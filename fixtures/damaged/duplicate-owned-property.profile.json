@@ -1,0 +1,13 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.damaged.duplicate",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.makepad.mesh.replay.enabled",
+    "debug.rustyquest.makepad.mesh.replay.enabled"
+  ],
+  "set_properties": [],
+  "expected_markers": [],
+  "validation_commands": []
+}
+

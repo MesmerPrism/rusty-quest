@@ -1,0 +1,18 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.damaged.legacy",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyxr.makepad.mesh.replay.enabled"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyxr.makepad.mesh.replay.enabled",
+      "value": "true",
+      "source_setting_id": "makepad.mesh_replay.enabled"
+    }
+  ],
+  "expected_markers": [],
+  "validation_commands": []
+}
+
