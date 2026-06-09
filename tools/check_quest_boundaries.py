@@ -8,7 +8,7 @@ FORBIDDEN = (
     "MesmerPrism/Rusty-XR",
 )
 
-SCAN_SUFFIXES = {".rs", ".toml", ".json", ".ps1"}
+SCAN_SUFFIXES = {".java", ".json", ".md", ".ps1", ".rs", ".toml", ".xml"}
 
 
 def main() -> int:
@@ -34,4 +34,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

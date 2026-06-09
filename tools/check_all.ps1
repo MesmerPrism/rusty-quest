@@ -22,8 +22,8 @@ try {
     Invoke-Checked "cargo fmt" "cargo" @("fmt", "--all", "--check")
     Invoke-Checked "cargo test" "cargo" @("test", "--workspace")
     Invoke-Checked "runtime profile dry-run" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Apply-RuntimeProfile.ps1", "-ProfilePath", "fixtures\runtime-profiles\quest-makepad-mesh-replay.profile.json", "-DryRun")
+    Invoke-Checked "Manifold broker Android scaffold" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-ManifoldBrokerAndroid.ps1")
     Invoke-Checked "Quest boundary scan" "python" @("tools\check_quest_boundaries.py")
 } finally {
     Pop-Location
 }
-
