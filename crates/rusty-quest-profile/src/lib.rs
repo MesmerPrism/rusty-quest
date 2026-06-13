@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 /// Quest runtime profile schema id.
 pub const RUNTIME_PROFILE_SCHEMA: &str = "rusty.quest.runtime_profile.v1";
 
+/// Android system property value limit in bytes for `setprop` values.
+pub const ANDROID_PROPERTY_VALUE_MAX_BYTES: usize = 92;
+
 /// Quest runtime profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeProfile {
@@ -136,6 +139,13 @@ pub fn validate_runtime_profile(profile: &RuntimeProfile) -> Result<(), Vec<Vali
                 property.name
             )));
         }
+        let value_bytes = property.value.as_bytes().len();
+        if value_bytes > ANDROID_PROPERTY_VALUE_MAX_BYTES {
+            errors.push(ValidationError::new(format!(
+                "set property {} value is {value_bytes} bytes, above Android setprop limit {ANDROID_PROPERTY_VALUE_MAX_BYTES}",
+                property.name
+            )));
+        }
         if set_properties
             .insert(property.name.as_str(), property)
             .is_some()
@@ -244,5 +254,16 @@ mod tests {
         .expect("damaged profile JSON");
         let errors = validate_runtime_profile(&damaged).expect_err("must reject legacy");
         assert!(errors.iter().any(|error| error.message.contains("legacy")));
+    }
+
+    #[test]
+    fn oversized_property_value_is_rejected() {
+        let mut damaged = valid_profile();
+        damaged.set_properties[0].value = "x".repeat(93);
+
+        let errors = validate_runtime_profile(&damaged).expect_err("must reject oversized value");
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("above Android setprop limit")));
     }
 }

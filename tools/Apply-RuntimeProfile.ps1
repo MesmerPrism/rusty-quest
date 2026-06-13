@@ -9,6 +9,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$AndroidPropertyValueMaxBytes = 92
 
 function ConvertTo-AndroidShellSingleQuoted {
     param(
@@ -70,6 +71,10 @@ foreach ($property in $profile.set_properties) {
     }
     if ([string]::IsNullOrWhiteSpace([string]$property.source_setting_id)) {
         throw "Set property must declare source_setting_id: $($property.name)"
+    }
+    $valueBytes = [System.Text.Encoding]::UTF8.GetByteCount([string]$property.value)
+    if ($valueBytes -gt $AndroidPropertyValueMaxBytes) {
+        throw "Set property $($property.name) value is $valueBytes bytes, above Android setprop limit $AndroidPropertyValueMaxBytes"
     }
     $operations += [ordered]@{
         kind = "set"
@@ -144,7 +149,11 @@ if ($Execute) {
     $plan.readbacks = $readbacks
 }
 
-$outPath = Join-Path $RepoRoot $Out
+$outPath = if ([System.IO.Path]::IsPathRooted($Out)) {
+    $Out
+} else {
+    Join-Path $RepoRoot $Out
+}
 New-Item -ItemType Directory -Path (Split-Path $outPath -Parent) -Force | Out-Null
 $plan | ConvertTo-Json -Depth 8 | Set-Content -Path $outPath -Encoding UTF8
 

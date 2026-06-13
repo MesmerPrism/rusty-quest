@@ -1,0 +1,15 @@
+[package]
+name = "rusty-quest-remote-camera"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rusty-quest-profile = { path = "../rusty-quest-profile" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true

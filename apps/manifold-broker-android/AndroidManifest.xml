@@ -2,6 +2,9 @@
     package="io.github.mesmerprism.rustymanifold.broker">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="horizonos.permission.HEADSET_CAMERA" />
+    <uses-permission android:name="horizonos.permission.SPATIAL_CAMERA" />
 
     <application
         android:allowBackup="false"

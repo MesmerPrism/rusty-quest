@@ -90,7 +90,7 @@ $apkUnaligned = Join-Path $OutDir "rusty-manifold-broker-unaligned.apk"
 $apkAligned = Join-Path $OutDir "rusty-manifold-broker-aligned.apk"
 $apkSigned = Join-Path $OutDir "rusty-manifold-broker.apk"
 if ([string]::IsNullOrWhiteSpace($Keystore)) {
-    $Keystore = Join-Path $OutDir "rusty-manifold-broker-debug.keystore"
+    $Keystore = Join-Path $targetRoot "rusty-manifold-broker-debug.keystore"
 }
 
 New-Item -ItemType Directory -Force -Path $classesDir, $dexDir | Out-Null

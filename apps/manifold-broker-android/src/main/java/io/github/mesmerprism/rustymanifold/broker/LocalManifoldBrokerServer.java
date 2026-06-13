@@ -1,8 +1,8 @@
 package io.github.mesmerprism.rustymanifold.broker;
 
+import android.content.Context;
 import android.util.Base64;
 
-import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -32,6 +32,7 @@ public final class LocalManifoldBrokerServer {
     private final Object lock = new Object();
     private boolean started;
     private ServerSocket serverSocket;
+    private volatile Context applicationContext;
 
     private LocalManifoldBrokerServer() {
     }
@@ -44,6 +45,15 @@ public final class LocalManifoldBrokerServer {
         synchronized (lock) {
             return started && serverSocket != null && !serverSocket.isClosed();
         }
+    }
+
+    public void start(Context context) {
+        synchronized (lock) {
+            if (context != null) {
+                applicationContext = context.getApplicationContext();
+            }
+        }
+        start();
     }
 
     public void start() {
@@ -121,7 +131,7 @@ public final class LocalManifoldBrokerServer {
         }
     }
 
-    private void handleTextFrame(OutputStream output, String text) throws IOException, JSONException {
+    private void handleTextFrame(OutputStream output, String text) throws Exception {
         JSONObject message = new JSONObject(text);
         String type = message.optString("type", "");
         if ("hello".equals(type)) {
@@ -139,15 +149,24 @@ public final class LocalManifoldBrokerServer {
 
         if ("command".equals(type) || COMMAND_SCHEMA.equals(message.optString("schema", ""))) {
             JSONObject reply = new JSONObject();
-            String command = message.optString("command", "unknown");
+            String command = message.optString("command_id", message.optString("command", "unknown"));
+            JSONObject remoteCameraRuntime = RemoteCameraSessionRuntime.handleCommand(applicationContext, message);
             reply.put("type", "command_ack");
             reply.put("schema", "rusty.manifold.command.ack.v1");
             reply.put("request_id", message.optString("request_id", ""));
             reply.put("command", command);
             reply.put("accepted", true);
-            reply.put("status", "accepted");
+            reply.put("status", remoteCameraRuntime != null
+                    ? remoteCameraRuntime.optString("status", "accepted")
+                    : "accepted");
             reply.put("authority", "rusty.manifold");
             reply.put("live_stream_events_synthesized", false);
+            if (remoteCameraRuntime != null) {
+                reply.put("remote_camera_runtime", remoteCameraRuntime);
+                reply.put(
+                        "media_socket_runtime_started",
+                        remoteCameraRuntime.optBoolean("media_socket_runtime_started", false));
+            }
             reply.put("time_utc", Instant.now().toString());
             writeText(output, reply);
             return;

@@ -1,0 +1,170 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.remote_camera.q2q_two_way.quest_a",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.remote_camera.enabled",
+    "debug.rustyquest.remote_camera.session_id",
+    "debug.rustyquest.remote_camera.topology_id",
+    "debug.rustyquest.remote_camera.endpoint_device_id",
+    "debug.rustyquest.remote_camera.endpoint_device_kind",
+    "debug.rustyquest.remote_camera.endpoint_role",
+    "debug.rustyquest.remote_camera.privacy_tier",
+    "debug.rustyquest.remote_camera.lane_count",
+    "debug.rustyquest.remote_camera.incoming_lane_count",
+    "debug.rustyquest.remote_camera.outgoing_lane_count",
+    "debug.rustyquest.remote_camera.transport_kind",
+    "debug.rustyquest.remote_camera.adapter_kind",
+    "debug.rustyquest.remote_camera.sender_source_kind",
+    "debug.rustyquest.remote_camera.sender_source_host",
+    "debug.rustyquest.remote_camera.sender_source_ports",
+    "debug.rustyquest.remote_camera.sender_media_profiles",
+    "debug.rustyquest.remote_camera.sender_camera_id",
+    "debug.rustyquest.remote_camera.sender_camera_ids",
+    "debug.rustyquest.remote_camera.sender_camera_facing",
+    "debug.rustyquest.remote_camera.sender_quality_profile",
+    "debug.rustyquest.remote_camera.camera_permission_policy",
+    "debug.rustyquest.remote_camera.receiver_bind_host",
+    "debug.rustyquest.remote_camera.receiver_ports",
+    "debug.rustyquest.remote_camera.transport_bind_host",
+    "debug.rustyquest.remote_camera.transport_receive_ports",
+    "debug.rustyquest.remote_camera.transport_routes"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.remote_camera.enabled",
+      "value": "true",
+      "source_setting_id": "quest.remote_camera.enabled"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.session_id",
+      "value": "session.remote_camera.q2q_two_way_lan_smoke",
+      "source_setting_id": "quest.remote_camera.session_id"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.topology_id",
+      "value": "quest_to_quest_two_way",
+      "source_setting_id": "quest.remote_camera.topology_id"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.endpoint_device_id",
+      "value": "quest-a",
+      "source_setting_id": "quest.remote_camera.endpoint_device_id"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.endpoint_device_kind",
+      "value": "quest",
+      "source_setting_id": "quest.remote_camera.endpoint_device_kind"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.endpoint_role",
+      "value": "sender_receiver",
+      "source_setting_id": "quest.remote_camera.endpoint_role"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.privacy_tier",
+      "value": "local_lan_diagnostic",
+      "source_setting_id": "quest.remote_camera.privacy_tier"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.lane_count",
+      "value": "4",
+      "source_setting_id": "quest.remote_camera.lane_count"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.incoming_lane_count",
+      "value": "2",
+      "source_setting_id": "quest.remote_camera.incoming_lane_count"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.outgoing_lane_count",
+      "value": "2",
+      "source_setting_id": "quest.remote_camera.outgoing_lane_count"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.transport_kind",
+      "value": "lan_tcp",
+      "source_setting_id": "quest.remote_camera.transport_kind"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.adapter_kind",
+      "value": "quest_manifold_broker_android",
+      "source_setting_id": "quest.remote_camera.adapter_kind"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.sender_source_kind",
+      "value": "camera2_mediacodec_surface",
+      "source_setting_id": "quest.remote_camera.sender_source_kind"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.sender_source_host",
+      "value": "127.0.0.1",
+      "source_setting_id": "quest.remote_camera.sender_source_host"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.sender_source_ports",
+      "value": "left:8879,right:8880",
+      "source_setting_id": "quest.remote_camera.sender_source_ports"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.sender_media_profiles",
+      "value": "left:720x720@30:2500000;right:720x720@30:2500000",
+      "source_setting_id": "quest.remote_camera.sender_media_profiles"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.sender_camera_id",
+      "value": "none",
+      "source_setting_id": "quest.remote_camera.sender_camera_id"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.sender_camera_ids",
+      "value": "left:50,right:51",
+      "source_setting_id": "quest.remote_camera.sender_camera_ids"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.sender_camera_facing",
+      "value": "external",
+      "source_setting_id": "quest.remote_camera.sender_camera_facing"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.sender_quality_profile",
+      "value": "camera-native-max",
+      "source_setting_id": "quest.remote_camera.sender_quality_profile"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.camera_permission_policy",
+      "value": "camera_permission_required",
+      "source_setting_id": "quest.remote_camera.camera_permission_policy"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.receiver_bind_host",
+      "value": "127.0.0.1",
+      "source_setting_id": "quest.remote_camera.receiver_bind_host"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.receiver_ports",
+      "value": "left:8979,right:8980",
+      "source_setting_id": "quest.remote_camera.receiver_ports"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.transport_bind_host",
+      "value": "0.0.0.0",
+      "source_setting_id": "quest.remote_camera.transport_bind_host"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.transport_receive_ports",
+      "value": "left:9079,right:9080",
+      "source_setting_id": "quest.remote_camera.transport_receive_ports"
+    },
+    {
+      "name": "debug.rustyquest.remote_camera.transport_routes",
+      "value": "left:quest-b.local:9079;right:quest-b.local:9080",
+      "source_setting_id": "quest.remote_camera.transport_routes"
+    }
+  ],
+  "expected_markers": [
+    "RUSTY_QUEST_REMOTE_CAMERA_SESSION_PLAN",
+    "RUSTY_QUEST_REMOTE_CAMERA_RECEIVER_ARMED",
+    "RUSTY_QUEST_REMOTE_CAMERA_SENDER_STARTED"
+  ]
+}
