@@ -51,6 +51,12 @@ logcat, screenshots, Perfetto, or shared bridge ports.
   `rusty.lattice.*`, `rusty.matter.*`, `rusty.optics.*`, `rusty.quest.*`, or
   repo-local names); do not introduce `rusty.morphospace.*` schemas or
   `Morphospace*` core types by default.
+- Android property writes are transport generated from validated
+  `rusty.quest.runtime_profile.v1` inputs. `getprop` readback proves only the
+  transport layer; the consuming app must also emit the matching effective
+  setting, marker, or command receipt before the value counts as accepted
+  runtime behavior.
+
 ## Validation
 
 Run:
@@ -58,4 +64,3 @@ Run:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 ```
-
