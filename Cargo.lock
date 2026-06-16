@@ -41,6 +41,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusty-quest-projection-runtime-config"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rusty-quest-remote-camera"
 version = "0.1.0"
 dependencies = [

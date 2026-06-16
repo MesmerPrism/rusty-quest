@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/rusty-quest-projection-runtime-config",
     "crates/rusty-quest-profile",
     "crates/rusty-quest-remote-camera",
 ]
