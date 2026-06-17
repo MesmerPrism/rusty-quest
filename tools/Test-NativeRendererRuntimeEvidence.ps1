@@ -590,8 +590,7 @@ if ($RequireCameraProjection) {
         "projectionReady=true",
         "metadataDrivenTargetFootprint=true",
         "leftCameraId=50",
-        "rightCameraId=51",
-        "recordedHandReplayVisible=true"
+        "rightCameraId=51"
     )) {
         Assert-Contains $timingScorecard $token "latest timing-scorecard"
     }
@@ -605,6 +604,7 @@ if ($RequireCameraProjection) {
 
 if ($RequireReplayVisualProof) {
     Assert-True (-not [string]::IsNullOrWhiteSpace($handMeshVisualLine)) "Missing hand-mesh-visual marker."
+    Assert-Contains $timingScorecard "recordedHandReplayVisible=true" "latest timing-scorecard"
     foreach ($token in @(
         "recordedReplayVisualProofEnabled=true",
         "compactHandInputSourceMode=recorded-replay",
@@ -623,6 +623,7 @@ if ($RequireReplayVisualProof) {
 if ($RequireLiveVisualDiagnosticCaveat) {
     Assert-True (-not [string]::IsNullOrWhiteSpace($handMeshVisualLine)) "Missing hand-mesh-visual marker."
     Assert-True (-not [string]::IsNullOrWhiteSpace($sdfFieldLine)) "Missing gpu-sdf-field marker."
+    Assert-Contains $timingScorecard "recordedHandReplayVisible=false" "latest timing-scorecard"
     foreach ($token in @(
         "recordedReplayVisualProofEnabled=false",
         "compactHandInputSourceMode=live-meta-openxr-hand-tracking",

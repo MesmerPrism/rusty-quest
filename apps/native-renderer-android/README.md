@@ -35,6 +35,21 @@ opt-in native compact-joint skinned-mesh GPU SDF path in scorecards. When
 `XR_EXT_hand_tracking` is available, the same
 resident path can consume live OpenXR hand joints as the compact input source:
 21 runtime poses plus packed tip lengths, not expanded mesh vertices.
+This follows the original capture/export contract: per-hand rig files own the
+Meta/OpenXR bind topology, triangle components, blend weights, and bind poses;
+clip JSONL frames carry compact runtime joint poses plus tip lengths; validation
+mesh frames and GLB export are witnesses built from that rig plus clip data.
+The native runtime therefore treats live Meta joints as the dynamic input for
+the same resident Meta-derived topology instead of importing per-frame expanded
+mesh vertices.
+The live adapter preserves left and right compact frames separately. The
+primary hand feeds the current single SDF field, while a second resident
+GPU-skinned visual path can draw the other live hand in the same metadata-owned
+target area. Scorecards report `liveMetaHandUsingBoth`,
+`liveMetaHandVisualizableHandCount`, `liveHandMeshVisualLeftVisible`,
+`liveHandMeshVisualRightVisible`, and
+`liveHandMeshVisualBothHandsVisible` so two-hand tracking is not collapsed into
+the old one-hand marker.
 The live mesh visual is deliberately not considered accepted by markers alone:
 during the 2026-06-17 live-hand check the user had real hands in view, but did
 not see a mesh or SDF representation in the headset. Future headset retests
@@ -49,6 +64,18 @@ The staged property bundle for that later retest is
 it forces `live-meta-openxr-hand-tracking`, disables recorded fallback, enables
 the high-contrast mesh diagnostic plus SDF visual, and keeps live mesh/SDF
 acceptance pending until screenshot evidence shows visible overlay color.
+Live diagnostic builds now normalize the GPU skinning target from the active
+live runtime joint bounds before drawing the resident triangle mesh. When that
+path is active, `live-hand-mesh-target-proof` reports
+`liveHandMeshTargetProofPath=gpu-skinned-resident-triangle-fill`,
+`liveHandMeshJointOverlaySuppressed=true`, and the joint skeleton fallback is
+not drawn. This separates "the live joints are visible" from "the real
+GPU-skinned mesh is visible."
+In the first headset inspection of this route, the left live mesh looked good,
+the right mesh was visibly deformed, and both hands still appeared in fixed
+target-local diagnostic positions. Treat that as live mesh visibility progress,
+not final alignment: the next mesh gate is offline right-hand validation against
+the capture/export contract, followed by real-size world-space placement.
 
 For no-real-hands isolation, set
 `debug.rustyquest.native_renderer.replay.visual_proof.enabled=true`. That preset

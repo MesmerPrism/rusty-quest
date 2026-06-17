@@ -69,6 +69,7 @@ pub(crate) struct GpuSdfFieldFrameStats {
     pub(crate) derived_buffers_resident: bool,
     pub(crate) derived_buffers_reused: bool,
     pub(crate) live_compact_input_frame: bool,
+    pub(crate) target_transform_source: &'static str,
 }
 
 impl GpuSdfFieldFrameStats {
@@ -163,6 +164,12 @@ impl GpuSdfFieldFrameStats {
             } else {
                 "not-live-input"
             }
+        )
+        + &format!(
+            " handMeshTargetTransformSource={} liveHandMeshTargetLocalNormalized={}",
+            self.target_transform_source,
+            self.live_compact_input_frame
+                && self.target_transform_source == "live-runtime-joint-bounds"
         )
     }
 }
@@ -283,6 +290,9 @@ impl GpuSdfFieldRenderer {
         if vertex_count == 0 || triangle_count == 0 {
             return Ok(GpuSdfFieldFrameStats::unavailable(replay, frame_count));
         }
+        let live_compact_input_frame = live_hand_frame.is_some();
+        let (target_transform, target_transform_source) =
+            target_transform_for_frame(frame, self.target_transform, live_compact_input_frame);
 
         let host_to_compute = [
             host_to_compute_barrier(&self.resources.source_vertex_buffer),
@@ -310,17 +320,12 @@ impl GpuSdfFieldRenderer {
                 SDF_GRID_HEIGHT,
             ],
             target0: [
-                self.target_transform.center[0],
-                self.target_transform.center[1],
-                self.target_transform.min_z,
-                self.target_transform.radius,
+                target_transform.center[0],
+                target_transform.center[1],
+                target_transform.min_z,
+                target_transform.radius,
             ],
-            target1: [
-                self.target_transform.center[2],
-                self.target_transform.depth,
-                0.0,
-                0.0,
-            ],
+            target1: [target_transform.center[2], target_transform.depth, 0.0, 0.0],
             params: [SDF_NARROW_BAND_RADIUS, 0.0, 0.0, 0.0],
         };
 
@@ -462,7 +467,8 @@ impl GpuSdfFieldRenderer {
             source_mesh_buffers_reused: self.skinning_dispatch_count > 1,
             derived_buffers_resident: true,
             derived_buffers_reused: self.skinning_dispatch_count > 1,
-            live_compact_input_frame: live_hand_frame.is_some(),
+            live_compact_input_frame,
+            target_transform_source,
         })
     }
 
@@ -641,6 +647,65 @@ impl GpuSdfFieldRenderer {
             &[],
         );
     }
+}
+
+fn target_transform_for_frame(
+    frame: &RecordedHandSkinningFrame,
+    fallback: RecordedMeshTargetTransform,
+    live_compact_input_frame: bool,
+) -> (RecordedMeshTargetTransform, &'static str) {
+    if !live_compact_input_frame {
+        return (fallback, "recorded-validation-mesh-bounds");
+    }
+
+    live_runtime_joint_target_transform(&frame.runtime_joint_poses)
+        .map(|target| (target, "live-runtime-joint-bounds"))
+        .unwrap_or((fallback, "live-runtime-joint-bounds-fallback-recorded"))
+}
+
+fn live_runtime_joint_target_transform(
+    runtime_joint_poses: &[RecordedHandGpuPose],
+) -> Option<RecordedMeshTargetTransform> {
+    let mut min = [f32::INFINITY; 3];
+    let mut max = [f32::NEG_INFINITY; 3];
+    let mut finite_count = 0_usize;
+
+    for pose in runtime_joint_poses {
+        let translation = [
+            pose.translation_pad[0],
+            pose.translation_pad[1],
+            pose.translation_pad[2],
+        ];
+        if !translation.iter().all(|value| value.is_finite()) {
+            continue;
+        }
+        finite_count += 1;
+        for axis in 0..3 {
+            min[axis] = min[axis].min(translation[axis]);
+            max[axis] = max[axis].max(translation[axis]);
+        }
+    }
+
+    if finite_count < 5 {
+        return None;
+    }
+
+    let padding = 0.065_f32;
+    let width = (max[0] - min[0] + padding * 2.0).max(0.12);
+    let height = (max[1] - min[1] + padding * 2.0).max(0.12);
+    let depth = (max[2] - min[2] + padding * 2.0).max(0.12);
+    let radius = width.max(height).max(depth) * 0.5;
+
+    Some(RecordedMeshTargetTransform {
+        center: [
+            (min[0] + max[0]) * 0.5,
+            (min[1] + max[1]) * 0.5,
+            (min[2] + max[2]) * 0.5,
+        ],
+        radius,
+        min_z: min[2] - padding,
+        depth,
+    })
 }
 
 struct GpuSdfResources {

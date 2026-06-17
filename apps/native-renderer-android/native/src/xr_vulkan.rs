@@ -16,11 +16,13 @@ use crate::{
         PreparedCameraProjection,
     },
     camera_projection_metadata::{CameraProjectionMetadata, TargetRect},
-    gpu_hand_mesh_visual::{GpuHandMeshVisualFrameStats, GpuHandMeshVisualRenderer},
+    gpu_hand_mesh_visual::{
+        GpuHandMeshVisualFrameSetStats, GpuHandMeshVisualFrameStats, GpuHandMeshVisualRenderer,
+    },
     gpu_mesh_replay::{GpuMeshReplayResources, GpuMeshReplayStats},
     gpu_sdf_field::{GpuSdfFieldFrameStats, GpuSdfFieldRenderer},
     guide_blur_graph::{GuideBlurGraphFrameStats, GuideBlurGraphRenderer},
-    live_hand_compact::{LiveHandCompactInput, LiveHandCompactStats},
+    live_hand_compact::{LiveHandCompactFrameSet, LiveHandCompactInput, LiveHandCompactStats},
     native_camera::NativeCameraRuntime,
     native_renderer_options::{
         CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings, NativeRendererRuntimeOptions,
@@ -32,7 +34,7 @@ use crate::{
         elapsed_ms, FrameCpuTimings, GpuStageTimings, GpuTimestampStage, GpuTimestampTracker,
     },
     private_extension_slot::{PrivateExtensionSlotFrameStats, PrivateExtensionSlotRuntime},
-    recorded_hand_replay::RecordedHandReplaySummary,
+    recorded_hand_replay::{RecordedHandReplaySummary, RecordedHandSkinningFrame},
 };
 
 const VIEW_TYPE: xr::ViewConfigurationType = xr::ViewConfigurationType::PRIMARY_STEREO;
@@ -426,6 +428,50 @@ unsafe fn run_projection_loop_inner(
         );
         None
     };
+    let mut secondary_gpu_sdf_field_renderer = match GpuSdfFieldRenderer::new(
+        &vk_device,
+        &memory_properties,
+        render_pass,
+        &replay,
+    ) {
+        Ok(renderer) => {
+            crate::marker(
+                "hand-mesh-visual",
+                "status=secondary-gpu-skinning-created handMeshVisualSecondaryPath=live-second-hand-gpu-skinned-resident-triangle-draw liveHandMeshVisualBothHandsPath=dual-resident-gpu-skinned-mesh-draw secondarySdfOverlay=false",
+            );
+            Some(renderer)
+        }
+        Err(error) => {
+            crate::marker(
+                "hand-mesh-visual",
+                format!(
+                    "status=secondary-unavailable reason={} liveHandMeshVisualBothHandsPath=single-hand-only secondarySdfOverlay=false",
+                    crate::sanitize(&error)
+                ),
+            );
+            None
+        }
+    };
+    let mut secondary_gpu_hand_mesh_visual_renderer = if let Some(renderer) =
+        secondary_gpu_sdf_field_renderer.as_ref()
+    {
+        let draw_resources = renderer.skinned_hand_mesh_draw_resources();
+        match GpuHandMeshVisualRenderer::new(&vk_device, render_pass, &replay, draw_resources) {
+            Ok(renderer) => Some(renderer),
+            Err(error) => {
+                crate::marker(
+                        "hand-mesh-visual",
+                        format!(
+                            "status=secondary-visual-unavailable reason={} liveHandMeshVisualBothHandsPath=single-hand-only",
+                            crate::sanitize(&error)
+                        ),
+                    );
+                None
+            }
+        }
+    } else {
+        None
+    };
     let mut gpu_mesh_replay = GpuMeshReplayResources::default();
     let gpu_mesh_stats = match gpu_mesh_replay.prepare_source_mesh(
         &vk_device,
@@ -558,7 +604,9 @@ unsafe fn run_projection_loop_inner(
         &replay,
         &gpu_mesh_stats,
         gpu_hand_mesh_visual_renderer.as_mut(),
+        secondary_gpu_hand_mesh_visual_renderer.as_mut(),
         gpu_sdf_field_renderer.as_mut(),
+        secondary_gpu_sdf_field_renderer.as_mut(),
         &mut gpu_timestamp_tracker,
         &mut private_extension_slot_runtime,
         &mut live_hand_compact,
@@ -583,7 +631,13 @@ unsafe fn run_projection_loop_inner(
     if let Some(renderer) = gpu_hand_mesh_visual_renderer.as_mut() {
         renderer.destroy(&vk_device);
     }
+    if let Some(renderer) = secondary_gpu_hand_mesh_visual_renderer.as_mut() {
+        renderer.destroy(&vk_device);
+    }
     if let Some(renderer) = gpu_sdf_field_renderer.as_mut() {
+        renderer.destroy(&vk_device);
+    }
+    if let Some(renderer) = secondary_gpu_sdf_field_renderer.as_mut() {
         renderer.destroy(&vk_device);
     }
     gpu_timestamp_tracker.destroy(&vk_device);
@@ -891,7 +945,9 @@ unsafe fn run_projection_frames(
     replay: &RecordedHandReplaySummary,
     gpu_mesh_stats: &GpuMeshReplayStats,
     mut gpu_hand_mesh_visual_renderer: Option<&mut GpuHandMeshVisualRenderer>,
+    mut secondary_gpu_hand_mesh_visual_renderer: Option<&mut GpuHandMeshVisualRenderer>,
     mut gpu_sdf_field_renderer: Option<&mut GpuSdfFieldRenderer>,
+    mut secondary_gpu_sdf_field_renderer: Option<&mut GpuSdfFieldRenderer>,
     gpu_timestamp_tracker: &mut GpuTimestampTracker,
     private_extension_slot_runtime: &mut PrivateExtensionSlotRuntime,
     live_hand_compact: &mut LiveHandCompactInput,
@@ -1175,17 +1231,31 @@ unsafe fn run_projection_frames(
         );
         frame_timings.guide_graph_ms = elapsed_ms(stage_started);
         let stage_started = Instant::now();
-        let (live_hand_frame, live_hand_stats) = live_hand_compact.locate_compact_frame(
+        let (live_hand_frames, live_hand_stats) = live_hand_compact.locate_compact_frame(
             reference_space,
             frame_state.predicted_display_time,
             replay.runtime_joint_count as usize,
             replay.tip_length_count as usize,
         );
         frame_timings.live_hand_ms = elapsed_ms(stage_started);
-        let selected_live_hand_frame = compact_hand_input_source_mode
+        let selected_primary_live_hand_frame = compact_hand_input_source_mode
             .selects_live_frame()
-            .then(|| live_hand_frame.as_ref())
+            .then(|| live_hand_frames.primary_frame())
             .flatten();
+        let selected_primary_live_hand = if compact_hand_input_source_mode.selects_live_frame() {
+            live_hand_frames.primary_handedness().unwrap_or("none")
+        } else {
+            "recorded"
+        };
+        let selected_secondary_live_hand_frame = compact_hand_input_source_mode
+            .selects_live_frame()
+            .then(|| live_hand_frames.secondary_frame())
+            .flatten();
+        let selected_secondary_live_hand = if compact_hand_input_source_mode.selects_live_frame() {
+            live_hand_frames.secondary_handedness().unwrap_or("none")
+        } else {
+            "none"
+        };
         let stage_started = Instant::now();
         gpu_timestamp_tracker.write_stage_start(
             vk_device,
@@ -1201,7 +1271,7 @@ unsafe fn run_projection_frames(
                 frame_count,
                 sdf_visual_enabled,
                 sdf_update_period_frames,
-                selected_live_hand_frame,
+                selected_primary_live_hand_frame,
                 compact_hand_input_source_mode.allows_recorded_fallback(),
             ) {
                 Ok(stats) => {
@@ -1228,6 +1298,37 @@ unsafe fn run_projection_frames(
         } else {
             GpuSdfFieldFrameStats::unavailable(replay, frame_count)
         };
+        let secondary_gpu_sdf_stats = if let (Some(renderer), Some(frame)) = (
+            secondary_gpu_sdf_field_renderer.as_mut(),
+            selected_secondary_live_hand_frame,
+        ) {
+            match renderer.record_compute_frame(
+                vk_device,
+                cmd,
+                replay,
+                frame_count,
+                false,
+                sdf_update_period_frames,
+                Some(frame),
+                false,
+            ) {
+                Ok(stats) => stats,
+                Err(error) => {
+                    if frame_count == 0 || frame_count % 120 == 0 {
+                        crate::marker(
+                            "hand-mesh-visual",
+                            format!(
+                                "status=secondary-skinning-error reason={} liveHandMeshVisualBothHandsPath=primary-only",
+                                crate::sanitize(&error)
+                            ),
+                        );
+                    }
+                    GpuSdfFieldFrameStats::unavailable(replay, frame_count)
+                }
+            }
+        } else {
+            GpuSdfFieldFrameStats::unavailable(replay, frame_count)
+        };
         gpu_timestamp_tracker.write_stage_end(
             vk_device,
             cmd,
@@ -1242,14 +1343,16 @@ unsafe fn run_projection_frames(
             frame_slot,
             GpuTimestampStage::HandMeshVisual,
         );
-        let hand_mesh_visual_stats = if let Some(renderer) = gpu_hand_mesh_visual_renderer.as_mut()
+        let primary_hand_mesh_visual_stats = if let Some(renderer) =
+            gpu_hand_mesh_visual_renderer.as_mut()
         {
             match renderer.record_frame(
                 replay,
                 frame_count,
                 gpu_sdf_stats.skinning_ready,
-                selected_live_hand_frame,
+                selected_primary_live_hand_frame,
                 compact_hand_input_source_mode.allows_recorded_fallback(),
+                selected_primary_live_hand,
                 hand_mesh_visual_diagnostic_settings,
             ) {
                 Ok(stats) => stats,
@@ -1266,6 +1369,7 @@ unsafe fn run_projection_frames(
                     GpuHandMeshVisualFrameStats::unavailable(
                         replay,
                         frame_count,
+                        selected_primary_live_hand,
                         hand_mesh_visual_diagnostic_settings,
                     )
                 }
@@ -1274,9 +1378,54 @@ unsafe fn run_projection_frames(
             GpuHandMeshVisualFrameStats::unavailable(
                 replay,
                 frame_count,
+                selected_primary_live_hand,
                 hand_mesh_visual_diagnostic_settings,
             )
         };
+        let secondary_hand_mesh_visual_stats = if let (Some(renderer), Some(_frame)) = (
+            secondary_gpu_hand_mesh_visual_renderer.as_mut(),
+            selected_secondary_live_hand_frame,
+        ) {
+            match renderer.record_frame(
+                replay,
+                frame_count,
+                secondary_gpu_sdf_stats.skinning_ready,
+                selected_secondary_live_hand_frame,
+                false,
+                selected_secondary_live_hand,
+                hand_mesh_visual_diagnostic_settings,
+            ) {
+                Ok(stats) => stats,
+                Err(error) => {
+                    if frame_count == 0 || frame_count % 120 == 0 {
+                        crate::marker(
+                            "hand-mesh-visual",
+                            format!(
+                                "status=secondary-visual-error reason={} liveHandMeshVisualBothHandsPath=primary-only",
+                                crate::sanitize(&error)
+                            ),
+                        );
+                    }
+                    GpuHandMeshVisualFrameStats::unavailable(
+                        replay,
+                        frame_count,
+                        selected_secondary_live_hand,
+                        hand_mesh_visual_diagnostic_settings,
+                    )
+                }
+            }
+        } else {
+            GpuHandMeshVisualFrameStats::unavailable(
+                replay,
+                frame_count,
+                selected_secondary_live_hand,
+                hand_mesh_visual_diagnostic_settings,
+            )
+        };
+        let hand_mesh_visual_stats = GpuHandMeshVisualFrameSetStats::new(
+            primary_hand_mesh_visual_stats,
+            secondary_hand_mesh_visual_stats,
+        );
         gpu_timestamp_tracker.write_stage_end(
             vk_device,
             cmd,
@@ -1306,13 +1455,18 @@ unsafe fn run_projection_frames(
             image_index as usize,
             frame_count,
             replay,
+            replay_visual_proof_enabled,
             prepared_camera_projection.as_ref(),
             guide_blur_graph_renderer,
             &guide_blur_stats,
             gpu_hand_mesh_visual_renderer.as_deref(),
+            secondary_gpu_hand_mesh_visual_renderer.as_deref(),
             &hand_mesh_visual_stats,
             gpu_sdf_field_renderer.as_deref(),
             &gpu_sdf_stats,
+            &live_hand_frames,
+            compact_hand_input_source_mode.selects_live_frame(),
+            hand_mesh_visual_diagnostic_settings,
             projection_metadata,
         );
         gpu_timestamp_tracker.write_stage_end(
@@ -1636,13 +1790,18 @@ unsafe fn record_projection_diagnostic(
     image_index: usize,
     frame_count: u64,
     replay: &RecordedHandReplaySummary,
+    draw_recorded_replay_overlay: bool,
     prepared_camera_projection: Option<&PreparedCameraProjection>,
     guide_blur_graph_renderer: &GuideBlurGraphRenderer,
     guide_blur_stats: &GuideBlurGraphFrameStats,
     gpu_hand_mesh_visual_renderer: Option<&GpuHandMeshVisualRenderer>,
-    hand_mesh_visual_stats: &GpuHandMeshVisualFrameStats,
+    secondary_gpu_hand_mesh_visual_renderer: Option<&GpuHandMeshVisualRenderer>,
+    hand_mesh_visual_stats: &GpuHandMeshVisualFrameSetStats,
     gpu_sdf_field_renderer: Option<&GpuSdfFieldRenderer>,
     gpu_sdf_stats: &GpuSdfFieldFrameStats,
+    live_hand_frames: &LiveHandCompactFrameSet,
+    draw_live_hand_target_overlay: bool,
+    diagnostic_settings: HandMeshVisualDiagnosticSettings,
     projection_metadata: &CameraProjectionMetadata,
 ) -> ReplayVisualStats {
     let buffer = &swapchain.buffers[image_index];
@@ -1689,37 +1848,362 @@ unsafe fn record_projection_diagnostic(
                 projection_metadata,
             );
         }
-        if let Some(renderer) = gpu_hand_mesh_visual_renderer {
-            if hand_mesh_visual_stats.ready && hand_mesh_visual_stats.visible {
-                renderer.record_overlay_eye(
-                    device,
-                    cmd,
-                    swapchain.extent,
-                    target_rect,
-                    hand_mesh_visual_stats,
-                );
-            }
-        }
         if let Some(renderer) = gpu_sdf_field_renderer {
             if gpu_sdf_stats.ready && gpu_sdf_stats.overlay_visible {
                 renderer.record_overlay_eye(device, cmd, swapchain.extent, target_rect);
             }
         }
-        let eye_visual_stats = record_recorded_hand_overlay(
-            device,
-            cmd,
-            swapchain.extent,
-            target_rect,
-            frame_count,
-            replay,
-            hand_mesh_visual_stats.diagnostic_settings,
-        );
-        if eye_index == 0 {
-            visual_stats = eye_visual_stats;
+        if let Some(renderer) = gpu_hand_mesh_visual_renderer {
+            if hand_mesh_visual_stats.primary.ready && hand_mesh_visual_stats.primary.visible {
+                renderer.record_overlay_eye(
+                    device,
+                    cmd,
+                    swapchain.extent,
+                    target_rect,
+                    &hand_mesh_visual_stats.primary,
+                );
+            }
+        }
+        if let Some(renderer) = secondary_gpu_hand_mesh_visual_renderer {
+            if hand_mesh_visual_stats.secondary.ready && hand_mesh_visual_stats.secondary.visible {
+                renderer.record_overlay_eye(
+                    device,
+                    cmd,
+                    swapchain.extent,
+                    target_rect,
+                    &hand_mesh_visual_stats.secondary,
+                );
+            }
+        }
+        if eye_index == 0 && !draw_recorded_replay_overlay {
+            if let Some(eye_visual_stats) =
+                live_gpu_mesh_visual_stats(hand_mesh_visual_stats, diagnostic_settings, target_rect)
+            {
+                visual_stats = eye_visual_stats;
+            }
+        }
+        if draw_live_hand_target_overlay && !hand_mesh_visual_stats.any_ready() {
+            let eye_visual_stats = record_live_hand_target_overlay(
+                device,
+                cmd,
+                swapchain.extent,
+                target_rect,
+                live_hand_frames,
+                diagnostic_settings,
+            );
+            if eye_index == 0 && eye_visual_stats.visual_point_count > 0 {
+                visual_stats = eye_visual_stats;
+            }
+        }
+        if draw_recorded_replay_overlay {
+            let eye_visual_stats = record_recorded_hand_overlay(
+                device,
+                cmd,
+                swapchain.extent,
+                target_rect,
+                frame_count,
+                replay,
+                hand_mesh_visual_stats.diagnostic_settings(),
+            );
+            if eye_index == 0 {
+                visual_stats = eye_visual_stats;
+            }
         }
         device.cmd_end_render_pass(cmd);
     }
     visual_stats
+}
+
+fn live_gpu_mesh_visual_stats(
+    hand_mesh_visual_stats: &GpuHandMeshVisualFrameSetStats,
+    diagnostic_settings: HandMeshVisualDiagnosticSettings,
+    target_rect: TargetRect,
+) -> Option<ReplayVisualStats> {
+    let mut rects = Vec::new();
+    let mut visual_point_count = 0_u64;
+    let mut frame_index = 0_u32;
+    let mut timestamp_ns = 0_u64;
+
+    for stats in [
+        &hand_mesh_visual_stats.primary,
+        &hand_mesh_visual_stats.secondary,
+    ] {
+        if !stats.ready || !stats.visible || !stats.live_compact_input_frame {
+            continue;
+        }
+        rects.push(live_gpu_mesh_local_evidence_rect(
+            stats.handedness,
+            diagnostic_settings,
+        ));
+        visual_point_count = visual_point_count.saturating_add(stats.drawn_vertex_count as u64);
+        if frame_index == 0 {
+            frame_index = stats.frame_index;
+            timestamp_ns = stats.timestamp_ns;
+        }
+    }
+
+    let local_evidence_rect = EvidenceUvRect::union_all(&rects)?;
+    crate::marker(
+        "live-hand-mesh-target-proof",
+        format!(
+            "status=frame liveHandMeshTargetProofVisible=true liveHandMeshTargetProofPath=gpu-skinned-resident-triangle-fill liveHandMeshTargetProofPointCount={} liveHandMeshTargetProofScreenUvRect={} liveHandMeshJointOverlaySuppressed=true",
+            visual_point_count,
+            local_evidence_rect
+                .to_screen_rect(target_rect)
+                .marker_value()
+        ),
+    );
+    Some(ReplayVisualStats {
+        frame_index,
+        timestamp_ns,
+        visual_point_count,
+        local_evidence_rect,
+    })
+}
+
+fn live_gpu_mesh_local_evidence_rect(
+    handedness: &'static str,
+    diagnostic_settings: HandMeshVisualDiagnosticSettings,
+) -> EvidenceUvRect {
+    let base = EvidenceUvRect::from_bounds(0.08, 0.10, 0.92, 0.98);
+    let diagnostic_scale = if diagnostic_settings.enabled {
+        1.35
+    } else {
+        1.0
+    };
+    let mut offset = if diagnostic_settings.enabled {
+        diagnostic_settings.offset_uv
+    } else {
+        [0.0, 0.0]
+    };
+    if diagnostic_settings.enabled {
+        offset[0] += match handedness {
+            "left" => -0.16,
+            "right" => 0.16,
+            _ => 0.0,
+        };
+    }
+    base.scaled_about_center(diagnostic_scale, offset)
+        .padded(0.025)
+}
+
+unsafe fn record_live_hand_target_overlay(
+    device: &ash::Device,
+    cmd: vk::CommandBuffer,
+    extent: vk::Extent2D,
+    target_rect: TargetRect,
+    live_hand_frames: &LiveHandCompactFrameSet,
+    diagnostic_settings: HandMeshVisualDiagnosticSettings,
+) -> ReplayVisualStats {
+    let mut stats = ReplayVisualStats::default();
+    let mut rects = Vec::new();
+    let mut point_count = 0_u64;
+    if let Some(frame) = live_hand_frames.left.as_ref() {
+        let points =
+            live_hand_overlay_points(frame, LiveHandOverlaySlot::Left, diagnostic_settings);
+        if !points.is_empty() {
+            record_live_hand_points_and_bones(
+                device,
+                cmd,
+                extent,
+                target_rect,
+                &points,
+                [0.0, 1.0, 0.92, 1.0],
+                [1.0, 0.06, 0.85, 1.0],
+            );
+            rects.push(EvidenceUvRect::from_bounds_for_points(&points).padded(0.045));
+            point_count += points.len() as u64;
+            stats.frame_index = frame.frame_index;
+            stats.timestamp_ns = frame.timestamp_ns;
+        }
+    }
+    if let Some(frame) = live_hand_frames.right.as_ref() {
+        let points =
+            live_hand_overlay_points(frame, LiveHandOverlaySlot::Right, diagnostic_settings);
+        if !points.is_empty() {
+            record_live_hand_points_and_bones(
+                device,
+                cmd,
+                extent,
+                target_rect,
+                &points,
+                [1.0, 0.90, 0.0, 1.0],
+                [0.1, 0.85, 1.0, 1.0],
+            );
+            rects.push(EvidenceUvRect::from_bounds_for_points(&points).padded(0.045));
+            point_count += points.len() as u64;
+            if stats.frame_index == 0 {
+                stats.frame_index = frame.frame_index;
+                stats.timestamp_ns = frame.timestamp_ns;
+            }
+        }
+    }
+    if let Some(rect) = EvidenceUvRect::union_all(&rects) {
+        stats.local_evidence_rect = rect;
+        stats.visual_point_count = point_count;
+        crate::marker(
+            "live-hand-target-overlay",
+            format!(
+                "status=frame liveHandTargetOverlayVisible=true liveHandTargetOverlayPath=target-local-live-joint-mesh-proof liveHandTargetOverlayPointCount={} liveHandTargetOverlayScreenUvRect={}",
+                point_count,
+                rect.to_screen_rect(target_rect).marker_value()
+            ),
+        );
+    }
+    stats
+}
+
+#[derive(Clone, Copy)]
+enum LiveHandOverlaySlot {
+    Left,
+    Right,
+}
+
+fn live_hand_overlay_points(
+    frame: &RecordedHandSkinningFrame,
+    slot: LiveHandOverlaySlot,
+    diagnostic_settings: HandMeshVisualDiagnosticSettings,
+) -> Vec<[f32; 2]> {
+    let positions = frame
+        .runtime_joint_poses
+        .iter()
+        .map(|pose| {
+            [
+                pose.translation_pad[0],
+                pose.translation_pad[1],
+                pose.translation_pad[2],
+            ]
+        })
+        .collect::<Vec<_>>();
+    let normalized = normalize_live_joint_points(&positions);
+    let center_x = match slot {
+        LiveHandOverlaySlot::Left => 0.34,
+        LiveHandOverlaySlot::Right => 0.66,
+    };
+    let center_y = (0.55 + diagnostic_settings.offset_uv[1] * 0.45).clamp(0.32, 0.72);
+    let scale_x = 0.46;
+    let scale_y = 0.64;
+    normalized
+        .iter()
+        .map(|[x, y]| {
+            [
+                (center_x + (*x - 0.5) * scale_x).clamp(0.035, 0.965),
+                (center_y + (*y - 0.5) * scale_y).clamp(0.035, 0.965),
+            ]
+        })
+        .collect()
+}
+
+fn normalize_live_joint_points(points: &[[f32; 3]]) -> Vec<[f32; 2]> {
+    if points.is_empty() {
+        return Vec::new();
+    }
+    let mut min_x = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    for [x, y, _] in points.iter().copied() {
+        min_x = min_x.min(x);
+        max_x = max_x.max(x);
+        min_y = min_y.min(y);
+        max_y = max_y.max(y);
+    }
+    let width = (max_x - min_x).max(1.0e-5);
+    let height = (max_y - min_y).max(1.0e-5);
+    points
+        .iter()
+        .map(|[x, y, _]| {
+            let normalized_x = ((*x - min_x) / width * 0.72 + 0.14).clamp(0.0, 1.0);
+            let normalized_y = (1.0 - ((*y - min_y) / height * 0.72 + 0.14)).clamp(0.0, 1.0);
+            [normalized_x, normalized_y]
+        })
+        .collect()
+}
+
+unsafe fn record_live_hand_points_and_bones(
+    device: &ash::Device,
+    cmd: vk::CommandBuffer,
+    extent: vk::Extent2D,
+    target_rect: TargetRect,
+    points: &[[f32; 2]],
+    bone_color: [f32; 4],
+    joint_color: [f32; 4],
+) {
+    const BONES: &[(usize, usize)] = &[
+        (0, 1),
+        (0, 2),
+        (2, 3),
+        (3, 4),
+        (0, 5),
+        (5, 6),
+        (6, 7),
+        (7, 8),
+        (0, 9),
+        (9, 10),
+        (10, 11),
+        (11, 12),
+        (0, 13),
+        (13, 14),
+        (14, 15),
+        (15, 16),
+        (0, 17),
+        (17, 18),
+        (18, 19),
+        (19, 20),
+        (5, 9),
+        (9, 13),
+        (13, 17),
+    ];
+    for (left, right) in BONES {
+        if let (Some(a), Some(b)) = (points.get(*left), points.get(*right)) {
+            clear_live_hand_segment_in_target(device, cmd, extent, target_rect, bone_color, *a, *b);
+        }
+    }
+    for (index, point) in points.iter().copied().enumerate() {
+        let size = if index == 0 || index == 1 {
+            0.030
+        } else {
+            0.022
+        };
+        clear_rect_in_target(
+            device,
+            cmd,
+            extent,
+            target_rect,
+            joint_color,
+            point[0] - size * 0.5,
+            point[1] - size * 0.5,
+            size,
+            size,
+        );
+    }
+}
+
+unsafe fn clear_live_hand_segment_in_target(
+    device: &ash::Device,
+    cmd: vk::CommandBuffer,
+    extent: vk::Extent2D,
+    target_rect: TargetRect,
+    color: [f32; 4],
+    a: [f32; 2],
+    b: [f32; 2],
+) {
+    let thickness = 0.014_f32;
+    let min_x = a[0].min(b[0]) - thickness * 0.5;
+    let min_y = a[1].min(b[1]) - thickness * 0.5;
+    let max_x = a[0].max(b[0]) + thickness * 0.5;
+    let max_y = a[1].max(b[1]) + thickness * 0.5;
+    clear_rect_in_target(
+        device,
+        cmd,
+        extent,
+        target_rect,
+        color,
+        min_x,
+        min_y,
+        (max_x - min_x).max(thickness),
+        (max_y - min_y).max(thickness),
+    );
 }
 
 unsafe fn record_recorded_hand_overlay(
@@ -1865,7 +2349,7 @@ fn write_projection_scorecard(
     replay: &RecordedHandReplaySummary,
     replay_visual_stats: ReplayVisualStats,
     gpu_mesh_stats: &GpuMeshReplayStats,
-    hand_mesh_visual_stats: &GpuHandMeshVisualFrameStats,
+    hand_mesh_visual_stats: &GpuHandMeshVisualFrameSetStats,
     gpu_sdf_stats: &GpuSdfFieldFrameStats,
     guide_blur_stats: &GuideBlurGraphFrameStats,
     private_extension_stats: PrivateExtensionSlotFrameStats,
@@ -1920,7 +2404,7 @@ fn write_projection_scorecard(
     crate::marker(
         "timing-scorecard",
         format!(
-            "frame={} camera_frames_acquired={} hardware_buffer_imports={} hardware_buffer_cache_hits={} hardware_buffer_cache_misses={} guide_graph_renders={} guide_graph_cache_hits={} sdf_field_updates={} private_layer_invocations={} xr_frames_submitted={} stale_frames={} releaseRetireCount={} observedOpenXrFps={:.1} recordCpuMs={:.3} submitCpuMs={:.3} {} {} projectionExtent={}x{} openxrSubmitReady=true vulkanExternalImportReady={} cameraProjectionReady={} directHwbProjectionDiagnostic={} cameraProjectionPath={} metadataDrivenTargetFootprint=true {} plannedFinalExternalHwbSamples=0 plannedGuideTextureSamples=1 actualFinalExternalHwbSamples={} actualGuideTextureSamples={} leftCameraId={} rightCameraId={} leftSourceFrame={} rightSourceFrame={} leftHardwareBufferId={} rightHardwareBufferId={} leftImportSequence={} rightImportSequence={} stereoPairDeltaNs={} {} recordedHandReplayVisible=true recordedHandReplayTarget=metadata-target-screen-uv {} {} replayVisualFrame={} replayTimestampNs={} replayVisualPointCount={} compactJointOverlayVisible=false {} {} sdfTarget=metadata-target-screen-uv {} {} {} {} visualAcceptance=target-area-orientation-pending-screenshot projectionReady=true",
+            "frame={} camera_frames_acquired={} hardware_buffer_imports={} hardware_buffer_cache_hits={} hardware_buffer_cache_misses={} guide_graph_renders={} guide_graph_cache_hits={} sdf_field_updates={} private_layer_invocations={} xr_frames_submitted={} stale_frames={} releaseRetireCount={} observedOpenXrFps={:.1} recordCpuMs={:.3} submitCpuMs={:.3} {} {} projectionExtent={}x{} openxrSubmitReady=true vulkanExternalImportReady={} cameraProjectionReady={} directHwbProjectionDiagnostic={} cameraProjectionPath={} metadataDrivenTargetFootprint=true {} plannedFinalExternalHwbSamples=0 plannedGuideTextureSamples=1 actualFinalExternalHwbSamples={} actualGuideTextureSamples={} leftCameraId={} rightCameraId={} leftSourceFrame={} rightSourceFrame={} leftHardwareBufferId={} rightHardwareBufferId={} leftImportSequence={} rightImportSequence={} stereoPairDeltaNs={} {} recordedHandReplayVisible={} recordedHandReplayTarget=metadata-target-screen-uv {} {} replayVisualFrame={} replayTimestampNs={} replayVisualPointCount={} compactJointOverlayVisible=false {} {} sdfTarget=metadata-target-screen-uv {} {} {} {} visualAcceptance=target-area-orientation-pending-screenshot projectionReady=true",
             frame_count,
             camera_frames_acquired,
             hardware_buffer_imports,
@@ -1957,6 +2441,7 @@ fn write_projection_scorecard(
             camera_projection_stats.right_import_sequence,
             camera_projection_stats.pair_delta_ns,
             guide_blur_stats.marker_fields(),
+            replay_visual_proof_enabled,
             replay.marker_fields(),
             live_hand_stats.marker_fields(),
             replay_visual_stats.frame_index,
@@ -2054,7 +2539,7 @@ fn write_projection_scorecard(
         format!(
             "status=frame frame={} gpuSkinnedVisual={} compactJointPoseUploadPerFrame=true jointMatrixUploadPerFrame=false liveMetaCompactPathReady={} liveMetaCompactFrameReady={} gpuNormalDepthComponentShading=true sdfTriangleBoundsReady={} sdfTileBinsReady={} sdfNarrowBandReady={} sdfUpdateCadenceFrames={} sdfFieldCacheHits={} sourceMeshBuffersResident={} derivedBuffersResident={}",
             frame_count,
-            hand_mesh_visual_stats.ready,
+            hand_mesh_visual_stats.any_ready(),
             live_hand_stats.tracker_ready,
             live_hand_stats.frame_ready,
             gpu_sdf_stats.triangle_bounds_ready,
@@ -2179,7 +2664,7 @@ impl EvidenceUvRect {
         let mut max_x = 0.0_f32;
         let mut max_y = 0.0_f32;
         let diagnostic_scale = if diagnostic_settings.enabled {
-            1.12
+            1.35
         } else {
             1.0
         };
@@ -2215,12 +2700,65 @@ impl EvidenceUvRect {
         }
     }
 
+    fn from_bounds_for_points(points: &[[f32; 2]]) -> Self {
+        if points.is_empty() {
+            return Self::default();
+        }
+
+        let mut min_x = 1.0_f32;
+        let mut min_y = 1.0_f32;
+        let mut max_x = 0.0_f32;
+        let mut max_y = 0.0_f32;
+        for [x, y] in points.iter().copied() {
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x);
+            max_y = max_y.max(y);
+        }
+
+        Self::from_bounds(min_x, min_y, max_x, max_y)
+    }
+
+    fn union_all(rects: &[Self]) -> Option<Self> {
+        let mut rects = rects.iter().copied();
+        let first = rects.next()?;
+        let mut min_x = first.x;
+        let mut min_y = first.y;
+        let mut max_x = first.x + first.width;
+        let mut max_y = first.y + first.height;
+
+        for rect in rects {
+            min_x = min_x.min(rect.x);
+            min_y = min_y.min(rect.y);
+            max_x = max_x.max(rect.x + rect.width);
+            max_y = max_y.max(rect.y + rect.height);
+        }
+
+        Some(Self::from_bounds(min_x, min_y, max_x, max_y))
+    }
+
     fn padded(self, padding: f32) -> Self {
         let x = (self.x - padding).max(0.0);
         let y = (self.y - padding).max(0.0);
         let max_x = (self.x + self.width + padding).min(1.0);
         let max_y = (self.y + self.height + padding).min(1.0);
         Self::from_bounds(x, y, max_x, max_y)
+    }
+
+    fn scaled_about_center(self, scale: f32, offset: [f32; 2]) -> Self {
+        let points = [
+            [self.x, self.y],
+            [self.x + self.width, self.y],
+            [self.x, self.y + self.height],
+            [self.x + self.width, self.y + self.height],
+        ];
+        let scaled = points.map(|[x, y]| {
+            [
+                (0.5 + (x - 0.5) * scale + offset[0]).clamp(0.0, 1.0),
+                (0.5 + (y - 0.5) * scale + offset[1]).clamp(0.0, 1.0),
+            ]
+        });
+        Self::from_bounds_for_points(&scaled)
     }
 
     fn to_screen_rect(self, target_rect: TargetRect) -> Self {

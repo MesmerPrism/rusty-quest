@@ -35,7 +35,7 @@ void main() {
     vec3 normal = normalize(cross(b.xyz - a.xyz, c.xyz - a.xyz));
 
     float diagnostic = clamp(pc.params.w, 0.0, 1.0);
-    vec2 local_uv = vec2(0.5) + (vertex.xy - vec2(0.5)) * mix(1.0, 1.12, diagnostic);
+    vec2 local_uv = vec2(0.5) + (vertex.xy - vec2(0.5)) * mix(1.0, 1.35, diagnostic);
     local_uv += pc.params.xy * diagnostic;
     vec2 screen_uv = pc.target_rect.xy + local_uv * pc.target_rect.zw;
     gl_Position = vec4(screen_uv * 2.0 - vec2(1.0), 0.0, 1.0);

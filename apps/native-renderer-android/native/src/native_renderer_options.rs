@@ -34,7 +34,7 @@ impl CompactHandInputSourceMode {
             .to_ascii_lowercase();
         match normalized.as_str() {
             "recorded" | "recorded-replay" | "replay" => Self::RecordedReplay,
-            "live" | "live-meta" | "openxr" => Self::LiveMeta,
+            "live" | "live-meta" | "openxr" | "live-meta-openxr-hand-tracking" => Self::LiveMeta,
             "auto" => Self::Auto,
             _ if replay_visual_proof_enabled => Self::RecordedReplay,
             _ => Self::Auto,
@@ -79,7 +79,7 @@ impl HandMeshVisualDiagnosticSettings {
 
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "handMeshVisualDiagnosticEnabled={} handMeshVisualDiagnosticOffsetUv={:.3},{:.3} handMeshVisualDiagnosticAlpha={:.2} handMeshVisualDiagnosticScale=1.12",
+            "handMeshVisualDiagnosticEnabled={} handMeshVisualDiagnosticOffsetUv={:.3},{:.3} handMeshVisualDiagnosticAlpha={:.2} handMeshVisualDiagnosticScale=1.35",
             self.enabled, self.offset_uv[0], self.offset_uv[1], self.alpha
         )
     }
@@ -248,6 +248,22 @@ mod tests {
             .allows_recorded_fallback());
         assert!(options.sdf_visual_enabled);
         assert!(options.hand_mesh_visual_diagnostic_settings.enabled);
+    }
+
+    #[test]
+    fn canonical_live_source_value_selects_live_without_replay_fallback() {
+        let options = options_from(&[(
+            PROP_HAND_MESH_INPUT_SOURCE,
+            "live-meta-openxr-hand-tracking",
+        )]);
+        assert_eq!(
+            options.compact_hand_input_source_mode,
+            CompactHandInputSourceMode::LiveMeta
+        );
+        assert!(options.compact_hand_input_source_mode.selects_live_frame());
+        assert!(!options
+            .compact_hand_input_source_mode
+            .allows_recorded_fallback());
     }
 
     #[test]

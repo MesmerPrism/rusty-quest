@@ -15,6 +15,7 @@ use crate::{
 pub(crate) struct GpuHandMeshVisualFrameStats {
     pub(crate) ready: bool,
     pub(crate) visible: bool,
+    pub(crate) handedness: &'static str,
     pub(crate) frame_index: u32,
     pub(crate) timestamp_ns: u64,
     pub(crate) drawn_vertex_count: u32,
@@ -32,10 +33,12 @@ impl GpuHandMeshVisualFrameStats {
     pub(crate) fn unavailable(
         replay: &RecordedHandReplaySummary,
         frame_count: u64,
+        handedness: &'static str,
         diagnostic_settings: HandMeshVisualDiagnosticSettings,
     ) -> Self {
         let frame = replay.skinning_frame_for_count(frame_count);
         Self {
+            handedness,
             frame_index: frame.map(|frame| frame.frame_index).unwrap_or(0),
             timestamp_ns: frame.map(|frame| frame.timestamp_ns).unwrap_or(0),
             component_count: replay.mesh_component_summary.component_count,
@@ -48,9 +51,10 @@ impl GpuHandMeshVisualFrameStats {
 
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "animatedHandMeshVisualReady={} animatedHandMeshVisualVisible={} handMeshVisualPath=recorded-compact-joint-gpu-skinned-resident-triangle-draw recordedSkinnedMeshFrameSource=compact_joint_gpu_skinning gpuTriangleDraw=true cpuProjection=false validationMeshUploadPerFrame=false skinnedPositionBufferResident=true gpuNormalDepthComponentShading=true handMeshFrame={} handMeshTimestampNs={} handMeshDrawnTriangles={} handMeshDrawnVertices={} handMeshSkinnedPositionBufferBytes={} handMeshTriangleIndexBufferBytes={} handMeshComponentCount={} handMeshComponentVertexCounts={} handMeshComponentTriangleCounts={} handMeshComponentRank0=hand-inside-blue-green handMeshComponentRank1=hand-back-yellow handMeshComponentRank2=wrist-cap-red {}",
+            "animatedHandMeshVisualReady={} animatedHandMeshVisualVisible={} handMeshVisualPath=recorded-compact-joint-gpu-skinned-resident-triangle-draw recordedSkinnedMeshFrameSource=compact_joint_gpu_skinning gpuTriangleDraw=true cpuProjection=false validationMeshUploadPerFrame=false skinnedPositionBufferResident=true gpuNormalDepthComponentShading=true handMeshVisualHand={} handMeshFrame={} handMeshTimestampNs={} handMeshDrawnTriangles={} handMeshDrawnVertices={} handMeshSkinnedPositionBufferBytes={} handMeshTriangleIndexBufferBytes={} handMeshComponentCount={} handMeshComponentVertexCounts={} handMeshComponentTriangleCounts={} handMeshComponentRank0=hand-inside-blue-green handMeshComponentRank1=hand-back-yellow handMeshComponentRank2=wrist-cap-red {}",
             self.ready,
             self.visible,
+            self.handedness,
             self.frame_index,
             self.timestamp_ns,
             self.triangle_count,
@@ -63,11 +67,19 @@ impl GpuHandMeshVisualFrameStats {
             self.diagnostic_settings.marker_fields(),
         )
         + &format!(
-            " handMeshCompactInputSource={} liveHandMeshVisualAcceptance={}",
+            " handMeshCompactInputSource={} liveHandMeshTargetLocalNormalized={} handMeshVisualDiagnosticMaterial={} liveHandMeshVisualAcceptance={}",
             if self.live_compact_input_frame {
                 "live-meta-openxr-hand-tracking"
             } else {
                 "recorded-replay"
+            },
+            self.live_compact_input_frame,
+            if self.live_compact_input_frame && self.diagnostic_settings.enabled {
+                "live-target-local-high-contrast-fill"
+            } else if self.diagnostic_settings.enabled {
+                "recorded-target-local-high-contrast-fill"
+            } else {
+                "component-normal-depth-fill"
             },
             if self.live_compact_input_frame {
                 "pending-repeat-headset-visual-proof"
@@ -75,6 +87,57 @@ impl GpuHandMeshVisualFrameStats {
                 "not-live-input"
             }
         )
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct GpuHandMeshVisualFrameSetStats {
+    pub(crate) primary: GpuHandMeshVisualFrameStats,
+    pub(crate) secondary: GpuHandMeshVisualFrameStats,
+}
+
+impl GpuHandMeshVisualFrameSetStats {
+    pub(crate) fn new(
+        primary: GpuHandMeshVisualFrameStats,
+        secondary: GpuHandMeshVisualFrameStats,
+    ) -> Self {
+        Self { primary, secondary }
+    }
+
+    pub(crate) fn any_ready(&self) -> bool {
+        self.primary.ready || self.secondary.ready
+    }
+
+    pub(crate) fn diagnostic_settings(&self) -> HandMeshVisualDiagnosticSettings {
+        self.primary.diagnostic_settings
+    }
+
+    pub(crate) fn marker_fields(&self) -> String {
+        let left_visible = self.hand_visible("left");
+        let right_visible = self.hand_visible("right");
+        format!(
+            "{} liveHandMeshVisualLeftVisible={} liveHandMeshVisualRightVisible={} liveHandMeshVisualBothHandsVisible={} handMeshVisualGpuSkinnedHandCount={} handMeshVisualPrimaryHand={} handMeshVisualSecondaryHand={} handMeshVisualSecondaryReady={} handMeshVisualSecondaryVisible={} handMeshSecondaryFrame={} handMeshSecondaryTimestampNs={}",
+            self.primary.marker_fields(),
+            left_visible,
+            right_visible,
+            left_visible && right_visible,
+            self.visible_hand_count(),
+            self.primary.handedness,
+            self.secondary.handedness,
+            self.secondary.ready,
+            self.secondary.visible,
+            self.secondary.frame_index,
+            self.secondary.timestamp_ns,
+        )
+    }
+
+    fn hand_visible(&self, handedness: &'static str) -> bool {
+        (self.primary.handedness == handedness && self.primary.visible)
+            || (self.secondary.handedness == handedness && self.secondary.visible)
+    }
+
+    fn visible_hand_count(&self) -> u32 {
+        self.primary.visible as u32 + self.secondary.visible as u32
     }
 }
 
@@ -207,6 +270,7 @@ impl GpuHandMeshVisualRenderer {
         skinning_ready: bool,
         live_hand_frame: Option<&RecordedHandSkinningFrame>,
         allow_recorded_replay_fallback: bool,
+        handedness: &'static str,
         diagnostic_settings: HandMeshVisualDiagnosticSettings,
     ) -> Result<GpuHandMeshVisualFrameStats, String> {
         let frame = live_hand_frame
@@ -220,6 +284,7 @@ impl GpuHandMeshVisualRenderer {
             return Ok(GpuHandMeshVisualFrameStats::unavailable(
                 replay,
                 frame_count,
+                handedness,
                 diagnostic_settings,
             ));
         }
@@ -227,6 +292,7 @@ impl GpuHandMeshVisualRenderer {
         Ok(GpuHandMeshVisualFrameStats {
             ready: true,
             visible: true,
+            handedness,
             frame_index: frame.frame_index,
             timestamp_ns: frame.timestamp_ns,
             drawn_vertex_count,
@@ -252,6 +318,10 @@ impl GpuHandMeshVisualRenderer {
         if !stats.ready || stats.drawn_vertex_count == 0 {
             return;
         }
+        let mut params = stats.diagnostic_settings.push_params();
+        if stats.live_compact_input_frame && stats.diagnostic_settings.enabled {
+            params[0] += live_hand_mesh_proof_offset_x(stats.handedness);
+        }
         let push = HandMeshVisualPush {
             target_rect: [
                 target_rect.x,
@@ -259,7 +329,7 @@ impl GpuHandMeshVisualRenderer {
                 target_rect.width,
                 target_rect.height,
             ],
-            params: stats.diagnostic_settings.push_params(),
+            params,
         };
         let viewport = [vk::Viewport {
             x: 0.0,
@@ -298,6 +368,14 @@ impl GpuHandMeshVisualRenderer {
         device.cmd_set_viewport(cmd, 0, &viewport);
         device.cmd_set_scissor(cmd, 0, &scissor);
         device.cmd_draw(cmd, stats.drawn_vertex_count, 1, 0, 0);
+    }
+}
+
+fn live_hand_mesh_proof_offset_x(handedness: &'static str) -> f32 {
+    match handedness {
+        "left" => -0.16,
+        "right" => 0.16,
+        _ => 0.0,
     }
 }
 
