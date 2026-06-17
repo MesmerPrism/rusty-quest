@@ -1,0 +1,65 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.live_hand_visual_diagnostic",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.input.source",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha",
+    "debug.rustyquest.native_renderer.sdf.visual.enabled",
+    "debug.rustyquest.native_renderer.sdf.update_period_frames"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.replay.visual_proof.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.input.source",
+      "value": "live-meta-openxr-hand-tracking",
+      "source_setting_id": "native_renderer.hand_mesh.input.source"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+      "value": "true",
+      "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv",
+      "value": "0.18,-0.10",
+      "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.offset_uv"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha",
+      "value": "1.0",
+      "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.alpha"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.sdf.visual.enabled",
+      "value": "true",
+      "source_setting_id": "native_renderer.sdf.visual.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.sdf.update_period_frames",
+      "value": "2",
+      "source_setting_id": "native_renderer.sdf.update_period_frames"
+    }
+  ],
+  "expected_markers": [
+    "RUSTY_QUEST_NATIVE_RENDERER channel=recorded-replay-visual-proof",
+    "enabled=false",
+    "compactHandInputSourceMode=live-meta-openxr-hand-tracking",
+    "selectsLiveFrame=true",
+    "allowsRecordedFallback=false",
+    "sdfVisualEnabled=true",
+    "handMeshVisualDiagnosticEnabled=true",
+    "liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof",
+    "liveSdfVisualAcceptance=pending-repeat-headset-visual-proof"
+  ],
+  "validation_commands": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-live-hand-visual-diagnostic.profile.json -DryRun -Out local-artifacts/native-renderer-live-hand-visual-diagnostic-property-write-plan.json"
+  ]
+}

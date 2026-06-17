@@ -23,7 +23,10 @@ try {
     Invoke-Checked "cargo test" "cargo" @("test", "--workspace")
     Invoke-Checked "runtime profile dry-run" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Apply-RuntimeProfile.ps1", "-ProfilePath", "fixtures\runtime-profiles\quest-makepad-mesh-replay.profile.json", "-DryRun")
     Invoke-Checked "remote camera runtime profile dry-run" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Apply-RuntimeProfile.ps1", "-ProfilePath", "fixtures\runtime-profiles\quest-remote-camera-q2q-diagnostic.profile.json", "-DryRun", "-Out", "local-artifacts\remote-camera-property-write-plan.json")
+    Invoke-Checked "native renderer replay visual proof profile dry-run" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Apply-RuntimeProfile.ps1", "-ProfilePath", "fixtures\runtime-profiles\quest-native-renderer-replay-visual-proof.profile.json", "-DryRun", "-Out", "local-artifacts\native-renderer-replay-visual-proof-property-write-plan.json")
+    Invoke-Checked "native renderer live hand visual diagnostic profile dry-run" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Apply-RuntimeProfile.ps1", "-ProfilePath", "fixtures\runtime-profiles\quest-native-renderer-live-hand-visual-diagnostic.profile.json", "-DryRun", "-Out", "local-artifacts\native-renderer-live-hand-visual-diagnostic-property-write-plan.json")
     Invoke-Checked "Manifold broker Android scaffold" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-ManifoldBrokerAndroid.ps1")
+    Invoke-Checked "Native renderer Android scaffold" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-NativeRendererAndroid.ps1")
     Invoke-Checked "Quest boundary scan" "python" @("tools\check_quest_boundaries.py")
 } finally {
     Pop-Location

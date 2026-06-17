@@ -1,0 +1,128 @@
+{
+  "schema": "rusty.quest.native_renderer_plan.v1",
+  "plan_id": "native-hwb-blur-damaged-private-extension-path",
+  "target_runtime": "quest-native-openxr-vulkan",
+  "license_policy": {
+    "public_core_license": "AGPL-3.0-or-later",
+    "private_extension_slots_supported": true,
+    "private_extension_payloads_allowed_in_public_plan": false
+  },
+  "camera_source": {
+    "source_kind": "camera2-hardware-buffer",
+    "camera_ids": {
+      "left": "50",
+      "right": "51"
+    },
+    "hardware_buffer_import": {
+      "import_path": "camera2-ahardwarebuffer-vulkan-external",
+      "descriptor_shape": "combined-immutable-sampler-ycbcr-conversion",
+      "sampler_binding": "immutable-ycbcr-conversion-per-format",
+      "color_conformance_required": true
+    }
+  },
+  "layer_stack": [
+    {
+      "layer_id": "camera-projection",
+      "kind": "camera-projection",
+      "owner": "public-optics",
+      "abi_id": "rusty.optics.camera_projection.layer.v1",
+      "affects_color": true
+    },
+    {
+      "layer_id": "blur-guide",
+      "kind": "blur-guide",
+      "owner": "public-optics",
+      "abi_id": "rusty.optics.blur_guide.layer.v1",
+      "affects_color": true
+    },
+    {
+      "layer_id": "timing-diagnostics",
+      "kind": "timing-diagnostics",
+      "owner": "public-quest",
+      "abi_id": "rusty.quest.native_renderer.timing.v1",
+      "affects_color": false
+    },
+    {
+      "layer_id": "private-layer-slot-0",
+      "kind": "private-extension-slot",
+      "owner": "private-extension",
+      "abi_id": "private-extension/libcustom_layer.so",
+      "affects_color": true
+    }
+  ],
+  "render_graph": [
+    {
+      "pass_id": "camera-acquire",
+      "kind": "acquire-hardware-buffer",
+      "inputs": ["camera2-left-50", "camera2-right-51"],
+      "outputs": ["left-hwb-external", "right-hwb-external"],
+      "budget_ms": 1.2
+    },
+    {
+      "pass_id": "guide-horizontal-left",
+      "kind": "hwb-horizontal-guide-blur",
+      "inputs": ["left-hwb-external"],
+      "outputs": ["left-guide-horizontal"],
+      "budget_ms": 0.65
+    },
+    {
+      "pass_id": "guide-vertical-left",
+      "kind": "guide-vertical-blur",
+      "inputs": ["left-guide-horizontal"],
+      "outputs": ["left-guide-blur"],
+      "budget_ms": 0.45
+    },
+    {
+      "pass_id": "projection-composite",
+      "kind": "projection-composite",
+      "inputs": ["left-guide-blur", "right-guide-blur"],
+      "outputs": ["openxr-projection-layer"],
+      "budget_ms": 2.0
+    },
+    {
+      "pass_id": "timing-readback",
+      "kind": "timing-readback",
+      "inputs": ["stage-timestamp-query-pool"],
+      "outputs": ["native-renderer-timing-scorecard"],
+      "budget_ms": 0.2
+    }
+  ],
+  "cost_model": {
+    "target_refresh_hz": 72,
+    "external_hwb_samples_per_final_fragment": 0,
+    "guide_texture_samples_per_final_fragment": 1,
+    "offscreen_passes_per_eye": 2,
+    "stage_timing_required": true
+  },
+  "observability": {
+    "marker_prefix": "RUSTY_QUEST_NATIVE_RENDERER",
+    "stage_timings": [
+      {
+        "stage_id": "camera-acquire",
+        "kind": "camera-acquire",
+        "budget_ms": 1.2
+      },
+      {
+        "stage_id": "hwb-import-cache",
+        "kind": "hwb-import",
+        "budget_ms": 0.7
+      },
+      {
+        "stage_id": "guide-graph",
+        "kind": "guide-graph",
+        "budget_ms": 2.2
+      },
+      {
+        "stage_id": "projection-composite",
+        "kind": "projection-composite",
+        "budget_ms": 2.0
+      },
+      {
+        "stage_id": "openxr-submit",
+        "kind": "xr-submit",
+        "budget_ms": 0.8
+      }
+    ],
+    "counters": ["camera_frames_acquired"]
+  }
+}

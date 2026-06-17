@@ -435,6 +435,11 @@ pub const KEY_PROJECTION_TARGET_BREATH_INVERT: &str = "projection_target_breath_
 pub const KEY_PROJECTION_TARGET_BREATH_MIN_QUALITY: &str = "projection_target_breath_min_quality";
 pub const KEY_PROCESSING_LAYER: &str = "processing_layer";
 pub const KEY_CAMERA_BLUR_RADIUS_PX: &str = "camera_blur_radius_px";
+pub const KEY_CAMERA_BLUR_SAMPLE_DOMAIN: &str = "camera_blur_sample_domain";
+pub const KEY_CAMERA_BLUR_SOURCE_SIZE_PX: &str = "camera_blur_source_size_px";
+pub const KEY_CAMERA_BLUR_SAMPLE_STEP_GAIN: &str = "camera_blur_sample_step_gain";
+pub const KEY_CAMERA_BLUR_TAP_LAYOUT: &str = "camera_blur_tap_layout";
+pub const KEY_CAMERA_BLUR_RENDER_GRAPH: &str = "camera_blur_render_graph";
 pub const KEY_PERIPHERAL_STRETCH_MODE: &str = "peripheral_stretch_mode";
 pub const KEY_PERIPHERAL_STRETCH_CORE_SCALE: &str = "peripheral_stretch_core_scale";
 pub const KEY_PERIPHERAL_STRETCH_EDGE_INSET_UV: &str = "peripheral_stretch_edge_inset_uv";
@@ -685,6 +690,36 @@ pub const PROJECTION_RUNTIME_KEY_DEFINITIONS: &[RuntimeKeyDefinition] = &[
         ProjectionRuntimeKeyOwner::RendererPolicy,
         RuntimeValueKind::Float,
         "Diagnostic blur radius in source pixels for the blur processing layer.",
+    ),
+    projection_key(
+        KEY_CAMERA_BLUR_SAMPLE_DOMAIN,
+        ProjectionRuntimeKeyOwner::RendererPolicy,
+        RuntimeValueKind::Text,
+        "Named blur sample domain used to keep source-size/tap-spacing evidence explicit.",
+    ),
+    projection_key(
+        KEY_CAMERA_BLUR_SOURCE_SIZE_PX,
+        ProjectionRuntimeKeyOwner::RendererPolicy,
+        RuntimeValueKind::Float,
+        "Source-domain size used to convert blur tap spacing into normalized UV.",
+    ),
+    projection_key(
+        KEY_CAMERA_BLUR_SAMPLE_STEP_GAIN,
+        ProjectionRuntimeKeyOwner::RendererPolicy,
+        RuntimeValueKind::Float,
+        "Multiplier applied to blur radius and source texel size before the -2..+2 tap grid.",
+    ),
+    projection_key(
+        KEY_CAMERA_BLUR_TAP_LAYOUT,
+        ProjectionRuntimeKeyOwner::RendererPolicy,
+        RuntimeValueKind::Text,
+        "Final-pass blur tap layout: exact 5x5 box or a cheaper live-performance approximation.",
+    ),
+    projection_key(
+        KEY_CAMERA_BLUR_RENDER_GRAPH,
+        ProjectionRuntimeKeyOwner::RendererPolicy,
+        RuntimeValueKind::Text,
+        "Blur render graph: final-pass sampling or an offscreen low-resolution guide texture.",
     ),
     projection_key(
         KEY_PERIPHERAL_STRETCH_MODE,
@@ -1005,6 +1040,23 @@ pub const PROJECTION_RUNTIME_KEY_INPUTS: &[RuntimeKeyInputBinding] = &[
     launch_input("rustyquest.processingLayer", KEY_PROCESSING_LAYER),
     launch_input("rustyquest.cameraBlurRadiusPx", KEY_CAMERA_BLUR_RADIUS_PX),
     launch_input(
+        "rustyquest.cameraBlurSampleDomain",
+        KEY_CAMERA_BLUR_SAMPLE_DOMAIN,
+    ),
+    launch_input(
+        "rustyquest.cameraBlurSourceSizePx",
+        KEY_CAMERA_BLUR_SOURCE_SIZE_PX,
+    ),
+    launch_input(
+        "rustyquest.cameraBlurSampleStepGain",
+        KEY_CAMERA_BLUR_SAMPLE_STEP_GAIN,
+    ),
+    launch_input("rustyquest.cameraBlurTapLayout", KEY_CAMERA_BLUR_TAP_LAYOUT),
+    launch_input(
+        "rustyquest.cameraBlurRenderGraph",
+        KEY_CAMERA_BLUR_RENDER_GRAPH,
+    ),
+    launch_input(
         "rustyquest.peripheralStretchMode",
         KEY_PERIPHERAL_STRETCH_MODE,
     ),
@@ -1211,6 +1263,26 @@ pub const PROJECTION_RUNTIME_KEY_INPUTS: &[RuntimeKeyInputBinding] = &[
     property_input(
         "debug.rustyquest.camera.blur.radius.px",
         KEY_CAMERA_BLUR_RADIUS_PX,
+    ),
+    property_input(
+        "debug.rustyquest.camera.blur.sample.domain",
+        KEY_CAMERA_BLUR_SAMPLE_DOMAIN,
+    ),
+    property_input(
+        "debug.rustyquest.camera.blur.source.size.px",
+        KEY_CAMERA_BLUR_SOURCE_SIZE_PX,
+    ),
+    property_input(
+        "debug.rustyquest.camera.blur.sample.step.gain",
+        KEY_CAMERA_BLUR_SAMPLE_STEP_GAIN,
+    ),
+    property_input(
+        "debug.rustyquest.camera.blur.tap.layout",
+        KEY_CAMERA_BLUR_TAP_LAYOUT,
+    ),
+    property_input(
+        "debug.rustyquest.camera.blur.render.graph",
+        KEY_CAMERA_BLUR_RENDER_GRAPH,
     ),
     property_input(
         "debug.rustyquest.peripheral.stretch.mode",
@@ -2237,6 +2309,13 @@ mod tests {
                 (KEY_PROJECTION_TARGET_BREATH_SMOOTHING_ALPHA, "0.25"),
                 (KEY_PROJECTION_TARGET_BREATH_INVERT, "false"),
                 (KEY_PROJECTION_TARGET_BREATH_MIN_QUALITY, "0.0"),
+                (KEY_PROCESSING_LAYER, "raw"),
+                (KEY_CAMERA_BLUR_RADIUS_PX, "2.0"),
+                (KEY_CAMERA_BLUR_SAMPLE_DOMAIN, "source-1280"),
+                (KEY_CAMERA_BLUR_SOURCE_SIZE_PX, "1280.0"),
+                (KEY_CAMERA_BLUR_SAMPLE_STEP_GAIN, "4.0"),
+                (KEY_CAMERA_BLUR_TAP_LAYOUT, "final-pass-box-5x5"),
+                (KEY_CAMERA_BLUR_RENDER_GRAPH, "final-pass"),
                 (KEY_PROJECTION_ALPHA_MODE, "fixed"),
                 (KEY_PROJECTION_ALPHA_SCALE, "1.0"),
                 (KEY_PROJECTION_ALPHA_BIAS, "0.0"),
@@ -2297,6 +2376,13 @@ mod tests {
             KEY_PROJECTION_TARGET_BREATH_SMOOTHING_ALPHA,
             KEY_PROJECTION_TARGET_BREATH_INVERT,
             KEY_PROJECTION_TARGET_BREATH_MIN_QUALITY,
+            KEY_PROCESSING_LAYER,
+            KEY_CAMERA_BLUR_RADIUS_PX,
+            KEY_CAMERA_BLUR_SAMPLE_DOMAIN,
+            KEY_CAMERA_BLUR_SOURCE_SIZE_PX,
+            KEY_CAMERA_BLUR_SAMPLE_STEP_GAIN,
+            KEY_CAMERA_BLUR_TAP_LAYOUT,
+            KEY_CAMERA_BLUR_RENDER_GRAPH,
             KEY_PROJECTION_ALPHA_MODE,
             KEY_PROJECTION_ALPHA_SCALE,
             KEY_PROJECTION_ALPHA_BIAS,
@@ -2360,6 +2446,16 @@ mod tests {
                 ("rustyquest.projectionTargetBreathSmoothingAlpha", "0.30"),
                 ("rustyquest.projectionTargetBreathInvert", "true"),
                 ("rustyquest.projectionTargetBreathMinQuality", "0.20"),
+                ("rustyquest.processingLayer", "blur"),
+                ("rustyquest.cameraBlurRadiusPx", "1.0"),
+                ("rustyquest.cameraBlurSampleDomain", "guide-384"),
+                ("rustyquest.cameraBlurSourceSizePx", "384.0"),
+                ("rustyquest.cameraBlurSampleStepGain", "1.0"),
+                ("rustyquest.cameraBlurTapLayout", "final-pass-box-5x5"),
+                (
+                    "rustyquest.cameraBlurRenderGraph",
+                    "offscreen-guide-texture",
+                ),
                 ("rustyquest.projectionAlphaMode", "fixed"),
                 ("rustyquest.projectionAlphaScale", "1.10"),
                 ("rustyquest.projectionAlphaBias", "-0.05"),
@@ -2402,6 +2498,13 @@ mod tests {
                 (KEY_PROJECTION_TARGET_BREATH_SMOOTHING_ALPHA, "0.30"),
                 (KEY_PROJECTION_TARGET_BREATH_INVERT, "true"),
                 (KEY_PROJECTION_TARGET_BREATH_MIN_QUALITY, "0.20"),
+                (KEY_PROCESSING_LAYER, "blur"),
+                (KEY_CAMERA_BLUR_RADIUS_PX, "1.0"),
+                (KEY_CAMERA_BLUR_SAMPLE_DOMAIN, "guide-384"),
+                (KEY_CAMERA_BLUR_SOURCE_SIZE_PX, "384.0"),
+                (KEY_CAMERA_BLUR_SAMPLE_STEP_GAIN, "1.0"),
+                (KEY_CAMERA_BLUR_TAP_LAYOUT, "final-pass-box-5x5"),
+                (KEY_CAMERA_BLUR_RENDER_GRAPH, "offscreen-guide-texture"),
                 (KEY_PROJECTION_ALPHA_MODE, "fixed"),
                 (KEY_PROJECTION_ALPHA_SCALE, "1.10"),
                 (KEY_PROJECTION_ALPHA_BIAS, "-0.05"),
@@ -2468,6 +2571,19 @@ mod tests {
                 (
                     "debug.rustyquest.projection.target.breath.min.quality",
                     "0.20",
+                ),
+                ("debug.rustyquest.processing.layer", "blur"),
+                ("debug.rustyquest.camera.blur.radius.px", "1.0"),
+                ("debug.rustyquest.camera.blur.sample.domain", "guide-384"),
+                ("debug.rustyquest.camera.blur.source.size.px", "384.0"),
+                ("debug.rustyquest.camera.blur.sample.step.gain", "1.0"),
+                (
+                    "debug.rustyquest.camera.blur.tap.layout",
+                    "final-pass-box-5x5",
+                ),
+                (
+                    "debug.rustyquest.camera.blur.render.graph",
+                    "offscreen-guide-texture",
                 ),
                 ("debug.rustyquest.projection.alpha.mode", "fixed"),
                 ("debug.rustyquest.projection.alpha.scale", "1.10"),

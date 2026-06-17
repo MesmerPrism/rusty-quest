@@ -1,0 +1,953 @@
+param(
+    [switch]$Build,
+    [string]$AndroidHome = $env:ANDROID_HOME,
+    [string]$JavaHome = $env:JAVA_HOME,
+    [string]$NdkHome = $env:ANDROID_NDK_HOME
+)
+
+$ErrorActionPreference = "Stop"
+
+$repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$appRoot = Join-Path $repoRoot "apps\native-renderer-android"
+$manifestPath = Join-Path $appRoot "AndroidManifest.xml"
+$readmePath = Join-Path $appRoot "README.md"
+$nativeCargoPath = Join-Path $appRoot "native\Cargo.toml"
+$nativeBuildRsPath = Join-Path $appRoot "native\build.rs"
+$nativeLibPath = Join-Path $appRoot "native\src\lib.rs"
+$androidEventsPath = Join-Path $appRoot "native\src\android_events.rs"
+$nativeCameraPath = Join-Path $appRoot "native\src\native_camera.rs"
+$acameraSysPath = Join-Path $appRoot "native\src\acamera_sys.rs"
+$cameraProjectionPath = Join-Path $appRoot "native\src\camera_projection.rs"
+$cameraProjectionMetadataPath = Join-Path $appRoot "native\src\camera_projection_metadata.rs"
+$guideBlurGraphPath = Join-Path $appRoot "native\src\guide_blur_graph.rs"
+$recordedHandReplayModulePath = Join-Path $appRoot "native\src\recorded_hand_replay.rs"
+$liveHandCompactPath = Join-Path $appRoot "native\src\live_hand_compact.rs"
+$nativeRendererOptionsPath = Join-Path $appRoot "native\src\native_renderer_options.rs"
+$nativeRendererTimingPath = Join-Path $appRoot "native\src\native_renderer_timing.rs"
+$privateExtensionSlotPath = Join-Path $appRoot "native\src\private_extension_slot.rs"
+$gpuHandMeshVisualPath = Join-Path $appRoot "native\src\gpu_hand_mesh_visual.rs"
+$gpuMeshReplayPath = Join-Path $appRoot "native\src\gpu_mesh_replay.rs"
+$gpuSdfFieldPath = Join-Path $appRoot "native\src\gpu_sdf_field.rs"
+$cameraProjectionFragmentPath = Join-Path $appRoot "native\shaders\camera_projection.frag.glsl"
+$guideBlurDownsampleFragmentPath = Join-Path $appRoot "native\shaders\guide_blur_downsample.frag.glsl"
+$guideBlurFragmentPath = Join-Path $appRoot "native\shaders\guide_blur_5tap.frag.glsl"
+$guideProjectionFragmentPath = Join-Path $appRoot "native\shaders\guide_projection.frag.glsl"
+$handMeshVisualVertexPath = Join-Path $appRoot "native\shaders\hand_mesh_visual.vert.glsl"
+$handMeshVisualFragmentPath = Join-Path $appRoot "native\shaders\hand_mesh_visual.frag.glsl"
+$gpuHandSkinningShaderPath = Join-Path $appRoot "native\shaders\gpu_hand_skinning.comp.glsl"
+$gpuSdfFieldShaderPath = Join-Path $appRoot "native\shaders\gpu_sdf_field.comp.glsl"
+$gpuSdfTileBinsShaderPath = Join-Path $appRoot "native\shaders\gpu_sdf_tile_bins.comp.glsl"
+$gpuSdfOverlayShaderPath = Join-Path $appRoot "native\shaders\gpu_sdf_overlay.frag.glsl"
+$xrVulkanPath = Join-Path $appRoot "native\src\xr_vulkan.rs"
+$buildPath = Join-Path $PSScriptRoot "Build-NativeRendererAndroid.ps1"
+$checkAllPath = Join-Path $PSScriptRoot "check_all.ps1"
+$runtimeEvidenceToolPath = Join-Path $PSScriptRoot "Test-NativeRendererRuntimeEvidence.ps1"
+$runtimeSmokeToolPath = Join-Path $PSScriptRoot "Invoke-NativeRendererReplaySmoke.ps1"
+$fixturePath = Join-Path $repoRoot "fixtures\native-renderer\native-hwb-blur-sdf-public.plan.json"
+$recordedHandReplayPath = Join-Path $repoRoot "fixtures\native-renderer\recorded-hand-replay-public-shape.json"
+$runtimeEvidenceFixturePath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-replay-visual-proof.logcat.txt"
+$liveHandDiagnosticPendingFixturePath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-live-hand-visual-diagnostic-pending.logcat.txt"
+$runtimeEvidenceDamagedPath = Join-Path $repoRoot "fixtures\damaged\native-renderer-replay-visual-missing-mesh.logcat.txt"
+$runtimeEvidenceDamagedPerformancePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-replay-performance-budget-miss.logcat.txt"
+$liveHandPrematureAcceptanceDamagedPath = Join-Path $repoRoot "fixtures\damaged\native-renderer-live-hand-visual-premature-acceptance.logcat.txt"
+$replayVisualProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-replay-visual-proof.profile.json"
+$liveHandVisualDiagnosticProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-live-hand-visual-diagnostic.profile.json"
+
+foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $liveHandVisualDiagnosticProfilePath)) {
+    if (-not (Test-Path $path)) {
+        throw "Missing native renderer Android file: $path"
+    }
+}
+
+$manifest = Get-Content -Raw -Path $manifestPath
+$readme = Get-Content -Raw -Path $readmePath
+$nativeCargo = Get-Content -Raw -Path $nativeCargoPath
+$nativeBuildRs = Get-Content -Raw -Path $nativeBuildRsPath
+$nativeLib = Get-Content -Raw -Path $nativeLibPath
+$androidEvents = Get-Content -Raw -Path $androidEventsPath
+$nativeCamera = Get-Content -Raw -Path $nativeCameraPath
+$acameraSys = Get-Content -Raw -Path $acameraSysPath
+$cameraProjection = Get-Content -Raw -Path $cameraProjectionPath
+$cameraProjectionMetadata = Get-Content -Raw -Path $cameraProjectionMetadataPath
+$guideBlurGraph = Get-Content -Raw -Path $guideBlurGraphPath
+$recordedHandReplay = Get-Content -Raw -Path $recordedHandReplayPath
+$recordedHandReplayModule = Get-Content -Raw -Path $recordedHandReplayModulePath
+$liveHandCompact = Get-Content -Raw -Path $liveHandCompactPath
+$nativeRendererOptions = Get-Content -Raw -Path $nativeRendererOptionsPath
+$nativeRendererTiming = Get-Content -Raw -Path $nativeRendererTimingPath
+$privateExtensionSlot = Get-Content -Raw -Path $privateExtensionSlotPath
+$gpuHandMeshVisual = Get-Content -Raw -Path $gpuHandMeshVisualPath
+$gpuMeshReplay = Get-Content -Raw -Path $gpuMeshReplayPath
+$gpuSdfField = Get-Content -Raw -Path $gpuSdfFieldPath
+$cameraProjectionFragment = Get-Content -Raw -Path $cameraProjectionFragmentPath
+$guideBlurDownsampleFragment = Get-Content -Raw -Path $guideBlurDownsampleFragmentPath
+$guideBlurFragment = Get-Content -Raw -Path $guideBlurFragmentPath
+$guideProjectionFragment = Get-Content -Raw -Path $guideProjectionFragmentPath
+$handMeshVisualVertex = Get-Content -Raw -Path $handMeshVisualVertexPath
+$handMeshVisualFragment = Get-Content -Raw -Path $handMeshVisualFragmentPath
+$gpuHandSkinningShader = Get-Content -Raw -Path $gpuHandSkinningShaderPath
+$gpuSdfFieldShader = Get-Content -Raw -Path $gpuSdfFieldShaderPath
+$gpuSdfTileBinsShader = Get-Content -Raw -Path $gpuSdfTileBinsShaderPath
+$gpuSdfOverlayShader = Get-Content -Raw -Path $gpuSdfOverlayShaderPath
+$xrVulkan = Get-Content -Raw -Path $xrVulkanPath
+$buildScriptText = Get-Content -Raw -Path $buildPath
+$checkAllText = Get-Content -Raw -Path $checkAllPath
+$runtimeEvidenceToolText = Get-Content -Raw -Path $runtimeEvidenceToolPath
+$runtimeSmokeToolText = Get-Content -Raw -Path $runtimeSmokeToolPath
+$runtimeEvidenceFixtureText = Get-Content -Raw -Path $runtimeEvidenceFixturePath
+$liveHandDiagnosticPendingFixtureText = Get-Content -Raw -Path $liveHandDiagnosticPendingFixturePath
+$replayVisualProfile = Get-Content -Raw -Path $replayVisualProfilePath
+$liveHandVisualDiagnosticProfile = Get-Content -Raw -Path $liveHandVisualDiagnosticProfilePath
+$fixture = Get-Content -Raw -Path $fixturePath
+
+if ($manifest -notmatch 'package="io\.github\.mesmerprism\.rustyquest\.native_renderer"') {
+    throw "Native renderer Android manifest has the wrong package."
+}
+foreach ($permission in @(
+    'android\.permission\.CAMERA',
+    'com\.oculus\.permission\.HAND_TRACKING',
+    'horizonos\.permission\.HEADSET_CAMERA',
+    'horizonos\.permission\.SPATIAL_CAMERA',
+    'org\.khronos\.openxr\.permission\.OPENXR',
+    'org\.khronos\.openxr\.permission\.OPENXR_SYSTEM'
+)) {
+    if ($manifest -notmatch $permission) {
+        throw "Native renderer Android manifest missing permission: $permission"
+    }
+}
+foreach ($feature in @(
+    'android\.hardware\.vr\.headtracking',
+    'com\.oculus\.feature\.PASSTHROUGH',
+    'oculus\.software\.handtracking',
+    'android\.hardware\.camera2\.full'
+)) {
+    if ($manifest -notmatch $feature) {
+        throw "Native renderer Android manifest missing feature: $feature"
+    }
+}
+if ($manifest -notmatch 'com\.oculus\.intent\.category\.VR') {
+    throw "Native renderer Android manifest does not expose the Quest VR launcher category."
+}
+if ($manifest -notmatch 'android\.app\.NativeActivity' -or $manifest -notmatch 'android\.app\.lib_name' -or $manifest -notmatch 'rusty_quest_native_renderer') {
+    throw "Native renderer Android manifest must use Rust NativeActivity and the Rust native library."
+}
+if ($manifest -notmatch 'android:hasCode="false"') {
+    throw "Native renderer Android manifest must declare hasCode=false for the no-dex NativeActivity APK."
+}
+if ($manifest -notmatch 'org\.khronos\.openxr\.runtime_broker') {
+    throw "Native renderer Android manifest does not query the OpenXR runtime broker."
+}
+
+foreach ($token in @(
+    'rusty\.quest\.native_renderer_plan\.v1',
+    'quest-native-openxr-vulkan',
+    'camera2-ahardwarebuffer-vulkan-external',
+    'combined-immutable-sampler-ycbcr-conversion'
+)) {
+    if ($fixture -notmatch $token -and $nativeLib -notmatch $token) {
+        throw "Native renderer public plan path missing token: $token"
+    }
+}
+if ($fixture -notmatch '"left": "50"' -or $fixture -notmatch '"right": "51"') {
+    throw "Native renderer plan fixture does not name camera ids 50 and 51."
+}
+foreach ($token in @(
+    'rusty\.quest\.native_renderer\.recorded_hand_replay_source\.v1',
+    'public-recorded-hand-topology-shape',
+    'openxr-fb-handmesh-v1-j26-v1360-i6942',
+    'bind-mesh-plus-compact-joint-frame',
+    '"topology_vertex_count": 1360'
+)) {
+    if ($recordedHandReplay -notmatch $token) {
+        throw "Native renderer recorded hand replay fixture missing token: $token"
+    }
+}
+
+foreach ($token in @(
+    'RUSTY_QUEST_NATIVE_RENDERER',
+    'android_main',
+    'android_on_create',
+    'android_activity::AndroidApp',
+    'validate_native_renderer_plan',
+    'rustNativeActivity=true',
+    'javaPackaged=false',
+    'requestPermissions',
+    'rust-native-jni',
+    'publicEffectLayer=blur-guide',
+    'privatePayloads=false',
+    'minimal-projection-layer',
+    'recordedHandReplayRequested=true',
+    'finalExternalHwbSamples=0',
+    'guideTextureSamples=1',
+    'openxrProjectionLayer=runtime-submit',
+    'openxrSubmitReady=false',
+    'vulkanExternalImportReady=false'
+)) {
+    if ($nativeLib -notmatch $token) {
+        throw "Rust NativeActivity scaffold missing token: $token"
+    }
+}
+
+foreach ($token in @(
+    'pump_activity_events',
+    'MainEvent::InputAvailable',
+    'input_events_iter',
+    'InputStatus::Unhandled',
+    'android-input',
+    'event=drain'
+)) {
+    if ($androidEvents -notmatch $token) {
+        throw "Rust NativeActivity input pump missing token: $token"
+    }
+}
+if ($nativeLib -notmatch 'mod android_events' -or $xrVulkan -notmatch 'pump_activity_events') {
+    throw "Rust NativeActivity input pump is not wired into both app and OpenXR loops."
+}
+
+foreach ($token in @(
+    'RecordedHandReplaySummary',
+    'recorded_hand_replay_source\.v1',
+    'recorded_hand_replay_source\.json',
+    'RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR',
+    'rig_json',
+    'clip_jsonl',
+    'validation_mesh_jsonl',
+    'normalize_xy_points',
+    'recordedInputEquivalent=true',
+    'validationInputShape=bind-mesh-plus-compact-joint-frame',
+    'vertex_blend_indices',
+    'vertex_blend_weights',
+    'bind_joint_sources',
+    'parse_skinning_frames',
+    'runtime_joint_poses',
+    'tip_length_rows',
+    'compactJointPoseUploadPerFrame=true',
+    'gpuSkinningPayloadReady',
+    'skinningFrameCount',
+    'meshVisualFrameCount',
+    'meshComponentCount',
+    'meshComponentRank0=hand-inside',
+    'meshComponentRank1=hand-back',
+    'meshComponentRank2=wrist-cap'
+)) {
+    if ("$recordedHandReplayModule`n$nativeBuildRs`n$xrVulkan" -notmatch $token) {
+        throw "Native recorded hand replay route missing token: $token"
+    }
+}
+
+foreach ($token in @(
+    'mod native_renderer_options',
+    'mod gpu_hand_mesh_visual',
+    'GpuHandMeshVisualRenderer',
+    'GpuHandMeshVisualFrameStats',
+    'HandMeshVisualDiagnosticSettings',
+    'hand_mesh_visual.vert.glsl',
+    'hand_mesh_visual.frag.glsl',
+    'handMeshVisualPath=recorded-compact-joint-gpu-skinned-resident-triangle-draw',
+    'recordedSkinnedMeshFrameSource=compact_joint_gpu_skinning',
+    'animatedHandMeshVisualReady',
+    'animatedHandMeshVisualVisible',
+    'handMeshVisualDiagnosticEnabled',
+    'handMeshVisualDiagnosticOffsetUv',
+    'liveHandMeshVisualAcceptance',
+    'gpuTriangleDraw=true',
+    'cpuProjection=false',
+    'validationMeshUploadPerFrame=false',
+    'skinnedPositionBufferResident=true',
+    'gpuNormalDepthComponentShading=true',
+    'handMeshCompactInputSource',
+    'cmd_bind_descriptor_sets',
+    'cmd_draw',
+    'STORAGE_BUFFER',
+    'PipelineBindPoint::GRAPHICS'
+)) {
+    if ("$nativeBuildRs`n$nativeLib`n$recordedHandReplayModule`n$nativeRendererOptions`n$gpuHandMeshVisual`n$handMeshVisualVertex`n$handMeshVisualFragment`n$xrVulkan" -notmatch $token) {
+        throw "Native GPU hand mesh visual route missing token: $token"
+    }
+}
+
+foreach ($token in @(
+    'mod live_hand_compact',
+    'LiveHandCompactInput',
+    'LiveHandCompactStats',
+    'XR_EXT_hand_tracking',
+    'create_hand_tracker',
+    'locate_hand_joints',
+    'supports_hand_tracking',
+    'liveMetaHandCompactInputReady',
+    'liveMetaHandCompactFrameReady',
+    'liveMetaHandTrackingExtensionEnabled',
+    'liveMetaHandTrackingSystemSupported',
+    'liveMetaHandCompactUploadEquivalent=true',
+    'liveMetaHandGpuInputPath=recorded-compatible-compact-joint-pose-tip-length',
+    'liveMetaHandRuntimeJointPoseCount',
+    'liveMetaHandTipLengthCount',
+    'liveMetaHandCompactFrameUploadBytes',
+    'runtime_joint_poses',
+    'tip_length_rows'
+)) {
+    if ("$nativeLib`n$liveHandCompact`n$xrVulkan" -notmatch $token) {
+        throw "Native live Meta hand compact route missing token: $token"
+    }
+}
+
+foreach ($token in @(
+    'GpuMeshReplayResources',
+    'GpuMeshReplayStats',
+    'create_buffer',
+    'STORAGE_BUFFER',
+    'HOST_VISIBLE',
+    'sourceMeshBuffersResident',
+    'gpuMeshPath=native-vulkan-storage-buffer',
+    'sourceMeshToSdfKernel=false',
+    'cpuSdfPerFrame=false'
+)) {
+    if ("$gpuMeshReplay`n$xrVulkan" -notmatch $token) {
+        throw "Native GPU mesh replay boundary missing token: $token"
+    }
+}
+
+foreach ($token in @(
+    'mod gpu_sdf_field',
+    'GpuSdfFieldRenderer',
+    'GpuSdfFieldFrameStats',
+    'gpu_hand_skinning.comp.glsl',
+    'gpu_sdf_field.comp.glsl',
+    'gpu_sdf_tile_bins.comp.glsl',
+    'gpu_sdf_overlay.frag.glsl',
+    'create_compute_pipelines',
+    'PipelineBindPoint::COMPUTE',
+    'cmd_dispatch',
+    'sdfFieldSource=recorded-compact-joint-skinned-mesh-gpu-field',
+    'legacySdfFieldSource=recorded-validation-mesh-target-space-gpu-field',
+    'sdfComputePath=native-vulkan-compute-recorded-skinned-mesh-sdf-field',
+    'legacySdfComputePath=native-vulkan-compute-recorded-validation-mesh-sdf-field',
+    'dynamicSdfReady=\{\}',
+    'sdfVisualEffectVisible=\{\}',
+    'skinning_ready: true',
+    'field_update_dispatched',
+    'field_reused',
+    'gpuSdfFieldReady',
+    'gpuSdfOverlayVisible',
+    'gpuSdfMeshVertexCount',
+    'gpuSdfMeshTriangleCount',
+    'sdfUpdateCadenceFrames',
+    'sdfFieldUpdateDispatched',
+    'sdfFieldReused',
+    'sdfFieldCacheHits',
+    'sdfCompactInputSource',
+    'liveSdfVisualAcceptance',
+    'sdfTriangleBinsReady=false',
+    'sdfNarrowBandReady=false',
+    'sdfNarrowBandMode=tile-local-triangle-bin-band-cull',
+    'debug.rustyquest.native_renderer.sdf.update_period_frames',
+    'gpuSdfRuntimeJointPoseBufferBytes',
+    'gpuSdfTipLengthBufferBytes',
+    'gpuSdfCompactJointFrameUploadBytes',
+    'gpuSdfJointMatrixBufferBytes',
+    'gpuSdfSkinnedPositionBufferBytes',
+    'cpuSdfPerFrame=false',
+    'meshToSdfKernel=\{\}',
+    'targetSpaceMeshToSdfKernelAvailable=true',
+    'fullSkinnedMeshSdfReady=\{\}',
+    'compactJointSkinningKernel=\{\}',
+    'jointMatrixSkinningKernel=false',
+    'jointMatrixUploadPerFrame=false',
+    'compactJointPoseUploadPerFrame=true',
+    'sourceMeshToSdfKernel=\{\}',
+    'record_sdf_field_update'
+)) {
+    if ("$nativeBuildRs`n$nativeLib`n$nativeCamera`n$nativeRendererOptions`n$gpuSdfField`n$gpuHandSkinningShader`n$gpuSdfFieldShader`n$gpuSdfTileBinsShader`n$gpuSdfOverlayShader`n$xrVulkan" -notmatch $token) {
+        throw "Native GPU SDF field route missing token: $token"
+    }
+}
+
+foreach ($token in @(
+    'SDF_TILE_GRID_WIDTH',
+    'SDF_MAX_TRIANGLES_PER_TILE',
+    'coherent buffer SdfTileHeaders',
+    'writeonly buffer SdfTileIndices',
+    'writeonly buffer SdfTriangleBounds',
+    'atomicAdd',
+    'triangle_bounds\.bounds',
+    'tile_indices\.indices',
+    'band_radius',
+    'min_tile',
+    'max_tile'
+)) {
+    if ($gpuSdfTileBinsShader -notmatch $token) {
+        throw "Native GPU SDF tile-bin shader missing token: $token"
+    }
+}
+foreach ($token in @(
+    'readonly buffer SdfTileHeaders',
+    'readonly buffer SdfTileIndices',
+    'readonly buffer SdfTriangleBounds',
+    'tile_headers\.headers',
+    'tile_indices\.indices',
+    'triangle_bounds\.bounds',
+    'tile_triangle_count',
+    'for \(uint slot = 0u; slot < tile_triangle_count; slot\+\+\)'
+)) {
+    if ($gpuSdfFieldShader -notmatch $token) {
+        throw "Native GPU SDF field shader missing tile-local token: $token"
+    }
+}
+
+foreach ($token in @(
+    'camera_projection_metadata',
+    'rusty\.quest\.native_renderer\.camera_projection_metadata\.v1',
+    'rusty\.optics\.target_screen_footprint\.v1',
+    'target-local-raster',
+    'RUSTY_QUEST_NATIVE_RENDERER_CAMERA_LEFT_TARGET_SCREEN_UV_RECT',
+    'debug\.rustyquest\.native_renderer\.camera\.left\.target\.screen\.uv\.rect',
+    'targetCoordinateSpace=display-eye-screen-uv',
+    'metadataDrivenTargetFootprint=true',
+    'sourceSampleYFlip',
+    'sourceSampleTransform',
+    'sourceSampleTransformStage=post-homography-pre-texture-sample'
+)) {
+    if ("$nativeLib`n$cameraProjection`n$cameraProjectionMetadata`n$xrVulkan" -notmatch $token) {
+        throw "Native camera projection metadata route missing token: $token"
+    }
+}
+foreach ($token in @(
+    'target_rect',
+    'local_uv',
+    'mix\(local_uv\.y, 1\.0 - local_uv\.y, flip_y\)',
+    'discard',
+    'border_color'
+)) {
+    if ($cameraProjectionFragment -notmatch $token) {
+        throw "Native camera projection shader missing metadata target token: $token"
+    }
+}
+if ($cameraProjectionFragment -match 'vec2\(v_uv\.x,\s*1\.0\s*-\s*v_uv\.y\)') {
+    throw "Native camera projection shader must not hard-code full-screen source Y flip."
+}
+
+foreach ($token in @(
+    'mod guide_blur_graph',
+    'GuideBlurGraphRenderer',
+    'GuideBlurGraphFrameStats',
+    'guide_blur_downsample.frag.glsl',
+    'guide_blur_5tap.frag.glsl',
+    'guide_projection.frag.glsl',
+    'guideGraphPath=low-resolution-two-phase-5tap-blur',
+    'guideGraphReady',
+    'guideGraphDownsampleResolution=',
+    'guideGraphHorizontalTaps',
+    'guideGraphVerticalTaps',
+    'guideGraphFinalProjectionSource=guide-texture',
+    'guideGraphFinalExternalHwbSamples',
+    'actualFinalExternalHwbSamples',
+    'actualGuideTextureSamples',
+    'cameraProjectionPath=metadata-target-guide-texture-final',
+    'record_guide_graph_render',
+    'record_guide_graph_cache_hit',
+    'finalExternalHwbSamples=0',
+    'guideTextureSamples=1'
+)) {
+    if ("$nativeBuildRs`n$nativeLib`n$nativeCamera`n$cameraProjection`n$guideBlurGraph`n$guideBlurDownsampleFragment`n$guideBlurFragment`n$guideProjectionFragment`n$xrVulkan" -notmatch $token) {
+        throw "Native guide blur graph route missing token: $token"
+    }
+}
+foreach ($token in @(
+    'u_camera_left',
+    'u_camera_right',
+    'mix\(v_uv\.y, 1\.0 - v_uv\.y, flip_y\)'
+)) {
+    if ($guideBlurDownsampleFragment -notmatch $token) {
+        throw "Native guide downsample shader missing token: $token"
+    }
+}
+foreach ($token in @(
+    'u_source',
+    'v_uv - 2\.0 \* step_uv',
+    'rgb \* 0\.2'
+)) {
+    if ($guideBlurFragment -notmatch $token) {
+        throw "Native guide 5-tap blur shader missing token: $token"
+    }
+}
+foreach ($token in @(
+    'u_guide',
+    'target_rect',
+    'discard',
+    'border_color'
+)) {
+    if ($guideProjectionFragment -notmatch $token) {
+        throw "Native guide projection shader missing token: $token"
+    }
+}
+foreach ($token in @(
+    'guide_blur_downsample\.frag\.glsl',
+    'guide_blur_5tap\.frag\.glsl',
+    'guide_projection\.frag\.glsl'
+)) {
+    if ($nativeBuildRs -notmatch $token) {
+        throw "Native shader build script missing guide token: $token"
+    }
+}
+
+foreach ($token in @(
+    'ACameraManager_create',
+    'ACameraManager_getCameraIdList',
+    'ACameraManager_openCamera',
+    'AImageReader_newWithUsage',
+    'AIMAGE_FORMAT_PRIVATE',
+    'AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE',
+    'AImageReader_setImageListener',
+    'AImage_getHardwareBuffer',
+    'AHardwareBuffer_acquire',
+    'AHardwareBuffer_describe',
+    'AHardwareBuffer_getId',
+    'AHardwareBuffer_release',
+    'ACameraCaptureSession_setRepeatingRequest',
+    'plan\.camera_source\.camera_ids\.left',
+    'plan\.camera_source\.camera_ids\.right',
+    'hwb-frame-acquired',
+    'textureUpdateCadence=on-camera-frame',
+    'releaseRetireCount',
+    'descriptorShape=combined-immutable-sampler-ycbcr-conversion'
+)) {
+    if ($nativeCamera -notmatch $token -and $acameraSys -notmatch $token) {
+        throw "Rust native camera scaffold missing token: $token"
+    }
+}
+
+foreach ($token in @(
+    'rusty-quest-native-renderer-contracts',
+    'package = "rusty-quest-native-renderer"',
+    'android-activity',
+    'native-activity',
+    'jni',
+    'ndk-sys',
+    'ash',
+    'openxr',
+    'crate-type = \["cdylib", "rlib"\]',
+    'name = "rusty_quest_native_renderer"'
+)) {
+    if ($nativeCargo -notmatch $token) {
+        throw "Rust native Cargo manifest missing token: $token"
+    }
+}
+
+$xrVulkanTokens = @(
+    'xr::Entry::load',
+    'LoaderInitKHR',
+    'InstanceCreateInfoAndroidKHR',
+    'khr_android_create_instance',
+    'khr_vulkan_enable2',
+    'graphics_requirements::<xr::Vulkan>',
+    'ash::Entry::load',
+    'create_vulkan_instance',
+    'vulkan_graphics_device',
+    'external_memory_android_hardware_buffer',
+    'sampler_ycbcr_conversion',
+    'PhysicalDeviceSamplerYcbcrConversionFeatures',
+    'combined-immutable-sampler-ycbcr-conversion',
+    'vulkanExternalImportPrereqsReady',
+    'openxrSubmitReady=false',
+    'openxrSubmitReady=true',
+    'vulkanExternalImportReady=false',
+    'create_session::<xr::Vulkan>',
+    'create_swapchain',
+    'CompositionLayerProjection',
+    'FrameCpuTimings',
+    'cameraAcquireImportCpuMs',
+    'guideGraphCpuMs',
+    'liveHandLocateCpuMs',
+    'handSdfPrepareCpuMs',
+    'handMeshVisualCpuMs',
+    'projectionCompositeCpuMs',
+    'swapchainWaitCpuMs',
+    'queueSubmitCpuMs',
+    'openxrEndFrameCpuMs',
+    'cpuTimingScope=host-recording-and-submit',
+    'GpuTimestampTracker',
+    'cmd_reset_query_pool',
+    'cmd_write_timestamp',
+    'get_query_pool_results',
+    'gpu-timestamp-timing',
+    'gpuTimestampQuerySupported',
+    'gpuTimestampQueryReady',
+    'cameraProjectionGpuMs',
+    'guideGraphGpuMs',
+    'handSdfGpuMs',
+    'handMeshVisualGpuMs',
+    'projectionCompositeGpuMs',
+    'gpuTimingScope=vulkan-timestamp-query',
+    'PrivateExtensionSlotRuntime',
+    'private-extension-slot',
+    'record_private_layer_invocation',
+    'privateLayerPublicAbiOnly=true',
+    'privateLayerPayloadLinked=false',
+    'privateLayerImplementationPath=none',
+    'privateLayerOutput=identity-public-abi-resource',
+    'privateLayerVisualAcceptance=not-applicable-public-noop',
+    'recordedHandReplayVisible=true',
+    'animatedHandMeshVisualReady=pending',
+    'compactJointOverlayDefault=false',
+    'compactJointOverlayVisible=false',
+    'handMeshVisualPath=recorded-compact-joint-gpu-skinned-resident-triangle-draw',
+    'CompactHandInputSourceMode',
+    'recorded-replay-visual-proof',
+    'debug.rustyquest.native_renderer.replay.visual_proof.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.input.source',
+    'compactHandInputSourceMode',
+    'recordedReplayVisualProofEnabled',
+    'recordedReplayVisualAcceptance=pending-headset-screenshot',
+    'allowsRecordedFallback',
+    'hand-mesh-visual-diagnostic',
+    'leftHandMeshVisualScreenUvRect',
+    'rightHandMeshVisualScreenUvRect',
+    'leftSdfVisualScreenUvRect',
+    'rightSdfVisualScreenUvRect',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha',
+    'liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof',
+    'dynamicSdfReady=pending',
+    'debug.rustyquest.native_renderer.sdf.visual.enabled',
+    'status=skinning-active-sdf-overlay-deferred reason=property-disabled',
+    'GpuSdfFieldRenderer',
+    'GpuSdfFieldFrameStats',
+    'cpuSdfPerFrame=false',
+    'xr-vulkan-probe',
+    'vulkan-probe'
+)
+foreach ($token in $xrVulkanTokens) {
+    if ("$xrVulkan`n$nativeRendererOptions`n$nativeRendererTiming`n$privateExtensionSlot`n$nativeCamera" -notmatch $token) {
+        throw "Rust OpenXR/Vulkan prerequisite probe missing token: $token"
+    }
+}
+
+foreach ($counter in @(
+    'camera_frames_acquired',
+    'hardware_buffer_imports',
+    'hardware_buffer_cache_hits',
+    'hardware_buffer_cache_misses',
+    'guide_graph_renders',
+    'guide_graph_cache_hits',
+    'sdf_field_updates',
+    'private_layer_invocations',
+    'xr_frames_submitted',
+    'stale_frames'
+)) {
+    if ($nativeCamera -notmatch $counter -or $nativeLib -notmatch $counter) {
+        throw "Rust native timing scaffold missing counter: $counter"
+    }
+}
+
+foreach ($token in @(
+    'hwbNativeImportReady=true',
+    'vulkanExternalImportReady=false',
+    'finalExternalHwbSamples=0',
+    'guideTextureSamples=1',
+    'openxrProjectionLayer=runtime-submit',
+    'openxrSubmitReady=false'
+)) {
+    if ($nativeLib -notmatch $token -and $nativeCamera -notmatch $token) {
+        throw "Rust native renderer scaffold missing token: $token"
+    }
+}
+
+foreach ($token in @(
+    'cargo build',
+    'CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER',
+    'aarch64-linux-android29-clang\.cmd',
+    'librusty_quest_native_renderer\.so',
+    'libopenxr_loader\.so',
+    'native-hwb-blur-sdf-public\.plan\.json',
+    'recorded-hand-replay-public-shape\.json',
+    'RecordedHandCaptureDir',
+    'RequireRecordedHandCapture',
+    'recorded_hand_capture_required',
+    'RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR',
+    'gpu-mesh-boundary',
+    'rusty\.quest\.native_renderer_android\.build_manifest\.v1'
+)) {
+    if ($buildScriptText -notmatch $token) {
+        throw "Native renderer build script missing token: $token"
+    }
+}
+foreach ($token in @('javac', 'd8\.bat', 'classes\.dex', 'clang\+\+')) {
+    if ($buildScriptText -match $token) {
+        throw "Native renderer build script still carries Java/C++ packaging token: $token"
+    }
+}
+
+$sourceCombined = "$manifest`n$nativeCargo`n$nativeBuildRs`n$nativeLib`n$androidEvents`n$nativeCamera`n$acameraSys`n$cameraProjection`n$cameraProjectionMetadata`n$guideBlurGraph`n$guideBlurDownsampleFragment`n$guideBlurFragment`n$guideProjectionFragment`n$recordedHandReplayModule`n$liveHandCompact`n$nativeRendererOptions`n$gpuHandMeshVisual`n$handMeshVisualVertex`n$handMeshVisualFragment`n$gpuMeshReplay`n$gpuSdfField`n$gpuHandSkinningShader`n$gpuSdfFieldShader`n$gpuSdfTileBinsShader`n$gpuSdfOverlayShader`n$xrVulkan`n$buildScriptText"
+$forbiddenTokens = @(
+    ("RUSTY" + "_XR_"),
+    ("rusty" + ".xr."),
+    ("/rusty" + "xr/v1"),
+    ("com.example." + "rustyxr.broker"),
+    "Makepad",
+    "NativeRendererStartActivity",
+    "HardwareBuffer\.fromHardwareBuffer"
+)
+foreach ($token in $forbiddenTokens) {
+    if ($sourceCombined -match $token) {
+        throw "Native renderer Android scaffold contains forbidden route token: $token"
+    }
+}
+
+foreach ($token in @('colorama', 'rusty-vision-colorama')) {
+    if ($sourceCombined -match $token) {
+        throw "Native renderer Android public scaffold exposes private effect token: $token"
+    }
+}
+
+foreach ($token in @(
+    'rusty.quest.native_renderer_runtime_evidence.v1',
+    'Measure-ScreenshotContent',
+    'Save-ScreenshotCropSet',
+    'ConvertTo-ScreenshotUvRect',
+    'Expand-ScreenshotTargetUvRectTexts',
+    'Get-ScreenshotTargetUvRectTexts',
+    'leftTargetScreenUvRect',
+    'rightTargetScreenUvRect',
+    'RequireNonFlatScreenshot',
+    'RequireTargetNonFlatScreenshot',
+    'RequireHandMeshVisualScreenshot',
+    'RequireSdfVisualScreenshot',
+    'ScreenshotTargetUvRects',
+    'MinimumNonFlatScreenshotTargetRects',
+    'MinimumNonFlatHandMeshVisualRects',
+    'MinimumNonFlatSdfVisualRects',
+    'MinimumOverlayColorFamilyPixels',
+    'MinimumHandMeshVisualOverlayColorRatio',
+    'MinimumSdfVisualOverlayColorRatio',
+    'MinimumScreenshotUniqueColors',
+    'MinimumScreenshotLumaRange',
+    'screenshot_sampled_unique_colors',
+    'screenshot_sampled_chroma_pixels',
+    'screenshot_sampled_chroma_ratio',
+    'overlay_color_family_pixels',
+    'overlay_color_family_ratio',
+    'screenshot_luma_range',
+    'screenshot_target_rects',
+    'screenshot_crop_out_dir',
+    'screenshot_target_crop_artifacts',
+    'screenshot_hand_mesh_visual_crop_artifacts',
+    'screenshot_sdf_visual_crop_artifacts',
+    'screenshot_target_non_flat_rects',
+    'screenshot_hand_mesh_visual_rects',
+    'screenshot_sdf_visual_rects',
+    'screenshot_hand_mesh_visual_non_flat_rects',
+    'screenshot_sdf_visual_non_flat_rects',
+    'screenshot_hand_mesh_visual_overlay_color_rects',
+    'screenshot_sdf_visual_overlay_color_rects',
+    'RequireLiveVisualDiagnosticCaveat',
+    'live_visual_diagnostic_caveat_checked',
+    'compactHandInputSourceMode=live-meta-openxr-hand-tracking',
+    'handMeshCompactInputSource=live-meta-openxr-hand-tracking',
+    'sdfCompactInputSource=live-meta-openxr-hand-tracking',
+    'liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof',
+    'liveSdfVisualAcceptance=pending-repeat-headset-visual-proof',
+    'RequirePerformanceBudget',
+    'MinimumObservedOpenXrFps',
+    'MaximumStaleFrames',
+    'MaximumCameraAcquireImportCpuMs',
+    'MaximumGuideGraphCpuMs',
+    'MaximumHandSdfPrepareCpuMs',
+    'MaximumHandMeshVisualCpuMs',
+    'MaximumProjectionCompositeCpuMs',
+    'performance_budget_cpu_metrics',
+    'performance_budget_gpu_metrics',
+    'RequireReplayVisualProof',
+    'RequireGuideGraph',
+    'RequireSdfVisual',
+    'RequireGpuTimestampReady',
+    'RequirePrivateSlotNoPayload',
+    'animatedHandMeshVisualVisible=true',
+    'gpuTimestampQueryReady=true',
+    'privateLayerPayloadLinked=false'
+)) {
+    if ($runtimeEvidenceToolText -notmatch $token) {
+        throw "Native renderer runtime evidence checker missing token: $token"
+    }
+}
+
+foreach ($token in @(
+    'leftTargetScreenUvRect=0.171875,0.218750,0.750000,0.656250',
+    'rightTargetScreenUvRect=0.078125,0.218750,0.750000,0.671875',
+    'leftHandMeshVisualScreenUvRect=',
+    'rightHandMeshVisualScreenUvRect=',
+    'leftSdfVisualScreenUvRect=',
+    'rightSdfVisualScreenUvRect=',
+    'targetCoordinateSpace=display-eye-screen-uv',
+    'targetFootprintMetadataSource=native-direct-camera-target-screen-uv-runtime'
+)) {
+    if ($runtimeEvidenceFixtureText -notmatch [regex]::Escape($token)) {
+        throw "Native renderer accepted runtime evidence fixture missing target metadata token: $token"
+    }
+}
+
+foreach ($token in @(
+    'compactHandInputSourceMode=live-meta-openxr-hand-tracking',
+    'compactHandInputSelectsLiveFrame=true',
+    'compactHandInputAllowsRecordedFallback=false',
+    'handMeshCompactInputSource=live-meta-openxr-hand-tracking',
+    'sdfCompactInputSource=live-meta-openxr-hand-tracking',
+    'liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof',
+    'liveSdfVisualAcceptance=pending-repeat-headset-visual-proof'
+)) {
+    if ($liveHandDiagnosticPendingFixtureText -notmatch [regex]::Escape($token)) {
+        throw "Native renderer live-hand diagnostic pending fixture missing token: $token"
+    }
+}
+
+$parseTokens = $null
+$parseErrors = $null
+[System.Management.Automation.Language.Parser]::ParseFile($runtimeSmokeToolPath, [ref]$parseTokens, [ref]$parseErrors) | Out-Null
+if ($parseErrors.Count -gt 0) {
+    throw "Native renderer replay smoke tool has PowerShell parse errors: $($parseErrors[0].Message)"
+}
+foreach ($token in @(
+    'rusty.quest.native_renderer_replay_smoke_run.v1',
+    'Apply-RuntimeProfile.ps1',
+    'Test-NativeRendererRuntimeEvidence.ps1',
+    'quest-native-renderer-replay-visual-proof.profile.json',
+    'quest-native-renderer-live-hand-visual-diagnostic.profile.json',
+    'EvidenceMode',
+    'ReplayVisualProof',
+    'LiveVisualDiagnosticCaveat',
+    'previousErrorActionPreference',
+    'NativeCommandError',
+    'replay_visual_proof_required',
+    'live_visual_diagnostic_caveat_required',
+    'rusty-quest-native-renderer.apk',
+    'RUSTY_QUEST_NATIVE_RENDERER',
+    'android.permission.CAMERA',
+    'com.oculus.permission.HAND_TRACKING',
+    'horizonos.permission.HEADSET_CAMERA',
+    'horizonos.permission.SPATIAL_CAMERA',
+    'pm',
+    'grant',
+    'logcat',
+    'screencap',
+    '/data/local/tmp/rusty_quest_native_renderer_replay_smoke.png',
+    'filtered-native-renderer-logcat.txt',
+    'runtime-evidence-summary.json',
+    'screenshot-crops',
+    'run-summary.json',
+    'AllowFlatScreenshot',
+    'AllowPerformanceBudgetMiss',
+    'RequireNonFlatScreenshot',
+    'RequireTargetNonFlatScreenshot',
+    'RequireHandMeshVisualScreenshot',
+    'RequireSdfVisualScreenshot',
+    'ScreenshotTargetUvRects',
+    'ScreenshotCropOutDir',
+    '-join "|"',
+    'RequireReplayVisualProof',
+    'RequireLiveVisualDiagnosticCaveat',
+    'RequireGuideGraph',
+    'RequireSdfVisual',
+    'RequirePrivateSlotNoPayload',
+    'RequireGpuTimestampReady',
+    'RequirePerformanceBudget',
+    'StopAfterRun'
+)) {
+    if ($runtimeSmokeToolText -notmatch [regex]::Escape($token)) {
+        throw "Native renderer replay smoke tool missing token: $token"
+    }
+}
+if ($runtimeSmokeToolText -notmatch '-Execute' -or $runtimeSmokeToolText -notmatch '-SummaryOut') {
+    throw "Native renderer replay smoke tool must apply runtime properties and write evidence summaries."
+}
+
+foreach ($token in @(
+    'profile.quest.native_renderer.replay_visual_proof',
+    'debug.rustyquest.native_renderer.replay.visual_proof.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.input.source',
+    'compactHandInputSourceMode=recorded-replay',
+    'recordedReplayVisualAcceptance=pending-headset-screenshot'
+)) {
+    if ($replayVisualProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer replay visual proof profile missing token: $token"
+    }
+}
+foreach ($token in @(
+    'profile.quest.native_renderer.live_hand_visual_diagnostic',
+    'quest-native-renderer-live-hand-visual-diagnostic.profile.json',
+    'debug.rustyquest.native_renderer.replay.visual_proof.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.input.source',
+    'live-meta-openxr-hand-tracking',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha',
+    'debug.rustyquest.native_renderer.sdf.visual.enabled',
+    'compactHandInputSourceMode=live-meta-openxr-hand-tracking',
+    'selectsLiveFrame=true',
+    'allowsRecordedFallback=false',
+    'liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof',
+    'liveSdfVisualAcceptance=pending-repeat-headset-visual-proof'
+)) {
+    if ($liveHandVisualDiagnosticProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer live hand visual diagnostic profile missing token: $token"
+    }
+}
+if ($checkAllText -notmatch 'quest-native-renderer-live-hand-visual-diagnostic\.profile\.json' -or $checkAllText -notmatch 'native-renderer-live-hand-visual-diagnostic-property-write-plan\.json') {
+    throw "check_all.ps1 must dry-run the native renderer live hand diagnostic profile."
+}
+
+& $runtimeEvidenceToolPath `
+    -LogcatPath $runtimeEvidenceFixturePath `
+    -RequireCameraProjection `
+    -RequireReplayVisualProof `
+    -RequireGuideGraph `
+    -RequireSdfVisual `
+    -RequireGpuTimestampReady `
+    -RequirePerformanceBudget `
+    -RequirePrivateSlotNoPayload | Out-Null
+
+try {
+    & $runtimeEvidenceToolPath `
+        -LogcatPath $runtimeEvidenceDamagedPath `
+        -RequireReplayVisualProof | Out-Null
+    throw "Damaged native renderer runtime evidence fixture was accepted."
+} catch {
+    if ($_.Exception.Message -eq "Damaged native renderer runtime evidence fixture was accepted.") {
+        throw
+    }
+}
+
+try {
+    & $runtimeEvidenceToolPath `
+        -LogcatPath $runtimeEvidenceDamagedPerformancePath `
+        -RequirePerformanceBudget | Out-Null
+    throw "Damaged native renderer performance fixture was accepted."
+} catch {
+    if ($_.Exception.Message -eq "Damaged native renderer performance fixture was accepted.") {
+        throw
+    }
+}
+
+& $runtimeEvidenceToolPath `
+    -LogcatPath $liveHandDiagnosticPendingFixturePath `
+    -RequireLiveVisualDiagnosticCaveat | Out-Null
+
+try {
+    & $runtimeEvidenceToolPath `
+        -LogcatPath $liveHandPrematureAcceptanceDamagedPath `
+        -RequireLiveVisualDiagnosticCaveat | Out-Null
+    throw "Damaged native renderer live-hand visual acceptance fixture was accepted."
+} catch {
+    if ($_.Exception.Message -eq "Damaged native renderer live-hand visual acceptance fixture was accepted.") {
+        throw
+    }
+}
+
+if ($readme -notmatch 'Rust NativeActivity' -or $readme -notmatch 'no app Java is packaged' -or $readme -notmatch 'real submitted OpenXR' -or $readme -notmatch 'input queue') {
+    throw "Native renderer app README must document the Rust-native route and first-scaffold caveat."
+}
+
+if ($Build) {
+    & (Join-Path $PSScriptRoot "Build-NativeRendererAndroid.ps1") -AndroidHome $AndroidHome -JavaHome $JavaHome -NdkHome $NdkHome | Out-Host
+}
+
+Write-Output "Rusty Quest native renderer Android validation passed"

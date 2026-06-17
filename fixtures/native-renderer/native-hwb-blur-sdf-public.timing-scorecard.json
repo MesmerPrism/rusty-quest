@@ -1,0 +1,49 @@
+{
+  "schema": "rusty.quest.native_renderer_timing_scorecard.v1",
+  "plan_id": "native-hwb-blur-sdf-public-v1",
+  "timing_ready": true,
+  "stages": [
+    {
+      "stage_id": "camera-acquire",
+      "observed_ms": 0.42,
+      "budget_ms": 1.2
+    },
+    {
+      "stage_id": "hwb-import-cache",
+      "observed_ms": 0.24,
+      "budget_ms": 0.7
+    },
+    {
+      "stage_id": "guide-graph",
+      "observed_ms": 1.35,
+      "budget_ms": 2.2
+    },
+    {
+      "stage_id": "hand-sdf-field-prepare",
+      "observed_ms": 0.96,
+      "budget_ms": 1.5
+    },
+    {
+      "stage_id": "projection-composite",
+      "observed_ms": 1.1,
+      "budget_ms": 2.0
+    },
+    {
+      "stage_id": "openxr-submit",
+      "observed_ms": 0.28,
+      "budget_ms": 0.8
+    }
+  ],
+  "counters": {
+    "camera_frames_acquired": 720,
+    "hardware_buffer_imports": 720,
+    "hardware_buffer_cache_hits": 716,
+    "hardware_buffer_cache_misses": 4,
+    "guide_graph_renders": 360,
+    "guide_graph_cache_hits": 360,
+    "sdf_field_updates": 180,
+    "private_layer_invocations": 360,
+    "xr_frames_submitted": 720,
+    "stale_frames": 0
+  }
+}

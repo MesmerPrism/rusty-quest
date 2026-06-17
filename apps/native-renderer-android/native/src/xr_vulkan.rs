@@ -1,0 +1,2266 @@
+//! Minimal OpenXR/Vulkan prerequisite probe for the Quest-native renderer.
+
+use std::{
+    ffi::{CStr, CString},
+    ptr,
+    time::{Duration, Instant},
+};
+
+use ash::vk::{self, Handle};
+use openxr as xr;
+use openxr::sys::Handle as _;
+
+use crate::{
+    camera_projection::{
+        record_camera_projection_eye, CameraProjectionFrameStats, CameraProjectionRenderer,
+        PreparedCameraProjection,
+    },
+    camera_projection_metadata::{CameraProjectionMetadata, TargetRect},
+    gpu_hand_mesh_visual::{GpuHandMeshVisualFrameStats, GpuHandMeshVisualRenderer},
+    gpu_mesh_replay::{GpuMeshReplayResources, GpuMeshReplayStats},
+    gpu_sdf_field::{GpuSdfFieldFrameStats, GpuSdfFieldRenderer},
+    guide_blur_graph::{GuideBlurGraphFrameStats, GuideBlurGraphRenderer},
+    live_hand_compact::{LiveHandCompactInput, LiveHandCompactStats},
+    native_camera::NativeCameraRuntime,
+    native_renderer_options::{
+        CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings, NativeRendererRuntimeOptions,
+        PROP_ENABLE_SDF_VISUAL, PROP_HAND_MESH_INPUT_SOURCE,
+        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED,
+        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV, PROP_REPLAY_VISUAL_PROOF_ENABLED,
+    },
+    native_renderer_timing::{
+        elapsed_ms, FrameCpuTimings, GpuStageTimings, GpuTimestampStage, GpuTimestampTracker,
+    },
+    private_extension_slot::{PrivateExtensionSlotFrameStats, PrivateExtensionSlotRuntime},
+    recorded_hand_replay::RecordedHandReplaySummary,
+};
+
+const VIEW_TYPE: xr::ViewConfigurationType = xr::ViewConfigurationType::PRIMARY_STEREO;
+const VIEW_COUNT: u32 = 2;
+const VIEW_COUNT_USIZE: usize = 2;
+const PIPELINE_DEPTH: u32 = 2;
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct XrVulkanReadiness {
+    pub(crate) android_loader_ready: bool,
+    pub(crate) openxr_instance_ready: bool,
+    pub(crate) vulkan_instance_ready: bool,
+    pub(crate) external_hwb_extension_ready: bool,
+    pub(crate) sampler_ycbcr_extension_ready: bool,
+    pub(crate) sampler_ycbcr_feature_ready: bool,
+    pub(crate) vulkan_external_import_prereqs_ready: bool,
+    pub(crate) live_hand_tracking_extension_available: bool,
+    pub(crate) live_hand_tracking_extension_enabled: bool,
+    pub(crate) live_hand_tracking_system_supported: bool,
+}
+
+impl XrVulkanReadiness {
+    pub(crate) fn marker_fields(&self) -> String {
+        format!(
+            "androidOpenxrLoaderReady={} openxrInstanceReady={} vulkanInstanceReady={} externalHwbExtensionReady={} samplerYcbcrExtensionReady={} samplerYcbcrFeatureReady={} vulkanExternalImportPrereqsReady={} liveMetaHandTrackingExtensionAvailable={} liveMetaHandTrackingExtensionEnabled={} liveMetaHandTrackingSystemSupported={} openxrSubmitReady=false vulkanExternalImportReady=false",
+            self.android_loader_ready,
+            self.openxr_instance_ready,
+            self.vulkan_instance_ready,
+            self.external_hwb_extension_ready,
+            self.sampler_ycbcr_extension_ready,
+            self.sampler_ycbcr_feature_ready,
+            self.vulkan_external_import_prereqs_ready,
+            self.live_hand_tracking_extension_available,
+            self.live_hand_tracking_extension_enabled,
+            self.live_hand_tracking_system_supported
+        )
+    }
+}
+
+#[derive(Clone, Debug)]
+struct VulkanProbe {
+    device_name: String,
+    api_version: u32,
+    external_hwb_extension_ready: bool,
+    sampler_ycbcr_extension_ready: bool,
+    sampler_ycbcr_feature_ready: bool,
+}
+
+pub(crate) fn probe(app: &android_activity::AndroidApp) -> XrVulkanReadiness {
+    let started = Instant::now();
+    let mut readiness = XrVulkanReadiness::default();
+    match unsafe { probe_inner(app, &mut readiness) } {
+        Ok(()) => {
+            crate::marker(
+                "xr-vulkan-probe",
+                format!(
+                    "status=ok elapsedMs={} {}",
+                    started.elapsed().as_millis(),
+                    readiness.marker_fields()
+                ),
+            );
+        }
+        Err(error) => {
+            crate::marker(
+                "xr-vulkan-probe",
+                format!(
+                    "status=error elapsedMs={} reason={} {}",
+                    started.elapsed().as_millis(),
+                    crate::sanitize(&error),
+                    readiness.marker_fields()
+                ),
+            );
+        }
+    }
+    readiness
+}
+
+pub(crate) fn run_projection_loop(
+    app: &android_activity::AndroidApp,
+    camera_runtime: Option<&NativeCameraRuntime>,
+) -> Result<(), String> {
+    let replay = RecordedHandReplaySummary::load()?;
+    let projection_metadata = CameraProjectionMetadata::load();
+    crate::marker(
+        "recorded-hand-replay",
+        format!(
+            "status=loaded {} visualEffect=target-local-hand-mesh-overlay compactJointOverlayDefault=false animatedHandMeshVisualReady=pending dynamicSdfReady=pending gpuSdfFieldReady=pending cpuSdfPerFrame=false",
+            replay.marker_fields()
+        ),
+    );
+    crate::marker(
+        "camera-projection-metadata",
+        format!("status=loaded {}", projection_metadata.marker_fields()),
+    );
+
+    let started = Instant::now();
+    let result =
+        unsafe { run_projection_loop_inner(app, camera_runtime, replay, projection_metadata) };
+    if let Err(error) = &result {
+        crate::marker(
+            "openxr-projection",
+            format!(
+                "status=error elapsedMs={} reason={} openxrSubmitReady=false vulkanExternalImportReady=false",
+                started.elapsed().as_millis(),
+                crate::sanitize(error)
+            ),
+        );
+    }
+    result
+}
+
+unsafe fn run_projection_loop_inner(
+    app: &android_activity::AndroidApp,
+    camera_runtime: Option<&NativeCameraRuntime>,
+    replay: RecordedHandReplaySummary,
+    projection_metadata: CameraProjectionMetadata,
+) -> Result<(), String> {
+    let entry = xr::Entry::load().map_err(|error| format!("load OpenXR: {error}"))?;
+    initialize_android_loader(&entry, app)?;
+
+    let available_extensions = entry
+        .enumerate_extensions()
+        .map_err(|error| format!("enumerate OpenXR extensions: {error}"))?;
+    if !available_extensions.khr_android_create_instance {
+        return Err("OpenXR runtime does not expose XR_KHR_android_create_instance".to_string());
+    }
+    if !available_extensions.khr_vulkan_enable2 {
+        return Err("OpenXR runtime does not expose XR_KHR_vulkan_enable2".to_string());
+    }
+
+    let mut enabled_extensions = xr::ExtensionSet::default();
+    enabled_extensions.khr_android_create_instance = true;
+    enabled_extensions.khr_vulkan_enable2 = true;
+    enabled_extensions.ext_hand_tracking = available_extensions.ext_hand_tracking;
+    let xr_instance = create_android_instance(
+        &entry,
+        app,
+        &xr::ApplicationInfo {
+            application_name: "Rusty Quest Native Renderer",
+            application_version: 1,
+            engine_name: "Rusty Quest",
+            engine_version: 1,
+            api_version: xr::Version::new(1, 0, 0),
+        },
+        &enabled_extensions,
+        &[],
+    )?;
+
+    let properties = xr_instance
+        .properties()
+        .map_err(|error| format!("read OpenXR properties: {error}"))?;
+    let system = xr_instance
+        .system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)
+        .map_err(|error| format!("get HMD system: {error}"))?;
+    let live_hand_tracking_system_supported = if enabled_extensions.ext_hand_tracking {
+        xr_instance.supports_hand_tracking(system).unwrap_or(false)
+    } else {
+        false
+    };
+    let requirements = xr_instance
+        .graphics_requirements::<xr::Vulkan>(system)
+        .map_err(|error| format!("read Vulkan graphics requirements: {error}"))?;
+    let target_version_xr = xr::Version::new(1, 1, 0);
+    if target_version_xr < requirements.min_api_version_supported
+        || target_version_xr.major() > requirements.max_api_version_supported.major()
+    {
+        return Err(format!(
+            "OpenXR runtime requires Vulkan >= {} and < {}.0.0",
+            requirements.min_api_version_supported,
+            requirements.max_api_version_supported.major() + 1
+        ));
+    }
+
+    let vk_entry = ash::Entry::load().map_err(|error| format!("load Vulkan: {error}"))?;
+    let vk_target_version = vk::make_api_version(0, 1, 1, 0);
+    let vk_app_info = vk::ApplicationInfo::default()
+        .application_version(1)
+        .engine_version(1)
+        .api_version(vk_target_version);
+    let vk_instance = {
+        let raw = xr_instance
+            .create_vulkan_instance(
+                system,
+                std::mem::transmute(vk_entry.static_fn().get_instance_proc_addr),
+                &vk::InstanceCreateInfo::default().application_info(&vk_app_info) as *const _
+                    as *const _,
+            )
+            .map_err(|error| format!("OpenXR create Vulkan instance: {error}"))?
+            .map_err(vk::Result::from_raw)
+            .map_err(|error| format!("Vulkan create instance: {error}"))?;
+        ash::Instance::load(vk_entry.static_fn(), vk::Instance::from_raw(raw as _))
+    };
+
+    let vk_physical_device = vk::PhysicalDevice::from_raw(
+        xr_instance
+            .vulkan_graphics_device(system, vk_instance.handle().as_raw() as _)
+            .map_err(|error| format!("get OpenXR Vulkan graphics device: {error}"))? as _,
+    );
+    let device_properties = vk_instance.get_physical_device_properties(vk_physical_device);
+    let memory_properties = vk_instance.get_physical_device_memory_properties(vk_physical_device);
+    if device_properties.api_version < vk_target_version {
+        vk_instance.destroy_instance(None);
+        return Err("OpenXR-selected Vulkan device does not support Vulkan 1.1".to_string());
+    }
+    let device_name = CStr::from_ptr(device_properties.device_name.as_ptr())
+        .to_string_lossy()
+        .into_owned();
+    let queue_family_properties =
+        vk_instance.get_physical_device_queue_family_properties(vk_physical_device);
+    let queue_family_index = queue_family_properties
+        .iter()
+        .enumerate()
+        .find_map(|(index, info)| {
+            info.queue_flags
+                .contains(vk::QueueFlags::GRAPHICS | vk::QueueFlags::COMPUTE)
+                .then_some(index as u32)
+        })
+        .ok_or_else(|| "OpenXR-selected Vulkan device has no graphics+compute queue".to_string())?;
+    let selected_queue_family_properties = queue_family_properties[queue_family_index as usize];
+
+    let external_hwb_extension_ready = physical_device_supports_extension(
+        &vk_instance,
+        vk_physical_device,
+        ash::android::external_memory_android_hardware_buffer::NAME,
+    )?;
+    let sampler_ycbcr_extension_ready = physical_device_supports_extension(
+        &vk_instance,
+        vk_physical_device,
+        ash::khr::sampler_ycbcr_conversion::NAME,
+    )?;
+    let mut sampler_ycbcr_features = vk::PhysicalDeviceSamplerYcbcrConversionFeatures::default();
+    let mut feature_query =
+        vk::PhysicalDeviceFeatures2::default().push_next(&mut sampler_ycbcr_features);
+    vk_instance.get_physical_device_features2(vk_physical_device, &mut feature_query);
+    let sampler_ycbcr_feature_ready = sampler_ycbcr_features.sampler_ycbcr_conversion == vk::TRUE;
+    let vulkan_external_import_prereqs_ready = external_hwb_extension_ready
+        && sampler_ycbcr_extension_ready
+        && sampler_ycbcr_feature_ready;
+
+    let mut device_extension_ptrs = Vec::new();
+    if external_hwb_extension_ready {
+        device_extension_ptrs
+            .push(ash::android::external_memory_android_hardware_buffer::NAME.as_ptr());
+    }
+    if sampler_ycbcr_extension_ready {
+        device_extension_ptrs.push(ash::khr::sampler_ycbcr_conversion::NAME.as_ptr());
+    }
+    let queue_priorities = [1.0_f32];
+    let queue_infos = [vk::DeviceQueueCreateInfo::default()
+        .queue_family_index(queue_family_index)
+        .queue_priorities(&queue_priorities)];
+    let mut sampler_ycbcr_enable = vk::PhysicalDeviceSamplerYcbcrConversionFeatures::default()
+        .sampler_ycbcr_conversion(sampler_ycbcr_feature_ready);
+    let device_info = vk::DeviceCreateInfo::default()
+        .queue_create_infos(&queue_infos)
+        .enabled_extension_names(&device_extension_ptrs)
+        .push_next(&mut sampler_ycbcr_enable);
+    let vk_device = {
+        let raw = xr_instance
+            .create_vulkan_device(
+                system,
+                std::mem::transmute(vk_entry.static_fn().get_instance_proc_addr),
+                vk_physical_device.as_raw() as _,
+                &device_info as *const _ as *const _,
+            )
+            .map_err(|error| format!("OpenXR create Vulkan device: {error}"))?
+            .map_err(vk::Result::from_raw)
+            .map_err(|error| format!("Vulkan create device: {error}"))?;
+        ash::Device::load(vk_instance.fp_v1_0(), vk::Device::from_raw(raw as _))
+    };
+    let queue = vk_device.get_device_queue(queue_family_index, 0);
+
+    let (session, mut frame_wait, mut frame_stream) = xr_instance
+        .create_session::<xr::Vulkan>(
+            system,
+            &xr::vulkan::SessionCreateInfo {
+                instance: vk_instance.handle().as_raw() as _,
+                physical_device: vk_physical_device.as_raw() as _,
+                device: vk_device.handle().as_raw() as _,
+                queue_family_index,
+                queue_index: 0,
+            },
+        )
+        .map_err(|error| format!("create OpenXR Vulkan session: {error}"))?;
+    let mut live_hand_compact = LiveHandCompactInput::new(
+        &xr_instance,
+        system,
+        &session,
+        available_extensions.ext_hand_tracking,
+        enabled_extensions.ext_hand_tracking,
+    );
+    let reference_space = create_projection_reference_space(&session)?;
+    let color_format = choose_swapchain_format(&session)?;
+    let render_pass = create_projection_render_pass(&vk_device, color_format)?;
+    let mut camera_projection_renderer = CameraProjectionRenderer::new(
+        &vk_instance,
+        &vk_device,
+        memory_properties,
+        render_pass,
+        vulkan_external_import_prereqs_ready,
+    );
+    let mut guide_blur_graph_renderer =
+        GuideBlurGraphRenderer::new(memory_properties, color_format, render_pass);
+    let runtime_options = NativeRendererRuntimeOptions::load_from_android_properties();
+    let replay_visual_proof_enabled = runtime_options.replay_visual_proof_enabled;
+    let compact_hand_input_source_mode = runtime_options.compact_hand_input_source_mode;
+    let sdf_visual_enabled = runtime_options.sdf_visual_enabled;
+    let sdf_update_period_frames = runtime_options.sdf_update_period_frames;
+    let hand_mesh_visual_diagnostic_settings = runtime_options.hand_mesh_visual_diagnostic_settings;
+    crate::marker(
+        "recorded-replay-visual-proof",
+        format!(
+            "status=config property={} enabled={} handMeshInputSourceProperty={} compactHandInputSourceMode={} selectsLiveFrame={} allowsRecordedFallback={} sdfVisualEnabled={} handMeshVisualDiagnosticEnabled={} recordedReplayVisualAcceptance=pending-headset-screenshot liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof liveSdfVisualAcceptance=pending-repeat-headset-visual-proof",
+            PROP_REPLAY_VISUAL_PROOF_ENABLED,
+            replay_visual_proof_enabled,
+            PROP_HAND_MESH_INPUT_SOURCE,
+            compact_hand_input_source_mode.marker_value(),
+            compact_hand_input_source_mode.selects_live_frame(),
+            compact_hand_input_source_mode.allows_recorded_fallback(),
+            sdf_visual_enabled,
+            hand_mesh_visual_diagnostic_settings.enabled,
+        ),
+    );
+    crate::marker(
+        "hand-mesh-visual-diagnostic",
+        format!(
+            "status=config handMeshVisualDiagnosticPath=property-controlled-target-local-offset-tint enabledProperty={} offsetProperty={} alphaProperty={} {} liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof liveSdfVisualAcceptance=pending-repeat-headset-visual-proof",
+            PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED,
+            PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV,
+            PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA,
+            hand_mesh_visual_diagnostic_settings.marker_fields(),
+        ),
+    );
+    let mut private_extension_slot_runtime = PrivateExtensionSlotRuntime::default();
+    crate::marker(
+        "private-extension-slot",
+        format!(
+            "status=config {}",
+            PrivateExtensionSlotRuntime::config_marker_fields()
+        ),
+    );
+    let mut gpu_sdf_field_renderer = match GpuSdfFieldRenderer::new(
+        &vk_device,
+        &memory_properties,
+        render_pass,
+        &replay,
+    ) {
+        Ok(renderer) => {
+            if !sdf_visual_enabled {
+                crate::marker(
+                        "gpu-sdf-field",
+                        format!(
+                            "status=skinning-active-sdf-overlay-deferred reason=property-disabled property={} dynamicSdfReady=false sdfVisualEffectVisible=false gpuSdfFieldReady=false gpuSdfOverlayVisible=false cpuSdfPerFrame=false meshToSdfKernel=false targetSpaceMeshToSdfKernelAvailable=true fullSkinnedMeshSdfReady=false compactJointSkinningKernel=true jointMatrixSkinningKernel=false jointMatrixUploadPerFrame=false compactJointPoseUploadPerFrame=true sourceMeshToSdfKernel=false",
+                            PROP_ENABLE_SDF_VISUAL
+                        ),
+                    );
+            }
+            Some(renderer)
+        }
+        Err(error) => {
+            crate::marker(
+                    "gpu-sdf-field",
+                    format!(
+                        "status=error reason={} dynamicSdfReady=false sdfVisualEffectVisible=false sdfComputePath=native-vulkan-compute-recorded-skinned-mesh-sdf-field legacySdfComputePath=native-vulkan-compute-recorded-validation-mesh-sdf-field cpuSdfPerFrame=false meshToSdfKernel=false targetSpaceMeshToSdfKernelAvailable=true fullSkinnedMeshSdfReady=false compactJointSkinningKernel=false jointMatrixSkinningKernel=false jointMatrixUploadPerFrame=false compactJointPoseUploadPerFrame=false sourceMeshToSdfKernel=false",
+                        crate::sanitize(&error)
+                    ),
+                );
+            None
+        }
+    };
+    let mut gpu_hand_mesh_visual_renderer = if let Some(renderer) = gpu_sdf_field_renderer.as_ref()
+    {
+        let draw_resources = renderer.skinned_hand_mesh_draw_resources();
+        match GpuHandMeshVisualRenderer::new(&vk_device, render_pass, &replay, draw_resources) {
+            Ok(renderer) => Some(renderer),
+            Err(error) => {
+                crate::marker(
+                    "hand-mesh-visual",
+                    format!(
+                        "status=unavailable reason={} animatedHandMeshVisualReady=false animatedHandMeshVisualVisible=false handMeshVisualPath=recorded-compact-joint-gpu-skinned-resident-triangle-draw gpuTriangleDraw=false cpuProjection=false validationMeshUploadPerFrame=false",
+                        crate::sanitize(&error)
+                    ),
+                );
+                None
+            }
+        }
+    } else {
+        crate::marker(
+            "hand-mesh-visual",
+            "status=unavailable reason=no-resident-skinned-mesh-runtime animatedHandMeshVisualReady=false animatedHandMeshVisualVisible=false handMeshVisualPath=recorded-compact-joint-gpu-skinned-resident-triangle-draw gpuTriangleDraw=false cpuProjection=false validationMeshUploadPerFrame=false",
+        );
+        None
+    };
+    let mut gpu_mesh_replay = GpuMeshReplayResources::default();
+    let gpu_mesh_stats = match gpu_mesh_replay.prepare_source_mesh(
+        &vk_device,
+        &memory_properties,
+        &replay,
+    ) {
+        Ok(stats) => {
+            crate::marker(
+                "gpu-mesh-replay",
+                format!("status=prepared {}", stats.marker_fields()),
+            );
+            stats
+        }
+        Err(error) => {
+            crate::marker(
+                    "gpu-mesh-replay",
+                    format!(
+                        "status=error reason={} topologyVertexCount={} topologyTriangleCount={} topologyIndexCount={} sourceMeshToSdfKernel=false cpuSdfPerFrame=false",
+                        crate::sanitize(&error),
+                        replay.vertex_count,
+                        replay.triangle_count,
+                        replay.index_count
+                    ),
+                );
+            GpuMeshReplayStats {
+                topology_vertex_count: replay.vertex_count,
+                topology_triangle_count: replay.triangle_count,
+                topology_index_count: replay.index_count,
+                cpu_sdf_per_frame: false,
+                ..Default::default()
+            }
+        }
+    };
+    let cmd_pool = vk_device
+        .create_command_pool(
+            &vk::CommandPoolCreateInfo::default()
+                .queue_family_index(queue_family_index)
+                .flags(
+                    vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER
+                        | vk::CommandPoolCreateFlags::TRANSIENT,
+                ),
+            None,
+        )
+        .map_err(|error| format!("create Vulkan command pool: {error}"))?;
+    let cmds = vk_device
+        .allocate_command_buffers(
+            &vk::CommandBufferAllocateInfo::default()
+                .command_pool(cmd_pool)
+                .command_buffer_count(PIPELINE_DEPTH),
+        )
+        .map_err(|error| format!("allocate Vulkan command buffers: {error}"))?;
+    let fences = (0..PIPELINE_DEPTH)
+        .map(|_| {
+            vk_device.create_fence(
+                &vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED),
+                None,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("create Vulkan fences: {error}"))?;
+    let mut gpu_timestamp_tracker = match GpuTimestampTracker::new(
+        &vk_device,
+        PIPELINE_DEPTH as usize,
+        selected_queue_family_properties.timestamp_valid_bits,
+        f64::from(device_properties.limits.timestamp_period),
+    ) {
+        Ok(tracker) => tracker,
+        Err(error) => {
+            crate::marker(
+                "gpu-timestamp-timing",
+                format!(
+                    "status=disabled reason={} gpuTimestampQuerySupported=false gpuTimingScope=vulkan-timestamp-query",
+                    crate::sanitize(&error)
+                ),
+            );
+            GpuTimestampTracker::disabled(
+                PIPELINE_DEPTH as usize,
+                selected_queue_family_properties.timestamp_valid_bits,
+                f64::from(device_properties.limits.timestamp_period),
+            )
+        }
+    };
+    crate::marker(
+        "gpu-timestamp-timing",
+        format!(
+            "status=config {}",
+            gpu_timestamp_tracker.config_marker_fields()
+        ),
+    );
+
+    crate::marker(
+        "openxr-projection",
+        format!(
+            "status=created runtimeName={} runtimeVersion={} deviceName={} queueFamily={} colorFormat={:?} openxrSubmitReady=pending vulkanExternalImportPrereqsReady={} vulkanExternalImportReady=false recordedHandReplayVisible=pending gpuMeshPath=native-vulkan-storage-buffer",
+            crate::sanitize(&properties.runtime_name),
+            properties.runtime_version,
+            crate::sanitize(&device_name),
+            queue_family_index,
+            color_format,
+            vulkan_external_import_prereqs_ready
+        ),
+    );
+    crate::marker(
+        "openxr-live-hand",
+        format!(
+            "status=ready-check extensionAvailable={} extensionEnabled={} systemSupported={} liveMetaHandFrameSource=XR_EXT_hand_tracking liveMetaHandGpuInputPath=recorded-compatible-compact-joint-pose-tip-length",
+            available_extensions.ext_hand_tracking,
+            enabled_extensions.ext_hand_tracking,
+            live_hand_tracking_system_supported
+        ),
+    );
+
+    let loop_result = run_projection_frames(
+        app,
+        &xr_instance,
+        system,
+        &vk_device,
+        queue,
+        &session,
+        &mut frame_wait,
+        &mut frame_stream,
+        &reference_space,
+        render_pass,
+        color_format,
+        &cmds,
+        &fences,
+        &mut camera_projection_renderer,
+        &mut guide_blur_graph_renderer,
+        camera_runtime,
+        &replay,
+        &gpu_mesh_stats,
+        gpu_hand_mesh_visual_renderer.as_mut(),
+        gpu_sdf_field_renderer.as_mut(),
+        &mut gpu_timestamp_tracker,
+        &mut private_extension_slot_runtime,
+        &mut live_hand_compact,
+        compact_hand_input_source_mode,
+        replay_visual_proof_enabled,
+        sdf_visual_enabled,
+        sdf_update_period_frames,
+        hand_mesh_visual_diagnostic_settings,
+        &projection_metadata,
+    );
+
+    let _ = vk_device.device_wait_idle();
+    if let Err(error) = vk_device.wait_for_fences(&fences, true, 1_000_000_000) {
+        crate::marker(
+            "vulkan-cleanup",
+            format!("status=warning reason=wait_fences_failed error={error}"),
+        );
+    }
+    for fence in fences {
+        vk_device.destroy_fence(fence, None);
+    }
+    if let Some(renderer) = gpu_hand_mesh_visual_renderer.as_mut() {
+        renderer.destroy(&vk_device);
+    }
+    if let Some(renderer) = gpu_sdf_field_renderer.as_mut() {
+        renderer.destroy(&vk_device);
+    }
+    gpu_timestamp_tracker.destroy(&vk_device);
+    guide_blur_graph_renderer.destroy(&vk_device);
+    camera_projection_renderer.destroy(&vk_device);
+    gpu_mesh_replay.destroy(&vk_device);
+    vk_device.destroy_command_pool(cmd_pool, None);
+    vk_device.destroy_render_pass(render_pass, None);
+    drop((session, frame_wait, frame_stream, reference_space));
+    vk_device.destroy_device(None);
+    vk_instance.destroy_instance(None);
+
+    loop_result
+}
+
+unsafe fn probe_inner(
+    app: &android_activity::AndroidApp,
+    readiness: &mut XrVulkanReadiness,
+) -> Result<(), String> {
+    let entry = xr::Entry::load().map_err(|error| format!("load OpenXR: {error}"))?;
+    initialize_android_loader(&entry, app)?;
+    readiness.android_loader_ready = true;
+
+    let available_extensions = entry
+        .enumerate_extensions()
+        .map_err(|error| format!("enumerate OpenXR extensions: {error}"))?;
+    readiness.live_hand_tracking_extension_available = available_extensions.ext_hand_tracking;
+    if !available_extensions.khr_android_create_instance {
+        return Err("OpenXR runtime does not expose XR_KHR_android_create_instance".to_string());
+    }
+    if !available_extensions.khr_vulkan_enable2 {
+        return Err("OpenXR runtime does not expose XR_KHR_vulkan_enable2".to_string());
+    }
+
+    let mut enabled_extensions = xr::ExtensionSet::default();
+    enabled_extensions.khr_android_create_instance = true;
+    enabled_extensions.khr_vulkan_enable2 = true;
+    enabled_extensions.ext_hand_tracking = available_extensions.ext_hand_tracking;
+    readiness.live_hand_tracking_extension_enabled = enabled_extensions.ext_hand_tracking;
+    let xr_instance = create_android_instance(
+        &entry,
+        app,
+        &xr::ApplicationInfo {
+            application_name: "Rusty Quest Native Renderer",
+            application_version: 1,
+            engine_name: "Rusty Quest",
+            engine_version: 1,
+            api_version: xr::Version::new(1, 0, 0),
+        },
+        &enabled_extensions,
+        &[],
+    )?;
+    readiness.openxr_instance_ready = true;
+
+    let properties = xr_instance
+        .properties()
+        .map_err(|error| format!("read OpenXR properties: {error}"))?;
+    let system = xr_instance
+        .system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)
+        .map_err(|error| format!("get HMD system: {error}"))?;
+    readiness.live_hand_tracking_system_supported = if enabled_extensions.ext_hand_tracking {
+        xr_instance.supports_hand_tracking(system).unwrap_or(false)
+    } else {
+        false
+    };
+    let requirements = xr_instance
+        .graphics_requirements::<xr::Vulkan>(system)
+        .map_err(|error| format!("read Vulkan graphics requirements: {error}"))?;
+    let target_version_xr = xr::Version::new(1, 1, 0);
+    if target_version_xr < requirements.min_api_version_supported
+        || target_version_xr.major() > requirements.max_api_version_supported.major()
+    {
+        return Err(format!(
+            "OpenXR runtime requires Vulkan >= {} and < {}.0.0",
+            requirements.min_api_version_supported,
+            requirements.max_api_version_supported.major() + 1
+        ));
+    }
+    crate::marker(
+        "xr-vulkan-graphics-requirements",
+        format!(
+            "status=ok runtimeName={} runtimeVersion={} minApiVersion={} maxApiVersion={} targetApiVersion={} khrVulkanEnable2=true",
+            crate::sanitize(&properties.runtime_name),
+            properties.runtime_version,
+            requirements.min_api_version_supported,
+            requirements.max_api_version_supported,
+            target_version_xr
+        ),
+    );
+
+    let vk_probe = probe_vulkan(&xr_instance, system)?;
+    readiness.vulkan_instance_ready = true;
+    readiness.external_hwb_extension_ready = vk_probe.external_hwb_extension_ready;
+    readiness.sampler_ycbcr_extension_ready = vk_probe.sampler_ycbcr_extension_ready;
+    readiness.sampler_ycbcr_feature_ready = vk_probe.sampler_ycbcr_feature_ready;
+    readiness.vulkan_external_import_prereqs_ready = vk_probe.external_hwb_extension_ready
+        && vk_probe.sampler_ycbcr_extension_ready
+        && vk_probe.sampler_ycbcr_feature_ready;
+    crate::marker(
+        "vulkan-probe",
+        format!(
+            "status=ok deviceName={} apiVersion={} externalMemoryAndroidHardwareBuffer={} samplerYcbcrExtension={} samplerYcbcrFeature={} descriptorShape=combined-immutable-sampler-ycbcr-conversion vulkanExternalImportPrereqsReady={} openxrSubmitReady=false vulkanExternalImportReady=false",
+            crate::sanitize(&vk_probe.device_name),
+            vk_probe.api_version,
+            vk_probe.external_hwb_extension_ready,
+            vk_probe.sampler_ycbcr_extension_ready,
+            vk_probe.sampler_ycbcr_feature_ready,
+            readiness.vulkan_external_import_prereqs_ready
+        ),
+    );
+
+    Ok(())
+}
+
+fn initialize_android_loader(
+    entry: &xr::Entry,
+    app: &android_activity::AndroidApp,
+) -> Result<(), String> {
+    let loader_init = unsafe { xr::raw::LoaderInitKHR::load(entry, xr::sys::Instance::NULL) }
+        .map_err(|error| format!("load Android OpenXR loader init: {error}"))?;
+    let loader_info = xr::sys::LoaderInitInfoAndroidKHR {
+        ty: xr::sys::LoaderInitInfoAndroidKHR::TYPE,
+        next: ptr::null(),
+        application_vm: app.vm_as_ptr(),
+        application_context: app.activity_as_ptr(),
+    };
+
+    let result = unsafe { (loader_init.initialize_loader)(&loader_info as *const _ as _) };
+    ensure_xr_success(result, "xrInitializeLoaderKHR")
+}
+
+unsafe fn create_android_instance(
+    entry: &xr::Entry,
+    app: &android_activity::AndroidApp,
+    app_info: &xr::ApplicationInfo,
+    required_extensions: &xr::ExtensionSet,
+    layers: &[&str],
+) -> Result<xr::Instance, String> {
+    if app_info.application_name.len() >= xr::sys::MAX_APPLICATION_NAME_SIZE {
+        return Err(format!(
+            "OpenXR application name must be shorter than {} bytes",
+            xr::sys::MAX_APPLICATION_NAME_SIZE
+        ));
+    }
+    if app_info.engine_name.len() >= xr::sys::MAX_ENGINE_NAME_SIZE {
+        return Err(format!(
+            "OpenXR engine name must be shorter than {} bytes",
+            xr::sys::MAX_ENGINE_NAME_SIZE
+        ));
+    }
+
+    let extension_names = required_extensions.names();
+    let extension_ptrs = extension_names
+        .iter()
+        .map(|name| name.as_ptr() as *const _)
+        .collect::<Vec<_>>();
+    let layer_names = layers
+        .iter()
+        .filter_map(|layer| CString::new(*layer).ok())
+        .collect::<Vec<_>>();
+    let layer_ptrs = layer_names
+        .iter()
+        .map(|layer| layer.as_ptr())
+        .collect::<Vec<_>>();
+
+    let android_info = xr::sys::InstanceCreateInfoAndroidKHR {
+        ty: xr::sys::InstanceCreateInfoAndroidKHR::TYPE,
+        next: ptr::null(),
+        application_vm: app.vm_as_ptr(),
+        application_activity: app.activity_as_ptr(),
+    };
+    let mut info = xr::sys::InstanceCreateInfo {
+        ty: xr::sys::InstanceCreateInfo::TYPE,
+        next: &android_info as *const _ as _,
+        create_flags: Default::default(),
+        application_info: xr::sys::ApplicationInfo {
+            application_name: [0; xr::sys::MAX_APPLICATION_NAME_SIZE],
+            application_version: app_info.application_version,
+            engine_name: [0; xr::sys::MAX_ENGINE_NAME_SIZE],
+            engine_version: app_info.engine_version,
+            api_version: app_info.api_version,
+        },
+        enabled_api_layer_count: layer_ptrs.len() as _,
+        enabled_api_layer_names: layer_ptrs.as_ptr(),
+        enabled_extension_count: extension_ptrs.len() as _,
+        enabled_extension_names: extension_ptrs.as_ptr(),
+    };
+    write_xr_string(
+        &mut info.application_info.application_name,
+        app_info.application_name,
+    );
+    write_xr_string(&mut info.application_info.engine_name, app_info.engine_name);
+
+    let mut handle = xr::sys::Instance::NULL;
+    let result = (entry.fp().create_instance)(&info, &mut handle);
+    ensure_xr_success(result, "xrCreateInstance")?;
+
+    let extensions = xr::InstanceExtensions::load(entry, handle, required_extensions)
+        .map_err(|error| format!("load OpenXR instance extensions: {error}"))?;
+    xr::Instance::from_raw(entry.clone(), handle, extensions)
+        .map_err(|error| format!("wrap OpenXR instance: {error}"))
+}
+
+unsafe fn probe_vulkan(
+    xr_instance: &xr::Instance,
+    system: xr::SystemId,
+) -> Result<VulkanProbe, String> {
+    let vk_entry = ash::Entry::load().map_err(|error| format!("load Vulkan: {error}"))?;
+    let vk_target_version = vk::make_api_version(0, 1, 1, 0);
+    let vk_app_info = vk::ApplicationInfo::default()
+        .application_version(1)
+        .engine_version(1)
+        .api_version(vk_target_version);
+    let raw_instance = xr_instance
+        .create_vulkan_instance(
+            system,
+            std::mem::transmute(vk_entry.static_fn().get_instance_proc_addr),
+            &vk::InstanceCreateInfo::default().application_info(&vk_app_info) as *const _
+                as *const _,
+        )
+        .map_err(|error| format!("OpenXR create Vulkan instance: {error}"))?
+        .map_err(vk::Result::from_raw)
+        .map_err(|error| format!("Vulkan create instance: {error}"))?;
+    let vk_instance = ash::Instance::load(
+        vk_entry.static_fn(),
+        vk::Instance::from_raw(raw_instance as _),
+    );
+
+    let result = (|| -> Result<VulkanProbe, String> {
+        let vk_physical_device = vk::PhysicalDevice::from_raw(
+            xr_instance
+                .vulkan_graphics_device(system, vk_instance.handle().as_raw() as _)
+                .map_err(|error| format!("get OpenXR Vulkan graphics device: {error}"))?
+                as _,
+        );
+        let properties = vk_instance.get_physical_device_properties(vk_physical_device);
+        if properties.api_version < vk_target_version {
+            return Err("OpenXR-selected Vulkan device does not support Vulkan 1.1".to_string());
+        }
+
+        let external_hwb_extension_ready = physical_device_supports_extension(
+            &vk_instance,
+            vk_physical_device,
+            ash::android::external_memory_android_hardware_buffer::NAME,
+        )?;
+        let sampler_ycbcr_extension_ready = physical_device_supports_extension(
+            &vk_instance,
+            vk_physical_device,
+            ash::khr::sampler_ycbcr_conversion::NAME,
+        )?;
+        let mut sampler_ycbcr_features =
+            vk::PhysicalDeviceSamplerYcbcrConversionFeatures::default();
+        let mut feature_query =
+            vk::PhysicalDeviceFeatures2::default().push_next(&mut sampler_ycbcr_features);
+        vk_instance.get_physical_device_features2(vk_physical_device, &mut feature_query);
+        let sampler_ycbcr_feature_ready =
+            sampler_ycbcr_features.sampler_ycbcr_conversion == vk::TRUE;
+        let device_name = CStr::from_ptr(properties.device_name.as_ptr())
+            .to_string_lossy()
+            .into_owned();
+        Ok(VulkanProbe {
+            device_name,
+            api_version: properties.api_version,
+            external_hwb_extension_ready,
+            sampler_ycbcr_extension_ready,
+            sampler_ycbcr_feature_ready,
+        })
+    })();
+
+    vk_instance.destroy_instance(None);
+    result
+}
+
+unsafe fn physical_device_supports_extension(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+    extension_name: &CStr,
+) -> Result<bool, String> {
+    let extensions = instance
+        .enumerate_device_extension_properties(physical_device)
+        .map_err(|error| format!("enumerate Vulkan device extensions: {error}"))?;
+    Ok(extensions
+        .iter()
+        .any(|extension| CStr::from_ptr(extension.extension_name.as_ptr()) == extension_name))
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn run_projection_frames(
+    app: &android_activity::AndroidApp,
+    xr_instance: &xr::Instance,
+    system: xr::SystemId,
+    vk_device: &ash::Device,
+    queue: vk::Queue,
+    session: &xr::Session<xr::Vulkan>,
+    frame_wait: &mut xr::FrameWaiter,
+    frame_stream: &mut xr::FrameStream<xr::Vulkan>,
+    reference_space: &xr::Space,
+    render_pass: vk::RenderPass,
+    color_format: vk::Format,
+    cmds: &[vk::CommandBuffer],
+    fences: &[vk::Fence],
+    camera_projection_renderer: &mut CameraProjectionRenderer,
+    guide_blur_graph_renderer: &mut GuideBlurGraphRenderer,
+    camera_runtime: Option<&NativeCameraRuntime>,
+    replay: &RecordedHandReplaySummary,
+    gpu_mesh_stats: &GpuMeshReplayStats,
+    mut gpu_hand_mesh_visual_renderer: Option<&mut GpuHandMeshVisualRenderer>,
+    mut gpu_sdf_field_renderer: Option<&mut GpuSdfFieldRenderer>,
+    gpu_timestamp_tracker: &mut GpuTimestampTracker,
+    private_extension_slot_runtime: &mut PrivateExtensionSlotRuntime,
+    live_hand_compact: &mut LiveHandCompactInput,
+    compact_hand_input_source_mode: CompactHandInputSourceMode,
+    replay_visual_proof_enabled: bool,
+    sdf_visual_enabled: bool,
+    sdf_update_period_frames: u64,
+    hand_mesh_visual_diagnostic_settings: HandMeshVisualDiagnosticSettings,
+    projection_metadata: &CameraProjectionMetadata,
+) -> Result<(), String> {
+    let mut swapchain: Option<ProjectionSwapchain> = None;
+    let mut event_storage = xr::EventDataBuffer::new();
+    let mut session_running = false;
+    let mut app_running = true;
+    let mut frame_slot = 0_usize;
+    let mut frame_count = 0_u64;
+    let mut pacing_window_start = Instant::now();
+    let mut pacing_window_frames = 0_u64;
+    let mut camera_projection_stats = CameraProjectionFrameStats::default();
+    let mut last_camera_import_cache_hits = 0_u64;
+    let mut last_camera_import_cache_misses = 0_u64;
+
+    loop {
+        crate::android_events::pump_activity_events(
+            app,
+            Duration::from_millis(0),
+            &mut app_running,
+        );
+        if !app_running {
+            match session.request_exit() {
+                Ok(()) | Err(xr::sys::Result::ERROR_SESSION_NOT_RUNNING) => {}
+                Err(error) => crate::marker(
+                    "openxr-session",
+                    format!("event=request-exit-error error={error}"),
+                ),
+            }
+        }
+
+        while let Some(event) = xr_instance
+            .poll_event(&mut event_storage)
+            .map_err(|error| format!("poll OpenXR event: {error}"))?
+        {
+            match event {
+                xr::Event::SessionStateChanged(event) => {
+                    crate::marker(
+                        "openxr-session",
+                        format!("event=state-changed state={:?}", event.state()),
+                    );
+                    match event.state() {
+                        xr::SessionState::READY => {
+                            session
+                                .begin(VIEW_TYPE)
+                                .map_err(|error| format!("begin OpenXR session: {error}"))?;
+                            session_running = true;
+                            crate::marker("openxr-session", "event=begin viewType=PRIMARY_STEREO");
+                        }
+                        xr::SessionState::STOPPING => {
+                            session
+                                .end()
+                                .map_err(|error| format!("end OpenXR session: {error}"))?;
+                            session_running = false;
+                            crate::marker("openxr-session", "event=end");
+                        }
+                        xr::SessionState::EXITING | xr::SessionState::LOSS_PENDING => {
+                            if let Some(swapchain) = swapchain.take() {
+                                swapchain.destroy(vk_device);
+                            }
+                            return Ok(());
+                        }
+                        _ => {}
+                    }
+                }
+                xr::Event::InstanceLossPending(_) => {
+                    if let Some(swapchain) = swapchain.take() {
+                        swapchain.destroy(vk_device);
+                    }
+                    return Ok(());
+                }
+                xr::Event::EventsLost(event) => crate::marker(
+                    "openxr-session",
+                    format!("event=events-lost count={}", event.lost_event_count()),
+                ),
+                _ => {}
+            }
+        }
+
+        if !session_running {
+            if !app_running {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+            continue;
+        }
+
+        let frame_state = frame_wait
+            .wait()
+            .map_err(|error| format!("wait OpenXR frame: {error}"))?;
+        frame_stream
+            .begin()
+            .map_err(|error| format!("begin OpenXR frame: {error}"))?;
+
+        if !frame_state.should_render {
+            frame_stream
+                .end(
+                    frame_state.predicted_display_time,
+                    xr::EnvironmentBlendMode::OPAQUE,
+                    &[],
+                )
+                .map_err(|error| format!("end skipped OpenXR frame: {error}"))?;
+            continue;
+        }
+
+        let swapchain = ensure_projection_swapchain(
+            xr_instance,
+            system,
+            vk_device,
+            session,
+            render_pass,
+            color_format,
+            &mut swapchain,
+        )?;
+        let (view_flags, views) = session
+            .locate_views(
+                VIEW_TYPE,
+                frame_state.predicted_display_time,
+                reference_space,
+            )
+            .map_err(|error| format!("locate OpenXR views: {error}"))?;
+        if views.len() != VIEW_COUNT_USIZE
+            || !view_flags.contains(xr::ViewStateFlags::ORIENTATION_VALID)
+            || !view_flags.contains(xr::ViewStateFlags::POSITION_VALID)
+        {
+            if frame_count == 0 || frame_count % 120 == 0 {
+                crate::marker(
+                    "openxr-frame",
+                    format!(
+                        "event=skip reason=view-pose-invalid viewCount={} viewFlags={:?} openxrSubmitReady=false",
+                        views.len(),
+                        view_flags
+                    ),
+                );
+            }
+            frame_stream
+                .end(
+                    frame_state.predicted_display_time,
+                    xr::EnvironmentBlendMode::OPAQUE,
+                    &[],
+                )
+                .map_err(|error| format!("end OpenXR frame without views: {error}"))?;
+            frame_count = frame_count.saturating_add(1);
+            continue;
+        }
+
+        let image_index = swapchain
+            .handle
+            .acquire_image()
+            .map_err(|error| format!("acquire OpenXR swapchain image: {error}"))?;
+        let cmd = cmds[frame_slot];
+        vk_device
+            .wait_for_fences(&[fences[frame_slot]], true, u64::MAX)
+            .map_err(|error| format!("wait Vulkan fence: {error}"))?;
+        let gpu_stage_timings = gpu_timestamp_tracker.read_frame(vk_device, frame_slot);
+        vk_device
+            .reset_fences(&[fences[frame_slot]])
+            .map_err(|error| format!("reset Vulkan fence: {error}"))?;
+        vk_device
+            .reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())
+            .map_err(|error| format!("reset Vulkan command buffer: {error}"))?;
+
+        let record_started = Instant::now();
+        let mut frame_timings = FrameCpuTimings::default();
+        vk_device
+            .begin_command_buffer(
+                cmd,
+                &vk::CommandBufferBeginInfo::default()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+            )
+            .map_err(|error| format!("begin Vulkan command buffer: {error}"))?;
+        gpu_timestamp_tracker.reset_frame(vk_device, cmd, frame_slot);
+        let stage_started = Instant::now();
+        gpu_timestamp_tracker.write_stage_start(
+            vk_device,
+            cmd,
+            frame_slot,
+            GpuTimestampStage::CameraProjection,
+        );
+        let prepared_camera_projection = match camera_runtime
+            .and_then(NativeCameraRuntime::latest_stereo_frame)
+            .map(|stereo_frame| {
+                camera_projection_renderer.prepare_stereo_frame(vk_device, cmd, &stereo_frame)
+            }) {
+            Some(Ok(prepared)) => prepared,
+            Some(Err(error)) => {
+                if frame_count == 0 || frame_count % 120 == 0 {
+                    crate::marker(
+                        "camera-projection",
+                        format!(
+                            "status=error reason={} cameraProjectionReady=false vulkanExternalImportReady=false",
+                            crate::sanitize(&error)
+                        ),
+                    );
+                }
+                None
+            }
+            None => None,
+        };
+        gpu_timestamp_tracker.write_stage_end(
+            vk_device,
+            cmd,
+            frame_slot,
+            GpuTimestampStage::CameraProjection,
+        );
+        frame_timings.camera_acquire_import_ms = elapsed_ms(stage_started);
+        if let (Some(runtime), Some(prepared)) =
+            (camera_runtime, prepared_camera_projection.as_ref())
+        {
+            let hit_delta = prepared
+                .stats
+                .import_cache_hits
+                .saturating_sub(last_camera_import_cache_hits);
+            let miss_delta = prepared
+                .stats
+                .import_cache_misses
+                .saturating_sub(last_camera_import_cache_misses);
+            for _ in 0..hit_delta {
+                runtime.record_hardware_buffer_cache_hit();
+            }
+            for _ in 0..miss_delta {
+                runtime.record_hardware_buffer_cache_miss();
+            }
+            last_camera_import_cache_hits = prepared.stats.import_cache_hits;
+            last_camera_import_cache_misses = prepared.stats.import_cache_misses;
+            camera_projection_stats = prepared.stats.clone();
+        }
+        let stage_started = Instant::now();
+        gpu_timestamp_tracker.write_stage_start(
+            vk_device,
+            cmd,
+            frame_slot,
+            GpuTimestampStage::GuideGraph,
+        );
+        let guide_blur_stats = if let Some(prepared) = prepared_camera_projection.as_ref() {
+            match guide_blur_graph_renderer.record_frame(
+                vk_device,
+                cmd,
+                prepared,
+                projection_metadata,
+            ) {
+                Ok(stats) => {
+                    if let Some(runtime) = camera_runtime {
+                        if stats.rendered {
+                            runtime.record_guide_graph_render();
+                        }
+                        if stats.cache_hit {
+                            runtime.record_guide_graph_cache_hit();
+                        }
+                    }
+                    stats
+                }
+                Err(error) => {
+                    if frame_count == 0 || frame_count % 120 == 0 {
+                        crate::marker(
+                            "guide-blur-graph",
+                            format!(
+                                "status=error reason={} guideGraphReady=false guideGraphPath=low-resolution-two-phase-5tap-blur finalExternalHwbSamples=2 guideTextureSamples=0",
+                                crate::sanitize(&error)
+                            ),
+                        );
+                    }
+                    GuideBlurGraphFrameStats::unavailable()
+                }
+            }
+        } else {
+            GuideBlurGraphFrameStats::unavailable()
+        };
+        gpu_timestamp_tracker.write_stage_end(
+            vk_device,
+            cmd,
+            frame_slot,
+            GpuTimestampStage::GuideGraph,
+        );
+        frame_timings.guide_graph_ms = elapsed_ms(stage_started);
+        let stage_started = Instant::now();
+        let (live_hand_frame, live_hand_stats) = live_hand_compact.locate_compact_frame(
+            reference_space,
+            frame_state.predicted_display_time,
+            replay.runtime_joint_count as usize,
+            replay.tip_length_count as usize,
+        );
+        frame_timings.live_hand_ms = elapsed_ms(stage_started);
+        let selected_live_hand_frame = compact_hand_input_source_mode
+            .selects_live_frame()
+            .then(|| live_hand_frame.as_ref())
+            .flatten();
+        let stage_started = Instant::now();
+        gpu_timestamp_tracker.write_stage_start(
+            vk_device,
+            cmd,
+            frame_slot,
+            GpuTimestampStage::HandSdf,
+        );
+        let gpu_sdf_stats = if let Some(renderer) = gpu_sdf_field_renderer.as_mut() {
+            match renderer.record_compute_frame(
+                vk_device,
+                cmd,
+                replay,
+                frame_count,
+                sdf_visual_enabled,
+                sdf_update_period_frames,
+                selected_live_hand_frame,
+                compact_hand_input_source_mode.allows_recorded_fallback(),
+            ) {
+                Ok(stats) => {
+                    if stats.field_update_dispatched {
+                        if let Some(runtime) = camera_runtime {
+                            runtime.record_sdf_field_update();
+                        }
+                    }
+                    stats
+                }
+                Err(error) => {
+                    if frame_count == 0 || frame_count % 120 == 0 {
+                        crate::marker(
+                            "gpu-sdf-field",
+                            format!(
+                                "status=error reason={} dynamicSdfReady=false sdfVisualEffectVisible=false sdfComputePath=native-vulkan-compute-recorded-skinned-mesh-sdf-field legacySdfComputePath=native-vulkan-compute-recorded-validation-mesh-sdf-field cpuSdfPerFrame=false meshToSdfKernel=false targetSpaceMeshToSdfKernelAvailable=true fullSkinnedMeshSdfReady=false compactJointSkinningKernel=false jointMatrixSkinningKernel=false jointMatrixUploadPerFrame=false compactJointPoseUploadPerFrame=false sourceMeshToSdfKernel=false",
+                                crate::sanitize(&error)
+                            ),
+                        );
+                    }
+                    GpuSdfFieldFrameStats::unavailable(replay, frame_count)
+                }
+            }
+        } else {
+            GpuSdfFieldFrameStats::unavailable(replay, frame_count)
+        };
+        gpu_timestamp_tracker.write_stage_end(
+            vk_device,
+            cmd,
+            frame_slot,
+            GpuTimestampStage::HandSdf,
+        );
+        frame_timings.hand_sdf_prepare_ms = elapsed_ms(stage_started);
+        let stage_started = Instant::now();
+        gpu_timestamp_tracker.write_stage_start(
+            vk_device,
+            cmd,
+            frame_slot,
+            GpuTimestampStage::HandMeshVisual,
+        );
+        let hand_mesh_visual_stats = if let Some(renderer) = gpu_hand_mesh_visual_renderer.as_mut()
+        {
+            match renderer.record_frame(
+                replay,
+                frame_count,
+                gpu_sdf_stats.skinning_ready,
+                selected_live_hand_frame,
+                compact_hand_input_source_mode.allows_recorded_fallback(),
+                hand_mesh_visual_diagnostic_settings,
+            ) {
+                Ok(stats) => stats,
+                Err(error) => {
+                    if frame_count == 0 || frame_count % 120 == 0 {
+                        crate::marker(
+                                "hand-mesh-visual",
+                                format!(
+                                    "status=error reason={} animatedHandMeshVisualReady=false animatedHandMeshVisualVisible=false",
+                                    crate::sanitize(&error)
+                                ),
+                            );
+                    }
+                    GpuHandMeshVisualFrameStats::unavailable(
+                        replay,
+                        frame_count,
+                        hand_mesh_visual_diagnostic_settings,
+                    )
+                }
+            }
+        } else {
+            GpuHandMeshVisualFrameStats::unavailable(
+                replay,
+                frame_count,
+                hand_mesh_visual_diagnostic_settings,
+            )
+        };
+        gpu_timestamp_tracker.write_stage_end(
+            vk_device,
+            cmd,
+            frame_slot,
+            GpuTimestampStage::HandMeshVisual,
+        );
+        frame_timings.hand_mesh_visual_ms = elapsed_ms(stage_started);
+        let private_extension_stats = private_extension_slot_runtime.record_noop_frame(
+            frame_count,
+            guide_blur_stats.ready,
+            gpu_sdf_stats.ready,
+        );
+        if let Some(runtime) = camera_runtime {
+            runtime.record_private_layer_invocation();
+        }
+        let stage_started = Instant::now();
+        gpu_timestamp_tracker.write_stage_start(
+            vk_device,
+            cmd,
+            frame_slot,
+            GpuTimestampStage::ProjectionComposite,
+        );
+        let replay_visual_stats = record_projection_diagnostic(
+            vk_device,
+            cmd,
+            swapchain,
+            image_index as usize,
+            frame_count,
+            replay,
+            prepared_camera_projection.as_ref(),
+            guide_blur_graph_renderer,
+            &guide_blur_stats,
+            gpu_hand_mesh_visual_renderer.as_deref(),
+            &hand_mesh_visual_stats,
+            gpu_sdf_field_renderer.as_deref(),
+            &gpu_sdf_stats,
+            projection_metadata,
+        );
+        gpu_timestamp_tracker.write_stage_end(
+            vk_device,
+            cmd,
+            frame_slot,
+            GpuTimestampStage::ProjectionComposite,
+        );
+        frame_timings.projection_composite_ms = elapsed_ms(stage_started);
+        vk_device
+            .end_command_buffer(cmd)
+            .map_err(|error| format!("end Vulkan command buffer: {error}"))?;
+        let record_ms = record_started.elapsed().as_secs_f64() * 1000.0;
+        frame_timings.command_record_ms = record_ms;
+
+        let stage_started = Instant::now();
+        swapchain
+            .handle
+            .wait_image(xr::Duration::INFINITE)
+            .map_err(|error| format!("wait OpenXR swapchain image: {error}"))?;
+        frame_timings.swapchain_wait_ms = elapsed_ms(stage_started);
+        let submit_started = Instant::now();
+        vk_device
+            .queue_submit(
+                queue,
+                &[vk::SubmitInfo::default().command_buffers(&[cmd])],
+                fences[frame_slot],
+            )
+            .map_err(|error| format!("submit Vulkan queue: {error}"))?;
+        let submit_ms = submit_started.elapsed().as_secs_f64() * 1000.0;
+        frame_timings.queue_submit_ms = submit_ms;
+        swapchain
+            .handle
+            .release_image()
+            .map_err(|error| format!("release OpenXR swapchain image: {error}"))?;
+
+        let rect = xr::Rect2Di {
+            offset: xr::Offset2Di { x: 0, y: 0 },
+            extent: xr::Extent2Di {
+                width: swapchain.extent.width as _,
+                height: swapchain.extent.height as _,
+            },
+        };
+        let projection_views = [
+            xr::CompositionLayerProjectionView::new()
+                .pose(views[0].pose)
+                .fov(views[0].fov)
+                .sub_image(
+                    xr::SwapchainSubImage::new()
+                        .swapchain(&swapchain.handle)
+                        .image_array_index(0)
+                        .image_rect(rect),
+                ),
+            xr::CompositionLayerProjectionView::new()
+                .pose(views[1].pose)
+                .fov(views[1].fov)
+                .sub_image(
+                    xr::SwapchainSubImage::new()
+                        .swapchain(&swapchain.handle)
+                        .image_array_index(1)
+                        .image_rect(rect),
+                ),
+        ];
+        let projection_layer = xr::CompositionLayerProjection::new()
+            .layer_flags(xr::CompositionLayerFlags::EMPTY)
+            .space(reference_space)
+            .views(&projection_views);
+        let layers: [&xr::CompositionLayerBase<xr::Vulkan>; 1] = [&projection_layer];
+        let stage_started = Instant::now();
+        frame_stream
+            .end(
+                frame_state.predicted_display_time,
+                xr::EnvironmentBlendMode::OPAQUE,
+                &layers,
+            )
+            .map_err(|error| format!("end OpenXR frame: {error}"))?;
+        frame_timings.openxr_end_frame_ms = elapsed_ms(stage_started);
+
+        frame_count = frame_count.saturating_add(1);
+        pacing_window_frames = pacing_window_frames.saturating_add(1);
+        if let Some(runtime) = camera_runtime {
+            runtime.record_xr_frame_submitted();
+        }
+        if frame_count == 1 || frame_count % 120 == 0 {
+            let window_secs = pacing_window_start.elapsed().as_secs_f64().max(0.001);
+            let observed_openxr_fps = pacing_window_frames as f64 / window_secs;
+            write_projection_scorecard(
+                camera_runtime,
+                frame_count,
+                observed_openxr_fps,
+                record_ms,
+                submit_ms,
+                frame_timings,
+                gpu_stage_timings,
+                swapchain.extent,
+                replay,
+                replay_visual_stats,
+                gpu_mesh_stats,
+                &hand_mesh_visual_stats,
+                &gpu_sdf_stats,
+                &guide_blur_stats,
+                private_extension_stats,
+                &live_hand_stats,
+                compact_hand_input_source_mode,
+                replay_visual_proof_enabled,
+                &camera_projection_stats,
+                projection_metadata,
+            );
+            pacing_window_start = Instant::now();
+            pacing_window_frames = 0;
+        }
+        frame_slot = (frame_slot + 1) % PIPELINE_DEPTH as usize;
+    }
+
+    if let Some(swapchain) = swapchain.take() {
+        swapchain.destroy(vk_device);
+    }
+    Ok(())
+}
+
+fn create_projection_reference_space(
+    session: &xr::Session<xr::Vulkan>,
+) -> Result<xr::Space, String> {
+    match session.create_reference_space(xr::ReferenceSpaceType::LOCAL, xr::Posef::IDENTITY) {
+        Ok(space) => Ok(space),
+        Err(local_error) => session
+            .create_reference_space(xr::ReferenceSpaceType::STAGE, xr::Posef::IDENTITY)
+            .map_err(|stage_error| {
+                format!(
+                    "create OpenXR reference space: LOCAL failed with {local_error}; STAGE failed with {stage_error}"
+                )
+            }),
+    }
+}
+
+fn choose_swapchain_format(session: &xr::Session<xr::Vulkan>) -> Result<vk::Format, String> {
+    let supported = session
+        .enumerate_swapchain_formats()
+        .map_err(|error| format!("enumerate OpenXR swapchain formats: {error}"))?;
+    let candidates = [
+        vk::Format::R8G8B8A8_SRGB,
+        vk::Format::B8G8R8A8_SRGB,
+        vk::Format::R8G8B8A8_UNORM,
+        vk::Format::B8G8R8A8_UNORM,
+        vk::Format::A2B10G10R10_UNORM_PACK32,
+    ];
+    for candidate in candidates {
+        if supported.contains(&(candidate.as_raw() as u32)) {
+            return Ok(candidate);
+        }
+    }
+    supported
+        .first()
+        .map(|format| vk::Format::from_raw(*format as i32))
+        .ok_or_else(|| "OpenXR session returned no swapchain formats".to_string())
+}
+
+unsafe fn create_projection_render_pass(
+    device: &ash::Device,
+    color_format: vk::Format,
+) -> Result<vk::RenderPass, String> {
+    let color_attachment = vk::AttachmentDescription {
+        format: color_format,
+        samples: vk::SampleCountFlags::TYPE_1,
+        load_op: vk::AttachmentLoadOp::CLEAR,
+        store_op: vk::AttachmentStoreOp::STORE,
+        initial_layout: vk::ImageLayout::UNDEFINED,
+        final_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        ..Default::default()
+    };
+    let color_refs = [vk::AttachmentReference {
+        attachment: 0,
+        layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+    }];
+    let subpasses = [vk::SubpassDescription::default()
+        .color_attachments(&color_refs)
+        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)];
+    let dependencies = [vk::SubpassDependency {
+        src_subpass: vk::SUBPASS_EXTERNAL,
+        dst_subpass: 0,
+        src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+        dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+        dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+        ..Default::default()
+    }];
+    device
+        .create_render_pass(
+            &vk::RenderPassCreateInfo::default()
+                .attachments(&[color_attachment])
+                .subpasses(&subpasses)
+                .dependencies(&dependencies),
+            None,
+        )
+        .map_err(|error| format!("create Vulkan render pass: {error}"))
+}
+
+unsafe fn ensure_projection_swapchain<'a>(
+    xr_instance: &xr::Instance,
+    system: xr::SystemId,
+    device: &ash::Device,
+    session: &xr::Session<xr::Vulkan>,
+    render_pass: vk::RenderPass,
+    color_format: vk::Format,
+    swapchain: &'a mut Option<ProjectionSwapchain>,
+) -> Result<&'a mut ProjectionSwapchain, String> {
+    if swapchain.is_none() {
+        let views = xr_instance
+            .enumerate_view_configuration_views(system, VIEW_TYPE)
+            .map_err(|error| format!("enumerate OpenXR view configuration: {error}"))?;
+        if views.len() != VIEW_COUNT_USIZE {
+            return Err(format!(
+                "expected {VIEW_COUNT} OpenXR views, got {}",
+                views.len()
+            ));
+        }
+        if views[0].recommended_image_rect_width != views[1].recommended_image_rect_width
+            || views[0].recommended_image_rect_height != views[1].recommended_image_rect_height
+        {
+            return Err("native diagnostic swapchain expects matching eye dimensions".to_string());
+        }
+        let extent = vk::Extent2D {
+            width: views[0].recommended_image_rect_width,
+            height: views[0].recommended_image_rect_height,
+        };
+        let handle = session
+            .create_swapchain(&xr::SwapchainCreateInfo {
+                create_flags: xr::SwapchainCreateFlags::EMPTY,
+                usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT
+                    | xr::SwapchainUsageFlags::SAMPLED,
+                format: color_format.as_raw() as u32,
+                sample_count: 1,
+                width: extent.width,
+                height: extent.height,
+                face_count: 1,
+                array_size: VIEW_COUNT,
+                mip_count: 1,
+            })
+            .map_err(|error| format!("create OpenXR swapchain: {error}"))?;
+        let color_images = handle
+            .enumerate_images()
+            .map_err(|error| format!("enumerate OpenXR swapchain images: {error}"))?;
+        let mut buffers = Vec::with_capacity(color_images.len());
+        for color_image in color_images {
+            buffers.push(create_projection_swapchain_buffer(
+                device,
+                render_pass,
+                color_format,
+                vk::Image::from_raw(color_image),
+                extent,
+            )?);
+        }
+        crate::marker(
+            "openxr-swapchain",
+            format!(
+                "status=created width={} height={} views={} images={} colorFormat={:?} renderPath=per-eye-array-layer-clear openxrSubmitReady=pending",
+                extent.width,
+                extent.height,
+                VIEW_COUNT,
+                buffers.len(),
+                color_format
+            ),
+        );
+        *swapchain = Some(ProjectionSwapchain {
+            handle,
+            buffers,
+            extent,
+            render_pass,
+        });
+    }
+
+    swapchain
+        .as_mut()
+        .ok_or_else(|| "projection swapchain was not initialized".to_string())
+}
+
+unsafe fn create_projection_swapchain_buffer(
+    device: &ash::Device,
+    render_pass: vk::RenderPass,
+    color_format: vk::Format,
+    image: vk::Image,
+    extent: vk::Extent2D,
+) -> Result<ProjectionSwapchainBuffer, String> {
+    let mut eyes = Vec::with_capacity(VIEW_COUNT_USIZE);
+    for eye_index in 0..VIEW_COUNT {
+        let view = device
+            .create_image_view(
+                &vk::ImageViewCreateInfo::default()
+                    .image(image)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(color_format)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: eye_index,
+                        layer_count: 1,
+                    }),
+                None,
+            )
+            .map_err(|error| format!("create Vulkan swapchain image view: {error}"))?;
+        let framebuffer = device
+            .create_framebuffer(
+                &vk::FramebufferCreateInfo::default()
+                    .render_pass(render_pass)
+                    .attachments(&[view])
+                    .width(extent.width)
+                    .height(extent.height)
+                    .layers(1),
+                None,
+            )
+            .map_err(|error| format!("create Vulkan framebuffer: {error}"))?;
+        eyes.push(ProjectionEyeTarget { view, framebuffer });
+    }
+    Ok(ProjectionSwapchainBuffer { eyes })
+}
+
+unsafe fn record_projection_diagnostic(
+    device: &ash::Device,
+    cmd: vk::CommandBuffer,
+    swapchain: &ProjectionSwapchain,
+    image_index: usize,
+    frame_count: u64,
+    replay: &RecordedHandReplaySummary,
+    prepared_camera_projection: Option<&PreparedCameraProjection>,
+    guide_blur_graph_renderer: &GuideBlurGraphRenderer,
+    guide_blur_stats: &GuideBlurGraphFrameStats,
+    gpu_hand_mesh_visual_renderer: Option<&GpuHandMeshVisualRenderer>,
+    hand_mesh_visual_stats: &GpuHandMeshVisualFrameStats,
+    gpu_sdf_field_renderer: Option<&GpuSdfFieldRenderer>,
+    gpu_sdf_stats: &GpuSdfFieldFrameStats,
+    projection_metadata: &CameraProjectionMetadata,
+) -> ReplayVisualStats {
+    let buffer = &swapchain.buffers[image_index];
+    let mut visual_stats = ReplayVisualStats::default();
+    for (eye_index, eye) in buffer.eyes.iter().enumerate() {
+        let target_rect = projection_metadata.rect_for_eye(eye_index);
+        let background = if eye_index == 0 {
+            [0.012, 0.030, 0.038, 1.0]
+        } else {
+            [0.034, 0.016, 0.050, 1.0]
+        };
+        let clear_values = [vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: background,
+            },
+        }];
+        device.cmd_begin_render_pass(
+            cmd,
+            &vk::RenderPassBeginInfo::default()
+                .render_pass(swapchain.render_pass)
+                .framebuffer(eye.framebuffer)
+                .render_area(vk::Rect2D {
+                    offset: vk::Offset2D::default(),
+                    extent: swapchain.extent,
+                })
+                .clear_values(&clear_values),
+            vk::SubpassContents::INLINE,
+        );
+        if guide_blur_stats.ready {
+            guide_blur_graph_renderer.record_projection_eye(
+                device,
+                cmd,
+                swapchain.extent,
+                eye_index,
+                target_rect,
+            );
+        } else if let Some(prepared) = prepared_camera_projection {
+            record_camera_projection_eye(
+                device,
+                cmd,
+                swapchain.extent,
+                eye_index,
+                prepared,
+                projection_metadata,
+            );
+        }
+        if let Some(renderer) = gpu_hand_mesh_visual_renderer {
+            if hand_mesh_visual_stats.ready && hand_mesh_visual_stats.visible {
+                renderer.record_overlay_eye(
+                    device,
+                    cmd,
+                    swapchain.extent,
+                    target_rect,
+                    hand_mesh_visual_stats,
+                );
+            }
+        }
+        if let Some(renderer) = gpu_sdf_field_renderer {
+            if gpu_sdf_stats.ready && gpu_sdf_stats.overlay_visible {
+                renderer.record_overlay_eye(device, cmd, swapchain.extent, target_rect);
+            }
+        }
+        let eye_visual_stats = record_recorded_hand_overlay(
+            device,
+            cmd,
+            swapchain.extent,
+            target_rect,
+            frame_count,
+            replay,
+            hand_mesh_visual_stats.diagnostic_settings,
+        );
+        if eye_index == 0 {
+            visual_stats = eye_visual_stats;
+        }
+        device.cmd_end_render_pass(cmd);
+    }
+    visual_stats
+}
+
+unsafe fn record_recorded_hand_overlay(
+    device: &ash::Device,
+    cmd: vk::CommandBuffer,
+    extent: vk::Extent2D,
+    target_rect: TargetRect,
+    frame_count: u64,
+    replay: &RecordedHandReplaySummary,
+    diagnostic_settings: HandMeshVisualDiagnosticSettings,
+) -> ReplayVisualStats {
+    let frame = replay.frame_for_count(frame_count);
+    record_recorded_hand_bounds(device, cmd, extent, target_rect);
+    ReplayVisualStats {
+        frame_index: frame.frame_index,
+        timestamp_ns: frame.timestamp_ns,
+        visual_point_count: frame.normalized_points.len() as u64,
+        local_evidence_rect: EvidenceUvRect::from_points(
+            &frame.normalized_points,
+            diagnostic_settings,
+        ),
+    }
+}
+
+unsafe fn record_recorded_hand_bounds(
+    device: &ash::Device,
+    cmd: vk::CommandBuffer,
+    extent: vk::Extent2D,
+    target_rect: TargetRect,
+) {
+    clear_rect_in_target(
+        device,
+        cmd,
+        extent,
+        target_rect,
+        [0.0, 0.80, 1.0, 1.0],
+        0.120,
+        0.120,
+        0.760,
+        0.018,
+    );
+    clear_rect_in_target(
+        device,
+        cmd,
+        extent,
+        target_rect,
+        [1.0, 0.72, 0.05, 1.0],
+        0.120,
+        0.862,
+        0.760,
+        0.018,
+    );
+    clear_rect_in_target(
+        device,
+        cmd,
+        extent,
+        target_rect,
+        [0.0, 1.0, 0.82, 1.0],
+        0.120,
+        0.120,
+        0.018,
+        0.760,
+    );
+    clear_rect_in_target(
+        device,
+        cmd,
+        extent,
+        target_rect,
+        [0.0, 1.0, 0.82, 1.0],
+        0.862,
+        0.120,
+        0.018,
+        0.760,
+    );
+}
+
+unsafe fn clear_rect(
+    device: &ash::Device,
+    cmd: vk::CommandBuffer,
+    extent: vk::Extent2D,
+    color: [f32; 4],
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+) {
+    let attachment = vk::ClearAttachment {
+        aspect_mask: vk::ImageAspectFlags::COLOR,
+        color_attachment: 0,
+        clear_value: vk::ClearValue {
+            color: vk::ClearColorValue { float32: color },
+        },
+    };
+    let rect = vk::ClearRect {
+        rect: vk::Rect2D {
+            offset: vk::Offset2D {
+                x: (extent.width as f32 * x).round() as i32,
+                y: (extent.height as f32 * y).round() as i32,
+            },
+            extent: vk::Extent2D {
+                width: (extent.width as f32 * width).round().max(1.0) as u32,
+                height: (extent.height as f32 * height).round().max(1.0) as u32,
+            },
+        },
+        base_array_layer: 0,
+        layer_count: 1,
+    };
+    device.cmd_clear_attachments(cmd, &[attachment], &[rect]);
+}
+
+unsafe fn clear_rect_in_target(
+    device: &ash::Device,
+    cmd: vk::CommandBuffer,
+    extent: vk::Extent2D,
+    target_rect: TargetRect,
+    color: [f32; 4],
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+) {
+    clear_rect(
+        device,
+        cmd,
+        extent,
+        color,
+        target_rect.x + x * target_rect.width,
+        target_rect.y + y * target_rect.height,
+        width * target_rect.width,
+        height * target_rect.height,
+    );
+}
+
+fn write_projection_scorecard(
+    camera_runtime: Option<&NativeCameraRuntime>,
+    frame_count: u64,
+    observed_openxr_fps: f64,
+    record_ms: f64,
+    submit_ms: f64,
+    frame_timings: FrameCpuTimings,
+    gpu_stage_timings: GpuStageTimings,
+    extent: vk::Extent2D,
+    replay: &RecordedHandReplaySummary,
+    replay_visual_stats: ReplayVisualStats,
+    gpu_mesh_stats: &GpuMeshReplayStats,
+    hand_mesh_visual_stats: &GpuHandMeshVisualFrameStats,
+    gpu_sdf_stats: &GpuSdfFieldFrameStats,
+    guide_blur_stats: &GuideBlurGraphFrameStats,
+    private_extension_stats: PrivateExtensionSlotFrameStats,
+    live_hand_stats: &LiveHandCompactStats,
+    compact_hand_input_source_mode: CompactHandInputSourceMode,
+    replay_visual_proof_enabled: bool,
+    camera_projection_stats: &CameraProjectionFrameStats,
+    projection_metadata: &CameraProjectionMetadata,
+) {
+    let (
+        camera_frames_acquired,
+        hardware_buffer_imports,
+        hardware_buffer_cache_hits,
+        hardware_buffer_cache_misses,
+        guide_graph_renders,
+        guide_graph_cache_hits,
+        sdf_field_updates,
+        private_layer_invocations,
+        xr_frames_submitted,
+        stale_frames,
+        release_retire_count,
+    ) = if let Some(runtime) = camera_runtime {
+        let counters = runtime.counter_snapshot();
+        (
+            counters.camera_frames_acquired,
+            counters.hardware_buffer_imports,
+            counters.hardware_buffer_cache_hits,
+            counters.hardware_buffer_cache_misses,
+            counters.guide_graph_renders,
+            counters.guide_graph_cache_hits,
+            counters.sdf_field_updates,
+            counters.private_layer_invocations,
+            counters.xr_frames_submitted,
+            counters.stale_frames,
+            counters.release_retire_count,
+        )
+    } else {
+        (0, 0, 0, 0, 0, 0, 0, 0, frame_count, 0, 0)
+    };
+    let camera_projection_ready = camera_projection_stats.rendered || guide_blur_stats.ready;
+    let direct_hwb_projection_diagnostic =
+        camera_projection_stats.rendered && !guide_blur_stats.ready;
+    let camera_projection_path = if guide_blur_stats.ready {
+        "metadata-target-guide-texture-final"
+    } else {
+        "metadata-target-direct-hwb-fallback"
+    };
+    let hand_mesh_visual_evidence_rects =
+        replay_visual_stats.hand_mesh_screen_rect_marker_fields(projection_metadata);
+    let sdf_visual_evidence_rects =
+        replay_visual_stats.sdf_screen_rect_marker_fields(projection_metadata);
+    crate::marker(
+        "timing-scorecard",
+        format!(
+            "frame={} camera_frames_acquired={} hardware_buffer_imports={} hardware_buffer_cache_hits={} hardware_buffer_cache_misses={} guide_graph_renders={} guide_graph_cache_hits={} sdf_field_updates={} private_layer_invocations={} xr_frames_submitted={} stale_frames={} releaseRetireCount={} observedOpenXrFps={:.1} recordCpuMs={:.3} submitCpuMs={:.3} {} {} projectionExtent={}x{} openxrSubmitReady=true vulkanExternalImportReady={} cameraProjectionReady={} directHwbProjectionDiagnostic={} cameraProjectionPath={} metadataDrivenTargetFootprint=true {} plannedFinalExternalHwbSamples=0 plannedGuideTextureSamples=1 actualFinalExternalHwbSamples={} actualGuideTextureSamples={} leftCameraId={} rightCameraId={} leftSourceFrame={} rightSourceFrame={} leftHardwareBufferId={} rightHardwareBufferId={} leftImportSequence={} rightImportSequence={} stereoPairDeltaNs={} {} recordedHandReplayVisible=true recordedHandReplayTarget=metadata-target-screen-uv {} {} replayVisualFrame={} replayTimestampNs={} replayVisualPointCount={} compactJointOverlayVisible=false {} {} sdfTarget=metadata-target-screen-uv {} {} {} {} visualAcceptance=target-area-orientation-pending-screenshot projectionReady=true",
+            frame_count,
+            camera_frames_acquired,
+            hardware_buffer_imports,
+            hardware_buffer_cache_hits,
+            hardware_buffer_cache_misses,
+            guide_graph_renders,
+            guide_graph_cache_hits,
+            sdf_field_updates,
+            private_layer_invocations,
+            xr_frames_submitted,
+            stale_frames,
+            release_retire_count,
+            observed_openxr_fps,
+            record_ms,
+            submit_ms,
+            frame_timings.marker_fields(),
+            gpu_stage_timings.marker_fields(),
+            extent.width,
+            extent.height,
+            camera_projection_stats.rendered,
+            camera_projection_ready,
+            direct_hwb_projection_diagnostic,
+            camera_projection_path,
+            projection_metadata.marker_fields(),
+            if guide_blur_stats.ready { 0 } else { 2 },
+            if guide_blur_stats.ready { 1 } else { 0 },
+            crate::sanitize(&camera_projection_stats.left_camera_id),
+            crate::sanitize(&camera_projection_stats.right_camera_id),
+            camera_projection_stats.left_source_frame,
+            camera_projection_stats.right_source_frame,
+            camera_projection_stats.left_hardware_buffer_id,
+            camera_projection_stats.right_hardware_buffer_id,
+            camera_projection_stats.left_import_sequence,
+            camera_projection_stats.right_import_sequence,
+            camera_projection_stats.pair_delta_ns,
+            guide_blur_stats.marker_fields(),
+            replay.marker_fields(),
+            live_hand_stats.marker_fields(),
+            replay_visual_stats.frame_index,
+            replay_visual_stats.timestamp_ns,
+            replay_visual_stats.visual_point_count,
+            format!(
+                "recordedReplayVisualProofEnabled={} compactHandInputSourceMode={} compactHandInputSelectsLiveFrame={} compactHandInputAllowsRecordedFallback={} recordedReplayVisualAcceptance={} {}",
+                replay_visual_proof_enabled,
+                compact_hand_input_source_mode.marker_value(),
+                compact_hand_input_source_mode.selects_live_frame(),
+                compact_hand_input_source_mode.allows_recorded_fallback(),
+                if replay_visual_proof_enabled {
+                    "pending-headset-screenshot"
+                } else {
+                    "not-requested"
+                },
+                hand_mesh_visual_stats.marker_fields()
+            ),
+            hand_mesh_visual_evidence_rects,
+            gpu_sdf_stats.marker_fields(),
+            sdf_visual_evidence_rects,
+            gpu_mesh_stats.marker_fields(),
+            private_extension_stats.marker_fields()
+        ),
+    );
+    crate::marker(
+        "gpu-sdf-field",
+        format!(
+            "status=frame frame={} observedOpenXrFps={:.1} recordCpuMs={:.3} submitCpuMs={:.3} handSdfPrepareCpuMs={:.3} handSdfGpuMs={:.3} sdfTarget=metadata-target-screen-uv recordedReplayVisualProofEnabled={} compactHandInputSourceMode={} compactHandInputSelectsLiveFrame={} compactHandInputAllowsRecordedFallback={} {} {}",
+            frame_count,
+            observed_openxr_fps,
+            record_ms,
+            submit_ms,
+            frame_timings.hand_sdf_prepare_ms,
+            gpu_stage_timings.stage_ms(GpuTimestampStage::HandSdf),
+            replay_visual_proof_enabled,
+            compact_hand_input_source_mode.marker_value(),
+            compact_hand_input_source_mode.selects_live_frame(),
+            compact_hand_input_source_mode.allows_recorded_fallback(),
+            gpu_sdf_stats.marker_fields(),
+            sdf_visual_evidence_rects
+        ),
+    );
+    crate::marker(
+        "guide-blur-graph",
+        format!(
+            "status=frame frame={} observedOpenXrFps={:.1} recordCpuMs={:.3} submitCpuMs={:.3} guideGraphCpuMs={:.3} guideGraphGpuMs={:.3} guideTarget=metadata-target-screen-uv {}",
+            frame_count,
+            observed_openxr_fps,
+            record_ms,
+            submit_ms,
+            frame_timings.guide_graph_ms,
+            gpu_stage_timings.stage_ms(GpuTimestampStage::GuideGraph),
+            guide_blur_stats.marker_fields()
+        ),
+    );
+    crate::marker(
+        "hand-mesh-visual",
+        format!(
+            "status=frame frame={} observedOpenXrFps={:.1} recordCpuMs={:.3} submitCpuMs={:.3} handMeshVisualCpuMs={:.3} handMeshVisualGpuMs={:.3} handTarget=metadata-target-screen-uv recordedReplayVisualProofEnabled={} compactHandInputSourceMode={} compactHandInputSelectsLiveFrame={} compactHandInputAllowsRecordedFallback={} {} {}",
+            frame_count,
+            observed_openxr_fps,
+            record_ms,
+            submit_ms,
+            frame_timings.hand_mesh_visual_ms,
+            gpu_stage_timings.stage_ms(GpuTimestampStage::HandMeshVisual),
+            replay_visual_proof_enabled,
+            compact_hand_input_source_mode.marker_value(),
+            compact_hand_input_source_mode.selects_live_frame(),
+            compact_hand_input_source_mode.allows_recorded_fallback(),
+            hand_mesh_visual_stats.marker_fields(),
+            hand_mesh_visual_evidence_rects
+        ),
+    );
+    crate::marker(
+        "gpu-timestamp-timing",
+        format!(
+            "status=frame frame={} observedOpenXrFps={:.1} {}",
+            frame_count,
+            observed_openxr_fps,
+            gpu_stage_timings.marker_fields()
+        ),
+    );
+    crate::marker(
+        "private-extension-slot",
+        format!(
+            "status=frame frame={} observedOpenXrFps={:.1} {}",
+            frame_count,
+            observed_openxr_fps,
+            private_extension_stats.marker_fields()
+        ),
+    );
+    crate::marker(
+        "gpu-mesh-checklist",
+        format!(
+            "status=frame frame={} gpuSkinnedVisual={} compactJointPoseUploadPerFrame=true jointMatrixUploadPerFrame=false liveMetaCompactPathReady={} liveMetaCompactFrameReady={} gpuNormalDepthComponentShading=true sdfTriangleBoundsReady={} sdfTileBinsReady={} sdfNarrowBandReady={} sdfUpdateCadenceFrames={} sdfFieldCacheHits={} sourceMeshBuffersResident={} derivedBuffersResident={}",
+            frame_count,
+            hand_mesh_visual_stats.ready,
+            live_hand_stats.tracker_ready,
+            live_hand_stats.frame_ready,
+            gpu_sdf_stats.triangle_bounds_ready,
+            gpu_sdf_stats.tile_bins_ready,
+            gpu_sdf_stats.narrow_band_ready,
+            gpu_sdf_stats.sdf_update_period_frames,
+            gpu_sdf_stats.field_cache_hits,
+            gpu_sdf_stats.source_mesh_buffers_resident,
+            gpu_sdf_stats.derived_buffers_resident,
+        ),
+    );
+}
+
+struct ProjectionSwapchain {
+    handle: xr::Swapchain<xr::Vulkan>,
+    buffers: Vec<ProjectionSwapchainBuffer>,
+    extent: vk::Extent2D,
+    render_pass: vk::RenderPass,
+}
+
+impl ProjectionSwapchain {
+    unsafe fn destroy(self, device: &ash::Device) {
+        for buffer in self.buffers {
+            for eye in buffer.eyes {
+                device.destroy_framebuffer(eye.framebuffer, None);
+                device.destroy_image_view(eye.view, None);
+            }
+        }
+    }
+}
+
+struct ProjectionSwapchainBuffer {
+    eyes: Vec<ProjectionEyeTarget>,
+}
+
+struct ProjectionEyeTarget {
+    view: vk::ImageView,
+    framebuffer: vk::Framebuffer,
+}
+
+#[derive(Clone, Copy)]
+struct ReplayVisualStats {
+    frame_index: u32,
+    timestamp_ns: u64,
+    visual_point_count: u64,
+    local_evidence_rect: EvidenceUvRect,
+}
+
+impl Default for ReplayVisualStats {
+    fn default() -> Self {
+        Self {
+            frame_index: 0,
+            timestamp_ns: 0,
+            visual_point_count: 0,
+            local_evidence_rect: EvidenceUvRect::default(),
+        }
+    }
+}
+
+impl ReplayVisualStats {
+    fn hand_mesh_screen_rect_marker_fields(
+        self,
+        projection_metadata: &CameraProjectionMetadata,
+    ) -> String {
+        self.screen_rect_marker_fields(
+            projection_metadata,
+            "leftHandMeshVisualScreenUvRect",
+            "rightHandMeshVisualScreenUvRect",
+        )
+    }
+
+    fn sdf_screen_rect_marker_fields(
+        self,
+        projection_metadata: &CameraProjectionMetadata,
+    ) -> String {
+        self.screen_rect_marker_fields(
+            projection_metadata,
+            "leftSdfVisualScreenUvRect",
+            "rightSdfVisualScreenUvRect",
+        )
+    }
+
+    fn screen_rect_marker_fields(
+        self,
+        projection_metadata: &CameraProjectionMetadata,
+        left_field: &str,
+        right_field: &str,
+    ) -> String {
+        let left = self
+            .local_evidence_rect
+            .to_screen_rect(projection_metadata.rect_for_eye(0));
+        let right = self
+            .local_evidence_rect
+            .to_screen_rect(projection_metadata.rect_for_eye(1));
+        format!(
+            "{left_field}={} {right_field}={}",
+            left.marker_value(),
+            right.marker_value()
+        )
+    }
+}
+
+#[derive(Clone, Copy)]
+struct EvidenceUvRect {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+impl EvidenceUvRect {
+    fn from_points(
+        points: &[[f32; 2]],
+        diagnostic_settings: HandMeshVisualDiagnosticSettings,
+    ) -> Self {
+        if points.is_empty() {
+            return Self::default();
+        }
+
+        let mut min_x = 1.0_f32;
+        let mut min_y = 1.0_f32;
+        let mut max_x = 0.0_f32;
+        let mut max_y = 0.0_f32;
+        let diagnostic_scale = if diagnostic_settings.enabled {
+            1.12
+        } else {
+            1.0
+        };
+        let diagnostic_offset = if diagnostic_settings.enabled {
+            diagnostic_settings.offset_uv
+        } else {
+            [0.0, 0.0]
+        };
+        for point in points {
+            let x =
+                (0.5 + (point[0] - 0.5) * diagnostic_scale + diagnostic_offset[0]).clamp(0.0, 1.0);
+            let y =
+                (0.5 + (point[1] - 0.5) * diagnostic_scale + diagnostic_offset[1]).clamp(0.0, 1.0);
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x);
+            max_y = max_y.max(y);
+        }
+
+        Self::from_bounds(min_x, min_y, max_x, max_y).padded(0.035)
+    }
+
+    fn from_bounds(min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> Self {
+        let x = min_x.min(max_x).clamp(0.0, 1.0);
+        let y = min_y.min(max_y).clamp(0.0, 1.0);
+        let width = (max_x.max(min_x) - x).max(0.001).min(1.0 - x);
+        let height = (max_y.max(min_y) - y).max(0.001).min(1.0 - y);
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    fn padded(self, padding: f32) -> Self {
+        let x = (self.x - padding).max(0.0);
+        let y = (self.y - padding).max(0.0);
+        let max_x = (self.x + self.width + padding).min(1.0);
+        let max_y = (self.y + self.height + padding).min(1.0);
+        Self::from_bounds(x, y, max_x, max_y)
+    }
+
+    fn to_screen_rect(self, target_rect: TargetRect) -> Self {
+        Self::from_bounds(
+            target_rect.x + self.x * target_rect.width,
+            target_rect.y + self.y * target_rect.height,
+            target_rect.x + (self.x + self.width) * target_rect.width,
+            target_rect.y + (self.y + self.height) * target_rect.height,
+        )
+    }
+
+    fn marker_value(self) -> String {
+        format!(
+            "{:.6},{:.6},{:.6},{:.6}",
+            self.x, self.y, self.width, self.height
+        )
+    }
+}
+
+impl Default for EvidenceUvRect {
+    fn default() -> Self {
+        Self {
+            x: 0.25,
+            y: 0.25,
+            width: 0.50,
+            height: 0.50,
+        }
+    }
+}
+
+fn write_xr_string<const N: usize>(destination: &mut [std::os::raw::c_char; N], value: &str) {
+    for (slot, byte) in destination.iter_mut().zip(value.bytes()) {
+        *slot = byte as _;
+    }
+}
+
+fn ensure_xr_success(result: xr::sys::Result, operation: &str) -> Result<(), String> {
+    if result.into_raw() < xr::sys::Result::SUCCESS.into_raw() {
+        return Err(format!("{operation} failed: {result:?}"));
+    }
+
+    Ok(())
+}

@@ -1,5 +1,7 @@
 [workspace]
 members = [
+    "apps/native-renderer-android/native",
+    "crates/rusty-quest-native-renderer",
     "crates/rusty-quest-projection-runtime-config",
     "crates/rusty-quest-profile",
     "crates/rusty-quest-remote-camera",

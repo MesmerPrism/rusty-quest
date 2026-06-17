@@ -18,9 +18,13 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 public final class LocalManifoldBrokerServer {
     public static final int PORT = 8765;
@@ -30,6 +34,8 @@ public final class LocalManifoldBrokerServer {
     private static final LocalManifoldBrokerServer INSTANCE = new LocalManifoldBrokerServer();
 
     private final Object lock = new Object();
+    private final Object streamLock = new Object();
+    private final List<BrokerSession> sessions = new ArrayList<>();
     private boolean started;
     private ServerSocket serverSocket;
     private volatile Context applicationContext;
@@ -98,6 +104,7 @@ public final class LocalManifoldBrokerServer {
     }
 
     private void handleClient(Socket client) {
+        BrokerSession session = null;
         try (Socket socket = client) {
             InputStream input = socket.getInputStream();
             OutputStream output = socket.getOutputStream();
@@ -112,6 +119,10 @@ public final class LocalManifoldBrokerServer {
                 return;
             }
             writeWebSocketAccept(output, key);
+            session = new BrokerSession(output);
+            synchronized (streamLock) {
+                sessions.add(session);
+            }
             while (!socket.isClosed()) {
                 Frame frame = readFrame(input);
                 if (frame == null || frame.opcode == 0x8) {
@@ -124,14 +135,20 @@ public final class LocalManifoldBrokerServer {
                 if (frame.opcode != 0x1) {
                     continue;
                 }
-                handleTextFrame(output, new String(frame.payload, StandardCharsets.UTF_8));
+                handleTextFrame(session, new String(frame.payload, StandardCharsets.UTF_8));
             }
         } catch (Exception ignored) {
             // Client disconnects and malformed probes are expected during readiness polling.
+        } finally {
+            if (session != null) {
+                synchronized (streamLock) {
+                    sessions.remove(session);
+                }
+            }
         }
     }
 
-    private void handleTextFrame(OutputStream output, String text) throws Exception {
+    private void handleTextFrame(BrokerSession session, String text) throws Exception {
         JSONObject message = new JSONObject(text);
         String type = message.optString("type", "");
         if ("hello".equals(type)) {
@@ -143,13 +160,55 @@ public final class LocalManifoldBrokerServer {
             reply.put("server_id", "rusty.quest.manifold_broker_android");
             reply.put("endpoint_path", EVENTS_PATH);
             reply.put("time_utc", Instant.now().toString());
-            writeText(output, reply);
+            writeText(session, reply);
             return;
         }
 
         if ("command".equals(type) || COMMAND_SCHEMA.equals(message.optString("schema", ""))) {
             JSONObject reply = new JSONObject();
             String command = message.optString("command_id", message.optString("command", "unknown"));
+            JSONObject params = message.optJSONObject("params");
+            if (params == null) {
+                params = new JSONObject();
+            }
+            if (isSubscribeCommand(command)) {
+                String stream = firstNonEmpty(
+                        params.optString("stream", ""),
+                        params.optString("stream_id", ""),
+                        params.optString("value", ""));
+                if (!stream.isEmpty()) {
+                    session.subscribe(stream);
+                }
+                reply.put("type", "command_ack");
+                reply.put("schema", "rusty.manifold.command.ack.v1");
+                reply.put("request_id", message.optString("request_id", ""));
+                reply.put("command", command);
+                reply.put("accepted", !stream.isEmpty());
+                reply.put("status", stream.isEmpty() ? "missing_stream" : "subscribed");
+                reply.put("authority", "rusty.manifold");
+                reply.put("stream", stream);
+                reply.put("time_utc", Instant.now().toString());
+                writeText(session, reply);
+                return;
+            }
+            if (isPublishStreamEventCommand(command)) {
+                JSONObject event = buildStreamEvent(message, params);
+                reply.put("type", "command_ack");
+                reply.put("schema", "rusty.manifold.command.ack.v1");
+                reply.put("request_id", message.optString("request_id", ""));
+                reply.put("command", command);
+                reply.put("accepted", true);
+                reply.put("status", "published");
+                reply.put("authority", "rusty.manifold");
+                reply.put("stream", event.optString("stream", ""));
+                reply.put("stream_event_delivered_count", 0);
+                reply.put("live_stream_events_synthesized", false);
+                reply.put("time_utc", Instant.now().toString());
+                writeText(session, reply);
+                int delivered = publishStreamEvent(event);
+                reply.put("stream_event_delivered_count", delivered);
+                return;
+            }
             JSONObject remoteCameraRuntime = RemoteCameraSessionRuntime.handleCommand(applicationContext, message);
             reply.put("type", "command_ack");
             reply.put("schema", "rusty.manifold.command.ack.v1");
@@ -168,7 +227,7 @@ public final class LocalManifoldBrokerServer {
                         remoteCameraRuntime.optBoolean("media_socket_runtime_started", false));
             }
             reply.put("time_utc", Instant.now().toString());
-            writeText(output, reply);
+            writeText(session, reply);
             return;
         }
 
@@ -176,7 +235,85 @@ public final class LocalManifoldBrokerServer {
         reply.put("type", "message_ack");
         reply.put("accepted", true);
         reply.put("authority", "rusty.manifold");
-        writeText(output, reply);
+        writeText(session, reply);
+    }
+
+    private static boolean isSubscribeCommand(String command) {
+        return "subscribe".equals(command)
+                || "stream.subscribe".equals(command)
+                || "manifold.stream.subscribe".equals(command);
+    }
+
+    private static boolean isPublishStreamEventCommand(String command) {
+        return "publish_stream_event".equals(command)
+                || "stream.publish".equals(command)
+                || "manifold.stream.publish".equals(command);
+    }
+
+    private static String firstNonEmpty(String first, String second, String third) {
+        if (first != null && !first.trim().isEmpty()) {
+            return first.trim();
+        }
+        if (second != null && !second.trim().isEmpty()) {
+            return second.trim();
+        }
+        if (third != null && !third.trim().isEmpty()) {
+            return third.trim();
+        }
+        return "";
+    }
+
+    private static JSONObject buildStreamEvent(JSONObject message, JSONObject params) throws Exception {
+        JSONObject payload = params.optJSONObject("payload");
+        if (payload == null) {
+            payload = new JSONObject();
+        }
+        String stream = firstNonEmpty(
+                params.optString("stream", ""),
+                params.optString("stream_id", ""),
+                firstNonEmpty(payload.optString("stream", ""), payload.optString("stream_id", ""), ""));
+        long sequenceId = params.has("sequence_id")
+                ? params.optLong("sequence_id", 0L)
+                : payload.optLong("sequence_id", 0L);
+        long brokerTimeUnixNs = System.currentTimeMillis() * 1_000_000L;
+        JSONObject event = new JSONObject();
+        event.put("type", "stream_event");
+        event.put("schema", "rusty.manifold.stream.event.v1");
+        event.put("stream", stream);
+        event.put("stream_id", stream);
+        event.put("sequence_id", sequenceId);
+        event.put("payload", payload);
+        event.put("source_request_id", message.optString("request_id", ""));
+        event.put("transport_time_unix_ns", brokerTimeUnixNs);
+        event.put("transport_receive_time_unix_ns", brokerTimeUnixNs);
+        event.put("time_utc", Instant.now().toString());
+        return event;
+    }
+
+    private int publishStreamEvent(JSONObject event) {
+        String stream = event.optString("stream", "");
+        if (stream.isEmpty()) {
+            return 0;
+        }
+        List<BrokerSession> snapshot;
+        synchronized (streamLock) {
+            snapshot = new ArrayList<>(sessions);
+        }
+        int delivered = 0;
+        for (BrokerSession session : snapshot) {
+            if (!session.isSubscribedTo(stream)) {
+                continue;
+            }
+            try {
+                writeText(session, event);
+                delivered += 1;
+            } catch (IOException ex) {
+                synchronized (streamLock) {
+                    sessions.remove(session);
+                }
+            }
+        }
+        return delivered;
     }
 
     private static Handshake readHandshake(InputStream input) throws IOException {
@@ -268,8 +405,10 @@ public final class LocalManifoldBrokerServer {
         return bytes;
     }
 
-    private static void writeText(OutputStream output, JSONObject object) throws IOException {
-        writeFrame(output, object.toString().getBytes(StandardCharsets.UTF_8), 0x1);
+    private static void writeText(BrokerSession session, JSONObject object) throws IOException {
+        synchronized (session) {
+            writeFrame(session.output, object.toString().getBytes(StandardCharsets.UTF_8), 0x1);
+        }
     }
 
     private static void writeFrame(OutputStream output, byte[] payload, int opcode) throws IOException {
@@ -310,6 +449,27 @@ public final class LocalManifoldBrokerServer {
         Frame(int opcode, byte[] payload) {
             this.opcode = opcode;
             this.payload = payload;
+        }
+    }
+
+    private static final class BrokerSession {
+        final OutputStream output;
+        final Set<String> subscriptions = new HashSet<>();
+
+        BrokerSession(OutputStream output) {
+            this.output = output;
+        }
+
+        void subscribe(String stream) {
+            synchronized (subscriptions) {
+                subscriptions.add(stream);
+            }
+        }
+
+        boolean isSubscribedTo(String stream) {
+            synchronized (subscriptions) {
+                return subscriptions.contains(stream);
+            }
         }
     }
 }

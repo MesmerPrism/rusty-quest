@@ -8,13 +8,167 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 
 The runtime profile validation path is dry-run only. It validates runtime profile
 fixtures and generates a deterministic property write plan without touching a
-headset or ADB server.
+headset or ADB server. The native renderer has two separate profile fixtures:
+`quest-native-renderer-replay-visual-proof.profile.json` is the no-real-hands
+recorded replay acceptance route, while
+`quest-native-renderer-live-hand-visual-diagnostic.profile.json` only stages the
+future live-hand retest with live input, high-contrast mesh diagnostics, SDF
+visuals, and explicit pending visual-acceptance markers.
 
 Remote camera session plans are also source-only validation:
 
 ```powershell
 cargo test -p rusty-quest-remote-camera
 ```
+
+Native Quest renderer plans are source-only validation:
+
+```powershell
+cargo test -p rusty-quest-native-renderer
+```
+
+The tests validate the public HWB blur/SDF renderer plan, a timing scorecard,
+and damaged examples that try to leak private extension implementation paths or
+return final projection to multiplied external HWB samples.
+
+The Quest-native Android renderer scaffold has static and APK build validation:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -RunSeconds 12
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
+```
+
+`Invoke-NativeRendererReplaySmoke.ps1` is the no-real-hands device wrapper for
+the recorded replay path. It installs the APK unless `-SkipInstall` is passed,
+best-effort grants camera/hand permissions, applies
+`quest-native-renderer-replay-visual-proof.profile.json` through
+`Apply-RuntimeProfile.ps1 -Execute`, launches the NativeActivity, captures
+logcat plus a screenshot, and then calls
+`Test-NativeRendererRuntimeEvidence.ps1` with screenshot content analysis
+enabled. That checker records whole-screenshot dimensions, sampled unique
+colors, luminance range, and per-target-rectangle stats derived from the
+runtime-emitted `leftTargetScreenUvRect` and `rightTargetScreenUvRect` marker
+fields. It also measures hand-mesh and SDF overlay evidence rectangles derived
+from `leftHandMeshVisualScreenUvRect`/`rightHandMeshVisualScreenUvRect` and
+`leftSdfVisualScreenUvRect`/`rightSdfVisualScreenUvRect`, so camera-target
+variation cannot be mistaken for mesh/SDF visual proof. Those overlay
+rectangles also record chroma and expected cyan/yellow/magenta-family pixel
+counts, so grayscale camera detail inside the same region is rejected as visual
+proof. The wrapper rejects flat screenshots, flat target regions, flat or
+colorless hand-mesh evidence regions, and flat or colorless SDF evidence
+regions unless `-AllowFlatScreenshot` is passed for a diagnostic run. The
+wrapper also writes target, hand-mesh, and SDF crop PNGs under
+`screenshot-crops/` beside `runtime-evidence-summary.json` so the runtime
+visual evidence can be inspected directly after a headset run.
+It also requires the performance-budget gate by default: stale frames must stay
+at or below the configured maximum, observed OpenXR FPS must stay above the
+configured minimum, and CPU/GPU stage timings must stay within explicit per
+stage thresholds. Use `-AllowPerformanceBudgetMiss` only for exploratory runs
+where collecting artifacts is more important than acceptance. GPU timestamp
+readiness is optional for exploratory runs and becomes required only when
+`-RequireGpuTimestampReady` is passed.
+For the later live-hand retest, the same wrapper should be run with
+`-EvidenceMode LiveVisualDiagnosticCaveat`; that applies
+`quest-native-renderer-live-hand-visual-diagnostic.profile.json` by default and
+switches the marker gate from replay proof to the live visual caveat while
+keeping screenshot overlay-color checks active.
+ADB and child PowerShell calls are captured with `ErrorActionPreference`
+temporarily set to `Continue`, so native stderr is recorded in the run summary
+with the real exit code instead of surfacing as a PowerShell
+`NativeCommandError`.
+
+The static test verifies the package route, Quest/OpenXR/camera manifest
+surface, Rust NativeActivity identity, public plan fixture consumption, camera
+ids `50` and `51`, NDK `AImageReader` hardware-buffer acquisition, native
+`AHardwareBuffer` description, Rust/JNI framework permission request, OpenXR
+loader staging, OpenXR/Vulkan prerequisite probe tokens, Vulkan external-HWB
+boundary tokens, NativeActivity input-queue draining for `InputAvailable`,
+required `RUSTY_QUEST_NATIVE_RENDERER` counters, the runtime-submit projection
+marker, the public recorded hand topology/shape fixture, the optional
+`RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR` local capture generator, the
+native Vulkan recorded mesh storage-buffer boundary, the resident
+GPU-skinned-mesh triangle visual path, browser-matched component-rank labels,
+the public low-resolution native guide blur graph, the native Vulkan compute
+SDF field over recorded-compatible compact-joint
+input, the live `XR_EXT_hand_tracking` compact input adapter, the resident
+source mesh buffers, the no per-frame joint-matrix upload boundary, GPU
+skinning pass, resident skinned-position buffer, opt-in SDF overlay scorecard
+markers, tile-bin shader compilation, triangle-bounds/tile-header/tile-index
+storage buffers, tile-local SDF shader reads, SDF update cadence/cache markers,
+the `native_renderer_options`
+property parser boundary for replay visual proof and compact hand source
+selection, host CPU per-stage timing markers for camera/import, guide graph,
+live-hand locate, SDF preparation, hand visual, projection composite, swapchain
+wait, queue submit, and OpenXR end-frame, the modular Vulkan timestamp-query
+owner and marker fields for camera projection, guide graph, hand SDF,
+hand-mesh visual, and projection composite GPU timings, the public no-op private
+extension ABI slot marker with no linked payload, the runtime artifact evidence
+checker plus accepted/damaged replay visual log fixtures, and absence of Makepad
+or legacy compatibility route tokens in the app source/build path. It also has
+a live-hand diagnostic caveat fixture that accepts live compact-input markers
+only when `liveHandMeshVisualAcceptance` and `liveSdfVisualAcceptance` remain
+`pending-repeat-headset-visual-proof`, and a damaged fixture rejects marker-only
+live acceptance without screenshot proof. It also rejects
+Java/C++ packaging tokens for this low-level route. The build command requires
+Android SDK, JDK, and NDK paths in the current process and writes a debug APK plus
+`rusty.quest.native_renderer_android.build_manifest.v1` under `target/`.
+
+Current caveat: this validates the Android NativeActivity scaffold and native
+HWB acquisition shape. The 2026-06-17 headset smokes visually validate the
+native diagnostic projection, direct-HWB metadata target, guide-texture final
+projection route, and no-real-hands recorded replay mesh/SDF overlay. The
+current recorded replay slice removes the per-frame CPU screen-space SDF
+diagnostic from the render loop and reports
+`cpuSdfPerFrame=false`; local builds can embed the real recorded Meta/OpenXR
+hand capture, stage its bind mesh into a native Vulkan storage buffer, and draw
+the real animated hand mesh from the resident GPU-skinned position buffer in
+the target projection area. The no-real-hands replay proof path is explicit:
+`debug.rustyquest.native_renderer.replay.visual_proof.enabled=true` selects
+the recorded replay by default, enables the high-contrast mesh diagnostic and
+the SDF visual, and reports `compactHandInputSourceMode=recorded-replay`.
+`debug.rustyquest.native_renderer.hand_mesh.input.source` can still force
+`auto`, `recorded-replay`, or `live-meta-openxr-hand-tracking` for isolation
+tests. Full replay visual APK builds should use `-RequireRecordedHandCapture`
+with `-RecordedHandCaptureDir` so a metadata-only public fixture cannot be
+mistaken for a mesh/SDF visual test. The runtime property bundle is captured in
+`fixtures/runtime-profiles/quest-native-renderer-replay-visual-proof.profile.json`,
+with a dry-run plan emitted by `tools/check_all.ps1`. The live-hand diagnostic
+bundle is captured in
+`fixtures/runtime-profiles/quest-native-renderer-live-hand-visual-diagnostic.profile.json`;
+it forces `compactHandInputSourceMode=live-meta-openxr-hand-tracking` and
+`allowsRecordedFallback=false`, but it remains pending until screenshot evidence
+shows visible mesh/SDF color inside the target projection. Host-side unit tests
+cover the parser defaults, replay-proof source selection, explicit live-source
+override, SDF cadence clamp, and diagnostic offset/alpha clamps. The compact-joint GPU SDF visual is
+otherwise present but disabled by default behind
+`debug.rustyquest.native_renderer.sdf.visual.enabled`. It now uses recorded rig
+blend indices/weights plus compact joint frames, or live OpenXR hand tracking
+when available, to upload only runtime joint poses plus packed tip lengths per
+frame; GPU passes then skin the mesh and build or reuse the SDF field from
+resident buffers. The SDF update cadence is controlled by
+`debug.rustyquest.native_renderer.sdf.update_period_frames` and markers
+separate `sdfFieldUpdateDispatched` from `sdfFieldReused`. The 2026-06-17
+source/build validation exercised the real recorded capture parser with
+`RecordedHandFrameLimit=8` and built a real-capture APK; the later replay smoke
+ran a full recorded-capture APK and passed screenshot target, hand-mesh, SDF
+overlay-color, and performance-budget gates. Live hand tracking marker
+readiness is not live visual acceptance: during the 2026-06-17 live-hand
+check the user had real hands in view, but did not see a mesh or SDF
+representation in the headset. A later headset retest must confirm that the
+mesh and SDF representation are visible in-headset, preferably with
+`debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled` and the
+target-local offset/alpha diagnostic properties enabled. The guide graph has
+source/static validation plus headset replay evidence for 384x384 downsample,
+split horizontal/vertical 5-tap blur, guide cache markers, and final
+guide-texture projection. Color-correct camera projection output remains a
+separate pending validation gate. Direct Meta hand-mesh topology import,
+Matter/Lattice SDF parity, and live-hand headset visual SDF acceptance also
+remain separate pending validation gates. The
+GPU timestamp query scaffold is source-validated, but its numeric values remain
+pending runtime acceptance through `gpu-timestamp-timing` markers on a Quest
+replay or live run.
 
 The tests validate Quest-to-Quest and Quest-to-Android phone duplex fixtures and
 reject a damaged fixture that tries to carry high-rate camera payloads through
