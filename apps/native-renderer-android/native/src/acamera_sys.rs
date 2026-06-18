@@ -343,6 +343,11 @@ extern "C" {
     pub fn AImage_deleteAsync(image: *mut AImage, releaseFenceFd: c_int);
 }
 
+#[link(name = "dl")]
+extern "C" {
+    pub fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
+}
+
 #[link(name = "camera2ndk")]
 extern "C" {
     pub fn ACameraManager_create() -> *mut ACameraManager;

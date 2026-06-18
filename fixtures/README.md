@@ -14,7 +14,10 @@
   edge enhancement off; the low-noise record 30 profile applies the same public
   controls through Camera2 `TEMPLATE_RECORD`; the low-latency 60 profile
   requests 60 FPS AE with fast noise reduction; the 1280x960 profile tests
-  reader-size ranking with target-FPS and min-frame-duration markers; and the
+  reader-size ranking with target-FPS and min-frame-duration markers; the
+  direct-HWB route also exposes optional image-dataspace and Vulkan luma/range
+  diagnostic markers through
+  `debug.rustyquest.native_renderer.camera.luma_diagnostic.enabled`; and the
   hold-sync profile retains sampled `AImage` objects until the submitted Vulkan
   frame-slot fence retires. Hold-sync reader6 and reader8 variants raise
   `camera.reader_max_images` for queue-headroom A/B checks. The

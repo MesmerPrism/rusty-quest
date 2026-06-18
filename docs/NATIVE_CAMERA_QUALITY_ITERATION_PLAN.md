@@ -115,6 +115,15 @@ ranking reason, min-frame duration, target FPS, and feasibility marker.
 - Add an opt-in GPU luma/range diagnostic pass after direct-HWB sampling, with
   per-eye luma mean/range/high-frequency counters reported only in diagnostics.
 
+Implemented shape: acquired `AImage` frames dynamically query
+`AImage_getDataSpace` when the symbol exists and report `imageDataspace` plus
+status on HWB frame markers and left/right dataspace fields in the timing
+scorecard. The opt-in
+`debug.rustyquest.native_renderer.camera.luma_diagnostic.enabled` path records
+a native Vulkan compute pass over the resident direct-HWB image views, samples a
+64x64 grid per eye, and reports per-eye luma mean/min/max and high-frequency
+ratio from a frame-slot readback buffer. The baseline leaves this disabled.
+
 ### Slice 6: Async Sync-FD Producer/Consumer Path
 
 - Add a separate `camera.sync_mode=delete-async-release-fence` implementation

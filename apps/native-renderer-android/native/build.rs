@@ -8,6 +8,7 @@ use std::{
 fn main() {
     println!("cargo:rerun-if-changed=shaders/camera_projection.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/camera_projection.frag.glsl");
+    println!("cargo:rerun-if-changed=shaders/camera_luma_diagnostic.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/guide_blur_downsample.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/guide_blur_5tap.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/guide_projection.frag.glsl");
@@ -64,6 +65,12 @@ fn main() {
         "fragment",
         Path::new("shaders/camera_projection.frag.glsl"),
         &out_dir.join("camera_projection.frag.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "compute",
+        Path::new("shaders/camera_luma_diagnostic.comp.glsl"),
+        &out_dir.join("camera_luma_diagnostic.comp.spv"),
     );
     compile_shader(
         &glslc,

@@ -42,6 +42,7 @@ $gpuHandSkinningShaderPath = Join-Path $appRoot "native\shaders\gpu_hand_skinnin
 $gpuSdfFieldShaderPath = Join-Path $appRoot "native\shaders\gpu_sdf_field.comp.glsl"
 $gpuSdfTileBinsShaderPath = Join-Path $appRoot "native\shaders\gpu_sdf_tile_bins.comp.glsl"
 $gpuSdfOverlayShaderPath = Join-Path $appRoot "native\shaders\gpu_sdf_overlay.frag.glsl"
+$cameraLumaDiagnosticShaderPath = Join-Path $appRoot "native\shaders\camera_luma_diagnostic.comp.glsl"
 $xrVulkanPath = Join-Path $appRoot "native\src\xr_vulkan.rs"
 $buildPath = Join-Path $PSScriptRoot "Build-NativeRendererAndroid.ps1"
 $checkAllPath = Join-Path $PSScriptRoot "check_all.ps1"
@@ -72,7 +73,7 @@ $nativePassthroughHandsAndGraftsProfilePath = Join-Path $repoRoot "fixtures\runt
 $solidBlackHandsAndGraftsProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-solid-black-hands-and-grafts.profile.json"
 $solidBlackOpenXrHandsAnchorParticlesProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json"
 
-foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $nativeCameraMetadataPath, $nativeCameraProfilesPath, $nativeCameraReaderSelectionPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowNoiseRecord30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath)) {
+foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $nativeCameraMetadataPath, $nativeCameraProfilesPath, $nativeCameraReaderSelectionPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $cameraLumaDiagnosticShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowNoiseRecord30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath)) {
     if (-not (Test-Path $path)) {
         throw "Missing native renderer Android file: $path"
     }
@@ -112,6 +113,7 @@ $gpuHandSkinningShader = Get-Content -Raw -Path $gpuHandSkinningShaderPath
 $gpuSdfFieldShader = Get-Content -Raw -Path $gpuSdfFieldShaderPath
 $gpuSdfTileBinsShader = Get-Content -Raw -Path $gpuSdfTileBinsShaderPath
 $gpuSdfOverlayShader = Get-Content -Raw -Path $gpuSdfOverlayShaderPath
+$cameraLumaDiagnosticShader = Get-Content -Raw -Path $cameraLumaDiagnosticShaderPath
 $xrVulkan = Get-Content -Raw -Path $xrVulkanPath
 $buildScriptText = Get-Content -Raw -Path $buildPath
 $checkAllText = Get-Content -Raw -Path $checkAllPath
@@ -557,6 +559,7 @@ foreach ($token in @(
     'PROP_CAMERA_READER_MAX_IMAGES',
     'PROP_CAMERA_QUALITY_PROFILE',
     'PROP_CAMERA_SYNC_MODE',
+    'PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED',
     'PROP_SWAPCHAIN_COLOR_FORMAT_MODE',
     'PROP_CAMERA_DIRECT_BORDER_OPACITY',
     'debug\.rustyquest\.native_renderer\.camera\.output',
@@ -565,6 +568,7 @@ foreach ($token in @(
     'debug\.rustyquest\.native_renderer\.camera\.reader_max_images',
     'debug\.rustyquest\.native_renderer\.camera\.quality_profile',
     'debug\.rustyquest\.native_renderer\.camera\.sync_mode',
+    'debug\.rustyquest\.native_renderer\.camera\.luma_diagnostic\.enabled',
     'debug\.rustyquest\.native_renderer\.swapchain\.color_format',
     'debug\.rustyquest\.native_renderer\.camera\.direct_border\.opacity',
     'NativeCameraOutputMode',
@@ -579,6 +583,19 @@ foreach ($token in @(
     'formatFeaturesRaw=',
     'chromaFilter=',
     'camera-request-profile',
+    'camera_luma_diagnostic\.comp\.glsl',
+    'camera_luma_diagnostic\.comp\.spv',
+    'camera-luma-diagnostic',
+    'cameraLumaDiagnosticRequested=',
+    'cameraLumaDiagnosticReady=',
+    'cameraLumaDiagnosticPath=native-vulkan-compute-direct-hwb-luma-range',
+    'leftLumaMean=',
+    'rightLumaHighFrequencyRatio=',
+    'AImage_getDataSpace',
+    'imageDataspace=',
+    'imageDataspaceStatus=',
+    'leftImageDataspace=',
+    'rightImageDataspaceStatus=',
     'TEMPLATE_RECORD',
     'direct-low-noise-record-30',
     'template=',
@@ -621,8 +638,20 @@ foreach ($token in @(
     'guideProjectionEnabled=false',
     'quest-native-renderer-direct-hwb-camera-quality\.profile\.json'
 )) {
-    if ("$nativeRendererOptions`n$nativeCamera`n$nativeCameraMetadata`n$nativeCameraProfiles`n$nativeCameraReaderSelection`n$acameraSys`n$cameraProjection`n$cameraProjectionFragment`n$xrVulkan`n$directHwbCameraQualityProfile`n$directHwbLowNoiseRecord30Profile" -notmatch $token) {
+    if ("$nativeRendererOptions`n$nativeCamera`n$nativeCameraMetadata`n$nativeCameraProfiles`n$nativeCameraReaderSelection`n$acameraSys`n$cameraProjection`n$cameraProjectionFragment`n$cameraLumaDiagnosticShader`n$nativeBuildRs`n$xrVulkan`n$directHwbCameraQualityProfile`n$directHwbLowNoiseRecord30Profile" -notmatch $token) {
         throw "Native direct-HWB camera quality diagnostic route missing token: $token"
+    }
+}
+foreach ($token in @(
+    'layout\(local_size_x = 8, local_size_y = 8',
+    'atomicAdd\(out_stats\.eye_stats',
+    'atomicMax\(out_stats\.eye_stats',
+    'quantized_luma',
+    'u_camera_left',
+    'u_camera_right'
+)) {
+    if ($cameraLumaDiagnosticShader -notmatch $token) {
+        throw "Native camera luma diagnostic shader missing token: $token"
     }
 }
 foreach ($token in @(

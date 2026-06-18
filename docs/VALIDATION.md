@@ -43,6 +43,12 @@ requests 60 FPS AE, fast noise reduction, and edge enhancement off.
 reader size, with Camera2 stream-configuration fallback ranked and logged when
 needed. Ranking uses tested preferred PRIVATE sizes, target aspect, target-FPS
 feasibility, and `ACAMERA_SCALER_AVAILABLE_MIN_FRAME_DURATIONS` when exposed.
+HWB frame markers also report `imageDataspace`/`imageDataspaceStatus` when the
+runtime exports `AImage_getDataSpace`. Setting
+`debug.rustyquest.native_renderer.camera.luma_diagnostic.enabled=true` enables
+the opt-in Vulkan compute luma diagnostic and adds per-eye luma mean/min/max
+and high-frequency ratio fields to `timing-scorecard`; the default profile
+leaves that diagnostic off.
 `quest-native-renderer-direct-hwb-hold-sync.profile.json` activates the
 conservative producer/consumer diagnostic: the camera callback retains the
 sampled `AImage`, the renderer tracks that lease per Vulkan frame slot, and the

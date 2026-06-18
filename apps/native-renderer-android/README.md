@@ -214,7 +214,13 @@ requests the matching low-latency 60 FPS profile, while
 fallbacks are ranked by tested preferred sizes, aspect fit, target-FPS
 feasibility, and exposed min-frame duration when Camera2 reports it. Device logs include
 `camera-capabilities`, `camera-request-profile`, `camera-capture-result`,
-buffer-removed listener, selected reader size, and YCbCr format-feature markers.
+buffer-removed listener, selected reader size, image dataspace when the runtime
+exports `AImage_getDataSpace`, and YCbCr format-feature markers. For objective
+range checks, set
+`debug.rustyquest.native_renderer.camera.luma_diagnostic.enabled=true`; the
+renderer then runs an opt-in Vulkan compute diagnostic over the resident
+direct-HWB image views and reports per-eye luma mean/min/max plus a
+high-frequency ratio in `timing-scorecard`.
 `quest-native-renderer-direct-hwb-hold-sync.profile.json` activates the
 conservative synchronization diagnostic: the camera callback retains the
 `AImage` for the sampled frame and the render loop releases it only after the

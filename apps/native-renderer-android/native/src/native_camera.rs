@@ -6,7 +6,7 @@ use std::{
     ptr,
     sync::{
         atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
 };
 
@@ -18,10 +18,11 @@ use crate::native_camera_metadata::{
 };
 use crate::{
     acamera_sys::{
-        ACameraCaptureFailure, ACameraCaptureSession, ACameraCaptureSession_captureCallbacks,
-        ACameraCaptureSession_close, ACameraCaptureSession_setRepeatingRequest,
-        ACameraCaptureSession_stateCallbacks, ACameraCaptureSession_stopRepeating, ACameraDevice,
-        ACameraDevice_StateCallbacks, ACameraDevice_close, ACameraDevice_createCaptureRequest,
+        dlsym, media_status_t, ACameraCaptureFailure, ACameraCaptureSession,
+        ACameraCaptureSession_captureCallbacks, ACameraCaptureSession_close,
+        ACameraCaptureSession_setRepeatingRequest, ACameraCaptureSession_stateCallbacks,
+        ACameraCaptureSession_stopRepeating, ACameraDevice, ACameraDevice_StateCallbacks,
+        ACameraDevice_close, ACameraDevice_createCaptureRequest,
         ACameraDevice_createCaptureSession, ACameraManager, ACameraManager_create,
         ACameraManager_delete, ACameraManager_deleteCameraIdList,
         ACameraManager_getCameraCharacteristics, ACameraManager_getCameraIdList,
@@ -244,6 +245,8 @@ pub(crate) struct NativeCameraFrame {
     pub(crate) usage: u64,
     pub(crate) layers: u32,
     pub(crate) stride: u32,
+    pub(crate) image_dataspace: Option<i32>,
+    pub(crate) image_dataspace_status: String,
     pub(crate) hardware_buffer: AndroidHardwareBufferHandle,
     pub(crate) image_lease: Option<Arc<NativeCameraImageLease>>,
     pub(crate) capture_result: NativeCameraCaptureResultCorrelation,
@@ -321,6 +324,49 @@ impl NativeCameraImageLease {
             source_frame,
             hardware_buffer_id,
         })
+    }
+}
+
+type AImageGetDataSpaceFn =
+    unsafe extern "C" fn(image: *const AImage, data_space: *mut i32) -> media_status_t;
+
+static AIMAGE_GET_DATASPACE_FN: OnceLock<Option<AImageGetDataSpaceFn>> = OnceLock::new();
+
+#[derive(Clone, Debug)]
+struct NativeImageDataspace {
+    value: Option<i32>,
+    status: String,
+}
+
+unsafe fn image_dataspace(image: *const AImage) -> NativeImageDataspace {
+    let get_dataspace = AIMAGE_GET_DATASPACE_FN.get_or_init(|| {
+        let symbol = dlsym(ptr::null_mut(), c"AImage_getDataSpace".as_ptr().cast());
+        if symbol.is_null() {
+            None
+        } else {
+            Some(std::mem::transmute::<*mut c_void, AImageGetDataSpaceFn>(
+                symbol,
+            ))
+        }
+    });
+    let Some(get_dataspace) = get_dataspace else {
+        return NativeImageDataspace {
+            value: None,
+            status: "symbol-unavailable".to_string(),
+        };
+    };
+    let mut value = 0_i32;
+    let status = get_dataspace(image, &mut value);
+    if status == 0 {
+        NativeImageDataspace {
+            value: Some(value),
+            status: "ok".to_string(),
+        }
+    } else {
+        NativeImageDataspace {
+            value: None,
+            status: format!("error-{status}"),
+        }
     }
 }
 
@@ -1332,6 +1378,7 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
 
     let mut timestamp_ns = 0_i64;
     let _ = AImage_getTimestamp(image, &mut timestamp_ns);
+    let dataspace = image_dataspace(image);
     let mut hardware_buffer_ptr = ptr::null_mut();
     if AImage_getHardwareBuffer(image, &mut hardware_buffer_ptr) == 0
         && !hardware_buffer_ptr.is_null()
@@ -1416,6 +1463,8 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
             usage: desc.usage,
             layers: desc.layers,
             stride: desc.stride,
+            image_dataspace: dataspace.value,
+            image_dataspace_status: dataspace.status.clone(),
             hardware_buffer,
             image_lease,
             capture_result: capture_result.clone(),
@@ -1430,13 +1479,15 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
         marker(
             "hwb-frame-acquired",
             format!(
-                "sourceFrame={} cameraId={} side={} hardwareBufferId={} importSequence={} timestampNs={} descriptorShape=combined-immutable-sampler-ycbcr-conversion descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} textureUpdateCadence=on-camera-frame releaseRetireCount={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} imageAcquireApi=AImageReader_acquireLatestImage acquireFenceFd=-1 imageReleaseApi={} releaseFenceFd=-1 producerConsumerSync={} ahbHandleRetained=true imageLeaseActive={} bufferRemovedListenerRegistered={} hwbNativeImportReady=true gpuImportWorked=false vulkanExternalImportReady=false visualAcceptance=false {}",
+                "sourceFrame={} cameraId={} side={} hardwareBufferId={} importSequence={} timestampNs={} imageDataspace={} imageDataspaceStatus={} descriptorShape=combined-immutable-sampler-ycbcr-conversion descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} textureUpdateCadence=on-camera-frame releaseRetireCount={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} imageAcquireApi=AImageReader_acquireLatestImage acquireFenceFd=-1 imageReleaseApi={} releaseFenceFd=-1 producerConsumerSync={} ahbHandleRetained=true imageLeaseActive={} bufferRemovedListenerRegistered={} hwbNativeImportReady=true gpuImportWorked=false vulkanExternalImportReady=false visualAcceptance=false {}",
                 frame_sequence,
                 reader_context.camera_id,
                 reader_context.side.stable_id(),
                 hardware_buffer_id,
                 import_sequence,
                 timestamp_ns,
+                optional_i32_marker(dataspace.value),
+                dataspace.status,
                 desc.width,
                 desc.height,
                 desc.layers,

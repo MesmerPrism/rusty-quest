@@ -1,6 +1,6 @@
 //! Minimal Vulkan camera projection proof for retained Camera2 AHardwareBuffers.
 
-use std::{ffi::CString, sync::Arc};
+use std::{ffi::CString, mem, sync::Arc};
 
 use ash::vk;
 
@@ -11,6 +11,9 @@ use crate::native_renderer_options::NativeCameraYcbcrMode;
 
 const CAMERA_IMPORT_CACHE_LIMIT: usize = 18;
 const CAMERA_STEREO_DESCRIPTOR_LIMIT: usize = 12;
+const CAMERA_LUMA_DIAGNOSTIC_SAMPLE_AXIS: u32 = 64;
+const CAMERA_LUMA_DIAGNOSTIC_HIGH_FREQUENCY_THRESHOLD: u32 = 12;
+const CAMERA_LUMA_DIAGNOSTIC_BUFFER_BYTES: vk::DeviceSize = 32;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CameraProjectionFrameStats {
@@ -23,11 +26,105 @@ pub(crate) struct CameraProjectionFrameStats {
     pub(crate) right_import_sequence: u64,
     pub(crate) left_camera_id: String,
     pub(crate) right_camera_id: String,
+    pub(crate) left_image_dataspace: Option<i32>,
+    pub(crate) left_image_dataspace_status: String,
+    pub(crate) right_image_dataspace: Option<i32>,
+    pub(crate) right_image_dataspace_status: String,
     pub(crate) left_capture_result: NativeCameraCaptureResultCorrelation,
     pub(crate) right_capture_result: NativeCameraCaptureResultCorrelation,
     pub(crate) pair_delta_ns: u64,
     pub(crate) import_cache_hits: u64,
     pub(crate) import_cache_misses: u64,
+    pub(crate) luma_diagnostic: CameraLumaDiagnosticFrameStats,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct CameraLumaDiagnosticFrameStats {
+    pub(crate) enabled: bool,
+    pub(crate) ready: bool,
+    pub(crate) path: &'static str,
+    pub(crate) sample_count_per_eye: u32,
+    pub(crate) left_mean: f32,
+    pub(crate) left_min: u32,
+    pub(crate) left_max: u32,
+    pub(crate) left_high_frequency_ratio: f32,
+    pub(crate) right_mean: f32,
+    pub(crate) right_min: u32,
+    pub(crate) right_max: u32,
+    pub(crate) right_high_frequency_ratio: f32,
+}
+
+impl CameraLumaDiagnosticFrameStats {
+    pub(crate) fn disabled() -> Self {
+        Self {
+            enabled: false,
+            ready: false,
+            path: "disabled",
+            sample_count_per_eye: 0,
+            left_mean: 0.0,
+            left_min: 0,
+            left_max: 0,
+            left_high_frequency_ratio: 0.0,
+            right_mean: 0.0,
+            right_min: 0,
+            right_max: 0,
+            right_high_frequency_ratio: 0.0,
+        }
+    }
+
+    fn pending() -> Self {
+        Self {
+            enabled: true,
+            ready: false,
+            path: "native-vulkan-compute-direct-hwb-luma-range",
+            sample_count_per_eye: CAMERA_LUMA_DIAGNOSTIC_SAMPLE_AXIS
+                * CAMERA_LUMA_DIAGNOSTIC_SAMPLE_AXIS,
+            ..Self::disabled()
+        }
+    }
+
+    fn from_raw(left: [u32; 4], right: [u32; 4]) -> Self {
+        let sample_count = CAMERA_LUMA_DIAGNOSTIC_SAMPLE_AXIS * CAMERA_LUMA_DIAGNOSTIC_SAMPLE_AXIS;
+        let sample_count_f = sample_count as f32;
+        Self {
+            enabled: true,
+            ready: true,
+            path: "native-vulkan-compute-direct-hwb-luma-range",
+            sample_count_per_eye: sample_count,
+            left_mean: left[0] as f32 / sample_count_f,
+            left_min: 255_u32.saturating_sub(left[1].min(255)),
+            left_max: left[2].min(255),
+            left_high_frequency_ratio: left[3] as f32 / sample_count_f,
+            right_mean: right[0] as f32 / sample_count_f,
+            right_min: 255_u32.saturating_sub(right[1].min(255)),
+            right_max: right[2].min(255),
+            right_high_frequency_ratio: right[3] as f32 / sample_count_f,
+        }
+    }
+
+    pub(crate) fn marker_fields(&self) -> String {
+        format!(
+            "cameraLumaDiagnosticEnabled={} cameraLumaDiagnosticReady={} cameraLumaDiagnosticPath={} cameraLumaSampleCountPerEye={} leftLumaMean={:.3} leftLumaMin={} leftLumaMax={} leftLumaHighFrequencyRatio={:.6} rightLumaMean={:.3} rightLumaMin={} rightLumaMax={} rightLumaHighFrequencyRatio={:.6}",
+            self.enabled,
+            self.ready,
+            self.path,
+            self.sample_count_per_eye,
+            self.left_mean,
+            self.left_min,
+            self.left_max,
+            self.left_high_frequency_ratio,
+            self.right_mean,
+            self.right_min,
+            self.right_max,
+            self.right_high_frequency_ratio
+        )
+    }
+}
+
+impl Default for CameraLumaDiagnosticFrameStats {
+    fn default() -> Self {
+        Self::disabled()
+    }
 }
 
 pub(crate) struct PreparedCameraProjection {
@@ -35,6 +132,8 @@ pub(crate) struct PreparedCameraProjection {
     pub(crate) descriptor_set_layout: vk::DescriptorSetLayout,
     pub(crate) pipeline_layout: vk::PipelineLayout,
     pub(crate) pipeline: vk::Pipeline,
+    left_image_view: vk::ImageView,
+    right_image_view: vk::ImageView,
     pub(crate) stats: CameraProjectionFrameStats,
 }
 
@@ -69,6 +168,8 @@ pub(crate) struct CameraProjectionRenderer {
     import_cache_misses: u64,
     gpu_frame_image_leases: Vec<Vec<Arc<NativeCameraImageLease>>>,
     gpu_frame_hardware_buffer_ids: Vec<Vec<u64>>,
+    luma_frame_slots: Vec<CameraLumaDiagnosticFrameSlot>,
+    last_luma_diagnostic: CameraLumaDiagnosticFrameStats,
 }
 
 impl CameraProjectionRenderer {
@@ -95,12 +196,15 @@ impl CameraProjectionRenderer {
             import_cache_misses: 0,
             gpu_frame_image_leases: Vec::new(),
             gpu_frame_hardware_buffer_ids: Vec::new(),
+            luma_frame_slots: Vec::new(),
+            last_luma_diagnostic: CameraLumaDiagnosticFrameStats::disabled(),
         }
     }
 
     pub(crate) unsafe fn destroy(&mut self, device: &ash::Device) {
         self.gpu_frame_image_leases.clear();
         self.gpu_frame_hardware_buffer_ids.clear();
+        self.destroy_luma_frame_slots(device);
         self.destroy_stereo_descriptors(device);
         self.destroy_imports(device);
         if let Some(resources) = self.resources.take() {
@@ -120,6 +224,135 @@ impl CameraProjectionRenderer {
                 count
             })
             .unwrap_or(0)
+    }
+
+    pub(crate) fn collect_completed_luma_diagnostic(
+        &mut self,
+        frame_slot: usize,
+        enabled: bool,
+    ) -> CameraLumaDiagnosticFrameStats {
+        if !enabled {
+            self.last_luma_diagnostic = CameraLumaDiagnosticFrameStats::disabled();
+            return self.last_luma_diagnostic.clone();
+        }
+        let Some(slot) = self.luma_frame_slots.get_mut(frame_slot) else {
+            self.last_luma_diagnostic = CameraLumaDiagnosticFrameStats::pending();
+            return self.last_luma_diagnostic.clone();
+        };
+        if !slot.dispatched {
+            self.last_luma_diagnostic = CameraLumaDiagnosticFrameStats::pending();
+            return self.last_luma_diagnostic.clone();
+        }
+        let values = unsafe { slot.buffer.read_u32s() };
+        self.last_luma_diagnostic = CameraLumaDiagnosticFrameStats::from_raw(
+            [values[0], values[1], values[2], values[3]],
+            [values[4], values[5], values[6], values[7]],
+        );
+        slot.dispatched = false;
+        self.last_luma_diagnostic.clone()
+    }
+
+    pub(crate) unsafe fn record_luma_diagnostic(
+        &mut self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        frame_slot: usize,
+        prepared: &PreparedCameraProjection,
+        enabled: bool,
+    ) -> Result<CameraLumaDiagnosticFrameStats, String> {
+        if !enabled {
+            return Ok(CameraLumaDiagnosticFrameStats::disabled());
+        }
+        let resources = self
+            .resources
+            .as_ref()
+            .and_then(|resources| resources.luma_diagnostic.as_ref())
+            .ok_or_else(|| "camera luma diagnostic resources are unavailable".to_string())?;
+        while self.luma_frame_slots.len() <= frame_slot {
+            let slot = CameraLumaDiagnosticFrameSlot::new(
+                device,
+                &self.memory_properties,
+                resources.descriptor_pool,
+                resources.descriptor_set_layout,
+            )?;
+            self.luma_frame_slots.push(slot);
+        }
+        let slot = &mut self.luma_frame_slots[frame_slot];
+        update_luma_descriptor_set(
+            device,
+            slot.descriptor_set,
+            prepared.left_image_view,
+            prepared.right_image_view,
+            slot.buffer.descriptor(),
+        );
+        device.cmd_fill_buffer(
+            slot.buffer.buffer,
+            0,
+            CAMERA_LUMA_DIAGNOSTIC_BUFFER_BYTES,
+            0,
+        );
+        let reset_barrier = [vk::BufferMemoryBarrier::default()
+            .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_WRITE)
+            .buffer(slot.buffer.buffer)
+            .offset(0)
+            .size(CAMERA_LUMA_DIAGNOSTIC_BUFFER_BYTES)];
+        device.cmd_pipeline_barrier(
+            cmd,
+            vk::PipelineStageFlags::TRANSFER,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &reset_barrier,
+            &[],
+        );
+        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, resources.pipeline);
+        device.cmd_bind_descriptor_sets(
+            cmd,
+            vk::PipelineBindPoint::COMPUTE,
+            resources.pipeline_layout,
+            0,
+            &[slot.descriptor_set],
+            &[],
+        );
+        let push = CameraLumaDiagnosticPush {
+            params0: [
+                CAMERA_LUMA_DIAGNOSTIC_SAMPLE_AXIS,
+                CAMERA_LUMA_DIAGNOSTIC_HIGH_FREQUENCY_THRESHOLD,
+                0,
+                0,
+            ],
+        };
+        let push_bytes = std::slice::from_raw_parts(
+            (&push as *const CameraLumaDiagnosticPush).cast::<u8>(),
+            mem::size_of::<CameraLumaDiagnosticPush>(),
+        );
+        device.cmd_push_constants(
+            cmd,
+            resources.pipeline_layout,
+            vk::ShaderStageFlags::COMPUTE,
+            0,
+            push_bytes,
+        );
+        let groups = CAMERA_LUMA_DIAGNOSTIC_SAMPLE_AXIS.div_ceil(8);
+        device.cmd_dispatch(cmd, groups, groups, 2);
+        let readback_barrier = [vk::BufferMemoryBarrier::default()
+            .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+            .dst_access_mask(vk::AccessFlags::HOST_READ)
+            .buffer(slot.buffer.buffer)
+            .offset(0)
+            .size(CAMERA_LUMA_DIAGNOSTIC_BUFFER_BYTES)];
+        device.cmd_pipeline_barrier(
+            cmd,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+            vk::PipelineStageFlags::HOST,
+            vk::DependencyFlags::empty(),
+            &[],
+            &readback_barrier,
+            &[],
+        );
+        slot.dispatched = true;
+        Ok(CameraLumaDiagnosticFrameStats::pending())
     }
 
     pub(crate) unsafe fn evict_removed_hardware_buffers(
@@ -321,6 +554,8 @@ impl CameraProjectionRenderer {
             descriptor_set_layout,
             pipeline_layout,
             pipeline,
+            left_image_view: left.image_view,
+            right_image_view: right.image_view,
             stats: CameraProjectionFrameStats {
                 rendered: true,
                 left_source_frame: frame.left.source_frame,
@@ -331,11 +566,16 @@ impl CameraProjectionRenderer {
                 right_import_sequence: frame.right.import_sequence,
                 left_camera_id: frame.left.camera_id.clone(),
                 right_camera_id: frame.right.camera_id.clone(),
+                left_image_dataspace: frame.left.image_dataspace,
+                left_image_dataspace_status: frame.left.image_dataspace_status.clone(),
+                right_image_dataspace: frame.right.image_dataspace,
+                right_image_dataspace_status: frame.right.image_dataspace_status.clone(),
                 left_capture_result: frame.left.capture_result.clone(),
                 right_capture_result: frame.right.capture_result.clone(),
                 pair_delta_ns: frame.pair_delta_ns,
                 import_cache_hits: self.import_cache_hits,
                 import_cache_misses: self.import_cache_misses,
+                luma_diagnostic: self.last_luma_diagnostic.clone(),
             },
         }))
     }
@@ -439,6 +679,7 @@ impl CameraProjectionRenderer {
         {
             self.destroy_stereo_descriptors(device);
             self.destroy_imports(device);
+            self.destroy_luma_frame_slots(device);
             if let Some(resources) = self.resources.take() {
                 resources.destroy(device);
             }
@@ -529,6 +770,13 @@ impl CameraProjectionRenderer {
         for descriptor in self.stereo_descriptors.drain(..) {
             descriptor.destroy(device);
         }
+    }
+
+    unsafe fn destroy_luma_frame_slots(&mut self, device: &ash::Device) {
+        for slot in self.luma_frame_slots.drain(..) {
+            slot.destroy(device);
+        }
+        self.last_luma_diagnostic = CameraLumaDiagnosticFrameStats::disabled();
     }
 
     unsafe fn destroy_stereo_descriptors_for_key(
@@ -653,16 +901,173 @@ struct CameraProjectionResources {
     descriptor_pool: vk::DescriptorPool,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
+    luma_diagnostic: Option<CameraLumaDiagnosticResources>,
 }
 
 impl CameraProjectionResources {
     unsafe fn destroy(self, device: &ash::Device) {
+        if let Some(luma_diagnostic) = self.luma_diagnostic {
+            luma_diagnostic.destroy(device);
+        }
         device.destroy_pipeline(self.pipeline, None);
         device.destroy_pipeline_layout(self.pipeline_layout, None);
         device.destroy_descriptor_pool(self.descriptor_pool, None);
         device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
         device.destroy_sampler(self.sampler, None);
         device.destroy_sampler_ycbcr_conversion(self.sampler_ycbcr_conversion, None);
+    }
+}
+
+struct CameraLumaDiagnosticResources {
+    descriptor_set_layout: vk::DescriptorSetLayout,
+    descriptor_pool: vk::DescriptorPool,
+    pipeline_layout: vk::PipelineLayout,
+    pipeline: vk::Pipeline,
+}
+
+impl CameraLumaDiagnosticResources {
+    unsafe fn destroy(self, device: &ash::Device) {
+        device.destroy_pipeline(self.pipeline, None);
+        device.destroy_pipeline_layout(self.pipeline_layout, None);
+        device.destroy_descriptor_pool(self.descriptor_pool, None);
+        device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+    }
+}
+
+struct CameraLumaDiagnosticFrameSlot {
+    descriptor_set: vk::DescriptorSet,
+    buffer: CameraLumaDiagnosticBuffer,
+    dispatched: bool,
+}
+
+impl CameraLumaDiagnosticFrameSlot {
+    unsafe fn new(
+        device: &ash::Device,
+        memory_properties: &vk::PhysicalDeviceMemoryProperties,
+        descriptor_pool: vk::DescriptorPool,
+        descriptor_set_layout: vk::DescriptorSetLayout,
+    ) -> Result<Self, String> {
+        let set_layouts = [descriptor_set_layout];
+        let descriptor_set = device
+            .allocate_descriptor_sets(
+                &vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(descriptor_pool)
+                    .set_layouts(&set_layouts),
+            )
+            .map_err(|error| format!("allocate camera luma diagnostic descriptor set: {error}"))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                "camera luma diagnostic descriptor allocation returned no set".to_string()
+            })?;
+        let buffer = CameraLumaDiagnosticBuffer::new(device, memory_properties)?;
+        Ok(Self {
+            descriptor_set,
+            buffer,
+            dispatched: false,
+        })
+    }
+
+    unsafe fn destroy(self, device: &ash::Device) {
+        self.buffer.destroy(device);
+    }
+}
+
+struct CameraLumaDiagnosticBuffer {
+    buffer: vk::Buffer,
+    memory: vk::DeviceMemory,
+    mapped: *mut u32,
+}
+
+impl CameraLumaDiagnosticBuffer {
+    unsafe fn new(
+        device: &ash::Device,
+        memory_properties: &vk::PhysicalDeviceMemoryProperties,
+    ) -> Result<Self, String> {
+        let buffer = device
+            .create_buffer(
+                &vk::BufferCreateInfo::default()
+                    .size(CAMERA_LUMA_DIAGNOSTIC_BUFFER_BYTES)
+                    .usage(
+                        vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                    )
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE),
+                None,
+            )
+            .map_err(|error| format!("create camera luma diagnostic buffer: {error}"))?;
+        let requirements = device.get_buffer_memory_requirements(buffer);
+        let memory_type_index = match find_memory_type(
+            memory_properties,
+            requirements.memory_type_bits,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        ) {
+            Ok(index) => index,
+            Err(error) => {
+                device.destroy_buffer(buffer, None);
+                return Err(error);
+            }
+        };
+        let memory = match device.allocate_memory(
+            &vk::MemoryAllocateInfo::default()
+                .allocation_size(requirements.size)
+                .memory_type_index(memory_type_index),
+            None,
+        ) {
+            Ok(memory) => memory,
+            Err(error) => {
+                device.destroy_buffer(buffer, None);
+                return Err(format!("allocate camera luma diagnostic memory: {error}"));
+            }
+        };
+        if let Err(error) = device.bind_buffer_memory(buffer, memory, 0) {
+            device.free_memory(memory, None);
+            device.destroy_buffer(buffer, None);
+            return Err(format!("bind camera luma diagnostic memory: {error}"));
+        }
+        let mapped = match device.map_memory(
+            memory,
+            0,
+            CAMERA_LUMA_DIAGNOSTIC_BUFFER_BYTES,
+            vk::MemoryMapFlags::empty(),
+        ) {
+            Ok(mapped) => mapped.cast::<u32>(),
+            Err(error) => {
+                device.free_memory(memory, None);
+                device.destroy_buffer(buffer, None);
+                return Err(format!("map camera luma diagnostic memory: {error}"));
+            }
+        };
+        Ok(Self {
+            buffer,
+            memory,
+            mapped,
+        })
+    }
+
+    fn descriptor(&self) -> vk::DescriptorBufferInfo {
+        vk::DescriptorBufferInfo::default()
+            .buffer(self.buffer)
+            .offset(0)
+            .range(CAMERA_LUMA_DIAGNOSTIC_BUFFER_BYTES)
+    }
+
+    unsafe fn read_u32s(&self) -> [u32; 8] {
+        let values = std::slice::from_raw_parts(self.mapped, 8);
+        [
+            values[0], values[1], values[2], values[3], values[4], values[5], values[6], values[7],
+        ]
+    }
+
+    unsafe fn destroy(self, device: &ash::Device) {
+        if !self.mapped.is_null() {
+            device.unmap_memory(self.memory);
+        }
+        if self.buffer != vk::Buffer::null() {
+            device.destroy_buffer(self.buffer, None);
+        }
+        if self.memory != vk::DeviceMemory::null() {
+            device.free_memory(self.memory, None);
+        }
     }
 }
 
@@ -818,6 +1223,12 @@ struct CameraProjectionPush {
     params2: [f32; 4],
 }
 
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CameraLumaDiagnosticPush {
+    params0: [u32; 4],
+}
+
 fn target_rect_to_scissor(extent: vk::Extent2D, rect: TargetRect) -> vk::Rect2D {
     let (x, width) = normalized_interval_to_pixels(extent.width, rect.x, rect.x + rect.width);
     let (y, height) = normalized_interval_to_pixels(extent.height, rect.y, rect.y + rect.height);
@@ -968,11 +1379,115 @@ unsafe fn create_camera_projection_resources(
         ),
     );
 
+    let luma_diagnostic = match create_luma_diagnostic_resources(device, sampler) {
+        Ok(resources) => Some(resources),
+        Err(error) => {
+            crate::marker(
+                "camera-luma-diagnostic",
+                format!(
+                    "status=resources-unavailable reason={} cameraLumaDiagnosticReady=false",
+                    crate::sanitize(&error)
+                ),
+            );
+            None
+        }
+    };
+
     Ok(CameraProjectionResources {
         format_key,
         sampler_ycbcr_conversion,
         sampler,
         ycbcr_metadata,
+        descriptor_set_layout,
+        descriptor_pool,
+        pipeline_layout,
+        pipeline,
+        luma_diagnostic,
+    })
+}
+
+unsafe fn create_luma_diagnostic_resources(
+    device: &ash::Device,
+    sampler: vk::Sampler,
+) -> Result<CameraLumaDiagnosticResources, String> {
+    let immutable_samplers = [sampler];
+    let descriptor_bindings = [
+        vk::DescriptorSetLayoutBinding::default()
+            .binding(0)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_count(1)
+            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+            .immutable_samplers(&immutable_samplers),
+        vk::DescriptorSetLayoutBinding::default()
+            .binding(1)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_count(1)
+            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+            .immutable_samplers(&immutable_samplers),
+        vk::DescriptorSetLayoutBinding::default()
+            .binding(2)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .descriptor_count(1)
+            .stage_flags(vk::ShaderStageFlags::COMPUTE),
+    ];
+    let descriptor_set_layout = device
+        .create_descriptor_set_layout(
+            &vk::DescriptorSetLayoutCreateInfo::default().bindings(&descriptor_bindings),
+            None,
+        )
+        .map_err(|error| format!("create camera luma descriptor set layout: {error}"))?;
+    let pool_sizes = [
+        vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_count(24),
+        vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::STORAGE_BUFFER)
+            .descriptor_count(12),
+    ];
+    let descriptor_pool = match device.create_descriptor_pool(
+        &vk::DescriptorPoolCreateInfo::default()
+            .pool_sizes(&pool_sizes)
+            .max_sets(12),
+        None,
+    ) {
+        Ok(pool) => pool,
+        Err(error) => {
+            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+            return Err(format!("create camera luma descriptor pool: {error}"));
+        }
+    };
+    let push_ranges = [vk::PushConstantRange::default()
+        .stage_flags(vk::ShaderStageFlags::COMPUTE)
+        .offset(0)
+        .size(mem::size_of::<CameraLumaDiagnosticPush>() as u32)];
+    let set_layouts = [descriptor_set_layout];
+    let pipeline_layout = match device.create_pipeline_layout(
+        &vk::PipelineLayoutCreateInfo::default()
+            .set_layouts(&set_layouts)
+            .push_constant_ranges(&push_ranges),
+        None,
+    ) {
+        Ok(layout) => layout,
+        Err(error) => {
+            device.destroy_descriptor_pool(descriptor_pool, None);
+            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+            return Err(format!("create camera luma pipeline layout: {error}"));
+        }
+    };
+    let pipeline = match create_luma_compute_pipeline(device, pipeline_layout) {
+        Ok(pipeline) => pipeline,
+        Err(error) => {
+            device.destroy_pipeline_layout(pipeline_layout, None);
+            device.destroy_descriptor_pool(descriptor_pool, None);
+            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+            return Err(error);
+        }
+    };
+    crate::marker(
+        "camera-luma-diagnostic",
+        "status=resources-created cameraLumaDiagnosticPath=native-vulkan-compute-direct-hwb-luma-range cameraLumaDiagnosticReady=false",
+    );
+    Ok(CameraLumaDiagnosticResources {
         descriptor_set_layout,
         descriptor_pool,
         pipeline_layout,
@@ -1019,6 +1534,44 @@ unsafe fn allocate_camera_descriptor_set(
     ];
     device.update_descriptor_sets(&writes, &[]);
     Ok(descriptor_set)
+}
+
+fn update_luma_descriptor_set(
+    device: &ash::Device,
+    descriptor_set: vk::DescriptorSet,
+    left_view: vk::ImageView,
+    right_view: vk::ImageView,
+    output_buffer: vk::DescriptorBufferInfo,
+) {
+    let image_infos = [
+        vk::DescriptorImageInfo::default()
+            .image_view(left_view)
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
+        vk::DescriptorImageInfo::default()
+            .image_view(right_view)
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
+    ];
+    let output_buffers = [output_buffer];
+    let writes = [
+        vk::WriteDescriptorSet::default()
+            .dst_set(descriptor_set)
+            .dst_binding(0)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(&image_infos[0..1]),
+        vk::WriteDescriptorSet::default()
+            .dst_set(descriptor_set)
+            .dst_binding(1)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(&image_infos[1..2]),
+        vk::WriteDescriptorSet::default()
+            .dst_set(descriptor_set)
+            .dst_binding(2)
+            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+            .buffer_info(&output_buffers),
+    ];
+    unsafe {
+        device.update_descriptor_sets(&writes, &[]);
+    }
 }
 
 unsafe fn import_camera_hardware_buffer(
@@ -1208,6 +1761,36 @@ unsafe fn create_camera_projection_pipeline(
     pipeline_result
         .map(|mut pipelines| pipelines.remove(0))
         .map_err(|(_, error)| format!("create camera graphics pipeline: {error}"))
+}
+
+unsafe fn create_luma_compute_pipeline(
+    device: &ash::Device,
+    pipeline_layout: vk::PipelineLayout,
+) -> Result<vk::Pipeline, String> {
+    let compute_words = spirv_words(include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/camera_luma_diagnostic.comp.spv"
+    )))?;
+    let compute_module = device
+        .create_shader_module(
+            &vk::ShaderModuleCreateInfo::default().code(&compute_words),
+            None,
+        )
+        .map_err(|error| format!("create camera luma compute shader module: {error}"))?;
+    let entry = CString::new("main").expect("static shader entry point is valid");
+    let stage = vk::PipelineShaderStageCreateInfo::default()
+        .stage(vk::ShaderStageFlags::COMPUTE)
+        .module(compute_module)
+        .name(&entry);
+    let create_info = vk::ComputePipelineCreateInfo::default()
+        .stage(stage)
+        .layout(pipeline_layout);
+    let pipeline_result =
+        device.create_compute_pipelines(vk::PipelineCache::null(), &[create_info], None);
+    device.destroy_shader_module(compute_module, None);
+    pipeline_result
+        .map(|mut pipelines| pipelines.remove(0))
+        .map_err(|(_, error)| format!("create camera luma compute pipeline: {error}"))
 }
 
 fn spirv_words(bytes: &[u8]) -> Result<Vec<u32>, String> {
