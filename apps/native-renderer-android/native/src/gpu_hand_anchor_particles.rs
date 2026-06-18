@@ -9,7 +9,9 @@ use crate::{
         GpuHandMeshVisualFrameSetStats, GpuHandMeshVisualFrameStats, HandMeshVisualEyeProjection,
     },
     gpu_sdf_field::SkinnedHandMeshDrawResources,
-    native_renderer_options::NativeHandAnchorParticleSettings,
+    native_renderer_options::{
+        NativeHandAnchorParticleSettings, NativeHandAnchorParticleTransparencyBlendMode,
+    },
 };
 
 include!(concat!(
@@ -18,9 +20,11 @@ include!(concat!(
 ));
 
 const PARTICLE_VERTICES_PER_INSTANCE: u32 = 6;
+const PARTICLE_SORT_LOCAL_SIZE: u32 = 128;
 const PARTICLE_OUTPUT_ROW_VEC4S: vk::DeviceSize = 4;
 const PARTICLE_OUTPUT_ROW_BYTES: vk::DeviceSize =
     PARTICLE_OUTPUT_ROW_VEC4S * mem::size_of::<[f32; 4]>() as vk::DeviceSize;
+const PARTICLE_SORT_ROW_BYTES: vk::DeviceSize = mem::size_of::<[u32; 4]>() as vk::DeviceSize;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct GpuHandAnchorParticleFrameStats {
@@ -31,6 +35,7 @@ pub(crate) struct GpuHandAnchorParticleFrameStats {
     pub(crate) triangle_count: u32,
     pub(crate) skinned_position_buffer_bytes: u64,
     pub(crate) live_compact_input_frame: bool,
+    pub(crate) center_position: [f32; 4],
 }
 
 impl GpuHandAnchorParticleFrameStats {
@@ -55,6 +60,7 @@ impl GpuHandAnchorParticleFrameStats {
             triangle_count: hand_mesh.triangle_count,
             skinned_position_buffer_bytes: hand_mesh.skinned_position_buffer_bytes,
             live_compact_input_frame: hand_mesh.live_compact_input_frame,
+            center_position: hand_mesh.center_position,
         }
     }
 
@@ -121,6 +127,7 @@ pub(crate) struct GpuHandAnchorParticleRenderer {
     descriptor_set: vk::DescriptorSet,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
+    sort_resources: ParticleSortResources,
     draw_resources: SkinnedHandMeshDrawResources,
     hand_code: u32,
     fallback_particle_output_buffer: Option<OwnedBuffer>,
@@ -139,7 +146,7 @@ impl GpuHandAnchorParticleRenderer {
         if draw_resources.vertex_count == 0 || draw_resources.triangle_count == 0 {
             return Err("resident skinned hand mesh particle draw resources are empty".to_string());
         }
-        let private_kuramoto = PrivateKuramotoParticleDynamics::new(
+        let mut private_kuramoto = PrivateKuramotoParticleDynamics::new(
             device,
             memory_properties,
             draw_resources,
@@ -166,22 +173,53 @@ impl GpuHandAnchorParticleRenderer {
                     .map(OwnedBuffer::descriptor)
             })
             .ok_or_else(|| "hand anchor particle output buffer unavailable".to_string())?;
+        let sort_capacity = settings.particles_per_hand.max(1).next_power_of_two();
+        let sort_resources = match ParticleSortResources::new(
+            device,
+            memory_properties,
+            particle_output_buffer,
+            sort_capacity,
+        ) {
+            Ok(resources) => resources,
+            Err(error) => {
+                if let Some(buffer) = fallback_particle_output_buffer.as_ref() {
+                    buffer.destroy(device);
+                }
+                if let Some(private_kuramoto) = private_kuramoto.as_mut() {
+                    private_kuramoto.destroy(device);
+                }
+                return Err(error);
+            }
+        };
 
         let bindings = [
             storage_binding(0, vk::ShaderStageFlags::VERTEX),
             storage_binding(1, vk::ShaderStageFlags::VERTEX),
             storage_binding(2, vk::ShaderStageFlags::VERTEX),
+            storage_binding(3, vk::ShaderStageFlags::VERTEX),
         ];
-        let descriptor_set_layout = device
-            .create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
-                None,
-            )
-            .map_err(|error| format!("create hand anchor particle descriptor layout: {error}"))?;
+        let descriptor_set_layout = match device.create_descriptor_set_layout(
+            &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
+            None,
+        ) {
+            Ok(layout) => layout,
+            Err(error) => {
+                sort_resources.destroy(device);
+                if let Some(buffer) = fallback_particle_output_buffer.as_ref() {
+                    buffer.destroy(device);
+                }
+                if let Some(private_kuramoto) = private_kuramoto.as_mut() {
+                    private_kuramoto.destroy(device);
+                }
+                return Err(format!(
+                    "create hand anchor particle descriptor layout: {error}"
+                ));
+            }
+        };
 
         let pool_sizes = [vk::DescriptorPoolSize::default()
             .ty(vk::DescriptorType::STORAGE_BUFFER)
-            .descriptor_count(3)];
+            .descriptor_count(4)];
         let descriptor_pool = match device.create_descriptor_pool(
             &vk::DescriptorPoolCreateInfo::default()
                 .pool_sizes(&pool_sizes)
@@ -190,6 +228,13 @@ impl GpuHandAnchorParticleRenderer {
         ) {
             Ok(pool) => pool,
             Err(error) => {
+                sort_resources.destroy(device);
+                if let Some(buffer) = fallback_particle_output_buffer.as_ref() {
+                    buffer.destroy(device);
+                }
+                if let Some(private_kuramoto) = private_kuramoto.as_mut() {
+                    private_kuramoto.destroy(device);
+                }
                 device.destroy_descriptor_set_layout(descriptor_set_layout, None);
                 return Err(format!(
                     "create hand anchor particle descriptor pool: {error}"
@@ -205,6 +250,13 @@ impl GpuHandAnchorParticleRenderer {
         ) {
             Ok(mut sets) => sets.remove(0),
             Err(error) => {
+                sort_resources.destroy(device);
+                if let Some(buffer) = fallback_particle_output_buffer.as_ref() {
+                    buffer.destroy(device);
+                }
+                if let Some(private_kuramoto) = private_kuramoto.as_mut() {
+                    private_kuramoto.destroy(device);
+                }
                 device.destroy_descriptor_pool(descriptor_pool, None);
                 device.destroy_descriptor_set_layout(descriptor_set_layout, None);
                 return Err(format!(
@@ -217,6 +269,7 @@ impl GpuHandAnchorParticleRenderer {
             descriptor_set,
             draw_resources,
             particle_output_buffer,
+            sort_resources.remap_descriptor(),
         );
 
         let push_ranges = [vk::PushConstantRange::default()
@@ -231,6 +284,13 @@ impl GpuHandAnchorParticleRenderer {
         ) {
             Ok(layout) => layout,
             Err(error) => {
+                sort_resources.destroy(device);
+                if let Some(buffer) = fallback_particle_output_buffer.as_ref() {
+                    buffer.destroy(device);
+                }
+                if let Some(private_kuramoto) = private_kuramoto.as_mut() {
+                    private_kuramoto.destroy(device);
+                }
                 device.destroy_descriptor_pool(descriptor_pool, None);
                 device.destroy_descriptor_set_layout(descriptor_set_layout, None);
                 return Err(format!(
@@ -239,9 +299,21 @@ impl GpuHandAnchorParticleRenderer {
             }
         };
 
-        let pipeline = match create_pipeline(device, render_pass, pipeline_layout) {
+        let pipeline = match create_pipeline(
+            device,
+            render_pass,
+            pipeline_layout,
+            settings.transparency_blend_mode,
+        ) {
             Ok(pipeline) => pipeline,
             Err(error) => {
+                sort_resources.destroy(device);
+                if let Some(buffer) = fallback_particle_output_buffer.as_ref() {
+                    buffer.destroy(device);
+                }
+                if let Some(private_kuramoto) = private_kuramoto.as_mut() {
+                    private_kuramoto.destroy(device);
+                }
                 device.destroy_pipeline_layout(pipeline_layout, None);
                 device.destroy_descriptor_pool(descriptor_pool, None);
                 device.destroy_descriptor_set_layout(descriptor_set_layout, None);
@@ -252,12 +324,13 @@ impl GpuHandAnchorParticleRenderer {
         crate::marker(
             "hand-anchor-particles",
             format!(
-                "status=created handAnchorParticleHand={} handAnchorParticlePath=resident-skinned-mesh-coordinate-anchor-billboards handAnchorParticleCoordinateSource=deterministic-gpu-barycentric-triangle-anchors handAnchorParticleCoordinateSpace=openxr-reference-space handAnchorParticleMask=static-feather-dot-luminance-alpha handAnchorParticleAnimation=false handAnchorParticleTriangleCount={} handAnchorParticleVertexCount={} handAnchorParticleSkinnedPositionBufferBytes={} handAnchorParticleTriangleBufferBytes={} handAnchorParticleCpuExpandedUploadPerFrame=false handAnchorParticleMeshUploadPerFrame=false",
+                "status=created handAnchorParticleHand={} handAnchorParticlePath=resident-skinned-mesh-coordinate-anchor-billboards handAnchorParticleCoordinateSource=deterministic-gpu-barycentric-triangle-anchors handAnchorParticleCoordinateSpace=openxr-reference-space handAnchorParticleMask=static-feather-dot-luminance-alpha handAnchorParticleAnimation=false handAnchorParticleTriangleCount={} handAnchorParticleVertexCount={} handAnchorParticleSkinnedPositionBufferBytes={} handAnchorParticleTriangleBufferBytes={} handAnchorParticleCpuExpandedUploadPerFrame=false handAnchorParticleMeshUploadPerFrame=false {}",
                 handedness,
                 draw_resources.triangle_count,
                 draw_resources.vertex_count,
                 draw_resources.skinned_position_buffer_bytes,
                 draw_resources.triangle_buffer_bytes,
+                settings.marker_fields(),
             ),
         );
 
@@ -267,6 +340,7 @@ impl GpuHandAnchorParticleRenderer {
             descriptor_set,
             pipeline_layout,
             pipeline,
+            sort_resources,
             draw_resources,
             hand_code: if handedness == "right" { 2 } else { 1 },
             fallback_particle_output_buffer,
@@ -281,6 +355,7 @@ impl GpuHandAnchorParticleRenderer {
         if let Some(buffer) = self.fallback_particle_output_buffer.as_ref() {
             buffer.destroy(device);
         }
+        self.sort_resources.destroy(device);
         device.destroy_pipeline(self.pipeline, None);
         device.destroy_pipeline_layout(self.pipeline_layout, None);
         device.destroy_descriptor_pool(self.descriptor_pool, None);
@@ -310,6 +385,49 @@ impl GpuHandAnchorParticleRenderer {
         }
     }
 
+    pub(crate) unsafe fn record_sort_frame(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        stats: &GpuHandAnchorParticleFrameStats,
+        settings: NativeHandAnchorParticleSettings,
+        eye_projection: HandMeshVisualEyeProjection,
+        frame_count: u64,
+    ) {
+        if !self.resident_gpu_sort_active(stats, settings) {
+            if frame_count == 0
+                && settings.resident_gpu_particle_sort_requested()
+                && self.private_kuramoto.is_none()
+            {
+                crate::marker(
+                    "hand-anchor-particles",
+                    format!(
+                        "status=gpu-sort-unavailable reason=no-gpu-particle-output handAnchorParticleHand={} handAnchorParticleGpuSortActive=false handAnchorParticleOrderingImplementation={} handAnchorParticleOrderingCpuExpandedUploadPerFrame=false",
+                        stats.handedness,
+                        settings.ordering_implementation.marker_value(),
+                    ),
+                );
+            }
+            return;
+        }
+
+        self.sort_resources
+            .record_sort_frame(device, cmd, stats.particles_drawn, eye_projection);
+        if frame_count == 0 {
+            crate::marker(
+                "hand-anchor-particles",
+                format!(
+                    "status=gpu-sort-active handAnchorParticleHand={} handAnchorParticleGpuSortActive=true handAnchorParticleSortPath=resident-gpu-index-remap handAnchorParticleSortBasis=primary-eye-openxr-reference-space handAnchorParticleSortCount={} handAnchorParticleSortCapacity={} handAnchorParticleOrderingMode={} handAnchorParticleOrderingImplementation={} handAnchorParticleOrderingCpuExpandedUploadPerFrame=false",
+                    stats.handedness,
+                    stats.particles_drawn.min(self.sort_resources.capacity),
+                    self.sort_resources.capacity,
+                    settings.ordering_mode.marker_value(),
+                    settings.ordering_implementation.marker_value(),
+                ),
+            );
+        }
+    }
+
     pub(crate) unsafe fn record_overlay_eye(
         &self,
         device: &ash::Device,
@@ -331,6 +449,20 @@ impl GpuHandAnchorParticleRenderer {
             ],
             params1: [
                 if self.private_kuramoto.is_some() {
+                    1.0
+                } else {
+                    0.0
+                },
+                if settings.transparency_blend_mode.premultiply_rgb() {
+                    1.0
+                } else {
+                    0.0
+                },
+                settings.transparency_composition_mode.shader_code(),
+                settings.transparency_depth_suppression_strength,
+            ],
+            params2: [
+                if self.resident_gpu_sort_active(stats, settings) {
                     1.0
                 } else {
                     0.0
@@ -379,6 +511,270 @@ impl GpuHandAnchorParticleRenderer {
             stats.particles_drawn,
             0,
             0,
+        );
+    }
+
+    fn resident_gpu_sort_active(
+        &self,
+        stats: &GpuHandAnchorParticleFrameStats,
+        settings: NativeHandAnchorParticleSettings,
+    ) -> bool {
+        stats.ready
+            && stats.particles_drawn > 1
+            && self.private_kuramoto.is_some()
+            && settings.resident_gpu_particle_sort_requested()
+    }
+}
+
+struct ParticleSortResources {
+    descriptor_pool: vk::DescriptorPool,
+    descriptor_set_layout: vk::DescriptorSetLayout,
+    descriptor_set: vk::DescriptorSet,
+    pipeline_layout: vk::PipelineLayout,
+    pipeline: vk::Pipeline,
+    remap_buffer: OwnedBuffer,
+    capacity: u32,
+}
+
+impl ParticleSortResources {
+    unsafe fn new(
+        device: &ash::Device,
+        memory_properties: &vk::PhysicalDeviceMemoryProperties,
+        particle_output_buffer: vk::DescriptorBufferInfo,
+        capacity: u32,
+    ) -> Result<Self, String> {
+        let capacity = capacity.max(1);
+        let remap_buffer = OwnedBuffer::new(
+            device,
+            memory_properties,
+            capacity as vk::DeviceSize * PARTICLE_SORT_ROW_BYTES,
+            vk::BufferUsageFlags::STORAGE_BUFFER,
+            "hand anchor particle resident GPU sort remap",
+        )?;
+
+        let bindings = [
+            storage_binding(0, vk::ShaderStageFlags::COMPUTE),
+            storage_binding(1, vk::ShaderStageFlags::COMPUTE),
+        ];
+        let descriptor_set_layout = match device.create_descriptor_set_layout(
+            &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
+            None,
+        ) {
+            Ok(layout) => layout,
+            Err(error) => {
+                remap_buffer.destroy(device);
+                return Err(format!(
+                    "create hand anchor particle sort descriptor layout: {error}"
+                ));
+            }
+        };
+
+        let pool_sizes = [vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::STORAGE_BUFFER)
+            .descriptor_count(2)];
+        let descriptor_pool = match device.create_descriptor_pool(
+            &vk::DescriptorPoolCreateInfo::default()
+                .pool_sizes(&pool_sizes)
+                .max_sets(1),
+            None,
+        ) {
+            Ok(pool) => pool,
+            Err(error) => {
+                device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+                remap_buffer.destroy(device);
+                return Err(format!(
+                    "create hand anchor particle sort descriptor pool: {error}"
+                ));
+            }
+        };
+
+        let set_layouts = [descriptor_set_layout];
+        let descriptor_set = match device.allocate_descriptor_sets(
+            &vk::DescriptorSetAllocateInfo::default()
+                .descriptor_pool(descriptor_pool)
+                .set_layouts(&set_layouts),
+        ) {
+            Ok(mut sets) => sets.remove(0),
+            Err(error) => {
+                device.destroy_descriptor_pool(descriptor_pool, None);
+                device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+                remap_buffer.destroy(device);
+                return Err(format!(
+                    "allocate hand anchor particle sort descriptor set: {error}"
+                ));
+            }
+        };
+        update_particle_sort_descriptors(
+            device,
+            descriptor_set,
+            particle_output_buffer,
+            remap_buffer.descriptor(),
+        );
+
+        let push_ranges = [vk::PushConstantRange::default()
+            .stage_flags(vk::ShaderStageFlags::COMPUTE)
+            .offset(0)
+            .size(mem::size_of::<ParticleSortComputePush>() as u32)];
+        let pipeline_layout = match device.create_pipeline_layout(
+            &vk::PipelineLayoutCreateInfo::default()
+                .set_layouts(&set_layouts)
+                .push_constant_ranges(&push_ranges),
+            None,
+        ) {
+            Ok(layout) => layout,
+            Err(error) => {
+                device.destroy_descriptor_pool(descriptor_pool, None);
+                device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+                remap_buffer.destroy(device);
+                return Err(format!(
+                    "create hand anchor particle sort pipeline layout: {error}"
+                ));
+            }
+        };
+
+        let pipeline = match create_compute_pipeline(
+            device,
+            pipeline_layout,
+            include_bytes!(concat!(
+                env!("OUT_DIR"),
+                "/hand_anchor_particles_sort.comp.spv"
+            )),
+            "hand anchor particle sort",
+        ) {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                device.destroy_pipeline_layout(pipeline_layout, None);
+                device.destroy_descriptor_pool(descriptor_pool, None);
+                device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+                remap_buffer.destroy(device);
+                return Err(error);
+            }
+        };
+
+        Ok(Self {
+            descriptor_pool,
+            descriptor_set_layout,
+            descriptor_set,
+            pipeline_layout,
+            pipeline,
+            remap_buffer,
+            capacity,
+        })
+    }
+
+    fn remap_descriptor(&self) -> vk::DescriptorBufferInfo {
+        self.remap_buffer.descriptor()
+    }
+
+    unsafe fn destroy(&self, device: &ash::Device) {
+        device.destroy_pipeline(self.pipeline, None);
+        device.destroy_pipeline_layout(self.pipeline_layout, None);
+        device.destroy_descriptor_pool(self.descriptor_pool, None);
+        device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+        self.remap_buffer.destroy(device);
+    }
+
+    unsafe fn record_sort_frame(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        particle_count: u32,
+        eye_projection: HandMeshVisualEyeProjection,
+    ) {
+        let particle_count = particle_count.min(self.capacity);
+        if particle_count <= 1 {
+            return;
+        }
+        let sort_count = particle_count.next_power_of_two().min(self.capacity);
+        let group_count = sort_count.div_ceil(PARTICLE_SORT_LOCAL_SIZE);
+        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, self.pipeline);
+        device.cmd_bind_descriptor_sets(
+            cmd,
+            vk::PipelineBindPoint::COMPUTE,
+            self.pipeline_layout,
+            0,
+            &[self.descriptor_set],
+            &[],
+        );
+        let eye_forward = rotate_by_quat(eye_projection.orientation_xyzw, [0.0, 0.0, -1.0]);
+        let init_push = ParticleSortComputePush {
+            params0: [particle_count as f32, sort_count as f32, 0.0, 0.0],
+            params1: [
+                eye_projection.position[0],
+                eye_projection.position[1],
+                eye_projection.position[2],
+                0.0,
+            ],
+            params2: [eye_forward[0], eye_forward[1], eye_forward[2], 0.0],
+        };
+        self.dispatch_sort_pass(device, cmd, &init_push, group_count);
+        self.record_sort_barrier(device, cmd);
+
+        let mut k = 2_u32;
+        while k <= sort_count {
+            let mut j = k / 2;
+            while j > 0 {
+                let sort_push = ParticleSortComputePush {
+                    params0: [particle_count as f32, sort_count as f32, 1.0, j as f32],
+                    params1: [
+                        eye_projection.position[0],
+                        eye_projection.position[1],
+                        eye_projection.position[2],
+                        k as f32,
+                    ],
+                    params2: [eye_forward[0], eye_forward[1], eye_forward[2], 0.0],
+                };
+                self.dispatch_sort_pass(device, cmd, &sort_push, group_count);
+                self.record_sort_barrier(device, cmd);
+                j /= 2;
+            }
+            k *= 2;
+        }
+
+        let vertex_barrier = [compute_write_to_shader_read_barrier(&self.remap_buffer)];
+        device.cmd_pipeline_barrier(
+            cmd,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+            vk::PipelineStageFlags::VERTEX_SHADER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &vertex_barrier,
+            &[],
+        );
+    }
+
+    unsafe fn dispatch_sort_pass(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        push: &ParticleSortComputePush,
+        group_count: u32,
+    ) {
+        device.cmd_push_constants(
+            cmd,
+            self.pipeline_layout,
+            vk::ShaderStageFlags::COMPUTE,
+            0,
+            as_bytes(push),
+        );
+        device.cmd_dispatch(cmd, group_count, 1, 1);
+    }
+
+    unsafe fn record_sort_barrier(&self, device: &ash::Device, cmd: vk::CommandBuffer) {
+        let barrier = [vk::BufferMemoryBarrier::default()
+            .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)
+            .buffer(self.remap_buffer.buffer)
+            .offset(0)
+            .size(self.remap_buffer.bytes)];
+        device.cmd_pipeline_barrier(
+            cmd,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &barrier,
+            &[],
         );
     }
 }
@@ -930,6 +1326,7 @@ unsafe fn create_pipeline(
     device: &ash::Device,
     render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
+    blend_mode: NativeHandAnchorParticleTransparencyBlendMode,
 ) -> Result<vk::Pipeline, String> {
     let vertex_words = spirv_words(include_bytes!(concat!(
         env!("OUT_DIR"),
@@ -982,15 +1379,7 @@ unsafe fn create_pipeline(
         .line_width(1.0);
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()
         .rasterization_samples(vk::SampleCountFlags::TYPE_1);
-    let color_blend_attachment = [vk::PipelineColorBlendAttachmentState::default()
-        .blend_enable(true)
-        .src_color_blend_factor(vk::BlendFactor::ONE)
-        .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-        .color_blend_op(vk::BlendOp::ADD)
-        .src_alpha_blend_factor(vk::BlendFactor::ONE)
-        .dst_alpha_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
-        .alpha_blend_op(vk::BlendOp::ADD)
-        .color_write_mask(vk::ColorComponentFlags::RGBA)];
+    let color_blend_attachment = [particle_color_blend_attachment(blend_mode)];
     let color_blend =
         vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_blend_attachment);
     let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
@@ -1021,6 +1410,46 @@ unsafe fn create_pipeline(
         .map_err(|(_, error)| format!("create hand anchor particle graphics pipeline: {error}"))
 }
 
+fn particle_color_blend_attachment(
+    mode: NativeHandAnchorParticleTransparencyBlendMode,
+) -> vk::PipelineColorBlendAttachmentState {
+    let (src_color, dst_color, src_alpha, dst_alpha) = match mode {
+        NativeHandAnchorParticleTransparencyBlendMode::LegacyAdditiveMultiply => (
+            vk::BlendFactor::SRC_ALPHA,
+            vk::BlendFactor::ONE,
+            vk::BlendFactor::ONE,
+            vk::BlendFactor::ONE,
+        ),
+        NativeHandAnchorParticleTransparencyBlendMode::TrueAdditive => (
+            vk::BlendFactor::ONE,
+            vk::BlendFactor::ONE,
+            vk::BlendFactor::ONE,
+            vk::BlendFactor::ONE,
+        ),
+        NativeHandAnchorParticleTransparencyBlendMode::Fade => (
+            vk::BlendFactor::SRC_ALPHA,
+            vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+            vk::BlendFactor::ONE,
+            vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+        ),
+        NativeHandAnchorParticleTransparencyBlendMode::Premultiplied => (
+            vk::BlendFactor::ONE,
+            vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+            vk::BlendFactor::ONE,
+            vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+        ),
+    };
+    vk::PipelineColorBlendAttachmentState::default()
+        .blend_enable(true)
+        .src_color_blend_factor(src_color)
+        .dst_color_blend_factor(dst_color)
+        .color_blend_op(vk::BlendOp::ADD)
+        .src_alpha_blend_factor(src_alpha)
+        .dst_alpha_blend_factor(dst_alpha)
+        .alpha_blend_op(vk::BlendOp::ADD)
+        .color_write_mask(vk::ColorComponentFlags::RGBA)
+}
+
 fn storage_binding(
     binding: u32,
     stage_flags: vk::ShaderStageFlags,
@@ -1037,6 +1466,7 @@ unsafe fn update_descriptors(
     descriptor_set: vk::DescriptorSet,
     draw_resources: SkinnedHandMeshDrawResources,
     particle_output_buffer: vk::DescriptorBufferInfo,
+    sort_remap_buffer: vk::DescriptorBufferInfo,
 ) {
     let skinned_position_info = [descriptor_info(
         draw_resources.skinned_position_buffer,
@@ -1047,10 +1477,27 @@ unsafe fn update_descriptors(
         draw_resources.triangle_buffer_bytes,
     )];
     let particle_output_info = [particle_output_buffer];
+    let sort_remap_info = [sort_remap_buffer];
     let writes = [
         write_descriptor(descriptor_set, 0, &skinned_position_info),
         write_descriptor(descriptor_set, 1, &triangle_info),
         write_descriptor(descriptor_set, 2, &particle_output_info),
+        write_descriptor(descriptor_set, 3, &sort_remap_info),
+    ];
+    device.update_descriptor_sets(&writes, &[]);
+}
+
+unsafe fn update_particle_sort_descriptors(
+    device: &ash::Device,
+    descriptor_set: vk::DescriptorSet,
+    particle_output_buffer: vk::DescriptorBufferInfo,
+    sort_remap_buffer: vk::DescriptorBufferInfo,
+) {
+    let particle_output_info = [particle_output_buffer];
+    let sort_remap_info = [sort_remap_buffer];
+    let writes = [
+        write_descriptor(descriptor_set, 0, &particle_output_info),
+        write_descriptor(descriptor_set, 1, &sort_remap_info),
     ];
     device.update_descriptor_sets(&writes, &[]);
 }
@@ -1582,6 +2029,40 @@ fn spirv_words(bytes: &[u8]) -> Result<Vec<u32>, String> {
         .collect())
 }
 
+fn rotate_by_quat(quat: [f32; 4], vector: [f32; 3]) -> [f32; 3] {
+    let q = normalize_quat(quat);
+    let uv = cross3([q[0], q[1], q[2]], vector);
+    let uuv = cross3([q[0], q[1], q[2]], uv);
+    [
+        vector[0] + uv[0] * (2.0 * q[3]) + uuv[0] * 2.0,
+        vector[1] + uv[1] * (2.0 * q[3]) + uuv[1] * 2.0,
+        vector[2] + uv[2] * (2.0 * q[3]) + uuv[2] * 2.0,
+    ]
+}
+
+fn normalize_quat(quat: [f32; 4]) -> [f32; 4] {
+    let length_sq = dot4(quat, quat).max(0.000000000001);
+    let inv_length = 1.0 / length_sq.sqrt();
+    [
+        quat[0] * inv_length,
+        quat[1] * inv_length,
+        quat[2] * inv_length,
+        quat[3] * inv_length,
+    ]
+}
+
+fn cross3(left: [f32; 3], right: [f32; 3]) -> [f32; 3] {
+    [
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    ]
+}
+
+fn dot4(left: [f32; 4], right: [f32; 4]) -> f32 {
+    left[0] * right[0] + left[1] * right[1] + left[2] * right[2] + left[3] * right[3]
+}
+
 fn as_bytes<T>(value: &T) -> &[u8] {
     unsafe { std::slice::from_raw_parts((value as *const T).cast::<u8>(), mem::size_of::<T>()) }
 }
@@ -1590,9 +2071,17 @@ fn as_bytes<T>(value: &T) -> &[u8] {
 struct HandAnchorParticlePush {
     params0: [f32; 4],
     params1: [f32; 4],
+    params2: [f32; 4],
     eye_position: [f32; 4],
     eye_orientation_xyzw: [f32; 4],
     fov_tangents: [f32; 4],
+}
+
+#[repr(C)]
+struct ParticleSortComputePush {
+    params0: [f32; 4],
+    params1: [f32; 4],
+    params2: [f32; 4],
 }
 
 #[repr(C)]

@@ -30,15 +30,21 @@ use crate::{
     native_camera::NativeCameraRuntime,
     native_renderer_options::{
         CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings, NativeCameraOutputMode,
-        NativeHandAnchorParticleSettings, NativePrivateLayerSettings,
-        NativeProjectionBorderStretchSettings, NativeRendererRenderMode,
-        NativeRendererRuntimeOptions, PROP_CAMERA_OUTPUT_MODE, PROP_ENABLE_SDF_VISUAL,
-        PROP_HAND_ANCHOR_PARTICLES_ENABLED, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
-        PROP_HAND_ANCHOR_PARTICLES_RADIUS_M, PROP_HAND_MESH_GRAFT_COPIES_ENABLED,
-        PROP_HAND_MESH_GRAFT_COPY_SCALE, PROP_HAND_MESH_INPUT_SOURCE,
-        PROP_HAND_MESH_REAL_HANDS_VISIBLE, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA,
-        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV,
-        PROP_PROCESSING_LAYER, PROP_RENDER_MODE, PROP_REPLAY_VISUAL_PROOF_ENABLED,
+        NativeHandAnchorParticleOrderingMode, NativeHandAnchorParticleSettings,
+        NativePrivateLayerSettings, NativeProjectionBorderStretchSettings,
+        NativeRendererRenderMode, NativeRendererRuntimeOptions, PROP_CAMERA_OUTPUT_MODE,
+        PROP_ENABLE_SDF_VISUAL, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
+        PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
+        PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
+        PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
+        PROP_HAND_ANCHOR_PARTICLES_RADIUS_M, PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_BLEND_MODE,
+        PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_COMPOSITION_MODE,
+        PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH,
+        PROP_HAND_MESH_GRAFT_COPIES_ENABLED, PROP_HAND_MESH_GRAFT_COPY_SCALE,
+        PROP_HAND_MESH_INPUT_SOURCE, PROP_HAND_MESH_REAL_HANDS_VISIBLE,
+        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED,
+        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV, PROP_PROCESSING_LAYER, PROP_RENDER_MODE,
+        PROP_REPLAY_VISUAL_PROOF_ENABLED,
     },
     native_renderer_timing::{
         elapsed_ms, FrameCpuTimings, GpuStageTimings, GpuTimestampStage, GpuTimestampTracker,
@@ -484,10 +490,16 @@ unsafe fn run_projection_loop_inner(
     crate::marker(
         "hand-anchor-particles",
         format!(
-            "status=config enabledProperty={} perHandProperty={} radiusProperty={} renderMode={} openxrDefaultHandVisualRequested={} customHandMeshVisualRequested={} compactHandInputSourceMode={} selectsLiveFrame={} {} handAnchorParticleVisualAcceptance=pending-headset-screenshot",
+            "status=config enabledProperty={} perHandProperty={} radiusProperty={} transparencyBlendProperty={} transparencyCompositionProperty={} transparencyDepthSuppressionProperty={} orderingModeProperty={} orderingImplementationProperty={} orderingIntervalProperty={} renderMode={} openxrDefaultHandVisualRequested={} customHandMeshVisualRequested={} compactHandInputSourceMode={} selectsLiveFrame={} {} handAnchorParticleVisualAcceptance=pending-headset-screenshot",
             PROP_HAND_ANCHOR_PARTICLES_ENABLED,
             PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
             PROP_HAND_ANCHOR_PARTICLES_RADIUS_M,
+            PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_BLEND_MODE,
+            PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_COMPOSITION_MODE,
+            PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH,
+            PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE,
+            PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
+            PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
             render_mode.marker_value(),
             render_mode.requests_openxr_default_hand_visual(),
             hand_mesh_real_hands_visible,
@@ -1772,6 +1784,30 @@ unsafe fn run_projection_frames(
                 frame_count,
             );
         }
+        let particle_sort_eye_projection = views
+            .first()
+            .map(hand_mesh_visual_eye_projection)
+            .unwrap_or_default();
+        if let Some(renderer) = gpu_hand_anchor_particle_renderer.as_ref() {
+            renderer.record_sort_frame(
+                vk_device,
+                cmd,
+                &hand_anchor_particle_stats.primary,
+                hand_anchor_particle_settings,
+                particle_sort_eye_projection,
+                frame_count,
+            );
+        }
+        if let Some(renderer) = secondary_gpu_hand_anchor_particle_renderer.as_ref() {
+            renderer.record_sort_frame(
+                vk_device,
+                cmd,
+                &hand_anchor_particle_stats.secondary,
+                hand_anchor_particle_settings,
+                particle_sort_eye_projection,
+                frame_count,
+            );
+        }
         gpu_timestamp_tracker.write_stage_end(
             vk_device,
             cmd,
@@ -2339,25 +2375,35 @@ unsafe fn record_projection_diagnostic(
                 }
             }
         }
-        if let Some(renderer) = gpu_hand_anchor_particle_renderer {
-            renderer.record_overlay_eye(
-                device,
-                cmd,
-                swapchain.extent,
-                eye_projection,
-                &hand_anchor_particle_stats.primary,
-                hand_anchor_particle_stats.settings,
-            );
-        }
-        if let Some(renderer) = secondary_gpu_hand_anchor_particle_renderer {
-            renderer.record_overlay_eye(
-                device,
-                cmd,
-                swapchain.extent,
-                eye_projection,
-                &hand_anchor_particle_stats.secondary,
-                hand_anchor_particle_stats.settings,
-            );
+        for draw_target in
+            hand_anchor_particle_draw_order(hand_anchor_particle_stats, eye_projection)
+        {
+            match draw_target {
+                HandAnchorParticleDrawTarget::Primary => {
+                    if let Some(renderer) = gpu_hand_anchor_particle_renderer {
+                        renderer.record_overlay_eye(
+                            device,
+                            cmd,
+                            swapchain.extent,
+                            eye_projection,
+                            &hand_anchor_particle_stats.primary,
+                            hand_anchor_particle_stats.settings,
+                        );
+                    }
+                }
+                HandAnchorParticleDrawTarget::Secondary => {
+                    if let Some(renderer) = secondary_gpu_hand_anchor_particle_renderer {
+                        renderer.record_overlay_eye(
+                            device,
+                            cmd,
+                            swapchain.extent,
+                            eye_projection,
+                            &hand_anchor_particle_stats.secondary,
+                            hand_anchor_particle_stats.settings,
+                        );
+                    }
+                }
+            }
         }
         if let Some(renderer) = gpu_hand_mesh_visual_renderer {
             if hand_mesh_visual_stats.primary.graft_copy_count > 0 {
@@ -2423,6 +2469,93 @@ unsafe fn record_projection_diagnostic(
         device.cmd_end_render_pass(cmd);
     }
     visual_stats
+}
+
+#[derive(Clone, Copy, Debug)]
+enum HandAnchorParticleDrawTarget {
+    Primary,
+    Secondary,
+}
+
+fn hand_anchor_particle_draw_order(
+    stats: &GpuHandAnchorParticleFrameSetStats,
+    eye_projection: HandMeshVisualEyeProjection,
+) -> [HandAnchorParticleDrawTarget; 2] {
+    use HandAnchorParticleDrawTarget::{Primary, Secondary};
+    match stats.settings.ordering_mode {
+        NativeHandAnchorParticleOrderingMode::SecondaryThenPrimary => [Secondary, Primary],
+        NativeHandAnchorParticleOrderingMode::NearHandFirst => {
+            if hand_forward_depth_m(stats.primary.center_position, eye_projection)
+                <= hand_forward_depth_m(stats.secondary.center_position, eye_projection)
+            {
+                [Primary, Secondary]
+            } else {
+                [Secondary, Primary]
+            }
+        }
+        NativeHandAnchorParticleOrderingMode::FarHandFirst
+        | NativeHandAnchorParticleOrderingMode::PerParticleBackToFront => {
+            if hand_forward_depth_m(stats.primary.center_position, eye_projection)
+                >= hand_forward_depth_m(stats.secondary.center_position, eye_projection)
+            {
+                [Primary, Secondary]
+            } else {
+                [Secondary, Primary]
+            }
+        }
+        NativeHandAnchorParticleOrderingMode::PrimaryThenSecondary => [Primary, Secondary],
+    }
+}
+
+fn hand_forward_depth_m(
+    center_position: [f32; 4],
+    eye_projection: HandMeshVisualEyeProjection,
+) -> f32 {
+    let forward = rotate_by_quat(eye_projection.orientation_xyzw, [0.0, 0.0, -1.0]);
+    let delta = [
+        center_position[0] - eye_projection.position[0],
+        center_position[1] - eye_projection.position[1],
+        center_position[2] - eye_projection.position[2],
+    ];
+    dot3(delta, forward)
+}
+
+fn rotate_by_quat(quat: [f32; 4], vector: [f32; 3]) -> [f32; 3] {
+    let q = normalize_quat(quat);
+    let uv = cross3([q[0], q[1], q[2]], vector);
+    let uuv = cross3([q[0], q[1], q[2]], uv);
+    [
+        vector[0] + uv[0] * (2.0 * q[3]) + uuv[0] * 2.0,
+        vector[1] + uv[1] * (2.0 * q[3]) + uuv[1] * 2.0,
+        vector[2] + uv[2] * (2.0 * q[3]) + uuv[2] * 2.0,
+    ]
+}
+
+fn normalize_quat(quat: [f32; 4]) -> [f32; 4] {
+    let length_sq = dot4(quat, quat).max(0.000000000001);
+    let inv_length = 1.0 / length_sq.sqrt();
+    [
+        quat[0] * inv_length,
+        quat[1] * inv_length,
+        quat[2] * inv_length,
+        quat[3] * inv_length,
+    ]
+}
+
+fn cross3(left: [f32; 3], right: [f32; 3]) -> [f32; 3] {
+    [
+        left[1] * right[2] - left[2] * right[1],
+        left[2] * right[0] - left[0] * right[2],
+        left[0] * right[1] - left[1] * right[0],
+    ]
+}
+
+fn dot3(left: [f32; 3], right: [f32; 3]) -> f32 {
+    left[0] * right[0] + left[1] * right[1] + left[2] * right[2]
+}
+
+fn dot4(left: [f32; 4], right: [f32; 4]) -> f32 {
+    left[0] * right[0] + left[1] * right[1] + left[2] * right[2] + left[3] * right[3]
 }
 
 fn live_gpu_mesh_visual_stats(

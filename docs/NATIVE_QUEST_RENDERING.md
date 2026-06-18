@@ -226,6 +226,18 @@ is the topology-comparison variant: it keeps live compact hand input and the
 resident skinned mesh buffers, but disables the app's custom hand mesh/graft
 draw, requests the runtime/default OpenXR hand visual, and draws only the
 world-space anchor particles over a solid black background.
+The anchor-particle renderer exposes an Astral-style transparency/ordering
+mode set through Android properties: `legacy-additive-multiply`,
+`true-additive`, `fade`, and `premultiplied` blend modes;
+`true-additive` and `approximate-depth-suppressed` composition modes with a
+bounded depth-suppression strength; and fixed, eye-depth, or per-particle
+ordering modes. Fixed and eye-depth hand ordering change draw call order
+immediately. Per-particle back-to-front ordering uses a resident GPU
+index-remap buffer: a compute pass builds depth keys from the GPU particle
+output positions, bitonic-sorts the remap in place, and the billboard vertex
+shader indexes particles through that remap. CPU-sorted render buffers are
+explicitly disabled for this native path because they would reintroduce
+expanded particle uploads.
 The smoke wrapper has an explicit evidence mode: default `ReplayVisualProof`
 uses the recorded replay profile and replay/SDF marker gates, while
 `LiveVisualDiagnosticCaveat` applies the live-hand diagnostic profile and asks

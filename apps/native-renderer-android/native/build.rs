@@ -19,6 +19,7 @@ fn main() {
     println!("cargo:rerun-if-changed=shaders/hand_mesh_visual.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/hand_anchor_particles.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/hand_anchor_particles.frag.glsl");
+    println!("cargo:rerun-if-changed=shaders/hand_anchor_particles_sort.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/private_kuramoto_particles_placeholder.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/private_layer_placeholder.frag.glsl");
     println!(
@@ -129,6 +130,12 @@ fn main() {
         "fragment",
         Path::new("shaders/hand_anchor_particles.frag.glsl"),
         &out_dir.join("hand_anchor_particles.frag.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "compute",
+        Path::new("shaders/hand_anchor_particles_sort.comp.glsl"),
+        &out_dir.join("hand_anchor_particles_sort.comp.spv"),
     );
     if let Some(payload) = private_kuramoto_payload.as_ref() {
         println!("cargo:rerun-if-changed={}", payload.shader.display());

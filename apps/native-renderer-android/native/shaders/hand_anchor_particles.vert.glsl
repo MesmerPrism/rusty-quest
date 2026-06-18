@@ -12,9 +12,14 @@ layout(set = 0, binding = 2) readonly buffer ParticleOutput {
     vec4 rows[];
 } particle_output;
 
+layout(set = 0, binding = 3) readonly buffer ParticleSortRows {
+    uvec4 rows[];
+} particle_sort;
+
 layout(push_constant) uniform HandAnchorParticlePush {
     vec4 params0;
     vec4 params1;
+    vec4 params2;
     vec4 eye_position;
     vec4 eye_orientation_xyzw;
     vec4 fov_tangents;
@@ -22,6 +27,7 @@ layout(push_constant) uniform HandAnchorParticlePush {
 
 layout(location = 0) out vec2 v_mask_uv;
 layout(location = 1) out vec4 v_color;
+layout(location = 2) out vec4 v_render_params;
 
 const vec2 QUAD_POSITIONS[6] = vec2[](
     vec2(-1.0, -1.0),
@@ -96,8 +102,11 @@ void main() {
     float radius = max(pc.params0.z, 0.0002);
     uint hand_code = uint(pc.params0.w);
     bool use_particle_output = pc.params1.x > 0.5;
+    bool use_sort_remap = pc.params2.x > 0.5;
 
-    uint anchor_index = gl_InstanceIndex;
+    uint anchor_index = use_sort_remap
+        ? particle_sort.rows[gl_InstanceIndex].x
+        : gl_InstanceIndex;
     vec3 center;
     vec4 particle_color;
     if (use_particle_output) {
@@ -129,8 +138,11 @@ void main() {
     vec3 eye_right = rotate_by_quat(pc.eye_orientation_xyzw, vec3(1.0, 0.0, 0.0));
     vec3 eye_up = rotate_by_quat(pc.eye_orientation_xyzw, vec3(0.0, 1.0, 0.0));
     vec3 world = center + (eye_right * quad.x + eye_up * quad.y) * radius;
+    vec3 center_eye = world_to_eye(center);
+    float center_forward_m = max(-center_eye.z, 0.0);
 
     v_mask_uv = quad * 0.5 + vec2(0.5);
     v_color = vec4(clamp(particle_color.rgb, vec3(0.0), vec3(1.0)), clamp(particle_color.a, 0.0, 1.0));
+    v_render_params = vec4(pc.params1.y, pc.params1.z, pc.params1.w, center_forward_m);
     gl_Position = world_to_eye_clip(world);
 }
