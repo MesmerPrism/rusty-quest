@@ -98,7 +98,9 @@ filters from the advertised features. Camera import and stereo-descriptor cache
 eviction is allowed only for resources that are not protected by the frame being
 prepared and not referenced by submitted frame slots; if all cached imports are
 in flight, eviction is deferred and logged instead of destroying live Vulkan
-resources.
+resources. Capture result metadata is retained only as a bounded per-eye recent
+snapshot ring so acquired HWB frames and timing scorecards can report nearest
+Camera2 result correlation without introducing a high-rate telemetry store.
 
 This package is not Manifold command authority, not an Optics visual truth
 source, and not a Matter SDF owner. Headset smokes now prove

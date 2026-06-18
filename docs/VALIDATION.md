@@ -47,8 +47,10 @@ lease is retired only after that frame slot's GPU fence completes. The
 app logs `camera-capabilities`, `camera-request-profile`,
 `camera-capture-result`, selected reader size, buffer-removed listener,
 cache-eviction processing, import/descriptor LRU eviction deferrals, sync lease
-tracking, acquire errors, and YCbCr format-feature markers so headset
-screenshots can be compared with the actual Camera2 result metadata. The
+tracking, acquire errors, bounded capture-result correlation fields on acquired
+HWB frames, left/right result-correlation fields in the timing scorecard, and
+YCbCr format-feature markers so headset screenshots can be compared with the
+actual Camera2 result metadata. The
 lower-latency `AImage_deleteAsync`/sync-fd release path remains a future
 validation gate. The
 `quest-native-renderer-replay-visual-proof.profile.json` fixture is the

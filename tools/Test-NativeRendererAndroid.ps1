@@ -16,6 +16,7 @@ $nativeBuildRsPath = Join-Path $appRoot "native\build.rs"
 $nativeLibPath = Join-Path $appRoot "native\src\lib.rs"
 $androidEventsPath = Join-Path $appRoot "native\src\android_events.rs"
 $nativeCameraPath = Join-Path $appRoot "native\src\native_camera.rs"
+$nativeCameraMetadataPath = Join-Path $appRoot "native\src\native_camera_metadata.rs"
 $acameraSysPath = Join-Path $appRoot "native\src\acamera_sys.rs"
 $cameraProjectionPath = Join-Path $appRoot "native\src\camera_projection.rs"
 $cameraProjectionMetadataPath = Join-Path $appRoot "native\src\camera_projection_metadata.rs"
@@ -68,7 +69,7 @@ $nativePassthroughHandsAndGraftsProfilePath = Join-Path $repoRoot "fixtures\runt
 $solidBlackHandsAndGraftsProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-solid-black-hands-and-grafts.profile.json"
 $solidBlackOpenXrHandsAnchorParticlesProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json"
 
-foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath)) {
+foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $nativeCameraMetadataPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath)) {
     if (-not (Test-Path $path)) {
         throw "Missing native renderer Android file: $path"
     }
@@ -81,6 +82,7 @@ $nativeBuildRs = Get-Content -Raw -Path $nativeBuildRsPath
 $nativeLib = Get-Content -Raw -Path $nativeLibPath
 $androidEvents = Get-Content -Raw -Path $androidEventsPath
 $nativeCamera = Get-Content -Raw -Path $nativeCameraPath
+$nativeCameraMetadata = Get-Content -Raw -Path $nativeCameraMetadataPath
 $acameraSys = Get-Content -Raw -Path $acameraSysPath
 $cameraProjection = Get-Content -Raw -Path $cameraProjectionPath
 $cameraProjectionMetadata = Get-Content -Raw -Path $cameraProjectionMetadataPath
@@ -572,6 +574,18 @@ foreach ($token in @(
     'chromaFilter=',
     'camera-request-profile',
     'camera-capture-result',
+    'ACAMERA_SENSOR_TIMESTAMP',
+    'ACAMERA_CONTROL_AE_STATE',
+    'ACAMERA_CONTROL_AWB_STATE',
+    'resultSensorTimestampNs=',
+    'aeState=',
+    'awbState=',
+    'captureResultCorrelationStatus=',
+    'captureResultDeltaNs=',
+    'cameraCaptureResultCorrelationReady=',
+    'ResultCorrelationStatus=',
+    'scorecard_marker_fields\("left"\)',
+    'scorecard_marker_fields\("right"\)',
     'cameraResolutionProfile=',
     'readerMaxImages=',
     'cameraSyncActive=',
@@ -590,7 +604,7 @@ foreach ($token in @(
     'guideProjectionEnabled=false',
     'quest-native-renderer-direct-hwb-camera-quality\.profile\.json'
 )) {
-    if ("$nativeRendererOptions`n$nativeCamera`n$cameraProjection`n$cameraProjectionFragment`n$xrVulkan`n$directHwbCameraQualityProfile" -notmatch $token) {
+    if ("$nativeRendererOptions`n$nativeCamera`n$nativeCameraMetadata`n$acameraSys`n$cameraProjection`n$cameraProjectionFragment`n$xrVulkan`n$directHwbCameraQualityProfile" -notmatch $token) {
         throw "Native direct-HWB camera quality diagnostic route missing token: $token"
     }
 }

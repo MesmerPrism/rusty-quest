@@ -6,6 +6,7 @@ use ash::vk;
 
 use crate::camera_projection_metadata::{CameraProjectionMetadata, TargetRect};
 use crate::native_camera::{NativeCameraFrame, NativeCameraImageLease, NativeStereoCameraFrame};
+use crate::native_camera_metadata::NativeCameraCaptureResultCorrelation;
 use crate::native_renderer_options::NativeCameraYcbcrMode;
 
 const CAMERA_IMPORT_CACHE_LIMIT: usize = 18;
@@ -22,6 +23,8 @@ pub(crate) struct CameraProjectionFrameStats {
     pub(crate) right_import_sequence: u64,
     pub(crate) left_camera_id: String,
     pub(crate) right_camera_id: String,
+    pub(crate) left_capture_result: NativeCameraCaptureResultCorrelation,
+    pub(crate) right_capture_result: NativeCameraCaptureResultCorrelation,
     pub(crate) pair_delta_ns: u64,
     pub(crate) import_cache_hits: u64,
     pub(crate) import_cache_misses: u64,
@@ -328,6 +331,8 @@ impl CameraProjectionRenderer {
                 right_import_sequence: frame.right.import_sequence,
                 left_camera_id: frame.left.camera_id.clone(),
                 right_camera_id: frame.right.camera_id.clone(),
+                left_capture_result: frame.left.capture_result.clone(),
+                right_capture_result: frame.right.capture_result.clone(),
                 pair_delta_ns: frame.pair_delta_ns,
                 import_cache_hits: self.import_cache_hits,
                 import_cache_misses: self.import_cache_misses,

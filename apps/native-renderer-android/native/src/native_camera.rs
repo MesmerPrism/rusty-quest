@@ -12,6 +12,10 @@ use std::{
 
 use rusty_quest_native_renderer_contracts::NativeRendererPlan;
 
+use crate::native_camera_metadata::{
+    NativeCameraCaptureResultCorrelation, NativeCameraCaptureResultRing,
+    NativeCameraCaptureResultSnapshot,
+};
 use crate::{
     acamera_sys::{
         ACameraCaptureFailure, ACameraCaptureSession, ACameraCaptureSession_captureCallbacks,
@@ -42,9 +46,8 @@ use crate::{
         ACAMERA_NOISE_REDUCTION_MODE_FAST, ACAMERA_NOISE_REDUCTION_MODE_HIGH_QUALITY,
         ACAMERA_NOISE_REDUCTION_MODE_OFF, ACAMERA_REQUEST_AVAILABLE_CAPABILITIES,
         ACAMERA_REQUEST_AVAILABLE_REQUEST_KEYS, ACAMERA_REQUEST_AVAILABLE_RESULT_KEYS,
-        ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS, ACAMERA_SENSOR_EXPOSURE_TIME,
-        ACAMERA_SENSOR_FRAME_DURATION, ACAMERA_SENSOR_SENSITIVITY, ACAMERA_SYNC_FRAME_NUMBER,
-        AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, AIMAGE_FORMAT_PRIVATE, TEMPLATE_PREVIEW,
+        ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS, AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE,
+        AIMAGE_FORMAT_PRIVATE, TEMPLATE_PREVIEW,
     },
     android_log_error, marker,
     native_renderer_options::{
@@ -238,6 +241,7 @@ pub(crate) struct NativeCameraFrame {
     pub(crate) stride: u32,
     pub(crate) hardware_buffer: AndroidHardwareBufferHandle,
     pub(crate) image_lease: Option<Arc<NativeCameraImageLease>>,
+    pub(crate) capture_result: NativeCameraCaptureResultCorrelation,
 }
 
 #[derive(Clone)]
@@ -1098,44 +1102,6 @@ unsafe fn metadata_entry(
     }
 }
 
-unsafe fn metadata_u8_mode_marker(
-    metadata: *const ACameraMetadata,
-    tag: u32,
-    label: fn(u8) -> &'static str,
-) -> String {
-    read_u8_values(metadata, tag)
-        .first()
-        .copied()
-        .map(|value| label(value).to_string())
-        .unwrap_or_else(|| "unavailable".to_string())
-}
-
-unsafe fn metadata_i32_marker(metadata: *const ACameraMetadata, tag: u32) -> String {
-    read_i32_values(metadata, tag)
-        .first()
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "unavailable".to_string())
-}
-
-unsafe fn metadata_i64_marker(metadata: *const ACameraMetadata, tag: u32) -> String {
-    let Some(entry) = metadata_entry(metadata, tag) else {
-        return "unavailable".to_string();
-    };
-    if entry.count == 0 || entry.data.i64_.is_null() {
-        return "unavailable".to_string();
-    }
-    (*entry.data.i64_).to_string()
-}
-
-unsafe fn metadata_i32_pair_marker(metadata: *const ACameraMetadata, tag: u32) -> String {
-    let values = read_i32_values(metadata, tag);
-    if values.len() < 2 {
-        "unavailable".to_string()
-    } else {
-        format!("{}-{}", values[0], values[1])
-    }
-}
-
 fn optional_u8_marker(value: Option<u8>) -> String {
     value
         .map(|value| value.to_string())
@@ -1248,6 +1214,8 @@ struct NativeCameraCounters {
     removed_hardware_buffer_ids: Mutex<Vec<u64>>,
     latest_left_frame: Mutex<Option<NativeCameraFrame>>,
     latest_right_frame: Mutex<Option<NativeCameraFrame>>,
+    recent_left_capture_results: Mutex<NativeCameraCaptureResultRing>,
+    recent_right_capture_results: Mutex<NativeCameraCaptureResultRing>,
 }
 
 impl NativeCameraCounters {
@@ -1293,6 +1261,31 @@ impl NativeCameraCounters {
         self.removed_hardware_buffer_ids
             .lock()
             .map(|mut removed| std::mem::take(&mut *removed))
+            .unwrap_or_default()
+    }
+
+    fn push_capture_result(&self, side: CameraSide, snapshot: NativeCameraCaptureResultSnapshot) {
+        let result_slot = match side {
+            CameraSide::Left => &self.recent_left_capture_results,
+            CameraSide::Right => &self.recent_right_capture_results,
+        };
+        if let Ok(mut results) = result_slot.lock() {
+            results.push(snapshot);
+        }
+    }
+
+    fn correlate_capture_result(
+        &self,
+        side: CameraSide,
+        timestamp_ns: i64,
+    ) -> NativeCameraCaptureResultCorrelation {
+        let result_slot = match side {
+            CameraSide::Left => &self.recent_left_capture_results,
+            CameraSide::Right => &self.recent_right_capture_results,
+        };
+        result_slot
+            .lock()
+            .map(|results| results.correlate(timestamp_ns))
             .unwrap_or_default()
     }
 }
@@ -1418,6 +1411,9 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
         } else {
             None
         };
+        let capture_result = reader_context
+            .counters
+            .correlate_capture_result(reader_context.side, timestamp_ns);
         let frame = NativeCameraFrame {
             side: reader_context.side.stable_id(),
             camera_id: reader_context.camera_id.clone(),
@@ -1433,6 +1429,7 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
             stride: desc.stride,
             hardware_buffer,
             image_lease,
+            capture_result: capture_result.clone(),
         };
         let latest_slot = match reader_context.side {
             CameraSide::Left => &reader_context.counters.latest_left_frame,
@@ -1444,7 +1441,7 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
         marker(
             "hwb-frame-acquired",
             format!(
-                "sourceFrame={} cameraId={} side={} hardwareBufferId={} importSequence={} timestampNs={} descriptorShape=combined-immutable-sampler-ycbcr-conversion descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} textureUpdateCadence=on-camera-frame releaseRetireCount={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} imageAcquireApi=AImageReader_acquireLatestImage acquireFenceFd=-1 imageReleaseApi={} releaseFenceFd=-1 producerConsumerSync={} ahbHandleRetained=true imageLeaseActive={} bufferRemovedListenerRegistered={} hwbNativeImportReady=true gpuImportWorked=false vulkanExternalImportReady=false visualAcceptance=false",
+                "sourceFrame={} cameraId={} side={} hardwareBufferId={} importSequence={} timestampNs={} descriptorShape=combined-immutable-sampler-ycbcr-conversion descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} textureUpdateCadence=on-camera-frame releaseRetireCount={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} imageAcquireApi=AImageReader_acquireLatestImage acquireFenceFd=-1 imageReleaseApi={} releaseFenceFd=-1 producerConsumerSync={} ahbHandleRetained=true imageLeaseActive={} bufferRemovedListenerRegistered={} hwbNativeImportReady=true gpuImportWorked=false vulkanExternalImportReady=false visualAcceptance=false {}",
                 frame_sequence,
                 reader_context.camera_id,
                 reader_context.side.stable_id(),
@@ -1473,7 +1470,8 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
                     "not-fence-backed-yet"
                 },
                 hold_image_until_gpu_fence,
-                reader_context.buffer_removed_listener_registered
+                reader_context.buffer_removed_listener_registered,
+                capture_result.frame_marker_fields()
             ),
         );
     } else {
@@ -1546,26 +1544,24 @@ unsafe extern "C" fn capture_on_completed(
         .capture_results_seen
         .fetch_add(1, Ordering::Relaxed)
         + 1;
+    let snapshot = NativeCameraCaptureResultSnapshot::from_metadata(result_count, result);
+    reader_context
+        .counters
+        .push_capture_result(reader_context.side, snapshot.clone());
     if result_count > 3 && result_count % 120 != 0 {
         return;
     }
     marker(
         "camera-capture-result",
         format!(
-            "status=ok side={} cameraId={} resultCount={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} exposureTimeNs={} sensitivityIso={} frameDurationNs={} aeFpsRange={} noiseReductionMode={} edgeMode={} syncFrameNumber={} resultMetadataReady=true",
+            "status=ok side={} cameraId={} resultCount={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} {} resultMetadataReady=true",
             reader_context.side.stable_id(),
             reader_context.camera_id,
             result_count,
             reader_context.camera_quality_profile.marker_value(),
             reader_context.camera_sync_mode.marker_value(),
             reader_context.camera_sync_mode.active_marker_value(),
-            metadata_i64_marker(result, ACAMERA_SENSOR_EXPOSURE_TIME),
-            metadata_i32_marker(result, ACAMERA_SENSOR_SENSITIVITY),
-            metadata_i64_marker(result, ACAMERA_SENSOR_FRAME_DURATION),
-            metadata_i32_pair_marker(result, ACAMERA_CONTROL_AE_TARGET_FPS_RANGE),
-            metadata_u8_mode_marker(result, ACAMERA_NOISE_REDUCTION_MODE, noise_reduction_mode_label),
-            metadata_u8_mode_marker(result, ACAMERA_EDGE_MODE, edge_mode_label),
-            metadata_i64_marker(result, ACAMERA_SYNC_FRAME_NUMBER),
+            snapshot.capture_result_marker_fields(),
         ),
     );
 }

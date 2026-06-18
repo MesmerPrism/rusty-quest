@@ -33,6 +33,8 @@ mod hand_mesh_graft;
 mod live_hand_compact;
 #[cfg(target_os = "android")]
 mod native_camera;
+#[cfg(target_os = "android")]
+mod native_camera_metadata;
 mod native_renderer_options;
 #[cfg(target_os = "android")]
 mod native_renderer_timing;

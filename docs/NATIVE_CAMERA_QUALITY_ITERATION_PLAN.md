@@ -76,6 +76,11 @@ lifetime safety:
   nearest result snapshot.
 - Keep logging bounded and marker-first; do not introduce a telemetry database.
 
+Implemented shape: each camera side keeps a bounded recent-result ring, capture
+callbacks store sensor timestamp/exposure/sensitivity/frame duration/AE/AWB/NR/
+edge/sync fields, acquired HWB frames report the nearest result correlation,
+and the timing scorecard carries left/right result-correlation fields.
+
 ### Slice 3: Camera2 Profile Selection
 
 - Add a `direct-low-noise-record-30` profile that uses `TEMPLATE_RECORD`.
