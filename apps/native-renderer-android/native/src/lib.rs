@@ -185,6 +185,7 @@ fn android_main(app: android_activity::AndroidApp) {
             runtime_options.camera_reader_max_images,
             runtime_options.camera_quality_profile,
             runtime_options.camera_sync_mode,
+            runtime_options.camera_stereo_pairing_policy,
         ) {
             Ok(runtime) => Some(runtime),
             Err(error) => {

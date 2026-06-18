@@ -233,7 +233,13 @@ queue-headroom A/B checks. The lower-latency
 It uses the async ImageReader acquire/release APIs and reports acquire-fence fd
 presence, while markers still call out that Vulkan external-semaphore ownership
 transfer is pending. Keep the hold-sync profile as the fence-backed safety
-comparison.
+comparison. 
+
+Stereo pairing defaults to latest left plus latest right frame. Set
+`debug.rustyquest.native_renderer.camera.stereo_pairing=nearest-timestamp` to
+enable the bounded recent-frame pairing diagnostic; timing scorecards then
+report `stereoPairingPolicy=nearest-timestamp` with `stereoPairDeltaNs` for
+fixed-scene comparisons.
 
 Acceptance caveat: the current visual acceptance covers the native diagnostic
 projection, recorded hand replay overlay, metadata-owned camera target area,

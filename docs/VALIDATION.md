@@ -66,7 +66,10 @@ actual Camera2 result metadata. The
 lower-latency `delete-async-release-fence` sync mode now activates the async
 ImageReader acquire/release APIs and reports acquire fence fd presence, while
 its markers explicitly keep Vulkan external-semaphore ownership transfer as
-pending. The
+pending. Stereo pairing defaults to `latest-latest`; setting
+`debug.rustyquest.native_renderer.camera.stereo_pairing=nearest-timestamp`
+uses a bounded recent-frame ring and reports `stereoPairingPolicy` with
+`stereoPairDeltaNs` in `timing-scorecard`. The
 `quest-native-renderer-replay-visual-proof.profile.json` fixture is the
 no-real-hands recorded replay acceptance route, while
 `quest-native-renderer-live-hand-visual-diagnostic.profile.json` only stages the

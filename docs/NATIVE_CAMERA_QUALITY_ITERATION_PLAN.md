@@ -148,6 +148,13 @@ hold-sync path remains the fence-backed safety path.
 - Compare latest/latest with nearest-timestamp pairing under fixed-scene
   headset evidence.
 
+Implemented shape: `debug.rustyquest.native_renderer.camera.stereo_pairing`
+defaults to `latest-latest` and can be set to `nearest-timestamp`. The
+nearest-timestamp policy keeps a bounded four-frame per-eye ring only when
+requested, chooses the left/right pair with the smallest sensor timestamp
+delta, and reports `stereoPairingPolicy` alongside `stereoPairDeltaNs` in the
+timing scorecard.
+
 ## Validation
 
 Minimum validation for each source slice:

@@ -18,6 +18,8 @@ pub(crate) const PROP_CAMERA_QUALITY_PROFILE: &str =
 pub(crate) const PROP_CAMERA_SYNC_MODE: &str = "debug.rustyquest.native_renderer.camera.sync_mode";
 pub(crate) const PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED: &str =
     "debug.rustyquest.native_renderer.camera.luma_diagnostic.enabled";
+pub(crate) const PROP_CAMERA_STEREO_PAIRING: &str =
+    "debug.rustyquest.native_renderer.camera.stereo_pairing";
 pub(crate) const PROP_CAMERA_DIRECT_BORDER_OPACITY: &str =
     "debug.rustyquest.native_renderer.camera.direct_border.opacity";
 pub(crate) const PROP_SWAPCHAIN_COLOR_FORMAT_MODE: &str =
@@ -399,6 +401,28 @@ impl NativeCameraSyncMode {
             Self::DeleteAsyncReleaseFence => {
                 "active-diagnostic-sync-fd-observed-vulkan-semaphore-pending"
             }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeCameraStereoPairingPolicy {
+    LatestLatest,
+    NearestTimestamp,
+}
+
+impl NativeCameraStereoPairingPolicy {
+    pub(crate) fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "nearest-timestamp" | "nearest" | "timestamp-nearest" => Self::NearestTimestamp,
+            _ => Self::LatestLatest,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::LatestLatest => "latest-latest",
+            Self::NearestTimestamp => "nearest-timestamp",
         }
     }
 }
@@ -1181,6 +1205,7 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) camera_quality_profile: NativeCameraQualityProfile,
     pub(crate) camera_sync_mode: NativeCameraSyncMode,
     pub(crate) camera_luma_diagnostic_enabled: bool,
+    pub(crate) camera_stereo_pairing_policy: NativeCameraStereoPairingPolicy,
     pub(crate) camera_direct_border_opacity: f32,
     pub(crate) swapchain_color_format_mode: NativeSwapchainColorFormatMode,
     pub(crate) replay_visual_proof_enabled: bool,
@@ -1211,6 +1236,8 @@ impl NativeRendererRuntimeOptions {
         let camera_sync_mode = NativeCameraSyncMode::from_property(lookup(PROP_CAMERA_SYNC_MODE));
         let camera_luma_diagnostic_enabled =
             bool_value(lookup(PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED), false);
+        let camera_stereo_pairing_policy =
+            NativeCameraStereoPairingPolicy::from_property(lookup(PROP_CAMERA_STEREO_PAIRING));
         let camera_direct_border_opacity =
             f32_clamped_value(lookup(PROP_CAMERA_DIRECT_BORDER_OPACITY), 0.72, 0.0, 1.0);
         let swapchain_color_format_mode =
@@ -1253,6 +1280,7 @@ impl NativeRendererRuntimeOptions {
             camera_quality_profile,
             camera_sync_mode,
             camera_luma_diagnostic_enabled,
+            camera_stereo_pairing_policy,
             camera_direct_border_opacity,
             swapchain_color_format_mode,
             replay_visual_proof_enabled,
@@ -1362,12 +1390,12 @@ mod tests {
 
     use super::{
         CompactHandInputSourceMode, NativeCameraOutputMode, NativeCameraQualityProfile,
-        NativeCameraResolutionProfile, NativeCameraSyncMode, NativeCameraYcbcrMode,
-        NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
+        NativeCameraResolutionProfile, NativeCameraStereoPairingPolicy, NativeCameraSyncMode,
+        NativeCameraYcbcrMode, NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
         PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED,
         PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_READER_MAX_IMAGES,
-        PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_SYNC_MODE, PROP_CAMERA_YCBCR_MODE,
-        PROP_ENABLE_SDF_VISUAL, PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
+        PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
+        PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL, PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
         PROP_HAND_ANCHOR_PARTICLES_ENABLED, PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
@@ -1513,6 +1541,10 @@ mod tests {
         );
         assert!(!options.camera_luma_diagnostic_enabled);
         assert_eq!(
+            options.camera_stereo_pairing_policy,
+            NativeCameraStereoPairingPolicy::LatestLatest
+        );
+        assert_eq!(
             options.swapchain_color_format_mode,
             NativeSwapchainColorFormatMode::Auto
         );
@@ -1526,6 +1558,7 @@ mod tests {
             (PROP_CAMERA_QUALITY_PROFILE, "low-noise-30"),
             (PROP_CAMERA_SYNC_MODE, "delete-async"),
             (PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED, "true"),
+            (PROP_CAMERA_STEREO_PAIRING, "nearest-timestamp"),
             (PROP_SWAPCHAIN_COLOR_FORMAT_MODE, "unorm"),
             (PROP_CAMERA_DIRECT_BORDER_OPACITY, "0"),
         ]);
@@ -1585,6 +1618,14 @@ mod tests {
             "active-diagnostic-sync-fd-observed-vulkan-semaphore-pending"
         );
         assert!(direct.camera_luma_diagnostic_enabled);
+        assert_eq!(
+            direct.camera_stereo_pairing_policy,
+            NativeCameraStereoPairingPolicy::NearestTimestamp
+        );
+        assert_eq!(
+            direct.camera_stereo_pairing_policy.marker_value(),
+            "nearest-timestamp"
+        );
         assert_eq!(
             direct.swapchain_color_format_mode,
             NativeSwapchainColorFormatMode::Unorm

@@ -57,17 +57,20 @@ use crate::{
         select_reader_size, CameraCapabilities, PrivateOutputMinFrameDuration,
     },
     native_renderer_options::{
-        NativeCameraQualityProfile, NativeCameraResolutionProfile, NativeCameraSyncMode,
+        NativeCameraQualityProfile, NativeCameraResolutionProfile, NativeCameraStereoPairingPolicy,
+        NativeCameraSyncMode,
     },
 };
 
 const DEFAULT_READER_WIDTH: i32 = 1280;
 const DEFAULT_READER_HEIGHT: i32 = 1280;
 const DEFAULT_READER_MAX_IMAGES: u32 = 4;
+const RECENT_STEREO_PAIRING_FRAME_LIMIT: usize = 4;
 
 pub(crate) struct NativeCameraRuntime {
     manager: *mut ACameraManager,
     counters: Arc<NativeCameraCounters>,
+    stereo_pairing_policy: NativeCameraStereoPairingPolicy,
     left: Option<NativeCameraStream>,
     right: Option<NativeCameraStream>,
 }
@@ -79,6 +82,7 @@ impl NativeCameraRuntime {
         camera_reader_max_images: u32,
         camera_quality_profile: NativeCameraQualityProfile,
         camera_sync_mode: NativeCameraSyncMode,
+        stereo_pairing_policy: NativeCameraStereoPairingPolicy,
     ) -> Result<Self, String> {
         let camera_reader_max_images = if camera_reader_max_images == 0 {
             DEFAULT_READER_MAX_IMAGES
@@ -116,6 +120,7 @@ impl NativeCameraRuntime {
         let mut runtime = Self {
             manager,
             counters: Arc::clone(&counters),
+            stereo_pairing_policy,
             left: None,
             right: None,
         };
@@ -129,6 +134,7 @@ impl NativeCameraRuntime {
                 camera_reader_max_images,
                 camera_quality_profile,
                 camera_sync_mode,
+                stereo_pairing_policy,
                 Arc::clone(&counters),
                 Arc::clone(&alive),
             )?
@@ -142,6 +148,7 @@ impl NativeCameraRuntime {
                 camera_reader_max_images,
                 camera_quality_profile,
                 camera_sync_mode,
+                stereo_pairing_policy,
                 Arc::clone(&counters),
                 alive,
             )?
@@ -150,13 +157,14 @@ impl NativeCameraRuntime {
         marker(
             "camera-runtime",
             format!(
-                "status=started acquisition=ACameraManager imageFormat=PRIVATE usage=GPU_SAMPLED_IMAGE textureUpdateCadence=on-camera-frame sourceFrame=ndk-callback cameraIds=50,51 cameraResolutionProfile={} readerMaxImages={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={}",
+                "status=started acquisition=ACameraManager imageFormat=PRIVATE usage=GPU_SAMPLED_IMAGE textureUpdateCadence=on-camera-frame sourceFrame=ndk-callback cameraIds=50,51 cameraResolutionProfile={} readerMaxImages={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} stereoPairingPolicy={}",
                 camera_resolution_profile.marker_value(),
                 camera_reader_max_images,
                 camera_quality_profile.marker_value(),
                 camera_sync_mode.marker_value(),
                 camera_sync_mode.active_marker_value(),
-                camera_sync_mode.implementation_status()
+                camera_sync_mode.implementation_status(),
+                stereo_pairing_policy.marker_value()
             ),
         );
         Ok(runtime)
@@ -167,7 +175,7 @@ impl NativeCameraRuntime {
     }
 
     pub(crate) fn latest_stereo_frame(&self) -> Option<NativeStereoCameraFrame> {
-        self.counters.latest_stereo_frame()
+        self.counters.stereo_frame(self.stereo_pairing_policy)
     }
 
     pub(crate) fn take_removed_hardware_buffer_ids(&self) -> Vec<u64> {
@@ -257,6 +265,7 @@ pub(crate) struct NativeStereoCameraFrame {
     pub(crate) left: NativeCameraFrame,
     pub(crate) right: NativeCameraFrame,
     pub(crate) pair_delta_ns: u64,
+    pub(crate) pairing_policy: &'static str,
 }
 
 #[derive(Debug)]
@@ -412,6 +421,7 @@ impl NativeCameraStream {
         camera_reader_max_images: u32,
         camera_quality_profile: NativeCameraQualityProfile,
         camera_sync_mode: NativeCameraSyncMode,
+        stereo_pairing_policy: NativeCameraStereoPairingPolicy,
         counters: Arc<NativeCameraCounters>,
         alive: Arc<AtomicBool>,
     ) -> Result<Self, String> {
@@ -424,6 +434,7 @@ impl NativeCameraStream {
             camera_reader_max_images,
             camera_quality_profile,
             camera_sync_mode,
+            stereo_pairing_policy,
             buffer_removed_listener_registered: false,
             counters,
             alive,
@@ -1258,6 +1269,7 @@ struct NativeReaderContext {
     camera_reader_max_images: u32,
     camera_quality_profile: NativeCameraQualityProfile,
     camera_sync_mode: NativeCameraSyncMode,
+    stereo_pairing_policy: NativeCameraStereoPairingPolicy,
     buffer_removed_listener_registered: bool,
     counters: Arc<NativeCameraCounters>,
     alive: Arc<AtomicBool>,
@@ -1283,6 +1295,8 @@ struct NativeCameraCounters {
     removed_hardware_buffer_ids: Mutex<Vec<u64>>,
     latest_left_frame: Mutex<Option<NativeCameraFrame>>,
     latest_right_frame: Mutex<Option<NativeCameraFrame>>,
+    recent_left_frames: Mutex<Vec<NativeCameraFrame>>,
+    recent_right_frames: Mutex<Vec<NativeCameraFrame>>,
     recent_left_capture_results: Mutex<NativeCameraCaptureResultRing>,
     recent_right_capture_results: Mutex<NativeCameraCaptureResultRing>,
 }
@@ -1304,7 +1318,20 @@ impl NativeCameraCounters {
         }
     }
 
-    fn latest_stereo_frame(&self) -> Option<NativeStereoCameraFrame> {
+    fn stereo_frame(
+        &self,
+        policy: NativeCameraStereoPairingPolicy,
+    ) -> Option<NativeStereoCameraFrame> {
+        match policy {
+            NativeCameraStereoPairingPolicy::LatestLatest => self.latest_stereo_frame(policy),
+            NativeCameraStereoPairingPolicy::NearestTimestamp => self.nearest_stereo_frame(policy),
+        }
+    }
+
+    fn latest_stereo_frame(
+        &self,
+        policy: NativeCameraStereoPairingPolicy,
+    ) -> Option<NativeStereoCameraFrame> {
         let left = self.latest_left_frame.lock().ok()?.clone()?;
         let right = self.latest_right_frame.lock().ok()?.clone()?;
         let pair_delta_ns = left.timestamp_ns.abs_diff(right.timestamp_ns);
@@ -1312,7 +1339,62 @@ impl NativeCameraCounters {
             left,
             right,
             pair_delta_ns,
+            pairing_policy: policy.marker_value(),
         })
+    }
+
+    fn nearest_stereo_frame(
+        &self,
+        policy: NativeCameraStereoPairingPolicy,
+    ) -> Option<NativeStereoCameraFrame> {
+        let left_frames = self.recent_left_frames.lock().ok()?.clone();
+        let right_frames = self.recent_right_frames.lock().ok()?.clone();
+        let mut best_pair: Option<(NativeCameraFrame, NativeCameraFrame, u64)> = None;
+        for left in &left_frames {
+            for right in &right_frames {
+                let delta = left.timestamp_ns.abs_diff(right.timestamp_ns);
+                if best_pair
+                    .as_ref()
+                    .map(|(_, _, best_delta)| delta < *best_delta)
+                    .unwrap_or(true)
+                {
+                    best_pair = Some((left.clone(), right.clone(), delta));
+                }
+            }
+        }
+        if let Some((left, right, pair_delta_ns)) = best_pair {
+            return Some(NativeStereoCameraFrame {
+                left,
+                right,
+                pair_delta_ns,
+                pairing_policy: policy.marker_value(),
+            });
+        }
+        self.latest_stereo_frame(policy)
+    }
+
+    fn push_recent_frame(
+        &self,
+        side: CameraSide,
+        frame: NativeCameraFrame,
+        policy: NativeCameraStereoPairingPolicy,
+    ) {
+        if !matches!(policy, NativeCameraStereoPairingPolicy::NearestTimestamp) {
+            return;
+        }
+        let recent_slot = match side {
+            CameraSide::Left => &self.recent_left_frames,
+            CameraSide::Right => &self.recent_right_frames,
+        };
+        if let Ok(mut recent) = recent_slot.lock() {
+            recent.push(frame);
+            let overflow = recent
+                .len()
+                .saturating_sub(RECENT_STEREO_PAIRING_FRAME_LIMIT);
+            if overflow > 0 {
+                recent.drain(0..overflow);
+            }
+        }
     }
 
     fn push_removed_hardware_buffer_id(&self, hardware_buffer_id: u64) {
@@ -1522,6 +1604,11 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
             CameraSide::Left => &reader_context.counters.latest_left_frame,
             CameraSide::Right => &reader_context.counters.latest_right_frame,
         };
+        reader_context.counters.push_recent_frame(
+            reader_context.side,
+            frame.clone(),
+            reader_context.stereo_pairing_policy,
+        );
         if let Ok(mut latest_frame) = latest_slot.lock() {
             *latest_frame = Some(frame);
         }
