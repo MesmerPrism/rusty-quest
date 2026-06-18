@@ -9,6 +9,8 @@ pub(crate) const PROP_RENDER_MODE: &str = "debug.rustyquest.native_renderer.rend
 pub(crate) const PROP_CAMERA_OUTPUT_MODE: &str = "debug.rustyquest.native_renderer.camera.output";
 pub(crate) const PROP_CAMERA_YCBCR_MODE: &str =
     "debug.rustyquest.native_renderer.camera.ycbcr.mode";
+pub(crate) const PROP_CAMERA_RESOLUTION_PROFILE: &str =
+    "debug.rustyquest.native_renderer.camera.resolution";
 pub(crate) const PROP_CAMERA_QUALITY_PROFILE: &str =
     "debug.rustyquest.native_renderer.camera.quality_profile";
 pub(crate) const PROP_CAMERA_SYNC_MODE: &str = "debug.rustyquest.native_renderer.camera.sync_mode";
@@ -266,6 +268,39 @@ impl NativeCameraYcbcrMode {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeCameraResolutionProfile {
+    Square1280,
+    Wide1280x960,
+    ClosestSupported,
+}
+
+impl NativeCameraResolutionProfile {
+    pub(crate) fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "1280x960" | "wide-1280x960" | "quest-1280x960" => Self::Wide1280x960,
+            "closest" | "closest-supported" | "auto-supported" => Self::ClosestSupported,
+            _ => Self::Square1280,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::Square1280 => "1280x1280",
+            Self::Wide1280x960 => "1280x960",
+            Self::ClosestSupported => "closest-supported",
+        }
+    }
+
+    pub(crate) fn requested_size(self) -> Option<[i32; 2]> {
+        match self {
+            Self::Square1280 => Some([1280, 1280]),
+            Self::Wide1280x960 => Some([1280, 960]),
+            Self::ClosestSupported => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeCameraQualityProfile {
     DirectBaseline,
     DirectLowNoise30,
@@ -326,15 +361,18 @@ impl NativeCameraSyncMode {
     }
 
     pub(crate) fn active_marker_value(self) -> &'static str {
-        "early-delete-ahb-retained"
+        match self {
+            Self::EarlyDeleteAhbRetained => "early-delete-ahb-retained",
+            Self::HoldImageUntilGpuFence => "hold-image-until-gpu-fence",
+            Self::DeleteAsyncReleaseFence => "early-delete-ahb-retained",
+        }
     }
 
     pub(crate) fn implementation_status(self) -> &'static str {
         match self {
             Self::EarlyDeleteAhbRetained => "active-baseline",
-            Self::HoldImageUntilGpuFence | Self::DeleteAsyncReleaseFence => {
-                "declared-diagnostic-not-active-yet"
-            }
+            Self::HoldImageUntilGpuFence => "active-diagnostic",
+            Self::DeleteAsyncReleaseFence => "declared-diagnostic-not-active-yet",
         }
     }
 }
@@ -861,6 +899,7 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) render_mode: NativeRendererRenderMode,
     pub(crate) camera_output_mode: NativeCameraOutputMode,
     pub(crate) camera_ycbcr_mode: NativeCameraYcbcrMode,
+    pub(crate) camera_resolution_profile: NativeCameraResolutionProfile,
     pub(crate) camera_quality_profile: NativeCameraQualityProfile,
     pub(crate) camera_sync_mode: NativeCameraSyncMode,
     pub(crate) camera_direct_border_opacity: f32,
@@ -885,6 +924,8 @@ impl NativeRendererRuntimeOptions {
             NativeCameraOutputMode::from_property(lookup(PROP_CAMERA_OUTPUT_MODE));
         let camera_ycbcr_mode =
             NativeCameraYcbcrMode::from_property(lookup(PROP_CAMERA_YCBCR_MODE));
+        let camera_resolution_profile =
+            NativeCameraResolutionProfile::from_property(lookup(PROP_CAMERA_RESOLUTION_PROFILE));
         let camera_quality_profile =
             NativeCameraQualityProfile::from_property(lookup(PROP_CAMERA_QUALITY_PROFILE));
         let camera_sync_mode = NativeCameraSyncMode::from_property(lookup(PROP_CAMERA_SYNC_MODE));
@@ -925,6 +966,7 @@ impl NativeRendererRuntimeOptions {
             render_mode,
             camera_output_mode,
             camera_ycbcr_mode,
+            camera_resolution_profile,
             camera_quality_profile,
             camera_sync_mode,
             camera_direct_border_opacity,
@@ -1036,9 +1078,10 @@ mod tests {
 
     use super::{
         CompactHandInputSourceMode, NativeCameraOutputMode, NativeCameraQualityProfile,
-        NativeCameraSyncMode, NativeCameraYcbcrMode, NativeRendererRuntimeOptions,
-        NativeSwapchainColorFormatMode, PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_OUTPUT_MODE,
-        PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_SYNC_MODE, PROP_CAMERA_YCBCR_MODE,
+        NativeCameraResolutionProfile, NativeCameraSyncMode, NativeCameraYcbcrMode,
+        NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
+        PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE,
+        PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_SYNC_MODE, PROP_CAMERA_YCBCR_MODE,
         PROP_ENABLE_SDF_VISUAL, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
         PROP_HAND_ANCHOR_PARTICLES_PER_HAND, PROP_HAND_ANCHOR_PARTICLES_RADIUS_M,
         PROP_HAND_MESH_GRAFT_COPIES_ENABLED, PROP_HAND_MESH_GRAFT_COPY_SCALE,
@@ -1162,6 +1205,14 @@ mod tests {
             NativeCameraYcbcrMode::AndroidSuggested
         );
         assert_eq!(
+            options.camera_resolution_profile,
+            NativeCameraResolutionProfile::Square1280
+        );
+        assert_eq!(
+            options.camera_resolution_profile.marker_value(),
+            "1280x1280"
+        );
+        assert_eq!(
             options.camera_quality_profile,
             NativeCameraQualityProfile::DirectBaseline
         );
@@ -1178,6 +1229,7 @@ mod tests {
         let direct = options_from(&[
             (PROP_CAMERA_OUTPUT_MODE, "raw_hwb"),
             (PROP_CAMERA_YCBCR_MODE, "cpuyuv-reference"),
+            (PROP_CAMERA_RESOLUTION_PROFILE, "1280x960"),
             (PROP_CAMERA_QUALITY_PROFILE, "low-noise-30"),
             (PROP_CAMERA_SYNC_MODE, "delete-async"),
             (PROP_SWAPCHAIN_COLOR_FORMAT_MODE, "unorm"),
@@ -1195,6 +1247,14 @@ mod tests {
         assert_eq!(
             direct.camera_ycbcr_mode.conversion_mode(),
             "forced-bt601-limited-cpuyuv-reference"
+        );
+        assert_eq!(
+            direct.camera_resolution_profile,
+            NativeCameraResolutionProfile::Wide1280x960
+        );
+        assert_eq!(
+            direct.camera_resolution_profile.requested_size(),
+            Some([1280, 960])
         );
         assert_eq!(
             direct.camera_quality_profile,
@@ -1225,6 +1285,27 @@ mod tests {
             NativeSwapchainColorFormatMode::Unorm
         );
         assert_eq!(direct.camera_direct_border_opacity, 0.0);
+
+        let hold_sync = options_from(&[
+            (PROP_CAMERA_RESOLUTION_PROFILE, "closest"),
+            (PROP_CAMERA_SYNC_MODE, "hold-image"),
+        ]);
+        assert_eq!(
+            hold_sync.camera_resolution_profile,
+            NativeCameraResolutionProfile::ClosestSupported
+        );
+        assert_eq!(
+            hold_sync.camera_sync_mode,
+            NativeCameraSyncMode::HoldImageUntilGpuFence
+        );
+        assert_eq!(
+            hold_sync.camera_sync_mode.active_marker_value(),
+            "hold-image-until-gpu-fence"
+        );
+        assert_eq!(
+            hold_sync.camera_sync_mode.implementation_status(),
+            "active-diagnostic"
+        );
 
         let guide = options_from(&[(PROP_CAMERA_OUTPUT_MODE, "public-guide")]);
         assert_eq!(

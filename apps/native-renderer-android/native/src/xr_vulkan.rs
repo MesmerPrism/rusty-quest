@@ -34,14 +34,14 @@ use crate::{
         NativePrivateLayerSettings, NativeProjectionBorderStretchSettings,
         NativeRendererRenderMode, NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
         PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE,
-        PROP_CAMERA_SYNC_MODE, PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL,
-        PROP_HAND_ANCHOR_PARTICLES_ENABLED, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
-        PROP_HAND_ANCHOR_PARTICLES_RADIUS_M, PROP_HAND_MESH_GRAFT_COPIES_ENABLED,
-        PROP_HAND_MESH_GRAFT_COPY_SCALE, PROP_HAND_MESH_INPUT_SOURCE,
-        PROP_HAND_MESH_REAL_HANDS_VISIBLE, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA,
-        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV,
-        PROP_PROCESSING_LAYER, PROP_RENDER_MODE, PROP_REPLAY_VISUAL_PROOF_ENABLED,
-        PROP_SWAPCHAIN_COLOR_FORMAT_MODE,
+        PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_SYNC_MODE, PROP_CAMERA_YCBCR_MODE,
+        PROP_ENABLE_SDF_VISUAL, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
+        PROP_HAND_ANCHOR_PARTICLES_PER_HAND, PROP_HAND_ANCHOR_PARTICLES_RADIUS_M,
+        PROP_HAND_MESH_GRAFT_COPIES_ENABLED, PROP_HAND_MESH_GRAFT_COPY_SCALE,
+        PROP_HAND_MESH_INPUT_SOURCE, PROP_HAND_MESH_REAL_HANDS_VISIBLE,
+        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED,
+        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV, PROP_PROCESSING_LAYER, PROP_RENDER_MODE,
+        PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SWAPCHAIN_COLOR_FORMAT_MODE,
     },
     native_renderer_timing::{
         elapsed_ms, FrameCpuTimings, GpuStageTimings, GpuTimestampStage, GpuTimestampTracker,
@@ -401,6 +401,7 @@ unsafe fn run_projection_loop_inner(
     let render_mode = runtime_options.render_mode;
     let camera_output_mode = runtime_options.camera_output_mode;
     let camera_ycbcr_mode = runtime_options.camera_ycbcr_mode;
+    let camera_resolution_profile = runtime_options.camera_resolution_profile;
     let camera_quality_profile = runtime_options.camera_quality_profile;
     let camera_sync_mode = runtime_options.camera_sync_mode;
     let camera_direct_border_opacity = runtime_options.camera_direct_border_opacity;
@@ -444,7 +445,7 @@ unsafe fn run_projection_loop_inner(
     crate::marker(
         "camera-output",
         format!(
-            "status=config property={} cameraOutputMode={} renderMode={} customStereoProjectionEnabled={} cameraImportEnabled={} privateLayerProjectionEnabled={} guideProjectionEnabled={} directHwbForced={} ycbcrProperty={} cameraYcbcrMode={} conversionMode={} qualityProfileProperty={} cameraQualityProfile={} syncModeProperty={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} swapchainProperty={} swapchainColorFormatMode={} directBorderProperty={} directBorderOpacity={:.3} cameraQualityDiagnostic=raw-direct-hwb-baseline",
+            "status=config property={} cameraOutputMode={} renderMode={} customStereoProjectionEnabled={} cameraImportEnabled={} privateLayerProjectionEnabled={} guideProjectionEnabled={} directHwbForced={} ycbcrProperty={} cameraYcbcrMode={} conversionMode={} resolutionProperty={} cameraResolutionProfile={} qualityProfileProperty={} cameraQualityProfile={} syncModeProperty={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} swapchainProperty={} swapchainColorFormatMode={} directBorderProperty={} directBorderOpacity={:.3} cameraQualityDiagnostic=raw-direct-hwb-baseline",
             PROP_CAMERA_OUTPUT_MODE,
             camera_output_mode.marker_value(),
             render_mode.marker_value(),
@@ -456,6 +457,8 @@ unsafe fn run_projection_loop_inner(
             PROP_CAMERA_YCBCR_MODE,
             camera_ycbcr_mode.marker_value(),
             camera_ycbcr_mode.conversion_mode(),
+            PROP_CAMERA_RESOLUTION_PROFILE,
+            camera_resolution_profile.marker_value(),
             PROP_CAMERA_QUALITY_PROFILE,
             camera_quality_profile.marker_value(),
             PROP_CAMERA_SYNC_MODE,
@@ -854,6 +857,7 @@ unsafe fn run_projection_loop_inner(
         hand_anchor_particle_settings,
         camera_output_mode,
         camera_ycbcr_mode,
+        camera_resolution_profile,
         camera_quality_profile,
         camera_sync_mode,
         swapchain_color_format_mode,
@@ -1221,6 +1225,7 @@ unsafe fn run_projection_frames(
     hand_anchor_particle_settings: NativeHandAnchorParticleSettings,
     camera_output_mode: NativeCameraOutputMode,
     camera_ycbcr_mode: crate::native_renderer_options::NativeCameraYcbcrMode,
+    camera_resolution_profile: crate::native_renderer_options::NativeCameraResolutionProfile,
     camera_quality_profile: NativeCameraQualityProfile,
     camera_sync_mode: NativeCameraSyncMode,
     swapchain_color_format_mode: NativeSwapchainColorFormatMode,
@@ -1380,6 +1385,37 @@ unsafe fn run_projection_frames(
         vk_device
             .wait_for_fences(&[fences[frame_slot]], true, u64::MAX)
             .map_err(|error| format!("wait Vulkan fence: {error}"))?;
+        let retired_image_leases =
+            camera_projection_renderer.retire_completed_frame_leases(frame_slot);
+        if retired_image_leases > 0 {
+            crate::marker(
+                "camera-sync",
+                format!(
+                    "status=gpu-frame-lease-retired frameSlot={} leaseCount={} cameraSyncActive=hold-image-until-gpu-fence producerConsumerSync=image-slot-held-until-vulkan-frame-fence",
+                    frame_slot, retired_image_leases
+                ),
+            );
+        }
+        if let Some(runtime) = camera_runtime {
+            let removed_hardware_buffer_ids = runtime.take_removed_hardware_buffer_ids();
+            if !removed_hardware_buffer_ids.is_empty() {
+                let evicted_count = camera_projection_renderer
+                    .evict_removed_hardware_buffers(vk_device, &removed_hardware_buffer_ids);
+                crate::marker(
+                    "camera-projection-cache",
+                    format!(
+                        "status=buffer-removed-processed removedHardwareBufferIds={} cacheEvictionSignal=true cacheEvictionApplied={} evictedImportCount={}",
+                        removed_hardware_buffer_ids
+                            .iter()
+                            .map(u64::to_string)
+                            .collect::<Vec<_>>()
+                            .join(","),
+                        evicted_count > 0,
+                        evicted_count
+                    ),
+                );
+            }
+        }
         let gpu_stage_timings = gpu_timestamp_tracker.read_frame(vk_device, frame_slot);
         vk_device
             .reset_fences(&[fences[frame_slot]])
@@ -1411,7 +1447,12 @@ unsafe fn run_projection_frames(
             match camera_runtime
                 .and_then(NativeCameraRuntime::latest_stereo_frame)
                 .map(|stereo_frame| {
-                    camera_projection_renderer.prepare_stereo_frame(vk_device, cmd, &stereo_frame)
+                    camera_projection_renderer.prepare_stereo_frame(
+                        vk_device,
+                        cmd,
+                        frame_slot,
+                        &stereo_frame,
+                    )
                 }) {
                 Some(Ok(prepared)) => prepared,
                 Some(Err(error)) => {
@@ -1981,6 +2022,7 @@ unsafe fn run_projection_frames(
                 render_mode,
                 camera_output_mode,
                 camera_ycbcr_mode,
+                camera_resolution_profile,
                 camera_quality_profile,
                 camera_sync_mode,
                 swapchain_color_format_mode,
@@ -2966,6 +3008,7 @@ fn write_projection_scorecard(
     render_mode: NativeRendererRenderMode,
     camera_output_mode: NativeCameraOutputMode,
     camera_ycbcr_mode: crate::native_renderer_options::NativeCameraYcbcrMode,
+    camera_resolution_profile: crate::native_renderer_options::NativeCameraResolutionProfile,
     camera_quality_profile: NativeCameraQualityProfile,
     camera_sync_mode: NativeCameraSyncMode,
     swapchain_color_format_mode: NativeSwapchainColorFormatMode,
@@ -3066,7 +3109,7 @@ fn write_projection_scorecard(
     crate::marker(
         "timing-scorecard",
         format!(
-            "frame={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} openxrDefaultHandVisualRequested={} nativePassthroughLayerActive={} environmentBlendMode={:?} projectionLayerAlphaBlend={} cameraRuntimeMode={} cameraOutputMode={} cameraYcbcrMode={} cameraYcbcrConversionMode={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} swapchainColorFormatMode={} directHwbBorderOpacity={:.3} camera_frames_acquired={} hardware_buffer_imports={} hardware_buffer_cache_hits={} hardware_buffer_cache_misses={} guide_graph_renders={} guide_graph_cache_hits={} sdf_field_updates={} private_layer_invocations={} xr_frames_submitted={} stale_frames={} releaseRetireCount={} observedOpenXrFps={:.1} recordCpuMs={:.3} submitCpuMs={:.3} {} {} projectionExtent={}x{} openxrSubmitReady=true vulkanExternalImportReady={} cameraProjectionReady={} directHwbProjectionDiagnostic={} cameraProjectionPath={} metadataDrivenTargetFootprint={} guideProjectionCoverage={} {} {} plannedFinalExternalHwbSamples={} plannedGuideTextureSamples={} actualFinalExternalHwbSamples={} actualGuideTextureSamples={} leftCameraId={} rightCameraId={} leftSourceFrame={} rightSourceFrame={} leftHardwareBufferId={} rightHardwareBufferId={} leftImportSequence={} rightImportSequence={} stereoPairDeltaNs={} {} recordedHandReplayVisible={} recordedHandReplayTarget=metadata-target-screen-uv {} {} replayVisualFrame={} replayTimestampNs={} replayVisualPointCount={} compactJointOverlayVisible=false handMeshRealHandsVisible={} nativePassthroughRealHandMeshVisible={} solidBlackRealHandMeshVisible={} {} {} sdfTarget=metadata-target-screen-uv {} {} {} {} {} visualAcceptance=target-area-orientation-pending-screenshot projectionReady=true",
+            "frame={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} openxrDefaultHandVisualRequested={} nativePassthroughLayerActive={} environmentBlendMode={:?} projectionLayerAlphaBlend={} cameraRuntimeMode={} cameraOutputMode={} cameraYcbcrMode={} cameraYcbcrConversionMode={} cameraResolutionProfile={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} swapchainColorFormatMode={} directHwbBorderOpacity={:.3} camera_frames_acquired={} hardware_buffer_imports={} hardware_buffer_cache_hits={} hardware_buffer_cache_misses={} guide_graph_renders={} guide_graph_cache_hits={} sdf_field_updates={} private_layer_invocations={} xr_frames_submitted={} stale_frames={} releaseRetireCount={} observedOpenXrFps={:.1} recordCpuMs={:.3} submitCpuMs={:.3} {} {} projectionExtent={}x{} openxrSubmitReady=true vulkanExternalImportReady={} cameraProjectionReady={} directHwbProjectionDiagnostic={} cameraProjectionPath={} metadataDrivenTargetFootprint={} guideProjectionCoverage={} {} {} plannedFinalExternalHwbSamples={} plannedGuideTextureSamples={} actualFinalExternalHwbSamples={} actualGuideTextureSamples={} leftCameraId={} rightCameraId={} leftSourceFrame={} rightSourceFrame={} leftHardwareBufferId={} rightHardwareBufferId={} leftImportSequence={} rightImportSequence={} stereoPairDeltaNs={} {} recordedHandReplayVisible={} recordedHandReplayTarget=metadata-target-screen-uv {} {} replayVisualFrame={} replayTimestampNs={} replayVisualPointCount={} compactJointOverlayVisible=false handMeshRealHandsVisible={} nativePassthroughRealHandMeshVisible={} solidBlackRealHandMeshVisible={} {} {} sdfTarget=metadata-target-screen-uv {} {} {} {} {} visualAcceptance=target-area-orientation-pending-screenshot projectionReady=true",
             frame_count,
             render_mode.marker_value(),
             render_mode.uses_custom_stereo_projection(),
@@ -3080,6 +3123,7 @@ fn write_projection_scorecard(
             camera_output_mode.marker_value(),
             camera_ycbcr_mode.marker_value(),
             camera_ycbcr_mode.conversion_mode(),
+            camera_resolution_profile.marker_value(),
             camera_quality_profile.marker_value(),
             camera_sync_mode.marker_value(),
             camera_sync_mode.active_marker_value(),

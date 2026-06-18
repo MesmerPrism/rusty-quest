@@ -11,7 +11,10 @@
   BT.601/UNORM variant forces limited BT.601 for color-lift A/B checks. The
   low-noise 30 profile keeps the Android-suggested/UNORM baseline and requests
   support-gated public Camera2 controls for 30 FPS AE, noise reduction, and
-  edge enhancement off. The
+  edge enhancement off; the low-latency 60 profile requests 60 FPS AE with fast
+  noise reduction; the 1280x960 profile tests reader-size selection; and the
+  hold-sync profile retains sampled `AImage` objects until the submitted Vulkan
+  frame-slot fence retires. The
   HWB peripheral stretch
   profile keeps the custom Camera2 projection route active while enabling the public
   full-eye target-edge stretch/blend border profile. The native passthrough

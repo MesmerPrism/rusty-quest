@@ -21,8 +21,7 @@ direct-camera border overlay, leaves the Vulkan YCbCr sampler on Android's
 suggested model/range, and requests a UNORM OpenXR swapchain preference. It
 also declares `camera.quality_profile=direct-baseline` and
 `camera.sync_mode=early-delete-ahb-retained`; runtime markers report this as
-the active public baseline until the later fence-backed ImageReader/Vulkan
-release path is implemented. The
+the default public baseline. The
 `quest-native-renderer-direct-hwb-camera-quality-bt601-unorm.profile.json`
 fixture keeps the same raw route but forces the effective sampler conversion to
 `YCBCR_601` plus `ITU_NARROW` and requests a UNORM OpenXR swapchain preference
@@ -31,10 +30,20 @@ for color-lift and dark-region grain diagnostics. The
 same Android-suggested/UNORM raw route but requests the support-gated public
 Camera2 low-noise profile: 30 FPS AE range, high-quality noise reduction with a
 fast fallback, and edge enhancement off when those keys/modes are exposed by
-the device. The native app logs `camera-capabilities`,
-`camera-request-profile`, `camera-capture-result`, buffer-removed listener, and
-YCbCr format-feature markers so headset screenshots can be compared with the
-actual Camera2 result metadata. The
+the device. `quest-native-renderer-direct-hwb-low-latency-60.profile.json`
+requests 60 FPS AE, fast noise reduction, and edge enhancement off.
+`quest-native-renderer-direct-hwb-1280x960.profile.json` requests the 1280x960
+reader size, with Camera2 stream-configuration fallback logged when needed.
+`quest-native-renderer-direct-hwb-hold-sync.profile.json` activates the
+conservative producer/consumer diagnostic: the camera callback retains the
+sampled `AImage`, the renderer tracks that lease per Vulkan frame slot, and the
+lease is retired only after that frame slot's GPU fence completes. The native
+app logs `camera-capabilities`, `camera-request-profile`,
+`camera-capture-result`, selected reader size, buffer-removed listener,
+cache-eviction processing, sync lease tracking, and YCbCr format-feature
+markers so headset screenshots can be compared with the actual Camera2 result
+metadata. The lower-latency `AImage_deleteAsync`/sync-fd release path remains a
+future validation gate. The
 `quest-native-renderer-replay-visual-proof.profile.json` fixture is the
 no-real-hands recorded replay acceptance route, while
 `quest-native-renderer-live-hand-visual-diagnostic.profile.json` only stages the

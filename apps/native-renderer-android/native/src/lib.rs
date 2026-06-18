@@ -175,6 +175,7 @@ fn android_main(app: android_activity::AndroidApp) {
     let camera_runtime = if runtime_options.render_mode.uses_custom_stereo_projection() {
         match native_camera::NativeCameraRuntime::start_from_plan(
             &plan,
+            runtime_options.camera_resolution_profile,
             runtime_options.camera_quality_profile,
             runtime_options.camera_sync_mode,
         ) {

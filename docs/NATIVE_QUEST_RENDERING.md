@@ -287,6 +287,13 @@ The runtime scaffold:
   current direct-HWB quality baseline, keeps BT.601/UNORM as a comparison
   profile, and exposes support-gated public Camera2 quality profiles with
   explicit `cameraSyncRequested`/`cameraSyncActive` markers;
+- can request the historical 1280x960 reader size, or ask for the closest
+  supported private Camera2 output size, while logging requested, selected, and
+  fallback status markers;
+- can run the conservative hold-sync diagnostic, where the camera callback
+  retains the sampled `AImage` and the render loop releases that lease after
+  the submitted Vulkan frame-slot fence completes; `AImage_deleteAsync` with
+  sync-fd ownership transfer remains a later lower-latency path;
 - builds a public low-resolution guide graph from those imported camera
   descriptors: per-eye 384x384 downsample, horizontal 5-tap blur, vertical
   5-tap blur, and final guide-texture projection inside the same metadata

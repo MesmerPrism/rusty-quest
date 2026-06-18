@@ -86,11 +86,15 @@ remains a comparison route, not the default. The public camera-quality profile
 knob is support-gated through Camera2 metadata: `direct-baseline` applies no
 request overrides, while `direct-low-noise-30` requests 30 FPS AE, high-quality
 noise reduction with a fast fallback, and edge enhancement off where supported.
-Runtime markers also distinguish `cameraSyncRequested` from
-`cameraSyncActive`; the active implementation remains
-`early-delete-ahb-retained` until the ImageReader/Vulkan fence-backed release
-path is built. The Vulkan import path logs external-format feature bits and
-selects YCbCr chroma/sampler filters from the advertised features.
+`direct-low-latency-60` requests 60 FPS AE with fast noise reduction,
+`camera.resolution=1280x960` selects a support-gated alternate reader size, and
+`camera.sync_mode=hold-image-until-gpu-fence` retains sampled `AImage` objects
+until the submitted Vulkan frame-slot fence retires. Runtime markers distinguish
+`cameraSyncRequested` from `cameraSyncActive`; `early-delete-ahb-retained`
+remains the default baseline, hold-sync is an active diagnostic, and the
+lower-latency `AImage_deleteAsync`/sync-fd path is still future work. The Vulkan
+import path logs external-format feature bits and selects YCbCr chroma/sampler
+filters from the advertised features.
 
 This package is not Manifold command authority, not an Optics visual truth
 source, and not a Matter SDF owner. Headset smokes now prove

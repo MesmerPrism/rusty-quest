@@ -1,6 +1,6 @@
 {
   "schema": "rusty.quest.runtime_profile.v1",
-  "profile_id": "profile.quest.native_renderer.direct_hwb_low_noise_30",
+  "profile_id": "profile.quest.native_renderer.direct_hwb_low_latency_60",
   "target_platform": "quest",
   "owned_android_properties": [
     "debug.rustyquest.native_renderer.render.mode",
@@ -44,7 +44,7 @@
     },
     {
       "name": "debug.rustyquest.native_renderer.camera.quality_profile",
-      "value": "direct-low-noise-30",
+      "value": "direct-low-latency-60",
       "source_setting_id": "native_renderer.camera.quality_profile"
     },
     {
@@ -112,32 +112,20 @@
     "RUSTY_QUEST_NATIVE_RENDERER channel=camera-output",
     "cameraOutputMode=direct-hwb",
     "cameraYcbcrMode=android-suggested",
-    "conversionMode=android-suggested-ycbcr",
     "cameraResolutionProfile=1280x1280",
-    "cameraQualityProfile=direct-low-noise-30",
-    "cameraSyncRequested=early-delete-ahb-retained",
+    "cameraQualityProfile=direct-low-latency-60",
     "cameraSyncActive=early-delete-ahb-retained",
     "swapchainColorFormatMode=unorm",
-    "directBorderOpacity=0.000",
-    "cameraImportEnabled=true",
-    "privateLayerProjectionEnabled=false",
-    "guideProjectionEnabled=false",
-    "directHwbForced=true",
-    "compactHandInputSourceMode=disabled",
-    "handMeshRealHandsVisible=false",
-    "handAnchorParticlesEnabled=false",
     "RUSTY_QUEST_NATIVE_RENDERER channel=camera-request-profile",
-    "profile=direct-low-noise-30",
-    "requestedAeFpsRange=30-30",
-    "requestedNoiseReductionMode=HIGH_QUALITY",
+    "profile=direct-low-latency-60",
+    "requestedAeFpsRange=60-60",
+    "requestedNoiseReductionMode=FAST",
     "requestedEdgeMode=OFF",
-    "RUSTY_QUEST_NATIVE_RENDERER channel=timing-scorecard",
-    "cameraProjectionPath=metadata-target-direct-hwb-forced",
     "directHwbProjectionDiagnostic=true",
     "actualFinalExternalHwbSamples=2",
     "actualGuideTextureSamples=0"
   ],
   "validation_commands": [
-    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-direct-hwb-low-noise-30.profile.json -DryRun -Out local-artifacts/native-renderer-direct-hwb-low-noise-30-property-write-plan.json"
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-direct-hwb-low-latency-60.profile.json -DryRun -Out local-artifacts/native-renderer-direct-hwb-low-latency-60-property-write-plan.json"
   ]
 }

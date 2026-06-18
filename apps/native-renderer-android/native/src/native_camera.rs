@@ -47,11 +47,13 @@ use crate::{
         AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, AIMAGE_FORMAT_PRIVATE, TEMPLATE_PREVIEW,
     },
     android_log_error, marker,
-    native_renderer_options::{NativeCameraQualityProfile, NativeCameraSyncMode},
+    native_renderer_options::{
+        NativeCameraQualityProfile, NativeCameraResolutionProfile, NativeCameraSyncMode,
+    },
 };
 
-const READER_WIDTH: i32 = 1280;
-const READER_HEIGHT: i32 = 1280;
+const DEFAULT_READER_WIDTH: i32 = 1280;
+const DEFAULT_READER_HEIGHT: i32 = 1280;
 const READER_MAX_IMAGES: i32 = 4;
 
 pub(crate) struct NativeCameraRuntime {
@@ -64,6 +66,7 @@ pub(crate) struct NativeCameraRuntime {
 impl NativeCameraRuntime {
     pub(crate) fn start_from_plan(
         plan: &NativeRendererPlan,
+        camera_resolution_profile: NativeCameraResolutionProfile,
         camera_quality_profile: NativeCameraQualityProfile,
         camera_sync_mode: NativeCameraSyncMode,
     ) -> Result<Self, String> {
@@ -107,6 +110,7 @@ impl NativeCameraRuntime {
                 manager,
                 CameraSide::Left,
                 &plan.camera_source.camera_ids.left,
+                camera_resolution_profile,
                 camera_quality_profile,
                 camera_sync_mode,
                 Arc::clone(&counters),
@@ -118,6 +122,7 @@ impl NativeCameraRuntime {
                 manager,
                 CameraSide::Right,
                 &plan.camera_source.camera_ids.right,
+                camera_resolution_profile,
                 camera_quality_profile,
                 camera_sync_mode,
                 Arc::clone(&counters),
@@ -128,7 +133,8 @@ impl NativeCameraRuntime {
         marker(
             "camera-runtime",
             format!(
-                "status=started acquisition=ACameraManager imageFormat=PRIVATE usage=GPU_SAMPLED_IMAGE textureUpdateCadence=on-camera-frame sourceFrame=ndk-callback cameraIds=50,51 cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={}",
+                "status=started acquisition=ACameraManager imageFormat=PRIVATE usage=GPU_SAMPLED_IMAGE textureUpdateCadence=on-camera-frame sourceFrame=ndk-callback cameraIds=50,51 cameraResolutionProfile={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={}",
+                camera_resolution_profile.marker_value(),
                 camera_quality_profile.marker_value(),
                 camera_sync_mode.marker_value(),
                 camera_sync_mode.active_marker_value(),
@@ -144,6 +150,10 @@ impl NativeCameraRuntime {
 
     pub(crate) fn latest_stereo_frame(&self) -> Option<NativeStereoCameraFrame> {
         self.counters.latest_stereo_frame()
+    }
+
+    pub(crate) fn take_removed_hardware_buffer_ids(&self) -> Vec<u64> {
+        self.counters.take_removed_hardware_buffer_ids()
     }
 
     pub(crate) fn record_hardware_buffer_cache_hit(&self) {
@@ -218,6 +228,7 @@ pub(crate) struct NativeCameraFrame {
     pub(crate) layers: u32,
     pub(crate) stride: u32,
     pub(crate) hardware_buffer: AndroidHardwareBufferHandle,
+    pub(crate) image_lease: Option<Arc<NativeCameraImageLease>>,
 }
 
 #[derive(Clone)]
@@ -266,6 +277,53 @@ impl Drop for AndroidHardwareBufferHandle {
     }
 }
 
+pub(crate) struct NativeCameraImageLease {
+    image: *mut AImage,
+    side: &'static str,
+    camera_id: String,
+    source_frame: u64,
+    hardware_buffer_id: u64,
+}
+
+unsafe impl Send for NativeCameraImageLease {}
+unsafe impl Sync for NativeCameraImageLease {}
+
+impl NativeCameraImageLease {
+    unsafe fn new(
+        image: *mut AImage,
+        side: CameraSide,
+        camera_id: &str,
+        source_frame: u64,
+        hardware_buffer_id: u64,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            image,
+            side: side.stable_id(),
+            camera_id: camera_id.to_string(),
+            source_frame,
+            hardware_buffer_id,
+        })
+    }
+}
+
+impl Drop for NativeCameraImageLease {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.image.is_null() {
+                AImage_delete(self.image);
+                self.image = ptr::null_mut();
+            }
+        }
+        marker(
+            "camera-sync",
+            format!(
+                "status=image-lease-retired side={} cameraId={} sourceFrame={} hardwareBufferId={} imageReleaseApi=AImage_delete releaseFenceFd=-1 cameraSyncActive=hold-image-until-gpu-fence producerConsumerSync=image-slot-held-until-vulkan-frame-fence",
+                self.side, self.camera_id, self.source_frame, self.hardware_buffer_id
+            ),
+        );
+    }
+}
+
 struct NativeCameraStream {
     camera_id: String,
     side: CameraSide,
@@ -286,6 +344,7 @@ impl NativeCameraStream {
         manager: *mut ACameraManager,
         side: CameraSide,
         camera_id: &str,
+        camera_resolution_profile: NativeCameraResolutionProfile,
         camera_quality_profile: NativeCameraQualityProfile,
         camera_sync_mode: NativeCameraSyncMode,
         counters: Arc<NativeCameraCounters>,
@@ -296,6 +355,7 @@ impl NativeCameraStream {
         let context = Box::into_raw(Box::new(NativeReaderContext {
             side,
             camera_id: camera_id.to_string(),
+            camera_resolution_profile,
             camera_quality_profile,
             camera_sync_mode,
             buffer_removed_listener_registered: false,
@@ -336,16 +396,21 @@ impl NativeCameraStream {
                 camera_id.to_string_lossy()
             ));
         }
+        let camera_resolution_profile = (*context).camera_resolution_profile;
+        let requested_reader_size = camera_resolution_profile
+            .requested_size()
+            .unwrap_or([DEFAULT_READER_WIDTH, DEFAULT_READER_HEIGHT]);
         let capabilities = match load_camera_capabilities(manager, camera_id.as_ptr()) {
             Ok(capabilities) => {
                 marker(
                     "camera-capabilities",
                     format!(
-                        "status=ok side={} cameraId={} readerRequested={}x{} hardwareLevel={} requestKeyCount={} resultKeyCount={} capabilities={} availableAeFpsRanges={} availableNoiseReductionModes={} availableEdgeModes={} privateOutputSizes={}",
+                        "status=ok side={} cameraId={} cameraResolutionProfile={} readerRequested={}x{} hardwareLevel={} requestKeyCount={} resultKeyCount={} capabilities={} availableAeFpsRanges={} availableNoiseReductionModes={} availableEdgeModes={} privateOutputSizes={}",
                         side.stable_id(),
                         camera_id.to_string_lossy(),
-                        READER_WIDTH,
-                        READER_HEIGHT,
+                        camera_resolution_profile.marker_value(),
+                        requested_reader_size[0],
+                        requested_reader_size[1],
                         optional_u8_marker(capabilities.hardware_level),
                         capabilities.request_keys.len(),
                         capabilities.result_keys.len(),
@@ -362,17 +427,19 @@ impl NativeCameraStream {
                 marker(
                     "camera-capabilities",
                     format!(
-                        "status=error side={} cameraId={} readerRequested={}x{} reason={}",
+                        "status=error side={} cameraId={} cameraResolutionProfile={} readerRequested={}x{} reason={}",
                         side.stable_id(),
                         camera_id.to_string_lossy(),
-                        READER_WIDTH,
-                        READER_HEIGHT,
+                        camera_resolution_profile.marker_value(),
+                        requested_reader_size[0],
+                        requested_reader_size[1],
                         crate::sanitize(&error)
                     ),
                 );
                 CameraCapabilities::default()
             }
         };
+        let reader_size = select_reader_size(camera_resolution_profile, &capabilities);
 
         let mut capture_request = ptr::null_mut();
         if ACameraDevice_createCaptureRequest(camera_device, TEMPLATE_PREVIEW, &mut capture_request)
@@ -397,8 +464,8 @@ impl NativeCameraStream {
 
         let mut reader = ptr::null_mut();
         let reader_result = AImageReader_newWithUsage(
-            READER_WIDTH,
-            READER_HEIGHT,
+            reader_size.width,
+            reader_size.height,
             AIMAGE_FORMAT_PRIVATE,
             AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE,
             READER_MAX_IMAGES,
@@ -411,8 +478,8 @@ impl NativeCameraStream {
                 "AImageReader_newWithUsage failed cameraId={} result={} size={}x{}",
                 camera_id.to_string_lossy(),
                 reader_result,
-                READER_WIDTH,
-                READER_HEIGHT
+                reader_size.width,
+                reader_size.height
             ));
         }
 
@@ -431,7 +498,7 @@ impl NativeCameraStream {
         marker(
             "camera-buffer-removed-listener",
             format!(
-                "status={} side={} cameraId={} cacheEvictionSignal=true cacheEvictionApplied=false",
+                "status={} side={} cameraId={} cacheEvictionSignal=true cacheEvictionQueued=true",
                 if buffer_listener_status == 0 {
                     "registered"
                 } else {
@@ -564,24 +631,40 @@ impl NativeCameraStream {
         marker(
             "camera-start",
             format!(
-                "status=ok side={} cameraId={} width={} height={} format=PRIVATE usage=GPU_SAMPLED_IMAGE readerMaxImages={}",
+                "status=ok side={} cameraId={} cameraResolutionProfile={} readerRequested={}x{} readerSelected={}x{} readerSelectionStatus={} width={} height={} format=PRIVATE usage=GPU_SAMPLED_IMAGE readerMaxImages={}",
                 side.stable_id(),
                 camera_id.to_string_lossy(),
-                READER_WIDTH,
-                READER_HEIGHT,
+                camera_resolution_profile.marker_value(),
+                reader_size.requested_width,
+                reader_size.requested_height,
+                reader_size.width,
+                reader_size.height,
+                reader_size.status,
+                reader_size.width,
+                reader_size.height,
                 READER_MAX_IMAGES
             ),
         );
         marker(
             "camera-sync",
             format!(
-                "status=config side={} cameraId={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} imageAcquireApi=AImageReader_acquireLatestImage acquireFenceFd=-1 imageReleaseApi=AImage_delete releaseFenceFd=-1 producerConsumerSync=not-fence-backed-yet ahbHandleRetained=true",
+                "status=config side={} cameraId={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} imageAcquireApi=AImageReader_acquireLatestImage acquireFenceFd=-1 imageReleaseApi={} releaseFenceFd=-1 producerConsumerSync={} ahbHandleRetained=true",
                 side.stable_id(),
                 camera_id.to_string_lossy(),
                 camera_quality_profile.marker_value(),
                 camera_sync_mode.marker_value(),
                 camera_sync_mode.active_marker_value(),
                 camera_sync_mode.implementation_status(),
+                if matches!(camera_sync_mode, NativeCameraSyncMode::HoldImageUntilGpuFence) {
+                    "AImage_delete-on-vulkan-frame-fence"
+                } else {
+                    "AImage_delete"
+                },
+                if matches!(camera_sync_mode, NativeCameraSyncMode::HoldImageUntilGpuFence) {
+                    "image-slot-held-until-vulkan-frame-fence"
+                } else {
+                    "not-fence-backed-yet"
+                },
             ),
         );
 
@@ -686,6 +769,15 @@ struct CameraCapabilities {
     private_output_sizes: Vec<[i32; 2]>,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct ReaderSizeSelection {
+    width: i32,
+    height: i32,
+    requested_width: i32,
+    requested_height: i32,
+    status: &'static str,
+}
+
 impl CameraCapabilities {
     fn supports_request_key(&self, tag: u32) -> bool {
         self.request_keys.iter().any(|key| *key == tag as i32)
@@ -711,6 +803,77 @@ impl CameraCapabilities {
         self.supports_request_key(ACAMERA_EDGE_MODE)
             && self.edge_modes.iter().any(|value| *value == mode)
     }
+}
+
+fn select_reader_size(
+    profile: NativeCameraResolutionProfile,
+    capabilities: &CameraCapabilities,
+) -> ReaderSizeSelection {
+    let requested = profile
+        .requested_size()
+        .unwrap_or([DEFAULT_READER_WIDTH, DEFAULT_READER_HEIGHT]);
+    if capabilities.private_output_sizes.is_empty() {
+        return ReaderSizeSelection {
+            width: requested[0],
+            height: requested[1],
+            requested_width: requested[0],
+            requested_height: requested[1],
+            status: "support-unknown-using-requested",
+        };
+    }
+    if let Some(requested_size) = profile.requested_size() {
+        if capabilities.private_output_sizes.contains(&requested_size) {
+            return ReaderSizeSelection {
+                width: requested_size[0],
+                height: requested_size[1],
+                requested_width: requested_size[0],
+                requested_height: requested_size[1],
+                status: "exact-supported",
+            };
+        }
+        let fallback = closest_private_output_size(requested_size, capabilities);
+        return ReaderSizeSelection {
+            width: fallback[0],
+            height: fallback[1],
+            requested_width: requested_size[0],
+            requested_height: requested_size[1],
+            status: "fallback-closest-supported",
+        };
+    }
+
+    for preferred in [[1280, 1280], [1280, 960]] {
+        if capabilities.private_output_sizes.contains(&preferred) {
+            return ReaderSizeSelection {
+                width: preferred[0],
+                height: preferred[1],
+                requested_width: requested[0],
+                requested_height: requested[1],
+                status: "closest-preferred-supported",
+            };
+        }
+    }
+    let fallback = capabilities.private_output_sizes[0];
+    ReaderSizeSelection {
+        width: fallback[0],
+        height: fallback[1],
+        requested_width: requested[0],
+        requested_height: requested[1],
+        status: "closest-first-supported",
+    }
+}
+
+fn closest_private_output_size(
+    requested_size: [i32; 2],
+    capabilities: &CameraCapabilities,
+) -> [i32; 2] {
+    capabilities
+        .private_output_sizes
+        .iter()
+        .copied()
+        .min_by_key(|size| {
+            (size[0] - requested_size[0]).abs() + (size[1] - requested_size[1]).abs()
+        })
+        .unwrap_or(requested_size)
 }
 
 unsafe fn load_camera_capabilities(
@@ -1043,6 +1206,7 @@ fn edge_mode_label(value: u8) -> &'static str {
 struct NativeReaderContext {
     side: CameraSide,
     camera_id: String,
+    camera_resolution_profile: NativeCameraResolutionProfile,
     camera_quality_profile: NativeCameraQualityProfile,
     camera_sync_mode: NativeCameraSyncMode,
     buffer_removed_listener_registered: bool,
@@ -1067,6 +1231,7 @@ struct NativeCameraCounters {
     capture_results_seen: AtomicU64,
     last_left_timestamp_ns: AtomicI64,
     last_right_timestamp_ns: AtomicI64,
+    removed_hardware_buffer_ids: Mutex<Vec<u64>>,
     latest_left_frame: Mutex<Option<NativeCameraFrame>>,
     latest_right_frame: Mutex<Option<NativeCameraFrame>>,
 }
@@ -1097,6 +1262,24 @@ impl NativeCameraCounters {
             right,
             pair_delta_ns,
         })
+    }
+
+    fn push_removed_hardware_buffer_id(&self, hardware_buffer_id: u64) {
+        if hardware_buffer_id == 0 {
+            return;
+        }
+        if let Ok(mut removed) = self.removed_hardware_buffer_ids.lock() {
+            if !removed.contains(&hardware_buffer_id) {
+                removed.push(hardware_buffer_id);
+            }
+        }
+    }
+
+    fn take_removed_hardware_buffer_ids(&self) -> Vec<u64> {
+        self.removed_hardware_buffer_ids
+            .lock()
+            .map(|mut removed| std::mem::take(&mut *removed))
+            .unwrap_or_default()
     }
 }
 
@@ -1131,6 +1314,11 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
             .fetch_add(1, Ordering::Relaxed);
         return;
     }
+    let hold_image_until_gpu_fence = matches!(
+        reader_context.camera_sync_mode,
+        NativeCameraSyncMode::HoldImageUntilGpuFence
+    );
+    let mut image_retained_by_frame = false;
 
     let mut timestamp_ns = 0_i64;
     let _ = AImage_getTimestamp(image, &mut timestamp_ns);
@@ -1190,6 +1378,18 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
         if id_status != 0 {
             hardware_buffer_id = 0;
         }
+        let image_lease = if hold_image_until_gpu_fence {
+            image_retained_by_frame = true;
+            Some(NativeCameraImageLease::new(
+                image,
+                reader_context.side,
+                &reader_context.camera_id,
+                frame_sequence,
+                hardware_buffer_id,
+            ))
+        } else {
+            None
+        };
         let frame = NativeCameraFrame {
             side: reader_context.side.stable_id(),
             camera_id: reader_context.camera_id.clone(),
@@ -1204,6 +1404,7 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
             layers: desc.layers,
             stride: desc.stride,
             hardware_buffer,
+            image_lease,
         };
         let latest_slot = match reader_context.side {
             CameraSide::Left => &reader_context.counters.latest_left_frame,
@@ -1215,7 +1416,7 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
         marker(
             "hwb-frame-acquired",
             format!(
-                "sourceFrame={} cameraId={} side={} hardwareBufferId={} importSequence={} timestampNs={} descriptorShape=combined-immutable-sampler-ycbcr-conversion descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} textureUpdateCadence=on-camera-frame releaseRetireCount={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} imageAcquireApi=AImageReader_acquireLatestImage acquireFenceFd=-1 imageReleaseApi=AImage_delete releaseFenceFd=-1 producerConsumerSync=not-fence-backed-yet ahbHandleRetained=true bufferRemovedListenerRegistered={} hwbNativeImportReady=true gpuImportWorked=false vulkanExternalImportReady=false visualAcceptance=false",
+                "sourceFrame={} cameraId={} side={} hardwareBufferId={} importSequence={} timestampNs={} descriptorShape=combined-immutable-sampler-ycbcr-conversion descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} textureUpdateCadence=on-camera-frame releaseRetireCount={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} imageAcquireApi=AImageReader_acquireLatestImage acquireFenceFd=-1 imageReleaseApi={} releaseFenceFd=-1 producerConsumerSync={} ahbHandleRetained=true imageLeaseActive={} bufferRemovedListenerRegistered={} hwbNativeImportReady=true gpuImportWorked=false vulkanExternalImportReady=false visualAcceptance=false",
                 frame_sequence,
                 reader_context.camera_id,
                 reader_context.side.stable_id(),
@@ -1233,6 +1434,17 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
                 reader_context.camera_sync_mode.marker_value(),
                 reader_context.camera_sync_mode.active_marker_value(),
                 reader_context.camera_sync_mode.implementation_status(),
+                if hold_image_until_gpu_fence {
+                    "AImage_delete-on-vulkan-frame-fence"
+                } else {
+                    "AImage_delete"
+                },
+                if hold_image_until_gpu_fence {
+                    "image-slot-held-until-vulkan-frame-fence"
+                } else {
+                    "not-fence-backed-yet"
+                },
+                hold_image_until_gpu_fence,
                 reader_context.buffer_removed_listener_registered
             ),
         );
@@ -1247,7 +1459,9 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
             reader_context.side.stable_id()
         ));
     }
-    AImage_delete(image);
+    if !image_retained_by_frame {
+        AImage_delete(image);
+    }
 }
 
 unsafe extern "C" fn image_on_buffer_removed(
@@ -1273,14 +1487,18 @@ unsafe extern "C" fn image_on_buffer_removed(
             desc.width, desc.height, desc.format, desc.usage, desc.stride, desc.layers
         );
     }
+    reader_context
+        .counters
+        .push_removed_hardware_buffer_id(hardware_buffer_id);
     marker(
         "hwb-buffer-removed",
         format!(
-            "side={} cameraId={} hardwareBufferId={} descriptor={} cacheEvictionSignal=true cacheEvictionApplied=false",
+            "side={} cameraId={} hardwareBufferId={} descriptor={} cacheEvictionSignal=true cacheEvictionQueued={}",
             reader_context.side.stable_id(),
             reader_context.camera_id,
             hardware_buffer_id,
-            desc_marker
+            desc_marker,
+            hardware_buffer_id != 0
         ),
     );
 }

@@ -54,10 +54,11 @@ a hard-coded shader flip. The direct camera-quality profiles can force
 projection outputs are bypassed while inspecting raw acquisition quality; the
 default baseline now uses Android-suggested YCbCr plus the OpenXR swapchain
 preference `unorm`, the BT.601/UNORM variant only changes the effective Vulkan
-sampler conversion for color-lift A/B diagnostics, and the low-noise 30 profile
-adds support-gated public Camera2 request controls for 30 FPS AE, noise
-reduction, and edge enhancement off. Local
-builds can embed the real recorded
+sampler conversion for color-lift A/B diagnostics, the low-noise 30 and
+low-latency 60 profiles add support-gated public Camera2 request controls, the
+1280x960 profile A/B tests reader resolution, and the hold-sync profile retains
+sampled `AImage` objects until the submitted Vulkan frame-slot fence retires.
+Local builds can embed the real recorded
 Meta/OpenXR hand capture and stage its bind mesh into a native Vulkan storage
 buffer while reporting `cpuSdfPerFrame=false`. The current render loop also
 draws the real recorded hand mesh from the resident GPU-skinned position

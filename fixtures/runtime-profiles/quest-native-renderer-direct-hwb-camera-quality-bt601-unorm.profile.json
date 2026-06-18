@@ -6,6 +6,7 @@
     "debug.rustyquest.native_renderer.render.mode",
     "debug.rustyquest.native_renderer.camera.output",
     "debug.rustyquest.native_renderer.camera.ycbcr.mode",
+    "debug.rustyquest.native_renderer.camera.resolution",
     "debug.rustyquest.native_renderer.camera.quality_profile",
     "debug.rustyquest.native_renderer.camera.sync_mode",
     "debug.rustyquest.native_renderer.camera.direct_border.opacity",
@@ -35,6 +36,11 @@
       "name": "debug.rustyquest.native_renderer.camera.ycbcr.mode",
       "value": "forced-bt601-narrow",
       "source_setting_id": "native_renderer.camera.ycbcr.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.resolution",
+      "value": "1280x1280",
+      "source_setting_id": "native_renderer.camera.resolution"
     },
     {
       "name": "debug.rustyquest.native_renderer.camera.quality_profile",
@@ -107,6 +113,7 @@
     "cameraOutputMode=direct-hwb",
     "cameraYcbcrMode=forced-bt601-narrow",
     "conversionMode=forced-bt601-limited-cpuyuv-reference",
+    "cameraResolutionProfile=1280x1280",
     "cameraQualityProfile=direct-baseline",
     "cameraSyncRequested=early-delete-ahb-retained",
     "cameraSyncActive=early-delete-ahb-retained",

@@ -20,6 +20,9 @@ Runtime routes are selected by profile/property, not by separate APKs:
 | `quest-native-renderer-direct-hwb-camera-quality.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for raw camera inspection | Enabled, forced direct `AHardwareBuffer` sample with Android-suggested YCbCr, UNORM swapchain preference, and clean border |
 | `quest-native-renderer-direct-hwb-camera-quality-bt601-unorm.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for raw camera inspection | Enabled, forced direct `AHardwareBuffer` sample with limited BT.601 YCbCr and UNORM swapchain preference |
 | `quest-native-renderer-direct-hwb-low-noise-30.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for low-noise A/B inspection | Enabled, Android-suggested YCbCr plus support-gated 30 FPS AE, noise reduction, and edge-off request controls |
+| `quest-native-renderer-direct-hwb-low-latency-60.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for low-latency A/B inspection | Enabled, Android-suggested YCbCr plus support-gated 60 FPS AE, fast noise reduction, and edge-off request controls |
+| `quest-native-renderer-direct-hwb-hold-sync.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for sync A/B inspection | Enabled, Android-suggested YCbCr with `AImage` retained until the submitted Vulkan frame fence retires |
+| `quest-native-renderer-direct-hwb-1280x960.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for resolution A/B inspection | Enabled, Android-suggested YCbCr with requested 1280x960 reader size and support-gated fallback |
 | `quest-native-renderer-replay-visual-proof.profile.json` | Custom camera projection | Recorded GPU-skinned mesh and SDF visual | Enabled |
 | `quest-native-renderer-hwb-peripheral-stretch.profile.json` | Custom camera projection with full-eye target-edge stretch/blend border | Optional recorded/live mesh controls remain profile-selectable | Enabled |
 | `quest-native-renderer-live-hand-visual-diagnostic.profile.json` | Custom camera projection | Live diagnostic mesh/SDF, pending screenshot acceptance | Enabled |
@@ -192,11 +195,18 @@ format for range/matrix/gamma A/B review. The
 `quest-native-renderer-direct-hwb-low-noise-30.profile.json` route keeps the
 Android-suggested/UNORM baseline and requests support-gated Camera2 controls
 for 30 FPS AE, high-quality noise reduction with fast fallback, and edge
-enhancement off. Device logs include `camera-capabilities`,
-`camera-request-profile`, `camera-capture-result`, buffer-removed listener, and
-YCbCr format-feature markers. This is still a visual baseline family; the full
-ImageReader/Vulkan acquire-release synchronization hardening remains a separate
-implementation and headset validation gate.
+enhancement off. `quest-native-renderer-direct-hwb-low-latency-60.profile.json`
+requests the matching low-latency 60 FPS profile, while
+`quest-native-renderer-direct-hwb-1280x960.profile.json` requests the historical
+1280x960 reader size for resolution-path A/B checks. Device logs include
+`camera-capabilities`, `camera-request-profile`, `camera-capture-result`,
+buffer-removed listener, selected reader size, and YCbCr format-feature markers.
+`quest-native-renderer-direct-hwb-hold-sync.profile.json` activates the
+conservative synchronization diagnostic: the camera callback retains the
+`AImage` for the sampled frame and the render loop releases it only after the
+Vulkan fence for that submitted frame slot has completed. The lower-latency
+`AImage_deleteAsync`/sync-fd release path remains a separate implementation and
+headset validation gate.
 
 Acceptance caveat: the current visual acceptance covers the native diagnostic
 projection, recorded hand replay overlay, metadata-owned camera target area,
@@ -266,6 +276,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-camera-quality.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-camera-quality-property-write-plan.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-camera-quality-bt601-unorm.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-camera-quality-bt601-unorm-property-write-plan.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-low-noise-30.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-low-noise-30-property-write-plan.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-low-latency-60.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-low-latency-60-property-write-plan.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-hold-sync.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-hold-sync-property-write-plan.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-1280x960.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-1280x960-property-write-plan.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-hwb-peripheral-stretch.profile.json -DryRun -Out .\local-artifacts\native-renderer-hwb-peripheral-stretch-property-write-plan.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-live-hand-visual-diagnostic.profile.json -DryRun -Out .\local-artifacts\native-renderer-live-hand-visual-diagnostic-property-write-plan.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-live-hand-anchor-particles.profile.json -DryRun -Out .\local-artifacts\native-renderer-live-hand-anchor-particles-property-write-plan.json

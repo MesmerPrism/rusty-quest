@@ -1,11 +1,11 @@
 //! Minimal Vulkan camera projection proof for retained Camera2 AHardwareBuffers.
 
-use std::ffi::CString;
+use std::{ffi::CString, sync::Arc};
 
 use ash::vk;
 
 use crate::camera_projection_metadata::{CameraProjectionMetadata, TargetRect};
-use crate::native_camera::{NativeCameraFrame, NativeStereoCameraFrame};
+use crate::native_camera::{NativeCameraFrame, NativeCameraImageLease, NativeStereoCameraFrame};
 use crate::native_renderer_options::NativeCameraYcbcrMode;
 
 const CAMERA_IMPORT_CACHE_LIMIT: usize = 6;
@@ -45,6 +45,8 @@ pub(crate) struct CameraProjectionRenderer {
     ycbcr_mode: NativeCameraYcbcrMode,
     import_cache_hits: u64,
     import_cache_misses: u64,
+    gpu_frame_image_leases: Vec<Vec<Arc<NativeCameraImageLease>>>,
+    gpu_frame_hardware_buffer_ids: Vec<Vec<u64>>,
 }
 
 impl CameraProjectionRenderer {
@@ -69,10 +71,14 @@ impl CameraProjectionRenderer {
             ycbcr_mode,
             import_cache_hits: 0,
             import_cache_misses: 0,
+            gpu_frame_image_leases: Vec::new(),
+            gpu_frame_hardware_buffer_ids: Vec::new(),
         }
     }
 
     pub(crate) unsafe fn destroy(&mut self, device: &ash::Device) {
+        self.gpu_frame_image_leases.clear();
+        self.gpu_frame_hardware_buffer_ids.clear();
         self.destroy_stereo_descriptors(device);
         self.destroy_imports(device);
         if let Some(resources) = self.resources.take() {
@@ -80,10 +86,60 @@ impl CameraProjectionRenderer {
         }
     }
 
+    pub(crate) fn retire_completed_frame_leases(&mut self, frame_slot: usize) -> usize {
+        if let Some(buffer_ids) = self.gpu_frame_hardware_buffer_ids.get_mut(frame_slot) {
+            buffer_ids.clear();
+        }
+        self.gpu_frame_image_leases
+            .get_mut(frame_slot)
+            .map(|leases| {
+                let count = leases.len();
+                leases.clear();
+                count
+            })
+            .unwrap_or(0)
+    }
+
+    pub(crate) unsafe fn evict_removed_hardware_buffers(
+        &mut self,
+        device: &ash::Device,
+        removed_hardware_buffer_ids: &[u64],
+    ) -> usize {
+        if removed_hardware_buffer_ids.is_empty() {
+            return 0;
+        }
+        let mut removed_count = 0_usize;
+        let mut index = 0_usize;
+        while index < self.imports.len() {
+            let remove = removed_hardware_buffer_ids
+                .iter()
+                .any(|id| *id != 0 && *id == self.imports[index].key.buffer_id)
+                && !self.hardware_buffer_id_in_submitted_frame(self.imports[index].key.buffer_id);
+            if remove {
+                let old = self.imports.remove(index);
+                self.destroy_stereo_descriptors_for_key(device, old.key);
+                old.destroy(device);
+                removed_count += 1;
+            } else {
+                index += 1;
+            }
+        }
+        removed_count
+    }
+
+    fn hardware_buffer_id_in_submitted_frame(&self, hardware_buffer_id: u64) -> bool {
+        hardware_buffer_id != 0
+            && self
+                .gpu_frame_hardware_buffer_ids
+                .iter()
+                .any(|ids| ids.iter().any(|id| *id == hardware_buffer_id))
+    }
+
     pub(crate) unsafe fn prepare_stereo_frame(
         &mut self,
         device: &ash::Device,
         cmd: vk::CommandBuffer,
+        frame_slot: usize,
         frame: &NativeStereoCameraFrame,
     ) -> Result<Option<PreparedCameraProjection>, String> {
         if self.ahb.is_none() {
@@ -92,15 +148,16 @@ impl CameraProjectionRenderer {
 
         let left = self.prepare_frame_inner(device, cmd, &frame.left)?;
         let right = self.prepare_frame_inner(device, cmd, &frame.right)?;
-        let resources = self
-            .resources
-            .as_ref()
-            .ok_or_else(|| "camera projection resources were not initialized".to_string())?;
+        let (descriptor_set, descriptor_set_layout, pipeline_layout, pipeline) = {
+            let resources = self
+                .resources
+                .as_ref()
+                .ok_or_else(|| "camera projection resources were not initialized".to_string())?;
 
-        let descriptor_set =
-            if let Some(descriptor) = self.stereo_descriptors.iter().find(|descriptor| {
-                descriptor.left_key == left.key && descriptor.right_key == right.key
-            }) {
+            let descriptor_set = if let Some(descriptor) =
+                self.stereo_descriptors.iter().find(|descriptor| {
+                    descriptor.left_key == left.key && descriptor.right_key == right.key
+                }) {
                 descriptor.descriptor_set
             } else {
                 while self.stereo_descriptors.len() >= CAMERA_STEREO_DESCRIPTOR_LIMIT {
@@ -121,12 +178,21 @@ impl CameraProjectionRenderer {
                 });
                 descriptor_set
             };
+            (
+                descriptor_set,
+                resources.descriptor_set_layout,
+                resources.pipeline_layout,
+                resources.pipeline,
+            )
+        };
+
+        self.track_frame_image_leases(frame_slot, frame);
 
         Ok(Some(PreparedCameraProjection {
             descriptor_set,
-            descriptor_set_layout: resources.descriptor_set_layout,
-            pipeline_layout: resources.pipeline_layout,
-            pipeline: resources.pipeline,
+            descriptor_set_layout,
+            pipeline_layout,
+            pipeline,
             stats: CameraProjectionFrameStats {
                 rendered: true,
                 left_source_frame: frame.left.source_frame,
@@ -142,6 +208,52 @@ impl CameraProjectionRenderer {
                 import_cache_misses: self.import_cache_misses,
             },
         }))
+    }
+
+    fn track_frame_image_leases(&mut self, frame_slot: usize, frame: &NativeStereoCameraFrame) {
+        let mut leases = Vec::new();
+        if let Some(lease) = &frame.left.image_lease {
+            leases.push(Arc::clone(lease));
+        }
+        if let Some(lease) = &frame.right.image_lease {
+            leases.push(Arc::clone(lease));
+        }
+        if leases.is_empty() {
+            self.track_frame_hardware_buffer_ids(frame_slot, frame);
+            return;
+        }
+        while self.gpu_frame_image_leases.len() <= frame_slot {
+            self.gpu_frame_image_leases.push(Vec::new());
+        }
+        self.gpu_frame_image_leases[frame_slot] = leases;
+        self.track_frame_hardware_buffer_ids(frame_slot, frame);
+        crate::marker(
+            "camera-sync",
+            format!(
+                "status=gpu-frame-lease-tracked frameSlot={} leaseCount={} leftSourceFrame={} rightSourceFrame={} cameraSyncActive=hold-image-until-gpu-fence producerConsumerSync=image-slot-held-until-vulkan-frame-fence",
+                frame_slot,
+                self.gpu_frame_image_leases[frame_slot].len(),
+                frame.left.source_frame,
+                frame.right.source_frame
+            ),
+        );
+    }
+
+    fn track_frame_hardware_buffer_ids(
+        &mut self,
+        frame_slot: usize,
+        frame: &NativeStereoCameraFrame,
+    ) {
+        while self.gpu_frame_hardware_buffer_ids.len() <= frame_slot {
+            self.gpu_frame_hardware_buffer_ids.push(Vec::new());
+        }
+        self.gpu_frame_hardware_buffer_ids[frame_slot] = [
+            frame.left.hardware_buffer_id,
+            frame.right.hardware_buffer_id,
+        ]
+        .into_iter()
+        .filter(|id| *id != 0)
+        .collect();
     }
 
     unsafe fn prepare_frame_inner(
