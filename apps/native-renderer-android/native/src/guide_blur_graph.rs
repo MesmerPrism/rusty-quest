@@ -7,6 +7,7 @@ use ash::vk;
 use crate::{
     camera_projection::PreparedCameraProjection,
     camera_projection_metadata::{CameraProjectionMetadata, TargetRect},
+    native_renderer_options::NativeProjectionBorderStretchSettings,
 };
 
 const GUIDE_WIDTH: u32 = 384;
@@ -209,6 +210,7 @@ impl GuideBlurGraphRenderer {
         extent: vk::Extent2D,
         eye_index: usize,
         target_rect: TargetRect,
+        projection_settings: NativeProjectionBorderStretchSettings,
     ) {
         let Some(resources) = self.resources.as_ref() else {
             return;
@@ -224,7 +226,11 @@ impl GuideBlurGraphRenderer {
             min_depth: 0.0,
             max_depth: 1.0,
         }];
-        let scissor = [target_rect_to_scissor(extent, target_rect)];
+        let scissor = if projection_settings.peripheral_stretch_active() {
+            [full_extent_scissor(extent)]
+        } else {
+            [target_rect_to_scissor(extent, target_rect)]
+        };
         device.cmd_set_viewport(cmd, 0, &viewport);
         device.cmd_set_scissor(cmd, 0, &scissor);
         device.cmd_bind_pipeline(
@@ -240,6 +246,7 @@ impl GuideBlurGraphRenderer {
             &[eye.final_descriptor_set],
             &[],
         );
+        let projection_push = projection_settings.push_params();
         let push = GuideProjectionPush {
             target_rect: [
                 target_rect.x,
@@ -247,7 +254,20 @@ impl GuideBlurGraphRenderer {
                 target_rect.width,
                 target_rect.height,
             ],
-            params: [eye_index as f32, 0.0, 0.0, 0.0],
+            params: [
+                eye_index as f32,
+                projection_push.params[0],
+                projection_push.params[1],
+                projection_push.params[2],
+            ],
+            stretch0: projection_push.stretch0,
+            stretch1: [
+                projection_push.stretch1[0],
+                projection_push.stretch1[1],
+                projection_push.stretch1[2],
+                projection_push.stretch1[3],
+            ],
+            alpha: [projection_push.params[3], 0.0, 0.0, 0.0],
         };
         push_fragment_constants(device, cmd, resources.final_pipeline_layout, &push);
         device.cmd_draw(cmd, 3, 1, 0, 0);
@@ -522,7 +542,7 @@ impl GuideBlurGraphResources {
             final_pipeline_layout,
             include_bytes!(concat!(env!("OUT_DIR"), "/camera_projection.vert.spv")),
             include_bytes!(concat!(env!("OUT_DIR"), "/guide_projection.frag.spv")),
-            false,
+            true,
             "guide texture projection",
         ) {
             Ok(pipeline) => pipeline,
@@ -844,6 +864,9 @@ struct GuideBlurPush {
 struct GuideProjectionPush {
     target_rect: [f32; 4],
     params: [f32; 4],
+    stretch0: [f32; 4],
+    stretch1: [f32; 4],
+    alpha: [f32; 4],
 }
 
 unsafe fn begin_guide_pass(
@@ -1142,6 +1165,13 @@ fn target_rect_to_scissor(extent: vk::Extent2D, rect: TargetRect) -> vk::Rect2D 
     vk::Rect2D {
         offset: vk::Offset2D { x, y },
         extent: vk::Extent2D { width, height },
+    }
+}
+
+fn full_extent_scissor(extent: vk::Extent2D) -> vk::Rect2D {
+    vk::Rect2D {
+        offset: vk::Offset2D { x: 0, y: 0 },
+        extent,
     }
 }
 

@@ -159,7 +159,13 @@ tests. Full replay visual APK builds should use `-RequireRecordedHandCapture`
 with `-RecordedHandCaptureDir` so a metadata-only public fixture cannot be
 mistaken for a mesh/SDF visual test. The runtime property bundle is captured in
 `fixtures/runtime-profiles/quest-native-renderer-replay-visual-proof.profile.json`,
-with a dry-run plan emitted by `tools/check_all.ps1`. The live-hand diagnostic
+with a dry-run plan emitted by `tools/check_all.ps1`. The public HWB
+peripheral stretch/blend route is captured in
+`fixtures/runtime-profiles/quest-native-renderer-hwb-peripheral-stretch.profile.json`;
+its dry-run evidence checks the Makepad-matched stretch controls and expected
+markers, including `guideProjectionCoverage=full-eye-peripheral-stretch` and
+`cameraProjectionPath=metadata-target-guide-texture-peripheral-stretch-final`.
+The live-hand diagnostic
 bundle is captured in
 `fixtures/runtime-profiles/quest-native-renderer-live-hand-visual-diagnostic.profile.json`;
 it forces `compactHandInputSourceMode=live-meta-openxr-hand-tracking` and

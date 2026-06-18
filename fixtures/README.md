@@ -2,14 +2,16 @@
 
 - `runtime-profiles/`: valid Quest runtime profiles, including separate native
   renderer profiles for no-real-hands recorded replay acceptance and the later
-  live-hand visual diagnostic retest. The native passthrough graft-only profile
-  keeps the normal projection profiles available while testing only fingertip
-  graft models over `XR_FB_passthrough`, with custom Camera2 projection and SDF
-  visuals disabled. The native passthrough hands-and-grafts profile uses the
-  same route but also enables the base real hand meshes from the GPU-skinned
-  resident buffers. The solid black hands-and-grafts profile disables both
-  passthrough and custom Camera2 projection so only an opaque black background
-  and hand visuals are submitted.
+  live-hand visual diagnostic retest. The HWB peripheral stretch profile keeps
+  the custom Camera2 projection route active while enabling the public
+  full-eye target-edge stretch/blend border profile. The native passthrough
+  graft-only profile keeps the normal projection profiles available while
+  testing only fingertip graft models over `XR_FB_passthrough`, with custom
+  Camera2 projection and SDF visuals disabled. The native passthrough
+  hands-and-grafts profile uses the same route but also enables the base real
+  hand meshes from the GPU-skinned resident buffers. The solid black
+  hands-and-grafts profile disables both passthrough and custom Camera2
+  projection so only an opaque black background and hand visuals are submitted.
 - `native-renderer/`: valid Quest-native renderer plans, timing scorecards, and
   public recorded-hand topology/shape fixtures for pure-HWB blur, GPU mesh
   boundary, resident compact-joint GPU-skinned visual examples,

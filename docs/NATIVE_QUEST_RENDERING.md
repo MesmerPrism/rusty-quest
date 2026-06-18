@@ -10,7 +10,7 @@ changing the GPU hand mesh path:
 
 | Public route | Background/compositor path | GPU content path | Camera/HWB use |
 | --- | --- | --- | --- |
-| Custom stereo projection | OpenXR projection layer with metadata-owned per-eye camera target rectangles | Guide blur, recorded/live hand mesh, optional SDF visual, private no-op slot | Camera2 `50`/`51` imported as Vulkan external HWB images |
+| Custom stereo projection | OpenXR projection layer with metadata-owned per-eye camera target rectangles | Guide blur, optional peripheral stretch border, recorded/live hand mesh, optional SDF visual, private no-op slot | Camera2 `50`/`51` imported as Vulkan external HWB images |
 | Native passthrough hands and grafts | `XR_FB_passthrough` plus alpha-blended projection layer | Live world-space base hands plus opposite-fingertip graft copies | Disabled |
 | Native passthrough graft only | `XR_FB_passthrough` plus alpha-blended projection layer | Opposite-fingertip graft copies only | Disabled |
 | Solid black hands and grafts | Opaque black OpenXR projection layer | Live world-space base hands plus opposite-fingertip graft copies | Disabled |
@@ -67,6 +67,9 @@ The initial public renderer plan requires:
 - offscreen guide blur with at most two passes per eye;
 - final projection with zero external HWB samples per fragment and one guide
   texture sample per fragment;
+- optional public peripheral stretch/blend border on the final guide projection
+  pass, using the Makepad HWB stack's target-local raster model as reference
+  evidence while keeping ownership in this native route;
 - stage timing for camera acquire, HWB import/cache, guide graph, SDF update,
   projection composite, and OpenXR submit.
 
@@ -169,6 +172,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererR
 The tests validate the public plan, validate a sample timing scorecard, reject
 plans that leak private extension implementation paths, and reject final
 projection plans that return to multiplied external HWB samples.
+`quest-native-renderer-hwb-peripheral-stretch.profile.json` is the source-only
+profile for the public stretch/blend border route. Its dry-run and expected
+markers check the Makepad-matched default controls, full-eye guide projection
+coverage, target-edge exterior stretch, and inner-band blend semantics without
+claiming headset visual acceptance.
 `Invoke-NativeRendererReplaySmoke.ps1` is the no-real-hands device wrapper for
 the recorded replay path: it applies the replay visual-proof profile, launches
 the NativeActivity, captures logcat and a screenshot, and then calls
@@ -270,6 +278,12 @@ The runtime scaffold:
   descriptors: per-eye 384x384 downsample, horizontal 5-tap blur, vertical
   5-tap blur, and final guide-texture projection inside the same metadata
   target rectangles;
+- can expand that final guide-texture projection to full-eye coverage when
+  `debug.rustyquest.native_renderer.processing.layer=peripheral-stretch`,
+  using the metadata target as the core region, stretching exterior pixels from
+  the target edge, blending through the inner target band, and reporting
+  `cameraProjectionPath=metadata-target-guide-texture-peripheral-stretch-final`
+  plus `guideProjectionCoverage=full-eye-peripheral-stretch`;
 - creates an OpenXR/Vulkan session and stereo swapchain, records per-eye
   projection clears into array-layer image views, and submits a real
   `CompositionLayerProjection`;
@@ -406,10 +420,11 @@ and replay evidence of the resident skinned-mesh SDF visual path. It does not
 claim camera projection color parity, live hand visual acceptance, direct Meta
 hand-mesh topology import, or Matter/Lattice-backed SDF parity.
 
-The public package exposes only the blur guide path. Other downstream visual
-layers remain private extension implementations behind ABI slots and must not
-enter the public fixture, source package, or build manifest until explicitly
-graduated.
+The public package exposes the guide blur path plus the target-edge peripheral
+stretch/blend border needed by the native camera projection route. Other
+downstream visual layers remain private extension implementations behind ABI
+slots and must not enter the public fixture, source package, or build manifest
+until explicitly graduated.
 
 Build:
 

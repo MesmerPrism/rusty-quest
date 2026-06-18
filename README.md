@@ -20,7 +20,7 @@ The currently documented public routes are:
 
 | Route | Background | Hand visual | Camera/HWB path | Primary use |
 | --- | --- | --- | --- | --- |
-| Custom stereo projection | Camera2 `50`/`51` via Vulkan HWB guide textures | Recorded/live GPU-skinned hand mesh, optional SDF visual | Enabled | Camera projection, blur, SDF, and replay evidence |
+| Custom stereo projection | Camera2 `50`/`51` via Vulkan HWB guide textures | Recorded/live GPU-skinned hand mesh, optional SDF visual, optional peripheral stretch border | Enabled | Camera projection, blur, stretch/blend border, SDF, and replay evidence |
 | Native passthrough hands and grafts | `XR_FB_passthrough` | Live GPU-skinned base hands plus fingertip graft copies | Disabled | World-space hand mesh/graft visuals over Meta passthrough |
 | Native passthrough graft only | `XR_FB_passthrough` | Fingertip graft copies only | Disabled | Graft-fit isolation |
 | Solid black hands and grafts | Opaque black OpenXR projection layer | Live GPU-skinned base hands plus fingertip graft copies | Disabled | Non-passthrough world-space control view |
@@ -91,7 +91,15 @@ cadence/cache scorecard markers. The native camera path now includes a public
 low-resolution guide blur graph: imported Camera2 HWB frames are downsampled to
 384x384 per-eye guide textures, blurred with split horizontal/vertical 5-tap
 passes, and final projection samples the guide texture when the graph is ready
-instead of sampling external HWB again. Live headset visual acceptance,
+instead of sampling external HWB again. The same native guide projection pass
+can optionally expand to a full-eye peripheral stretch border using the
+Makepad HWB stack's target-local raster model as a reference: the profile
+`quest-native-renderer-hwb-peripheral-stretch.profile.json` sets
+`debug.rustyquest.native_renderer.processing.layer=peripheral-stretch`,
+keeps the metadata-owned camera target as the core region, stretches exterior
+pixels from the target edge, and blends through the inner target band while
+reporting `guideProjectionCoverage=full-eye-peripheral-stretch`. Live headset
+visual acceptance,
 Matter/Lattice SDF parity, color conformance, projection parity,
 and higher-order SDF acceleration remain separate validation gates. The
 2026-06-17 no-real-hands recorded replay smoke visually verified the

@@ -18,6 +18,7 @@ Runtime routes are selected by profile/property, not by separate APKs:
 | Profile | Background | Visible hand content | Camera2/HWB projection |
 | --- | --- | --- | --- |
 | `quest-native-renderer-replay-visual-proof.profile.json` | Custom camera projection | Recorded GPU-skinned mesh and SDF visual | Enabled |
+| `quest-native-renderer-hwb-peripheral-stretch.profile.json` | Custom camera projection with full-eye target-edge stretch/blend border | Optional recorded/live mesh controls remain profile-selectable | Enabled |
 | `quest-native-renderer-live-hand-visual-diagnostic.profile.json` | Custom camera projection | Live diagnostic mesh/SDF, pending screenshot acceptance | Enabled |
 | `quest-native-renderer-native-passthrough-graft-only.profile.json` | Native Meta passthrough | Fingertip graft copies only | Disabled |
 | `quest-native-renderer-native-passthrough-hands-and-grafts.profile.json` | Native Meta passthrough | Live base hand meshes plus graft copies | Disabled |
@@ -47,7 +48,12 @@ cached Vulkan external-HWB import for Camera2 frames, and a real submitted OpenX
 stereo projection layer with metadata-targeted camera projection, a public
 384x384 per-eye guide blur graph, the recorded hand replay overlay, resident
 compact-joint GPU-skinned triangle visual, native GPU mesh boundary, and
-opt-in native compact-joint skinned-mesh GPU SDF path in scorecards. When
+opt-in native compact-joint skinned-mesh GPU SDF path in scorecards. The same
+final guide projection can optionally enable the Makepad-reference peripheral
+stretch/blend border natively through
+`debug.rustyquest.native_renderer.processing.layer=peripheral-stretch`,
+expanding coverage to the full eye while keeping the metadata-owned camera
+target as the source core. When
 `XR_EXT_hand_tracking` is available, the same
 resident path can consume live OpenXR hand joints as the compact input source:
 21 runtime poses plus packed tip lengths, not expanded mesh vertices.
@@ -147,7 +153,8 @@ projection, recorded hand replay overlay, metadata-owned camera target area,
 guide-texture final projection route, and no-real-hands mesh/SDF overlay
 screenshot evidence. Color conformance and projection alignment remain pending
 even when runtime markers report `guideGraphReady=true`,
-`cameraProjectionPath=metadata-target-guide-texture-final`,
+`cameraProjectionPath=metadata-target-guide-texture-final` or
+`cameraProjectionPath=metadata-target-guide-texture-peripheral-stretch-final`,
 `actualFinalExternalHwbSamples=0`, and `actualGuideTextureSamples=1`, with the
 direct-HWB projection path acting only as fallback. The real recorded capture can be embedded
 for local builds with `-RecordedHandCaptureDir`; committed fixtures keep only a
@@ -182,11 +189,12 @@ palm anchors and a wrist-radius to target-finger-radius scale. Guide blur
 headset/color acceptance, color conformance, and projection alignment also
 remain pending.
 
-The public effect surface includes the blur guide path, the recorded hand
-replay visual, the resident compact-joint GPU-skinned triangle overlay, the
-native GPU mesh boundary, the opt-in live hand graft-copy visual, and the
-opt-in recorded compact-joint skinned-mesh GPU SDF path. Private downstream
-visual layers remain extension slots and are not packaged here.
+The public effect surface includes the blur guide path, the target-edge
+peripheral stretch/blend border, the recorded hand replay visual, the resident
+compact-joint GPU-skinned triangle overlay, the native GPU mesh boundary, the
+opt-in live hand graft-copy visual, and the opt-in recorded compact-joint
+skinned-mesh GPU SDF path. Private downstream visual layers remain extension
+slots and are not packaged here.
 
 Build:
 
@@ -205,6 +213,7 @@ Static validation:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-replay-visual-proof.profile.json -DryRun -Out .\local-artifacts\native-renderer-replay-visual-proof-property-write-plan.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-hwb-peripheral-stretch.profile.json -DryRun -Out .\local-artifacts\native-renderer-hwb-peripheral-stretch-property-write-plan.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-live-hand-visual-diagnostic.profile.json -DryRun -Out .\local-artifacts\native-renderer-live-hand-visual-diagnostic-property-write-plan.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-native-passthrough-hands-and-grafts.profile.json -DryRun -Out .\local-artifacts\native-renderer-native-passthrough-hands-and-grafts-property-write-plan.json
 ```

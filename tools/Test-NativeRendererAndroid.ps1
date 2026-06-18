@@ -53,12 +53,13 @@ $runtimeEvidenceDamagedPath = Join-Path $repoRoot "fixtures\damaged\native-rende
 $runtimeEvidenceDamagedPerformancePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-replay-performance-budget-miss.logcat.txt"
 $liveHandPrematureAcceptanceDamagedPath = Join-Path $repoRoot "fixtures\damaged\native-renderer-live-hand-visual-premature-acceptance.logcat.txt"
 $replayVisualProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-replay-visual-proof.profile.json"
+$hwbPeripheralStretchProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-hwb-peripheral-stretch.profile.json"
 $liveHandVisualDiagnosticProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-live-hand-visual-diagnostic.profile.json"
 $nativePassthroughGraftOnlyProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-graft-only.profile.json"
 $nativePassthroughHandsAndGraftsProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-hands-and-grafts.profile.json"
 $solidBlackHandsAndGraftsProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-solid-black-hands-and-grafts.profile.json"
 
-foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath)) {
+foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath)) {
     if (-not (Test-Path $path)) {
         throw "Missing native renderer Android file: $path"
     }
@@ -104,6 +105,7 @@ $runtimeSmokeToolText = Get-Content -Raw -Path $runtimeSmokeToolPath
 $runtimeEvidenceFixtureText = Get-Content -Raw -Path $runtimeEvidenceFixturePath
 $liveHandDiagnosticPendingFixtureText = Get-Content -Raw -Path $liveHandDiagnosticPendingFixturePath
 $replayVisualProfile = Get-Content -Raw -Path $replayVisualProfilePath
+$hwbPeripheralStretchProfile = Get-Content -Raw -Path $hwbPeripheralStretchProfilePath
 $liveHandVisualDiagnosticProfile = Get-Content -Raw -Path $liveHandVisualDiagnosticProfilePath
 $nativePassthroughGraftOnlyProfile = Get-Content -Raw -Path $nativePassthroughGraftOnlyProfilePath
 $nativePassthroughHandsAndGraftsProfile = Get-Content -Raw -Path $nativePassthroughHandsAndGraftsProfilePath
@@ -152,7 +154,9 @@ foreach ($token in @(
     'rusty\.quest\.native_renderer_plan\.v1',
     'quest-native-openxr-vulkan',
     'camera2-ahardwarebuffer-vulkan-external',
-    'combined-immutable-sampler-ycbcr-conversion'
+    'combined-immutable-sampler-ycbcr-conversion',
+    'peripheral-stretch-border',
+    'rusty\.optics\.peripheral_stretch_border\.layer\.v1'
 )) {
     if ($fixture -notmatch $token -and $nativeLib -notmatch $token) {
         throw "Native renderer public plan path missing token: $token"
@@ -183,7 +187,7 @@ foreach ($token in @(
     'javaPackaged=false',
     'requestPermissions',
     'rust-native-jni',
-    'publicEffectLayer=blur-guide',
+    'publicEffectLayers=blur-guide,peripheral-stretch-border',
     'privatePayloads=false',
     'minimal-projection-layer',
     'recordedHandReplayRequested=true',
@@ -501,6 +505,7 @@ foreach ($token in @(
     'actualFinalExternalHwbSamples',
     'actualGuideTextureSamples',
     'cameraProjectionPath=metadata-target-guide-texture-final',
+    'metadata-target-guide-texture-peripheral-stretch-final',
     'record_guide_graph_render',
     'record_guide_graph_cache_hit',
     'finalExternalHwbSamples=0',
@@ -526,6 +531,23 @@ foreach ($token in @(
 )) {
     if ($guideBlurFragment -notmatch $token) {
         throw "Native guide 5-tap blur shader missing token: $token"
+    }
+}
+foreach ($token in @(
+    'NativeProjectionBorderStretchSettings',
+    'debug\.rustyquest\.native_renderer\.processing\.layer',
+    'debug\.rustyquest\.native_renderer\.projection\.border\.policy',
+    'debug\.rustyquest\.native_renderer\.peripheral\.stretch\.inner\.blend\.uv',
+    'peripheralStretchReference=pure-hwb-target-local-raster-curved-inner-band',
+    'peripheralStretchProjectionExteriorMode=target-edge-stretch-with-inner-band-blend',
+    'guideProjectionCoverage=full-eye-peripheral-stretch',
+    'full_extent_scissor',
+    'projection_area_rect_edge_uv',
+    'peripheral_stretch_blend_weight',
+    'target_stretch_effect_region'
+)) {
+    if ("$nativeLib`n$nativeRendererOptions`n$guideBlurGraph`n$guideProjectionFragment`n$xrVulkan`n$hwbPeripheralStretchProfile" -notmatch $token) {
+        throw "Native peripheral stretch border route missing token: $token"
     }
 }
 foreach ($token in @(
@@ -999,6 +1021,35 @@ foreach ($token in @(
     }
 }
 foreach ($token in @(
+    'profile.quest.native_renderer.hwb_peripheral_stretch',
+    'quest-native-renderer-hwb-peripheral-stretch.profile.json',
+    'debug.rustyquest.native_renderer.render.mode',
+    'custom-stereo-projection',
+    'debug.rustyquest.native_renderer.processing.layer',
+    'peripheral-stretch',
+    'debug.rustyquest.native_renderer.projection.border.policy',
+    'passthrough-underlay',
+    'debug.rustyquest.native_renderer.projection.border.opacity',
+    'debug.rustyquest.native_renderer.projection.area.opacity',
+    'debug.rustyquest.native_renderer.peripheral.stretch.core.scale',
+    'debug.rustyquest.native_renderer.peripheral.stretch.edge.inset.uv',
+    'debug.rustyquest.native_renderer.peripheral.stretch.max.inset.uv',
+    'debug.rustyquest.native_renderer.peripheral.stretch.curve',
+    'debug.rustyquest.native_renderer.peripheral.stretch.inner.blend.uv',
+    'debug.rustyquest.native_renderer.peripheral.stretch.blend.curve',
+    'debug.rustyquest.native_renderer.peripheral.stretch.blend.mode',
+    'debug.rustyquest.native_renderer.peripheral.stretch.debug',
+    'processingLayer=peripheral-stretch',
+    'projectionBorderPolicy=passthrough-underlay',
+    'guideProjectionCoverage=full-eye-peripheral-stretch',
+    'peripheralStretchProjectionExteriorMode=target-edge-stretch-with-inner-band-blend',
+    'cameraProjectionPath=metadata-target-guide-texture-peripheral-stretch-final'
+)) {
+    if ($hwbPeripheralStretchProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer HWB peripheral stretch profile missing token: $token"
+    }
+}
+foreach ($token in @(
     'profile.quest.native_renderer.live_hand_visual_diagnostic',
     'quest-native-renderer-live-hand-visual-diagnostic.profile.json',
     'debug.rustyquest.native_renderer.render.mode',
@@ -1109,6 +1160,9 @@ foreach ($token in @(
 }
 if ($checkAllText -notmatch 'quest-native-renderer-live-hand-visual-diagnostic\.profile\.json' -or $checkAllText -notmatch 'native-renderer-live-hand-visual-diagnostic-property-write-plan\.json') {
     throw "check_all.ps1 must dry-run the native renderer live hand diagnostic profile."
+}
+if ($checkAllText -notmatch 'quest-native-renderer-hwb-peripheral-stretch\.profile\.json' -or $checkAllText -notmatch 'native-renderer-hwb-peripheral-stretch-property-write-plan\.json') {
+    throw "check_all.ps1 must dry-run the native renderer HWB peripheral stretch profile."
 }
 if ($checkAllText -notmatch 'quest-native-renderer-native-passthrough-graft-only\.profile\.json' -or $checkAllText -notmatch 'native-renderer-native-passthrough-graft-only-property-write-plan\.json') {
     throw "check_all.ps1 must dry-run the native renderer native passthrough graft-only profile."

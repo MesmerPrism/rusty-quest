@@ -36,6 +36,13 @@
       "affects_color": true
     },
     {
+      "layer_id": "peripheral-stretch-border",
+      "kind": "peripheral-stretch-border",
+      "owner": "public-optics",
+      "abi_id": "rusty.optics.peripheral_stretch_border.layer.v1",
+      "affects_color": true
+    },
+    {
       "layer_id": "hand-sdf-input",
       "kind": "sdf-field-input",
       "owner": "public-matter",

@@ -132,7 +132,7 @@ fn android_main(app: android_activity::AndroidApp) {
     marker(
         "plan-loaded",
         format!(
-            "status=ok planId={} targetRuntime={} publicEffectLayer=blur-guide privateLayerSlots=abi-only privatePayloads=false cameraLeft={} cameraRight={} finalExternalHwbSamples={} guideTextureSamples={} colorConformanceRequired={}",
+            "status=ok planId={} targetRuntime={} publicEffectLayers=blur-guide,peripheral-stretch-border privateLayerSlots=abi-only privatePayloads=false cameraLeft={} cameraRight={} finalExternalHwbSamples={} guideTextureSamples={} colorConformanceRequired={}",
             sanitize(&plan.plan_id),
             sanitize(&plan.target_runtime),
             sanitize(&plan.camera_source.camera_ids.left),
@@ -148,7 +148,7 @@ fn android_main(app: android_activity::AndroidApp) {
     marker(
         "render-mode",
         format!(
-            "status=config property={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} sdfVisualEnabled={} handMeshGraftCopiesEnabled={} handMeshGraftScaleMultiplier={:.2} realHandsProperty={} handMeshRealHandsVisible={}",
+            "status=config property={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} sdfVisualEnabled={} handMeshGraftCopiesEnabled={} handMeshGraftScaleMultiplier={:.2} realHandsProperty={} handMeshRealHandsVisible={} {}",
             native_renderer_options::PROP_RENDER_MODE,
             runtime_options.render_mode.marker_value(),
             runtime_options.render_mode.uses_custom_stereo_projection(),
@@ -159,6 +159,9 @@ fn android_main(app: android_activity::AndroidApp) {
             runtime_options.hand_mesh_graft_copy_scale,
             native_renderer_options::PROP_HAND_MESH_REAL_HANDS_VISIBLE,
             runtime_options.hand_mesh_real_hands_visible,
+            runtime_options
+                .projection_border_stretch_settings
+                .marker_fields(),
         ),
     );
 
@@ -193,10 +196,18 @@ fn android_main(app: android_activity::AndroidApp) {
     marker(
         "render-loop",
         format!(
-            "status=starting minimal-projection-layer=true recordedHandReplayRequested=true openxrProjectionLayer=runtime-submit renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} {} finalExternalHwbSamples=0 guideTextureSamples=1 activeGuideTextureSamples={}",
+            "status=starting minimal-projection-layer=true recordedHandReplayRequested=true openxrProjectionLayer=runtime-submit renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} guideProjectionCoverage={} {} finalExternalHwbSamples=0 guideTextureSamples=1 activeGuideTextureSamples={}",
             runtime_options.render_mode.marker_value(),
             runtime_options.render_mode.uses_custom_stereo_projection(),
             runtime_options.render_mode.uses_native_passthrough(),
+            if runtime_options
+                .projection_border_stretch_settings
+                .peripheral_stretch_active()
+            {
+                "full-eye-peripheral-stretch"
+            } else {
+                "metadata-target-only"
+            },
             xr_vulkan_readiness.marker_fields(),
             if runtime_options.render_mode.uses_custom_stereo_projection() { 1 } else { 0 },
         ),

@@ -1,9 +1,9 @@
 //! Contracts for Quest-native HWB Vulkan renderer plans.
 //!
 //! This crate is intentionally platform-contract only. It describes the public
-//! AGPL-owned blur/SDF renderer route, private layer extension boundaries, and
-//! timing evidence expected from a native Quest implementation without linking
-//! Android, OpenXR, or Vulkan SDKs.
+//! AGPL-owned blur/stretch/SDF renderer route, private layer extension
+//! boundaries, and timing evidence expected from a native Quest implementation
+//! without linking Android, OpenXR, or Vulkan SDKs.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -114,6 +114,8 @@ pub enum LayerKind {
     CameraProjection,
     /// Public offscreen guide blur layer.
     BlurGuide,
+    /// Public final-projection target-edge stretch/blend border layer.
+    PeripheralStretchBorder,
     /// Public SDF/hand-mesh input layer.
     SdfFieldInput,
     /// Public timing/diagnostic layer.
@@ -375,6 +377,13 @@ fn validate_layers(layers: &[LayerPlan], errors: &mut Vec<ValidationError>) {
                     ));
                 }
             }
+            LayerKind::PeripheralStretchBorder => {
+                if layer.owner != LayerOwner::PublicOptics {
+                    errors.push(ValidationError::new(
+                        "peripheral-stretch-border layer must be public-optics owned",
+                    ));
+                }
+            }
             LayerKind::CameraProjection => {
                 has_projection = true;
                 if layer.owner != LayerOwner::PublicOptics {
@@ -633,7 +642,7 @@ fn contains_private_payload_hint(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        validate_native_renderer_plan, validate_timing_scorecard, NativeRendererPlan,
+        validate_native_renderer_plan, validate_timing_scorecard, LayerKind, NativeRendererPlan,
         NativeRendererTimingScorecard,
     };
 
@@ -648,6 +657,10 @@ mod tests {
     fn native_hwb_blur_sdf_public_plan_validates() {
         let plan = public_plan();
         validate_native_renderer_plan(&plan).expect("plan validates");
+        assert!(plan
+            .layer_stack
+            .iter()
+            .any(|layer| layer.kind == LayerKind::PeripheralStretchBorder));
     }
 
     #[test]

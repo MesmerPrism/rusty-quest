@@ -1,0 +1,129 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.hwb_peripheral_stretch",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.render.mode",
+    "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.input.source",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+    "debug.rustyquest.native_renderer.sdf.visual.enabled",
+    "debug.rustyquest.native_renderer.processing.layer",
+    "debug.rustyquest.native_renderer.projection.border.policy",
+    "debug.rustyquest.native_renderer.projection.border.opacity",
+    "debug.rustyquest.native_renderer.projection.area.opacity",
+    "debug.rustyquest.native_renderer.peripheral.stretch.core.scale",
+    "debug.rustyquest.native_renderer.peripheral.stretch.edge.inset.uv",
+    "debug.rustyquest.native_renderer.peripheral.stretch.max.inset.uv",
+    "debug.rustyquest.native_renderer.peripheral.stretch.curve",
+    "debug.rustyquest.native_renderer.peripheral.stretch.inner.blend.uv",
+    "debug.rustyquest.native_renderer.peripheral.stretch.blend.curve",
+    "debug.rustyquest.native_renderer.peripheral.stretch.blend.mode",
+    "debug.rustyquest.native_renderer.peripheral.stretch.debug"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.render.mode",
+      "value": "custom-stereo-projection",
+      "source_setting_id": "native_renderer.render.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.replay.visual_proof.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.input.source",
+      "value": "auto",
+      "source_setting_id": "native_renderer.hand_mesh.input.source"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.graft_copies.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.sdf.visual.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.sdf.visual.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.processing.layer",
+      "value": "peripheral-stretch",
+      "source_setting_id": "native_renderer.processing.layer"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.border.policy",
+      "value": "passthrough-underlay",
+      "source_setting_id": "native_renderer.projection.border.policy"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.border.opacity",
+      "value": "0.0",
+      "source_setting_id": "native_renderer.projection.border.opacity"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.area.opacity",
+      "value": "1.0",
+      "source_setting_id": "native_renderer.projection.area.opacity"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.peripheral.stretch.core.scale",
+      "value": "1.0",
+      "source_setting_id": "native_renderer.peripheral.stretch.core.scale"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.peripheral.stretch.edge.inset.uv",
+      "value": "0.015",
+      "source_setting_id": "native_renderer.peripheral.stretch.edge.inset.uv"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.peripheral.stretch.max.inset.uv",
+      "value": "0.14",
+      "source_setting_id": "native_renderer.peripheral.stretch.max.inset.uv"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.peripheral.stretch.curve",
+      "value": "1.6",
+      "source_setting_id": "native_renderer.peripheral.stretch.curve"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.peripheral.stretch.inner.blend.uv",
+      "value": "0.040",
+      "source_setting_id": "native_renderer.peripheral.stretch.inner.blend.uv"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.peripheral.stretch.blend.curve",
+      "value": "1.6",
+      "source_setting_id": "native_renderer.peripheral.stretch.blend.curve"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.peripheral.stretch.blend.mode",
+      "value": "target-inner-band",
+      "source_setting_id": "native_renderer.peripheral.stretch.blend.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.peripheral.stretch.debug",
+      "value": "off",
+      "source_setting_id": "native_renderer.peripheral.stretch.debug"
+    }
+  ],
+  "expected_markers": [
+    "RUSTY_QUEST_NATIVE_RENDERER channel=projection-border-stretch",
+    "renderMode=custom-stereo-projection",
+    "processingLayer=peripheral-stretch",
+    "projectionBorderPolicy=passthrough-underlay",
+    "guideProjectionCoverage=full-eye-peripheral-stretch",
+    "peripheralStretchProjectionExteriorMode=target-edge-stretch-with-inner-band-blend",
+    "cameraProjectionPath=metadata-target-guide-texture-peripheral-stretch-final"
+  ],
+  "validation_commands": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-hwb-peripheral-stretch.profile.json -DryRun -Out local-artifacts/native-renderer-hwb-peripheral-stretch-property-write-plan.json"
+  ]
+}
