@@ -28,7 +28,13 @@
   The solid black OpenXR-hands anchor-particles profile keeps the black
   background and live compact hand input but disables the app's custom hand
   mesh and graft visuals, requests the runtime/default OpenXR hand visual, and
-  draws only resident-mesh anchor particles for topology comparison.
+  draws only resident-mesh anchor particles for topology comparison. Anchor
+  particles also expose standard transparency modes (`legacy-additive-multiply`,
+  `true-additive`, `fade`, `premultiplied`), composition modes
+  (`true-additive`, `approximate-depth-suppressed`), and ordering modes for
+  fixed/eye-depth hand draw order plus resident GPU index-remap sorting.
+  CPU-sorted render-buffer ordering is not used by the native Quest path
+  because steady state must not upload expanded particle arrays.
 - `native-renderer/`: valid Quest-native renderer plans, timing scorecards, and
   public recorded-hand topology/shape fixtures for pure-HWB blur, GPU mesh
   boundary, resident compact-joint GPU-skinned visual examples,

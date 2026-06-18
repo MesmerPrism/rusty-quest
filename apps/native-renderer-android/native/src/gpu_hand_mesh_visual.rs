@@ -48,6 +48,7 @@ pub(crate) struct GpuHandMeshVisualFrameStats {
     pub(crate) triangle_index_buffer_bytes: u64,
     pub(crate) live_compact_input_frame: bool,
     pub(crate) graft_copy_count: u32,
+    pub(crate) center_position: [f32; 4],
     pub(crate) diagnostic_settings: HandMeshVisualDiagnosticSettings,
 }
 
@@ -402,6 +403,7 @@ impl GpuHandMeshVisualRenderer {
             triangle_index_buffer_bytes: self.draw_resources.triangle_buffer_bytes as u64,
             live_compact_input_frame: live_hand_frame.is_some(),
             graft_copy_count: 0,
+            center_position: compact_frame_center(frame),
             diagnostic_settings,
         })
     }
@@ -621,6 +623,25 @@ fn live_hand_mesh_proof_offset_x(handedness: &'static str) -> f32 {
         "right" => 0.16,
         _ => 0.0,
     }
+}
+
+fn compact_frame_center(frame: &RecordedHandSkinningFrame) -> [f32; 4] {
+    if frame.runtime_joint_poses.is_empty() {
+        return [0.0, 0.0, 0.0, 1.0];
+    }
+    let mut center = [0.0_f32; 3];
+    for pose in &frame.runtime_joint_poses {
+        center[0] += pose.translation_pad[0];
+        center[1] += pose.translation_pad[1];
+        center[2] += pose.translation_pad[2];
+    }
+    let inv_count = 1.0 / frame.runtime_joint_poses.len() as f32;
+    [
+        center[0] * inv_count,
+        center[1] * inv_count,
+        center[2] * inv_count,
+        1.0,
+    ]
 }
 
 struct OwnedBuffer {

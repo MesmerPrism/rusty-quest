@@ -110,6 +110,11 @@ report `handAnchorParticleCpuExpandedUploadPerFrame=false` and
 `handAnchorParticleMeshUploadPerFrame=false`; the only per-frame hand input
 remains the compact live joint/tip-length upload used by the existing GPU
 skinning path.
+The same renderer also exposes standard particle transparency and ordering
+controls. Per-particle back-to-front ordering is implemented as a resident GPU
+index-remap pass over the GPU particle output buffer; the CPU path is limited
+to property/profile selection and never uploads expanded sorted particle rows
+in steady state.
 `fixtures/runtime-profiles/quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json`
 is the topology-matching comparison route: it skips Camera2/custom projection,
 clears the OpenXR projection layer to solid black, disables the app's custom

@@ -14,6 +14,12 @@
     "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
     "debug.rustyquest.native_renderer.hand_anchor_particles.per_hand",
     "debug.rustyquest.native_renderer.hand_anchor_particles.radius_m",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.blend_mode",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.composition_mode",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.depth_suppression_strength",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.mode",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.implementation",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.interval_frames",
     "debug.rustyquest.native_renderer.sdf.visual.enabled",
     "debug.rustyquest.native_renderer.sdf.update_period_frames",
     "debug.rustyquest.native_renderer.processing.layer",
@@ -80,6 +86,36 @@
       "source_setting_id": "native_renderer.hand_anchor_particles.radius_m"
     },
     {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.blend_mode",
+      "value": "premultiplied",
+      "source_setting_id": "native_renderer.hand_anchor_particles.transparency.blend_mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.composition_mode",
+      "value": "true-additive",
+      "source_setting_id": "native_renderer.hand_anchor_particles.transparency.composition_mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.depth_suppression_strength",
+      "value": "1.5",
+      "source_setting_id": "native_renderer.hand_anchor_particles.transparency.depth_suppression_strength"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.mode",
+      "value": "primary-then-secondary",
+      "source_setting_id": "native_renderer.hand_anchor_particles.ordering.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.implementation",
+      "value": "identity-draw-order",
+      "source_setting_id": "native_renderer.hand_anchor_particles.ordering.implementation"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.interval_frames",
+      "value": "1",
+      "source_setting_id": "native_renderer.hand_anchor_particles.ordering.interval_frames"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.sdf.visual.enabled",
       "value": "false",
       "source_setting_id": "native_renderer.sdf.visual.enabled"
@@ -125,6 +161,10 @@
     "status=config",
     "handAnchorParticlesEnabled=true",
     "handAnchorParticlesPerHand=320",
+    "handAnchorParticleTransparencyBlendMode=premultiplied",
+    "handAnchorParticleTransparencyCompositionMode=true-additive",
+    "handAnchorParticleOrderingMode=primary-then-secondary",
+    "handAnchorParticleOrderingStatus=identity-hand-draw-order",
     "handAnchorParticleCoordinateSpace=openxr-reference-space",
     "handAnchorParticleMask=static-feather-dot-luminance-alpha",
     "handAnchorParticleCpuExpandedUploadPerFrame=false",

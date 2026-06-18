@@ -15,6 +15,13 @@
     "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
     "debug.rustyquest.native_renderer.hand_anchor_particles.per_hand",
     "debug.rustyquest.native_renderer.hand_anchor_particles.radius_m",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.dynamics",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.blend_mode",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.composition_mode",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.depth_suppression_strength",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.mode",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.implementation",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.interval_frames",
     "debug.rustyquest.native_renderer.sdf.visual.enabled",
     "debug.rustyquest.native_renderer.sdf.update_period_frames",
     "debug.rustyquest.native_renderer.processing.layer",
@@ -77,13 +84,48 @@
     },
     {
       "name": "debug.rustyquest.native_renderer.hand_anchor_particles.per_hand",
-      "value": "320",
+      "value": "1024",
       "source_setting_id": "native_renderer.hand_anchor_particles.per_hand"
     },
     {
       "name": "debug.rustyquest.native_renderer.hand_anchor_particles.radius_m",
       "value": "0.0045",
       "source_setting_id": "native_renderer.hand_anchor_particles.radius_m"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.dynamics",
+      "value": "private-gpu-payload",
+      "source_setting_id": "native_renderer.hand_anchor_particles.dynamics"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.blend_mode",
+      "value": "legacy-additive-multiply",
+      "source_setting_id": "native_renderer.hand_anchor_particles.transparency.blend_mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.composition_mode",
+      "value": "approximate-depth-suppressed",
+      "source_setting_id": "native_renderer.hand_anchor_particles.transparency.composition_mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.depth_suppression_strength",
+      "value": "1.5",
+      "source_setting_id": "native_renderer.hand_anchor_particles.transparency.depth_suppression_strength"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.mode",
+      "value": "per-particle-back-to-front",
+      "source_setting_id": "native_renderer.hand_anchor_particles.ordering.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.implementation",
+      "value": "gpu-index-remap",
+      "source_setting_id": "native_renderer.hand_anchor_particles.ordering.implementation"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.interval_frames",
+      "value": "1",
+      "source_setting_id": "native_renderer.hand_anchor_particles.ordering.interval_frames"
     },
     {
       "name": "debug.rustyquest.native_renderer.sdf.visual.enabled",
@@ -138,12 +180,25 @@
     "handMeshGraftCopiesEnabled=false",
     "RUSTY_QUEST_NATIVE_RENDERER channel=hand-anchor-particles",
     "handAnchorParticlesEnabled=true",
-    "handAnchorParticlesPerHand=320",
+    "handAnchorParticlesPerHand=1024",
+    "handAnchorParticleDynamics=private-gpu-payload",
+    "handAnchorParticleTransparencyBlendMode=legacy-additive-multiply",
+    "handAnchorParticleTransparencyCompositionMode=approximate-depth-suppressed",
+    "handAnchorParticleOrderingMode=per-particle-back-to-front",
+    "handAnchorParticleOrderingImplementation=gpu-index-remap",
+    "handAnchorParticleOrderingStatus=resident-gpu-index-remap-requested",
+    "handAnchorParticleGpuSortActive=true",
     "customHandMeshVisualRequested=false",
     "handAnchorParticleCoordinateSpace=openxr-reference-space",
     "handAnchorParticleMask=static-feather-dot-luminance-alpha",
     "handAnchorParticleCpuExpandedUploadPerFrame=false",
     "handAnchorParticleMeshUploadPerFrame=false",
+    "RUSTY_KURAMOTO_MESH_NATIVE channel=frame",
+    "kuramotoRuntimeMode=quest-native-vulkan-gpu",
+    "kuramotoNeighborhoodMode=surface-distance-tiered",
+    "kuramotoMovementNoiseSpace=local-normalized",
+    "kuramotoColorMode=rgb-driver",
+    "kuramotoGpuBuffersResident=true",
     "compactHandInputSourceMode=live-meta-openxr-hand-tracking",
     "selectsLiveFrame=true",
     "allowsRecordedFallback=false"

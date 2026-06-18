@@ -42,6 +42,20 @@ pub(crate) const PROP_HAND_ANCHOR_PARTICLES_PER_HAND: &str =
     "debug.rustyquest.native_renderer.hand_anchor_particles.per_hand";
 pub(crate) const PROP_HAND_ANCHOR_PARTICLES_RADIUS_M: &str =
     "debug.rustyquest.native_renderer.hand_anchor_particles.radius_m";
+pub(crate) const PROP_HAND_ANCHOR_PARTICLES_DYNAMICS: &str =
+    "debug.rustyquest.native_renderer.hand_anchor_particles.dynamics";
+pub(crate) const PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_BLEND_MODE: &str =
+    "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.blend_mode";
+pub(crate) const PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_COMPOSITION_MODE: &str =
+    "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.composition_mode";
+pub(crate) const PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH: &str =
+    "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.depth_suppression_strength";
+pub(crate) const PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE: &str =
+    "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.mode";
+pub(crate) const PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION: &str =
+    "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.implementation";
+pub(crate) const PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES: &str =
+    "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.interval_frames";
 pub(crate) const PROP_PROCESSING_LAYER: &str = "debug.rustyquest.native_renderer.processing.layer";
 pub(crate) const PROP_PROJECTION_BORDER_POLICY: &str =
     "debug.rustyquest.native_renderer.projection.border.policy";
@@ -491,10 +505,23 @@ pub(crate) struct NativeHandAnchorParticleSettings {
     pub(crate) enabled: bool,
     pub(crate) particles_per_hand: u32,
     pub(crate) radius_m: f32,
+    pub(crate) dynamics: NativeHandAnchorParticleDynamics,
+    pub(crate) transparency_blend_mode: NativeHandAnchorParticleTransparencyBlendMode,
+    pub(crate) transparency_composition_mode: NativeHandAnchorParticleTransparencyCompositionMode,
+    pub(crate) transparency_depth_suppression_strength: f32,
+    pub(crate) ordering_mode: NativeHandAnchorParticleOrderingMode,
+    pub(crate) ordering_implementation: NativeHandAnchorParticleOrderingImplementation,
+    pub(crate) ordering_interval_frames: u64,
 }
 
 impl NativeHandAnchorParticleSettings {
     fn from_property_lookup(mut lookup: impl FnMut(&str) -> Option<String>) -> Self {
+        let ordering_mode = NativeHandAnchorParticleOrderingMode::from_property(lookup(
+            PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE,
+        ));
+        let ordering_implementation = NativeHandAnchorParticleOrderingImplementation::from_property(
+            lookup(PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION),
+        );
         Self {
             enabled: bool_value(lookup(PROP_HAND_ANCHOR_PARTICLES_ENABLED), false),
             particles_per_hand: u32_value(
@@ -509,14 +536,86 @@ impl NativeHandAnchorParticleSettings {
                 0.001,
                 0.040,
             ),
+            dynamics: NativeHandAnchorParticleDynamics::from_property(lookup(
+                PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
+            )),
+            transparency_blend_mode: NativeHandAnchorParticleTransparencyBlendMode::from_property(
+                lookup(PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_BLEND_MODE),
+            ),
+            transparency_composition_mode:
+                NativeHandAnchorParticleTransparencyCompositionMode::from_property(lookup(
+                    PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_COMPOSITION_MODE,
+                )),
+            transparency_depth_suppression_strength: f32_clamped_value(
+                lookup(PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH),
+                1.5,
+                0.0,
+                8.0,
+            ),
+            ordering_mode,
+            ordering_implementation,
+            ordering_interval_frames: u64_value(
+                lookup(PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES),
+                1,
+                1,
+                8,
+            ),
         }
+    }
+
+    pub(crate) fn private_gpu_payload_requested(self) -> bool {
+        self.dynamics == NativeHandAnchorParticleDynamics::PrivateGpuPayload
     }
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "handAnchorParticlesEnabled={} handAnchorParticlesPerHand={} handAnchorParticleRadiusMeters={:.5} handAnchorParticlePath=resident-skinned-mesh-coordinate-anchor-billboards handAnchorParticleCoordinateSpace=openxr-reference-space handAnchorParticleMask=static-feather-dot-luminance-alpha handAnchorParticleAnimation=false handAnchorParticleCpuExpandedUploadPerFrame=false handAnchorParticleMeshUploadPerFrame=false",
-            self.enabled, self.particles_per_hand, self.radius_m
+            "handAnchorParticlesEnabled={} handAnchorParticlesPerHand={} handAnchorParticleRadiusMeters={:.5} handAnchorParticleDynamics={} handAnchorParticlePrivateGpuPayloadRequested={} handAnchorParticleTransparencyBlendMode={} handAnchorParticleTransparencyCompositionMode={} handAnchorParticleTransparencyDepthSuppressionStrength={:.3} handAnchorParticleOrderingMode={} handAnchorParticleOrderingImplementation={} handAnchorParticleOrderingIntervalFrames={} handAnchorParticleOrderingStatus={} handAnchorParticleOrderingCpuExpandedUploadPerFrame=false handAnchorParticlePath=resident-skinned-mesh-coordinate-anchor-billboards handAnchorParticleCoordinateSpace=openxr-reference-space handAnchorParticleMask=static-feather-dot-luminance-alpha handAnchorParticleAnimation=false handAnchorParticleCpuExpandedUploadPerFrame=false handAnchorParticleMeshUploadPerFrame=false",
+            self.enabled,
+            self.particles_per_hand,
+            self.radius_m,
+            self.dynamics.marker_value(),
+            self.private_gpu_payload_requested(),
+            self.transparency_blend_mode.marker_value(),
+            self.transparency_composition_mode.marker_value(),
+            self.transparency_depth_suppression_strength,
+            self.ordering_mode.marker_value(),
+            self.ordering_implementation.marker_value(),
+            self.ordering_interval_frames,
+            self.ordering_status()
         )
+    }
+
+    pub(crate) fn ordering_status(self) -> &'static str {
+        if self.ordering_mode.requires_particle_sort() {
+            return match self.ordering_implementation {
+                NativeHandAnchorParticleOrderingImplementation::GpuIndexRemap => {
+                    "resident-gpu-index-remap-requested"
+                }
+                NativeHandAnchorParticleOrderingImplementation::CpuSortedRenderBuffers => {
+                    "cpu-sorted-render-buffers-disabled-no-expanded-particle-upload"
+                }
+                NativeHandAnchorParticleOrderingImplementation::IdentityDrawOrder => {
+                    "identity-instance-order"
+                }
+            };
+        }
+        match self.ordering_mode {
+            NativeHandAnchorParticleOrderingMode::PrimaryThenSecondary => {
+                "identity-hand-draw-order"
+            }
+            NativeHandAnchorParticleOrderingMode::SecondaryThenPrimary => "fixed-hand-draw-order",
+            NativeHandAnchorParticleOrderingMode::NearHandFirst
+            | NativeHandAnchorParticleOrderingMode::FarHandFirst => "eye-depth-hand-draw-order",
+            NativeHandAnchorParticleOrderingMode::PerParticleBackToFront => {
+                "identity-instance-order"
+            }
+        }
+    }
+
+    pub(crate) fn resident_gpu_particle_sort_requested(self) -> bool {
+        self.ordering_mode.requires_particle_sort()
+            && self.ordering_implementation
+                == NativeHandAnchorParticleOrderingImplementation::GpuIndexRemap
     }
 }
 
@@ -526,6 +625,172 @@ impl Default for NativeHandAnchorParticleSettings {
             enabled: false,
             particles_per_hand: 256,
             radius_m: 0.0045,
+            dynamics: NativeHandAnchorParticleDynamics::DeterministicAnchors,
+            transparency_blend_mode: NativeHandAnchorParticleTransparencyBlendMode::Premultiplied,
+            transparency_composition_mode:
+                NativeHandAnchorParticleTransparencyCompositionMode::TrueAdditive,
+            transparency_depth_suppression_strength: 1.5,
+            ordering_mode: NativeHandAnchorParticleOrderingMode::PrimaryThenSecondary,
+            ordering_implementation:
+                NativeHandAnchorParticleOrderingImplementation::IdentityDrawOrder,
+            ordering_interval_frames: 1,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeHandAnchorParticleDynamics {
+    DeterministicAnchors,
+    PrivateGpuPayload,
+}
+
+impl NativeHandAnchorParticleDynamics {
+    fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "private" | "private-gpu" | "private-gpu-payload" | "kuramoto" | "kuramoto-gpu" => {
+                Self::PrivateGpuPayload
+            }
+            _ => Self::DeterministicAnchors,
+        }
+    }
+
+    fn marker_value(self) -> &'static str {
+        match self {
+            Self::DeterministicAnchors => "deterministic-anchors",
+            Self::PrivateGpuPayload => "private-gpu-payload",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeHandAnchorParticleTransparencyBlendMode {
+    LegacyAdditiveMultiply,
+    TrueAdditive,
+    Fade,
+    Premultiplied,
+}
+
+impl NativeHandAnchorParticleTransparencyBlendMode {
+    fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "legacy-additive" | "legacy-additive-multiply" | "additive-multiply" => {
+                Self::LegacyAdditiveMultiply
+            }
+            "true-additive" | "additive" | "one-one" => Self::TrueAdditive,
+            "fade" | "alpha" | "alpha-blend" | "straight-alpha" => Self::Fade,
+            "premultiplied" | "premultiplied-alpha" | "pre-multiplied" => Self::Premultiplied,
+            _ => Self::Premultiplied,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::LegacyAdditiveMultiply => "legacy-additive-multiply",
+            Self::TrueAdditive => "true-additive",
+            Self::Fade => "fade",
+            Self::Premultiplied => "premultiplied",
+        }
+    }
+
+    pub(crate) fn premultiply_rgb(self) -> bool {
+        matches!(self, Self::TrueAdditive | Self::Premultiplied)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeHandAnchorParticleTransparencyCompositionMode {
+    TrueAdditive,
+    ApproximateDepthSuppressed,
+}
+
+impl NativeHandAnchorParticleTransparencyCompositionMode {
+    fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "approximate-depth-suppressed"
+            | "depth-suppressed"
+            | "depth-suppression"
+            | "approx-depth" => Self::ApproximateDepthSuppressed,
+            _ => Self::TrueAdditive,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::TrueAdditive => "true-additive",
+            Self::ApproximateDepthSuppressed => "approximate-depth-suppressed",
+        }
+    }
+
+    pub(crate) fn shader_code(self) -> f32 {
+        match self {
+            Self::TrueAdditive => 0.0,
+            Self::ApproximateDepthSuppressed => 1.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeHandAnchorParticleOrderingMode {
+    PrimaryThenSecondary,
+    SecondaryThenPrimary,
+    NearHandFirst,
+    FarHandFirst,
+    PerParticleBackToFront,
+}
+
+impl NativeHandAnchorParticleOrderingMode {
+    fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "secondary-then-primary" | "right-then-left" => Self::SecondaryThenPrimary,
+            "near-hand-first" | "near-first" | "front-to-back" => Self::NearHandFirst,
+            "far-hand-first" | "far-first" | "back-to-front" | "per-hand-back-to-front" => {
+                Self::FarHandFirst
+            }
+            "per-particle-back-to-front"
+            | "main-back-to-front"
+            | "main-and-cpu-tracers-back-to-front" => Self::PerParticleBackToFront,
+            _ => Self::PrimaryThenSecondary,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::PrimaryThenSecondary => "primary-then-secondary",
+            Self::SecondaryThenPrimary => "secondary-then-primary",
+            Self::NearHandFirst => "near-hand-first",
+            Self::FarHandFirst => "far-hand-first",
+            Self::PerParticleBackToFront => "per-particle-back-to-front",
+        }
+    }
+
+    pub(crate) fn requires_particle_sort(self) -> bool {
+        matches!(self, Self::PerParticleBackToFront)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeHandAnchorParticleOrderingImplementation {
+    IdentityDrawOrder,
+    GpuIndexRemap,
+    CpuSortedRenderBuffers,
+}
+
+impl NativeHandAnchorParticleOrderingImplementation {
+    fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "gpu-index-remap" | "gpu-remap" | "index-remap" => Self::GpuIndexRemap,
+            "cpu-sorted-render-buffers" | "cpu-sorted" | "sorted-render-buffers" => {
+                Self::CpuSortedRenderBuffers
+            }
+            _ => Self::IdentityDrawOrder,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::IdentityDrawOrder => "identity-draw-order",
+            Self::GpuIndexRemap => "gpu-index-remap",
+            Self::CpuSortedRenderBuffers => "cpu-sorted-render-buffers",
         }
     }
 }
@@ -1082,8 +1347,13 @@ mod tests {
         NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
         PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE,
         PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_SYNC_MODE, PROP_CAMERA_YCBCR_MODE,
-        PROP_ENABLE_SDF_VISUAL, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
-        PROP_HAND_ANCHOR_PARTICLES_PER_HAND, PROP_HAND_ANCHOR_PARTICLES_RADIUS_M,
+        PROP_ENABLE_SDF_VISUAL, PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
+        PROP_HAND_ANCHOR_PARTICLES_ENABLED, PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
+        PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
+        PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
+        PROP_HAND_ANCHOR_PARTICLES_RADIUS_M, PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_BLEND_MODE,
+        PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_COMPOSITION_MODE,
+        PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH,
         PROP_HAND_MESH_GRAFT_COPIES_ENABLED, PROP_HAND_MESH_GRAFT_COPY_SCALE,
         PROP_HAND_MESH_INPUT_SOURCE, PROP_HAND_MESH_REAL_HANDS_VISIBLE,
         PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED,
@@ -1475,6 +1745,28 @@ mod tests {
             (PROP_HAND_ANCHOR_PARTICLES_ENABLED, "on"),
             (PROP_HAND_ANCHOR_PARTICLES_PER_HAND, "99999"),
             (PROP_HAND_ANCHOR_PARTICLES_RADIUS_M, "0.2"),
+            (PROP_HAND_ANCHOR_PARTICLES_DYNAMICS, "private-gpu-payload"),
+            (
+                PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_BLEND_MODE,
+                "legacy-additive-multiply",
+            ),
+            (
+                PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_COMPOSITION_MODE,
+                "approximate-depth-suppressed",
+            ),
+            (
+                PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH,
+                "99",
+            ),
+            (
+                PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE,
+                "main-and-cpu-tracers-back-to-front",
+            ),
+            (
+                PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
+                "gpu-index-remap",
+            ),
+            (PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES, "99"),
         ]);
 
         assert!(options.hand_anchor_particle_settings.enabled);
@@ -1483,9 +1775,60 @@ mod tests {
             4096
         );
         assert_eq!(options.hand_anchor_particle_settings.radius_m, 0.040);
+        assert_eq!(
+            options
+                .hand_anchor_particle_settings
+                .transparency_blend_mode
+                .marker_value(),
+            "legacy-additive-multiply"
+        );
+        assert_eq!(
+            options
+                .hand_anchor_particle_settings
+                .transparency_composition_mode
+                .marker_value(),
+            "approximate-depth-suppressed"
+        );
+        assert_eq!(
+            options
+                .hand_anchor_particle_settings
+                .transparency_depth_suppression_strength,
+            8.0
+        );
+        assert_eq!(
+            options
+                .hand_anchor_particle_settings
+                .ordering_mode
+                .marker_value(),
+            "per-particle-back-to-front"
+        );
+        assert_eq!(
+            options
+                .hand_anchor_particle_settings
+                .ordering_implementation
+                .marker_value(),
+            "gpu-index-remap"
+        );
+        assert_eq!(
+            options
+                .hand_anchor_particle_settings
+                .ordering_interval_frames,
+            8
+        );
+        assert!(options
+            .hand_anchor_particle_settings
+            .private_gpu_payload_requested());
         let fields = options.hand_anchor_particle_settings.marker_fields();
+        assert!(fields.contains("handAnchorParticleDynamics=private-gpu-payload"));
+        assert!(
+            fields.contains("handAnchorParticleOrderingStatus=resident-gpu-index-remap-requested")
+        );
+        assert!(fields.contains("handAnchorParticleOrderingCpuExpandedUploadPerFrame=false"));
         assert!(fields.contains("handAnchorParticleCoordinateSpace=openxr-reference-space"));
         assert!(fields.contains("handAnchorParticleCpuExpandedUploadPerFrame=false"));
+        assert!(options
+            .hand_anchor_particle_settings
+            .resident_gpu_particle_sort_requested());
     }
 
     #[test]

@@ -8,8 +8,18 @@ layout(set = 0, binding = 1) readonly buffer RecordedSkinningTriangles {
     uvec4 triangles[];
 } skinning_triangles;
 
+layout(set = 0, binding = 2) readonly buffer ParticleOutput {
+    vec4 rows[];
+} particle_output;
+
+layout(set = 0, binding = 3) readonly buffer ParticleSortRows {
+    uvec4 rows[];
+} particle_sort;
+
 layout(push_constant) uniform HandAnchorParticlePush {
     vec4 params0;
+    vec4 params1;
+    vec4 params2;
     vec4 eye_position;
     vec4 eye_orientation_xyzw;
     vec4 fov_tangents;
@@ -17,6 +27,7 @@ layout(push_constant) uniform HandAnchorParticlePush {
 
 layout(location = 0) out vec2 v_mask_uv;
 layout(location = 1) out vec4 v_color;
+layout(location = 2) out vec4 v_render_params;
 
 const vec2 QUAD_POSITIONS[6] = vec2[](
     vec2(-1.0, -1.0),
@@ -90,30 +101,48 @@ void main() {
     uint anchor_count = max(uint(pc.params0.y), 1u);
     float radius = max(pc.params0.z, 0.0002);
     uint hand_code = uint(pc.params0.w);
+    bool use_particle_output = pc.params1.x > 0.5;
+    bool use_sort_remap = pc.params2.x > 0.5;
 
-    uint anchor_index = gl_InstanceIndex;
-    uint triangle_index = (anchor_index * 2654435761u + anchor_index / 3u) % triangle_count;
-    uvec4 triangle = skinning_triangles.triangles[triangle_index];
+    uint anchor_index = use_sort_remap
+        ? particle_sort.rows[gl_InstanceIndex].x
+        : gl_InstanceIndex;
+    vec3 center;
+    vec4 particle_color;
+    if (use_particle_output) {
+        uint row = anchor_index * 4u;
+        vec4 position_radius = particle_output.rows[row];
+        center = position_radius.xyz;
+        radius = max(position_radius.w, 0.0002);
+        particle_color = particle_output.rows[row + 1u];
+    } else {
+        uint triangle_index = (anchor_index * 2654435761u + anchor_index / 3u) % triangle_count;
+        uvec4 triangle = skinning_triangles.triangles[triangle_index];
 
-    vec3 bary = anchor_barycentric(anchor_index);
-    vec3 a = skinned_positions.positions[triangle.x].xyz;
-    vec3 b = skinned_positions.positions[triangle.y].xyz;
-    vec3 c = skinned_positions.positions[triangle.z].xyz;
-    vec3 center = a * bary.x + b * bary.y + c * bary.z;
+        vec3 bary = anchor_barycentric(anchor_index);
+        vec3 a = skinned_positions.positions[triangle.x].xyz;
+        vec3 b = skinned_positions.positions[triangle.y].xyz;
+        vec3 c = skinned_positions.positions[triangle.z].xyz;
+        center = a * bary.x + b * bary.y + c * bary.z;
+
+        float hand_mix = hand_code == 2u ? 1.0 : 0.0;
+        vec3 left_color = vec3(0.96, 1.00, 0.78);
+        vec3 right_color = vec3(0.70, 0.91, 1.00);
+        float anchor_phase = float(anchor_index) / float(anchor_count);
+        vec3 color = mix(left_color, right_color, hand_mix);
+        color *= mix(0.86, 1.10, hash01(anchor_index + 17u));
+        particle_color = vec4(clamp(color, vec3(0.0), vec3(1.0)), mix(0.74, 1.0, anchor_phase));
+    }
 
     vec2 quad = QUAD_POSITIONS[gl_VertexIndex % 6];
     vec3 eye_right = rotate_by_quat(pc.eye_orientation_xyzw, vec3(1.0, 0.0, 0.0));
     vec3 eye_up = rotate_by_quat(pc.eye_orientation_xyzw, vec3(0.0, 1.0, 0.0));
     vec3 world = center + (eye_right * quad.x + eye_up * quad.y) * radius;
-
-    float hand_mix = hand_code == 2u ? 1.0 : 0.0;
-    vec3 left_color = vec3(0.96, 1.00, 0.78);
-    vec3 right_color = vec3(0.70, 0.91, 1.00);
-    float anchor_phase = float(anchor_index) / float(anchor_count);
-    vec3 color = mix(left_color, right_color, hand_mix);
-    color *= mix(0.86, 1.10, hash01(anchor_index + 17u));
+    vec3 center_eye = world_to_eye(center);
+    float center_forward_m = max(-center_eye.z, 0.0);
 
     v_mask_uv = quad * 0.5 + vec2(0.5);
-    v_color = vec4(clamp(color, vec3(0.0), vec3(1.0)), mix(0.74, 1.0, anchor_phase));
+    v_color = vec4(clamp(particle_color.rgb, vec3(0.0), vec3(1.0)), clamp(particle_color.a, 0.0, 1.0));
+    v_render_params = vec4(pc.params1.y, pc.params1.z, pc.params1.w, center_forward_m);
     gl_Position = world_to_eye_clip(world);
 }
