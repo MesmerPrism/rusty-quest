@@ -1,9 +1,7 @@
 //! Camera2 PRIVATE reader-size capability and ranking helpers.
 
 use crate::{
-    acamera_sys::{
-        ACAMERA_CONTROL_AE_TARGET_FPS_RANGE, ACAMERA_EDGE_MODE, ACAMERA_NOISE_REDUCTION_MODE,
-    },
+    acamera_sys::{ACAMERA_EDGE_MODE, ACAMERA_NOISE_REDUCTION_MODE},
     native_renderer_options::{NativeCameraQualityProfile, NativeCameraResolutionProfile},
 };
 
@@ -43,10 +41,6 @@ pub(crate) struct ReaderSizeSelection {
 impl CameraCapabilities {
     pub(crate) fn supports_request_key(&self, tag: u32) -> bool {
         self.request_keys.iter().any(|key| *key == tag as i32)
-    }
-
-    pub(crate) fn supports_ae_fps_request(&self) -> bool {
-        self.supports_request_key(ACAMERA_CONTROL_AE_TARGET_FPS_RANGE)
     }
 
     pub(crate) fn supports_noise_reduction_mode(&self, mode: u8) -> bool {

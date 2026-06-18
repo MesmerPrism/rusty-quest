@@ -287,6 +287,7 @@ impl CameraProjectionRenderer {
             slot.buffer.descriptor(),
         );
         device.cmd_fill_buffer(
+            cmd,
             slot.buffer.buffer,
             0,
             CAMERA_LUMA_DIAGNOSTIC_BUFFER_BYTES,

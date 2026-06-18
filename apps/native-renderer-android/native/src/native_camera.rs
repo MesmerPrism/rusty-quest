@@ -848,7 +848,6 @@ impl CameraSide {
     }
 }
 
-#[derive(Clone, Debug, Default)]
 unsafe fn load_camera_capabilities(
     manager: *mut ACameraManager,
     camera_id: *const c_char,
