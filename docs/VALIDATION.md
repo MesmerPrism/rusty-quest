@@ -12,9 +12,31 @@ headset or ADB server. The native renderer profiles are the public validation
 matrix for the main native Quest XR stack: they select custom Camera2/HWB
 projection, native Meta passthrough, or a solid black projection background
 without changing APK identity or hiding route state in ad hoc launch scripts.
-The native renderer has five separate profile fixtures:
-`quest-native-renderer-replay-visual-proof.profile.json` is the no-real-hands
-recorded replay acceptance route, while
+The native renderer has separate profile fixtures:
+`quest-native-renderer-direct-hwb-camera-quality.profile.json` is the raw
+Camera2/HWB baseline route; it forces
+`debug.rustyquest.native_renderer.camera.output=direct-hwb`, bypasses
+guide/private projection output, disables hand/SDF overlays, disables the
+direct-camera border overlay, leaves the Vulkan YCbCr sampler on Android's
+suggested model/range, and requests a UNORM OpenXR swapchain preference. It
+also declares `camera.quality_profile=direct-baseline` and
+`camera.sync_mode=early-delete-ahb-retained`; runtime markers report this as
+the active public baseline until the later fence-backed ImageReader/Vulkan
+release path is implemented. The
+`quest-native-renderer-direct-hwb-camera-quality-bt601-unorm.profile.json`
+fixture keeps the same raw route but forces the effective sampler conversion to
+`YCBCR_601` plus `ITU_NARROW` and requests a UNORM OpenXR swapchain preference
+for color-lift and dark-region grain diagnostics. The
+`quest-native-renderer-direct-hwb-low-noise-30.profile.json` fixture keeps the
+same Android-suggested/UNORM raw route but requests the support-gated public
+Camera2 low-noise profile: 30 FPS AE range, high-quality noise reduction with a
+fast fallback, and edge enhancement off when those keys/modes are exposed by
+the device. The native app logs `camera-capabilities`,
+`camera-request-profile`, `camera-capture-result`, buffer-removed listener, and
+YCbCr format-feature markers so headset screenshots can be compared with the
+actual Camera2 result metadata. The
+`quest-native-renderer-replay-visual-proof.profile.json` fixture is the
+no-real-hands recorded replay acceptance route, while
 `quest-native-renderer-live-hand-visual-diagnostic.profile.json` only stages the
 future live-hand retest with live input, high-contrast mesh diagnostics, SDF
 visuals, and explicit pending visual-acceptance markers. The
@@ -29,6 +51,12 @@ base live hand mesh draw path with
 `quest-native-renderer-solid-black-hands-and-grafts.profile.json` route disables
 both passthrough and custom Camera2 projection, clears the submitted projection
 layer to black, and draws only the live base meshes plus graft copies.
+The
+`quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json`
+route also disables passthrough and custom Camera2 projection, clears to black,
+keeps the app's custom hand mesh and graft visuals disabled, requests the
+runtime/default OpenXR hand visual, and draws only resident-mesh anchor
+particles for topology comparison.
 
 Remote camera session plans are also source-only validation:
 
@@ -198,7 +226,10 @@ diagnostic alpha property enabled. The guide graph has
 source/static validation plus headset replay evidence for 384x384 downsample,
 split horizontal/vertical 5-tap blur, guide cache markers, and final
 guide-texture projection. Color-correct camera projection output remains a
-separate pending validation gate. Direct Meta hand-mesh topology import,
+separate pending validation gate; the direct-HWB YCbCr/swapchain A/B profiles
+only expose suggested/effective sampler metadata and selected swapchain format
+so headset review can isolate range/matrix/gamma behavior. Direct Meta
+hand-mesh topology import,
 Matter/Lattice SDF parity, and live-hand headset visual SDF acceptance also
 remain separate pending validation gates. The
 GPU timestamp query scaffold is source-validated, but its numeric values remain

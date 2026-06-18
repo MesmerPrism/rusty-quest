@@ -17,12 +17,17 @@ Runtime routes are selected by profile/property, not by separate APKs:
 
 | Profile | Background | Visible hand content | Camera2/HWB projection |
 | --- | --- | --- | --- |
+| `quest-native-renderer-direct-hwb-camera-quality.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for raw camera inspection | Enabled, forced direct `AHardwareBuffer` sample with Android-suggested YCbCr, UNORM swapchain preference, and clean border |
+| `quest-native-renderer-direct-hwb-camera-quality-bt601-unorm.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for raw camera inspection | Enabled, forced direct `AHardwareBuffer` sample with limited BT.601 YCbCr and UNORM swapchain preference |
+| `quest-native-renderer-direct-hwb-low-noise-30.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for low-noise A/B inspection | Enabled, Android-suggested YCbCr plus support-gated 30 FPS AE, noise reduction, and edge-off request controls |
 | `quest-native-renderer-replay-visual-proof.profile.json` | Custom camera projection | Recorded GPU-skinned mesh and SDF visual | Enabled |
 | `quest-native-renderer-hwb-peripheral-stretch.profile.json` | Custom camera projection with full-eye target-edge stretch/blend border | Optional recorded/live mesh controls remain profile-selectable | Enabled |
 | `quest-native-renderer-live-hand-visual-diagnostic.profile.json` | Custom camera projection | Live diagnostic mesh/SDF, pending screenshot acceptance | Enabled |
+| `quest-native-renderer-live-hand-anchor-particles.profile.json` | Custom camera projection | Live base hand meshes plus resident GPU anchor particles | Enabled |
 | `quest-native-renderer-native-passthrough-graft-only.profile.json` | Native Meta passthrough | Fingertip graft copies only | Disabled |
 | `quest-native-renderer-native-passthrough-hands-and-grafts.profile.json` | Native Meta passthrough | Live base hand meshes plus graft copies | Disabled |
 | `quest-native-renderer-solid-black-hands-and-grafts.profile.json` | Opaque black projection layer | Live base hand meshes plus graft copies | Disabled |
+| `quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json` | Opaque black projection layer | Runtime/default OpenXR hands requested plus resident GPU anchor particles; app custom mesh hidden | Disabled |
 
 It consumes the public native renderer fixture at build time. Runtime ownership
 is a Rust NativeActivity in `librusty_quest_native_renderer.so`: no app Java is packaged
@@ -90,6 +95,24 @@ The optional graft-copy experiment is controlled separately by
 `debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled`; the shared
 profiles set it to `false` so replay and live diagnostic runs do not inherit a
 stale experimental copy mode.
+`fixtures/runtime-profiles/quest-native-renderer-live-hand-anchor-particles.profile.json`
+keeps that graft path disabled, selects live OpenXR hand tracking, makes the
+live base hand meshes visible, and enables the resident Vulkan particle layer
+through `debug.rustyquest.native_renderer.hand_anchor_particles.enabled=true`.
+The particle layer evaluates deterministic barycentric coordinate anchors in
+the vertex shader over the resident skinned-position and triangle buffers for
+each hand, draws camera-facing billboards in OpenXR reference-space meters, and
+uses a static feather-dot luminance alpha mask with no animation. Its markers
+report `handAnchorParticleCpuExpandedUploadPerFrame=false` and
+`handAnchorParticleMeshUploadPerFrame=false`; the only per-frame hand input
+remains the compact live joint/tip-length upload used by the existing GPU
+skinning path.
+`fixtures/runtime-profiles/quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json`
+is the topology-matching comparison route: it skips Camera2/custom projection,
+clears the OpenXR projection layer to solid black, disables the app's custom
+hand mesh and graft visuals, requests the runtime/default OpenXR hand visual as
+the comparison hand, and keeps the same resident-mesh anchor particles visible
+in world space.
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-graft-only.profile.json`
 keeps native passthrough focused on graft instances only, while
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-hands-and-grafts.profile.json`
@@ -147,6 +170,33 @@ Runtime scorecards may report `openxrSubmitReady=true` after a submitted
 diagnostic projection frame. `vulkanExternalImportReady=true` is reserved for
 frames where Camera2 `AHardwareBuffer` objects were imported into Vulkan
 external images and bound through the immutable YCbCr descriptor path.
+
+For raw camera-quality inspection, the
+`quest-native-renderer-direct-hwb-camera-quality.profile.json` route sets
+`debug.rustyquest.native_renderer.camera.output=direct-hwb`, bypasses the guide
+and private projection outputs, disables hand/SDF overlays, and reports
+`cameraProjectionPath=metadata-target-direct-hwb-forced` with
+`directHwbProjectionDiagnostic=true`. It also sets
+`debug.rustyquest.native_renderer.camera.direct_border.opacity=0.0` so the
+projection target contains only sampled camera color. It uses Android-suggested
+YCbCr plus `debug.rustyquest.native_renderer.swapchain.color_format=unorm`,
+with `debug.rustyquest.native_renderer.camera.quality_profile=direct-baseline`
+and `debug.rustyquest.native_renderer.camera.sync_mode=early-delete-ahb-retained`
+logged as the active public baseline. The
+`quest-native-renderer-direct-hwb-camera-quality-bt601-unorm.profile.json`
+route keeps the same visual baseline but sets
+`debug.rustyquest.native_renderer.camera.ycbcr.mode=forced-bt601-narrow` and
+`debug.rustyquest.native_renderer.swapchain.color_format=unorm`; device logs
+then report suggested/effective YCbCr model/range plus selected swapchain
+format for range/matrix/gamma A/B review. The
+`quest-native-renderer-direct-hwb-low-noise-30.profile.json` route keeps the
+Android-suggested/UNORM baseline and requests support-gated Camera2 controls
+for 30 FPS AE, high-quality noise reduction with fast fallback, and edge
+enhancement off. Device logs include `camera-capabilities`,
+`camera-request-profile`, `camera-capture-result`, buffer-removed listener, and
+YCbCr format-feature markers. This is still a visual baseline family; the full
+ImageReader/Vulkan acquire-release synchronization hardening remains a separate
+implementation and headset validation gate.
 
 Acceptance caveat: the current visual acceptance covers the native diagnostic
 projection, recorded hand replay overlay, metadata-owned camera target area,
@@ -213,8 +263,13 @@ Static validation:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-replay-visual-proof.profile.json -DryRun -Out .\local-artifacts\native-renderer-replay-visual-proof-property-write-plan.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-camera-quality.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-camera-quality-property-write-plan.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-camera-quality-bt601-unorm.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-camera-quality-bt601-unorm-property-write-plan.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-low-noise-30.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-low-noise-30-property-write-plan.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-hwb-peripheral-stretch.profile.json -DryRun -Out .\local-artifacts\native-renderer-hwb-peripheral-stretch-property-write-plan.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-live-hand-visual-diagnostic.profile.json -DryRun -Out .\local-artifacts\native-renderer-live-hand-visual-diagnostic-property-write-plan.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-live-hand-anchor-particles.profile.json -DryRun -Out .\local-artifacts\native-renderer-live-hand-anchor-particles-property-write-plan.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json -DryRun -Out .\local-artifacts\native-renderer-solid-black-openxr-hands-anchor-particles-property-write-plan.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-native-passthrough-hands-and-grafts.profile.json -DryRun -Out .\local-artifacts\native-renderer-native-passthrough-hands-and-grafts-property-write-plan.json
 ```
 

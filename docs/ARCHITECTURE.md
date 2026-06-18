@@ -75,7 +75,22 @@ OpenXR/Vulkan session and stereo swapchain, submits a diagnostic projection
 layer with the public recorded-hand replay overlay visible, stages an optional
 local full recorded bind mesh into a native Vulkan storage-buffer boundary, and
 emits native timing counters plus Vulkan external-HWB import boundary metadata
-under `RUSTY_QUEST_NATIVE_RENDERER`.
+under `RUSTY_QUEST_NATIVE_RENDERER`. Direct-HWB camera diagnostics expose
+runtime-selectable YCbCr conversion and swapchain-format preferences:
+`camera.ycbcr.mode=android-suggested` uses Android/Vulkan's suggested
+model/range, while `camera.ycbcr.mode=forced-bt601-narrow` forces the
+effective Vulkan sampler conversion to limited BT.601 for comparison against
+the Makepad pure-HWB reference lane. The current raw-quality baseline combines
+Android-suggested YCbCr with `swapchain.color_format=unorm`; BT.601/UNORM
+remains a comparison route, not the default. The public camera-quality profile
+knob is support-gated through Camera2 metadata: `direct-baseline` applies no
+request overrides, while `direct-low-noise-30` requests 30 FPS AE, high-quality
+noise reduction with a fast fallback, and edge enhancement off where supported.
+Runtime markers also distinguish `cameraSyncRequested` from
+`cameraSyncActive`; the active implementation remains
+`early-delete-ahb-retained` until the ImageReader/Vulkan fence-backed release
+path is built. The Vulkan import path logs external-format feature bits and
+selects YCbCr chroma/sampler filters from the advertised features.
 
 This package is not Manifold command authority, not an Optics visual truth
 source, and not a Matter SDF owner. Headset smokes now prove
@@ -120,7 +135,12 @@ same GPU-skinned resident live hand meshes draw under the graft instances while
 Camera2/custom stereo projection and SDF remain disabled. The solid black
 hands-and-grafts profile uses no `XR_FB_passthrough` layer at all: it clears the
 submitted projection layer to opaque black and draws only the live base hand
-meshes plus graft instances. `targetSpaceMeshToSdfKernelAvailable=true` means the
+meshes plus graft instances. The solid black OpenXR-hands anchor-particles
+profile keeps the same opaque black background but disables the app's custom
+hand mesh and graft visuals; the resident skinned mesh remains GPU-owned as the
+anchor source, and only particle billboards are drawn while the runtime/default
+OpenXR hand visual is requested for topology comparison.
+`targetSpaceMeshToSdfKernelAvailable=true` means the
 opt-in target-space SDF visual route is compiled into the renderer;
 `meshToSdfKernel=true` appears only for frames where that opt-in GPU kernel
 actually ran. Cached field reuse is
@@ -136,7 +156,10 @@ Vulkan external-HWB import true by construction. A green prerequisite probe may 
 `openxrInstanceReady` and `vulkanExternalImportPrereqsReady` true, while
 `vulkanExternalImportReady=false` continues to separate native camera frame
 acquisition from Vulkan image/cache ownership and color-correct projection
-acceptance.
+acceptance. Camera projection resource markers report suggested and effective
+YCbCr model/range, component mapping, chroma offsets, conversion mode, and the
+selected OpenXR swapchain color-format preference so color acceptance can be
+reviewed from device evidence rather than inferred from route readiness.
 
 Runtime property parsing for replay visual proof, compact hand input source,
 hand mesh diagnostic settings, graft-copy enablement, and SDF cadence belongs to the

@@ -6,6 +6,16 @@
 pub(crate) const PROP_ENABLE_SDF_VISUAL: &str =
     "debug.rustyquest.native_renderer.sdf.visual.enabled";
 pub(crate) const PROP_RENDER_MODE: &str = "debug.rustyquest.native_renderer.render.mode";
+pub(crate) const PROP_CAMERA_OUTPUT_MODE: &str = "debug.rustyquest.native_renderer.camera.output";
+pub(crate) const PROP_CAMERA_YCBCR_MODE: &str =
+    "debug.rustyquest.native_renderer.camera.ycbcr.mode";
+pub(crate) const PROP_CAMERA_QUALITY_PROFILE: &str =
+    "debug.rustyquest.native_renderer.camera.quality_profile";
+pub(crate) const PROP_CAMERA_SYNC_MODE: &str = "debug.rustyquest.native_renderer.camera.sync_mode";
+pub(crate) const PROP_CAMERA_DIRECT_BORDER_OPACITY: &str =
+    "debug.rustyquest.native_renderer.camera.direct_border.opacity";
+pub(crate) const PROP_SWAPCHAIN_COLOR_FORMAT_MODE: &str =
+    "debug.rustyquest.native_renderer.swapchain.color_format";
 pub(crate) const PROP_SDF_UPDATE_PERIOD_FRAMES: &str =
     "debug.rustyquest.native_renderer.sdf.update_period_frames";
 pub(crate) const PROP_REPLAY_VISUAL_PROOF_ENABLED: &str =
@@ -24,6 +34,12 @@ pub(crate) const PROP_HAND_MESH_GRAFT_COPY_SCALE: &str =
     "debug.rustyquest.native_renderer.hand_mesh.graft_copies.scale";
 pub(crate) const PROP_HAND_MESH_REAL_HANDS_VISIBLE: &str =
     "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible";
+pub(crate) const PROP_HAND_ANCHOR_PARTICLES_ENABLED: &str =
+    "debug.rustyquest.native_renderer.hand_anchor_particles.enabled";
+pub(crate) const PROP_HAND_ANCHOR_PARTICLES_PER_HAND: &str =
+    "debug.rustyquest.native_renderer.hand_anchor_particles.per_hand";
+pub(crate) const PROP_HAND_ANCHOR_PARTICLES_RADIUS_M: &str =
+    "debug.rustyquest.native_renderer.hand_anchor_particles.radius_m";
 pub(crate) const PROP_PROCESSING_LAYER: &str = "debug.rustyquest.native_renderer.processing.layer";
 pub(crate) const PROP_PROJECTION_BORDER_POLICY: &str =
     "debug.rustyquest.native_renderer.projection.border.policy";
@@ -67,6 +83,7 @@ pub(crate) enum NativeRendererRenderMode {
     CustomStereoProjection,
     NativePassthroughGraftOnly,
     SolidBlackHandsAndGrafts,
+    SolidBlackOpenXrHandsAnchorParticles,
 }
 
 impl NativeRendererRenderMode {
@@ -85,6 +102,13 @@ impl NativeRendererRenderMode {
             | "black-hands-and-grafts"
             | "solid-black"
             | "black-background-hands-and-grafts" => Self::SolidBlackHandsAndGrafts,
+            "solid-black-openxr-hands-anchor-particles"
+            | "solid-black-openxr-hands"
+            | "solid-black-default-hands-anchor-particles"
+            | "solid-black-default-hands"
+            | "black-background-openxr-hands-anchor-particles" => {
+                Self::SolidBlackOpenXrHandsAnchorParticles
+            }
             _ => Self::CustomStereoProjection,
         }
     }
@@ -94,6 +118,9 @@ impl NativeRendererRenderMode {
             Self::CustomStereoProjection => "custom-stereo-projection",
             Self::NativePassthroughGraftOnly => "native-passthrough-graft-only",
             Self::SolidBlackHandsAndGrafts => "solid-black-hands-and-grafts",
+            Self::SolidBlackOpenXrHandsAnchorParticles => {
+                "solid-black-openxr-hands-anchor-particles"
+            }
         }
     }
 
@@ -106,7 +133,14 @@ impl NativeRendererRenderMode {
     }
 
     pub(crate) fn uses_solid_black_background(self) -> bool {
-        matches!(self, Self::SolidBlackHandsAndGrafts)
+        matches!(
+            self,
+            Self::SolidBlackHandsAndGrafts | Self::SolidBlackOpenXrHandsAnchorParticles
+        )
+    }
+
+    pub(crate) fn requests_openxr_default_hand_visual(self) -> bool {
+        matches!(self, Self::SolidBlackOpenXrHandsAnchorParticles)
     }
 
     pub(crate) fn forces_graft_copies(self) -> bool {
@@ -125,6 +159,9 @@ impl NativeRendererRenderMode {
             Self::CustomStereoProjection => "camera2-hwb",
             Self::NativePassthroughGraftOnly => "skipped-native-passthrough",
             Self::SolidBlackHandsAndGrafts => "skipped-solid-black-hands-and-grafts",
+            Self::SolidBlackOpenXrHandsAnchorParticles => {
+                "skipped-solid-black-openxr-hands-anchor-particles"
+            }
         }
     }
 
@@ -133,6 +170,9 @@ impl NativeRendererRenderMode {
             Self::CustomStereoProjection => "metadata-target-direct-hwb-fallback",
             Self::NativePassthroughGraftOnly => "disabled-native-passthrough-graft-only",
             Self::SolidBlackHandsAndGrafts => "disabled-solid-black-hands-and-grafts",
+            Self::SolidBlackOpenXrHandsAnchorParticles => {
+                "disabled-solid-black-openxr-hands-anchor-particles"
+            }
         }
     }
 
@@ -142,8 +182,192 @@ impl NativeRendererRenderMode {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeCameraOutputMode {
+    Auto,
+    DirectHwb,
+    GuidePublic,
+    Disabled,
+}
+
+impl NativeCameraOutputMode {
+    pub(crate) fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "direct" | "direct-hwb" | "direct-hardware-buffer" | "raw" | "raw-hwb" => {
+                Self::DirectHwb
+            }
+            "guide" | "guide-public" | "public-guide" | "guide-texture" => Self::GuidePublic,
+            "0" | "false" | "no" | "off" | "disabled" => Self::Disabled,
+            _ => Self::Auto,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::DirectHwb => "direct-hwb",
+            Self::GuidePublic => "guide-public",
+            Self::Disabled => "disabled",
+        }
+    }
+
+    pub(crate) fn camera_import_enabled(self) -> bool {
+        !matches!(self, Self::Disabled)
+    }
+
+    pub(crate) fn private_layer_projection_enabled(self) -> bool {
+        matches!(self, Self::Auto)
+    }
+
+    pub(crate) fn guide_projection_enabled(self) -> bool {
+        matches!(self, Self::Auto | Self::GuidePublic)
+    }
+
+    pub(crate) fn guide_graph_processing_enabled(self) -> bool {
+        matches!(self, Self::Auto | Self::GuidePublic)
+    }
+
+    pub(crate) fn direct_hwb_forced(self) -> bool {
+        matches!(self, Self::DirectHwb)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeCameraYcbcrMode {
+    AndroidSuggested,
+    ForcedBt601Narrow,
+}
+
+impl NativeCameraYcbcrMode {
+    pub(crate) fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "bt601-narrow"
+            | "bt601-limited"
+            | "forced-bt601"
+            | "forced-bt601-narrow"
+            | "forced-bt601-limited"
+            | "cpuyuv-reference" => Self::ForcedBt601Narrow,
+            _ => Self::AndroidSuggested,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::AndroidSuggested => "android-suggested",
+            Self::ForcedBt601Narrow => "forced-bt601-narrow",
+        }
+    }
+
+    pub(crate) fn conversion_mode(self) -> &'static str {
+        match self {
+            Self::AndroidSuggested => "android-suggested-ycbcr",
+            Self::ForcedBt601Narrow => "forced-bt601-limited-cpuyuv-reference",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeCameraQualityProfile {
+    DirectBaseline,
+    DirectLowNoise30,
+    DirectLowLatency60,
+    DirectQualityProbe,
+}
+
+impl NativeCameraQualityProfile {
+    pub(crate) fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "direct-low-noise-30" | "low-noise-30" | "noise-30" | "low-noise" => {
+                Self::DirectLowNoise30
+            }
+            "direct-low-latency-60" | "low-latency-60" | "latency-60" | "low-latency" => {
+                Self::DirectLowLatency60
+            }
+            "direct-quality-probe" | "quality-probe" | "quality" => Self::DirectQualityProbe,
+            _ => Self::DirectBaseline,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::DirectBaseline => "direct-baseline",
+            Self::DirectLowNoise30 => "direct-low-noise-30",
+            Self::DirectLowLatency60 => "direct-low-latency-60",
+            Self::DirectQualityProbe => "direct-quality-probe",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeCameraSyncMode {
+    EarlyDeleteAhbRetained,
+    HoldImageUntilGpuFence,
+    DeleteAsyncReleaseFence,
+}
+
+impl NativeCameraSyncMode {
+    pub(crate) fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "hold-image-until-gpu-fence" | "hold-image" | "hold-image-until-fence" => {
+                Self::HoldImageUntilGpuFence
+            }
+            "delete-async-release-fence" | "delete-async" | "async-release-fence" => {
+                Self::DeleteAsyncReleaseFence
+            }
+            _ => Self::EarlyDeleteAhbRetained,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::EarlyDeleteAhbRetained => "early-delete-ahb-retained",
+            Self::HoldImageUntilGpuFence => "hold-image-until-gpu-fence",
+            Self::DeleteAsyncReleaseFence => "delete-async-release-fence",
+        }
+    }
+
+    pub(crate) fn active_marker_value(self) -> &'static str {
+        "early-delete-ahb-retained"
+    }
+
+    pub(crate) fn implementation_status(self) -> &'static str {
+        match self {
+            Self::EarlyDeleteAhbRetained => "active-baseline",
+            Self::HoldImageUntilGpuFence | Self::DeleteAsyncReleaseFence => {
+                "declared-diagnostic-not-active-yet"
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeSwapchainColorFormatMode {
+    Auto,
+    Srgb,
+    Unorm,
+}
+
+impl NativeSwapchainColorFormatMode {
+    pub(crate) fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "srgb" | "s-rgb" | "prefer-srgb" => Self::Srgb,
+            "unorm" | "linear" | "prefer-unorm" => Self::Unorm,
+            _ => Self::Auto,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::Auto => "auto-srgb-preferred",
+            Self::Srgb => "srgb",
+            Self::Unorm => "unorm",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CompactHandInputSourceMode {
     Auto,
+    Disabled,
     RecordedReplay,
     LiveMeta,
 }
@@ -156,6 +380,7 @@ impl CompactHandInputSourceMode {
             .trim()
             .to_ascii_lowercase();
         match normalized.as_str() {
+            "0" | "false" | "no" | "off" | "disabled" | "none" => Self::Disabled,
             "recorded" | "recorded-replay" | "replay" => Self::RecordedReplay,
             "live" | "live-meta" | "openxr" | "live-meta-openxr-hand-tracking" => Self::LiveMeta,
             "auto" => Self::Auto,
@@ -167,17 +392,18 @@ impl CompactHandInputSourceMode {
     pub(crate) fn marker_value(self) -> &'static str {
         match self {
             Self::Auto => "auto",
+            Self::Disabled => "disabled",
             Self::RecordedReplay => "recorded-replay",
             Self::LiveMeta => "live-meta-openxr-hand-tracking",
         }
     }
 
     pub(crate) fn selects_live_frame(self) -> bool {
-        !matches!(self, Self::RecordedReplay)
+        matches!(self, Self::Auto | Self::LiveMeta)
     }
 
     pub(crate) fn allows_recorded_fallback(self) -> bool {
-        !matches!(self, Self::LiveMeta)
+        matches!(self, Self::Auto | Self::RecordedReplay)
     }
 }
 
@@ -219,6 +445,50 @@ impl HandMeshVisualDiagnosticSettings {
 impl Default for HandMeshVisualDiagnosticSettings {
     fn default() -> Self {
         Self::new(false, [0.0, 0.0], 0.78)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NativeHandAnchorParticleSettings {
+    pub(crate) enabled: bool,
+    pub(crate) particles_per_hand: u32,
+    pub(crate) radius_m: f32,
+}
+
+impl NativeHandAnchorParticleSettings {
+    fn from_property_lookup(mut lookup: impl FnMut(&str) -> Option<String>) -> Self {
+        Self {
+            enabled: bool_value(lookup(PROP_HAND_ANCHOR_PARTICLES_ENABLED), false),
+            particles_per_hand: u32_value(
+                lookup(PROP_HAND_ANCHOR_PARTICLES_PER_HAND),
+                256,
+                1,
+                4096,
+            ),
+            radius_m: f32_clamped_value(
+                lookup(PROP_HAND_ANCHOR_PARTICLES_RADIUS_M),
+                0.0045,
+                0.001,
+                0.040,
+            ),
+        }
+    }
+
+    pub(crate) fn marker_fields(self) -> String {
+        format!(
+            "handAnchorParticlesEnabled={} handAnchorParticlesPerHand={} handAnchorParticleRadiusMeters={:.5} handAnchorParticlePath=resident-skinned-mesh-coordinate-anchor-billboards handAnchorParticleCoordinateSpace=openxr-reference-space handAnchorParticleMask=static-feather-dot-luminance-alpha handAnchorParticleAnimation=false handAnchorParticleCpuExpandedUploadPerFrame=false handAnchorParticleMeshUploadPerFrame=false",
+            self.enabled, self.particles_per_hand, self.radius_m
+        )
+    }
+}
+
+impl Default for NativeHandAnchorParticleSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            particles_per_hand: 256,
+            radius_m: 0.0045,
+        }
     }
 }
 
@@ -589,6 +859,12 @@ pub(crate) struct NativeProjectionBorderStretchPush {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) render_mode: NativeRendererRenderMode,
+    pub(crate) camera_output_mode: NativeCameraOutputMode,
+    pub(crate) camera_ycbcr_mode: NativeCameraYcbcrMode,
+    pub(crate) camera_quality_profile: NativeCameraQualityProfile,
+    pub(crate) camera_sync_mode: NativeCameraSyncMode,
+    pub(crate) camera_direct_border_opacity: f32,
+    pub(crate) swapchain_color_format_mode: NativeSwapchainColorFormatMode,
     pub(crate) replay_visual_proof_enabled: bool,
     pub(crate) compact_hand_input_source_mode: CompactHandInputSourceMode,
     pub(crate) sdf_visual_enabled: bool,
@@ -597,6 +873,7 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) hand_mesh_graft_copies_enabled: bool,
     pub(crate) hand_mesh_graft_copy_scale: f32,
     pub(crate) hand_mesh_real_hands_visible: bool,
+    pub(crate) hand_anchor_particle_settings: NativeHandAnchorParticleSettings,
     pub(crate) projection_border_stretch_settings: NativeProjectionBorderStretchSettings,
     pub(crate) private_layer_settings: NativePrivateLayerSettings,
 }
@@ -604,6 +881,17 @@ pub(crate) struct NativeRendererRuntimeOptions {
 impl NativeRendererRuntimeOptions {
     pub(crate) fn from_property_lookup(mut lookup: impl FnMut(&str) -> Option<String>) -> Self {
         let render_mode = NativeRendererRenderMode::from_property(lookup(PROP_RENDER_MODE));
+        let camera_output_mode =
+            NativeCameraOutputMode::from_property(lookup(PROP_CAMERA_OUTPUT_MODE));
+        let camera_ycbcr_mode =
+            NativeCameraYcbcrMode::from_property(lookup(PROP_CAMERA_YCBCR_MODE));
+        let camera_quality_profile =
+            NativeCameraQualityProfile::from_property(lookup(PROP_CAMERA_QUALITY_PROFILE));
+        let camera_sync_mode = NativeCameraSyncMode::from_property(lookup(PROP_CAMERA_SYNC_MODE));
+        let camera_direct_border_opacity =
+            f32_clamped_value(lookup(PROP_CAMERA_DIRECT_BORDER_OPACITY), 0.72, 0.0, 1.0);
+        let swapchain_color_format_mode =
+            NativeSwapchainColorFormatMode::from_property(lookup(PROP_SWAPCHAIN_COLOR_FORMAT_MODE));
         let replay_visual_proof_enabled =
             bool_value(lookup(PROP_REPLAY_VISUAL_PROOF_ENABLED), false);
         let compact_hand_input_source_mode = CompactHandInputSourceMode::from_property(
@@ -627,12 +915,20 @@ impl NativeRendererRuntimeOptions {
             f32_value(lookup(PROP_HAND_MESH_GRAFT_COPY_SCALE), 1.0).clamp(0.10, 2.0);
         let hand_mesh_real_hands_visible = render_mode.forces_real_hand_meshes()
             || bool_value(lookup(PROP_HAND_MESH_REAL_HANDS_VISIBLE), false);
+        let hand_anchor_particle_settings =
+            NativeHandAnchorParticleSettings::from_property_lookup(&mut lookup);
         let projection_border_stretch_settings =
             NativeProjectionBorderStretchSettings::from_property_lookup(&mut lookup);
         let private_layer_settings = NativePrivateLayerSettings::from_property_lookup(&mut lookup);
 
         Self {
             render_mode,
+            camera_output_mode,
+            camera_ycbcr_mode,
+            camera_quality_profile,
+            camera_sync_mode,
+            camera_direct_border_opacity,
+            swapchain_color_format_mode,
             replay_visual_proof_enabled,
             compact_hand_input_source_mode,
             sdf_visual_enabled,
@@ -645,6 +941,7 @@ impl NativeRendererRuntimeOptions {
             hand_mesh_graft_copies_enabled,
             hand_mesh_graft_copy_scale,
             hand_mesh_real_hands_visible,
+            hand_anchor_particle_settings,
             projection_border_stretch_settings,
             private_layer_settings,
         }
@@ -677,6 +974,14 @@ fn bool_value(value: Option<String>, default_value: bool) -> bool {
 fn u64_value(value: Option<String>, default_value: u64, min_value: u64, max_value: u64) -> u64 {
     value
         .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value >= min_value)
+        .unwrap_or(default_value)
+        .min(max_value)
+}
+
+fn u32_value(value: Option<String>, default_value: u32, min_value: u32, max_value: u32) -> u32 {
+    value
+        .and_then(|value| value.trim().parse::<u32>().ok())
         .filter(|value| *value >= min_value)
         .unwrap_or(default_value)
         .min(max_value)
@@ -730,7 +1035,12 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{
-        CompactHandInputSourceMode, NativeRendererRuntimeOptions, PROP_ENABLE_SDF_VISUAL,
+        CompactHandInputSourceMode, NativeCameraOutputMode, NativeCameraQualityProfile,
+        NativeCameraSyncMode, NativeCameraYcbcrMode, NativeRendererRuntimeOptions,
+        NativeSwapchainColorFormatMode, PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_OUTPUT_MODE,
+        PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_SYNC_MODE, PROP_CAMERA_YCBCR_MODE,
+        PROP_ENABLE_SDF_VISUAL, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
+        PROP_HAND_ANCHOR_PARTICLES_PER_HAND, PROP_HAND_ANCHOR_PARTICLES_RADIUS_M,
         PROP_HAND_MESH_GRAFT_COPIES_ENABLED, PROP_HAND_MESH_GRAFT_COPY_SCALE,
         PROP_HAND_MESH_INPUT_SOURCE, PROP_HAND_MESH_REAL_HANDS_VISIBLE,
         PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED,
@@ -739,6 +1049,7 @@ mod tests {
         PROP_PERIPHERAL_STRETCH_MAX_INSET_UV, PROP_PROCESSING_LAYER,
         PROP_PROJECTION_BORDER_OPACITY, PROP_PROJECTION_BORDER_POLICY, PROP_RENDER_MODE,
         PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SDF_UPDATE_PERIOD_FRAMES,
+        PROP_SWAPCHAIN_COLOR_FORMAT_MODE,
     };
 
     fn options_from(values: &[(&str, &str)]) -> NativeRendererRuntimeOptions {
@@ -817,6 +1128,118 @@ mod tests {
             .allows_recorded_fallback());
         assert!(!options.sdf_visual_enabled);
         assert!(!options.hand_mesh_visual_diagnostic_settings.enabled);
+    }
+
+    #[test]
+    fn disabled_hand_input_source_selects_no_hand_frames() {
+        let options = options_from(&[(PROP_HAND_MESH_INPUT_SOURCE, "disabled")]);
+        assert_eq!(
+            options.compact_hand_input_source_mode,
+            CompactHandInputSourceMode::Disabled
+        );
+        assert!(!options.compact_hand_input_source_mode.selects_live_frame());
+        assert!(!options
+            .compact_hand_input_source_mode
+            .allows_recorded_fallback());
+        assert_eq!(
+            options.compact_hand_input_source_mode.marker_value(),
+            "disabled"
+        );
+    }
+
+    #[test]
+    fn camera_output_mode_defaults_to_auto_and_parses_diagnostics() {
+        let options = options_from(&[]);
+        assert_eq!(options.camera_output_mode, NativeCameraOutputMode::Auto);
+        assert_eq!(options.camera_output_mode.marker_value(), "auto");
+        assert!(options.camera_output_mode.camera_import_enabled());
+        assert!(options
+            .camera_output_mode
+            .private_layer_projection_enabled());
+        assert!(options.camera_output_mode.guide_projection_enabled());
+        assert_eq!(
+            options.camera_ycbcr_mode,
+            NativeCameraYcbcrMode::AndroidSuggested
+        );
+        assert_eq!(
+            options.camera_quality_profile,
+            NativeCameraQualityProfile::DirectBaseline
+        );
+        assert_eq!(
+            options.camera_sync_mode,
+            NativeCameraSyncMode::EarlyDeleteAhbRetained
+        );
+        assert_eq!(
+            options.swapchain_color_format_mode,
+            NativeSwapchainColorFormatMode::Auto
+        );
+        assert_eq!(options.camera_direct_border_opacity, 0.72);
+
+        let direct = options_from(&[
+            (PROP_CAMERA_OUTPUT_MODE, "raw_hwb"),
+            (PROP_CAMERA_YCBCR_MODE, "cpuyuv-reference"),
+            (PROP_CAMERA_QUALITY_PROFILE, "low-noise-30"),
+            (PROP_CAMERA_SYNC_MODE, "delete-async"),
+            (PROP_SWAPCHAIN_COLOR_FORMAT_MODE, "unorm"),
+            (PROP_CAMERA_DIRECT_BORDER_OPACITY, "0"),
+        ]);
+        assert_eq!(direct.camera_output_mode, NativeCameraOutputMode::DirectHwb);
+        assert!(direct.camera_output_mode.camera_import_enabled());
+        assert!(direct.camera_output_mode.direct_hwb_forced());
+        assert!(!direct.camera_output_mode.private_layer_projection_enabled());
+        assert!(!direct.camera_output_mode.guide_graph_processing_enabled());
+        assert_eq!(
+            direct.camera_ycbcr_mode,
+            NativeCameraYcbcrMode::ForcedBt601Narrow
+        );
+        assert_eq!(
+            direct.camera_ycbcr_mode.conversion_mode(),
+            "forced-bt601-limited-cpuyuv-reference"
+        );
+        assert_eq!(
+            direct.camera_quality_profile,
+            NativeCameraQualityProfile::DirectLowNoise30
+        );
+        assert_eq!(
+            direct.camera_quality_profile.marker_value(),
+            "direct-low-noise-30"
+        );
+        assert_eq!(
+            direct.camera_sync_mode,
+            NativeCameraSyncMode::DeleteAsyncReleaseFence
+        );
+        assert_eq!(
+            direct.camera_sync_mode.marker_value(),
+            "delete-async-release-fence"
+        );
+        assert_eq!(
+            direct.camera_sync_mode.active_marker_value(),
+            "early-delete-ahb-retained"
+        );
+        assert_eq!(
+            direct.camera_sync_mode.implementation_status(),
+            "declared-diagnostic-not-active-yet"
+        );
+        assert_eq!(
+            direct.swapchain_color_format_mode,
+            NativeSwapchainColorFormatMode::Unorm
+        );
+        assert_eq!(direct.camera_direct_border_opacity, 0.0);
+
+        let guide = options_from(&[(PROP_CAMERA_OUTPUT_MODE, "public-guide")]);
+        assert_eq!(
+            guide.camera_output_mode,
+            NativeCameraOutputMode::GuidePublic
+        );
+        assert!(guide.camera_output_mode.guide_projection_enabled());
+        assert!(!guide.camera_output_mode.private_layer_projection_enabled());
+
+        let disabled = options_from(&[(PROP_CAMERA_OUTPUT_MODE, "off")]);
+        assert_eq!(
+            disabled.camera_output_mode,
+            NativeCameraOutputMode::Disabled
+        );
+        assert!(!disabled.camera_output_mode.camera_import_enabled());
     }
 
     #[test]
@@ -908,6 +1331,45 @@ mod tests {
     }
 
     #[test]
+    fn solid_black_openxr_hands_anchor_particles_keeps_custom_mesh_visual_off() {
+        let options = options_from(&[
+            (
+                PROP_RENDER_MODE,
+                "solid-black-openxr-hands-anchor-particles",
+            ),
+            (PROP_HAND_MESH_INPUT_SOURCE, "live-meta"),
+            (PROP_ENABLE_SDF_VISUAL, "true"),
+            (PROP_HAND_MESH_GRAFT_COPIES_ENABLED, "false"),
+            (PROP_HAND_MESH_REAL_HANDS_VISIBLE, "false"),
+            (PROP_HAND_ANCHOR_PARTICLES_ENABLED, "true"),
+        ]);
+        assert_eq!(
+            options.render_mode.marker_value(),
+            "solid-black-openxr-hands-anchor-particles"
+        );
+        assert!(!options.render_mode.uses_custom_stereo_projection());
+        assert!(!options.render_mode.uses_native_passthrough());
+        assert!(options.render_mode.uses_solid_black_background());
+        assert!(options.render_mode.requests_openxr_default_hand_visual());
+        assert!(!options.sdf_visual_enabled);
+        assert!(!options.hand_mesh_graft_copies_enabled);
+        assert!(!options.hand_mesh_real_hands_visible);
+        assert!(options.hand_anchor_particle_settings.enabled);
+        assert_eq!(
+            options.compact_hand_input_source_mode,
+            CompactHandInputSourceMode::LiveMeta
+        );
+        assert_eq!(
+            options.render_mode.camera_runtime_mode(),
+            "skipped-solid-black-openxr-hands-anchor-particles"
+        );
+        assert_eq!(
+            options.render_mode.disabled_camera_projection_path(),
+            "disabled-solid-black-openxr-hands-anchor-particles"
+        );
+    }
+
+    #[test]
     fn invalid_values_keep_defaults() {
         let options = options_from(&[
             (PROP_SDF_UPDATE_PERIOD_FRAMES, "0"),
@@ -924,6 +1386,25 @@ mod tests {
         assert!(!options.hand_mesh_graft_copies_enabled);
         assert_eq!(options.hand_mesh_graft_copy_scale, 1.0);
         assert!(!options.hand_mesh_real_hands_visible);
+    }
+
+    #[test]
+    fn hand_anchor_particle_settings_parse_and_clamp() {
+        let options = options_from(&[
+            (PROP_HAND_ANCHOR_PARTICLES_ENABLED, "on"),
+            (PROP_HAND_ANCHOR_PARTICLES_PER_HAND, "99999"),
+            (PROP_HAND_ANCHOR_PARTICLES_RADIUS_M, "0.2"),
+        ]);
+
+        assert!(options.hand_anchor_particle_settings.enabled);
+        assert_eq!(
+            options.hand_anchor_particle_settings.particles_per_hand,
+            4096
+        );
+        assert_eq!(options.hand_anchor_particle_settings.radius_m, 0.040);
+        let fields = options.hand_anchor_particle_settings.marker_fields();
+        assert!(fields.contains("handAnchorParticleCoordinateSpace=openxr-reference-space"));
+        assert!(fields.contains("handAnchorParticleCpuExpandedUploadPerFrame=false"));
     }
 
     #[test]

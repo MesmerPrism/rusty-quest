@@ -2,8 +2,18 @@
 
 - `runtime-profiles/`: valid Quest runtime profiles, including separate native
   renderer profiles for no-real-hands recorded replay acceptance and the later
-  live-hand visual diagnostic retest. The HWB peripheral stretch profile keeps
-  the custom Camera2 projection route active while enabling the public
+  live-hand visual diagnostic retest. The direct-HWB camera quality profiles
+  force `debug.rustyquest.native_renderer.camera.output=direct-hwb` and
+  disable hand/SDF/private overlays plus the direct-camera border overlay so
+  camera acquisition and projection can be inspected before guide or private
+  processing. The default direct-HWB quality profile keeps Android-suggested
+  sampler YCbCr model/range and requests UNORM swapchain selection, while the
+  BT.601/UNORM variant forces limited BT.601 for color-lift A/B checks. The
+  low-noise 30 profile keeps the Android-suggested/UNORM baseline and requests
+  support-gated public Camera2 controls for 30 FPS AE, noise reduction, and
+  edge enhancement off. The
+  HWB peripheral stretch
+  profile keeps the custom Camera2 projection route active while enabling the public
   full-eye target-edge stretch/blend border profile. The native passthrough
   graft-only profile keeps the normal projection profiles available while
   testing only fingertip graft models over `XR_FB_passthrough`, with custom
@@ -12,6 +22,10 @@
   hand meshes from the GPU-skinned resident buffers. The solid black
   hands-and-grafts profile disables both passthrough and custom Camera2
   projection so only an opaque black background and hand visuals are submitted.
+  The solid black OpenXR-hands anchor-particles profile keeps the black
+  background and live compact hand input but disables the app's custom hand
+  mesh and graft visuals, requests the runtime/default OpenXR hand visual, and
+  draws only resident-mesh anchor particles for topology comparison.
 - `native-renderer/`: valid Quest-native renderer plans, timing scorecards, and
   public recorded-hand topology/shape fixtures for pure-HWB blur, GPU mesh
   boundary, resident compact-joint GPU-skinned visual examples,

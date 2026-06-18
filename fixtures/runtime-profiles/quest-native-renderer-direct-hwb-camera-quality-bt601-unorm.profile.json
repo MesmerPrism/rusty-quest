@@ -1,0 +1,138 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.direct_hwb_camera_quality_bt601_unorm",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.render.mode",
+    "debug.rustyquest.native_renderer.camera.output",
+    "debug.rustyquest.native_renderer.camera.ycbcr.mode",
+    "debug.rustyquest.native_renderer.camera.quality_profile",
+    "debug.rustyquest.native_renderer.camera.sync_mode",
+    "debug.rustyquest.native_renderer.camera.direct_border.opacity",
+    "debug.rustyquest.native_renderer.swapchain.color_format",
+    "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.input.source",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
+    "debug.rustyquest.native_renderer.sdf.visual.enabled",
+    "debug.rustyquest.native_renderer.processing.layer",
+    "debug.rustyquest.native_renderer.private_layer.enabled"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.render.mode",
+      "value": "custom-stereo-projection",
+      "source_setting_id": "native_renderer.render.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.output",
+      "value": "direct-hwb",
+      "source_setting_id": "native_renderer.camera.output"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.ycbcr.mode",
+      "value": "forced-bt601-narrow",
+      "source_setting_id": "native_renderer.camera.ycbcr.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.quality_profile",
+      "value": "direct-baseline",
+      "source_setting_id": "native_renderer.camera.quality_profile"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.sync_mode",
+      "value": "early-delete-ahb-retained",
+      "source_setting_id": "native_renderer.camera.sync_mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.direct_border.opacity",
+      "value": "0.0",
+      "source_setting_id": "native_renderer.camera.direct_border.opacity"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.swapchain.color_format",
+      "value": "unorm",
+      "source_setting_id": "native_renderer.swapchain.color_format"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.replay.visual_proof.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.input.source",
+      "value": "disabled",
+      "source_setting_id": "native_renderer.hand_mesh.input.source"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.graft_copies.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.real_hands.visible"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_anchor_particles.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.sdf.visual.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.sdf.visual.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.processing.layer",
+      "value": "blur",
+      "source_setting_id": "native_renderer.processing.layer"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_layer.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.private_layer.enabled"
+    }
+  ],
+  "expected_markers": [
+    "RUSTY_QUEST_NATIVE_RENDERER channel=camera-output",
+    "cameraOutputMode=direct-hwb",
+    "cameraYcbcrMode=forced-bt601-narrow",
+    "conversionMode=forced-bt601-limited-cpuyuv-reference",
+    "cameraQualityProfile=direct-baseline",
+    "cameraSyncRequested=early-delete-ahb-retained",
+    "cameraSyncActive=early-delete-ahb-retained",
+    "effectiveYcbcrModel=YCBCR_601",
+    "effectiveYcbcrRange=ITU_NARROW",
+    "swapchainColorFormatMode=unorm",
+    "directBorderOpacity=0.000",
+    "cameraImportEnabled=true",
+    "privateLayerProjectionEnabled=false",
+    "guideProjectionEnabled=false",
+    "directHwbForced=true",
+    "compactHandInputSourceMode=disabled",
+    "selectsLiveFrame=false",
+    "allowsRecordedFallback=false",
+    "handMeshRealHandsVisible=false",
+    "handAnchorParticlesEnabled=false",
+    "RUSTY_QUEST_NATIVE_RENDERER channel=openxr-swapchain-format",
+    "unormPreferred=true",
+    "RUSTY_QUEST_NATIVE_RENDERER channel=timing-scorecard",
+    "cameraProjectionPath=metadata-target-direct-hwb-forced",
+    "directHwbProjectionDiagnostic=true",
+    "plannedFinalExternalHwbSamples=2",
+    "actualFinalExternalHwbSamples=2",
+    "actualGuideTextureSamples=0"
+  ],
+  "validation_commands": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-direct-hwb-camera-quality-bt601-unorm.profile.json -DryRun -Out local-artifacts/native-renderer-direct-hwb-camera-quality-bt601-unorm-property-write-plan.json"
+  ]
+}

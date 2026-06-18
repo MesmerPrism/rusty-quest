@@ -19,6 +19,8 @@ mod android_events;
 mod camera_projection;
 mod camera_projection_metadata;
 #[cfg(target_os = "android")]
+mod gpu_hand_anchor_particles;
+#[cfg(target_os = "android")]
 mod gpu_hand_mesh_visual;
 #[cfg(target_os = "android")]
 mod gpu_mesh_replay;
@@ -148,12 +150,15 @@ fn android_main(app: android_activity::AndroidApp) {
     marker(
         "render-mode",
         format!(
-            "status=config property={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} sdfVisualEnabled={} handMeshGraftCopiesEnabled={} handMeshGraftScaleMultiplier={:.2} realHandsProperty={} handMeshRealHandsVisible={} {}",
+            "status=config property={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} openxrDefaultHandVisualRequested={} sdfVisualEnabled={} handMeshGraftCopiesEnabled={} handMeshGraftScaleMultiplier={:.2} realHandsProperty={} handMeshRealHandsVisible={} {}",
             native_renderer_options::PROP_RENDER_MODE,
             runtime_options.render_mode.marker_value(),
             runtime_options.render_mode.uses_custom_stereo_projection(),
             runtime_options.render_mode.uses_native_passthrough(),
             runtime_options.render_mode.uses_solid_black_background(),
+            runtime_options
+                .render_mode
+                .requests_openxr_default_hand_visual(),
             runtime_options.sdf_visual_enabled,
             runtime_options.hand_mesh_graft_copies_enabled,
             runtime_options.hand_mesh_graft_copy_scale,
@@ -168,7 +173,11 @@ fn android_main(app: android_activity::AndroidApp) {
     let xr_vulkan_readiness = xr_vulkan::probe(&app);
 
     let camera_runtime = if runtime_options.render_mode.uses_custom_stereo_projection() {
-        match native_camera::NativeCameraRuntime::start_from_plan(&plan) {
+        match native_camera::NativeCameraRuntime::start_from_plan(
+            &plan,
+            runtime_options.camera_quality_profile,
+            runtime_options.camera_sync_mode,
+        ) {
             Ok(runtime) => Some(runtime),
             Err(error) => {
                 marker(

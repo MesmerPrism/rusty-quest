@@ -17,6 +17,8 @@ fn main() {
     println!("cargo:rerun-if-changed=shaders/gpu_sdf_overlay.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/hand_mesh_visual.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/hand_mesh_visual.frag.glsl");
+    println!("cargo:rerun-if-changed=shaders/hand_anchor_particles.vert.glsl");
+    println!("cargo:rerun-if-changed=shaders/hand_anchor_particles.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/private_layer_placeholder.frag.glsl");
     println!(
         "cargo:rerun-if-changed=../../../fixtures/native-renderer/recorded-hand-replay-public-shape.json"
@@ -108,6 +110,18 @@ fn main() {
         "fragment",
         Path::new("shaders/hand_mesh_visual.frag.glsl"),
         &out_dir.join("hand_mesh_visual.frag.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "vertex",
+        Path::new("shaders/hand_anchor_particles.vert.glsl"),
+        &out_dir.join("hand_anchor_particles.vert.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "fragment",
+        Path::new("shaders/hand_anchor_particles.frag.glsl"),
+        &out_dir.join("hand_anchor_particles.frag.spv"),
     );
     compile_private_layer_payload(&glslc, private_layer_sources.as_ref(), &out_dir);
 }

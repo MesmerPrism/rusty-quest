@@ -1,8 +1,7 @@
 //! Minimal Android NDK camera and image-reader FFI for the public HWB route.
 //!
-//! Adapted from the user's Rusty-Vision native camera implementation with
-//! permission. This file contains only camera/HWB acquisition bindings; private
-//! downstream visual-effect implementations are intentionally excluded.
+//! This file contains only public Camera2/HWB acquisition bindings; downstream
+//! visual-effect implementations are intentionally excluded.
 
 #![allow(non_camel_case_types)]
 #![allow(dead_code)]
@@ -25,6 +24,39 @@ pub struct ACameraIdList {
 
 pub const AIMAGE_FORMAT_PRIVATE: u32 = 0x22;
 pub const AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE: u64 = 1 << 8;
+
+pub const ACAMERA_CONTROL_AE_TARGET_FPS_RANGE: u32 = (ACAMERA_CONTROL << 16) + 5;
+pub const ACAMERA_CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES: u32 = (ACAMERA_CONTROL << 16) + 20;
+pub const ACAMERA_EDGE_MODE: u32 = ACAMERA_EDGE << 16;
+pub const ACAMERA_EDGE_AVAILABLE_EDGE_MODES: u32 = (ACAMERA_EDGE << 16) + 2;
+pub const ACAMERA_NOISE_REDUCTION_MODE: u32 = ACAMERA_NOISE_REDUCTION << 16;
+pub const ACAMERA_NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES: u32 =
+    (ACAMERA_NOISE_REDUCTION << 16) + 2;
+pub const ACAMERA_REQUEST_AVAILABLE_CAPABILITIES: u32 = (ACAMERA_REQUEST << 16) + 12;
+pub const ACAMERA_REQUEST_AVAILABLE_REQUEST_KEYS: u32 = (ACAMERA_REQUEST << 16) + 13;
+pub const ACAMERA_REQUEST_AVAILABLE_RESULT_KEYS: u32 = (ACAMERA_REQUEST << 16) + 14;
+pub const ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS: u32 = (ACAMERA_SCALER << 16) + 10;
+pub const ACAMERA_SENSOR_EXPOSURE_TIME: u32 = ACAMERA_SENSOR << 16;
+pub const ACAMERA_SENSOR_FRAME_DURATION: u32 = (ACAMERA_SENSOR << 16) + 1;
+pub const ACAMERA_SENSOR_SENSITIVITY: u32 = (ACAMERA_SENSOR << 16) + 2;
+pub const ACAMERA_INFO_SUPPORTED_HARDWARE_LEVEL: u32 = ACAMERA_INFO << 16;
+pub const ACAMERA_SYNC_FRAME_NUMBER: u32 = ACAMERA_SYNC << 16;
+
+pub const ACAMERA_EDGE_MODE_OFF: u8 = 0;
+pub const ACAMERA_EDGE_MODE_FAST: u8 = 1;
+pub const ACAMERA_EDGE_MODE_HIGH_QUALITY: u8 = 2;
+pub const ACAMERA_NOISE_REDUCTION_MODE_OFF: u8 = 0;
+pub const ACAMERA_NOISE_REDUCTION_MODE_FAST: u8 = 1;
+pub const ACAMERA_NOISE_REDUCTION_MODE_HIGH_QUALITY: u8 = 2;
+
+const ACAMERA_CONTROL: u32 = 1;
+const ACAMERA_EDGE: u32 = 3;
+const ACAMERA_NOISE_REDUCTION: u32 = 10;
+const ACAMERA_REQUEST: u32 = 12;
+const ACAMERA_SCALER: u32 = 13;
+const ACAMERA_SENSOR: u32 = 14;
+const ACAMERA_INFO: u32 = 21;
+const ACAMERA_SYNC: u32 = 23;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
@@ -53,6 +85,39 @@ pub const TEMPLATE_PREVIEW: ACameraDevice_request_template = 1;
 #[derive(Debug, Copy, Clone)]
 pub struct ACaptureRequest {
     _unused: [u8; 0],
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct ACameraMetadata {
+    _unused: [u8; 0],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub union ACameraMetadataConstEntryData {
+    pub u8_: *const u8,
+    pub i32_: *const i32,
+    pub f_: *const f32,
+    pub i64_: *const i64,
+    pub d_: *const f64,
+    pub r_: *const ACameraMetadataRational,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct ACameraMetadataRational {
+    pub numerator: i32,
+    pub denominator: i32,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct ACameraMetadataConstEntry {
+    pub tag: u32,
+    pub type_: u8,
+    pub count: u32,
+    pub data: ACameraMetadataConstEntryData,
 }
 
 pub type ANativeWindow = ndk_sys::ANativeWindow;
@@ -90,6 +155,21 @@ pub struct AImageReader_ImageListener {
     pub onImageAvailable: AImageReader_ImageCallback,
 }
 
+pub type AImageReader_BufferRemovedCallback = Option<
+    unsafe extern "C" fn(
+        context: *mut c_void,
+        reader: *mut AImageReader,
+        buffer: *mut AHardwareBuffer,
+    ),
+>;
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct AImageReader_BufferRemovedListener {
+    pub context: *mut c_void,
+    pub onBufferRemoved: AImageReader_BufferRemovedCallback,
+}
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct ACameraOutputTarget {
@@ -118,6 +198,77 @@ pub struct ACameraCaptureSession {
 #[derive(Debug, Copy, Clone)]
 pub struct AImage {
     _unused: [u8; 0],
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct ACameraCaptureFailure {
+    pub frameNumber: i64,
+    pub reason: c_int,
+    pub sequenceId: c_int,
+    pub wasImageCaptured: bool,
+}
+
+pub type ACameraCaptureSession_captureCallback_start = Option<
+    unsafe extern "C" fn(
+        context: *mut c_void,
+        session: *mut ACameraCaptureSession,
+        request: *const ACaptureRequest,
+        timestamp: i64,
+    ),
+>;
+pub type ACameraCaptureSession_captureCallback_result = Option<
+    unsafe extern "C" fn(
+        context: *mut c_void,
+        session: *mut ACameraCaptureSession,
+        request: *mut ACaptureRequest,
+        result: *const ACameraMetadata,
+    ),
+>;
+pub type ACameraCaptureSession_captureCallback_failed = Option<
+    unsafe extern "C" fn(
+        context: *mut c_void,
+        session: *mut ACameraCaptureSession,
+        request: *mut ACaptureRequest,
+        failure: *mut ACameraCaptureFailure,
+    ),
+>;
+pub type ACameraCaptureSession_captureCallback_sequenceEnd = Option<
+    unsafe extern "C" fn(
+        context: *mut c_void,
+        session: *mut ACameraCaptureSession,
+        sequenceId: c_int,
+        frameNumber: i64,
+    ),
+>;
+pub type ACameraCaptureSession_captureCallback_sequenceAbort = Option<
+    unsafe extern "C" fn(
+        context: *mut c_void,
+        session: *mut ACameraCaptureSession,
+        sequenceId: c_int,
+    ),
+>;
+pub type ACameraCaptureSession_captureCallback_bufferLost = Option<
+    unsafe extern "C" fn(
+        context: *mut c_void,
+        session: *mut ACameraCaptureSession,
+        request: *mut ACaptureRequest,
+        window: *mut ACameraWindowType,
+        frameNumber: i64,
+    ),
+>;
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct ACameraCaptureSession_captureCallbacks {
+    pub context: *mut c_void,
+    pub onCaptureStarted: ACameraCaptureSession_captureCallback_start,
+    pub onCaptureProgressed: ACameraCaptureSession_captureCallback_result,
+    pub onCaptureCompleted: ACameraCaptureSession_captureCallback_result,
+    pub onCaptureFailed: ACameraCaptureSession_captureCallback_failed,
+    pub onCaptureSequenceCompleted: ACameraCaptureSession_captureCallback_sequenceEnd,
+    pub onCaptureSequenceAborted: ACameraCaptureSession_captureCallback_sequenceAbort,
+    pub onCaptureBufferLost: ACameraCaptureSession_captureCallback_bufferLost,
 }
 
 #[link(name = "nativewindow")]
@@ -154,6 +305,17 @@ extern "C" {
         image: *mut *mut AImage,
     ) -> media_status_t;
 
+    pub fn AImageReader_acquireLatestImageAsync(
+        reader: *mut AImageReader,
+        image: *mut *mut AImage,
+        acquireFenceFd: *mut c_int,
+    ) -> media_status_t;
+
+    pub fn AImageReader_setBufferRemovedListener(
+        reader: *mut AImageReader,
+        listener: *mut AImageReader_BufferRemovedListener,
+    ) -> media_status_t;
+
     pub fn AImage_getTimestamp(image: *const AImage, timestampNs: *mut i64) -> media_status_t;
 
     pub fn AImage_getHardwareBuffer(
@@ -162,6 +324,8 @@ extern "C" {
     ) -> media_status_t;
 
     pub fn AImage_delete(image: *mut AImage);
+
+    pub fn AImage_deleteAsync(image: *mut AImage, releaseFenceFd: c_int);
 }
 
 #[link(name = "camera2ndk")]
@@ -173,6 +337,17 @@ extern "C" {
         cameraIdList: *mut *mut ACameraIdList,
     ) -> camera_status_t;
     pub fn ACameraManager_deleteCameraIdList(cameraIdList: *mut ACameraIdList);
+    pub fn ACameraManager_getCameraCharacteristics(
+        manager: *mut ACameraManager,
+        cameraId: *const c_char,
+        characteristics: *mut *mut ACameraMetadata,
+    ) -> camera_status_t;
+    pub fn ACameraMetadata_free(metadata: *mut ACameraMetadata);
+    pub fn ACameraMetadata_getConstEntry(
+        metadata: *const ACameraMetadata,
+        tag: u32,
+        entry: *mut ACameraMetadataConstEntry,
+    ) -> camera_status_t;
 
     pub fn ACameraManager_openCamera(
         manager: *mut ACameraManager,
@@ -210,6 +385,24 @@ extern "C" {
         request: *mut ACaptureRequest,
         output: *const ACameraOutputTarget,
     ) -> camera_status_t;
+    pub fn ACaptureRequest_setEntry_u8(
+        request: *mut ACaptureRequest,
+        tag: u32,
+        count: c_uint,
+        data: *const u8,
+    ) -> camera_status_t;
+    pub fn ACaptureRequest_setEntry_i32(
+        request: *mut ACaptureRequest,
+        tag: u32,
+        count: c_uint,
+        data: *const i32,
+    ) -> camera_status_t;
+    pub fn ACaptureRequest_setEntry_i64(
+        request: *mut ACaptureRequest,
+        tag: u32,
+        count: c_uint,
+        data: *const i64,
+    ) -> camera_status_t;
     pub fn ACaptureRequest_removeTarget(
         request: *mut ACaptureRequest,
         output: *const ACameraOutputTarget,
@@ -223,7 +416,7 @@ extern "C" {
     ) -> camera_status_t;
     pub fn ACameraCaptureSession_setRepeatingRequest(
         session: *mut ACameraCaptureSession,
-        callbacks: *mut c_void,
+        callbacks: *mut ACameraCaptureSession_captureCallbacks,
         numRequests: c_int,
         requests: *mut *mut ACaptureRequest,
         captureSequenceId: *mut c_int,

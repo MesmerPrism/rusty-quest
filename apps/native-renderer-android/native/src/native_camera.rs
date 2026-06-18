@@ -2,7 +2,7 @@
 
 use std::{
     ffi::{CStr, CString},
-    os::raw::c_void,
+    os::raw::{c_char, c_void},
     ptr,
     sync::{
         atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering},
@@ -14,25 +14,40 @@ use rusty_quest_native_renderer_contracts::NativeRendererPlan;
 
 use crate::{
     acamera_sys::{
-        ACameraCaptureSession, ACameraCaptureSession_close,
-        ACameraCaptureSession_setRepeatingRequest, ACameraCaptureSession_stateCallbacks,
-        ACameraCaptureSession_stopRepeating, ACameraDevice, ACameraDevice_StateCallbacks,
-        ACameraDevice_close, ACameraDevice_createCaptureRequest,
+        ACameraCaptureFailure, ACameraCaptureSession, ACameraCaptureSession_captureCallbacks,
+        ACameraCaptureSession_close, ACameraCaptureSession_setRepeatingRequest,
+        ACameraCaptureSession_stateCallbacks, ACameraCaptureSession_stopRepeating, ACameraDevice,
+        ACameraDevice_StateCallbacks, ACameraDevice_close, ACameraDevice_createCaptureRequest,
         ACameraDevice_createCaptureSession, ACameraManager, ACameraManager_create,
-        ACameraManager_delete, ACameraManager_deleteCameraIdList, ACameraManager_getCameraIdList,
-        ACameraManager_openCamera, ACameraOutputTarget, ACameraOutputTarget_create,
-        ACameraOutputTarget_free, ACameraWindowType, ACaptureRequest, ACaptureRequest_addTarget,
-        ACaptureRequest_free, ACaptureRequest_removeTarget, ACaptureSessionOutput,
+        ACameraManager_delete, ACameraManager_deleteCameraIdList,
+        ACameraManager_getCameraCharacteristics, ACameraManager_getCameraIdList,
+        ACameraManager_openCamera, ACameraMetadata, ACameraMetadataConstEntry,
+        ACameraMetadata_free, ACameraMetadata_getConstEntry, ACameraOutputTarget,
+        ACameraOutputTarget_create, ACameraOutputTarget_free, ACameraWindowType, ACaptureRequest,
+        ACaptureRequest_addTarget, ACaptureRequest_free, ACaptureRequest_removeTarget,
+        ACaptureRequest_setEntry_i32, ACaptureRequest_setEntry_u8, ACaptureSessionOutput,
         ACaptureSessionOutputContainer, ACaptureSessionOutputContainer_add,
         ACaptureSessionOutputContainer_create, ACaptureSessionOutputContainer_free,
         ACaptureSessionOutput_create, ACaptureSessionOutput_free, AImage, AImageReader,
-        AImageReader_ImageListener, AImageReader_acquireLatestImage, AImageReader_delete,
-        AImageReader_getWindow, AImageReader_newWithUsage, AImageReader_setImageListener,
-        AImage_delete, AImage_getHardwareBuffer, AImage_getTimestamp, ANativeWindow_acquire,
-        ANativeWindow_release, AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, AIMAGE_FORMAT_PRIVATE,
-        TEMPLATE_PREVIEW,
+        AImageReader_BufferRemovedListener, AImageReader_ImageListener,
+        AImageReader_acquireLatestImage, AImageReader_delete, AImageReader_getWindow,
+        AImageReader_newWithUsage, AImageReader_setBufferRemovedListener,
+        AImageReader_setImageListener, AImage_delete, AImage_getHardwareBuffer,
+        AImage_getTimestamp, ANativeWindow_acquire, ANativeWindow_release,
+        ACAMERA_CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES, ACAMERA_CONTROL_AE_TARGET_FPS_RANGE,
+        ACAMERA_EDGE_AVAILABLE_EDGE_MODES, ACAMERA_EDGE_MODE, ACAMERA_EDGE_MODE_FAST,
+        ACAMERA_EDGE_MODE_HIGH_QUALITY, ACAMERA_EDGE_MODE_OFF,
+        ACAMERA_INFO_SUPPORTED_HARDWARE_LEVEL,
+        ACAMERA_NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES, ACAMERA_NOISE_REDUCTION_MODE,
+        ACAMERA_NOISE_REDUCTION_MODE_FAST, ACAMERA_NOISE_REDUCTION_MODE_HIGH_QUALITY,
+        ACAMERA_NOISE_REDUCTION_MODE_OFF, ACAMERA_REQUEST_AVAILABLE_CAPABILITIES,
+        ACAMERA_REQUEST_AVAILABLE_REQUEST_KEYS, ACAMERA_REQUEST_AVAILABLE_RESULT_KEYS,
+        ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS, ACAMERA_SENSOR_EXPOSURE_TIME,
+        ACAMERA_SENSOR_FRAME_DURATION, ACAMERA_SENSOR_SENSITIVITY, ACAMERA_SYNC_FRAME_NUMBER,
+        AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, AIMAGE_FORMAT_PRIVATE, TEMPLATE_PREVIEW,
     },
     android_log_error, marker,
+    native_renderer_options::{NativeCameraQualityProfile, NativeCameraSyncMode},
 };
 
 const READER_WIDTH: i32 = 1280;
@@ -47,7 +62,11 @@ pub(crate) struct NativeCameraRuntime {
 }
 
 impl NativeCameraRuntime {
-    pub(crate) fn start_from_plan(plan: &NativeRendererPlan) -> Result<Self, String> {
+    pub(crate) fn start_from_plan(
+        plan: &NativeRendererPlan,
+        camera_quality_profile: NativeCameraQualityProfile,
+        camera_sync_mode: NativeCameraSyncMode,
+    ) -> Result<Self, String> {
         let manager = unsafe { ACameraManager_create() };
         if manager.is_null() {
             return Err("ACameraManager_create returned null".to_string());
@@ -88,6 +107,8 @@ impl NativeCameraRuntime {
                 manager,
                 CameraSide::Left,
                 &plan.camera_source.camera_ids.left,
+                camera_quality_profile,
+                camera_sync_mode,
                 Arc::clone(&counters),
                 Arc::clone(&alive),
             )?
@@ -97,6 +118,8 @@ impl NativeCameraRuntime {
                 manager,
                 CameraSide::Right,
                 &plan.camera_source.camera_ids.right,
+                camera_quality_profile,
+                camera_sync_mode,
                 Arc::clone(&counters),
                 alive,
             )?
@@ -104,7 +127,13 @@ impl NativeCameraRuntime {
 
         marker(
             "camera-runtime",
-            "status=started acquisition=ACameraManager imageFormat=PRIVATE usage=GPU_SAMPLED_IMAGE textureUpdateCadence=on-camera-frame sourceFrame=ndk-callback cameraIds=50,51",
+            format!(
+                "status=started acquisition=ACameraManager imageFormat=PRIVATE usage=GPU_SAMPLED_IMAGE textureUpdateCadence=on-camera-frame sourceFrame=ndk-callback cameraIds=50,51 cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={}",
+                camera_quality_profile.marker_value(),
+                camera_sync_mode.marker_value(),
+                camera_sync_mode.active_marker_value(),
+                camera_sync_mode.implementation_status()
+            ),
         );
         Ok(runtime)
     }
@@ -248,6 +277,7 @@ struct NativeCameraStream {
     window: *mut ACameraWindowType,
     reader: *mut AImageReader,
     capture_request: *mut ACaptureRequest,
+    _capture_callbacks: Box<ACameraCaptureSession_captureCallbacks>,
     context: *mut NativeReaderContext,
 }
 
@@ -256,6 +286,8 @@ impl NativeCameraStream {
         manager: *mut ACameraManager,
         side: CameraSide,
         camera_id: &str,
+        camera_quality_profile: NativeCameraQualityProfile,
+        camera_sync_mode: NativeCameraSyncMode,
         counters: Arc<NativeCameraCounters>,
         alive: Arc<AtomicBool>,
     ) -> Result<Self, String> {
@@ -264,6 +296,9 @@ impl NativeCameraStream {
         let context = Box::into_raw(Box::new(NativeReaderContext {
             side,
             camera_id: camera_id.to_string(),
+            camera_quality_profile,
+            camera_sync_mode,
+            buffer_removed_listener_registered: false,
             counters,
             alive,
         }));
@@ -301,6 +336,43 @@ impl NativeCameraStream {
                 camera_id.to_string_lossy()
             ));
         }
+        let capabilities = match load_camera_capabilities(manager, camera_id.as_ptr()) {
+            Ok(capabilities) => {
+                marker(
+                    "camera-capabilities",
+                    format!(
+                        "status=ok side={} cameraId={} readerRequested={}x{} hardwareLevel={} requestKeyCount={} resultKeyCount={} capabilities={} availableAeFpsRanges={} availableNoiseReductionModes={} availableEdgeModes={} privateOutputSizes={}",
+                        side.stable_id(),
+                        camera_id.to_string_lossy(),
+                        READER_WIDTH,
+                        READER_HEIGHT,
+                        optional_u8_marker(capabilities.hardware_level),
+                        capabilities.request_keys.len(),
+                        capabilities.result_keys.len(),
+                        u8_list_marker(&capabilities.capabilities),
+                        ae_fps_ranges_marker(&capabilities.ae_fps_ranges),
+                        u8_modes_marker(&capabilities.noise_reduction_modes, noise_reduction_mode_label),
+                        u8_modes_marker(&capabilities.edge_modes, edge_mode_label),
+                        stream_sizes_marker(&capabilities.private_output_sizes)
+                    ),
+                );
+                capabilities
+            }
+            Err(error) => {
+                marker(
+                    "camera-capabilities",
+                    format!(
+                        "status=error side={} cameraId={} readerRequested={}x{} reason={}",
+                        side.stable_id(),
+                        camera_id.to_string_lossy(),
+                        READER_WIDTH,
+                        READER_HEIGHT,
+                        crate::sanitize(&error)
+                    ),
+                );
+                CameraCapabilities::default()
+            }
+        };
 
         let mut capture_request = ptr::null_mut();
         if ACameraDevice_createCaptureRequest(camera_device, TEMPLATE_PREVIEW, &mut capture_request)
@@ -313,6 +385,15 @@ impl NativeCameraStream {
                 camera_id.to_string_lossy()
             ));
         }
+        let camera_quality_profile = (*context).camera_quality_profile;
+        let camera_sync_mode = (*context).camera_sync_mode;
+        apply_camera_quality_profile(
+            capture_request,
+            side,
+            camera_id,
+            camera_quality_profile,
+            &capabilities,
+        );
 
         let mut reader = ptr::null_mut();
         let reader_result = AImageReader_newWithUsage(
@@ -340,6 +421,26 @@ impl NativeCameraStream {
             onImageAvailable: Some(image_on_image_available),
         };
         let _ = AImageReader_setImageListener(reader, &mut listener);
+        let mut buffer_removed_listener = AImageReader_BufferRemovedListener {
+            context: context.cast(),
+            onBufferRemoved: Some(image_on_buffer_removed),
+        };
+        let buffer_listener_status =
+            AImageReader_setBufferRemovedListener(reader, &mut buffer_removed_listener);
+        (*context).buffer_removed_listener_registered = buffer_listener_status == 0;
+        marker(
+            "camera-buffer-removed-listener",
+            format!(
+                "status={} side={} cameraId={} cacheEvictionSignal=true cacheEvictionApplied=false",
+                if buffer_listener_status == 0 {
+                    "registered"
+                } else {
+                    "error"
+                },
+                side.stable_id(),
+                camera_id.to_string_lossy()
+            ),
+        );
 
         let mut window = ptr::null_mut();
         if AImageReader_getWindow(reader, &mut window) != 0 || window.is_null() {
@@ -426,10 +527,20 @@ impl NativeCameraStream {
             ));
         }
 
+        let mut capture_callbacks = Box::new(ACameraCaptureSession_captureCallbacks {
+            context: context.cast(),
+            onCaptureStarted: None,
+            onCaptureProgressed: None,
+            onCaptureCompleted: Some(capture_on_completed),
+            onCaptureFailed: Some(capture_on_failed),
+            onCaptureSequenceCompleted: Some(capture_on_sequence_completed),
+            onCaptureSequenceAborted: Some(capture_on_sequence_aborted),
+            onCaptureBufferLost: Some(capture_on_buffer_lost),
+        });
         let mut capture_request_for_repeating = capture_request;
         if ACameraCaptureSession_setRepeatingRequest(
             capture_session,
-            ptr::null_mut(),
+            capture_callbacks.as_mut(),
             1,
             &mut capture_request_for_repeating,
             ptr::null_mut(),
@@ -461,6 +572,18 @@ impl NativeCameraStream {
                 READER_MAX_IMAGES
             ),
         );
+        marker(
+            "camera-sync",
+            format!(
+                "status=config side={} cameraId={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} imageAcquireApi=AImageReader_acquireLatestImage acquireFenceFd=-1 imageReleaseApi=AImage_delete releaseFenceFd=-1 producerConsumerSync=not-fence-backed-yet ahbHandleRetained=true",
+                side.stable_id(),
+                camera_id.to_string_lossy(),
+                camera_quality_profile.marker_value(),
+                camera_sync_mode.marker_value(),
+                camera_sync_mode.active_marker_value(),
+                camera_sync_mode.implementation_status(),
+            ),
+        );
 
         Ok(Self {
             camera_id: camera_id.to_string_lossy().into_owned(),
@@ -473,6 +596,7 @@ impl NativeCameraStream {
             window,
             reader,
             capture_request,
+            _capture_callbacks: capture_callbacks,
             context,
         })
     }
@@ -550,9 +674,378 @@ impl CameraSide {
     }
 }
 
+#[derive(Clone, Debug, Default)]
+struct CameraCapabilities {
+    hardware_level: Option<u8>,
+    capabilities: Vec<u8>,
+    request_keys: Vec<i32>,
+    result_keys: Vec<i32>,
+    ae_fps_ranges: Vec<[i32; 2]>,
+    noise_reduction_modes: Vec<u8>,
+    edge_modes: Vec<u8>,
+    private_output_sizes: Vec<[i32; 2]>,
+}
+
+impl CameraCapabilities {
+    fn supports_request_key(&self, tag: u32) -> bool {
+        self.request_keys.iter().any(|key| *key == tag as i32)
+    }
+
+    fn supports_ae_fps_range(&self, range: [i32; 2]) -> bool {
+        self.supports_request_key(ACAMERA_CONTROL_AE_TARGET_FPS_RANGE)
+            && self
+                .ae_fps_ranges
+                .iter()
+                .any(|supported| *supported == range)
+    }
+
+    fn supports_noise_reduction_mode(&self, mode: u8) -> bool {
+        self.supports_request_key(ACAMERA_NOISE_REDUCTION_MODE)
+            && self
+                .noise_reduction_modes
+                .iter()
+                .any(|value| *value == mode)
+    }
+
+    fn supports_edge_mode(&self, mode: u8) -> bool {
+        self.supports_request_key(ACAMERA_EDGE_MODE)
+            && self.edge_modes.iter().any(|value| *value == mode)
+    }
+}
+
+unsafe fn load_camera_capabilities(
+    manager: *mut ACameraManager,
+    camera_id: *const c_char,
+) -> Result<CameraCapabilities, String> {
+    let mut metadata: *mut ACameraMetadata = ptr::null_mut();
+    let status = ACameraManager_getCameraCharacteristics(manager, camera_id, &mut metadata);
+    if status != 0 || metadata.is_null() {
+        return Err(format!(
+            "ACameraManager_getCameraCharacteristics failed status={status}"
+        ));
+    }
+
+    let mut capabilities = CameraCapabilities {
+        hardware_level: read_u8_values(metadata, ACAMERA_INFO_SUPPORTED_HARDWARE_LEVEL)
+            .first()
+            .copied(),
+        capabilities: read_u8_values(metadata, ACAMERA_REQUEST_AVAILABLE_CAPABILITIES),
+        request_keys: read_i32_values(metadata, ACAMERA_REQUEST_AVAILABLE_REQUEST_KEYS),
+        result_keys: read_i32_values(metadata, ACAMERA_REQUEST_AVAILABLE_RESULT_KEYS),
+        ae_fps_ranges: read_i32_values(metadata, ACAMERA_CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+            .chunks_exact(2)
+            .map(|range| [range[0], range[1]])
+            .collect(),
+        noise_reduction_modes: read_u8_values(
+            metadata,
+            ACAMERA_NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES,
+        ),
+        edge_modes: read_u8_values(metadata, ACAMERA_EDGE_AVAILABLE_EDGE_MODES),
+        private_output_sizes: Vec::new(),
+    };
+
+    let stream_configs = read_i32_values(metadata, ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS);
+    for config in stream_configs.chunks_exact(4) {
+        let format = config[0];
+        let width = config[1];
+        let height = config[2];
+        let input = config[3];
+        let size = [width, height];
+        if format == AIMAGE_FORMAT_PRIVATE as i32
+            && input == 0
+            && !capabilities.private_output_sizes.contains(&size)
+        {
+            capabilities.private_output_sizes.push(size);
+        }
+    }
+
+    ACameraMetadata_free(metadata);
+    Ok(capabilities)
+}
+
+unsafe fn apply_camera_quality_profile(
+    capture_request: *mut ACaptureRequest,
+    side: CameraSide,
+    camera_id: &CString,
+    profile: NativeCameraQualityProfile,
+    capabilities: &CameraCapabilities,
+) {
+    let desired_ae_fps_range = match profile {
+        NativeCameraQualityProfile::DirectLowNoise30
+        | NativeCameraQualityProfile::DirectQualityProbe => Some([30, 30]),
+        NativeCameraQualityProfile::DirectLowLatency60 => Some([60, 60]),
+        NativeCameraQualityProfile::DirectBaseline => None,
+    };
+    let desired_noise_modes = match profile {
+        NativeCameraQualityProfile::DirectLowNoise30
+        | NativeCameraQualityProfile::DirectQualityProbe => vec![
+            ACAMERA_NOISE_REDUCTION_MODE_HIGH_QUALITY,
+            ACAMERA_NOISE_REDUCTION_MODE_FAST,
+        ],
+        NativeCameraQualityProfile::DirectLowLatency60 => {
+            vec![ACAMERA_NOISE_REDUCTION_MODE_FAST]
+        }
+        NativeCameraQualityProfile::DirectBaseline => Vec::new(),
+    };
+    let desired_edge_modes = match profile {
+        NativeCameraQualityProfile::DirectLowNoise30
+        | NativeCameraQualityProfile::DirectLowLatency60
+        | NativeCameraQualityProfile::DirectQualityProbe => vec![ACAMERA_EDGE_MODE_OFF],
+        NativeCameraQualityProfile::DirectBaseline => Vec::new(),
+    };
+
+    let (applied_ae_fps_range, ae_fps_status) =
+        apply_ae_fps_range(capture_request, capabilities, desired_ae_fps_range);
+    let requested_noise_mode = desired_noise_modes.first().copied();
+    let selected_noise_mode = desired_noise_modes
+        .iter()
+        .copied()
+        .find(|mode| capabilities.supports_noise_reduction_mode(*mode));
+    let (applied_noise_mode, noise_status) = apply_u8_request(
+        capture_request,
+        ACAMERA_NOISE_REDUCTION_MODE,
+        selected_noise_mode,
+        requested_noise_mode,
+    );
+    let requested_edge_mode = desired_edge_modes.first().copied();
+    let selected_edge_mode = desired_edge_modes
+        .iter()
+        .copied()
+        .find(|mode| capabilities.supports_edge_mode(*mode));
+    let (applied_edge_mode, edge_status) = apply_u8_request(
+        capture_request,
+        ACAMERA_EDGE_MODE,
+        selected_edge_mode,
+        requested_edge_mode,
+    );
+
+    marker(
+        "camera-request-profile",
+        format!(
+            "status=config side={} cameraId={} profile={} template=preview requestedAeFpsRange={} appliedAeFpsRange={} aeFpsStatus={} requestedNoiseReductionMode={} appliedNoiseReductionMode={} noiseReductionStatus={} requestedEdgeMode={} appliedEdgeMode={} edgeStatus={} requestKeyCount={} resultKeyCount={} supportGated=true",
+            side.stable_id(),
+            camera_id.to_string_lossy(),
+            profile.marker_value(),
+            optional_range_marker(desired_ae_fps_range),
+            optional_range_marker(applied_ae_fps_range),
+            ae_fps_status,
+            optional_u8_mode_marker(requested_noise_mode, noise_reduction_mode_label),
+            optional_u8_mode_marker(applied_noise_mode, noise_reduction_mode_label),
+            noise_status,
+            optional_u8_mode_marker(requested_edge_mode, edge_mode_label),
+            optional_u8_mode_marker(applied_edge_mode, edge_mode_label),
+            edge_status,
+            capabilities.request_keys.len(),
+            capabilities.result_keys.len(),
+        ),
+    );
+}
+
+unsafe fn apply_ae_fps_range(
+    capture_request: *mut ACaptureRequest,
+    capabilities: &CameraCapabilities,
+    requested: Option<[i32; 2]>,
+) -> (Option<[i32; 2]>, String) {
+    let Some(range) = requested else {
+        return (None, "not-requested".to_string());
+    };
+    if !capabilities.supports_ae_fps_range(range) {
+        return (None, "unsupported".to_string());
+    }
+    let status = ACaptureRequest_setEntry_i32(
+        capture_request,
+        ACAMERA_CONTROL_AE_TARGET_FPS_RANGE,
+        2,
+        range.as_ptr(),
+    );
+    if status == 0 {
+        (Some(range), "set".to_string())
+    } else {
+        (None, format!("set-error-{status}"))
+    }
+}
+
+unsafe fn apply_u8_request(
+    capture_request: *mut ACaptureRequest,
+    tag: u32,
+    selected: Option<u8>,
+    requested: Option<u8>,
+) -> (Option<u8>, String) {
+    let Some(value) = selected else {
+        return (
+            None,
+            if requested.is_some() {
+                "unsupported".to_string()
+            } else {
+                "not-requested".to_string()
+            },
+        );
+    };
+    let values = [value];
+    let status = ACaptureRequest_setEntry_u8(capture_request, tag, 1, values.as_ptr());
+    if status == 0 {
+        (Some(value), "set".to_string())
+    } else {
+        (None, format!("set-error-{status}"))
+    }
+}
+
+unsafe fn read_u8_values(metadata: *const ACameraMetadata, tag: u32) -> Vec<u8> {
+    let Some(entry) = metadata_entry(metadata, tag) else {
+        return Vec::new();
+    };
+    if entry.count == 0 || entry.data.u8_.is_null() {
+        return Vec::new();
+    }
+    std::slice::from_raw_parts(entry.data.u8_, entry.count as usize).to_vec()
+}
+
+unsafe fn read_i32_values(metadata: *const ACameraMetadata, tag: u32) -> Vec<i32> {
+    let Some(entry) = metadata_entry(metadata, tag) else {
+        return Vec::new();
+    };
+    if entry.count == 0 || entry.data.i32_.is_null() {
+        return Vec::new();
+    }
+    std::slice::from_raw_parts(entry.data.i32_, entry.count as usize).to_vec()
+}
+
+unsafe fn metadata_entry(
+    metadata: *const ACameraMetadata,
+    tag: u32,
+) -> Option<ACameraMetadataConstEntry> {
+    let mut entry = std::mem::MaybeUninit::<ACameraMetadataConstEntry>::zeroed();
+    if ACameraMetadata_getConstEntry(metadata, tag, entry.as_mut_ptr()) == 0 {
+        Some(entry.assume_init())
+    } else {
+        None
+    }
+}
+
+unsafe fn metadata_u8_mode_marker(
+    metadata: *const ACameraMetadata,
+    tag: u32,
+    label: fn(u8) -> &'static str,
+) -> String {
+    read_u8_values(metadata, tag)
+        .first()
+        .copied()
+        .map(|value| label(value).to_string())
+        .unwrap_or_else(|| "unavailable".to_string())
+}
+
+unsafe fn metadata_i32_marker(metadata: *const ACameraMetadata, tag: u32) -> String {
+    read_i32_values(metadata, tag)
+        .first()
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unavailable".to_string())
+}
+
+unsafe fn metadata_i64_marker(metadata: *const ACameraMetadata, tag: u32) -> String {
+    let Some(entry) = metadata_entry(metadata, tag) else {
+        return "unavailable".to_string();
+    };
+    if entry.count == 0 || entry.data.i64_.is_null() {
+        return "unavailable".to_string();
+    }
+    (*entry.data.i64_).to_string()
+}
+
+unsafe fn metadata_i32_pair_marker(metadata: *const ACameraMetadata, tag: u32) -> String {
+    let values = read_i32_values(metadata, tag);
+    if values.len() < 2 {
+        "unavailable".to_string()
+    } else {
+        format!("{}-{}", values[0], values[1])
+    }
+}
+
+fn optional_u8_marker(value: Option<u8>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unavailable".to_string())
+}
+
+fn u8_list_marker(values: &[u8]) -> String {
+    if values.is_empty() {
+        return "none".to_string();
+    }
+    values
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn u8_modes_marker(values: &[u8], label: fn(u8) -> &'static str) -> String {
+    if values.is_empty() {
+        return "none".to_string();
+    }
+    values
+        .iter()
+        .map(|value| label(*value))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn ae_fps_ranges_marker(values: &[[i32; 2]]) -> String {
+    if values.is_empty() {
+        return "none".to_string();
+    }
+    values
+        .iter()
+        .map(|range| format!("{}-{}", range[0], range[1]))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn stream_sizes_marker(values: &[[i32; 2]]) -> String {
+    if values.is_empty() {
+        return "none".to_string();
+    }
+    values
+        .iter()
+        .map(|size| format!("{}x{}", size[0], size[1]))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn optional_range_marker(value: Option<[i32; 2]>) -> String {
+    value
+        .map(|range| format!("{}-{}", range[0], range[1]))
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn optional_u8_mode_marker(value: Option<u8>, label: fn(u8) -> &'static str) -> String {
+    value
+        .map(|mode| label(mode).to_string())
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn noise_reduction_mode_label(value: u8) -> &'static str {
+    match value {
+        ACAMERA_NOISE_REDUCTION_MODE_OFF => "OFF",
+        ACAMERA_NOISE_REDUCTION_MODE_FAST => "FAST",
+        ACAMERA_NOISE_REDUCTION_MODE_HIGH_QUALITY => "HIGH_QUALITY",
+        _ => "UNKNOWN",
+    }
+}
+
+fn edge_mode_label(value: u8) -> &'static str {
+    match value {
+        ACAMERA_EDGE_MODE_OFF => "OFF",
+        ACAMERA_EDGE_MODE_FAST => "FAST",
+        ACAMERA_EDGE_MODE_HIGH_QUALITY => "HIGH_QUALITY",
+        _ => "UNKNOWN",
+    }
+}
+
 struct NativeReaderContext {
     side: CameraSide,
     camera_id: String,
+    camera_quality_profile: NativeCameraQualityProfile,
+    camera_sync_mode: NativeCameraSyncMode,
+    buffer_removed_listener_registered: bool,
     counters: Arc<NativeCameraCounters>,
     alive: Arc<AtomicBool>,
 }
@@ -571,6 +1064,7 @@ struct NativeCameraCounters {
     stale_frames: AtomicU64,
     release_retire_count: AtomicU64,
     camera_acquire_errors: AtomicU64,
+    capture_results_seen: AtomicU64,
     last_left_timestamp_ns: AtomicI64,
     last_right_timestamp_ns: AtomicI64,
     latest_left_frame: Mutex<Option<NativeCameraFrame>>,
@@ -721,7 +1215,7 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
         marker(
             "hwb-frame-acquired",
             format!(
-                "sourceFrame={} cameraId={} side={} hardwareBufferId={} importSequence={} timestampNs={} descriptorShape=combined-immutable-sampler-ycbcr-conversion descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} textureUpdateCadence=on-camera-frame releaseRetireCount={} hwbNativeImportReady=true gpuImportWorked=false vulkanExternalImportReady=false visualAcceptance=false",
+                "sourceFrame={} cameraId={} side={} hardwareBufferId={} importSequence={} timestampNs={} descriptorShape=combined-immutable-sampler-ycbcr-conversion descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} textureUpdateCadence=on-camera-frame releaseRetireCount={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} imageAcquireApi=AImageReader_acquireLatestImage acquireFenceFd=-1 imageReleaseApi=AImage_delete releaseFenceFd=-1 producerConsumerSync=not-fence-backed-yet ahbHandleRetained=true bufferRemovedListenerRegistered={} hwbNativeImportReady=true gpuImportWorked=false vulkanExternalImportReady=false visualAcceptance=false",
                 frame_sequence,
                 reader_context.camera_id,
                 reader_context.side.stable_id(),
@@ -734,7 +1228,12 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
                 desc.format,
                 desc.usage,
                 desc.stride,
-                release_retire_count
+                release_retire_count,
+                reader_context.camera_quality_profile.marker_value(),
+                reader_context.camera_sync_mode.marker_value(),
+                reader_context.camera_sync_mode.active_marker_value(),
+                reader_context.camera_sync_mode.implementation_status(),
+                reader_context.buffer_removed_listener_registered
             ),
         );
     } else {
@@ -749,6 +1248,178 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
         ));
     }
     AImage_delete(image);
+}
+
+unsafe extern "C" fn image_on_buffer_removed(
+    context: *mut c_void,
+    _reader: *mut AImageReader,
+    buffer: *mut ndk_sys::AHardwareBuffer,
+) {
+    if context.is_null() {
+        return;
+    }
+    let reader_context = &*(context as *mut NativeReaderContext);
+    let mut hardware_buffer_id = 0_u64;
+    let mut desc_marker = "unavailable".to_string();
+    if !buffer.is_null() {
+        if ndk_sys::AHardwareBuffer_getId(buffer, &mut hardware_buffer_id) != 0 {
+            hardware_buffer_id = 0;
+        }
+        let mut desc = std::mem::MaybeUninit::<ndk_sys::AHardwareBuffer_Desc>::zeroed();
+        ndk_sys::AHardwareBuffer_describe(buffer, desc.as_mut_ptr());
+        let desc = desc.assume_init();
+        desc_marker = format!(
+            "{}x{} format={} usage={} stride={} layers={}",
+            desc.width, desc.height, desc.format, desc.usage, desc.stride, desc.layers
+        );
+    }
+    marker(
+        "hwb-buffer-removed",
+        format!(
+            "side={} cameraId={} hardwareBufferId={} descriptor={} cacheEvictionSignal=true cacheEvictionApplied=false",
+            reader_context.side.stable_id(),
+            reader_context.camera_id,
+            hardware_buffer_id,
+            desc_marker
+        ),
+    );
+}
+
+unsafe extern "C" fn capture_on_completed(
+    context: *mut c_void,
+    _session: *mut ACameraCaptureSession,
+    _request: *mut ACaptureRequest,
+    result: *const ACameraMetadata,
+) {
+    if context.is_null() || result.is_null() {
+        return;
+    }
+    let reader_context = &*(context as *mut NativeReaderContext);
+    let result_count = reader_context
+        .counters
+        .capture_results_seen
+        .fetch_add(1, Ordering::Relaxed)
+        + 1;
+    if result_count > 3 && result_count % 120 != 0 {
+        return;
+    }
+    marker(
+        "camera-capture-result",
+        format!(
+            "status=ok side={} cameraId={} resultCount={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} exposureTimeNs={} sensitivityIso={} frameDurationNs={} aeFpsRange={} noiseReductionMode={} edgeMode={} syncFrameNumber={} resultMetadataReady=true",
+            reader_context.side.stable_id(),
+            reader_context.camera_id,
+            result_count,
+            reader_context.camera_quality_profile.marker_value(),
+            reader_context.camera_sync_mode.marker_value(),
+            reader_context.camera_sync_mode.active_marker_value(),
+            metadata_i64_marker(result, ACAMERA_SENSOR_EXPOSURE_TIME),
+            metadata_i32_marker(result, ACAMERA_SENSOR_SENSITIVITY),
+            metadata_i64_marker(result, ACAMERA_SENSOR_FRAME_DURATION),
+            metadata_i32_pair_marker(result, ACAMERA_CONTROL_AE_TARGET_FPS_RANGE),
+            metadata_u8_mode_marker(result, ACAMERA_NOISE_REDUCTION_MODE, noise_reduction_mode_label),
+            metadata_u8_mode_marker(result, ACAMERA_EDGE_MODE, edge_mode_label),
+            metadata_i64_marker(result, ACAMERA_SYNC_FRAME_NUMBER),
+        ),
+    );
+}
+
+unsafe extern "C" fn capture_on_failed(
+    context: *mut c_void,
+    _session: *mut ACameraCaptureSession,
+    _request: *mut ACaptureRequest,
+    failure: *mut ACameraCaptureFailure,
+) {
+    if context.is_null() {
+        return;
+    }
+    let reader_context = &*(context as *mut NativeReaderContext);
+    let (frame_number, reason, sequence_id, was_image_captured) = if failure.is_null() {
+        (-1, -1, -1, false)
+    } else {
+        (
+            (*failure).frameNumber,
+            (*failure).reason,
+            (*failure).sequenceId,
+            (*failure).wasImageCaptured,
+        )
+    };
+    marker(
+        "camera-capture-result",
+        format!(
+            "status=failed side={} cameraId={} frameNumber={} reason={} sequenceId={} wasImageCaptured={}",
+            reader_context.side.stable_id(),
+            reader_context.camera_id,
+            frame_number,
+            reason,
+            sequence_id,
+            was_image_captured
+        ),
+    );
+}
+
+unsafe extern "C" fn capture_on_sequence_completed(
+    context: *mut c_void,
+    _session: *mut ACameraCaptureSession,
+    sequence_id: i32,
+    frame_number: i64,
+) {
+    if context.is_null() {
+        return;
+    }
+    let reader_context = &*(context as *mut NativeReaderContext);
+    marker(
+        "camera-capture-sequence",
+        format!(
+            "status=completed side={} cameraId={} sequenceId={} frameNumber={}",
+            reader_context.side.stable_id(),
+            reader_context.camera_id,
+            sequence_id,
+            frame_number
+        ),
+    );
+}
+
+unsafe extern "C" fn capture_on_sequence_aborted(
+    context: *mut c_void,
+    _session: *mut ACameraCaptureSession,
+    sequence_id: i32,
+) {
+    if context.is_null() {
+        return;
+    }
+    let reader_context = &*(context as *mut NativeReaderContext);
+    marker(
+        "camera-capture-sequence",
+        format!(
+            "status=aborted side={} cameraId={} sequenceId={}",
+            reader_context.side.stable_id(),
+            reader_context.camera_id,
+            sequence_id
+        ),
+    );
+}
+
+unsafe extern "C" fn capture_on_buffer_lost(
+    context: *mut c_void,
+    _session: *mut ACameraCaptureSession,
+    _request: *mut ACaptureRequest,
+    _window: *mut ACameraWindowType,
+    frame_number: i64,
+) {
+    if context.is_null() {
+        return;
+    }
+    let reader_context = &*(context as *mut NativeReaderContext);
+    marker(
+        "camera-capture-result",
+        format!(
+            "status=buffer-lost side={} cameraId={} frameNumber={}",
+            reader_context.side.stable_id(),
+            reader_context.camera_id,
+            frame_number
+        ),
+    );
 }
 
 unsafe extern "C" fn device_on_disconnected(_context: *mut c_void, _device: *mut ACameraDevice) {

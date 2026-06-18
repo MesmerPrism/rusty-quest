@@ -20,10 +20,12 @@ The currently documented public routes are:
 
 | Route | Background | Hand visual | Camera/HWB path | Primary use |
 | --- | --- | --- | --- | --- |
+| Direct HWB camera quality | Camera2 `50`/`51` sampled directly in the final projection | Disabled by profile | Forced direct `AHardwareBuffer` sample | Raw camera acquisition/projection baseline before guide/private processing |
 | Custom stereo projection | Camera2 `50`/`51` via Vulkan HWB guide textures | Recorded/live GPU-skinned hand mesh, optional SDF visual, optional peripheral stretch border | Enabled | Camera projection, blur, stretch/blend border, SDF, and replay evidence |
 | Native passthrough hands and grafts | `XR_FB_passthrough` | Live GPU-skinned base hands plus fingertip graft copies | Disabled | World-space hand mesh/graft visuals over Meta passthrough |
 | Native passthrough graft only | `XR_FB_passthrough` | Fingertip graft copies only | Disabled | Graft-fit isolation |
 | Solid black hands and grafts | Opaque black OpenXR projection layer | Live GPU-skinned base hands plus fingertip graft copies | Disabled | Non-passthrough world-space control view |
+| Solid black OpenXR hands anchor particles | Opaque black OpenXR projection layer | Runtime/default OpenXR hands requested; app custom mesh visual disabled; resident-mesh anchor particles visible | Disabled | Compare resident custom mesh anchor placement against runtime hand visuals |
 
 These routes are public AGPL examples. Private downstream effects can attach
 later through the public extension-slot boundary, but Colorama, distortion, and
@@ -47,7 +49,15 @@ layer with the public recorded-hand replay overlay visible. The current native
 camera proof imports retained Camera2 HWB frames
 into Vulkan external images and renders them only inside metadata-owned per-eye
 target rectangles, with source raster Y flip controlled by metadata rather than
-a hard-coded shader flip. Local builds can embed the real recorded
+a hard-coded shader flip. The direct camera-quality profiles can force
+`debug.rustyquest.native_renderer.camera.output=direct-hwb` so guide/private
+projection outputs are bypassed while inspecting raw acquisition quality; the
+default baseline now uses Android-suggested YCbCr plus the OpenXR swapchain
+preference `unorm`, the BT.601/UNORM variant only changes the effective Vulkan
+sampler conversion for color-lift A/B diagnostics, and the low-noise 30 profile
+adds support-gated public Camera2 request controls for 30 FPS AE, noise
+reduction, and edge enhancement off. Local
+builds can embed the real recorded
 Meta/OpenXR hand capture and stage its bind mesh into a native Vulkan storage
 buffer while reporting `cpuSdfPerFrame=false`. The current render loop also
 draws the real recorded hand mesh from the resident GPU-skinned position
@@ -76,7 +86,13 @@ real live hand meshes from the already GPU-skinned resident buffers. The
 `quest-native-renderer-solid-black-hands-and-grafts.profile.json` route is the
 same live base-mesh plus graft visual test without passthrough or Camera2
 projection: it submits an opaque black projection layer and draws only the
-hand visuals. A compact-joint GPU
+hand visuals. The
+`quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json`
+route is the resident-topology comparison view against the runtime hand visual:
+it skips Camera2/custom stereo projection, clears to black, keeps the app's
+custom hand mesh visual and graft copies disabled, requests the OpenXR/default
+hand visual as the reference, and draws only GPU anchor particles generated from
+the resident skinned mesh buffers. A compact-joint GPU
 path now parses the real rig blend indices/weights, bind-joint sources, compact
 runtime joint frames, and tip lengths; keeps source mesh and bind metadata
 buffers resident; uploads only runtime poses plus tip-length rows per frame;

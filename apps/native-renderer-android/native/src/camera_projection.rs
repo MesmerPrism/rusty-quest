@@ -6,6 +6,7 @@ use ash::vk;
 
 use crate::camera_projection_metadata::{CameraProjectionMetadata, TargetRect};
 use crate::native_camera::{NativeCameraFrame, NativeStereoCameraFrame};
+use crate::native_renderer_options::NativeCameraYcbcrMode;
 
 const CAMERA_IMPORT_CACHE_LIMIT: usize = 6;
 const CAMERA_STEREO_DESCRIPTOR_LIMIT: usize = 6;
@@ -41,6 +42,7 @@ pub(crate) struct CameraProjectionRenderer {
     resources: Option<CameraProjectionResources>,
     imports: Vec<CameraImport>,
     stereo_descriptors: Vec<CameraStereoDescriptor>,
+    ycbcr_mode: NativeCameraYcbcrMode,
     import_cache_hits: u64,
     import_cache_misses: u64,
 }
@@ -52,6 +54,7 @@ impl CameraProjectionRenderer {
         memory_properties: vk::PhysicalDeviceMemoryProperties,
         render_pass: vk::RenderPass,
         import_supported: bool,
+        ycbcr_mode: NativeCameraYcbcrMode,
     ) -> Self {
         let ahb = import_supported.then(|| {
             ash::android::external_memory_android_hardware_buffer::Device::new(instance, device)
@@ -63,6 +66,7 @@ impl CameraProjectionRenderer {
             resources: None,
             imports: Vec::new(),
             stereo_descriptors: Vec::new(),
+            ycbcr_mode,
             import_cache_hits: 0,
             import_cache_misses: 0,
         }
@@ -201,6 +205,7 @@ impl CameraProjectionRenderer {
                 self.render_pass,
                 format_key,
                 &format_props,
+                self.ycbcr_mode,
             )?);
         }
 
@@ -232,7 +237,7 @@ impl CameraProjectionRenderer {
         crate::marker(
             "camera-projection-import",
             format!(
-                "status=ok side={} cameraId={} sourceFrame={} hardwareBufferId={} width={} height={} nativeFormat={} layers={} stride={} usage={} externalFormat={} vkFormat={:?} allocationSize={} memoryTypeBits=0x{:x} descriptorShape=combined-immutable-sampler-ycbcr-conversion gpuImportWorked=true vulkanExternalImportReady=true",
+                "status=ok side={} cameraId={} sourceFrame={} hardwareBufferId={} width={} height={} nativeFormat={} layers={} stride={} usage={} externalFormat={} vkFormat={:?} allocationSize={} memoryTypeBits=0x{:x} descriptorShape=combined-immutable-sampler-ycbcr-conversion {} gpuImportWorked=true vulkanExternalImportReady=true",
                 frame.side,
                 crate::sanitize(&frame.camera_id),
                 frame.source_frame,
@@ -246,7 +251,8 @@ impl CameraProjectionRenderer {
                 format_key.external_format,
                 format_key.format,
                 allocation_size,
-                memory_type_bits
+                memory_type_bits,
+                resources.ycbcr_metadata.marker_fields()
             ),
         );
 
@@ -294,6 +300,7 @@ pub(crate) unsafe fn record_camera_projection_eye(
     eye_index: usize,
     prepared: &PreparedCameraProjection,
     projection_metadata: &CameraProjectionMetadata,
+    direct_border_opacity: f32,
 ) {
     let target_rect = projection_metadata.rect_for_eye(eye_index);
     let viewport = [vk::Viewport {
@@ -329,7 +336,7 @@ pub(crate) unsafe fn record_camera_projection_eye(
             target_rect.width,
             target_rect.height,
         ],
-        params2: [0.0, 0.0, 0.0, 0.0],
+        params2: [direct_border_opacity.clamp(0.0, 1.0), 0.0, 0.0, 0.0],
     };
     let push_bytes = std::slice::from_raw_parts(
         (&push as *const CameraProjectionPush).cast::<u8>(),
@@ -384,6 +391,7 @@ struct CameraProjectionResources {
     format_key: CameraFormatKey,
     sampler_ycbcr_conversion: vk::SamplerYcbcrConversion,
     sampler: vk::Sampler,
+    ycbcr_metadata: CameraYcbcrConversionMetadata,
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
     pipeline_layout: vk::PipelineLayout,
@@ -398,6 +406,93 @@ impl CameraProjectionResources {
         device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
         device.destroy_sampler(self.sampler, None);
         device.destroy_sampler_ycbcr_conversion(self.sampler_ycbcr_conversion, None);
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CameraYcbcrConversionMetadata {
+    requested_mode: NativeCameraYcbcrMode,
+    format_features: vk::FormatFeatureFlags,
+    chroma_filter: vk::Filter,
+    chroma_linear_filter_supported: bool,
+    sampler_filter: vk::Filter,
+    sampler_linear_filter_supported: bool,
+    suggested_model: vk::SamplerYcbcrModelConversion,
+    suggested_range: vk::SamplerYcbcrRange,
+    effective_model: vk::SamplerYcbcrModelConversion,
+    effective_range: vk::SamplerYcbcrRange,
+    components: String,
+    suggested_x_chroma_offset: vk::ChromaLocation,
+    suggested_y_chroma_offset: vk::ChromaLocation,
+}
+
+impl CameraYcbcrConversionMetadata {
+    fn from_format_props(
+        format_props: &vk::AndroidHardwareBufferFormatPropertiesANDROID<'_>,
+        requested_mode: NativeCameraYcbcrMode,
+    ) -> Self {
+        let chroma_linear_filter_supported = format_props
+            .format_features
+            .contains(vk::FormatFeatureFlags::SAMPLED_IMAGE_YCBCR_CONVERSION_LINEAR_FILTER);
+        let sampler_linear_filter_supported = format_props
+            .format_features
+            .contains(vk::FormatFeatureFlags::SAMPLED_IMAGE_FILTER_LINEAR);
+        let (effective_model, effective_range) = match requested_mode {
+            NativeCameraYcbcrMode::AndroidSuggested => (
+                format_props.suggested_ycbcr_model,
+                format_props.suggested_ycbcr_range,
+            ),
+            NativeCameraYcbcrMode::ForcedBt601Narrow => (
+                vk::SamplerYcbcrModelConversion::YCBCR_601,
+                vk::SamplerYcbcrRange::ITU_NARROW,
+            ),
+        };
+        Self {
+            requested_mode,
+            format_features: format_props.format_features,
+            chroma_filter: if chroma_linear_filter_supported {
+                vk::Filter::LINEAR
+            } else {
+                vk::Filter::NEAREST
+            },
+            chroma_linear_filter_supported,
+            sampler_filter: if sampler_linear_filter_supported {
+                vk::Filter::LINEAR
+            } else {
+                vk::Filter::NEAREST
+            },
+            sampler_linear_filter_supported,
+            suggested_model: format_props.suggested_ycbcr_model,
+            suggested_range: format_props.suggested_ycbcr_range,
+            effective_model,
+            effective_range,
+            components: ycbcr_component_mapping_label(
+                format_props.sampler_ycbcr_conversion_components,
+            ),
+            suggested_x_chroma_offset: format_props.suggested_x_chroma_offset,
+            suggested_y_chroma_offset: format_props.suggested_y_chroma_offset,
+        }
+    }
+
+    fn marker_fields(&self) -> String {
+        format!(
+            "cameraYcbcrMode={} suggestedYcbcrModel={:?} suggestedYcbcrRange={:?} effectiveYcbcrModel={:?} effectiveYcbcrRange={:?} ycbcrComponents={} suggestedXChromaOffset={:?} suggestedYChromaOffset={:?} conversionMode={} formatFeaturesRaw=0x{:x} formatFeatures={} chromaFilter={:?} chromaLinearFilterSupported={} samplerFilter={:?} samplerLinearFilterSupported={} ycbcrFeatureValidation=active samplerBindingMode=combined-immutable-sampler colorDiagnostic=direct-hwb-ycbcr",
+            self.requested_mode.marker_value(),
+            self.suggested_model,
+            self.suggested_range,
+            self.effective_model,
+            self.effective_range,
+            self.components,
+            self.suggested_x_chroma_offset,
+            self.suggested_y_chroma_offset,
+            self.requested_mode.conversion_mode(),
+            self.format_features.as_raw(),
+            format_feature_flags_marker(self.format_features),
+            self.chroma_filter,
+            self.chroma_linear_filter_supported,
+            self.sampler_filter,
+            self.sampler_linear_filter_supported,
+        )
     }
 }
 
@@ -431,6 +526,33 @@ impl CameraStereoDescriptor {
     }
 }
 
+fn ycbcr_component_mapping_label(mapping: vk::ComponentMapping) -> String {
+    format!(
+        "r:{};g:{};b:{};a:{}",
+        component_swizzle_label(mapping.r),
+        component_swizzle_label(mapping.g),
+        component_swizzle_label(mapping.b),
+        component_swizzle_label(mapping.a)
+    )
+}
+
+fn component_swizzle_label(swizzle: vk::ComponentSwizzle) -> &'static str {
+    match swizzle {
+        vk::ComponentSwizzle::IDENTITY => "identity",
+        vk::ComponentSwizzle::ZERO => "zero",
+        vk::ComponentSwizzle::ONE => "one",
+        vk::ComponentSwizzle::R => "r",
+        vk::ComponentSwizzle::G => "g",
+        vk::ComponentSwizzle::B => "b",
+        vk::ComponentSwizzle::A => "a",
+        _ => "unknown",
+    }
+}
+
+fn format_feature_flags_marker(flags: vk::FormatFeatureFlags) -> String {
+    format!("{flags:?}").replace(' ', "")
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 struct CameraProjectionPush {
@@ -462,17 +584,19 @@ unsafe fn create_camera_projection_resources(
     render_pass: vk::RenderPass,
     format_key: CameraFormatKey,
     format_props: &vk::AndroidHardwareBufferFormatPropertiesANDROID<'_>,
+    ycbcr_mode: NativeCameraYcbcrMode,
 ) -> Result<CameraProjectionResources, String> {
+    let ycbcr_metadata = CameraYcbcrConversionMetadata::from_format_props(format_props, ycbcr_mode);
     let mut external_format =
         vk::ExternalFormatANDROID::default().external_format(format_key.external_format);
     let mut conversion_info = vk::SamplerYcbcrConversionCreateInfo::default()
         .format(format_key.format)
-        .ycbcr_model(format_props.suggested_ycbcr_model)
-        .ycbcr_range(format_props.suggested_ycbcr_range)
+        .ycbcr_model(ycbcr_metadata.effective_model)
+        .ycbcr_range(ycbcr_metadata.effective_range)
         .components(format_props.sampler_ycbcr_conversion_components)
         .x_chroma_offset(format_props.suggested_x_chroma_offset)
         .y_chroma_offset(format_props.suggested_y_chroma_offset)
-        .chroma_filter(vk::Filter::LINEAR);
+        .chroma_filter(ycbcr_metadata.chroma_filter);
     if format_key.external_format != 0 {
         conversion_info = conversion_info.push_next(&mut external_format);
     }
@@ -484,8 +608,8 @@ unsafe fn create_camera_projection_resources(
         vk::SamplerYcbcrConversionInfo::default().conversion(sampler_ycbcr_conversion);
     let sampler = match device.create_sampler(
         &vk::SamplerCreateInfo::default()
-            .mag_filter(vk::Filter::LINEAR)
-            .min_filter(vk::Filter::LINEAR)
+            .mag_filter(ycbcr_metadata.sampler_filter)
+            .min_filter(ycbcr_metadata.sampler_filter)
             .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
             .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
             .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
@@ -582,8 +706,8 @@ unsafe fn create_camera_projection_resources(
     crate::marker(
         "camera-projection-resources",
         format!(
-            "status=created externalFormat={} vkFormat={:?} descriptorShape=combined-immutable-sampler-ycbcr-conversion shaderPath=metadata-target-direct-hwb-camera-projection metadataDrivenTargetFootprint=true",
-            format_key.external_format, format_key.format
+            "status=created externalFormat={} vkFormat={:?} descriptorShape=combined-immutable-sampler-ycbcr-conversion shaderPath=metadata-target-direct-hwb-camera-projection metadataDrivenTargetFootprint=true {}",
+            format_key.external_format, format_key.format, ycbcr_metadata.marker_fields()
         ),
     );
 
@@ -591,6 +715,7 @@ unsafe fn create_camera_projection_resources(
         format_key,
         sampler_ycbcr_conversion,
         sampler,
+        ycbcr_metadata,
         descriptor_set_layout,
         descriptor_pool,
         pipeline_layout,
