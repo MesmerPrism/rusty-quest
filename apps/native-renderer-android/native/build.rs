@@ -17,14 +17,22 @@ fn main() {
     println!("cargo:rerun-if-changed=shaders/gpu_sdf_overlay.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/hand_mesh_visual.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/hand_mesh_visual.frag.glsl");
+    println!("cargo:rerun-if-changed=shaders/private_layer_placeholder.frag.glsl");
     println!(
         "cargo:rerun-if-changed=../../../fixtures/native-renderer/recorded-hand-replay-public-shape.json"
     );
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_SHADER_DIR");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER");
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_PROJECTION_SHADER"
+    );
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by Cargo"));
     write_recorded_hand_replay_source(&out_dir);
+    let private_layer_sources = private_layer_shader_sources();
+    write_private_layer_payload_config(&out_dir, private_layer_sources.is_some());
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("android") {
         return;
@@ -101,7 +109,22 @@ fn main() {
         Path::new("shaders/hand_mesh_visual.frag.glsl"),
         &out_dir.join("hand_mesh_visual.frag.spv"),
     );
+    compile_private_layer_payload(&glslc, private_layer_sources.as_ref(), &out_dir);
 }
+
+struct PrivateLayerShaderSources {
+    guide: PathBuf,
+    projection: PathBuf,
+}
+
+const PRIVATE_LAYER_GUIDE_OUTPUTS: [(&str, &str); 6] = [
+    ("0", "private_layer_guide_analysis0.frag.spv"),
+    ("1", "private_layer_guide_scratch_horizontal.frag.spv"),
+    ("2", "private_layer_guide_analysis1.frag.spv"),
+    ("3", "private_layer_guide_control0.frag.spv"),
+    ("4", "private_layer_guide_scratch_strength.frag.spv"),
+    ("5", "private_layer_guide_control1.frag.spv"),
+];
 
 fn write_recorded_hand_replay_source(out_dir: &Path) {
     let output = out_dir.join("recorded_hand_replay_source.json");
@@ -133,6 +156,89 @@ fn write_recorded_hand_replay_source(out_dir: &Path) {
             output.display()
         )
     });
+}
+
+fn write_private_layer_payload_config(out_dir: &Path, payload_linked: bool) {
+    let output = out_dir.join("private_layer_payload_config.rs");
+    let implementation_path = if payload_linked {
+        "external-private-shader-dir"
+    } else {
+        "none"
+    };
+    let source = format!(
+        "pub(crate) const PRIVATE_LAYER_PAYLOAD_LINKED: bool = {payload_linked};\npub(crate) const PRIVATE_LAYER_IMPLEMENTATION_PATH: &str = \"{implementation_path}\";\n"
+    );
+    fs::write(&output, source).unwrap_or_else(|error| {
+        panic!(
+            "failed to write generated private layer payload config {}: {error}",
+            output.display()
+        )
+    });
+}
+
+fn private_layer_shader_sources() -> Option<PrivateLayerShaderSources> {
+    let explicit_guide = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.is_file());
+    let explicit_projection =
+        env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_PROJECTION_SHADER")
+            .ok()
+            .map(PathBuf::from)
+            .filter(|path| path.is_file());
+    if let (Some(guide), Some(projection)) = (explicit_guide, explicit_projection) {
+        return Some(PrivateLayerShaderSources { guide, projection });
+    }
+
+    let shader_dir = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_SHADER_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())?;
+    let guide = shader_dir.join("private_layer_guide_pass.frag.glsl");
+    let projection = shader_dir.join("private_layer_projection.frag.glsl");
+    if guide.is_file() && projection.is_file() {
+        Some(PrivateLayerShaderSources { guide, projection })
+    } else {
+        None
+    }
+}
+
+fn compile_private_layer_payload(
+    glslc: &Path,
+    sources: Option<&PrivateLayerShaderSources>,
+    out_dir: &Path,
+) {
+    if let Some(sources) = sources {
+        println!("cargo:rerun-if-changed={}", sources.guide.display());
+        println!("cargo:rerun-if-changed={}", sources.projection.display());
+        for (mode, output_name) in PRIVATE_LAYER_GUIDE_OUTPUTS {
+            compile_shader_with_defines(
+                glslc,
+                "fragment",
+                &sources.guide,
+                &out_dir.join(output_name),
+                &[("PRIVATE_LAYER_GUIDE_PASS_MODE", mode)],
+            );
+        }
+        compile_shader(
+            glslc,
+            "fragment",
+            &sources.projection,
+            &out_dir.join("private_layer_projection.frag.spv"),
+        );
+        return;
+    }
+
+    let placeholder = Path::new("shaders/private_layer_placeholder.frag.glsl");
+    for (_, output_name) in PRIVATE_LAYER_GUIDE_OUTPUTS {
+        compile_shader(glslc, "fragment", placeholder, &out_dir.join(output_name));
+    }
+    compile_shader(
+        glslc,
+        "fragment",
+        placeholder,
+        &out_dir.join("private_layer_projection.frag.spv"),
+    );
 }
 
 fn generate_recorded_hand_capture_source(capture_dir: &Path, frame_limit: usize) -> String {
@@ -283,9 +389,24 @@ fn find_on_path(file_name: &str) -> Option<PathBuf> {
 }
 
 fn compile_shader(glslc: &Path, stage: &str, source: &Path, output: &Path) {
+    compile_shader_with_defines(glslc, stage, source, output, &[]);
+}
+
+fn compile_shader_with_defines(
+    glslc: &Path,
+    stage: &str,
+    source: &Path,
+    output: &Path,
+    defines: &[(&str, &str)],
+) {
     let status = Command::new(glslc)
         .arg("--target-env=vulkan1.1")
         .arg(format!("-fshader-stage={stage}"))
+        .args(
+            defines
+                .iter()
+                .map(|(name, value)| format!("-D{name}={value}")),
+        )
         .arg(source)
         .arg("-o")
         .arg(output)

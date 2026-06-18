@@ -17,6 +17,7 @@ param(
     [switch]$RequireGpuTimestampReady,
     [switch]$AllowFlatScreenshot,
     [switch]$AllowPerformanceBudgetMiss,
+    [switch]$AllowPrivateLayerPayload,
     [switch]$StopAfterRun
 )
 
@@ -209,6 +210,7 @@ $summary = [ordered]@{
     replay_visual_proof_required = ($EvidenceMode -eq "ReplayVisualProof")
     live_visual_diagnostic_caveat_required = ($EvidenceMode -eq "LiveVisualDiagnosticCaveat")
     performance_budget_required = (-not [bool]$AllowPerformanceBudgetMiss)
+    private_layer_payload_allowed = [bool]$AllowPrivateLayerPayload
     stop_after_run = [bool]$StopAfterRun
     property_plan_path = $propertyPlanPath
     raw_logcat_path = $rawLogcatPath
@@ -293,9 +295,13 @@ try {
         "-SummaryOut", $evidenceSummaryPath,
         "-RequireScreenshot",
         "-RequireCameraProjection",
-        "-RequireGuideGraph",
-        "-RequirePrivateSlotNoPayload"
+        "-RequireGuideGraph"
     )
+    if ($AllowPrivateLayerPayload) {
+        $evidenceArgs += "-RequirePrivateSlotPayload"
+    } else {
+        $evidenceArgs += "-RequirePrivateSlotNoPayload"
+    }
     if ($EvidenceMode -eq "LiveVisualDiagnosticCaveat") {
         $evidenceArgs += "-RequireLiveVisualDiagnosticCaveat"
     } else {

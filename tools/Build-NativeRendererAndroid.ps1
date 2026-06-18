@@ -169,6 +169,12 @@ if (-not (Test-Path $builtNativeLib)) {
 }
 Copy-Item -LiteralPath $builtNativeLib -Destination $nativeLib -Force
 
+$privateLayerPayloadLinked =
+    (-not [string]::IsNullOrWhiteSpace($env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER)) -and
+    (-not [string]::IsNullOrWhiteSpace($env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_PROJECTION_SHADER)) -and
+    (Test-Path $env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER) -and
+    (Test-Path $env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_PROJECTION_SHADER)
+
 $openXrLoaderPackaged = $false
 if (-not [string]::IsNullOrWhiteSpace($OpenXrLoader) -and (Test-Path $OpenXrLoader)) {
     Copy-Item -LiteralPath $OpenXrLoader -Destination (Join-Path $nativeLibDir "libopenxr_loader.so") -Force
@@ -234,7 +240,7 @@ $manifest = [ordered]@{
     rust_native_crate = "apps/native-renderer-android/native/Cargo.toml"
     runtime_permission_request = "rust-jni-framework-activity-requestPermissions"
     public_effect_layers = @("blur-guide", "recorded-hand-replay-visual", "gpu-mesh-boundary", "target-space-validation-mesh-sdf")
-    private_extension_payloads_packaged = $false
+    private_extension_payloads_packaged = [bool]$privateLayerPayloadLinked
     camera_ids = [ordered]@{
         left = "50"
         right = "51"

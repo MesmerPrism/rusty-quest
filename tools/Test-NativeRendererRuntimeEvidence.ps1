@@ -46,6 +46,7 @@ param(
     [double]$MaximumHandMeshVisualGpuMs = 1.0,
     [double]$MaximumProjectionCompositeGpuMs = 2.0,
     [switch]$RequirePrivateSlotNoPayload,
+    [switch]$RequirePrivateSlotPayload,
     [string]$ScreenshotCropOutDir = "",
     [string]$SummaryOut = ""
 )
@@ -454,7 +455,12 @@ $logLines = @(Get-Content -Path $resolvedLogcat)
 
 Assert-Contains $logText "RUSTY_QUEST_NATIVE_RENDERER" "native renderer log"
 Assert-NotRegex $logText "FATAL EXCEPTION|AndroidRuntime|\bANR\b|Application Not Responding" "native renderer log"
-Assert-NotRegex $logText "privateLayerPayloadLinked=true|privateLayerImplementationPath=(?!none\b)\S+" "native renderer private boundary"
+if ($RequirePrivateSlotNoPayload -and $RequirePrivateSlotPayload) {
+    throw "Use either -RequirePrivateSlotNoPayload or -RequirePrivateSlotPayload, not both."
+}
+if (-not $RequirePrivateSlotPayload) {
+    Assert-NotRegex $logText "privateLayerPayloadLinked=true|privateLayerImplementationPath=(?!none\b)\S+" "native renderer private boundary"
+}
 
 $summary = [ordered]@{
     schema = "rusty.quest.native_renderer_runtime_evidence.v1"
@@ -467,7 +473,8 @@ $summary = [ordered]@{
     sdf_visual_checked = [bool]$RequireSdfVisual
     gpu_timestamp_checked = [bool]$RequireGpuTimestampReady
     performance_budget_checked = [bool]$RequirePerformanceBudget
-    private_slot_checked = [bool]$RequirePrivateSlotNoPayload
+    private_slot_checked = ([bool]$RequirePrivateSlotNoPayload -or [bool]$RequirePrivateSlotPayload)
+    private_slot_payload_checked = [bool]$RequirePrivateSlotPayload
 }
 
 $timingScorecard = Get-LatestMarkerLine $logLines "timing-scorecard"
@@ -588,11 +595,17 @@ if ($RequireCameraProjection) {
         "openxrSubmitReady=true",
         "cameraProjectionReady=true",
         "projectionReady=true",
-        "metadataDrivenTargetFootprint=true",
-        "leftCameraId=50",
-        "rightCameraId=51"
+        "metadataDrivenTargetFootprint=true"
     )) {
         Assert-Contains $timingScorecard $token "latest timing-scorecard"
+    }
+    if (-not $RequirePrivateSlotPayload) {
+        foreach ($token in @(
+            "leftCameraId=50",
+            "rightCameraId=51"
+        )) {
+            Assert-Contains $timingScorecard $token "latest timing-scorecard"
+        }
     }
     $staleFrames = Get-MarkerInteger -Line $timingScorecard -Field "stale_frames"
     Assert-True ($staleFrames -le $MaximumStaleFrames) "latest timing-scorecard reports stale_frames=$staleFrames, above max $MaximumStaleFrames"
@@ -746,6 +759,27 @@ if ($RequirePrivateSlotNoPayload) {
     )) {
         Assert-Contains $privateLine $token "latest private-extension-slot marker"
     }
+}
+
+if ($RequirePrivateSlotPayload) {
+    $privateLine = Get-LatestMarkerLine $logLines "private-extension-slot"
+    Assert-True (-not [string]::IsNullOrWhiteSpace($privateLine)) "Missing private-extension-slot marker."
+    foreach ($token in @(
+        "privateLayerSlotReady=true",
+        "privateLayerPublicAbiOnly=false",
+        "privateLayerPayloadLinked=true",
+        "privateLayerImplementationPath=external-private-shader-dir",
+        "privateLayerEnabled=true",
+        "privateLayerReady=true",
+        "privateLayerRendered=true",
+        "privateLayerOutput=resident-private-guide-texture-final",
+        "privateLayerColorEffectActive=true",
+        "privateLayerGuideTargets=5",
+        "privateLayerGuidePasses=6"
+    )) {
+        Assert-Contains $privateLine $token "latest private-extension-slot marker"
+    }
+    $summary.private_slot_payload_line = $privateLine
 }
 
 if (-not [string]::IsNullOrWhiteSpace($SummaryOut)) {

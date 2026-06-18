@@ -47,6 +47,20 @@ pub(crate) const PROP_PERIPHERAL_STRETCH_BLEND_MODE: &str =
     "debug.rustyquest.native_renderer.peripheral.stretch.blend.mode";
 pub(crate) const PROP_PERIPHERAL_STRETCH_DEBUG: &str =
     "debug.rustyquest.native_renderer.peripheral.stretch.debug";
+pub(crate) const PROP_PRIVATE_LAYER_ENABLED: &str =
+    "debug.rustyquest.native_renderer.private_layer.enabled";
+pub(crate) const PROP_PRIVATE_LAYER_SECONDS: &str =
+    "debug.rustyquest.native_renderer.private_layer.layer_seconds";
+pub(crate) const PROP_PRIVATE_LAYER_OVERRIDE: &str =
+    "debug.rustyquest.native_renderer.private_layer.layer_override";
+pub(crate) const PROP_PRIVATE_LAYER_EFFECT0: &str =
+    "debug.rustyquest.native_renderer.private_layer.effect0";
+pub(crate) const PROP_PRIVATE_LAYER_EFFECT1: &str =
+    "debug.rustyquest.native_renderer.private_layer.effect1";
+pub(crate) const PROP_PRIVATE_LAYER_EFFECT2: &str =
+    "debug.rustyquest.native_renderer.private_layer.effect2";
+pub(crate) const PROP_PRIVATE_LAYER_EFFECT3: &str =
+    "debug.rustyquest.native_renderer.private_layer.effect3";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeRendererRenderMode {
@@ -517,6 +531,54 @@ impl Default for NativeProjectionBorderStretchSettings {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NativePrivateLayerSettings {
+    pub(crate) enabled: bool,
+    pub(crate) layer_seconds: f32,
+    pub(crate) layer_override: f32,
+    pub(crate) effect: [f32; 4],
+}
+
+impl NativePrivateLayerSettings {
+    fn from_property_lookup(mut lookup: impl FnMut(&str) -> Option<String>) -> Self {
+        Self {
+            enabled: bool_value(lookup(PROP_PRIVATE_LAYER_ENABLED), false),
+            layer_seconds: f32_clamped_value(lookup(PROP_PRIVATE_LAYER_SECONDS), 5.0, 0.25, 60.0),
+            layer_override: f32_clamped_value(lookup(PROP_PRIVATE_LAYER_OVERRIDE), -1.0, -1.0, 5.0),
+            effect: [
+                f32_clamped_value(lookup(PROP_PRIVATE_LAYER_EFFECT0), 1.0, 0.0, 4.0),
+                f32_clamped_value(lookup(PROP_PRIVATE_LAYER_EFFECT1), 1.0, 0.0, 4.0),
+                f32_clamped_value(lookup(PROP_PRIVATE_LAYER_EFFECT2), 0.0, 0.0, 0.25),
+                f32_clamped_value(lookup(PROP_PRIVATE_LAYER_EFFECT3), 1.0, 0.0, 4.0),
+            ],
+        }
+    }
+
+    pub(crate) fn marker_fields(self) -> String {
+        format!(
+            "privateLayerEnabled={} privateLayerSeconds={:.3} privateLayerOverride={:.1} privateLayerEffect0={:.3} privateLayerEffect1={:.3} privateLayerEffect2={:.5} privateLayerEffect3={:.3}",
+            self.enabled,
+            self.layer_seconds,
+            self.layer_override,
+            self.effect[0],
+            self.effect[1],
+            self.effect[2],
+            self.effect[3]
+        )
+    }
+}
+
+impl Default for NativePrivateLayerSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            layer_seconds: 5.0,
+            layer_override: -1.0,
+            effect: [1.0, 1.0, 0.0, 1.0],
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct NativeProjectionBorderStretchPush {
     pub(crate) params: [f32; 4],
@@ -536,6 +598,7 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) hand_mesh_graft_copy_scale: f32,
     pub(crate) hand_mesh_real_hands_visible: bool,
     pub(crate) projection_border_stretch_settings: NativeProjectionBorderStretchSettings,
+    pub(crate) private_layer_settings: NativePrivateLayerSettings,
 }
 
 impl NativeRendererRuntimeOptions {
@@ -566,6 +629,7 @@ impl NativeRendererRuntimeOptions {
             || bool_value(lookup(PROP_HAND_MESH_REAL_HANDS_VISIBLE), false);
         let projection_border_stretch_settings =
             NativeProjectionBorderStretchSettings::from_property_lookup(&mut lookup);
+        let private_layer_settings = NativePrivateLayerSettings::from_property_lookup(&mut lookup);
 
         Self {
             render_mode,
@@ -582,6 +646,7 @@ impl NativeRendererRuntimeOptions {
             hand_mesh_graft_copy_scale,
             hand_mesh_real_hands_visible,
             projection_border_stretch_settings,
+            private_layer_settings,
         }
     }
 
