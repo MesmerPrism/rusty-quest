@@ -348,6 +348,11 @@ extern "C" {
     pub fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *mut c_void;
 }
 
+#[link(name = "c")]
+extern "C" {
+    pub fn close(fd: c_int) -> c_int;
+}
+
 #[link(name = "camera2ndk")]
 extern "C" {
     pub fn ACameraManager_create() -> *mut ACameraManager;

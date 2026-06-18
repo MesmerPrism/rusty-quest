@@ -228,8 +228,12 @@ Vulkan fence for that submitted frame slot has completed. The reader6 and
 reader8 hold-sync variants keep the same visual route but raise
 `debug.rustyquest.native_renderer.camera.reader_max_images` for ImageReader
 queue-headroom A/B checks. The lower-latency
-`AImage_deleteAsync`/sync-fd release path remains a separate implementation and
-headset validation gate.
+`AImage_deleteAsync`/sync-fd release path is available as
+`debug.rustyquest.native_renderer.camera.sync_mode=delete-async-release-fence`.
+It uses the async ImageReader acquire/release APIs and reports acquire-fence fd
+presence, while markers still call out that Vulkan external-semaphore ownership
+transfer is pending. Keep the hold-sync profile as the fence-backed safety
+comparison.
 
 Acceptance caveat: the current visual acceptance covers the native diagnostic
 projection, recorded hand replay overlay, metadata-owned camera target area,

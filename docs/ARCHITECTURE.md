@@ -92,7 +92,8 @@ noise reduction with a fast fallback, and edge enhancement off where supported.
 until the submitted Vulkan frame-slot fence retires. Runtime markers distinguish
 `cameraSyncRequested` from `cameraSyncActive`; `early-delete-ahb-retained`
 remains the default baseline, hold-sync is an active diagnostic, and the
-lower-latency `AImage_deleteAsync`/sync-fd path is still future work. The Vulkan
+lower-latency `AImage_deleteAsync`/sync-fd mode is an active async ImageReader
+diagnostic with Vulkan external-semaphore ownership still marked pending. The Vulkan
 import path logs external-format feature bits and selects YCbCr chroma/sampler
 filters from the advertised features. Camera import and stereo-descriptor cache
 eviction is allowed only for resources that are not protected by the frame being

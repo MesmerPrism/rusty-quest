@@ -18,7 +18,7 @@ use crate::native_camera_metadata::{
 };
 use crate::{
     acamera_sys::{
-        dlsym, media_status_t, ACameraCaptureFailure, ACameraCaptureSession,
+        close, dlsym, media_status_t, ACameraCaptureFailure, ACameraCaptureSession,
         ACameraCaptureSession_captureCallbacks, ACameraCaptureSession_close,
         ACameraCaptureSession_setRepeatingRequest, ACameraCaptureSession_stateCallbacks,
         ACameraCaptureSession_stopRepeating, ACameraDevice, ACameraDevice_StateCallbacks,
@@ -35,9 +35,9 @@ use crate::{
         ACaptureSessionOutputContainer_create, ACaptureSessionOutputContainer_free,
         ACaptureSessionOutput_create, ACaptureSessionOutput_free, AImage, AImageReader,
         AImageReader_BufferRemovedListener, AImageReader_ImageListener,
-        AImageReader_acquireLatestImage, AImageReader_delete, AImageReader_getWindow,
-        AImageReader_newWithUsage, AImageReader_setBufferRemovedListener,
-        AImageReader_setImageListener, AImage_delete, AImage_getHardwareBuffer,
+        AImageReader_acquireLatestImage, AImageReader_acquireLatestImageAsync, AImageReader_delete,
+        AImageReader_getWindow, AImageReader_newWithUsage, AImageReader_setBufferRemovedListener,
+        AImageReader_setImageListener, AImage_delete, AImage_deleteAsync, AImage_getHardwareBuffer,
         AImage_getTimestamp, ANativeWindow_acquire, ANativeWindow_release,
         ACAMERA_CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES, ACAMERA_CONTROL_AE_TARGET_FPS_RANGE,
         ACAMERA_EDGE_AVAILABLE_EDGE_MODES, ACAMERA_EDGE_MODE, ACAMERA_EDGE_MODE_FAST,
@@ -735,23 +735,16 @@ impl NativeCameraStream {
         marker(
             "camera-sync",
             format!(
-                "status=config side={} cameraId={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} imageAcquireApi=AImageReader_acquireLatestImage acquireFenceFd=-1 imageReleaseApi={} releaseFenceFd=-1 producerConsumerSync={} ahbHandleRetained=true",
+                "status=config side={} cameraId={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} imageAcquireApi={} acquireFenceFd=-1 imageReleaseApi={} releaseFenceFd=-1 producerConsumerSync={} ahbHandleRetained=true",
                 side.stable_id(),
                 camera_id.to_string_lossy(),
                 camera_quality_profile.marker_value(),
                 camera_sync_mode.marker_value(),
                 camera_sync_mode.active_marker_value(),
                 camera_sync_mode.implementation_status(),
-                if matches!(camera_sync_mode, NativeCameraSyncMode::HoldImageUntilGpuFence) {
-                    "AImage_delete-on-vulkan-frame-fence"
-                } else {
-                    "AImage_delete"
-                },
-                if matches!(camera_sync_mode, NativeCameraSyncMode::HoldImageUntilGpuFence) {
-                    "image-slot-held-until-vulkan-frame-fence"
-                } else {
-                    "not-fence-backed-yet"
-                },
+                image_acquire_api_marker(camera_sync_mode),
+                image_release_api_marker(camera_sync_mode),
+                producer_consumer_sync_marker(camera_sync_mode),
             ),
         );
 
@@ -1199,6 +1192,47 @@ fn optional_u8_mode_marker(value: Option<u8>, label: fn(u8) -> &'static str) -> 
         .unwrap_or_else(|| "none".to_string())
 }
 
+fn image_acquire_api_marker(sync_mode: NativeCameraSyncMode) -> &'static str {
+    if matches!(sync_mode, NativeCameraSyncMode::DeleteAsyncReleaseFence) {
+        "AImageReader_acquireLatestImageAsync"
+    } else {
+        "AImageReader_acquireLatestImage"
+    }
+}
+
+fn image_release_api_marker(sync_mode: NativeCameraSyncMode) -> &'static str {
+    match sync_mode {
+        NativeCameraSyncMode::HoldImageUntilGpuFence => "AImage_delete-on-vulkan-frame-fence",
+        NativeCameraSyncMode::DeleteAsyncReleaseFence => "AImage_deleteAsync",
+        NativeCameraSyncMode::EarlyDeleteAhbRetained => "AImage_delete",
+    }
+}
+
+fn producer_consumer_sync_marker(sync_mode: NativeCameraSyncMode) -> &'static str {
+    match sync_mode {
+        NativeCameraSyncMode::HoldImageUntilGpuFence => "image-slot-held-until-vulkan-frame-fence",
+        NativeCameraSyncMode::DeleteAsyncReleaseFence => {
+            "async-acquire-fence-observed-vulkan-semaphore-pending"
+        }
+        NativeCameraSyncMode::EarlyDeleteAhbRetained => "not-fence-backed-yet",
+    }
+}
+
+unsafe fn delete_image_for_sync_mode(image: *mut AImage, sync_mode: NativeCameraSyncMode) {
+    if matches!(sync_mode, NativeCameraSyncMode::DeleteAsyncReleaseFence) {
+        AImage_deleteAsync(image, -1);
+    } else {
+        AImage_delete(image);
+    }
+}
+
+unsafe fn close_fd_if_valid(fd: i32) -> bool {
+    if fd < 0 {
+        return false;
+    }
+    close(fd) == 0
+}
+
 fn noise_reduction_mode_label(value: u8) -> &'static str {
     match value {
         ACAMERA_NOISE_REDUCTION_MODE_OFF => "OFF",
@@ -1348,8 +1382,17 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
         return;
     }
 
+    let async_release_fence = matches!(
+        reader_context.camera_sync_mode,
+        NativeCameraSyncMode::DeleteAsyncReleaseFence
+    );
     let mut image: *mut AImage = ptr::null_mut();
-    let acquire_result = AImageReader_acquireLatestImage(reader, &mut image);
+    let mut acquire_fence_fd = -1_i32;
+    let acquire_result = if async_release_fence {
+        AImageReader_acquireLatestImageAsync(reader, &mut image, &mut acquire_fence_fd)
+    } else {
+        AImageReader_acquireLatestImage(reader, &mut image)
+    };
     if acquire_result != 0 || image.is_null() {
         let acquire_error_count = reader_context
             .counters
@@ -1359,13 +1402,18 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
         marker(
             "camera-acquire",
             format!(
-                "status=error side={} cameraId={} acquireResult={} imageNull={} readerMaxImages={} acquireErrorCount={} queueExhaustionPossible=true imageAcquireApi=AImageReader_acquireLatestImage",
+                "status=error side={} cameraId={} acquireResult={} imageNull={} readerMaxImages={} acquireErrorCount={} queueExhaustionPossible=true imageAcquireApi={}",
                 reader_context.side.stable_id(),
                 reader_context.camera_id,
                 acquire_result,
                 image.is_null(),
                 reader_context.camera_reader_max_images,
-                acquire_error_count
+                acquire_error_count,
+                if async_release_fence {
+                    "AImageReader_acquireLatestImageAsync"
+                } else {
+                    "AImageReader_acquireLatestImage"
+                }
             ),
         );
         return;
@@ -1396,7 +1444,8 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
                     reader_context.side.stable_id(),
                     error
                 ));
-                AImage_delete(image);
+                let _ = close_fd_if_valid(acquire_fence_fd);
+                delete_image_for_sync_mode(image, reader_context.camera_sync_mode);
                 return;
             }
         };
@@ -1479,7 +1528,7 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
         marker(
             "hwb-frame-acquired",
             format!(
-                "sourceFrame={} cameraId={} side={} hardwareBufferId={} importSequence={} timestampNs={} imageDataspace={} imageDataspaceStatus={} descriptorShape=combined-immutable-sampler-ycbcr-conversion descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} textureUpdateCadence=on-camera-frame releaseRetireCount={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} imageAcquireApi=AImageReader_acquireLatestImage acquireFenceFd=-1 imageReleaseApi={} releaseFenceFd=-1 producerConsumerSync={} ahbHandleRetained=true imageLeaseActive={} bufferRemovedListenerRegistered={} hwbNativeImportReady=true gpuImportWorked=false vulkanExternalImportReady=false visualAcceptance=false {}",
+                "sourceFrame={} cameraId={} side={} hardwareBufferId={} importSequence={} timestampNs={} imageDataspace={} imageDataspaceStatus={} descriptorShape=combined-immutable-sampler-ycbcr-conversion descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} textureUpdateCadence=on-camera-frame releaseRetireCount={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} imageAcquireApi={} acquireFenceFd={} acquireFenceFdPresent={} imageReleaseApi={} releaseFenceFd=-1 producerConsumerSync={} ahbHandleRetained=true imageLeaseActive={} bufferRemovedListenerRegistered={} hwbNativeImportReady=true gpuImportWorked=false vulkanExternalImportReady=false visualAcceptance=false {}",
                 frame_sequence,
                 reader_context.camera_id,
                 reader_context.side.stable_id(),
@@ -1499,16 +1548,11 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
                 reader_context.camera_sync_mode.marker_value(),
                 reader_context.camera_sync_mode.active_marker_value(),
                 reader_context.camera_sync_mode.implementation_status(),
-                if hold_image_until_gpu_fence {
-                    "AImage_delete-on-vulkan-frame-fence"
-                } else {
-                    "AImage_delete"
-                },
-                if hold_image_until_gpu_fence {
-                    "image-slot-held-until-vulkan-frame-fence"
-                } else {
-                    "not-fence-backed-yet"
-                },
+                image_acquire_api_marker(reader_context.camera_sync_mode),
+                acquire_fence_fd,
+                acquire_fence_fd >= 0,
+                image_release_api_marker(reader_context.camera_sync_mode),
+                producer_consumer_sync_marker(reader_context.camera_sync_mode),
                 hold_image_until_gpu_fence,
                 reader_context.buffer_removed_listener_registered,
                 capture_result.frame_marker_fields()
@@ -1526,7 +1570,10 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
         ));
     }
     if !image_retained_by_frame {
-        AImage_delete(image);
+        let _ = close_fd_if_valid(acquire_fence_fd);
+        delete_image_for_sync_mode(image, reader_context.camera_sync_mode);
+    } else {
+        let _ = close_fd_if_valid(acquire_fence_fd);
     }
 }
 

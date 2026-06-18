@@ -388,7 +388,7 @@ impl NativeCameraSyncMode {
         match self {
             Self::EarlyDeleteAhbRetained => "early-delete-ahb-retained",
             Self::HoldImageUntilGpuFence => "hold-image-until-gpu-fence",
-            Self::DeleteAsyncReleaseFence => "early-delete-ahb-retained",
+            Self::DeleteAsyncReleaseFence => "delete-async-release-fence",
         }
     }
 
@@ -396,7 +396,9 @@ impl NativeCameraSyncMode {
         match self {
             Self::EarlyDeleteAhbRetained => "active-baseline",
             Self::HoldImageUntilGpuFence => "active-diagnostic",
-            Self::DeleteAsyncReleaseFence => "declared-diagnostic-not-active-yet",
+            Self::DeleteAsyncReleaseFence => {
+                "active-diagnostic-sync-fd-observed-vulkan-semaphore-pending"
+            }
         }
     }
 }
@@ -1576,11 +1578,11 @@ mod tests {
         );
         assert_eq!(
             direct.camera_sync_mode.active_marker_value(),
-            "early-delete-ahb-retained"
+            "delete-async-release-fence"
         );
         assert_eq!(
             direct.camera_sync_mode.implementation_status(),
-            "declared-diagnostic-not-active-yet"
+            "active-diagnostic-sync-fd-observed-vulkan-semaphore-pending"
         );
         assert!(direct.camera_luma_diagnostic_enabled);
         assert_eq!(

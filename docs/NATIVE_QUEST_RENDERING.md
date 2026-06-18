@@ -305,7 +305,8 @@ The runtime scaffold:
 - can run the conservative hold-sync diagnostic, where the camera callback
   retains the sampled `AImage` and the render loop releases that lease after
   the submitted Vulkan frame-slot fence completes; `AImage_deleteAsync` with
-  sync-fd ownership transfer remains a later lower-latency path;
+  async ImageReader acquire/release is available as a lower-latency diagnostic,
+  while Vulkan external-semaphore ownership transfer remains explicitly pending;
 - builds a public low-resolution guide graph from those imported camera
   descriptors: per-eye 384x384 downsample, horizontal 5-tap blur, vertical
   5-tap blur, and final guide-texture projection inside the same metadata

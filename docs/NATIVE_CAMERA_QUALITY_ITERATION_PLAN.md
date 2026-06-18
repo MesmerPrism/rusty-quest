@@ -18,7 +18,9 @@ effects, private tuning, and Morphovision-specific behavior are out of scope.
   through cached descriptors.
 - The conservative hold-sync path retains sampled `AImage` leases until the
   submitted Vulkan frame-slot fence completes. The lower-latency
-  `AImage_deleteAsync`/sync-fd path is not implemented yet.
+  `AImage_deleteAsync`/sync-fd diagnostic path is active for ImageReader
+  acquire/release API coverage, while full Vulkan external-semaphore ownership
+  remains explicitly marked pending.
 
 ## Scope
 
@@ -131,6 +133,14 @@ ratio from a frame-slot readback buffer. The baseline leaves this disabled.
 - Use async ImageReader acquire/release APIs, Vulkan external semaphores, and
   explicit ownership transfer.
 - Keep hold-sync as the fallback diagnostic path.
+
+Implemented shape: `delete-async-release-fence` is now an active diagnostic
+mode that uses `AImageReader_acquireLatestImageAsync`, reports acquire fence fd
+presence, closes observed acquire fds to avoid leaks, and releases images with
+`AImage_deleteAsync`. Markers deliberately report
+`active-diagnostic-sync-fd-observed-vulkan-semaphore-pending` because the public
+Vulkan device setup does not yet enable/import external semaphore fds. The
+hold-sync path remains the fence-backed safety path.
 
 ### Slice 7: Stereo Pairing
 
