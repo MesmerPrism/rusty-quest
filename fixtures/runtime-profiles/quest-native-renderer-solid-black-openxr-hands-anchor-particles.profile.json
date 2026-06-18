@@ -1,0 +1,154 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.solid_black_openxr_hands_anchor_particles",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.render.mode",
+    "debug.rustyquest.native_renderer.camera.output",
+    "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.input.source",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha",
+    "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.per_hand",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.radius_m",
+    "debug.rustyquest.native_renderer.sdf.visual.enabled",
+    "debug.rustyquest.native_renderer.sdf.update_period_frames",
+    "debug.rustyquest.native_renderer.processing.layer",
+    "debug.rustyquest.native_renderer.private_layer.enabled",
+    "debug.rustyquest.native_renderer.private_layer.effect0",
+    "debug.rustyquest.native_renderer.private_layer.effect1",
+    "debug.rustyquest.native_renderer.private_layer.effect2",
+    "debug.rustyquest.native_renderer.private_layer.effect3"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.render.mode",
+      "value": "solid-black-openxr-hands-anchor-particles",
+      "source_setting_id": "native_renderer.render.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.output",
+      "value": "disabled",
+      "source_setting_id": "native_renderer.camera.output"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.replay.visual_proof.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.input.source",
+      "value": "live-meta-openxr-hand-tracking",
+      "source_setting_id": "native_renderer.hand_mesh.input.source"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv",
+      "value": "0.0,0.0",
+      "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.offset_uv"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha",
+      "value": "0.88",
+      "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.alpha"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.graft_copies.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.real_hands.visible"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
+      "value": "true",
+      "source_setting_id": "native_renderer.hand_anchor_particles.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.per_hand",
+      "value": "320",
+      "source_setting_id": "native_renderer.hand_anchor_particles.per_hand"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.radius_m",
+      "value": "0.0045",
+      "source_setting_id": "native_renderer.hand_anchor_particles.radius_m"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.sdf.visual.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.sdf.visual.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.sdf.update_period_frames",
+      "value": "2",
+      "source_setting_id": "native_renderer.sdf.update_period_frames"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.processing.layer",
+      "value": "blur",
+      "source_setting_id": "native_renderer.processing.layer"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_layer.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.private_layer.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_layer.effect0",
+      "value": "1.0",
+      "source_setting_id": "native_renderer.private_layer.effect0"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_layer.effect1",
+      "value": "1.0",
+      "source_setting_id": "native_renderer.private_layer.effect1"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_layer.effect2",
+      "value": "0.0",
+      "source_setting_id": "native_renderer.private_layer.effect2"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_layer.effect3",
+      "value": "1.0",
+      "source_setting_id": "native_renderer.private_layer.effect3"
+    }
+  ],
+  "expected_markers": [
+    "RUSTY_QUEST_NATIVE_RENDERER channel=render-mode",
+    "renderMode=solid-black-openxr-hands-anchor-particles",
+    "customStereoProjectionEnabled=false",
+    "nativePassthroughRequested=false",
+    "solidBlackBackground=true",
+    "openxrDefaultHandVisualRequested=true",
+    "sdfVisualEnabled=false",
+    "handMeshRealHandsVisible=false",
+    "handMeshGraftCopiesEnabled=false",
+    "RUSTY_QUEST_NATIVE_RENDERER channel=hand-anchor-particles",
+    "handAnchorParticlesEnabled=true",
+    "handAnchorParticlesPerHand=320",
+    "customHandMeshVisualRequested=false",
+    "handAnchorParticleCoordinateSpace=openxr-reference-space",
+    "handAnchorParticleMask=static-feather-dot-luminance-alpha",
+    "handAnchorParticleCpuExpandedUploadPerFrame=false",
+    "handAnchorParticleMeshUploadPerFrame=false",
+    "compactHandInputSourceMode=live-meta-openxr-hand-tracking",
+    "selectsLiveFrame=true",
+    "allowsRecordedFallback=false"
+  ],
+  "validation_commands": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json -DryRun -Out local-artifacts/native-renderer-solid-black-openxr-hands-anchor-particles-property-write-plan.json"
+  ]
+}

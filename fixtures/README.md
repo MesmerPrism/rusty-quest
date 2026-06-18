@@ -2,8 +2,11 @@
 
 - `runtime-profiles/`: valid Quest runtime profiles, including separate native
   renderer profiles for no-real-hands recorded replay acceptance and the later
-  live-hand visual diagnostic retest. The HWB peripheral stretch profile keeps
-  the custom Camera2 projection route active while enabling the public
+  live-hand visual diagnostic retest. The direct-HWB camera quality profile
+  forces `debug.rustyquest.native_renderer.camera.output=direct-hwb` and
+  disables hand/SDF/private overlays so camera acquisition and projection can
+  be inspected before guide or private processing. The HWB peripheral stretch
+  profile keeps the custom Camera2 projection route active while enabling the public
   full-eye target-edge stretch/blend border profile. The native passthrough
   graft-only profile keeps the normal projection profiles available while
   testing only fingertip graft models over `XR_FB_passthrough`, with custom
@@ -12,6 +15,10 @@
   hand meshes from the GPU-skinned resident buffers. The solid black
   hands-and-grafts profile disables both passthrough and custom Camera2
   projection so only an opaque black background and hand visuals are submitted.
+  The solid black OpenXR-hands anchor-particles profile keeps the black
+  background and live compact hand input but disables the app's custom hand
+  mesh and graft visuals, requests the runtime/default OpenXR hand visual, and
+  draws only resident-mesh anchor particles for topology comparison.
 - `native-renderer/`: valid Quest-native renderer plans, timing scorecards, and
   public recorded-hand topology/shape fixtures for pure-HWB blur, GPU mesh
   boundary, resident compact-joint GPU-skinned visual examples,

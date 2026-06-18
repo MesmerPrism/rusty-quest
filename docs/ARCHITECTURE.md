@@ -120,7 +120,12 @@ same GPU-skinned resident live hand meshes draw under the graft instances while
 Camera2/custom stereo projection and SDF remain disabled. The solid black
 hands-and-grafts profile uses no `XR_FB_passthrough` layer at all: it clears the
 submitted projection layer to opaque black and draws only the live base hand
-meshes plus graft instances. `targetSpaceMeshToSdfKernelAvailable=true` means the
+meshes plus graft instances. The solid black OpenXR-hands anchor-particles
+profile keeps the same opaque black background but disables the app's custom
+hand mesh and graft visuals; the resident skinned mesh remains GPU-owned as the
+anchor source, and only particle billboards are drawn while the runtime/default
+OpenXR hand visual is requested for topology comparison.
+`targetSpaceMeshToSdfKernelAvailable=true` means the
 opt-in target-space SDF visual route is compiled into the renderer;
 `meshToSdfKernel=true` appears only for frames where that opt-in GPU kernel
 actually ran. Cached field reuse is

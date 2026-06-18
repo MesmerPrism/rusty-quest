@@ -221,6 +221,11 @@ For a non-passthrough control view,
 `quest-native-renderer-solid-black-hands-and-grafts.profile.json` uses the same
 live hand mesh plus graft visual path, but submits only an opaque black
 projection layer behind it.
+`quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json`
+is the topology-comparison variant: it keeps live compact hand input and the
+resident skinned mesh buffers, but disables the app's custom hand mesh/graft
+draw, requests the runtime/default OpenXR hand visual, and draws only the
+world-space anchor particles over a solid black background.
 The smoke wrapper has an explicit evidence mode: default `ReplayVisualProof`
 uses the recorded replay profile and replay/SDF marker gates, while
 `LiveVisualDiagnosticCaveat` applies the live-hand diagnostic profile and asks
@@ -274,6 +279,10 @@ The runtime scaffold:
   images with immutable YCbCr sampler conversion;
 - renders the direct-HWB camera diagnostic only inside metadata-owned per-eye
   target-screen rectangles, with source raster Y flip controlled by metadata;
+- can force the direct-HWB diagnostic as the final camera output with
+  `debug.rustyquest.native_renderer.camera.output=direct-hwb`, bypassing
+  guide/private projection outputs for raw acquisition and projection quality
+  checks;
 - builds a public low-resolution guide graph from those imported camera
   descriptors: per-eye 384x384 downsample, horizontal 5-tap blur, vertical
   5-tap blur, and final guide-texture projection inside the same metadata
