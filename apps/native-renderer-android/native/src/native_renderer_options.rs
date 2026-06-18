@@ -31,6 +31,8 @@ pub(crate) const PROP_HAND_ANCHOR_PARTICLES_PER_HAND: &str =
     "debug.rustyquest.native_renderer.hand_anchor_particles.per_hand";
 pub(crate) const PROP_HAND_ANCHOR_PARTICLES_RADIUS_M: &str =
     "debug.rustyquest.native_renderer.hand_anchor_particles.radius_m";
+pub(crate) const PROP_HAND_ANCHOR_PARTICLES_DYNAMICS: &str =
+    "debug.rustyquest.native_renderer.hand_anchor_particles.dynamics";
 pub(crate) const PROP_PROCESSING_LAYER: &str = "debug.rustyquest.native_renderer.processing.layer";
 pub(crate) const PROP_PROJECTION_BORDER_POLICY: &str =
     "debug.rustyquest.native_renderer.projection.border.policy";
@@ -308,6 +310,7 @@ pub(crate) struct NativeHandAnchorParticleSettings {
     pub(crate) enabled: bool,
     pub(crate) particles_per_hand: u32,
     pub(crate) radius_m: f32,
+    pub(crate) dynamics: NativeHandAnchorParticleDynamics,
 }
 
 impl NativeHandAnchorParticleSettings {
@@ -326,13 +329,24 @@ impl NativeHandAnchorParticleSettings {
                 0.001,
                 0.040,
             ),
+            dynamics: NativeHandAnchorParticleDynamics::from_property(lookup(
+                PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
+            )),
         }
+    }
+
+    pub(crate) fn private_gpu_payload_requested(self) -> bool {
+        self.dynamics == NativeHandAnchorParticleDynamics::PrivateGpuPayload
     }
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "handAnchorParticlesEnabled={} handAnchorParticlesPerHand={} handAnchorParticleRadiusMeters={:.5} handAnchorParticlePath=resident-skinned-mesh-coordinate-anchor-billboards handAnchorParticleCoordinateSpace=openxr-reference-space handAnchorParticleMask=static-feather-dot-luminance-alpha handAnchorParticleAnimation=false handAnchorParticleCpuExpandedUploadPerFrame=false handAnchorParticleMeshUploadPerFrame=false",
-            self.enabled, self.particles_per_hand, self.radius_m
+            "handAnchorParticlesEnabled={} handAnchorParticlesPerHand={} handAnchorParticleRadiusMeters={:.5} handAnchorParticleDynamics={} handAnchorParticlePrivateGpuPayloadRequested={} handAnchorParticlePath=resident-skinned-mesh-coordinate-anchor-billboards handAnchorParticleCoordinateSpace=openxr-reference-space handAnchorParticleMask=static-feather-dot-luminance-alpha handAnchorParticleAnimation=false handAnchorParticleCpuExpandedUploadPerFrame=false handAnchorParticleMeshUploadPerFrame=false",
+            self.enabled,
+            self.particles_per_hand,
+            self.radius_m,
+            self.dynamics.marker_value(),
+            self.private_gpu_payload_requested()
         )
     }
 }
@@ -343,6 +357,31 @@ impl Default for NativeHandAnchorParticleSettings {
             enabled: false,
             particles_per_hand: 256,
             radius_m: 0.0045,
+            dynamics: NativeHandAnchorParticleDynamics::DeterministicAnchors,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeHandAnchorParticleDynamics {
+    DeterministicAnchors,
+    PrivateGpuPayload,
+}
+
+impl NativeHandAnchorParticleDynamics {
+    fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "private" | "private-gpu" | "private-gpu-payload" | "kuramoto" | "kuramoto-gpu" => {
+                Self::PrivateGpuPayload
+            }
+            _ => Self::DeterministicAnchors,
+        }
+    }
+
+    fn marker_value(self) -> &'static str {
+        match self {
+            Self::DeterministicAnchors => "deterministic-anchors",
+            Self::PrivateGpuPayload => "private-gpu-payload",
         }
     }
 }
@@ -872,16 +911,16 @@ mod tests {
 
     use super::{
         CompactHandInputSourceMode, NativeCameraOutputMode, NativeRendererRuntimeOptions,
-        PROP_CAMERA_OUTPUT_MODE, PROP_ENABLE_SDF_VISUAL, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
-        PROP_HAND_ANCHOR_PARTICLES_PER_HAND, PROP_HAND_ANCHOR_PARTICLES_RADIUS_M,
-        PROP_HAND_MESH_GRAFT_COPIES_ENABLED, PROP_HAND_MESH_GRAFT_COPY_SCALE,
-        PROP_HAND_MESH_INPUT_SOURCE, PROP_HAND_MESH_REAL_HANDS_VISIBLE,
-        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED,
-        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV, PROP_PERIPHERAL_STRETCH_BLEND_MODE,
-        PROP_PERIPHERAL_STRETCH_CORE_SCALE, PROP_PERIPHERAL_STRETCH_EDGE_INSET_UV,
-        PROP_PERIPHERAL_STRETCH_MAX_INSET_UV, PROP_PROCESSING_LAYER,
-        PROP_PROJECTION_BORDER_OPACITY, PROP_PROJECTION_BORDER_POLICY, PROP_RENDER_MODE,
-        PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SDF_UPDATE_PERIOD_FRAMES,
+        PROP_CAMERA_OUTPUT_MODE, PROP_ENABLE_SDF_VISUAL, PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
+        PROP_HAND_ANCHOR_PARTICLES_ENABLED, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
+        PROP_HAND_ANCHOR_PARTICLES_RADIUS_M, PROP_HAND_MESH_GRAFT_COPIES_ENABLED,
+        PROP_HAND_MESH_GRAFT_COPY_SCALE, PROP_HAND_MESH_INPUT_SOURCE,
+        PROP_HAND_MESH_REAL_HANDS_VISIBLE, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA,
+        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV,
+        PROP_PERIPHERAL_STRETCH_BLEND_MODE, PROP_PERIPHERAL_STRETCH_CORE_SCALE,
+        PROP_PERIPHERAL_STRETCH_EDGE_INSET_UV, PROP_PERIPHERAL_STRETCH_MAX_INSET_UV,
+        PROP_PROCESSING_LAYER, PROP_PROJECTION_BORDER_OPACITY, PROP_PROJECTION_BORDER_POLICY,
+        PROP_RENDER_MODE, PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SDF_UPDATE_PERIOD_FRAMES,
     };
 
     fn options_from(values: &[(&str, &str)]) -> NativeRendererRuntimeOptions {
@@ -1148,6 +1187,7 @@ mod tests {
             (PROP_HAND_ANCHOR_PARTICLES_ENABLED, "on"),
             (PROP_HAND_ANCHOR_PARTICLES_PER_HAND, "99999"),
             (PROP_HAND_ANCHOR_PARTICLES_RADIUS_M, "0.2"),
+            (PROP_HAND_ANCHOR_PARTICLES_DYNAMICS, "private-gpu-payload"),
         ]);
 
         assert!(options.hand_anchor_particle_settings.enabled);
@@ -1156,7 +1196,11 @@ mod tests {
             4096
         );
         assert_eq!(options.hand_anchor_particle_settings.radius_m, 0.040);
+        assert!(options
+            .hand_anchor_particle_settings
+            .private_gpu_payload_requested());
         let fields = options.hand_anchor_particle_settings.marker_fields();
+        assert!(fields.contains("handAnchorParticleDynamics=private-gpu-payload"));
         assert!(fields.contains("handAnchorParticleCoordinateSpace=openxr-reference-space"));
         assert!(fields.contains("handAnchorParticleCpuExpandedUploadPerFrame=false"));
     }

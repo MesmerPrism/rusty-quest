@@ -19,12 +19,16 @@ fn main() {
     println!("cargo:rerun-if-changed=shaders/hand_mesh_visual.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/hand_anchor_particles.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/hand_anchor_particles.frag.glsl");
+    println!("cargo:rerun-if-changed=shaders/private_kuramoto_particles_placeholder.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/private_layer_placeholder.frag.glsl");
     println!(
         "cargo:rerun-if-changed=../../../fixtures/native-renderer/recorded-hand-replay-public-shape.json"
     );
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_DATA_DIR");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_SHADER");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_SHADER_DIR");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_SHADER_DIR");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER");
     println!(
@@ -35,6 +39,9 @@ fn main() {
     write_recorded_hand_replay_source(&out_dir);
     let private_layer_sources = private_layer_shader_sources();
     write_private_layer_payload_config(&out_dir, private_layer_sources.is_some());
+    let private_kuramoto_payload = private_kuramoto_payload_sources();
+    write_private_kuramoto_payload_config(&out_dir, private_kuramoto_payload.as_ref());
+    write_private_kuramoto_payload_files(&out_dir, private_kuramoto_payload.as_ref());
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("android") {
         return;
@@ -123,12 +130,33 @@ fn main() {
         Path::new("shaders/hand_anchor_particles.frag.glsl"),
         &out_dir.join("hand_anchor_particles.frag.spv"),
     );
+    if let Some(payload) = private_kuramoto_payload.as_ref() {
+        println!("cargo:rerun-if-changed={}", payload.shader.display());
+        compile_shader(
+            &glslc,
+            "compute",
+            &payload.shader,
+            &out_dir.join("private_kuramoto_particles.comp.spv"),
+        );
+    } else {
+        compile_shader(
+            &glslc,
+            "compute",
+            Path::new("shaders/private_kuramoto_particles_placeholder.comp.glsl"),
+            &out_dir.join("private_kuramoto_particles.comp.spv"),
+        );
+    }
     compile_private_layer_payload(&glslc, private_layer_sources.as_ref(), &out_dir);
 }
 
 struct PrivateLayerShaderSources {
     guide: PathBuf,
     projection: PathBuf,
+}
+
+struct PrivateKuramotoPayloadSources {
+    data_dir: PathBuf,
+    shader: PathBuf,
 }
 
 const PRIVATE_LAYER_GUIDE_OUTPUTS: [(&str, &str); 6] = [
@@ -190,6 +218,33 @@ fn write_private_layer_payload_config(out_dir: &Path, payload_linked: bool) {
     });
 }
 
+fn write_private_kuramoto_payload_config(
+    out_dir: &Path,
+    payload: Option<&PrivateKuramotoPayloadSources>,
+) {
+    let output = out_dir.join("private_kuramoto_payload_config.rs");
+    let payload_linked = payload.is_some();
+    let (data_path, shader_path) = payload
+        .map(|payload| {
+            (
+                payload.data_dir.display().to_string(),
+                payload.shader.display().to_string(),
+            )
+        })
+        .unwrap_or_else(|| ("none".to_string(), "none".to_string()));
+    let source = format!(
+        "pub(crate) const PRIVATE_KURAMOTO_PAYLOAD_LINKED: bool = {payload_linked};\npub(crate) const PRIVATE_KURAMOTO_IMPLEMENTATION_PATH: &str = \"{}\";\npub(crate) const PRIVATE_KURAMOTO_DATA_PATH: &str = \"{}\";\npub(crate) const PRIVATE_KURAMOTO_SAMPLE_COUNT: usize = 1024;\n",
+        rust_string_literal(&shader_path),
+        rust_string_literal(&data_path),
+    );
+    fs::write(&output, source).unwrap_or_else(|error| {
+        panic!(
+            "failed to write generated private Kuramoto payload config {}: {error}",
+            output.display()
+        )
+    });
+}
+
 fn private_layer_shader_sources() -> Option<PrivateLayerShaderSources> {
     let explicit_guide = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER")
         .ok()
@@ -214,6 +269,97 @@ fn private_layer_shader_sources() -> Option<PrivateLayerShaderSources> {
         Some(PrivateLayerShaderSources { guide, projection })
     } else {
         None
+    }
+}
+
+fn private_kuramoto_payload_sources() -> Option<PrivateKuramotoPayloadSources> {
+    let data_dir = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_DATA_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())?;
+    let explicit_shader = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_SHADER")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.is_file());
+    let shader = explicit_shader.or_else(|| {
+        env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_SHADER_DIR")
+            .ok()
+            .map(PathBuf::from)
+            .map(|path| path.join("kuramoto_particles.comp.glsl"))
+            .filter(|path| path.is_file())
+    })?;
+    Some(PrivateKuramotoPayloadSources { data_dir, shader })
+}
+
+fn write_private_kuramoto_payload_files(
+    out_dir: &Path,
+    payload: Option<&PrivateKuramotoPayloadSources>,
+) {
+    let files = [
+        (
+            "recorded-meta-quest-hand-samples-1024-coordinate-triangles.u32.bin",
+            "private_kuramoto_left_coordinate_triangles.u32.bin",
+        ),
+        (
+            "recorded-meta-quest-hand-samples-1024-coordinate-barycentric.f32.bin",
+            "private_kuramoto_left_coordinate_barycentric.f32.bin",
+        ),
+        (
+            "recorded-meta-quest-hand-samples-1024-surface-distance-edges.u32.bin",
+            "private_kuramoto_left_surface_distance_edges.u32.bin",
+        ),
+        (
+            "recorded-meta-quest-hand-samples-1024-surface-distance-meters.f32.bin",
+            "private_kuramoto_left_surface_distance_meters.f32.bin",
+        ),
+        (
+            "recorded-meta-quest-hand-samples-1024-small-world-edges.u32.bin",
+            "private_kuramoto_left_small_world_edges.u32.bin",
+        ),
+        (
+            "recorded-meta-quest-right-hand-samples-1024-coordinate-triangles.u32.bin",
+            "private_kuramoto_right_coordinate_triangles.u32.bin",
+        ),
+        (
+            "recorded-meta-quest-right-hand-samples-1024-coordinate-barycentric.f32.bin",
+            "private_kuramoto_right_coordinate_barycentric.f32.bin",
+        ),
+        (
+            "recorded-meta-quest-right-hand-samples-1024-surface-distance-edges.u32.bin",
+            "private_kuramoto_right_surface_distance_edges.u32.bin",
+        ),
+        (
+            "recorded-meta-quest-right-hand-samples-1024-surface-distance-meters.f32.bin",
+            "private_kuramoto_right_surface_distance_meters.f32.bin",
+        ),
+        (
+            "recorded-meta-quest-right-hand-samples-1024-small-world-edges.u32.bin",
+            "private_kuramoto_right_small_world_edges.u32.bin",
+        ),
+    ];
+
+    for (source_name, output_name) in files {
+        let output = out_dir.join(output_name);
+        if let Some(payload) = payload {
+            let source = payload.data_dir.join(source_name);
+            println!("cargo:rerun-if-changed={}", source.display());
+            if source.is_file() {
+                fs::copy(&source, &output).unwrap_or_else(|error| {
+                    panic!(
+                        "failed to copy private Kuramoto payload {} -> {}: {error}",
+                        source.display(),
+                        output.display()
+                    )
+                });
+                continue;
+            }
+        }
+        fs::write(&output, [0_u8; 4]).unwrap_or_else(|error| {
+            panic!(
+                "failed to write placeholder private Kuramoto payload {}: {error}",
+                output.display()
+            )
+        });
     }
 }
 
@@ -364,6 +510,10 @@ fn json_escape(value: &str) -> String {
         }
     }
     escaped
+}
+
+fn rust_string_literal(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn find_glslc() -> Option<PathBuf> {

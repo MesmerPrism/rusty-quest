@@ -568,9 +568,11 @@ unsafe fn run_projection_loop_inner(
             let draw_resources = renderer.skinned_hand_mesh_draw_resources();
             match GpuHandAnchorParticleRenderer::new(
                 &vk_device,
+                &memory_properties,
                 render_pass,
                 draw_resources,
                 handedness_label(&replay.handedness),
+                hand_anchor_particle_settings,
             ) {
                 Ok(renderer) => Some(renderer),
                 Err(error) => {
@@ -649,9 +651,11 @@ unsafe fn run_projection_loop_inner(
             let draw_resources = renderer.skinned_hand_mesh_draw_resources();
             match GpuHandAnchorParticleRenderer::new(
                 &vk_device,
+                &memory_properties,
                 render_pass,
                 draw_resources,
                 handedness_label(&secondary_replay.handedness),
+                hand_anchor_particle_settings,
             ) {
                 Ok(renderer) => Some(renderer),
                 Err(error) => {
@@ -813,8 +817,8 @@ unsafe fn run_projection_loop_inner(
         &gpu_mesh_stats,
         gpu_hand_mesh_visual_renderer.as_mut(),
         secondary_gpu_hand_mesh_visual_renderer.as_mut(),
-        gpu_hand_anchor_particle_renderer.as_ref(),
-        secondary_gpu_hand_anchor_particle_renderer.as_ref(),
+        gpu_hand_anchor_particle_renderer.as_mut(),
+        secondary_gpu_hand_anchor_particle_renderer.as_mut(),
         gpu_sdf_field_renderer.as_mut(),
         secondary_gpu_sdf_field_renderer.as_mut(),
         &mut gpu_timestamp_tracker,
@@ -1175,8 +1179,8 @@ unsafe fn run_projection_frames(
     gpu_mesh_stats: &GpuMeshReplayStats,
     mut gpu_hand_mesh_visual_renderer: Option<&mut GpuHandMeshVisualRenderer>,
     mut secondary_gpu_hand_mesh_visual_renderer: Option<&mut GpuHandMeshVisualRenderer>,
-    gpu_hand_anchor_particle_renderer: Option<&GpuHandAnchorParticleRenderer>,
-    secondary_gpu_hand_anchor_particle_renderer: Option<&GpuHandAnchorParticleRenderer>,
+    mut gpu_hand_anchor_particle_renderer: Option<&mut GpuHandAnchorParticleRenderer>,
+    mut secondary_gpu_hand_anchor_particle_renderer: Option<&mut GpuHandAnchorParticleRenderer>,
     mut gpu_sdf_field_renderer: Option<&mut GpuSdfFieldRenderer>,
     mut secondary_gpu_sdf_field_renderer: Option<&mut GpuSdfFieldRenderer>,
     gpu_timestamp_tracker: &mut GpuTimestampTracker,
@@ -1750,6 +1754,24 @@ unsafe fn run_projection_frames(
             &hand_mesh_visual_stats,
             hand_anchor_particle_settings,
         );
+        if let Some(renderer) = gpu_hand_anchor_particle_renderer.as_mut() {
+            renderer.record_compute_frame(
+                vk_device,
+                cmd,
+                &hand_anchor_particle_stats.primary,
+                hand_anchor_particle_settings,
+                frame_count,
+            );
+        }
+        if let Some(renderer) = secondary_gpu_hand_anchor_particle_renderer.as_mut() {
+            renderer.record_compute_frame(
+                vk_device,
+                cmd,
+                &hand_anchor_particle_stats.secondary,
+                hand_anchor_particle_settings,
+                frame_count,
+            );
+        }
         gpu_timestamp_tracker.write_stage_end(
             vk_device,
             cmd,
@@ -1803,8 +1825,8 @@ unsafe fn run_projection_frames(
             gpu_hand_mesh_visual_renderer.as_deref(),
             secondary_gpu_hand_mesh_visual_renderer.as_deref(),
             &hand_mesh_visual_stats,
-            gpu_hand_anchor_particle_renderer,
-            secondary_gpu_hand_anchor_particle_renderer,
+            gpu_hand_anchor_particle_renderer.as_deref(),
+            secondary_gpu_hand_anchor_particle_renderer.as_deref(),
             &hand_anchor_particle_stats,
             gpu_sdf_field_renderer.as_deref(),
             &gpu_sdf_stats,
