@@ -35,6 +35,10 @@ mod live_hand_compact;
 mod native_camera;
 #[cfg(target_os = "android")]
 mod native_camera_metadata;
+#[cfg(target_os = "android")]
+mod native_camera_profiles;
+#[cfg(target_os = "android")]
+mod native_camera_reader_selection;
 mod native_renderer_options;
 #[cfg(target_os = "android")]
 mod native_renderer_timing;

@@ -46,10 +46,15 @@ use crate::{
         ACAMERA_NOISE_REDUCTION_MODE_FAST, ACAMERA_NOISE_REDUCTION_MODE_HIGH_QUALITY,
         ACAMERA_NOISE_REDUCTION_MODE_OFF, ACAMERA_REQUEST_AVAILABLE_CAPABILITIES,
         ACAMERA_REQUEST_AVAILABLE_REQUEST_KEYS, ACAMERA_REQUEST_AVAILABLE_RESULT_KEYS,
+        ACAMERA_SCALER_AVAILABLE_MIN_FRAME_DURATIONS,
         ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS, AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE,
-        AIMAGE_FORMAT_PRIVATE, TEMPLATE_PREVIEW,
+        AIMAGE_FORMAT_PRIVATE,
     },
     android_log_error, marker,
+    native_camera_profiles::CameraRequestTemplate,
+    native_camera_reader_selection::{
+        select_reader_size, CameraCapabilities, PrivateOutputMinFrameDuration,
+    },
     native_renderer_options::{
         NativeCameraQualityProfile, NativeCameraResolutionProfile, NativeCameraSyncMode,
     },
@@ -421,7 +426,7 @@ impl NativeCameraStream {
                 marker(
                     "camera-capabilities",
                     format!(
-                        "status=ok side={} cameraId={} cameraResolutionProfile={} readerRequested={}x{} hardwareLevel={} requestKeyCount={} resultKeyCount={} capabilities={} availableAeFpsRanges={} availableNoiseReductionModes={} availableEdgeModes={} privateOutputSizes={}",
+                        "status=ok side={} cameraId={} cameraResolutionProfile={} readerRequested={}x{} hardwareLevel={} requestKeyCount={} resultKeyCount={} capabilities={} availableAeFpsRanges={} availableNoiseReductionModes={} availableEdgeModes={} privateOutputSizes={} privateOutputMinFrameDurations={}",
                         side.stable_id(),
                         camera_id.to_string_lossy(),
                         camera_resolution_profile.marker_value(),
@@ -434,7 +439,10 @@ impl NativeCameraStream {
                         ae_fps_ranges_marker(&capabilities.ae_fps_ranges),
                         u8_modes_marker(&capabilities.noise_reduction_modes, noise_reduction_mode_label),
                         u8_modes_marker(&capabilities.edge_modes, edge_mode_label),
-                        stream_sizes_marker(&capabilities.private_output_sizes)
+                        stream_sizes_marker(&capabilities.private_output_sizes),
+                        stream_min_frame_durations_marker(
+                            &capabilities.private_output_min_frame_durations
+                        )
                     ),
                 );
                 capabilities
@@ -455,11 +463,21 @@ impl NativeCameraStream {
                 CameraCapabilities::default()
             }
         };
-        let reader_size = select_reader_size(camera_resolution_profile, &capabilities);
+        let camera_quality_profile = (*context).camera_quality_profile;
+        let reader_size = select_reader_size(
+            camera_resolution_profile,
+            camera_quality_profile,
+            &capabilities,
+            [DEFAULT_READER_WIDTH, DEFAULT_READER_HEIGHT],
+        );
 
         let mut capture_request = ptr::null_mut();
-        if ACameraDevice_createCaptureRequest(camera_device, TEMPLATE_PREVIEW, &mut capture_request)
-            != 0
+        let request_template = camera_quality_profile.request_template();
+        if ACameraDevice_createCaptureRequest(
+            camera_device,
+            request_template.ndk_value(),
+            &mut capture_request,
+        ) != 0
             || capture_request.is_null()
         {
             ACameraDevice_close(camera_device);
@@ -468,13 +486,13 @@ impl NativeCameraStream {
                 camera_id.to_string_lossy()
             ));
         }
-        let camera_quality_profile = (*context).camera_quality_profile;
         let camera_sync_mode = (*context).camera_sync_mode;
         apply_camera_quality_profile(
             capture_request,
             side,
             camera_id,
             camera_quality_profile,
+            request_template,
             &capabilities,
         );
 
@@ -648,7 +666,7 @@ impl NativeCameraStream {
         marker(
             "camera-start",
             format!(
-                "status=ok side={} cameraId={} cameraResolutionProfile={} readerRequested={}x{} readerSelected={}x{} readerSelectionStatus={} width={} height={} format=PRIVATE usage=GPU_SAMPLED_IMAGE readerMaxImages={}",
+                "status=ok side={} cameraId={} cameraResolutionProfile={} readerRequested={}x{} readerSelected={}x{} readerSelectionStatus={} readerSelectionReason={} readerMinFrameDurationNs={} readerTargetFps={} readerTargetFpsFeasible={} width={} height={} format=PRIVATE usage=GPU_SAMPLED_IMAGE readerMaxImages={}",
                 side.stable_id(),
                 camera_id.to_string_lossy(),
                 camera_resolution_profile.marker_value(),
@@ -657,6 +675,12 @@ impl NativeCameraStream {
                 reader_size.width,
                 reader_size.height,
                 reader_size.status,
+                reader_size.reason,
+                optional_i64_marker(reader_size.min_frame_duration_ns),
+                optional_i32_marker(reader_size.target_fps),
+                reader_size.target_fps_feasible
+                    .map(|feasible| feasible.to_string())
+                    .unwrap_or_else(|| "unknown".to_string()),
                 reader_size.width,
                 reader_size.height,
                 reader_max_images
@@ -775,124 +799,6 @@ impl CameraSide {
 }
 
 #[derive(Clone, Debug, Default)]
-struct CameraCapabilities {
-    hardware_level: Option<u8>,
-    capabilities: Vec<u8>,
-    request_keys: Vec<i32>,
-    result_keys: Vec<i32>,
-    ae_fps_ranges: Vec<[i32; 2]>,
-    noise_reduction_modes: Vec<u8>,
-    edge_modes: Vec<u8>,
-    private_output_sizes: Vec<[i32; 2]>,
-}
-
-#[derive(Clone, Copy, Debug)]
-struct ReaderSizeSelection {
-    width: i32,
-    height: i32,
-    requested_width: i32,
-    requested_height: i32,
-    status: &'static str,
-}
-
-impl CameraCapabilities {
-    fn supports_request_key(&self, tag: u32) -> bool {
-        self.request_keys.iter().any(|key| *key == tag as i32)
-    }
-
-    fn supports_ae_fps_range(&self, range: [i32; 2]) -> bool {
-        self.supports_request_key(ACAMERA_CONTROL_AE_TARGET_FPS_RANGE)
-            && self
-                .ae_fps_ranges
-                .iter()
-                .any(|supported| *supported == range)
-    }
-
-    fn supports_noise_reduction_mode(&self, mode: u8) -> bool {
-        self.supports_request_key(ACAMERA_NOISE_REDUCTION_MODE)
-            && self
-                .noise_reduction_modes
-                .iter()
-                .any(|value| *value == mode)
-    }
-
-    fn supports_edge_mode(&self, mode: u8) -> bool {
-        self.supports_request_key(ACAMERA_EDGE_MODE)
-            && self.edge_modes.iter().any(|value| *value == mode)
-    }
-}
-
-fn select_reader_size(
-    profile: NativeCameraResolutionProfile,
-    capabilities: &CameraCapabilities,
-) -> ReaderSizeSelection {
-    let requested = profile
-        .requested_size()
-        .unwrap_or([DEFAULT_READER_WIDTH, DEFAULT_READER_HEIGHT]);
-    if capabilities.private_output_sizes.is_empty() {
-        return ReaderSizeSelection {
-            width: requested[0],
-            height: requested[1],
-            requested_width: requested[0],
-            requested_height: requested[1],
-            status: "support-unknown-using-requested",
-        };
-    }
-    if let Some(requested_size) = profile.requested_size() {
-        if capabilities.private_output_sizes.contains(&requested_size) {
-            return ReaderSizeSelection {
-                width: requested_size[0],
-                height: requested_size[1],
-                requested_width: requested_size[0],
-                requested_height: requested_size[1],
-                status: "exact-supported",
-            };
-        }
-        let fallback = closest_private_output_size(requested_size, capabilities);
-        return ReaderSizeSelection {
-            width: fallback[0],
-            height: fallback[1],
-            requested_width: requested_size[0],
-            requested_height: requested_size[1],
-            status: "fallback-closest-supported",
-        };
-    }
-
-    for preferred in [[1280, 1280], [1280, 960]] {
-        if capabilities.private_output_sizes.contains(&preferred) {
-            return ReaderSizeSelection {
-                width: preferred[0],
-                height: preferred[1],
-                requested_width: requested[0],
-                requested_height: requested[1],
-                status: "closest-preferred-supported",
-            };
-        }
-    }
-    let fallback = capabilities.private_output_sizes[0];
-    ReaderSizeSelection {
-        width: fallback[0],
-        height: fallback[1],
-        requested_width: requested[0],
-        requested_height: requested[1],
-        status: "closest-first-supported",
-    }
-}
-
-fn closest_private_output_size(
-    requested_size: [i32; 2],
-    capabilities: &CameraCapabilities,
-) -> [i32; 2] {
-    capabilities
-        .private_output_sizes
-        .iter()
-        .copied()
-        .min_by_key(|size| {
-            (size[0] - requested_size[0]).abs() + (size[1] - requested_size[1]).abs()
-        })
-        .unwrap_or(requested_size)
-}
-
 unsafe fn load_camera_capabilities(
     manager: *mut ACameraManager,
     camera_id: *const c_char,
@@ -922,6 +828,7 @@ unsafe fn load_camera_capabilities(
         ),
         edge_modes: read_u8_values(metadata, ACAMERA_EDGE_AVAILABLE_EDGE_MODES),
         private_output_sizes: Vec::new(),
+        private_output_min_frame_durations: Vec::new(),
     };
 
     let stream_configs = read_i32_values(metadata, ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS);
@@ -938,6 +845,23 @@ unsafe fn load_camera_capabilities(
             capabilities.private_output_sizes.push(size);
         }
     }
+    let min_frame_durations =
+        read_i64_values(metadata, ACAMERA_SCALER_AVAILABLE_MIN_FRAME_DURATIONS);
+    for duration in min_frame_durations.chunks_exact(4) {
+        let format = duration[0] as i32;
+        let width = duration[1] as i32;
+        let height = duration[2] as i32;
+        let duration_ns = duration[3];
+        if format == AIMAGE_FORMAT_PRIVATE as i32 && duration_ns > 0 {
+            capabilities
+                .private_output_min_frame_durations
+                .push(PrivateOutputMinFrameDuration {
+                    width,
+                    height,
+                    duration_ns,
+                });
+        }
+    }
 
     ACameraMetadata_free(metadata);
     Ok(capabilities)
@@ -948,16 +872,13 @@ unsafe fn apply_camera_quality_profile(
     side: CameraSide,
     camera_id: &CString,
     profile: NativeCameraQualityProfile,
+    request_template: CameraRequestTemplate,
     capabilities: &CameraCapabilities,
 ) {
-    let desired_ae_fps_range = match profile {
-        NativeCameraQualityProfile::DirectLowNoise30
-        | NativeCameraQualityProfile::DirectQualityProbe => Some([30, 30]),
-        NativeCameraQualityProfile::DirectLowLatency60 => Some([60, 60]),
-        NativeCameraQualityProfile::DirectBaseline => None,
-    };
+    let desired_ae_fps_range = profile.target_ae_fps_range();
     let desired_noise_modes = match profile {
         NativeCameraQualityProfile::DirectLowNoise30
+        | NativeCameraQualityProfile::DirectLowNoiseRecord30
         | NativeCameraQualityProfile::DirectQualityProbe => vec![
             ACAMERA_NOISE_REDUCTION_MODE_HIGH_QUALITY,
             ACAMERA_NOISE_REDUCTION_MODE_FAST,
@@ -969,12 +890,13 @@ unsafe fn apply_camera_quality_profile(
     };
     let desired_edge_modes = match profile {
         NativeCameraQualityProfile::DirectLowNoise30
+        | NativeCameraQualityProfile::DirectLowNoiseRecord30
         | NativeCameraQualityProfile::DirectLowLatency60
         | NativeCameraQualityProfile::DirectQualityProbe => vec![ACAMERA_EDGE_MODE_OFF],
         NativeCameraQualityProfile::DirectBaseline => Vec::new(),
     };
 
-    let (applied_ae_fps_range, ae_fps_status) =
+    let (selected_ae_fps_range, applied_ae_fps_range, ae_fps_status) =
         apply_ae_fps_range(capture_request, capabilities, desired_ae_fps_range);
     let requested_noise_mode = desired_noise_modes.first().copied();
     let selected_noise_mode = desired_noise_modes
@@ -1002,11 +924,13 @@ unsafe fn apply_camera_quality_profile(
     marker(
         "camera-request-profile",
         format!(
-            "status=config side={} cameraId={} profile={} template=preview requestedAeFpsRange={} appliedAeFpsRange={} aeFpsStatus={} requestedNoiseReductionMode={} appliedNoiseReductionMode={} noiseReductionStatus={} requestedEdgeMode={} appliedEdgeMode={} edgeStatus={} requestKeyCount={} resultKeyCount={} supportGated=true",
+            "status=config side={} cameraId={} profile={} template={} requestedAeFpsRange={} selectedAeFpsRange={} appliedAeFpsRange={} aeFpsStatus={} requestedNoiseReductionMode={} appliedNoiseReductionMode={} noiseReductionStatus={} requestedEdgeMode={} appliedEdgeMode={} edgeStatus={} requestKeyCount={} resultKeyCount={} supportGated=true",
             side.stable_id(),
             camera_id.to_string_lossy(),
             profile.marker_value(),
+            request_template.marker_value(),
             optional_range_marker(desired_ae_fps_range),
+            optional_range_marker(selected_ae_fps_range),
             optional_range_marker(applied_ae_fps_range),
             ae_fps_status,
             optional_u8_mode_marker(requested_noise_mode, noise_reduction_mode_label),
@@ -1025,24 +949,56 @@ unsafe fn apply_ae_fps_range(
     capture_request: *mut ACaptureRequest,
     capabilities: &CameraCapabilities,
     requested: Option<[i32; 2]>,
-) -> (Option<[i32; 2]>, String) {
+) -> (Option<[i32; 2]>, Option<[i32; 2]>, String) {
     let Some(range) = requested else {
-        return (None, "not-requested".to_string());
+        return (None, None, "not-requested".to_string());
     };
-    if !capabilities.supports_ae_fps_range(range) {
-        return (None, "unsupported".to_string());
+    if !capabilities.supports_request_key(ACAMERA_CONTROL_AE_TARGET_FPS_RANGE) {
+        return (None, None, "request-key-unsupported".to_string());
     }
+    let Some(selected) = select_ae_fps_range(range, &capabilities.ae_fps_ranges) else {
+        return (None, None, "unsupported".to_string());
+    };
     let status = ACaptureRequest_setEntry_i32(
         capture_request,
         ACAMERA_CONTROL_AE_TARGET_FPS_RANGE,
         2,
-        range.as_ptr(),
+        selected.as_ptr(),
     );
-    if status == 0 {
-        (Some(range), "set".to_string())
+    let selection_status = if selected == range {
+        "exact-supported"
     } else {
-        (None, format!("set-error-{status}"))
+        "nearest-supported"
+    };
+    if status == 0 {
+        (
+            Some(selected),
+            Some(selected),
+            format!("set-{selection_status}"),
+        )
+    } else {
+        (
+            Some(selected),
+            None,
+            format!("set-error-{status}-{selection_status}"),
+        )
     }
+}
+
+fn select_ae_fps_range(requested: [i32; 2], supported: &[[i32; 2]]) -> Option<[i32; 2]> {
+    supported
+        .iter()
+        .copied()
+        .find(|range| *range == requested)
+        .or_else(|| {
+            supported.iter().copied().min_by_key(|range| {
+                (
+                    (range[0] - requested[0]).abs() + (range[1] - requested[1]).abs(),
+                    (range[1] - range[0]).abs(),
+                    (range[1] - requested[1]).abs(),
+                )
+            })
+        })
 }
 
 unsafe fn apply_u8_request(
@@ -1088,6 +1044,16 @@ unsafe fn read_i32_values(metadata: *const ACameraMetadata, tag: u32) -> Vec<i32
         return Vec::new();
     }
     std::slice::from_raw_parts(entry.data.i32_, entry.count as usize).to_vec()
+}
+
+unsafe fn read_i64_values(metadata: *const ACameraMetadata, tag: u32) -> Vec<i64> {
+    let Some(entry) = metadata_entry(metadata, tag) else {
+        return Vec::new();
+    };
+    if entry.count == 0 || entry.data.i64_.is_null() {
+        return Vec::new();
+    }
+    std::slice::from_raw_parts(entry.data.i64_, entry.count as usize).to_vec()
 }
 
 unsafe fn metadata_entry(
@@ -1152,9 +1118,32 @@ fn stream_sizes_marker(values: &[[i32; 2]]) -> String {
         .join(",")
 }
 
+fn stream_min_frame_durations_marker(values: &[PrivateOutputMinFrameDuration]) -> String {
+    if values.is_empty() {
+        return "none".to_string();
+    }
+    values
+        .iter()
+        .map(|value| format!("{}x{}:{}", value.width, value.height, value.duration_ns))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
 fn optional_range_marker(value: Option<[i32; 2]>) -> String {
     value
         .map(|range| format!("{}-{}", range[0], range[1]))
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn optional_i32_marker(value: Option<i32>) -> String {
+    value
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn optional_i64_marker(value: Option<i64>) -> String {
+    value
+        .map(|value| value.to_string())
         .unwrap_or_else(|| "none".to_string())
 }
 

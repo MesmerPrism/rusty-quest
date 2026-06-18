@@ -33,10 +33,16 @@ for color-lift and dark-region grain diagnostics. The
 same Android-suggested/UNORM raw route but requests the support-gated public
 Camera2 low-noise profile: 30 FPS AE range, high-quality noise reduction with a
 fast fallback, and edge enhancement off when those keys/modes are exposed by
-the device. `quest-native-renderer-direct-hwb-low-latency-60.profile.json`
+the device. `quest-native-renderer-direct-hwb-low-noise-record-30.profile.json`
+uses the same public request controls from Camera2 `TEMPLATE_RECORD` so preview
+and record templates can be compared without changing APK identity. AE FPS
+selection is exact-first and then nearest-supported, with requested, selected,
+and applied markers logged. `quest-native-renderer-direct-hwb-low-latency-60.profile.json`
 requests 60 FPS AE, fast noise reduction, and edge enhancement off.
 `quest-native-renderer-direct-hwb-1280x960.profile.json` requests the 1280x960
-reader size, with Camera2 stream-configuration fallback logged when needed.
+reader size, with Camera2 stream-configuration fallback ranked and logged when
+needed. Ranking uses tested preferred PRIVATE sizes, target aspect, target-FPS
+feasibility, and `ACAMERA_SCALER_AVAILABLE_MIN_FRAME_DURATIONS` when exposed.
 `quest-native-renderer-direct-hwb-hold-sync.profile.json` activates the
 conservative producer/consumer diagnostic: the camera callback retains the
 sampled `AImage`, the renderer tracks that lease per Vulkan frame slot, and the

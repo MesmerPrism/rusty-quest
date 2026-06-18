@@ -17,6 +17,8 @@ $nativeLibPath = Join-Path $appRoot "native\src\lib.rs"
 $androidEventsPath = Join-Path $appRoot "native\src\android_events.rs"
 $nativeCameraPath = Join-Path $appRoot "native\src\native_camera.rs"
 $nativeCameraMetadataPath = Join-Path $appRoot "native\src\native_camera_metadata.rs"
+$nativeCameraProfilesPath = Join-Path $appRoot "native\src\native_camera_profiles.rs"
+$nativeCameraReaderSelectionPath = Join-Path $appRoot "native\src\native_camera_reader_selection.rs"
 $acameraSysPath = Join-Path $appRoot "native\src\acamera_sys.rs"
 $cameraProjectionPath = Join-Path $appRoot "native\src\camera_projection.rs"
 $cameraProjectionMetadataPath = Join-Path $appRoot "native\src\camera_projection_metadata.rs"
@@ -57,6 +59,7 @@ $replayVisualProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-
 $directHwbCameraQualityProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-direct-hwb-camera-quality.profile.json"
 $directHwbCameraQualityBt601UnormProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-direct-hwb-camera-quality-bt601-unorm.profile.json"
 $directHwbLowNoise30ProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-direct-hwb-low-noise-30.profile.json"
+$directHwbLowNoiseRecord30ProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-direct-hwb-low-noise-record-30.profile.json"
 $directHwbLowLatency60ProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-direct-hwb-low-latency-60.profile.json"
 $directHwbHoldSyncProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-direct-hwb-hold-sync.profile.json"
 $directHwbHoldSyncReader6ProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-direct-hwb-hold-sync-reader6.profile.json"
@@ -69,7 +72,7 @@ $nativePassthroughHandsAndGraftsProfilePath = Join-Path $repoRoot "fixtures\runt
 $solidBlackHandsAndGraftsProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-solid-black-hands-and-grafts.profile.json"
 $solidBlackOpenXrHandsAnchorParticlesProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json"
 
-foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $nativeCameraMetadataPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath)) {
+foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $nativeCameraMetadataPath, $nativeCameraProfilesPath, $nativeCameraReaderSelectionPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowNoiseRecord30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath)) {
     if (-not (Test-Path $path)) {
         throw "Missing native renderer Android file: $path"
     }
@@ -83,6 +86,8 @@ $nativeLib = Get-Content -Raw -Path $nativeLibPath
 $androidEvents = Get-Content -Raw -Path $androidEventsPath
 $nativeCamera = Get-Content -Raw -Path $nativeCameraPath
 $nativeCameraMetadata = Get-Content -Raw -Path $nativeCameraMetadataPath
+$nativeCameraProfiles = Get-Content -Raw -Path $nativeCameraProfilesPath
+$nativeCameraReaderSelection = Get-Content -Raw -Path $nativeCameraReaderSelectionPath
 $acameraSys = Get-Content -Raw -Path $acameraSysPath
 $cameraProjection = Get-Content -Raw -Path $cameraProjectionPath
 $cameraProjectionMetadata = Get-Content -Raw -Path $cameraProjectionMetadataPath
@@ -119,6 +124,7 @@ $replayVisualProfile = Get-Content -Raw -Path $replayVisualProfilePath
 $directHwbCameraQualityProfile = Get-Content -Raw -Path $directHwbCameraQualityProfilePath
 $directHwbCameraQualityBt601UnormProfile = Get-Content -Raw -Path $directHwbCameraQualityBt601UnormProfilePath
 $directHwbLowNoise30Profile = Get-Content -Raw -Path $directHwbLowNoise30ProfilePath
+$directHwbLowNoiseRecord30Profile = Get-Content -Raw -Path $directHwbLowNoiseRecord30ProfilePath
 $directHwbLowLatency60Profile = Get-Content -Raw -Path $directHwbLowLatency60ProfilePath
 $directHwbHoldSyncProfile = Get-Content -Raw -Path $directHwbHoldSyncProfilePath
 $directHwbHoldSyncReader6Profile = Get-Content -Raw -Path $directHwbHoldSyncReader6ProfilePath
@@ -573,6 +579,17 @@ foreach ($token in @(
     'formatFeaturesRaw=',
     'chromaFilter=',
     'camera-request-profile',
+    'TEMPLATE_RECORD',
+    'direct-low-noise-record-30',
+    'template=',
+    'template=record',
+    'selectedAeFpsRange=',
+    'nearest-supported',
+    'ACAMERA_SCALER_AVAILABLE_MIN_FRAME_DURATIONS',
+    'privateOutputMinFrameDurations=',
+    'readerSelectionReason=',
+    'readerMinFrameDurationNs=',
+    'readerTargetFpsFeasible=',
     'camera-capture-result',
     'ACAMERA_SENSOR_TIMESTAMP',
     'ACAMERA_CONTROL_AE_STATE',
@@ -604,7 +621,7 @@ foreach ($token in @(
     'guideProjectionEnabled=false',
     'quest-native-renderer-direct-hwb-camera-quality\.profile\.json'
 )) {
-    if ("$nativeRendererOptions`n$nativeCamera`n$nativeCameraMetadata`n$acameraSys`n$cameraProjection`n$cameraProjectionFragment`n$xrVulkan`n$directHwbCameraQualityProfile" -notmatch $token) {
+    if ("$nativeRendererOptions`n$nativeCamera`n$nativeCameraMetadata`n$nativeCameraProfiles`n$nativeCameraReaderSelection`n$acameraSys`n$cameraProjection`n$cameraProjectionFragment`n$xrVulkan`n$directHwbCameraQualityProfile`n$directHwbLowNoiseRecord30Profile" -notmatch $token) {
         throw "Native direct-HWB camera quality diagnostic route missing token: $token"
     }
 }
@@ -1243,6 +1260,37 @@ foreach ($token in @(
     }
 }
 foreach ($token in @(
+    'profile.quest.native_renderer.direct_hwb_low_noise_record_30',
+    'quest-native-renderer-direct-hwb-low-noise-record-30.profile.json',
+    'debug.rustyquest.native_renderer.camera.output',
+    'direct-hwb',
+    'debug.rustyquest.native_renderer.camera.ycbcr.mode',
+    'android-suggested',
+    'debug.rustyquest.native_renderer.camera.resolution',
+    '1280x1280',
+    'debug.rustyquest.native_renderer.camera.reader_max_images',
+    'readerMaxImages=4',
+    'debug.rustyquest.native_renderer.camera.quality_profile',
+    'direct-low-noise-record-30',
+    'cameraQualityProfile=direct-low-noise-record-30',
+    'cameraSyncActive=early-delete-ahb-retained',
+    'camera-request-profile',
+    'profile=direct-low-noise-record-30',
+    'template=record',
+    'requestedAeFpsRange=30-30',
+    'selectedAeFpsRange=',
+    'requestedNoiseReductionMode=HIGH_QUALITY',
+    'requestedEdgeMode=OFF',
+    'cameraProjectionPath=metadata-target-direct-hwb-forced',
+    'directHwbProjectionDiagnostic=true',
+    'actualFinalExternalHwbSamples=2',
+    'actualGuideTextureSamples=0'
+)) {
+    if ($directHwbLowNoiseRecord30Profile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer direct-HWB low-noise record 30 profile missing token: $token"
+    }
+}
+foreach ($token in @(
     'profile.quest.native_renderer.direct_hwb_low_latency_60',
     'quest-native-renderer-direct-hwb-low-latency-60.profile.json',
     'debug.rustyquest.native_renderer.camera.output',
@@ -1508,6 +1556,9 @@ if ($checkAllText -notmatch 'quest-native-renderer-direct-hwb-camera-quality-bt6
 }
 if ($checkAllText -notmatch 'quest-native-renderer-direct-hwb-low-noise-30\.profile\.json' -or $checkAllText -notmatch 'native-renderer-direct-hwb-low-noise-30-property-write-plan\.json') {
     throw "check_all.ps1 must dry-run the native renderer direct-HWB low-noise 30 profile."
+}
+if ($checkAllText -notmatch 'quest-native-renderer-direct-hwb-low-noise-record-30\.profile\.json' -or $checkAllText -notmatch 'native-renderer-direct-hwb-low-noise-record-30-property-write-plan\.json') {
+    throw "check_all.ps1 must dry-run the native renderer direct-HWB low-noise record 30 profile."
 }
 if ($checkAllText -notmatch 'quest-native-renderer-direct-hwb-low-latency-60\.profile\.json' -or $checkAllText -notmatch 'native-renderer-direct-hwb-low-latency-60-property-write-plan\.json') {
     throw "check_all.ps1 must dry-run the native renderer direct-HWB low-latency 60 profile."

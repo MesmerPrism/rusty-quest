@@ -37,6 +37,7 @@ pub const ACAMERA_NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES: u32 =
 pub const ACAMERA_REQUEST_AVAILABLE_CAPABILITIES: u32 = (ACAMERA_REQUEST << 16) + 12;
 pub const ACAMERA_REQUEST_AVAILABLE_REQUEST_KEYS: u32 = (ACAMERA_REQUEST << 16) + 13;
 pub const ACAMERA_REQUEST_AVAILABLE_RESULT_KEYS: u32 = (ACAMERA_REQUEST << 16) + 14;
+pub const ACAMERA_SCALER_AVAILABLE_MIN_FRAME_DURATIONS: u32 = (ACAMERA_SCALER << 16) + 11;
 pub const ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS: u32 = (ACAMERA_SCALER << 16) + 10;
 pub const ACAMERA_SENSOR_EXPOSURE_TIME: u32 = ACAMERA_SENSOR << 16;
 pub const ACAMERA_SENSOR_FRAME_DURATION: u32 = (ACAMERA_SENSOR << 16) + 1;
@@ -93,6 +94,7 @@ pub struct ACameraDevice_StateCallbacks {
 
 pub type ACameraDevice_request_template = c_uint;
 pub const TEMPLATE_PREVIEW: ACameraDevice_request_template = 1;
+pub const TEMPLATE_RECORD: ACameraDevice_request_template = 3;
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]

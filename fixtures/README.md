@@ -11,8 +11,10 @@
   BT.601/UNORM variant forces limited BT.601 for color-lift A/B checks. The
   low-noise 30 profile keeps the Android-suggested/UNORM baseline and requests
   support-gated public Camera2 controls for 30 FPS AE, noise reduction, and
-  edge enhancement off; the low-latency 60 profile requests 60 FPS AE with fast
-  noise reduction; the 1280x960 profile tests reader-size selection; and the
+  edge enhancement off; the low-noise record 30 profile applies the same public
+  controls through Camera2 `TEMPLATE_RECORD`; the low-latency 60 profile
+  requests 60 FPS AE with fast noise reduction; the 1280x960 profile tests
+  reader-size ranking with target-FPS and min-frame-duration markers; and the
   hold-sync profile retains sampled `AImage` objects until the submitted Vulkan
   frame-slot fence retires. Hold-sync reader6 and reader8 variants raise
   `camera.reader_max_images` for queue-headroom A/B checks. The

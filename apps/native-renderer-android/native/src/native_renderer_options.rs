@@ -320,6 +320,7 @@ impl NativeCameraResolutionProfile {
 pub(crate) enum NativeCameraQualityProfile {
     DirectBaseline,
     DirectLowNoise30,
+    DirectLowNoiseRecord30,
     DirectLowLatency60,
     DirectQualityProbe,
 }
@@ -330,6 +331,10 @@ impl NativeCameraQualityProfile {
             "direct-low-noise-30" | "low-noise-30" | "noise-30" | "low-noise" => {
                 Self::DirectLowNoise30
             }
+            "direct-low-noise-record-30"
+            | "low-noise-record-30"
+            | "record-low-noise-30"
+            | "record-30" => Self::DirectLowNoiseRecord30,
             "direct-low-latency-60" | "low-latency-60" | "latency-60" | "low-latency" => {
                 Self::DirectLowLatency60
             }
@@ -342,6 +347,7 @@ impl NativeCameraQualityProfile {
         match self {
             Self::DirectBaseline => "direct-baseline",
             Self::DirectLowNoise30 => "direct-low-noise-30",
+            Self::DirectLowNoiseRecord30 => "direct-low-noise-record-30",
             Self::DirectLowLatency60 => "direct-low-latency-60",
             Self::DirectQualityProbe => "direct-quality-probe",
         }
@@ -1541,6 +1547,15 @@ mod tests {
         assert_eq!(
             direct.camera_quality_profile.marker_value(),
             "direct-low-noise-30"
+        );
+        let record_template = options_from(&[(PROP_CAMERA_QUALITY_PROFILE, "record-low-noise-30")]);
+        assert_eq!(
+            record_template.camera_quality_profile,
+            NativeCameraQualityProfile::DirectLowNoiseRecord30
+        );
+        assert_eq!(
+            record_template.camera_quality_profile.marker_value(),
+            "direct-low-noise-record-30"
         );
         assert_eq!(
             direct.camera_sync_mode,

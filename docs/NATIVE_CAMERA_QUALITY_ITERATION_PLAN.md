@@ -88,12 +88,26 @@ and the timing scorecard carries left/right result-correlation fields.
   with explicit requested, selected, and applied markers.
 - Keep preview/direct-baseline as the canonical default.
 
+Implemented shape: the public quality profile parser accepts
+`direct-low-noise-record-30`, the native Camera2 path chooses
+`TEMPLATE_RECORD` only for that profile, and `camera-request-profile` logs
+`template`, requested/selected/applied AE FPS range, and exact-vs-nearest
+selection status. The existing preview/direct-baseline profile remains the
+default.
+
 ### Slice 4: Reader Size Ranking
 
 - Parse min-frame-duration stream configurations when available.
 - Rank explicit and fallback PRIVATE reader sizes by preferred tested sizes,
   target aspect, and target frame duration feasibility.
 - Log the ranking reason.
+
+Implemented shape: Camera2 capabilities parse
+`ACAMERA_SCALER_AVAILABLE_MIN_FRAME_DURATIONS`, expose PRIVATE min-frame
+duration markers, and select reader-size fallbacks with a deterministic ranking
+over target-FPS feasibility, preferred 1280x1280/1280x960 sizes, aspect error,
+size distance, and min frame duration. `camera-start` reports the selected size,
+ranking reason, min-frame duration, target FPS, and feasibility marker.
 
 ### Slice 5: Dataspace And Objective Range Diagnostics
 
