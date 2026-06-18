@@ -33,7 +33,7 @@ layout(set = 0, binding = 5) readonly buffer BindJointSources {
     uvec4 rows[];
 } bind_joint_sources;
 
-layout(set = 0, binding = 6) writeonly buffer SkinnedTargetPositions {
+layout(set = 0, binding = 6) writeonly buffer SkinnedWorldPositions {
     vec4 positions[];
 } skinned_positions;
 
@@ -105,18 +105,6 @@ vec3 transform_joint(uint joint_index, vec4 p) {
     return transform_point(current_pose, inverse_transform_point(bind_pose, p.xyz));
 }
 
-vec4 target_space_position(vec3 p) {
-    vec3 center = vec3(pc.target0.x, pc.target0.y, pc.target1.x);
-    float min_z = pc.target0.z;
-    float radius = max(pc.target0.w, 0.000001);
-    float depth = max(pc.target1.y, 0.000001);
-    vec2 local = (p.xy - center.xy) / radius;
-    float target_x = 0.5 + local.x * 0.44;
-    float target_y = 0.55 - local.y * 0.44;
-    float target_z = clamp((p.z - min_z) / depth, 0.0, 1.0);
-    return vec4(target_x, target_y, target_z, 1.0);
-}
-
 void main() {
     uint index = gl_GlobalInvocationID.x;
     uint vertex_count = pc.dims.x;
@@ -135,8 +123,8 @@ void main() {
             transform_joint(joints.y, p) * weights.y +
             transform_joint(joints.z, p) * weights.z +
             transform_joint(joints.w, p) * weights.w;
-        skinned_positions.positions[index] = target_space_position(weighted / total_weight);
+        skinned_positions.positions[index] = vec4(weighted / total_weight, 1.0);
     } else {
-        skinned_positions.positions[index] = target_space_position(p.xyz);
+        skinned_positions.positions[index] = vec4(p.xyz, 1.0);
     }
 }

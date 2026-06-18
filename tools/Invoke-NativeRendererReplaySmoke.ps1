@@ -7,11 +7,13 @@ param(
     [int]$RunSeconds = 12,
     [string]$Adb = $env:RUSTY_QUEST_ADB,
     [string]$Serial = $env:RUSTY_QUEST_SERIAL,
+    [string]$AdbServerPort = $env:RUSTY_QUEST_ADB_SERVER_PORT,
     [string]$PackageName = "io.github.mesmerprism.rustyquest.native_renderer",
     [string]$Activity = "io.github.mesmerprism.rustyquest.native_renderer/android.app.NativeActivity",
     [string[]]$ScreenshotTargetUvRects = @(),
     [int]$MinimumNonFlatScreenshotTargetRects = 1,
     [switch]$SkipInstall,
+    [switch]$ClearLogcat,
     [switch]$RequireGpuTimestampReady,
     [switch]$AllowFlatScreenshot,
     [switch]$AllowPerformanceBudgetMiss,
@@ -50,6 +52,21 @@ function Resolve-ToolPath {
     return $fallback.Source
 }
 
+function Resolve-AdbServerPortArgument {
+    param(
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $null
+    }
+    $parsed = 0
+    if (-not [int]::TryParse($Value, [ref]$parsed) -or $parsed -lt 1 -or $parsed -gt 65535) {
+        throw "ADB server port must be an integer from 1 to 65535: $Value"
+    }
+    return $parsed.ToString()
+}
+
 function Invoke-AdbCommand {
     param(
         [Parameter(Mandatory=$true)]
@@ -60,9 +77,10 @@ function Invoke-AdbCommand {
     )
 
     $adbArgs = @()
-    if (-not [string]::IsNullOrWhiteSpace($script:Serial)) {
-        $adbArgs += @("-s", $script:Serial)
+    if ($null -ne $script:ResolvedAdbServerPort) {
+        $adbArgs += @("-P", $script:ResolvedAdbServerPort)
     }
+    $adbArgs += @("-s", $script:Serial)
     $adbArgs += $Arguments
 
     # Keep native stderr as captured evidence instead of PowerShell NativeCommandError.
@@ -148,6 +166,11 @@ $script:ResolvedAdb = Resolve-ToolPath `
     -Name "adb" `
     -Value $Adb `
     -DefaultPath "S:\Work\tools\Android\windows-sdk\platform-tools\adb.exe"
+$script:ResolvedAdbServerPort = Resolve-AdbServerPortArgument -Value $AdbServerPort
+
+if ([string]::IsNullOrWhiteSpace($Serial)) {
+    throw "-Serial or RUSTY_QUEST_SERIAL is required; device-facing smoke tests must pass adb -s <serial> and must not use an implicit target."
+}
 
 $rawLogcatPath = Join-Path $OutDir "raw-logcat.txt"
 $filteredLogcatPath = Join-Path $OutDir "filtered-native-renderer-logcat.txt"
@@ -163,7 +186,10 @@ $summary = [ordered]@{
     started_at = (Get-Date).ToUniversalTime().ToString("o")
     status = "started"
     adb_path = $script:ResolvedAdb
-    serial = if ([string]::IsNullOrWhiteSpace($Serial)) { $null } else { $Serial }
+    adb_scope = "device-scoped-adb"
+    adb_serial_required = $true
+    adb_server_port = $script:ResolvedAdbServerPort
+    serial = $Serial
     package_name = $PackageName
     activity = $Activity
     apk_path = (Resolve-Path $resolvedApk).Path
@@ -172,6 +198,8 @@ $summary = [ordered]@{
     out_dir = (Resolve-Path $OutDir).Path
     run_seconds = $RunSeconds
     skipped_install = [bool]$SkipInstall
+    clear_logcat_requested = [bool]$ClearLogcat
+    logcat_scope = "pid-scoped-device-logcat"
     gpu_timestamp_required = [bool]$RequireGpuTimestampReady
     non_flat_screenshot_required = (-not [bool]$AllowFlatScreenshot)
     screenshot_target_uv_rects = $ScreenshotTargetUvRects
@@ -226,18 +254,27 @@ try {
         "-ProfilePath", (Resolve-Path $resolvedProfile).Path,
         "-Execute",
         "-Out", $propertyPlanPath,
-        "-Adb", $script:ResolvedAdb
+        "-Adb", $script:ResolvedAdb,
+        "-Serial", $Serial
     )
-    if (-not [string]::IsNullOrWhiteSpace($Serial)) {
-        $profileArgs += @("-Serial", $Serial)
+    if ($null -ne $script:ResolvedAdbServerPort) {
+        $profileArgs += @("-AdbServerPort", $script:ResolvedAdbServerPort)
     }
     $summary.profile_apply_output = Invoke-CheckedPowershell -Name "runtime profile apply" -Arguments $profileArgs
 
-    Invoke-AdbCommand -Name "clear logcat" -Arguments @("logcat", "-c") | Out-Null
+    if ($ClearLogcat) {
+        Invoke-AdbCommand -Name "clear logcat" -Arguments @("logcat", "-c") | Out-Null
+    }
     $summary.launch_output = (Invoke-AdbCommand -Name "launch native renderer" -Arguments @("shell", "am", "start", "-W", "-n", $Activity)).output
     Start-Sleep -Seconds ([Math]::Max(1, $RunSeconds))
 
-    $rawLogcat = (Invoke-AdbCommand -Name "dump logcat" -Arguments @("logcat", "-d", "-v", "time")).output
+    $pidResult = Invoke-AdbCommand -Name "native renderer pid" -Arguments @("shell", "pidof", $PackageName) -AllowFailure
+    $summary.target_pid = (($pidResult.output -split "\s+") | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1)
+    if ([string]::IsNullOrWhiteSpace($summary.target_pid)) {
+        throw "Native renderer process id was not available after launch; refusing unscoped logcat evidence."
+    }
+
+    $rawLogcat = (Invoke-AdbCommand -Name "dump pid-scoped logcat" -Arguments @("logcat", "-d", "-v", "time", "--pid", $summary.target_pid)).output
     Set-Content -Encoding UTF8 -Path $rawLogcatPath -Value $rawLogcat
     $filtered = @($rawLogcat -split "`r?`n" | Where-Object { $_ -match "RUSTY_QUEST_NATIVE_RENDERER" })
     [System.IO.File]::WriteAllLines($filteredLogcatPath, [string[]]$filtered)

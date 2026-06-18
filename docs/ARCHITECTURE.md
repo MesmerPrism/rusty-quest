@@ -56,6 +56,14 @@ native renderer lane:
 io.github.mesmerprism.rustyquest.native_renderer/android.app.NativeActivity
 ```
 
+This package is the primary public native Quest XR stack. It is the place to
+add low-level Quest examples that need direct Rust/OpenXR/Vulkan control,
+custom Camera2/HWB projection, native Meta passthrough composition, solid
+background projection, resident GPU hand meshes, public blur processing, or
+public SDF/hand-resource hooks. New examples should stay inside this route
+unless they specifically need a Makepad UI shell or a Manifold-controlled
+operator app.
+
 The package is a Quest platform adapter. It consumes the validated public
 native-renderer plan fixture as an APK asset, requests Android/headset/spatial
 camera permissions, launches through Android framework `NativeActivity`, and
@@ -88,11 +96,34 @@ Meta hand joints into the recorded-compatible 21-pose plus tip-length frame
 shape and feeds the same resident GPU skinning/SDF buffers. The bind mesh
 storage buffer, resident skinned-position visual overlay, compact input source,
 and skinned-mesh SDF field remain separate source/visual/input/field
-boundaries. The overlay uses the same connected-component ranking as the
-browser preview: rank `0` hand-inside, rank `1` hand-back, and rank `2` wrist
-cap. `targetSpaceMeshToSdfKernelAvailable=true` means the opt-in target-space
-route is compiled into the renderer; `meshToSdfKernel=true` appears only for
-frames where that opt-in GPU kernel actually ran. Cached field reuse is
+boundaries. The resident skinned-position buffer is now OpenXR reference-space
+meter data; live hand visuals project that buffer through each eye's OpenXR
+pose/FOV, while the current SDF visual still projects the same world-space mesh
+into a metadata-target grid. The paired live visual route treats right-hand
+topology as a separate source, matching the browser preview that used `mesh1`
+for the right hand. The primary path consumes the left replay summary; the
+secondary path consumes the right replay summary for GPU skinning, SDF resource
+allocation, and triangle drawing when a full local capture is embedded. Runtime
+markers expose source handedness separately from visual hand labels. The overlay
+keeps the same connected-component ranking as the browser preview, rank `0`
+hand-inside, rank `1` hand-back, and rank `2` wrist cap, but the visible hand
+material is now a continuous single surface color rather than component-colored
+chunks. A separate opt-in graft-copy setting instances the already-skinned
+source mesh onto the opposite hand's reconstructed fingertip anchors when both
+live hands are visible; it does not rerun skinning or upload expanded mesh
+vertices. The native passthrough graft-only runtime profile is a distinct
+route: it uses `XR_FB_passthrough` plus an alpha-blended projection layer for
+only those graft instances, skips Camera2/custom stereo projection, and keeps
+the SDF visual disabled. A second native passthrough profile enables
+`debug.rustyquest.native_renderer.hand_mesh.real_hands.visible=true`, so the
+same GPU-skinned resident live hand meshes draw under the graft instances while
+Camera2/custom stereo projection and SDF remain disabled. The solid black
+hands-and-grafts profile uses no `XR_FB_passthrough` layer at all: it clears the
+submitted projection layer to opaque black and draws only the live base hand
+meshes plus graft instances. `targetSpaceMeshToSdfKernelAvailable=true` means the
+opt-in target-space SDF visual route is compiled into the renderer;
+`meshToSdfKernel=true` appears only for frames where that opt-in GPU kernel
+actually ran. Cached field reuse is
 reported separately through `sdfFieldReused=true`, `sdfFieldCacheHits`, and
 `sdfUpdateCadenceFrames`. `fullSkinnedMeshSdfReady=true` is scoped to a valid
 resident field in this native renderer; live headset visual acceptance and
@@ -108,7 +139,7 @@ acquisition from Vulkan image/cache ownership and color-correct projection
 acceptance.
 
 Runtime property parsing for replay visual proof, compact hand input source,
-hand mesh diagnostic settings, and SDF cadence belongs to the
+hand mesh diagnostic settings, graft-copy enablement, and SDF cadence belongs to the
 `native_renderer_options` module. The OpenXR/Vulkan frame loop consumes typed
 options from that module so Android property transport, replay/live fallback
 semantics, and visual proof defaults remain testable without a headset.

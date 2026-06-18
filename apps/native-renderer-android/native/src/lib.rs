@@ -26,6 +26,7 @@ mod gpu_mesh_replay;
 mod gpu_sdf_field;
 #[cfg(target_os = "android")]
 mod guide_blur_graph;
+mod hand_mesh_graft;
 #[cfg(target_os = "android")]
 mod live_hand_compact;
 #[cfg(target_os = "android")]
@@ -142,31 +143,66 @@ fn android_main(app: android_activity::AndroidApp) {
         ),
     );
 
+    let runtime_options =
+        native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties();
+    marker(
+        "render-mode",
+        format!(
+            "status=config property={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} sdfVisualEnabled={} handMeshGraftCopiesEnabled={} handMeshGraftScaleMultiplier={:.2} realHandsProperty={} handMeshRealHandsVisible={}",
+            native_renderer_options::PROP_RENDER_MODE,
+            runtime_options.render_mode.marker_value(),
+            runtime_options.render_mode.uses_custom_stereo_projection(),
+            runtime_options.render_mode.uses_native_passthrough(),
+            runtime_options.render_mode.uses_solid_black_background(),
+            runtime_options.sdf_visual_enabled,
+            runtime_options.hand_mesh_graft_copies_enabled,
+            runtime_options.hand_mesh_graft_copy_scale,
+            native_renderer_options::PROP_HAND_MESH_REAL_HANDS_VISIBLE,
+            runtime_options.hand_mesh_real_hands_visible,
+        ),
+    );
+
     let xr_vulkan_readiness = xr_vulkan::probe(&app);
 
-    let camera_runtime = match native_camera::NativeCameraRuntime::start_from_plan(&plan) {
-        Ok(runtime) => Some(runtime),
-        Err(error) => {
-            marker(
-                "camera-runtime",
-                format!(
-                    "status=error acquisition=ACameraManager reason={} openxrSubmitReady=false vulkanExternalImportReady=false",
-                    sanitize(&error)
-                ),
-            );
-            None
+    let camera_runtime = if runtime_options.render_mode.uses_custom_stereo_projection() {
+        match native_camera::NativeCameraRuntime::start_from_plan(&plan) {
+            Ok(runtime) => Some(runtime),
+            Err(error) => {
+                marker(
+                    "camera-runtime",
+                    format!(
+                        "status=error acquisition=ACameraManager reason={} openxrSubmitReady=false vulkanExternalImportReady=false",
+                        sanitize(&error)
+                    ),
+                );
+                None
+            }
         }
+    } else {
+        marker(
+            "camera-runtime",
+            format!(
+                "status=skipped reason={} cameraRuntimeMode={} customStereoProjectionEnabled=false cameraFramesRequested=false cameraProjectionReady=false",
+                runtime_options.render_mode.marker_value(),
+                runtime_options.render_mode.camera_runtime_mode(),
+            ),
+        );
+        None
     };
 
     marker(
         "render-loop",
         format!(
-            "status=starting minimal-projection-layer=true recordedHandReplayRequested=true openxrProjectionLayer=runtime-submit {} finalExternalHwbSamples=0 guideTextureSamples=1",
-            xr_vulkan_readiness.marker_fields()
+            "status=starting minimal-projection-layer=true recordedHandReplayRequested=true openxrProjectionLayer=runtime-submit renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} {} finalExternalHwbSamples=0 guideTextureSamples=1 activeGuideTextureSamples={}",
+            runtime_options.render_mode.marker_value(),
+            runtime_options.render_mode.uses_custom_stereo_projection(),
+            runtime_options.render_mode.uses_native_passthrough(),
+            xr_vulkan_readiness.marker_fields(),
+            if runtime_options.render_mode.uses_custom_stereo_projection() { 1 } else { 0 },
         ),
     );
 
-    match xr_vulkan::run_projection_loop(&app, camera_runtime.as_ref()) {
+    match xr_vulkan::run_projection_loop(&app, camera_runtime.as_ref(), runtime_options) {
         Ok(()) => marker(
             "render-loop",
             "status=stopped reason=openxr-projection-loop-finished",

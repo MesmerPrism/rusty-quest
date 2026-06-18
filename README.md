@@ -10,6 +10,25 @@ becoming hand-written launch authority.
 
 ## Native Quest Rendering
 
+Rusty Quest now treats `apps/native-renderer-android` as the main public
+Quest-native XR stack for low-level Morphospace rendering experiments. The
+stack is Rust-first and NativeActivity-based: it uses Android/OpenXR/Vulkan
+directly, keeps Makepad out of the runtime path, and reports acceptance through
+`RUSTY_QUEST_NATIVE_RENDERER` markers and runtime-profile fixtures.
+
+The currently documented public routes are:
+
+| Route | Background | Hand visual | Camera/HWB path | Primary use |
+| --- | --- | --- | --- | --- |
+| Custom stereo projection | Camera2 `50`/`51` via Vulkan HWB guide textures | Recorded/live GPU-skinned hand mesh, optional SDF visual | Enabled | Camera projection, blur, SDF, and replay evidence |
+| Native passthrough hands and grafts | `XR_FB_passthrough` | Live GPU-skinned base hands plus fingertip graft copies | Disabled | World-space hand mesh/graft visuals over Meta passthrough |
+| Native passthrough graft only | `XR_FB_passthrough` | Fingertip graft copies only | Disabled | Graft-fit isolation |
+| Solid black hands and grafts | Opaque black OpenXR projection layer | Live GPU-skinned base hands plus fingertip graft copies | Disabled | Non-passthrough world-space control view |
+
+These routes are public AGPL examples. Private downstream effects can attach
+later through the public extension-slot boundary, but Colorama, distortion, and
+other private visual layers are not part of this package.
+
 `crates/rusty-quest-native-renderer` defines the first clean contract for a
 pure Quest-native OpenXR/Vulkan camera renderer. It models the public AGPL
 HWB import, offscreen guide blur, SDF input hook, private extension ABI slot,
@@ -31,14 +50,39 @@ target rectangles, with source raster Y flip controlled by metadata rather than
 a hard-coded shader flip. Local builds can embed the real recorded
 Meta/OpenXR hand capture and stage its bind mesh into a native Vulkan storage
 buffer while reporting `cpuSdfPerFrame=false`. The current render loop also
-draws the real recorded hand mesh from the resident GPU-skinned position buffer
-inside the metadata target rectangle, preserving the browser-discovered
-component split: hand-inside, hand-back, and wrist cap. A compact-joint GPU
+draws the real recorded hand mesh from the resident GPU-skinned position
+buffer, preserving the browser-discovered component split: hand-inside,
+hand-back, and wrist cap. The resident hand mesh buffer now stores OpenXR
+reference-space meter positions; live hand visuals project those positions
+through each eye's OpenXR pose/FOV instead of fixed target-local UVs, with the
+OpenXR `+Y`-up eye-space value converted for this positive-height Vulkan
+viewport. The live two-hand route now follows the browser "hand job" preview's
+source split: the primary visual uses the left recorded topology, while the
+secondary visual allocates, skins, and draws from the distinct right recorded
+topology when a full local capture is embedded. Scorecards expose both visual
+hand labels and source handedness so a right-hand draw cannot silently reuse
+the left bind mesh. The normal hand visual now uses one continuous surface
+material instead of visible component-color chunks; component ids remain
+metadata for validation and future effects. An opt-in graft-copy property can
+reuse the already-skinned left/right meshes as fingertip instances on the
+opposite hand when both live hands are visible. The separate
+`quest-native-renderer-native-passthrough-graft-only.profile.json` route uses
+native passthrough as the background, skips Camera2/custom stereo projection,
+disables the SDF visual, and scales those graft copies by `0.85` for a tighter
+finger fit. The separate
+`quest-native-renderer-native-passthrough-hands-and-grafts.profile.json` route
+keeps the same native passthrough background and graft scale but also draws the
+real live hand meshes from the already GPU-skinned resident buffers. The
+`quest-native-renderer-solid-black-hands-and-grafts.profile.json` route is the
+same live base-mesh plus graft visual test without passthrough or Camera2
+projection: it submits an opaque black projection layer and draws only the
+hand visuals. A compact-joint GPU
 path now parses the real rig blend indices/weights, bind-joint sources, compact
 runtime joint frames, and tip lengths; keeps source mesh and bind metadata
 buffers resident; uploads only runtime poses plus tip-length rows per frame;
 dispatches GPU skinning into a resident skinned-position buffer; and optionally
-builds the target SDF field from that GPU-owned mesh. The same compact input
+builds the target SDF field by projecting that GPU-owned mesh into the metadata
+target for the current visual SDF slice. The same compact input
 shape can now be fed by live OpenXR hand tracking when `XR_EXT_hand_tracking`
 is available: live frames upload only the 21 runtime joint poses plus packed tip
 lengths and then reuse the resident topology/bind/SDF graph. The SDF visual
@@ -111,6 +155,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-ques
 powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-remote-camera"
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -RunSeconds 12
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1
 ```
+
+Device-facing smoke wrappers require `-Serial <quest-serial>` or
+`RUSTY_QUEST_SERIAL`; normal ADB work must not rely on an implicit default
+device. Use `RUSTY_QUEST_ADB_SERVER_PORT` or `-AdbServerPort` only when
+intentionally routing through a non-default ADB server port.

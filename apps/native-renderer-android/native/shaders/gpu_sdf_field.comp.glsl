@@ -10,7 +10,7 @@ layout(set = 0, binding = 1) readonly buffer RecordedSkinningTriangles {
     uvec4 triangles[];
 } skinning_triangles;
 
-layout(set = 0, binding = 6) readonly buffer SkinnedTargetPositions {
+layout(set = 0, binding = 6) readonly buffer SkinnedWorldPositions {
     vec4 positions[];
 } skinned_positions;
 
@@ -40,6 +40,7 @@ layout(push_constant) uniform SdfComputePush {
 float cross2(vec2 left, vec2 right);
 float distance_to_segment(vec2 point, vec2 a, vec2 b);
 bool point_in_triangle(vec2 point, vec2 a, vec2 b, vec2 c);
+vec2 target_space_uv(vec3 world);
 
 void main() {
     uint linear_index = gl_GlobalInvocationID.x;
@@ -80,12 +81,9 @@ void main() {
         if (triangle.x >= vertex_count || triangle.y >= vertex_count || triangle.z >= vertex_count) {
             continue;
         }
-        vec4 a_record = skinned_positions.positions[triangle.x];
-        vec4 b_record = skinned_positions.positions[triangle.y];
-        vec4 c_record = skinned_positions.positions[triangle.z];
-        vec2 a = a_record.xy;
-        vec2 b = b_record.xy;
-        vec2 c = c_record.xy;
+        vec2 a = target_space_uv(skinned_positions.positions[triangle.x].xyz);
+        vec2 b = target_space_uv(skinned_positions.positions[triangle.y].xyz);
+        vec2 c = target_space_uv(skinned_positions.positions[triangle.z].xyz);
 
         float triangle_distance = min(
             distance_to_segment(uv, a, b),
@@ -127,4 +125,11 @@ bool point_in_triangle(vec2 point, vec2 a, vec2 b, vec2 c) {
     bool has_negative = edge0 < 0.0 || edge1 < 0.0 || edge2 < 0.0;
     bool has_positive = edge0 > 0.0 || edge1 > 0.0 || edge2 > 0.0;
     return !(has_negative && has_positive);
+}
+
+vec2 target_space_uv(vec3 world) {
+    vec3 center = vec3(pc.target0.x, pc.target0.y, pc.target1.x);
+    float radius = max(pc.target0.w, 0.000001);
+    vec2 local = (world.xy - center.xy) / radius;
+    return vec2(0.5 + local.x * 0.44, 0.55 - local.y * 0.44);
 }

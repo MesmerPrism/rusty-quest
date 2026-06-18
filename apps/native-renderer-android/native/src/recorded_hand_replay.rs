@@ -40,6 +40,13 @@ pub(crate) struct RecordedHandReplaySummary {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct RecordedHandReplaySet {
+    pub(crate) left: RecordedHandReplaySummary,
+    pub(crate) right: RecordedHandReplaySummary,
+    pub(crate) right_hand_distinct: bool,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct RecordedHandVisualFrame {
     pub(crate) frame_index: u32,
     pub(crate) timestamp_ns: u64,
@@ -91,30 +98,29 @@ pub(crate) struct MeshComponentSummary {
 
 impl RecordedHandReplaySummary {
     pub(crate) fn load() -> Result<Self, String> {
-        Self::from_json_str(RECORDED_HAND_REPLAY_JSON)
+        Self::from_json_str_for_hand(RECORDED_HAND_REPLAY_JSON, "left")
     }
 
     fn from_json_str(json: &str) -> Result<Self, String> {
+        Self::from_json_str_for_hand(json, "left")
+    }
+
+    fn from_json_str_for_hand(json: &str, handedness: &str) -> Result<Self, String> {
         let value: serde_json::Value = serde_json::from_str(json)
             .map_err(|error| format!("parse recorded hand replay source JSON: {error}"))?;
-        required_text(&value, "schema").and_then(|schema| {
-            if schema == "rusty.quest.native_renderer.recorded_hand_replay_source.v1" {
-                Ok(())
-            } else {
-                Err(format!("unsupported recorded hand replay schema {schema}"))
-            }
-        })?;
-        let source_id = required_text(&value, "source_id")?;
-        let source_kind = required_text(&value, "source_kind")?;
-        let hands = value
-            .get("hands")
-            .and_then(serde_json::Value::as_array)
-            .filter(|hands| !hands.is_empty())
+        let hands = source_hands(&value)?;
+        let hand = hand_by_handedness(hands, handedness)
+            .or_else(|| hands.first())
             .ok_or_else(|| "recorded hand replay source has no hands".to_string())?;
-        let hand = hands
-            .iter()
-            .find(|hand| text_field(hand, "handedness").as_deref() == Some("left"))
-            .unwrap_or(&hands[0]);
+        Self::from_json_value_hand(&value, hand)
+    }
+
+    fn from_json_value_hand(
+        value: &serde_json::Value,
+        hand: &serde_json::Value,
+    ) -> Result<Self, String> {
+        let source_id = required_text(value, "source_id")?;
+        let source_kind = required_text(value, "source_kind")?;
 
         let parsed =
             if let Some(rig_json) = hand.get("rig_json").and_then(serde_json::Value::as_str) {
@@ -278,6 +284,46 @@ impl RecordedHandReplaySummary {
             self.mesh_component_summary.component_count,
             join_u64(&self.mesh_component_summary.vertex_counts),
             join_u64(&self.mesh_component_summary.triangle_counts),
+        )
+    }
+}
+
+impl RecordedHandReplaySet {
+    pub(crate) fn load() -> Result<Self, String> {
+        Self::from_json_str(RECORDED_HAND_REPLAY_JSON)
+    }
+
+    fn from_json_str(json: &str) -> Result<Self, String> {
+        let value: serde_json::Value = serde_json::from_str(json)
+            .map_err(|error| format!("parse recorded hand replay source JSON: {error}"))?;
+        let hands = source_hands(&value)?;
+        let left_hand = hand_by_handedness(hands, "left")
+            .or_else(|| hands.first())
+            .ok_or_else(|| "recorded hand replay source has no hands".to_string())?;
+        let left = RecordedHandReplaySummary::from_json_value_hand(&value, left_hand)?;
+        let right = hand_by_handedness(hands, "right")
+            .map(|hand| RecordedHandReplaySummary::from_json_value_hand(&value, hand))
+            .transpose()?;
+        let right_hand_distinct = right.is_some();
+        let right = right.unwrap_or_else(|| left.clone());
+        Ok(Self {
+            left,
+            right,
+            right_hand_distinct,
+        })
+    }
+
+    pub(crate) fn marker_fields(&self) -> String {
+        format!(
+            "recordedHandReplayHandSetReady=true recordedHandReplayRightHandDistinct={} recordedHandReplayLeftHandedness={} recordedHandReplayRightHandedness={} recordedHandReplayLeftGpuSkinningPayloadReady={} recordedHandReplayRightGpuSkinningPayloadReady={} recordedHandReplayRightTopologyVertexCount={} recordedHandReplayRightTopologyTriangleCount={} recordedHandReplayRightMeshComponentCount={}",
+            self.right_hand_distinct,
+            crate::sanitize(&self.left.handedness),
+            crate::sanitize(&self.right.handedness),
+            self.left.has_gpu_skinning_sdf_payload(),
+            self.right.has_gpu_skinning_sdf_payload(),
+            self.right.vertex_count,
+            self.right.triangle_count,
+            self.right.mesh_component_summary.component_count,
         )
     }
 }
@@ -1109,6 +1155,28 @@ fn text_field(value: &serde_json::Value, field: &'static str) -> Option<String> 
         .map(str::to_owned)
 }
 
+fn source_hands(value: &serde_json::Value) -> Result<&[serde_json::Value], String> {
+    let schema = required_text(value, "schema")?;
+    if !schema.ends_with("recorded_hand_replay_source.v1") {
+        return Err(format!("unsupported recorded hand replay schema {schema}"));
+    }
+    value
+        .get("hands")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::as_slice)
+        .filter(|hands| !hands.is_empty())
+        .ok_or_else(|| "recorded hand replay source has no hands".to_string())
+}
+
+fn hand_by_handedness<'a>(
+    hands: &'a [serde_json::Value],
+    handedness: &str,
+) -> Option<&'a serde_json::Value> {
+    hands
+        .iter()
+        .find(|hand| text_field(hand, "handedness").as_deref() == Some(handedness))
+}
+
 fn required_text(value: &serde_json::Value, field: &'static str) -> Result<String, String> {
     text_field(value, field).ok_or_else(|| format!("missing text field {field}"))
 }
@@ -1163,7 +1231,7 @@ fn join_u64(values: &[u64]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::RecordedHandReplaySummary;
+    use super::{RecordedHandReplaySet, RecordedHandReplaySummary};
 
     #[test]
     fn public_recorded_hand_shape_fixture_loads() {
@@ -1193,5 +1261,22 @@ mod tests {
         assert!(replay
             .marker_fields()
             .contains("recordedInputEquivalent=true"));
+    }
+
+    #[test]
+    fn recorded_hand_replay_set_provides_right_hand_route() {
+        let replay_set = RecordedHandReplaySet::load().expect("fixture set loads");
+
+        assert_eq!(replay_set.left.vertex_count, 1360);
+        assert_eq!(replay_set.right.vertex_count, 1360);
+        if replay_set.right_hand_distinct {
+            assert_eq!(replay_set.right.handedness, "right");
+            assert!(replay_set.right.has_gpu_skinning_sdf_payload());
+        } else {
+            assert_eq!(replay_set.right.handedness, replay_set.left.handedness);
+        }
+        let markers = replay_set.marker_fields();
+        assert!(markers.contains("recordedHandReplayHandSetReady=true"));
+        assert!(markers.contains("recordedHandReplayRightHandDistinct="));
     }
 }

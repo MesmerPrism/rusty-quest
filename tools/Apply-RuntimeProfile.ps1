@@ -5,7 +5,8 @@ param(
     [switch]$Execute,
     [string]$Out = "local-artifacts\property-write-plan.json",
     [string]$Adb = $env:RUSTY_QUEST_ADB,
-    [string]$Serial = $env:RUSTY_QUEST_SERIAL
+    [string]$Serial = $env:RUSTY_QUEST_SERIAL,
+    [string]$AdbServerPort = $env:RUSTY_QUEST_ADB_SERVER_PORT
 )
 
 $ErrorActionPreference = "Stop"
@@ -21,6 +22,21 @@ function ConvertTo-AndroidShellSingleQuoted {
         throw "Android shell single-quote escaping is not supported for value: $Value"
     }
     return "'$Value'"
+}
+
+function Resolve-AdbServerPortArgument {
+    param(
+        [string]$Value
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $null
+    }
+    $parsed = 0
+    if (-not [int]::TryParse($Value, [ref]$parsed) -or $parsed -lt 1 -or $parsed -gt 65535) {
+        throw "ADB server port must be an integer from 1 to 65535: $Value"
+    }
+    return $parsed.ToString()
 }
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
@@ -97,10 +113,15 @@ if ($Execute) {
     if ([string]::IsNullOrWhiteSpace($Adb)) {
         $Adb = "adb"
     }
-    $adbArgsBase = @()
-    if (-not [string]::IsNullOrWhiteSpace($Serial)) {
-        $adbArgsBase += @("-s", $Serial)
+    if ([string]::IsNullOrWhiteSpace($Serial)) {
+        throw "-Serial or RUSTY_QUEST_SERIAL is required with -Execute; device-scoped ADB writes must not use an implicit target."
     }
+    $resolvedAdbServerPort = Resolve-AdbServerPortArgument -Value $AdbServerPort
+    $adbArgsBase = @()
+    if ($null -ne $resolvedAdbServerPort) {
+        $adbArgsBase += @("-P", $resolvedAdbServerPort)
+    }
+    $adbArgsBase += @("-s", $Serial)
 
     $state = & $Adb @adbArgsBase "get-state"
     if ($LASTEXITCODE -ne 0) {
@@ -145,7 +166,10 @@ if ($Execute) {
 
     $plan.executed_at = (Get-Date).ToUniversalTime().ToString("o")
     $plan.transport = "adb"
-    $plan.adb_serial = if ([string]::IsNullOrWhiteSpace($Serial)) { $null } else { $Serial }
+    $plan.adb_scope = "device-scoped-adb"
+    $plan.adb_serial_required = $true
+    $plan.adb_serial = $Serial
+    $plan.adb_server_port = $resolvedAdbServerPort
     $plan.readbacks = $readbacks
 }
 

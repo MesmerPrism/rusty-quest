@@ -11,28 +11,14 @@ layout(push_constant) uniform HandMeshVisualPush {
 } pc;
 
 void main() {
-    vec3 colors[6] = vec3[](
-        vec3(0.561, 0.780, 0.690),
-        vec3(0.843, 0.706, 0.416),
-        vec3(0.820, 0.478, 0.424),
-        vec3(0.694, 0.584, 0.792),
-        vec3(0.898, 0.604, 0.373),
-        vec3(0.612, 0.702, 0.859)
-    );
-    vec3 diagnostic_colors[6] = vec3[](
-        vec3(0.000, 1.000, 0.950),
-        vec3(1.000, 0.930, 0.000),
-        vec3(1.000, 0.050, 0.820),
-        vec3(0.570, 0.980, 1.000),
-        vec3(1.000, 0.380, 0.000),
-        vec3(0.200, 0.520, 1.000)
-    );
-    vec3 rgb = colors[v_component % 6u];
-    float depth_tint = mix(0.74, 1.12, clamp(v_depth, 0.0, 1.0));
-    float normal_tint = mix(0.86, 1.16, clamp(v_normal_z, 0.0, 1.0));
+    vec3 surface_color = vec3(0.700, 0.935, 0.870);
+    vec3 diagnostic_color = vec3(0.620, 0.965, 0.900);
+    vec3 rgb = surface_color;
+    float depth_tint = mix(0.97, 1.03, clamp(v_depth, 0.0, 1.0));
+    float normal_tint = mix(0.99, 1.01, clamp(v_normal_z, 0.0, 1.0));
     float diagnostic = clamp(pc.params.w, 0.0, 1.0);
-    float alpha = mix(v_component == 2u ? 0.55 : 0.42, clamp(pc.params.z, 0.2, 1.0), diagnostic);
-    rgb = mix(rgb, diagnostic_colors[v_component % 6u], diagnostic);
+    float alpha = mix(0.62, clamp(pc.params.z, 0.2, 1.0), diagnostic);
+    rgb = mix(rgb, diagnostic_color, diagnostic);
     rgb = clamp(rgb * depth_tint * normal_tint, vec3(0.0), vec3(1.0));
     out_color = vec4(rgb * alpha, alpha);
 }

@@ -7,6 +7,22 @@ This package is the Quest-native Android scaffold for the public
 io.github.mesmerprism.rustyquest.native_renderer/android.app.NativeActivity
 ```
 
+It is the main public native Quest XR stack in Rusty Quest. Use it for
+Rust-first OpenXR/Vulkan examples that need custom projection layers, Meta
+passthrough composition, a solid-color XR background, resident GPU-skinned hand
+meshes, public blur processing, SDF hooks, or detailed timing markers without a
+Makepad runtime in the app.
+
+Runtime routes are selected by profile/property, not by separate APKs:
+
+| Profile | Background | Visible hand content | Camera2/HWB projection |
+| --- | --- | --- | --- |
+| `quest-native-renderer-replay-visual-proof.profile.json` | Custom camera projection | Recorded GPU-skinned mesh and SDF visual | Enabled |
+| `quest-native-renderer-live-hand-visual-diagnostic.profile.json` | Custom camera projection | Live diagnostic mesh/SDF, pending screenshot acceptance | Enabled |
+| `quest-native-renderer-native-passthrough-graft-only.profile.json` | Native Meta passthrough | Fingertip graft copies only | Disabled |
+| `quest-native-renderer-native-passthrough-hands-and-grafts.profile.json` | Native Meta passthrough | Live base hand meshes plus graft copies | Disabled |
+| `quest-native-renderer-solid-black-hands-and-grafts.profile.json` | Opaque black projection layer | Live base hand meshes plus graft copies | Disabled |
+
 It consumes the public native renderer fixture at build time. Runtime ownership
 is a Rust NativeActivity in `librusty_quest_native_renderer.so`: no app Java is packaged
 for this route. The Rust code opens NDK `ACameraManager` camera ids `50` and
@@ -53,29 +69,55 @@ the old one-hand marker.
 The live mesh visual is deliberately not considered accepted by markers alone:
 during the 2026-06-17 live-hand check the user had real hands in view, but did
 not see a mesh or SDF representation in the headset. Future headset retests
-should enable the high-contrast, target-local diagnostic overlay with
+should enable the high-contrast diagnostic overlay with
 `debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled`, optional
 `debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv`, and
 `debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha`, then
-capture visual evidence that the mesh and SDF effects are visible inside the
-metadata-owned camera projection target.
+capture visual evidence that the mesh and SDF effects are visible over the
+camera projection.
 The staged property bundle for that later retest is
 `fixtures/runtime-profiles/quest-native-renderer-live-hand-visual-diagnostic.profile.json`;
 it forces `live-meta-openxr-hand-tracking`, disables recorded fallback, enables
 the high-contrast mesh diagnostic plus SDF visual, and keeps live mesh/SDF
 acceptance pending until screenshot evidence shows visible overlay color.
-Live diagnostic builds now normalize the GPU skinning target from the active
-live runtime joint bounds before drawing the resident triangle mesh. When that
+The optional graft-copy experiment is controlled separately by
+`debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled`; the shared
+profiles set it to `false` so replay and live diagnostic runs do not inherit a
+stale experimental copy mode.
+`fixtures/runtime-profiles/quest-native-renderer-native-passthrough-graft-only.profile.json`
+keeps native passthrough focused on graft instances only, while
+`fixtures/runtime-profiles/quest-native-renderer-native-passthrough-hands-and-grafts.profile.json`
+also sets `debug.rustyquest.native_renderer.hand_mesh.real_hands.visible=true`
+so the base live hand meshes draw over native passthrough before the graft
+instances.
+`fixtures/runtime-profiles/quest-native-renderer-solid-black-hands-and-grafts.profile.json`
+uses the same live hand mesh and graft settings without native passthrough or
+Camera2 projection; the submitted projection layer clears to opaque black.
+Live diagnostic builds now keep the resident GPU-skinned position buffer in
+OpenXR reference-space meters. Live compact-hand frames draw through each
+eye's OpenXR pose/FOV (`handMeshVisualProjectionSpace=openxr-eye-fov-world-space`)
+instead of fixed target-local UVs. The shader explicitly converts OpenXR
+eye-space `+Y` up into the current positive-height Vulkan viewport convention
+(`handMeshVisualClipY=openxr-y-up-to-vulkan-positive-viewport`) so vertical hand
+motion stays aligned in headset space. Recorded replay can still use a
+metadata-target diagnostic mapper for no-real-hands screenshots. When the live
 path is active, `live-hand-mesh-target-proof` reports
 `liveHandMeshTargetProofPath=gpu-skinned-resident-triangle-fill`,
 `liveHandMeshJointOverlaySuppressed=true`, and the joint skeleton fallback is
 not drawn. This separates "the live joints are visible" from "the real
 GPU-skinned mesh is visible."
-In the first headset inspection of this route, the left live mesh looked good,
-the right mesh was visibly deformed, and both hands still appeared in fixed
-target-local diagnostic positions. Treat that as live mesh visibility progress,
-not final alignment: the next mesh gate is offline right-hand validation against
-the capture/export contract, followed by real-size world-space placement.
+In the first headset inspection of the live mesh route, the left live mesh
+looked good while the right mesh was visibly deformed. The browser-side "hand
+job" preview showed the important correction: the right hand is not a mirrored
+left route; it uses the distinct `mesh1` / `right.rig.json` /
+`right.clip.jsonl` source. The native runtime now loads a paired replay set,
+keeps the primary path on the left source, and creates the secondary
+GPU-skinned visual/SDF resources from the right-hand source when that local
+capture is embedded. Markers report `recordedHandReplayRightHandDistinct`,
+`recordedHandReplayRightHandedness`, `handMeshVisualSourceHandedness`, and
+`handMeshVisualSecondarySourceHandedness` so headset logs can prove the right
+draw came from right-hand bind topology. This still needs a live headset retest
+before calling the right-hand visual accepted.
 
 For no-real-hands isolation, set
 `debug.rustyquest.native_renderer.replay.visual_proof.enabled=true`. That preset
@@ -125,19 +167,26 @@ full-capture build path; the 2026-06-17 no-real-hands replay smoke visually
 validated the recorded mesh/SDF overlay in headset screenshots. Live compact
 input is build-validated but still needs headset visual acceptance, and direct
 Meta hand-mesh topology import, Matter/Lattice-backed SDF parity, and live
-headset visual SDF acceptance remain pending. The active mesh visual draws the shared resident skinned-position
-buffer through a descriptor based Vulkan triangle pipeline and preserves the
-browser component colors for hand-inside, hand-back, and wrist cap. A
-diagnostic property path can temporarily brighten, enlarge, and offset that
-triangle overlay without changing the normal default route. Guide blur
+headset visual SDF acceptance remain pending. The active mesh visual draws the
+shared resident skinned-position buffer through a descriptor based Vulkan
+triangle pipeline, while component ranks for hand-inside, hand-back, and wrist
+cap remain metadata rather than visible color bands. The normal hand material
+is a continuous single surface color with depth/normal shading; diagnostics can
+brighten that same continuous surface. The resident buffer is now
+`skinnedPositionBufferCoordinateSpace=openxr-reference-space`; the SDF visual
+still projects that world-space mesh into a low-resolution metadata-target
+field for this slice. When graft copies are enabled and both live hands are
+visible, the already-skinned left mesh can be instanced onto the right
+fingertips and the already-skinned right mesh onto the left fingertips using
+palm anchors and a wrist-radius to target-finger-radius scale. Guide blur
 headset/color acceptance, color conformance, and projection alignment also
 remain pending.
 
 The public effect surface includes the blur guide path, the recorded hand
 replay visual, the resident compact-joint GPU-skinned triangle overlay, the
-native GPU mesh boundary, and the opt-in recorded compact-joint skinned-mesh
-GPU SDF path. Private downstream visual layers remain extension slots and are
-not packaged here.
+native GPU mesh boundary, the opt-in live hand graft-copy visual, and the
+opt-in recorded compact-joint skinned-mesh GPU SDF path. Private downstream
+visual layers remain extension slots and are not packaged here.
 
 Build:
 
@@ -157,12 +206,13 @@ Static validation:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-replay-visual-proof.profile.json -DryRun -Out .\local-artifacts\native-renderer-replay-visual-proof-property-write-plan.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-live-hand-visual-diagnostic.profile.json -DryRun -Out .\local-artifacts\native-renderer-live-hand-visual-diagnostic-property-write-plan.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-native-passthrough-hands-and-grafts.profile.json -DryRun -Out .\local-artifacts\native-renderer-native-passthrough-hands-and-grafts-property-write-plan.json
 ```
 
 Runtime evidence validation for a no-real-hands replay smoke:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -RunSeconds 12
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
 ```
 
@@ -184,6 +234,11 @@ summary for direct inspection. It also requires stage-level performance budgets
 by default; pass
 `-AllowPerformanceBudgetMiss` only when collecting failed-run artifacts is the
 priority.
+Device-facing smoke runs require `-Serial <quest-serial>` or
+`RUSTY_QUEST_SERIAL`. Use `-AdbServerPort` or `RUSTY_QUEST_ADB_SERVER_PORT`
+only when deliberately routing through a non-default ADB server. Logcat capture
+is PID-scoped by default; pass `-ClearLogcat` only for an exclusive headset run
+where clearing that device's log buffer is acceptable.
 For the later live-hand retest, pass
 `-EvidenceMode LiveVisualDiagnosticCaveat` without overriding `-ProfilePath`;
 the wrapper will apply

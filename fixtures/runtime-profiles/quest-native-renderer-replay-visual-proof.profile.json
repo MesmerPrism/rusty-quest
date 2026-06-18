@@ -3,15 +3,22 @@
   "profile_id": "profile.quest.native_renderer.replay_visual_proof",
   "target_platform": "quest",
   "owned_android_properties": [
+    "debug.rustyquest.native_renderer.render.mode",
     "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
     "debug.rustyquest.native_renderer.hand_mesh.input.source",
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv",
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha",
+    "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
     "debug.rustyquest.native_renderer.sdf.visual.enabled",
     "debug.rustyquest.native_renderer.sdf.update_period_frames"
   ],
   "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.render.mode",
+      "value": "custom-stereo-projection",
+      "source_setting_id": "native_renderer.render.mode"
+    },
     {
       "name": "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
       "value": "true",
@@ -38,6 +45,11 @@
       "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.alpha"
     },
     {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.graft_copies.enabled"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.sdf.visual.enabled",
       "value": "true",
       "source_setting_id": "native_renderer.sdf.visual.enabled"
@@ -50,6 +62,7 @@
   ],
   "expected_markers": [
     "RUSTY_QUEST_NATIVE_RENDERER channel=recorded-replay-visual-proof",
+    "renderMode=custom-stereo-projection",
     "recordedReplayVisualProofEnabled=true",
     "compactHandInputSourceMode=recorded-replay",
     "recordedReplayVisualAcceptance=pending-headset-screenshot"

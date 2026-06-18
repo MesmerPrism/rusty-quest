@@ -31,8 +31,16 @@ appearance truth, Manifold command authority, or Lattice relation contracts.
 
 Read-only source inspection and dry-run profile validation do not require Agent
 Board. Use Agent Board only when the user explicitly asks for shared-resource
-coordination or when a task actually uses headset, ADB server, APK build,
+coordination or when a task actually uses headset, ADB lifecycle, APK build,
 logcat, screenshots, Perfetto, or shared bridge ports.
+
+Routine device ADB commands must be serial-scoped with `adb -s <serial>` or the
+wrapper `-Serial`/`RUSTY_QUEST_SERIAL` inputs. Reserve `quest:<serial>` for
+same-headset install, launch, screenshot, headset-bound logcat, Perfetto, and
+runtime validation. Reserve `adb-server:lifecycle` only for disruptive daemon
+operations such as `adb kill-server`, `adb start-server`, reconnect/recovery,
+Wi-Fi ADB setup, or ADB server path/port ownership changes; do not serialize
+ordinary serial-scoped ADB work behind a global `adb-server` lease.
 
 ## Sustainable Design Guardrails
 

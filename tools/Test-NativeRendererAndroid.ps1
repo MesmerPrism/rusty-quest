@@ -25,6 +25,7 @@ $liveHandCompactPath = Join-Path $appRoot "native\src\live_hand_compact.rs"
 $nativeRendererOptionsPath = Join-Path $appRoot "native\src\native_renderer_options.rs"
 $nativeRendererTimingPath = Join-Path $appRoot "native\src\native_renderer_timing.rs"
 $privateExtensionSlotPath = Join-Path $appRoot "native\src\private_extension_slot.rs"
+$handMeshGraftPath = Join-Path $appRoot "native\src\hand_mesh_graft.rs"
 $gpuHandMeshVisualPath = Join-Path $appRoot "native\src\gpu_hand_mesh_visual.rs"
 $gpuMeshReplayPath = Join-Path $appRoot "native\src\gpu_mesh_replay.rs"
 $gpuSdfFieldPath = Join-Path $appRoot "native\src\gpu_sdf_field.rs"
@@ -41,6 +42,7 @@ $gpuSdfOverlayShaderPath = Join-Path $appRoot "native\shaders\gpu_sdf_overlay.fr
 $xrVulkanPath = Join-Path $appRoot "native\src\xr_vulkan.rs"
 $buildPath = Join-Path $PSScriptRoot "Build-NativeRendererAndroid.ps1"
 $checkAllPath = Join-Path $PSScriptRoot "check_all.ps1"
+$runtimeProfileToolPath = Join-Path $PSScriptRoot "Apply-RuntimeProfile.ps1"
 $runtimeEvidenceToolPath = Join-Path $PSScriptRoot "Test-NativeRendererRuntimeEvidence.ps1"
 $runtimeSmokeToolPath = Join-Path $PSScriptRoot "Invoke-NativeRendererReplaySmoke.ps1"
 $fixturePath = Join-Path $repoRoot "fixtures\native-renderer\native-hwb-blur-sdf-public.plan.json"
@@ -52,8 +54,11 @@ $runtimeEvidenceDamagedPerformancePath = Join-Path $repoRoot "fixtures\damaged\n
 $liveHandPrematureAcceptanceDamagedPath = Join-Path $repoRoot "fixtures\damaged\native-renderer-live-hand-visual-premature-acceptance.logcat.txt"
 $replayVisualProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-replay-visual-proof.profile.json"
 $liveHandVisualDiagnosticProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-live-hand-visual-diagnostic.profile.json"
+$nativePassthroughGraftOnlyProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-graft-only.profile.json"
+$nativePassthroughHandsAndGraftsProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-hands-and-grafts.profile.json"
+$solidBlackHandsAndGraftsProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-solid-black-hands-and-grafts.profile.json"
 
-foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $liveHandVisualDiagnosticProfilePath)) {
+foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath)) {
     if (-not (Test-Path $path)) {
         throw "Missing native renderer Android file: $path"
     }
@@ -76,6 +81,7 @@ $liveHandCompact = Get-Content -Raw -Path $liveHandCompactPath
 $nativeRendererOptions = Get-Content -Raw -Path $nativeRendererOptionsPath
 $nativeRendererTiming = Get-Content -Raw -Path $nativeRendererTimingPath
 $privateExtensionSlot = Get-Content -Raw -Path $privateExtensionSlotPath
+$handMeshGraft = Get-Content -Raw -Path $handMeshGraftPath
 $gpuHandMeshVisual = Get-Content -Raw -Path $gpuHandMeshVisualPath
 $gpuMeshReplay = Get-Content -Raw -Path $gpuMeshReplayPath
 $gpuSdfField = Get-Content -Raw -Path $gpuSdfFieldPath
@@ -92,12 +98,16 @@ $gpuSdfOverlayShader = Get-Content -Raw -Path $gpuSdfOverlayShaderPath
 $xrVulkan = Get-Content -Raw -Path $xrVulkanPath
 $buildScriptText = Get-Content -Raw -Path $buildPath
 $checkAllText = Get-Content -Raw -Path $checkAllPath
+$runtimeProfileToolText = Get-Content -Raw -Path $runtimeProfileToolPath
 $runtimeEvidenceToolText = Get-Content -Raw -Path $runtimeEvidenceToolPath
 $runtimeSmokeToolText = Get-Content -Raw -Path $runtimeSmokeToolPath
 $runtimeEvidenceFixtureText = Get-Content -Raw -Path $runtimeEvidenceFixturePath
 $liveHandDiagnosticPendingFixtureText = Get-Content -Raw -Path $liveHandDiagnosticPendingFixturePath
 $replayVisualProfile = Get-Content -Raw -Path $replayVisualProfilePath
 $liveHandVisualDiagnosticProfile = Get-Content -Raw -Path $liveHandVisualDiagnosticProfilePath
+$nativePassthroughGraftOnlyProfile = Get-Content -Raw -Path $nativePassthroughGraftOnlyProfilePath
+$nativePassthroughHandsAndGraftsProfile = Get-Content -Raw -Path $nativePassthroughHandsAndGraftsProfilePath
+$solidBlackHandsAndGraftsProfile = Get-Content -Raw -Path $solidBlackHandsAndGraftsProfilePath
 $fixture = Get-Content -Raw -Path $fixturePath
 
 if ($manifest -notmatch 'package="io\.github\.mesmerprism\.rustyquest\.native_renderer"') {
@@ -206,6 +216,7 @@ if ($nativeLib -notmatch 'mod android_events' -or $xrVulkan -notmatch 'pump_acti
 
 foreach ($token in @(
     'RecordedHandReplaySummary',
+    'RecordedHandReplaySet',
     'recorded_hand_replay_source\.v1',
     'recorded_hand_replay_source\.json',
     'RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR',
@@ -224,6 +235,10 @@ foreach ($token in @(
     'compactJointPoseUploadPerFrame=true',
     'gpuSkinningPayloadReady',
     'skinningFrameCount',
+    'recordedHandReplayHandSetReady',
+    'recordedHandReplayRightHandDistinct',
+    'recordedHandReplayRightHandedness',
+    'recordedHandReplayRightGpuSkinningPayloadReady',
     'meshVisualFrameCount',
     'meshComponentCount',
     'meshComponentRank0=hand-inside',
@@ -239,6 +254,7 @@ foreach ($token in @(
     'mod native_renderer_options',
     'mod gpu_hand_mesh_visual',
     'GpuHandMeshVisualRenderer',
+    'HandMeshVisualEyeProjection',
     'GpuHandMeshVisualFrameStats',
     'GpuHandMeshVisualFrameSetStats',
     'HandMeshVisualDiagnosticSettings',
@@ -255,8 +271,37 @@ foreach ($token in @(
     'cpuProjection=false',
     'validationMeshUploadPerFrame=false',
     'skinnedPositionBufferResident=true',
+    'skinnedPositionBufferCoordinateSpace=openxr-reference-space',
+    'handMeshVisualProjectionSpace',
+    'handMeshVisualClipY',
+    'openxr-y-up-to-vulkan-positive-viewport',
+    'liveHandMeshTargetLocalNormalized=false',
+    'world_to_eye_clip',
+    'screen_y = 1.0 -',
+    'fov_tangents',
     'gpuNormalDepthComponentShading=true',
+    'gpuNormalDepthComponentShadingMode=subtle',
     'handMeshCompactInputSource',
+    'handMeshVisualSourceHandedness',
+    'handMeshVisualSecondarySourceHandedness',
+    'handMeshVisualMaterial=continuous-single-surface',
+    'handMeshVisualSmoothSurfaceShading=true',
+    'handMeshVisualComponentColoring=false',
+    'HandMeshGraftParams',
+    'prepare_graft_copies',
+    'record_graft_overlay_eye',
+    'handMeshGraftCopiesEnabled',
+    'handMeshGraftCopiesVisible',
+    'handMeshGraftScaleMultiplier',
+    'debug.rustyquest.native_renderer.hand_mesh.graft_copies.scale',
+    'debug.rustyquest.native_renderer.hand_mesh.real_hands.visible',
+    'handMeshRealHandsVisible',
+    'nativePassthroughRealHandMeshVisible',
+    'handMeshGraftCopyPath=post-skinning-instanced-source-mesh-to-opposite-fingertips',
+    'handMeshGraftSourceAnimationReuse=true',
+    'handMeshGraftScaleBasis=source-wrist-radius-to-target-distal-radius',
+    'target_position_scale',
+    'gl_InstanceIndex',
     'liveHandMeshVisualBothHandsVisible',
     'handMeshVisualGpuSkinnedHandCount',
     'handMeshVisualPrimaryHand',
@@ -358,6 +403,10 @@ foreach ($token in @(
     'cpuSdfPerFrame=false',
     'meshToSdfKernel=\{\}',
     'targetSpaceMeshToSdfKernelAvailable=true',
+    'SkinnedWorldPositions',
+    'target_space_uv',
+    'sdfProjectionInputCoordinateSpace=openxr-reference-space',
+    'sdfProjectionOutputCoordinateSpace=metadata-target-screen-uv',
     'fullSkinnedMeshSdfReady=\{\}',
     'compactJointSkinningKernel=\{\}',
     'jointMatrixSkinningKernel=false',
@@ -602,6 +651,30 @@ $xrVulkanTokens = @(
     'handMeshVisualPath=recorded-compact-joint-gpu-skinned-resident-triangle-draw',
     'CompactHandInputSourceMode',
     'recorded-replay-visual-proof',
+    'NativeRendererRenderMode',
+    'debug.rustyquest.native_renderer.render.mode',
+    'native-passthrough-graft-only',
+    'solid-black-hands-and-grafts',
+    'customStereoProjectionEnabled',
+    'nativePassthroughRequested',
+    'solidBlackBackground',
+    'cameraRuntimeMode=',
+    'cameraProjectionPath=',
+    'skipped-native-passthrough',
+    'disabled-native-passthrough-graft-only',
+    'skipped-solid-black-hands-and-grafts',
+    'disabled-solid-black-hands-and-grafts',
+    'XR_FB_passthrough',
+    'fb_passthrough',
+    'NativePassthroughRuntime',
+    'create_passthrough',
+    'create_passthrough_layer',
+    'CompositionLayerPassthroughFB',
+    'PassthroughLayerPurposeFB::RECONSTRUCTION',
+    'EnvironmentBlendMode::ALPHA_BLEND',
+    'BLEND_TEXTURE_SOURCE_ALPHA',
+    'nativePassthroughLayerActive',
+    'projectionLayerAlphaBlend',
     'debug.rustyquest.native_renderer.replay.visual_proof.enabled',
     'debug.rustyquest.native_renderer.hand_mesh.input.source',
     'compactHandInputSourceMode',
@@ -616,6 +689,10 @@ $xrVulkanTokens = @(
     'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled',
     'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv',
     'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha',
+    'debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.graft_copies.scale',
+    'debug.rustyquest.native_renderer.hand_mesh.real_hands.visible',
+    'solidBlackRealHandMeshVisible',
     'liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof',
     'dynamicSdfReady=pending',
     'debug.rustyquest.native_renderer.sdf.visual.enabled',
@@ -687,7 +764,7 @@ foreach ($token in @('javac', 'd8\.bat', 'classes\.dex', 'clang\+\+')) {
     }
 }
 
-$sourceCombined = "$manifest`n$nativeCargo`n$nativeBuildRs`n$nativeLib`n$androidEvents`n$nativeCamera`n$acameraSys`n$cameraProjection`n$cameraProjectionMetadata`n$guideBlurGraph`n$guideBlurDownsampleFragment`n$guideBlurFragment`n$guideProjectionFragment`n$recordedHandReplayModule`n$liveHandCompact`n$nativeRendererOptions`n$gpuHandMeshVisual`n$handMeshVisualVertex`n$handMeshVisualFragment`n$gpuMeshReplay`n$gpuSdfField`n$gpuHandSkinningShader`n$gpuSdfFieldShader`n$gpuSdfTileBinsShader`n$gpuSdfOverlayShader`n$xrVulkan`n$buildScriptText"
+$sourceCombined = "$manifest`n$nativeCargo`n$nativeBuildRs`n$nativeLib`n$androidEvents`n$nativeCamera`n$acameraSys`n$cameraProjection`n$cameraProjectionMetadata`n$guideBlurGraph`n$guideBlurDownsampleFragment`n$guideBlurFragment`n$guideProjectionFragment`n$recordedHandReplayModule`n$liveHandCompact`n$nativeRendererOptions`n$handMeshGraft`n$gpuHandMeshVisual`n$handMeshVisualVertex`n$handMeshVisualFragment`n$gpuMeshReplay`n$gpuSdfField`n$gpuHandSkinningShader`n$gpuSdfFieldShader`n$gpuSdfTileBinsShader`n$gpuSdfOverlayShader`n$xrVulkan`n$buildScriptText"
 $forbiddenTokens = @(
     ("RUSTY" + "_XR_"),
     ("rusty" + ".xr."),
@@ -811,9 +888,34 @@ foreach ($token in @(
 
 $parseTokens = $null
 $parseErrors = $null
+[System.Management.Automation.Language.Parser]::ParseFile($runtimeProfileToolPath, [ref]$parseTokens, [ref]$parseErrors) | Out-Null
+if ($parseErrors.Count -gt 0) {
+    throw "Native renderer runtime profile tool has PowerShell parse errors: $($parseErrors[0].Message)"
+}
+$parseTokens = $null
+$parseErrors = $null
 [System.Management.Automation.Language.Parser]::ParseFile($runtimeSmokeToolPath, [ref]$parseTokens, [ref]$parseErrors) | Out-Null
 if ($parseErrors.Count -gt 0) {
     throw "Native renderer replay smoke tool has PowerShell parse errors: $($parseErrors[0].Message)"
+}
+
+foreach ($token in @(
+    'RUSTY_QUEST_ADB_SERVER_PORT',
+    'AdbServerPort',
+    'Resolve-AdbServerPortArgument',
+    'adb_scope',
+    'device-scoped-adb',
+    'adb_serial_required',
+    'adb_serial',
+    'adb_server_port',
+    '-P',
+    '-s',
+    '-Serial or RUSTY_QUEST_SERIAL is required with -Execute',
+    'device-scoped ADB writes must not use an implicit target'
+)) {
+    if ($runtimeProfileToolText -notmatch [regex]::Escape($token)) {
+        throw "Native renderer runtime profile tool missing serial-scoped ADB token: $token"
+    }
 }
 foreach ($token in @(
     'rusty.quest.native_renderer_replay_smoke_run.v1',
@@ -826,6 +928,18 @@ foreach ($token in @(
     'LiveVisualDiagnosticCaveat',
     'previousErrorActionPreference',
     'NativeCommandError',
+    'RUSTY_QUEST_ADB_SERVER_PORT',
+    'AdbServerPort',
+    'Resolve-AdbServerPortArgument',
+    'device-scoped-adb',
+    'adb_serial_required',
+    'adb_server_port',
+    'clear_logcat_requested',
+    'pid-scoped-device-logcat',
+    'pidof',
+    '--pid',
+    'refusing unscoped logcat evidence',
+    'must pass adb -s <serial>',
     'replay_visual_proof_required',
     'live_visual_diagnostic_caveat_required',
     'rusty-quest-native-renderer.apk',
@@ -871,8 +985,12 @@ if ($runtimeSmokeToolText -notmatch '-Execute' -or $runtimeSmokeToolText -notmat
 
 foreach ($token in @(
     'profile.quest.native_renderer.replay_visual_proof',
+    'debug.rustyquest.native_renderer.render.mode',
+    'custom-stereo-projection',
     'debug.rustyquest.native_renderer.replay.visual_proof.enabled',
     'debug.rustyquest.native_renderer.hand_mesh.input.source',
+    'debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled',
+    'renderMode=custom-stereo-projection',
     'compactHandInputSourceMode=recorded-replay',
     'recordedReplayVisualAcceptance=pending-headset-screenshot'
 )) {
@@ -883,13 +1001,18 @@ foreach ($token in @(
 foreach ($token in @(
     'profile.quest.native_renderer.live_hand_visual_diagnostic',
     'quest-native-renderer-live-hand-visual-diagnostic.profile.json',
+    'debug.rustyquest.native_renderer.render.mode',
+    'custom-stereo-projection',
     'debug.rustyquest.native_renderer.replay.visual_proof.enabled',
     'debug.rustyquest.native_renderer.hand_mesh.input.source',
     'live-meta-openxr-hand-tracking',
     'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled',
     'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv',
     'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha',
+    'debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled',
     'debug.rustyquest.native_renderer.sdf.visual.enabled',
+    'renderMode=custom-stereo-projection',
+    'handMeshGraftCopiesEnabled=false',
     'compactHandInputSourceMode=live-meta-openxr-hand-tracking',
     'selectsLiveFrame=true',
     'allowsRecordedFallback=false',
@@ -900,8 +1023,101 @@ foreach ($token in @(
         throw "Native renderer live hand visual diagnostic profile missing token: $token"
     }
 }
+foreach ($token in @(
+    'profile.quest.native_renderer.native_passthrough_graft_only',
+    'quest-native-renderer-native-passthrough-graft-only.profile.json',
+    'debug.rustyquest.native_renderer.render.mode',
+    'native-passthrough-graft-only',
+    'debug.rustyquest.native_renderer.replay.visual_proof.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.input.source',
+    'live-meta-openxr-hand-tracking',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha',
+    'debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.graft_copies.scale',
+    'debug.rustyquest.native_renderer.hand_mesh.real_hands.visible',
+    'debug.rustyquest.native_renderer.sdf.visual.enabled',
+    'customStereoProjectionEnabled=false',
+    'nativePassthroughRequested=true',
+    'sdfVisualEnabled=false',
+    'handMeshGraftCopiesEnabled=true',
+    'handMeshGraftScaleMultiplier=0.85',
+    'handMeshRealHandsVisible=false',
+    'cameraRuntimeMode=skipped-native-passthrough',
+    'cameraProjectionPath=disabled-native-passthrough-graft-only'
+)) {
+    if ($nativePassthroughGraftOnlyProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer native passthrough graft-only profile missing token: $token"
+    }
+}
+foreach ($token in @(
+    'profile.quest.native_renderer.native_passthrough_hands_and_grafts',
+    'quest-native-renderer-native-passthrough-hands-and-grafts.profile.json',
+    'debug.rustyquest.native_renderer.render.mode',
+    'native-passthrough-graft-only',
+    'debug.rustyquest.native_renderer.replay.visual_proof.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.input.source',
+    'live-meta-openxr-hand-tracking',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha',
+    'debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.graft_copies.scale',
+    'debug.rustyquest.native_renderer.hand_mesh.real_hands.visible',
+    'debug.rustyquest.native_renderer.sdf.visual.enabled',
+    'customStereoProjectionEnabled=false',
+    'nativePassthroughRequested=true',
+    'sdfVisualEnabled=false',
+    'handMeshGraftCopiesEnabled=true',
+    'handMeshGraftScaleMultiplier=0.85',
+    'handMeshRealHandsVisible=true',
+    'nativePassthroughRealHandMeshVisible=true',
+    'cameraRuntimeMode=skipped-native-passthrough',
+    'cameraProjectionPath=disabled-native-passthrough-graft-only'
+)) {
+    if ($nativePassthroughHandsAndGraftsProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer native passthrough hands-and-grafts profile missing token: $token"
+    }
+}
+foreach ($token in @(
+    'profile.quest.native_renderer.solid_black_hands_and_grafts',
+    'quest-native-renderer-solid-black-hands-and-grafts.profile.json',
+    'debug.rustyquest.native_renderer.render.mode',
+    'solid-black-hands-and-grafts',
+    'debug.rustyquest.native_renderer.replay.visual_proof.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.input.source',
+    'live-meta-openxr-hand-tracking',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha',
+    'debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.graft_copies.scale',
+    'debug.rustyquest.native_renderer.hand_mesh.real_hands.visible',
+    'debug.rustyquest.native_renderer.sdf.visual.enabled',
+    'customStereoProjectionEnabled=false',
+    'nativePassthroughRequested=false',
+    'solidBlackBackground=true',
+    'sdfVisualEnabled=false',
+    'handMeshGraftCopiesEnabled=true',
+    'handMeshGraftScaleMultiplier=0.85',
+    'handMeshRealHandsVisible=true',
+    'solidBlackRealHandMeshVisible=true',
+    'cameraRuntimeMode=skipped-solid-black-hands-and-grafts',
+    'cameraProjectionPath=disabled-solid-black-hands-and-grafts'
+)) {
+    if ($solidBlackHandsAndGraftsProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer solid black hands-and-grafts profile missing token: $token"
+    }
+}
 if ($checkAllText -notmatch 'quest-native-renderer-live-hand-visual-diagnostic\.profile\.json' -or $checkAllText -notmatch 'native-renderer-live-hand-visual-diagnostic-property-write-plan\.json') {
     throw "check_all.ps1 must dry-run the native renderer live hand diagnostic profile."
+}
+if ($checkAllText -notmatch 'quest-native-renderer-native-passthrough-graft-only\.profile\.json' -or $checkAllText -notmatch 'native-renderer-native-passthrough-graft-only-property-write-plan\.json') {
+    throw "check_all.ps1 must dry-run the native renderer native passthrough graft-only profile."
+}
+if ($checkAllText -notmatch 'quest-native-renderer-native-passthrough-hands-and-grafts\.profile\.json' -or $checkAllText -notmatch 'native-renderer-native-passthrough-hands-and-grafts-property-write-plan\.json') {
+    throw "check_all.ps1 must dry-run the native renderer native passthrough hands-and-grafts profile."
+}
+if ($checkAllText -notmatch 'quest-native-renderer-solid-black-hands-and-grafts\.profile\.json' -or $checkAllText -notmatch 'native-renderer-solid-black-hands-and-grafts-property-write-plan\.json') {
+    throw "check_all.ps1 must dry-run the native renderer solid black hands-and-grafts profile."
 }
 
 & $runtimeEvidenceToolPath `

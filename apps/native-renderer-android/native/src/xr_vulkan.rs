@@ -18,6 +18,7 @@ use crate::{
     camera_projection_metadata::{CameraProjectionMetadata, TargetRect},
     gpu_hand_mesh_visual::{
         GpuHandMeshVisualFrameSetStats, GpuHandMeshVisualFrameStats, GpuHandMeshVisualRenderer,
+        HandMeshVisualEyeProjection,
     },
     gpu_mesh_replay::{GpuMeshReplayResources, GpuMeshReplayStats},
     gpu_sdf_field::{GpuSdfFieldFrameStats, GpuSdfFieldRenderer},
@@ -25,16 +26,20 @@ use crate::{
     live_hand_compact::{LiveHandCompactFrameSet, LiveHandCompactInput, LiveHandCompactStats},
     native_camera::NativeCameraRuntime,
     native_renderer_options::{
-        CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings, NativeRendererRuntimeOptions,
-        PROP_ENABLE_SDF_VISUAL, PROP_HAND_MESH_INPUT_SOURCE,
-        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED,
-        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV, PROP_REPLAY_VISUAL_PROOF_ENABLED,
+        CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings, NativeRendererRenderMode,
+        NativeRendererRuntimeOptions, PROP_ENABLE_SDF_VISUAL, PROP_HAND_MESH_GRAFT_COPIES_ENABLED,
+        PROP_HAND_MESH_GRAFT_COPY_SCALE, PROP_HAND_MESH_INPUT_SOURCE,
+        PROP_HAND_MESH_REAL_HANDS_VISIBLE, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA,
+        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV,
+        PROP_RENDER_MODE, PROP_REPLAY_VISUAL_PROOF_ENABLED,
     },
     native_renderer_timing::{
         elapsed_ms, FrameCpuTimings, GpuStageTimings, GpuTimestampStage, GpuTimestampTracker,
     },
     private_extension_slot::{PrivateExtensionSlotFrameStats, PrivateExtensionSlotRuntime},
-    recorded_hand_replay::{RecordedHandReplaySummary, RecordedHandSkinningFrame},
+    recorded_hand_replay::{
+        RecordedHandReplaySet, RecordedHandReplaySummary, RecordedHandSkinningFrame,
+    },
 };
 
 const VIEW_TYPE: xr::ViewConfigurationType = xr::ViewConfigurationType::PRIMARY_STEREO;
@@ -115,14 +120,16 @@ pub(crate) fn probe(app: &android_activity::AndroidApp) -> XrVulkanReadiness {
 pub(crate) fn run_projection_loop(
     app: &android_activity::AndroidApp,
     camera_runtime: Option<&NativeCameraRuntime>,
+    runtime_options: NativeRendererRuntimeOptions,
 ) -> Result<(), String> {
-    let replay = RecordedHandReplaySummary::load()?;
+    let replay_set = RecordedHandReplaySet::load()?;
     let projection_metadata = CameraProjectionMetadata::load();
     crate::marker(
         "recorded-hand-replay",
         format!(
-            "status=loaded {} visualEffect=target-local-hand-mesh-overlay compactJointOverlayDefault=false animatedHandMeshVisualReady=pending dynamicSdfReady=pending gpuSdfFieldReady=pending cpuSdfPerFrame=false",
-            replay.marker_fields()
+            "status=loaded {} {} visualEffect=target-local-hand-mesh-overlay compactJointOverlayDefault=false animatedHandMeshVisualReady=pending dynamicSdfReady=pending gpuSdfFieldReady=pending cpuSdfPerFrame=false",
+            replay_set.left.marker_fields(),
+            replay_set.marker_fields()
         ),
     );
     crate::marker(
@@ -131,8 +138,15 @@ pub(crate) fn run_projection_loop(
     );
 
     let started = Instant::now();
-    let result =
-        unsafe { run_projection_loop_inner(app, camera_runtime, replay, projection_metadata) };
+    let result = unsafe {
+        run_projection_loop_inner(
+            app,
+            camera_runtime,
+            runtime_options,
+            replay_set,
+            projection_metadata,
+        )
+    };
     if let Err(error) = &result {
         crate::marker(
             "openxr-projection",
@@ -149,9 +163,12 @@ pub(crate) fn run_projection_loop(
 unsafe fn run_projection_loop_inner(
     app: &android_activity::AndroidApp,
     camera_runtime: Option<&NativeCameraRuntime>,
-    replay: RecordedHandReplaySummary,
+    runtime_options: NativeRendererRuntimeOptions,
+    replay_set: RecordedHandReplaySet,
     projection_metadata: CameraProjectionMetadata,
 ) -> Result<(), String> {
+    let replay = &replay_set.left;
+    let secondary_replay = &replay_set.right;
     let entry = xr::Entry::load().map_err(|error| format!("load OpenXR: {error}"))?;
     initialize_android_loader(&entry, app)?;
 
@@ -169,6 +186,8 @@ unsafe fn run_projection_loop_inner(
     enabled_extensions.khr_android_create_instance = true;
     enabled_extensions.khr_vulkan_enable2 = true;
     enabled_extensions.ext_hand_tracking = available_extensions.ext_hand_tracking;
+    enabled_extensions.fb_passthrough = runtime_options.render_mode.uses_native_passthrough()
+        && available_extensions.fb_passthrough;
     let xr_instance = create_android_instance(
         &entry,
         app,
@@ -194,6 +213,29 @@ unsafe fn run_projection_loop_inner(
     } else {
         false
     };
+    let environment_blend_modes = xr_instance
+        .enumerate_environment_blend_modes(system, VIEW_TYPE)
+        .map_err(|error| format!("enumerate OpenXR environment blend modes: {error}"))?;
+    let alpha_blend_supported =
+        environment_blend_modes.contains(&xr::EnvironmentBlendMode::ALPHA_BLEND);
+    let environment_blend_mode = xr::EnvironmentBlendMode::OPAQUE;
+    crate::marker(
+        "native-passthrough",
+        format!(
+            "status=config renderMode={} nativePassthroughRequested={} solidBlackBackground={} fbPassthroughAvailable={} fbPassthroughEnabled={} alphaBlendSupported={} environmentBlendModes={} environmentBlendMode={:?} projectionLayerAlphaBlend={} cameraRuntimeMode={} cameraProjectionPath={}",
+            runtime_options.render_mode.marker_value(),
+            runtime_options.render_mode.uses_native_passthrough(),
+            runtime_options.render_mode.uses_solid_black_background(),
+            available_extensions.fb_passthrough,
+            enabled_extensions.fb_passthrough,
+            alpha_blend_supported,
+            environment_blend_modes_marker(&environment_blend_modes),
+            environment_blend_mode,
+            runtime_options.render_mode.uses_native_passthrough(),
+            runtime_options.render_mode.camera_runtime_mode(),
+            runtime_options.render_mode.disabled_camera_projection_path(),
+        ),
+    );
     let requirements = xr_instance
         .graphics_requirements::<xr::Vulkan>(system)
         .map_err(|error| format!("read Vulkan graphics requirements: {error}"))?;
@@ -319,6 +361,12 @@ unsafe fn run_projection_loop_inner(
             },
         )
         .map_err(|error| format!("create OpenXR Vulkan session: {error}"))?;
+    let native_passthrough = NativePassthroughRuntime::create(
+        &session,
+        runtime_options.render_mode,
+        enabled_extensions.fb_passthrough,
+        alpha_blend_supported,
+    );
     let mut live_hand_compact = LiveHandCompactInput::new(
         &xr_instance,
         system,
@@ -338,16 +386,24 @@ unsafe fn run_projection_loop_inner(
     );
     let mut guide_blur_graph_renderer =
         GuideBlurGraphRenderer::new(memory_properties, color_format, render_pass);
-    let runtime_options = NativeRendererRuntimeOptions::load_from_android_properties();
+    let render_mode = runtime_options.render_mode;
     let replay_visual_proof_enabled = runtime_options.replay_visual_proof_enabled;
     let compact_hand_input_source_mode = runtime_options.compact_hand_input_source_mode;
     let sdf_visual_enabled = runtime_options.sdf_visual_enabled;
     let sdf_update_period_frames = runtime_options.sdf_update_period_frames;
     let hand_mesh_visual_diagnostic_settings = runtime_options.hand_mesh_visual_diagnostic_settings;
+    let hand_mesh_graft_copies_enabled = runtime_options.hand_mesh_graft_copies_enabled;
+    let hand_mesh_graft_copy_scale = runtime_options.hand_mesh_graft_copy_scale;
+    let hand_mesh_real_hands_visible = runtime_options.hand_mesh_real_hands_visible;
     crate::marker(
         "recorded-replay-visual-proof",
         format!(
-            "status=config property={} enabled={} handMeshInputSourceProperty={} compactHandInputSourceMode={} selectsLiveFrame={} allowsRecordedFallback={} sdfVisualEnabled={} handMeshVisualDiagnosticEnabled={} recordedReplayVisualAcceptance=pending-headset-screenshot liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof liveSdfVisualAcceptance=pending-repeat-headset-visual-proof",
+            "status=config renderModeProperty={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} property={} enabled={} handMeshInputSourceProperty={} compactHandInputSourceMode={} selectsLiveFrame={} allowsRecordedFallback={} sdfVisualEnabled={} handMeshVisualDiagnosticEnabled={} handMeshGraftCopiesEnabled={} handMeshGraftScaleProperty={} handMeshGraftScaleMultiplier={:.2} realHandsProperty={} handMeshRealHandsVisible={} recordedReplayVisualAcceptance=pending-headset-screenshot liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof liveSdfVisualAcceptance=pending-repeat-headset-visual-proof",
+            PROP_RENDER_MODE,
+            render_mode.marker_value(),
+            render_mode.uses_custom_stereo_projection(),
+            render_mode.uses_native_passthrough(),
+            render_mode.uses_solid_black_background(),
             PROP_REPLAY_VISUAL_PROOF_ENABLED,
             replay_visual_proof_enabled,
             PROP_HAND_MESH_INPUT_SOURCE,
@@ -356,15 +412,30 @@ unsafe fn run_projection_loop_inner(
             compact_hand_input_source_mode.allows_recorded_fallback(),
             sdf_visual_enabled,
             hand_mesh_visual_diagnostic_settings.enabled,
+            hand_mesh_graft_copies_enabled,
+            PROP_HAND_MESH_GRAFT_COPY_SCALE,
+            hand_mesh_graft_copy_scale,
+            PROP_HAND_MESH_REAL_HANDS_VISIBLE,
+            hand_mesh_real_hands_visible,
         ),
     );
     crate::marker(
         "hand-mesh-visual-diagnostic",
         format!(
-            "status=config handMeshVisualDiagnosticPath=property-controlled-target-local-offset-tint enabledProperty={} offsetProperty={} alphaProperty={} {} liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof liveSdfVisualAcceptance=pending-repeat-headset-visual-proof",
+            "status=config renderMode={} solidBlackBackground={} handMeshVisualDiagnosticPath=property-controlled-target-local-offset-tint enabledProperty={} offsetProperty={} alphaProperty={} graftCopiesProperty={} graftScaleProperty={} realHandsProperty={} handMeshGraftCopiesEnabled={} handMeshGraftScaleMultiplier={:.2} handMeshRealHandsVisible={} nativePassthroughRealHandMeshVisible={} solidBlackRealHandMeshVisible={} {} liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof liveSdfVisualAcceptance=pending-repeat-headset-visual-proof",
+            render_mode.marker_value(),
+            render_mode.uses_solid_black_background(),
             PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED,
             PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV,
             PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA,
+            PROP_HAND_MESH_GRAFT_COPIES_ENABLED,
+            PROP_HAND_MESH_GRAFT_COPY_SCALE,
+            PROP_HAND_MESH_REAL_HANDS_VISIBLE,
+            hand_mesh_graft_copies_enabled,
+            hand_mesh_graft_copy_scale,
+            hand_mesh_real_hands_visible,
+            render_mode.uses_native_passthrough() && hand_mesh_real_hands_visible,
+            render_mode.uses_solid_black_background() && hand_mesh_real_hands_visible,
             hand_mesh_visual_diagnostic_settings.marker_fields(),
         ),
     );
@@ -380,7 +451,7 @@ unsafe fn run_projection_loop_inner(
         &vk_device,
         &memory_properties,
         render_pass,
-        &replay,
+        replay,
     ) {
         Ok(renderer) => {
             if !sdf_visual_enabled {
@@ -408,7 +479,13 @@ unsafe fn run_projection_loop_inner(
     let mut gpu_hand_mesh_visual_renderer = if let Some(renderer) = gpu_sdf_field_renderer.as_ref()
     {
         let draw_resources = renderer.skinned_hand_mesh_draw_resources();
-        match GpuHandMeshVisualRenderer::new(&vk_device, render_pass, &replay, draw_resources) {
+        match GpuHandMeshVisualRenderer::new(
+            &vk_device,
+            &memory_properties,
+            render_pass,
+            replay,
+            draw_resources,
+        ) {
             Ok(renderer) => Some(renderer),
             Err(error) => {
                 crate::marker(
@@ -432,7 +509,7 @@ unsafe fn run_projection_loop_inner(
         &vk_device,
         &memory_properties,
         render_pass,
-        &replay,
+        secondary_replay,
     ) {
         Ok(renderer) => {
             crate::marker(
@@ -456,7 +533,13 @@ unsafe fn run_projection_loop_inner(
         secondary_gpu_sdf_field_renderer.as_ref()
     {
         let draw_resources = renderer.skinned_hand_mesh_draw_resources();
-        match GpuHandMeshVisualRenderer::new(&vk_device, render_pass, &replay, draw_resources) {
+        match GpuHandMeshVisualRenderer::new(
+            &vk_device,
+            &memory_properties,
+            render_pass,
+            secondary_replay,
+            draw_resources,
+        ) {
             Ok(renderer) => Some(renderer),
             Err(error) => {
                 crate::marker(
@@ -476,7 +559,7 @@ unsafe fn run_projection_loop_inner(
     let gpu_mesh_stats = match gpu_mesh_replay.prepare_source_mesh(
         &vk_device,
         &memory_properties,
-        &replay,
+        replay,
     ) {
         Ok(stats) => {
             crate::marker(
@@ -565,7 +648,12 @@ unsafe fn run_projection_loop_inner(
     crate::marker(
         "openxr-projection",
         format!(
-            "status=created runtimeName={} runtimeVersion={} deviceName={} queueFamily={} colorFormat={:?} openxrSubmitReady=pending vulkanExternalImportPrereqsReady={} vulkanExternalImportReady=false recordedHandReplayVisible=pending gpuMeshPath=native-vulkan-storage-buffer",
+            "status=created renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} nativePassthroughLayerActive={} environmentBlendMode={:?} runtimeName={} runtimeVersion={} deviceName={} queueFamily={} colorFormat={:?} openxrSubmitReady=pending vulkanExternalImportPrereqsReady={} vulkanExternalImportReady=false recordedHandReplayVisible=pending gpuMeshPath=native-vulkan-storage-buffer",
+            render_mode.marker_value(),
+            render_mode.uses_custom_stereo_projection(),
+            render_mode.uses_native_passthrough(),
+            native_passthrough.is_some(),
+            environment_blend_mode,
             crate::sanitize(&properties.runtime_name),
             properties.runtime_version,
             crate::sanitize(&device_name),
@@ -601,7 +689,11 @@ unsafe fn run_projection_loop_inner(
         &mut camera_projection_renderer,
         &mut guide_blur_graph_renderer,
         camera_runtime,
-        &replay,
+        render_mode,
+        environment_blend_mode,
+        native_passthrough.as_ref(),
+        replay,
+        secondary_replay,
         &gpu_mesh_stats,
         gpu_hand_mesh_visual_renderer.as_mut(),
         secondary_gpu_hand_mesh_visual_renderer.as_mut(),
@@ -615,6 +707,9 @@ unsafe fn run_projection_loop_inner(
         sdf_visual_enabled,
         sdf_update_period_frames,
         hand_mesh_visual_diagnostic_settings,
+        hand_mesh_graft_copies_enabled,
+        hand_mesh_graft_copy_scale,
+        hand_mesh_real_hands_visible,
         &projection_metadata,
     );
 
@@ -646,6 +741,7 @@ unsafe fn run_projection_loop_inner(
     gpu_mesh_replay.destroy(&vk_device);
     vk_device.destroy_command_pool(cmd_pool, None);
     vk_device.destroy_render_pass(render_pass, None);
+    drop(native_passthrough);
     drop((session, frame_wait, frame_stream, reference_space));
     vk_device.destroy_device(None);
     vk_instance.destroy_instance(None);
@@ -942,7 +1038,11 @@ unsafe fn run_projection_frames(
     camera_projection_renderer: &mut CameraProjectionRenderer,
     guide_blur_graph_renderer: &mut GuideBlurGraphRenderer,
     camera_runtime: Option<&NativeCameraRuntime>,
+    render_mode: NativeRendererRenderMode,
+    environment_blend_mode: xr::EnvironmentBlendMode,
+    native_passthrough: Option<&NativePassthroughRuntime>,
     replay: &RecordedHandReplaySummary,
+    secondary_replay: &RecordedHandReplaySummary,
     gpu_mesh_stats: &GpuMeshReplayStats,
     mut gpu_hand_mesh_visual_renderer: Option<&mut GpuHandMeshVisualRenderer>,
     mut secondary_gpu_hand_mesh_visual_renderer: Option<&mut GpuHandMeshVisualRenderer>,
@@ -956,6 +1056,9 @@ unsafe fn run_projection_frames(
     sdf_visual_enabled: bool,
     sdf_update_period_frames: u64,
     hand_mesh_visual_diagnostic_settings: HandMeshVisualDiagnosticSettings,
+    hand_mesh_graft_copies_enabled: bool,
+    hand_mesh_graft_copy_scale: f32,
+    hand_mesh_real_hands_visible: bool,
     projection_metadata: &CameraProjectionMetadata,
 ) -> Result<(), String> {
     let mut swapchain: Option<ProjectionSwapchain> = None;
@@ -1053,7 +1156,7 @@ unsafe fn run_projection_frames(
             frame_stream
                 .end(
                     frame_state.predicted_display_time,
-                    xr::EnvironmentBlendMode::OPAQUE,
+                    environment_blend_mode,
                     &[],
                 )
                 .map_err(|error| format!("end skipped OpenXR frame: {error}"))?;
@@ -1093,7 +1196,7 @@ unsafe fn run_projection_frames(
             frame_stream
                 .end(
                     frame_state.predicted_display_time,
-                    xr::EnvironmentBlendMode::OPAQUE,
+                    environment_blend_mode,
                     &[],
                 )
                 .map_err(|error| format!("end OpenXR frame without views: {error}"))?;
@@ -1134,25 +1237,41 @@ unsafe fn run_projection_frames(
             frame_slot,
             GpuTimestampStage::CameraProjection,
         );
-        let prepared_camera_projection = match camera_runtime
-            .and_then(NativeCameraRuntime::latest_stereo_frame)
-            .map(|stereo_frame| {
-                camera_projection_renderer.prepare_stereo_frame(vk_device, cmd, &stereo_frame)
-            }) {
-            Some(Ok(prepared)) => prepared,
-            Some(Err(error)) => {
-                if frame_count == 0 || frame_count % 120 == 0 {
-                    crate::marker(
+        let prepared_camera_projection = if render_mode.uses_custom_stereo_projection() {
+            match camera_runtime
+                .and_then(NativeCameraRuntime::latest_stereo_frame)
+                .map(|stereo_frame| {
+                    camera_projection_renderer.prepare_stereo_frame(vk_device, cmd, &stereo_frame)
+                }) {
+                Some(Ok(prepared)) => prepared,
+                Some(Err(error)) => {
+                    if frame_count == 0 || frame_count % 120 == 0 {
+                        crate::marker(
+                            "camera-projection",
+                            format!(
+                                "status=error reason={} cameraProjectionReady=false vulkanExternalImportReady=false",
+                                crate::sanitize(&error)
+                            ),
+                        );
+                    }
+                    None
+                }
+                None => None,
+            }
+        } else {
+            if frame_count == 0 {
+                crate::marker(
                         "camera-projection",
                         format!(
-                            "status=error reason={} cameraProjectionReady=false vulkanExternalImportReady=false",
-                            crate::sanitize(&error)
+                            "status=disabled reason={} renderMode={} customStereoProjectionEnabled=false nativePassthroughRequested={} solidBlackBackground={} cameraProjectionReady=false vulkanExternalImportReady=false finalExternalHwbSamples=0 guideTextureSamples=0",
+                            render_mode.marker_value(),
+                            render_mode.marker_value(),
+                            render_mode.uses_native_passthrough(),
+                            render_mode.uses_solid_black_background(),
                         ),
                     );
-                }
-                None
             }
-            None => None,
+            None
         };
         gpu_timestamp_tracker.write_stage_end(
             vk_device,
@@ -1189,36 +1308,40 @@ unsafe fn run_projection_frames(
             frame_slot,
             GpuTimestampStage::GuideGraph,
         );
-        let guide_blur_stats = if let Some(prepared) = prepared_camera_projection.as_ref() {
-            match guide_blur_graph_renderer.record_frame(
-                vk_device,
-                cmd,
-                prepared,
-                projection_metadata,
-            ) {
-                Ok(stats) => {
-                    if let Some(runtime) = camera_runtime {
-                        if stats.rendered {
-                            runtime.record_guide_graph_render();
+        let guide_blur_stats = if render_mode.uses_custom_stereo_projection() {
+            if let Some(prepared) = prepared_camera_projection.as_ref() {
+                match guide_blur_graph_renderer.record_frame(
+                    vk_device,
+                    cmd,
+                    prepared,
+                    projection_metadata,
+                ) {
+                    Ok(stats) => {
+                        if let Some(runtime) = camera_runtime {
+                            if stats.rendered {
+                                runtime.record_guide_graph_render();
+                            }
+                            if stats.cache_hit {
+                                runtime.record_guide_graph_cache_hit();
+                            }
                         }
-                        if stats.cache_hit {
-                            runtime.record_guide_graph_cache_hit();
-                        }
+                        stats
                     }
-                    stats
-                }
-                Err(error) => {
-                    if frame_count == 0 || frame_count % 120 == 0 {
-                        crate::marker(
+                    Err(error) => {
+                        if frame_count == 0 || frame_count % 120 == 0 {
+                            crate::marker(
                             "guide-blur-graph",
                             format!(
                                 "status=error reason={} guideGraphReady=false guideGraphPath=low-resolution-two-phase-5tap-blur finalExternalHwbSamples=2 guideTextureSamples=0",
                                 crate::sanitize(&error)
                             ),
                         );
+                        }
+                        GuideBlurGraphFrameStats::unavailable()
                     }
-                    GuideBlurGraphFrameStats::unavailable()
                 }
+            } else {
+                GuideBlurGraphFrameStats::unavailable()
             }
         } else {
             GuideBlurGraphFrameStats::unavailable()
@@ -1305,7 +1428,7 @@ unsafe fn run_projection_frames(
             match renderer.record_compute_frame(
                 vk_device,
                 cmd,
-                replay,
+                secondary_replay,
                 frame_count,
                 false,
                 sdf_update_period_frames,
@@ -1323,11 +1446,11 @@ unsafe fn run_projection_frames(
                             ),
                         );
                     }
-                    GpuSdfFieldFrameStats::unavailable(replay, frame_count)
+                    GpuSdfFieldFrameStats::unavailable(secondary_replay, frame_count)
                 }
             }
         } else {
-            GpuSdfFieldFrameStats::unavailable(replay, frame_count)
+            GpuSdfFieldFrameStats::unavailable(secondary_replay, frame_count)
         };
         gpu_timestamp_tracker.write_stage_end(
             vk_device,
@@ -1343,7 +1466,7 @@ unsafe fn run_projection_frames(
             frame_slot,
             GpuTimestampStage::HandMeshVisual,
         );
-        let primary_hand_mesh_visual_stats = if let Some(renderer) =
+        let mut primary_hand_mesh_visual_stats = if let Some(renderer) =
             gpu_hand_mesh_visual_renderer.as_mut()
         {
             match renderer.record_frame(
@@ -1382,12 +1505,12 @@ unsafe fn run_projection_frames(
                 hand_mesh_visual_diagnostic_settings,
             )
         };
-        let secondary_hand_mesh_visual_stats = if let (Some(renderer), Some(_frame)) = (
+        let mut secondary_hand_mesh_visual_stats = if let (Some(renderer), Some(_frame)) = (
             secondary_gpu_hand_mesh_visual_renderer.as_mut(),
             selected_secondary_live_hand_frame,
         ) {
             match renderer.record_frame(
-                replay,
+                secondary_replay,
                 frame_count,
                 secondary_gpu_sdf_stats.skinning_ready,
                 selected_secondary_live_hand_frame,
@@ -1407,7 +1530,7 @@ unsafe fn run_projection_frames(
                         );
                     }
                     GpuHandMeshVisualFrameStats::unavailable(
-                        replay,
+                        secondary_replay,
                         frame_count,
                         selected_secondary_live_hand,
                         hand_mesh_visual_diagnostic_settings,
@@ -1416,15 +1539,66 @@ unsafe fn run_projection_frames(
             }
         } else {
             GpuHandMeshVisualFrameStats::unavailable(
-                replay,
+                secondary_replay,
                 frame_count,
                 selected_secondary_live_hand,
                 hand_mesh_visual_diagnostic_settings,
             )
         };
+        if hand_mesh_graft_copies_enabled
+            && primary_hand_mesh_visual_stats.ready
+            && secondary_hand_mesh_visual_stats.ready
+            && primary_hand_mesh_visual_stats.live_compact_input_frame
+            && secondary_hand_mesh_visual_stats.live_compact_input_frame
+        {
+            if let (Some(renderer), Some(source_frame), Some(target_frame)) = (
+                gpu_hand_mesh_visual_renderer.as_ref(),
+                selected_primary_live_hand_frame,
+                selected_secondary_live_hand_frame,
+            ) {
+                match renderer.prepare_graft_copies(
+                    vk_device,
+                    source_frame,
+                    target_frame,
+                    hand_mesh_graft_copy_scale,
+                ) {
+                    Ok(copy_count) => primary_hand_mesh_visual_stats.graft_copy_count = copy_count,
+                    Err(error) => crate::marker(
+                        "hand-mesh-visual",
+                        format!(
+                            "status=graft-primary-unavailable reason={} handMeshGraftCopiesEnabled=true handMeshGraftCopyCount=0",
+                            crate::sanitize(&error)
+                        ),
+                    ),
+                }
+            }
+            if let (Some(renderer), Some(source_frame), Some(target_frame)) = (
+                secondary_gpu_hand_mesh_visual_renderer.as_ref(),
+                selected_secondary_live_hand_frame,
+                selected_primary_live_hand_frame,
+            ) {
+                match renderer.prepare_graft_copies(
+                    vk_device,
+                    source_frame,
+                    target_frame,
+                    hand_mesh_graft_copy_scale,
+                ) {
+                    Ok(copy_count) => secondary_hand_mesh_visual_stats.graft_copy_count = copy_count,
+                    Err(error) => crate::marker(
+                        "hand-mesh-visual",
+                        format!(
+                            "status=graft-secondary-unavailable reason={} handMeshGraftCopiesEnabled=true handMeshGraftCopyCount=0",
+                            crate::sanitize(&error)
+                        ),
+                    ),
+                }
+            }
+        }
         let hand_mesh_visual_stats = GpuHandMeshVisualFrameSetStats::new(
             primary_hand_mesh_visual_stats,
             secondary_hand_mesh_visual_stats,
+            hand_mesh_graft_copies_enabled,
+            hand_mesh_graft_copy_scale,
         );
         gpu_timestamp_tracker.write_stage_end(
             vk_device,
@@ -1455,6 +1629,8 @@ unsafe fn run_projection_frames(
             image_index as usize,
             frame_count,
             replay,
+            render_mode,
+            hand_mesh_real_hands_visible,
             replay_visual_proof_enabled,
             prepared_camera_projection.as_ref(),
             guide_blur_graph_renderer,
@@ -1465,6 +1641,7 @@ unsafe fn run_projection_frames(
             gpu_sdf_field_renderer.as_deref(),
             &gpu_sdf_stats,
             &live_hand_frames,
+            &views,
             compact_hand_input_source_mode.selects_live_frame(),
             hand_mesh_visual_diagnostic_settings,
             projection_metadata,
@@ -1530,16 +1707,28 @@ unsafe fn run_projection_frames(
                         .image_rect(rect),
                 ),
         ];
+        let projection_layer_flags = if render_mode.uses_native_passthrough() {
+            xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA
+                | xr::CompositionLayerFlags::CORRECT_CHROMATIC_ABERRATION
+        } else {
+            xr::CompositionLayerFlags::CORRECT_CHROMATIC_ABERRATION
+        };
         let projection_layer = xr::CompositionLayerProjection::new()
-            .layer_flags(xr::CompositionLayerFlags::EMPTY)
+            .layer_flags(projection_layer_flags)
             .space(reference_space)
             .views(&projection_views);
-        let layers: [&xr::CompositionLayerBase<xr::Vulkan>; 1] = [&projection_layer];
+        let passthrough_layer =
+            native_passthrough.map(|runtime| runtime.composition_layer_raw(reference_space));
+        let mut layers: Vec<&xr::CompositionLayerBase<xr::Vulkan>> = Vec::with_capacity(2);
+        if let Some(passthrough_layer) = passthrough_layer.as_ref() {
+            layers.push(passthrough_layer_base(passthrough_layer));
+        }
+        layers.push(&projection_layer);
         let stage_started = Instant::now();
         frame_stream
             .end(
                 frame_state.predicted_display_time,
-                xr::EnvironmentBlendMode::OPAQUE,
+                environment_blend_mode,
                 &layers,
             )
             .map_err(|error| format!("end OpenXR frame: {error}"))?;
@@ -1571,6 +1760,10 @@ unsafe fn run_projection_frames(
                 private_extension_stats,
                 &live_hand_stats,
                 compact_hand_input_source_mode,
+                render_mode,
+                environment_blend_mode,
+                native_passthrough.is_some(),
+                hand_mesh_real_hands_visible,
                 replay_visual_proof_enabled,
                 &camera_projection_stats,
                 projection_metadata,
@@ -1790,6 +1983,8 @@ unsafe fn record_projection_diagnostic(
     image_index: usize,
     frame_count: u64,
     replay: &RecordedHandReplaySummary,
+    render_mode: NativeRendererRenderMode,
+    hand_mesh_real_hands_visible: bool,
     draw_recorded_replay_overlay: bool,
     prepared_camera_projection: Option<&PreparedCameraProjection>,
     guide_blur_graph_renderer: &GuideBlurGraphRenderer,
@@ -1800,19 +1995,43 @@ unsafe fn record_projection_diagnostic(
     gpu_sdf_field_renderer: Option<&GpuSdfFieldRenderer>,
     gpu_sdf_stats: &GpuSdfFieldFrameStats,
     live_hand_frames: &LiveHandCompactFrameSet,
+    views: &[xr::View],
     draw_live_hand_target_overlay: bool,
     diagnostic_settings: HandMeshVisualDiagnosticSettings,
     projection_metadata: &CameraProjectionMetadata,
 ) -> ReplayVisualStats {
     let buffer = &swapchain.buffers[image_index];
     let mut visual_stats = ReplayVisualStats::default();
+    let passthrough_graft_only = render_mode.uses_native_passthrough();
+    let custom_stereo_projection = render_mode.uses_custom_stereo_projection();
+    let draw_base_hand_meshes = custom_stereo_projection || hand_mesh_real_hands_visible;
     for (eye_index, eye) in buffer.eyes.iter().enumerate() {
         let target_rect = projection_metadata.rect_for_eye(eye_index);
-        let background = if eye_index == 0 {
+        let eye_projection = views
+            .get(eye_index)
+            .map(hand_mesh_visual_eye_projection)
+            .unwrap_or_default();
+        let background = if passthrough_graft_only {
+            [0.0, 0.0, 0.0, 0.0]
+        } else if render_mode.uses_solid_black_background() {
+            [0.0, 0.0, 0.0, 1.0]
+        } else if eye_index == 0 {
             [0.012, 0.030, 0.038, 1.0]
         } else {
             [0.034, 0.016, 0.050, 1.0]
         };
+        if hand_mesh_visual_stats.graft_copies_visible() {
+            if let Some(renderer) = gpu_hand_mesh_visual_renderer {
+                if hand_mesh_visual_stats.primary.graft_copy_count > 0 {
+                    renderer.record_graft_buffer_barrier(device, cmd);
+                }
+            }
+            if let Some(renderer) = secondary_gpu_hand_mesh_visual_renderer {
+                if hand_mesh_visual_stats.secondary.graft_copy_count > 0 {
+                    renderer.record_graft_buffer_barrier(device, cmd);
+                }
+            }
+        }
         let clear_values = [vk::ClearValue {
             color: vk::ClearColorValue {
                 float32: background,
@@ -1830,7 +2049,7 @@ unsafe fn record_projection_diagnostic(
                 .clear_values(&clear_values),
             vk::SubpassContents::INLINE,
         );
-        if guide_blur_stats.ready {
+        if custom_stereo_projection && guide_blur_stats.ready {
             guide_blur_graph_renderer.record_projection_eye(
                 device,
                 cmd,
@@ -1838,39 +2057,75 @@ unsafe fn record_projection_diagnostic(
                 eye_index,
                 target_rect,
             );
-        } else if let Some(prepared) = prepared_camera_projection {
-            record_camera_projection_eye(
-                device,
-                cmd,
-                swapchain.extent,
-                eye_index,
-                prepared,
-                projection_metadata,
-            );
+        } else if custom_stereo_projection {
+            if let Some(prepared) = prepared_camera_projection {
+                record_camera_projection_eye(
+                    device,
+                    cmd,
+                    swapchain.extent,
+                    eye_index,
+                    prepared,
+                    projection_metadata,
+                );
+            }
         }
-        if let Some(renderer) = gpu_sdf_field_renderer {
-            if gpu_sdf_stats.ready && gpu_sdf_stats.overlay_visible {
-                renderer.record_overlay_eye(device, cmd, swapchain.extent, target_rect);
+        if custom_stereo_projection {
+            if let Some(renderer) = gpu_sdf_field_renderer {
+                if gpu_sdf_stats.ready && gpu_sdf_stats.overlay_visible {
+                    renderer.record_overlay_eye(device, cmd, swapchain.extent, target_rect);
+                }
+            }
+        }
+        if draw_base_hand_meshes {
+            if let Some(renderer) = gpu_hand_mesh_visual_renderer {
+                if hand_mesh_visual_stats.primary.ready && hand_mesh_visual_stats.primary.visible {
+                    renderer.record_overlay_eye(
+                        device,
+                        cmd,
+                        swapchain.extent,
+                        target_rect,
+                        eye_projection,
+                        &hand_mesh_visual_stats.primary,
+                    );
+                }
+            }
+        }
+        if draw_base_hand_meshes {
+            if let Some(renderer) = secondary_gpu_hand_mesh_visual_renderer {
+                if hand_mesh_visual_stats.secondary.ready
+                    && hand_mesh_visual_stats.secondary.visible
+                {
+                    renderer.record_overlay_eye(
+                        device,
+                        cmd,
+                        swapchain.extent,
+                        target_rect,
+                        eye_projection,
+                        &hand_mesh_visual_stats.secondary,
+                    );
+                }
             }
         }
         if let Some(renderer) = gpu_hand_mesh_visual_renderer {
-            if hand_mesh_visual_stats.primary.ready && hand_mesh_visual_stats.primary.visible {
-                renderer.record_overlay_eye(
+            if hand_mesh_visual_stats.primary.graft_copy_count > 0 {
+                renderer.record_graft_overlay_eye(
                     device,
                     cmd,
                     swapchain.extent,
                     target_rect,
+                    eye_projection,
                     &hand_mesh_visual_stats.primary,
                 );
             }
         }
         if let Some(renderer) = secondary_gpu_hand_mesh_visual_renderer {
-            if hand_mesh_visual_stats.secondary.ready && hand_mesh_visual_stats.secondary.visible {
-                renderer.record_overlay_eye(
+            if hand_mesh_visual_stats.secondary.graft_copy_count > 0 {
+                renderer.record_graft_overlay_eye(
                     device,
                     cmd,
                     swapchain.extent,
                     target_rect,
+                    eye_projection,
                     &hand_mesh_visual_stats.secondary,
                 );
             }
@@ -1882,7 +2137,10 @@ unsafe fn record_projection_diagnostic(
                 visual_stats = eye_visual_stats;
             }
         }
-        if draw_live_hand_target_overlay && !hand_mesh_visual_stats.any_ready() {
+        if custom_stereo_projection
+            && draw_live_hand_target_overlay
+            && !hand_mesh_visual_stats.any_ready()
+        {
             let eye_visual_stats = record_live_hand_target_overlay(
                 device,
                 cmd,
@@ -1895,7 +2153,7 @@ unsafe fn record_projection_diagnostic(
                 visual_stats = eye_visual_stats;
             }
         }
-        if draw_recorded_replay_overlay {
+        if custom_stereo_projection && draw_recorded_replay_overlay {
             let eye_visual_stats = record_recorded_hand_overlay(
                 device,
                 cmd,
@@ -1935,7 +2193,9 @@ fn live_gpu_mesh_visual_stats(
             stats.handedness,
             diagnostic_settings,
         ));
-        visual_point_count = visual_point_count.saturating_add(stats.drawn_vertex_count as u64);
+        visual_point_count = visual_point_count.saturating_add(
+            stats.drawn_vertex_count as u64 * u64::from(stats.graft_copy_count.saturating_add(1)),
+        );
         if frame_index == 0 {
             frame_index = stats.frame_index;
             timestamp_ns = stats.timestamp_ns;
@@ -2355,6 +2615,10 @@ fn write_projection_scorecard(
     private_extension_stats: PrivateExtensionSlotFrameStats,
     live_hand_stats: &LiveHandCompactStats,
     compact_hand_input_source_mode: CompactHandInputSourceMode,
+    render_mode: NativeRendererRenderMode,
+    environment_blend_mode: xr::EnvironmentBlendMode,
+    native_passthrough_layer_active: bool,
+    hand_mesh_real_hands_visible: bool,
     replay_visual_proof_enabled: bool,
     camera_projection_stats: &CameraProjectionFrameStats,
     projection_metadata: &CameraProjectionMetadata,
@@ -2389,14 +2653,36 @@ fn write_projection_scorecard(
     } else {
         (0, 0, 0, 0, 0, 0, 0, 0, frame_count, 0, 0)
     };
-    let camera_projection_ready = camera_projection_stats.rendered || guide_blur_stats.ready;
-    let direct_hwb_projection_diagnostic =
-        camera_projection_stats.rendered && !guide_blur_stats.ready;
-    let camera_projection_path = if guide_blur_stats.ready {
+    let camera_projection_ready = render_mode.uses_custom_stereo_projection()
+        && (camera_projection_stats.rendered || guide_blur_stats.ready);
+    let direct_hwb_projection_diagnostic = render_mode.uses_custom_stereo_projection()
+        && camera_projection_stats.rendered
+        && !guide_blur_stats.ready;
+    let camera_projection_path = if render_mode.uses_native_passthrough() {
+        render_mode.disabled_camera_projection_path()
+    } else if render_mode.uses_solid_black_background() {
+        render_mode.disabled_camera_projection_path()
+    } else if guide_blur_stats.ready {
         "metadata-target-guide-texture-final"
     } else {
         "metadata-target-direct-hwb-fallback"
     };
+    let actual_final_external_hwb_samples =
+        if render_mode.uses_custom_stereo_projection() && !guide_blur_stats.ready {
+            2
+        } else {
+            0
+        };
+    let actual_guide_texture_samples =
+        if render_mode.uses_custom_stereo_projection() && guide_blur_stats.ready {
+            1
+        } else {
+            0
+        };
+    let native_passthrough_real_hand_mesh_visible =
+        render_mode.uses_native_passthrough() && hand_mesh_real_hands_visible;
+    let solid_black_real_hand_mesh_visible =
+        render_mode.uses_solid_black_background() && hand_mesh_real_hands_visible;
     let hand_mesh_visual_evidence_rects =
         replay_visual_stats.hand_mesh_screen_rect_marker_fields(projection_metadata);
     let sdf_visual_evidence_rects =
@@ -2404,8 +2690,16 @@ fn write_projection_scorecard(
     crate::marker(
         "timing-scorecard",
         format!(
-            "frame={} camera_frames_acquired={} hardware_buffer_imports={} hardware_buffer_cache_hits={} hardware_buffer_cache_misses={} guide_graph_renders={} guide_graph_cache_hits={} sdf_field_updates={} private_layer_invocations={} xr_frames_submitted={} stale_frames={} releaseRetireCount={} observedOpenXrFps={:.1} recordCpuMs={:.3} submitCpuMs={:.3} {} {} projectionExtent={}x{} openxrSubmitReady=true vulkanExternalImportReady={} cameraProjectionReady={} directHwbProjectionDiagnostic={} cameraProjectionPath={} metadataDrivenTargetFootprint=true {} plannedFinalExternalHwbSamples=0 plannedGuideTextureSamples=1 actualFinalExternalHwbSamples={} actualGuideTextureSamples={} leftCameraId={} rightCameraId={} leftSourceFrame={} rightSourceFrame={} leftHardwareBufferId={} rightHardwareBufferId={} leftImportSequence={} rightImportSequence={} stereoPairDeltaNs={} {} recordedHandReplayVisible={} recordedHandReplayTarget=metadata-target-screen-uv {} {} replayVisualFrame={} replayTimestampNs={} replayVisualPointCount={} compactJointOverlayVisible=false {} {} sdfTarget=metadata-target-screen-uv {} {} {} {} visualAcceptance=target-area-orientation-pending-screenshot projectionReady=true",
+            "frame={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} nativePassthroughLayerActive={} environmentBlendMode={:?} projectionLayerAlphaBlend={} cameraRuntimeMode={} camera_frames_acquired={} hardware_buffer_imports={} hardware_buffer_cache_hits={} hardware_buffer_cache_misses={} guide_graph_renders={} guide_graph_cache_hits={} sdf_field_updates={} private_layer_invocations={} xr_frames_submitted={} stale_frames={} releaseRetireCount={} observedOpenXrFps={:.1} recordCpuMs={:.3} submitCpuMs={:.3} {} {} projectionExtent={}x{} openxrSubmitReady=true vulkanExternalImportReady={} cameraProjectionReady={} directHwbProjectionDiagnostic={} cameraProjectionPath={} metadataDrivenTargetFootprint={} {} plannedFinalExternalHwbSamples=0 plannedGuideTextureSamples={} actualFinalExternalHwbSamples={} actualGuideTextureSamples={} leftCameraId={} rightCameraId={} leftSourceFrame={} rightSourceFrame={} leftHardwareBufferId={} rightHardwareBufferId={} leftImportSequence={} rightImportSequence={} stereoPairDeltaNs={} {} recordedHandReplayVisible={} recordedHandReplayTarget=metadata-target-screen-uv {} {} replayVisualFrame={} replayTimestampNs={} replayVisualPointCount={} compactJointOverlayVisible=false handMeshRealHandsVisible={} nativePassthroughRealHandMeshVisible={} solidBlackRealHandMeshVisible={} {} {} sdfTarget=metadata-target-screen-uv {} {} {} {} visualAcceptance=target-area-orientation-pending-screenshot projectionReady=true",
             frame_count,
+            render_mode.marker_value(),
+            render_mode.uses_custom_stereo_projection(),
+            render_mode.uses_native_passthrough(),
+            render_mode.uses_solid_black_background(),
+            native_passthrough_layer_active,
+            environment_blend_mode,
+            render_mode.uses_native_passthrough(),
+            render_mode.camera_runtime_mode(),
             camera_frames_acquired,
             hardware_buffer_imports,
             hardware_buffer_cache_hits,
@@ -2428,9 +2722,11 @@ fn write_projection_scorecard(
             camera_projection_ready,
             direct_hwb_projection_diagnostic,
             camera_projection_path,
+            render_mode.uses_custom_stereo_projection(),
             projection_metadata.marker_fields(),
-            if guide_blur_stats.ready { 0 } else { 2 },
-            if guide_blur_stats.ready { 1 } else { 0 },
+            if render_mode.uses_custom_stereo_projection() { 1 } else { 0 },
+            actual_final_external_hwb_samples,
+            actual_guide_texture_samples,
             crate::sanitize(&camera_projection_stats.left_camera_id),
             crate::sanitize(&camera_projection_stats.right_camera_id),
             camera_projection_stats.left_source_frame,
@@ -2447,6 +2743,9 @@ fn write_projection_scorecard(
             replay_visual_stats.frame_index,
             replay_visual_stats.timestamp_ns,
             replay_visual_stats.visual_point_count,
+            hand_mesh_real_hands_visible,
+            native_passthrough_real_hand_mesh_visible,
+            solid_black_real_hand_mesh_visible,
             format!(
                 "recordedReplayVisualProofEnabled={} compactHandInputSourceMode={} compactHandInputSelectsLiveFrame={} compactHandInputAllowsRecordedFallback={} recordedReplayVisualAcceptance={} {}",
                 replay_visual_proof_enabled,
@@ -2501,13 +2800,24 @@ fn write_projection_scorecard(
     crate::marker(
         "hand-mesh-visual",
         format!(
-            "status=frame frame={} observedOpenXrFps={:.1} recordCpuMs={:.3} submitCpuMs={:.3} handMeshVisualCpuMs={:.3} handMeshVisualGpuMs={:.3} handTarget=metadata-target-screen-uv recordedReplayVisualProofEnabled={} compactHandInputSourceMode={} compactHandInputSelectsLiveFrame={} compactHandInputAllowsRecordedFallback={} {} {}",
+            "status=frame frame={} observedOpenXrFps={:.1} recordCpuMs={:.3} submitCpuMs={:.3} handMeshVisualCpuMs={:.3} handMeshVisualGpuMs={:.3} handTarget={} handMeshVisualWorldSpaceReady={} handMeshRealHandsVisible={} nativePassthroughRealHandMeshVisible={} solidBlackRealHandMeshVisible={} recordedReplayVisualProofEnabled={} compactHandInputSourceMode={} compactHandInputSelectsLiveFrame={} compactHandInputAllowsRecordedFallback={} {} {}",
             frame_count,
             observed_openxr_fps,
             record_ms,
             submit_ms,
             frame_timings.hand_mesh_visual_ms,
             gpu_stage_timings.stage_ms(GpuTimestampStage::HandMeshVisual),
+            if hand_mesh_visual_stats.primary.live_compact_input_frame
+                || hand_mesh_visual_stats.secondary.live_compact_input_frame
+            {
+                "openxr-eye-fov-world-space"
+            } else {
+                "metadata-target-screen-uv-diagnostic"
+            },
+            hand_mesh_visual_stats.any_ready(),
+            hand_mesh_real_hands_visible,
+            native_passthrough_real_hand_mesh_visible,
+            solid_black_real_hand_mesh_visible,
             replay_visual_proof_enabled,
             compact_hand_input_source_mode.marker_value(),
             compact_hand_input_source_mode.selects_live_frame(),
@@ -2537,9 +2847,11 @@ fn write_projection_scorecard(
     crate::marker(
         "gpu-mesh-checklist",
         format!(
-            "status=frame frame={} gpuSkinnedVisual={} compactJointPoseUploadPerFrame=true jointMatrixUploadPerFrame=false liveMetaCompactPathReady={} liveMetaCompactFrameReady={} gpuNormalDepthComponentShading=true sdfTriangleBoundsReady={} sdfTileBinsReady={} sdfNarrowBandReady={} sdfUpdateCadenceFrames={} sdfFieldCacheHits={} sourceMeshBuffersResident={} derivedBuffersResident={}",
+            "status=frame frame={} gpuSkinnedVisual={} skinnedPositionBufferCoordinateSpace=openxr-reference-space liveHandMeshWorldSpaceProjection={} compactJointPoseUploadPerFrame=true jointMatrixUploadPerFrame=false liveMetaCompactPathReady={} liveMetaCompactFrameReady={} gpuNormalDepthComponentShading=true sdfTriangleBoundsReady={} sdfTileBinsReady={} sdfNarrowBandReady={} sdfUpdateCadenceFrames={} sdfFieldCacheHits={} sourceMeshBuffersResident={} derivedBuffersResident={}",
             frame_count,
             hand_mesh_visual_stats.any_ready(),
+            hand_mesh_visual_stats.primary.live_compact_input_frame
+                || hand_mesh_visual_stats.secondary.live_compact_input_frame,
             live_hand_stats.tracker_ready,
             live_hand_stats.frame_ready,
             gpu_sdf_stats.triangle_bounds_ready,
@@ -2551,6 +2863,29 @@ fn write_projection_scorecard(
             gpu_sdf_stats.derived_buffers_resident,
         ),
     );
+}
+
+fn hand_mesh_visual_eye_projection(view: &xr::View) -> HandMeshVisualEyeProjection {
+    HandMeshVisualEyeProjection {
+        position: [
+            view.pose.position.x,
+            view.pose.position.y,
+            view.pose.position.z,
+            0.0,
+        ],
+        orientation_xyzw: [
+            view.pose.orientation.x,
+            view.pose.orientation.y,
+            view.pose.orientation.z,
+            view.pose.orientation.w,
+        ],
+        fov_tangents: [
+            view.fov.angle_left.tan(),
+            view.fov.angle_right.tan(),
+            view.fov.angle_down.tan(),
+            view.fov.angle_up.tan(),
+        ],
+    }
 }
 
 struct ProjectionSwapchain {
@@ -2569,6 +2904,117 @@ impl ProjectionSwapchain {
             }
         }
     }
+}
+
+struct NativePassthroughRuntime {
+    _passthrough: xr::Passthrough,
+    layer: xr::PassthroughLayerFB,
+}
+
+impl NativePassthroughRuntime {
+    fn create(
+        session: &xr::Session<xr::Vulkan>,
+        render_mode: NativeRendererRenderMode,
+        fb_passthrough_enabled: bool,
+        alpha_blend_supported: bool,
+    ) -> Option<Self> {
+        if !render_mode.uses_native_passthrough() {
+            crate::marker(
+                "native-passthrough",
+                format!(
+                    "status=disabled renderMode={} nativePassthroughRequested=false solidBlackBackground={} nativePassthroughLayerActive=false",
+                    render_mode.marker_value(),
+                    render_mode.uses_solid_black_background(),
+                ),
+            );
+            return None;
+        }
+        if !fb_passthrough_enabled {
+            crate::marker(
+                "native-passthrough",
+                "status=unavailable reason=XR_FB_passthrough-not-enabled nativePassthroughRequested=true fbPassthroughEnabled=false nativePassthroughLayerActive=false",
+            );
+            return None;
+        }
+
+        let passthrough = match session
+            .create_passthrough(xr::PassthroughFlagsFB::IS_RUNNING_AT_CREATION)
+        {
+            Ok(passthrough) => passthrough,
+            Err(error) => {
+                crate::marker(
+                        "native-passthrough",
+                        format!(
+                            "status=error stage=create-passthrough reason={} nativePassthroughLayerActive=false",
+                            crate::sanitize(&error.to_string())
+                        ),
+                    );
+                return None;
+            }
+        };
+        let layer = match session.create_passthrough_layer(
+            &passthrough,
+            xr::PassthroughFlagsFB::EMPTY,
+            xr::PassthroughLayerPurposeFB::RECONSTRUCTION,
+        ) {
+            Ok(layer) => layer,
+            Err(error) => {
+                crate::marker(
+                    "native-passthrough",
+                    format!(
+                        "status=error stage=create-layer reason={} nativePassthroughLayerActive=false",
+                        crate::sanitize(&error.to_string())
+                    ),
+                );
+                return None;
+            }
+        };
+        if let Err(error) = layer.resume() {
+            crate::marker(
+                "native-passthrough",
+                format!(
+                    "status=error stage=resume-layer reason={} nativePassthroughLayerActive=false",
+                    crate::sanitize(&error.to_string())
+                ),
+            );
+            return None;
+        }
+        crate::marker(
+            "native-passthrough",
+            format!(
+                "status=active passthroughExtension=XR_FB_passthrough nativePassthroughLayerActive=true passthroughCompositionLayer=CompositionLayerPassthroughFB passthroughPurpose=RECONSTRUCTION environmentBlendModeAlphaSupported={} environmentBlendMode=OPAQUE projectionLayerAlphaBlend=true passthroughLayerAlphaBlend=true",
+                alpha_blend_supported,
+            ),
+        );
+        Some(Self {
+            _passthrough: passthrough,
+            layer,
+        })
+    }
+
+    fn composition_layer_raw(&self, _space: &xr::Space) -> xr::sys::CompositionLayerPassthroughFB {
+        xr::sys::CompositionLayerPassthroughFB {
+            ty: xr::sys::StructureType::COMPOSITION_LAYER_PASSTHROUGH_FB,
+            next: ptr::null(),
+            flags: xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA,
+            space: xr::sys::Space::NULL,
+            layer_handle: self.layer.as_raw(),
+        }
+    }
+}
+
+fn passthrough_layer_base(
+    layer: &xr::sys::CompositionLayerPassthroughFB,
+) -> &xr::CompositionLayerBase<'_, xr::Vulkan> {
+    unsafe { std::mem::transmute(layer) }
+}
+
+fn environment_blend_modes_marker(modes: &[xr::EnvironmentBlendMode]) -> String {
+    modes
+        .iter()
+        .map(|mode| format!("{mode:?}"))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 struct ProjectionSwapchainBuffer {

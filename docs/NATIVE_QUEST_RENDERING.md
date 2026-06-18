@@ -4,6 +4,23 @@ This note defines the first clean Rusty Quest route for a native OpenXR/Vulkan
 camera renderer. It is not a Makepad app route and it is not a Rusty-XR
 compatibility route.
 
+It is also the main public native Quest XR stack for Morphospace rendering
+work. The stack proves four separable compositor/background choices without
+changing the GPU hand mesh path:
+
+| Public route | Background/compositor path | GPU content path | Camera/HWB use |
+| --- | --- | --- | --- |
+| Custom stereo projection | OpenXR projection layer with metadata-owned per-eye camera target rectangles | Guide blur, recorded/live hand mesh, optional SDF visual, private no-op slot | Camera2 `50`/`51` imported as Vulkan external HWB images |
+| Native passthrough hands and grafts | `XR_FB_passthrough` plus alpha-blended projection layer | Live world-space base hands plus opposite-fingertip graft copies | Disabled |
+| Native passthrough graft only | `XR_FB_passthrough` plus alpha-blended projection layer | Opposite-fingertip graft copies only | Disabled |
+| Solid black hands and grafts | Opaque black OpenXR projection layer | Live world-space base hands plus opposite-fingertip graft copies | Disabled |
+
+All four routes share the same Rust NativeActivity/OpenXR/Vulkan package,
+typed runtime options, profile transport, marker scorecards, resident GPU mesh
+resources, and serial-scoped validation workflow. This is the preferred public
+Quest-native route for new low-level examples. Makepad remains a separate app
+shell/input lane, and Rusty-XR remains historical compatibility evidence.
+
 ## Decision
 
 Build the pure-HWB camera path as a Quest-native renderer adapter:
@@ -133,6 +150,9 @@ native route may differ where newer Vulkan evidence supports it:
 - keep SDF/hand-mesh inputs as public Matter/Lattice resources rather than
   app-local globals;
 - keep private layer hooks behind a public ABI descriptor and timing budget;
+- keep left/right recorded hand topology as separate sources for live two-hand
+  visuals; right-hand mesh proof must report right source handedness, not only
+  a right visual label;
 - use scorecards and damaged fixtures before adding a broad app scaffold.
 
 ## Validation
@@ -142,7 +162,7 @@ Run:
 ```powershell
 cargo test -p rusty-quest-native-renderer
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -RunSeconds 12
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
 ```
 
@@ -163,14 +183,19 @@ summary also records separate hand-mesh and SDF overlay evidence rectangles
 from `leftHandMeshVisualScreenUvRect`/`rightHandMeshVisualScreenUvRect` and
 `leftSdfVisualScreenUvRect`/`rightSdfVisualScreenUvRect`, so camera/projection
 content and mesh/SDF visual content are not conflated. Overlay rectangles also
-record chroma and expected cyan/yellow/magenta-family pixel counts, so
+record chroma and expected high-chroma overlay color-family pixel counts, so
 grayscale camera detail inside the same region is not accepted as mesh/SDF
 visual proof. Flat screenshots, flat target regions, flat or colorless
 hand-mesh evidence regions, or flat or colorless SDF evidence regions are
 rejected unless the wrapper is run with `-AllowFlatScreenshot`. The wrapper
 also writes target, hand-mesh, and SDF crop PNGs under `screenshot-crops/`
 beside `runtime-evidence-summary.json` for direct visual inspection. Replay
-wrapper runs also require
+smokes are serial-scoped: pass `-Serial <quest-serial>` or set
+`RUSTY_QUEST_SERIAL`, and use `-AdbServerPort`/`RUSTY_QUEST_ADB_SERVER_PORT`
+only for intentional non-default ADB server routing. The wrapper uses
+PID-scoped logcat by default and only clears logcat when `-ClearLogcat` is
+explicitly requested by a run that owns the headset.
+Wrapper runs also require
 the performance budget gate by default; the checker records the observed FPS,
 stale-frame count, and CPU/GPU stage timing budget results, and fails if a
 stage exceeds its configured threshold. `-AllowPerformanceBudgetMiss` turns
@@ -179,6 +204,15 @@ The source-only live-hand diagnostic fixture deliberately remains a caveat
 fixture: `RequireLiveVisualDiagnosticCaveat` accepts live compact-input markers
 only while live mesh/SDF visual acceptance stays
 `pending-repeat-headset-visual-proof`, and rejects marker-only acceptance.
+Native passthrough has two live-hand profiles: the graft-only profile leaves the
+base real hand mesh suppressed, while the hands-and-grafts profile sets
+`debug.rustyquest.native_renderer.hand_mesh.real_hands.visible=true` so the
+resident GPU-skinned live hand meshes draw under the fingertip graft instances
+without re-enabling Camera2 custom projection or the SDF visual.
+For a non-passthrough control view,
+`quest-native-renderer-solid-black-hands-and-grafts.profile.json` uses the same
+live hand mesh plus graft visual path, but submits only an opaque black
+projection layer behind it.
 The smoke wrapper has an explicit evidence mode: default `ReplayVisualProof`
 uses the recorded replay profile and replay/SDF marker gates, while
 `LiveVisualDiagnosticCaveat` applies the live-hand diagnostic profile and asks
@@ -248,15 +282,28 @@ The runtime scaffold:
   metadata-only and reports `sourceMeshBuffersResident=false`;
 - embeds bounded recorded validation-mesh metadata for local full-capture
   builds, but draws the animated hand as a native Vulkan triangle overlay from
-  the resident GPU-skinned position buffer inside the metadata target
-  rectangle, with component ranks matching the browser preview: hand-inside,
-  hand-back, and wrist cap;
-- exposes a property-controlled hand mesh diagnostic overlay that brightens,
-  enlarges, and target-local offsets the resident GPU-skinned triangle draw
+  the resident GPU-skinned position buffer. That resident buffer now stores
+  OpenXR reference-space meter positions; live compact-hand frames project
+  through each eye's OpenXR pose/FOV, while recorded replay keeps a
+  metadata-target diagnostic mapper for no-real-hands screenshots. Component
+  ranks match the browser preview, hand-inside, hand-back, and wrist cap, but
+  the normal visible material is one continuous surface color with depth/normal
+  shading rather than component-colored bands;
+- exposes a property-controlled hand mesh diagnostic overlay that brightens the
+  resident GPU-skinned triangle draw. Recorded replay diagnostics can still
+  enlarge and target-local offset their metadata-target mapping
   through
   `debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled`,
   `debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv`, and
   `debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha`;
+- exposes an optional live two-hand graft-copy visual through
+  `debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled`. When both
+  live hands are visible, the already-skinned left hand mesh is instanced onto
+  the right fingertips and the already-skinned right hand mesh is instanced onto
+  the left fingertips. The copy transform uses the source palm as the local
+  anchor and scales source wrist radius to the target distal-finger radius, so
+  the copy path reuses current skinned mesh state instead of rerunning skinning
+  or uploading expanded mesh vertices;
 - exposes a no-real-hands replay proof preset with
   `debug.rustyquest.native_renderer.replay.visual_proof.enabled=true`. Unless
   `debug.rustyquest.native_renderer.hand_mesh.input.source` is explicitly set,
@@ -267,16 +314,19 @@ The runtime scaffold:
 - keeps the later live-hand visual retest in a separate profile,
   `quest-native-renderer-live-hand-visual-diagnostic.profile.json`, which
   disables replay proof, forces `live-meta-openxr-hand-tracking`, disables
-  recorded fallback, enables the high-contrast mesh diagnostic plus SDF visual,
-  and still reports live mesh/SDF acceptance as pending until headset
-  screenshots show visible target-local overlay color;
+  recorded fallback, keeps graft copies disabled by default, enables the
+  high-contrast mesh diagnostic plus SDF visual, and still reports live
+  mesh/SDF acceptance as pending until headset
+  screenshots show visible live world-space mesh and SDF overlay color;
 - keeps an opt-in native Vulkan skinned-mesh SDF path disabled by default
   behind `debug.rustyquest.native_renderer.sdf.visual.enabled`; local
   full-capture builds parse rig blend indices/weights and compact joint
   frames, keep source mesh, bind-pose, and bind-joint-source buffers resident,
   upload only runtime joint poses plus packed tip-length rows per frame,
-  dispatch GPU skinning into a resident skinned-position buffer, and optionally
-  build the target SDF field from that GPU-owned mesh;
+  dispatch GPU skinning into a resident OpenXR reference-space
+  skinned-position buffer, and optionally build the target SDF field by
+  projecting that GPU-owned mesh into the metadata target for the current
+  visual SDF slice;
 - enables `XR_EXT_hand_tracking` when the runtime advertises it and packs live
   left/right hand joints into the same recorded-compatible compact input shape:
   21 runtime joint poses plus 5 tip lengths, with no live validation-mesh vertex

@@ -10,7 +10,7 @@ layout(set = 0, binding = 1) readonly buffer RecordedSkinningTriangles {
     uvec4 triangles[];
 } skinning_triangles;
 
-layout(set = 0, binding = 6) readonly buffer SkinnedTargetPositions {
+layout(set = 0, binding = 6) readonly buffer SkinnedWorldPositions {
     vec4 positions[];
 } skinned_positions;
 
@@ -33,6 +33,13 @@ layout(push_constant) uniform SdfComputePush {
     vec4 params;
 } pc;
 
+vec2 target_space_uv(vec3 world) {
+    vec3 center = vec3(pc.target0.x, pc.target0.y, pc.target1.x);
+    float radius = max(pc.target0.w, 0.000001);
+    vec2 local = (world.xy - center.xy) / radius;
+    return vec2(0.5 + local.x * 0.44, 0.55 - local.y * 0.44);
+}
+
 void main() {
     uint triangle_index = gl_GlobalInvocationID.x;
     uint vertex_count = pc.dims.x;
@@ -47,9 +54,9 @@ void main() {
         return;
     }
 
-    vec2 a = skinned_positions.positions[triangle.x].xy;
-    vec2 b = skinned_positions.positions[triangle.y].xy;
-    vec2 c = skinned_positions.positions[triangle.z].xy;
+    vec2 a = target_space_uv(skinned_positions.positions[triangle.x].xyz);
+    vec2 b = target_space_uv(skinned_positions.positions[triangle.y].xyz);
+    vec2 c = target_space_uv(skinned_positions.positions[triangle.z].xyz);
     float band_radius = max(pc.params.x, 0.0001);
     vec2 min_uv = clamp(min(a, min(b, c)) - vec2(band_radius), vec2(0.0), vec2(1.0));
     vec2 max_uv = clamp(max(a, max(b, c)) + vec2(band_radius), vec2(0.0), vec2(1.0));
