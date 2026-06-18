@@ -22,6 +22,8 @@ Runtime routes are selected by profile/property, not by separate APKs:
 | `quest-native-renderer-direct-hwb-low-noise-30.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for low-noise A/B inspection | Enabled, Android-suggested YCbCr plus support-gated 30 FPS AE, noise reduction, and edge-off request controls |
 | `quest-native-renderer-direct-hwb-low-latency-60.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for low-latency A/B inspection | Enabled, Android-suggested YCbCr plus support-gated 60 FPS AE, fast noise reduction, and edge-off request controls |
 | `quest-native-renderer-direct-hwb-hold-sync.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for sync A/B inspection | Enabled, Android-suggested YCbCr with `AImage` retained until the submitted Vulkan frame fence retires |
+| `quest-native-renderer-direct-hwb-hold-sync-reader6.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for queue-depth A/B inspection | Enabled, hold-sync with `readerMaxImages=6` |
+| `quest-native-renderer-direct-hwb-hold-sync-reader8.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for queue-depth A/B inspection | Enabled, hold-sync with `readerMaxImages=8` |
 | `quest-native-renderer-direct-hwb-1280x960.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for resolution A/B inspection | Enabled, Android-suggested YCbCr with requested 1280x960 reader size and support-gated fallback |
 | `quest-native-renderer-replay-visual-proof.profile.json` | Custom camera projection | Recorded GPU-skinned mesh and SDF visual | Enabled |
 | `quest-native-renderer-hwb-peripheral-stretch.profile.json` | Custom camera projection with full-eye target-edge stretch/blend border | Optional recorded/live mesh controls remain profile-selectable | Enabled |
@@ -209,7 +211,10 @@ buffer-removed listener, selected reader size, and YCbCr format-feature markers.
 `quest-native-renderer-direct-hwb-hold-sync.profile.json` activates the
 conservative synchronization diagnostic: the camera callback retains the
 `AImage` for the sampled frame and the render loop releases it only after the
-Vulkan fence for that submitted frame slot has completed. The lower-latency
+Vulkan fence for that submitted frame slot has completed. The reader6 and
+reader8 hold-sync variants keep the same visual route but raise
+`debug.rustyquest.native_renderer.camera.reader_max_images` for ImageReader
+queue-headroom A/B checks. The lower-latency
 `AImage_deleteAsync`/sync-fd release path remains a separate implementation and
 headset validation gate.
 
@@ -283,6 +288,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-low-noise-30.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-low-noise-30-property-write-plan.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-low-latency-60.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-low-latency-60-property-write-plan.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-hold-sync.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-hold-sync-property-write-plan.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-hold-sync-reader6.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-hold-sync-reader6-property-write-plan.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-hold-sync-reader8.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-hold-sync-reader8-property-write-plan.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-1280x960.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-1280x960-property-write-plan.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-hwb-peripheral-stretch.profile.json -DryRun -Out .\local-artifacts\native-renderer-hwb-peripheral-stretch-property-write-plan.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-live-hand-visual-diagnostic.profile.json -DryRun -Out .\local-artifacts\native-renderer-live-hand-visual-diagnostic-property-write-plan.json

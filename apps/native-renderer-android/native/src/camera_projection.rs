@@ -8,8 +8,8 @@ use crate::camera_projection_metadata::{CameraProjectionMetadata, TargetRect};
 use crate::native_camera::{NativeCameraFrame, NativeCameraImageLease, NativeStereoCameraFrame};
 use crate::native_renderer_options::NativeCameraYcbcrMode;
 
-const CAMERA_IMPORT_CACHE_LIMIT: usize = 6;
-const CAMERA_STEREO_DESCRIPTOR_LIMIT: usize = 6;
+const CAMERA_IMPORT_CACHE_LIMIT: usize = 18;
+const CAMERA_STEREO_DESCRIPTOR_LIMIT: usize = 12;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CameraProjectionFrameStats {
@@ -33,6 +33,25 @@ pub(crate) struct PreparedCameraProjection {
     pub(crate) pipeline_layout: vk::PipelineLayout,
     pub(crate) pipeline: vk::Pipeline,
     pub(crate) stats: CameraProjectionFrameStats,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct CameraCacheEvictionStats {
+    attempts: usize,
+    applied: usize,
+    in_flight_skips: usize,
+    protected_skips: usize,
+    deferred: usize,
+}
+
+impl CameraCacheEvictionStats {
+    fn should_log(self) -> bool {
+        self.attempts > 0
+            || self.applied > 0
+            || self.in_flight_skips > 0
+            || self.protected_skips > 0
+            || self.deferred > 0
+    }
 }
 
 pub(crate) struct CameraProjectionRenderer {
@@ -127,6 +146,87 @@ impl CameraProjectionRenderer {
         removed_count
     }
 
+    unsafe fn evict_imports_to_limit(
+        &mut self,
+        device: &ash::Device,
+        protected_hardware_buffer_ids: &[u64],
+    ) -> CameraCacheEvictionStats {
+        let mut stats = CameraCacheEvictionStats::default();
+        while self.imports.len() >= CAMERA_IMPORT_CACHE_LIMIT {
+            stats.attempts += 1;
+            let mut evict_index = None;
+            for (index, import) in self.imports.iter().enumerate() {
+                if protected_hardware_buffer_ids
+                    .iter()
+                    .any(|id| *id != 0 && *id == import.key.buffer_id)
+                {
+                    stats.protected_skips += 1;
+                    continue;
+                }
+                if self.hardware_buffer_id_in_submitted_frame(import.key.buffer_id) {
+                    stats.in_flight_skips += 1;
+                    continue;
+                }
+                evict_index = Some(index);
+                break;
+            }
+
+            let Some(index) = evict_index else {
+                stats.deferred += 1;
+                break;
+            };
+            let old = self.imports.remove(index);
+            self.destroy_stereo_descriptors_for_key(device, old.key);
+            old.destroy(device);
+            stats.applied += 1;
+        }
+        stats
+    }
+
+    unsafe fn evict_stereo_descriptors_to_limit(
+        &mut self,
+        device: &ash::Device,
+        protected_hardware_buffer_ids: &[u64],
+    ) -> CameraCacheEvictionStats {
+        let mut stats = CameraCacheEvictionStats::default();
+        while self.stereo_descriptors.len() >= CAMERA_STEREO_DESCRIPTOR_LIMIT {
+            stats.attempts += 1;
+            let mut evict_index = None;
+            for (index, descriptor) in self.stereo_descriptors.iter().enumerate() {
+                let descriptor_buffer_ids = [
+                    descriptor.left_key.buffer_id,
+                    descriptor.right_key.buffer_id,
+                ];
+                if descriptor_buffer_ids.iter().any(|buffer_id| {
+                    protected_hardware_buffer_ids
+                        .iter()
+                        .any(|id| *id != 0 && *id == *buffer_id)
+                }) {
+                    stats.protected_skips += 1;
+                    continue;
+                }
+                if descriptor_buffer_ids
+                    .iter()
+                    .any(|buffer_id| self.hardware_buffer_id_in_submitted_frame(*buffer_id))
+                {
+                    stats.in_flight_skips += 1;
+                    continue;
+                }
+                evict_index = Some(index);
+                break;
+            }
+
+            let Some(index) = evict_index else {
+                stats.deferred += 1;
+                break;
+            };
+            let old = self.stereo_descriptors.remove(index);
+            old.destroy(device);
+            stats.applied += 1;
+        }
+        stats
+    }
+
     fn hardware_buffer_id_in_submitted_frame(&self, hardware_buffer_id: u64) -> bool {
         hardware_buffer_id != 0
             && self
@@ -146,44 +246,69 @@ impl CameraProjectionRenderer {
             return Ok(None);
         }
 
-        let left = self.prepare_frame_inner(device, cmd, &frame.left)?;
-        let right = self.prepare_frame_inner(device, cmd, &frame.right)?;
-        let (descriptor_set, descriptor_set_layout, pipeline_layout, pipeline) = {
+        let protected_hardware_buffer_ids = [
+            frame.left.hardware_buffer_id,
+            frame.right.hardware_buffer_id,
+        ];
+        let left =
+            self.prepare_frame_inner(device, cmd, &frame.left, &protected_hardware_buffer_ids)?;
+        let right =
+            self.prepare_frame_inner(device, cmd, &frame.right, &protected_hardware_buffer_ids)?;
+        let (descriptor_set_layout, pipeline_layout, pipeline) = {
             let resources = self
                 .resources
                 .as_ref()
                 .ok_or_else(|| "camera projection resources were not initialized".to_string())?;
-
-            let descriptor_set = if let Some(descriptor) =
-                self.stereo_descriptors.iter().find(|descriptor| {
-                    descriptor.left_key == left.key && descriptor.right_key == right.key
-                }) {
-                descriptor.descriptor_set
-            } else {
-                while self.stereo_descriptors.len() >= CAMERA_STEREO_DESCRIPTOR_LIMIT {
-                    let old = self.stereo_descriptors.remove(0);
-                    old.destroy(device);
-                }
-                let descriptor_set = allocate_camera_descriptor_set(
-                    device,
-                    resources,
-                    left.image_view,
-                    right.image_view,
-                )?;
-                self.stereo_descriptors.push(CameraStereoDescriptor {
-                    left_key: left.key,
-                    right_key: right.key,
-                    descriptor_set,
-                    descriptor_pool: resources.descriptor_pool,
-                });
-                descriptor_set
-            };
             (
-                descriptor_set,
                 resources.descriptor_set_layout,
                 resources.pipeline_layout,
                 resources.pipeline,
             )
+        };
+        let descriptor_set = if let Some(descriptor) = self
+            .stereo_descriptors
+            .iter()
+            .find(|descriptor| descriptor.left_key == left.key && descriptor.right_key == right.key)
+        {
+            descriptor.descriptor_set
+        } else {
+            let descriptors_before = self.stereo_descriptors.len();
+            let eviction_stats =
+                self.evict_stereo_descriptors_to_limit(device, &protected_hardware_buffer_ids);
+            if eviction_stats.should_log() {
+                crate::marker(
+                    "camera-projection-cache",
+                    format!(
+                        "status=descriptor-lru-eviction descriptorCacheLimit={} descriptorsBefore={} descriptorsAfter={} evictionAttempts={} evictedDescriptorCount={} inFlightSkipCount={} protectedSkipCount={} cacheEvictionApplied={} cacheEvictionDeferred={}",
+                        CAMERA_STEREO_DESCRIPTOR_LIMIT,
+                        descriptors_before,
+                        self.stereo_descriptors.len(),
+                        eviction_stats.attempts,
+                        eviction_stats.applied,
+                        eviction_stats.in_flight_skips,
+                        eviction_stats.protected_skips,
+                        eviction_stats.applied > 0,
+                        eviction_stats.deferred > 0,
+                    ),
+                );
+            }
+            let resources = self
+                .resources
+                .as_ref()
+                .ok_or_else(|| "camera projection resources were not initialized".to_string())?;
+            let descriptor_set = allocate_camera_descriptor_set(
+                device,
+                resources,
+                left.image_view,
+                right.image_view,
+            )?;
+            self.stereo_descriptors.push(CameraStereoDescriptor {
+                left_key: left.key,
+                right_key: right.key,
+                descriptor_set,
+                descriptor_pool: resources.descriptor_pool,
+            });
+            descriptor_set
         };
 
         self.track_frame_image_leases(frame_slot, frame);
@@ -261,6 +386,7 @@ impl CameraProjectionRenderer {
         device: &ash::Device,
         cmd: vk::CommandBuffer,
         frame: &NativeCameraFrame,
+        protected_hardware_buffer_ids: &[u64],
     ) -> Result<PreparedCameraImport, String> {
         let key = CameraImportKey::from_frame(frame);
         if let Some(index) = self.imports.iter().position(|import| import.key == key) {
@@ -321,10 +447,24 @@ impl CameraProjectionRenderer {
             )?);
         }
 
-        while self.imports.len() >= CAMERA_IMPORT_CACHE_LIMIT {
-            let old = self.imports.remove(0);
-            self.destroy_stereo_descriptors_for_key(device, old.key);
-            old.destroy(device);
+        let imports_before = self.imports.len();
+        let eviction_stats = self.evict_imports_to_limit(device, protected_hardware_buffer_ids);
+        if eviction_stats.should_log() {
+            crate::marker(
+                "camera-projection-cache",
+                format!(
+                    "status=import-lru-eviction importCacheLimit={} importsBefore={} importsAfter={} evictionAttempts={} evictedImportCount={} inFlightSkipCount={} protectedSkipCount={} cacheEvictionApplied={} cacheEvictionDeferred={}",
+                    CAMERA_IMPORT_CACHE_LIMIT,
+                    imports_before,
+                    self.imports.len(),
+                    eviction_stats.attempts,
+                    eviction_stats.applied,
+                    eviction_stats.in_flight_skips,
+                    eviction_stats.protected_skips,
+                    eviction_stats.applied > 0,
+                    eviction_stats.deferred > 0,
+                ),
+            );
         }
 
         let resources = self

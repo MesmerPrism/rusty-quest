@@ -58,6 +58,8 @@ $directHwbCameraQualityBt601UnormProfilePath = Join-Path $repoRoot "fixtures\run
 $directHwbLowNoise30ProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-direct-hwb-low-noise-30.profile.json"
 $directHwbLowLatency60ProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-direct-hwb-low-latency-60.profile.json"
 $directHwbHoldSyncProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-direct-hwb-hold-sync.profile.json"
+$directHwbHoldSyncReader6ProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-direct-hwb-hold-sync-reader6.profile.json"
+$directHwbHoldSyncReader8ProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-direct-hwb-hold-sync-reader8.profile.json"
 $directHwb1280x960ProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-direct-hwb-1280x960.profile.json"
 $hwbPeripheralStretchProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-hwb-peripheral-stretch.profile.json"
 $liveHandVisualDiagnosticProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-live-hand-visual-diagnostic.profile.json"
@@ -66,7 +68,7 @@ $nativePassthroughHandsAndGraftsProfilePath = Join-Path $repoRoot "fixtures\runt
 $solidBlackHandsAndGraftsProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-solid-black-hands-and-grafts.profile.json"
 $solidBlackOpenXrHandsAnchorParticlesProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json"
 
-foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath)) {
+foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath)) {
     if (-not (Test-Path $path)) {
         throw "Missing native renderer Android file: $path"
     }
@@ -117,6 +119,8 @@ $directHwbCameraQualityBt601UnormProfile = Get-Content -Raw -Path $directHwbCame
 $directHwbLowNoise30Profile = Get-Content -Raw -Path $directHwbLowNoise30ProfilePath
 $directHwbLowLatency60Profile = Get-Content -Raw -Path $directHwbLowLatency60ProfilePath
 $directHwbHoldSyncProfile = Get-Content -Raw -Path $directHwbHoldSyncProfilePath
+$directHwbHoldSyncReader6Profile = Get-Content -Raw -Path $directHwbHoldSyncReader6ProfilePath
+$directHwbHoldSyncReader8Profile = Get-Content -Raw -Path $directHwbHoldSyncReader8ProfilePath
 $directHwb1280x960Profile = Get-Content -Raw -Path $directHwb1280x960ProfilePath
 $hwbPeripheralStretchProfile = Get-Content -Raw -Path $hwbPeripheralStretchProfilePath
 $liveHandVisualDiagnosticProfile = Get-Content -Raw -Path $liveHandVisualDiagnosticProfilePath
@@ -542,6 +546,7 @@ foreach ($token in @(
     'PROP_CAMERA_OUTPUT_MODE',
     'PROP_CAMERA_YCBCR_MODE',
     'PROP_CAMERA_RESOLUTION_PROFILE',
+    'PROP_CAMERA_READER_MAX_IMAGES',
     'PROP_CAMERA_QUALITY_PROFILE',
     'PROP_CAMERA_SYNC_MODE',
     'PROP_SWAPCHAIN_COLOR_FORMAT_MODE',
@@ -549,6 +554,7 @@ foreach ($token in @(
     'debug\.rustyquest\.native_renderer\.camera\.output',
     'debug\.rustyquest\.native_renderer\.camera\.ycbcr\.mode',
     'debug\.rustyquest\.native_renderer\.camera\.resolution',
+    'debug\.rustyquest\.native_renderer\.camera\.reader_max_images',
     'debug\.rustyquest\.native_renderer\.camera\.quality_profile',
     'debug\.rustyquest\.native_renderer\.camera\.sync_mode',
     'debug\.rustyquest\.native_renderer\.swapchain\.color_format',
@@ -556,6 +562,7 @@ foreach ($token in @(
     'NativeCameraOutputMode',
     'NativeCameraYcbcrMode',
     'NativeCameraResolutionProfile',
+    'camera_reader_max_images',
     'NativeCameraQualityProfile',
     'NativeCameraSyncMode',
     'NativeSwapchainColorFormatMode',
@@ -566,10 +573,14 @@ foreach ($token in @(
     'camera-request-profile',
     'camera-capture-result',
     'cameraResolutionProfile=',
+    'readerMaxImages=',
     'cameraSyncActive=',
     'gpu-frame-lease-tracked',
     'gpu-frame-lease-retired',
     'cacheEvictionApplied=',
+    'cacheEvictionDeferred=',
+    'inFlightSkipCount=',
+    'protectedSkipCount=',
     'openxr-swapchain-format',
     'border_opacity',
     'cameraOutputMode=',
@@ -1099,6 +1110,8 @@ foreach ($token in @(
     'android-suggested',
     'debug.rustyquest.native_renderer.camera.resolution',
     '1280x1280',
+    'debug.rustyquest.native_renderer.camera.reader_max_images',
+    'readerMaxImages=4',
     'debug.rustyquest.native_renderer.camera.quality_profile',
     'direct-baseline',
     'debug.rustyquest.native_renderer.camera.sync_mode',
@@ -1145,6 +1158,8 @@ foreach ($token in @(
     'forced-bt601-narrow',
     'debug.rustyquest.native_renderer.camera.resolution',
     '1280x1280',
+    'debug.rustyquest.native_renderer.camera.reader_max_images',
+    'readerMaxImages=4',
     'debug.rustyquest.native_renderer.camera.quality_profile',
     'direct-baseline',
     'debug.rustyquest.native_renderer.camera.sync_mode',
@@ -1184,6 +1199,8 @@ foreach ($token in @(
     'android-suggested',
     'debug.rustyquest.native_renderer.camera.resolution',
     '1280x1280',
+    'debug.rustyquest.native_renderer.camera.reader_max_images',
+    'readerMaxImages=4',
     'debug.rustyquest.native_renderer.camera.quality_profile',
     'direct-low-noise-30',
     'debug.rustyquest.native_renderer.camera.sync_mode',
@@ -1218,6 +1235,8 @@ foreach ($token in @(
     'direct-hwb',
     'debug.rustyquest.native_renderer.camera.resolution',
     '1280x1280',
+    'debug.rustyquest.native_renderer.camera.reader_max_images',
+    'readerMaxImages=4',
     'debug.rustyquest.native_renderer.camera.quality_profile',
     'direct-low-latency-60',
     'cameraResolutionProfile=1280x1280',
@@ -1235,6 +1254,8 @@ foreach ($token in @(
 foreach ($token in @(
     'profile.quest.native_renderer.direct_hwb_hold_sync',
     'quest-native-renderer-direct-hwb-hold-sync.profile.json',
+    'debug.rustyquest.native_renderer.camera.reader_max_images',
+    'readerMaxImages=4',
     'debug.rustyquest.native_renderer.camera.sync_mode',
     'hold-image-until-gpu-fence',
     'cameraSyncRequested=hold-image-until-gpu-fence',
@@ -1248,10 +1269,40 @@ foreach ($token in @(
     }
 }
 foreach ($token in @(
+    'profile.quest.native_renderer.direct_hwb_hold_sync_reader6',
+    'quest-native-renderer-direct-hwb-hold-sync-reader6.profile.json',
+    'debug.rustyquest.native_renderer.camera.reader_max_images',
+    'readerMaxImages=6',
+    'cameraSyncRequested=hold-image-until-gpu-fence',
+    'cameraSyncActive=hold-image-until-gpu-fence',
+    'cameraSyncImplementation=active-diagnostic',
+    'producerConsumerSync=image-slot-held-until-vulkan-frame-fence'
+)) {
+    if ($directHwbHoldSyncReader6Profile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer direct-HWB hold-sync reader 6 profile missing token: $token"
+    }
+}
+foreach ($token in @(
+    'profile.quest.native_renderer.direct_hwb_hold_sync_reader8',
+    'quest-native-renderer-direct-hwb-hold-sync-reader8.profile.json',
+    'debug.rustyquest.native_renderer.camera.reader_max_images',
+    'readerMaxImages=8',
+    'cameraSyncRequested=hold-image-until-gpu-fence',
+    'cameraSyncActive=hold-image-until-gpu-fence',
+    'cameraSyncImplementation=active-diagnostic',
+    'producerConsumerSync=image-slot-held-until-vulkan-frame-fence'
+)) {
+    if ($directHwbHoldSyncReader8Profile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer direct-HWB hold-sync reader 8 profile missing token: $token"
+    }
+}
+foreach ($token in @(
     'profile.quest.native_renderer.direct_hwb_1280x960',
     'quest-native-renderer-direct-hwb-1280x960.profile.json',
     'debug.rustyquest.native_renderer.camera.resolution',
     '1280x960',
+    'debug.rustyquest.native_renderer.camera.reader_max_images',
+    'readerMaxImages=4',
     'cameraResolutionProfile=1280x960',
     'readerRequested=1280x960',
     'cameraQualityProfile=direct-baseline'
@@ -1449,6 +1500,12 @@ if ($checkAllText -notmatch 'quest-native-renderer-direct-hwb-low-latency-60\.pr
 }
 if ($checkAllText -notmatch 'quest-native-renderer-direct-hwb-hold-sync\.profile\.json' -or $checkAllText -notmatch 'native-renderer-direct-hwb-hold-sync-property-write-plan\.json') {
     throw "check_all.ps1 must dry-run the native renderer direct-HWB hold-sync profile."
+}
+if ($checkAllText -notmatch 'quest-native-renderer-direct-hwb-hold-sync-reader6\.profile\.json' -or $checkAllText -notmatch 'native-renderer-direct-hwb-hold-sync-reader6-property-write-plan\.json') {
+    throw "check_all.ps1 must dry-run the native renderer direct-HWB hold-sync reader 6 profile."
+}
+if ($checkAllText -notmatch 'quest-native-renderer-direct-hwb-hold-sync-reader8\.profile\.json' -or $checkAllText -notmatch 'native-renderer-direct-hwb-hold-sync-reader8-property-write-plan\.json') {
+    throw "check_all.ps1 must dry-run the native renderer direct-HWB hold-sync reader 8 profile."
 }
 if ($checkAllText -notmatch 'quest-native-renderer-direct-hwb-1280x960\.profile\.json' -or $checkAllText -notmatch 'native-renderer-direct-hwb-1280x960-property-write-plan\.json') {
     throw "check_all.ps1 must dry-run the native renderer direct-HWB 1280x960 profile."

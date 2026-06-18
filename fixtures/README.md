@@ -14,7 +14,8 @@
   edge enhancement off; the low-latency 60 profile requests 60 FPS AE with fast
   noise reduction; the 1280x960 profile tests reader-size selection; and the
   hold-sync profile retains sampled `AImage` objects until the submitted Vulkan
-  frame-slot fence retires. The
+  frame-slot fence retires. Hold-sync reader6 and reader8 variants raise
+  `camera.reader_max_images` for queue-headroom A/B checks. The
   HWB peripheral stretch
   profile keeps the custom Camera2 projection route active while enabling the public
   full-eye target-edge stretch/blend border profile. The native passthrough

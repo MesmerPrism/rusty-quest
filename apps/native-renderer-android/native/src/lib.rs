@@ -176,6 +176,7 @@ fn android_main(app: android_activity::AndroidApp) {
         match native_camera::NativeCameraRuntime::start_from_plan(
             &plan,
             runtime_options.camera_resolution_profile,
+            runtime_options.camera_reader_max_images,
             runtime_options.camera_quality_profile,
             runtime_options.camera_sync_mode,
         ) {

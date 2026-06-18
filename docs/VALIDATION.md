@@ -12,6 +12,9 @@ headset or ADB server. The native renderer profiles are the public validation
 matrix for the main native Quest XR stack: they select custom Camera2/HWB
 projection, native Meta passthrough, or a solid black projection background
 without changing APK identity or hiding route state in ad hoc launch scripts.
+The current raw-camera quality hardening backlog is tracked in
+`docs/NATIVE_CAMERA_QUALITY_ITERATION_PLAN.md`; this document lists the
+validation commands and profile fixtures that prove each landed slice.
 The native renderer has separate profile fixtures:
 `quest-native-renderer-direct-hwb-camera-quality.profile.json` is the raw
 Camera2/HWB baseline route; it forces
@@ -37,13 +40,17 @@ reader size, with Camera2 stream-configuration fallback logged when needed.
 `quest-native-renderer-direct-hwb-hold-sync.profile.json` activates the
 conservative producer/consumer diagnostic: the camera callback retains the
 sampled `AImage`, the renderer tracks that lease per Vulkan frame slot, and the
-lease is retired only after that frame slot's GPU fence completes. The native
+lease is retired only after that frame slot's GPU fence completes. The
+`quest-native-renderer-direct-hwb-hold-sync-reader6.profile.json` and
+`quest-native-renderer-direct-hwb-hold-sync-reader8.profile.json` fixtures raise
+`camera.reader_max_images` for queue-headroom A/B checks. The native
 app logs `camera-capabilities`, `camera-request-profile`,
 `camera-capture-result`, selected reader size, buffer-removed listener,
-cache-eviction processing, sync lease tracking, and YCbCr format-feature
-markers so headset screenshots can be compared with the actual Camera2 result
-metadata. The lower-latency `AImage_deleteAsync`/sync-fd release path remains a
-future validation gate. The
+cache-eviction processing, import/descriptor LRU eviction deferrals, sync lease
+tracking, acquire errors, and YCbCr format-feature markers so headset
+screenshots can be compared with the actual Camera2 result metadata. The
+lower-latency `AImage_deleteAsync`/sync-fd release path remains a future
+validation gate. The
 `quest-native-renderer-replay-visual-proof.profile.json` fixture is the
 no-real-hands recorded replay acceptance route, while
 `quest-native-renderer-live-hand-visual-diagnostic.profile.json` only stages the

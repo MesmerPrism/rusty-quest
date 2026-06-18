@@ -1,6 +1,6 @@
 {
   "schema": "rusty.quest.runtime_profile.v1",
-  "profile_id": "profile.quest.native_renderer.direct_hwb_1280x960",
+  "profile_id": "profile.quest.native_renderer.direct_hwb_hold_sync_reader6",
   "target_platform": "quest",
   "owned_android_properties": [
     "debug.rustyquest.native_renderer.render.mode",
@@ -40,12 +40,12 @@
     },
     {
       "name": "debug.rustyquest.native_renderer.camera.resolution",
-      "value": "1280x960",
+      "value": "1280x1280",
       "source_setting_id": "native_renderer.camera.resolution"
     },
     {
       "name": "debug.rustyquest.native_renderer.camera.reader_max_images",
-      "value": "4",
+      "value": "6",
       "source_setting_id": "native_renderer.camera.reader_max_images"
     },
     {
@@ -55,7 +55,7 @@
     },
     {
       "name": "debug.rustyquest.native_renderer.camera.sync_mode",
-      "value": "early-delete-ahb-retained",
+      "value": "hold-image-until-gpu-fence",
       "source_setting_id": "native_renderer.camera.sync_mode"
     },
     {
@@ -118,17 +118,20 @@
     "RUSTY_QUEST_NATIVE_RENDERER channel=camera-output",
     "cameraOutputMode=direct-hwb",
     "cameraYcbcrMode=android-suggested",
-    "cameraResolutionProfile=1280x960",
-    "readerMaxImages=4",
+    "cameraResolutionProfile=1280x1280",
+    "readerMaxImages=6",
     "cameraQualityProfile=direct-baseline",
-    "cameraSyncActive=early-delete-ahb-retained",
+    "cameraSyncRequested=hold-image-until-gpu-fence",
+    "cameraSyncActive=hold-image-until-gpu-fence",
+    "cameraSyncImplementation=active-diagnostic",
+    "producerConsumerSync=image-slot-held-until-vulkan-frame-fence",
+    "imageReleaseApi=AImage_delete-on-vulkan-frame-fence",
     "swapchainColorFormatMode=unorm",
-    "readerRequested=1280x960",
     "directHwbProjectionDiagnostic=true",
     "actualFinalExternalHwbSamples=2",
     "actualGuideTextureSamples=0"
   ],
   "validation_commands": [
-    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-direct-hwb-1280x960.profile.json -DryRun -Out local-artifacts/native-renderer-direct-hwb-1280x960-property-write-plan.json"
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-direct-hwb-hold-sync-reader6.profile.json -DryRun -Out local-artifacts/native-renderer-direct-hwb-hold-sync-reader6-property-write-plan.json"
   ]
 }

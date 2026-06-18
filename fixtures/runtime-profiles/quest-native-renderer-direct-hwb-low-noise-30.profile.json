@@ -7,6 +7,7 @@
     "debug.rustyquest.native_renderer.camera.output",
     "debug.rustyquest.native_renderer.camera.ycbcr.mode",
     "debug.rustyquest.native_renderer.camera.resolution",
+    "debug.rustyquest.native_renderer.camera.reader_max_images",
     "debug.rustyquest.native_renderer.camera.quality_profile",
     "debug.rustyquest.native_renderer.camera.sync_mode",
     "debug.rustyquest.native_renderer.camera.direct_border.opacity",
@@ -41,6 +42,11 @@
       "name": "debug.rustyquest.native_renderer.camera.resolution",
       "value": "1280x1280",
       "source_setting_id": "native_renderer.camera.resolution"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.reader_max_images",
+      "value": "4",
+      "source_setting_id": "native_renderer.camera.reader_max_images"
     },
     {
       "name": "debug.rustyquest.native_renderer.camera.quality_profile",
@@ -114,6 +120,7 @@
     "cameraYcbcrMode=android-suggested",
     "conversionMode=android-suggested-ycbcr",
     "cameraResolutionProfile=1280x1280",
+    "readerMaxImages=4",
     "cameraQualityProfile=direct-low-noise-30",
     "cameraSyncRequested=early-delete-ahb-retained",
     "cameraSyncActive=early-delete-ahb-retained",

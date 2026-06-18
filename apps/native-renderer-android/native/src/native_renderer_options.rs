@@ -11,6 +11,8 @@ pub(crate) const PROP_CAMERA_YCBCR_MODE: &str =
     "debug.rustyquest.native_renderer.camera.ycbcr.mode";
 pub(crate) const PROP_CAMERA_RESOLUTION_PROFILE: &str =
     "debug.rustyquest.native_renderer.camera.resolution";
+pub(crate) const PROP_CAMERA_READER_MAX_IMAGES: &str =
+    "debug.rustyquest.native_renderer.camera.reader_max_images";
 pub(crate) const PROP_CAMERA_QUALITY_PROFILE: &str =
     "debug.rustyquest.native_renderer.camera.quality_profile";
 pub(crate) const PROP_CAMERA_SYNC_MODE: &str = "debug.rustyquest.native_renderer.camera.sync_mode";
@@ -1165,6 +1167,7 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) camera_output_mode: NativeCameraOutputMode,
     pub(crate) camera_ycbcr_mode: NativeCameraYcbcrMode,
     pub(crate) camera_resolution_profile: NativeCameraResolutionProfile,
+    pub(crate) camera_reader_max_images: u32,
     pub(crate) camera_quality_profile: NativeCameraQualityProfile,
     pub(crate) camera_sync_mode: NativeCameraSyncMode,
     pub(crate) camera_direct_border_opacity: f32,
@@ -1191,6 +1194,7 @@ impl NativeRendererRuntimeOptions {
             NativeCameraYcbcrMode::from_property(lookup(PROP_CAMERA_YCBCR_MODE));
         let camera_resolution_profile =
             NativeCameraResolutionProfile::from_property(lookup(PROP_CAMERA_RESOLUTION_PROFILE));
+        let camera_reader_max_images = u32_value(lookup(PROP_CAMERA_READER_MAX_IMAGES), 4, 3, 12);
         let camera_quality_profile =
             NativeCameraQualityProfile::from_property(lookup(PROP_CAMERA_QUALITY_PROFILE));
         let camera_sync_mode = NativeCameraSyncMode::from_property(lookup(PROP_CAMERA_SYNC_MODE));
@@ -1232,6 +1236,7 @@ impl NativeRendererRuntimeOptions {
             camera_output_mode,
             camera_ycbcr_mode,
             camera_resolution_profile,
+            camera_reader_max_images,
             camera_quality_profile,
             camera_sync_mode,
             camera_direct_border_opacity,
@@ -1346,8 +1351,8 @@ mod tests {
         NativeCameraResolutionProfile, NativeCameraSyncMode, NativeCameraYcbcrMode,
         NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
         PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE,
-        PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_SYNC_MODE, PROP_CAMERA_YCBCR_MODE,
-        PROP_ENABLE_SDF_VISUAL, PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
+        PROP_CAMERA_READER_MAX_IMAGES, PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_SYNC_MODE,
+        PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL, PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
         PROP_HAND_ANCHOR_PARTICLES_ENABLED, PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
@@ -1482,6 +1487,7 @@ mod tests {
             options.camera_resolution_profile.marker_value(),
             "1280x1280"
         );
+        assert_eq!(options.camera_reader_max_images, 4);
         assert_eq!(
             options.camera_quality_profile,
             NativeCameraQualityProfile::DirectBaseline
@@ -1500,6 +1506,7 @@ mod tests {
             (PROP_CAMERA_OUTPUT_MODE, "raw_hwb"),
             (PROP_CAMERA_YCBCR_MODE, "cpuyuv-reference"),
             (PROP_CAMERA_RESOLUTION_PROFILE, "1280x960"),
+            (PROP_CAMERA_READER_MAX_IMAGES, "8"),
             (PROP_CAMERA_QUALITY_PROFILE, "low-noise-30"),
             (PROP_CAMERA_SYNC_MODE, "delete-async"),
             (PROP_SWAPCHAIN_COLOR_FORMAT_MODE, "unorm"),
@@ -1526,6 +1533,7 @@ mod tests {
             direct.camera_resolution_profile.requested_size(),
             Some([1280, 960])
         );
+        assert_eq!(direct.camera_reader_max_images, 8);
         assert_eq!(
             direct.camera_quality_profile,
             NativeCameraQualityProfile::DirectLowNoise30
@@ -1558,6 +1566,7 @@ mod tests {
 
         let hold_sync = options_from(&[
             (PROP_CAMERA_RESOLUTION_PROFILE, "closest"),
+            (PROP_CAMERA_READER_MAX_IMAGES, "99"),
             (PROP_CAMERA_SYNC_MODE, "hold-image"),
         ]);
         assert_eq!(
@@ -1576,6 +1585,7 @@ mod tests {
             hold_sync.camera_sync_mode.implementation_status(),
             "active-diagnostic"
         );
+        assert_eq!(hold_sync.camera_reader_max_images, 12);
 
         let guide = options_from(&[(PROP_CAMERA_OUTPUT_MODE, "public-guide")]);
         assert_eq!(

@@ -94,7 +94,11 @@ until the submitted Vulkan frame-slot fence retires. Runtime markers distinguish
 remains the default baseline, hold-sync is an active diagnostic, and the
 lower-latency `AImage_deleteAsync`/sync-fd path is still future work. The Vulkan
 import path logs external-format feature bits and selects YCbCr chroma/sampler
-filters from the advertised features.
+filters from the advertised features. Camera import and stereo-descriptor cache
+eviction is allowed only for resources that are not protected by the frame being
+prepared and not referenced by submitted frame slots; if all cached imports are
+in flight, eviction is deferred and logged instead of destroying live Vulkan
+resources.
 
 This package is not Manifold command authority, not an Optics visual truth
 source, and not a Matter SDF owner. Headset smokes now prove

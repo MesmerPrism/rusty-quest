@@ -54,7 +54,7 @@ use crate::{
 
 const DEFAULT_READER_WIDTH: i32 = 1280;
 const DEFAULT_READER_HEIGHT: i32 = 1280;
-const READER_MAX_IMAGES: i32 = 4;
+const DEFAULT_READER_MAX_IMAGES: u32 = 4;
 
 pub(crate) struct NativeCameraRuntime {
     manager: *mut ACameraManager,
@@ -67,9 +67,15 @@ impl NativeCameraRuntime {
     pub(crate) fn start_from_plan(
         plan: &NativeRendererPlan,
         camera_resolution_profile: NativeCameraResolutionProfile,
+        camera_reader_max_images: u32,
         camera_quality_profile: NativeCameraQualityProfile,
         camera_sync_mode: NativeCameraSyncMode,
     ) -> Result<Self, String> {
+        let camera_reader_max_images = if camera_reader_max_images == 0 {
+            DEFAULT_READER_MAX_IMAGES
+        } else {
+            camera_reader_max_images.clamp(3, 12)
+        };
         let manager = unsafe { ACameraManager_create() };
         if manager.is_null() {
             return Err("ACameraManager_create returned null".to_string());
@@ -111,6 +117,7 @@ impl NativeCameraRuntime {
                 CameraSide::Left,
                 &plan.camera_source.camera_ids.left,
                 camera_resolution_profile,
+                camera_reader_max_images,
                 camera_quality_profile,
                 camera_sync_mode,
                 Arc::clone(&counters),
@@ -123,6 +130,7 @@ impl NativeCameraRuntime {
                 CameraSide::Right,
                 &plan.camera_source.camera_ids.right,
                 camera_resolution_profile,
+                camera_reader_max_images,
                 camera_quality_profile,
                 camera_sync_mode,
                 Arc::clone(&counters),
@@ -133,8 +141,9 @@ impl NativeCameraRuntime {
         marker(
             "camera-runtime",
             format!(
-                "status=started acquisition=ACameraManager imageFormat=PRIVATE usage=GPU_SAMPLED_IMAGE textureUpdateCadence=on-camera-frame sourceFrame=ndk-callback cameraIds=50,51 cameraResolutionProfile={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={}",
+                "status=started acquisition=ACameraManager imageFormat=PRIVATE usage=GPU_SAMPLED_IMAGE textureUpdateCadence=on-camera-frame sourceFrame=ndk-callback cameraIds=50,51 cameraResolutionProfile={} readerMaxImages={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={}",
                 camera_resolution_profile.marker_value(),
+                camera_reader_max_images,
                 camera_quality_profile.marker_value(),
                 camera_sync_mode.marker_value(),
                 camera_sync_mode.active_marker_value(),
@@ -345,6 +354,7 @@ impl NativeCameraStream {
         side: CameraSide,
         camera_id: &str,
         camera_resolution_profile: NativeCameraResolutionProfile,
+        camera_reader_max_images: u32,
         camera_quality_profile: NativeCameraQualityProfile,
         camera_sync_mode: NativeCameraSyncMode,
         counters: Arc<NativeCameraCounters>,
@@ -356,6 +366,7 @@ impl NativeCameraStream {
             side,
             camera_id: camera_id.to_string(),
             camera_resolution_profile,
+            camera_reader_max_images,
             camera_quality_profile,
             camera_sync_mode,
             buffer_removed_listener_registered: false,
@@ -397,6 +408,7 @@ impl NativeCameraStream {
             ));
         }
         let camera_resolution_profile = (*context).camera_resolution_profile;
+        let reader_max_images = (*context).camera_reader_max_images as i32;
         let requested_reader_size = camera_resolution_profile
             .requested_size()
             .unwrap_or([DEFAULT_READER_WIDTH, DEFAULT_READER_HEIGHT]);
@@ -468,18 +480,19 @@ impl NativeCameraStream {
             reader_size.height,
             AIMAGE_FORMAT_PRIVATE,
             AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE,
-            READER_MAX_IMAGES,
+            reader_max_images,
             &mut reader,
         );
         if reader_result != 0 || reader.is_null() {
             ACaptureRequest_free(capture_request);
             ACameraDevice_close(camera_device);
             return Err(format!(
-                "AImageReader_newWithUsage failed cameraId={} result={} size={}x{}",
+                "AImageReader_newWithUsage failed cameraId={} result={} size={}x{} readerMaxImages={}",
                 camera_id.to_string_lossy(),
                 reader_result,
                 reader_size.width,
-                reader_size.height
+                reader_size.height,
+                reader_max_images
             ));
         }
 
@@ -642,7 +655,7 @@ impl NativeCameraStream {
                 reader_size.status,
                 reader_size.width,
                 reader_size.height,
-                READER_MAX_IMAGES
+                reader_max_images
             ),
         );
         marker(
@@ -1207,6 +1220,7 @@ struct NativeReaderContext {
     side: CameraSide,
     camera_id: String,
     camera_resolution_profile: NativeCameraResolutionProfile,
+    camera_reader_max_images: u32,
     camera_quality_profile: NativeCameraQualityProfile,
     camera_sync_mode: NativeCameraSyncMode,
     buffer_removed_listener_registered: bool,
@@ -1307,11 +1321,25 @@ unsafe extern "C" fn image_on_image_available(context: *mut c_void, reader: *mut
     }
 
     let mut image: *mut AImage = ptr::null_mut();
-    if AImageReader_acquireLatestImage(reader, &mut image) != 0 || image.is_null() {
-        reader_context
+    let acquire_result = AImageReader_acquireLatestImage(reader, &mut image);
+    if acquire_result != 0 || image.is_null() {
+        let acquire_error_count = reader_context
             .counters
             .camera_acquire_errors
-            .fetch_add(1, Ordering::Relaxed);
+            .fetch_add(1, Ordering::Relaxed)
+            + 1;
+        marker(
+            "camera-acquire",
+            format!(
+                "status=error side={} cameraId={} acquireResult={} imageNull={} readerMaxImages={} acquireErrorCount={} queueExhaustionPossible=true imageAcquireApi=AImageReader_acquireLatestImage",
+                reader_context.side.stable_id(),
+                reader_context.camera_id,
+                acquire_result,
+                image.is_null(),
+                reader_context.camera_reader_max_images,
+                acquire_error_count
+            ),
+        );
         return;
     }
     let hold_image_until_gpu_fence = matches!(

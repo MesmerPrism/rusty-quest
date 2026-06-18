@@ -37,6 +37,8 @@ HWB import, offscreen guide blur, SDF input hook, private extension ABI slot,
 and detailed timing scorecard required before building a native app scaffold.
 
 See `docs/NATIVE_QUEST_RENDERING.md`.
+The raw native camera quality hardening backlog is tracked as sliced public
+work in `docs/NATIVE_CAMERA_QUALITY_ITERATION_PLAN.md`.
 
 `apps/native-renderer-android` is the first Quest-native Android package
 scaffold for that contract. It stages the public renderer plan as an APK asset
