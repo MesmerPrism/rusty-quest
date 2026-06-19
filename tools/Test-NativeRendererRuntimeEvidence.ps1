@@ -758,6 +758,17 @@ if ($RequireEnvironmentDepthParticles) {
     Assert-True ($minValidReconstructedMeters -gt 0.0 -and $maxValidReconstructedMeters -ge $minValidReconstructedMeters) "environment-depth-particles reconstructed meter min/max are invalid."
     $debugValidSampleCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthDebugValidSampleCount"
     Assert-True ($debugValidSampleCount -gt 0) "environment-depth-particles raw debug readback reports no valid samples."
+    $hashInsertSuccessCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashInsertSuccessCount"
+    $hashMergeCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashMergeCount"
+    $hashStaleReplaceCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashStaleReplaceCount"
+    $hashProbeExhaustedCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashProbeExhaustedCount"
+    $freeSpaceRetireAttemptCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthFreeSpaceRetireAttemptCount"
+    $freeSpaceRetireSuccessCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthFreeSpaceRetireSuccessCount"
+    $hashOccupancyEstimate = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashOccupancyEstimate"
+    $hashWriteConflictCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashWriteConflictCount"
+    $hashUpdateCount = $hashInsertSuccessCount + $hashMergeCount + $hashStaleReplaceCount
+    Assert-True ($hashUpdateCount -gt 0) "environment-depth-particles scene-map readback reports no successful insert, merge, or stale replacement."
+    Assert-True ($freeSpaceRetireSuccessCount -le $freeSpaceRetireAttemptCount) "environment-depth-particles free-space retire successes exceed attempts."
     $summary.environment_depth_line = $environmentDepthLine
     $summary.environment_depth_particles_line = $environmentDepthParticlesLine
     $summary.environment_depth_particle_count = $particleCount
@@ -766,6 +777,14 @@ if ($RequireEnvironmentDepthParticles) {
     $summary.environment_depth_center_reconstructed_meters = $centerReconstructedMeters
     $summary.environment_depth_raw_center_window_median_d16 = $rawMedianD16
     $summary.environment_depth_debug_valid_sample_count = $debugValidSampleCount
+    $summary.environment_depth_hash_insert_success_count = $hashInsertSuccessCount
+    $summary.environment_depth_hash_merge_count = $hashMergeCount
+    $summary.environment_depth_hash_stale_replace_count = $hashStaleReplaceCount
+    $summary.environment_depth_hash_probe_exhausted_count = $hashProbeExhaustedCount
+    $summary.environment_depth_free_space_retire_attempt_count = $freeSpaceRetireAttemptCount
+    $summary.environment_depth_free_space_retire_success_count = $freeSpaceRetireSuccessCount
+    $summary.environment_depth_hash_occupancy_estimate = $hashOccupancyEstimate
+    $summary.environment_depth_hash_write_conflict_count = $hashWriteConflictCount
 }
 
 if ($RequireGuideGraph) {

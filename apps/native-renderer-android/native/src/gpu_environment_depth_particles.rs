@@ -28,7 +28,7 @@ const META_ENVIRONMENT_DEPTH_TEXTURE_TRANSFORM_FLAGS: f32 = 8.0;
 const DEPTH_FLAG_INFINITE_FAR: u32 = 1;
 const DEPTH_FLAG_SCENE_PARTICLE_MAP: u32 = 2;
 const DEPTH_FLAG_SOURCE_LAYER1: u32 = 4;
-const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT: usize = 12;
+const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT: usize = 18;
 const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_BYTES: vk::DeviceSize =
     (ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT * mem::size_of::<u32>()) as vk::DeviceSize;
 const RAW_DEBUG_VALID_COUNT_INDEX: usize = 0;
@@ -41,6 +41,14 @@ const RAW_DEBUG_CENTER_MEDIAN_D16_INDEX: usize = 6;
 const RAW_DEBUG_MIN_VALID_INVERSE_MM_INDEX: usize = 7;
 const RAW_DEBUG_MAX_VALID_MM_INDEX: usize = 8;
 const RAW_DEBUG_CENTER_WINDOW_VALID_COUNT_INDEX: usize = 9;
+const RAW_DEBUG_HASH_INSERT_SUCCESS_COUNT_INDEX: usize = 10;
+const RAW_DEBUG_HASH_MERGE_COUNT_INDEX: usize = 11;
+const RAW_DEBUG_HASH_STALE_REPLACE_COUNT_INDEX: usize = 12;
+const RAW_DEBUG_HASH_PROBE_EXHAUSTED_COUNT_INDEX: usize = 13;
+const RAW_DEBUG_FREE_SPACE_RETIRE_ATTEMPT_COUNT_INDEX: usize = 14;
+const RAW_DEBUG_FREE_SPACE_RETIRE_SUCCESS_COUNT_INDEX: usize = 15;
+const RAW_DEBUG_HASH_OCCUPANCY_ESTIMATE_INDEX: usize = 16;
+const RAW_DEBUG_HASH_WRITE_CONFLICT_COUNT_INDEX: usize = 17;
 const SCENE_PARTICLE_CELL_METERS: f32 = 0.06;
 const SCENE_PARTICLE_HASH_PROBE_COUNT: u32 = 8;
 const SCENE_PARTICLE_STALE_FADE_START_FRAMES: u32 = 720;
@@ -59,6 +67,14 @@ struct EnvironmentDepthRawDebugStats {
     center_window_valid_count: u32,
     min_valid_reconstructed_m: f32,
     max_valid_reconstructed_m: f32,
+    hash_insert_success_count: u32,
+    hash_merge_count: u32,
+    hash_stale_replace_count: u32,
+    hash_probe_exhausted_count: u32,
+    free_space_retire_attempt_count: u32,
+    free_space_retire_success_count: u32,
+    hash_occupancy_estimate: u32,
+    hash_write_conflict_count: u32,
 }
 
 impl EnvironmentDepthRawDebugStats {
@@ -75,6 +91,14 @@ impl EnvironmentDepthRawDebugStats {
             center_window_valid_count: 0,
             min_valid_reconstructed_m: 0.0,
             max_valid_reconstructed_m: 0.0,
+            hash_insert_success_count: 0,
+            hash_merge_count: 0,
+            hash_stale_replace_count: 0,
+            hash_probe_exhausted_count: 0,
+            free_space_retire_attempt_count: 0,
+            free_space_retire_success_count: 0,
+            hash_occupancy_estimate: 0,
+            hash_write_conflict_count: 0,
         }
     }
 
@@ -108,6 +132,16 @@ impl EnvironmentDepthRawDebugStats {
             center_window_valid_count: values[RAW_DEBUG_CENTER_WINDOW_VALID_COUNT_INDEX],
             min_valid_reconstructed_m: min_valid_mm as f32 / 1000.0,
             max_valid_reconstructed_m: values[RAW_DEBUG_MAX_VALID_MM_INDEX] as f32 / 1000.0,
+            hash_insert_success_count: values[RAW_DEBUG_HASH_INSERT_SUCCESS_COUNT_INDEX],
+            hash_merge_count: values[RAW_DEBUG_HASH_MERGE_COUNT_INDEX],
+            hash_stale_replace_count: values[RAW_DEBUG_HASH_STALE_REPLACE_COUNT_INDEX],
+            hash_probe_exhausted_count: values[RAW_DEBUG_HASH_PROBE_EXHAUSTED_COUNT_INDEX],
+            free_space_retire_attempt_count: values
+                [RAW_DEBUG_FREE_SPACE_RETIRE_ATTEMPT_COUNT_INDEX],
+            free_space_retire_success_count: values
+                [RAW_DEBUG_FREE_SPACE_RETIRE_SUCCESS_COUNT_INDEX],
+            hash_occupancy_estimate: values[RAW_DEBUG_HASH_OCCUPANCY_ESTIMATE_INDEX],
+            hash_write_conflict_count: values[RAW_DEBUG_HASH_WRITE_CONFLICT_COUNT_INDEX],
         }
     }
 }
@@ -320,7 +354,7 @@ impl GpuEnvironmentDepthParticleFrameStats {
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "environmentDepthProviderState={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound={} environmentDepthSupported={} environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthPoseValid={} environmentDepthSwapchainIndex={} environmentDepthCaptureTimeNs={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthMode={} environmentDepthParticleReady={} environmentDepthParticleVisible={} environmentDepthParticleCount={} environmentDepthParticleCapacity={} environmentDepthParticleSource={} environmentDepthParticleCoordinateSpace={} environmentDepthParticleReferenceSpace={} environmentDepthWorldSpaceReady={} environmentDepthParticleSourceDepthSamples={} environmentDepthParticleCpuUploadBytes=0 environmentDepthGpuBuffersResident={} environmentDepthParticleBufferMemory=device-local environmentDepthGpuReconstructPath={} environmentDepthGpuDrawPath={} environmentDepthParticleRetention={} environmentDepthParticleMapPolicy={} environmentDepthSceneParticleMap={} environmentDepthSceneCellMeters={:.3} environmentDepthSceneHashProbeCount={} environmentDepthSceneStaleFadeStartFrames={} environmentDepthSceneStaleRetireFrames={} environmentDepthInvalidSamplePolicy={} environmentDepthFreeSpaceCorrection={} environmentDepthRawStatsStatus={} environmentDepthRawCenterD16={} environmentDepthCenterReconstructedMeters={:.3} environmentDepthCenterConfidence={:.3} environmentDepthRawCenterWindowMedianD16={} environmentDepthRawCenterWindowValidCount={} environmentDepthMinValidReconstructedMeters={:.3} environmentDepthMaxValidReconstructedMeters={:.3} environmentDepthDebugValidSampleCount={} environmentDepthDebugInvalidSampleCount={} environmentDepthDebugConfidenceRejectedCount={} environmentDepthReadbackCadenceFrames=0 environmentDepthRawReadbackCadenceFrames=120",
+            "environmentDepthProviderState={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound={} environmentDepthSupported={} environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthPoseValid={} environmentDepthSwapchainIndex={} environmentDepthCaptureTimeNs={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthMode={} environmentDepthParticleReady={} environmentDepthParticleVisible={} environmentDepthParticleCount={} environmentDepthParticleCapacity={} environmentDepthParticleSource={} environmentDepthParticleCoordinateSpace={} environmentDepthParticleReferenceSpace={} environmentDepthWorldSpaceReady={} environmentDepthParticleSourceDepthSamples={} environmentDepthParticleCpuUploadBytes=0 environmentDepthGpuBuffersResident={} environmentDepthParticleBufferMemory=device-local environmentDepthGpuReconstructPath={} environmentDepthGpuDrawPath={} environmentDepthParticleRetention={} environmentDepthParticleMapPolicy={} environmentDepthSceneParticleMap={} environmentDepthSceneCellMeters={:.3} environmentDepthSceneHashProbeCount={} environmentDepthSceneStaleFadeStartFrames={} environmentDepthSceneStaleRetireFrames={} environmentDepthInvalidSamplePolicy={} environmentDepthFreeSpaceCorrection={} environmentDepthRawStatsStatus={} environmentDepthRawCenterD16={} environmentDepthCenterReconstructedMeters={:.3} environmentDepthCenterConfidence={:.3} environmentDepthRawCenterWindowMedianD16={} environmentDepthRawCenterWindowValidCount={} environmentDepthMinValidReconstructedMeters={:.3} environmentDepthMaxValidReconstructedMeters={:.3} environmentDepthDebugValidSampleCount={} environmentDepthDebugInvalidSampleCount={} environmentDepthDebugConfidenceRejectedCount={} environmentDepthHashInsertSuccessCount={} environmentDepthHashMergeCount={} environmentDepthHashStaleReplaceCount={} environmentDepthHashProbeExhaustedCount={} environmentDepthFreeSpaceRetireAttemptCount={} environmentDepthFreeSpaceRetireSuccessCount={} environmentDepthHashOccupancyEstimate={} environmentDepthHashWriteConflictCount={} environmentDepthReadbackCadenceFrames=0 environmentDepthRawReadbackCadenceFrames=120",
             self.provider_state,
             self.provider_available,
             self.real_provider_bound,
@@ -412,6 +446,14 @@ impl GpuEnvironmentDepthParticleFrameStats {
             self.raw_debug_stats.valid_sample_count,
             self.raw_debug_stats.invalid_sample_count,
             self.raw_debug_stats.confidence_rejected_count,
+            self.raw_debug_stats.hash_insert_success_count,
+            self.raw_debug_stats.hash_merge_count,
+            self.raw_debug_stats.hash_stale_replace_count,
+            self.raw_debug_stats.hash_probe_exhausted_count,
+            self.raw_debug_stats.free_space_retire_attempt_count,
+            self.raw_debug_stats.free_space_retire_success_count,
+            self.raw_debug_stats.hash_occupancy_estimate,
+            self.raw_debug_stats.hash_write_conflict_count,
         )
     }
 }

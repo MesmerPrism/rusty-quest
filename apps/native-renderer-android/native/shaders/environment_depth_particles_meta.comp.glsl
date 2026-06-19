@@ -44,6 +44,14 @@ const uint RAW_DEBUG_CENTER_MEDIAN_D16 = 6u;
 const uint RAW_DEBUG_MIN_VALID_INVERSE_MM = 7u;
 const uint RAW_DEBUG_MAX_VALID_MM = 8u;
 const uint RAW_DEBUG_CENTER_WINDOW_VALID_COUNT = 9u;
+const uint RAW_DEBUG_HASH_INSERT_SUCCESS_COUNT = 10u;
+const uint RAW_DEBUG_HASH_MERGE_COUNT = 11u;
+const uint RAW_DEBUG_HASH_STALE_REPLACE_COUNT = 12u;
+const uint RAW_DEBUG_HASH_PROBE_EXHAUSTED_COUNT = 13u;
+const uint RAW_DEBUG_FREE_SPACE_RETIRE_ATTEMPT_COUNT = 14u;
+const uint RAW_DEBUG_FREE_SPACE_RETIRE_SUCCESS_COUNT = 15u;
+const uint RAW_DEBUG_HASH_OCCUPANCY_ESTIMATE = 16u;
+const uint RAW_DEBUG_HASH_WRITE_CONFLICT_COUNT = 17u;
 
 uint depth_flags() {
     return uint(max(floor(pc.params1.z + 0.5), 0.0));
@@ -196,6 +204,7 @@ void retire_scene_cell(ivec3 cell) {
     float cell_key = compact_scene_cell_key(hash_value);
     uint base_slot = hash_value % capacity;
 
+    atomicAdd(depth_debug.values[RAW_DEBUG_FREE_SPACE_RETIRE_ATTEMPT_COUNT], 1u);
     for (uint probe = 0u; probe < SCENE_PARTICLE_PROBE_COUNT; probe++) {
         uint slot = (base_slot + probe) % capacity;
         uint base = slot * 4u;
@@ -206,6 +215,7 @@ void retire_scene_cell(ivec3 cell) {
             particles.rows[base + 1u].a = 0.0;
             particles.rows[base + 2u].w = 0.0;
             particles.rows[base + 3u] = vec4(cell_key, 0.0, frame_marker(), 1.0);
+            atomicAdd(depth_debug.values[RAW_DEBUG_FREE_SPACE_RETIRE_SUCCESS_COUNT], 1u);
             return;
         }
     }
@@ -260,7 +270,18 @@ void write_scene_particle(
         float age_frames = max(frame_marker() - existing_state.z, 0.0);
         bool stale = age_frames > SCENE_PARTICLE_STALE_REPLACE_FRAMES;
 
+        if (!empty) {
+            atomicAdd(depth_debug.values[RAW_DEBUG_HASH_OCCUPANCY_ESTIMATE], 1u);
+        }
+
         if (empty || same_cell || stale) {
+            if (empty) {
+                atomicAdd(depth_debug.values[RAW_DEBUG_HASH_INSERT_SUCCESS_COUNT], 1u);
+            } else if (same_cell && !stale) {
+                atomicAdd(depth_debug.values[RAW_DEBUG_HASH_MERGE_COUNT], 1u);
+            } else {
+                atomicAdd(depth_debug.values[RAW_DEBUG_HASH_STALE_REPLACE_COUNT], 1u);
+            }
             float merge_weight = same_cell && !empty && !stale
                 ? SCENE_PARTICLE_MERGE_WEIGHT * clamp(confidence, 0.0, 1.0)
                 : 1.0;
@@ -289,7 +310,9 @@ void write_scene_particle(
                 1.0);
             return;
         }
+        atomicAdd(depth_debug.values[RAW_DEBUG_HASH_WRITE_CONFLICT_COUNT], 1u);
     }
+    atomicAdd(depth_debug.values[RAW_DEBUG_HASH_PROBE_EXHAUSTED_COUNT], 1u);
 }
 
 uint meters_to_debug_mm(float meters) {
