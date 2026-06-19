@@ -74,6 +74,8 @@ pub(crate) const PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW: &str =
     "debug.rustyquest.native_renderer.environment_depth.debug_view";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE: &str =
     "debug.rustyquest.native_renderer.environment_depth.reference_space";
+pub(crate) const PROP_ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED: &str =
+    "debug.rustyquest.native_renderer.environment_depth.hand_removal.enabled";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY: &str =
     "debug.rustyquest.native_renderer.environment_depth.particle_capacity";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS: &str =
@@ -861,6 +863,7 @@ pub(crate) struct NativeEnvironmentDepthSettings {
     pub(crate) depth_units_policy: NativeEnvironmentDepthDepthUnitsPolicy,
     pub(crate) debug_view: NativeEnvironmentDepthDebugView,
     pub(crate) reference_space: NativeEnvironmentDepthReferenceSpace,
+    pub(crate) hand_removal_requested: bool,
     pub(crate) particle_capacity: u32,
     pub(crate) sample_stride_pixels: u32,
     pub(crate) near_m: f32,
@@ -899,6 +902,10 @@ impl NativeEnvironmentDepthSettings {
             reference_space: NativeEnvironmentDepthReferenceSpace::from_property(lookup(
                 PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE,
             )),
+            hand_removal_requested: bool_value(
+                lookup(PROP_ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED),
+                false,
+            ),
             particle_capacity: u32_value(
                 lookup(PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY),
                 32_768,
@@ -922,12 +929,13 @@ impl NativeEnvironmentDepthSettings {
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "modeProperty={} sourceProperty={} layerPolicyProperty={} depthUnitsPolicyProperty={} debugViewProperty={} environmentDepthMode={} environmentDepthSource={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthProviderState={} environmentDepthProviderAvailable=false environmentDepthRealProviderBound=false environmentDepthSupported=false environmentDepthAcquireStatus={} environmentDepthImageSize=0x0 environmentDepthFormat=none environmentDepthLayerCount=0 environmentDepthReferenceSpace={} environmentDepthPoseValid=false environmentDepthParticleCapacity={} environmentDepthSampleStridePixels={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCpuUploadBytes=0 environmentDepthGpuReconstructMs=0.000 environmentDepthGpuMapUpdateMs=0.000 environmentDepthGpuDrawMs=0.000 environmentDepthReadbackCadenceFrames=0 environmentDepthHighRateJsonPayload={}",
+            "modeProperty={} sourceProperty={} layerPolicyProperty={} depthUnitsPolicyProperty={} debugViewProperty={} handRemovalProperty={} environmentDepthMode={} environmentDepthSource={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthProviderState={} environmentDepthProviderAvailable=false environmentDepthRealProviderBound=false environmentDepthSupported=false environmentDepthAcquireStatus={} environmentDepthImageSize=0x0 environmentDepthFormat=none environmentDepthLayerCount=0 environmentDepthReferenceSpace={} environmentDepthHandRemovalRequested={} environmentDepthHandRemovalEnabled=false environmentDepthPoseValid=false environmentDepthParticleCapacity={} environmentDepthSampleStridePixels={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCpuUploadBytes=0 environmentDepthGpuReconstructMs=0.000 environmentDepthGpuMapUpdateMs=0.000 environmentDepthGpuDrawMs=0.000 environmentDepthReadbackCadenceFrames=0 environmentDepthHighRateJsonPayload={}",
             PROP_ENVIRONMENT_DEPTH_MODE,
             PROP_ENVIRONMENT_DEPTH_SOURCE,
             PROP_ENVIRONMENT_DEPTH_LAYER_POLICY,
             PROP_ENVIRONMENT_DEPTH_DEPTH_UNITS_POLICY,
             PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW,
+            PROP_ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED,
             self.mode.marker_value(),
             self.source.marker_value(),
             self.layer_policy.source_view_count(),
@@ -939,6 +947,7 @@ impl NativeEnvironmentDepthSettings {
             self.source.provider_state_marker(self.mode),
             self.source.acquire_status_marker(self.mode),
             self.reference_space.marker_value(),
+            self.hand_removal_requested,
             self.particle_capacity,
             self.sample_stride_pixels,
             self.near_m,
@@ -1026,6 +1035,7 @@ impl Default for NativeEnvironmentDepthSettings {
             depth_units_policy: NativeEnvironmentDepthDepthUnitsPolicy::ProjectedDepthFromNearFar,
             debug_view: NativeEnvironmentDepthDebugView::Normal,
             reference_space: NativeEnvironmentDepthReferenceSpace::OpenXrLocal,
+            hand_removal_requested: false,
             particle_capacity: 32_768,
             sample_stride_pixels: 12,
             near_m: 0.20,
@@ -1866,12 +1876,12 @@ mod tests {
         PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
         PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL, PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW,
         PROP_ENVIRONMENT_DEPTH_DEPTH_UNITS_POLICY, PROP_ENVIRONMENT_DEPTH_FAR_M,
-        PROP_ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD, PROP_ENVIRONMENT_DEPTH_LAYER_POLICY,
-        PROP_ENVIRONMENT_DEPTH_MODE, PROP_ENVIRONMENT_DEPTH_NEAR_M,
-        PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY, PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE,
-        PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS, PROP_ENVIRONMENT_DEPTH_SOURCE,
-        PROP_HAND_ANCHOR_PARTICLES_DYNAMICS, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
-        PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
+        PROP_ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED, PROP_ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD,
+        PROP_ENVIRONMENT_DEPTH_LAYER_POLICY, PROP_ENVIRONMENT_DEPTH_MODE,
+        PROP_ENVIRONMENT_DEPTH_NEAR_M, PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY,
+        PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE, PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS,
+        PROP_ENVIRONMENT_DEPTH_SOURCE, PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
+        PROP_HAND_ANCHOR_PARTICLES_ENABLED, PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
         PROP_HAND_ANCHOR_PARTICLES_RADIUS_M, PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_BLEND_MODE,
@@ -2407,6 +2417,7 @@ mod tests {
             settings.reference_space,
             NativeEnvironmentDepthReferenceSpace::OpenXrLocal
         );
+        assert!(!settings.hand_removal_requested);
         assert_eq!(settings.particle_capacity, 32_768);
         assert_eq!(settings.sample_stride_pixels, 12);
         assert!(!settings.high_rate_json_payload);
@@ -2419,6 +2430,8 @@ mod tests {
         assert!(fields.contains("environmentDepthRawToMetersPolicy=projected-depth-from-near-far"));
         assert!(fields.contains("environmentDepthDebugView=normal"));
         assert!(fields.contains("environmentDepthProviderState=not-requested"));
+        assert!(fields.contains("environmentDepthHandRemovalRequested=false"));
+        assert!(fields.contains("environmentDepthHandRemovalEnabled=false"));
         assert!(fields.contains("environmentDepthHighRateJsonPayload=false"));
         assert!(fields.contains("environmentDepthGpuReconstructMs=0.000"));
     }
@@ -2435,6 +2448,7 @@ mod tests {
             ),
             (PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW, "raw-d16"),
             (PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE, "stage"),
+            (PROP_ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED, "true"),
             (PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY, "999999"),
             (PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS, "0"),
             (PROP_ENVIRONMENT_DEPTH_NEAR_M, "0.50"),
@@ -2463,6 +2477,7 @@ mod tests {
             settings.reference_space,
             NativeEnvironmentDepthReferenceSpace::OpenXrStage
         );
+        assert!(settings.hand_removal_requested);
         assert_eq!(settings.particle_capacity, 262_144);
         assert_eq!(settings.sample_stride_pixels, 12);
         assert_eq!(settings.near_m, 0.50);
@@ -2477,6 +2492,7 @@ mod tests {
         assert!(fields.contains("environmentDepthDebugView=raw-d16"));
         assert!(fields.contains("environmentDepthProviderState=status-only-skeleton"));
         assert!(fields.contains("environmentDepthReferenceSpace=openxr-stage"));
+        assert!(fields.contains("environmentDepthHandRemovalRequested=true"));
         assert!(fields.contains("environmentDepthParticleCapacity=262144"));
         assert!(fields.contains("environmentDepthSampleStridePixels=12"));
     }

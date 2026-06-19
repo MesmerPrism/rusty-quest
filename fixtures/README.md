@@ -84,6 +84,11 @@
   `environment_depth.debug_view=free-space-state` and expects
   `environmentDepthParticleDebugColorMode=free-space-state`; the default,
   layer-1, and low-capacity routes expect `depth-gradient`.
+  The `quest-native-renderer-envdepth-*.profile.json` Iteration 8 matrix keeps
+  that same real provider scene-map route fixed and varies one acceptance axis
+  per fixture: layer 0, layer 1, raw-D16 debug, OpenXR local reference space,
+  OpenXR stage reference space, 65536-particle capacity, 8-pixel sample stride,
+  or the Meta environment-depth hand-removal request.
 - `native-renderer/`: valid Quest-native renderer plans, timing scorecards, and
   public recorded-hand topology/shape fixtures for pure-HWB blur, GPU mesh
   boundary, resident compact-joint GPU-skinned visual examples,

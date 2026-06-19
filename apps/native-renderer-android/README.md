@@ -188,6 +188,18 @@ keeps the same real Meta provider scene-map route but switches
 layer-1, and low-capacity profiles report `depth-gradient`. The same
 `debug_view` setting can also select confidence, age, source-layer, and
 hash-probe diagnostic colors without adding a second Android property.
+The Iteration 8 acceptance matrix is captured as dedicated dry-run profiles:
+`quest-native-renderer-envdepth-layer0.profile.json`,
+`quest-native-renderer-envdepth-layer1.profile.json`,
+`quest-native-renderer-envdepth-raw-depth-debug.profile.json`,
+`quest-native-renderer-envdepth-local-space.profile.json`,
+`quest-native-renderer-envdepth-stage-space.profile.json`,
+`quest-native-renderer-envdepth-capacity-65536.profile.json`,
+`quest-native-renderer-envdepth-stride-8.profile.json`, and
+`quest-native-renderer-envdepth-hand-removal.profile.json`. They keep the same
+real Meta scene-particle-map path while varying exactly one source-view,
+debug-view, reference-space, capacity, stride, or
+`xrSetEnvironmentDepthHandRemovalMETA` policy.
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-graft-only.profile.json`
 keeps native passthrough focused on graft instances only, while
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-hands-and-grafts.profile.json`

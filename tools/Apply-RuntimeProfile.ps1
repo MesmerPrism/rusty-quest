@@ -18,6 +18,7 @@ $EnvironmentDepthLayerPolicyProperty = "debug.rustyquest.native_renderer.environ
 $EnvironmentDepthDepthUnitsPolicyProperty = "debug.rustyquest.native_renderer.environment_depth.depth_units_policy"
 $EnvironmentDepthDebugViewProperty = "debug.rustyquest.native_renderer.environment_depth.debug_view"
 $EnvironmentDepthReferenceSpaceProperty = "debug.rustyquest.native_renderer.environment_depth.reference_space"
+$EnvironmentDepthHandRemovalEnabledProperty = "debug.rustyquest.native_renderer.environment_depth.hand_removal.enabled"
 $EnvironmentDepthParticleCapacityProperty = "debug.rustyquest.native_renderer.environment_depth.particle_capacity"
 $EnvironmentDepthSampleStridePixelsProperty = "debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels"
 $EnvironmentDepthNearMProperty = "debug.rustyquest.native_renderer.environment_depth.near_m"
@@ -66,6 +67,17 @@ function Assert-EnvironmentDepthUInt {
     $parsed = [uint32]0
     if (-not [uint32]::TryParse($Value.Trim(), [ref]$parsed) -or $parsed -lt $Min -or $parsed -gt $Max) {
         throw "$Name value $Value must be an integer from $Min to $Max"
+    }
+}
+
+function Assert-EnvironmentDepthBool {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Value
+    )
+    $normalized = Get-NormalizedProfileValue -Value $Value
+    if (@("0", "1", "false", "true", "no", "yes", "off", "on") -notcontains $normalized) {
+        throw "$Name value $Value must be boolean"
     }
 }
 
@@ -152,6 +164,10 @@ function Assert-EnvironmentDepthProperty {
             if (@("local", "stage", "openxr-local", "openxr-stage") -notcontains $normalized) {
                 throw "Environment depth reference_space is not supported: $Value"
             }
+            return
+        }
+        $EnvironmentDepthHandRemovalEnabledProperty {
+            Assert-EnvironmentDepthBool -Name $Name -Value $Value
             return
         }
         $EnvironmentDepthParticleCapacityProperty {

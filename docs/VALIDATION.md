@@ -154,6 +154,19 @@ reports as `environmentDepthDebugView=free-space-state` and
 marker. The default raw-D16 profiles still draw particles with
 `environmentDepthParticleDebugColorMode=depth-gradient`; other accepted
 diagnostic debug-view values are confidence, age, source-layer, and hash-probe.
+The Iteration 8 environment-depth matrix is dry-run validated through
+`quest-native-renderer-envdepth-layer0.profile.json`,
+`quest-native-renderer-envdepth-layer1.profile.json`,
+`quest-native-renderer-envdepth-raw-depth-debug.profile.json`,
+`quest-native-renderer-envdepth-local-space.profile.json`,
+`quest-native-renderer-envdepth-stage-space.profile.json`,
+`quest-native-renderer-envdepth-capacity-65536.profile.json`,
+`quest-native-renderer-envdepth-stride-8.profile.json`, and
+`quest-native-renderer-envdepth-hand-removal.profile.json`. These fixtures keep
+the real Meta provider scene-map path fixed and vary one acceptance axis at a
+time: sampled depth layer, raw-D16 debug view, OpenXR local/stage reference
+space, particle capacity, sample stride, or the
+`xrSetEnvironmentDepthHandRemovalMETA` request path.
 Use `docs/environment-depth-known-distance-raw-d16-runbook.md` for the
 headset known-distance run that compares `environmentDepthRawCenterD16`,
 `environmentDepthCenterReconstructedMeters`, and

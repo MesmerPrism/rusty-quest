@@ -21,6 +21,8 @@ const ENVIRONMENT_DEPTH_DEBUG_VIEW: &str =
     "debug.rustyquest.native_renderer.environment_depth.debug_view";
 const ENVIRONMENT_DEPTH_REFERENCE_SPACE: &str =
     "debug.rustyquest.native_renderer.environment_depth.reference_space";
+const ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED: &str =
+    "debug.rustyquest.native_renderer.environment_depth.hand_removal.enabled";
 const ENVIRONMENT_DEPTH_PARTICLE_CAPACITY: &str =
     "debug.rustyquest.native_renderer.environment_depth.particle_capacity";
 const ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS: &str =
@@ -340,6 +342,9 @@ fn validate_environment_depth_property(
                 )));
             }
         }
+        ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED => {
+            validate_environment_depth_bool(property, errors);
+        }
         ENVIRONMENT_DEPTH_PARTICLE_CAPACITY => {
             validate_environment_depth_u32(property, 64, 262_144, errors);
         }
@@ -381,6 +386,19 @@ fn validate_environment_depth_u32(
             "{} value {} must be an integer",
             property.name, property.value
         ))),
+    }
+}
+
+fn validate_environment_depth_bool(property: &PropertyValue, errors: &mut Vec<ValidationError>) {
+    let normalized = normalized_value(&property.value);
+    if !matches!(
+        normalized.as_str(),
+        "0" | "1" | "false" | "true" | "no" | "yes" | "off" | "on"
+    ) {
+        errors.push(ValidationError::new(format!(
+            "{} value {} must be boolean",
+            property.name, property.value
+        )));
     }
 }
 
@@ -474,6 +492,17 @@ mod tests {
             "../../../fixtures/runtime-profiles/quest-makepad-mesh-replay.profile.json"
         ))
         .expect("valid profile JSON")
+    }
+
+    fn assert_plan_sets(profile_text: &str, profile_id: &str, property_name: &str, value: &str) {
+        let profile: RuntimeProfile =
+            serde_json::from_str(profile_text).expect("runtime profile JSON");
+        assert_eq!(profile.profile_id, profile_id);
+        validate_runtime_profile(&profile).expect("environment depth matrix profile validates");
+        let plan = build_write_plan(&profile).expect("write plan");
+        assert!(plan.operations.iter().any(|operation| {
+            operation.name == property_name && operation.value.as_deref() == Some(value)
+        }));
     }
 
     #[test]
@@ -583,6 +612,78 @@ mod tests {
             operation.name == "debug.rustyquest.native_renderer.environment_depth.debug_view"
                 && operation.value.as_deref() == Some("free-space-state")
         }));
+    }
+
+    #[test]
+    fn environment_depth_iteration8_profile_matrix_validates() {
+        for (profile_text, profile_id, property_name, value) in [
+            (
+                include_str!(
+                    "../../../fixtures/runtime-profiles/quest-native-renderer-envdepth-layer0.profile.json"
+                ),
+                "profile.quest.native_renderer.envdepth_layer0",
+                "debug.rustyquest.native_renderer.environment_depth.layer_policy",
+                "mono-layer0",
+            ),
+            (
+                include_str!(
+                    "../../../fixtures/runtime-profiles/quest-native-renderer-envdepth-layer1.profile.json"
+                ),
+                "profile.quest.native_renderer.envdepth_layer1",
+                "debug.rustyquest.native_renderer.environment_depth.layer_policy",
+                "mono-layer1",
+            ),
+            (
+                include_str!(
+                    "../../../fixtures/runtime-profiles/quest-native-renderer-envdepth-raw-depth-debug.profile.json"
+                ),
+                "profile.quest.native_renderer.envdepth_raw_depth_debug",
+                "debug.rustyquest.native_renderer.environment_depth.debug_view",
+                "raw-d16",
+            ),
+            (
+                include_str!(
+                    "../../../fixtures/runtime-profiles/quest-native-renderer-envdepth-local-space.profile.json"
+                ),
+                "profile.quest.native_renderer.envdepth_local_space",
+                "debug.rustyquest.native_renderer.environment_depth.reference_space",
+                "openxr-local",
+            ),
+            (
+                include_str!(
+                    "../../../fixtures/runtime-profiles/quest-native-renderer-envdepth-stage-space.profile.json"
+                ),
+                "profile.quest.native_renderer.envdepth_stage_space",
+                "debug.rustyquest.native_renderer.environment_depth.reference_space",
+                "openxr-stage",
+            ),
+            (
+                include_str!(
+                    "../../../fixtures/runtime-profiles/quest-native-renderer-envdepth-capacity-65536.profile.json"
+                ),
+                "profile.quest.native_renderer.envdepth_capacity_65536",
+                "debug.rustyquest.native_renderer.environment_depth.particle_capacity",
+                "65536",
+            ),
+            (
+                include_str!(
+                    "../../../fixtures/runtime-profiles/quest-native-renderer-envdepth-stride-8.profile.json"
+                ),
+                "profile.quest.native_renderer.envdepth_stride_8",
+                "debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels",
+                "8",
+            ),
+            (
+                include_str!(
+                    "../../../fixtures/runtime-profiles/quest-native-renderer-envdepth-hand-removal.profile.json"
+                ),
+                "profile.quest.native_renderer.envdepth_hand_removal",
+                "debug.rustyquest.native_renderer.environment_depth.hand_removal.enabled",
+                "true",
+            ),
+        ] {
+            assert_plan_sets(profile_text, profile_id, property_name, value);
+        }
     }
 
     #[test]
