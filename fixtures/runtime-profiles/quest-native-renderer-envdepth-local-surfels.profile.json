@@ -140,7 +140,12 @@
     "environmentDepthSurfaceComponentMinCells=1",
     "environmentDepthSurfaceNormalCoherence=off",
     "environmentDepthSurfaceFreeSpaceDecay=soft",
-    "environmentDepthSurfaceSupportStatus=pending-gpu-support-pass"
+    "environmentDepthSurfaceSupportStatus=pending-gpu-support-pass",
+    "environmentDepthSurfaceLifecycleStatus=pending-runtime-support",
+    "environmentDepthSurfaceCandidateCells=0",
+    "environmentDepthSurfaceConfirmedCells=0",
+    "environmentDepthSurfacePromotedCells=0",
+    "environmentDepthSurfaceCandidateRetiredCells=0"
   ],
   "validation_commands": [
     "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-envdepth-local-surfels.profile.json -DryRun -Out local-artifacts/quest-native-renderer-envdepth-local-surfels-property-write-plan.json"

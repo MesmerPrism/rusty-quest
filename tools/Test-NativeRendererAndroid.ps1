@@ -1238,8 +1238,13 @@ foreach ($token in @(
     'environmentDepthSurfaceSupportRequested=true',
     'environmentDepthSurfaceSupportEnforced=true',
     'environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-pending',
+    'environmentDepthSurfaceLifecycleStatus=candidate-confirmed-local-depth-neighborhood',
     'environmentDepthSurfaceSupportedCells=552',
-    'environmentDepthSurfaceRejectedIsolatedCells=36'
+    'environmentDepthSurfaceRejectedIsolatedCells=36',
+    'environmentDepthSurfaceCandidateCells=0',
+    'environmentDepthSurfaceConfirmedCells=552',
+    'environmentDepthSurfacePromotedCells=0',
+    'environmentDepthSurfaceCandidateRetiredCells=0'
 )) {
     if ($environmentDepthSurfaceSupportEvidenceFixtureText -notmatch [regex]::Escape($token)) {
         throw "Native renderer Meta environment-depth surface-support fixture missing token: $token"
@@ -1845,7 +1850,9 @@ foreach ($token in @(
     'environmentDepthHighRateJsonPayload=false',
     'environmentDepthSurfaceSupportRequested',
     'environmentDepthSurfaceSupportEnforced=false',
-    'environmentDepthSurfaceSupportStatus'
+    'environmentDepthSurfaceSupportStatus',
+    'environmentDepthSurfaceLifecycleStatus',
+    'environmentDepthSurfaceCandidateCells'
 )) {
     if ("$nativeLib`n$environmentDepthGeometry`n$environmentDepthParticles`n$openxrEnvironmentDepth`n$nativeRendererOptions" -notmatch [regex]::Escape($token)) {
         throw "Native renderer environment-depth source surface missing token: $token"
@@ -1901,10 +1908,21 @@ foreach ($token in @(
     'environmentDepthSurfaceRejectedIsolatedCells',
     'environmentDepthSurfaceLargestComponentCells',
     'environmentDepthSurfaceSupportStatus',
+    'environmentDepthSurfaceLifecycleStatus',
+    'environmentDepthSurfaceCandidateCells',
+    'environmentDepthSurfaceConfirmedCells',
+    'environmentDepthSurfacePromotedCells',
+    'environmentDepthSurfaceCandidateRetiredCells',
     'DEPTH_FLAG_SURFACE_SUPPORT_ENFORCED',
+    'DEPTH_FLAG_SURFACE_SUPPORT_MIN_OBSERVATION_SHIFT',
     'RAW_DEBUG_SURFACE_SUPPORTED_CELLS',
     'RAW_DEBUG_SURFACE_REJECTED_ISOLATED_CELLS',
+    'RAW_DEBUG_SURFACE_CANDIDATE_CELLS',
+    'RAW_DEBUG_SURFACE_CONFIRMED_CELLS',
+    'RAW_DEBUG_SURFACE_PROMOTED_CELLS',
+    'RAW_DEBUG_SURFACE_CANDIDATE_RETIRED_CELLS',
     'surface_support_runtime_enforced',
+    'candidate-confirmed-local-depth-neighborhood',
     'enforced-local-depth-neighborhood-component-pending',
     'particle_debug_color_mode',
     'particle_debug_color_code',
@@ -2288,7 +2306,9 @@ foreach ($profileCase in @(
             'environmentDepthSurfaceModel=local-surfels',
             'environmentDepthSurfaceSupportRequested=true',
             'environmentDepthSurfaceSupportEnforced=false',
-            'environmentDepthSurfaceSupportStatus=pending-gpu-support-pass'
+            'environmentDepthSurfaceSupportStatus=pending-gpu-support-pass',
+            'environmentDepthSurfaceLifecycleStatus=pending-runtime-support',
+            'environmentDepthSurfaceCandidateCells=0'
         )
     },
     @{
@@ -2306,7 +2326,8 @@ foreach ($profileCase in @(
             'environmentDepthSurfaceModel=global-surfaces',
             'environmentDepthSurfaceMinNeighborCount=4',
             'environmentDepthSurfaceComponentMinCells=16',
-            'environmentDepthSurfaceSupportStatus=pending-gpu-support-pass'
+            'environmentDepthSurfaceSupportStatus=pending-gpu-support-pass',
+            'environmentDepthSurfaceLifecycleStatus=pending-runtime-support'
         )
     },
     @{
@@ -2322,7 +2343,8 @@ foreach ($profileCase in @(
             'environmentDepthSurfaceModel=hybrid',
             'environmentDepthSurfaceSupportMode=hybrid',
             'environmentDepthSurfaceFreeSpaceDecay=hard',
-            'environmentDepthSurfaceSupportStatus=pending-gpu-support-pass'
+            'environmentDepthSurfaceSupportStatus=pending-gpu-support-pass',
+            'environmentDepthSurfaceLifecycleStatus=pending-runtime-support'
         )
     }
 )) {

@@ -92,7 +92,16 @@ float scene_particle_age01(vec4 particle_state) {
 }
 
 float active_probe01(vec4 particle_state) {
-    return clamp((particle_state.w - 1.0) * 2.0, 0.0, 1.0);
+    if (particle_state.w >= 1.30 && particle_state.w < 1.75) {
+        return clamp((particle_state.w - 1.35) / 0.20, 0.0, 1.0);
+    }
+    return clamp((particle_state.w - 1.0) / 0.20, 0.0, 1.0);
+}
+
+bool scene_particle_confirmed(vec4 particle_state) {
+    return scene_particle_map_requested()
+        && particle_state.w >= 1.30
+        && particle_state.w < 1.75;
 }
 
 bool scene_particle_retired(vec4 source_sample, vec4 particle_state) {
@@ -122,6 +131,7 @@ vec4 debug_particle_color(
     float source_layer = max(source_sample.w - 1.0, 0.0);
     float age01 = scene_particle_age01(particle_state);
     bool retired = scene_particle_retired(source_sample, particle_state);
+    bool confirmed = scene_particle_confirmed(particle_state);
 
     if (mode == DEBUG_COLOR_CONFIDENCE) {
         return vec4(heat_color(1.0 - confidence), clamp(mix(0.28, 0.95, confidence), 0.0, 1.0));
@@ -143,11 +153,16 @@ vec4 debug_particle_color(
             : vec4(0.04, 1.00, 0.34, clamp(particle_color.a * max(age_alpha, 0.28), 0.0, 1.0));
     }
     if (mode == DEBUG_COLOR_SURFACE_SUPPORT) {
-        vec3 weak = vec3(0.08, 0.25, 1.00);
-        vec3 strong = vec3(0.04, 1.00, 0.52);
+        vec3 candidate = vec3(0.10, 0.34, 1.00);
+        vec3 confirmed_low = vec3(0.02, 0.86, 0.72);
+        vec3 confirmed_high = vec3(0.06, 1.00, 0.36);
         return retired
             ? vec4(1.00, 0.12, 0.04, 0.55)
-            : vec4(mix(weak, strong, confidence), clamp(particle_color.a * max(age_alpha, 0.40), 0.0, 1.0));
+            : confirmed
+                ? vec4(
+                    mix(confirmed_low, confirmed_high, confidence),
+                    clamp(particle_color.a * max(age_alpha, 0.44), 0.0, 1.0))
+                : vec4(candidate, clamp(particle_color.a * max(age_alpha, 0.30), 0.0, 1.0));
     }
     return vec4(
         clamp(particle_color.rgb, vec3(0.0), vec3(1.0)),
@@ -179,7 +194,8 @@ void main() {
     vec4 source_sample = particles.rows[base + 2u];
     vec4 particle_state = particles.rows[base + 3u];
     float age_alpha = scene_particle_age_alpha(particle_state);
-    bool retired_debug = particle_debug_color_mode() == DEBUG_COLOR_FREE_SPACE_STATE
+    bool retired_debug = (particle_debug_color_mode() == DEBUG_COLOR_FREE_SPACE_STATE
+            || particle_debug_color_mode() == DEBUG_COLOR_SURFACE_SUPPORT)
         && scene_particle_retired(source_sample, particle_state);
     bool valid = (source_sample.w >= 0.5 && particle_color.a > 0.002 && age_alpha > 0.01)
         || retired_debug;

@@ -221,8 +221,10 @@ reports `environmentDepthSurfaceSupportEnforced=true`,
 `environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-pending`,
 `environmentDepthSurfaceSupportedCells`, and
 `environmentDepthSurfaceRejectedIsolatedCells` on runtime particle markers.
-Global connected-component support, largest-component proof, and headset
-motion acceptance remain separate gates.
+The same marker reports `environmentDepthSurfaceLifecycleStatus` and
+candidate/confirmed/promoted/candidate-retired lifecycle counters for retained
+scene cells. Global connected-component support, largest-component proof, and
+headset motion acceptance remain separate gates.
 Wrapper runs also require
 the performance budget gate by default; the checker records the observed FPS,
 stale-frame count, and CPU/GPU stage timing budget results, and fails if a

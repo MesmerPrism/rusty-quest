@@ -220,7 +220,9 @@ gate before writing retained scene cells. Runtime particle markers report
 `environmentDepthSurfaceSupportEnforced=true`,
 `environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-pending`,
 `environmentDepthSurfaceSupportedCells`, and
-`environmentDepthSurfaceRejectedIsolatedCells` when that gate is active. The
+`environmentDepthSurfaceRejectedIsolatedCells` when that gate is active. They
+also report `environmentDepthSurfaceLifecycleStatus` plus candidate,
+confirmed, promoted, and candidate-retired cell counters. The
 connected-component/global-surface pass and largest-component proof are still
 pending and require later headset evidence.
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-graft-only.profile.json`

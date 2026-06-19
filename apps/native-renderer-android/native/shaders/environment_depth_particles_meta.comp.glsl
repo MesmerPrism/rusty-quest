@@ -35,6 +35,8 @@ const uint DEPTH_FLAG_SURFACE_SUPPORT_MIN_NEIGHBOR_MASK = 0x0000ff00u;
 const uint DEPTH_FLAG_SURFACE_SUPPORT_MIN_NEIGHBOR_SHIFT = 8u;
 const uint DEPTH_FLAG_SURFACE_SUPPORT_RADIUS_MASK = 0x000f0000u;
 const uint DEPTH_FLAG_SURFACE_SUPPORT_RADIUS_SHIFT = 16u;
+const uint DEPTH_FLAG_SURFACE_SUPPORT_MIN_OBSERVATION_MASK = 0x00f00000u;
+const uint DEPTH_FLAG_SURFACE_SUPPORT_MIN_OBSERVATION_SHIFT = 20u;
 const float SCENE_PARTICLE_CELL_METERS = 0.06;
 const uint SCENE_PARTICLE_PROBE_COUNT = 8u;
 const float SCENE_PARTICLE_STALE_REPLACE_FRAMES = 1440.0;
@@ -68,6 +70,10 @@ const uint RAW_DEBUG_HASH_CLAIM_FAILED_COUNT = 18u;
 const uint RAW_DEBUG_FREE_SPACE_CONFIDENCE_SKIPPED_COUNT = 19u;
 const uint RAW_DEBUG_SURFACE_SUPPORTED_CELLS = 20u;
 const uint RAW_DEBUG_SURFACE_REJECTED_ISOLATED_CELLS = 21u;
+const uint RAW_DEBUG_SURFACE_CANDIDATE_CELLS = 22u;
+const uint RAW_DEBUG_SURFACE_CONFIRMED_CELLS = 23u;
+const uint RAW_DEBUG_SURFACE_PROMOTED_CELLS = 24u;
+const uint RAW_DEBUG_SURFACE_CANDIDATE_RETIRED_CELLS = 25u;
 const uint SCENE_META_WORDS_PER_SLOT = 4u;
 const uint SCENE_META_KEY = 0u;
 const uint SCENE_META_STATE = 1u;
@@ -77,6 +83,11 @@ const uint SCENE_META_STATE_EMPTY = 0u;
 const uint SCENE_META_STATE_ACTIVE = 1u;
 const uint SCENE_META_STATE_RETIRED = 2u;
 const uint SCENE_META_STATE_WRITING = 3u;
+const uint SCENE_META_SOURCE_LAYER_MASK = 0x00000003u;
+const uint SCENE_META_CONFIDENCE_SHIFT = 8u;
+const uint SCENE_META_OBSERVATION_SHIFT = 16u;
+const uint SCENE_META_OBSERVATION_MASK = 0x00ff0000u;
+const uint SCENE_META_CONFIRMED_FLAG = 0x01000000u;
 
 uint depth_flags() {
     return uint(max(floor(pc.params1.z + 0.5), 0.0));
@@ -103,6 +114,12 @@ uint surface_support_radius_cells() {
     uint radius = (depth_flags() & DEPTH_FLAG_SURFACE_SUPPORT_RADIUS_MASK)
         >> DEPTH_FLAG_SURFACE_SUPPORT_RADIUS_SHIFT;
     return clamp(radius, 1u, 8u);
+}
+
+uint surface_support_min_observation_count() {
+    uint observations = (depth_flags() & DEPTH_FLAG_SURFACE_SUPPORT_MIN_OBSERVATION_MASK)
+        >> DEPTH_FLAG_SURFACE_SUPPORT_MIN_OBSERVATION_SHIFT;
+    return max(observations, 1u);
 }
 
 float depth_source_layer_index() {
@@ -196,8 +213,11 @@ float source_valid_marker() {
     return 1.0 + depth_source_layer_index();
 }
 
-float active_scene_state_marker(uint probe) {
-    return 1.0 + 0.5 * (float(probe) / float(max(SCENE_PARTICLE_PROBE_COUNT - 1u, 1u)));
+float active_scene_state_marker(uint probe, bool confirmed) {
+    float probe01 = float(probe) / float(max(SCENE_PARTICLE_PROBE_COUNT - 1u, 1u));
+    return confirmed
+        ? 1.35 + 0.20 * probe01
+        : 1.00 + 0.20 * probe01;
 }
 
 void write_retained_invalid(uint slot) {
@@ -266,8 +286,54 @@ uint scene_confidence_bucket(float confidence) {
     return uint(clamp(confidence * 255.0 + 0.5, 0.0, 255.0));
 }
 
-uint packed_scene_metadata_flags(float confidence) {
-    return scene_source_layer_mask() | (scene_confidence_bucket(confidence) << 8);
+uint scene_observation_count_from_flags(uint flags) {
+    return (flags & SCENE_META_OBSERVATION_MASK) >> SCENE_META_OBSERVATION_SHIFT;
+}
+
+bool scene_confirmed_from_flags(uint flags) {
+    return (flags & SCENE_META_CONFIRMED_FLAG) != 0u;
+}
+
+uint scene_layer_count(uint layer_mask) {
+    uint masked = layer_mask & SCENE_META_SOURCE_LAYER_MASK;
+    return (masked & 0x1u) + ((masked & 0x2u) >> 1);
+}
+
+uint packed_scene_metadata_flags(
+    float confidence,
+    uint source_layer_mask,
+    uint observation_count,
+    bool confirmed
+) {
+    uint flags = (source_layer_mask & SCENE_META_SOURCE_LAYER_MASK)
+        | (scene_confidence_bucket(confidence) << SCENE_META_CONFIDENCE_SHIFT)
+        | (clamp(observation_count, 0u, 255u) << SCENE_META_OBSERVATION_SHIFT);
+    return confirmed ? (flags | SCENE_META_CONFIRMED_FLAG) : flags;
+}
+
+bool scene_lifecycle_confirmed(
+    uint observation_count,
+    uint source_layer_mask,
+    bool local_surface_supported
+) {
+    uint min_observations = surface_support_min_observation_count();
+    bool enough_observations = observation_count >= min_observations;
+    bool has_source_layer = scene_layer_count(source_layer_mask) > 0u;
+    return (enough_observations && has_source_layer) || local_surface_supported;
+}
+
+void record_scene_lifecycle(bool confirmed, bool promoted) {
+    if (!surface_support_enforced_requested()) {
+        return;
+    }
+    atomicAdd(
+        depth_debug.values[
+            confirmed ? RAW_DEBUG_SURFACE_CONFIRMED_CELLS : RAW_DEBUG_SURFACE_CANDIDATE_CELLS
+        ],
+        1u);
+    if (promoted) {
+        atomicAdd(depth_debug.values[RAW_DEBUG_SURFACE_PROMOTED_CELLS], 1u);
+    }
 }
 
 bool try_lock_scene_metadata(uint meta_base, uint expected_state) {
@@ -277,9 +343,9 @@ bool try_lock_scene_metadata(uint meta_base, uint expected_state) {
         SCENE_META_STATE_WRITING) == expected_state;
 }
 
-void publish_scene_metadata(uint meta_base, float confidence, uint state) {
+void publish_scene_metadata(uint meta_base, uint flags, uint state) {
     scene_meta.words[meta_base + SCENE_META_LAST_FRAME] = frame_marker_u32();
-    scene_meta.words[meta_base + SCENE_META_FLAGS] = packed_scene_metadata_flags(confidence);
+    scene_meta.words[meta_base + SCENE_META_FLAGS] = flags;
     memoryBarrierBuffer();
     atomicExchange(scene_meta.words[meta_base + SCENE_META_STATE], state);
 }
@@ -311,10 +377,17 @@ void retire_scene_cell(ivec3 cell) {
                 record_scene_claim_failed();
                 return;
             }
+            uint observed_flags = scene_meta.words[meta_base + SCENE_META_FLAGS];
+            if (!scene_confirmed_from_flags(observed_flags)) {
+                atomicAdd(depth_debug.values[RAW_DEBUG_SURFACE_CANDIDATE_RETIRED_CELLS], 1u);
+            }
             particles.rows[base + 1u].a = 0.0;
             particles.rows[base + 2u].w = 0.0;
             particles.rows[base + 3u] = vec4(cell_key, 0.0, frame_marker(), 2.0);
-            publish_scene_metadata(meta_base, 0.0, SCENE_META_STATE_RETIRED);
+            publish_scene_metadata(
+                meta_base,
+                packed_scene_metadata_flags(0.0, 0u, 0u, false),
+                SCENE_META_STATE_RETIRED);
             atomicAdd(depth_debug.values[RAW_DEBUG_FREE_SPACE_RETIRE_SUCCESS_COUNT], 1u);
             return;
         }
@@ -345,12 +418,50 @@ void active_correct_visible_free_space(vec2 surface_uv, float observed_depth_met
     }
 }
 
+void write_active_scene_cell(
+    uint slot,
+    uint meta_base,
+    vec3 reference_space_point,
+    float depth_meters,
+    float confidence,
+    vec2 surface_uv,
+    vec2 depth_uv,
+    float cell_key,
+    uint probe,
+    uint source_layer_mask,
+    uint observation_count,
+    bool was_confirmed,
+    bool local_surface_supported
+) {
+    bool confirmed = scene_lifecycle_confirmed(
+        observation_count,
+        source_layer_mask,
+        local_surface_supported);
+    write_particle_slot(
+        slot,
+        reference_space_point,
+        depth_meters,
+        confidence,
+        surface_uv,
+        depth_uv,
+        cell_key,
+        active_scene_state_marker(probe, confirmed));
+    publish_scene_metadata(
+        meta_base,
+        packed_scene_metadata_flags(confidence, source_layer_mask, observation_count, confirmed),
+        SCENE_META_STATE_ACTIVE);
+    record_scene_lifecycle(
+        confirmed,
+        confirmed && !was_confirmed && observation_count > 1u);
+}
+
 void write_scene_particle(
     vec3 reference_space_point,
     float depth_meters,
     float confidence,
     vec2 surface_uv,
-    vec2 depth_uv
+    vec2 depth_uv,
+    bool local_surface_supported
 ) {
     uint capacity = max(uint(pc.params0.x), 1u);
     ivec3 cell = scene_cell_for_reference_space_position(reference_space_point);
@@ -388,16 +499,20 @@ void write_scene_particle(
                 return;
             }
             atomicAdd(depth_debug.values[RAW_DEBUG_HASH_INSERT_SUCCESS_COUNT], 1u);
-            write_particle_slot(
+            write_active_scene_cell(
                 slot,
+                meta_base,
                 reference_space_point,
                 depth_meters,
                 confidence,
                 surface_uv,
                 depth_uv,
                 cell_key,
-                active_scene_state_marker(probe));
-            publish_scene_metadata(meta_base, confidence, SCENE_META_STATE_ACTIVE);
+                probe,
+                scene_source_layer_mask(),
+                1u,
+                false,
+                local_surface_supported);
             return;
         }
 
@@ -408,16 +523,20 @@ void write_scene_particle(
                     return;
                 }
                 atomicAdd(depth_debug.values[RAW_DEBUG_HASH_INSERT_SUCCESS_COUNT], 1u);
-                write_particle_slot(
+                write_active_scene_cell(
                     slot,
+                    meta_base,
                     reference_space_point,
                     depth_meters,
                     confidence,
                     surface_uv,
                     depth_uv,
                     cell_key,
-                    active_scene_state_marker(probe));
-                publish_scene_metadata(meta_base, confidence, SCENE_META_STATE_ACTIVE);
+                    probe,
+                    scene_source_layer_mask(),
+                    1u,
+                    false,
+                    local_surface_supported);
                 return;
             }
             if (observed_state != SCENE_META_STATE_ACTIVE
@@ -447,16 +566,28 @@ void write_scene_particle(
                     0.0,
                     1.0)
                 : confidence;
-            write_particle_slot(
+            uint existing_flags = scene_meta.words[meta_base + SCENE_META_FLAGS];
+            bool was_confirmed = !stale && scene_confirmed_from_flags(existing_flags);
+            uint source_layer_mask = stale
+                ? scene_source_layer_mask()
+                : ((existing_flags & SCENE_META_SOURCE_LAYER_MASK) | scene_source_layer_mask());
+            uint observation_count = stale
+                ? 1u
+                : min(scene_observation_count_from_flags(existing_flags) + 1u, 255u);
+            write_active_scene_cell(
                 slot,
+                meta_base,
                 merged_position,
                 merged_depth,
                 merged_confidence,
                 surface_uv,
                 depth_uv,
                 cell_key,
-                active_scene_state_marker(probe));
-            publish_scene_metadata(meta_base, merged_confidence, SCENE_META_STATE_ACTIVE);
+                probe,
+                source_layer_mask,
+                observation_count,
+                was_confirmed,
+                local_surface_supported);
             return;
         }
 
@@ -469,22 +600,29 @@ void write_scene_particle(
                 return;
             }
             if (scene_meta.words[meta_base + SCENE_META_KEY] != observed_key) {
-                publish_scene_metadata(meta_base, 0.0, expected_state);
+                publish_scene_metadata(
+                    meta_base,
+                    packed_scene_metadata_flags(0.0, 0u, 0u, false),
+                    expected_state);
                 record_scene_claim_failed();
                 return;
             }
             atomicExchange(scene_meta.words[meta_base + SCENE_META_KEY], cell_key_u);
             atomicAdd(depth_debug.values[RAW_DEBUG_HASH_STALE_REPLACE_COUNT], 1u);
-            write_particle_slot(
+            write_active_scene_cell(
                 slot,
+                meta_base,
                 reference_space_point,
                 depth_meters,
                 confidence,
                 surface_uv,
                 depth_uv,
                 cell_key,
-                active_scene_state_marker(probe));
-            publish_scene_metadata(meta_base, confidence, SCENE_META_STATE_ACTIVE);
+                probe,
+                scene_source_layer_mask(),
+                1u,
+                false,
+                local_surface_supported);
             return;
         }
         atomicAdd(depth_debug.values[RAW_DEBUG_HASH_WRITE_CONFLICT_COUNT], 1u);
@@ -733,11 +871,14 @@ void main() {
         return;
     }
 
+    bool local_surface_supported = false;
     if (scene_map && surface_support_enforced_requested()) {
-        if (!surface_support_passes(pixel, depth_meters, depth_size, sample_stride)) {
+        uint support_count = surface_support_neighbor_count(pixel, depth_meters, depth_size, sample_stride);
+        if (support_count < surface_support_min_neighbor_count()) {
             atomicAdd(depth_debug.values[RAW_DEBUG_SURFACE_REJECTED_ISOLATED_CELLS], 1u);
             return;
         }
+        local_surface_supported = true;
         atomicAdd(depth_debug.values[RAW_DEBUG_SURFACE_SUPPORTED_CELLS], 1u);
     }
 
@@ -748,7 +889,13 @@ void main() {
         } else {
             atomicAdd(depth_debug.values[RAW_DEBUG_FREE_SPACE_CONFIDENCE_SKIPPED_COUNT], 1u);
         }
-        write_scene_particle(reference_space_point, depth_meters, confidence, surface_uv, depth_uv);
+        write_scene_particle(
+            reference_space_point,
+            depth_meters,
+            confidence,
+            surface_uv,
+            depth_uv,
+            local_surface_supported);
         return;
     }
 

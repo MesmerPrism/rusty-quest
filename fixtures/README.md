@@ -89,6 +89,10 @@
   per fixture: layer 0, layer 1, raw-D16 debug, OpenXR local reference space,
   OpenXR stage reference space, 65536-particle capacity, 8-pixel sample stride,
   or the Meta environment-depth hand-removal request.
+  The surface-support profiles also expect pending
+  `environmentDepthSurfaceLifecycleStatus` markers and zero lifecycle counters
+  in dry-run output; runtime log fixtures carry active candidate/confirmed
+  lifecycle counters only after the GPU scene-map path has run.
 - `native-renderer/`: valid Quest-native renderer plans, timing scorecards, and
   public recorded-hand topology/shape fixtures for pure-HWB blur, GPU mesh
   boundary, resident compact-joint GPU-skinned visual examples,

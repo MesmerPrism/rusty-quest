@@ -185,9 +185,11 @@ real runtime frame, requested surface modes can now report
 `environmentDepthSurfaceSupportEnforced=true`,
 `environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-pending`,
 and nonzero supported/rejected-cell counters from the GPU local-depth
-neighborhood gate. This is not yet connected-component or global-surface
-acceptance; those remain pending alongside the movement-required world-space
-proof.
+neighborhood gate. The same runtime marker now includes
+`environmentDepthSurfaceLifecycleStatus` plus candidate, confirmed, promoted,
+and candidate-retired cell counters for the scene-cell lifecycle. This is not
+yet connected-component or global-surface acceptance; those remain pending
+alongside the movement-required world-space proof.
 Use `docs/environment-depth-known-distance-raw-d16-runbook.md` for the
 headset known-distance run that compares `environmentDepthRawCenterD16`,
 `environmentDepthCenterReconstructedMeters`, and

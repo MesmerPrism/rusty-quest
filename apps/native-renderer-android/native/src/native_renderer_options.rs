@@ -1111,9 +1111,17 @@ impl NativeEnvironmentDepthSettings {
         }
     }
 
+    pub(crate) fn surface_lifecycle_status_marker(self) -> &'static str {
+        if self.surface_support_requested() {
+            "pending-runtime-support"
+        } else {
+            "disabled"
+        }
+    }
+
     pub(crate) fn surface_support_marker_fields(self) -> String {
         format!(
-            "environmentDepthSurfaceModel={} environmentDepthSurfaceSupportRequested={} environmentDepthSurfaceSupportEnforced=false environmentDepthSurfaceSupportMode={} environmentDepthSurfaceSupportRadiusCells={} environmentDepthSurfaceMinNeighborCount={} environmentDepthSurfaceMinObservationCount={} environmentDepthSurfaceMinSourceLayerCount={} environmentDepthSurfaceComponentMinCells={} environmentDepthSurfaceNormalCoherence={} environmentDepthSurfaceFreeSpaceDecay={} environmentDepthSurfaceSupportedCells=0 environmentDepthSurfaceRejectedIsolatedCells=0 environmentDepthSurfaceLargestComponentCells=0 environmentDepthSurfaceSupportStatus={}",
+            "environmentDepthSurfaceModel={} environmentDepthSurfaceSupportRequested={} environmentDepthSurfaceSupportEnforced=false environmentDepthSurfaceSupportMode={} environmentDepthSurfaceSupportRadiusCells={} environmentDepthSurfaceMinNeighborCount={} environmentDepthSurfaceMinObservationCount={} environmentDepthSurfaceMinSourceLayerCount={} environmentDepthSurfaceComponentMinCells={} environmentDepthSurfaceNormalCoherence={} environmentDepthSurfaceFreeSpaceDecay={} environmentDepthSurfaceSupportedCells=0 environmentDepthSurfaceRejectedIsolatedCells=0 environmentDepthSurfaceLargestComponentCells=0 environmentDepthSurfaceSupportStatus={} environmentDepthSurfaceLifecycleStatus={} environmentDepthSurfaceCandidateCells=0 environmentDepthSurfaceConfirmedCells=0 environmentDepthSurfacePromotedCells=0 environmentDepthSurfaceCandidateRetiredCells=0",
             self.surface_model.marker_value(),
             self.surface_support_requested(),
             self.surface_model.support_mode_marker_value(),
@@ -1125,6 +1133,7 @@ impl NativeEnvironmentDepthSettings {
             self.surface_support_normal_coherence.marker_value(),
             self.surface_support_free_space_decay.marker_value(),
             self.surface_support_status_marker(),
+            self.surface_lifecycle_status_marker(),
         )
     }
 }
@@ -2819,6 +2828,11 @@ mod tests {
         assert!(fields.contains("environmentDepthSurfaceNormalCoherence=loose"));
         assert!(fields.contains("environmentDepthSurfaceFreeSpaceDecay=hard"));
         assert!(fields.contains("environmentDepthSurfaceSupportStatus=pending-gpu-support-pass"));
+        assert!(fields.contains("environmentDepthSurfaceLifecycleStatus=pending-runtime-support"));
+        assert!(fields.contains("environmentDepthSurfaceCandidateCells=0"));
+        assert!(fields.contains("environmentDepthSurfaceConfirmedCells=0"));
+        assert!(fields.contains("environmentDepthSurfacePromotedCells=0"));
+        assert!(fields.contains("environmentDepthSurfaceCandidateRetiredCells=0"));
     }
 
     #[test]

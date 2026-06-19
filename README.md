@@ -195,8 +195,11 @@ local-depth-neighborhood support gate for requested surface modes; runtime
 particle evidence may report
 `environmentDepthSurfaceSupportEnforced=true` with
 `environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-pending`
-and nonzero supported/rejected-cell counters. Connected-component/global
-surface acceptance and world-space motion proof still require a headset run.
+and nonzero supported/rejected-cell counters. It also tracks a bounded
+candidate/confirmed lifecycle with `environmentDepthSurfaceLifecycleStatus`
+and candidate, confirmed, promoted, and candidate-retired cell counters.
+Connected-component/global surface acceptance and world-space motion proof
+still require a headset run.
 
 Device-facing smoke wrappers require `-Serial <quest-serial>` or
 `RUSTY_QUEST_SERIAL`; normal ADB work must not rely on an implicit default
