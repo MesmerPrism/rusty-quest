@@ -123,6 +123,56 @@ pub(crate) fn project_reference_space_point_to_render_eye(
     })
 }
 
+pub(crate) fn reference_pose_translation_delta_m(
+    anchor_pose: ReferencePose,
+    current_pose: ReferencePose,
+) -> Option<f32> {
+    if !reference_pose_valid(anchor_pose) || !reference_pose_valid(current_pose) {
+        return None;
+    }
+
+    let delta = [
+        current_pose.position_m[0] - anchor_pose.position_m[0],
+        current_pose.position_m[1] - anchor_pose.position_m[1],
+        current_pose.position_m[2] - anchor_pose.position_m[2],
+    ];
+    let distance_m = dot3(delta, delta).sqrt();
+    distance_m.is_finite().then_some(distance_m)
+}
+
+pub(crate) fn reference_pose_yaw_delta_degrees(
+    anchor_pose: ReferencePose,
+    current_pose: ReferencePose,
+) -> Option<f32> {
+    if !reference_pose_valid(anchor_pose) || !reference_pose_valid(current_pose) {
+        return None;
+    }
+
+    let anchor_heading = reference_pose_heading_radians(anchor_pose)?;
+    let current_heading = reference_pose_heading_radians(current_pose)?;
+    Some(
+        (current_heading - anchor_heading)
+            .sin()
+            .atan2((current_heading - anchor_heading).cos())
+            .abs()
+            .to_degrees(),
+    )
+}
+
+fn reference_pose_valid(pose: ReferencePose) -> bool {
+    pose.position_m.iter().all(|value| value.is_finite())
+        && pose.orientation_xyzw.iter().all(|value| value.is_finite())
+}
+
+fn reference_pose_heading_radians(pose: ReferencePose) -> Option<f32> {
+    let forward = rotate_by_quat(pose.orientation_xyzw, [0.0, 0.0, -1.0]);
+    let horizontal_len_sq = forward[0] * forward[0] + forward[2] * forward[2];
+    if !horizontal_len_sq.is_finite() || horizontal_len_sq <= 0.000_001 {
+        return None;
+    }
+    Some(forward[0].atan2(-forward[2]))
+}
+
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
@@ -161,11 +211,16 @@ fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+fn dot3(a: [f32; 3], b: [f32; 3]) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         project_reference_space_point_to_render_eye, reconstruct_reference_space_point,
-        FovTangents, ReferencePose,
+        reference_pose_translation_delta_m, reference_pose_yaw_delta_degrees, FovTangents,
+        ReferencePose,
     };
 
     fn assert_vec3_close(actual: [f32; 3], expected: [f32; 3]) {
@@ -187,6 +242,14 @@ mod tests {
                 actual[index],
                 expected[index]
             );
+        }
+    }
+
+    fn yaw_pose(degrees: f32) -> ReferencePose {
+        let half_radians = degrees.to_radians() * 0.5;
+        ReferencePose {
+            position_m: [0.0, 0.0, 0.0],
+            orientation_xyzw: [0.0, half_radians.sin(), 0.0, half_radians.cos()],
         }
     }
 
@@ -214,6 +277,27 @@ mod tests {
         .expect("off-center depth reconstructs");
 
         assert_vec3_close(point, [2.0, 1.0, -2.0]);
+    }
+
+    #[test]
+    fn reference_pose_translation_delta_reports_meters() {
+        let anchor = ReferencePose::identity();
+        let current = ReferencePose {
+            position_m: [0.3, -0.4, 1.2],
+            orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+        };
+
+        let delta = reference_pose_translation_delta_m(anchor, current).expect("valid delta");
+
+        assert!((delta - 1.3).abs() < 0.0001, "delta {delta}");
+    }
+
+    #[test]
+    fn reference_pose_yaw_delta_reports_shortest_heading_change() {
+        let delta =
+            reference_pose_yaw_delta_degrees(yaw_pose(179.0), yaw_pose(-179.0)).expect("valid yaw");
+
+        assert!((delta - 2.0).abs() < 0.0001, "delta {delta}");
     }
 
     #[test]

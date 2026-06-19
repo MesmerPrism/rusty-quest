@@ -5,6 +5,9 @@ use std::{ptr, time::Instant};
 use openxr as xr;
 use openxr::sys::Handle as _;
 
+use crate::environment_depth_geometry::{
+    reference_pose_translation_delta_m, reference_pose_yaw_delta_degrees, ReferencePose,
+};
 use crate::native_renderer_options::NativeEnvironmentDepthSettings;
 
 const VIEW_COUNT: u32 = 2;
@@ -41,6 +44,88 @@ pub(crate) struct OpenXrEnvironmentDepthFrame {
     pub(crate) depth_eye_position: [f32; 4],
     pub(crate) depth_eye_orientation_xyzw: [f32; 4],
     pub(crate) depth_fov_tangents: [f32; 4],
+    pub(crate) head_motion: OpenXrEnvironmentDepthHeadMotionStats,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct OpenXrEnvironmentDepthHeadMotionStats {
+    pub(crate) evidence: &'static str,
+    pub(crate) pose_source: &'static str,
+    pub(crate) sample_count: u64,
+    pub(crate) yaw_delta_deg: f32,
+    pub(crate) max_yaw_delta_deg: f32,
+    pub(crate) translation_delta_m: f32,
+    pub(crate) max_translation_delta_m: f32,
+}
+
+impl OpenXrEnvironmentDepthHeadMotionStats {
+    const fn unavailable() -> Self {
+        Self {
+            evidence: "unavailable",
+            pose_source: "none",
+            sample_count: 0,
+            yaw_delta_deg: 0.0,
+            max_yaw_delta_deg: 0.0,
+            translation_delta_m: 0.0,
+            max_translation_delta_m: 0.0,
+        }
+    }
+}
+
+impl Default for OpenXrEnvironmentDepthHeadMotionStats {
+    fn default() -> Self {
+        Self::unavailable()
+    }
+}
+
+#[derive(Default)]
+struct EnvironmentDepthHeadMotionTracker {
+    anchor_pose: Option<ReferencePose>,
+    sample_count: u64,
+    max_yaw_delta_deg: f32,
+    max_translation_delta_m: f32,
+    latest: OpenXrEnvironmentDepthHeadMotionStats,
+}
+
+impl EnvironmentDepthHeadMotionTracker {
+    fn record(
+        &mut self,
+        render_view_state_flags: xr::ViewStateFlags,
+        render_pose: xr::sys::Posef,
+    ) -> OpenXrEnvironmentDepthHeadMotionStats {
+        if !render_view_state_flags.contains(xr::ViewStateFlags::ORIENTATION_VALID)
+            || !render_view_state_flags.contains(xr::ViewStateFlags::POSITION_VALID)
+        {
+            return self.latest;
+        }
+        let pose = reference_pose_from_openxr_pose(render_pose);
+        if !pose.position_m.iter().all(|value| value.is_finite())
+            || !pose.orientation_xyzw.iter().all(|value| value.is_finite())
+        {
+            return self.latest;
+        }
+
+        let anchor_pose = *self.anchor_pose.get_or_insert(pose);
+        let yaw_delta_deg = reference_pose_yaw_delta_degrees(anchor_pose, pose)
+            .unwrap_or(self.latest.yaw_delta_deg)
+            .max(0.0);
+        let translation_delta_m = reference_pose_translation_delta_m(anchor_pose, pose)
+            .unwrap_or(self.latest.translation_delta_m)
+            .max(0.0);
+        self.sample_count = self.sample_count.saturating_add(1);
+        self.max_yaw_delta_deg = self.max_yaw_delta_deg.max(yaw_delta_deg);
+        self.max_translation_delta_m = self.max_translation_delta_m.max(translation_delta_m);
+        self.latest = OpenXrEnvironmentDepthHeadMotionStats {
+            evidence: "render-view-pose-delta",
+            pose_source: "left-render-view",
+            sample_count: self.sample_count,
+            yaw_delta_deg,
+            max_yaw_delta_deg: self.max_yaw_delta_deg,
+            translation_delta_m,
+            max_translation_delta_m: self.max_translation_delta_m,
+        };
+        self.latest
+    }
 }
 
 pub(crate) struct OpenXrEnvironmentDepthRuntime {
@@ -78,6 +163,7 @@ pub(crate) struct OpenXrEnvironmentDepthRuntime {
     last_swapchain_index: Option<u32>,
     last_near_z: f32,
     last_far_z: f32,
+    head_motion_tracker: EnvironmentDepthHeadMotionTracker,
 }
 
 impl OpenXrEnvironmentDepthRuntime {
@@ -310,6 +396,7 @@ impl OpenXrEnvironmentDepthRuntime {
             last_swapchain_index: None,
             last_near_z: 0.0,
             last_far_z: 0.0,
+            head_motion_tracker: EnvironmentDepthHeadMotionTracker::default(),
         })
     }
 
@@ -458,6 +545,9 @@ impl OpenXrEnvironmentDepthRuntime {
         let render_view = current_views.first().copied();
         let render_fov = render_view.map(|view| view.fov).unwrap_or(depth_view.fov);
         let render_pose = render_view.map(|view| view.pose).unwrap_or(depth_view.pose);
+        let head_motion = self
+            .head_motion_tracker
+            .record(render_view_state_flags, render_pose);
         Some(OpenXrEnvironmentDepthFrame {
             swapchain_index: image.swapchain_index,
             depth_width: self.width,
@@ -473,6 +563,7 @@ impl OpenXrEnvironmentDepthRuntime {
             depth_eye_position: pose_position(depth_view.pose),
             depth_eye_orientation_xyzw: pose_orientation(depth_view.pose),
             depth_fov_tangents: fov_tangents(depth_view.fov),
+            head_motion,
         })
         .filter(|_| {
             depth_view.fov.angle_left.is_finite()
@@ -729,4 +820,16 @@ fn pose_orientation(pose: xr::sys::Posef) -> [f32; 4] {
         pose.orientation.z,
         pose.orientation.w,
     ]
+}
+
+fn reference_pose_from_openxr_pose(pose: xr::sys::Posef) -> ReferencePose {
+    ReferencePose {
+        position_m: [pose.position.x, pose.position.y, pose.position.z],
+        orientation_xyzw: [
+            pose.orientation.x,
+            pose.orientation.y,
+            pose.orientation.z,
+            pose.orientation.w,
+        ],
+    }
 }

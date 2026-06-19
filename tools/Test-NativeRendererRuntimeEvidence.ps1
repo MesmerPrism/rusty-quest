@@ -30,6 +30,9 @@ param(
     [int]$ExpectedEnvironmentDepthParticleCount = 0,
     [int]$MinimumEnvironmentDepthSourceDepthSamples = 0,
     [int]$MinimumEnvironmentDepthHashProbeExhaustedCount = 0,
+    [int]$MinimumEnvironmentDepthHeadMotionSamples = 0,
+    [double]$MinimumEnvironmentDepthHeadMotionYawDeg = 0.0,
+    [double]$MinimumEnvironmentDepthHeadMotionTranslationM = 0.0,
     [double]$MinimumObservedOpenXrFps = 70.0,
     [int]$MaximumStaleFrames = 0,
     [double]$MaximumRecordCpuMs = 4.0,
@@ -723,6 +726,8 @@ if ($RequireEnvironmentDepthParticles) {
         "environmentDepthParticleSource=xr-meta-environment-depth",
         "environmentDepthParticleCoordinateSpace=openxr-reference-space",
         "environmentDepthWorldSpaceReady=true",
+        "environmentDepthWorldSpaceMotionEvidence=render-view-pose-delta",
+        "environmentDepthHeadMotionPoseSource=left-render-view",
         "environmentDepthParticleCpuUploadBytes=0",
         "environmentDepthGpuBuffersResident=true",
         "environmentDepthParticleBufferMemory=device-local",
@@ -782,6 +787,23 @@ if ($RequireEnvironmentDepthParticles) {
     if ($MinimumEnvironmentDepthSourceDepthSamples -gt 0) {
         Assert-True ($sourceDepthSamples -ge $MinimumEnvironmentDepthSourceDepthSamples) "environment-depth-particles marker reports $sourceDepthSamples source depth samples; expected at least $MinimumEnvironmentDepthSourceDepthSamples."
     }
+    $headMotionSamples = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHeadMotionSamples"
+    Assert-True ($headMotionSamples -gt 0) "environment-depth-particles marker reports no render-view head-motion samples."
+    if ($MinimumEnvironmentDepthHeadMotionSamples -gt 0) {
+        Assert-True ($headMotionSamples -ge $MinimumEnvironmentDepthHeadMotionSamples) "environment-depth-particles marker reports $headMotionSamples head-motion samples; expected at least $MinimumEnvironmentDepthHeadMotionSamples."
+    }
+    $headMotionYawDeltaDeg = Get-MarkerNumber -Line $environmentDepthParticlesLine -Field "environmentDepthHeadMotionYawDeltaDeg"
+    $headMotionMaxYawDeltaDeg = Get-MarkerNumber -Line $environmentDepthParticlesLine -Field "environmentDepthHeadMotionMaxYawDeltaDeg"
+    Assert-True ($headMotionYawDeltaDeg -ge 0.0 -and $headMotionMaxYawDeltaDeg -ge $headMotionYawDeltaDeg) "environment-depth-particles head-motion yaw delta fields are invalid."
+    if ($MinimumEnvironmentDepthHeadMotionYawDeg -gt 0.0) {
+        Assert-True ($headMotionMaxYawDeltaDeg -ge $MinimumEnvironmentDepthHeadMotionYawDeg) "environment-depth-particles marker reports $headMotionMaxYawDeltaDeg max yaw degrees; expected at least $MinimumEnvironmentDepthHeadMotionYawDeg."
+    }
+    $headMotionTranslationDeltaM = Get-MarkerNumber -Line $environmentDepthParticlesLine -Field "environmentDepthHeadMotionTranslationDeltaM"
+    $headMotionMaxTranslationDeltaM = Get-MarkerNumber -Line $environmentDepthParticlesLine -Field "environmentDepthHeadMotionMaxTranslationDeltaM"
+    Assert-True ($headMotionTranslationDeltaM -ge 0.0 -and $headMotionMaxTranslationDeltaM -ge $headMotionTranslationDeltaM) "environment-depth-particles head-motion translation delta fields are invalid."
+    if ($MinimumEnvironmentDepthHeadMotionTranslationM -gt 0.0) {
+        Assert-True ($headMotionMaxTranslationDeltaM -ge $MinimumEnvironmentDepthHeadMotionTranslationM) "environment-depth-particles marker reports $headMotionMaxTranslationDeltaM max translation meters; expected at least $MinimumEnvironmentDepthHeadMotionTranslationM."
+    }
     $rawCenterD16 = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthRawCenterD16"
     Assert-True ($rawCenterD16 -gt 0 -and $rawCenterD16 -le 65535) "environment-depth-particles raw center D16 is outside 1..65535: $rawCenterD16"
     $centerReconstructedMeters = Get-MarkerNumber -Line $environmentDepthParticlesLine -Field "environmentDepthCenterReconstructedMeters"
@@ -826,6 +848,11 @@ if ($RequireEnvironmentDepthParticles) {
     $summary.environment_depth_particle_debug_color_mode = $particleDebugColorMode
     $summary.environment_depth_particle_count = $particleCount
     $summary.environment_depth_particle_source_depth_samples = $sourceDepthSamples
+    $summary.environment_depth_head_motion_samples = $headMotionSamples
+    $summary.environment_depth_head_motion_yaw_delta_deg = $headMotionYawDeltaDeg
+    $summary.environment_depth_head_motion_max_yaw_delta_deg = $headMotionMaxYawDeltaDeg
+    $summary.environment_depth_head_motion_translation_delta_m = $headMotionTranslationDeltaM
+    $summary.environment_depth_head_motion_max_translation_delta_m = $headMotionMaxTranslationDeltaM
     $summary.environment_depth_raw_center_d16 = $rawCenterD16
     $summary.environment_depth_center_reconstructed_meters = $centerReconstructedMeters
     $summary.environment_depth_raw_center_window_median_d16 = $rawMedianD16

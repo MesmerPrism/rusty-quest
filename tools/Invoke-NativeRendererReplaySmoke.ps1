@@ -21,6 +21,9 @@ param(
     [int]$ExpectedEnvironmentDepthParticleCount = 0,
     [int]$MinimumEnvironmentDepthSourceDepthSamples = 0,
     [int]$MinimumEnvironmentDepthHashProbeExhaustedCount = 0,
+    [int]$MinimumEnvironmentDepthHeadMotionSamples = 0,
+    [double]$MinimumEnvironmentDepthHeadMotionYawDeg = 0.0,
+    [double]$MinimumEnvironmentDepthHeadMotionTranslationM = 0.0,
     [switch]$StopAfterRun
 )
 
@@ -220,6 +223,9 @@ $summary = [ordered]@{
     expected_environment_depth_particle_count = $ExpectedEnvironmentDepthParticleCount
     minimum_environment_depth_source_depth_samples = $MinimumEnvironmentDepthSourceDepthSamples
     minimum_environment_depth_hash_probe_exhausted_count = $MinimumEnvironmentDepthHashProbeExhaustedCount
+    minimum_environment_depth_head_motion_samples = $MinimumEnvironmentDepthHeadMotionSamples
+    minimum_environment_depth_head_motion_yaw_deg = $MinimumEnvironmentDepthHeadMotionYawDeg
+    minimum_environment_depth_head_motion_translation_m = $MinimumEnvironmentDepthHeadMotionTranslationM
     stop_after_run = [bool]$StopAfterRun
     property_plan_path = $propertyPlanPath
     permission_pregrant_path = $permissionPregrantPath
@@ -315,6 +321,15 @@ try {
         }
         if ($MinimumEnvironmentDepthHashProbeExhaustedCount -gt 0) {
             $evidenceArgs += @("-MinimumEnvironmentDepthHashProbeExhaustedCount", $MinimumEnvironmentDepthHashProbeExhaustedCount.ToString())
+        }
+        if ($MinimumEnvironmentDepthHeadMotionSamples -gt 0) {
+            $evidenceArgs += @("-MinimumEnvironmentDepthHeadMotionSamples", $MinimumEnvironmentDepthHeadMotionSamples.ToString())
+        }
+        if ($MinimumEnvironmentDepthHeadMotionYawDeg -gt 0.0) {
+            $evidenceArgs += @("-MinimumEnvironmentDepthHeadMotionYawDeg", $MinimumEnvironmentDepthHeadMotionYawDeg.ToString([System.Globalization.CultureInfo]::InvariantCulture))
+        }
+        if ($MinimumEnvironmentDepthHeadMotionTranslationM -gt 0.0) {
+            $evidenceArgs += @("-MinimumEnvironmentDepthHeadMotionTranslationM", $MinimumEnvironmentDepthHeadMotionTranslationM.ToString([System.Globalization.CultureInfo]::InvariantCulture))
         }
     } else {
         $evidenceArgs += @(

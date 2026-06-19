@@ -196,6 +196,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererA
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss -MinimumEnvironmentDepthHeadMotionSamples 120 -MinimumEnvironmentDepthHeadMotionYawDeg 25
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -ProfilePath fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity.profile.json -ExpectedEnvironmentDepthParticleCount 64 -MinimumEnvironmentDepthHashProbeExhaustedCount 1 -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
 ```
@@ -245,6 +246,12 @@ For the real environment-depth particle proof, run the same wrapper with
 `-EvidenceMode EnvironmentDepthParticles`; that applies the Meta depth profile
 by default and switches the marker gate to
 `Test-NativeRendererRuntimeEvidence.ps1 -RequireEnvironmentDepthParticles`.
+For a world-space head-motion proof, add
+`-MinimumEnvironmentDepthHeadMotionSamples`,
+`-MinimumEnvironmentDepthHeadMotionYawDeg`, or
+`-MinimumEnvironmentDepthHeadMotionTranslationM`; those thresholds are checked
+against the particle marker's render-view pose-delta evidence while the same
+marker still requires `environmentDepthWorldSpaceReady=true`.
 ADB and child PowerShell calls are captured with `ErrorActionPreference`
 temporarily set to `Continue`, so native stderr is recorded in the run summary
 with the real exit code instead of surfacing as a PowerShell
