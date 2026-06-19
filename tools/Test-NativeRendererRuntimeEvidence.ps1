@@ -698,10 +698,22 @@ if ($RequireEnvironmentDepthParticles) {
         "environmentDepthDebugView=raw-d16",
         "environmentDepthDepthViewPoseValidMask=0x1",
         "environmentDepthDepthViewFovValidMask=0x1",
+        "environmentDepthRenderViewStateFlags=orientation-valid+position-valid",
+        "environmentDepthTextureTransformLabel=rotate0+flipY",
+        "environmentDepthRayUvPolicy=canonical-untransformed",
+        "environmentDepthSampleUvPolicy=texture-transformed",
         "environmentDepthPoseValid=true"
     )) {
         Assert-Contains $environmentDepthLine $token "latest environment-depth marker"
     }
+    $captureToDisplayMs = Get-MarkerNumber -Line $environmentDepthLine -Field "environmentDepthCaptureToDisplayMs"
+    Assert-True ($captureToDisplayMs -ge 0.0) "environment-depth capture-to-display timing must be nonnegative."
+    $frameAgeMs = Get-MarkerNumber -Line $environmentDepthLine -Field "environmentDepthFrameAgeMs"
+    Assert-True ($frameAgeMs -ge 0.0) "environment-depth frame age must be nonnegative."
+    $repeatedCaptureTimeCount = Get-MarkerInteger -Line $environmentDepthLine -Field "environmentDepthRepeatedCaptureTimeCount"
+    Assert-True ($repeatedCaptureTimeCount -ge 0) "environment-depth repeated capture count must be nonnegative."
+    $unavailableStreak = Get-MarkerInteger -Line $environmentDepthLine -Field "environmentDepthUnavailableStreak"
+    Assert-True ($unavailableStreak -ge 0) "environment-depth unavailable streak must be nonnegative."
 
     Assert-True (-not [string]::IsNullOrWhiteSpace($environmentDepthParticlesLine)) "Missing environment-depth-particles marker."
     foreach ($token in @(
@@ -736,12 +748,22 @@ if ($RequireEnvironmentDepthParticles) {
         "environmentDepthDepthUnitsPolicy=projected-depth-from-near-far",
         "environmentDepthRawToMetersPolicy=projected-depth-from-near-far",
         "environmentDepthDebugView=raw-d16",
+        "environmentDepthRenderViewStateFlags=orientation-valid+position-valid",
+        "environmentDepthTextureTransformLabel=rotate0+flipY",
+        "environmentDepthRayUvPolicy=canonical-untransformed",
+        "environmentDepthSampleUvPolicy=texture-transformed",
         "environmentDepthRawStatsStatus=readback",
         "environmentDepthDepthViewPoseValidMask=0x1",
         "environmentDepthDepthViewFovValidMask=0x1"
     )) {
         Assert-Contains $environmentDepthParticlesLine $token "latest environment-depth-particles marker"
     }
+    $particleCaptureToDisplayMs = Get-MarkerNumber -Line $environmentDepthParticlesLine -Field "environmentDepthCaptureToDisplayMs"
+    Assert-True ($particleCaptureToDisplayMs -ge 0.0) "environment-depth-particles capture-to-display timing must be nonnegative."
+    $particleAcquireToRenderMs = Get-MarkerNumber -Line $environmentDepthParticlesLine -Field "environmentDepthAcquireToRenderMs"
+    Assert-True ($particleAcquireToRenderMs -ge 0.0) "environment-depth-particles acquire-to-render timing must be nonnegative."
+    $particleFrameAgeMs = Get-MarkerNumber -Line $environmentDepthParticlesLine -Field "environmentDepthFrameAgeMs"
+    Assert-True ($particleFrameAgeMs -ge 0.0) "environment-depth-particles frame age must be nonnegative."
 
     $particleCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthParticleCount"
     Assert-True ($particleCount -gt 0) "environment-depth-particles marker reports no particles."
@@ -785,6 +807,13 @@ if ($RequireEnvironmentDepthParticles) {
     Assert-True ($freeSpaceRetireSuccessCount -le $freeSpaceRetireAttemptCount) "environment-depth-particles free-space retire successes exceed attempts."
     $summary.environment_depth_line = $environmentDepthLine
     $summary.environment_depth_particles_line = $environmentDepthParticlesLine
+    $summary.environment_depth_capture_to_display_ms = $captureToDisplayMs
+    $summary.environment_depth_frame_age_ms = $frameAgeMs
+    $summary.environment_depth_repeated_capture_time_count = $repeatedCaptureTimeCount
+    $summary.environment_depth_unavailable_streak = $unavailableStreak
+    $summary.environment_depth_particle_capture_to_display_ms = $particleCaptureToDisplayMs
+    $summary.environment_depth_particle_acquire_to_render_ms = $particleAcquireToRenderMs
+    $summary.environment_depth_particle_frame_age_ms = $particleFrameAgeMs
     $summary.environment_depth_particle_count = $particleCount
     $summary.environment_depth_particle_source_depth_samples = $sourceDepthSamples
     $summary.environment_depth_raw_center_d16 = $rawCenterD16

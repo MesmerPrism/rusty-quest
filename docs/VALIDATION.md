@@ -124,7 +124,9 @@ the `atomic-slot-claim` map-write policy, preserve-existing-cells
 invalid-sample behavior, visible-free-space correction, scene-map health
 counters for hash insert/merge/stale replace, probe exhaustion, approximate
 occupancy, hash conflicts, failed claims, and free-space retire attempt/success
-counts, zero expanded CPU particle upload, resident GPU buffers, and
+counts, explicit render view-state flags, capture-to-display/frame-age timing,
+repeated-capture and unavailable-streak counters, texture-transform/ray-UV/sample-UV
+policy labels, zero expanded CPU particle upload, resident GPU buffers, and
 `environmentDepthParticleBufferMemory=device-local`.
 `quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json`
 is the matching layer-1 comparison profile. It switches only

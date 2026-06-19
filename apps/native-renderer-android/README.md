@@ -161,7 +161,10 @@ the wrapper serial-scopes ADB, pregrants the declared permissions with
 showing acquired Meta depth frames, `environmentDepthMode=scene-particle-map`,
 nonzero source depth samples, `spatial-hash-reference-space-cells`, zero
 expanded CPU particle upload, resident GPU buffers, and device-local particle
-memory.
+memory. The same evidence marker now carries the Iteration 5 scorecard fields:
+render view-state flags, capture-to-display/frame-age timing, acquire-to-render
+timing on the particle path, repeated-capture and unavailable-streak counters,
+and explicit texture-transform/ray-UV/sample-UV policy labels.
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json`
 is the A/B comparison profile for `environment_depth.layer_policy=mono-layer1`.
 It samples texture-array layer 1 and depth view 1 with

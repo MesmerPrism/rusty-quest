@@ -2049,6 +2049,7 @@ unsafe fn run_projection_frames(
                         runtime.acquire(
                             reference_space,
                             frame_state.predicted_display_time,
+                            view_flags,
                             &views,
                             frame_count,
                         )

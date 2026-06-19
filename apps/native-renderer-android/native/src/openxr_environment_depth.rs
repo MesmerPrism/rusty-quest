@@ -10,6 +10,13 @@ use crate::native_renderer_options::NativeEnvironmentDepthSettings;
 const VIEW_COUNT: u32 = 2;
 const DEPTH_FORMAT_LABEL: &str = "VK_FORMAT_D16_UNORM";
 const DEPTH_TEXTURE_TRANSFORM_LABEL: &str = "rotate0+flipY";
+const DEPTH_RAY_UV_POLICY_LABEL: &str = "canonical-untransformed";
+const DEPTH_SAMPLE_UV_POLICY_LABEL: &str = "texture-transformed";
+const RENDER_VIEW_STATE_NONE: &str = "none";
+const RENDER_VIEW_STATE_ORIENTATION_POSITION_VALID: &str = "orientation-valid+position-valid";
+const RENDER_VIEW_STATE_ORIENTATION_VALID: &str = "orientation-valid";
+const RENDER_VIEW_STATE_POSITION_VALID: &str = "position-valid";
+const RENDER_VIEW_STATE_INVALID: &str = "invalid";
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct OpenXrEnvironmentDepthProperties {
@@ -18,7 +25,7 @@ pub(crate) struct OpenXrEnvironmentDepthProperties {
     pub(crate) supports_hand_removal: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct OpenXrEnvironmentDepthFrame {
     pub(crate) swapchain_index: u32,
     pub(crate) depth_width: u32,
@@ -26,6 +33,11 @@ pub(crate) struct OpenXrEnvironmentDepthFrame {
     pub(crate) near_z: f32,
     pub(crate) far_z: f32,
     pub(crate) capture_time_ns: i64,
+    pub(crate) display_time_ns: i64,
+    pub(crate) capture_to_display_ms: f64,
+    pub(crate) frame_age_ms: f64,
+    pub(crate) render_view_state_flags_marker: &'static str,
+    pub(crate) acquire_completed_at: Instant,
     pub(crate) depth_eye_position: [f32; 4],
     pub(crate) depth_eye_orientation_xyzw: [f32; 4],
     pub(crate) depth_fov_tangents: [f32; 4],
@@ -56,7 +68,12 @@ pub(crate) struct OpenXrEnvironmentDepthRuntime {
     total_errors: u64,
     total_unique_capture_times: u64,
     repeated_capture_time_count: u64,
+    unavailable_streak: u64,
     last_capture_time_ns: Option<i64>,
+    last_display_time_ns: Option<i64>,
+    last_capture_to_display_ms: f64,
+    last_frame_age_ms: f64,
+    last_render_view_state_flags_marker: &'static str,
     last_acquired_frame: Option<u64>,
     last_swapchain_index: Option<u32>,
     last_near_z: f32,
@@ -266,7 +283,12 @@ impl OpenXrEnvironmentDepthRuntime {
             total_errors: 0,
             total_unique_capture_times: 0,
             repeated_capture_time_count: 0,
+            unavailable_streak: 0,
             last_capture_time_ns: None,
+            last_display_time_ns: None,
+            last_capture_to_display_ms: 0.0,
+            last_frame_age_ms: 0.0,
+            last_render_view_state_flags_marker: RENDER_VIEW_STATE_NONE,
             last_acquired_frame: None,
             last_swapchain_index: None,
             last_near_z: 0.0,
@@ -290,6 +312,7 @@ impl OpenXrEnvironmentDepthRuntime {
         &mut self,
         acquire_space: &xr::Space,
         display_time: xr::Time,
+        render_view_state_flags: xr::ViewStateFlags,
         current_views: &[xr::View],
         frame_count: u64,
     ) -> Option<OpenXrEnvironmentDepthFrame> {
@@ -337,12 +360,14 @@ impl OpenXrEnvironmentDepthRuntime {
         if result == xr::sys::Result::ENVIRONMENT_DEPTH_NOT_AVAILABLE_META {
             self.window_unavailable = self.window_unavailable.saturating_add(1);
             self.total_unavailable = self.total_unavailable.saturating_add(1);
+            self.unavailable_streak = self.unavailable_streak.saturating_add(1);
             self.report_status_if_due(frame_count, acquire_ms, false);
             return None;
         }
         if result.into_raw() < xr::sys::Result::SUCCESS.into_raw() {
             self.window_errors = self.window_errors.saturating_add(1);
             self.total_errors = self.total_errors.saturating_add(1);
+            self.unavailable_streak = self.unavailable_streak.saturating_add(1);
             crate::android_log_error(format!(
                 "Rusty Quest environment depth acquire failed frame={} result={result:?}",
                 frame_count
@@ -353,7 +378,13 @@ impl OpenXrEnvironmentDepthRuntime {
 
         self.window_acquired = self.window_acquired.saturating_add(1);
         self.total_acquired = self.total_acquired.saturating_add(1);
+        self.unavailable_streak = 0;
         let capture_time_ns = timestamp.capture_time.as_nanos();
+        let display_time_ns = display_time.as_nanos();
+        let capture_to_display_ms = nanos_delta_ms(display_time_ns, capture_time_ns);
+        let frame_age_ms = capture_to_display_ms.max(0.0);
+        let render_view_state_flags_marker =
+            render_view_state_flags_marker(render_view_state_flags);
         if self.last_capture_time_ns == Some(capture_time_ns) {
             self.repeated_capture_time_count = self.repeated_capture_time_count.saturating_add(1);
         } else {
@@ -361,6 +392,10 @@ impl OpenXrEnvironmentDepthRuntime {
             self.total_unique_capture_times = self.total_unique_capture_times.saturating_add(1);
             self.last_capture_time_ns = Some(capture_time_ns);
         }
+        self.last_display_time_ns = Some(display_time_ns);
+        self.last_capture_to_display_ms = capture_to_display_ms;
+        self.last_frame_age_ms = frame_age_ms;
+        self.last_render_view_state_flags_marker = render_view_state_flags_marker;
         self.last_acquired_frame = Some(frame_count);
         self.last_swapchain_index = Some(image.swapchain_index);
         self.last_near_z = image.near_z;
@@ -370,7 +405,7 @@ impl OpenXrEnvironmentDepthRuntime {
             crate::marker(
                 "environment-depth",
                 format!(
-                    "status=first-frame environmentDepthSource=xr-meta-environment-depth environmentDepthAcquireStatus=acquired environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthSwapchainIndex={} environmentDepthPoseValid=true environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCaptureTimeNs={} environmentDepthTextureTransform={} confidenceSource=depth-discontinuity-or-none confidencePayload=false",
+                    "status=first-frame environmentDepthSource=xr-meta-environment-depth environmentDepthAcquireStatus=acquired environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthRenderViewStateFlags={} environmentDepthSwapchainIndex={} environmentDepthPoseValid=true environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCaptureTimeNs={} environmentDepthDisplayTimeNs={} environmentDepthCaptureToDisplayMs={:.3} environmentDepthFrameAgeMs={:.3} environmentDepthRepeatedCaptureTimeCount={} environmentDepthUnavailableStreak={} environmentDepthTextureTransform={} environmentDepthTextureTransformLabel={} environmentDepthRayUvPolicy={} environmentDepthSampleUvPolicy={} confidenceSource=depth-discontinuity-or-none confidencePayload=false",
                     self.width,
                     self.height,
                     DEPTH_FORMAT_LABEL,
@@ -383,11 +418,20 @@ impl OpenXrEnvironmentDepthRuntime {
                     self.settings.debug_view_marker_value(),
                     self.settings.sampled_layer_mask(),
                     self.settings.sampled_layer_mask(),
+                    render_view_state_flags_marker,
                     image.swapchain_index,
                     image.near_z,
                     image.far_z,
                     capture_time_ns,
-                    DEPTH_TEXTURE_TRANSFORM_LABEL
+                    display_time_ns,
+                    capture_to_display_ms,
+                    frame_age_ms,
+                    self.repeated_capture_time_count,
+                    self.unavailable_streak,
+                    DEPTH_TEXTURE_TRANSFORM_LABEL,
+                    DEPTH_TEXTURE_TRANSFORM_LABEL,
+                    DEPTH_RAY_UV_POLICY_LABEL,
+                    DEPTH_SAMPLE_UV_POLICY_LABEL
                 ),
             );
         }
@@ -404,6 +448,11 @@ impl OpenXrEnvironmentDepthRuntime {
             near_z: image.near_z,
             far_z: image.far_z,
             capture_time_ns,
+            display_time_ns,
+            capture_to_display_ms,
+            frame_age_ms,
+            render_view_state_flags_marker,
+            acquire_completed_at: Instant::now(),
             depth_eye_position: pose_position(depth_view.pose),
             depth_eye_orientation_xyzw: pose_orientation(depth_view.pose),
             depth_fov_tangents: fov_tangents(depth_view.fov),
@@ -437,7 +486,7 @@ impl OpenXrEnvironmentDepthRuntime {
         crate::marker(
             "environment-depth",
             format!(
-                "status=runtime frame={} environmentDepthSource=xr-meta-environment-depth environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthSwapchainIndex={} environmentDepthPoseValid={} openXrFrameCount={} observedOpenXrFps={:.1} acquireAttempts={} acquiredFrames={} unavailableFrames={} acquireErrors={} uniqueCaptureTimes={} repeatedCaptureTimes={} observedAcquireHz={:.1} observedDepthHz={:.1} lastAcquireCpuMs={:.3} avgAcquireCpuMs={:.3} captureTimeNs={} nearZ={:.3} farZ={:.3} handRemovalSupported={} handRemovalEnabled={} confidenceSource=depth-discontinuity-or-none confidencePayload=false textureTransform={}",
+                "status=runtime frame={} environmentDepthSource=xr-meta-environment-depth environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthRenderViewStateFlags={} environmentDepthSwapchainIndex={} environmentDepthPoseValid={} openXrFrameCount={} observedOpenXrFps={:.1} acquireAttempts={} acquiredFrames={} unavailableFrames={} acquireErrors={} uniqueCaptureTimes={} repeatedCaptureTimes={} environmentDepthRepeatedCaptureTimeCount={} environmentDepthUnavailableStreak={} observedAcquireHz={:.1} observedDepthHz={:.1} lastAcquireCpuMs={:.3} avgAcquireCpuMs={:.3} captureTimeNs={} environmentDepthCaptureTimeNs={} environmentDepthDisplayTimeNs={} environmentDepthCaptureToDisplayMs={:.3} environmentDepthFrameAgeMs={:.3} nearZ={:.3} farZ={:.3} handRemovalSupported={} handRemovalEnabled={} confidenceSource=depth-discontinuity-or-none confidencePayload=false textureTransform={} environmentDepthTextureTransformLabel={} environmentDepthRayUvPolicy={} environmentDepthSampleUvPolicy={}",
                 frame_count,
                 if acquired { "acquired" } else { "not-available" },
                 self.width,
@@ -460,6 +509,7 @@ impl OpenXrEnvironmentDepthRuntime {
                 } else {
                     "0x0"
                 },
+                self.last_render_view_state_flags_marker,
                 self.last_swapchain_index
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "none".to_string()),
@@ -472,6 +522,8 @@ impl OpenXrEnvironmentDepthRuntime {
                 self.total_errors,
                 self.total_unique_capture_times,
                 self.repeated_capture_time_count,
+                self.repeated_capture_time_count,
+                self.unavailable_streak,
                 observed_acquire_hz,
                 observed_unique_depth_hz,
                 last_acquire_ms,
@@ -479,11 +531,22 @@ impl OpenXrEnvironmentDepthRuntime {
                 self.last_capture_time_ns
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "none".to_string()),
+                self.last_capture_time_ns
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                self.last_display_time_ns
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
+                self.last_capture_to_display_ms,
+                self.last_frame_age_ms,
                 self.last_near_z,
                 self.last_far_z,
                 self.supports_hand_removal,
                 self.hand_removal_enabled,
-                DEPTH_TEXTURE_TRANSFORM_LABEL
+                DEPTH_TEXTURE_TRANSFORM_LABEL,
+                DEPTH_TEXTURE_TRANSFORM_LABEL,
+                DEPTH_RAY_UV_POLICY_LABEL,
+                DEPTH_SAMPLE_UV_POLICY_LABEL
             ),
         );
         self.window_start = Instant::now();
@@ -494,6 +557,21 @@ impl OpenXrEnvironmentDepthRuntime {
         self.window_errors = 0;
         self.window_unique_capture_times = 0;
         self.window_acquire_cpu_ms = 0.0;
+    }
+}
+
+fn nanos_delta_ms(end_ns: i64, start_ns: i64) -> f64 {
+    end_ns.saturating_sub(start_ns) as f64 / 1_000_000.0
+}
+
+fn render_view_state_flags_marker(flags: xr::ViewStateFlags) -> &'static str {
+    let orientation_valid = flags.contains(xr::ViewStateFlags::ORIENTATION_VALID);
+    let position_valid = flags.contains(xr::ViewStateFlags::POSITION_VALID);
+    match (orientation_valid, position_valid) {
+        (true, true) => RENDER_VIEW_STATE_ORIENTATION_POSITION_VALID,
+        (true, false) => RENDER_VIEW_STATE_ORIENTATION_VALID,
+        (false, true) => RENDER_VIEW_STATE_POSITION_VALID,
+        (false, false) => RENDER_VIEW_STATE_INVALID,
     }
 }
 

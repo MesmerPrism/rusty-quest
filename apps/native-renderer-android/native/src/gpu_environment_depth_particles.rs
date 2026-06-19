@@ -27,6 +27,9 @@ const SCENE_PARTICLE_METADATA_BYTES_PER_SLOT: vk::DeviceSize =
 const META_ENVIRONMENT_DEPTH_FORMAT: vk::Format = vk::Format::D16_UNORM;
 const META_ENVIRONMENT_DEPTH_LAYER_COUNT: u32 = 2;
 const META_ENVIRONMENT_DEPTH_DEPTH_VIEW_VALID_MASK: &str = "0x1";
+const META_ENVIRONMENT_DEPTH_TEXTURE_TRANSFORM_LABEL: &str = "rotate0+flipY";
+const META_ENVIRONMENT_DEPTH_RAY_UV_POLICY_LABEL: &str = "canonical-untransformed";
+const META_ENVIRONMENT_DEPTH_SAMPLE_UV_POLICY_LABEL: &str = "texture-transformed";
 const META_ENVIRONMENT_DEPTH_TEXTURE_TRANSFORM_FLAGS: f32 = 8.0;
 const DEPTH_FLAG_INFINITE_FAR: u32 = 1;
 const DEPTH_FLAG_SCENE_PARTICLE_MAP: u32 = 2;
@@ -188,8 +191,13 @@ pub(crate) struct GpuEnvironmentDepthParticleFrameStats {
     debug_view: &'static str,
     raw_debug_stats: EnvironmentDepthRawDebugStats,
     pose_valid: bool,
+    render_view_state_flags: &'static str,
     swapchain_index: Option<u32>,
     capture_time_ns: Option<i64>,
+    display_time_ns: Option<i64>,
+    capture_to_display_ms: f64,
+    acquire_to_render_ms: f64,
+    frame_age_ms: f64,
     near_m: f32,
     far_m: f32,
     frame_marker: f32,
@@ -311,8 +319,13 @@ impl GpuEnvironmentDepthParticleFrameStats {
             debug_view: settings.debug_view_marker_value(),
             raw_debug_stats,
             pose_valid: true,
+            render_view_state_flags: frame.render_view_state_flags_marker,
             swapchain_index: Some(frame.swapchain_index),
             capture_time_ns: Some(frame.capture_time_ns),
+            display_time_ns: Some(frame.display_time_ns),
+            capture_to_display_ms: frame.capture_to_display_ms,
+            acquire_to_render_ms: frame.acquire_completed_at.elapsed().as_secs_f64() * 1000.0,
+            frame_age_ms: frame.frame_age_ms,
             near_m: frame.near_z,
             far_m: if frame.far_z.is_finite() {
                 frame.far_z
@@ -366,7 +379,7 @@ impl GpuEnvironmentDepthParticleFrameStats {
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "environmentDepthProviderState={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound={} environmentDepthSupported={} environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthPoseValid={} environmentDepthSwapchainIndex={} environmentDepthCaptureTimeNs={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthMode={} environmentDepthParticleReady={} environmentDepthParticleVisible={} environmentDepthParticleCount={} environmentDepthParticleCapacity={} environmentDepthParticleSource={} environmentDepthParticleCoordinateSpace={} environmentDepthParticleReferenceSpace={} environmentDepthWorldSpaceReady={} environmentDepthParticleSourceDepthSamples={} environmentDepthParticleCpuUploadBytes=0 environmentDepthGpuBuffersResident={} environmentDepthParticleBufferMemory=device-local environmentDepthGpuReconstructPath={} environmentDepthGpuDrawPath={} environmentDepthParticleRetention={} environmentDepthParticleMapPolicy={} environmentDepthMapWritePolicy={} environmentDepthSceneParticleMap={} environmentDepthSceneCellMeters={:.3} environmentDepthSceneHashProbeCount={} environmentDepthSceneStaleFadeStartFrames={} environmentDepthSceneStaleRetireFrames={} environmentDepthInvalidSamplePolicy={} environmentDepthFreeSpaceCorrection={} environmentDepthRawStatsStatus={} environmentDepthRawCenterD16={} environmentDepthCenterReconstructedMeters={:.3} environmentDepthCenterConfidence={:.3} environmentDepthRawCenterWindowMedianD16={} environmentDepthRawCenterWindowValidCount={} environmentDepthMinValidReconstructedMeters={:.3} environmentDepthMaxValidReconstructedMeters={:.3} environmentDepthDebugValidSampleCount={} environmentDepthDebugInvalidSampleCount={} environmentDepthDebugConfidenceRejectedCount={} environmentDepthHashInsertSuccessCount={} environmentDepthHashMergeCount={} environmentDepthHashStaleReplaceCount={} environmentDepthHashProbeExhaustedCount={} environmentDepthFreeSpaceRetireAttemptCount={} environmentDepthFreeSpaceRetireSuccessCount={} environmentDepthHashOccupancyEstimate={} environmentDepthHashWriteConflictCount={} environmentDepthHashClaimFailedCount={} environmentDepthReadbackCadenceFrames=0 environmentDepthRawReadbackCadenceFrames=120",
+            "environmentDepthProviderState={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound={} environmentDepthSupported={} environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthRenderViewStateFlags={} environmentDepthPoseValid={} environmentDepthSwapchainIndex={} environmentDepthCaptureTimeNs={} environmentDepthDisplayTimeNs={} environmentDepthCaptureToDisplayMs={:.3} environmentDepthAcquireToRenderMs={:.3} environmentDepthFrameAgeMs={:.3} environmentDepthTextureTransformLabel={} environmentDepthRayUvPolicy={} environmentDepthSampleUvPolicy={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthMode={} environmentDepthParticleReady={} environmentDepthParticleVisible={} environmentDepthParticleCount={} environmentDepthParticleCapacity={} environmentDepthParticleSource={} environmentDepthParticleCoordinateSpace={} environmentDepthParticleReferenceSpace={} environmentDepthWorldSpaceReady={} environmentDepthParticleSourceDepthSamples={} environmentDepthParticleCpuUploadBytes=0 environmentDepthGpuBuffersResident={} environmentDepthParticleBufferMemory=device-local environmentDepthGpuReconstructPath={} environmentDepthGpuDrawPath={} environmentDepthParticleRetention={} environmentDepthParticleMapPolicy={} environmentDepthMapWritePolicy={} environmentDepthSceneParticleMap={} environmentDepthSceneCellMeters={:.3} environmentDepthSceneHashProbeCount={} environmentDepthSceneStaleFadeStartFrames={} environmentDepthSceneStaleRetireFrames={} environmentDepthInvalidSamplePolicy={} environmentDepthFreeSpaceCorrection={} environmentDepthRawStatsStatus={} environmentDepthRawCenterD16={} environmentDepthCenterReconstructedMeters={:.3} environmentDepthCenterConfidence={:.3} environmentDepthRawCenterWindowMedianD16={} environmentDepthRawCenterWindowValidCount={} environmentDepthMinValidReconstructedMeters={:.3} environmentDepthMaxValidReconstructedMeters={:.3} environmentDepthDebugValidSampleCount={} environmentDepthDebugInvalidSampleCount={} environmentDepthDebugConfidenceRejectedCount={} environmentDepthHashInsertSuccessCount={} environmentDepthHashMergeCount={} environmentDepthHashStaleReplaceCount={} environmentDepthHashProbeExhaustedCount={} environmentDepthFreeSpaceRetireAttemptCount={} environmentDepthFreeSpaceRetireSuccessCount={} environmentDepthHashOccupancyEstimate={} environmentDepthHashWriteConflictCount={} environmentDepthHashClaimFailedCount={} environmentDepthReadbackCadenceFrames=0 environmentDepthRawReadbackCadenceFrames=120",
             self.provider_state,
             self.provider_available,
             self.real_provider_bound,
@@ -392,6 +405,7 @@ impl GpuEnvironmentDepthParticleFrameStats {
             } else {
                 "0x0"
             },
+            self.render_view_state_flags,
             self.pose_valid,
             self.swapchain_index
                 .map(|value| value.to_string())
@@ -399,6 +413,15 @@ impl GpuEnvironmentDepthParticleFrameStats {
             self.capture_time_ns
                 .map(|value| value.to_string())
                 .unwrap_or_else(|| "none".to_string()),
+            self.display_time_ns
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            self.capture_to_display_ms,
+            self.acquire_to_render_ms,
+            self.frame_age_ms,
+            META_ENVIRONMENT_DEPTH_TEXTURE_TRANSFORM_LABEL,
+            META_ENVIRONMENT_DEPTH_RAY_UV_POLICY_LABEL,
+            META_ENVIRONMENT_DEPTH_SAMPLE_UV_POLICY_LABEL,
             self.near_m,
             self.far_m,
             self.mode,
@@ -966,7 +989,7 @@ impl GpuEnvironmentDepthParticleRenderer {
         crate::marker(
             "environment-depth-particles",
             format!(
-                "status=created environmentDepthParticlePath=meta-environment-depth-gpu-reference-space-billboards environmentDepthParticleSource={} environmentDepthParticleCoordinateSpace=openxr-reference-space environmentDepthParticleReferenceSpace={} environmentDepthParticleCapacity={} environmentDepthParticleBufferBytes={} environmentDepthParticleCpuUploadBytes=0 environmentDepthGpuBuffersResident=true environmentDepthParticleBufferMemory={} environmentDepthRawDebugBufferBytes={} environmentDepthRawDebugBufferMemory={} environmentDepthSceneMetadataBufferBytes={} environmentDepthSceneMetadataBufferMemory={} environmentDepthProviderState=provider-running environmentDepthRealProviderBound=true environmentDepthImageSize={}x{} environmentDepthFormat=VK_FORMAT_D16_UNORM environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthTextureTransform=rotate0+flipY environmentDepthParticleRetention={} environmentDepthParticleMapPolicy={} environmentDepthMapWritePolicy={} environmentDepthSceneParticleMap={} environmentDepthSceneCellMeters={:.3} environmentDepthSceneHashProbeCount={} environmentDepthInvalidSamplePolicy={} environmentDepthFreeSpaceCorrection={} environmentDepthHighRateJsonPayload={}",
+                "status=created environmentDepthParticlePath=meta-environment-depth-gpu-reference-space-billboards environmentDepthParticleSource={} environmentDepthParticleCoordinateSpace=openxr-reference-space environmentDepthParticleReferenceSpace={} environmentDepthParticleCapacity={} environmentDepthParticleBufferBytes={} environmentDepthParticleCpuUploadBytes=0 environmentDepthGpuBuffersResident=true environmentDepthParticleBufferMemory={} environmentDepthRawDebugBufferBytes={} environmentDepthRawDebugBufferMemory={} environmentDepthSceneMetadataBufferBytes={} environmentDepthSceneMetadataBufferMemory={} environmentDepthProviderState=provider-running environmentDepthRealProviderBound=true environmentDepthImageSize={}x{} environmentDepthFormat=VK_FORMAT_D16_UNORM environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthTextureTransform=rotate0+flipY environmentDepthTextureTransformLabel={} environmentDepthRayUvPolicy={} environmentDepthSampleUvPolicy={} environmentDepthParticleRetention={} environmentDepthParticleMapPolicy={} environmentDepthMapWritePolicy={} environmentDepthSceneParticleMap={} environmentDepthSceneCellMeters={:.3} environmentDepthSceneHashProbeCount={} environmentDepthInvalidSamplePolicy={} environmentDepthFreeSpaceCorrection={} environmentDepthHighRateJsonPayload={}",
                 settings.source_marker_value(),
                 settings.reference_space_marker_value(),
                 capacity,
@@ -987,6 +1010,9 @@ impl GpuEnvironmentDepthParticleRenderer {
                 settings.debug_view_marker_value(),
                 META_ENVIRONMENT_DEPTH_DEPTH_VIEW_VALID_MASK,
                 META_ENVIRONMENT_DEPTH_DEPTH_VIEW_VALID_MASK,
+                META_ENVIRONMENT_DEPTH_TEXTURE_TRANSFORM_LABEL,
+                META_ENVIRONMENT_DEPTH_RAY_UV_POLICY_LABEL,
+                META_ENVIRONMENT_DEPTH_SAMPLE_UV_POLICY_LABEL,
                 environment_depth_particle_retention_marker(settings),
                 environment_depth_particle_map_policy_marker(settings),
                 environment_depth_map_write_policy_marker(settings),

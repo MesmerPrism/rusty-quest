@@ -63,7 +63,9 @@
   depth samples, OpenXR-local world-space scene cells,
   spatial-hash map policy, preserve-existing-cells invalid-sample behavior,
   visible-free-space correction, zero expanded CPU particle upload, resident
-  GPU buffers, and device-local particle memory.
+  GPU buffers, device-local particle memory, explicit render view-state flags,
+  capture-to-display/frame-age timing, repeated-capture and unavailable-streak
+  counters, and texture-transform/ray-UV/sample-UV policy labels.
   `quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json`
   is the matching mono-layer1 comparison route; it requires
   `environmentDepthSampledLayerMask=0x2` and
