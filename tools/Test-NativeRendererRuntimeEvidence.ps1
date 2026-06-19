@@ -23,6 +23,7 @@ param(
     [switch]$RequireReplayVisualProof,
     [switch]$RequireLiveVisualDiagnosticCaveat,
     [switch]$RequireEnvironmentDepthParticles,
+    [switch]$RequireEnvironmentDepthSurfaceSupport,
     [switch]$RequireGuideGraph,
     [switch]$RequireSdfVisual,
     [switch]$RequireGpuTimestampReady,
@@ -477,6 +478,7 @@ $summary = [ordered]@{
     replay_visual_proof_checked = [bool]$RequireReplayVisualProof
     live_visual_diagnostic_caveat_checked = [bool]$RequireLiveVisualDiagnosticCaveat
     environment_depth_particles_checked = [bool]$RequireEnvironmentDepthParticles
+    environment_depth_surface_support_checked = [bool]$RequireEnvironmentDepthSurfaceSupport
     guide_graph_checked = [bool]$RequireGuideGraph
     sdf_visual_checked = [bool]$RequireSdfVisual
     gpu_timestamp_checked = [bool]$RequireGpuTimestampReady
@@ -744,7 +746,7 @@ if ($RequireEnvironmentDepthParticles) {
         "environmentDepthFreeSpaceRangePolicy=near-plus-cell-step-cap",
         "environmentDepthSurfaceModel=",
         "environmentDepthSurfaceSupportRequested=",
-        "environmentDepthSurfaceSupportEnforced=false",
+        "environmentDepthSurfaceSupportEnforced=",
         "environmentDepthSurfaceSupportMode=",
         "environmentDepthSurfaceSupportRadiusCells=",
         "environmentDepthSurfaceMinNeighborCount=",
@@ -795,10 +797,12 @@ if ($RequireEnvironmentDepthParticles) {
     Assert-True (-not [string]::IsNullOrWhiteSpace($surfaceModel)) "environment-depth-particles marker is missing surface model."
     $surfaceSupportRequested = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSupportRequested"
     Assert-True (@("true", "false") -contains $surfaceSupportRequested) "environment-depth-particles marker has invalid surface support requested value: $surfaceSupportRequested"
+    $surfaceSupportEnforced = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSupportEnforced"
+    Assert-True (@("true", "false") -contains $surfaceSupportEnforced) "environment-depth-particles marker has invalid surface support enforced value: $surfaceSupportEnforced"
     $surfaceSupportMode = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSupportMode"
     Assert-True (-not [string]::IsNullOrWhiteSpace($surfaceSupportMode)) "environment-depth-particles marker is missing surface support mode."
     $surfaceSupportStatus = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSupportStatus"
-    Assert-True (@("disabled", "pending-gpu-support-pass") -contains $surfaceSupportStatus) "environment-depth-particles marker has invalid surface support status: $surfaceSupportStatus"
+    Assert-True (@("disabled", "pending-gpu-support-pass", "enforced-local-depth-neighborhood-component-pending") -contains $surfaceSupportStatus) "environment-depth-particles marker has invalid surface support status: $surfaceSupportStatus"
     $surfaceSupportRadiusCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSupportRadiusCells"
     $surfaceSupportMinNeighbors = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceMinNeighborCount"
     $surfaceSupportMinObservations = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceMinObservationCount"
@@ -813,6 +817,23 @@ if ($RequireEnvironmentDepthParticles) {
     Assert-True ($surfaceSupportMinSourceLayers -ge 1) "environment-depth-particles surface support min-source-layer count must be positive."
     Assert-True ($surfaceSupportComponentMinCells -ge 1) "environment-depth-particles surface support component-min-cells must be positive."
     Assert-True ($surfaceSupportedCells -ge 0 -and $surfaceRejectedIsolatedCells -ge 0 -and $surfaceLargestComponentCells -ge 0) "environment-depth-particles surface support counters must be nonnegative."
+    if ($surfaceSupportRequested -eq "false") {
+        Assert-True ($surfaceSupportEnforced -eq "false") "environment-depth-particles cannot enforce support when support was not requested."
+        Assert-True ($surfaceSupportStatus -eq "disabled") "environment-depth-particles disabled support must report status=disabled."
+    }
+    if ($surfaceSupportRequested -eq "true" -and $surfaceSupportEnforced -eq "false") {
+        Assert-True ($surfaceSupportStatus -eq "pending-gpu-support-pass") "environment-depth-particles requested-but-not-enforced support must report pending-gpu-support-pass."
+    }
+    if ($surfaceSupportEnforced -eq "true") {
+        Assert-True ($surfaceSupportRequested -eq "true") "environment-depth-particles support cannot be enforced when support was not requested."
+        Assert-True ($surfaceSupportStatus -eq "enforced-local-depth-neighborhood-component-pending") "environment-depth-particles enforced support must name the local-neighborhood/component-pending status."
+    }
+    if ($RequireEnvironmentDepthSurfaceSupport) {
+        Assert-True ($surfaceSupportRequested -eq "true") "environment-depth-particles surface support proof requires requested support."
+        Assert-True ($surfaceSupportEnforced -eq "true") "environment-depth-particles surface support proof requires GPU-enforced support."
+        Assert-True ($surfaceSupportedCells -gt 0) "environment-depth-particles surface support proof requires nonzero supported cells."
+        Assert-True ($surfaceSupportMinNeighbors -gt 0) "environment-depth-particles surface support proof requires a positive min-neighbor threshold."
+    }
 
     $particleCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthParticleCount"
     Assert-True ($particleCount -gt 0) "environment-depth-particles marker reports no particles."

@@ -18,6 +18,7 @@ param(
     [switch]$AllowFlatScreenshot,
     [switch]$AllowPerformanceBudgetMiss,
     [switch]$AllowPrivateLayerPayload,
+    [switch]$RequireEnvironmentDepthSurfaceSupport,
     [int]$ExpectedEnvironmentDepthParticleCount = 0,
     [int]$MinimumEnvironmentDepthSourceDepthSamples = 0,
     [int]$MinimumEnvironmentDepthHashProbeExhaustedCount = 0,
@@ -218,6 +219,7 @@ $summary = [ordered]@{
     replay_visual_proof_required = ($EvidenceMode -eq "ReplayVisualProof")
     live_visual_diagnostic_caveat_required = ($EvidenceMode -eq "LiveVisualDiagnosticCaveat")
     environment_depth_particles_required = ($EvidenceMode -eq "EnvironmentDepthParticles")
+    environment_depth_surface_support_required = [bool]$RequireEnvironmentDepthSurfaceSupport
     performance_budget_required = (-not [bool]$AllowPerformanceBudgetMiss)
     private_layer_payload_allowed = [bool]$AllowPrivateLayerPayload
     expected_environment_depth_particle_count = $ExpectedEnvironmentDepthParticleCount
@@ -313,6 +315,9 @@ try {
     )
     if ($EvidenceMode -eq "EnvironmentDepthParticles") {
         $evidenceArgs += "-RequireEnvironmentDepthParticles"
+        if ($RequireEnvironmentDepthSurfaceSupport) {
+            $evidenceArgs += "-RequireEnvironmentDepthSurfaceSupport"
+        }
         if ($ExpectedEnvironmentDepthParticleCount -gt 0) {
             $evidenceArgs += @("-ExpectedEnvironmentDepthParticleCount", $ExpectedEnvironmentDepthParticleCount.ToString())
         }

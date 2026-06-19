@@ -1337,7 +1337,7 @@ impl NativeEnvironmentDepthDebugView {
             Self::SourceLayer => 3.0,
             Self::HashProbe => 4.0,
             Self::FreeSpaceState => 5.0,
-            Self::SurfaceSupport => 0.0,
+            Self::SurfaceSupport => 6.0,
         }
     }
 }
@@ -2744,7 +2744,7 @@ mod tests {
                 "surface-support",
                 NativeEnvironmentDepthDebugView::SurfaceSupport,
                 "surface-support",
-                0.0,
+                6.0,
             ),
         ];
         for (property_value, expected, marker, code) in cases {

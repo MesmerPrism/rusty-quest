@@ -213,11 +213,16 @@ The source-side surface-support profiles are
 validated `environment_depth.surface_model` and
 `environment_depth.surface_support.*` properties plus
 `environmentDepthSurfaceSupport*` markers for local candidates, connected
-global surfaces, and hybrid mode. The current renderer reports
-`environmentDepthSurfaceSupportEnforced=false` and
-`environmentDepthSurfaceSupportStatus=pending-gpu-support-pass` whenever a
-surface-support model is requested; these profiles prepare the control plane
-and evidence contract, but do not yet hide or filter unsupported particles.
+global surfaces, and hybrid mode. The dry-run profile markers remain
+non-enforcing, but the real Meta environment-depth scene-map compute path now
+uses those settings to apply a bounded GPU local-depth-neighborhood support
+gate before writing retained scene cells. Runtime particle markers report
+`environmentDepthSurfaceSupportEnforced=true`,
+`environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-pending`,
+`environmentDepthSurfaceSupportedCells`, and
+`environmentDepthSurfaceRejectedIsolatedCells` when that gate is active. The
+connected-component/global-surface pass and largest-component proof are still
+pending and require later headset evidence.
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-graft-only.profile.json`
 keeps native passthrough focused on graft instances only, while
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-hands-and-grafts.profile.json`

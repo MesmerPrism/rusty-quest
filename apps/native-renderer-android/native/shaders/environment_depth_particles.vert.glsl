@@ -26,6 +26,7 @@ const float DEBUG_COLOR_AGE = 2.0;
 const float DEBUG_COLOR_SOURCE_LAYER = 3.0;
 const float DEBUG_COLOR_HASH_PROBE = 4.0;
 const float DEBUG_COLOR_FREE_SPACE_STATE = 5.0;
+const float DEBUG_COLOR_SURFACE_SUPPORT = 6.0;
 const float SCENE_PARTICLE_FADE_START_FRAMES = 720.0;
 const float SCENE_PARTICLE_RETIRE_FRAMES = 1440.0;
 
@@ -140,6 +141,13 @@ vec4 debug_particle_color(
         return retired
             ? vec4(1.00, 0.12, 0.04, 0.55)
             : vec4(0.04, 1.00, 0.34, clamp(particle_color.a * max(age_alpha, 0.28), 0.0, 1.0));
+    }
+    if (mode == DEBUG_COLOR_SURFACE_SUPPORT) {
+        vec3 weak = vec3(0.08, 0.25, 1.00);
+        vec3 strong = vec3(0.04, 1.00, 0.52);
+        return retired
+            ? vec4(1.00, 0.12, 0.04, 0.55)
+            : vec4(mix(weak, strong, confidence), clamp(particle_color.a * max(age_alpha, 0.40), 0.0, 1.0));
     }
     return vec4(
         clamp(particle_color.rgb, vec3(0.0), vec3(1.0)),

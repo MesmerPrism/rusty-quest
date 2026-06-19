@@ -179,12 +179,15 @@ validate `environment_depth.surface_model`,
 `environment_depth.surface_support.component_min_cells`,
 `environment_depth.surface_support.normal_coherence`, and
 `environment_depth.surface_support.free_space_decay`. Runtime evidence now
-requires the matching `environmentDepthSurfaceSupport*` marker fields. Until
-the GPU neighborhood/component pass lands, requested support modes must report
-`environmentDepthSurfaceSupportEnforced=false` and
-`environmentDepthSurfaceSupportStatus=pending-gpu-support-pass`; acceptance
-must not treat these profiles as proof that isolated floating particles are
-being filtered.
+requires the matching `environmentDepthSurfaceSupport*` marker fields. Dry-run
+profile evidence remains low-rate and must not claim filtering by itself. On a
+real runtime frame, requested surface modes can now report
+`environmentDepthSurfaceSupportEnforced=true`,
+`environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-pending`,
+and nonzero supported/rejected-cell counters from the GPU local-depth
+neighborhood gate. This is not yet connected-component or global-surface
+acceptance; those remain pending alongside the movement-required world-space
+proof.
 Use `docs/environment-depth-known-distance-raw-d16-runbook.md` for the
 headset known-distance run that compares `environmentDepthRawCenterD16`,
 `environmentDepthCenterReconstructedMeters`, and
@@ -216,6 +219,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendere
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -ProfilePath fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity.profile.json -ExpectedEnvironmentDepthParticleCount 64 -MinimumEnvironmentDepthHashProbeExhaustedCount 1 -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -ProfilePath fixtures\runtime-profiles\quest-native-renderer-envdepth-local-surfels.profile.json -RequireEnvironmentDepthSurfaceSupport -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
 ```
 

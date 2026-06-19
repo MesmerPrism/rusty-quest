@@ -214,11 +214,15 @@ The source-side surface-support profiles
 `quest-native-renderer-envdepth-global-surfaces.profile.json`, and
 `quest-native-renderer-envdepth-hybrid-surfaces.profile.json` validate the
 planned local-candidate, connected-surface, and hybrid control settings without
-requiring headset movement. They intentionally report
-`environmentDepthSurfaceSupportEnforced=false` and
-`environmentDepthSurfaceSupportStatus=pending-gpu-support-pass` until the
-native Vulkan support pass computes neighbor/component support and filters or
-dims unsupported cells.
+requiring headset movement. Their dry-run property evidence remains
+non-enforcing, but the native Vulkan scene-map compute path now applies a
+bounded local-depth-neighborhood support gate for requested surface modes and
+reports `environmentDepthSurfaceSupportEnforced=true`,
+`environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-pending`,
+`environmentDepthSurfaceSupportedCells`, and
+`environmentDepthSurfaceRejectedIsolatedCells` on runtime particle markers.
+Global connected-component support, largest-component proof, and headset
+motion acceptance remain separate gates.
 Wrapper runs also require
 the performance budget gate by default; the checker records the observed FPS,
 stale-frame count, and CPU/GPU stage timing budget results, and fails if a

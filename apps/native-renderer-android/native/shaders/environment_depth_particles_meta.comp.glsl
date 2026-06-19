@@ -30,11 +30,18 @@ layout(push_constant) uniform EnvironmentDepthParticlePush {
 const uint DEPTH_FLAG_INFINITE_FAR = 1u;
 const uint DEPTH_FLAG_SCENE_PARTICLE_MAP = 2u;
 const uint DEPTH_FLAG_SOURCE_LAYER1 = 4u;
+const uint DEPTH_FLAG_SURFACE_SUPPORT_ENFORCED = 8u;
+const uint DEPTH_FLAG_SURFACE_SUPPORT_MIN_NEIGHBOR_MASK = 0x0000ff00u;
+const uint DEPTH_FLAG_SURFACE_SUPPORT_MIN_NEIGHBOR_SHIFT = 8u;
+const uint DEPTH_FLAG_SURFACE_SUPPORT_RADIUS_MASK = 0x000f0000u;
+const uint DEPTH_FLAG_SURFACE_SUPPORT_RADIUS_SHIFT = 16u;
 const float SCENE_PARTICLE_CELL_METERS = 0.06;
 const uint SCENE_PARTICLE_PROBE_COUNT = 8u;
 const float SCENE_PARTICLE_STALE_REPLACE_FRAMES = 1440.0;
 const float SCENE_PARTICLE_MERGE_WEIGHT = 0.18;
 const float SCENE_PARTICLE_CONFIDENCE_THRESHOLD = 0.58;
+const float SCENE_PARTICLE_SURFACE_SUPPORT_MIN_DEPTH_TOLERANCE_METERS = 0.18;
+const float SCENE_PARTICLE_SURFACE_SUPPORT_DEPTH_TOLERANCE_SCALE = 0.10;
 const float SCENE_PARTICLE_ACTIVE_CORRECTION_CONFIDENCE = 0.78;
 const float SCENE_PARTICLE_ACTIVE_CORRECTION_STEP_METERS = SCENE_PARTICLE_CELL_METERS;
 const uint SCENE_PARTICLE_ACTIVE_CORRECTION_MAX_STEPS = 64u;
@@ -59,6 +66,8 @@ const uint RAW_DEBUG_HASH_OCCUPANCY_ESTIMATE = 16u;
 const uint RAW_DEBUG_HASH_WRITE_CONFLICT_COUNT = 17u;
 const uint RAW_DEBUG_HASH_CLAIM_FAILED_COUNT = 18u;
 const uint RAW_DEBUG_FREE_SPACE_CONFIDENCE_SKIPPED_COUNT = 19u;
+const uint RAW_DEBUG_SURFACE_SUPPORTED_CELLS = 20u;
+const uint RAW_DEBUG_SURFACE_REJECTED_ISOLATED_CELLS = 21u;
 const uint SCENE_META_WORDS_PER_SLOT = 4u;
 const uint SCENE_META_KEY = 0u;
 const uint SCENE_META_STATE = 1u;
@@ -79,6 +88,21 @@ bool infinite_far_requested() {
 
 bool scene_particle_map_requested() {
     return (depth_flags() & DEPTH_FLAG_SCENE_PARTICLE_MAP) != 0u;
+}
+
+bool surface_support_enforced_requested() {
+    return (depth_flags() & DEPTH_FLAG_SURFACE_SUPPORT_ENFORCED) != 0u;
+}
+
+uint surface_support_min_neighbor_count() {
+    return (depth_flags() & DEPTH_FLAG_SURFACE_SUPPORT_MIN_NEIGHBOR_MASK)
+        >> DEPTH_FLAG_SURFACE_SUPPORT_MIN_NEIGHBOR_SHIFT;
+}
+
+uint surface_support_radius_cells() {
+    uint radius = (depth_flags() & DEPTH_FLAG_SURFACE_SUPPORT_RADIUS_MASK)
+        >> DEPTH_FLAG_SURFACE_SUPPORT_RADIUS_SHIFT;
+    return clamp(radius, 1u, 8u);
 }
 
 float depth_source_layer_index() {
@@ -525,6 +549,72 @@ float confidence_for_depth_uv(vec2 depth_uv, float depth_meters, ivec2 depth_siz
     return clamp(edge_confidence * support_confidence, 0.0, 1.0);
 }
 
+bool surface_support_neighbor_is_coherent(
+    ivec2 neighbor_pixel,
+    float depth_meters,
+    ivec2 depth_size
+) {
+    ivec2 pixel = clamp(neighbor_pixel, ivec2(0), depth_size - ivec2(1));
+    vec2 surface_uv = (vec2(pixel) + vec2(0.5)) / max(vec2(depth_size), vec2(1.0));
+    vec2 depth_uv = clamp(
+        apply_depth_texture_transform(surface_uv, int(floor(pc.params0.z + 0.5))),
+        vec2(0.0),
+        vec2(1.0));
+    float raw_neighbor_depth = sample_raw_depth(depth_uv);
+    if (!raw_depth_is_valid(raw_neighbor_depth)) {
+        return false;
+    }
+    float neighbor_depth_meters = raw_depth_to_meters(raw_neighbor_depth);
+    bool neighbor_in_range = neighbor_depth_meters >= max(pc.params1.x, 0.001)
+        && neighbor_depth_meters <= max(pc.params1.y, pc.params1.x + 0.01);
+    float tolerance = max(
+        SCENE_PARTICLE_SURFACE_SUPPORT_MIN_DEPTH_TOLERANCE_METERS,
+        depth_meters * SCENE_PARTICLE_SURFACE_SUPPORT_DEPTH_TOLERANCE_SCALE);
+    return neighbor_in_range && abs(depth_meters - neighbor_depth_meters) <= tolerance;
+}
+
+uint surface_support_neighbor_count(
+    ivec2 center_pixel,
+    float depth_meters,
+    ivec2 depth_size,
+    uint sample_stride
+) {
+    uint support_count = 0u;
+    int radius = int(surface_support_radius_cells());
+    int stride = int(max(sample_stride, 1u));
+    for (int y = -8; y <= 8; y++) {
+        for (int x = -8; x <= 8; x++) {
+            if ((x == 0 && y == 0) || abs(x) > radius || abs(y) > radius) {
+                continue;
+            }
+            if (surface_support_neighbor_is_coherent(
+                center_pixel + ivec2(x * stride, y * stride),
+                depth_meters,
+                depth_size)) {
+                support_count++;
+            }
+        }
+    }
+    return support_count;
+}
+
+bool surface_support_passes(
+    ivec2 center_pixel,
+    float depth_meters,
+    ivec2 depth_size,
+    uint sample_stride
+) {
+    if (!surface_support_enforced_requested()) {
+        return true;
+    }
+    uint min_neighbors = surface_support_min_neighbor_count();
+    if (min_neighbors == 0u) {
+        return true;
+    }
+    return surface_support_neighbor_count(center_pixel, depth_meters, depth_size, sample_stride)
+        >= min_neighbors;
+}
+
 void sort_raw_prefix(inout float raw_values[9], int count) {
     for (int outer_index = 0; outer_index < 8; outer_index++) {
         for (int inner_index = outer_index + 1; inner_index < 9; inner_index++) {
@@ -641,6 +731,14 @@ void main() {
             write_retained_invalid(sample_index);
         }
         return;
+    }
+
+    if (scene_map && surface_support_enforced_requested()) {
+        if (!surface_support_passes(pixel, depth_meters, depth_size, sample_stride)) {
+            atomicAdd(depth_debug.values[RAW_DEBUG_SURFACE_REJECTED_ISOLATED_CELLS], 1u);
+            return;
+        }
+        atomicAdd(depth_debug.values[RAW_DEBUG_SURFACE_SUPPORTED_CELLS], 1u);
     }
 
     vec3 reference_space_point = reconstruct_reference_space_position(surface_uv, depth_meters);

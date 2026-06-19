@@ -189,9 +189,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBroker
 
 `check_all.ps1` also dry-runs the environment-depth surface-support profiles:
 local surfels, global surfaces, and hybrid surfaces. These validate the
-properties and `environmentDepthSurfaceSupport*` markers without claiming GPU
-filtering; headset acceptance still requires a later support-pass build plus
-movement evidence.
+properties and low-rate `environmentDepthSurfaceSupport*` markers without
+touching a headset. The native renderer now has a bounded GPU
+local-depth-neighborhood support gate for requested surface modes; runtime
+particle evidence may report
+`environmentDepthSurfaceSupportEnforced=true` with
+`environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-pending`
+and nonzero supported/rejected-cell counters. Connected-component/global
+surface acceptance and world-space motion proof still require a headset run.
 
 Device-facing smoke wrappers require `-Serial <quest-serial>` or
 `RUSTY_QUEST_SERIAL`; normal ADB work must not rely on an implicit default

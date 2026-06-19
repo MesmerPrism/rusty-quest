@@ -9,6 +9,7 @@ param(
     [int]$MinimumHeadMotionSamples = 120,
     [double]$MinimumYawDeg = 25.0,
     [double]$MinimumTranslationM = 0.0,
+    [switch]$RequireEnvironmentDepthSurfaceSupport,
     [switch]$SkipInstall,
     [switch]$ClearLogcat,
     [switch]$StopAfterRun
@@ -58,6 +59,9 @@ if ($MinimumTranslationM -gt 0.0) {
         "-MinimumEnvironmentDepthHeadMotionTranslationM",
         $MinimumTranslationM.ToString([System.Globalization.CultureInfo]::InvariantCulture)
     )
+}
+if ($RequireEnvironmentDepthSurfaceSupport) {
+    $smokeArgs += "-RequireEnvironmentDepthSurfaceSupport"
 }
 if ($SkipInstall) {
     $smokeArgs += "-SkipInstall"

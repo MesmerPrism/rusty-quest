@@ -63,6 +63,7 @@ $recordedHandReplayPath = Join-Path $repoRoot "fixtures\native-renderer\recorded
 $runtimeEvidenceFixturePath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-replay-visual-proof.logcat.txt"
 $liveHandDiagnosticPendingFixturePath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-live-hand-visual-diagnostic-pending.logcat.txt"
 $environmentDepthParticlesEvidenceFixturePath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-meta-environment-depth-particles.logcat.txt"
+$environmentDepthSurfaceSupportEvidenceFixturePath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-meta-environment-depth-surface-support.logcat.txt"
 $runtimeEvidenceDamagedPath = Join-Path $repoRoot "fixtures\damaged\native-renderer-replay-visual-missing-mesh.logcat.txt"
 $runtimeEvidenceDamagedPerformancePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-replay-performance-budget-miss.logcat.txt"
 $liveHandPrematureAcceptanceDamagedPath = Join-Path $repoRoot "fixtures\damaged\native-renderer-live-hand-visual-premature-acceptance.logcat.txt"
@@ -105,7 +106,7 @@ $environmentDepthInvalidCapacityDamagedProfilePath = Join-Path $repoRoot "fixtur
 $environmentDepthInvalidDepthUnitsPolicyDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-invalid-depth-units-policy.profile.json"
 $environmentDepthInvalidSurfaceSupportDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-invalid-surface-support.profile.json"
 
-foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $nativeCameraMetadataPath, $nativeCameraProfilesPath, $nativeCameraReaderSelectionPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $environmentDepthGeometryPath, $environmentDepthParticlesPath, $openxrEnvironmentDepthPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $cameraLumaDiagnosticShaderPath, $environmentDepthParticlesComputeShaderPath, $environmentDepthParticlesMetaComputeShaderPath, $environmentDepthParticlesVertexShaderPath, $environmentDepthParticlesFragmentShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $permissionPregrantToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $environmentDepthMotionProofToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $environmentDepthParticlesEvidenceFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowNoiseRecord30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath, $environmentDepthStatusProfilePath, $environmentDepthNativePassthroughParticlesProfilePath, $environmentDepthNativePassthroughMetaParticlesProfilePath, $environmentDepthNativePassthroughMetaParticlesLayer1ProfilePath, $environmentDepthNativePassthroughMetaParticlesLowCapacityProfilePath, $environmentDepthNativePassthroughMetaParticlesDebugColorsProfilePath, $environmentDepthLayer0ProfilePath, $environmentDepthLayer1ProfilePath, $environmentDepthRawDepthDebugProfilePath, $environmentDepthLocalSpaceProfilePath, $environmentDepthStageSpaceProfilePath, $environmentDepthCapacity65536ProfilePath, $environmentDepthStride8ProfilePath, $environmentDepthHandRemovalProfilePath, $environmentDepthLocalSurfelsProfilePath, $environmentDepthGlobalSurfacesProfilePath, $environmentDepthHybridSurfacesProfilePath, $environmentDepthHighRateJsonDamagedProfilePath, $environmentDepthInvalidRangeDamagedProfilePath, $environmentDepthInvalidCapacityDamagedProfilePath, $environmentDepthInvalidDepthUnitsPolicyDamagedProfilePath, $environmentDepthInvalidSurfaceSupportDamagedProfilePath)) {
+foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $nativeCameraMetadataPath, $nativeCameraProfilesPath, $nativeCameraReaderSelectionPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $environmentDepthGeometryPath, $environmentDepthParticlesPath, $openxrEnvironmentDepthPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $cameraLumaDiagnosticShaderPath, $environmentDepthParticlesComputeShaderPath, $environmentDepthParticlesMetaComputeShaderPath, $environmentDepthParticlesVertexShaderPath, $environmentDepthParticlesFragmentShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $permissionPregrantToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $environmentDepthMotionProofToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $environmentDepthParticlesEvidenceFixturePath, $environmentDepthSurfaceSupportEvidenceFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowNoiseRecord30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath, $environmentDepthStatusProfilePath, $environmentDepthNativePassthroughParticlesProfilePath, $environmentDepthNativePassthroughMetaParticlesProfilePath, $environmentDepthNativePassthroughMetaParticlesLayer1ProfilePath, $environmentDepthNativePassthroughMetaParticlesLowCapacityProfilePath, $environmentDepthNativePassthroughMetaParticlesDebugColorsProfilePath, $environmentDepthLayer0ProfilePath, $environmentDepthLayer1ProfilePath, $environmentDepthRawDepthDebugProfilePath, $environmentDepthLocalSpaceProfilePath, $environmentDepthStageSpaceProfilePath, $environmentDepthCapacity65536ProfilePath, $environmentDepthStride8ProfilePath, $environmentDepthHandRemovalProfilePath, $environmentDepthLocalSurfelsProfilePath, $environmentDepthGlobalSurfacesProfilePath, $environmentDepthHybridSurfacesProfilePath, $environmentDepthHighRateJsonDamagedProfilePath, $environmentDepthInvalidRangeDamagedProfilePath, $environmentDepthInvalidCapacityDamagedProfilePath, $environmentDepthInvalidDepthUnitsPolicyDamagedProfilePath, $environmentDepthInvalidSurfaceSupportDamagedProfilePath)) {
     if (-not (Test-Path $path)) {
         throw "Missing native renderer Android file: $path"
     }
@@ -164,6 +165,7 @@ $environmentDepthMotionProofToolText = Get-Content -Raw -Path $environmentDepthM
 $runtimeEvidenceFixtureText = Get-Content -Raw -Path $runtimeEvidenceFixturePath
 $liveHandDiagnosticPendingFixtureText = Get-Content -Raw -Path $liveHandDiagnosticPendingFixturePath
 $environmentDepthParticlesEvidenceFixtureText = Get-Content -Raw -Path $environmentDepthParticlesEvidenceFixturePath
+$environmentDepthSurfaceSupportEvidenceFixtureText = Get-Content -Raw -Path $environmentDepthSurfaceSupportEvidenceFixturePath
 $replayVisualProfile = Get-Content -Raw -Path $replayVisualProfilePath
 $directHwbCameraQualityProfile = Get-Content -Raw -Path $directHwbCameraQualityProfilePath
 $directHwbCameraQualityBt601UnormProfile = Get-Content -Raw -Path $directHwbCameraQualityBt601UnormProfilePath
@@ -1068,6 +1070,8 @@ foreach ($token in @(
     'live_visual_diagnostic_caveat_checked',
     'RequireEnvironmentDepthParticles',
     'environment_depth_particles_checked',
+    'RequireEnvironmentDepthSurfaceSupport',
+    'environment_depth_surface_support_checked',
     'ExpectedEnvironmentDepthParticleCount',
     'MinimumEnvironmentDepthSourceDepthSamples',
     'MinimumEnvironmentDepthHashProbeExhaustedCount',
@@ -1227,6 +1231,21 @@ foreach ($token in @(
     }
 }
 
+foreach ($token in @(
+    'environmentDepthDebugView=surface-support',
+    'environmentDepthParticleDebugColorMode=surface-support',
+    'environmentDepthSurfaceModel=local-surfels',
+    'environmentDepthSurfaceSupportRequested=true',
+    'environmentDepthSurfaceSupportEnforced=true',
+    'environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-pending',
+    'environmentDepthSurfaceSupportedCells=552',
+    'environmentDepthSurfaceRejectedIsolatedCells=36'
+)) {
+    if ($environmentDepthSurfaceSupportEvidenceFixtureText -notmatch [regex]::Escape($token)) {
+        throw "Native renderer Meta environment-depth surface-support fixture missing token: $token"
+    }
+}
+
 $parseTokens = $null
 $parseErrors = $null
 [System.Management.Automation.Language.Parser]::ParseFile($runtimeProfileToolPath, [ref]$parseTokens, [ref]$parseErrors) | Out-Null
@@ -1320,6 +1339,7 @@ foreach ($token in @(
     'RequireReplayVisualProof',
     'RequireLiveVisualDiagnosticCaveat',
     'RequireEnvironmentDepthParticles',
+    'RequireEnvironmentDepthSurfaceSupport',
     'ExpectedEnvironmentDepthParticleCount',
     'MinimumEnvironmentDepthSourceDepthSamples',
     'MinimumEnvironmentDepthHashProbeExhaustedCount',
@@ -1350,6 +1370,7 @@ foreach ($token in @(
     'MinimumHeadMotionSamples',
     'MinimumYawDeg',
     'MinimumTranslationM',
+    'RequireEnvironmentDepthSurfaceSupport',
     'MinimumEnvironmentDepthHeadMotionSamples',
     'MinimumEnvironmentDepthHeadMotionYawDeg',
     'MinimumEnvironmentDepthHeadMotionTranslationM',
@@ -1875,14 +1896,20 @@ foreach ($token in @(
     'environmentDepthFreeSpaceConfidenceSkippedCount',
     'environmentDepthParticleDebugColorMode',
     'environmentDepthSurfaceSupportRequested',
-    'environmentDepthSurfaceSupportEnforced=false',
+    'environmentDepthSurfaceSupportEnforced',
     'environmentDepthSurfaceSupportedCells',
     'environmentDepthSurfaceRejectedIsolatedCells',
     'environmentDepthSurfaceLargestComponentCells',
     'environmentDepthSurfaceSupportStatus',
+    'DEPTH_FLAG_SURFACE_SUPPORT_ENFORCED',
+    'RAW_DEBUG_SURFACE_SUPPORTED_CELLS',
+    'RAW_DEBUG_SURFACE_REJECTED_ISOLATED_CELLS',
+    'surface_support_runtime_enforced',
+    'enforced-local-depth-neighborhood-component-pending',
     'particle_debug_color_mode',
     'particle_debug_color_code',
     'DEBUG_COLOR_FREE_SPACE_STATE',
+    'DEBUG_COLOR_SURFACE_SUPPORT',
     'debug_particle_color',
     'depth_source_layer_index',
     'raw_depth_to_meters',
@@ -2515,6 +2542,14 @@ foreach ($damagedProfile in @($environmentDepthHighRateJsonDamagedProfilePath, $
 & $runtimeEvidenceToolPath `
     -LogcatPath $environmentDepthParticlesEvidenceFixturePath `
     -RequireEnvironmentDepthParticles `
+    -ExpectedEnvironmentDepthParticleCount 32768 `
+    -MinimumEnvironmentDepthSourceDepthSamples 1 `
+    -RequirePrivateSlotNoPayload | Out-Null
+
+& $runtimeEvidenceToolPath `
+    -LogcatPath $environmentDepthSurfaceSupportEvidenceFixturePath `
+    -RequireEnvironmentDepthParticles `
+    -RequireEnvironmentDepthSurfaceSupport `
     -ExpectedEnvironmentDepthParticleCount 32768 `
     -MinimumEnvironmentDepthSourceDepthSamples 1 `
     -RequirePrivateSlotNoPayload | Out-Null
