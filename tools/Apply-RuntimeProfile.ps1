@@ -36,7 +36,10 @@ $EnvironmentDepthSurfaceSupportMinNeighborsProperty = "debug.rustyquest.native_r
 $EnvironmentDepthSurfaceSupportMinObservationsProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.min_observations"
 $EnvironmentDepthSurfaceSupportMinSourceLayersProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.min_source_layers"
 $EnvironmentDepthSurfaceSupportComponentMinCellsProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.component_min_cells"
+$EnvironmentDepthSurfaceSupportComponentModeProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.component_mode"
+$EnvironmentDepthSurfaceSupportNormalSourceProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_source"
 $EnvironmentDepthSurfaceSupportNormalCoherenceProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_coherence"
+$EnvironmentDepthSurfaceSupportSmallComponentPolicyProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.small_component_policy"
 $EnvironmentDepthSurfaceSupportFreeSpaceDecayProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.free_space_decay"
 $StimulusVolumePropertyPrefix = "debug.rustyquest.native_renderer.stimulus_volume."
 $StimulusVolumeEnabledProperty = "debug.rustyquest.native_renderer.stimulus_volume.enabled"
@@ -46,6 +49,7 @@ $StimulusVolumeRenderTargetProperty = "debug.rustyquest.native_renderer.stimulus
 $StimulusVolumeRaymarchSamplesProperty = "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples"
 $StimulusVolumeCentralFovFractionProperty = "debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction"
 $StimulusVolumeGradientSmoothingProperty = "debug.rustyquest.native_renderer.stimulus_volume.gradient_smoothing"
+$StimulusVolumePatternFamilyProperty = "debug.rustyquest.native_renderer.stimulus_volume.pattern_family"
 $StimulusVolumeRandomizeEnabledProperty = "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled"
 $StimulusVolumeRandomizeMinHzProperty = "debug.rustyquest.native_renderer.stimulus_volume.randomize.min_hz"
 $StimulusVolumeRandomizeMaxHzProperty = "debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz"
@@ -526,7 +530,16 @@ function Assert-EnvironmentDepthProperty {
                 "surface-support",
                 "surface",
                 "support",
-                "debug-surface-support"
+                "debug-surface-support",
+                "normal-coherence",
+                "coherence",
+                "debug-normal-coherence",
+                "support-count",
+                "surface-support-count",
+                "debug-support-count",
+                "surface-residual",
+                "residual",
+                "debug-surface-residual"
             ) -notcontains $normalized) {
                 throw "Environment depth debug_view is not supported: $Value"
             }
@@ -590,9 +603,27 @@ function Assert-EnvironmentDepthProperty {
             Assert-EnvironmentDepthUInt -Name $Name -Value $Value -Min 1 -Max 4096
             return
         }
+        $EnvironmentDepthSurfaceSupportComponentModeProperty {
+            if (@("off", "local-hint", "local", "hint", "local-neighborhood", "connected-labels", "connected", "labels", "connected-components") -notcontains $normalized) {
+                throw "Environment depth surface_support.component_mode is not supported: $Value"
+            }
+            return
+        }
+        $EnvironmentDepthSurfaceSupportNormalSourceProperty {
+            if (@("off", "depth-neighborhood", "depth", "depth-view", "cell-neighborhood", "cell", "scene-cell", "retained-cell") -notcontains $normalized) {
+                throw "Environment depth surface_support.normal_source is not supported: $Value"
+            }
+            return
+        }
         $EnvironmentDepthSurfaceSupportNormalCoherenceProperty {
             if (@("off", "loose", "low", "strict", "high") -notcontains $normalized) {
                 throw "Environment depth surface_support.normal_coherence is not supported: $Value"
+            }
+            return
+        }
+        $EnvironmentDepthSurfaceSupportSmallComponentPolicyProperty {
+            if (@("dim", "hide", "hidden", "debug-only", "debug", "diagnostic-only") -notcontains $normalized) {
+                throw "Environment depth surface_support.small_component_policy is not supported: $Value"
             }
             return
         }
@@ -628,6 +659,36 @@ function Assert-StimulusVolumeProperty {
         $StimulusVolumeCompositionProperty {
             if (@("opaque-black-projection", "alpha-over-native-passthrough") -notcontains $normalized) {
                 throw "Stimulus volume composition is not supported: $Value"
+            }
+            return
+        }
+        $StimulusVolumePatternFamilyProperty {
+            if (@(
+                "randomized-trevor-vocabulary",
+                "randomized",
+                "random",
+                "trevor-vocabulary",
+                "trevor-mix",
+                "mixed",
+                "interference-mix",
+                "stripes",
+                "stripe",
+                "ripples",
+                "ripple",
+                "rings",
+                "rays",
+                "ray",
+                "radial-rays",
+                "checker",
+                "checkerboard",
+                "checkers",
+                "spiral",
+                "spirals",
+                "noise-field",
+                "noise",
+                "blobs"
+            ) -notcontains $normalized) {
+                throw "Stimulus volume pattern_family is not supported: $Value"
             }
             return
         }

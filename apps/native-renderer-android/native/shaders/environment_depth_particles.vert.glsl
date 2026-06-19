@@ -13,6 +13,7 @@ layout(push_constant) uniform EnvironmentDepthParticlePush {
     vec4 depth_eye_position;
     vec4 depth_eye_orientation_xyzw;
     vec4 depth_fov_tangents;
+    vec4 surface_params;
 } pc;
 
 layout(location = 0) out vec2 v_mask_uv;
@@ -27,6 +28,9 @@ const float DEBUG_COLOR_SOURCE_LAYER = 3.0;
 const float DEBUG_COLOR_HASH_PROBE = 4.0;
 const float DEBUG_COLOR_FREE_SPACE_STATE = 5.0;
 const float DEBUG_COLOR_SURFACE_SUPPORT = 6.0;
+const float DEBUG_COLOR_NORMAL_COHERENCE = 7.0;
+const float DEBUG_COLOR_SUPPORT_COUNT = 8.0;
+const float DEBUG_COLOR_SURFACE_RESIDUAL = 9.0;
 const float SCENE_PARTICLE_FADE_START_FRAMES = 720.0;
 const float SCENE_PARTICLE_RETIRE_FRAMES = 1440.0;
 
@@ -164,6 +168,24 @@ vec4 debug_particle_color(
                     clamp(particle_color.a * max(age_alpha, 0.44), 0.0, 1.0))
                 : vec4(candidate, clamp(particle_color.a * max(age_alpha, 0.30), 0.0, 1.0));
     }
+    if (mode == DEBUG_COLOR_NORMAL_COHERENCE) {
+        vec3 pending = vec3(0.16, 0.20, 1.00);
+        vec3 coherent_color = vec3(0.08, 1.00, 0.56);
+        vec3 stale = vec3(1.00, 0.22, 0.08);
+        return retired
+            ? vec4(stale, 0.52)
+            : confirmed
+                ? vec4(mix(coherent_color, vec3(1.00, 0.94, 0.18), 1.0 - confidence), 0.88)
+                : vec4(pending, clamp(particle_color.a * max(age_alpha, 0.30), 0.0, 1.0));
+    }
+    if (mode == DEBUG_COLOR_SUPPORT_COUNT) {
+        float support_proxy = confirmed ? clamp(confidence, 0.0, 1.0) : active_probe01(particle_state) * 0.5;
+        return vec4(heat_color(support_proxy), clamp(particle_color.a * max(age_alpha, 0.34), 0.0, 1.0));
+    }
+    if (mode == DEBUG_COLOR_SURFACE_RESIDUAL) {
+        float residual_proxy = confirmed ? (1.0 - confidence) : max(age01, 0.18);
+        return vec4(heat_color(residual_proxy), clamp(particle_color.a * max(age_alpha, 0.36), 0.0, 1.0));
+    }
     return vec4(
         clamp(particle_color.rgb, vec3(0.0), vec3(1.0)),
         clamp(particle_color.a * age_alpha, 0.0, 1.0));
@@ -194,8 +216,12 @@ void main() {
     vec4 source_sample = particles.rows[base + 2u];
     vec4 particle_state = particles.rows[base + 3u];
     float age_alpha = scene_particle_age_alpha(particle_state);
-    bool retired_debug = (particle_debug_color_mode() == DEBUG_COLOR_FREE_SPACE_STATE
-            || particle_debug_color_mode() == DEBUG_COLOR_SURFACE_SUPPORT)
+    float debug_mode = particle_debug_color_mode();
+    bool retired_debug = (debug_mode == DEBUG_COLOR_FREE_SPACE_STATE
+            || debug_mode == DEBUG_COLOR_SURFACE_SUPPORT
+            || debug_mode == DEBUG_COLOR_NORMAL_COHERENCE
+            || debug_mode == DEBUG_COLOR_SUPPORT_COUNT
+            || debug_mode == DEBUG_COLOR_SURFACE_RESIDUAL)
         && scene_particle_retired(source_sample, particle_state);
     bool valid = (source_sample.w >= 0.5 && particle_color.a > 0.002 && age_alpha > 0.01)
         || retired_debug;

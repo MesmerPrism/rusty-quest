@@ -101,8 +101,14 @@ pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_SOURCE_LAYERS: &str 
     "debug.rustyquest.native_renderer.environment_depth.surface_support.min_source_layers";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MIN_CELLS: &str =
     "debug.rustyquest.native_renderer.environment_depth.surface_support.component_min_cells";
+pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MODE: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.component_mode";
+pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_SOURCE: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_source";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE: &str =
     "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_coherence";
+pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_SMALL_COMPONENT_POLICY: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.small_component_policy";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY: &str =
     "debug.rustyquest.native_renderer.environment_depth.surface_support.free_space_decay";
 pub(crate) const PROP_STIMULUS_VOLUME_ENABLED: &str =
@@ -119,6 +125,8 @@ pub(crate) const PROP_STIMULUS_VOLUME_CENTRAL_FOV_FRACTION: &str =
     "debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction";
 pub(crate) const PROP_STIMULUS_VOLUME_GRADIENT_SMOOTHING: &str =
     "debug.rustyquest.native_renderer.stimulus_volume.gradient_smoothing";
+pub(crate) const PROP_STIMULUS_VOLUME_PATTERN_FAMILY: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.pattern_family";
 pub(crate) const PROP_STIMULUS_VOLUME_RANDOMIZE_ENABLED: &str =
     "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled";
 pub(crate) const PROP_STIMULUS_VOLUME_RANDOMIZE_MIN_HZ: &str =

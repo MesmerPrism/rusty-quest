@@ -219,13 +219,17 @@ requiring headset movement. Their dry-run property evidence remains
 non-enforcing, but the native Vulkan scene-map compute path now applies a
 bounded local-depth-neighborhood support gate for requested surface modes and
 reports `environmentDepthSurfaceSupportEnforced=true`,
-`environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-pending`,
+`environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-local-hint`,
 `environmentDepthSurfaceSupportedCells`, and
 `environmentDepthSurfaceRejectedIsolatedCells` on runtime particle markers.
-The same marker reports `environmentDepthSurfaceLifecycleStatus` and
+The same marker reports aggregate local-patch component hints
+(`environmentDepthSurfaceLargestComponentCells`,
+`environmentDepthSurfaceComponentCandidateCells`, and
+`environmentDepthSurfaceConfirmedComponentCells`) plus
+`environmentDepthSurfaceLifecycleStatus` and
 candidate/confirmed/promoted/candidate-retired lifecycle counters for retained
-scene cells. Global connected-component support, largest-component proof, and
-headset motion acceptance remain separate gates.
+scene cells. Global connected-label support and headset motion acceptance
+remain separate gates.
 Wrapper runs also require
 the performance budget gate by default; the checker records the observed FPS,
 stale-frame count, and CPU/GPU stage timing budget results, and fails if a

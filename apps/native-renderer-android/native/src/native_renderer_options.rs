@@ -20,8 +20,9 @@ pub(crate) use crate::native_renderer_environment_depth_options::{
     NativeEnvironmentDepthDebugView, NativeEnvironmentDepthDepthUnitsPolicy,
     NativeEnvironmentDepthLayerPolicy, NativeEnvironmentDepthMode,
     NativeEnvironmentDepthReferenceSpace, NativeEnvironmentDepthSource,
-    NativeEnvironmentDepthSurfaceFreeSpaceDecay, NativeEnvironmentDepthSurfaceModel,
-    NativeEnvironmentDepthSurfaceNormalCoherence,
+    NativeEnvironmentDepthSurfaceComponentMode, NativeEnvironmentDepthSurfaceFreeSpaceDecay,
+    NativeEnvironmentDepthSurfaceModel, NativeEnvironmentDepthSurfaceNormalCoherence,
+    NativeEnvironmentDepthSurfaceNormalSource, NativeEnvironmentDepthSurfaceSmallComponentPolicy,
 };
 pub(crate) use crate::native_renderer_hand_anchor_particle_options::NativeHandAnchorParticleSettings;
 #[cfg(any(target_os = "android", test))]
@@ -44,7 +45,8 @@ pub(crate) use crate::native_renderer_stimulus_volume_options::NativeStimulusVol
 #[allow(unused_imports)]
 pub(crate) use crate::native_renderer_stimulus_volume_options::{
     NativeStimulusVolumeColorMode, NativeStimulusVolumeCompositionMode,
-    NativeStimulusVolumeProfile, NativeStimulusVolumeRenderTarget,
+    NativeStimulusVolumePatternFamily, NativeStimulusVolumeProfile,
+    NativeStimulusVolumeRenderTarget,
 };
 pub(crate) use crate::native_renderer_visual_options::{
     CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings, NativePrivateLayerSettings,

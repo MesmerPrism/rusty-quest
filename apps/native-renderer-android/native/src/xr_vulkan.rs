@@ -1683,6 +1683,9 @@ unsafe fn run_projection_frames(
                     renderer.randomize(stimulus_volume_settings, frame_count);
                 }
             }
+            if controller_events.panel_toggle_triggered {
+                crate::native_renderer_panel_bridge::toggle_control_panel(app, frame_count);
+            }
         }
         if let Some(bridge) = breath_bridge.as_mut() {
             if let Some(input) = bridge.poll_input(dt_seconds, frame_count) {

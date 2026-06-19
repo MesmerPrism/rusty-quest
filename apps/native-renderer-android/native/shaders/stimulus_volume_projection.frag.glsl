@@ -7,6 +7,8 @@ layout(push_constant) uniform StimulusVolumePush {
     vec4 params1;
     vec4 params2;
     vec4 params3;
+    vec4 params4;
+    vec4 params5;
 } pushData;
 
 layout(location = 0) in vec2 inUv;

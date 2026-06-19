@@ -48,8 +48,14 @@ const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_SOURCE_LAYERS: &str =
     "debug.rustyquest.native_renderer.environment_depth.surface_support.min_source_layers";
 const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MIN_CELLS: &str =
     "debug.rustyquest.native_renderer.environment_depth.surface_support.component_min_cells";
+const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MODE: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.component_mode";
+const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_SOURCE: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_source";
 const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE: &str =
     "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_coherence";
+const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_SMALL_COMPONENT_POLICY: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.small_component_policy";
 const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY: &str =
     "debug.rustyquest.native_renderer.environment_depth.surface_support.free_space_decay";
 const STIMULUS_VOLUME_PROP_PREFIX: &str = "debug.rustyquest.native_renderer.stimulus_volume.";
@@ -65,6 +71,8 @@ const STIMULUS_VOLUME_CENTRAL_FOV_FRACTION: &str =
     "debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction";
 const STIMULUS_VOLUME_GRADIENT_SMOOTHING: &str =
     "debug.rustyquest.native_renderer.stimulus_volume.gradient_smoothing";
+const STIMULUS_VOLUME_PATTERN_FAMILY: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.pattern_family";
 const STIMULUS_VOLUME_RANDOMIZE_ENABLED: &str =
     "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled";
 const STIMULUS_VOLUME_RANDOMIZE_MIN_HZ: &str =
@@ -841,6 +849,41 @@ fn validate_stimulus_volume_property(property: &PropertyValue, errors: &mut Vec<
                 )));
             }
         }
+        STIMULUS_VOLUME_PATTERN_FAMILY => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(
+                normalized.as_str(),
+                "randomized-trevor-vocabulary"
+                    | "randomized"
+                    | "random"
+                    | "trevor-vocabulary"
+                    | "trevor-mix"
+                    | "mixed"
+                    | "interference-mix"
+                    | "stripes"
+                    | "stripe"
+                    | "ripples"
+                    | "ripple"
+                    | "rings"
+                    | "rays"
+                    | "ray"
+                    | "radial-rays"
+                    | "checker"
+                    | "checkerboard"
+                    | "checkers"
+                    | "spiral"
+                    | "spirals"
+                    | "noise-field"
+                    | "noise"
+                    | "blobs"
+            );
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "stimulus volume pattern_family {} is not supported",
+                    property.value
+                )));
+            }
+        }
         STIMULUS_VOLUME_RENDER_TARGET => {
             let normalized = normalized_value(&property.value);
             let valid = matches!(
@@ -1083,6 +1126,15 @@ fn validate_environment_depth_property(
                     | "surface"
                     | "support"
                     | "debug-surface-support"
+                    | "normal-coherence"
+                    | "coherence"
+                    | "debug-normal-coherence"
+                    | "support-count"
+                    | "surface-support-count"
+                    | "debug-support-count"
+                    | "surface-residual"
+                    | "residual"
+                    | "debug-surface-residual"
             );
             if !valid {
                 errors.push(ValidationError::new(format!(
@@ -1164,6 +1216,47 @@ fn validate_environment_depth_property(
         ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MIN_CELLS => {
             validate_environment_depth_u32(property, 1, 4096, errors);
         }
+        ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MODE => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(
+                normalized.as_str(),
+                "off"
+                    | "local-hint"
+                    | "local"
+                    | "hint"
+                    | "local-neighborhood"
+                    | "connected-labels"
+                    | "connected"
+                    | "labels"
+                    | "connected-components"
+            );
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "environment depth surface_support.component_mode {} is not supported",
+                    property.value
+                )));
+            }
+        }
+        ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_SOURCE => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(
+                normalized.as_str(),
+                "off"
+                    | "depth-neighborhood"
+                    | "depth"
+                    | "depth-view"
+                    | "cell-neighborhood"
+                    | "cell"
+                    | "scene-cell"
+                    | "retained-cell"
+            );
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "environment depth surface_support.normal_source {} is not supported",
+                    property.value
+                )));
+            }
+        }
         ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE => {
             let normalized = normalized_value(&property.value);
             let valid = matches!(
@@ -1173,6 +1266,19 @@ fn validate_environment_depth_property(
             if !valid {
                 errors.push(ValidationError::new(format!(
                     "environment depth surface_support.normal_coherence {} is not supported",
+                    property.value
+                )));
+            }
+        }
+        ENVIRONMENT_DEPTH_SURFACE_SUPPORT_SMALL_COMPONENT_POLICY => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(
+                normalized.as_str(),
+                "dim" | "hide" | "hidden" | "debug-only" | "debug" | "diagnostic-only"
+            );
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "environment depth surface_support.small_component_policy {} is not supported",
                     property.value
                 )));
             }
@@ -1311,7 +1417,8 @@ fn validate_property_name(property: &str, label: &str, errors: &mut Vec<Validati
 mod tests {
     use super::{
         build_write_plan, validate_runtime_profile, PropertyValue, RuntimeProfile,
-        STIMULUS_VOLUME_RAYMARCH_SAMPLES, STIMULUS_VOLUME_RENDER_TARGET,
+        STIMULUS_VOLUME_PATTERN_FAMILY, STIMULUS_VOLUME_RAYMARCH_SAMPLES,
+        STIMULUS_VOLUME_RENDER_TARGET,
     };
 
     fn valid_profile() -> RuntimeProfile {
@@ -1537,8 +1644,8 @@ mod tests {
                     "../../../fixtures/runtime-profiles/quest-native-renderer-envdepth-hybrid-surfaces.profile.json"
                 ),
                 "profile.quest.native_renderer.envdepth_hybrid_surfaces",
-                "debug.rustyquest.native_renderer.environment_depth.surface_support.component_min_cells",
-                "16",
+                "debug.rustyquest.native_renderer.environment_depth.surface_support.small_component_policy",
+                "debug-only",
             ),
             (
                 include_str!(
@@ -1673,6 +1780,35 @@ mod tests {
                     && operation.value.as_deref() == Some(expected_samples)
             }));
         }
+    }
+
+    #[test]
+    fn stimulus_volume_pattern_family_profile_value_validates() {
+        let mut profile: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/runtime-profiles/quest-native-renderer-solid-black-stimulus-volume-performance.profile.json"
+        ))
+        .expect("stimulus volume profile JSON");
+        profile
+            .owned_android_properties
+            .push(STIMULUS_VOLUME_PATTERN_FAMILY.to_string());
+        profile.set_properties.push(PropertyValue {
+            name: STIMULUS_VOLUME_PATTERN_FAMILY.to_string(),
+            value: "spiral".to_string(),
+            source_setting_id: "native_renderer.stimulus_volume.pattern_family".to_string(),
+        });
+        validate_runtime_profile(&profile).expect("stimulus pattern family validates");
+
+        let mut damaged = profile;
+        damaged
+            .set_properties
+            .last_mut()
+            .expect("pattern family property")
+            .value = "not-a-family".to_string();
+        let errors =
+            validate_runtime_profile(&damaged).expect_err("must reject unknown pattern family");
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("pattern_family")));
     }
 
     #[test]

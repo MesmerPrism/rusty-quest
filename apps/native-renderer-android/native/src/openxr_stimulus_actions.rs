@@ -23,6 +23,8 @@ const BREATH_HAPTIC_AMPLITUDE: f32 = 0.45;
 pub(crate) struct StimulusVolumeActions {
     action_set: xr::ActionSet,
     right_primary_randomize: xr::Action<bool>,
+    right_trigger_panel_toggle: xr::Action<f32>,
+    right_select_panel_toggle: xr::Action<bool>,
     right_primary_reset: xr::Action<bool>,
     right_secondary_scale_driver_toggle: xr::Action<bool>,
     right_thumbstick_y: xr::Action<f32>,
@@ -40,6 +42,8 @@ pub(crate) struct StimulusVolumeActions {
     manifold_pose_published_count: u64,
     manifold_pose_dropped_count: u64,
     previous_right_primary_randomize_pressed: bool,
+    previous_right_trigger_panel_toggle_pressed: bool,
+    previous_right_select_panel_toggle_pressed: bool,
     previous_right_primary_reset_pressed: bool,
     previous_right_secondary_scale_driver_toggle_pressed: bool,
     suggested_binding_count: usize,
@@ -50,6 +54,7 @@ pub(crate) struct StimulusVolumeActions {
 #[derive(Debug, Default)]
 pub(crate) struct NativeRendererControllerEvents {
     pub(crate) stimulus_randomize_triggered: bool,
+    pub(crate) panel_toggle_triggered: bool,
     pub(crate) projection_target_inputs: Vec<ProjectionTargetInput>,
     pub(crate) right_grip_pose_active: bool,
     pub(crate) right_grip_pose_tracked: bool,
@@ -93,13 +98,12 @@ impl StimulusVolumeActions {
         if !stimulus_settings.enabled && !projection_target_settings.controls_enabled {
             crate::marker(
                 "stimulus-volume-input",
-                "status=disabled reason=native-controller-controls-disabled actionSetAttached=false rightPrimaryRandomizeAction=false",
+                "status=panel-toggle-only reason=native-controller-controls-disabled actionSetAttached=false rightPrimaryRandomizeAction=false rightTriggerPanelToggleAction=true",
             );
             crate::marker(
                 "projection-target-input",
                 "status=disabled reason=projection-target-controls-disabled actionSetAttached=false rightThumbstickYAction=false rightPrimaryResetAction=false rightSecondaryScaleDriverToggleAction=false rightGripPoseAction=false",
             );
-            return Ok(None);
         }
 
         let action_set = instance
@@ -113,6 +117,20 @@ impl StimulusVolumeActions {
         let right_primary_randomize = action_set
             .create_action::<bool>("right_primary_randomize", "Right Primary Randomize", &[])
             .map_err(|error| format!("create stimulus randomize action: {error}"))?;
+        let right_trigger_panel_toggle = action_set
+            .create_action::<f32>(
+                "right_trigger_panel_toggle",
+                "Right Trigger Panel Toggle",
+                &[],
+            )
+            .map_err(|error| format!("create panel toggle trigger action: {error}"))?;
+        let right_select_panel_toggle = action_set
+            .create_action::<bool>(
+                "right_select_panel_toggle",
+                "Right Select Panel Toggle Fallback",
+                &[],
+            )
+            .map_err(|error| format!("create panel toggle fallback action: {error}"))?;
         let right_primary_reset = action_set
             .create_action::<bool>("right_primary_reset", "Right Primary Reset", &[])
             .map_err(|error| format!("create projection target reset action: {error}"))?;
@@ -174,6 +192,20 @@ impl StimulusVolumeActions {
                     bindings.push(xr::Binding::new(&right_primary_reset, input));
                 }
             }
+            if let Some(input_path) = profile.right_trigger_value_path {
+                let input = instance.string_to_path(input_path).map_err(|error| {
+                    format!("create OpenXR path for right trigger input {input_path}: {error}")
+                })?;
+                bindings.push(xr::Binding::new(&right_trigger_panel_toggle, input));
+            }
+            if let Some(input_path) = profile.right_select_fallback_path {
+                let input = instance.string_to_path(input_path).map_err(|error| {
+                    format!(
+                        "create OpenXR path for right select fallback input {input_path}: {error}"
+                    )
+                })?;
+                bindings.push(xr::Binding::new(&right_select_panel_toggle, input));
+            }
             if let Some(input_path) = profile.right_secondary_path {
                 let input = instance.string_to_path(input_path).map_err(|error| {
                     format!("create OpenXR path for secondary input {input_path}: {error}")
@@ -215,13 +247,17 @@ impl StimulusVolumeActions {
                     crate::marker(
                         "projection-target-input",
                         format!(
-                        "status=binding-suggested interactionProfile={} rightPrimaryInputPath={} rightSecondaryInputPath={} rightThumbstickYInputPath={} rightGripPoseInputPath={} rightHapticOutputPath={} rightControllerThumbstickYBinding={} rightControllerPrimaryResetBinding={} rightControllerSecondaryScaleDriverToggleBinding={} rightGripPoseBinding={} rightBreathHapticBinding={}",
+                        "status=binding-suggested interactionProfile={} rightPrimaryInputPath={} rightTriggerValueInputPath={} rightSelectFallbackInputPath={} rightSecondaryInputPath={} rightThumbstickYInputPath={} rightGripPoseInputPath={} rightHapticOutputPath={} rightTriggerPanelToggleBinding={} rightSelectPanelToggleFallbackBinding={} rightControllerThumbstickYBinding={} rightControllerPrimaryResetBinding={} rightControllerSecondaryScaleDriverToggleBinding={} rightGripPoseBinding={} rightBreathHapticBinding={}",
                             profile.profile_path,
                             profile.right_primary_path.unwrap_or("none"),
+                            profile.right_trigger_value_path.unwrap_or("none"),
+                            profile.right_select_fallback_path.unwrap_or("none"),
                             profile.right_secondary_path.unwrap_or("none"),
                             profile.right_thumbstick_y_path.unwrap_or("none"),
                             profile.right_grip_pose_path.unwrap_or("none"),
                             profile.right_haptic_output_path.unwrap_or("none"),
+                            profile.right_trigger_value_path.is_some(),
+                            profile.right_select_fallback_path.is_some(),
                             profile.right_thumbstick_y_path.is_some()
                                 && projection_joystick_binding_enabled,
                             profile.right_primary_path.is_some() && projection_controls_enabled,
@@ -234,7 +270,7 @@ impl StimulusVolumeActions {
                 Err(error) => crate::marker(
                     "projection-target-input",
                     format!(
-                        "status=binding-warning interactionProfile={} reason={} rightControllerThumbstickYBinding=false rightControllerPrimaryResetBinding=false rightControllerSecondaryScaleDriverToggleBinding=false rightGripPoseBinding=false rightBreathHapticBinding=false",
+                        "status=binding-warning interactionProfile={} reason={} rightTriggerPanelToggleBinding=false rightSelectPanelToggleFallbackBinding=false rightControllerThumbstickYBinding=false rightControllerPrimaryResetBinding=false rightControllerSecondaryScaleDriverToggleBinding=false rightGripPoseBinding=false rightBreathHapticBinding=false",
                         profile.profile_path,
                         crate::sanitize(&error.to_string())
                     ),
@@ -245,7 +281,7 @@ impl StimulusVolumeActions {
         crate::marker(
             "stimulus-volume-input",
             format!(
-                "status=config actionSet=stimulus_volume action=right_primary_randomize randomizeEnabled={} suggestedBindingCount={} rightControllerPrimaryButtonRandomize={} inputPath=/user/hand/right/input/a/click fallbackInputPath=/user/hand/right/input/select/click actionSetAttached=false",
+                "status=config actionSet=stimulus_volume action=right_primary_randomize randomizeEnabled={} suggestedBindingCount={} rightControllerPrimaryButtonRandomize={} inputPath=/user/hand/right/input/a/click fallbackInputPath=/user/hand/right/input/select/click rightTriggerPanelToggleAction=true rightControllerTriggerPanelToggle=true triggerInputPath=/user/hand/right/input/trigger/value selectFallbackInputPath=/user/hand/right/input/select/click actionSetAttached=false",
                 stimulus_settings.randomize_enabled,
                 suggested_binding_count,
                 stimulus_randomize_binding_enabled
@@ -290,6 +326,8 @@ impl StimulusVolumeActions {
         Ok(Some(Self {
             action_set,
             right_primary_randomize,
+            right_trigger_panel_toggle,
+            right_select_panel_toggle,
             right_primary_reset,
             right_secondary_scale_driver_toggle,
             right_thumbstick_y,
@@ -307,6 +345,8 @@ impl StimulusVolumeActions {
             manifold_pose_published_count: 0,
             manifold_pose_dropped_count: 0,
             previous_right_primary_randomize_pressed: false,
+            previous_right_trigger_panel_toggle_pressed: false,
+            previous_right_select_panel_toggle_pressed: false,
             previous_right_primary_reset_pressed: false,
             previous_right_secondary_scale_driver_toggle_pressed: false,
             suggested_binding_count,
@@ -344,7 +384,7 @@ impl StimulusVolumeActions {
         crate::marker(
             "stimulus-volume-input",
             format!(
-                "status=attached actionSet=stimulus_volume actionSetAttached=true suggestedBindingCount={} rightControllerPrimaryButtonRandomize={}",
+                "status=attached actionSet=stimulus_volume actionSetAttached=true suggestedBindingCount={} rightControllerPrimaryButtonRandomize={} rightControllerTriggerPanelToggle=true",
                 self.suggested_binding_count,
                 self.stimulus_settings.enabled && self.stimulus_settings.randomize_enabled
             ),
@@ -398,6 +438,7 @@ impl StimulusVolumeActions {
         }
 
         events.stimulus_randomize_triggered = self.poll_primary_randomize(session, frame_count);
+        events.panel_toggle_triggered = self.poll_panel_toggle(session, frame_count);
         if let Some(input) = self.poll_projection_reset(session, frame_count) {
             events.projection_target_inputs.push(input);
         }
@@ -832,6 +873,92 @@ impl StimulusVolumeActions {
         triggered
     }
 
+    fn poll_panel_toggle<G>(&mut self, session: &xr::Session<G>, frame_count: u64) -> bool {
+        let trigger_state = match self
+            .right_trigger_panel_toggle
+            .state(session, xr::Path::NULL)
+        {
+            Ok(state) => Some(state),
+            Err(error) => {
+                if frame_count == 0 || frame_count % 120 == 0 {
+                    crate::marker(
+                        "stimulus-panel",
+                        format!(
+                            "status=trigger-state-error frame={} reason={} rightControllerTriggerPanelToggle=false",
+                            frame_count,
+                            crate::sanitize(&error.to_string())
+                        ),
+                    );
+                }
+                None
+            }
+        };
+        let select_state = match self
+            .right_select_panel_toggle
+            .state(session, xr::Path::NULL)
+        {
+            Ok(state) => Some(state),
+            Err(error) => {
+                if frame_count == 0 || frame_count % 120 == 0 {
+                    crate::marker(
+                        "stimulus-panel",
+                        format!(
+                            "status=select-fallback-state-error frame={} reason={} rightSelectPanelToggleFallback=false",
+                            frame_count,
+                            crate::sanitize(&error.to_string())
+                        ),
+                    );
+                }
+                None
+            }
+        };
+
+        let trigger_pressed = trigger_state
+            .as_ref()
+            .is_some_and(|state| state.is_active && state.current_state >= 0.82);
+        let select_pressed = select_state
+            .as_ref()
+            .is_some_and(|state| state.is_active && state.current_state);
+        if frame_count == 0 || frame_count % 120 == 0 {
+            crate::marker(
+                "stimulus-panel",
+                format!(
+                    "status=polled frame={} rightControllerTriggerPanelToggle=true triggerActive={} triggerValue={:.3} selectFallbackActive={} selectFallbackState={} triggerThreshold=0.820",
+                    frame_count,
+                    trigger_state.as_ref().is_some_and(|state| state.is_active),
+                    trigger_state
+                        .as_ref()
+                        .map(|state| state.current_state)
+                        .unwrap_or(0.0),
+                    select_state.as_ref().is_some_and(|state| state.is_active),
+                    select_state
+                        .as_ref()
+                        .is_some_and(|state| state.current_state),
+                ),
+            );
+        }
+
+        let trigger_transition =
+            trigger_pressed && !self.previous_right_trigger_panel_toggle_pressed;
+        let select_transition = select_pressed && !self.previous_right_select_panel_toggle_pressed;
+        self.previous_right_trigger_panel_toggle_pressed = trigger_pressed;
+        self.previous_right_select_panel_toggle_pressed = select_pressed;
+
+        let triggered = trigger_transition || select_transition;
+        if triggered {
+            crate::marker(
+                "stimulus-panel",
+                format!(
+                    "event=right-trigger-panel-toggle status=triggered frame={} rightControllerTriggerPanelToggle=true triggerPressed={} selectFallbackPressed={}",
+                    frame_count,
+                    trigger_pressed,
+                    select_pressed
+                ),
+            );
+        }
+        triggered
+    }
+
     fn poll_projection_reset<G>(
         &mut self,
         session: &xr::Session<G>,
@@ -992,6 +1119,8 @@ fn breath_haptic_pulse_hz() -> f32 {
 struct InteractionProfileBindings {
     profile_path: &'static str,
     right_primary_path: Option<&'static str>,
+    right_trigger_value_path: Option<&'static str>,
+    right_select_fallback_path: Option<&'static str>,
     right_secondary_path: Option<&'static str>,
     right_thumbstick_y_path: Option<&'static str>,
     right_grip_pose_path: Option<&'static str>,
@@ -1002,6 +1131,8 @@ const INTERACTION_PROFILES: &[InteractionProfileBindings] = &[
     InteractionProfileBindings {
         profile_path: "/interaction_profiles/oculus/touch_controller",
         right_primary_path: Some("/user/hand/right/input/a/click"),
+        right_trigger_value_path: Some("/user/hand/right/input/trigger/value"),
+        right_select_fallback_path: None,
         right_secondary_path: Some("/user/hand/right/input/b/click"),
         right_thumbstick_y_path: Some("/user/hand/right/input/thumbstick/y"),
         right_grip_pose_path: Some("/user/hand/right/input/grip/pose"),
@@ -1010,6 +1141,8 @@ const INTERACTION_PROFILES: &[InteractionProfileBindings] = &[
     InteractionProfileBindings {
         profile_path: "/interaction_profiles/meta/touch_controller_plus",
         right_primary_path: Some("/user/hand/right/input/a/click"),
+        right_trigger_value_path: Some("/user/hand/right/input/trigger/value"),
+        right_select_fallback_path: None,
         right_secondary_path: Some("/user/hand/right/input/b/click"),
         right_thumbstick_y_path: Some("/user/hand/right/input/thumbstick/y"),
         right_grip_pose_path: Some("/user/hand/right/input/grip/pose"),
@@ -1018,6 +1151,8 @@ const INTERACTION_PROFILES: &[InteractionProfileBindings] = &[
     InteractionProfileBindings {
         profile_path: "/interaction_profiles/khr/simple_controller",
         right_primary_path: Some("/user/hand/right/input/select/click"),
+        right_trigger_value_path: None,
+        right_select_fallback_path: Some("/user/hand/right/input/select/click"),
         right_secondary_path: None,
         right_thumbstick_y_path: None,
         right_grip_pose_path: Some("/user/hand/right/input/grip/pose"),

@@ -607,6 +607,12 @@ impl GpuEnvironmentDepthParticleRenderer {
             depth_eye_position: eye_projection.position,
             depth_eye_orientation_xyzw: eye_projection.orientation_xyzw,
             depth_fov_tangents: eye_projection.fov_tangents,
+            surface_params: [
+                settings.surface_normal_source_code(),
+                settings.surface_normal_coherence_code(),
+                settings.surface_support_component_mode.push_constant_code(),
+                settings.surface_support_component_min_cells as f32,
+            ],
         };
         let compute_write_barrier = [shader_to_compute_write_barrier(&self.particle_buffer)];
         device.cmd_pipeline_barrier(
@@ -801,6 +807,12 @@ impl GpuEnvironmentDepthParticleRenderer {
             depth_eye_position,
             depth_eye_orientation_xyzw: frame.depth_eye_orientation_xyzw,
             depth_fov_tangents: frame.depth_fov_tangents,
+            surface_params: [
+                settings.surface_normal_source_code(),
+                settings.surface_normal_coherence_code(),
+                settings.surface_support_component_mode.push_constant_code(),
+                settings.surface_support_component_min_cells as f32,
+            ],
         };
         let mut compute_write_barrier =
             vec![shader_to_compute_write_barrier(&self.particle_buffer)];
@@ -921,6 +933,12 @@ impl GpuEnvironmentDepthParticleRenderer {
             depth_eye_position: eye_projection.position,
             depth_eye_orientation_xyzw: eye_projection.orientation_xyzw,
             depth_fov_tangents: eye_projection.fov_tangents,
+            surface_params: [
+                settings.surface_normal_source_code(),
+                settings.surface_normal_coherence_code(),
+                settings.surface_support_component_mode.push_constant_code(),
+                settings.surface_support_component_min_cells as f32,
+            ],
         };
         let descriptor_set = match self.source_kind {
             EnvironmentDepthParticleRendererSource::SyntheticGpuProof => self.descriptor_sets[0],
@@ -1437,4 +1455,5 @@ struct EnvironmentDepthParticlePush {
     depth_eye_position: [f32; 4],
     depth_eye_orientation_xyzw: [f32; 4],
     depth_fov_tangents: [f32; 4],
+    surface_params: [f32; 4],
 }

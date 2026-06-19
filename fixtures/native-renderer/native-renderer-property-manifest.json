@@ -6,7 +6,7 @@
     "apps/native-renderer-android/native/src/native_renderer_properties.rs",
     "apps/native-renderer-android/native/src/projection_target_state.rs"
   ],
-  "property_count": 102,
+  "property_count": 106,
   "properties": [
     {
       "name": "debug.rustyquest.native_renderer.camera.direct_border.opacity",
@@ -198,7 +198,10 @@
         "source-layer",
         "hash-probe",
         "free-space-state",
-        "surface-support"
+        "surface-support",
+        "normal-coherence",
+        "support-count",
+        "surface-residual"
       ],
       "validators": [
         "runtime-parser",
@@ -451,6 +454,26 @@
       ]
     },
     {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.component_mode",
+      "family": "environment_depth",
+      "runtime_owner": "native_renderer_environment_depth_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "off",
+        "local-hint",
+        "connected-labels"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
       "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.free_space_decay",
       "family": "environment_depth",
       "runtime_owner": "native_renderer_environment_depth_options",
@@ -547,6 +570,26 @@
       ]
     },
     {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_source",
+      "family": "environment_depth",
+      "runtime_owner": "native_renderer_environment_depth_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "off",
+        "depth-neighborhood",
+        "cell-neighborhood"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
       "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.radius_cells",
       "family": "environment_depth",
       "runtime_owner": "native_renderer_environment_depth_options",
@@ -558,6 +601,26 @@
         "min": 1,
         "max": 8
       },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.small_component_policy",
+      "family": "environment_depth",
+      "runtime_owner": "native_renderer_environment_depth_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "dim",
+        "hide",
+        "debug-only"
+      ],
       "validators": [
         "runtime-parser",
         "profile-matrix",
@@ -1753,6 +1816,31 @@
         "min": 0.0,
         "max": 1.0
       },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.pattern_family",
+      "family": "stimulus_volume",
+      "runtime_owner": "native_renderer_stimulus_volume_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "randomized-trevor-vocabulary",
+        "trevor-mix",
+        "stripes",
+        "ripples",
+        "rays",
+        "checker",
+        "spiral",
+        "noise-field"
+      ],
       "validators": [
         "runtime-parser",
         "profile-matrix",

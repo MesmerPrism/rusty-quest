@@ -20,8 +20,8 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-if ($manifest.property_count -ne 102 -or $manifest.properties.Count -ne 102) {
-    throw "Native renderer property manifest must cover the current 102-property runtime surface."
+if ($manifest.property_count -ne 106 -or $manifest.properties.Count -ne 106) {
+    throw "Native renderer property manifest must cover the current 106-property runtime surface."
 }
 foreach ($entry in @($manifest.properties)) {
     if ([string]$entry.lifecycle -ne "startup-effective") {
@@ -37,6 +37,9 @@ foreach ($entry in @($manifest.properties)) {
 
 foreach ($token in @(
     'debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction',
+    'debug.rustyquest.native_renderer.environment_depth.surface_support.component_mode',
+    'debug.rustyquest.native_renderer.environment_depth.surface_support.normal_source',
+    'debug.rustyquest.native_renderer.environment_depth.surface_support.small_component_policy',
     'debug.rustyquest.native_renderer.environment_depth.surface_support.min_neighbors',
     'debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload',
     'native_renderer_visual_options',

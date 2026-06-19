@@ -71,14 +71,16 @@ $buildTools = Get-LatestDirectory -Parent (Join-Path $AndroidHome "build-tools")
 $platformRoot = Get-LatestDirectory -Parent (Join-Path $AndroidHome "platforms") -Pattern "android-*"
 $platformJar = Join-Path $platformRoot "android.jar"
 $aapt2 = Join-Path $buildTools "aapt2.exe"
+$d8 = Join-Path $buildTools "d8.bat"
 $zipalign = Join-Path $buildTools "zipalign.exe"
 $apksigner = Join-Path $buildTools "apksigner.bat"
+$javac = Join-Path $JavaHome "bin\javac.exe"
 $jar = Join-Path $JavaHome "bin\jar.exe"
 $keytool = Join-Path $JavaHome "bin\keytool.exe"
 $linker = Join-Path $NdkHome "toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android29-clang.cmd"
 $cargoCommand = Get-Command cargo -ErrorAction Stop
 
-foreach ($tool in @($platformJar, $aapt2, $zipalign, $apksigner, $jar, $keytool, $linker)) {
+foreach ($tool in @($platformJar, $aapt2, $d8, $zipalign, $apksigner, $javac, $jar, $keytool, $linker)) {
     if (-not (Test-Path $tool)) {
         throw "Required tool not found: $tool"
     }
@@ -97,6 +99,9 @@ if (Test-Path $OutDir) {
 }
 
 $assetsDir = Join-Path $OutDir "assets"
+$classesDir = Join-Path $OutDir "classes"
+$dexDir = Join-Path $OutDir "dex"
+$classesJar = Join-Path $OutDir "classes.jar"
 $nativeStageRoot = Join-Path $OutDir "native"
 $nativeLibDir = Join-Path $nativeStageRoot "lib\arm64-v8a"
 $cargoTargetDir = Join-Path $OutDir "cargo-target"
@@ -109,7 +114,7 @@ if ([string]::IsNullOrWhiteSpace($Keystore)) {
     $Keystore = Join-Path $targetRoot "rusty-quest-native-renderer-debug.keystore"
 }
 
-New-Item -ItemType Directory -Force -Path $assetsDir, $nativeLibDir | Out-Null
+New-Item -ItemType Directory -Force -Path $assetsDir, $classesDir, $dexDir, $nativeLibDir | Out-Null
 Copy-Item -LiteralPath (Join-Path $repoRoot "fixtures\native-renderer\native-hwb-blur-sdf-public.plan.json") `
     -Destination (Join-Path $assetsDir "native-hwb-blur-sdf-public.plan.json") `
     -Force
@@ -120,6 +125,25 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "fixtures\native-renderer\recorded-h
 if ($RequireRecordedHandCapture -and [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
     throw "-RequireRecordedHandCapture needs -RecordedHandCaptureDir so the APK cannot silently fall back to the public metadata-only replay shape."
 }
+
+$sourceFiles = Get-ChildItem -Path (Join-Path $appRoot "src\main\java") -Recurse -Filter *.java |
+    ForEach-Object { $_.FullName }
+if ($sourceFiles.Count -eq 0) {
+    throw "No Java sources found under $appRoot"
+}
+$sourceList = Join-Path $OutDir "sources.rsp"
+$sourceFiles | Set-Content -Encoding ASCII -Path $sourceList
+
+Invoke-Checked "javac" $javac @(
+    "-encoding", "UTF-8",
+    "-source", "1.8",
+    "-target", "1.8",
+    "-bootclasspath", $platformJar,
+    "-d", $classesDir,
+    "@$sourceList"
+)
+Invoke-Checked "jar class pack" $jar @("cf", $classesJar, "-C", $classesDir, ".")
+Invoke-Checked "d8" $d8 @("--lib", $platformJar, "--output", $dexDir, $classesJar)
 
 $previousAndroidHome = $env:ANDROID_HOME
 $previousNdkHome = $env:ANDROID_NDK_HOME
@@ -195,6 +219,7 @@ Invoke-Checked "aapt2 link" $aapt2 @(
 
 Copy-Item $apkUnsigned $apkUnaligned
 Invoke-Checked "jar native lib update" $jar @("uf", $apkUnaligned, "-C", $nativeStageRoot, "lib")
+Invoke-Checked "jar dex update" $jar @("uf", $apkUnaligned, "-C", $dexDir, "classes.dex")
 Invoke-Checked "zipalign" $zipalign @("-f", "4", $apkUnaligned, $apkAligned)
 
 if (-not (Test-Path $Keystore)) {
@@ -236,7 +261,12 @@ $manifest = [ordered]@{
     source_recorded_hand_replay_fixture = "fixtures/native-renderer/recorded-hand-replay-public-shape.json"
     marker_prefix = "RUSTY_QUEST_NATIVE_RENDERER"
     rust_native_activity = $true
-    java_classes_packaged = $false
+    java_classes_packaged = $true
+    panel_activity = "io.github.mesmerprism.rustyquest.native_renderer/.ControlPanelActivity"
+    panel_transport = "app-private-file"
+    panel_candidate_file = "stimulus_volume_candidate.json"
+    panel_status_file = "stimulus_volume_status.json"
+    spatial_sdk_packaged = $false
     rust_native_crate = "apps/native-renderer-android/native/Cargo.toml"
     runtime_permission_request = "rust-jni-framework-activity-requestPermissions"
     public_effect_layers = @("blur-guide", "recorded-hand-replay-visual", "gpu-mesh-boundary", "target-space-validation-mesh-sdf")

@@ -22,7 +22,7 @@
     <application
         android:allowBackup="false"
         android:extractNativeLibs="true"
-        android:hasCode="false"
+        android:hasCode="true"
         android:label="Rusty Quest Native Renderer"
         android:largeHeap="true"
         android:theme="@android:style/Theme.Material.NoActionBar"
@@ -53,6 +53,27 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="com.oculus.intent.category.VR" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".ControlPanelActivity"
+            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode"
+            android:exported="true"
+            android:hardwareAccelerated="true"
+            android:label="Rusty Quest Stimulus Panel"
+            android:launchMode="singleTask"
+            android:resizeableActivity="true"
+            android:screenOrientation="landscape"
+            android:windowSoftInputMode="adjustResize">
+            <layout
+                android:defaultHeight="720dp"
+                android:defaultWidth="960dp"
+                android:minHeight="480dp"
+                android:minWidth="640dp" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="com.oculus.intent.category.2D" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>

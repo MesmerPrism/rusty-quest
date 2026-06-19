@@ -92,6 +92,7 @@ The stimulus settings are owned by `NativeStimulusVolumeSettings` in
 - `debug.rustyquest.native_renderer.stimulus_volume.enabled`
 - `debug.rustyquest.native_renderer.stimulus_volume.profile`
 - `debug.rustyquest.native_renderer.stimulus_volume.composition`
+- `debug.rustyquest.native_renderer.stimulus_volume.pattern_family`
 - `debug.rustyquest.native_renderer.stimulus_volume.render_target`
 - `debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples`
 - `debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction`
@@ -114,6 +115,81 @@ Stimulus render modes are also guarded in runtime option parsing: when
 are replaced with disabled defaults. This makes the route robust against stale
 device properties from prior Breathing Room launches.
 
+## Same-APK Panel Candidate
+
+The native renderer APK now includes a plain Android 2D
+`ControlPanelActivity`. It is deliberately not a Spatial SDK, WebView, Compose,
+or Makepad surface. The panel writes a low-rate candidate into app-private
+storage:
+
+```text
+stimulus_volume_candidate.json
+```
+
+The candidate schema is `rusty.quest.stimulus_volume.profile.v1`. It can select
+the stimulus composition, active request state, safety acknowledgement, render
+target tier, raymarch samples, central-FOV fraction, gradient smoothing, pattern
+family, and randomize Hz range. The panel cannot write Android system
+properties and does not directly mutate renderer state. On startup the Rust
+`NativeActivity` reads the file through `AndroidApp::internal_data_path()`,
+rejects damaged or unsafe candidates, maps accepted values into
+`NativeStimulusVolumeSettings`, disables stale Breathing Room controls for the
+volume-only route, emits a `stimulus-panel` marker, and writes:
+
+```text
+stimulus_volume_status.json
+```
+
+with schema `rusty.quest.stimulus_volume.apply_status.v1`.
+
+This is a startup-effective proof slice. Future browser-like editing should
+reuse the same candidate/status schema through a same-process JNI or command
+queue adapter and apply only at a safe frame boundary. The renderer should not
+poll panel files or WebView state inside the Vulkan command-recording hot path.
+
+The first in-VR panel affordance is a right-controller trigger toggle. The
+native OpenXR action set binds `/user/hand/right/input/trigger/value` for
+Oculus/Meta Touch controllers and uses the simple-controller select click only
+as a fallback. On a rising trigger edge, Rust sends a JNI intent to
+`ControlPanelActivity` with the panel toggle action. The first trigger opens
+the panel; a second trigger closes it if Horizon OS keeps the immersive
+OpenXR action stream active while the panel is visible. The panel also has a
+Close button for exclusive/focus-shift modes. A/right-primary remains the
+stimulus randomize action and is not reused for the panel.
+
+## Pattern Vocabulary
+
+The current volume shader ports a Trevor Hewitt-inspired browser pattern
+vocabulary into shader-native 3D fields. It does not import browser canvas code
+or generate a 2D image plane. Instead, `pattern_family` selects a compact family
+name that both a future browser editor and the Quest shader can share:
+`randomized-trevor-vocabulary`, `trevor-mix`, `stripes`, `ripples`, `rays`,
+`checker`, `spiral`, and `noise-field`.
+
+The default `randomized-trevor-vocabulary` value lets the A/right-primary
+randomizer choose among the concrete families. The shader also carries a small
+browser-portable warp vocabulary: mirror mode, twist, pinch/bulge, scramble,
+jumble, stretch, spatial oscillator frequencies, temporal frequency, phase
+offsets, noise scale, and depth warp. These names intentionally match controls
+that can be represented in a browser UI, while the native renderer evaluates
+them as volumetric fields inside the central-FOV raymarch.
+
+The startup dynamics default is a saved in-headset randomization labeled
+`headset-randomize-count-28-2026-06-20`. It starts on the `spiral` family with
+temporal frequency `3.084` Hz, spatial oscillators `6.041`, `35.362`, and
+`37.531` Hz, no mirror fold, twist `-0.791`, pinch `-0.282`, scramble `0.128`,
+jumble `0.165`, stretch `1.390,1.072`, source shift `-0.052,0.099`, noise
+scale `6.633`, depth warp `0.103`, and phase offsets `0.965,1.613,3.836`.
+The right-primary randomize action remains enabled and can move away from this
+startup preset.
+
+This means browser and VR outputs should not be expected to be pixel-identical:
+the browser preview can be a fast 2D design surface, while the headset route
+uses the same parameter vocabulary to drive colored volumetric interference.
+Profile fixtures should use canonical `pattern_family` values from the manifest
+when pinning a family; parser aliases are reserved for raw Android property
+experiments.
+
 ## GPU Flow
 
 `GpuStimulusVolumeRenderer` creates one device-local stereo storage image with
@@ -129,7 +205,8 @@ Per rendered frame:
 2. `stimulus_volume_raymarch.comp.glsl` dispatches one compute grid over both
    array layers.
 3. The compute shader raymarches a synthetic volume over the central-FOV ray
-   window with three oscillators, a two-octave value-noise modulation, high
+   window with Trevor-inspired pattern families, mirror/twist/pinch/scramble
+   warps, three spatial oscillators, a two-octave value-noise modulation, high
    emission gain, black thresholding, and a depth-driven cyan/magenta/yellow
    ramp.
 4. The image transitions to `SHADER_READ_ONLY_OPTIMAL`.
@@ -164,7 +241,9 @@ Each frame the renderer calls `sync_actions`, reads the boolean action state, an
 applies randomization on the rising edge. Randomization changes the temporal
 envelope frequency and three spatial oscillator frequencies inside the validated
 3-40 Hz range, then updates source offsets, spatial frequency scale, noise
-scale, depth warp, and three phase offsets.
+scale, depth warp, three phase offsets, the pattern family when the active
+family is randomized, and the browser-portable mirror/twist/pinch/scramble/
+jumble/stretch warp parameters.
 Projection-target reset, joystick scale, PMB pose publishing, and breath haptics
 are not bound or polled in stimulus-volume modes, so the A/right-primary button
 is reserved for stimulus randomization.
@@ -190,10 +269,15 @@ cargo check --manifest-path apps\native-renderer-android\native\Cargo.toml --tar
 
 Expected runtime evidence markers include:
 `stimulusVolumeEnabled=true`, `stimulusVolumeActive=true`,
+`volumePatternVocabulary=trevor-hewitt-inspired-browser-portable-v1`,
+`volumePatternFamily=randomized-trevor-vocabulary`,
 `volumeResolutionTier=limit-1024`,
 `volumeCentralFovFraction=0.72`,
 `volumeGradientSmoothing=0.78`,
 `stimulusVolumeImageSize=1024x1024`,
+`stimulusVolumePatternFamily=...`,
+`stimulusVolumeMirrorMode=...`,
+`stimulusVolumeStretch=...`,
 `stimulusVolumeProjectionPath=central-fov-stereo-sampled-storage-image`,
 `stimulusVolumeGpuBuffersResident=true`,
 `stimulusVolumeExpandedVolumeUploadPerFrame=false`,

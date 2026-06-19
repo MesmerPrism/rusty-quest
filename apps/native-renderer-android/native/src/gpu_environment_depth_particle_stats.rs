@@ -34,7 +34,7 @@ const DEPTH_FLAG_SURFACE_SUPPORT_MIN_SOURCE_LAYERS_TWO: u32 = 128;
 const DEPTH_FLAG_SURFACE_SUPPORT_MIN_NEIGHBOR_SHIFT: u32 = 8;
 const DEPTH_FLAG_SURFACE_SUPPORT_RADIUS_SHIFT: u32 = 16;
 const DEPTH_FLAG_SURFACE_SUPPORT_MIN_OBSERVATION_SHIFT: u32 = 20;
-pub(crate) const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT: usize = 28;
+pub(crate) const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT: usize = 35;
 pub(crate) const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_BYTES: vk::DeviceSize =
     (ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT * mem::size_of::<u32>()) as vk::DeviceSize;
 const RAW_DEBUG_VALID_COUNT_INDEX: usize = 0;
@@ -65,11 +65,19 @@ const RAW_DEBUG_SURFACE_PROMOTED_CELLS_INDEX: usize = 24;
 const RAW_DEBUG_SURFACE_CANDIDATE_RETIRED_CELLS_INDEX: usize = 25;
 const RAW_DEBUG_SOURCE_LAYER_AGREEMENT_CELLS_INDEX: usize = 26;
 const RAW_DEBUG_SINGLE_LAYER_ONLY_CELLS_INDEX: usize = 27;
+const RAW_DEBUG_SURFACE_NORMAL_VALID_CELLS_INDEX: usize = 28;
+const RAW_DEBUG_SURFACE_NORMAL_INVALID_CELLS_INDEX: usize = 29;
+const RAW_DEBUG_SURFACE_NORMAL_REJECTED_CELLS_INDEX: usize = 30;
+const RAW_DEBUG_SURFACE_COMPONENT_LARGEST_CELLS_INDEX: usize = 31;
+const RAW_DEBUG_SURFACE_COMPONENT_SMALL_REJECTED_CELLS_INDEX: usize = 32;
+const RAW_DEBUG_SURFACE_COMPONENT_CANDIDATE_CELLS_INDEX: usize = 33;
+const RAW_DEBUG_SURFACE_COMPONENT_CONFIRMED_CELLS_INDEX: usize = 34;
 pub(crate) const SCENE_PARTICLE_CELL_METERS: f32 = 0.06;
 pub(crate) const SCENE_PARTICLE_HASH_PROBE_COUNT: u32 = 8;
 pub(crate) const SCENE_PARTICLE_STALE_FADE_START_FRAMES: u32 = 720;
 pub(crate) const SCENE_PARTICLE_STALE_RETIRE_FRAMES: u32 = 1440;
-const SURFACE_SUPPORT_RUNTIME_STATUS: &str = "enforced-local-depth-neighborhood-component-pending";
+const SURFACE_SUPPORT_RUNTIME_STATUS: &str =
+    "enforced-local-depth-neighborhood-component-local-hint";
 const SURFACE_LIFECYCLE_RUNTIME_STATUS: &str = "candidate-confirmed-local-depth-neighborhood";
 
 #[derive(Clone, Copy, Debug)]
@@ -103,6 +111,13 @@ pub(crate) struct EnvironmentDepthRawDebugStats {
     surface_candidate_retired_cells: u32,
     source_layer_agreement_cells: u32,
     single_layer_only_cells: u32,
+    surface_normal_valid_cells: u32,
+    surface_normal_invalid_cells: u32,
+    surface_normal_rejected_cells: u32,
+    surface_component_largest_cells: u32,
+    surface_component_small_rejected_cells: u32,
+    surface_component_candidate_cells: u32,
+    surface_component_confirmed_cells: u32,
 }
 
 impl EnvironmentDepthRawDebugStats {
@@ -137,6 +152,13 @@ impl EnvironmentDepthRawDebugStats {
             surface_candidate_retired_cells: 0,
             source_layer_agreement_cells: 0,
             single_layer_only_cells: 0,
+            surface_normal_valid_cells: 0,
+            surface_normal_invalid_cells: 0,
+            surface_normal_rejected_cells: 0,
+            surface_component_largest_cells: 0,
+            surface_component_small_rejected_cells: 0,
+            surface_component_candidate_cells: 0,
+            surface_component_confirmed_cells: 0,
         }
     }
 
@@ -193,6 +215,17 @@ impl EnvironmentDepthRawDebugStats {
                 [RAW_DEBUG_SURFACE_CANDIDATE_RETIRED_CELLS_INDEX],
             source_layer_agreement_cells: values[RAW_DEBUG_SOURCE_LAYER_AGREEMENT_CELLS_INDEX],
             single_layer_only_cells: values[RAW_DEBUG_SINGLE_LAYER_ONLY_CELLS_INDEX],
+            surface_normal_valid_cells: values[RAW_DEBUG_SURFACE_NORMAL_VALID_CELLS_INDEX],
+            surface_normal_invalid_cells: values[RAW_DEBUG_SURFACE_NORMAL_INVALID_CELLS_INDEX],
+            surface_normal_rejected_cells: values[RAW_DEBUG_SURFACE_NORMAL_REJECTED_CELLS_INDEX],
+            surface_component_largest_cells: values
+                [RAW_DEBUG_SURFACE_COMPONENT_LARGEST_CELLS_INDEX],
+            surface_component_small_rejected_cells: values
+                [RAW_DEBUG_SURFACE_COMPONENT_SMALL_REJECTED_CELLS_INDEX],
+            surface_component_candidate_cells: values
+                [RAW_DEBUG_SURFACE_COMPONENT_CANDIDATE_CELLS_INDEX],
+            surface_component_confirmed_cells: values
+                [RAW_DEBUG_SURFACE_COMPONENT_CONFIRMED_CELLS_INDEX],
         }
     }
 }
@@ -240,7 +273,11 @@ pub(crate) struct GpuEnvironmentDepthParticleFrameStats {
     surface_support_min_observations: u32,
     surface_support_min_source_layers: u32,
     surface_support_component_min_cells: u32,
+    surface_support_component_mode: &'static str,
+    surface_normal_source: &'static str,
     surface_support_normal_coherence: &'static str,
+    surface_support_small_component_policy: &'static str,
+    surface_normal_status: &'static str,
     surface_support_free_space_decay: &'static str,
     surface_support_status: &'static str,
     surface_lifecycle_status: &'static str,
@@ -292,9 +329,15 @@ impl GpuEnvironmentDepthParticleFrameStats {
             surface_support_min_observations: settings.surface_support_min_observations,
             surface_support_min_source_layers: settings.surface_support_min_source_layers,
             surface_support_component_min_cells: settings.surface_support_component_min_cells,
+            surface_support_component_mode: settings.surface_support_component_mode.marker_value(),
+            surface_normal_source: settings.surface_support_normal_source.marker_value(),
             surface_support_normal_coherence: settings
                 .surface_support_normal_coherence
                 .marker_value(),
+            surface_support_small_component_policy: settings
+                .surface_support_small_component_policy
+                .marker_value(),
+            surface_normal_status: settings.surface_normal_status_marker(),
             surface_support_free_space_decay: settings
                 .surface_support_free_space_decay
                 .marker_value(),
@@ -344,9 +387,15 @@ impl GpuEnvironmentDepthParticleFrameStats {
             surface_support_min_observations: settings.surface_support_min_observations,
             surface_support_min_source_layers: settings.surface_support_min_source_layers,
             surface_support_component_min_cells: settings.surface_support_component_min_cells,
+            surface_support_component_mode: settings.surface_support_component_mode.marker_value(),
+            surface_normal_source: settings.surface_support_normal_source.marker_value(),
             surface_support_normal_coherence: settings
                 .surface_support_normal_coherence
                 .marker_value(),
+            surface_support_small_component_policy: settings
+                .surface_support_small_component_policy
+                .marker_value(),
+            surface_normal_status: environment_depth_surface_normal_status_marker(settings),
             surface_support_free_space_decay: settings
                 .surface_support_free_space_decay
                 .marker_value(),
@@ -419,9 +468,15 @@ impl GpuEnvironmentDepthParticleFrameStats {
             surface_support_min_observations: settings.surface_support_min_observations,
             surface_support_min_source_layers: settings.surface_support_min_source_layers,
             surface_support_component_min_cells: settings.surface_support_component_min_cells,
+            surface_support_component_mode: settings.surface_support_component_mode.marker_value(),
+            surface_normal_source: settings.surface_support_normal_source.marker_value(),
             surface_support_normal_coherence: settings
                 .surface_support_normal_coherence
                 .marker_value(),
+            surface_support_small_component_policy: settings
+                .surface_support_small_component_policy
+                .marker_value(),
+            surface_normal_status: environment_depth_surface_normal_status_marker(settings),
             surface_support_free_space_decay: settings
                 .surface_support_free_space_decay
                 .marker_value(),
@@ -488,9 +543,15 @@ impl GpuEnvironmentDepthParticleFrameStats {
             surface_support_min_observations: settings.surface_support_min_observations,
             surface_support_min_source_layers: settings.surface_support_min_source_layers,
             surface_support_component_min_cells: settings.surface_support_component_min_cells,
+            surface_support_component_mode: settings.surface_support_component_mode.marker_value(),
+            surface_normal_source: settings.surface_support_normal_source.marker_value(),
             surface_support_normal_coherence: settings
                 .surface_support_normal_coherence
                 .marker_value(),
+            surface_support_small_component_policy: settings
+                .surface_support_small_component_policy
+                .marker_value(),
+            surface_normal_status: settings.surface_normal_status_marker(),
             surface_support_free_space_decay: settings
                 .surface_support_free_space_decay
                 .marker_value(),
@@ -510,7 +571,7 @@ impl GpuEnvironmentDepthParticleFrameStats {
 
     pub(crate) fn marker_fields(self) -> String {
         let marker_fields = format!(
-            "environmentDepthProviderState={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound={} environmentDepthSupported={} environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthRenderViewStateFlags={} environmentDepthPoseValid={} environmentDepthSwapchainIndex={} environmentDepthCaptureTimeNs={} environmentDepthDisplayTimeNs={} environmentDepthCaptureToDisplayMs={:.3} environmentDepthAcquireToRenderMs={:.3} environmentDepthFrameAgeMs={:.3} environmentDepthTextureTransformLabel={} environmentDepthRayUvPolicy={} environmentDepthSampleUvPolicy={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthMode={} environmentDepthParticleReady={} environmentDepthParticleVisible={} environmentDepthParticleCount={} environmentDepthParticleCapacity={} environmentDepthParticleSource={} environmentDepthParticleCoordinateSpace={} environmentDepthParticleReferenceSpace={} environmentDepthWorldSpaceReady={} environmentDepthWorldSpaceMotionEvidence={} environmentDepthHeadMotionPoseSource={} environmentDepthHeadMotionSamples={} environmentDepthHeadMotionYawDeltaDeg={:.3} environmentDepthHeadMotionMaxYawDeltaDeg={:.3} environmentDepthHeadMotionTranslationDeltaM={:.4} environmentDepthHeadMotionMaxTranslationDeltaM={:.4} environmentDepthParticleSourceDepthSamples={} environmentDepthParticleCpuUploadBytes=0 environmentDepthGpuBuffersResident={} environmentDepthParticleBufferMemory=device-local environmentDepthGpuReconstructPath={} environmentDepthGpuDrawPath={} environmentDepthParticleRetention={} environmentDepthParticleMapPolicy={} environmentDepthMapWritePolicy={} environmentDepthSceneParticleMap={} environmentDepthSceneCellMeters={:.3} environmentDepthSceneHashProbeCount={} environmentDepthSceneStaleFadeStartFrames={} environmentDepthSceneStaleRetireFrames={} environmentDepthInvalidSamplePolicy={} environmentDepthFreeSpaceCorrection={} environmentDepthSurfaceModel={} environmentDepthSurfaceSupportRequested={} environmentDepthSurfaceSupportEnforced={} environmentDepthSurfaceSupportMode={} environmentDepthSurfaceSupportRadiusCells={} environmentDepthSurfaceMinNeighborCount={} environmentDepthSurfaceMinObservationCount={} environmentDepthSurfaceMinSourceLayerCount={} environmentDepthSourceLayerAgreementRequired={} environmentDepthSourceLayerAgreementCells={} environmentDepthSingleLayerOnlyCells={} environmentDepthSurfaceComponentMinCells={} environmentDepthSurfaceNormalCoherence={} environmentDepthSurfaceFreeSpaceDecay={} environmentDepthSurfaceSupportedCells={} environmentDepthSurfaceRejectedIsolatedCells={} environmentDepthSurfaceLargestComponentCells=0 environmentDepthSurfaceSupportStatus={} environmentDepthSurfaceLifecycleStatus={} environmentDepthSurfaceCandidateCells={} environmentDepthSurfaceConfirmedCells={} environmentDepthSurfacePromotedCells={} environmentDepthSurfaceCandidateRetiredCells={} environmentDepthRawStatsStatus={} environmentDepthRawCenterD16={} environmentDepthCenterReconstructedMeters={:.3} environmentDepthCenterConfidence={:.3} environmentDepthRawCenterWindowMedianD16={} environmentDepthRawCenterWindowValidCount={} environmentDepthMinValidReconstructedMeters={:.3} environmentDepthMaxValidReconstructedMeters={:.3} environmentDepthDebugValidSampleCount={} environmentDepthDebugInvalidSampleCount={} environmentDepthDebugConfidenceRejectedCount={} environmentDepthHashInsertSuccessCount={} environmentDepthHashMergeCount={} environmentDepthHashStaleReplaceCount={} environmentDepthHashProbeExhaustedCount={} environmentDepthFreeSpaceRetireAttemptCount={} environmentDepthFreeSpaceRetireSuccessCount={} environmentDepthHashOccupancyEstimate={} environmentDepthHashWriteConflictCount={} environmentDepthHashClaimFailedCount={} environmentDepthReadbackCadenceFrames=0 environmentDepthRawReadbackCadenceFrames=120",
+            "environmentDepthProviderState={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound={} environmentDepthSupported={} environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthRenderViewStateFlags={} environmentDepthPoseValid={} environmentDepthSwapchainIndex={} environmentDepthCaptureTimeNs={} environmentDepthDisplayTimeNs={} environmentDepthCaptureToDisplayMs={:.3} environmentDepthAcquireToRenderMs={:.3} environmentDepthFrameAgeMs={:.3} environmentDepthTextureTransformLabel={} environmentDepthRayUvPolicy={} environmentDepthSampleUvPolicy={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthMode={} environmentDepthParticleReady={} environmentDepthParticleVisible={} environmentDepthParticleCount={} environmentDepthParticleCapacity={} environmentDepthParticleSource={} environmentDepthParticleCoordinateSpace={} environmentDepthParticleReferenceSpace={} environmentDepthWorldSpaceReady={} environmentDepthWorldSpaceMotionEvidence={} environmentDepthHeadMotionPoseSource={} environmentDepthHeadMotionSamples={} environmentDepthHeadMotionYawDeltaDeg={:.3} environmentDepthHeadMotionMaxYawDeltaDeg={:.3} environmentDepthHeadMotionTranslationDeltaM={:.4} environmentDepthHeadMotionMaxTranslationDeltaM={:.4} environmentDepthParticleSourceDepthSamples={} environmentDepthParticleCpuUploadBytes=0 environmentDepthGpuBuffersResident={} environmentDepthParticleBufferMemory=device-local environmentDepthGpuReconstructPath={} environmentDepthGpuDrawPath={} environmentDepthParticleRetention={} environmentDepthParticleMapPolicy={} environmentDepthMapWritePolicy={} environmentDepthSceneParticleMap={} environmentDepthSceneCellMeters={:.3} environmentDepthSceneHashProbeCount={} environmentDepthSceneStaleFadeStartFrames={} environmentDepthSceneStaleRetireFrames={} environmentDepthInvalidSamplePolicy={} environmentDepthFreeSpaceCorrection={} environmentDepthSurfaceModel={} environmentDepthSurfaceSupportRequested={} environmentDepthSurfaceSupportEnforced={} environmentDepthSurfaceSupportMode={} environmentDepthSurfaceSupportRadiusCells={} environmentDepthSurfaceMinNeighborCount={} environmentDepthSurfaceMinObservationCount={} environmentDepthSurfaceMinSourceLayerCount={} environmentDepthSourceLayerAgreementRequired={} environmentDepthSourceLayerAgreementCells={} environmentDepthSingleLayerOnlyCells={} environmentDepthSurfaceComponentMinCells={} environmentDepthSurfaceComponentMode={} environmentDepthSurfaceSmallComponentPolicy={} environmentDepthSurfaceSmallComponentRejectedCells={} environmentDepthSurfaceComponentCandidateCells={} environmentDepthSurfaceConfirmedComponentCells={} environmentDepthSurfaceNormalSource={} environmentDepthSurfaceNormalCoherence={} environmentDepthSurfaceNormalValidCells={} environmentDepthSurfaceNormalInvalidCells={} environmentDepthSurfaceNormalRejectedCells={} environmentDepthSurfaceNormalStatus={} environmentDepthSurfaceFreeSpaceDecay={} environmentDepthSurfaceSupportedCells={} environmentDepthSurfaceRejectedIsolatedCells={} environmentDepthSurfaceLargestComponentCells={} environmentDepthSurfaceSupportStatus={} environmentDepthSurfaceLifecycleStatus={} environmentDepthSurfaceCandidateCells={} environmentDepthSurfaceConfirmedCells={} environmentDepthSurfacePromotedCells={} environmentDepthSurfaceCandidateRetiredCells={} environmentDepthRawStatsStatus={} environmentDepthRawCenterD16={} environmentDepthCenterReconstructedMeters={:.3} environmentDepthCenterConfidence={:.3} environmentDepthRawCenterWindowMedianD16={} environmentDepthRawCenterWindowValidCount={} environmentDepthMinValidReconstructedMeters={:.3} environmentDepthMaxValidReconstructedMeters={:.3} environmentDepthDebugValidSampleCount={} environmentDepthDebugInvalidSampleCount={} environmentDepthDebugConfidenceRejectedCount={} environmentDepthHashInsertSuccessCount={} environmentDepthHashMergeCount={} environmentDepthHashStaleReplaceCount={} environmentDepthHashProbeExhaustedCount={} environmentDepthFreeSpaceRetireAttemptCount={} environmentDepthFreeSpaceRetireSuccessCount={} environmentDepthHashOccupancyEstimate={} environmentDepthHashWriteConflictCount={} environmentDepthHashClaimFailedCount={} environmentDepthReadbackCadenceFrames=0 environmentDepthRawReadbackCadenceFrames=120",
             self.provider_state,
             self.provider_available,
             self.real_provider_bound,
@@ -621,10 +682,21 @@ impl GpuEnvironmentDepthParticleFrameStats {
             self.raw_debug_stats.source_layer_agreement_cells,
             self.raw_debug_stats.single_layer_only_cells,
             self.surface_support_component_min_cells,
+            self.surface_support_component_mode,
+            self.surface_support_small_component_policy,
+            self.raw_debug_stats.surface_component_small_rejected_cells,
+            self.raw_debug_stats.surface_component_candidate_cells,
+            self.raw_debug_stats.surface_component_confirmed_cells,
+            self.surface_normal_source,
             self.surface_support_normal_coherence,
+            self.raw_debug_stats.surface_normal_valid_cells,
+            self.raw_debug_stats.surface_normal_invalid_cells,
+            self.raw_debug_stats.surface_normal_rejected_cells,
+            self.surface_normal_status,
             self.surface_support_free_space_decay,
             self.raw_debug_stats.surface_supported_cells,
             self.raw_debug_stats.surface_rejected_isolated_cells,
+            self.raw_debug_stats.surface_component_largest_cells,
             self.surface_support_status,
             self.surface_lifecycle_status,
             self.raw_debug_stats.surface_candidate_cells,
@@ -728,7 +800,11 @@ fn environment_depth_surface_support_runtime_status_marker(
     settings: NativeEnvironmentDepthSettings,
 ) -> &'static str {
     if environment_depth_surface_support_runtime_enforced(settings) {
-        SURFACE_SUPPORT_RUNTIME_STATUS
+        if settings.surface_support_component_mode.marker_value() == "connected-labels" {
+            "enforced-local-depth-neighborhood-connected-labels-pending"
+        } else {
+            SURFACE_SUPPORT_RUNTIME_STATUS
+        }
     } else {
         settings.surface_support_status_marker()
     }
@@ -743,6 +819,18 @@ fn environment_depth_surface_lifecycle_status_marker(
         "pending-runtime-support"
     } else {
         "disabled"
+    }
+}
+
+fn environment_depth_surface_normal_status_marker(
+    settings: NativeEnvironmentDepthSettings,
+) -> &'static str {
+    if environment_depth_surface_support_runtime_enforced(settings)
+        && settings.surface_depth_neighborhood_normals_requested()
+    {
+        "depth-neighborhood-gpu-readback"
+    } else {
+        settings.surface_normal_status_marker()
     }
 }
 

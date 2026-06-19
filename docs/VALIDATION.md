@@ -178,22 +178,38 @@ validate `environment_depth.surface_model`,
 `environment_depth.surface_support.min_observations`,
 `environment_depth.surface_support.min_source_layers`,
 `environment_depth.surface_support.component_min_cells`,
-`environment_depth.surface_support.normal_coherence`, and
+`environment_depth.surface_support.component_mode`,
+`environment_depth.surface_support.normal_source`,
+`environment_depth.surface_support.normal_coherence`,
+`environment_depth.surface_support.small_component_policy`, and
 `environment_depth.surface_support.free_space_decay`. Runtime evidence now
 requires the matching `environmentDepthSurfaceSupport*` marker fields. Dry-run
 profile evidence remains low-rate and must not claim filtering by itself. On a
 real runtime frame, requested surface modes can now report
 `environmentDepthSurfaceSupportEnforced=true`,
-`environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-pending`,
+`environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-local-hint`,
 and nonzero supported/rejected-cell counters from the GPU local-depth
 neighborhood gate. The same runtime marker now includes
 `environmentDepthSurfaceLifecycleStatus` plus candidate, confirmed, promoted,
-and candidate-retired cell counters for the scene-cell lifecycle. Source-layer
+candidate-retired, component-mode, small-component, local-patch max,
+component-candidate, confirmed-component, normal-source, valid-normal,
+invalid-normal, and normal-rejected counters for the scene-cell lifecycle.
+The component counters are aggregate local-hint evidence unless a later
+connected-labels pass is accepted. Source-layer
 agreement profiles additionally require
 `environmentDepthSourceLayerAgreementRequired`,
 `environmentDepthSourceLayerAgreementCells`, and
 `environmentDepthSingleLayerOnlyCells` markers; they do not make stereo fusion
-or two-layer agreement accepted by themselves. This is not yet
+or two-layer agreement accepted by themselves. Host-side
+`environment_depth_surface_support` tests provide the synthetic CPU mirror for
+flat-plane coherent normals, invalid hole neighborhoods, depth-step rejection,
+connected-component small-cluster policy, candidate promotion, candidate
+retirement, source-layer agreement, and dynamic-object ghost retirement across
+appear/confirm/move sequence fixtures. Runtime surface-support evidence now
+requires
+`environmentDepthSurfaceNormalStatus=depth-neighborhood-gpu-readback` plus
+nonzero depth-neighborhood normal counters before the GPU normal pass is
+accepted. This is not yet
 connected-component or global-surface acceptance; those remain pending alongside
 the movement-required world-space proof.
 `check_all.ps1` delegates the native renderer runtime-profile matrix to
@@ -259,6 +275,25 @@ timing counter assertions live in
 `Test-NativeRendererAndroid.ps1` no longer mirrors native-renderer profile
 fixture contents as literal token checks; profile acceptance is owned by the
 profile matrix plus manifest-backed parity and validator gates.
+
+The Android scaffold static check also owns the same-APK 2D stimulus panel
+ledger. It requires `android:hasCode="true"`, the existing
+`android.app.NativeActivity` VR route, the added `ControlPanelActivity`
+`com.oculus.intent.category.2D` route, panel layout metadata, Java/d8
+`classes.dex` packaging, and build-manifest fields that report
+`java_classes_packaged=true`, `panel_activity`, `panel_candidate_file`, and
+`panel_status_file`. The same check rejects WebView, `addJavascriptInterface`,
+AndroidX, Spatial SDK, `AppSystemActivity`, `VrActivity`, and GLXF tokens in
+the first panel slice. The Rust-side panel adapter is validated as a
+startup-effective file transport: it consumes
+`stimulus_volume_candidate.json`, emits `stimulus-panel` accepted/rejected
+markers, rejects missing safety acknowledgement and invalid Hz ranges, maps
+accepted candidates onto the existing `NativeStimulusVolumeSettings` owner, and
+disables projection-target controls for volume-only routes. The same scaffold
+and stimulus-volume checks also require the right-controller trigger panel
+toggle bridge: the OpenXR action set binds
+`/user/hand/right/input/trigger/value`, emits `rightControllerTriggerPanelToggle`
+markers, and the JNI bridge starts `ControlPanelActivity` with a toggle intent.
 
 Use `docs/environment-depth-known-distance-raw-d16-runbook.md` for the
 headset known-distance run that compares `environmentDepthRawCenterD16`,
@@ -463,15 +498,19 @@ tracked grip pose.
 The solid-black stimulus-volume profile is the current native GPU headroom
 stress fixture for smooth central-FOV interference: it requests the
 1024x1024x2 limit tier, 18 raymarch samples, `central_fov_fraction=0.72`, and
-`gradient_smoothing=0.78` while preserving the 3-40 Hz randomization range and
-keeping Breathing Room haptic/reset actions disabled. The balanced solid-black
-stimulus-volume profile keeps the same visual/safety route at 768x768x2 and 12
-raymarch samples for 72 Hz quality A/B checks. The performance solid-black
-stimulus-volume profile keeps the same visual/safety route at 512x512x2 and 12
-raymarch samples; the 2026-06-19 Quest 3S resolution sweep made it the first
-native tier with enough headroom for 120 Hz/high-clock exploration. The
-native-passthrough stimulus-volume fixture is the balanced 768x768x2 comparison
-route.
+`gradient_smoothing=0.78` while preserving the 3-40 Hz randomization range,
+randomized Trevor-inspired pattern vocabulary, and disabled Breathing Room
+haptic/reset actions. The balanced solid-black stimulus-volume profile keeps
+the same visual/safety route at 768x768x2 and 12 raymarch samples for 72 Hz
+quality A/B checks. The performance solid-black stimulus-volume profile keeps
+the same visual/safety route at 512x512x2 and 12 raymarch samples; the
+2026-06-19 Quest 3S resolution sweep made it the first native tier with enough
+headroom for 120 Hz/high-clock exploration. Its runtime marker gate also
+expects the saved startup dynamics
+`headset-randomize-count-28-2026-06-20`, which starts on the `spiral` family at
+3.084 Hz with spatial oscillators 6.041, 35.362, and 37.531 Hz before any new
+right-primary randomization. The native-passthrough
+stimulus-volume fixture is the balanced 768x768x2 comparison route.
 The live-hand diagnostic
 bundle is captured in
 `fixtures/runtime-profiles/quest-native-renderer-live-hand-visual-diagnostic.profile.json`;

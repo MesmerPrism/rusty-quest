@@ -757,7 +757,17 @@ if ($RequireEnvironmentDepthParticles) {
         "environmentDepthSourceLayerAgreementCells=",
         "environmentDepthSingleLayerOnlyCells=",
         "environmentDepthSurfaceComponentMinCells=",
+        "environmentDepthSurfaceComponentMode=",
+        "environmentDepthSurfaceSmallComponentPolicy=",
+        "environmentDepthSurfaceSmallComponentRejectedCells=",
+        "environmentDepthSurfaceComponentCandidateCells=",
+        "environmentDepthSurfaceConfirmedComponentCells=",
+        "environmentDepthSurfaceNormalSource=",
         "environmentDepthSurfaceNormalCoherence=",
+        "environmentDepthSurfaceNormalValidCells=",
+        "environmentDepthSurfaceNormalInvalidCells=",
+        "environmentDepthSurfaceNormalRejectedCells=",
+        "environmentDepthSurfaceNormalStatus=",
         "environmentDepthSurfaceFreeSpaceDecay=",
         "environmentDepthSurfaceSupportedCells=",
         "environmentDepthSurfaceRejectedIsolatedCells=",
@@ -811,7 +821,7 @@ if ($RequireEnvironmentDepthParticles) {
     $surfaceSupportMode = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSupportMode"
     Assert-True (-not [string]::IsNullOrWhiteSpace($surfaceSupportMode)) "environment-depth-particles marker is missing surface support mode."
     $surfaceSupportStatus = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSupportStatus"
-    Assert-True (@("disabled", "pending-gpu-support-pass", "enforced-local-depth-neighborhood-component-pending") -contains $surfaceSupportStatus) "environment-depth-particles marker has invalid surface support status: $surfaceSupportStatus"
+    Assert-True (@("disabled", "pending-gpu-support-pass", "enforced-local-depth-neighborhood-component-local-hint", "enforced-local-depth-neighborhood-connected-labels-pending") -contains $surfaceSupportStatus) "environment-depth-particles marker has invalid surface support status: $surfaceSupportStatus"
     $surfaceLifecycleStatus = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceLifecycleStatus"
     Assert-True (@("disabled", "pending-runtime-support", "candidate-confirmed-local-depth-neighborhood") -contains $surfaceLifecycleStatus) "environment-depth-particles marker has invalid surface lifecycle status: $surfaceLifecycleStatus"
     $surfaceSupportRadiusCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSupportRadiusCells"
@@ -822,6 +832,17 @@ if ($RequireEnvironmentDepthParticles) {
     $sourceLayerAgreementCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSourceLayerAgreementCells"
     $singleLayerOnlyCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSingleLayerOnlyCells"
     $surfaceSupportComponentMinCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceComponentMinCells"
+    $surfaceSupportComponentMode = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceComponentMode"
+    $surfaceSmallComponentPolicy = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSmallComponentPolicy"
+    $surfaceSmallComponentRejectedCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSmallComponentRejectedCells"
+    $surfaceComponentCandidateCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceComponentCandidateCells"
+    $surfaceConfirmedComponentCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceConfirmedComponentCells"
+    $surfaceNormalSource = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceNormalSource"
+    $surfaceNormalCoherence = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceNormalCoherence"
+    $surfaceNormalValidCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceNormalValidCells"
+    $surfaceNormalInvalidCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceNormalInvalidCells"
+    $surfaceNormalRejectedCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceNormalRejectedCells"
+    $surfaceNormalStatus = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceNormalStatus"
     $surfaceSupportedCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSupportedCells"
     $surfaceRejectedIsolatedCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceRejectedIsolatedCells"
     $surfaceLargestComponentCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceLargestComponentCells"
@@ -837,12 +858,20 @@ if ($RequireEnvironmentDepthParticles) {
     Assert-True (($sourceLayerAgreementRequired -eq "true") -eq ($surfaceSupportMinSourceLayers -gt 1)) "environment-depth-particles source-layer agreement required marker does not match min-source-layer count."
     Assert-True ($sourceLayerAgreementCells -ge 0 -and $singleLayerOnlyCells -ge 0) "environment-depth-particles source-layer agreement counters must be nonnegative."
     Assert-True ($surfaceSupportComponentMinCells -ge 1) "environment-depth-particles surface support component-min-cells must be positive."
+    Assert-True (@("off", "local-hint", "connected-labels") -contains $surfaceSupportComponentMode) "environment-depth-particles marker has invalid surface component mode: $surfaceSupportComponentMode"
+    Assert-True (@("dim", "hide", "debug-only") -contains $surfaceSmallComponentPolicy) "environment-depth-particles marker has invalid small component policy: $surfaceSmallComponentPolicy"
+    Assert-True ($surfaceSmallComponentRejectedCells -ge 0 -and $surfaceComponentCandidateCells -ge 0 -and $surfaceConfirmedComponentCells -ge 0) "environment-depth-particles component counters must be nonnegative."
+    Assert-True (@("off", "depth-neighborhood", "cell-neighborhood") -contains $surfaceNormalSource) "environment-depth-particles marker has invalid surface normal source: $surfaceNormalSource"
+    Assert-True (@("off", "loose", "strict") -contains $surfaceNormalCoherence) "environment-depth-particles marker has invalid surface normal coherence: $surfaceNormalCoherence"
+    Assert-True (@("disabled", "configured-counters-pending", "depth-neighborhood-gpu-readback") -contains $surfaceNormalStatus) "environment-depth-particles marker has invalid surface normal status: $surfaceNormalStatus"
+    Assert-True ($surfaceNormalValidCells -ge 0 -and $surfaceNormalInvalidCells -ge 0 -and $surfaceNormalRejectedCells -ge 0) "environment-depth-particles surface normal counters must be nonnegative."
     Assert-True ($surfaceSupportedCells -ge 0 -and $surfaceRejectedIsolatedCells -ge 0 -and $surfaceLargestComponentCells -ge 0) "environment-depth-particles surface support counters must be nonnegative."
     Assert-True ($surfaceCandidateCells -ge 0 -and $surfaceConfirmedCells -ge 0 -and $surfacePromotedCells -ge 0 -and $surfaceCandidateRetiredCells -ge 0) "environment-depth-particles surface lifecycle counters must be nonnegative."
     if ($surfaceSupportRequested -eq "false") {
         Assert-True ($surfaceSupportEnforced -eq "false") "environment-depth-particles cannot enforce support when support was not requested."
         Assert-True ($surfaceSupportStatus -eq "disabled") "environment-depth-particles disabled support must report status=disabled."
         Assert-True ($surfaceLifecycleStatus -eq "disabled") "environment-depth-particles disabled support must report lifecycle status=disabled."
+        Assert-True ($surfaceNormalStatus -eq "disabled") "environment-depth-particles disabled support must report normal status=disabled."
         Assert-True (($surfaceCandidateCells + $surfaceConfirmedCells + $surfacePromotedCells + $surfaceCandidateRetiredCells) -eq 0) "environment-depth-particles disabled support must not report lifecycle counters."
     }
     if ($surfaceSupportRequested -eq "true" -and $surfaceSupportEnforced -eq "false") {
@@ -851,15 +880,25 @@ if ($RequireEnvironmentDepthParticles) {
     }
     if ($surfaceSupportEnforced -eq "true") {
         Assert-True ($surfaceSupportRequested -eq "true") "environment-depth-particles support cannot be enforced when support was not requested."
-        Assert-True ($surfaceSupportStatus -eq "enforced-local-depth-neighborhood-component-pending") "environment-depth-particles enforced support must name the local-neighborhood/component-pending status."
+        Assert-True (@("enforced-local-depth-neighborhood-component-local-hint", "enforced-local-depth-neighborhood-connected-labels-pending") -contains $surfaceSupportStatus) "environment-depth-particles enforced support must name the component status."
         Assert-True ($surfaceLifecycleStatus -eq "candidate-confirmed-local-depth-neighborhood") "environment-depth-particles enforced support must report active candidate/confirmed lifecycle status."
+        if ($surfaceNormalSource -eq "depth-neighborhood") {
+            Assert-True ($surfaceNormalStatus -eq "depth-neighborhood-gpu-readback") "environment-depth-particles enforced depth-neighborhood normals must report GPU readback status."
+        }
     }
     if ($RequireEnvironmentDepthSurfaceSupport) {
         Assert-True ($surfaceSupportRequested -eq "true") "environment-depth-particles surface support proof requires requested support."
         Assert-True ($surfaceSupportEnforced -eq "true") "environment-depth-particles surface support proof requires GPU-enforced support."
         Assert-True ($surfaceSupportedCells -gt 0) "environment-depth-particles surface support proof requires nonzero supported cells."
         Assert-True ($surfaceSupportMinNeighbors -gt 0) "environment-depth-particles surface support proof requires a positive min-neighbor threshold."
+        Assert-True ($surfaceSupportComponentMode -eq "local-hint") "environment-depth-particles current GPU surface support proof requires component mode local-hint."
+        Assert-True ($surfaceComponentCandidateCells -gt 0) "environment-depth-particles surface support proof requires nonzero local component candidate cells."
+        Assert-True ($surfaceConfirmedComponentCells -gt 0) "environment-depth-particles surface support proof requires nonzero confirmed local component cells."
+        Assert-True ($surfaceLargestComponentCells -gt 0) "environment-depth-particles surface support proof requires nonzero local patch max component cells."
         Assert-True (($surfaceCandidateCells + $surfaceConfirmedCells) -gt 0) "environment-depth-particles surface support proof requires candidate or confirmed lifecycle cells."
+        Assert-True ($surfaceNormalSource -eq "depth-neighborhood") "environment-depth-particles surface support proof currently requires depth-neighborhood normal source."
+        Assert-True ($surfaceNormalStatus -eq "depth-neighborhood-gpu-readback") "environment-depth-particles surface support proof requires GPU normal readback status."
+        Assert-True (($surfaceNormalValidCells + $surfaceNormalRejectedCells) -gt 0) "environment-depth-particles surface support proof requires nonzero normal readback counters."
     }
 
     $particleCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthParticleCount"
@@ -944,6 +983,11 @@ if ($RequireEnvironmentDepthParticles) {
     $summary.environment_depth_source_layer_agreement_cells = $sourceLayerAgreementCells
     $summary.environment_depth_single_layer_only_cells = $singleLayerOnlyCells
     $summary.environment_depth_surface_support_component_min_cells = $surfaceSupportComponentMinCells
+    $summary.environment_depth_surface_component_mode = $surfaceSupportComponentMode
+    $summary.environment_depth_surface_small_component_policy = $surfaceSmallComponentPolicy
+    $summary.environment_depth_surface_small_component_rejected_cells = $surfaceSmallComponentRejectedCells
+    $summary.environment_depth_surface_component_candidate_cells = $surfaceComponentCandidateCells
+    $summary.environment_depth_surface_confirmed_component_cells = $surfaceConfirmedComponentCells
     $summary.environment_depth_surface_supported_cells = $surfaceSupportedCells
     $summary.environment_depth_surface_rejected_isolated_cells = $surfaceRejectedIsolatedCells
     $summary.environment_depth_surface_largest_component_cells = $surfaceLargestComponentCells

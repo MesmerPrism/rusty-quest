@@ -8,9 +8,11 @@ mod tests {
         NativeCameraYcbcrMode, NativeEnvironmentDepthDebugView,
         NativeEnvironmentDepthDepthUnitsPolicy, NativeEnvironmentDepthLayerPolicy,
         NativeEnvironmentDepthMode, NativeEnvironmentDepthReferenceSpace,
-        NativeEnvironmentDepthSource, NativeEnvironmentDepthSurfaceFreeSpaceDecay,
-        NativeEnvironmentDepthSurfaceModel, NativeEnvironmentDepthSurfaceNormalCoherence,
-        NativeGuideGraphResolution, NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
+        NativeEnvironmentDepthSource, NativeEnvironmentDepthSurfaceComponentMode,
+        NativeEnvironmentDepthSurfaceFreeSpaceDecay, NativeEnvironmentDepthSurfaceModel,
+        NativeEnvironmentDepthSurfaceNormalCoherence, NativeEnvironmentDepthSurfaceNormalSource,
+        NativeEnvironmentDepthSurfaceSmallComponentPolicy, NativeGuideGraphResolution,
+        NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
         PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED,
         PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_READER_MAX_IMAGES,
         PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
@@ -22,12 +24,15 @@ mod tests {
         PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE, PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS,
         PROP_ENVIRONMENT_DEPTH_SOURCE, PROP_ENVIRONMENT_DEPTH_SURFACE_MODEL,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MIN_CELLS,
+        PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MODE,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_NEIGHBORS,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_OBSERVATIONS,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_SOURCE_LAYERS,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE,
-        PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_RADIUS_CELLS, PROP_GUIDE_BLUR_ENABLED,
+        PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_SOURCE,
+        PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_RADIUS_CELLS,
+        PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_SMALL_COMPONENT_POLICY, PROP_GUIDE_BLUR_ENABLED,
         PROP_GUIDE_RESOLUTION, PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
         PROP_HAND_ANCHOR_PARTICLES_ENABLED, PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
@@ -45,13 +50,14 @@ mod tests {
         PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SDF_UPDATE_PERIOD_FRAMES,
         PROP_STIMULUS_VOLUME_CENTRAL_FOV_FRACTION, PROP_STIMULUS_VOLUME_COMPOSITION,
         PROP_STIMULUS_VOLUME_ENABLED, PROP_STIMULUS_VOLUME_GRADIENT_SMOOTHING,
-        PROP_STIMULUS_VOLUME_RANDOMIZE_ENABLED, PROP_STIMULUS_VOLUME_RANDOMIZE_MAX_HZ,
-        PROP_STIMULUS_VOLUME_RANDOMIZE_MIN_HZ, PROP_STIMULUS_VOLUME_RAYMARCH_SAMPLES,
-        PROP_STIMULUS_VOLUME_RENDER_TARGET, PROP_STIMULUS_VOLUME_SAFETY_ACK,
-        PROP_SWAPCHAIN_COLOR_FORMAT_MODE,
+        PROP_STIMULUS_VOLUME_PATTERN_FAMILY, PROP_STIMULUS_VOLUME_RANDOMIZE_ENABLED,
+        PROP_STIMULUS_VOLUME_RANDOMIZE_MAX_HZ, PROP_STIMULUS_VOLUME_RANDOMIZE_MIN_HZ,
+        PROP_STIMULUS_VOLUME_RAYMARCH_SAMPLES, PROP_STIMULUS_VOLUME_RENDER_TARGET,
+        PROP_STIMULUS_VOLUME_SAFETY_ACK, PROP_SWAPCHAIN_COLOR_FORMAT_MODE,
     };
     use crate::native_renderer_stimulus_volume_options::{
-        NativeStimulusVolumeCompositionMode, NativeStimulusVolumeRenderTarget,
+        NativeStimulusVolumeCompositionMode, NativeStimulusVolumePatternFamily,
+        NativeStimulusVolumeRenderTarget,
     };
     use crate::projection_target_state::{
         BreathBridgeMode, PROP_PROJECTION_TARGET_BREATH_BRIDGE_MODE,
@@ -532,6 +538,10 @@ mod tests {
         assert_eq!(settings.raymarch_samples, 6);
         assert_eq!(settings.central_fov_fraction, 0.78);
         assert_eq!(settings.gradient_smoothing, 0.65);
+        assert_eq!(
+            settings.pattern_family,
+            NativeStimulusVolumePatternFamily::RandomizedTrevorVocabulary
+        );
         assert_eq!(settings.randomize_min_hz, 3.0);
         assert_eq!(settings.randomize_max_hz, 40.0);
         assert_eq!(
@@ -557,6 +567,10 @@ mod tests {
         assert!(fields.contains("volumeResolutionTier=baseline-512"));
         assert!(fields.contains("volumeCentralFovFraction=0.78"));
         assert!(fields.contains("volumeGradientSmoothing=0.65"));
+        assert!(
+            fields.contains("volumePatternVocabulary=trevor-hewitt-inspired-browser-portable-v1")
+        );
+        assert!(fields.contains("volumePatternFamily=randomized-trevor-vocabulary"));
         assert!(fields.contains("randomizeHzRange=3.000-40.000"));
         assert!(fields.contains("stimulusSafetyAcknowledged=true"));
     }
@@ -570,6 +584,7 @@ mod tests {
             (PROP_STIMULUS_VOLUME_RENDER_TARGET, "1024x1024x2-rgba16f"),
             (PROP_STIMULUS_VOLUME_CENTRAL_FOV_FRACTION, "0.72"),
             (PROP_STIMULUS_VOLUME_GRADIENT_SMOOTHING, "0.80"),
+            (PROP_STIMULUS_VOLUME_PATTERN_FAMILY, "spiral"),
             (
                 PROP_STIMULUS_VOLUME_COMPOSITION,
                 "alpha-over-native-passthrough",
@@ -595,6 +610,10 @@ mod tests {
         );
         assert_eq!(settings.central_fov_fraction, 0.72);
         assert_eq!(settings.gradient_smoothing, 0.80);
+        assert_eq!(
+            settings.pattern_family,
+            NativeStimulusVolumePatternFamily::Spiral
+        );
         assert_eq!(
             settings.composition,
             NativeStimulusVolumeCompositionMode::AlphaOverNativePassthrough
@@ -771,6 +790,10 @@ mod tests {
         assert_eq!(settings.particle_capacity, 32_768);
         assert_eq!(settings.sample_stride_pixels, 12);
         assert!(!settings.high_rate_json_payload);
+        assert_eq!(
+            settings.surface_support_normal_source,
+            NativeEnvironmentDepthSurfaceNormalSource::Off
+        );
 
         let fields = settings.marker_fields();
         assert!(fields.contains("environmentDepthMode=disabled"));
@@ -783,6 +806,8 @@ mod tests {
         assert!(fields.contains("environmentDepthHandRemovalRequested=false"));
         assert!(fields.contains("environmentDepthHandRemovalEnabled=false"));
         assert!(fields.contains("environmentDepthHighRateJsonPayload=false"));
+        assert!(fields.contains("environmentDepthSurfaceNormalSource=off"));
+        assert!(fields.contains("environmentDepthSurfaceNormalStatus=disabled"));
         assert!(fields.contains("environmentDepthGpuReconstructMs=0.000"));
     }
 
@@ -881,6 +906,24 @@ mod tests {
                 "surface-support",
                 6.0,
             ),
+            (
+                "normal-coherence",
+                NativeEnvironmentDepthDebugView::NormalCoherence,
+                "normal-coherence",
+                7.0,
+            ),
+            (
+                "support-count",
+                NativeEnvironmentDepthDebugView::SupportCount,
+                "support-count",
+                8.0,
+            ),
+            (
+                "surface-residual",
+                NativeEnvironmentDepthDebugView::SurfaceResidual,
+                "surface-residual",
+                9.0,
+            ),
         ];
         for (property_value, expected, marker, code) in cases {
             let options = options_from(&[(PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW, property_value)]);
@@ -908,8 +951,20 @@ mod tests {
                 "16",
             ),
             (
+                PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MODE,
+                "connected-labels",
+            ),
+            (
+                PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_SOURCE,
+                "depth-neighborhood",
+            ),
+            (
                 PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE,
                 "loose",
+            ),
+            (
+                PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_SMALL_COMPONENT_POLICY,
+                "hide",
             ),
             (
                 PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY,
@@ -929,8 +984,20 @@ mod tests {
         assert_eq!(settings.surface_support_min_source_layers, 1);
         assert_eq!(settings.surface_support_component_min_cells, 16);
         assert_eq!(
+            settings.surface_support_component_mode,
+            NativeEnvironmentDepthSurfaceComponentMode::ConnectedLabels
+        );
+        assert_eq!(
+            settings.surface_support_normal_source,
+            NativeEnvironmentDepthSurfaceNormalSource::DepthNeighborhood
+        );
+        assert_eq!(
             settings.surface_support_normal_coherence,
             NativeEnvironmentDepthSurfaceNormalCoherence::Loose
+        );
+        assert_eq!(
+            settings.surface_support_small_component_policy,
+            NativeEnvironmentDepthSurfaceSmallComponentPolicy::Hide
         );
         assert_eq!(
             settings.surface_support_free_space_decay,
@@ -951,7 +1018,17 @@ mod tests {
         assert!(fields.contains("environmentDepthSurfaceMinNeighborCount=4"));
         assert!(fields.contains("environmentDepthSurfaceMinObservationCount=3"));
         assert!(fields.contains("environmentDepthSurfaceComponentMinCells=16"));
+        assert!(fields.contains("environmentDepthSurfaceComponentMode=connected-labels"));
+        assert!(fields.contains("environmentDepthSurfaceSmallComponentPolicy=hide"));
+        assert!(fields.contains("environmentDepthSurfaceSmallComponentRejectedCells=0"));
+        assert!(fields.contains("environmentDepthSurfaceComponentCandidateCells=0"));
+        assert!(fields.contains("environmentDepthSurfaceConfirmedComponentCells=0"));
+        assert!(fields.contains("environmentDepthSurfaceNormalSource=depth-neighborhood"));
         assert!(fields.contains("environmentDepthSurfaceNormalCoherence=loose"));
+        assert!(fields.contains("environmentDepthSurfaceNormalValidCells=0"));
+        assert!(fields.contains("environmentDepthSurfaceNormalInvalidCells=0"));
+        assert!(fields.contains("environmentDepthSurfaceNormalRejectedCells=0"));
+        assert!(fields.contains("environmentDepthSurfaceNormalStatus=configured-counters-pending"));
         assert!(fields.contains("environmentDepthSurfaceFreeSpaceDecay=hard"));
         assert!(fields.contains("environmentDepthSurfaceSupportStatus=pending-gpu-support-pass"));
         assert!(fields.contains("environmentDepthSurfaceLifecycleStatus=pending-runtime-support"));

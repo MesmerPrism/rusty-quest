@@ -48,7 +48,8 @@
   fixture for bright volumetric interference: it requests a 1024x1024x2 stereo
   storage target, 18 raymarch samples, a 0.72 central-FOV fraction, and smooth
   weighted gradient accumulation while preserving A/right-primary
-  randomization and keeping Breathing Room haptics/reset controls disabled.
+  randomization over a Trevor-inspired browser-portable pattern vocabulary and
+  keeping Breathing Room haptics/reset controls disabled.
   The balanced solid-black stimulus-volume profile keeps the same route,
   central-FOV fraction, smoothing, safety acknowledgement, and randomization
   range while dropping to a 768x768x2 stereo target and 12 raymarch samples for
@@ -57,7 +58,10 @@
   central-FOV fraction, smoothing, safety acknowledgement, and randomization
   range while dropping to a 512x512x2 stereo target and 12 raymarch samples for
   the first high-headroom 120 Hz/native-clock exploration tier measured on the
-  2026-06-19 Quest 3S resolution sweep.
+  2026-06-19 Quest 3S resolution sweep. Its runtime markers now also expect
+  the saved startup dynamics `headset-randomize-count-28-2026-06-20`: a
+  `spiral` pattern at 3.084 Hz with spatial oscillators 6.041, 35.362, and
+  37.531 Hz before any new right-primary randomization.
   The native-passthrough stimulus-volume fixture is the balanced comparison
   tier at 768x768x2 and 14 raymarch samples. Damaged stimulus-volume fixtures
   reject invalid randomization, missing safety acknowledgement, and out-of-range
@@ -111,9 +115,13 @@
   OpenXR stage reference space, 65536-particle capacity, 8-pixel sample stride,
   or the Meta environment-depth hand-removal request.
   The surface-support profiles also expect pending
-  `environmentDepthSurfaceLifecycleStatus` markers and zero lifecycle counters
-  in dry-run output; runtime log fixtures carry active candidate/confirmed
-  lifecycle counters only after the GPU scene-map path has run. The
+  `environmentDepthSurfaceLifecycleStatus` markers plus component-mode,
+  small-component policy, normal-source, and zero aggregate component/normal
+  counters in dry-run output; runtime log fixtures carry active
+  candidate/confirmed/local-patch component-hint lifecycle counters only after
+  the GPU scene-map path has run. Source-only mirror tests cover dynamic object
+  appear/confirm/move retirement before headset movement evidence is available.
+  The
   source-layer-agreement profile adds a non-default
   `environmentDepthSourceLayerAgreementRequired=true` dry-run route so two-layer
   agreement can be tested later without making stereo fusion the default.

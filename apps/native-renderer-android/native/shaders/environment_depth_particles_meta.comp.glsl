@@ -25,6 +25,7 @@ layout(push_constant) uniform EnvironmentDepthParticlePush {
     vec4 depth_eye_position;
     vec4 depth_eye_orientation_xyzw;
     vec4 depth_fov_tangents;
+    vec4 surface_params;
 } pc;
 
 const uint DEPTH_FLAG_INFINITE_FAR = 1u;
@@ -45,6 +46,9 @@ const float SCENE_PARTICLE_MERGE_WEIGHT = 0.18;
 const float SCENE_PARTICLE_CONFIDENCE_THRESHOLD = 0.58;
 const float SCENE_PARTICLE_SURFACE_SUPPORT_MIN_DEPTH_TOLERANCE_METERS = 0.18;
 const float SCENE_PARTICLE_SURFACE_SUPPORT_DEPTH_TOLERANCE_SCALE = 0.10;
+const float SURFACE_NORMAL_MIN_AREA_M2 = 0.000001;
+const float SURFACE_NORMAL_LOOSE_RESIDUAL_TOLERANCE_METERS = 0.08;
+const float SURFACE_NORMAL_STRICT_RESIDUAL_TOLERANCE_METERS = 0.03;
 const float SCENE_PARTICLE_ACTIVE_CORRECTION_CONFIDENCE = 0.78;
 const float SCENE_PARTICLE_ACTIVE_CORRECTION_STEP_METERS = SCENE_PARTICLE_CELL_METERS;
 const uint SCENE_PARTICLE_ACTIVE_CORRECTION_MAX_STEPS = 64u;
@@ -77,6 +81,13 @@ const uint RAW_DEBUG_SURFACE_PROMOTED_CELLS = 24u;
 const uint RAW_DEBUG_SURFACE_CANDIDATE_RETIRED_CELLS = 25u;
 const uint RAW_DEBUG_SOURCE_LAYER_AGREEMENT_CELLS = 26u;
 const uint RAW_DEBUG_SINGLE_LAYER_ONLY_CELLS = 27u;
+const uint RAW_DEBUG_SURFACE_NORMAL_VALID_CELLS = 28u;
+const uint RAW_DEBUG_SURFACE_NORMAL_INVALID_CELLS = 29u;
+const uint RAW_DEBUG_SURFACE_NORMAL_REJECTED_CELLS = 30u;
+const uint RAW_DEBUG_SURFACE_COMPONENT_LARGEST_CELLS = 31u;
+const uint RAW_DEBUG_SURFACE_COMPONENT_SMALL_REJECTED_CELLS = 32u;
+const uint RAW_DEBUG_SURFACE_COMPONENT_CANDIDATE_CELLS = 33u;
+const uint RAW_DEBUG_SURFACE_COMPONENT_CONFIRMED_CELLS = 34u;
 const uint SCENE_META_WORDS_PER_SLOT = 4u;
 const uint SCENE_META_KEY = 0u;
 const uint SCENE_META_STATE = 1u;
@@ -131,6 +142,40 @@ uint surface_support_min_source_layer_count() {
 
 float depth_source_layer_index() {
     return ((depth_flags() & DEPTH_FLAG_SOURCE_LAYER1) != 0u) ? 1.0 : 0.0;
+}
+
+float surface_normal_source_code() {
+    return floor(pc.surface_params.x + 0.5);
+}
+
+float surface_normal_coherence_code() {
+    return floor(pc.surface_params.y + 0.5);
+}
+
+bool surface_normal_depth_neighborhood_requested() {
+    return surface_normal_source_code() == 1.0;
+}
+
+bool surface_normal_coherence_gate_requested() {
+    return surface_normal_coherence_code() > 0.5;
+}
+
+float surface_component_mode_code() {
+    return floor(pc.surface_params.z + 0.5);
+}
+
+bool surface_component_hint_requested() {
+    return surface_component_mode_code() > 0.5;
+}
+
+uint surface_component_min_cell_count() {
+    return max(uint(max(floor(pc.surface_params.w + 0.5), 0.0)), 1u);
+}
+
+float surface_normal_residual_tolerance_meters() {
+    return surface_normal_coherence_code() >= 1.5
+        ? SURFACE_NORMAL_STRICT_RESIDUAL_TOLERANCE_METERS
+        : SURFACE_NORMAL_LOOSE_RESIDUAL_TOLERANCE_METERS;
 }
 
 float frame_marker() {
@@ -204,6 +249,117 @@ vec3 reconstruct_reference_space_position(vec2 surface_uv, float depth_meters) {
     float tangent_y = mix(pc.depth_fov_tangents.z, pc.depth_fov_tangents.w, surface_uv.y);
     vec3 depth_view = vec3(tangent_x * depth_meters, tangent_y * depth_meters, -depth_meters);
     return pc.depth_eye_position.xyz + rotate_by_quat(pc.depth_eye_orientation_xyzw, depth_view);
+}
+
+struct SurfaceNormalResult {
+    bool valid;
+    bool rejected;
+    vec3 normal;
+    float residual_meters;
+};
+
+SurfaceNormalResult invalid_surface_normal(bool rejected) {
+    SurfaceNormalResult result;
+    result.valid = false;
+    result.rejected = rejected;
+    result.normal = vec3(0.0);
+    result.residual_meters = 0.0;
+    return result;
+}
+
+SurfaceNormalResult valid_surface_normal(vec3 normal, float residual_meters) {
+    SurfaceNormalResult result;
+    result.valid = true;
+    result.rejected = false;
+    result.normal = normal;
+    result.residual_meters = residual_meters;
+    return result;
+}
+
+bool sample_depth_pixel_meters(
+    ivec2 pixel,
+    ivec2 depth_size,
+    out float depth_meters,
+    out vec2 surface_uv
+) {
+    if (pixel.x < 0 || pixel.y < 0 || pixel.x >= depth_size.x || pixel.y >= depth_size.y) {
+        return false;
+    }
+    surface_uv = (vec2(pixel) + vec2(0.5)) / max(vec2(depth_size), vec2(1.0));
+    vec2 depth_uv = clamp(
+        apply_depth_texture_transform(surface_uv, int(floor(pc.params0.z + 0.5))),
+        vec2(0.0),
+        vec2(1.0));
+    float raw_depth = sample_raw_depth(depth_uv);
+    if (!raw_depth_is_valid(raw_depth)) {
+        return false;
+    }
+    depth_meters = raw_depth_to_meters(raw_depth);
+    return depth_meters >= max(pc.params1.x, 0.001)
+        && depth_meters <= max(pc.params1.y, pc.params1.x + 0.01);
+}
+
+SurfaceNormalResult surface_depth_neighborhood_normal(
+    ivec2 center_pixel,
+    float center_depth_meters,
+    vec2 center_surface_uv,
+    ivec2 depth_size,
+    uint sample_stride
+) {
+    int stride = int(max(sample_stride, 1u));
+    ivec2 left_pixel = center_pixel - ivec2(stride, 0);
+    ivec2 right_pixel = center_pixel + ivec2(stride, 0);
+    ivec2 down_pixel = center_pixel - ivec2(0, stride);
+    ivec2 up_pixel = center_pixel + ivec2(0, stride);
+
+    float left_depth_meters = 0.0;
+    float right_depth_meters = 0.0;
+    float down_depth_meters = 0.0;
+    float up_depth_meters = 0.0;
+    vec2 left_surface_uv = vec2(0.0);
+    vec2 right_surface_uv = vec2(0.0);
+    vec2 down_surface_uv = vec2(0.0);
+    vec2 up_surface_uv = vec2(0.0);
+    if (!sample_depth_pixel_meters(left_pixel, depth_size, left_depth_meters, left_surface_uv)
+        || !sample_depth_pixel_meters(right_pixel, depth_size, right_depth_meters, right_surface_uv)
+        || !sample_depth_pixel_meters(down_pixel, depth_size, down_depth_meters, down_surface_uv)
+        || !sample_depth_pixel_meters(up_pixel, depth_size, up_depth_meters, up_surface_uv)) {
+        return invalid_surface_normal(false);
+    }
+
+    float tolerance = max(
+        SCENE_PARTICLE_SURFACE_SUPPORT_MIN_DEPTH_TOLERANCE_METERS,
+        center_depth_meters * SCENE_PARTICLE_SURFACE_SUPPORT_DEPTH_TOLERANCE_SCALE);
+    float max_depth_step = max(
+        max(abs(left_depth_meters - center_depth_meters), abs(right_depth_meters - center_depth_meters)),
+        max(abs(down_depth_meters - center_depth_meters), abs(up_depth_meters - center_depth_meters)));
+    if (max_depth_step > tolerance) {
+        return invalid_surface_normal(true);
+    }
+
+    vec3 center = reconstruct_reference_space_position(center_surface_uv, center_depth_meters);
+    vec3 left = reconstruct_reference_space_position(left_surface_uv, left_depth_meters);
+    vec3 right = reconstruct_reference_space_position(right_surface_uv, right_depth_meters);
+    vec3 down = reconstruct_reference_space_position(down_surface_uv, down_depth_meters);
+    vec3 up = reconstruct_reference_space_position(up_surface_uv, up_depth_meters);
+    vec3 normal_area = cross(right - left, up - down);
+    float area_sq = dot(normal_area, normal_area);
+    if (area_sq < SURFACE_NORMAL_MIN_AREA_M2) {
+        return invalid_surface_normal(false);
+    }
+    vec3 normal = normalize(normal_area);
+    if (dot(normal, pc.depth_eye_position.xyz - center) < 0.0) {
+        normal = -normal;
+    }
+
+    float residual_meters = max(
+        max(abs(dot(left - center, normal)), abs(dot(right - center, normal))),
+        max(abs(dot(down - center, normal)), abs(dot(up - center, normal))));
+    if (surface_normal_coherence_gate_requested()
+        && residual_meters > surface_normal_residual_tolerance_meters()) {
+        return invalid_surface_normal(true);
+    }
+    return valid_surface_normal(normal, residual_meters);
 }
 
 vec3 depth_color(float depth_meters) {
@@ -773,6 +929,22 @@ bool surface_support_passes(
         >= min_neighbors;
 }
 
+void record_surface_component_hint(uint support_count) {
+    if (!surface_component_hint_requested()) {
+        return;
+    }
+
+    uint local_patch_cells = support_count + 1u;
+    atomicAdd(depth_debug.values[RAW_DEBUG_SURFACE_COMPONENT_CANDIDATE_CELLS], 1u);
+    atomicMax(depth_debug.values[RAW_DEBUG_SURFACE_COMPONENT_LARGEST_CELLS], local_patch_cells);
+
+    if (local_patch_cells >= surface_component_min_cell_count()) {
+        atomicAdd(depth_debug.values[RAW_DEBUG_SURFACE_COMPONENT_CONFIRMED_CELLS], 1u);
+    } else {
+        atomicAdd(depth_debug.values[RAW_DEBUG_SURFACE_COMPONENT_SMALL_REJECTED_CELLS], 1u);
+    }
+}
+
 void sort_raw_prefix(inout float raw_values[9], int count) {
     for (int outer_index = 0; outer_index < 8; outer_index++) {
         for (int inner_index = outer_index + 1; inner_index < 9; inner_index++) {
@@ -893,6 +1065,27 @@ void main() {
 
     bool local_surface_supported = false;
     if (scene_map && surface_support_enforced_requested()) {
+        if (surface_normal_depth_neighborhood_requested()) {
+            SurfaceNormalResult normal_result = surface_depth_neighborhood_normal(
+                pixel,
+                depth_meters,
+                surface_uv,
+                depth_size,
+                sample_stride);
+            if (normal_result.valid) {
+                atomicAdd(depth_debug.values[RAW_DEBUG_SURFACE_NORMAL_VALID_CELLS], 1u);
+            } else if (normal_result.rejected) {
+                atomicAdd(depth_debug.values[RAW_DEBUG_SURFACE_NORMAL_REJECTED_CELLS], 1u);
+                if (surface_normal_coherence_gate_requested()) {
+                    return;
+                }
+            } else {
+                atomicAdd(depth_debug.values[RAW_DEBUG_SURFACE_NORMAL_INVALID_CELLS], 1u);
+                if (surface_normal_coherence_gate_requested()) {
+                    return;
+                }
+            }
+        }
         uint support_count = surface_support_neighbor_count(pixel, depth_meters, depth_size, sample_stride);
         if (support_count < surface_support_min_neighbor_count()) {
             atomicAdd(depth_debug.values[RAW_DEBUG_SURFACE_REJECTED_ISOLATED_CELLS], 1u);
@@ -900,6 +1093,7 @@ void main() {
         }
         local_surface_supported = true;
         atomicAdd(depth_debug.values[RAW_DEBUG_SURFACE_SUPPORTED_CELLS], 1u);
+        record_surface_component_hint(support_count);
     }
 
     vec3 reference_space_point = reconstruct_reference_space_position(surface_uv, depth_meters);

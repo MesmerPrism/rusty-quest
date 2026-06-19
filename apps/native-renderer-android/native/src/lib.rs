@@ -19,6 +19,7 @@ mod android_events;
 mod camera_projection;
 mod camera_projection_metadata;
 mod environment_depth_geometry;
+mod environment_depth_surface_support;
 #[cfg(target_os = "android")]
 mod gpu_environment_depth_particle_stats;
 #[cfg(target_os = "android")]
@@ -54,9 +55,12 @@ mod native_renderer_hand_anchor_particle_options;
 mod native_renderer_options;
 #[cfg(test)]
 mod native_renderer_options_tests;
+#[cfg(target_os = "android")]
+mod native_renderer_panel_bridge;
 mod native_renderer_projection_border_stretch_options;
 mod native_renderer_properties;
 mod native_renderer_property_values;
+mod native_renderer_stimulus_panel;
 mod native_renderer_stimulus_volume_options;
 #[cfg(target_os = "android")]
 mod native_renderer_timing;
@@ -90,7 +94,7 @@ fn load_public_plan() -> Result<NativeRendererPlan, String> {
 fn android_on_create(_state: &android_activity::OnCreateState) {
     marker(
         "activity-created",
-        "entrypoint=NativeActivity rustNativeActivity=true javaPackaged=false",
+        "entrypoint=NativeActivity rustNativeActivity=true javaPackaged=true panelActivity=ControlPanelActivity",
     );
     match request_runtime_permissions(_state) {
         Ok(()) => marker(
@@ -178,6 +182,8 @@ fn android_main(app: android_activity::AndroidApp) {
 
     let runtime_options =
         native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties();
+    let runtime_options =
+        native_renderer_stimulus_panel::apply_app_private_candidate(&app, runtime_options);
     marker(
         "render-mode",
         format!(

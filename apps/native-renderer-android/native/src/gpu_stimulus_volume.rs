@@ -4,12 +4,15 @@ use std::{ffi::CString, mem};
 
 use ash::vk;
 
-use crate::native_renderer_options::NativeStimulusVolumeSettings;
+use crate::native_renderer_options::{
+    NativeStimulusVolumePatternFamily, NativeStimulusVolumeSettings,
+};
 
 const STIMULUS_LAYERS: u32 = 2;
 const STIMULUS_LOCAL_SIZE_X: u32 = 8;
 const STIMULUS_LOCAL_SIZE_Y: u32 = 8;
 const STIMULUS_ACTUAL_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
+const SAVED_DEFAULT_DYNAMICS_SOURCE: &str = "headset-randomize-count-28-2026-06-20";
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct GpuStimulusVolumeFrameStats {
@@ -31,6 +34,13 @@ pub(crate) struct GpuStimulusVolumeFrameStats {
     pub(crate) source_shift: [f32; 2],
     pub(crate) noise_scale: f32,
     pub(crate) depth_warp: f32,
+    pub(crate) pattern_family: NativeStimulusVolumePatternFamily,
+    pub(crate) mirror_mode: u32,
+    pub(crate) twist: f32,
+    pub(crate) pinch: f32,
+    pub(crate) scramble: f32,
+    pub(crate) jumble: f32,
+    pub(crate) stretch: [f32; 2],
     pub(crate) phase: f32,
     pub(crate) cpu_upload_bytes: u64,
     pub(crate) gpu_buffers_resident: bool,
@@ -56,7 +66,7 @@ impl GpuStimulusVolumeFrameStats {
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "stimulusVolumeReady={} stimulusVolumeVisible={} stimulusVolumeDispatchCount={} stimulusVolumeRandomizeCount={} stimulusVolumeImageSize={}x{} stimulusVolumeLayerCount={} stimulusVolumeRequestedRenderTarget={} stimulusVolumeFormat={} stimulusVolumeFormatFallback={} stimulusVolumeResolutionTier={} stimulusVolumeCentralFovFraction={:.2} stimulusVolumeGradientSmoothing={:.2} stimulusVolumeTemporalFrequencyHz={:.3} stimulusVolumeSpatialOscillatorHz={:.3},{:.3},{:.3} stimulusVolumeSpatialFrequencyScale={:.3} stimulusVolumeSpatialSourceShift={:.3},{:.3} stimulusVolumeSpatialNoiseScale={:.3} stimulusVolumeDepthWarp={:.3} stimulusVolumePhase={:.3} stimulusVolumeCpuUploadBytes={} stimulusVolumeGpuBuffersResident={} stimulusVolumeBufferMemory=device-local stimulusVolumeExpandedVolumeUploadPerFrame=false stimulusVolumeProjectionPath=central-fov-stereo-sampled-storage-image stimulusSafetyAcknowledged={}",
+            "stimulusVolumeReady={} stimulusVolumeVisible={} stimulusVolumeDispatchCount={} stimulusVolumeRandomizeCount={} stimulusVolumeImageSize={}x{} stimulusVolumeLayerCount={} stimulusVolumeRequestedRenderTarget={} stimulusVolumeFormat={} stimulusVolumeFormatFallback={} stimulusVolumeResolutionTier={} stimulusVolumeCentralFovFraction={:.2} stimulusVolumeGradientSmoothing={:.2} stimulusVolumePatternFamily={} stimulusVolumeMirrorMode={} stimulusVolumeTwist={:.3} stimulusVolumePinch={:.3} stimulusVolumeScramble={:.3} stimulusVolumeJumble={:.3} stimulusVolumeStretch={:.3},{:.3} stimulusVolumeTemporalFrequencyHz={:.3} stimulusVolumeSpatialOscillatorHz={:.3},{:.3},{:.3} stimulusVolumeSpatialFrequencyScale={:.3} stimulusVolumeSpatialSourceShift={:.3},{:.3} stimulusVolumeSpatialNoiseScale={:.3} stimulusVolumeDepthWarp={:.3} stimulusVolumePhase={:.3} stimulusVolumeCpuUploadBytes={} stimulusVolumeGpuBuffersResident={} stimulusVolumeBufferMemory=device-local stimulusVolumeExpandedVolumeUploadPerFrame=false stimulusVolumeProjectionPath=central-fov-stereo-sampled-storage-image stimulusSafetyAcknowledged={}",
             self.ready,
             self.visible,
             self.dispatch_count,
@@ -70,6 +80,14 @@ impl GpuStimulusVolumeFrameStats {
             self.resolution_tier,
             self.central_fov_fraction,
             self.gradient_smoothing,
+            self.pattern_family.marker_value(),
+            mirror_mode_marker(self.mirror_mode),
+            self.twist,
+            self.pinch,
+            self.scramble,
+            self.jumble,
+            self.stretch[0],
+            self.stretch[1],
             self.temporal_frequency_hz,
             self.oscillator_hz[0],
             self.oscillator_hz[1],
@@ -108,7 +126,57 @@ pub(crate) struct GpuStimulusVolumeRenderer {
     source_shift: [f32; 2],
     noise_scale: f32,
     depth_warp: f32,
+    pattern_family: NativeStimulusVolumePatternFamily,
+    mirror_mode: u32,
+    twist: f32,
+    pinch: f32,
+    scramble: f32,
+    jumble: f32,
+    stretch: [f32; 2],
     phase_offsets: [f32; 3],
+}
+
+#[derive(Clone, Copy, Debug)]
+struct StimulusVolumeDynamics {
+    temporal_frequency_hz: f32,
+    oscillator_hz: [f32; 3],
+    spatial_frequency_scale: f32,
+    source_shift: [f32; 2],
+    noise_scale: f32,
+    depth_warp: f32,
+    pattern_family: NativeStimulusVolumePatternFamily,
+    mirror_mode: u32,
+    twist: f32,
+    pinch: f32,
+    scramble: f32,
+    jumble: f32,
+    stretch: [f32; 2],
+    phase_offsets: [f32; 3],
+}
+
+const SAVED_DEFAULT_DYNAMICS: StimulusVolumeDynamics = StimulusVolumeDynamics {
+    temporal_frequency_hz: 3.083_864,
+    oscillator_hz: [6.041_369, 35.362_293, 37.530_54],
+    spatial_frequency_scale: 0.900_433,
+    source_shift: [-0.052_117, 0.099_197],
+    noise_scale: 6.632_848,
+    depth_warp: 0.103_063,
+    pattern_family: NativeStimulusVolumePatternFamily::Spiral,
+    mirror_mode: 0,
+    twist: -0.791_351,
+    pinch: -0.281_597,
+    scramble: 0.127_603,
+    jumble: 0.165_175,
+    stretch: [1.390_104, 1.071_787],
+    phase_offsets: [0.964_848, 1.612_527, 3.835_902],
+};
+
+fn startup_dynamics(settings: NativeStimulusVolumeSettings) -> StimulusVolumeDynamics {
+    let mut dynamics = SAVED_DEFAULT_DYNAMICS;
+    if !settings.pattern_family.randomizes_family() {
+        dynamics.pattern_family = settings.pattern_family.runtime_initial_family();
+    }
+    dynamics
 }
 
 impl GpuStimulusVolumeRenderer {
@@ -300,6 +368,35 @@ impl GpuStimulusVolumeRenderer {
             ),
         );
 
+        let startup_dynamics = startup_dynamics(settings);
+        crate::marker(
+            "stimulus-volume",
+            format!(
+                "status=startup-dynamics source={} stimulusVolumePatternFamily={} stimulusVolumeMirrorMode={} stimulusVolumeTwist={:.3} stimulusVolumePinch={:.3} stimulusVolumeScramble={:.3} stimulusVolumeJumble={:.3} stimulusVolumeStretch={:.3},{:.3} stimulusVolumeTemporalFrequencyHz={:.3} stimulusVolumeSpatialOscillatorHz={:.3},{:.3},{:.3} stimulusVolumeSpatialFrequencyScale={:.3} stimulusVolumeSpatialSourceShift={:.3},{:.3} stimulusVolumeSpatialNoiseScale={:.3} stimulusVolumeDepthWarp={:.3} stimulusVolumePhaseOffsets={:.3},{:.3},{:.3}",
+                SAVED_DEFAULT_DYNAMICS_SOURCE,
+                startup_dynamics.pattern_family.marker_value(),
+                mirror_mode_marker(startup_dynamics.mirror_mode),
+                startup_dynamics.twist,
+                startup_dynamics.pinch,
+                startup_dynamics.scramble,
+                startup_dynamics.jumble,
+                startup_dynamics.stretch[0],
+                startup_dynamics.stretch[1],
+                startup_dynamics.temporal_frequency_hz,
+                startup_dynamics.oscillator_hz[0],
+                startup_dynamics.oscillator_hz[1],
+                startup_dynamics.oscillator_hz[2],
+                startup_dynamics.spatial_frequency_scale,
+                startup_dynamics.source_shift[0],
+                startup_dynamics.source_shift[1],
+                startup_dynamics.noise_scale,
+                startup_dynamics.depth_warp,
+                startup_dynamics.phase_offsets[0],
+                startup_dynamics.phase_offsets[1],
+                startup_dynamics.phase_offsets[2],
+            ),
+        );
+
         Ok(Self {
             descriptor_pool,
             descriptor_set_layout,
@@ -315,13 +412,20 @@ impl GpuStimulusVolumeRenderer {
             randomize_count: 0,
             last_reported_randomize_count: 0,
             random_seed: 0x51A7_5EED,
-            temporal_frequency_hz: 12.0,
-            oscillator_hz: [9.25, 13.5, 10.75],
-            spatial_frequency_scale: 1.0,
-            source_shift: [0.0, 0.0],
-            noise_scale: 4.7,
-            depth_warp: 0.045,
-            phase_offsets: [0.0, 1.7, 3.1],
+            temporal_frequency_hz: startup_dynamics.temporal_frequency_hz,
+            oscillator_hz: startup_dynamics.oscillator_hz,
+            spatial_frequency_scale: startup_dynamics.spatial_frequency_scale,
+            source_shift: startup_dynamics.source_shift,
+            noise_scale: startup_dynamics.noise_scale,
+            depth_warp: startup_dynamics.depth_warp,
+            pattern_family: startup_dynamics.pattern_family,
+            mirror_mode: startup_dynamics.mirror_mode,
+            twist: startup_dynamics.twist,
+            pinch: startup_dynamics.pinch,
+            scramble: startup_dynamics.scramble,
+            jumble: startup_dynamics.jumble,
+            stretch: startup_dynamics.stretch,
+            phase_offsets: startup_dynamics.phase_offsets,
         })
     }
 
@@ -345,6 +449,14 @@ impl GpuStimulusVolumeRenderer {
         let source_y01 = next_unit_float(&mut self.random_seed);
         let noise01 = next_unit_float(&mut self.random_seed);
         let depth_warp01 = next_unit_float(&mut self.random_seed);
+        let family01 = next_unit_float(&mut self.random_seed);
+        let mirror01 = next_unit_float(&mut self.random_seed);
+        let twist01 = next_unit_float(&mut self.random_seed);
+        let pinch01 = next_unit_float(&mut self.random_seed);
+        let scramble01 = next_unit_float(&mut self.random_seed);
+        let jumble01 = next_unit_float(&mut self.random_seed);
+        let stretch01 = next_unit_float(&mut self.random_seed);
+        let stretch11 = next_unit_float(&mut self.random_seed);
         let phase01 = next_unit_float(&mut self.random_seed);
         let phase11 = next_unit_float(&mut self.random_seed);
         let phase21 = next_unit_float(&mut self.random_seed);
@@ -362,6 +474,17 @@ impl GpuStimulusVolumeRenderer {
         ];
         self.noise_scale = 3.2 + noise01 * 4.8;
         self.depth_warp = 0.02 + depth_warp01 * 0.12;
+        self.pattern_family = if settings.pattern_family.randomizes_family() {
+            NativeStimulusVolumePatternFamily::from_random_unit(family01)
+        } else {
+            settings.pattern_family.runtime_initial_family()
+        };
+        self.mirror_mode = (mirror01 * 6.0).floor().min(5.0) as u32;
+        self.twist = (twist01 * 2.0 - 1.0) * 1.35;
+        self.pinch = (pinch01 * 2.0 - 1.0) * 0.70;
+        self.scramble = scramble01 * 0.34;
+        self.jumble = jumble01 * 0.30;
+        self.stretch = [0.72 + stretch01 * 0.72, 0.72 + stretch11 * 0.72];
         self.phase_offsets = [
             phase01 * std::f32::consts::TAU,
             phase11 * std::f32::consts::TAU,
@@ -371,9 +494,17 @@ impl GpuStimulusVolumeRenderer {
         crate::marker(
             "stimulus-volume-input",
             format!(
-                "event=right-primary-randomize status=applied frame={} stimulusVolumeRandomizeCount={} stimulusVolumeRandomizeMode=temporal-spatial stimulusVolumeTemporalFrequencyHz={:.3} stimulusVolumeSpatialOscillatorHz={:.3},{:.3},{:.3} randomizeHzRange={:.3}-{:.3} stimulusVolumeSpatialFrequencyScale={:.3} stimulusVolumeSpatialSourceShift={:.3},{:.3} stimulusVolumeSpatialNoiseScale={:.3} stimulusVolumeDepthWarp={:.3} stimulusVolumePhaseOffsets={:.3},{:.3},{:.3}",
+                "event=right-primary-randomize status=applied frame={} stimulusVolumeRandomizeCount={} stimulusVolumeRandomizeMode=trevor-vocabulary-temporal-spatial stimulusVolumePatternFamily={} stimulusVolumeMirrorMode={} stimulusVolumeTwist={:.3} stimulusVolumePinch={:.3} stimulusVolumeScramble={:.3} stimulusVolumeJumble={:.3} stimulusVolumeStretch={:.3},{:.3} stimulusVolumeTemporalFrequencyHz={:.3} stimulusVolumeSpatialOscillatorHz={:.3},{:.3},{:.3} randomizeHzRange={:.3}-{:.3} stimulusVolumeSpatialFrequencyScale={:.3} stimulusVolumeSpatialSourceShift={:.3},{:.3} stimulusVolumeSpatialNoiseScale={:.3} stimulusVolumeDepthWarp={:.3} stimulusVolumePhaseOffsets={:.3},{:.3},{:.3}",
                 frame_count,
                 self.randomize_count,
+                self.pattern_family.marker_value(),
+                mirror_mode_marker(self.mirror_mode),
+                self.twist,
+                self.pinch,
+                self.scramble,
+                self.jumble,
+                self.stretch[0],
+                self.stretch[1],
                 self.temporal_frequency_hz,
                 self.oscillator_hz[0],
                 self.oscillator_hz[1],
@@ -429,6 +560,13 @@ impl GpuStimulusVolumeRenderer {
                 self.noise_scale,
                 self.depth_warp,
             ],
+            params4: [
+                self.pattern_family.shader_code(),
+                self.mirror_mode as f32,
+                self.twist,
+                self.pinch,
+            ],
+            params5: [self.scramble, self.jumble, self.stretch[0], self.stretch[1]],
         };
 
         transition_image_to_compute_write(device, cmd, self.stereo_image.image, self.image_layout);
@@ -523,6 +661,13 @@ impl GpuStimulusVolumeRenderer {
                 self.noise_scale,
                 self.depth_warp,
             ],
+            params4: [
+                self.pattern_family.shader_code(),
+                self.mirror_mode as f32,
+                self.twist,
+                self.pinch,
+            ],
+            params5: [self.scramble, self.jumble, self.stretch[0], self.stretch[1]],
         };
         device.cmd_set_viewport(cmd, 0, &viewport);
         device.cmd_set_scissor(cmd, 0, &scissor);
@@ -580,6 +725,13 @@ impl GpuStimulusVolumeRenderer {
             source_shift: self.source_shift,
             noise_scale: self.noise_scale,
             depth_warp: self.depth_warp,
+            pattern_family: self.pattern_family,
+            mirror_mode: self.mirror_mode,
+            twist: self.twist,
+            pinch: self.pinch,
+            scramble: self.scramble,
+            jumble: self.jumble,
+            stretch: self.stretch,
             phase,
             cpu_upload_bytes: mem::size_of::<StimulusVolumeUniforms>() as u64,
             gpu_buffers_resident: true,
@@ -633,6 +785,8 @@ struct StimulusVolumePush {
     params1: [f32; 4],
     params2: [f32; 4],
     params3: [f32; 4],
+    params4: [f32; 4],
+    params5: [f32; 4],
 }
 
 struct OwnedImage {
@@ -1096,6 +1250,17 @@ fn format_fallback_marker(requested_format: &str) -> &'static str {
     }
 }
 
+fn mirror_mode_marker(mode: u32) -> &'static str {
+    match mode {
+        1 => "mirror-x",
+        2 => "mirror-y",
+        3 => "mirror-xy",
+        4 => "radial-wedge",
+        5 => "grid-fold",
+        _ => "none",
+    }
+}
+
 fn spirv_words(bytes: &[u8]) -> Result<Vec<u32>, String> {
     if bytes.len() % 4 != 0 {
         return Err("SPIR-V bytecode length is not word-aligned".to_string());
@@ -1121,4 +1286,63 @@ fn next_unit_float(seed: &mut u32) -> f32 {
 
 fn unit_float(seed: u32) -> f32 {
     ((seed >> 8) as f32) / 16_777_215.0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_renderer_options::NativeStimulusVolumeSettings;
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 0.000_001,
+            "actual {actual} expected {expected}"
+        );
+    }
+
+    #[test]
+    fn startup_dynamics_match_saved_headset_randomization() {
+        let settings = NativeStimulusVolumeSettings::default();
+        let dynamics = startup_dynamics(settings);
+        assert_eq!(
+            SAVED_DEFAULT_DYNAMICS_SOURCE,
+            "headset-randomize-count-28-2026-06-20"
+        );
+        assert_eq!(
+            dynamics.pattern_family,
+            NativeStimulusVolumePatternFamily::Spiral
+        );
+        assert_eq!(dynamics.mirror_mode, 0);
+        assert_close(dynamics.temporal_frequency_hz, 3.083_864);
+        assert_close(dynamics.oscillator_hz[0], 6.041_369);
+        assert_close(dynamics.oscillator_hz[1], 35.362_293);
+        assert_close(dynamics.oscillator_hz[2], 37.530_54);
+        assert_close(dynamics.spatial_frequency_scale, 0.900_433);
+        assert_close(dynamics.source_shift[0], -0.052_117);
+        assert_close(dynamics.source_shift[1], 0.099_197);
+        assert_close(dynamics.noise_scale, 6.632_848);
+        assert_close(dynamics.depth_warp, 0.103_063);
+        assert_close(dynamics.twist, -0.791_351);
+        assert_close(dynamics.pinch, -0.281_597);
+        assert_close(dynamics.scramble, 0.127_603);
+        assert_close(dynamics.jumble, 0.165_175);
+        assert_close(dynamics.stretch[0], 1.390_104);
+        assert_close(dynamics.stretch[1], 1.071_787);
+        assert_close(dynamics.phase_offsets[0], 0.964_848);
+        assert_close(dynamics.phase_offsets[1], 1.612_527);
+        assert_close(dynamics.phase_offsets[2], 3.835_902);
+    }
+
+    #[test]
+    fn explicit_profile_family_overrides_saved_default_family_only() {
+        let mut settings = NativeStimulusVolumeSettings::default();
+        settings.pattern_family = NativeStimulusVolumePatternFamily::Checker;
+        let dynamics = startup_dynamics(settings);
+        assert_eq!(
+            dynamics.pattern_family,
+            NativeStimulusVolumePatternFamily::Checker
+        );
+        assert_close(dynamics.temporal_frequency_hz, 3.083_864);
+        assert_close(dynamics.oscillator_hz[1], 35.362_293);
+    }
 }

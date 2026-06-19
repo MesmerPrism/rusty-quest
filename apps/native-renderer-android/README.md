@@ -35,14 +35,24 @@ Runtime routes are selected by profile/property, not by separate APKs:
 | `quest-native-renderer-solid-black-hands-and-grafts.profile.json` | Opaque black projection layer | Live base hand meshes plus graft copies | Disabled |
 | `quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json` | Opaque black projection layer | Runtime/default OpenXR hands requested plus resident GPU anchor particles; app custom mesh hidden | Disabled |
 
-It consumes the public native renderer fixture at build time. Runtime ownership
-is a Rust NativeActivity in `librusty_quest_native_renderer.so`: no app Java is packaged
-for this route. The Rust code opens NDK `ACameraManager` camera ids `50` and
-`51`, creates `PRIVATE` GPU-sampled `AImageReader` hardware buffers, acquires
+It consumes the public native renderer fixture at build time. Immersive runtime
+ownership remains a Rust NativeActivity in
+`librusty_quest_native_renderer.so`. The APK also packages a small same-APK 2D
+control panel Activity as `classes.dex`; that panel stages
+`stimulus_volume_candidate.json` and reads/writes
+`stimulus_volume_status.json` in app-private storage. The Java panel is a
+low-rate requester only: it uses native Android controls, does not package
+Spatial SDK, WebView, Compose, or Makepad, and does not mutate renderer state
+directly. On startup, the Rust NativeActivity reads the staged candidate,
+validates `rusty.quest.stimulus_volume.profile.v1`, and applies the effective
+stimulus-volume settings before the OpenXR/Vulkan loop starts.
+The Rust code opens NDK `ACameraManager` camera ids `50` and `51`, creates
+`PRIVATE` GPU-sampled `AImageReader` hardware buffers, acquires
 `AHardwareBuffer` frames in Rust callbacks, and emits
 `RUSTY_QUEST_NATIVE_RENDERER` timing and counter markers.
 Runtime permissions are requested by a tiny Rust/JNI call into Android's
-framework `Activity.requestPermissions`; this does not add app Java classes.
+framework `Activity.requestPermissions`; the panel Activity does not own runtime
+permission policy.
 Quest live hand tracking also requires the APK manifest to declare
 `com.oculus.permission.HAND_TRACKING` and optional
 `oculus.software.handtracking`; OS-level hand tracking must be enabled before
@@ -51,6 +61,52 @@ The NativeActivity event pump drains `MainEvent::InputAvailable` through
 `AndroidApp::input_events_iter()` so controller/menu key events are
 acknowledged by Android's input queue while remaining unhandled by the renderer
 unless a later layer explicitly consumes them.
+
+## Same-APK 2D Control Panel
+
+`io.github.mesmerprism.rustyquest.native_renderer/.ControlPanelActivity` is a
+plain Android 2D panel with `com.oculus.intent.category.2D`. It is intended as
+the first low-overhead in-headset setup surface for the stimulus-volume route.
+The panel writes a candidate profile:
+
+```text
+files/stimulus_volume_candidate.json
+```
+
+The candidate schema is `rusty.quest.stimulus_volume.profile.v1`. It can select
+the solid-black or native-passthrough stimulus-volume render route, safety
+acknowledgement, active/inactive request state, render target tier, raymarch
+sample count, central-FOV fraction, gradient smoothing, pattern family, and
+randomization Hz bounds. The Rust NativeActivity is the authority: it rejects
+missing safety acknowledgement for active requests, rejects randomization ranges
+outside `3.0` to `40.0` Hz, rejects unsupported pattern families or render
+targets, disables stale Breathing Room projection-target controls for
+volume-only routes, and emits `stimulus-panel` markers when a candidate is
+missing, rejected, or applied.
+
+The panel also writes an app-private status witness:
+
+```text
+files/stimulus_volume_status.json
+```
+
+The native runtime may replace that file with
+`rusty.quest.stimulus_volume.apply_status.v1` after startup validation. This is
+startup-effective by design. Future live editing should add a same-process JNI
+or command-queue adapter that drains at a frame boundary; it should not poll
+panel files in the GPU command-recording hot path.
+
+While the immersive native renderer is running, the OpenXR action set binds the
+right controller trigger value to a panel toggle. Pressing the right trigger
+starts `ControlPanelActivity` with the panel toggle action; if the panel is
+already alive, its `onNewIntent` handler closes the panel. This is best-effort
+cooperative panel behavior and includes an on-panel Close button as a fallback
+for platform modes that move input focus fully to the 2D panel. The A/right
+primary button remains reserved for stimulus randomization.
+
+The stimulus route starts from the saved headset dynamics
+`headset-randomize-count-28-2026-06-20` before any new randomize press: a spiral
+family at 3.084 Hz with spatial oscillators 6.041, 35.362, and 37.531 Hz.
 
 The Rust core proves Android package, NativeActivity entry, NDK camera/HWB
 acquisition shape, native timing counters, OpenXR loader packaging, an
@@ -220,16 +276,19 @@ environment-depth scene-map compute path now uses those settings to apply a
 bounded GPU local-depth-neighborhood support gate before writing retained scene
 cells. Runtime particle markers report
 `environmentDepthSurfaceSupportEnforced=true`,
-`environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-pending`,
+`environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-local-hint`,
 `environmentDepthSurfaceSupportedCells`, and
 `environmentDepthSurfaceRejectedIsolatedCells` when that gate is active. They
-also report `environmentDepthSurfaceLifecycleStatus` plus candidate,
-confirmed, promoted, and candidate-retired cell counters. Source-layer
+also report aggregate local-patch component hints through
+`environmentDepthSurfaceLargestComponentCells`,
+`environmentDepthSurfaceComponentCandidateCells`, and
+`environmentDepthSurfaceConfirmedComponentCells`, plus
+`environmentDepthSurfaceLifecycleStatus` with candidate, confirmed, promoted,
+and candidate-retired cell counters. Source-layer
 agreement uses `environmentDepthSourceLayerAgreementRequired`,
 `environmentDepthSourceLayerAgreementCells`, and
 `environmentDepthSingleLayerOnlyCells`; the connected-component/global-surface
-pass and largest-component proof are still pending and require later headset
-evidence.
+connected-label pass is still pending and requires later headset evidence.
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-graft-only.profile.json`
 keeps native passthrough focused on graft instances only, while
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-hands-and-grafts.profile.json`

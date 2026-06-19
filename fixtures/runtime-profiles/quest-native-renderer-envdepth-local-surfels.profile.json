@@ -21,7 +21,10 @@
     "debug.rustyquest.native_renderer.environment_depth.surface_support.min_observations",
     "debug.rustyquest.native_renderer.environment_depth.surface_support.min_source_layers",
     "debug.rustyquest.native_renderer.environment_depth.surface_support.component_min_cells",
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.component_mode",
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_source",
     "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_coherence",
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.small_component_policy",
     "debug.rustyquest.native_renderer.environment_depth.surface_support.free_space_decay"
   ],
   "set_properties": [
@@ -116,9 +119,24 @@
       "source_setting_id": "native_renderer.environment_depth.surface_support.component_min_cells"
     },
     {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.component_mode",
+      "value": "local-hint",
+      "source_setting_id": "native_renderer.environment_depth.surface_support.component_mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_source",
+      "value": "depth-neighborhood",
+      "source_setting_id": "native_renderer.environment_depth.surface_support.normal_source"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_coherence",
       "value": "off",
       "source_setting_id": "native_renderer.environment_depth.surface_support.normal_coherence"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.small_component_policy",
+      "value": "dim",
+      "source_setting_id": "native_renderer.environment_depth.surface_support.small_component_policy"
     },
     {
       "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.free_space_decay",
@@ -141,7 +159,17 @@
     "environmentDepthSourceLayerAgreementCells=0",
     "environmentDepthSingleLayerOnlyCells=0",
     "environmentDepthSurfaceComponentMinCells=1",
+    "environmentDepthSurfaceComponentMode=local-hint",
+    "environmentDepthSurfaceSmallComponentPolicy=dim",
+    "environmentDepthSurfaceSmallComponentRejectedCells=0",
+    "environmentDepthSurfaceComponentCandidateCells=0",
+    "environmentDepthSurfaceConfirmedComponentCells=0",
+    "environmentDepthSurfaceNormalSource=depth-neighborhood",
     "environmentDepthSurfaceNormalCoherence=off",
+    "environmentDepthSurfaceNormalValidCells=0",
+    "environmentDepthSurfaceNormalInvalidCells=0",
+    "environmentDepthSurfaceNormalRejectedCells=0",
+    "environmentDepthSurfaceNormalStatus=configured-counters-pending",
     "environmentDepthSurfaceFreeSpaceDecay=soft",
     "environmentDepthSurfaceSupportStatus=pending-gpu-support-pass",
     "environmentDepthSurfaceLifecycleStatus=pending-runtime-support",

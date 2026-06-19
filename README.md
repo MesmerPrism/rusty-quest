@@ -43,12 +43,18 @@ work in `docs/NATIVE_CAMERA_QUALITY_ITERATION_PLAN.md`.
 
 `apps/native-renderer-android` is the first Quest-native Android package
 scaffold for that contract. It stages the public renderer plan as an APK asset
-and uses a Rust NativeActivity library, with no app Java packaged, to open NDK
-`ACameraManager` camera ids `50` and `51` into GPU-sampled `AImageReader`
-hardware buffers and emit `RUSTY_QUEST_NATIVE_RENDERER` timing markers. It is
-not a Makepad route and it is not a legacy compatibility route. The current
-scaffold has headset evidence for a real submitted OpenXR diagnostic projection
-layer with the public recorded-hand replay overlay visible. The current native
+and uses a Rust NativeActivity library to open NDK `ACameraManager` camera ids
+`50` and `51` into GPU-sampled `AImageReader` hardware buffers and emit
+`RUSTY_QUEST_NATIVE_RENDERER` timing markers. The package also includes a small
+same-APK 2D control panel Activity packaged as `classes.dex`; that panel is a
+low-rate requester only. It stages `stimulus_volume_candidate.json` in
+app-private storage, while the Rust NativeActivity reads, validates, and applies
+the candidate as the effective startup authority for the native stimulus-volume
+route. The panel does not add Spatial SDK, WebView, Compose, or Makepad to the
+immersive OpenXR/Vulkan renderer. It is not a Makepad route and it is not a
+legacy compatibility route. The current scaffold has headset evidence for a real
+submitted OpenXR diagnostic projection layer with the public recorded-hand
+replay overlay visible. The current native
 camera proof imports retained Camera2 HWB frames
 into Vulkan external images and renders them only inside metadata-owned per-eye
 target rectangles, with source raster Y flip controlled by metadata rather than
@@ -126,8 +132,17 @@ through the right-hand subaction path as the Breathing Room breathing-mode cue.
 Stimulus-volume render modes are volume-only routes: they sanitize
 projection-target settings to disabled defaults, do not bind Breathing Room
 reset/scale/haptic actions, and reserve right-controller A for stimulus
-randomization. The solid-black stimulus fixture now uses the central-FOV
-limit tier (`1024x1024x2`, 18 raymarch samples, 0.72 central-FOV fraction) so
+randomization. The startup dynamics default to the saved headset randomization
+`headset-randomize-count-28-2026-06-20`: a spiral family at 3.084 Hz with
+spatial oscillators 6.041, 35.362, and 37.531 Hz, source shift
+`-0.052,0.099`, and the captured twist/pinch/scramble/jumble/stretch values.
+The randomization vocabulary remains Trevor Hewitt-inspired but shader-native:
+button randomization selects browser-portable pattern families
+(`trevor-mix`, stripes, ripples, rays, checker, spiral, and noise-field) plus
+mirror/twist/pinch/scramble/jumble/stretch parameters that a later browser
+designer can serialize into the Quest profile surface. The solid-black stimulus
+fixture now uses the central-FOV limit tier (`1024x1024x2`, 18 raymarch samples,
+0.72 central-FOV fraction) so
 the native GPU path spends its resolution budget on the main field of view
 instead of the periphery; the companion balanced solid-black profile keeps the
 same route and safety settings at `768x768x2` with 12 raymarch samples for
@@ -175,8 +190,11 @@ can evolve without making the integration file another settings or evidence
 schema owner.
 Environment-depth particle Vulkan resource and command recording stays in
 `gpu_environment_depth_particles`, while readback statistics, marker-policy
-strings, surface-support depth flags, and grid sizing live in
-`gpu_environment_depth_particle_stats`.
+strings, surface-support depth flags, normal-source/counter markers, and grid
+sizing live in `gpu_environment_depth_particle_stats`. Source-only
+normal/coherence regression math lives in `environment_depth_surface_support`;
+it reconstructs bounded depth neighborhoods into reference-space meters for
+host tests and does not become runtime authority.
 The typed low-rate property manifest at
 `fixtures/native-renderer/native-renderer-property-manifest.json` records the
 current Android property surface, value kinds, ranges, parser owners,
@@ -287,12 +305,14 @@ touching a headset. The native renderer now has a bounded GPU
 local-depth-neighborhood support gate for requested surface modes; runtime
 particle evidence may report
 `environmentDepthSurfaceSupportEnforced=true` with
-`environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-pending`
+`environmentDepthSurfaceSupportStatus=enforced-local-depth-neighborhood-component-local-hint`
 and nonzero supported/rejected-cell counters. It also tracks a bounded
 candidate/confirmed lifecycle with `environmentDepthSurfaceLifecycleStatus`
-and candidate, confirmed, promoted, and candidate-retired cell counters.
-Connected-component/global surface acceptance and world-space motion proof
-still require a headset run.
+and candidate, confirmed, promoted, candidate-retired, component-mode,
+small-component, confirmed-component, and nonzero local-patch max counters.
+These are aggregate GPU local-hint counters, not accepted connected-labels.
+Connected-component/global surface acceptance and world-space motion proof still
+require a headset run.
 
 Device-facing smoke wrappers require `-Serial <quest-serial>` or
 `RUSTY_QUEST_SERIAL`; normal ADB work must not rely on an implicit default

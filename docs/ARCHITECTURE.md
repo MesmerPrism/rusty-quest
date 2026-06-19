@@ -66,10 +66,21 @@ operator app.
 
 The package is a Quest platform adapter. It consumes the validated public
 native-renderer plan fixture as an APK asset, requests Android/headset/spatial
-camera permissions, launches through Android framework `NativeActivity`, and
-keeps app logic in the Rust native library. The Rust code opens outside camera
-ids `50` and `51` through NDK `ACameraManager`, acquires `PRIVATE` GPU-sampled
-`AHardwareBuffer` frames, initializes the Android OpenXR loader, probes the
+camera permissions, launches the immersive renderer through Android framework
+`NativeActivity`, and keeps immersive render logic in the Rust native library.
+The package also exposes a same-APK 2D `ControlPanelActivity` as a plain
+Android panel. That panel is not a renderer, not a Spatial SDK host, and not a
+Makepad shell; it is a low-rate requester that stages
+`rusty.quest.stimulus_volume.profile.v1` candidates in app-private storage. On
+startup, the Rust `NativeActivity` reads `stimulus_volume_candidate.json`,
+validates safety and range constraints, applies accepted candidates as
+effective startup settings for the stimulus-volume route, and writes
+`rusty.quest.stimulus_volume.apply_status.v1` status. Live editor work should
+reuse that candidate/status contract through a same-process command queue
+rather than polling files from the GPU hot path.
+The Rust code opens outside camera ids `50` and `51` through NDK
+`ACameraManager`, acquires `PRIVATE` GPU-sampled `AHardwareBuffer` frames,
+initializes the Android OpenXR loader, probes the
 OpenXR-selected Vulkan instance/device prerequisites, creates a native
 OpenXR/Vulkan session and stereo swapchain, submits a diagnostic projection
 layer with the public recorded-hand replay overlay visible, stages an optional
@@ -181,7 +192,11 @@ parsing belongs to `native_renderer_hand_anchor_particle_options`;
 projection-border and peripheral-stretch settings parsing belongs to
 `native_renderer_projection_border_stretch_options`; and
 stimulus-volume settings parsing belongs to
-`native_renderer_stimulus_volume_options`. Render-route, compact hand source,
+`native_renderer_stimulus_volume_options`. Same-APK 2D panel candidate parsing,
+status writing, and startup-effective stimulus override logic belongs to
+`native_renderer_stimulus_panel`; it adapts the panel schema into the existing
+stimulus-volume settings owner without making Java UI code runtime authority.
+Render-route, compact hand source,
 hand-visual diagnostic, and private-layer settings parsing belongs to
 `native_renderer_visual_options`. The `native_renderer_options` module
 remains the aggregate facade consumed by the OpenXR/Vulkan frame loop so
@@ -256,9 +271,13 @@ Replay/live visual evidence rectangle math lives in
 helpers are not another responsibility of the frame-loop integration file.
 The environment-depth particle Vulkan resource and command recording facade
 remains `gpu_environment_depth_particles.rs`; readback statistics, marker
-policy strings, surface-support depth flags, and depth-grid sizing live in
+policy strings, surface-support depth flags, normal-source/counter markers,
+and depth-grid sizing live in
 `gpu_environment_depth_particle_stats.rs` so resource lifetime code does not
-also own the low-rate evidence policy.
+also own the low-rate evidence policy. The source-only
+`environment_depth_surface_support.rs` mirror owns host-testable
+depth-neighborhood normal/coherence policy for synthetic planes, holes, and
+depth steps; the Android runtime remains GPU-owned.
 
 Only the blur guide path, public recorded-hand replay visual, resident
 compact-joint GPU-skinned triangle overlay, native GPU mesh boundary, and
