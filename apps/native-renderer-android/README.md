@@ -168,6 +168,13 @@ It samples texture-array layer 1 and depth view 1 with
 `environmentDepthSampledLayerMask=0x2` and
 `environmentDepthShaderLayerPolicy=mono-layer1`; it is still mono-source
 evidence, not stereo fusion.
+`fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity.profile.json`
+is the stress profile for the same real Meta provider scene-map path. It keeps
+the layer-0 OpenXR-local world-space map policy fixed, lowers the particle
+capacity to 64, and samples every 4 pixels so headset evidence can require
+`environmentDepthParticleCount=64` plus nonzero exhausted hash probes. Use it
+only as a bounded-map stress route; the normal 32768-capacity profile remains
+the default quality proof.
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-graft-only.profile.json`
 keeps native passthrough focused on graft instances only, while
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-hands-and-grafts.profile.json`

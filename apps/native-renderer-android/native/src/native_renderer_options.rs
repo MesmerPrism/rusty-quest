@@ -1819,18 +1819,18 @@ mod tests {
         NativeCameraYcbcrMode, NativeEnvironmentDepthDebugView,
         NativeEnvironmentDepthDepthUnitsPolicy, NativeEnvironmentDepthLayerPolicy,
         NativeEnvironmentDepthMode, NativeEnvironmentDepthReferenceSpace,
-        NativeEnvironmentDepthSource, NativeRendererRuntimeOptions,
-        NativeSwapchainColorFormatMode, PROP_CAMERA_DIRECT_BORDER_OPACITY,
-        PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED, PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE,
-        PROP_CAMERA_READER_MAX_IMAGES, PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING,
-        PROP_CAMERA_SYNC_MODE, PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL,
-        PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW, PROP_ENVIRONMENT_DEPTH_DEPTH_UNITS_POLICY,
-        PROP_ENVIRONMENT_DEPTH_FAR_M, PROP_ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD,
-        PROP_ENVIRONMENT_DEPTH_LAYER_POLICY, PROP_ENVIRONMENT_DEPTH_MODE,
-        PROP_ENVIRONMENT_DEPTH_NEAR_M, PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY,
-        PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE, PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS,
-        PROP_ENVIRONMENT_DEPTH_SOURCE, PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
-        PROP_HAND_ANCHOR_PARTICLES_ENABLED, PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
+        NativeEnvironmentDepthSource, NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
+        PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED,
+        PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_READER_MAX_IMAGES,
+        PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
+        PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL, PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW,
+        PROP_ENVIRONMENT_DEPTH_DEPTH_UNITS_POLICY, PROP_ENVIRONMENT_DEPTH_FAR_M,
+        PROP_ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD, PROP_ENVIRONMENT_DEPTH_LAYER_POLICY,
+        PROP_ENVIRONMENT_DEPTH_MODE, PROP_ENVIRONMENT_DEPTH_NEAR_M,
+        PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY, PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE,
+        PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS, PROP_ENVIRONMENT_DEPTH_SOURCE,
+        PROP_HAND_ANCHOR_PARTICLES_DYNAMICS, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
+        PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
         PROP_HAND_ANCHOR_PARTICLES_RADIUS_M, PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_BLEND_MODE,
@@ -2374,12 +2374,8 @@ mod tests {
         assert!(fields.contains("environmentDepthMode=disabled"));
         assert!(fields.contains("environmentDepthSource=runtime-provider"));
         assert!(fields.contains("environmentDepthShaderLayerPolicy=mono-layer0"));
-        assert!(fields.contains(
-            "environmentDepthDepthUnitsPolicy=projected-depth-from-near-far"
-        ));
-        assert!(fields.contains(
-            "environmentDepthRawToMetersPolicy=projected-depth-from-near-far"
-        ));
+        assert!(fields.contains("environmentDepthDepthUnitsPolicy=projected-depth-from-near-far"));
+        assert!(fields.contains("environmentDepthRawToMetersPolicy=projected-depth-from-near-far"));
         assert!(fields.contains("environmentDepthDebugView=normal"));
         assert!(fields.contains("environmentDepthProviderState=not-requested"));
         assert!(fields.contains("environmentDepthHighRateJsonPayload=false"));
@@ -2436,9 +2432,7 @@ mod tests {
         assert!(fields.contains("environmentDepthMode=status-only"));
         assert!(fields.contains("environmentDepthSource=synthetic-gpu-proof"));
         assert!(fields.contains("environmentDepthShaderLayerPolicy=mono-layer1"));
-        assert!(fields.contains(
-            "environmentDepthDepthUnitsPolicy=projected-depth-from-near-far"
-        ));
+        assert!(fields.contains("environmentDepthDepthUnitsPolicy=projected-depth-from-near-far"));
         assert!(fields.contains("environmentDepthDebugView=raw-d16"));
         assert!(fields.contains("environmentDepthProviderState=status-only-skeleton"));
         assert!(fields.contains("environmentDepthReferenceSpace=openxr-stage"));

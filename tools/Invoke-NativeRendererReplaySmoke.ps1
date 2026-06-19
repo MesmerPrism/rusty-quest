@@ -18,6 +18,9 @@ param(
     [switch]$AllowFlatScreenshot,
     [switch]$AllowPerformanceBudgetMiss,
     [switch]$AllowPrivateLayerPayload,
+    [int]$ExpectedEnvironmentDepthParticleCount = 0,
+    [int]$MinimumEnvironmentDepthSourceDepthSamples = 0,
+    [int]$MinimumEnvironmentDepthHashProbeExhaustedCount = 0,
     [switch]$StopAfterRun
 )
 
@@ -214,6 +217,9 @@ $summary = [ordered]@{
     environment_depth_particles_required = ($EvidenceMode -eq "EnvironmentDepthParticles")
     performance_budget_required = (-not [bool]$AllowPerformanceBudgetMiss)
     private_layer_payload_allowed = [bool]$AllowPrivateLayerPayload
+    expected_environment_depth_particle_count = $ExpectedEnvironmentDepthParticleCount
+    minimum_environment_depth_source_depth_samples = $MinimumEnvironmentDepthSourceDepthSamples
+    minimum_environment_depth_hash_probe_exhausted_count = $MinimumEnvironmentDepthHashProbeExhaustedCount
     stop_after_run = [bool]$StopAfterRun
     property_plan_path = $propertyPlanPath
     permission_pregrant_path = $permissionPregrantPath
@@ -301,6 +307,15 @@ try {
     )
     if ($EvidenceMode -eq "EnvironmentDepthParticles") {
         $evidenceArgs += "-RequireEnvironmentDepthParticles"
+        if ($ExpectedEnvironmentDepthParticleCount -gt 0) {
+            $evidenceArgs += @("-ExpectedEnvironmentDepthParticleCount", $ExpectedEnvironmentDepthParticleCount.ToString())
+        }
+        if ($MinimumEnvironmentDepthSourceDepthSamples -gt 0) {
+            $evidenceArgs += @("-MinimumEnvironmentDepthSourceDepthSamples", $MinimumEnvironmentDepthSourceDepthSamples.ToString())
+        }
+        if ($MinimumEnvironmentDepthHashProbeExhaustedCount -gt 0) {
+            $evidenceArgs += @("-MinimumEnvironmentDepthHashProbeExhaustedCount", $MinimumEnvironmentDepthHashProbeExhaustedCount.ToString())
+        }
     } else {
         $evidenceArgs += @(
             "-RequireCameraProjection",

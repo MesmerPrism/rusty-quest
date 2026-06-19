@@ -27,6 +27,9 @@ param(
     [switch]$RequireSdfVisual,
     [switch]$RequireGpuTimestampReady,
     [switch]$RequirePerformanceBudget,
+    [int]$ExpectedEnvironmentDepthParticleCount = 0,
+    [int]$MinimumEnvironmentDepthSourceDepthSamples = 0,
+    [int]$MinimumEnvironmentDepthHashProbeExhaustedCount = 0,
     [double]$MinimumObservedOpenXrFps = 70.0,
     [int]$MaximumStaleFrames = 0,
     [double]$MaximumRecordCpuMs = 4.0,
@@ -742,8 +745,14 @@ if ($RequireEnvironmentDepthParticles) {
 
     $particleCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthParticleCount"
     Assert-True ($particleCount -gt 0) "environment-depth-particles marker reports no particles."
+    if ($ExpectedEnvironmentDepthParticleCount -gt 0) {
+        Assert-True ($particleCount -eq $ExpectedEnvironmentDepthParticleCount) "environment-depth-particles marker reports $particleCount particles; expected $ExpectedEnvironmentDepthParticleCount."
+    }
     $sourceDepthSamples = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthParticleSourceDepthSamples"
     Assert-True ($sourceDepthSamples -gt 0) "environment-depth-particles marker reports no source depth samples."
+    if ($MinimumEnvironmentDepthSourceDepthSamples -gt 0) {
+        Assert-True ($sourceDepthSamples -ge $MinimumEnvironmentDepthSourceDepthSamples) "environment-depth-particles marker reports $sourceDepthSamples source depth samples; expected at least $MinimumEnvironmentDepthSourceDepthSamples."
+    }
     $rawCenterD16 = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthRawCenterD16"
     Assert-True ($rawCenterD16 -gt 0 -and $rawCenterD16 -le 65535) "environment-depth-particles raw center D16 is outside 1..65535: $rawCenterD16"
     $centerReconstructedMeters = Get-MarkerNumber -Line $environmentDepthParticlesLine -Field "environmentDepthCenterReconstructedMeters"
@@ -770,6 +779,9 @@ if ($RequireEnvironmentDepthParticles) {
     $hashClaimFailedCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashClaimFailedCount"
     $hashUpdateCount = $hashInsertSuccessCount + $hashMergeCount + $hashStaleReplaceCount
     Assert-True ($hashUpdateCount -gt 0) "environment-depth-particles scene-map readback reports no successful insert, merge, or stale replacement."
+    if ($MinimumEnvironmentDepthHashProbeExhaustedCount -gt 0) {
+        Assert-True ($hashProbeExhaustedCount -ge $MinimumEnvironmentDepthHashProbeExhaustedCount) "environment-depth-particles scene-map reports $hashProbeExhaustedCount exhausted hash probes; expected at least $MinimumEnvironmentDepthHashProbeExhaustedCount."
+    }
     Assert-True ($freeSpaceRetireSuccessCount -le $freeSpaceRetireAttemptCount) "environment-depth-particles free-space retire successes exceed attempts."
     $summary.environment_depth_line = $environmentDepthLine
     $summary.environment_depth_particles_line = $environmentDepthParticlesLine

@@ -527,6 +527,26 @@ mod tests {
     }
 
     #[test]
+    fn environment_depth_meta_low_capacity_profile_validates() {
+        let profile: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity.profile.json"
+        ))
+        .expect("environment depth Meta low-capacity profile JSON");
+        validate_runtime_profile(&profile)
+            .expect("environment depth low-capacity profile validates");
+        let plan = build_write_plan(&profile).expect("write plan");
+        assert!(plan.operations.iter().any(|operation| {
+            operation.name == "debug.rustyquest.native_renderer.environment_depth.particle_capacity"
+                && operation.value.as_deref() == Some("64")
+        }));
+        assert!(plan.operations.iter().any(|operation| {
+            operation.name
+                == "debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels"
+                && operation.value.as_deref() == Some("4")
+        }));
+    }
+
+    #[test]
     fn environment_depth_high_rate_json_payload_is_rejected() {
         let damaged: RuntimeProfile = serde_json::from_str(include_str!(
             "../../../fixtures/damaged/native-renderer-environment-depth-high-rate-json.profile.json"

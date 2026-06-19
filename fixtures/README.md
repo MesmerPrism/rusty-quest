@@ -69,6 +69,12 @@
   `environmentDepthSampledLayerMask=0x2` and
   `environmentDepthShaderLayerPolicy=mono-layer1` without enabling stereo
   fusion.
+  `quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity.profile.json`
+  is the bounded-map stress route for the same real Meta provider path. It
+  keeps layer 0, OpenXR-local scene cells, raw D16 projected-depth sampling,
+  and native passthrough fixed while lowering `particle_capacity` to 64 and
+  `sample_stride_pixels` to 4 so a headset run can prove low-capacity hash
+  pressure through the scene-map health counters.
 - `native-renderer/`: valid Quest-native renderer plans, timing scorecards, and
   public recorded-hand topology/shape fixtures for pure-HWB blur, GPU mesh
   boundary, resident compact-joint GPU-skinned visual examples,

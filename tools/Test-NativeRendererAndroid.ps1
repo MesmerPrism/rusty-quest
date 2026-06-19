@@ -85,12 +85,13 @@ $environmentDepthStatusProfilePath = Join-Path $repoRoot "fixtures\runtime-profi
 $environmentDepthNativePassthroughParticlesProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-environment-depth-particles.profile.json"
 $environmentDepthNativePassthroughMetaParticlesProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json"
 $environmentDepthNativePassthroughMetaParticlesLayer1ProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json"
+$environmentDepthNativePassthroughMetaParticlesLowCapacityProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity.profile.json"
 $environmentDepthHighRateJsonDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-high-rate-json.profile.json"
 $environmentDepthInvalidRangeDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-invalid-range.profile.json"
 $environmentDepthInvalidCapacityDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-invalid-capacity.profile.json"
 $environmentDepthInvalidDepthUnitsPolicyDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-invalid-depth-units-policy.profile.json"
 
-foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $nativeCameraMetadataPath, $nativeCameraProfilesPath, $nativeCameraReaderSelectionPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $environmentDepthGeometryPath, $environmentDepthParticlesPath, $openxrEnvironmentDepthPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $cameraLumaDiagnosticShaderPath, $environmentDepthParticlesComputeShaderPath, $environmentDepthParticlesMetaComputeShaderPath, $environmentDepthParticlesVertexShaderPath, $environmentDepthParticlesFragmentShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $permissionPregrantToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $environmentDepthParticlesEvidenceFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowNoiseRecord30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath, $environmentDepthStatusProfilePath, $environmentDepthNativePassthroughParticlesProfilePath, $environmentDepthNativePassthroughMetaParticlesProfilePath, $environmentDepthNativePassthroughMetaParticlesLayer1ProfilePath, $environmentDepthHighRateJsonDamagedProfilePath, $environmentDepthInvalidRangeDamagedProfilePath, $environmentDepthInvalidCapacityDamagedProfilePath, $environmentDepthInvalidDepthUnitsPolicyDamagedProfilePath)) {
+foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $nativeCameraMetadataPath, $nativeCameraProfilesPath, $nativeCameraReaderSelectionPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $environmentDepthGeometryPath, $environmentDepthParticlesPath, $openxrEnvironmentDepthPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $cameraLumaDiagnosticShaderPath, $environmentDepthParticlesComputeShaderPath, $environmentDepthParticlesMetaComputeShaderPath, $environmentDepthParticlesVertexShaderPath, $environmentDepthParticlesFragmentShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $permissionPregrantToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $environmentDepthParticlesEvidenceFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowNoiseRecord30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath, $environmentDepthStatusProfilePath, $environmentDepthNativePassthroughParticlesProfilePath, $environmentDepthNativePassthroughMetaParticlesProfilePath, $environmentDepthNativePassthroughMetaParticlesLayer1ProfilePath, $environmentDepthNativePassthroughMetaParticlesLowCapacityProfilePath, $environmentDepthHighRateJsonDamagedProfilePath, $environmentDepthInvalidRangeDamagedProfilePath, $environmentDepthInvalidCapacityDamagedProfilePath, $environmentDepthInvalidDepthUnitsPolicyDamagedProfilePath)) {
     if (-not (Test-Path $path)) {
         throw "Missing native renderer Android file: $path"
     }
@@ -168,6 +169,7 @@ $environmentDepthStatusProfile = Get-Content -Raw -Path $environmentDepthStatusP
 $environmentDepthNativePassthroughParticlesProfile = Get-Content -Raw -Path $environmentDepthNativePassthroughParticlesProfilePath
 $environmentDepthNativePassthroughMetaParticlesProfile = Get-Content -Raw -Path $environmentDepthNativePassthroughMetaParticlesProfilePath
 $environmentDepthNativePassthroughMetaParticlesLayer1Profile = Get-Content -Raw -Path $environmentDepthNativePassthroughMetaParticlesLayer1ProfilePath
+$environmentDepthNativePassthroughMetaParticlesLowCapacityProfile = Get-Content -Raw -Path $environmentDepthNativePassthroughMetaParticlesLowCapacityProfilePath
 $environmentDepthHighRateJsonDamagedProfile = Get-Content -Raw -Path $environmentDepthHighRateJsonDamagedProfilePath
 $environmentDepthInvalidRangeDamagedProfile = Get-Content -Raw -Path $environmentDepthInvalidRangeDamagedProfilePath
 $environmentDepthInvalidCapacityDamagedProfile = Get-Content -Raw -Path $environmentDepthInvalidCapacityDamagedProfilePath
@@ -1038,6 +1040,9 @@ foreach ($token in @(
     'live_visual_diagnostic_caveat_checked',
     'RequireEnvironmentDepthParticles',
     'environment_depth_particles_checked',
+    'ExpectedEnvironmentDepthParticleCount',
+    'MinimumEnvironmentDepthSourceDepthSamples',
+    'MinimumEnvironmentDepthHashProbeExhaustedCount',
     'nativePassthroughLayerActive=true',
     'passthroughCompositionLayer=CompositionLayerPassthroughFB',
     'environmentDepthSource=xr-meta-environment-depth',
@@ -1237,6 +1242,9 @@ foreach ($token in @(
     'RequireReplayVisualProof',
     'RequireLiveVisualDiagnosticCaveat',
     'RequireEnvironmentDepthParticles',
+    'ExpectedEnvironmentDepthParticleCount',
+    'MinimumEnvironmentDepthSourceDepthSamples',
+    'MinimumEnvironmentDepthHashProbeExhaustedCount',
     'RequireGuideGraph',
     'RequireSdfVisual',
     'RequirePrivateSlotNoPayload',
@@ -1908,6 +1916,27 @@ foreach ($token in @(
     }
 }
 foreach ($token in @(
+    'profile.quest.native_renderer.native_passthrough_meta_environment_depth_particles_low_capacity',
+    'quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity.profile.json',
+    'debug.rustyquest.native_renderer.environment_depth.layer_policy',
+    'mono-layer0',
+    'debug.rustyquest.native_renderer.environment_depth.particle_capacity',
+    '64',
+    'debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels',
+    '4',
+    'environmentDepthParticleCount=64',
+    'environmentDepthParticleRetention=scene-owned-spatial-particle-map',
+    'environmentDepthParticleMapPolicy=spatial-hash-reference-space-cells',
+    'environmentDepthMapWritePolicy=atomic-slot-claim',
+    'environmentDepthSceneHashProbeCount=8',
+    'environmentDepthHashProbeExhaustedCount=',
+    'environmentDepthWorldSpaceReady=true'
+)) {
+    if ($environmentDepthNativePassthroughMetaParticlesLowCapacityProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer Meta environment-depth low-capacity profile missing token: $token"
+    }
+}
+foreach ($token in @(
     'high_rate_json_payload',
     'true'
 )) {
@@ -1998,6 +2027,9 @@ if ($checkAllText -notmatch 'quest-native-renderer-native-passthrough-meta-envir
 if ($checkAllText -notmatch 'quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1\.profile\.json' -or $checkAllText -notmatch 'native-renderer-native-passthrough-meta-environment-depth-particles-layer1-property-write-plan\.json') {
     throw "check_all.ps1 must dry-run the native renderer native passthrough Meta environment-depth layer-1 particle profile."
 }
+if ($checkAllText -notmatch 'quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity\.profile\.json' -or $checkAllText -notmatch 'native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity-property-write-plan\.json') {
+    throw "check_all.ps1 must dry-run the native renderer native passthrough Meta environment-depth low-capacity particle profile."
+}
 
 & $runtimeProfileToolPath `
     -ProfilePath $environmentDepthStatusProfilePath `
@@ -2018,6 +2050,11 @@ if ($checkAllText -notmatch 'quest-native-renderer-native-passthrough-meta-envir
     -ProfilePath $environmentDepthNativePassthroughMetaParticlesLayer1ProfilePath `
     -DryRun `
     -Out "local-artifacts\native-renderer-native-passthrough-meta-environment-depth-particles-layer1-property-write-plan.json" | Out-Null
+
+& $runtimeProfileToolPath `
+    -ProfilePath $environmentDepthNativePassthroughMetaParticlesLowCapacityProfilePath `
+    -DryRun `
+    -Out "local-artifacts\native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity-property-write-plan.json" | Out-Null
 
 foreach ($damagedProfile in @($environmentDepthHighRateJsonDamagedProfilePath, $environmentDepthInvalidRangeDamagedProfilePath, $environmentDepthInvalidCapacityDamagedProfilePath, $environmentDepthInvalidDepthUnitsPolicyDamagedProfilePath)) {
     try {
@@ -2046,6 +2083,8 @@ foreach ($damagedProfile in @($environmentDepthHighRateJsonDamagedProfilePath, $
 & $runtimeEvidenceToolPath `
     -LogcatPath $environmentDepthParticlesEvidenceFixturePath `
     -RequireEnvironmentDepthParticles `
+    -ExpectedEnvironmentDepthParticleCount 32768 `
+    -MinimumEnvironmentDepthSourceDepthSamples 1 `
     -RequirePrivateSlotNoPayload | Out-Null
 
 try {

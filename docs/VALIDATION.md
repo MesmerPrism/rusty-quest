@@ -132,6 +132,16 @@ is the matching layer-1 comparison profile. It switches only
 `environmentDepthSampledLayerMask=0x2` plus
 `environmentDepthShaderLayerPolicy=mono-layer1`; this validates a second
 mono-source sample path before any stereo-two-layer policy is accepted.
+`quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity.profile.json`
+is the stress profile for the same layer-0 real Meta provider route. It keeps
+the scene-map, native passthrough, raw-D16, projected-depth, and OpenXR-local
+reference-space policy fixed, but sets `particle_capacity=64` and
+`sample_stride_pixels=4` so a headset smoke run can assert the bounded
+spatial-hash path under collision pressure. Acceptance for this profile should
+pass the environment-depth particle marker gate with
+`-ExpectedEnvironmentDepthParticleCount 64` and
+`-MinimumEnvironmentDepthHashProbeExhaustedCount 1`; it is a stress/evidence
+fixture, not the default quality profile.
 Use `docs/environment-depth-known-distance-raw-d16-runbook.md` for the
 headset known-distance run that compares `environmentDepthRawCenterD16`,
 `environmentDepthCenterReconstructedMeters`, and
@@ -161,6 +171,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererA
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -ProfilePath fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity.profile.json -ExpectedEnvironmentDepthParticleCount 64 -MinimumEnvironmentDepthHashProbeExhaustedCount 1 -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
 ```
 
