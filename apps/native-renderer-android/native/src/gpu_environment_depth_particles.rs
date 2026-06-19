@@ -30,11 +30,16 @@ const META_ENVIRONMENT_DEPTH_DEPTH_VIEW_VALID_MASK: &str = "0x1";
 const META_ENVIRONMENT_DEPTH_TEXTURE_TRANSFORM_LABEL: &str = "rotate0+flipY";
 const META_ENVIRONMENT_DEPTH_RAY_UV_POLICY_LABEL: &str = "canonical-untransformed";
 const META_ENVIRONMENT_DEPTH_SAMPLE_UV_POLICY_LABEL: &str = "texture-transformed";
+const META_ENVIRONMENT_DEPTH_CONFIDENCE_FILTER_LABEL: &str =
+    "edge-aware-4tap-discontinuity-isolated-reject-v1";
+const META_ENVIRONMENT_DEPTH_FREE_SPACE_RANGE_POLICY_LABEL: &str = "near-plus-cell-step-cap";
+const META_ENVIRONMENT_DEPTH_SCENE_CONFIDENCE_THRESHOLD: f32 = 0.58;
+const META_ENVIRONMENT_DEPTH_FREE_SPACE_CONFIDENCE_THRESHOLD: f32 = 0.78;
 const META_ENVIRONMENT_DEPTH_TEXTURE_TRANSFORM_FLAGS: f32 = 8.0;
 const DEPTH_FLAG_INFINITE_FAR: u32 = 1;
 const DEPTH_FLAG_SCENE_PARTICLE_MAP: u32 = 2;
 const DEPTH_FLAG_SOURCE_LAYER1: u32 = 4;
-const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT: usize = 19;
+const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT: usize = 20;
 const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_BYTES: vk::DeviceSize =
     (ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT * mem::size_of::<u32>()) as vk::DeviceSize;
 const RAW_DEBUG_VALID_COUNT_INDEX: usize = 0;
@@ -56,6 +61,7 @@ const RAW_DEBUG_FREE_SPACE_RETIRE_SUCCESS_COUNT_INDEX: usize = 15;
 const RAW_DEBUG_HASH_OCCUPANCY_ESTIMATE_INDEX: usize = 16;
 const RAW_DEBUG_HASH_WRITE_CONFLICT_COUNT_INDEX: usize = 17;
 const RAW_DEBUG_HASH_CLAIM_FAILED_COUNT_INDEX: usize = 18;
+const RAW_DEBUG_FREE_SPACE_CONFIDENCE_SKIPPED_COUNT_INDEX: usize = 19;
 const SCENE_PARTICLE_CELL_METERS: f32 = 0.06;
 const SCENE_PARTICLE_HASH_PROBE_COUNT: u32 = 8;
 const SCENE_PARTICLE_STALE_FADE_START_FRAMES: u32 = 720;
@@ -83,6 +89,7 @@ struct EnvironmentDepthRawDebugStats {
     hash_occupancy_estimate: u32,
     hash_write_conflict_count: u32,
     hash_claim_failed_count: u32,
+    free_space_confidence_skipped_count: u32,
 }
 
 impl EnvironmentDepthRawDebugStats {
@@ -108,6 +115,7 @@ impl EnvironmentDepthRawDebugStats {
             hash_occupancy_estimate: 0,
             hash_write_conflict_count: 0,
             hash_claim_failed_count: 0,
+            free_space_confidence_skipped_count: 0,
         }
     }
 
@@ -152,6 +160,8 @@ impl EnvironmentDepthRawDebugStats {
             hash_occupancy_estimate: values[RAW_DEBUG_HASH_OCCUPANCY_ESTIMATE_INDEX],
             hash_write_conflict_count: values[RAW_DEBUG_HASH_WRITE_CONFLICT_COUNT_INDEX],
             hash_claim_failed_count: values[RAW_DEBUG_HASH_CLAIM_FAILED_COUNT_INDEX],
+            free_space_confidence_skipped_count: values
+                [RAW_DEBUG_FREE_SPACE_CONFIDENCE_SKIPPED_COUNT_INDEX],
         }
     }
 }
@@ -378,7 +388,7 @@ impl GpuEnvironmentDepthParticleFrameStats {
     }
 
     pub(crate) fn marker_fields(self) -> String {
-        format!(
+        let marker_fields = format!(
             "environmentDepthProviderState={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound={} environmentDepthSupported={} environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthRenderViewStateFlags={} environmentDepthPoseValid={} environmentDepthSwapchainIndex={} environmentDepthCaptureTimeNs={} environmentDepthDisplayTimeNs={} environmentDepthCaptureToDisplayMs={:.3} environmentDepthAcquireToRenderMs={:.3} environmentDepthFrameAgeMs={:.3} environmentDepthTextureTransformLabel={} environmentDepthRayUvPolicy={} environmentDepthSampleUvPolicy={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthMode={} environmentDepthParticleReady={} environmentDepthParticleVisible={} environmentDepthParticleCount={} environmentDepthParticleCapacity={} environmentDepthParticleSource={} environmentDepthParticleCoordinateSpace={} environmentDepthParticleReferenceSpace={} environmentDepthWorldSpaceReady={} environmentDepthParticleSourceDepthSamples={} environmentDepthParticleCpuUploadBytes=0 environmentDepthGpuBuffersResident={} environmentDepthParticleBufferMemory=device-local environmentDepthGpuReconstructPath={} environmentDepthGpuDrawPath={} environmentDepthParticleRetention={} environmentDepthParticleMapPolicy={} environmentDepthMapWritePolicy={} environmentDepthSceneParticleMap={} environmentDepthSceneCellMeters={:.3} environmentDepthSceneHashProbeCount={} environmentDepthSceneStaleFadeStartFrames={} environmentDepthSceneStaleRetireFrames={} environmentDepthInvalidSamplePolicy={} environmentDepthFreeSpaceCorrection={} environmentDepthRawStatsStatus={} environmentDepthRawCenterD16={} environmentDepthCenterReconstructedMeters={:.3} environmentDepthCenterConfidence={:.3} environmentDepthRawCenterWindowMedianD16={} environmentDepthRawCenterWindowValidCount={} environmentDepthMinValidReconstructedMeters={:.3} environmentDepthMaxValidReconstructedMeters={:.3} environmentDepthDebugValidSampleCount={} environmentDepthDebugInvalidSampleCount={} environmentDepthDebugConfidenceRejectedCount={} environmentDepthHashInsertSuccessCount={} environmentDepthHashMergeCount={} environmentDepthHashStaleReplaceCount={} environmentDepthHashProbeExhaustedCount={} environmentDepthFreeSpaceRetireAttemptCount={} environmentDepthFreeSpaceRetireSuccessCount={} environmentDepthHashOccupancyEstimate={} environmentDepthHashWriteConflictCount={} environmentDepthHashClaimFailedCount={} environmentDepthReadbackCadenceFrames=0 environmentDepthRawReadbackCadenceFrames=120",
             self.provider_state,
             self.provider_available,
@@ -491,6 +501,15 @@ impl GpuEnvironmentDepthParticleFrameStats {
             self.raw_debug_stats.hash_occupancy_estimate,
             self.raw_debug_stats.hash_write_conflict_count,
             self.raw_debug_stats.hash_claim_failed_count,
+        );
+        format!(
+            "{} environmentDepthConfidenceFilter={} environmentDepthSceneConfidenceThreshold={:.3} environmentDepthFreeSpaceConfidenceThreshold={:.3} environmentDepthFreeSpaceRangePolicy={} environmentDepthFreeSpaceConfidenceSkippedCount={}",
+            marker_fields,
+            META_ENVIRONMENT_DEPTH_CONFIDENCE_FILTER_LABEL,
+            META_ENVIRONMENT_DEPTH_SCENE_CONFIDENCE_THRESHOLD,
+            META_ENVIRONMENT_DEPTH_FREE_SPACE_CONFIDENCE_THRESHOLD,
+            META_ENVIRONMENT_DEPTH_FREE_SPACE_RANGE_POLICY_LABEL,
+            self.raw_debug_stats.free_space_confidence_skipped_count,
         )
     }
 }
@@ -539,7 +558,7 @@ fn environment_depth_free_space_correction_marker(
     settings: NativeEnvironmentDepthSettings,
 ) -> &'static str {
     if settings.scene_particle_map_requested() {
-        "visible-free-space-ray-clear"
+        "confidence-gated-visible-free-space-ray-clear"
     } else {
         "disabled-retained-particle-slots"
     }

@@ -1052,6 +1052,9 @@ foreach ($token in @(
     'environmentDepthTextureTransformLabel',
     'environmentDepthRayUvPolicy',
     'environmentDepthSampleUvPolicy',
+    'environmentDepthConfidenceFilter',
+    'environmentDepthFreeSpaceRangePolicy',
+    'environmentDepthFreeSpaceConfidenceSkippedCount',
     'nativePassthroughLayerActive=true',
     'passthroughCompositionLayer=CompositionLayerPassthroughFB',
     'environmentDepthSource=xr-meta-environment-depth',
@@ -1166,13 +1169,18 @@ foreach ($token in @(
     'environmentDepthTextureTransformLabel=rotate0+flipY',
     'environmentDepthRayUvPolicy=canonical-untransformed',
     'environmentDepthSampleUvPolicy=texture-transformed',
+    'environmentDepthConfidenceFilter=edge-aware-4tap-discontinuity-isolated-reject-v1',
+    'environmentDepthSceneConfidenceThreshold=0.580',
+    'environmentDepthFreeSpaceConfidenceThreshold=0.780',
     'environmentDepthGpuReconstructPath=native-vulkan-compute-depth-view-to-reference-space',
     'environmentDepthGpuDrawPath=native-vulkan-reference-space-billboard-overlay',
     'environmentDepthParticleRetention=scene-owned-spatial-particle-map',
     'environmentDepthParticleMapPolicy=spatial-hash-reference-space-cells',
     'environmentDepthSceneParticleMap=true',
     'environmentDepthInvalidSamplePolicy=preserve-existing-cells',
-    'environmentDepthFreeSpaceCorrection=visible-free-space-ray-clear'
+    'environmentDepthFreeSpaceCorrection=confidence-gated-visible-free-space-ray-clear',
+    'environmentDepthFreeSpaceRangePolicy=near-plus-cell-step-cap',
+    'environmentDepthFreeSpaceConfidenceSkippedCount='
 )) {
     if ($environmentDepthParticlesEvidenceFixtureText -notmatch [regex]::Escape($token)) {
         throw "Native renderer Meta environment-depth particle fixture missing token: $token"
@@ -1774,6 +1782,9 @@ foreach ($token in @(
     'environmentDepthTextureTransformLabel',
     'environmentDepthRayUvPolicy',
     'environmentDepthSampleUvPolicy',
+    'environmentDepthConfidenceFilter',
+    'environmentDepthFreeSpaceRangePolicy',
+    'environmentDepthFreeSpaceConfidenceSkippedCount',
     'depth_source_layer_index',
     'raw_depth_to_meters',
     'write_center_raw_debug_window',
@@ -1927,11 +1938,16 @@ foreach ($token in @(
     'environmentDepthTextureTransformLabel=rotate0+flipY',
     'environmentDepthRayUvPolicy=canonical-untransformed',
     'environmentDepthSampleUvPolicy=texture-transformed',
+    'environmentDepthConfidenceFilter=edge-aware-4tap-discontinuity-isolated-reject-v1',
+    'environmentDepthSceneConfidenceThreshold=0.580',
+    'environmentDepthFreeSpaceConfidenceThreshold=0.780',
     'environmentDepthParticleRetention=scene-owned-spatial-particle-map',
     'environmentDepthParticleMapPolicy=spatial-hash-reference-space-cells',
     'environmentDepthSceneParticleMap=true',
     'environmentDepthInvalidSamplePolicy=preserve-existing-cells',
-    'environmentDepthFreeSpaceCorrection=visible-free-space-ray-clear',
+    'environmentDepthFreeSpaceCorrection=confidence-gated-visible-free-space-ray-clear',
+    'environmentDepthFreeSpaceRangePolicy=near-plus-cell-step-cap',
+    'environmentDepthFreeSpaceConfidenceSkippedCount=',
     'nativePassthroughLayerActive=true'
 )) {
 if ($environmentDepthNativePassthroughMetaParticlesProfile -notmatch [regex]::Escape($token)) {
@@ -1962,6 +1978,8 @@ foreach ($token in @(
     'environmentDepthTextureTransformLabel=rotate0+flipY',
     'environmentDepthRayUvPolicy=canonical-untransformed',
     'environmentDepthSampleUvPolicy=texture-transformed',
+    'environmentDepthConfidenceFilter=edge-aware-4tap-discontinuity-isolated-reject-v1',
+    'environmentDepthFreeSpaceRangePolicy=near-plus-cell-step-cap',
     'environmentDepthParticleRetention=scene-owned-spatial-particle-map',
     'environmentDepthParticleMapPolicy=spatial-hash-reference-space-cells',
     'environmentDepthWorldSpaceReady=true'
@@ -1992,6 +2010,8 @@ foreach ($token in @(
     'environmentDepthTextureTransformLabel=rotate0+flipY',
     'environmentDepthRayUvPolicy=canonical-untransformed',
     'environmentDepthSampleUvPolicy=texture-transformed',
+    'environmentDepthConfidenceFilter=edge-aware-4tap-discontinuity-isolated-reject-v1',
+    'environmentDepthFreeSpaceRangePolicy=near-plus-cell-step-cap',
     'environmentDepthWorldSpaceReady=true'
 )) {
     if ($environmentDepthNativePassthroughMetaParticlesLowCapacityProfile -notmatch [regex]::Escape($token)) {

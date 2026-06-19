@@ -153,8 +153,9 @@ compute (`environmentDepthSourceViewCount=1`,
 `environmentDepthShaderLayerPolicy=mono-layer0`),
 reconstructs depth samples into OpenXR local reference space, hashes
 `0.06m` reference-space cells into the bounded particle buffer, preserves
-existing cells on invalid samples, applies visible-free-space correction, and
-draws those retained cells over `XR_FB_passthrough`. Run it through
+existing cells on invalid samples, applies confidence-gated visible-free-space
+correction with the `near-plus-cell-step-cap` range policy, and draws those
+retained cells over `XR_FB_passthrough`. Run it through
 `tools/Invoke-NativeRendererReplaySmoke.ps1 -EvidenceMode EnvironmentDepthParticles`;
 the wrapper serial-scopes ADB, pregrants the declared permissions with
 `tools/Grant-NativeRendererPermissions.ps1`, and accepts only runtime markers
@@ -164,7 +165,9 @@ expanded CPU particle upload, resident GPU buffers, and device-local particle
 memory. The same evidence marker now carries the Iteration 5 scorecard fields:
 render view-state flags, capture-to-display/frame-age timing, acquire-to-render
 timing on the particle path, repeated-capture and unavailable-streak counters,
-and explicit texture-transform/ray-UV/sample-UV policy labels.
+explicit texture-transform/ray-UV/sample-UV policy labels, the
+edge-aware four-neighbor confidence filter label, and the free-space
+confidence-skip counter.
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json`
 is the A/B comparison profile for `environment_depth.layer_policy=mono-layer1`.
 It samples texture-array layer 1 and depth view 1 with

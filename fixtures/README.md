@@ -62,10 +62,12 @@
   `environmentDepthShaderLayerPolicy=mono-layer0`), valid pose, nonzero source
   depth samples, OpenXR-local world-space scene cells,
   spatial-hash map policy, preserve-existing-cells invalid-sample behavior,
-  visible-free-space correction, zero expanded CPU particle upload, resident
-  GPU buffers, device-local particle memory, explicit render view-state flags,
-  capture-to-display/frame-age timing, repeated-capture and unavailable-streak
-  counters, and texture-transform/ray-UV/sample-UV policy labels.
+  confidence-gated visible-free-space correction, the
+  `near-plus-cell-step-cap` free-space range policy, zero expanded CPU particle
+  upload, resident GPU buffers, device-local particle memory, explicit render
+  view-state flags, capture-to-display/frame-age timing, repeated-capture and
+  unavailable-streak counters, texture-transform/ray-UV/sample-UV policy
+  labels, and the free-space confidence-skip counter.
   `quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json`
   is the matching mono-layer1 comparison route; it requires
   `environmentDepthSampledLayerMask=0x2` and

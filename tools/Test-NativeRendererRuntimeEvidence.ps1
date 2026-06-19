@@ -735,7 +735,11 @@ if ($RequireEnvironmentDepthParticles) {
         "environmentDepthSceneCellMeters=0.060",
         "environmentDepthSceneHashProbeCount=8",
         "environmentDepthInvalidSamplePolicy=preserve-existing-cells",
-        "environmentDepthFreeSpaceCorrection=visible-free-space-ray-clear",
+        "environmentDepthFreeSpaceCorrection=confidence-gated-visible-free-space-ray-clear",
+        "environmentDepthFreeSpaceRangePolicy=near-plus-cell-step-cap",
+        "environmentDepthConfidenceFilter=edge-aware-4tap-discontinuity-isolated-reject-v1",
+        "environmentDepthSceneConfidenceThreshold=0.580",
+        "environmentDepthFreeSpaceConfidenceThreshold=0.780",
         "environmentDepthRealProviderBound=true",
         "environmentDepthSupported=true",
         "environmentDepthAcquireStatus=acquired",
@@ -796,6 +800,7 @@ if ($RequireEnvironmentDepthParticles) {
     $hashProbeExhaustedCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashProbeExhaustedCount"
     $freeSpaceRetireAttemptCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthFreeSpaceRetireAttemptCount"
     $freeSpaceRetireSuccessCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthFreeSpaceRetireSuccessCount"
+    $freeSpaceConfidenceSkippedCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthFreeSpaceConfidenceSkippedCount"
     $hashOccupancyEstimate = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashOccupancyEstimate"
     $hashWriteConflictCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashWriteConflictCount"
     $hashClaimFailedCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashClaimFailedCount"
@@ -805,6 +810,7 @@ if ($RequireEnvironmentDepthParticles) {
         Assert-True ($hashProbeExhaustedCount -ge $MinimumEnvironmentDepthHashProbeExhaustedCount) "environment-depth-particles scene-map reports $hashProbeExhaustedCount exhausted hash probes; expected at least $MinimumEnvironmentDepthHashProbeExhaustedCount."
     }
     Assert-True ($freeSpaceRetireSuccessCount -le $freeSpaceRetireAttemptCount) "environment-depth-particles free-space retire successes exceed attempts."
+    Assert-True ($freeSpaceConfidenceSkippedCount -ge 0) "environment-depth-particles free-space confidence skipped count is negative."
     $summary.environment_depth_line = $environmentDepthLine
     $summary.environment_depth_particles_line = $environmentDepthParticlesLine
     $summary.environment_depth_capture_to_display_ms = $captureToDisplayMs
@@ -826,6 +832,7 @@ if ($RequireEnvironmentDepthParticles) {
     $summary.environment_depth_hash_probe_exhausted_count = $hashProbeExhaustedCount
     $summary.environment_depth_free_space_retire_attempt_count = $freeSpaceRetireAttemptCount
     $summary.environment_depth_free_space_retire_success_count = $freeSpaceRetireSuccessCount
+    $summary.environment_depth_free_space_confidence_skipped_count = $freeSpaceConfidenceSkippedCount
     $summary.environment_depth_hash_occupancy_estimate = $hashOccupancyEstimate
     $summary.environment_depth_hash_write_conflict_count = $hashWriteConflictCount
     $summary.environment_depth_hash_claim_failed_count = $hashClaimFailedCount

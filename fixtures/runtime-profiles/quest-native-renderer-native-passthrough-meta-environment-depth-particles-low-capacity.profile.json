@@ -155,6 +155,9 @@
     "environmentDepthTextureTransformLabel=rotate0+flipY",
     "environmentDepthRayUvPolicy=canonical-untransformed",
     "environmentDepthSampleUvPolicy=texture-transformed",
+    "environmentDepthConfidenceFilter=edge-aware-4tap-discontinuity-isolated-reject-v1",
+    "environmentDepthSceneConfidenceThreshold=0.580",
+    "environmentDepthFreeSpaceConfidenceThreshold=0.780",
     "environmentDepthPoseValid=true",
     "environmentDepthReferenceSpace=openxr-local",
     "environmentDepthHighRateJsonPayload=false",
@@ -187,7 +190,9 @@
     "environmentDepthSceneParticleMap=true",
     "environmentDepthHashProbeExhaustedCount=",
     "environmentDepthInvalidSamplePolicy=preserve-existing-cells",
-    "environmentDepthFreeSpaceCorrection=visible-free-space-ray-clear",
+    "environmentDepthFreeSpaceCorrection=confidence-gated-visible-free-space-ray-clear",
+    "environmentDepthFreeSpaceRangePolicy=near-plus-cell-step-cap",
+    "environmentDepthFreeSpaceConfidenceSkippedCount=",
     "environmentDepthWorldSpaceReady=true"
   ],
   "validation_commands": [

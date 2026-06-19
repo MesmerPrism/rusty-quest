@@ -34,6 +34,7 @@ const float SCENE_PARTICLE_CELL_METERS = 0.06;
 const uint SCENE_PARTICLE_PROBE_COUNT = 8u;
 const float SCENE_PARTICLE_STALE_REPLACE_FRAMES = 1440.0;
 const float SCENE_PARTICLE_MERGE_WEIGHT = 0.18;
+const float SCENE_PARTICLE_CONFIDENCE_THRESHOLD = 0.58;
 const float SCENE_PARTICLE_ACTIVE_CORRECTION_CONFIDENCE = 0.78;
 const float SCENE_PARTICLE_ACTIVE_CORRECTION_STEP_METERS = SCENE_PARTICLE_CELL_METERS;
 const uint SCENE_PARTICLE_ACTIVE_CORRECTION_MAX_STEPS = 64u;
@@ -57,6 +58,7 @@ const uint RAW_DEBUG_FREE_SPACE_RETIRE_SUCCESS_COUNT = 15u;
 const uint RAW_DEBUG_HASH_OCCUPANCY_ESTIMATE = 16u;
 const uint RAW_DEBUG_HASH_WRITE_CONFLICT_COUNT = 17u;
 const uint RAW_DEBUG_HASH_CLAIM_FAILED_COUNT = 18u;
+const uint RAW_DEBUG_FREE_SPACE_CONFIDENCE_SKIPPED_COUNT = 19u;
 const uint SCENE_META_WORDS_PER_SLOT = 4u;
 const uint SCENE_META_KEY = 0u;
 const uint SCENE_META_STATE = 1u;
@@ -294,7 +296,7 @@ void active_correct_visible_free_space(vec2 surface_uv, float observed_depth_met
         * float(SCENE_PARTICLE_ACTIVE_CORRECTION_MAX_STEPS);
     float stop_depth = min(
         observed_depth_meters - SCENE_PARTICLE_ACTIVE_CORRECTION_SURFACE_KEEP_METERS,
-        active_range);
+        near_z + active_range);
 
     if (!(stop_depth > start_depth)) {
         return;
@@ -466,12 +468,53 @@ uint raw_to_debug_d16(float raw_depth) {
     return uint(clamp(raw_depth * 65535.0 + 0.5, 0.0, 65535.0));
 }
 
+void observe_neighbor_depth(
+    vec2 depth_uv,
+    float depth_meters,
+    inout uint valid_neighbor_count,
+    inout float max_discontinuity
+) {
+    float raw_neighbor_depth = sample_raw_depth(depth_uv);
+    if (!raw_depth_is_valid(raw_neighbor_depth)) {
+        return;
+    }
+    float neighbor_depth_meters = raw_depth_to_meters(raw_neighbor_depth);
+    valid_neighbor_count++;
+    max_discontinuity = max(max_discontinuity, abs(depth_meters - neighbor_depth_meters));
+}
+
 float confidence_for_depth_uv(vec2 depth_uv, float depth_meters, ivec2 depth_size) {
     vec2 sample_step = 1.0 / max(vec2(depth_size), vec2(1.0));
-    float right_depth = sample_depth_meters(depth_uv + vec2(sample_step.x, 0.0));
-    float up_depth = sample_depth_meters(depth_uv + vec2(0.0, sample_step.y));
-    float discontinuity = max(abs(depth_meters - right_depth), abs(depth_meters - up_depth));
-    return 1.0 - smoothstep(0.28, 0.56, discontinuity);
+    uint valid_neighbor_count = 0u;
+    float max_discontinuity = 0.0;
+    observe_neighbor_depth(
+        depth_uv + vec2(sample_step.x, 0.0),
+        depth_meters,
+        valid_neighbor_count,
+        max_discontinuity);
+    observe_neighbor_depth(
+        depth_uv - vec2(sample_step.x, 0.0),
+        depth_meters,
+        valid_neighbor_count,
+        max_discontinuity);
+    observe_neighbor_depth(
+        depth_uv + vec2(0.0, sample_step.y),
+        depth_meters,
+        valid_neighbor_count,
+        max_discontinuity);
+    observe_neighbor_depth(
+        depth_uv - vec2(0.0, sample_step.y),
+        depth_meters,
+        valid_neighbor_count,
+        max_discontinuity);
+
+    if (valid_neighbor_count < 2u) {
+        return 0.0;
+    }
+
+    float support_confidence = valid_neighbor_count >= 3u ? 1.0 : 0.82;
+    float edge_confidence = 1.0 - smoothstep(0.28, 0.56, max_discontinuity);
+    return clamp(edge_confidence * support_confidence, 0.0, 1.0);
 }
 
 void sort_raw_prefix(inout float raw_values[9], int count) {
@@ -578,7 +621,7 @@ void main() {
     bool raw_valid = raw_depth_is_valid(raw_depth);
     float depth_meters = raw_valid ? raw_depth_to_meters(raw_depth) : pc.params1.y + 1.0;
     float confidence = confidence_for_depth_uv(depth_uv, depth_meters, depth_size);
-    float confidence_threshold = scene_map ? 0.58 : 0.52;
+    float confidence_threshold = scene_map ? SCENE_PARTICLE_CONFIDENCE_THRESHOLD : 0.52;
     bool in_range = raw_valid
         && depth_meters >= max(pc.params1.x, 0.001)
         && depth_meters <= max(pc.params1.y, pc.params1.x + 0.01);
@@ -596,6 +639,8 @@ void main() {
     if (scene_map) {
         if (confidence >= SCENE_PARTICLE_ACTIVE_CORRECTION_CONFIDENCE) {
             active_correct_visible_free_space(surface_uv, depth_meters);
+        } else {
+            atomicAdd(depth_debug.values[RAW_DEBUG_FREE_SPACE_CONFIDENCE_SKIPPED_COUNT], 1u);
         }
         write_scene_particle(reference_space_point, depth_meters, confidence, surface_uv, depth_uv);
         return;

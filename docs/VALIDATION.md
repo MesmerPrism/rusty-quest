@@ -121,12 +121,14 @@ summary, and validates runtime markers for acquired D16 two-layer
 policy marker, raw D16 aggregate readback fields, valid depth pose, nonzero
 source depth samples, OpenXR-local scene cells, the spatial-hash map policy,
 the `atomic-slot-claim` map-write policy, preserve-existing-cells
-invalid-sample behavior, visible-free-space correction, scene-map health
-counters for hash insert/merge/stale replace, probe exhaustion, approximate
-occupancy, hash conflicts, failed claims, and free-space retire attempt/success
-counts, explicit render view-state flags, capture-to-display/frame-age timing,
-repeated-capture and unavailable-streak counters, texture-transform/ray-UV/sample-UV
-policy labels, zero expanded CPU particle upload, resident GPU buffers, and
+invalid-sample behavior, confidence-gated visible-free-space correction,
+the `near-plus-cell-step-cap` free-space range policy, scene-map health counters
+for hash insert/merge/stale replace, probe exhaustion, approximate occupancy,
+hash conflicts, failed claims, free-space retire attempt/success counts, and
+valid-but-too-low-confidence free-space skip counts, explicit render view-state
+flags, capture-to-display/frame-age timing, repeated-capture and
+unavailable-streak counters, texture-transform/ray-UV/sample-UV policy labels,
+zero expanded CPU particle upload, resident GPU buffers, and
 `environmentDepthParticleBufferMemory=device-local`.
 `quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json`
 is the matching layer-1 comparison profile. It switches only
