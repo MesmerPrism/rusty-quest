@@ -120,10 +120,11 @@ summary, and validates runtime markers for acquired D16 two-layer
 `environmentDepthShaderLayerPolicy=mono-layer0`), the projected-depth raw-to-meter
 policy marker, raw D16 aggregate readback fields, valid depth pose, nonzero
 source depth samples, OpenXR-local scene cells, the spatial-hash map policy,
-preserve-existing-cells invalid-sample behavior, visible-free-space
-correction, scene-map health counters for hash insert/merge/stale replace,
-probe exhaustion, approximate occupancy, hash conflicts, and free-space retire
-attempt/success counts, zero expanded CPU particle upload, resident GPU buffers, and
+the `atomic-slot-claim` map-write policy, preserve-existing-cells
+invalid-sample behavior, visible-free-space correction, scene-map health
+counters for hash insert/merge/stale replace, probe exhaustion, approximate
+occupancy, hash conflicts, failed claims, and free-space retire attempt/success
+counts, zero expanded CPU particle upload, resident GPU buffers, and
 `environmentDepthParticleBufferMemory=device-local`.
 `quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json`
 is the matching layer-1 comparison profile. It switches only

@@ -715,6 +715,7 @@ if ($RequireEnvironmentDepthParticles) {
         "environmentDepthGpuDrawPath=native-vulkan-reference-space-billboard-overlay",
         "environmentDepthParticleRetention=scene-owned-spatial-particle-map",
         "environmentDepthParticleMapPolicy=spatial-hash-reference-space-cells",
+        "environmentDepthMapWritePolicy=atomic-slot-claim",
         "environmentDepthSceneParticleMap=true",
         "environmentDepthSceneCellMeters=0.060",
         "environmentDepthSceneHashProbeCount=8",
@@ -766,6 +767,7 @@ if ($RequireEnvironmentDepthParticles) {
     $freeSpaceRetireSuccessCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthFreeSpaceRetireSuccessCount"
     $hashOccupancyEstimate = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashOccupancyEstimate"
     $hashWriteConflictCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashWriteConflictCount"
+    $hashClaimFailedCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashClaimFailedCount"
     $hashUpdateCount = $hashInsertSuccessCount + $hashMergeCount + $hashStaleReplaceCount
     Assert-True ($hashUpdateCount -gt 0) "environment-depth-particles scene-map readback reports no successful insert, merge, or stale replacement."
     Assert-True ($freeSpaceRetireSuccessCount -le $freeSpaceRetireAttemptCount) "environment-depth-particles free-space retire successes exceed attempts."
@@ -785,6 +787,7 @@ if ($RequireEnvironmentDepthParticles) {
     $summary.environment_depth_free_space_retire_success_count = $freeSpaceRetireSuccessCount
     $summary.environment_depth_hash_occupancy_estimate = $hashOccupancyEstimate
     $summary.environment_depth_hash_write_conflict_count = $hashWriteConflictCount
+    $summary.environment_depth_hash_claim_failed_count = $hashClaimFailedCount
 }
 
 if ($RequireGuideGraph) {
