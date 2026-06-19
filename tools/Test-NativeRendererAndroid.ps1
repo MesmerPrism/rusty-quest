@@ -22,6 +22,9 @@ $nativeCameraReaderSelectionPath = Join-Path $appRoot "native\src\native_camera_
 $acameraSysPath = Join-Path $appRoot "native\src\acamera_sys.rs"
 $cameraProjectionPath = Join-Path $appRoot "native\src\camera_projection.rs"
 $cameraProjectionMetadataPath = Join-Path $appRoot "native\src\camera_projection_metadata.rs"
+$environmentDepthGeometryPath = Join-Path $appRoot "native\src\environment_depth_geometry.rs"
+$environmentDepthParticlesPath = Join-Path $appRoot "native\src\gpu_environment_depth_particles.rs"
+$openxrEnvironmentDepthPath = Join-Path $appRoot "native\src\openxr_environment_depth.rs"
 $guideBlurGraphPath = Join-Path $appRoot "native\src\guide_blur_graph.rs"
 $recordedHandReplayModulePath = Join-Path $appRoot "native\src\recorded_hand_replay.rs"
 $liveHandCompactPath = Join-Path $appRoot "native\src\live_hand_compact.rs"
@@ -43,16 +46,22 @@ $gpuSdfFieldShaderPath = Join-Path $appRoot "native\shaders\gpu_sdf_field.comp.g
 $gpuSdfTileBinsShaderPath = Join-Path $appRoot "native\shaders\gpu_sdf_tile_bins.comp.glsl"
 $gpuSdfOverlayShaderPath = Join-Path $appRoot "native\shaders\gpu_sdf_overlay.frag.glsl"
 $cameraLumaDiagnosticShaderPath = Join-Path $appRoot "native\shaders\camera_luma_diagnostic.comp.glsl"
+$environmentDepthParticlesComputeShaderPath = Join-Path $appRoot "native\shaders\environment_depth_particles_synthetic.comp.glsl"
+$environmentDepthParticlesMetaComputeShaderPath = Join-Path $appRoot "native\shaders\environment_depth_particles_meta.comp.glsl"
+$environmentDepthParticlesVertexShaderPath = Join-Path $appRoot "native\shaders\environment_depth_particles.vert.glsl"
+$environmentDepthParticlesFragmentShaderPath = Join-Path $appRoot "native\shaders\environment_depth_particles.frag.glsl"
 $xrVulkanPath = Join-Path $appRoot "native\src\xr_vulkan.rs"
 $buildPath = Join-Path $PSScriptRoot "Build-NativeRendererAndroid.ps1"
 $checkAllPath = Join-Path $PSScriptRoot "check_all.ps1"
 $runtimeProfileToolPath = Join-Path $PSScriptRoot "Apply-RuntimeProfile.ps1"
+$permissionPregrantToolPath = Join-Path $PSScriptRoot "Grant-NativeRendererPermissions.ps1"
 $runtimeEvidenceToolPath = Join-Path $PSScriptRoot "Test-NativeRendererRuntimeEvidence.ps1"
 $runtimeSmokeToolPath = Join-Path $PSScriptRoot "Invoke-NativeRendererReplaySmoke.ps1"
 $fixturePath = Join-Path $repoRoot "fixtures\native-renderer\native-hwb-blur-sdf-public.plan.json"
 $recordedHandReplayPath = Join-Path $repoRoot "fixtures\native-renderer\recorded-hand-replay-public-shape.json"
 $runtimeEvidenceFixturePath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-replay-visual-proof.logcat.txt"
 $liveHandDiagnosticPendingFixturePath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-live-hand-visual-diagnostic-pending.logcat.txt"
+$environmentDepthParticlesEvidenceFixturePath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-meta-environment-depth-particles.logcat.txt"
 $runtimeEvidenceDamagedPath = Join-Path $repoRoot "fixtures\damaged\native-renderer-replay-visual-missing-mesh.logcat.txt"
 $runtimeEvidenceDamagedPerformancePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-replay-performance-budget-miss.logcat.txt"
 $liveHandPrematureAcceptanceDamagedPath = Join-Path $repoRoot "fixtures\damaged\native-renderer-live-hand-visual-premature-acceptance.logcat.txt"
@@ -72,8 +81,14 @@ $nativePassthroughGraftOnlyProfilePath = Join-Path $repoRoot "fixtures\runtime-p
 $nativePassthroughHandsAndGraftsProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-hands-and-grafts.profile.json"
 $solidBlackHandsAndGraftsProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-solid-black-hands-and-grafts.profile.json"
 $solidBlackOpenXrHandsAnchorParticlesProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json"
+$environmentDepthStatusProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-environment-depth-status.profile.json"
+$environmentDepthNativePassthroughParticlesProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-environment-depth-particles.profile.json"
+$environmentDepthNativePassthroughMetaParticlesProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json"
+$environmentDepthHighRateJsonDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-high-rate-json.profile.json"
+$environmentDepthInvalidRangeDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-invalid-range.profile.json"
+$environmentDepthInvalidCapacityDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-invalid-capacity.profile.json"
 
-foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $nativeCameraMetadataPath, $nativeCameraProfilesPath, $nativeCameraReaderSelectionPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $cameraLumaDiagnosticShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowNoiseRecord30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath)) {
+foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $nativeCameraMetadataPath, $nativeCameraProfilesPath, $nativeCameraReaderSelectionPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $environmentDepthGeometryPath, $environmentDepthParticlesPath, $openxrEnvironmentDepthPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $cameraLumaDiagnosticShaderPath, $environmentDepthParticlesComputeShaderPath, $environmentDepthParticlesMetaComputeShaderPath, $environmentDepthParticlesVertexShaderPath, $environmentDepthParticlesFragmentShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $permissionPregrantToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $environmentDepthParticlesEvidenceFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowNoiseRecord30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath, $environmentDepthStatusProfilePath, $environmentDepthNativePassthroughParticlesProfilePath, $environmentDepthNativePassthroughMetaParticlesProfilePath, $environmentDepthHighRateJsonDamagedProfilePath, $environmentDepthInvalidRangeDamagedProfilePath, $environmentDepthInvalidCapacityDamagedProfilePath)) {
     if (-not (Test-Path $path)) {
         throw "Missing native renderer Android file: $path"
     }
@@ -92,6 +107,9 @@ $nativeCameraReaderSelection = Get-Content -Raw -Path $nativeCameraReaderSelecti
 $acameraSys = Get-Content -Raw -Path $acameraSysPath
 $cameraProjection = Get-Content -Raw -Path $cameraProjectionPath
 $cameraProjectionMetadata = Get-Content -Raw -Path $cameraProjectionMetadataPath
+$environmentDepthGeometry = Get-Content -Raw -Path $environmentDepthGeometryPath
+$environmentDepthParticles = Get-Content -Raw -Path $environmentDepthParticlesPath
+$openxrEnvironmentDepth = Get-Content -Raw -Path $openxrEnvironmentDepthPath
 $guideBlurGraph = Get-Content -Raw -Path $guideBlurGraphPath
 $recordedHandReplay = Get-Content -Raw -Path $recordedHandReplayPath
 $recordedHandReplayModule = Get-Content -Raw -Path $recordedHandReplayModulePath
@@ -114,14 +132,20 @@ $gpuSdfFieldShader = Get-Content -Raw -Path $gpuSdfFieldShaderPath
 $gpuSdfTileBinsShader = Get-Content -Raw -Path $gpuSdfTileBinsShaderPath
 $gpuSdfOverlayShader = Get-Content -Raw -Path $gpuSdfOverlayShaderPath
 $cameraLumaDiagnosticShader = Get-Content -Raw -Path $cameraLumaDiagnosticShaderPath
+$environmentDepthParticlesComputeShader = Get-Content -Raw -Path $environmentDepthParticlesComputeShaderPath
+$environmentDepthParticlesMetaComputeShader = Get-Content -Raw -Path $environmentDepthParticlesMetaComputeShaderPath
+$environmentDepthParticlesVertexShader = Get-Content -Raw -Path $environmentDepthParticlesVertexShaderPath
+$environmentDepthParticlesFragmentShader = Get-Content -Raw -Path $environmentDepthParticlesFragmentShaderPath
 $xrVulkan = Get-Content -Raw -Path $xrVulkanPath
 $buildScriptText = Get-Content -Raw -Path $buildPath
 $checkAllText = Get-Content -Raw -Path $checkAllPath
 $runtimeProfileToolText = Get-Content -Raw -Path $runtimeProfileToolPath
+$permissionPregrantToolText = Get-Content -Raw -Path $permissionPregrantToolPath
 $runtimeEvidenceToolText = Get-Content -Raw -Path $runtimeEvidenceToolPath
 $runtimeSmokeToolText = Get-Content -Raw -Path $runtimeSmokeToolPath
 $runtimeEvidenceFixtureText = Get-Content -Raw -Path $runtimeEvidenceFixturePath
 $liveHandDiagnosticPendingFixtureText = Get-Content -Raw -Path $liveHandDiagnosticPendingFixturePath
+$environmentDepthParticlesEvidenceFixtureText = Get-Content -Raw -Path $environmentDepthParticlesEvidenceFixturePath
 $replayVisualProfile = Get-Content -Raw -Path $replayVisualProfilePath
 $directHwbCameraQualityProfile = Get-Content -Raw -Path $directHwbCameraQualityProfilePath
 $directHwbCameraQualityBt601UnormProfile = Get-Content -Raw -Path $directHwbCameraQualityBt601UnormProfilePath
@@ -138,6 +162,12 @@ $nativePassthroughGraftOnlyProfile = Get-Content -Raw -Path $nativePassthroughGr
 $nativePassthroughHandsAndGraftsProfile = Get-Content -Raw -Path $nativePassthroughHandsAndGraftsProfilePath
 $solidBlackHandsAndGraftsProfile = Get-Content -Raw -Path $solidBlackHandsAndGraftsProfilePath
 $solidBlackOpenXrHandsAnchorParticlesProfile = Get-Content -Raw -Path $solidBlackOpenXrHandsAnchorParticlesProfilePath
+$environmentDepthStatusProfile = Get-Content -Raw -Path $environmentDepthStatusProfilePath
+$environmentDepthNativePassthroughParticlesProfile = Get-Content -Raw -Path $environmentDepthNativePassthroughParticlesProfilePath
+$environmentDepthNativePassthroughMetaParticlesProfile = Get-Content -Raw -Path $environmentDepthNativePassthroughMetaParticlesProfilePath
+$environmentDepthHighRateJsonDamagedProfile = Get-Content -Raw -Path $environmentDepthHighRateJsonDamagedProfilePath
+$environmentDepthInvalidRangeDamagedProfile = Get-Content -Raw -Path $environmentDepthInvalidRangeDamagedProfilePath
+$environmentDepthInvalidCapacityDamagedProfile = Get-Content -Raw -Path $environmentDepthInvalidCapacityDamagedProfilePath
 $fixture = Get-Content -Raw -Path $fixturePath
 
 if ($manifest -notmatch 'package="io\.github\.mesmerprism\.rustyquest\.native_renderer"') {
@@ -148,6 +178,7 @@ foreach ($permission in @(
     'com\.oculus\.permission\.HAND_TRACKING',
     'horizonos\.permission\.HEADSET_CAMERA',
     'horizonos\.permission\.SPATIAL_CAMERA',
+    'horizonos\.permission\.USE_SCENE',
     'org\.khronos\.openxr\.permission\.OPENXR',
     'org\.khronos\.openxr\.permission\.OPENXR_SYSTEM'
 )) {
@@ -937,7 +968,7 @@ foreach ($token in @('javac', 'd8\.bat', 'classes\.dex', 'clang\+\+')) {
     }
 }
 
-$sourceCombined = "$manifest`n$nativeCargo`n$nativeBuildRs`n$nativeLib`n$androidEvents`n$nativeCamera`n$acameraSys`n$cameraProjection`n$cameraProjectionMetadata`n$guideBlurGraph`n$guideBlurDownsampleFragment`n$guideBlurFragment`n$guideProjectionFragment`n$recordedHandReplayModule`n$liveHandCompact`n$nativeRendererOptions`n$handMeshGraft`n$gpuHandMeshVisual`n$handMeshVisualVertex`n$handMeshVisualFragment`n$gpuMeshReplay`n$gpuSdfField`n$gpuHandSkinningShader`n$gpuSdfFieldShader`n$gpuSdfTileBinsShader`n$gpuSdfOverlayShader`n$xrVulkan`n$buildScriptText"
+$sourceCombined = "$manifest`n$nativeCargo`n$nativeBuildRs`n$nativeLib`n$androidEvents`n$nativeCamera`n$acameraSys`n$cameraProjection`n$cameraProjectionMetadata`n$environmentDepthGeometry`n$guideBlurGraph`n$guideBlurDownsampleFragment`n$guideBlurFragment`n$guideProjectionFragment`n$recordedHandReplayModule`n$liveHandCompact`n$nativeRendererOptions`n$handMeshGraft`n$gpuHandMeshVisual`n$handMeshVisualVertex`n$handMeshVisualFragment`n$gpuMeshReplay`n$gpuSdfField`n$gpuHandSkinningShader`n$gpuSdfFieldShader`n$gpuSdfTileBinsShader`n$gpuSdfOverlayShader`n$xrVulkan`n$buildScriptText"
 $forbiddenTokens = @(
     ("RUSTY" + "_XR_"),
     ("rusty" + ".xr."),
@@ -1001,6 +1032,16 @@ foreach ($token in @(
     'screenshot_sdf_visual_overlay_color_rects',
     'RequireLiveVisualDiagnosticCaveat',
     'live_visual_diagnostic_caveat_checked',
+    'RequireEnvironmentDepthParticles',
+    'environment_depth_particles_checked',
+    'nativePassthroughLayerActive=true',
+    'passthroughCompositionLayer=CompositionLayerPassthroughFB',
+    'environmentDepthSource=xr-meta-environment-depth',
+    'environmentDepthAcquireStatus=acquired',
+    'environmentDepthParticleSource=xr-meta-environment-depth',
+    'environmentDepthParticleCpuUploadBytes=0',
+    'environmentDepthGpuBuffersResident=true',
+    'environmentDepthWorldSpaceReady=true',
     'compactHandInputSourceMode=live-meta-openxr-hand-tracking',
     'handMeshCompactInputSource=live-meta-openxr-hand-tracking',
     'sdfCompactInputSource=live-meta-openxr-hand-tracking',
@@ -1059,6 +1100,44 @@ foreach ($token in @(
     }
 }
 
+foreach ($token in @(
+    'RUSTY_QUEST_NATIVE_RENDERER channel=native-passthrough',
+    'nativePassthroughLayerActive=true',
+    'passthroughCompositionLayer=CompositionLayerPassthroughFB',
+    'RUSTY_QUEST_NATIVE_RENDERER channel=environment-depth',
+    'environmentDepthSource=xr-meta-environment-depth',
+    'environmentDepthProviderState=provider-running',
+    'environmentDepthProviderAvailable=true',
+    'environmentDepthRealProviderBound=true',
+    'environmentDepthSupported=true',
+    'environmentDepthAcquireStatus=acquired',
+    'environmentDepthFormat=VK_FORMAT_D16_UNORM',
+    'environmentDepthLayerCount=2',
+    'environmentDepthPoseValid=true',
+    'RUSTY_QUEST_NATIVE_RENDERER channel=environment-depth-particles',
+    'environmentDepthParticleReady=true',
+    'environmentDepthParticleVisible=true',
+    'environmentDepthMode=scene-particle-map',
+    'environmentDepthParticleSource=xr-meta-environment-depth',
+    'environmentDepthParticleCoordinateSpace=openxr-reference-space',
+    'environmentDepthWorldSpaceReady=true',
+    'environmentDepthParticleSourceDepthSamples=676',
+    'environmentDepthParticleCpuUploadBytes=0',
+    'environmentDepthGpuBuffersResident=true',
+    'environmentDepthParticleBufferMemory=device-local',
+    'environmentDepthGpuReconstructPath=native-vulkan-compute-depth-view-to-reference-space',
+    'environmentDepthGpuDrawPath=native-vulkan-reference-space-billboard-overlay',
+    'environmentDepthParticleRetention=scene-owned-spatial-particle-map',
+    'environmentDepthParticleMapPolicy=spatial-hash-reference-space-cells',
+    'environmentDepthSceneParticleMap=true',
+    'environmentDepthInvalidSamplePolicy=preserve-existing-cells',
+    'environmentDepthFreeSpaceCorrection=visible-free-space-ray-clear'
+)) {
+    if ($environmentDepthParticlesEvidenceFixtureText -notmatch [regex]::Escape($token)) {
+        throw "Native renderer Meta environment-depth particle fixture missing token: $token"
+    }
+}
+
 $parseTokens = $null
 $parseErrors = $null
 [System.Management.Automation.Language.Parser]::ParseFile($runtimeProfileToolPath, [ref]$parseTokens, [ref]$parseErrors) | Out-Null
@@ -1096,9 +1175,11 @@ foreach ($token in @(
     'Test-NativeRendererRuntimeEvidence.ps1',
     'quest-native-renderer-replay-visual-proof.profile.json',
     'quest-native-renderer-live-hand-visual-diagnostic.profile.json',
+    'quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json',
     'EvidenceMode',
     'ReplayVisualProof',
     'LiveVisualDiagnosticCaveat',
+    'EnvironmentDepthParticles',
     'previousErrorActionPreference',
     'NativeCommandError',
     'RUSTY_QUEST_ADB_SERVER_PORT',
@@ -1115,12 +1196,14 @@ foreach ($token in @(
     'must pass adb -s <serial>',
     'replay_visual_proof_required',
     'live_visual_diagnostic_caveat_required',
+    'environment_depth_particles_required',
     'rusty-quest-native-renderer.apk',
     'RUSTY_QUEST_NATIVE_RENDERER',
     'android.permission.CAMERA',
     'com.oculus.permission.HAND_TRACKING',
     'horizonos.permission.HEADSET_CAMERA',
     'horizonos.permission.SPATIAL_CAMERA',
+    'horizonos.permission.USE_SCENE',
     'pm',
     'grant',
     'logcat',
@@ -1141,6 +1224,7 @@ foreach ($token in @(
     '-join "|"',
     'RequireReplayVisualProof',
     'RequireLiveVisualDiagnosticCaveat',
+    'RequireEnvironmentDepthParticles',
     'RequireGuideGraph',
     'RequireSdfVisual',
     'RequirePrivateSlotNoPayload',
@@ -1148,7 +1232,7 @@ foreach ($token in @(
     'RequirePerformanceBudget',
     'StopAfterRun'
 )) {
-    if ($runtimeSmokeToolText -notmatch [regex]::Escape($token)) {
+    if ("$runtimeSmokeToolText`n$permissionPregrantToolText" -notmatch [regex]::Escape($token)) {
         throw "Native renderer replay smoke tool missing token: $token"
     }
 }
@@ -1586,6 +1670,180 @@ foreach ($token in @(
         throw "Native renderer solid black OpenXR hands anchor particles profile missing token: $token"
     }
 }
+foreach ($token in @(
+    'mod environment_depth_geometry',
+    'mod gpu_environment_depth_particles',
+    'mod openxr_environment_depth',
+    'reconstruct_reference_space_point',
+    'project_reference_space_point_to_render_eye',
+    'depth_view_pose_rotation_and_translation_are_applied_once',
+    'retained_reference_point_projects_through_current_render_eye',
+    'debug.rustyquest.native_renderer.environment_depth.mode',
+    'debug.rustyquest.native_renderer.environment_depth.source',
+    'debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload',
+    'environmentDepthHighRateJsonPayload=false'
+)) {
+    if ("$nativeLib`n$environmentDepthGeometry`n$environmentDepthParticles`n$openxrEnvironmentDepth`n$nativeRendererOptions" -notmatch [regex]::Escape($token)) {
+        throw "Native renderer environment-depth source surface missing token: $token"
+    }
+}
+foreach ($token in @(
+    'GpuEnvironmentDepthParticleRenderer',
+    'GpuEnvironmentDepthParticleFrameStats',
+    'environment_depth_particles_synthetic.comp.glsl',
+    'environment_depth_particles_meta.comp.glsl',
+    'environment_depth_particles.vert.glsl',
+    'environment_depth_particles.frag.glsl',
+    'OpenXrEnvironmentDepthRuntime',
+    'EnvironmentDepthMETA',
+    'XR_META_environment_depth',
+    'acquire_environment_depth_image',
+    'new_runtime_depth',
+    'record_runtime_depth_frame',
+    'PipelineBindPoint::COMPUTE',
+    'cmd_dispatch',
+    'PipelineBindPoint::GRAPHICS',
+    'cmd_draw',
+    'native-vulkan-compute-depth-view-to-reference-space',
+    'native-vulkan-reference-space-billboard-overlay',
+    'environmentDepthParticleCoordinateSpace=openxr-reference-space',
+    'environmentDepthParticleCpuUploadBytes=0',
+    'environmentDepthGpuBuffersResident=true',
+    'environmentDepthParticleBufferMemory=device-local',
+    'environmentDepthWorldSpaceReady',
+    'syntheticGpuProofRequested',
+    'runtimeProviderRequested',
+    'environment-depth-particles'
+)) {
+    if ("$nativeBuildRs`n$nativeLib`n$environmentDepthParticles`n$openxrEnvironmentDepth`n$environmentDepthParticlesComputeShader`n$environmentDepthParticlesMetaComputeShader`n$environmentDepthParticlesVertexShader`n$environmentDepthParticlesFragmentShader`n$xrVulkan" -notmatch [regex]::Escape($token)) {
+        throw "Native renderer environment-depth particle GPU proof route missing token: $token"
+    }
+}
+foreach ($token in @(
+    'Grant-NativeRendererPermissions.ps1',
+    'permission-pregrant.json',
+    'android.permission.CAMERA',
+    'com.oculus.permission.HAND_TRACKING',
+    'horizonos.permission.HEADSET_CAMERA',
+    'horizonos.permission.SPATIAL_CAMERA',
+    'horizonos.permission.USE_SCENE',
+    'org.khronos.openxr.permission.OPENXR',
+    'org.khronos.openxr.permission.OPENXR_SYSTEM',
+    'pm',
+    'grant',
+    '-s'
+)) {
+    if ("$runtimeSmokeToolPath`n$permissionPregrantToolPath`n$runtimeSmokeToolText`n$permissionPregrantToolText" -notmatch [regex]::Escape($token)) {
+        throw "Native renderer permission pregrant route missing token: $token"
+    }
+}
+foreach ($token in @(
+    'profile.quest.native_renderer.environment_depth_status',
+    'quest-native-renderer-environment-depth-status.profile.json',
+    'debug.rustyquest.native_renderer.environment_depth.mode',
+    'status-only',
+    'debug.rustyquest.native_renderer.environment_depth.source',
+    'runtime-provider',
+    'debug.rustyquest.native_renderer.environment_depth.reference_space',
+    'openxr-local',
+    'debug.rustyquest.native_renderer.environment_depth.particle_capacity',
+    '32768',
+    'debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels',
+    '12',
+    'debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload',
+    'false',
+    'RUSTY_QUEST_NATIVE_RENDERER channel=environment-depth',
+    'environmentDepthProviderState=status-only-skeleton',
+    'environmentDepthHighRateJsonPayload=false'
+)) {
+    if ($environmentDepthStatusProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer environment-depth status profile missing token: $token"
+    }
+}
+foreach ($token in @(
+    'profile.quest.native_renderer.native_passthrough_environment_depth_particles',
+    'quest-native-renderer-native-passthrough-environment-depth-particles.profile.json',
+    'native-passthrough-graft-only',
+    'debug.rustyquest.native_renderer.environment_depth.mode',
+    'retained-particles',
+    'debug.rustyquest.native_renderer.environment_depth.source',
+    'synthetic-gpu-proof',
+    'debug.rustyquest.native_renderer.environment_depth.particle_capacity',
+    '4096',
+    'debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload',
+    'false',
+    'RUSTY_QUEST_NATIVE_RENDERER channel=environment-depth-particles',
+    'environmentDepthParticleSource=synthetic-gpu-proof',
+    'environmentDepthParticleCoordinateSpace=openxr-reference-space',
+    'environmentDepthParticleCpuUploadBytes=0',
+    'environmentDepthGpuBuffersResident=true',
+    'environmentDepthParticleBufferMemory=device-local',
+    'nativePassthroughLayerActive=true'
+)) {
+    if ($environmentDepthNativePassthroughParticlesProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer environment-depth native passthrough particle profile missing token: $token"
+    }
+}
+foreach ($token in @(
+    'profile.quest.native_renderer.native_passthrough_meta_environment_depth_particles',
+    'quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json',
+    'native-passthrough-graft-only',
+    'debug.rustyquest.native_renderer.environment_depth.mode',
+    'scene-particle-map',
+    'debug.rustyquest.native_renderer.environment_depth.source',
+    'xr-meta-environment-depth',
+    'debug.rustyquest.native_renderer.environment_depth.particle_capacity',
+    '32768',
+    'debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload',
+    'false',
+    'RUSTY_QUEST_NATIVE_RENDERER channel=environment-depth',
+    'environmentDepthProviderState=provider-running',
+    'environmentDepthRealProviderBound=true',
+    'environmentDepthAcquireStatus=acquired',
+    'environmentDepthFormat=VK_FORMAT_D16_UNORM',
+    'RUSTY_QUEST_NATIVE_RENDERER channel=environment-depth-particles',
+    'environmentDepthParticleSource=xr-meta-environment-depth',
+    'environmentDepthParticleCoordinateSpace=openxr-reference-space',
+    'environmentDepthParticleCpuUploadBytes=0',
+    'environmentDepthGpuBuffersResident=true',
+    'environmentDepthParticleBufferMemory=device-local',
+    'environmentDepthParticleRetention=scene-owned-spatial-particle-map',
+    'environmentDepthParticleMapPolicy=spatial-hash-reference-space-cells',
+    'environmentDepthSceneParticleMap=true',
+    'environmentDepthInvalidSamplePolicy=preserve-existing-cells',
+    'environmentDepthFreeSpaceCorrection=visible-free-space-ray-clear',
+    'nativePassthroughLayerActive=true'
+)) {
+    if ($environmentDepthNativePassthroughMetaParticlesProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer Meta environment-depth native passthrough particle profile missing token: $token"
+    }
+}
+foreach ($token in @(
+    'high_rate_json_payload',
+    'true'
+)) {
+    if ($environmentDepthHighRateJsonDamagedProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer damaged environment-depth high-rate JSON profile missing token: $token"
+    }
+}
+foreach ($token in @(
+    'near_m',
+    '2.0',
+    'far_m',
+    '1.0'
+)) {
+    if ($environmentDepthInvalidRangeDamagedProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer damaged environment-depth invalid-range profile missing token: $token"
+    }
+}
+foreach ($token in @(
+    'particle_capacity',
+    '"0"'
+)) {
+    if ($environmentDepthInvalidCapacityDamagedProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer damaged environment-depth invalid-capacity profile missing token: $token"
+    }
+}
 if ($checkAllText -notmatch 'quest-native-renderer-live-hand-visual-diagnostic\.profile\.json' -or $checkAllText -notmatch 'native-renderer-live-hand-visual-diagnostic-property-write-plan\.json') {
     throw "check_all.ps1 must dry-run the native renderer live hand diagnostic profile."
 }
@@ -1631,6 +1889,44 @@ if ($checkAllText -notmatch 'quest-native-renderer-solid-black-hands-and-grafts\
 if ($checkAllText -notmatch 'quest-native-renderer-solid-black-openxr-hands-anchor-particles\.profile\.json' -or $checkAllText -notmatch 'native-renderer-solid-black-openxr-hands-anchor-particles-property-write-plan\.json') {
     throw "check_all.ps1 must dry-run the native renderer solid black OpenXR hands anchor particles profile."
 }
+if ($checkAllText -notmatch 'quest-native-renderer-environment-depth-status\.profile\.json' -or $checkAllText -notmatch 'native-renderer-environment-depth-status-property-write-plan\.json') {
+    throw "check_all.ps1 must dry-run the native renderer environment-depth status profile."
+}
+if ($checkAllText -notmatch 'quest-native-renderer-native-passthrough-environment-depth-particles\.profile\.json' -or $checkAllText -notmatch 'native-renderer-native-passthrough-environment-depth-particles-property-write-plan\.json') {
+    throw "check_all.ps1 must dry-run the native renderer native passthrough environment-depth particle profile."
+}
+if ($checkAllText -notmatch 'quest-native-renderer-native-passthrough-meta-environment-depth-particles\.profile\.json' -or $checkAllText -notmatch 'native-renderer-native-passthrough-meta-environment-depth-particles-property-write-plan\.json') {
+    throw "check_all.ps1 must dry-run the native renderer native passthrough Meta environment-depth particle profile."
+}
+
+& $runtimeProfileToolPath `
+    -ProfilePath $environmentDepthStatusProfilePath `
+    -DryRun `
+    -Out "local-artifacts\native-renderer-environment-depth-status-property-write-plan.json" | Out-Null
+
+& $runtimeProfileToolPath `
+    -ProfilePath $environmentDepthNativePassthroughParticlesProfilePath `
+    -DryRun `
+    -Out "local-artifacts\native-renderer-native-passthrough-environment-depth-particles-property-write-plan.json" | Out-Null
+
+& $runtimeProfileToolPath `
+    -ProfilePath $environmentDepthNativePassthroughMetaParticlesProfilePath `
+    -DryRun `
+    -Out "local-artifacts\native-renderer-native-passthrough-meta-environment-depth-particles-property-write-plan.json" | Out-Null
+
+foreach ($damagedProfile in @($environmentDepthHighRateJsonDamagedProfilePath, $environmentDepthInvalidRangeDamagedProfilePath, $environmentDepthInvalidCapacityDamagedProfilePath)) {
+    try {
+        & $runtimeProfileToolPath `
+            -ProfilePath $damagedProfile `
+            -DryRun `
+            -Out "local-artifacts\native-renderer-damaged-environment-depth-property-write-plan.json" | Out-Null
+        throw "Damaged environment-depth runtime profile was accepted: $damagedProfile"
+    } catch {
+        if ($_.Exception.Message -like "Damaged environment-depth runtime profile was accepted:*") {
+            throw
+        }
+    }
+}
 
 & $runtimeEvidenceToolPath `
     -LogcatPath $runtimeEvidenceFixturePath `
@@ -1640,6 +1936,11 @@ if ($checkAllText -notmatch 'quest-native-renderer-solid-black-openxr-hands-anch
     -RequireSdfVisual `
     -RequireGpuTimestampReady `
     -RequirePerformanceBudget `
+    -RequirePrivateSlotNoPayload | Out-Null
+
+& $runtimeEvidenceToolPath `
+    -LogcatPath $environmentDepthParticlesEvidenceFixturePath `
+    -RequireEnvironmentDepthParticles `
     -RequirePrivateSlotNoPayload | Out-Null
 
 try {

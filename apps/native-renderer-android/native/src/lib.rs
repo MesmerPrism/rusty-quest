@@ -18,6 +18,9 @@ mod android_events;
 #[cfg(target_os = "android")]
 mod camera_projection;
 mod camera_projection_metadata;
+mod environment_depth_geometry;
+#[cfg(target_os = "android")]
+mod gpu_environment_depth_particles;
 #[cfg(target_os = "android")]
 mod gpu_hand_anchor_particles;
 #[cfg(target_os = "android")]
@@ -42,6 +45,8 @@ mod native_camera_reader_selection;
 mod native_renderer_options;
 #[cfg(target_os = "android")]
 mod native_renderer_timing;
+#[cfg(target_os = "android")]
+mod openxr_environment_depth;
 #[cfg(target_os = "android")]
 mod private_extension_slot;
 mod recorded_hand_replay;
@@ -71,7 +76,7 @@ fn android_on_create(_state: &android_activity::OnCreateState) {
     match request_runtime_permissions(_state) {
         Ok(()) => marker(
             "permission-request",
-            "status=requested owner=rust-native-jni method=Activity.requestPermissions permissions=CAMERA,HAND_TRACKING,HEADSET_CAMERA,SPATIAL_CAMERA,OPENXR,OPENXR_SYSTEM",
+            "status=requested owner=rust-native-jni method=Activity.requestPermissions permissions=CAMERA,HAND_TRACKING,HEADSET_CAMERA,SPATIAL_CAMERA,USE_SCENE,OPENXR,OPENXR_SYSTEM",
         ),
         Err(error) => marker(
             "permission-request",
@@ -101,6 +106,7 @@ fn request_runtime_permissions(state: &android_activity::OnCreateState) -> Resul
             "com.oculus.permission.HAND_TRACKING",
             "horizonos.permission.HEADSET_CAMERA",
             "horizonos.permission.SPATIAL_CAMERA",
+            "horizonos.permission.USE_SCENE",
             "org.khronos.openxr.permission.OPENXR",
             "org.khronos.openxr.permission.OPENXR_SYSTEM",
         ];
@@ -173,6 +179,13 @@ fn android_main(app: android_activity::AndroidApp) {
             runtime_options
                 .projection_border_stretch_settings
                 .marker_fields(),
+        ),
+    );
+    marker(
+        "environment-depth",
+        format!(
+            "status=config {}",
+            runtime_options.environment_depth_settings.marker_fields()
         ),
     );
 

@@ -11,6 +11,15 @@ param(
 
 $ErrorActionPreference = "Stop"
 $AndroidPropertyValueMaxBytes = 92
+$EnvironmentDepthPropertyPrefix = "debug.rustyquest.native_renderer.environment_depth."
+$EnvironmentDepthModeProperty = "debug.rustyquest.native_renderer.environment_depth.mode"
+$EnvironmentDepthSourceProperty = "debug.rustyquest.native_renderer.environment_depth.source"
+$EnvironmentDepthReferenceSpaceProperty = "debug.rustyquest.native_renderer.environment_depth.reference_space"
+$EnvironmentDepthParticleCapacityProperty = "debug.rustyquest.native_renderer.environment_depth.particle_capacity"
+$EnvironmentDepthSampleStridePixelsProperty = "debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels"
+$EnvironmentDepthNearMProperty = "debug.rustyquest.native_renderer.environment_depth.near_m"
+$EnvironmentDepthFarMProperty = "debug.rustyquest.native_renderer.environment_depth.far_m"
+$EnvironmentDepthHighRateJsonPayloadProperty = "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload"
 
 function ConvertTo-AndroidShellSingleQuoted {
     param(
@@ -39,6 +48,93 @@ function Resolve-AdbServerPortArgument {
     return $parsed.ToString()
 }
 
+function Get-NormalizedProfileValue {
+    param([Parameter(Mandatory=$true)][string]$Value)
+    return $Value.Trim().ToLowerInvariant().Replace("_", "-")
+}
+
+function Assert-EnvironmentDepthUInt {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Value,
+        [Parameter(Mandatory=$true)][uint32]$Min,
+        [Parameter(Mandatory=$true)][uint32]$Max
+    )
+    $parsed = [uint32]0
+    if (-not [uint32]::TryParse($Value.Trim(), [ref]$parsed) -or $parsed -lt $Min -or $parsed -gt $Max) {
+        throw "$Name value $Value must be an integer from $Min to $Max"
+    }
+}
+
+function Get-EnvironmentDepthFloat {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Value
+    )
+    try {
+        $parsed = [double]::Parse($Value.Trim(), [System.Globalization.CultureInfo]::InvariantCulture)
+    } catch {
+        throw "$Name value $Value must be a finite number"
+    }
+    if ([double]::IsNaN($parsed) -or [double]::IsInfinity($parsed)) {
+        throw "$Name value $Value must be a finite number"
+    }
+    return $parsed
+}
+
+function Assert-EnvironmentDepthProperty {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Value
+    )
+    $normalized = Get-NormalizedProfileValue -Value $Value
+    switch -Exact ($Name) {
+        $EnvironmentDepthModeProperty {
+            if (@("disabled", "off", "status", "status-only", "provider-status", "retained-particles", "retained-particle-map", "scene-particle-map", "scene-map") -notcontains $normalized) {
+                throw "Environment depth mode is not supported: $Value"
+            }
+            return
+        }
+        $EnvironmentDepthSourceProperty {
+            if (@("runtime-provider", "provider", "xr-meta-environment-depth", "meta-environment-depth", "meta-provider", "synthetic-gpu-proof", "synthetic-proof", "synthetic-depth-grid") -notcontains $normalized) {
+                throw "Environment depth source is not supported: $Value"
+            }
+            return
+        }
+        $EnvironmentDepthReferenceSpaceProperty {
+            if (@("local", "stage", "openxr-local", "openxr-stage") -notcontains $normalized) {
+                throw "Environment depth reference_space is not supported: $Value"
+            }
+            return
+        }
+        $EnvironmentDepthParticleCapacityProperty {
+            Assert-EnvironmentDepthUInt -Name $Name -Value $Value -Min 64 -Max 262144
+            return
+        }
+        $EnvironmentDepthSampleStridePixelsProperty {
+            Assert-EnvironmentDepthUInt -Name $Name -Value $Value -Min 1 -Max 128
+            return
+        }
+        $EnvironmentDepthNearMProperty {
+            $null = Get-EnvironmentDepthFloat -Name $Name -Value $Value
+            return
+        }
+        $EnvironmentDepthFarMProperty {
+            $null = Get-EnvironmentDepthFloat -Name $Name -Value $Value
+            return
+        }
+        $EnvironmentDepthHighRateJsonPayloadProperty {
+            if (@("0", "false", "no", "off") -notcontains $normalized) {
+                throw "Environment depth high_rate_json_payload must be false"
+            }
+            return
+        }
+        default {
+            throw "Unknown environment depth property: $Name"
+        }
+    }
+}
+
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $resolvedProfile = Resolve-Path $ProfilePath
 $profile = Get-Content -Path $resolvedProfile -Raw | ConvertFrom-Json
@@ -59,6 +155,7 @@ if ($profile.target_platform -ne "quest") {
 
 $owned = @{}
 $operations = @()
+$environmentDepthProperties = @{}
 foreach ($name in $profile.owned_android_properties) {
     if ([string]::IsNullOrWhiteSpace($name)) {
         throw "Owned Android property must not be empty"
@@ -82,21 +179,38 @@ foreach ($name in $profile.owned_android_properties) {
 }
 
 foreach ($property in $profile.set_properties) {
-    if (-not $owned.ContainsKey([string]$property.name)) {
-        throw "Set property is not declared as profile-owned: $($property.name)"
+    $propertyName = [string]$property.name
+    $propertyValue = [string]$property.value
+    if (-not $owned.ContainsKey($propertyName)) {
+        throw "Set property is not declared as profile-owned: $propertyName"
     }
     if ([string]::IsNullOrWhiteSpace([string]$property.source_setting_id)) {
-        throw "Set property must declare source_setting_id: $($property.name)"
+        throw "Set property must declare source_setting_id: $propertyName"
     }
-    $valueBytes = [System.Text.Encoding]::UTF8.GetByteCount([string]$property.value)
+    $valueBytes = [System.Text.Encoding]::UTF8.GetByteCount($propertyValue)
     if ($valueBytes -gt $AndroidPropertyValueMaxBytes) {
-        throw "Set property $($property.name) value is $valueBytes bytes, above Android setprop limit $AndroidPropertyValueMaxBytes"
+        throw "Set property $propertyName value is $valueBytes bytes, above Android setprop limit $AndroidPropertyValueMaxBytes"
+    }
+    if ($propertyName.StartsWith($EnvironmentDepthPropertyPrefix)) {
+        Assert-EnvironmentDepthProperty -Name $propertyName -Value $propertyValue
+        $environmentDepthProperties[$propertyName] = $propertyValue
     }
     $operations += [ordered]@{
         kind = "set"
-        name = [string]$property.name
-        value = [string]$property.value
+        name = $propertyName
+        value = $propertyValue
         source_setting_id = [string]$property.source_setting_id
+    }
+}
+
+if ($environmentDepthProperties.ContainsKey($EnvironmentDepthNearMProperty) -and $environmentDepthProperties.ContainsKey($EnvironmentDepthFarMProperty)) {
+    $nearM = Get-EnvironmentDepthFloat -Name $EnvironmentDepthNearMProperty -Value $environmentDepthProperties[$EnvironmentDepthNearMProperty]
+    $farM = Get-EnvironmentDepthFloat -Name $EnvironmentDepthFarMProperty -Value $environmentDepthProperties[$EnvironmentDepthFarMProperty]
+    if ($nearM -le 0.0) {
+        throw "Environment depth near_m must be greater than 0"
+    }
+    if ($farM -le $nearM) {
+        throw "Environment depth far_m $farM must be greater than near_m $nearM"
     }
 }
 

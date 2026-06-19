@@ -124,6 +124,40 @@ clears the OpenXR projection layer to solid black, disables the app's custom
 hand mesh and graft visuals, requests the runtime/default OpenXR hand visual as
 the comparison hand, and keeps the same resident-mesh anchor particles visible
 in world space.
+`fixtures/runtime-profiles/quest-native-renderer-environment-depth-status.profile.json`
+is the first source-only environment-depth status profile. It owns only the
+environment-depth low-rate properties, keeps depth images and particle/map
+buffers out of JSON, reports the disabled/status skeleton through
+`RUSTY_QUEST_NATIVE_RENDERER channel=environment-depth`, and leaves actual
+OpenXR environment-depth provider binding for a later GPU slice.
+`fixtures/runtime-profiles/quest-native-renderer-native-passthrough-environment-depth-particles.profile.json`
+is the pure native GPU proof route. It disables the hand/SDF overlay paths,
+uses native passthrough, fills a resident Vulkan storage buffer from a compute
+shader with synthetic depth-view samples mapped into OpenXR reference-space
+meters, and draws reference-space billboards through each current eye pose/FOV.
+Markers on `RUSTY_QUEST_NATIVE_RENDERER channel=environment-depth-particles`
+report `environmentDepthParticleCpuUploadBytes=0`,
+`environmentDepthGpuBuffersResident=true`, and
+`environmentDepthParticleBufferMemory=device-local`, and
+`environmentDepthParticleCoordinateSpace=openxr-reference-space`. This proves
+the native passthrough particle mapping stack, not a bound
+`XR_META_environment_depth` provider.
+`fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json`
+is the real provider scene-map route, matching the later legacy
+`SceneParticleMap` behavior rather than the earlier view-grid overlay. It
+requests `XR_META_environment_depth`, requires `horizonos.permission.USE_SCENE`,
+samples the D16 two-layer depth swapchain in native Vulkan compute,
+reconstructs depth samples into OpenXR local reference space, hashes
+`0.06m` reference-space cells into the bounded particle buffer, preserves
+existing cells on invalid samples, applies visible-free-space correction, and
+draws those retained cells over `XR_FB_passthrough`. Run it through
+`tools/Invoke-NativeRendererReplaySmoke.ps1 -EvidenceMode EnvironmentDepthParticles`;
+the wrapper serial-scopes ADB, pregrants the declared permissions with
+`tools/Grant-NativeRendererPermissions.ps1`, and accepts only runtime markers
+showing acquired Meta depth frames, `environmentDepthMode=scene-particle-map`,
+nonzero source depth samples, `spatial-hash-reference-space-cells`, zero
+expanded CPU particle upload, resident GPU buffers, and device-local particle
+memory.
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-graft-only.profile.json`
 keeps native passthrough focused on graft instances only, while
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-hands-and-grafts.profile.json`

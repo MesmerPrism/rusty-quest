@@ -1,0 +1,17 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.damaged.environment_depth_high_rate_json",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload",
+      "value": "true",
+      "source_setting_id": "native_renderer.environment_depth.high_rate_json_payload"
+    }
+  ],
+  "expected_markers": [],
+  "validation_commands": []
+}

@@ -41,6 +41,25 @@
   fixed/eye-depth hand draw order plus resident GPU index-remap sorting.
   CPU-sorted render-buffer ordering is not used by the native Quest path
   because steady state must not upload expanded particle arrays.
+  `quest-native-renderer-environment-depth-status.profile.json` is the
+  first environment-depth status-only profile. It sets only scalar
+  environment-depth properties such as mode, source, reference space, capacity,
+  stride, range, and `high_rate_json_payload=false`; damaged fixtures reject
+  high-rate JSON, invalid capacity, and invalid near/far range attempts.
+  `quest-native-renderer-native-passthrough-environment-depth-particles.profile.json`
+  is the synthetic pure-GPU proof route: native passthrough is enabled, hand/SDF
+  overlays are disabled, a compute shader writes reference-space particle rows
+  into a resident Vulkan buffer, and the draw path reports zero CPU-expanded
+  particle upload. It intentionally marks the depth source as
+  `synthetic-gpu-proof` until a real environment-depth provider is bound.
+  `quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json`
+  is the real Meta provider proof route: it selects
+  `scene-particle-map` plus `xr-meta-environment-depth`, requires the
+  `USE_SCENE` permission path, and expects acquired D16 two-layer depth, valid
+  pose, nonzero source depth samples, OpenXR-local world-space scene cells,
+  spatial-hash map policy, preserve-existing-cells invalid-sample behavior,
+  visible-free-space correction, zero expanded CPU particle upload, resident
+  GPU buffers, and device-local particle memory.
 - `native-renderer/`: valid Quest-native renderer plans, timing scorecards, and
   public recorded-hand topology/shape fixtures for pure-HWB blur, GPU mesh
   boundary, resident compact-joint GPU-skinned visual examples,

@@ -1,0 +1,23 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.damaged.environment_depth_invalid_range",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.environment_depth.near_m",
+    "debug.rustyquest.native_renderer.environment_depth.far_m"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.near_m",
+      "value": "2.0",
+      "source_setting_id": "native_renderer.environment_depth.near_m"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.far_m",
+      "value": "1.0",
+      "source_setting_id": "native_renderer.environment_depth.far_m"
+    }
+  ],
+  "expected_markers": [],
+  "validation_commands": []
+}

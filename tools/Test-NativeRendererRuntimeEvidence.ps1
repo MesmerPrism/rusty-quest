@@ -22,6 +22,7 @@ param(
     [switch]$RequireCameraProjection,
     [switch]$RequireReplayVisualProof,
     [switch]$RequireLiveVisualDiagnosticCaveat,
+    [switch]$RequireEnvironmentDepthParticles,
     [switch]$RequireGuideGraph,
     [switch]$RequireSdfVisual,
     [switch]$RequireGpuTimestampReady,
@@ -469,6 +470,7 @@ $summary = [ordered]@{
     camera_projection_checked = [bool]$RequireCameraProjection
     replay_visual_proof_checked = [bool]$RequireReplayVisualProof
     live_visual_diagnostic_caveat_checked = [bool]$RequireLiveVisualDiagnosticCaveat
+    environment_depth_particles_checked = [bool]$RequireEnvironmentDepthParticles
     guide_graph_checked = [bool]$RequireGuideGraph
     sdf_visual_checked = [bool]$RequireSdfVisual
     gpu_timestamp_checked = [bool]$RequireGpuTimestampReady
@@ -481,6 +483,9 @@ $timingScorecard = Get-LatestMarkerLine $logLines "timing-scorecard"
 $handMeshVisualLine = Get-LatestMarkerLine $logLines "hand-mesh-visual"
 $sdfFieldLine = Get-LatestMarkerLine $logLines "gpu-sdf-field"
 $gpuTimingLine = Get-LatestMarkerLine $logLines "gpu-timestamp-timing"
+$nativePassthroughLine = Get-LatestMarkerLine $logLines "native-passthrough"
+$environmentDepthLine = Get-LatestMarkerLine $logLines "environment-depth"
+$environmentDepthParticlesLine = Get-LatestMarkerLine $logLines "environment-depth-particles"
 
 if (($RequireNonFlatScreenshot -or $RequireTargetNonFlatScreenshot -or $RequireHandMeshVisualScreenshot -or $RequireSdfVisualScreenshot) -and -not $RequireScreenshot) {
     throw "Screenshot content requirements need -RequireScreenshot and -ScreenshotPath."
@@ -661,6 +666,70 @@ if ($RequireLiveVisualDiagnosticCaveat) {
     }
     Assert-NotRegex $handMeshVisualLine "liveHandMeshVisualAcceptance=(?!pending-repeat-headset-visual-proof\b)\S+" "latest hand-mesh-visual marker"
     Assert-NotRegex $sdfFieldLine "liveSdfVisualAcceptance=(?!pending-repeat-headset-visual-proof\b)\S+" "latest gpu-sdf-field marker"
+}
+
+if ($RequireEnvironmentDepthParticles) {
+    Assert-True (-not [string]::IsNullOrWhiteSpace($nativePassthroughLine)) "Missing native-passthrough marker."
+    foreach ($token in @(
+        "nativePassthroughLayerActive=true",
+        "passthroughCompositionLayer=CompositionLayerPassthroughFB"
+    )) {
+        Assert-Contains $nativePassthroughLine $token "latest native-passthrough marker"
+    }
+
+    Assert-True (-not [string]::IsNullOrWhiteSpace($environmentDepthLine)) "Missing environment-depth marker."
+    foreach ($token in @(
+        "environmentDepthSource=xr-meta-environment-depth",
+        "environmentDepthProviderState=provider-running",
+        "environmentDepthProviderAvailable=true",
+        "environmentDepthRealProviderBound=true",
+        "environmentDepthSupported=true",
+        "environmentDepthAcquireStatus=acquired",
+        "environmentDepthFormat=VK_FORMAT_D16_UNORM",
+        "environmentDepthLayerCount=2",
+        "environmentDepthPoseValid=true"
+    )) {
+        Assert-Contains $environmentDepthLine $token "latest environment-depth marker"
+    }
+
+    Assert-True (-not [string]::IsNullOrWhiteSpace($environmentDepthParticlesLine)) "Missing environment-depth-particles marker."
+    foreach ($token in @(
+        "environmentDepthParticleReady=true",
+        "environmentDepthParticleVisible=true",
+        "environmentDepthMode=scene-particle-map",
+        "environmentDepthParticleSource=xr-meta-environment-depth",
+        "environmentDepthParticleCoordinateSpace=openxr-reference-space",
+        "environmentDepthWorldSpaceReady=true",
+        "environmentDepthParticleCpuUploadBytes=0",
+        "environmentDepthGpuBuffersResident=true",
+        "environmentDepthParticleBufferMemory=device-local",
+        "environmentDepthGpuReconstructPath=native-vulkan-compute-depth-view-to-reference-space",
+        "environmentDepthGpuDrawPath=native-vulkan-reference-space-billboard-overlay",
+        "environmentDepthParticleRetention=scene-owned-spatial-particle-map",
+        "environmentDepthParticleMapPolicy=spatial-hash-reference-space-cells",
+        "environmentDepthSceneParticleMap=true",
+        "environmentDepthSceneCellMeters=0.060",
+        "environmentDepthSceneHashProbeCount=8",
+        "environmentDepthInvalidSamplePolicy=preserve-existing-cells",
+        "environmentDepthFreeSpaceCorrection=visible-free-space-ray-clear",
+        "environmentDepthRealProviderBound=true",
+        "environmentDepthSupported=true",
+        "environmentDepthAcquireStatus=acquired",
+        "environmentDepthPoseValid=true",
+        "environmentDepthFormat=VK_FORMAT_D16_UNORM",
+        "environmentDepthLayerCount=2"
+    )) {
+        Assert-Contains $environmentDepthParticlesLine $token "latest environment-depth-particles marker"
+    }
+
+    $particleCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthParticleCount"
+    Assert-True ($particleCount -gt 0) "environment-depth-particles marker reports no particles."
+    $sourceDepthSamples = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthParticleSourceDepthSamples"
+    Assert-True ($sourceDepthSamples -gt 0) "environment-depth-particles marker reports no source depth samples."
+    $summary.environment_depth_line = $environmentDepthLine
+    $summary.environment_depth_particles_line = $environmentDepthParticlesLine
+    $summary.environment_depth_particle_count = $particleCount
+    $summary.environment_depth_particle_source_depth_samples = $sourceDepthSamples
 }
 
 if ($RequireGuideGraph) {

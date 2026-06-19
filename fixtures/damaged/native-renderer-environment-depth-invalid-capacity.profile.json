@@ -1,0 +1,17 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.damaged.environment_depth_invalid_capacity",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.environment_depth.particle_capacity"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.particle_capacity",
+      "value": "0",
+      "source_setting_id": "native_renderer.environment_depth.particle_capacity"
+    }
+  ],
+  "expected_markers": [],
+  "validation_commands": []
+}

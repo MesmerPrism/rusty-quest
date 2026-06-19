@@ -1,0 +1,143 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.native_passthrough_meta_environment_depth_particles",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.render.mode",
+    "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.input.source",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
+    "debug.rustyquest.native_renderer.sdf.visual.enabled",
+    "debug.rustyquest.native_renderer.environment_depth.mode",
+    "debug.rustyquest.native_renderer.environment_depth.source",
+    "debug.rustyquest.native_renderer.environment_depth.reference_space",
+    "debug.rustyquest.native_renderer.environment_depth.particle_capacity",
+    "debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels",
+    "debug.rustyquest.native_renderer.environment_depth.near_m",
+    "debug.rustyquest.native_renderer.environment_depth.far_m",
+    "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.render.mode",
+      "value": "native-passthrough-graft-only",
+      "source_setting_id": "native_renderer.render.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.replay.visual_proof.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.input.source",
+      "value": "disabled",
+      "source_setting_id": "native_renderer.hand_mesh.input.source"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.graft_copies.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.real_hands.visible"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_anchor_particles.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.sdf.visual.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.sdf.visual.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.mode",
+      "value": "scene-particle-map",
+      "source_setting_id": "native_renderer.environment_depth.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.source",
+      "value": "xr-meta-environment-depth",
+      "source_setting_id": "native_renderer.environment_depth.source"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.reference_space",
+      "value": "openxr-local",
+      "source_setting_id": "native_renderer.environment_depth.reference_space"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.particle_capacity",
+      "value": "32768",
+      "source_setting_id": "native_renderer.environment_depth.particle_capacity"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels",
+      "value": "12",
+      "source_setting_id": "native_renderer.environment_depth.sample_stride_pixels"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.near_m",
+      "value": "0.20",
+      "source_setting_id": "native_renderer.environment_depth.near_m"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.far_m",
+      "value": "5.00",
+      "source_setting_id": "native_renderer.environment_depth.far_m"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload",
+      "value": "false",
+      "source_setting_id": "native_renderer.environment_depth.high_rate_json_payload"
+    }
+  ],
+  "expected_markers": [
+    "RUSTY_QUEST_NATIVE_RENDERER channel=render-mode",
+    "renderMode=native-passthrough-graft-only",
+    "nativePassthroughRequested=true",
+    "customStereoProjectionEnabled=false",
+    "RUSTY_QUEST_NATIVE_RENDERER channel=native-passthrough",
+    "nativePassthroughLayerActive=true",
+    "cameraProjectionPath=disabled-native-passthrough-graft-only",
+    "RUSTY_QUEST_NATIVE_RENDERER channel=environment-depth",
+    "environmentDepthMode=scene-particle-map",
+    "environmentDepthSource=xr-meta-environment-depth",
+    "environmentDepthProviderState=provider-running",
+    "environmentDepthProviderAvailable=true",
+    "environmentDepthRealProviderBound=true",
+    "environmentDepthSupported=true",
+    "environmentDepthAcquireStatus=acquired",
+    "environmentDepthImageSize=",
+    "environmentDepthFormat=VK_FORMAT_D16_UNORM",
+    "environmentDepthLayerCount=2",
+    "environmentDepthPoseValid=true",
+    "environmentDepthReferenceSpace=openxr-local",
+    "environmentDepthHighRateJsonPayload=false",
+    "RUSTY_QUEST_NATIVE_RENDERER channel=environment-depth-particles",
+    "environmentDepthParticleSource=xr-meta-environment-depth",
+    "environmentDepthParticleCoordinateSpace=openxr-reference-space",
+    "environmentDepthParticleCpuUploadBytes=0",
+    "environmentDepthGpuBuffersResident=true",
+    "environmentDepthParticleBufferMemory=device-local",
+    "environmentDepthParticleRetention=scene-owned-spatial-particle-map",
+    "environmentDepthParticleMapPolicy=spatial-hash-reference-space-cells",
+    "environmentDepthSceneParticleMap=true",
+    "environmentDepthInvalidSamplePolicy=preserve-existing-cells",
+    "environmentDepthFreeSpaceCorrection=visible-free-space-ray-clear",
+    "environmentDepthWorldSpaceReady=true"
+  ],
+  "validation_commands": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json -DryRun -Out local-artifacts/native-renderer-native-passthrough-meta-environment-depth-particles-property-write-plan.json"
+  ]
+}

@@ -14,6 +14,7 @@
     <uses-permission android:name="com.oculus.permission.HAND_TRACKING" />
     <uses-permission android:name="horizonos.permission.HEADSET_CAMERA" />
     <uses-permission android:name="horizonos.permission.SPATIAL_CAMERA" />
+    <uses-permission android:name="horizonos.permission.USE_SCENE" />
     <uses-permission android:name="org.khronos.openxr.permission.OPENXR" />
     <uses-permission android:name="org.khronos.openxr.permission.OPENXR_SYSTEM" />
 

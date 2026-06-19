@@ -92,6 +92,31 @@ route also disables passthrough and custom Camera2 projection, clears to black,
 keeps the app's custom hand mesh and graft visuals disabled, requests the
 runtime/default OpenXR hand visual, and draws only resident-mesh anchor
 particles for topology comparison.
+`quest-native-renderer-environment-depth-status.profile.json` is the first
+environment-depth source-only profile. It validates the low-rate status
+surface, explicit capacity/stride/range properties, requested OpenXR reference
+space label, and `environmentDepthHighRateJsonPayload=false`; damaged profiles
+reject high-rate JSON payloads, invalid capacities, and invalid near/far
+ranges before any ADB write.
+`quest-native-renderer-native-passthrough-environment-depth-particles.profile.json`
+validates the next native GPU proof profile. It selects native passthrough,
+sets `environment_depth.mode=retained-particles` and
+`environment_depth.source=synthetic-gpu-proof`, and requires markers for a
+resident Vulkan particle buffer, zero CPU-expanded particle upload, and
+OpenXR reference-space particle coordinates. This is a proof of the native
+passthrough particle mapping stack; it is not acceptance evidence for a real
+runtime environment-depth provider.
+`quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json`
+is the real Meta provider proof profile. It selects
+`environment_depth.mode=scene-particle-map` and
+`environment_depth.source=xr-meta-environment-depth`, requires
+`horizonos.permission.USE_SCENE` in the APK manifest and permission pregrant
+summary, and validates runtime markers for acquired D16 two-layer
+`XR_META_environment_depth` frames, valid depth pose, nonzero source depth
+samples, OpenXR-local scene cells, the spatial-hash map policy,
+preserve-existing-cells invalid-sample behavior, visible-free-space
+correction, zero expanded CPU particle upload, resident GPU buffers, and
+`environmentDepthParticleBufferMemory=device-local`.
 
 Remote camera session plans are also source-only validation:
 
@@ -115,12 +140,14 @@ The Quest-native Android renderer scaffold has static and APK build validation:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
 ```
 
 `Invoke-NativeRendererReplaySmoke.ps1` is the no-real-hands device wrapper for
 the recorded replay path. It installs the APK unless `-SkipInstall` is passed,
-best-effort grants camera/hand permissions, applies
+pregrants the APK-declared camera/hand/scene permissions through
+`tools/Grant-NativeRendererPermissions.ps1`, applies
 `quest-native-renderer-replay-visual-proof.profile.json` through
 `Apply-RuntimeProfile.ps1 -Execute`, launches the NativeActivity, captures
 logcat plus a screenshot, and then calls
@@ -158,6 +185,10 @@ For the later live-hand retest, the same wrapper should be run with
 `quest-native-renderer-live-hand-visual-diagnostic.profile.json` by default and
 switches the marker gate from replay proof to the live visual caveat while
 keeping screenshot overlay-color checks active.
+For the real environment-depth particle proof, run the same wrapper with
+`-EvidenceMode EnvironmentDepthParticles`; that applies the Meta depth profile
+by default and switches the marker gate to
+`Test-NativeRendererRuntimeEvidence.ps1 -RequireEnvironmentDepthParticles`.
 ADB and child PowerShell calls are captured with `ErrorActionPreference`
 temporarily set to `Continue`, so native stderr is recorded in the run summary
 with the real exit code instead of surfacing as a PowerShell

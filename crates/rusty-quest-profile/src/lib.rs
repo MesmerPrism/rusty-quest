@@ -10,6 +10,20 @@ pub const RUNTIME_PROFILE_SCHEMA: &str = "rusty.quest.runtime_profile.v1";
 /// Android system property value limit in bytes for `setprop` values.
 pub const ANDROID_PROPERTY_VALUE_MAX_BYTES: usize = 92;
 
+const ENVIRONMENT_DEPTH_PROP_PREFIX: &str = "debug.rustyquest.native_renderer.environment_depth.";
+const ENVIRONMENT_DEPTH_MODE: &str = "debug.rustyquest.native_renderer.environment_depth.mode";
+const ENVIRONMENT_DEPTH_SOURCE: &str = "debug.rustyquest.native_renderer.environment_depth.source";
+const ENVIRONMENT_DEPTH_REFERENCE_SPACE: &str =
+    "debug.rustyquest.native_renderer.environment_depth.reference_space";
+const ENVIRONMENT_DEPTH_PARTICLE_CAPACITY: &str =
+    "debug.rustyquest.native_renderer.environment_depth.particle_capacity";
+const ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS: &str =
+    "debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels";
+const ENVIRONMENT_DEPTH_NEAR_M: &str = "debug.rustyquest.native_renderer.environment_depth.near_m";
+const ENVIRONMENT_DEPTH_FAR_M: &str = "debug.rustyquest.native_renderer.environment_depth.far_m";
+const ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD: &str =
+    "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload";
+
 /// Quest runtime profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeProfile {
@@ -156,12 +170,174 @@ pub fn validate_runtime_profile(profile: &RuntimeProfile) -> Result<(), Vec<Vali
             )));
         }
     }
+    validate_environment_depth_profile(&set_properties, &mut errors);
 
     if errors.is_empty() {
         Ok(())
     } else {
         Err(errors)
     }
+}
+
+fn validate_environment_depth_profile(
+    set_properties: &BTreeMap<&str, &PropertyValue>,
+    errors: &mut Vec<ValidationError>,
+) {
+    for property in set_properties.values() {
+        if property.name.starts_with(ENVIRONMENT_DEPTH_PROP_PREFIX) {
+            validate_environment_depth_property(property, errors);
+        }
+    }
+
+    let near_m = environment_depth_f32(set_properties, ENVIRONMENT_DEPTH_NEAR_M, errors);
+    let far_m = environment_depth_f32(set_properties, ENVIRONMENT_DEPTH_FAR_M, errors);
+    if let (Some(near_m), Some(far_m)) = (near_m, far_m) {
+        if near_m <= 0.0 {
+            errors.push(ValidationError::new(
+                "environment depth near_m must be greater than 0",
+            ));
+        }
+        if far_m <= near_m {
+            errors.push(ValidationError::new(format!(
+                "environment depth far_m {far_m} must be greater than near_m {near_m}",
+            )));
+        }
+    }
+}
+
+fn validate_environment_depth_property(
+    property: &PropertyValue,
+    errors: &mut Vec<ValidationError>,
+) {
+    match property.name.as_str() {
+        ENVIRONMENT_DEPTH_MODE => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(
+                normalized.as_str(),
+                "disabled"
+                    | "off"
+                    | "status"
+                    | "status-only"
+                    | "provider-status"
+                    | "retained-particles"
+                    | "retained-particle-map"
+                    | "scene-particle-map"
+                    | "scene-map"
+            );
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "environment depth mode {} is not supported",
+                    property.value
+                )));
+            }
+        }
+        ENVIRONMENT_DEPTH_SOURCE => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(
+                normalized.as_str(),
+                "runtime-provider"
+                    | "provider"
+                    | "xr-meta-environment-depth"
+                    | "meta-environment-depth"
+                    | "meta-provider"
+                    | "synthetic-gpu-proof"
+                    | "synthetic-proof"
+                    | "synthetic-depth-grid"
+            );
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "environment depth source {} is not supported",
+                    property.value
+                )));
+            }
+        }
+        ENVIRONMENT_DEPTH_REFERENCE_SPACE => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(
+                normalized.as_str(),
+                "local" | "stage" | "openxr-local" | "openxr-stage"
+            );
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "environment depth reference_space {} is not supported",
+                    property.value
+                )));
+            }
+        }
+        ENVIRONMENT_DEPTH_PARTICLE_CAPACITY => {
+            validate_environment_depth_u32(property, 64, 262_144, errors);
+        }
+        ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS => {
+            validate_environment_depth_u32(property, 1, 128, errors);
+        }
+        ENVIRONMENT_DEPTH_NEAR_M | ENVIRONMENT_DEPTH_FAR_M => {
+            validate_environment_depth_f32(property, errors);
+        }
+        ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD => {
+            let normalized = normalized_value(&property.value);
+            let valid_false = matches!(normalized.as_str(), "0" | "false" | "no" | "off");
+            if !valid_false {
+                errors.push(ValidationError::new(
+                    "environment depth high_rate_json_payload must be false",
+                ));
+            }
+        }
+        _ => errors.push(ValidationError::new(format!(
+            "unknown environment depth property {}",
+            property.name
+        ))),
+    }
+}
+
+fn validate_environment_depth_u32(
+    property: &PropertyValue,
+    min_value: u32,
+    max_value: u32,
+    errors: &mut Vec<ValidationError>,
+) {
+    match property.value.trim().parse::<u32>() {
+        Ok(value) if value >= min_value && value <= max_value => {}
+        Ok(value) => errors.push(ValidationError::new(format!(
+            "{} value {value} must be between {min_value} and {max_value}",
+            property.name
+        ))),
+        Err(_) => errors.push(ValidationError::new(format!(
+            "{} value {} must be an integer",
+            property.name, property.value
+        ))),
+    }
+}
+
+fn validate_environment_depth_f32(property: &PropertyValue, errors: &mut Vec<ValidationError>) {
+    match property.value.trim().parse::<f32>() {
+        Ok(value) if value.is_finite() => {}
+        _ => errors.push(ValidationError::new(format!(
+            "{} value {} must be a finite number",
+            property.name, property.value
+        ))),
+    }
+}
+
+fn environment_depth_f32(
+    set_properties: &BTreeMap<&str, &PropertyValue>,
+    name: &str,
+    errors: &mut Vec<ValidationError>,
+) -> Option<f32> {
+    let property = set_properties.get(name)?;
+    match property.value.trim().parse::<f32>() {
+        Ok(value) if value.is_finite() => Some(value),
+        _ => {
+            errors.push(ValidationError::new(format!(
+                "{} value {} must be a finite number",
+                property.name, property.value
+            )));
+            None
+        }
+    }
+}
+
+fn normalized_value(value: &str) -> String {
+    value.trim().to_ascii_lowercase().replace('_', "-")
 }
 
 /// Build a deterministic clear-then-set dry-run plan.
@@ -254,6 +430,71 @@ mod tests {
         .expect("damaged profile JSON");
         let errors = validate_runtime_profile(&damaged).expect_err("must reject legacy");
         assert!(errors.iter().any(|error| error.message.contains("legacy")));
+    }
+
+    #[test]
+    fn environment_depth_status_profile_validates() {
+        let profile: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/runtime-profiles/quest-native-renderer-environment-depth-status.profile.json"
+        ))
+        .expect("environment depth status profile JSON");
+        validate_runtime_profile(&profile).expect("environment depth profile validates");
+        let plan = build_write_plan(&profile).expect("write plan");
+        assert!(plan.operations.iter().any(|operation| {
+            operation.name == "debug.rustyquest.native_renderer.environment_depth.mode"
+                && operation.value.as_deref() == Some("status-only")
+        }));
+    }
+
+    #[test]
+    fn environment_depth_native_passthrough_particle_profile_validates() {
+        let profile: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/runtime-profiles/quest-native-renderer-native-passthrough-environment-depth-particles.profile.json"
+        ))
+        .expect("environment depth native passthrough particle profile JSON");
+        validate_runtime_profile(&profile).expect("environment depth particle profile validates");
+        let plan = build_write_plan(&profile).expect("write plan");
+        assert!(plan.operations.iter().any(|operation| {
+            operation.name == "debug.rustyquest.native_renderer.environment_depth.source"
+                && operation.value.as_deref() == Some("synthetic-gpu-proof")
+        }));
+    }
+
+    #[test]
+    fn environment_depth_high_rate_json_payload_is_rejected() {
+        let damaged: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/damaged/native-renderer-environment-depth-high-rate-json.profile.json"
+        ))
+        .expect("damaged profile JSON");
+        let errors =
+            validate_runtime_profile(&damaged).expect_err("must reject high-rate JSON payload");
+        assert!(errors.iter().any(|error| error
+            .message
+            .contains("high_rate_json_payload must be false")));
+    }
+
+    #[test]
+    fn environment_depth_invalid_range_is_rejected() {
+        let damaged: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/damaged/native-renderer-environment-depth-invalid-range.profile.json"
+        ))
+        .expect("damaged profile JSON");
+        let errors = validate_runtime_profile(&damaged).expect_err("must reject invalid range");
+        assert!(errors.iter().any(|error| error
+            .message
+            .contains("far_m 1 must be greater than near_m 2")));
+    }
+
+    #[test]
+    fn environment_depth_invalid_capacity_is_rejected() {
+        let damaged: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/damaged/native-renderer-environment-depth-invalid-capacity.profile.json"
+        ))
+        .expect("damaged profile JSON");
+        let errors = validate_runtime_profile(&damaged).expect_err("must reject invalid capacity");
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("particle_capacity value 0")));
     }
 
     #[test]

@@ -16,6 +16,9 @@ use crate::{
         PreparedCameraProjection,
     },
     camera_projection_metadata::{CameraProjectionMetadata, TargetRect},
+    gpu_environment_depth_particles::{
+        GpuEnvironmentDepthParticleFrameStats, GpuEnvironmentDepthParticleRenderer,
+    },
     gpu_hand_anchor_particles::{
         GpuHandAnchorParticleFrameSetStats, GpuHandAnchorParticleRenderer,
     },
@@ -30,10 +33,10 @@ use crate::{
     native_camera::NativeCameraRuntime,
     native_renderer_options::{
         CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings, NativeCameraOutputMode,
-        NativeCameraQualityProfile, NativeCameraSyncMode, NativeHandAnchorParticleOrderingMode,
-        NativeHandAnchorParticleSettings, NativePrivateLayerSettings,
-        NativeProjectionBorderStretchSettings, NativeRendererRenderMode,
-        NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
+        NativeCameraQualityProfile, NativeCameraSyncMode, NativeEnvironmentDepthSettings,
+        NativeHandAnchorParticleOrderingMode, NativeHandAnchorParticleSettings,
+        NativePrivateLayerSettings, NativeProjectionBorderStretchSettings,
+        NativeRendererRenderMode, NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
         PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED,
         PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_READER_MAX_IMAGES,
         PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
@@ -53,6 +56,7 @@ use crate::{
     native_renderer_timing::{
         elapsed_ms, FrameCpuTimings, GpuStageTimings, GpuTimestampStage, GpuTimestampTracker,
     },
+    openxr_environment_depth::OpenXrEnvironmentDepthRuntime,
     private_extension_slot::{PrivateExtensionSlotFrameStats, PrivateExtensionSlotRuntime},
     recorded_hand_replay::{
         RecordedHandReplaySet, RecordedHandReplaySummary, RecordedHandSkinningFrame,
@@ -205,6 +209,20 @@ unsafe fn run_projection_loop_inner(
     enabled_extensions.ext_hand_tracking = available_extensions.ext_hand_tracking;
     enabled_extensions.fb_passthrough = runtime_options.render_mode.uses_native_passthrough()
         && available_extensions.fb_passthrough;
+    enabled_extensions.meta_environment_depth = runtime_options
+        .environment_depth_settings
+        .runtime_provider_requested()
+        && available_extensions.meta_environment_depth;
+    if runtime_options
+        .environment_depth_settings
+        .runtime_provider_requested()
+        && !available_extensions.meta_environment_depth
+    {
+        crate::marker(
+            "environment-depth",
+            "status=unavailable reason=XR_META_environment_depth-extension-missing environmentDepthProviderAvailable=false environmentDepthRealProviderBound=false environmentDepthSupported=false",
+        );
+    }
     let xr_instance = create_android_instance(
         &entry,
         app,
@@ -225,6 +243,8 @@ unsafe fn run_projection_loop_inner(
     let system = xr_instance
         .system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)
         .map_err(|error| format!("get HMD system: {error}"))?;
+    let environment_depth_properties =
+        OpenXrEnvironmentDepthRuntime::query_properties(&xr_instance, system);
     let live_hand_tracking_system_supported = if enabled_extensions.ext_hand_tracking {
         xr_instance.supports_hand_tracking(system).unwrap_or(false)
     } else {
@@ -391,7 +411,8 @@ unsafe fn run_projection_loop_inner(
         available_extensions.ext_hand_tracking,
         enabled_extensions.ext_hand_tracking,
     );
-    let reference_space = create_projection_reference_space(&session)?;
+    let reference_space =
+        create_projection_reference_space(&session, runtime_options.environment_depth_settings)?;
     let color_format =
         choose_swapchain_format(&session, runtime_options.swapchain_color_format_mode)?;
     let render_pass = create_projection_render_pass(&vk_device, color_format)?;
@@ -425,6 +446,7 @@ unsafe fn run_projection_loop_inner(
     let hand_mesh_graft_copy_scale = runtime_options.hand_mesh_graft_copy_scale;
     let hand_mesh_real_hands_visible = runtime_options.hand_mesh_real_hands_visible;
     let hand_anchor_particle_settings = runtime_options.hand_anchor_particle_settings;
+    let environment_depth_settings = runtime_options.environment_depth_settings;
     let projection_border_stretch_settings = runtime_options.projection_border_stretch_settings;
     let private_layer_settings = runtime_options.private_layer_settings;
     crate::marker(
@@ -544,6 +566,44 @@ unsafe fn run_projection_loop_inner(
             hand_anchor_particle_settings.marker_fields(),
         ),
     );
+    crate::marker(
+        "environment-depth-particles",
+        format!(
+            "status=config renderMode={} nativePassthroughRequested={} syntheticGpuProofRequested={} runtimeProviderRequested={} {} environmentDepthParticleVisualAcceptance=pending-headset-screenshot",
+            render_mode.marker_value(),
+            render_mode.uses_native_passthrough(),
+            environment_depth_settings.synthetic_gpu_proof_requested(),
+            environment_depth_settings.runtime_provider_requested(),
+            environment_depth_settings.marker_fields(),
+        ),
+    );
+    let mut openxr_environment_depth_runtime = if environment_depth_settings
+        .runtime_provider_requested()
+    {
+        match OpenXrEnvironmentDepthRuntime::create(
+            &xr_instance,
+            &session,
+            environment_depth_settings,
+            environment_depth_properties,
+            0,
+        ) {
+            Ok(runtime) => Some(runtime),
+            Err(error) => {
+                crate::marker(
+                    "environment-depth",
+                    format!(
+                        "status=unavailable reason={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound=false environmentDepthSupported={} environmentDepthAcquireStatus=not-attempted-provider-not-bound",
+                        crate::sanitize(&error),
+                        environment_depth_properties.extension_available,
+                        environment_depth_properties.supports_environment_depth,
+                    ),
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
     let mut private_extension_slot_runtime =
         PrivateExtensionSlotRuntime::new(memory_properties, color_format, render_pass);
     crate::marker(
@@ -553,6 +613,63 @@ unsafe fn run_projection_loop_inner(
             PrivateExtensionSlotRuntime::config_marker_fields(private_layer_settings)
         ),
     );
+    let mut gpu_environment_depth_particle_renderer = if environment_depth_settings
+        .synthetic_gpu_proof_requested()
+    {
+        match GpuEnvironmentDepthParticleRenderer::new_synthetic(
+            &vk_device,
+            &memory_properties,
+            render_pass,
+            environment_depth_settings,
+        ) {
+            Ok(renderer) => Some(renderer),
+            Err(error) => {
+                crate::marker(
+                        "environment-depth-particles",
+                        format!(
+                            "status=unavailable reason={} environmentDepthParticleReady=false environmentDepthRealProviderBound=false",
+                            crate::sanitize(&error)
+                        ),
+                    );
+                None
+            }
+        }
+    } else if environment_depth_settings.runtime_provider_requested()
+        && environment_depth_settings.mode_draws_particles()
+    {
+        match openxr_environment_depth_runtime.as_ref().map(|runtime| {
+            GpuEnvironmentDepthParticleRenderer::new_runtime_depth(
+                &vk_device,
+                &memory_properties,
+                render_pass,
+                environment_depth_settings,
+                runtime.depth_image_handles(),
+                runtime.width(),
+                runtime.height(),
+            )
+        }) {
+            Some(Ok(renderer)) => Some(renderer),
+            Some(Err(error)) => {
+                crate::marker(
+                    "environment-depth-particles",
+                    format!(
+                        "status=unavailable reason={} environmentDepthParticleReady=false environmentDepthRealProviderBound=true",
+                        crate::sanitize(&error)
+                    ),
+                );
+                None
+            }
+            None => {
+                crate::marker(
+                    "environment-depth-particles",
+                    "status=unavailable reason=no-openxr-environment-depth-runtime environmentDepthParticleReady=false environmentDepthRealProviderBound=false",
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
     let mut gpu_sdf_field_renderer = match GpuSdfFieldRenderer::new(
         &vk_device,
         &memory_properties,
@@ -867,6 +984,8 @@ unsafe fn run_projection_loop_inner(
         secondary_gpu_hand_mesh_visual_renderer.as_mut(),
         gpu_hand_anchor_particle_renderer.as_mut(),
         secondary_gpu_hand_anchor_particle_renderer.as_mut(),
+        openxr_environment_depth_runtime.as_mut(),
+        gpu_environment_depth_particle_renderer.as_mut(),
         gpu_sdf_field_renderer.as_mut(),
         secondary_gpu_sdf_field_renderer.as_mut(),
         &mut gpu_timestamp_tracker,
@@ -881,6 +1000,7 @@ unsafe fn run_projection_loop_inner(
         hand_mesh_graft_copy_scale,
         hand_mesh_real_hands_visible,
         hand_anchor_particle_settings,
+        environment_depth_settings,
         camera_output_mode,
         camera_ycbcr_mode,
         camera_resolution_profile,
@@ -917,6 +1037,9 @@ unsafe fn run_projection_loop_inner(
     if let Some(renderer) = secondary_gpu_hand_anchor_particle_renderer.as_mut() {
         renderer.destroy(&vk_device);
     }
+    if let Some(renderer) = gpu_environment_depth_particle_renderer.as_mut() {
+        renderer.destroy(&vk_device);
+    }
     if let Some(renderer) = gpu_sdf_field_renderer.as_mut() {
         renderer.destroy(&vk_device);
     }
@@ -930,6 +1053,7 @@ unsafe fn run_projection_loop_inner(
     gpu_mesh_replay.destroy(&vk_device);
     vk_device.destroy_command_pool(cmd_pool, None);
     vk_device.destroy_render_pass(render_pass, None);
+    drop(openxr_environment_depth_runtime);
     drop(native_passthrough);
     drop((session, frame_wait, frame_stream, reference_space));
     vk_device.destroy_device(None);
@@ -1237,6 +1361,8 @@ unsafe fn run_projection_frames(
     mut secondary_gpu_hand_mesh_visual_renderer: Option<&mut GpuHandMeshVisualRenderer>,
     mut gpu_hand_anchor_particle_renderer: Option<&mut GpuHandAnchorParticleRenderer>,
     mut secondary_gpu_hand_anchor_particle_renderer: Option<&mut GpuHandAnchorParticleRenderer>,
+    mut openxr_environment_depth_runtime: Option<&mut OpenXrEnvironmentDepthRuntime>,
+    gpu_environment_depth_particle_renderer: Option<&mut GpuEnvironmentDepthParticleRenderer>,
     mut gpu_sdf_field_renderer: Option<&mut GpuSdfFieldRenderer>,
     mut secondary_gpu_sdf_field_renderer: Option<&mut GpuSdfFieldRenderer>,
     gpu_timestamp_tracker: &mut GpuTimestampTracker,
@@ -1251,6 +1377,7 @@ unsafe fn run_projection_frames(
     hand_mesh_graft_copy_scale: f32,
     hand_mesh_real_hands_visible: bool,
     hand_anchor_particle_settings: NativeHandAnchorParticleSettings,
+    environment_depth_settings: NativeEnvironmentDepthSettings,
     camera_output_mode: NativeCameraOutputMode,
     camera_ycbcr_mode: crate::native_renderer_options::NativeCameraYcbcrMode,
     camera_resolution_profile: crate::native_renderer_options::NativeCameraResolutionProfile,
@@ -1911,6 +2038,21 @@ unsafe fn run_projection_frames(
             .first()
             .map(hand_mesh_visual_eye_projection)
             .unwrap_or_default();
+        let openxr_environment_depth_frame =
+            if environment_depth_settings.runtime_provider_requested() {
+                openxr_environment_depth_runtime
+                    .as_mut()
+                    .and_then(|runtime| {
+                        runtime.acquire(
+                            reference_space,
+                            frame_state.predicted_display_time,
+                            &views,
+                            frame_count,
+                        )
+                    })
+            } else {
+                None
+            };
         if let Some(renderer) = gpu_hand_anchor_particle_renderer.as_ref() {
             renderer.record_sort_frame(
                 vk_device,
@@ -1931,6 +2073,37 @@ unsafe fn run_projection_frames(
                 frame_count,
             );
         }
+        let environment_depth_particle_stats =
+            if let Some(renderer) = gpu_environment_depth_particle_renderer.as_ref() {
+                if environment_depth_settings.synthetic_gpu_proof_requested() {
+                    renderer.record_compute_frame(
+                        vk_device,
+                        cmd,
+                        environment_depth_settings,
+                        particle_sort_eye_projection,
+                        frame_count,
+                    )
+                } else if let Some(depth_frame) = openxr_environment_depth_frame.as_ref() {
+                    renderer.record_runtime_depth_frame(
+                        vk_device,
+                        cmd,
+                        environment_depth_settings,
+                        depth_frame,
+                        frame_count,
+                    )
+                } else if environment_depth_settings.runtime_provider_requested()
+                    && environment_depth_settings.mode_draws_particles()
+                {
+                    GpuEnvironmentDepthParticleFrameStats::runtime_depth_not_acquired(
+                        environment_depth_settings,
+                        environment_depth_settings.particle_capacity,
+                    )
+                } else {
+                    GpuEnvironmentDepthParticleFrameStats::unavailable(environment_depth_settings)
+                }
+            } else {
+                GpuEnvironmentDepthParticleFrameStats::unavailable(environment_depth_settings)
+            };
         gpu_timestamp_tracker.write_stage_end(
             vk_device,
             cmd,
@@ -1988,6 +2161,9 @@ unsafe fn run_projection_frames(
             gpu_hand_anchor_particle_renderer.as_deref(),
             secondary_gpu_hand_anchor_particle_renderer.as_deref(),
             &hand_anchor_particle_stats,
+            gpu_environment_depth_particle_renderer.as_deref(),
+            &environment_depth_particle_stats,
+            environment_depth_settings,
             gpu_sdf_field_renderer.as_deref(),
             &gpu_sdf_stats,
             &live_hand_frames,
@@ -2107,6 +2283,8 @@ unsafe fn run_projection_frames(
                 gpu_mesh_stats,
                 &hand_mesh_visual_stats,
                 &hand_anchor_particle_stats,
+                &environment_depth_particle_stats,
+                environment_depth_settings,
                 &gpu_sdf_stats,
                 &guide_blur_stats,
                 private_extension_stats,
@@ -2144,14 +2322,26 @@ unsafe fn run_projection_frames(
 
 fn create_projection_reference_space(
     session: &xr::Session<xr::Vulkan>,
+    environment_depth_settings: NativeEnvironmentDepthSettings,
 ) -> Result<xr::Space, String> {
-    match session.create_reference_space(xr::ReferenceSpaceType::LOCAL, xr::Posef::IDENTITY) {
+    let prefer_stage = environment_depth_settings.reference_space_marker_value() == "openxr-stage";
+    let first = if prefer_stage {
+        xr::ReferenceSpaceType::STAGE
+    } else {
+        xr::ReferenceSpaceType::LOCAL
+    };
+    let second = if prefer_stage {
+        xr::ReferenceSpaceType::LOCAL
+    } else {
+        xr::ReferenceSpaceType::STAGE
+    };
+    match session.create_reference_space(first, xr::Posef::IDENTITY) {
         Ok(space) => Ok(space),
-        Err(local_error) => session
-            .create_reference_space(xr::ReferenceSpaceType::STAGE, xr::Posef::IDENTITY)
-            .map_err(|stage_error| {
+        Err(first_error) => session
+            .create_reference_space(second, xr::Posef::IDENTITY)
+            .map_err(|second_error| {
                 format!(
-                    "create OpenXR reference space: LOCAL failed with {local_error}; STAGE failed with {stage_error}"
+                    "create OpenXR reference space: first={first:?} failed with {first_error}; fallback={second:?} failed with {second_error}"
                 )
             }),
     }
@@ -2410,6 +2600,9 @@ unsafe fn record_projection_diagnostic(
     gpu_hand_anchor_particle_renderer: Option<&GpuHandAnchorParticleRenderer>,
     secondary_gpu_hand_anchor_particle_renderer: Option<&GpuHandAnchorParticleRenderer>,
     hand_anchor_particle_stats: &GpuHandAnchorParticleFrameSetStats,
+    gpu_environment_depth_particle_renderer: Option<&GpuEnvironmentDepthParticleRenderer>,
+    environment_depth_particle_stats: &GpuEnvironmentDepthParticleFrameStats,
+    environment_depth_settings: NativeEnvironmentDepthSettings,
     gpu_sdf_field_renderer: Option<&GpuSdfFieldRenderer>,
     gpu_sdf_stats: &GpuSdfFieldFrameStats,
     live_hand_frames: &LiveHandCompactFrameSet,
@@ -2591,6 +2784,16 @@ unsafe fn record_projection_diagnostic(
                     }
                 }
             }
+        }
+        if let Some(renderer) = gpu_environment_depth_particle_renderer {
+            renderer.record_overlay_eye(
+                device,
+                cmd,
+                swapchain.extent,
+                eye_projection,
+                environment_depth_particle_stats,
+                environment_depth_settings,
+            );
         }
         if let Some(renderer) = gpu_hand_mesh_visual_renderer {
             if hand_mesh_visual_stats.primary.graft_copy_count > 0 {
@@ -3192,6 +3395,8 @@ fn write_projection_scorecard(
     gpu_mesh_stats: &GpuMeshReplayStats,
     hand_mesh_visual_stats: &GpuHandMeshVisualFrameSetStats,
     hand_anchor_particle_stats: &GpuHandAnchorParticleFrameSetStats,
+    environment_depth_particle_stats: &GpuEnvironmentDepthParticleFrameStats,
+    environment_depth_settings: NativeEnvironmentDepthSettings,
     gpu_sdf_stats: &GpuSdfFieldFrameStats,
     guide_blur_stats: &GuideBlurGraphFrameStats,
     private_extension_stats: PrivateExtensionSlotFrameStats,
@@ -3425,6 +3630,20 @@ fn write_projection_scorecard(
             compact_hand_input_source_mode.marker_value(),
             compact_hand_input_source_mode.selects_live_frame(),
             hand_anchor_particle_stats.marker_fields()
+        ),
+    );
+    crate::marker(
+        "environment-depth-particles",
+        format!(
+            "status=frame frame={} observedOpenXrFps={:.1} renderMode={} nativePassthroughRequested={} {} {} environmentDepthGpuReconstructMs={:.3} environmentDepthGpuDrawMs={:.3}",
+            frame_count,
+            observed_openxr_fps,
+            render_mode.marker_value(),
+            render_mode.uses_native_passthrough(),
+            environment_depth_settings.marker_fields(),
+            environment_depth_particle_stats.marker_fields(),
+            gpu_stage_timings.stage_ms(GpuTimestampStage::HandMeshVisual),
+            gpu_stage_timings.stage_ms(GpuTimestampStage::ProjectionComposite),
         ),
     );
     crate::marker(

@@ -1,7 +1,7 @@
 param(
     [string]$ApkPath = "target\native-renderer-android\rusty-quest-native-renderer.apk",
     [string]$ProfilePath = "",
-    [ValidateSet("ReplayVisualProof", "LiveVisualDiagnosticCaveat")]
+    [ValidateSet("ReplayVisualProof", "LiveVisualDiagnosticCaveat", "EnvironmentDepthParticles")]
     [string]$EvidenceMode = "ReplayVisualProof",
     [string]$OutDir = "",
     [int]$RunSeconds = 12,
@@ -131,11 +131,12 @@ function Invoke-CheckedPowershell {
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $defaultReplayProfilePath = "fixtures\runtime-profiles\quest-native-renderer-replay-visual-proof.profile.json"
 $defaultLiveDiagnosticProfilePath = "fixtures\runtime-profiles\quest-native-renderer-live-hand-visual-diagnostic.profile.json"
+$defaultEnvironmentDepthParticlesProfilePath = "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json"
 if ([string]::IsNullOrWhiteSpace($ProfilePath)) {
-    $ProfilePath = if ($EvidenceMode -eq "LiveVisualDiagnosticCaveat") {
-        $defaultLiveDiagnosticProfilePath
-    } else {
-        $defaultReplayProfilePath
+    $ProfilePath = switch ($EvidenceMode) {
+        "LiveVisualDiagnosticCaveat" { $defaultLiveDiagnosticProfilePath }
+        "EnvironmentDepthParticles" { $defaultEnvironmentDepthParticlesProfilePath }
+        default { $defaultReplayProfilePath }
     }
 }
 $resolvedApk = if ([System.IO.Path]::IsPathRooted($ApkPath)) {
@@ -177,6 +178,7 @@ $rawLogcatPath = Join-Path $OutDir "raw-logcat.txt"
 $filteredLogcatPath = Join-Path $OutDir "filtered-native-renderer-logcat.txt"
 $screenshotPath = Join-Path $OutDir "screenshot.png"
 $propertyPlanPath = Join-Path $OutDir "property-write-plan.json"
+$permissionPregrantPath = Join-Path $OutDir "permission-pregrant.json"
 $evidenceSummaryPath = Join-Path $OutDir "runtime-evidence-summary.json"
 $screenshotCropOutDir = Join-Path $OutDir "screenshot-crops"
 $summaryPath = Join-Path $OutDir "run-summary.json"
@@ -209,10 +211,12 @@ $summary = [ordered]@{
     sdf_visual_screenshot_required = (-not [bool]$AllowFlatScreenshot)
     replay_visual_proof_required = ($EvidenceMode -eq "ReplayVisualProof")
     live_visual_diagnostic_caveat_required = ($EvidenceMode -eq "LiveVisualDiagnosticCaveat")
+    environment_depth_particles_required = ($EvidenceMode -eq "EnvironmentDepthParticles")
     performance_budget_required = (-not [bool]$AllowPerformanceBudgetMiss)
     private_layer_payload_allowed = [bool]$AllowPrivateLayerPayload
     stop_after_run = [bool]$StopAfterRun
     property_plan_path = $propertyPlanPath
+    permission_pregrant_path = $permissionPregrantPath
     raw_logcat_path = $rawLogcatPath
     filtered_logcat_path = $filteredLogcatPath
     screenshot_path = $screenshotPath
@@ -235,19 +239,19 @@ try {
         Invoke-AdbCommand -Name "install APK" -Arguments @("install", "-r", "-d", "-g", (Resolve-Path $resolvedApk).Path) | Out-Null
     }
 
-    $permissionResults = @()
-    foreach ($permission in @(
-        "android.permission.CAMERA",
-        "com.oculus.permission.HAND_TRACKING",
-        "horizonos.permission.HEADSET_CAMERA",
-        "horizonos.permission.SPATIAL_CAMERA"
-    )) {
-        $permissionResults += Invoke-AdbCommand `
-            -Name "grant $permission" `
-            -Arguments @("shell", "pm", "grant", $PackageName, $permission) `
-            -AllowFailure
+    $pregrantArgs = @(
+        "-NoProfile",
+        "-ExecutionPolicy", "Bypass",
+        "-File", (Join-Path $PSScriptRoot "Grant-NativeRendererPermissions.ps1"),
+        "-Adb", $script:ResolvedAdb,
+        "-Serial", $Serial,
+        "-PackageName", $PackageName,
+        "-Out", $permissionPregrantPath
+    )
+    if ($null -ne $script:ResolvedAdbServerPort) {
+        $pregrantArgs += @("-AdbServerPort", $script:ResolvedAdbServerPort)
     }
-    $summary.permission_grants = $permissionResults
+    $summary.permission_pregrant_output = Invoke-CheckedPowershell -Name "native renderer permission pregrant" -Arguments $pregrantArgs
 
     $profileArgs = @(
         "-NoProfile",
@@ -293,33 +297,44 @@ try {
         "-ScreenshotPath", $screenshotPath,
         "-ScreenshotCropOutDir", $screenshotCropOutDir,
         "-SummaryOut", $evidenceSummaryPath,
-        "-RequireScreenshot",
-        "-RequireCameraProjection",
-        "-RequireGuideGraph"
+        "-RequireScreenshot"
     )
+    if ($EvidenceMode -eq "EnvironmentDepthParticles") {
+        $evidenceArgs += "-RequireEnvironmentDepthParticles"
+    } else {
+        $evidenceArgs += @(
+            "-RequireCameraProjection",
+            "-RequireGuideGraph"
+        )
+    }
     if ($AllowPrivateLayerPayload) {
         $evidenceArgs += "-RequirePrivateSlotPayload"
     } else {
         $evidenceArgs += "-RequirePrivateSlotNoPayload"
     }
-    if ($EvidenceMode -eq "LiveVisualDiagnosticCaveat") {
-        $evidenceArgs += "-RequireLiveVisualDiagnosticCaveat"
-    } else {
-        $evidenceArgs += @(
-            "-RequireReplayVisualProof",
-            "-RequireSdfVisual"
-        )
+    switch ($EvidenceMode) {
+        "LiveVisualDiagnosticCaveat" {
+            $evidenceArgs += "-RequireLiveVisualDiagnosticCaveat"
+        }
+        "ReplayVisualProof" {
+            $evidenceArgs += @(
+                "-RequireReplayVisualProof",
+                "-RequireSdfVisual"
+            )
+        }
     }
     if (-not $AllowFlatScreenshot) {
-        $evidenceArgs += @(
-            "-RequireNonFlatScreenshot",
-            "-RequireTargetNonFlatScreenshot",
-            "-RequireHandMeshVisualScreenshot",
-            "-RequireSdfVisualScreenshot",
-            "-MinimumNonFlatScreenshotTargetRects", $MinimumNonFlatScreenshotTargetRects.ToString()
-        )
-        if ($ScreenshotTargetUvRects.Count -gt 0) {
-            $evidenceArgs += @("-ScreenshotTargetUvRects", ($ScreenshotTargetUvRects -join "|"))
+        $evidenceArgs += "-RequireNonFlatScreenshot"
+        if ($EvidenceMode -ne "EnvironmentDepthParticles") {
+            $evidenceArgs += @(
+                "-RequireTargetNonFlatScreenshot",
+                "-RequireHandMeshVisualScreenshot",
+                "-RequireSdfVisualScreenshot",
+                "-MinimumNonFlatScreenshotTargetRects", $MinimumNonFlatScreenshotTargetRects.ToString()
+            )
+            if ($ScreenshotTargetUvRects.Count -gt 0) {
+                $evidenceArgs += @("-ScreenshotTargetUvRects", ($ScreenshotTargetUvRects -join "|"))
+            }
         }
     }
     if ($RequireGpuTimestampReady) {

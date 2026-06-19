@@ -21,6 +21,10 @@ fn main() {
     println!("cargo:rerun-if-changed=shaders/hand_anchor_particles.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/hand_anchor_particles.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/hand_anchor_particles_sort.comp.glsl");
+    println!("cargo:rerun-if-changed=shaders/environment_depth_particles_synthetic.comp.glsl");
+    println!("cargo:rerun-if-changed=shaders/environment_depth_particles_meta.comp.glsl");
+    println!("cargo:rerun-if-changed=shaders/environment_depth_particles.vert.glsl");
+    println!("cargo:rerun-if-changed=shaders/environment_depth_particles.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/private_kuramoto_particles_placeholder.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/private_layer_placeholder.frag.glsl");
     println!(
@@ -143,6 +147,30 @@ fn main() {
         "compute",
         Path::new("shaders/hand_anchor_particles_sort.comp.glsl"),
         &out_dir.join("hand_anchor_particles_sort.comp.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "compute",
+        Path::new("shaders/environment_depth_particles_synthetic.comp.glsl"),
+        &out_dir.join("environment_depth_particles_synthetic.comp.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "compute",
+        Path::new("shaders/environment_depth_particles_meta.comp.glsl"),
+        &out_dir.join("environment_depth_particles_meta.comp.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "vertex",
+        Path::new("shaders/environment_depth_particles.vert.glsl"),
+        &out_dir.join("environment_depth_particles.vert.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "fragment",
+        Path::new("shaders/environment_depth_particles.frag.glsl"),
+        &out_dir.join("environment_depth_particles.frag.spv"),
     );
     if let Some(payload) = private_kuramoto_payload.as_ref() {
         println!("cargo:rerun-if-changed={}", payload.shader.display());
