@@ -196,7 +196,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererA
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss -MinimumEnvironmentDepthHeadMotionSamples 120 -MinimumEnvironmentDepthHeadMotionYawDeg 25
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -ProfilePath fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity.profile.json -ExpectedEnvironmentDepthParticleCount 64 -MinimumEnvironmentDepthHashProbeExhaustedCount 1 -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
 ```
@@ -246,7 +246,14 @@ For the real environment-depth particle proof, run the same wrapper with
 `-EvidenceMode EnvironmentDepthParticles`; that applies the Meta depth profile
 by default and switches the marker gate to
 `Test-NativeRendererRuntimeEvidence.ps1 -RequireEnvironmentDepthParticles`.
-For a world-space head-motion proof, add
+For a world-space head-motion proof, prefer
+`Invoke-NativeRendererEnvironmentDepthMotionProof.ps1`; it is a thin wrapper
+around the same smoke path with `-EvidenceMode EnvironmentDepthParticles`,
+`-AllowFlatScreenshot`, `-AllowPerformanceBudgetMiss`,
+`-MinimumEnvironmentDepthHeadMotionSamples 120`, and
+`-MinimumEnvironmentDepthHeadMotionYawDeg 25` by default. While it runs, perform
+the deliberate slow-yaw and optional lateral-translation acceptance motion.
+For custom thresholds, the lower-level smoke wrapper also accepts
 `-MinimumEnvironmentDepthHeadMotionSamples`,
 `-MinimumEnvironmentDepthHeadMotionYawDeg`, or
 `-MinimumEnvironmentDepthHeadMotionTranslationM`; those thresholds are checked

@@ -166,6 +166,7 @@ Run:
 cargo test -p rusty-quest-native-renderer
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
 ```
 
@@ -203,6 +204,11 @@ smokes are serial-scoped: pass `-Serial <quest-serial>` or set
 only for intentional non-default ADB server routing. The wrapper uses
 PID-scoped logcat by default and only clears logcat when `-ClearLogcat` is
 explicitly requested by a run that owns the headset.
+For the real Meta environment-depth world-space motion proof, use
+`Invoke-NativeRendererEnvironmentDepthMotionProof.ps1`; it reuses the same
+serial-scoped smoke/pregrant/profile/evidence path but fixes
+`EnvironmentDepthParticles` mode and default head-motion thresholds so a static
+headset run cannot satisfy the movement gate.
 Wrapper runs also require
 the performance budget gate by default; the checker records the observed FPS,
 stale-frame count, and CPU/GPU stage timing budget results, and fails if a

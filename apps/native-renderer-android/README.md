@@ -168,6 +168,12 @@ timing on the particle path, repeated-capture and unavailable-streak counters,
 explicit texture-transform/ray-UV/sample-UV policy labels, the
 edge-aware four-neighbor confidence filter label, and the free-space
 confidence-skip counter.
+For the deliberate world-space motion proof, use
+`tools/Invoke-NativeRendererEnvironmentDepthMotionProof.ps1`; it runs the same
+Meta environment-depth particle path and requires render-view pose-delta
+evidence, defaulting to at least 120 head-motion samples and 25 degrees of yaw.
+Pass `-MinimumTranslationM` when a lateral-translation gate is needed in the
+same run.
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json`
 is the A/B comparison profile for `environment_depth.layer_policy=mono-layer1`.
 It samples texture-array layer 1 and depth view 1 with
