@@ -109,14 +109,23 @@ runtime environment-depth provider.
 `quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json`
 is the real Meta provider proof profile. It selects
 `environment_depth.mode=scene-particle-map` and
-`environment_depth.source=xr-meta-environment-depth`, requires
+`environment_depth.source=xr-meta-environment-depth`, sets
+`environment_depth.layer_policy=mono-layer0`, requires
 `horizonos.permission.USE_SCENE` in the APK manifest and permission pregrant
 summary, and validates runtime markers for acquired D16 two-layer
-`XR_META_environment_depth` frames, valid depth pose, nonzero source depth
+`XR_META_environment_depth` frames, explicit mono-layer source policy
+(`environmentDepthSourceViewCount=1`, `environmentDepthSampledLayerMask=0x1`,
+`environmentDepthShaderLayerPolicy=mono-layer0`), valid depth pose, nonzero source depth
 samples, OpenXR-local scene cells, the spatial-hash map policy,
 preserve-existing-cells invalid-sample behavior, visible-free-space
 correction, zero expanded CPU particle upload, resident GPU buffers, and
 `environmentDepthParticleBufferMemory=device-local`.
+`quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json`
+is the matching layer-1 comparison profile. It switches only
+`environment_depth.layer_policy` to `mono-layer1` and requires
+`environmentDepthSampledLayerMask=0x2` plus
+`environmentDepthShaderLayerPolicy=mono-layer1`; this validates a second
+mono-source sample path before any stereo-two-layer policy is accepted.
 
 Remote camera session plans are also source-only validation:
 

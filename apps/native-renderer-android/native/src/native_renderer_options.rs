@@ -66,6 +66,8 @@ pub(crate) const PROP_ENVIRONMENT_DEPTH_MODE: &str =
     "debug.rustyquest.native_renderer.environment_depth.mode";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_SOURCE: &str =
     "debug.rustyquest.native_renderer.environment_depth.source";
+pub(crate) const PROP_ENVIRONMENT_DEPTH_LAYER_POLICY: &str =
+    "debug.rustyquest.native_renderer.environment_depth.layer_policy";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE: &str =
     "debug.rustyquest.native_renderer.environment_depth.reference_space";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY: &str =
@@ -851,6 +853,7 @@ impl NativeHandAnchorParticleOrderingImplementation {
 pub(crate) struct NativeEnvironmentDepthSettings {
     pub(crate) mode: NativeEnvironmentDepthMode,
     pub(crate) source: NativeEnvironmentDepthSource,
+    pub(crate) layer_policy: NativeEnvironmentDepthLayerPolicy,
     pub(crate) reference_space: NativeEnvironmentDepthReferenceSpace,
     pub(crate) particle_capacity: u32,
     pub(crate) sample_stride_pixels: u32,
@@ -878,6 +881,9 @@ impl NativeEnvironmentDepthSettings {
             source: NativeEnvironmentDepthSource::from_property(lookup(
                 PROP_ENVIRONMENT_DEPTH_SOURCE,
             )),
+            layer_policy: NativeEnvironmentDepthLayerPolicy::from_property(lookup(
+                PROP_ENVIRONMENT_DEPTH_LAYER_POLICY,
+            )),
             reference_space: NativeEnvironmentDepthReferenceSpace::from_property(lookup(
                 PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE,
             )),
@@ -904,11 +910,15 @@ impl NativeEnvironmentDepthSettings {
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "modeProperty={} sourceProperty={} environmentDepthMode={} environmentDepthSource={} environmentDepthProviderState={} environmentDepthProviderAvailable=false environmentDepthRealProviderBound=false environmentDepthSupported=false environmentDepthAcquireStatus={} environmentDepthImageSize=0x0 environmentDepthFormat=none environmentDepthLayerCount=0 environmentDepthReferenceSpace={} environmentDepthPoseValid=false environmentDepthParticleCapacity={} environmentDepthSampleStridePixels={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCpuUploadBytes=0 environmentDepthGpuReconstructMs=0.000 environmentDepthGpuMapUpdateMs=0.000 environmentDepthGpuDrawMs=0.000 environmentDepthReadbackCadenceFrames=0 environmentDepthHighRateJsonPayload={}",
+            "modeProperty={} sourceProperty={} layerPolicyProperty={} environmentDepthMode={} environmentDepthSource={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthProviderState={} environmentDepthProviderAvailable=false environmentDepthRealProviderBound=false environmentDepthSupported=false environmentDepthAcquireStatus={} environmentDepthImageSize=0x0 environmentDepthFormat=none environmentDepthLayerCount=0 environmentDepthReferenceSpace={} environmentDepthPoseValid=false environmentDepthParticleCapacity={} environmentDepthSampleStridePixels={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCpuUploadBytes=0 environmentDepthGpuReconstructMs=0.000 environmentDepthGpuMapUpdateMs=0.000 environmentDepthGpuDrawMs=0.000 environmentDepthReadbackCadenceFrames=0 environmentDepthHighRateJsonPayload={}",
             PROP_ENVIRONMENT_DEPTH_MODE,
             PROP_ENVIRONMENT_DEPTH_SOURCE,
+            PROP_ENVIRONMENT_DEPTH_LAYER_POLICY,
             self.mode.marker_value(),
             self.source.marker_value(),
+            self.layer_policy.source_view_count(),
+            self.layer_policy.sampled_layer_mask(),
+            self.layer_policy.marker_value(),
             self.source.provider_state_marker(self.mode),
             self.source.acquire_status_marker(self.mode),
             self.reference_space.marker_value(),
@@ -949,6 +959,22 @@ impl NativeEnvironmentDepthSettings {
         self.source.marker_value()
     }
 
+    pub(crate) fn layer_policy_marker_value(self) -> &'static str {
+        self.layer_policy.marker_value()
+    }
+
+    pub(crate) fn source_view_count(self) -> u32 {
+        self.layer_policy.source_view_count()
+    }
+
+    pub(crate) fn source_view_index(self) -> usize {
+        self.layer_policy.source_view_index()
+    }
+
+    pub(crate) fn sampled_layer_mask(self) -> &'static str {
+        self.layer_policy.sampled_layer_mask()
+    }
+
     pub(crate) fn reference_space_marker_value(self) -> &'static str {
         self.reference_space.marker_value()
     }
@@ -967,6 +993,7 @@ impl Default for NativeEnvironmentDepthSettings {
         Self {
             mode: NativeEnvironmentDepthMode::Disabled,
             source: NativeEnvironmentDepthSource::RuntimeProvider,
+            layer_policy: NativeEnvironmentDepthLayerPolicy::MonoLayer0,
             reference_space: NativeEnvironmentDepthReferenceSpace::OpenXrLocal,
             particle_capacity: 32_768,
             sample_stride_pixels: 12,
@@ -1079,6 +1106,46 @@ impl NativeEnvironmentDepthSource {
 
     fn runtime_provider_requested(self) -> bool {
         matches!(self, Self::RuntimeProvider | Self::MetaEnvironmentDepth)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeEnvironmentDepthLayerPolicy {
+    MonoLayer0,
+    MonoLayer1,
+}
+
+impl NativeEnvironmentDepthLayerPolicy {
+    fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "mono-layer1" | "layer1" | "view1" | "right" => Self::MonoLayer1,
+            _ => Self::MonoLayer0,
+        }
+    }
+
+    fn marker_value(self) -> &'static str {
+        match self {
+            Self::MonoLayer0 => "mono-layer0",
+            Self::MonoLayer1 => "mono-layer1",
+        }
+    }
+
+    fn source_view_count(self) -> u32 {
+        1
+    }
+
+    fn source_view_index(self) -> usize {
+        match self {
+            Self::MonoLayer0 => 0,
+            Self::MonoLayer1 => 1,
+        }
+    }
+
+    fn sampled_layer_mask(self) -> &'static str {
+        match self {
+            Self::MonoLayer0 => "0x1",
+            Self::MonoLayer1 => "0x2",
+        }
     }
 }
 
@@ -1668,17 +1735,19 @@ mod tests {
     use super::{
         CompactHandInputSourceMode, NativeCameraOutputMode, NativeCameraQualityProfile,
         NativeCameraResolutionProfile, NativeCameraStereoPairingPolicy, NativeCameraSyncMode,
-        NativeCameraYcbcrMode, NativeEnvironmentDepthMode, NativeEnvironmentDepthReferenceSpace,
-        NativeEnvironmentDepthSource, NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
+        NativeCameraYcbcrMode, NativeEnvironmentDepthLayerPolicy, NativeEnvironmentDepthMode,
+        NativeEnvironmentDepthReferenceSpace, NativeEnvironmentDepthSource,
+        NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
         PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED,
         PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_READER_MAX_IMAGES,
         PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
         PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL, PROP_ENVIRONMENT_DEPTH_FAR_M,
-        PROP_ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD, PROP_ENVIRONMENT_DEPTH_MODE,
-        PROP_ENVIRONMENT_DEPTH_NEAR_M, PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY,
-        PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE, PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS,
-        PROP_ENVIRONMENT_DEPTH_SOURCE, PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
-        PROP_HAND_ANCHOR_PARTICLES_ENABLED, PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
+        PROP_ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD, PROP_ENVIRONMENT_DEPTH_LAYER_POLICY,
+        PROP_ENVIRONMENT_DEPTH_MODE, PROP_ENVIRONMENT_DEPTH_NEAR_M,
+        PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY, PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE,
+        PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS, PROP_ENVIRONMENT_DEPTH_SOURCE,
+        PROP_HAND_ANCHOR_PARTICLES_DYNAMICS, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
+        PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
         PROP_HAND_ANCHOR_PARTICLES_RADIUS_M, PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_BLEND_MODE,
@@ -2202,6 +2271,10 @@ mod tests {
             NativeEnvironmentDepthSource::RuntimeProvider
         );
         assert_eq!(
+            settings.layer_policy,
+            NativeEnvironmentDepthLayerPolicy::MonoLayer0
+        );
+        assert_eq!(
             settings.reference_space,
             NativeEnvironmentDepthReferenceSpace::OpenXrLocal
         );
@@ -2212,6 +2285,7 @@ mod tests {
         let fields = settings.marker_fields();
         assert!(fields.contains("environmentDepthMode=disabled"));
         assert!(fields.contains("environmentDepthSource=runtime-provider"));
+        assert!(fields.contains("environmentDepthShaderLayerPolicy=mono-layer0"));
         assert!(fields.contains("environmentDepthProviderState=not-requested"));
         assert!(fields.contains("environmentDepthHighRateJsonPayload=false"));
         assert!(fields.contains("environmentDepthGpuReconstructMs=0.000"));
@@ -2222,6 +2296,7 @@ mod tests {
         let options = options_from(&[
             (PROP_ENVIRONMENT_DEPTH_MODE, "status-only"),
             (PROP_ENVIRONMENT_DEPTH_SOURCE, "synthetic-gpu-proof"),
+            (PROP_ENVIRONMENT_DEPTH_LAYER_POLICY, "mono-layer1"),
             (PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE, "stage"),
             (PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY, "999999"),
             (PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS, "0"),
@@ -2237,6 +2312,12 @@ mod tests {
             NativeEnvironmentDepthSource::SyntheticGpuProof
         );
         assert_eq!(
+            settings.layer_policy,
+            NativeEnvironmentDepthLayerPolicy::MonoLayer1
+        );
+        assert_eq!(settings.source_view_index(), 1);
+        assert_eq!(settings.sampled_layer_mask(), "0x2");
+        assert_eq!(
             settings.reference_space,
             NativeEnvironmentDepthReferenceSpace::OpenXrStage
         );
@@ -2249,6 +2330,7 @@ mod tests {
         let fields = settings.marker_fields();
         assert!(fields.contains("environmentDepthMode=status-only"));
         assert!(fields.contains("environmentDepthSource=synthetic-gpu-proof"));
+        assert!(fields.contains("environmentDepthShaderLayerPolicy=mono-layer1"));
         assert!(fields.contains("environmentDepthProviderState=status-only-skeleton"));
         assert!(fields.contains("environmentDepthReferenceSpace=openxr-stage"));
         assert!(fields.contains("environmentDepthParticleCapacity=262144"));

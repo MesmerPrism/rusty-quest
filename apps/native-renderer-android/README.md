@@ -146,7 +146,11 @@ the native passthrough particle mapping stack, not a bound
 is the real provider scene-map route, matching the later legacy
 `SceneParticleMap` behavior rather than the earlier view-grid overlay. It
 requests `XR_META_environment_depth`, requires `horizonos.permission.USE_SCENE`,
-samples the D16 two-layer depth swapchain in native Vulkan compute,
+sets `environment_depth.layer_policy=mono-layer0`, samples layer 0 as an
+explicit mono source from the D16 two-layer depth swapchain in native Vulkan
+compute (`environmentDepthSourceViewCount=1`,
+`environmentDepthSampledLayerMask=0x1`,
+`environmentDepthShaderLayerPolicy=mono-layer0`),
 reconstructs depth samples into OpenXR local reference space, hashes
 `0.06m` reference-space cells into the bounded particle buffer, preserves
 existing cells on invalid samples, applies visible-free-space correction, and
@@ -158,6 +162,12 @@ showing acquired Meta depth frames, `environmentDepthMode=scene-particle-map`,
 nonzero source depth samples, `spatial-hash-reference-space-cells`, zero
 expanded CPU particle upload, resident GPU buffers, and device-local particle
 memory.
+`fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json`
+is the A/B comparison profile for `environment_depth.layer_policy=mono-layer1`.
+It samples texture-array layer 1 and depth view 1 with
+`environmentDepthSampledLayerMask=0x2` and
+`environmentDepthShaderLayerPolicy=mono-layer1`; it is still mono-source
+evidence, not stereo fusion.
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-graft-only.profile.json`
 keeps native passthrough focused on graft instances only, while
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-hands-and-grafts.profile.json`

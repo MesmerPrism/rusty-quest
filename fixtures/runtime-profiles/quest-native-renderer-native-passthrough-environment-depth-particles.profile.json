@@ -17,6 +17,7 @@
     "debug.rustyquest.native_renderer.sdf.update_period_frames",
     "debug.rustyquest.native_renderer.environment_depth.mode",
     "debug.rustyquest.native_renderer.environment_depth.source",
+    "debug.rustyquest.native_renderer.environment_depth.layer_policy",
     "debug.rustyquest.native_renderer.environment_depth.reference_space",
     "debug.rustyquest.native_renderer.environment_depth.particle_capacity",
     "debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels",
@@ -96,6 +97,11 @@
       "source_setting_id": "native_renderer.environment_depth.source"
     },
     {
+      "name": "debug.rustyquest.native_renderer.environment_depth.layer_policy",
+      "value": "mono-layer0",
+      "source_setting_id": "native_renderer.environment_depth.layer_policy"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.environment_depth.reference_space",
       "value": "openxr-local",
       "source_setting_id": "native_renderer.environment_depth.reference_space"
@@ -134,6 +140,9 @@
     "RUSTY_QUEST_NATIVE_RENDERER channel=environment-depth",
     "environmentDepthMode=retained-particles",
     "environmentDepthSource=synthetic-gpu-proof",
+    "environmentDepthSourceViewCount=1",
+    "environmentDepthSampledLayerMask=0x1",
+    "environmentDepthShaderLayerPolicy=mono-layer0",
     "environmentDepthProviderState=synthetic-gpu-proof",
     "environmentDepthRealProviderBound=false",
     "environmentDepthAcquireStatus=not-attempted-synthetic-gpu-proof",

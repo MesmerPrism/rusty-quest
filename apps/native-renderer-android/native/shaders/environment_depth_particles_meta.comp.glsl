@@ -21,6 +21,7 @@ layout(push_constant) uniform EnvironmentDepthParticlePush {
 
 const uint DEPTH_FLAG_INFINITE_FAR = 1u;
 const uint DEPTH_FLAG_SCENE_PARTICLE_MAP = 2u;
+const uint DEPTH_FLAG_SOURCE_LAYER1 = 4u;
 const float SCENE_PARTICLE_CELL_METERS = 0.06;
 const uint SCENE_PARTICLE_PROBE_COUNT = 8u;
 const float SCENE_PARTICLE_STALE_REPLACE_FRAMES = 1440.0;
@@ -40,6 +41,10 @@ bool infinite_far_requested() {
 
 bool scene_particle_map_requested() {
     return (depth_flags() & DEPTH_FLAG_SCENE_PARTICLE_MAP) != 0u;
+}
+
+float depth_source_layer_index() {
+    return ((depth_flags() & DEPTH_FLAG_SOURCE_LAYER1) != 0u) ? 1.0 : 0.0;
 }
 
 float frame_marker() {
@@ -92,7 +97,7 @@ float linear_depth_meters(float raw_depth) {
 float sample_depth_meters(vec2 uv) {
     float raw_depth = textureLod(
         u_environment_depth,
-        vec3(clamp(uv, vec2(0.0), vec2(1.0)), 0.0),
+        vec3(clamp(uv, vec2(0.0), vec2(1.0)), depth_source_layer_index()),
         0.0).r;
     bool infinity_cutoff = raw_depth >= 1.0 - (0.5 / 65535.0);
     if (!(raw_depth >= 0.0) || infinity_cutoff) {

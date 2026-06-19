@@ -1,6 +1,6 @@
 {
   "schema": "rusty.quest.runtime_profile.v1",
-  "profile_id": "profile.quest.native_renderer.native_passthrough_meta_environment_depth_particles",
+  "profile_id": "profile.quest.native_renderer.native_passthrough_meta_environment_depth_particles_layer1",
   "target_platform": "quest",
   "owned_android_properties": [
     "debug.rustyquest.native_renderer.render.mode",
@@ -74,7 +74,7 @@
     },
     {
       "name": "debug.rustyquest.native_renderer.environment_depth.layer_policy",
-      "value": "mono-layer0",
+      "value": "mono-layer1",
       "source_setting_id": "native_renderer.environment_depth.layer_policy"
     },
     {
@@ -128,10 +128,10 @@
     "environmentDepthFormat=VK_FORMAT_D16_UNORM",
     "environmentDepthLayerCount=2",
     "environmentDepthSourceViewCount=1",
-    "environmentDepthSampledLayerMask=0x1",
-    "environmentDepthShaderLayerPolicy=mono-layer0",
-    "environmentDepthDepthViewPoseValidMask=0x1",
-    "environmentDepthDepthViewFovValidMask=0x1",
+    "environmentDepthSampledLayerMask=0x2",
+    "environmentDepthShaderLayerPolicy=mono-layer1",
+    "environmentDepthDepthViewPoseValidMask=0x2",
+    "environmentDepthDepthViewFovValidMask=0x2",
     "environmentDepthPoseValid=true",
     "environmentDepthReferenceSpace=openxr-local",
     "environmentDepthHighRateJsonPayload=false",
@@ -142,10 +142,10 @@
     "environmentDepthGpuBuffersResident=true",
     "environmentDepthParticleBufferMemory=device-local",
     "environmentDepthSourceViewCount=1",
-    "environmentDepthSampledLayerMask=0x1",
-    "environmentDepthShaderLayerPolicy=mono-layer0",
-    "environmentDepthDepthViewPoseValidMask=0x1",
-    "environmentDepthDepthViewFovValidMask=0x1",
+    "environmentDepthSampledLayerMask=0x2",
+    "environmentDepthShaderLayerPolicy=mono-layer1",
+    "environmentDepthDepthViewPoseValidMask=0x2",
+    "environmentDepthDepthViewFovValidMask=0x2",
     "environmentDepthParticleRetention=scene-owned-spatial-particle-map",
     "environmentDepthParticleMapPolicy=spatial-hash-reference-space-cells",
     "environmentDepthSceneParticleMap=true",
@@ -154,6 +154,6 @@
     "environmentDepthWorldSpaceReady=true"
   ],
   "validation_commands": [
-    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json -DryRun -Out local-artifacts/native-renderer-native-passthrough-meta-environment-depth-particles-property-write-plan.json"
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json -DryRun -Out local-artifacts/native-renderer-native-passthrough-meta-environment-depth-particles-layer1-property-write-plan.json"
   ]
 }

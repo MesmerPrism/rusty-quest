@@ -14,6 +14,7 @@ $AndroidPropertyValueMaxBytes = 92
 $EnvironmentDepthPropertyPrefix = "debug.rustyquest.native_renderer.environment_depth."
 $EnvironmentDepthModeProperty = "debug.rustyquest.native_renderer.environment_depth.mode"
 $EnvironmentDepthSourceProperty = "debug.rustyquest.native_renderer.environment_depth.source"
+$EnvironmentDepthLayerPolicyProperty = "debug.rustyquest.native_renderer.environment_depth.layer_policy"
 $EnvironmentDepthReferenceSpaceProperty = "debug.rustyquest.native_renderer.environment_depth.reference_space"
 $EnvironmentDepthParticleCapacityProperty = "debug.rustyquest.native_renderer.environment_depth.particle_capacity"
 $EnvironmentDepthSampleStridePixelsProperty = "debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels"
@@ -98,6 +99,12 @@ function Assert-EnvironmentDepthProperty {
         $EnvironmentDepthSourceProperty {
             if (@("runtime-provider", "provider", "xr-meta-environment-depth", "meta-environment-depth", "meta-provider", "synthetic-gpu-proof", "synthetic-proof", "synthetic-depth-grid") -notcontains $normalized) {
                 throw "Environment depth source is not supported: $Value"
+            }
+            return
+        }
+        $EnvironmentDepthLayerPolicyProperty {
+            if (@("mono-layer0", "layer0", "view0", "left", "mono-layer1", "layer1", "view1", "right") -notcontains $normalized) {
+                throw "Environment depth layer_policy is not supported: $Value"
             }
             return
         }

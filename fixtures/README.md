@@ -54,12 +54,21 @@
   `synthetic-gpu-proof` until a real environment-depth provider is bound.
   `quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json`
   is the real Meta provider proof route: it selects
-  `scene-particle-map` plus `xr-meta-environment-depth`, requires the
-  `USE_SCENE` permission path, and expects acquired D16 two-layer depth, valid
-  pose, nonzero source depth samples, OpenXR-local world-space scene cells,
+  `scene-particle-map`, `xr-meta-environment-depth`, and
+  `layer_policy=mono-layer0`, requires the `USE_SCENE` permission path, and
+  expects acquired D16 two-layer depth with explicit mono-layer source markers
+  (`environmentDepthSourceViewCount=1`,
+  `environmentDepthSampledLayerMask=0x1`,
+  `environmentDepthShaderLayerPolicy=mono-layer0`), valid pose, nonzero source
+  depth samples, OpenXR-local world-space scene cells,
   spatial-hash map policy, preserve-existing-cells invalid-sample behavior,
   visible-free-space correction, zero expanded CPU particle upload, resident
   GPU buffers, and device-local particle memory.
+  `quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json`
+  is the matching mono-layer1 comparison route; it requires
+  `environmentDepthSampledLayerMask=0x2` and
+  `environmentDepthShaderLayerPolicy=mono-layer1` without enabling stereo
+  fusion.
 - `native-renderer/`: valid Quest-native renderer plans, timing scorecards, and
   public recorded-hand topology/shape fixtures for pure-HWB blur, GPU mesh
   boundary, resident compact-joint GPU-skinned visual examples,

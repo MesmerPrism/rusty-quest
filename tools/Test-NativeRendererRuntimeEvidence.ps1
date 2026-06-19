@@ -687,6 +687,11 @@ if ($RequireEnvironmentDepthParticles) {
         "environmentDepthAcquireStatus=acquired",
         "environmentDepthFormat=VK_FORMAT_D16_UNORM",
         "environmentDepthLayerCount=2",
+        "environmentDepthSourceViewCount=1",
+        "environmentDepthSampledLayerMask=0x1",
+        "environmentDepthShaderLayerPolicy=mono-layer0",
+        "environmentDepthDepthViewPoseValidMask=0x1",
+        "environmentDepthDepthViewFovValidMask=0x1",
         "environmentDepthPoseValid=true"
     )) {
         Assert-Contains $environmentDepthLine $token "latest environment-depth marker"
@@ -717,7 +722,12 @@ if ($RequireEnvironmentDepthParticles) {
         "environmentDepthAcquireStatus=acquired",
         "environmentDepthPoseValid=true",
         "environmentDepthFormat=VK_FORMAT_D16_UNORM",
-        "environmentDepthLayerCount=2"
+        "environmentDepthLayerCount=2",
+        "environmentDepthSourceViewCount=1",
+        "environmentDepthSampledLayerMask=0x1",
+        "environmentDepthShaderLayerPolicy=mono-layer0",
+        "environmentDepthDepthViewPoseValidMask=0x1",
+        "environmentDepthDepthViewFovValidMask=0x1"
     )) {
         Assert-Contains $environmentDepthParticlesLine $token "latest environment-depth-particles marker"
     }

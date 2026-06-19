@@ -13,6 +13,8 @@ pub const ANDROID_PROPERTY_VALUE_MAX_BYTES: usize = 92;
 const ENVIRONMENT_DEPTH_PROP_PREFIX: &str = "debug.rustyquest.native_renderer.environment_depth.";
 const ENVIRONMENT_DEPTH_MODE: &str = "debug.rustyquest.native_renderer.environment_depth.mode";
 const ENVIRONMENT_DEPTH_SOURCE: &str = "debug.rustyquest.native_renderer.environment_depth.source";
+const ENVIRONMENT_DEPTH_LAYER_POLICY: &str =
+    "debug.rustyquest.native_renderer.environment_depth.layer_policy";
 const ENVIRONMENT_DEPTH_REFERENCE_SPACE: &str =
     "debug.rustyquest.native_renderer.environment_depth.reference_space";
 const ENVIRONMENT_DEPTH_PARTICLE_CAPACITY: &str =
@@ -251,6 +253,26 @@ fn validate_environment_depth_property(
                 )));
             }
         }
+        ENVIRONMENT_DEPTH_LAYER_POLICY => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(
+                normalized.as_str(),
+                "mono-layer0"
+                    | "layer0"
+                    | "view0"
+                    | "left"
+                    | "mono-layer1"
+                    | "layer1"
+                    | "view1"
+                    | "right"
+            );
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "environment depth layer_policy {} is not supported",
+                    property.value
+                )));
+            }
+        }
         ENVIRONMENT_DEPTH_REFERENCE_SPACE => {
             let normalized = normalized_value(&property.value);
             let valid = matches!(
@@ -457,6 +479,20 @@ mod tests {
         assert!(plan.operations.iter().any(|operation| {
             operation.name == "debug.rustyquest.native_renderer.environment_depth.source"
                 && operation.value.as_deref() == Some("synthetic-gpu-proof")
+        }));
+    }
+
+    #[test]
+    fn environment_depth_meta_layer1_profile_validates() {
+        let profile: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json"
+        ))
+        .expect("environment depth Meta layer-1 profile JSON");
+        validate_runtime_profile(&profile).expect("environment depth layer-1 profile validates");
+        let plan = build_write_plan(&profile).expect("write plan");
+        assert!(plan.operations.iter().any(|operation| {
+            operation.name == "debug.rustyquest.native_renderer.environment_depth.layer_policy"
+                && operation.value.as_deref() == Some("mono-layer1")
         }));
     }
 

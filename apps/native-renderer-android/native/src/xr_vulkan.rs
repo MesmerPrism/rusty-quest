@@ -243,8 +243,11 @@ unsafe fn run_projection_loop_inner(
     let system = xr_instance
         .system(xr::FormFactor::HEAD_MOUNTED_DISPLAY)
         .map_err(|error| format!("get HMD system: {error}"))?;
-    let environment_depth_properties =
-        OpenXrEnvironmentDepthRuntime::query_properties(&xr_instance, system);
+    let environment_depth_properties = OpenXrEnvironmentDepthRuntime::query_properties(
+        &xr_instance,
+        system,
+        runtime_options.environment_depth_settings,
+    );
     let live_hand_tracking_system_supported = if enabled_extensions.ext_hand_tracking {
         xr_instance.supports_hand_tracking(system).unwrap_or(false)
     } else {
