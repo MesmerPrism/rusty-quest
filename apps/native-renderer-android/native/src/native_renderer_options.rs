@@ -1067,12 +1067,26 @@ impl NativeEnvironmentDepthDepthUnitsPolicy {
 pub(crate) enum NativeEnvironmentDepthDebugView {
     Normal,
     RawD16,
+    Confidence,
+    Age,
+    SourceLayer,
+    HashProbe,
+    FreeSpaceState,
 }
 
 impl NativeEnvironmentDepthDebugView {
     fn from_property(value: Option<String>) -> Self {
         match normalized_property(value).as_str() {
             "raw-d16" | "raw-depth" | "debug-raw-d16" => Self::RawD16,
+            "confidence" | "debug-confidence" | "confidence-filter" => Self::Confidence,
+            "age" | "particle-age" | "cell-age" | "debug-age" => Self::Age,
+            "source-layer" | "source-layer-mask" | "layer" | "debug-source-layer" => {
+                Self::SourceLayer
+            }
+            "hash-probe" | "probe" | "hash" | "debug-hash-probe" => Self::HashProbe,
+            "free-space-state" | "free-space" | "retired-state" | "debug-free-space-state" => {
+                Self::FreeSpaceState
+            }
             _ => Self::Normal,
         }
     }
@@ -1081,6 +1095,33 @@ impl NativeEnvironmentDepthDebugView {
         match self {
             Self::Normal => "normal",
             Self::RawD16 => "raw-d16",
+            Self::Confidence => "confidence",
+            Self::Age => "age",
+            Self::SourceLayer => "source-layer",
+            Self::HashProbe => "hash-probe",
+            Self::FreeSpaceState => "free-space-state",
+        }
+    }
+
+    pub(crate) fn particle_debug_color_mode(self) -> &'static str {
+        match self {
+            Self::Normal | Self::RawD16 => "depth-gradient",
+            Self::Confidence => "confidence",
+            Self::Age => "age",
+            Self::SourceLayer => "source-layer",
+            Self::HashProbe => "hash-probe",
+            Self::FreeSpaceState => "free-space-state",
+        }
+    }
+
+    pub(crate) fn particle_debug_color_code(self) -> f32 {
+        match self {
+            Self::Normal | Self::RawD16 => 0.0,
+            Self::Confidence => 1.0,
+            Self::Age => 2.0,
+            Self::SourceLayer => 3.0,
+            Self::HashProbe => 4.0,
+            Self::FreeSpaceState => 5.0,
         }
     }
 }
@@ -2438,6 +2479,45 @@ mod tests {
         assert!(fields.contains("environmentDepthReferenceSpace=openxr-stage"));
         assert!(fields.contains("environmentDepthParticleCapacity=262144"));
         assert!(fields.contains("environmentDepthSampleStridePixels=12"));
+    }
+
+    #[test]
+    fn environment_depth_debug_view_modes_parse_for_particle_diagnostics() {
+        let cases = [
+            (
+                "confidence",
+                NativeEnvironmentDepthDebugView::Confidence,
+                "confidence",
+                1.0,
+            ),
+            ("age", NativeEnvironmentDepthDebugView::Age, "age", 2.0),
+            (
+                "source-layer",
+                NativeEnvironmentDepthDebugView::SourceLayer,
+                "source-layer",
+                3.0,
+            ),
+            (
+                "hash-probe",
+                NativeEnvironmentDepthDebugView::HashProbe,
+                "hash-probe",
+                4.0,
+            ),
+            (
+                "free-space-state",
+                NativeEnvironmentDepthDebugView::FreeSpaceState,
+                "free-space-state",
+                5.0,
+            ),
+        ];
+        for (property_value, expected, marker, code) in cases {
+            let options = options_from(&[(PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW, property_value)]);
+            let debug_view = options.environment_depth_settings.debug_view;
+            assert_eq!(debug_view, expected);
+            assert_eq!(debug_view.marker_value(), marker);
+            assert_eq!(debug_view.particle_debug_color_mode(), marker);
+            assert_eq!(debug_view.particle_debug_color_code(), code);
+        }
     }
 
     #[test]

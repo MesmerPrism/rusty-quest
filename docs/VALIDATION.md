@@ -146,6 +146,14 @@ pass the environment-depth particle marker gate with
 `-ExpectedEnvironmentDepthParticleCount 64` and
 `-MinimumEnvironmentDepthHashProbeExhaustedCount 1`; it is a stress/evidence
 fixture, not the default quality profile.
+`quest-native-renderer-native-passthrough-meta-environment-depth-particles-debug-colors.profile.json`
+is the diagnostic color profile for the same real Meta scene-map route. It
+sets `environment_depth.debug_view=free-space-state`, which the renderer
+reports as `environmentDepthDebugView=free-space-state` and
+`environmentDepthParticleDebugColorMode=free-space-state` on the particle
+marker. The default raw-D16 profiles still draw particles with
+`environmentDepthParticleDebugColorMode=depth-gradient`; other accepted
+diagnostic debug-view values are confidence, age, source-layer, and hash-probe.
 Use `docs/environment-depth-known-distance-raw-d16-runbook.md` for the
 headset known-distance run that compares `environmentDepthRawCenterD16`,
 `environmentDepthCenterReconstructedMeters`, and

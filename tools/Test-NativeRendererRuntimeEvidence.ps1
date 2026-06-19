@@ -695,7 +695,7 @@ if ($RequireEnvironmentDepthParticles) {
         "environmentDepthShaderLayerPolicy=mono-layer0",
         "environmentDepthDepthUnitsPolicy=projected-depth-from-near-far",
         "environmentDepthRawToMetersPolicy=projected-depth-from-near-far",
-        "environmentDepthDebugView=raw-d16",
+        "environmentDepthDebugView=",
         "environmentDepthDepthViewPoseValidMask=0x1",
         "environmentDepthDepthViewFovValidMask=0x1",
         "environmentDepthRenderViewStateFlags=orientation-valid+position-valid",
@@ -751,11 +751,12 @@ if ($RequireEnvironmentDepthParticles) {
         "environmentDepthShaderLayerPolicy=mono-layer0",
         "environmentDepthDepthUnitsPolicy=projected-depth-from-near-far",
         "environmentDepthRawToMetersPolicy=projected-depth-from-near-far",
-        "environmentDepthDebugView=raw-d16",
+        "environmentDepthDebugView=",
         "environmentDepthRenderViewStateFlags=orientation-valid+position-valid",
         "environmentDepthTextureTransformLabel=rotate0+flipY",
         "environmentDepthRayUvPolicy=canonical-untransformed",
         "environmentDepthSampleUvPolicy=texture-transformed",
+        "environmentDepthParticleDebugColorMode=",
         "environmentDepthRawStatsStatus=readback",
         "environmentDepthDepthViewPoseValidMask=0x1",
         "environmentDepthDepthViewFovValidMask=0x1"
@@ -768,6 +769,8 @@ if ($RequireEnvironmentDepthParticles) {
     Assert-True ($particleAcquireToRenderMs -ge 0.0) "environment-depth-particles acquire-to-render timing must be nonnegative."
     $particleFrameAgeMs = Get-MarkerNumber -Line $environmentDepthParticlesLine -Field "environmentDepthFrameAgeMs"
     Assert-True ($particleFrameAgeMs -ge 0.0) "environment-depth-particles frame age must be nonnegative."
+    $particleDebugColorMode = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthParticleDebugColorMode"
+    Assert-True (-not [string]::IsNullOrWhiteSpace($particleDebugColorMode)) "environment-depth-particles marker is missing particle debug color mode."
 
     $particleCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthParticleCount"
     Assert-True ($particleCount -gt 0) "environment-depth-particles marker reports no particles."
@@ -820,6 +823,7 @@ if ($RequireEnvironmentDepthParticles) {
     $summary.environment_depth_particle_capture_to_display_ms = $particleCaptureToDisplayMs
     $summary.environment_depth_particle_acquire_to_render_ms = $particleAcquireToRenderMs
     $summary.environment_depth_particle_frame_age_ms = $particleFrameAgeMs
+    $summary.environment_depth_particle_debug_color_mode = $particleDebugColorMode
     $summary.environment_depth_particle_count = $particleCount
     $summary.environment_depth_particle_source_depth_samples = $sourceDepthSamples
     $summary.environment_depth_raw_center_d16 = $rawCenterD16

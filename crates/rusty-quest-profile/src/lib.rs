@@ -294,7 +294,31 @@ fn validate_environment_depth_property(
             let normalized = normalized_value(&property.value);
             let valid = matches!(
                 normalized.as_str(),
-                "normal" | "off" | "disabled" | "raw-d16" | "raw-depth" | "debug-raw-d16"
+                "normal"
+                    | "off"
+                    | "disabled"
+                    | "raw-d16"
+                    | "raw-depth"
+                    | "debug-raw-d16"
+                    | "confidence"
+                    | "debug-confidence"
+                    | "confidence-filter"
+                    | "age"
+                    | "particle-age"
+                    | "cell-age"
+                    | "debug-age"
+                    | "source-layer"
+                    | "source-layer-mask"
+                    | "layer"
+                    | "debug-source-layer"
+                    | "hash-probe"
+                    | "probe"
+                    | "hash"
+                    | "debug-hash-probe"
+                    | "free-space-state"
+                    | "free-space"
+                    | "retired-state"
+                    | "debug-free-space-state"
             );
             if !valid {
                 errors.push(ValidationError::new(format!(
@@ -543,6 +567,21 @@ mod tests {
             operation.name
                 == "debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels"
                 && operation.value.as_deref() == Some("4")
+        }));
+    }
+
+    #[test]
+    fn environment_depth_meta_debug_colors_profile_validates() {
+        let profile: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles-debug-colors.profile.json"
+        ))
+        .expect("environment depth Meta debug-colors profile JSON");
+        validate_runtime_profile(&profile)
+            .expect("environment depth debug-colors profile validates");
+        let plan = build_write_plan(&profile).expect("write plan");
+        assert!(plan.operations.iter().any(|operation| {
+            operation.name == "debug.rustyquest.native_renderer.environment_depth.debug_view"
+                && operation.value.as_deref() == Some("free-space-state")
         }));
     }
 

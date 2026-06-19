@@ -117,7 +117,33 @@ function Assert-EnvironmentDepthProperty {
             return
         }
         $EnvironmentDepthDebugViewProperty {
-            if (@("normal", "off", "disabled", "raw-d16", "raw-depth", "debug-raw-d16") -notcontains $normalized) {
+            if (@(
+                "normal",
+                "off",
+                "disabled",
+                "raw-d16",
+                "raw-depth",
+                "debug-raw-d16",
+                "confidence",
+                "debug-confidence",
+                "confidence-filter",
+                "age",
+                "particle-age",
+                "cell-age",
+                "debug-age",
+                "source-layer",
+                "source-layer-mask",
+                "layer",
+                "debug-source-layer",
+                "hash-probe",
+                "probe",
+                "hash",
+                "debug-hash-probe",
+                "free-space-state",
+                "free-space",
+                "retired-state",
+                "debug-free-space-state"
+            ) -notcontains $normalized) {
                 throw "Environment depth debug_view is not supported: $Value"
             }
             return

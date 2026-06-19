@@ -168,6 +168,14 @@ vec3 depth_color(float depth_meters) {
     return mix(near_color, far_color, depth01);
 }
 
+float source_valid_marker() {
+    return 1.0 + depth_source_layer_index();
+}
+
+float active_scene_state_marker(uint probe) {
+    return 1.0 + 0.5 * (float(probe) / float(max(SCENE_PARTICLE_PROBE_COUNT - 1u, 1u)));
+}
+
 void write_retained_invalid(uint slot) {
     uint base = slot * 4u;
     particles.rows[base] = vec4(0.0);
@@ -190,7 +198,7 @@ void write_particle_slot(
     vec3 color = depth_color(depth_meters);
     particles.rows[base] = vec4(reference_space_point, max(pc.params0.y, 0.0005));
     particles.rows[base + 1u] = vec4(clamp(color, vec3(0.0), vec3(1.0)), pc.params0.w * confidence);
-    particles.rows[base + 2u] = vec4(surface_uv, depth_meters, 1.0);
+    particles.rows[base + 2u] = vec4(surface_uv, depth_meters, source_valid_marker());
     particles.rows[base + 3u] = vec4(slot_key, confidence, frame_marker(), state_marker + depth_uv.x * 0.0);
 }
 
@@ -281,7 +289,7 @@ void retire_scene_cell(ivec3 cell) {
             }
             particles.rows[base + 1u].a = 0.0;
             particles.rows[base + 2u].w = 0.0;
-            particles.rows[base + 3u] = vec4(cell_key, 0.0, frame_marker(), 1.0);
+            particles.rows[base + 3u] = vec4(cell_key, 0.0, frame_marker(), 2.0);
             publish_scene_metadata(meta_base, 0.0, SCENE_META_STATE_RETIRED);
             atomicAdd(depth_debug.values[RAW_DEBUG_FREE_SPACE_RETIRE_SUCCESS_COUNT], 1u);
             return;
@@ -364,7 +372,7 @@ void write_scene_particle(
                 surface_uv,
                 depth_uv,
                 cell_key,
-                1.0);
+                active_scene_state_marker(probe));
             publish_scene_metadata(meta_base, confidence, SCENE_META_STATE_ACTIVE);
             return;
         }
@@ -384,7 +392,7 @@ void write_scene_particle(
                     surface_uv,
                     depth_uv,
                     cell_key,
-                    1.0);
+                    active_scene_state_marker(probe));
                 publish_scene_metadata(meta_base, confidence, SCENE_META_STATE_ACTIVE);
                 return;
             }
@@ -423,7 +431,7 @@ void write_scene_particle(
                 surface_uv,
                 depth_uv,
                 cell_key,
-                1.0);
+                active_scene_state_marker(probe));
             publish_scene_metadata(meta_base, merged_confidence, SCENE_META_STATE_ACTIVE);
             return;
         }
@@ -451,7 +459,7 @@ void write_scene_particle(
                 surface_uv,
                 depth_uv,
                 cell_key,
-                1.0);
+                active_scene_state_marker(probe));
             publish_scene_metadata(meta_base, confidence, SCENE_META_STATE_ACTIVE);
             return;
         }

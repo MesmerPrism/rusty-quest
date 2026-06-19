@@ -181,6 +181,13 @@ capacity to 64, and samples every 4 pixels so headset evidence can require
 `environmentDepthParticleCount=64` plus nonzero exhausted hash probes. Use it
 only as a bounded-map stress route; the normal 32768-capacity profile remains
 the default quality proof.
+`fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles-debug-colors.profile.json`
+keeps the same real Meta provider scene-map route but switches
+`environment_depth.debug_view=free-space-state`. The particle marker reports
+`environmentDepthParticleDebugColorMode=free-space-state`, while the normal,
+layer-1, and low-capacity profiles report `depth-gradient`. The same
+`debug_view` setting can also select confidence, age, source-layer, and
+hash-probe diagnostic colors without adding a second Android property.
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-graft-only.profile.json`
 keeps native passthrough focused on graft instances only, while
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-hands-and-grafts.profile.json`

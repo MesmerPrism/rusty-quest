@@ -173,6 +173,7 @@
     "environmentDepthDepthUnitsPolicy=projected-depth-from-near-far",
     "environmentDepthRawToMetersPolicy=projected-depth-from-near-far",
     "environmentDepthDebugView=raw-d16",
+    "environmentDepthParticleDebugColorMode=depth-gradient",
     "environmentDepthDepthViewPoseValidMask=0x2",
     "environmentDepthDepthViewFovValidMask=0x2",
     "environmentDepthRenderViewStateFlags=orientation-valid+position-valid",

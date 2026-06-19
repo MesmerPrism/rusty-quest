@@ -79,6 +79,11 @@
   and native passthrough fixed while lowering `particle_capacity` to 64 and
   `sample_stride_pixels` to 4 so a headset run can prove low-capacity hash
   pressure through the scene-map health counters.
+  `quest-native-renderer-native-passthrough-meta-environment-depth-particles-debug-colors.profile.json`
+  is the diagnostic-color route for the same real Meta scene-map path. It uses
+  `environment_depth.debug_view=free-space-state` and expects
+  `environmentDepthParticleDebugColorMode=free-space-state`; the default,
+  layer-1, and low-capacity routes expect `depth-gradient`.
 - `native-renderer/`: valid Quest-native renderer plans, timing scorecards, and
   public recorded-hand topology/shape fixtures for pure-HWB blur, GPU mesh
   boundary, resident compact-joint GPU-skinned visual examples,

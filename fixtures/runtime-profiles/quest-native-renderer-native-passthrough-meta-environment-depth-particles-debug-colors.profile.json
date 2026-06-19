@@ -1,6 +1,6 @@
 {
   "schema": "rusty.quest.runtime_profile.v1",
-  "profile_id": "profile.quest.native_renderer.native_passthrough_meta_environment_depth_particles_low_capacity",
+  "profile_id": "profile.quest.native_renderer.native_passthrough_meta_environment_depth_particles_debug_colors",
   "target_platform": "quest",
   "owned_android_properties": [
     "debug.rustyquest.native_renderer.render.mode",
@@ -86,7 +86,7 @@
     },
     {
       "name": "debug.rustyquest.native_renderer.environment_depth.debug_view",
-      "value": "raw-d16",
+      "value": "free-space-state",
       "source_setting_id": "native_renderer.environment_depth.debug_view"
     },
     {
@@ -96,12 +96,12 @@
     },
     {
       "name": "debug.rustyquest.native_renderer.environment_depth.particle_capacity",
-      "value": "64",
+      "value": "32768",
       "source_setting_id": "native_renderer.environment_depth.particle_capacity"
     },
     {
       "name": "debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels",
-      "value": "4",
+      "value": "12",
       "source_setting_id": "native_renderer.environment_depth.sample_stride_pixels"
     },
     {
@@ -144,7 +144,7 @@
     "environmentDepthShaderLayerPolicy=mono-layer0",
     "environmentDepthDepthUnitsPolicy=projected-depth-from-near-far",
     "environmentDepthRawToMetersPolicy=projected-depth-from-near-far",
-    "environmentDepthDebugView=raw-d16",
+    "environmentDepthDebugView=free-space-state",
     "environmentDepthDepthViewPoseValidMask=0x1",
     "environmentDepthDepthViewFovValidMask=0x1",
     "environmentDepthRenderViewStateFlags=orientation-valid+position-valid",
@@ -164,7 +164,6 @@
     "RUSTY_QUEST_NATIVE_RENDERER channel=environment-depth-particles",
     "environmentDepthParticleSource=xr-meta-environment-depth",
     "environmentDepthParticleCoordinateSpace=openxr-reference-space",
-    "environmentDepthParticleCount=64",
     "environmentDepthParticleCpuUploadBytes=0",
     "environmentDepthGpuBuffersResident=true",
     "environmentDepthParticleBufferMemory=device-local",
@@ -173,8 +172,8 @@
     "environmentDepthShaderLayerPolicy=mono-layer0",
     "environmentDepthDepthUnitsPolicy=projected-depth-from-near-far",
     "environmentDepthRawToMetersPolicy=projected-depth-from-near-far",
-    "environmentDepthDebugView=raw-d16",
-    "environmentDepthParticleDebugColorMode=depth-gradient",
+    "environmentDepthDebugView=free-space-state",
+    "environmentDepthParticleDebugColorMode=free-space-state",
     "environmentDepthDepthViewPoseValidMask=0x1",
     "environmentDepthDepthViewFovValidMask=0x1",
     "environmentDepthRenderViewStateFlags=orientation-valid+position-valid",
@@ -186,10 +185,7 @@
     "environmentDepthSampleUvPolicy=texture-transformed",
     "environmentDepthParticleRetention=scene-owned-spatial-particle-map",
     "environmentDepthParticleMapPolicy=spatial-hash-reference-space-cells",
-    "environmentDepthMapWritePolicy=atomic-slot-claim",
-    "environmentDepthSceneHashProbeCount=8",
     "environmentDepthSceneParticleMap=true",
-    "environmentDepthHashProbeExhaustedCount=",
     "environmentDepthInvalidSamplePolicy=preserve-existing-cells",
     "environmentDepthFreeSpaceCorrection=confidence-gated-visible-free-space-ray-clear",
     "environmentDepthFreeSpaceRangePolicy=near-plus-cell-step-cap",
@@ -197,7 +193,6 @@
     "environmentDepthWorldSpaceReady=true"
   ],
   "validation_commands": [
-    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity.profile.json -DryRun -Out local-artifacts/native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity-property-write-plan.json",
-    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target/native-renderer-android/rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -ProfilePath fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity.profile.json -ExpectedEnvironmentDepthParticleCount 64 -MinimumEnvironmentDepthHashProbeExhaustedCount 1 -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss"
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles-debug-colors.profile.json -DryRun -Out local-artifacts/native-renderer-native-passthrough-meta-environment-depth-particles-debug-colors-property-write-plan.json"
   ]
 }
