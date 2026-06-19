@@ -102,6 +102,24 @@ pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE: &str =
     "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_coherence";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY: &str =
     "debug.rustyquest.native_renderer.environment_depth.surface_support.free_space_decay";
+pub(crate) const PROP_STIMULUS_VOLUME_ENABLED: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.enabled";
+pub(crate) const PROP_STIMULUS_VOLUME_PROFILE: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.profile";
+pub(crate) const PROP_STIMULUS_VOLUME_COMPOSITION: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.composition";
+pub(crate) const PROP_STIMULUS_VOLUME_RENDER_TARGET: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.render_target";
+pub(crate) const PROP_STIMULUS_VOLUME_RAYMARCH_SAMPLES: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples";
+pub(crate) const PROP_STIMULUS_VOLUME_RANDOMIZE_ENABLED: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled";
+pub(crate) const PROP_STIMULUS_VOLUME_RANDOMIZE_MIN_HZ: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.randomize.min_hz";
+pub(crate) const PROP_STIMULUS_VOLUME_RANDOMIZE_MAX_HZ: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz";
+pub(crate) const PROP_STIMULUS_VOLUME_SAFETY_ACK: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.safety_ack";
 pub(crate) const PROP_PROCESSING_LAYER: &str = "debug.rustyquest.native_renderer.processing.layer";
 pub(crate) const PROP_PROJECTION_BORDER_POLICY: &str =
     "debug.rustyquest.native_renderer.projection.border.policy";
@@ -144,8 +162,10 @@ pub(crate) const PROP_PRIVATE_LAYER_EFFECT3: &str =
 pub(crate) enum NativeRendererRenderMode {
     CustomStereoProjection,
     NativePassthroughGraftOnly,
+    NativePassthroughStimulusVolume,
     SolidBlackHandsAndGrafts,
     SolidBlackOpenXrHandsAnchorParticles,
+    SolidBlackStimulusVolume,
 }
 
 impl NativeRendererRenderMode {
@@ -160,6 +180,9 @@ impl NativeRendererRenderMode {
             | "passthrough-graft-only"
             | "graft-only"
             | "native-passthrough" => Self::NativePassthroughGraftOnly,
+            "native-passthrough-stimulus-volume"
+            | "passthrough-stimulus-volume"
+            | "native-stimulus-volume" => Self::NativePassthroughStimulusVolume,
             "solid-black-hands-and-grafts"
             | "black-hands-and-grafts"
             | "solid-black"
@@ -171,6 +194,9 @@ impl NativeRendererRenderMode {
             | "black-background-openxr-hands-anchor-particles" => {
                 Self::SolidBlackOpenXrHandsAnchorParticles
             }
+            "solid-black-stimulus-volume"
+            | "black-stimulus-volume"
+            | "opaque-black-stimulus-volume" => Self::SolidBlackStimulusVolume,
             _ => Self::CustomStereoProjection,
         }
     }
@@ -179,10 +205,12 @@ impl NativeRendererRenderMode {
         match self {
             Self::CustomStereoProjection => "custom-stereo-projection",
             Self::NativePassthroughGraftOnly => "native-passthrough-graft-only",
+            Self::NativePassthroughStimulusVolume => "native-passthrough-stimulus-volume",
             Self::SolidBlackHandsAndGrafts => "solid-black-hands-and-grafts",
             Self::SolidBlackOpenXrHandsAnchorParticles => {
                 "solid-black-openxr-hands-anchor-particles"
             }
+            Self::SolidBlackStimulusVolume => "solid-black-stimulus-volume",
         }
     }
 
@@ -191,14 +219,30 @@ impl NativeRendererRenderMode {
     }
 
     pub(crate) fn uses_native_passthrough(self) -> bool {
-        matches!(self, Self::NativePassthroughGraftOnly)
+        matches!(
+            self,
+            Self::NativePassthroughGraftOnly | Self::NativePassthroughStimulusVolume
+        )
     }
 
     pub(crate) fn uses_solid_black_background(self) -> bool {
         matches!(
             self,
-            Self::SolidBlackHandsAndGrafts | Self::SolidBlackOpenXrHandsAnchorParticles
+            Self::SolidBlackHandsAndGrafts
+                | Self::SolidBlackOpenXrHandsAnchorParticles
+                | Self::SolidBlackStimulusVolume
         )
+    }
+
+    pub(crate) fn uses_stimulus_volume(self) -> bool {
+        matches!(
+            self,
+            Self::NativePassthroughStimulusVolume | Self::SolidBlackStimulusVolume
+        )
+    }
+
+    pub(crate) fn projection_layer_alpha_blend(self) -> bool {
+        self.uses_native_passthrough() && !self.uses_stimulus_volume()
     }
 
     pub(crate) fn requests_openxr_default_hand_visual(self) -> bool {
@@ -220,10 +264,12 @@ impl NativeRendererRenderMode {
         match self {
             Self::CustomStereoProjection => "camera2-hwb",
             Self::NativePassthroughGraftOnly => "skipped-native-passthrough",
+            Self::NativePassthroughStimulusVolume => "skipped-native-passthrough-stimulus-volume",
             Self::SolidBlackHandsAndGrafts => "skipped-solid-black-hands-and-grafts",
             Self::SolidBlackOpenXrHandsAnchorParticles => {
                 "skipped-solid-black-openxr-hands-anchor-particles"
             }
+            Self::SolidBlackStimulusVolume => "skipped-solid-black-stimulus-volume",
         }
     }
 
@@ -231,10 +277,12 @@ impl NativeRendererRenderMode {
         match self {
             Self::CustomStereoProjection => "metadata-target-direct-hwb-fallback",
             Self::NativePassthroughGraftOnly => "disabled-native-passthrough-graft-only",
+            Self::NativePassthroughStimulusVolume => "disabled-native-passthrough-stimulus-volume",
             Self::SolidBlackHandsAndGrafts => "disabled-solid-black-hands-and-grafts",
             Self::SolidBlackOpenXrHandsAnchorParticles => {
                 "disabled-solid-black-openxr-hands-anchor-particles"
             }
+            Self::SolidBlackStimulusVolume => "disabled-solid-black-stimulus-volume",
         }
     }
 
@@ -1519,6 +1567,252 @@ impl NativeEnvironmentDepthReferenceSpace {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NativeStimulusVolumeSettings {
+    pub(crate) enabled: bool,
+    pub(crate) profile: NativeStimulusVolumeProfile,
+    pub(crate) composition: NativeStimulusVolumeCompositionMode,
+    pub(crate) render_target: NativeStimulusVolumeRenderTarget,
+    pub(crate) color_mode: NativeStimulusVolumeColorMode,
+    pub(crate) raymarch_samples: u32,
+    pub(crate) randomize_enabled: bool,
+    pub(crate) randomize_min_hz: f32,
+    pub(crate) randomize_max_hz: f32,
+    pub(crate) safety_acknowledged: bool,
+    pub(crate) safety_acknowledgement_required: bool,
+    pub(crate) allow_autostart: bool,
+    pub(crate) black_lead_in_seconds: f32,
+    pub(crate) max_duration_seconds: f32,
+    pub(crate) max_cycle_hz: f32,
+}
+
+impl NativeStimulusVolumeSettings {
+    fn from_property_lookup(
+        mut lookup: impl FnMut(&str) -> Option<String>,
+        render_mode: NativeRendererRenderMode,
+    ) -> Self {
+        let profile =
+            NativeStimulusVolumeProfile::from_property(lookup(PROP_STIMULUS_VOLUME_PROFILE));
+        let max_cycle_hz = 15.0;
+        let requested_min_hz = f32_clamped_value(
+            lookup(PROP_STIMULUS_VOLUME_RANDOMIZE_MIN_HZ),
+            8.0,
+            0.0,
+            max_cycle_hz,
+        );
+        let requested_max_hz = f32_clamped_value(
+            lookup(PROP_STIMULUS_VOLUME_RANDOMIZE_MAX_HZ),
+            15.0,
+            requested_min_hz.max(0.001),
+            max_cycle_hz,
+        );
+        let (randomize_min_hz, randomize_max_hz) = if requested_min_hz <= requested_max_hz {
+            (requested_min_hz, requested_max_hz)
+        } else {
+            (8.0, 15.0)
+        };
+        Self {
+            enabled: bool_value(
+                lookup(PROP_STIMULUS_VOLUME_ENABLED),
+                render_mode.uses_stimulus_volume(),
+            ),
+            profile,
+            composition: NativeStimulusVolumeCompositionMode::from_property(lookup(
+                PROP_STIMULUS_VOLUME_COMPOSITION,
+            )),
+            render_target: NativeStimulusVolumeRenderTarget::from_property(lookup(
+                PROP_STIMULUS_VOLUME_RENDER_TARGET,
+            )),
+            color_mode: NativeStimulusVolumeColorMode::DepthRamp,
+            raymarch_samples: u32_value(lookup(PROP_STIMULUS_VOLUME_RAYMARCH_SAMPLES), 6, 1, 24),
+            randomize_enabled: bool_value(lookup(PROP_STIMULUS_VOLUME_RANDOMIZE_ENABLED), true),
+            randomize_min_hz,
+            randomize_max_hz,
+            safety_acknowledged: bool_value(lookup(PROP_STIMULUS_VOLUME_SAFETY_ACK), false),
+            safety_acknowledgement_required: true,
+            allow_autostart: false,
+            black_lead_in_seconds: 1.0,
+            max_duration_seconds: 30.0,
+            max_cycle_hz,
+        }
+    }
+
+    pub(crate) fn active(self) -> bool {
+        self.enabled && (!self.safety_acknowledgement_required || self.safety_acknowledged)
+    }
+
+    pub(crate) fn volume_only(self) -> bool {
+        true
+    }
+
+    pub(crate) fn noise_model(self) -> &'static str {
+        "value-fbm-mobile-2oct-v1"
+    }
+
+    pub(crate) fn oscillator_model(self) -> &'static str {
+        "radial-axial-cross-v1"
+    }
+
+    pub(crate) fn emission_gain(self) -> f32 {
+        2.65
+    }
+
+    pub(crate) fn black_threshold(self) -> f32 {
+        0.24
+    }
+
+    pub(crate) fn depth_color_mix(self) -> f32 {
+        1.0
+    }
+
+    pub(crate) fn depth_contrast(self) -> f32 {
+        0.9
+    }
+
+    pub(crate) fn marker_fields(self) -> String {
+        format!(
+            "stimulusVolumeEnabled={} stimulusVolumeActive={} stimulusVolumeProfile={} renderPath=native-vulkan-stimulus-volume makepadRuntime=false hostessRuntime=false volumeOnly={} volumeColorMode={} volumeCompositing={} stimulusVolumeRenderTarget={} volumeRaymarchSamples={} volumeNoiseModel={} volumeOscillatorModel={} volumeEmissionGain={:.2} volumeBlackThreshold={:.2} volumeDepthColorMix={:.1} volumeDepthContrast={:.1} stimulusRandomizeEnabled={} randomizeHzRange={:.3}-{:.3} stimulusSafetyClass=PhotosensitiveRisk stimulusSafetyAcknowledgementRequired={} stimulusSafetyAcknowledged={} stimulusAllowAutostart={} stimulusBlackLeadInSeconds={:.3} stimulusMaxDurationSeconds={:.3} stimulusMaxCycleHz={:.3} stimulusSafetyGate={}",
+            self.enabled,
+            self.active(),
+            self.profile.marker_value(),
+            self.volume_only(),
+            self.color_mode.marker_value(),
+            self.composition.marker_value(),
+            self.render_target.marker_value(),
+            self.raymarch_samples,
+            self.noise_model(),
+            self.oscillator_model(),
+            self.emission_gain(),
+            self.black_threshold(),
+            self.depth_color_mix(),
+            self.depth_contrast(),
+            self.randomize_enabled,
+            self.randomize_min_hz,
+            self.randomize_max_hz,
+            self.safety_acknowledgement_required,
+            self.safety_acknowledged,
+            self.allow_autostart,
+            self.black_lead_in_seconds,
+            self.max_duration_seconds,
+            self.max_cycle_hz,
+            if self.active() {
+                "acknowledged-active"
+            } else if self.enabled {
+                "render-black-until-safety-ack"
+            } else {
+                "disabled"
+            },
+        )
+    }
+}
+
+impl Default for NativeStimulusVolumeSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            profile: NativeStimulusVolumeProfile::VolumeOnlyBrightInterference,
+            composition: NativeStimulusVolumeCompositionMode::OpaqueBlackProjection,
+            render_target: NativeStimulusVolumeRenderTarget::Rgba16f512Stereo,
+            color_mode: NativeStimulusVolumeColorMode::DepthRamp,
+            raymarch_samples: 6,
+            randomize_enabled: true,
+            randomize_min_hz: 8.0,
+            randomize_max_hz: 15.0,
+            safety_acknowledged: false,
+            safety_acknowledgement_required: true,
+            allow_autostart: false,
+            black_lead_in_seconds: 1.0,
+            max_duration_seconds: 30.0,
+            max_cycle_hz: 15.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeStimulusVolumeProfile {
+    VolumeOnlyBrightInterference,
+}
+
+impl NativeStimulusVolumeProfile {
+    fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "volume-only-bright-interference"
+            | "stimulus.profile.volume-only-bright-interference"
+            | "stimulus.profile.volume_only_bright_interference" => {
+                Self::VolumeOnlyBrightInterference
+            }
+            _ => Self::VolumeOnlyBrightInterference,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::VolumeOnlyBrightInterference => "volume-only-bright-interference",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeStimulusVolumeCompositionMode {
+    OpaqueBlackProjection,
+    AlphaOverNativePassthrough,
+}
+
+impl NativeStimulusVolumeCompositionMode {
+    fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "alpha-over-native-passthrough" | "passthrough-alpha" => {
+                Self::AlphaOverNativePassthrough
+            }
+            _ => Self::OpaqueBlackProjection,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::OpaqueBlackProjection => "opaque-black-projection",
+            Self::AlphaOverNativePassthrough => "alpha-over-native-passthrough",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeStimulusVolumeColorMode {
+    DepthRamp,
+}
+
+impl NativeStimulusVolumeColorMode {
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::DepthRamp => "DepthRamp",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeStimulusVolumeRenderTarget {
+    Rgba16f512Stereo,
+    Rgba8Unorm512Stereo,
+}
+
+impl NativeStimulusVolumeRenderTarget {
+    fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "512x512x2-rgba8" | "512x512x2-rgba8-unorm" | "rgba8" | "rgba8-unorm" => {
+                Self::Rgba8Unorm512Stereo
+            }
+            _ => Self::Rgba16f512Stereo,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::Rgba16f512Stereo => "512x512x2-rgba16f",
+            Self::Rgba8Unorm512Stereo => "512x512x2-rgba8-unorm",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeProjectionProcessingLayer {
     Blur,
@@ -1883,7 +2177,7 @@ pub(crate) struct NativeProjectionBorderStretchPush {
     pub(crate) stretch1: [f32; 4],
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) render_mode: NativeRendererRenderMode,
     pub(crate) camera_output_mode: NativeCameraOutputMode,
@@ -1906,6 +2200,8 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) hand_mesh_real_hands_visible: bool,
     pub(crate) hand_anchor_particle_settings: NativeHandAnchorParticleSettings,
     pub(crate) environment_depth_settings: NativeEnvironmentDepthSettings,
+    pub(crate) stimulus_volume_settings: NativeStimulusVolumeSettings,
+    pub(crate) projection_target_settings: ProjectionTargetSettings,
     pub(crate) projection_border_stretch_settings: NativeProjectionBorderStretchSettings,
     pub(crate) private_layer_settings: NativePrivateLayerSettings,
 }
@@ -1958,6 +2254,10 @@ impl NativeRendererRuntimeOptions {
             NativeHandAnchorParticleSettings::from_property_lookup(&mut lookup);
         let environment_depth_settings =
             NativeEnvironmentDepthSettings::from_property_lookup(&mut lookup);
+        let stimulus_volume_settings =
+            NativeStimulusVolumeSettings::from_property_lookup(&mut lookup, render_mode);
+        let projection_target_settings =
+            ProjectionTargetSettings::from_property_lookup(&mut lookup);
         let projection_border_stretch_settings =
             NativeProjectionBorderStretchSettings::from_property_lookup(&mut lookup);
         let private_layer_settings = NativePrivateLayerSettings::from_property_lookup(&mut lookup);
@@ -1988,6 +2288,8 @@ impl NativeRendererRuntimeOptions {
             hand_mesh_real_hands_visible,
             hand_anchor_particle_settings,
             environment_depth_settings,
+            stimulus_volume_settings,
+            projection_target_settings,
             projection_border_stretch_settings,
             private_layer_settings,
         }
@@ -2088,7 +2390,8 @@ mod tests {
         NativeEnvironmentDepthMode, NativeEnvironmentDepthReferenceSpace,
         NativeEnvironmentDepthSource, NativeEnvironmentDepthSurfaceFreeSpaceDecay,
         NativeEnvironmentDepthSurfaceModel, NativeEnvironmentDepthSurfaceNormalCoherence,
-        NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
+        NativeRendererRuntimeOptions, NativeStimulusVolumeCompositionMode,
+        NativeStimulusVolumeRenderTarget, NativeSwapchainColorFormatMode,
         PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED,
         PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_READER_MAX_IMAGES,
         PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
@@ -2120,7 +2423,16 @@ mod tests {
         PROP_PERIPHERAL_STRETCH_MAX_INSET_UV, PROP_PROCESSING_LAYER,
         PROP_PROJECTION_BORDER_OPACITY, PROP_PROJECTION_BORDER_POLICY, PROP_RENDER_MODE,
         PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SDF_UPDATE_PERIOD_FRAMES,
+        PROP_STIMULUS_VOLUME_COMPOSITION, PROP_STIMULUS_VOLUME_ENABLED,
+        PROP_STIMULUS_VOLUME_RANDOMIZE_ENABLED, PROP_STIMULUS_VOLUME_RANDOMIZE_MAX_HZ,
+        PROP_STIMULUS_VOLUME_RANDOMIZE_MIN_HZ, PROP_STIMULUS_VOLUME_RAYMARCH_SAMPLES,
+        PROP_STIMULUS_VOLUME_RENDER_TARGET, PROP_STIMULUS_VOLUME_SAFETY_ACK,
         PROP_SWAPCHAIN_COLOR_FORMAT_MODE,
+    };
+    use crate::projection_target_state::{
+        BreathBridgeMode, PROP_PROJECTION_TARGET_BREATH_BRIDGE_MODE,
+        PROP_PROJECTION_TARGET_CONTROLS, PROP_PROJECTION_TARGET_JOYSTICK_CONTROLS,
+        PROP_PROJECTION_TARGET_SCALE, PROP_PROJECTION_TARGET_TUNED_MAX_SCALE,
     };
 
     fn options_from(values: &[(&str, &str)]) -> NativeRendererRuntimeOptions {
@@ -2168,6 +2480,27 @@ mod tests {
             .allows_recorded_fallback());
         assert!(options.sdf_visual_enabled);
         assert!(options.hand_mesh_visual_diagnostic_settings.enabled);
+    }
+
+    #[test]
+    fn projection_target_settings_load_from_native_renderer_properties() {
+        let options = options_from(&[
+            (PROP_PROJECTION_TARGET_CONTROLS, "true"),
+            (PROP_PROJECTION_TARGET_JOYSTICK_CONTROLS, "true"),
+            (PROP_PROJECTION_TARGET_SCALE, "1.0"),
+            (PROP_PROJECTION_TARGET_TUNED_MAX_SCALE, "1.35"),
+            (PROP_PROJECTION_TARGET_BREATH_BRIDGE_MODE, "manifold-state"),
+        ]);
+        assert!(options.projection_target_settings.controls_enabled);
+        assert!(options.projection_target_settings.joystick_controls_enabled);
+        assert_eq!(
+            options.projection_target_settings.breath_bridge_mode,
+            BreathBridgeMode::ManifoldState
+        );
+        assert!(options
+            .projection_target_settings
+            .marker_fields()
+            .contains("projectionTargetTunedMaxScale=1.3500"));
     }
 
     #[test]
@@ -2506,6 +2839,112 @@ mod tests {
             options.render_mode.disabled_camera_projection_path(),
             "disabled-solid-black-openxr-hands-anchor-particles"
         );
+    }
+
+    #[test]
+    fn native_passthrough_stimulus_volume_enables_opaque_volume_route() {
+        let options = options_from(&[
+            (PROP_RENDER_MODE, "native-passthrough-stimulus-volume"),
+            (PROP_STIMULUS_VOLUME_ENABLED, "true"),
+            (PROP_STIMULUS_VOLUME_SAFETY_ACK, "true"),
+        ]);
+        let settings = options.stimulus_volume_settings;
+
+        assert_eq!(
+            options.render_mode.marker_value(),
+            "native-passthrough-stimulus-volume"
+        );
+        assert!(options.render_mode.uses_native_passthrough());
+        assert!(options.render_mode.uses_stimulus_volume());
+        assert!(!options.render_mode.projection_layer_alpha_blend());
+        assert!(!options.render_mode.uses_custom_stereo_projection());
+        assert!(!options.sdf_visual_enabled);
+        assert!(settings.enabled);
+        assert!(settings.active());
+        assert_eq!(settings.raymarch_samples, 6);
+        assert_eq!(settings.randomize_min_hz, 8.0);
+        assert_eq!(settings.randomize_max_hz, 15.0);
+        assert_eq!(
+            settings.composition,
+            NativeStimulusVolumeCompositionMode::OpaqueBlackProjection
+        );
+        assert_eq!(
+            options.render_mode.camera_runtime_mode(),
+            "skipped-native-passthrough-stimulus-volume"
+        );
+        assert_eq!(
+            options.render_mode.disabled_camera_projection_path(),
+            "disabled-native-passthrough-stimulus-volume"
+        );
+
+        let fields = settings.marker_fields();
+        assert!(fields.contains("renderPath=native-vulkan-stimulus-volume"));
+        assert!(fields.contains("makepadRuntime=false"));
+        assert!(fields.contains("hostessRuntime=false"));
+        assert!(fields.contains("volumeOnly=true"));
+        assert!(fields.contains("volumeColorMode=DepthRamp"));
+        assert!(fields.contains("volumeCompositing=opaque-black-projection"));
+        assert!(fields.contains("randomizeHzRange=8.000-15.000"));
+        assert!(fields.contains("stimulusSafetyAcknowledged=true"));
+    }
+
+    #[test]
+    fn solid_black_stimulus_volume_keeps_passthrough_disabled() {
+        let options = options_from(&[
+            (PROP_RENDER_MODE, "solid-black-stimulus-volume"),
+            (PROP_STIMULUS_VOLUME_ENABLED, "true"),
+            (PROP_STIMULUS_VOLUME_SAFETY_ACK, "true"),
+            (PROP_STIMULUS_VOLUME_RENDER_TARGET, "512x512x2-rgba8-unorm"),
+            (
+                PROP_STIMULUS_VOLUME_COMPOSITION,
+                "alpha-over-native-passthrough",
+            ),
+        ]);
+        let settings = options.stimulus_volume_settings;
+
+        assert_eq!(
+            options.render_mode.marker_value(),
+            "solid-black-stimulus-volume"
+        );
+        assert!(options.render_mode.uses_solid_black_background());
+        assert!(options.render_mode.uses_stimulus_volume());
+        assert!(!options.render_mode.uses_native_passthrough());
+        assert_eq!(
+            settings.render_target,
+            NativeStimulusVolumeRenderTarget::Rgba8Unorm512Stereo
+        );
+        assert_eq!(
+            settings.composition,
+            NativeStimulusVolumeCompositionMode::AlphaOverNativePassthrough
+        );
+        assert_eq!(
+            options.render_mode.camera_runtime_mode(),
+            "skipped-solid-black-stimulus-volume"
+        );
+    }
+
+    #[test]
+    fn stimulus_volume_safety_gate_and_randomize_values_clamp() {
+        let options = options_from(&[
+            (PROP_RENDER_MODE, "native-passthrough-stimulus-volume"),
+            (PROP_STIMULUS_VOLUME_ENABLED, "true"),
+            (PROP_STIMULUS_VOLUME_RAYMARCH_SAMPLES, "99"),
+            (PROP_STIMULUS_VOLUME_RANDOMIZE_ENABLED, "false"),
+            (PROP_STIMULUS_VOLUME_RANDOMIZE_MIN_HZ, "-2"),
+            (PROP_STIMULUS_VOLUME_RANDOMIZE_MAX_HZ, "99"),
+        ]);
+        let settings = options.stimulus_volume_settings;
+
+        assert!(settings.enabled);
+        assert!(!settings.active());
+        assert_eq!(settings.raymarch_samples, 24);
+        assert!(!settings.randomize_enabled);
+        assert_eq!(settings.randomize_min_hz, 0.0);
+        assert_eq!(settings.randomize_max_hz, 15.0);
+        let fields = settings.marker_fields();
+        assert!(fields.contains("stimulusSafetyAcknowledged=false"));
+        assert!(fields.contains("stimulusSafetyGate=render-black-until-safety-ack"));
+        assert!(fields.contains("stimulusMaxCycleHz=15.000"));
     }
 
     #[test]
@@ -2926,3 +3365,4 @@ mod tests {
         assert!(!settings.transition_active());
     }
 }
+use crate::projection_target_state::ProjectionTargetSettings;

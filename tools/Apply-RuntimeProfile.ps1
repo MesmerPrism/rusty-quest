@@ -32,6 +32,38 @@ $EnvironmentDepthSurfaceSupportMinSourceLayersProperty = "debug.rustyquest.nativ
 $EnvironmentDepthSurfaceSupportComponentMinCellsProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.component_min_cells"
 $EnvironmentDepthSurfaceSupportNormalCoherenceProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_coherence"
 $EnvironmentDepthSurfaceSupportFreeSpaceDecayProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.free_space_decay"
+$StimulusVolumePropertyPrefix = "debug.rustyquest.native_renderer.stimulus_volume."
+$StimulusVolumeEnabledProperty = "debug.rustyquest.native_renderer.stimulus_volume.enabled"
+$StimulusVolumeProfileProperty = "debug.rustyquest.native_renderer.stimulus_volume.profile"
+$StimulusVolumeCompositionProperty = "debug.rustyquest.native_renderer.stimulus_volume.composition"
+$StimulusVolumeRenderTargetProperty = "debug.rustyquest.native_renderer.stimulus_volume.render_target"
+$StimulusVolumeRaymarchSamplesProperty = "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples"
+$StimulusVolumeRandomizeEnabledProperty = "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled"
+$StimulusVolumeRandomizeMinHzProperty = "debug.rustyquest.native_renderer.stimulus_volume.randomize.min_hz"
+$StimulusVolumeRandomizeMaxHzProperty = "debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz"
+$StimulusVolumeSafetyAckProperty = "debug.rustyquest.native_renderer.stimulus_volume.safety_ack"
+$NativeProjectionTargetPropertyPrefix = "debug.rustyquest.native_renderer.projection.target."
+$NativeProjectionTargetControlsProperty = "debug.rustyquest.native_renderer.projection.target.controls"
+$NativeProjectionTargetScaleProperty = "debug.rustyquest.native_renderer.projection.target.scale"
+$NativeProjectionTargetTunedMaxScaleProperty = "debug.rustyquest.native_renderer.projection.target.tuned.max.scale"
+$NativeProjectionTargetMinScaleProperty = "debug.rustyquest.native_renderer.projection.target.min.scale"
+$NativeProjectionTargetMaxScaleProperty = "debug.rustyquest.native_renderer.projection.target.max.scale"
+$NativeProjectionTargetOffsetXUvProperty = "debug.rustyquest.native_renderer.projection.target.offset.x.uv"
+$NativeProjectionTargetOffsetYUvProperty = "debug.rustyquest.native_renderer.projection.target.offset.y.uv"
+$NativeProjectionTargetJoystickControlsProperty = "debug.rustyquest.native_renderer.projection.target.joystick.controls"
+$NativeProjectionTargetJoystickRateProperty = "debug.rustyquest.native_renderer.projection.target.joystick.scale.rate_per_second"
+$NativeProjectionTargetBreathModeProperty = "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode"
+$NativeProjectionTargetBreathStateStreamProperty = "debug.rustyquest.native_renderer.projection.target.breath.state.stream"
+$NativeProjectionTargetBreathValueStreamProperty = "debug.rustyquest.native_renderer.projection.target.breath.value.stream"
+$NativeProjectionTargetBreathInhaleSecondsProperty = "debug.rustyquest.native_renderer.projection.target.breath.inhale.seconds.min_to_max"
+$NativeProjectionTargetBreathExhaleSecondsProperty = "debug.rustyquest.native_renderer.projection.target.breath.exhale.seconds.max_to_min"
+$NativeProjectionTargetBreathSyntheticPeriodSecondsProperty = "debug.rustyquest.native_renderer.projection.target.breath.synthetic.period.seconds"
+$NativeProjectionTargetBreathHighRateJsonPayloadProperty = "debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload"
+$NativeManifoldBrokerPropertyPrefix = "debug.rustyquest.native_renderer.manifold."
+$NativeManifoldBrokerHostProperty = "debug.rustyquest.native_renderer.manifold.broker.host"
+$NativeManifoldBrokerPortProperty = "debug.rustyquest.native_renderer.manifold.broker.port"
+$NativeManifoldBrokerPathProperty = "debug.rustyquest.native_renderer.manifold.broker.path"
+$MakepadPropertyPrefix = "debug.rustyquest.makepad."
 
 function ConvertTo-AndroidShellSingleQuoted {
     param(
@@ -89,6 +121,19 @@ function Assert-EnvironmentDepthBool {
     }
 }
 
+function Assert-StimulusVolumeUInt {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Value,
+        [Parameter(Mandatory=$true)][uint32]$Min,
+        [Parameter(Mandatory=$true)][uint32]$Max
+    )
+    $parsed = [uint32]0
+    if (-not [uint32]::TryParse($Value.Trim(), [ref]$parsed) -or $parsed -lt $Min -or $parsed -gt $Max) {
+        throw "$Name value $Value must be an integer from $Min to $Max"
+    }
+}
+
 function Get-EnvironmentDepthFloat {
     param(
         [Parameter(Mandatory=$true)][string]$Name,
@@ -103,6 +148,152 @@ function Get-EnvironmentDepthFloat {
         throw "$Name value $Value must be a finite number"
     }
     return $parsed
+}
+
+function Get-StimulusVolumeFloat {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Value
+    )
+    try {
+        $parsed = [double]::Parse($Value.Trim(), [System.Globalization.CultureInfo]::InvariantCulture)
+    } catch {
+        throw "$Name value $Value must be a finite number"
+    }
+    if ([double]::IsNaN($parsed) -or [double]::IsInfinity($parsed)) {
+        throw "$Name value $Value must be a finite number"
+    }
+    return $parsed
+}
+
+function Get-NativeProjectionTargetFloat {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Value
+    )
+    try {
+        $parsed = [double]::Parse($Value.Trim(), [System.Globalization.CultureInfo]::InvariantCulture)
+    } catch {
+        throw "$Name value $Value must be a finite number"
+    }
+    if ([double]::IsNaN($parsed) -or [double]::IsInfinity($parsed)) {
+        throw "$Name value $Value must be a finite number"
+    }
+    return $parsed
+}
+
+function Test-NormalizedTrue {
+    param([Parameter(Mandatory=$true)][string]$Value)
+    $normalized = Get-NormalizedProfileValue -Value $Value
+    return @("1", "true", "yes", "on") -contains $normalized
+}
+
+function Assert-StimulusVolumeBool {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Value
+    )
+    $normalized = Get-NormalizedProfileValue -Value $Value
+    if (@("0", "1", "true", "false", "yes", "no", "on", "off") -notcontains $normalized) {
+        throw "$Name value $Value must be boolean"
+    }
+}
+
+function Assert-NativeProjectionTargetProperty {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Value
+    )
+    $normalized = Get-NormalizedProfileValue -Value $Value
+    switch -Exact ($Name) {
+        $NativeProjectionTargetControlsProperty {
+            Assert-StimulusVolumeBool -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetJoystickControlsProperty {
+            Assert-StimulusVolumeBool -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetBreathHighRateJsonPayloadProperty {
+            Assert-StimulusVolumeBool -Name $Name -Value $Value
+            if (@("0", "false", "no", "off") -notcontains $normalized) {
+                throw "Native projection target breath high_rate_json_payload must be false"
+            }
+            return
+        }
+        $NativeProjectionTargetScaleProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetTunedMaxScaleProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetMinScaleProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetMaxScaleProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetOffsetXUvProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetOffsetYUvProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetJoystickRateProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetBreathInhaleSecondsProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetBreathExhaleSecondsProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetBreathSyntheticPeriodSecondsProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetBreathModeProperty {
+            if (@("disabled", "off", "manifold-state", "pmb-state", "manifold-state-value", "pmb-state-value", "synthetic") -notcontains $normalized) {
+                throw "Native projection target breath bridge mode is not supported: $Value"
+            }
+            return
+        }
+        $NativeProjectionTargetBreathStateStreamProperty {
+            if ([string]::IsNullOrWhiteSpace($Value)) { throw "$Name value must not be empty" }
+            return
+        }
+        $NativeProjectionTargetBreathValueStreamProperty {
+            if ([string]::IsNullOrWhiteSpace($Value)) { throw "$Name value must not be empty" }
+            return
+        }
+        $NativeManifoldBrokerHostProperty {
+            if ([string]::IsNullOrWhiteSpace($Value)) { throw "$Name value must not be empty" }
+            return
+        }
+        $NativeManifoldBrokerPathProperty {
+            if ([string]::IsNullOrWhiteSpace($Value)) { throw "$Name value must not be empty" }
+            return
+        }
+        $NativeManifoldBrokerPortProperty {
+            $parsed = 0
+            if (-not [int]::TryParse($Value.Trim(), [ref]$parsed) -or $parsed -lt 1 -or $parsed -gt 65535) {
+                throw "$Name value $Value must be a TCP port"
+            }
+            return
+        }
+        default {
+            throw "Unknown native projection target property: $Name"
+        }
+    }
 }
 
 function Assert-EnvironmentDepthProperty {
@@ -248,6 +439,61 @@ function Assert-EnvironmentDepthProperty {
     }
 }
 
+function Assert-StimulusVolumeProperty {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Value
+    )
+    $normalized = Get-NormalizedProfileValue -Value $Value
+    switch -Exact ($Name) {
+        $StimulusVolumeEnabledProperty {
+            Assert-StimulusVolumeBool -Name $Name -Value $Value
+            return
+        }
+        $StimulusVolumeProfileProperty {
+            if (@("volume-only-bright-interference", "stimulus.profile.volume-only-bright-interference") -notcontains $normalized) {
+                throw "Stimulus volume profile is not supported: $Value"
+            }
+            return
+        }
+        $StimulusVolumeCompositionProperty {
+            if (@("opaque-black-projection", "alpha-over-native-passthrough") -notcontains $normalized) {
+                throw "Stimulus volume composition is not supported: $Value"
+            }
+            return
+        }
+        $StimulusVolumeRenderTargetProperty {
+            if (@("512x512x2-rgba16f", "512x512x2-rgba8-unorm", "512x512x2-rgba8") -notcontains $normalized) {
+                throw "Stimulus volume render_target is not supported: $Value"
+            }
+            return
+        }
+        $StimulusVolumeRaymarchSamplesProperty {
+            Assert-StimulusVolumeUInt -Name $Name -Value $Value -Min 1 -Max 24
+            return
+        }
+        $StimulusVolumeRandomizeEnabledProperty {
+            Assert-StimulusVolumeBool -Name $Name -Value $Value
+            return
+        }
+        $StimulusVolumeRandomizeMinHzProperty {
+            $null = Get-StimulusVolumeFloat -Name $Name -Value $Value
+            return
+        }
+        $StimulusVolumeRandomizeMaxHzProperty {
+            $null = Get-StimulusVolumeFloat -Name $Name -Value $Value
+            return
+        }
+        $StimulusVolumeSafetyAckProperty {
+            Assert-StimulusVolumeBool -Name $Name -Value $Value
+            return
+        }
+        default {
+            throw "Unknown stimulus volume property: $Name"
+        }
+    }
+}
+
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $resolvedProfile = Resolve-Path $ProfilePath
 $profile = Get-Content -Path $resolvedProfile -Raw | ConvertFrom-Json
@@ -269,6 +515,8 @@ if ($profile.target_platform -ne "quest") {
 $owned = @{}
 $operations = @()
 $environmentDepthProperties = @{}
+$stimulusVolumeProperties = @{}
+$nativeProjectionTargetProfile = (Get-NormalizedProfileValue -Value ([string]$profile.profile_id)).Contains("breathing-room")
 foreach ($name in $profile.owned_android_properties) {
     if ([string]::IsNullOrWhiteSpace($name)) {
         throw "Owned Android property must not be empty"
@@ -282,12 +530,23 @@ foreach ($name in $profile.owned_android_properties) {
     if ($owned.ContainsKey($name)) {
         throw "Duplicate owned Android property: $name"
     }
+    if ($name.StartsWith($NativeProjectionTargetPropertyPrefix)) {
+        $nativeProjectionTargetProfile = $true
+    }
     $owned[$name] = $true
     $operations += [ordered]@{
         kind = "clear"
         name = $name
         value = " "
         source_setting_id = $null
+    }
+}
+
+if ($nativeProjectionTargetProfile) {
+    foreach ($name in $owned.Keys) {
+        if ($name.StartsWith($MakepadPropertyPrefix)) {
+            throw "Native projection target profile must not own Makepad property: $name"
+        }
     }
 }
 
@@ -308,6 +567,16 @@ foreach ($property in $profile.set_properties) {
         Assert-EnvironmentDepthProperty -Name $propertyName -Value $propertyValue
         $environmentDepthProperties[$propertyName] = $propertyValue
     }
+    if ($propertyName.StartsWith($StimulusVolumePropertyPrefix)) {
+        Assert-StimulusVolumeProperty -Name $propertyName -Value $propertyValue
+        $stimulusVolumeProperties[$propertyName] = $propertyValue
+    }
+    if ($propertyName.StartsWith($NativeProjectionTargetPropertyPrefix) -or $propertyName.StartsWith($NativeManifoldBrokerPropertyPrefix)) {
+        Assert-NativeProjectionTargetProperty -Name $propertyName -Value $propertyValue
+    }
+    if ($nativeProjectionTargetProfile -and $propertyName.StartsWith($MakepadPropertyPrefix)) {
+        throw "Native projection target profile must not set Makepad property: $propertyName"
+    }
     $operations += [ordered]@{
         kind = "set"
         name = $propertyName
@@ -324,6 +593,26 @@ if ($environmentDepthProperties.ContainsKey($EnvironmentDepthNearMProperty) -and
     }
     if ($farM -le $nearM) {
         throw "Environment depth far_m $farM must be greater than near_m $nearM"
+    }
+}
+
+if ($stimulusVolumeProperties.ContainsKey($StimulusVolumeRandomizeMinHzProperty) -and $stimulusVolumeProperties.ContainsKey($StimulusVolumeRandomizeMaxHzProperty)) {
+    $minHz = Get-StimulusVolumeFloat -Name $StimulusVolumeRandomizeMinHzProperty -Value $stimulusVolumeProperties[$StimulusVolumeRandomizeMinHzProperty]
+    $maxHz = Get-StimulusVolumeFloat -Name $StimulusVolumeRandomizeMaxHzProperty -Value $stimulusVolumeProperties[$StimulusVolumeRandomizeMaxHzProperty]
+    if ($minHz -lt 0.0) {
+        throw "Stimulus volume randomize min_hz must be greater than or equal to 0"
+    }
+    if ($maxHz -gt 15.0) {
+        throw "Stimulus volume randomize max_hz must be less than or equal to 15"
+    }
+    if ($minHz -gt $maxHz) {
+        throw "Stimulus volume randomize min_hz $minHz must be less than or equal to max_hz $maxHz"
+    }
+}
+
+if ($stimulusVolumeProperties.ContainsKey($StimulusVolumeEnabledProperty) -and (Test-NormalizedTrue -Value $stimulusVolumeProperties[$StimulusVolumeEnabledProperty])) {
+    if (-not $stimulusVolumeProperties.ContainsKey($StimulusVolumeSafetyAckProperty) -or -not (Test-NormalizedTrue -Value $stimulusVolumeProperties[$StimulusVolumeSafetyAckProperty])) {
+        throw "Stimulus volume safety_ack must be true when stimulus_volume.enabled is true"
     }
 }
 

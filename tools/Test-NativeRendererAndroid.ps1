@@ -25,6 +25,10 @@ $cameraProjectionMetadataPath = Join-Path $appRoot "native\src\camera_projection
 $environmentDepthGeometryPath = Join-Path $appRoot "native\src\environment_depth_geometry.rs"
 $environmentDepthParticlesPath = Join-Path $appRoot "native\src\gpu_environment_depth_particles.rs"
 $openxrEnvironmentDepthPath = Join-Path $appRoot "native\src\openxr_environment_depth.rs"
+$gpuStimulusVolumePath = Join-Path $appRoot "native\src\gpu_stimulus_volume.rs"
+$openxrStimulusActionsPath = Join-Path $appRoot "native\src\openxr_stimulus_actions.rs"
+$projectionTargetStatePath = Join-Path $appRoot "native\src\projection_target_state.rs"
+$manifoldBreathBridgePath = Join-Path $appRoot "native\src\manifold_breath_bridge.rs"
 $guideBlurGraphPath = Join-Path $appRoot "native\src\guide_blur_graph.rs"
 $recordedHandReplayModulePath = Join-Path $appRoot "native\src\recorded_hand_replay.rs"
 $liveHandCompactPath = Join-Path $appRoot "native\src\live_hand_compact.rs"
@@ -50,6 +54,9 @@ $environmentDepthParticlesComputeShaderPath = Join-Path $appRoot "native\shaders
 $environmentDepthParticlesMetaComputeShaderPath = Join-Path $appRoot "native\shaders\environment_depth_particles_meta.comp.glsl"
 $environmentDepthParticlesVertexShaderPath = Join-Path $appRoot "native\shaders\environment_depth_particles.vert.glsl"
 $environmentDepthParticlesFragmentShaderPath = Join-Path $appRoot "native\shaders\environment_depth_particles.frag.glsl"
+$stimulusVolumeComputeShaderPath = Join-Path $appRoot "native\shaders\stimulus_volume_raymarch.comp.glsl"
+$stimulusVolumeVertexShaderPath = Join-Path $appRoot "native\shaders\stimulus_volume_projection.vert.glsl"
+$stimulusVolumeFragmentShaderPath = Join-Path $appRoot "native\shaders\stimulus_volume_projection.frag.glsl"
 $xrVulkanPath = Join-Path $appRoot "native\src\xr_vulkan.rs"
 $buildPath = Join-Path $PSScriptRoot "Build-NativeRendererAndroid.ps1"
 $checkAllPath = Join-Path $PSScriptRoot "check_all.ps1"
@@ -78,11 +85,14 @@ $directHwbHoldSyncReader6ProfilePath = Join-Path $repoRoot "fixtures\runtime-pro
 $directHwbHoldSyncReader8ProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-direct-hwb-hold-sync-reader8.profile.json"
 $directHwb1280x960ProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-direct-hwb-1280x960.profile.json"
 $hwbPeripheralStretchProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-hwb-peripheral-stretch.profile.json"
+$breathingRoomPmbScaleProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-breathing-room-pmb-scale.profile.json"
 $liveHandVisualDiagnosticProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-live-hand-visual-diagnostic.profile.json"
 $nativePassthroughGraftOnlyProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-graft-only.profile.json"
 $nativePassthroughHandsAndGraftsProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-hands-and-grafts.profile.json"
 $solidBlackHandsAndGraftsProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-solid-black-hands-and-grafts.profile.json"
 $solidBlackOpenXrHandsAnchorParticlesProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json"
+$solidBlackStimulusVolumeProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-solid-black-stimulus-volume.profile.json"
+$nativePassthroughStimulusVolumeProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-stimulus-volume.profile.json"
 $environmentDepthStatusProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-environment-depth-status.profile.json"
 $environmentDepthNativePassthroughParticlesProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-environment-depth-particles.profile.json"
 $environmentDepthNativePassthroughMetaParticlesProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json"
@@ -106,8 +116,63 @@ $environmentDepthInvalidRangeDamagedProfilePath = Join-Path $repoRoot "fixtures\
 $environmentDepthInvalidCapacityDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-invalid-capacity.profile.json"
 $environmentDepthInvalidDepthUnitsPolicyDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-invalid-depth-units-policy.profile.json"
 $environmentDepthInvalidSurfaceSupportDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-invalid-surface-support.profile.json"
+$stimulusVolumeInvalidRandomizeRangeDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-stimulus-volume-invalid-randomize-range.profile.json"
+$stimulusVolumeMissingSafetyAckDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-stimulus-volume-missing-safety-ack.profile.json"
+$breathingRoomMakepadDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-breathing-room-makepad-property.profile.json"
 
-foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $nativeCameraMetadataPath, $nativeCameraProfilesPath, $nativeCameraReaderSelectionPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $environmentDepthGeometryPath, $environmentDepthParticlesPath, $openxrEnvironmentDepthPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $cameraLumaDiagnosticShaderPath, $environmentDepthParticlesComputeShaderPath, $environmentDepthParticlesMetaComputeShaderPath, $environmentDepthParticlesVertexShaderPath, $environmentDepthParticlesFragmentShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $permissionPregrantToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $environmentDepthMotionProofToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $environmentDepthParticlesEvidenceFixturePath, $environmentDepthSurfaceSupportEvidenceFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowNoiseRecord30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath, $environmentDepthStatusProfilePath, $environmentDepthNativePassthroughParticlesProfilePath, $environmentDepthNativePassthroughMetaParticlesProfilePath, $environmentDepthNativePassthroughMetaParticlesLayer1ProfilePath, $environmentDepthNativePassthroughMetaParticlesLowCapacityProfilePath, $environmentDepthNativePassthroughMetaParticlesDebugColorsProfilePath, $environmentDepthLayer0ProfilePath, $environmentDepthLayer1ProfilePath, $environmentDepthRawDepthDebugProfilePath, $environmentDepthLocalSpaceProfilePath, $environmentDepthStageSpaceProfilePath, $environmentDepthCapacity65536ProfilePath, $environmentDepthStride8ProfilePath, $environmentDepthHandRemovalProfilePath, $environmentDepthLocalSurfelsProfilePath, $environmentDepthGlobalSurfacesProfilePath, $environmentDepthHybridSurfacesProfilePath, $environmentDepthSourceLayerAgreementProfilePath, $environmentDepthHighRateJsonDamagedProfilePath, $environmentDepthInvalidRangeDamagedProfilePath, $environmentDepthInvalidCapacityDamagedProfilePath, $environmentDepthInvalidDepthUnitsPolicyDamagedProfilePath, $environmentDepthInvalidSurfaceSupportDamagedProfilePath)) {
+$requiredPaths = @(
+    $manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath,
+    $androidEventsPath, $nativeCameraPath, $nativeCameraMetadataPath,
+    $nativeCameraProfilesPath, $nativeCameraReaderSelectionPath, $acameraSysPath,
+    $cameraProjectionPath, $cameraProjectionMetadataPath, $environmentDepthGeometryPath,
+    $environmentDepthParticlesPath, $openxrEnvironmentDepthPath, $gpuStimulusVolumePath,
+    $openxrStimulusActionsPath, $projectionTargetStatePath, $manifoldBreathBridgePath,
+    $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath,
+    $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath,
+    $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath,
+    $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath,
+    $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath,
+    $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath,
+    $gpuSdfOverlayShaderPath, $cameraLumaDiagnosticShaderPath,
+    $environmentDepthParticlesComputeShaderPath, $environmentDepthParticlesMetaComputeShaderPath,
+    $environmentDepthParticlesVertexShaderPath, $environmentDepthParticlesFragmentShaderPath,
+    $stimulusVolumeComputeShaderPath, $stimulusVolumeVertexShaderPath,
+    $stimulusVolumeFragmentShaderPath, $xrVulkanPath, $buildPath, $checkAllPath,
+    $runtimeProfileToolPath, $permissionPregrantToolPath, $runtimeEvidenceToolPath,
+    $runtimeSmokeToolPath, $environmentDepthMotionProofToolPath, $fixturePath,
+    $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath,
+    $environmentDepthParticlesEvidenceFixturePath, $environmentDepthSurfaceSupportEvidenceFixturePath,
+    $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath,
+    $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath,
+    $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath,
+    $directHwbLowNoise30ProfilePath, $directHwbLowNoiseRecord30ProfilePath,
+    $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath,
+    $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath,
+    $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath,
+    $breathingRoomPmbScaleProfilePath, $liveHandVisualDiagnosticProfilePath,
+    $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath,
+    $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath,
+    $solidBlackStimulusVolumeProfilePath, $nativePassthroughStimulusVolumeProfilePath,
+    $environmentDepthStatusProfilePath, $environmentDepthNativePassthroughParticlesProfilePath,
+    $environmentDepthNativePassthroughMetaParticlesProfilePath,
+    $environmentDepthNativePassthroughMetaParticlesLayer1ProfilePath,
+    $environmentDepthNativePassthroughMetaParticlesLowCapacityProfilePath,
+    $environmentDepthNativePassthroughMetaParticlesDebugColorsProfilePath,
+    $environmentDepthLayer0ProfilePath, $environmentDepthLayer1ProfilePath,
+    $environmentDepthRawDepthDebugProfilePath, $environmentDepthLocalSpaceProfilePath,
+    $environmentDepthStageSpaceProfilePath, $environmentDepthCapacity65536ProfilePath,
+    $environmentDepthStride8ProfilePath, $environmentDepthHandRemovalProfilePath,
+    $environmentDepthLocalSurfelsProfilePath, $environmentDepthGlobalSurfacesProfilePath,
+    $environmentDepthHybridSurfacesProfilePath, $environmentDepthSourceLayerAgreementProfilePath,
+    $environmentDepthHighRateJsonDamagedProfilePath, $environmentDepthInvalidRangeDamagedProfilePath,
+    $environmentDepthInvalidCapacityDamagedProfilePath,
+    $environmentDepthInvalidDepthUnitsPolicyDamagedProfilePath,
+    $environmentDepthInvalidSurfaceSupportDamagedProfilePath,
+    $stimulusVolumeInvalidRandomizeRangeDamagedProfilePath,
+    $stimulusVolumeMissingSafetyAckDamagedProfilePath, $breathingRoomMakepadDamagedProfilePath
+)
+
+foreach ($path in $requiredPaths) {
     if (-not (Test-Path $path)) {
         throw "Missing native renderer Android file: $path"
     }
@@ -129,6 +194,10 @@ $cameraProjectionMetadata = Get-Content -Raw -Path $cameraProjectionMetadataPath
 $environmentDepthGeometry = Get-Content -Raw -Path $environmentDepthGeometryPath
 $environmentDepthParticles = Get-Content -Raw -Path $environmentDepthParticlesPath
 $openxrEnvironmentDepth = Get-Content -Raw -Path $openxrEnvironmentDepthPath
+$gpuStimulusVolume = Get-Content -Raw -Path $gpuStimulusVolumePath
+$openxrStimulusActions = Get-Content -Raw -Path $openxrStimulusActionsPath
+$projectionTargetState = Get-Content -Raw -Path $projectionTargetStatePath
+$manifoldBreathBridge = Get-Content -Raw -Path $manifoldBreathBridgePath
 $guideBlurGraph = Get-Content -Raw -Path $guideBlurGraphPath
 $recordedHandReplay = Get-Content -Raw -Path $recordedHandReplayPath
 $recordedHandReplayModule = Get-Content -Raw -Path $recordedHandReplayModulePath
@@ -155,6 +224,9 @@ $environmentDepthParticlesComputeShader = Get-Content -Raw -Path $environmentDep
 $environmentDepthParticlesMetaComputeShader = Get-Content -Raw -Path $environmentDepthParticlesMetaComputeShaderPath
 $environmentDepthParticlesVertexShader = Get-Content -Raw -Path $environmentDepthParticlesVertexShaderPath
 $environmentDepthParticlesFragmentShader = Get-Content -Raw -Path $environmentDepthParticlesFragmentShaderPath
+$stimulusVolumeComputeShader = Get-Content -Raw -Path $stimulusVolumeComputeShaderPath
+$stimulusVolumeVertexShader = Get-Content -Raw -Path $stimulusVolumeVertexShaderPath
+$stimulusVolumeFragmentShader = Get-Content -Raw -Path $stimulusVolumeFragmentShaderPath
 $xrVulkan = Get-Content -Raw -Path $xrVulkanPath
 $buildScriptText = Get-Content -Raw -Path $buildPath
 $checkAllText = Get-Content -Raw -Path $checkAllPath
@@ -178,11 +250,14 @@ $directHwbHoldSyncReader6Profile = Get-Content -Raw -Path $directHwbHoldSyncRead
 $directHwbHoldSyncReader8Profile = Get-Content -Raw -Path $directHwbHoldSyncReader8ProfilePath
 $directHwb1280x960Profile = Get-Content -Raw -Path $directHwb1280x960ProfilePath
 $hwbPeripheralStretchProfile = Get-Content -Raw -Path $hwbPeripheralStretchProfilePath
+$breathingRoomPmbScaleProfile = Get-Content -Raw -Path $breathingRoomPmbScaleProfilePath
 $liveHandVisualDiagnosticProfile = Get-Content -Raw -Path $liveHandVisualDiagnosticProfilePath
 $nativePassthroughGraftOnlyProfile = Get-Content -Raw -Path $nativePassthroughGraftOnlyProfilePath
 $nativePassthroughHandsAndGraftsProfile = Get-Content -Raw -Path $nativePassthroughHandsAndGraftsProfilePath
 $solidBlackHandsAndGraftsProfile = Get-Content -Raw -Path $solidBlackHandsAndGraftsProfilePath
 $solidBlackOpenXrHandsAnchorParticlesProfile = Get-Content -Raw -Path $solidBlackOpenXrHandsAnchorParticlesProfilePath
+$solidBlackStimulusVolumeProfile = Get-Content -Raw -Path $solidBlackStimulusVolumeProfilePath
+$nativePassthroughStimulusVolumeProfile = Get-Content -Raw -Path $nativePassthroughStimulusVolumeProfilePath
 $environmentDepthStatusProfile = Get-Content -Raw -Path $environmentDepthStatusProfilePath
 $environmentDepthNativePassthroughParticlesProfile = Get-Content -Raw -Path $environmentDepthNativePassthroughParticlesProfilePath
 $environmentDepthNativePassthroughMetaParticlesProfile = Get-Content -Raw -Path $environmentDepthNativePassthroughMetaParticlesProfilePath
@@ -206,6 +281,9 @@ $environmentDepthInvalidRangeDamagedProfile = Get-Content -Raw -Path $environmen
 $environmentDepthInvalidCapacityDamagedProfile = Get-Content -Raw -Path $environmentDepthInvalidCapacityDamagedProfilePath
 $environmentDepthInvalidDepthUnitsPolicyDamagedProfile = Get-Content -Raw -Path $environmentDepthInvalidDepthUnitsPolicyDamagedProfilePath
 $environmentDepthInvalidSurfaceSupportDamagedProfile = Get-Content -Raw -Path $environmentDepthInvalidSurfaceSupportDamagedProfilePath
+$stimulusVolumeInvalidRandomizeRangeDamagedProfile = Get-Content -Raw -Path $stimulusVolumeInvalidRandomizeRangeDamagedProfilePath
+$breathingRoomMakepadDamagedProfile = Get-Content -Raw -Path $breathingRoomMakepadDamagedProfilePath
+$stimulusVolumeMissingSafetyAckDamagedProfile = Get-Content -Raw -Path $stimulusVolumeMissingSafetyAckDamagedProfilePath
 $fixture = Get-Content -Raw -Path $fixturePath
 
 if ($manifest -notmatch 'package="io\.github\.mesmerprism\.rustyquest\.native_renderer"') {
@@ -1017,7 +1095,7 @@ $forbiddenTokens = @(
     "HardwareBuffer\.fromHardwareBuffer"
 )
 foreach ($token in $forbiddenTokens) {
-    if ($sourceCombined -match $token) {
+    if ($sourceCombined -cmatch $token) {
         throw "Native renderer Android scaffold contains forbidden route token: $token"
     }
 }
@@ -1684,6 +1762,33 @@ foreach ($token in @(
     }
 }
 foreach ($token in @(
+    'profile.quest.native_renderer.breathing_room_pmb_scale',
+    'quest-native-renderer-breathing-room-pmb-scale.profile.json',
+    'debug.rustyquest.native_renderer.projection.target.controls',
+    'debug.rustyquest.native_renderer.projection.target.tuned.max.scale',
+    'debug.rustyquest.native_renderer.projection.target.joystick.controls',
+    'debug.rustyquest.native_renderer.projection.target.breath.bridge.mode',
+    'debug.rustyquest.native_renderer.projection.target.breath.state.stream',
+    'debug.rustyquest.native_renderer.projection.target.breath.value.stream',
+    'debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload',
+    'debug.rustyquest.native_renderer.manifold.broker.host',
+    'debug.rustyquest.native_renderer.manifold.broker.port',
+    'debug.rustyquest.native_renderer.manifold.broker.path',
+    'stream.breath.state',
+    'stream.breath.state.value',
+    'breathBridgeMode=manifold-state',
+    'projectionTargetRuntimeAuthority=native-renderer',
+    'startupDefaultsAuthority=runtime-profile',
+    'pmbSourceAuthority=hostess-manifold',
+    'rightControllerThumbstickY=/user/hand/right/input/thumbstick/y',
+    'highRateBreathViaAndroidProperties=false',
+    'breathHighRateJsonPayload=false'
+)) {
+    if ($breathingRoomPmbScaleProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer Breathing Room PMB scale profile missing token: $token"
+    }
+}
+foreach ($token in @(
     'profile.quest.native_renderer.live_hand_visual_diagnostic',
     'quest-native-renderer-live-hand-visual-diagnostic.profile.json',
     'debug.rustyquest.native_renderer.render.mode',
@@ -1827,6 +1932,48 @@ foreach ($token in @(
     }
 }
 foreach ($token in @(
+    'profile.quest.native_renderer.solid_black_stimulus_volume',
+    'quest-native-renderer-solid-black-stimulus-volume.profile.json',
+    'solid-black-stimulus-volume',
+    'debug.rustyquest.native_renderer.stimulus_volume.enabled',
+    'debug.rustyquest.native_renderer.stimulus_volume.profile',
+    'volume-only-bright-interference',
+    'debug.rustyquest.native_renderer.stimulus_volume.composition',
+    'opaque-black-projection',
+    'debug.rustyquest.native_renderer.stimulus_volume.render_target',
+    '512x512x2-rgba16f',
+    'debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples',
+    '"8"',
+    'debug.rustyquest.native_renderer.stimulus_volume.randomize.min_hz',
+    '"8.0"',
+    'debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz',
+    '"15.0"',
+    'debug.rustyquest.native_renderer.stimulus_volume.safety_ack',
+    'RUSTY_QUEST_NATIVE_RENDERER channel=stimulus-volume',
+    'renderPath=native-vulkan-stimulus-volume',
+    'makepadRuntime=false',
+    'volumeColorMode=DepthRamp',
+    'projectionLayerAlphaBlend=false'
+)) {
+    if ($solidBlackStimulusVolumeProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer solid black stimulus-volume profile missing token: $token"
+    }
+}
+foreach ($token in @(
+    'profile.quest.native_renderer.native_passthrough_stimulus_volume',
+    'quest-native-renderer-native-passthrough-stimulus-volume.profile.json',
+    'native-passthrough-stimulus-volume',
+    'nativePassthroughRequested=true',
+    'debug.rustyquest.native_renderer.stimulus_volume.enabled',
+    'volume-only-bright-interference',
+    'rightControllerPrimaryButtonRandomize=true',
+    'projectionLayerAlphaBlend=false'
+)) {
+    if ($nativePassthroughStimulusVolumeProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer native passthrough stimulus-volume profile missing token: $token"
+    }
+}
+foreach ($token in @(
     'mod environment_depth_geometry',
     'mod gpu_environment_depth_particles',
     'mod openxr_environment_depth',
@@ -1953,6 +2100,70 @@ foreach ($token in @(
 )) {
     if ("$nativeBuildRs`n$nativeLib`n$environmentDepthParticles`n$openxrEnvironmentDepth`n$environmentDepthParticlesComputeShader`n$environmentDepthParticlesMetaComputeShader`n$environmentDepthParticlesVertexShader`n$environmentDepthParticlesFragmentShader`n$xrVulkan" -notmatch [regex]::Escape($token)) {
         throw "Native renderer environment-depth particle GPU proof route missing token: $token"
+    }
+}
+foreach ($token in @(
+    'mod gpu_stimulus_volume',
+    'mod openxr_stimulus_actions',
+    'GpuStimulusVolumeRenderer',
+    'GpuStimulusVolumeFrameStats',
+    'StimulusVolumeActions',
+    'stimulus_volume_raymarch.comp.glsl',
+    'stimulus_volume_projection.vert.glsl',
+    'stimulus_volume_projection.frag.glsl',
+    'image2DArray',
+    'sampler2DArray',
+    'PipelineBindPoint::COMPUTE',
+    'cmd_dispatch',
+    'PipelineBindPoint::GRAPHICS',
+    'cmd_draw',
+    'renderPath=native-vulkan-stimulus-volume',
+    'makepadRuntime=false',
+    'hostessRuntime=false',
+    'volumeOnly=true',
+    'volumeColorMode=DepthRamp',
+    'volumeCompositing=opaque-black-projection',
+    'randomizeHzRange={:.3}-{:.3}',
+    'stimulusSafetyClass=PhotosensitiveRisk',
+    'stimulusVolumeGpuBuffersResident=true',
+    'stimulusVolumeExpandedVolumeUploadPerFrame=false',
+    'right_primary_randomize',
+    'rightControllerPrimaryButtonRandomize=true',
+    '/user/hand/right/input/a/click',
+    'sync_actions',
+    'projection_layer_alpha_blend',
+    'record_compute_frame',
+    'record_projection_eye'
+)) {
+    if ("$nativeBuildRs`n$nativeLib`n$nativeRendererOptions`n$gpuStimulusVolume`n$openxrStimulusActions`n$stimulusVolumeComputeShader`n$stimulusVolumeVertexShader`n$stimulusVolumeFragmentShader`n$xrVulkan" -notmatch [regex]::Escape($token)) {
+        throw "Native renderer stimulus-volume GPU route missing token: $token"
+    }
+}
+foreach ($token in @(
+    'mod projection_target_state',
+    'mod manifold_breath_bridge',
+    'ProjectionTargetState',
+    'ProjectionTargetSettings',
+    'ProjectionTargetInput',
+    'BreathBridgeMode',
+    'ManifoldBreathBridge',
+    'stream.breath.state',
+    'stream.breath.state.value',
+    'subscribe',
+    'right_thumbstick_y',
+    'right_primary_reset',
+    'right_grip_pose',
+    '/user/hand/right/input/thumbstick/y',
+    '/user/hand/right/input/grip/pose',
+    'projectionTargetRuntimeAuthority=native-renderer',
+    'startupDefaultsAuthority=runtime-profile',
+    'pmbSourceAuthority=hostess-manifold',
+    'highRateBreathViaAndroidProperties=false',
+    'highRatePoseViaAndroidProperties=false',
+    'debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload'
+)) {
+    if ("$nativeLib`n$nativeRendererOptions`n$projectionTargetState`n$manifoldBreathBridge`n$openxrStimulusActions`n$xrVulkan" -notmatch [regex]::Escape($token)) {
+        throw "Native renderer breathing-room projection target route missing token: $token"
     }
 }
 foreach ($token in @(
@@ -2437,6 +2648,32 @@ foreach ($token in @(
         throw "Native renderer damaged environment-depth invalid surface-support profile missing token: $token"
     }
 }
+foreach ($token in @(
+    'stimulus_volume.randomize.max_hz',
+    '"18.0"'
+)) {
+    if ($stimulusVolumeInvalidRandomizeRangeDamagedProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer damaged stimulus-volume invalid-randomize-range profile missing token: $token"
+    }
+}
+foreach ($token in @(
+    'stimulus_volume.enabled',
+    '"true"',
+    'stimulus_volume.safety_ack'
+)) {
+    if ($stimulusVolumeMissingSafetyAckDamagedProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer damaged stimulus-volume missing-safety-ack profile missing token: $token"
+    }
+}
+foreach ($token in @(
+    'profile.quest.native_renderer.damaged_breathing_room_makepad_property',
+    'debug.rustyquest.native_renderer.projection.target.controls',
+    'debug.rustyquest.makepad.projection.target.scale'
+)) {
+    if ($breathingRoomMakepadDamagedProfile -notmatch [regex]::Escape($token)) {
+        throw "Native renderer damaged Breathing Room Makepad profile missing token: $token"
+    }
+}
 if ($checkAllText -notmatch 'quest-native-renderer-live-hand-visual-diagnostic\.profile\.json' -or $checkAllText -notmatch 'native-renderer-live-hand-visual-diagnostic-property-write-plan\.json') {
     throw "check_all.ps1 must dry-run the native renderer live hand diagnostic profile."
 }
@@ -2470,6 +2707,9 @@ if ($checkAllText -notmatch 'quest-native-renderer-direct-hwb-1280x960\.profile\
 if ($checkAllText -notmatch 'quest-native-renderer-hwb-peripheral-stretch\.profile\.json' -or $checkAllText -notmatch 'native-renderer-hwb-peripheral-stretch-property-write-plan\.json') {
     throw "check_all.ps1 must dry-run the native renderer HWB peripheral stretch profile."
 }
+if ($checkAllText -notmatch 'quest-native-renderer-breathing-room-pmb-scale\.profile\.json' -or $checkAllText -notmatch 'native-renderer-breathing-room-pmb-scale-property-write-plan\.json') {
+    throw "check_all.ps1 must dry-run the native renderer Breathing Room PMB scale profile."
+}
 if ($checkAllText -notmatch 'quest-native-renderer-native-passthrough-graft-only\.profile\.json' -or $checkAllText -notmatch 'native-renderer-native-passthrough-graft-only-property-write-plan\.json') {
     throw "check_all.ps1 must dry-run the native renderer native passthrough graft-only profile."
 }
@@ -2481,6 +2721,12 @@ if ($checkAllText -notmatch 'quest-native-renderer-solid-black-hands-and-grafts\
 }
 if ($checkAllText -notmatch 'quest-native-renderer-solid-black-openxr-hands-anchor-particles\.profile\.json' -or $checkAllText -notmatch 'native-renderer-solid-black-openxr-hands-anchor-particles-property-write-plan\.json') {
     throw "check_all.ps1 must dry-run the native renderer solid black OpenXR hands anchor particles profile."
+}
+if ($checkAllText -notmatch 'quest-native-renderer-solid-black-stimulus-volume\.profile\.json' -or $checkAllText -notmatch 'native-renderer-solid-black-stimulus-volume-property-write-plan\.json') {
+    throw "check_all.ps1 must dry-run the native renderer solid black stimulus-volume profile."
+}
+if ($checkAllText -notmatch 'quest-native-renderer-native-passthrough-stimulus-volume\.profile\.json' -or $checkAllText -notmatch 'native-renderer-native-passthrough-stimulus-volume-property-write-plan\.json') {
+    throw "check_all.ps1 must dry-run the native renderer native passthrough stimulus-volume profile."
 }
 if ($checkAllText -notmatch 'quest-native-renderer-environment-depth-status\.profile\.json' -or $checkAllText -notmatch 'native-renderer-environment-depth-status-property-write-plan\.json') {
     throw "check_all.ps1 must dry-run the native renderer environment-depth status profile."
@@ -2526,6 +2772,21 @@ foreach ($profileFile in @(
         throw "check_all.ps1 must dry-run the native renderer environment-depth surface-support profile: $profileFile"
     }
 }
+
+& $runtimeProfileToolPath `
+    -ProfilePath $solidBlackStimulusVolumeProfilePath `
+    -DryRun `
+    -Out "local-artifacts\native-renderer-solid-black-stimulus-volume-property-write-plan.json" | Out-Null
+
+& $runtimeProfileToolPath `
+    -ProfilePath $nativePassthroughStimulusVolumeProfilePath `
+    -DryRun `
+    -Out "local-artifacts\native-renderer-native-passthrough-stimulus-volume-property-write-plan.json" | Out-Null
+
+& $runtimeProfileToolPath `
+    -ProfilePath $breathingRoomPmbScaleProfilePath `
+    -DryRun `
+    -Out "local-artifacts\native-renderer-breathing-room-pmb-scale-property-write-plan.json" | Out-Null
 
 & $runtimeProfileToolPath `
     -ProfilePath $environmentDepthStatusProfilePath `
@@ -2588,6 +2849,32 @@ foreach ($damagedProfile in @($environmentDepthHighRateJsonDamagedProfilePath, $
         if ($_.Exception.Message -like "Damaged environment-depth runtime profile was accepted:*") {
             throw
         }
+    }
+}
+
+foreach ($damagedProfile in @($stimulusVolumeInvalidRandomizeRangeDamagedProfilePath, $stimulusVolumeMissingSafetyAckDamagedProfilePath)) {
+    try {
+        & $runtimeProfileToolPath `
+            -ProfilePath $damagedProfile `
+            -DryRun `
+            -Out "local-artifacts\native-renderer-damaged-stimulus-volume-property-write-plan.json" | Out-Null
+        throw "Damaged stimulus-volume runtime profile was accepted: $damagedProfile"
+    } catch {
+        if ($_.Exception.Message -like "Damaged stimulus-volume runtime profile was accepted:*") {
+            throw
+        }
+    }
+}
+
+try {
+    & $runtimeProfileToolPath `
+        -ProfilePath $breathingRoomMakepadDamagedProfilePath `
+        -DryRun `
+        -Out "local-artifacts\native-renderer-damaged-breathing-room-property-write-plan.json" | Out-Null
+    throw "Damaged Breathing Room runtime profile was accepted: $breathingRoomMakepadDamagedProfilePath"
+} catch {
+    if ($_.Exception.Message -like "Damaged Breathing Room runtime profile was accepted:*") {
+        throw
     }
 }
 

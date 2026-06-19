@@ -28,20 +28,22 @@ use crate::{
     },
     gpu_mesh_replay::{GpuMeshReplayResources, GpuMeshReplayStats},
     gpu_sdf_field::{GpuSdfFieldFrameStats, GpuSdfFieldRenderer},
+    gpu_stimulus_volume::{GpuStimulusVolumeFrameStats, GpuStimulusVolumeRenderer},
     guide_blur_graph::{GuideBlurGraphFrameStats, GuideBlurGraphRenderer},
     live_hand_compact::{LiveHandCompactFrameSet, LiveHandCompactInput, LiveHandCompactStats},
+    manifold_breath_bridge::ManifoldBreathBridge,
     native_camera::NativeCameraRuntime,
     native_renderer_options::{
         CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings, NativeCameraOutputMode,
         NativeCameraQualityProfile, NativeCameraSyncMode, NativeEnvironmentDepthSettings,
         NativeHandAnchorParticleOrderingMode, NativeHandAnchorParticleSettings,
         NativePrivateLayerSettings, NativeProjectionBorderStretchSettings,
-        NativeRendererRenderMode, NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
-        PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED,
-        PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_READER_MAX_IMAGES,
-        PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
-        PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
-        PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
+        NativeRendererRenderMode, NativeRendererRuntimeOptions, NativeStimulusVolumeSettings,
+        NativeSwapchainColorFormatMode, PROP_CAMERA_DIRECT_BORDER_OPACITY,
+        PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED, PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE,
+        PROP_CAMERA_READER_MAX_IMAGES, PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING,
+        PROP_CAMERA_SYNC_MODE, PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL,
+        PROP_HAND_ANCHOR_PARTICLES_ENABLED, PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
         PROP_HAND_ANCHOR_PARTICLES_RADIUS_M, PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_BLEND_MODE,
@@ -57,7 +59,9 @@ use crate::{
         elapsed_ms, FrameCpuTimings, GpuStageTimings, GpuTimestampStage, GpuTimestampTracker,
     },
     openxr_environment_depth::OpenXrEnvironmentDepthRuntime,
+    openxr_stimulus_actions::StimulusVolumeActions,
     private_extension_slot::{PrivateExtensionSlotFrameStats, PrivateExtensionSlotRuntime},
+    projection_target_state::{ProjectionTargetSettings, ProjectionTargetState},
     recorded_hand_replay::{
         RecordedHandReplaySet, RecordedHandReplaySummary, RecordedHandSkinningFrame,
     },
@@ -236,6 +240,23 @@ unsafe fn run_projection_loop_inner(
         &enabled_extensions,
         &[],
     )?;
+    let mut stimulus_actions = match StimulusVolumeActions::new(
+        &xr_instance,
+        runtime_options.stimulus_volume_settings,
+        runtime_options.projection_target_settings.clone(),
+    ) {
+        Ok(actions) => actions,
+        Err(error) => {
+            crate::marker(
+                "stimulus-volume-input",
+                format!(
+                    "status=unavailable reason={} actionSetAttached=false rightControllerPrimaryButtonRandomize=false",
+                    crate::sanitize(&error)
+                ),
+            );
+            None
+        }
+    };
 
     let properties = xr_instance
         .properties()
@@ -271,7 +292,7 @@ unsafe fn run_projection_loop_inner(
             alpha_blend_supported,
             environment_blend_modes_marker(&environment_blend_modes),
             environment_blend_mode,
-            runtime_options.render_mode.uses_native_passthrough(),
+            runtime_options.render_mode.projection_layer_alpha_blend(),
             runtime_options.render_mode.camera_runtime_mode(),
             runtime_options.render_mode.disabled_camera_projection_path(),
         ),
@@ -401,6 +422,18 @@ unsafe fn run_projection_loop_inner(
             },
         )
         .map_err(|error| format!("create OpenXR Vulkan session: {error}"))?;
+    if let Some(actions) = stimulus_actions.as_ref() {
+        if let Err(error) = actions.attach_session(&session) {
+            crate::marker(
+                "stimulus-volume-input",
+                format!(
+                    "status=unavailable reason={} actionSetAttached=false rightControllerPrimaryButtonRandomize=false",
+                    crate::sanitize(&error)
+                ),
+            );
+            stimulus_actions = None;
+        }
+    }
     let native_passthrough = NativePassthroughRuntime::create(
         &session,
         runtime_options.render_mode,
@@ -450,6 +483,8 @@ unsafe fn run_projection_loop_inner(
     let hand_mesh_real_hands_visible = runtime_options.hand_mesh_real_hands_visible;
     let hand_anchor_particle_settings = runtime_options.hand_anchor_particle_settings;
     let environment_depth_settings = runtime_options.environment_depth_settings;
+    let stimulus_volume_settings = runtime_options.stimulus_volume_settings;
+    let projection_target_settings = runtime_options.projection_target_settings.clone();
     let projection_border_stretch_settings = runtime_options.projection_border_stretch_settings;
     let private_layer_settings = runtime_options.private_layer_settings;
     crate::marker(
@@ -525,6 +560,15 @@ unsafe fn run_projection_loop_inner(
                 "metadata-target-only"
             },
             projection_border_stretch_settings.marker_fields()
+        ),
+    );
+    crate::marker(
+        "projection-target",
+        format!(
+            "status=config renderMode={} customStereoProjectionEnabled={} {} startupDefaultsAuthority=runtime-profile finalStateAuthority=native-renderer pmbSourceAuthority=hostess-manifold",
+            render_mode.marker_value(),
+            render_mode.uses_custom_stereo_projection(),
+            projection_target_settings.marker_fields(),
         ),
     );
     crate::marker(
@@ -616,6 +660,29 @@ unsafe fn run_projection_loop_inner(
             PrivateExtensionSlotRuntime::config_marker_fields(private_layer_settings)
         ),
     );
+    let mut gpu_stimulus_volume_renderer = if stimulus_volume_settings.enabled {
+        match GpuStimulusVolumeRenderer::new(
+            &vk_device,
+            &memory_properties,
+            render_pass,
+            stimulus_volume_settings,
+        ) {
+            Ok(renderer) => Some(renderer),
+            Err(error) => {
+                crate::marker(
+                    "stimulus-volume",
+                    format!(
+                        "status=unavailable reason={} stimulusVolumeReady=false {}",
+                        crate::sanitize(&error),
+                        stimulus_volume_settings.marker_fields()
+                    ),
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
     let mut gpu_environment_depth_particle_renderer = if environment_depth_settings
         .synthetic_gpu_proof_requested()
     {
@@ -673,33 +740,36 @@ unsafe fn run_projection_loop_inner(
     } else {
         None
     };
-    let mut gpu_sdf_field_renderer = match GpuSdfFieldRenderer::new(
-        &vk_device,
-        &memory_properties,
-        render_pass,
-        replay,
-    ) {
-        Ok(renderer) => {
-            if !sdf_visual_enabled {
-                crate::marker(
+    let mut gpu_sdf_field_renderer = if render_mode.uses_stimulus_volume() {
+        crate::marker(
+            "gpu-sdf-field",
+            "status=disabled reason=stimulus-volume-route dynamicSdfReady=false sdfVisualEffectVisible=false gpuSdfFieldReady=false",
+        );
+        None
+    } else {
+        match GpuSdfFieldRenderer::new(&vk_device, &memory_properties, render_pass, replay) {
+            Ok(renderer) => {
+                if !sdf_visual_enabled {
+                    crate::marker(
                         "gpu-sdf-field",
                         format!(
                             "status=skinning-active-sdf-overlay-deferred reason=property-disabled property={} dynamicSdfReady=false sdfVisualEffectVisible=false gpuSdfFieldReady=false gpuSdfOverlayVisible=false cpuSdfPerFrame=false meshToSdfKernel=false targetSpaceMeshToSdfKernelAvailable=true fullSkinnedMeshSdfReady=false compactJointSkinningKernel=true jointMatrixSkinningKernel=false jointMatrixUploadPerFrame=false compactJointPoseUploadPerFrame=true sourceMeshToSdfKernel=false",
                             PROP_ENABLE_SDF_VISUAL
                         ),
                     );
+                }
+                Some(renderer)
             }
-            Some(renderer)
-        }
-        Err(error) => {
-            crate::marker(
+            Err(error) => {
+                crate::marker(
                     "gpu-sdf-field",
                     format!(
                         "status=error reason={} dynamicSdfReady=false sdfVisualEffectVisible=false sdfComputePath=native-vulkan-compute-recorded-skinned-mesh-sdf-field legacySdfComputePath=native-vulkan-compute-recorded-validation-mesh-sdf-field cpuSdfPerFrame=false meshToSdfKernel=false targetSpaceMeshToSdfKernelAvailable=true fullSkinnedMeshSdfReady=false compactJointSkinningKernel=false jointMatrixSkinningKernel=false jointMatrixUploadPerFrame=false compactJointPoseUploadPerFrame=false sourceMeshToSdfKernel=false",
                         crate::sanitize(&error)
                     ),
                 );
-            None
+                None
+            }
         }
     };
     let mut gpu_hand_mesh_visual_renderer = if let Some(renderer) = gpu_sdf_field_renderer.as_ref()
@@ -764,28 +834,32 @@ unsafe fn run_projection_loop_inner(
     } else {
         None
     };
-    let mut secondary_gpu_sdf_field_renderer = match GpuSdfFieldRenderer::new(
-        &vk_device,
-        &memory_properties,
-        render_pass,
-        secondary_replay,
-    ) {
-        Ok(renderer) => {
-            crate::marker(
-                "hand-mesh-visual",
-                "status=secondary-gpu-skinning-created handMeshVisualSecondaryPath=live-second-hand-gpu-skinned-resident-triangle-draw liveHandMeshVisualBothHandsPath=dual-resident-gpu-skinned-mesh-draw secondarySdfOverlay=false",
-            );
-            Some(renderer)
-        }
-        Err(error) => {
-            crate::marker(
-                "hand-mesh-visual",
-                format!(
-                    "status=secondary-unavailable reason={} liveHandMeshVisualBothHandsPath=single-hand-only secondarySdfOverlay=false",
-                    crate::sanitize(&error)
-                ),
-            );
-            None
+    let mut secondary_gpu_sdf_field_renderer = if render_mode.uses_stimulus_volume() {
+        None
+    } else {
+        match GpuSdfFieldRenderer::new(
+            &vk_device,
+            &memory_properties,
+            render_pass,
+            secondary_replay,
+        ) {
+            Ok(renderer) => {
+                crate::marker(
+                    "hand-mesh-visual",
+                    "status=secondary-gpu-skinning-created handMeshVisualSecondaryPath=live-second-hand-gpu-skinned-resident-triangle-draw liveHandMeshVisualBothHandsPath=dual-resident-gpu-skinned-mesh-draw secondarySdfOverlay=false",
+                );
+                Some(renderer)
+            }
+            Err(error) => {
+                crate::marker(
+                    "hand-mesh-visual",
+                    format!(
+                        "status=secondary-unavailable reason={} liveHandMeshVisualBothHandsPath=single-hand-only secondarySdfOverlay=false",
+                        crate::sanitize(&error)
+                    ),
+                );
+                None
+            }
         }
     };
     let mut secondary_gpu_hand_mesh_visual_renderer = if let Some(renderer) =
@@ -980,6 +1054,8 @@ unsafe fn run_projection_loop_inner(
         render_mode,
         environment_blend_mode,
         native_passthrough.as_ref(),
+        stimulus_actions.as_mut(),
+        gpu_stimulus_volume_renderer.as_mut(),
         replay,
         secondary_replay,
         &gpu_mesh_stats,
@@ -1004,6 +1080,8 @@ unsafe fn run_projection_loop_inner(
         hand_mesh_real_hands_visible,
         hand_anchor_particle_settings,
         environment_depth_settings,
+        stimulus_volume_settings,
+        projection_target_settings,
         camera_output_mode,
         camera_ycbcr_mode,
         camera_resolution_profile,
@@ -1041,6 +1119,9 @@ unsafe fn run_projection_loop_inner(
         renderer.destroy(&vk_device);
     }
     if let Some(renderer) = gpu_environment_depth_particle_renderer.as_mut() {
+        renderer.destroy(&vk_device);
+    }
+    if let Some(renderer) = gpu_stimulus_volume_renderer.as_mut() {
         renderer.destroy(&vk_device);
     }
     if let Some(renderer) = gpu_sdf_field_renderer.as_mut() {
@@ -1357,6 +1438,8 @@ unsafe fn run_projection_frames(
     render_mode: NativeRendererRenderMode,
     environment_blend_mode: xr::EnvironmentBlendMode,
     native_passthrough: Option<&NativePassthroughRuntime>,
+    mut stimulus_actions: Option<&mut StimulusVolumeActions>,
+    mut gpu_stimulus_volume_renderer: Option<&mut GpuStimulusVolumeRenderer>,
     replay: &RecordedHandReplaySummary,
     secondary_replay: &RecordedHandReplaySummary,
     gpu_mesh_stats: &GpuMeshReplayStats,
@@ -1381,6 +1464,8 @@ unsafe fn run_projection_frames(
     hand_mesh_real_hands_visible: bool,
     hand_anchor_particle_settings: NativeHandAnchorParticleSettings,
     environment_depth_settings: NativeEnvironmentDepthSettings,
+    stimulus_volume_settings: NativeStimulusVolumeSettings,
+    projection_target_settings: ProjectionTargetSettings,
     camera_output_mode: NativeCameraOutputMode,
     camera_ycbcr_mode: crate::native_renderer_options::NativeCameraYcbcrMode,
     camera_resolution_profile: crate::native_renderer_options::NativeCameraResolutionProfile,
@@ -1405,6 +1490,24 @@ unsafe fn run_projection_frames(
     let mut camera_projection_stats = CameraProjectionFrameStats::default();
     let mut last_camera_import_cache_hits = 0_u64;
     let mut last_camera_import_cache_misses = 0_u64;
+    let mut projection_target_state =
+        ProjectionTargetState::new(projection_target_settings.clone());
+    let mut breath_bridge = ManifoldBreathBridge::start(projection_target_settings);
+    let mut previous_frame_instant = Instant::now();
+    crate::marker(
+        "projection-target",
+        format!(
+            "status=runtime-initialized {} bridgeStarted={}",
+            projection_target_state.marker_fields(),
+            breath_bridge.is_some()
+        ),
+    );
+    if let Some(bridge) = breath_bridge.as_ref() {
+        crate::marker(
+            "projection-target",
+            format!("status=bridge-config {}", bridge.marker_fields()),
+        );
+    }
 
     loop {
         crate::android_events::pump_activity_events(
@@ -1535,6 +1638,46 @@ unsafe fn run_projection_frames(
                 .map_err(|error| format!("end OpenXR frame without views: {error}"))?;
             frame_count = frame_count.saturating_add(1);
             continue;
+        }
+
+        let frame_instant = Instant::now();
+        let dt_seconds = (frame_instant - previous_frame_instant)
+            .as_secs_f32()
+            .clamp(0.0, 1.0);
+        previous_frame_instant = frame_instant;
+
+        if let Some(actions) = stimulus_actions.as_deref_mut() {
+            let controller_events = actions.sync_and_poll(session, frame_count, dt_seconds);
+            for input in controller_events.projection_target_inputs {
+                projection_target_state.apply_input(input);
+            }
+            if controller_events.stimulus_randomize_triggered {
+                if let Some(renderer) = gpu_stimulus_volume_renderer.as_deref_mut() {
+                    renderer.randomize(stimulus_volume_settings, frame_count);
+                }
+            }
+        }
+        if let Some(bridge) = breath_bridge.as_mut() {
+            if let Some(input) = bridge.poll_input(dt_seconds, frame_count) {
+                projection_target_state.apply_input(input);
+            }
+        }
+        projection_target_state.update_frame(dt_seconds);
+        if frame_count == 0 || frame_count % 120 == 0 {
+            let left_effective_rect =
+                projection_target_state.effective_rect(projection_metadata.rect_for_eye(0));
+            let right_effective_rect =
+                projection_target_state.effective_rect(projection_metadata.rect_for_eye(1));
+            crate::marker(
+                "projection-target",
+                format!(
+                    "status=effective frame={} leftEffectiveTargetScreenUvRect={} rightEffectiveTargetScreenUvRect={} {}",
+                    frame_count,
+                    left_effective_rect.as_xywh_token(),
+                    right_effective_rect.as_xywh_token(),
+                    projection_target_state.marker_fields(),
+                ),
+            );
         }
 
         let image_index = swapchain
@@ -2140,6 +2283,12 @@ unsafe fn run_projection_frames(
             frame_slot,
             GpuTimestampStage::ProjectionComposite,
         );
+        let stimulus_volume_stats =
+            if let Some(renderer) = gpu_stimulus_volume_renderer.as_deref_mut() {
+                renderer.record_compute_frame(vk_device, cmd, stimulus_volume_settings, frame_count)
+            } else {
+                GpuStimulusVolumeFrameStats::unavailable(stimulus_volume_settings)
+            };
         let replay_visual_stats = record_projection_diagnostic(
             vk_device,
             cmd,
@@ -2154,6 +2303,9 @@ unsafe fn run_projection_frames(
             replay_visual_proof_enabled,
             projection_border_stretch_settings,
             prepared_camera_projection.as_ref(),
+            gpu_stimulus_volume_renderer.as_deref(),
+            &stimulus_volume_stats,
+            stimulus_volume_settings,
             private_extension_slot_runtime,
             &private_extension_stats,
             private_layer_settings,
@@ -2176,6 +2328,7 @@ unsafe fn run_projection_frames(
                 && hand_mesh_visual_diagnostic_settings.enabled,
             hand_mesh_visual_diagnostic_settings,
             projection_metadata,
+            &projection_target_state,
         );
         gpu_timestamp_tracker.write_stage_end(
             vk_device,
@@ -2238,7 +2391,7 @@ unsafe fn run_projection_frames(
                         .image_rect(rect),
                 ),
         ];
-        let projection_layer_flags = if render_mode.uses_native_passthrough() {
+        let projection_layer_flags = if render_mode.projection_layer_alpha_blend() {
             xr::CompositionLayerFlags::BLEND_TEXTURE_SOURCE_ALPHA
                 | xr::CompositionLayerFlags::CORRECT_CHROMATIC_ABERRATION
         } else {
@@ -2289,6 +2442,8 @@ unsafe fn run_projection_frames(
                 &hand_anchor_particle_stats,
                 &environment_depth_particle_stats,
                 environment_depth_settings,
+                &stimulus_volume_stats,
+                stimulus_volume_settings,
                 &gpu_sdf_stats,
                 &guide_blur_stats,
                 private_extension_stats,
@@ -2593,6 +2748,9 @@ unsafe fn record_projection_diagnostic(
     draw_recorded_replay_overlay: bool,
     projection_settings: NativeProjectionBorderStretchSettings,
     prepared_camera_projection: Option<&PreparedCameraProjection>,
+    gpu_stimulus_volume_renderer: Option<&GpuStimulusVolumeRenderer>,
+    stimulus_volume_stats: &GpuStimulusVolumeFrameStats,
+    stimulus_volume_settings: NativeStimulusVolumeSettings,
     private_extension_slot_runtime: &PrivateExtensionSlotRuntime,
     private_extension_stats: &PrivateExtensionSlotFrameStats,
     private_layer_settings: NativePrivateLayerSettings,
@@ -2614,10 +2772,12 @@ unsafe fn record_projection_diagnostic(
     draw_live_hand_target_overlay: bool,
     diagnostic_settings: HandMeshVisualDiagnosticSettings,
     projection_metadata: &CameraProjectionMetadata,
+    projection_target_state: &ProjectionTargetState,
 ) -> ReplayVisualStats {
     let buffer = &swapchain.buffers[image_index];
     let mut visual_stats = ReplayVisualStats::default();
-    let passthrough_graft_only = render_mode.uses_native_passthrough();
+    let passthrough_alpha_clear = render_mode.projection_layer_alpha_blend();
+    let stimulus_volume_route = render_mode.uses_stimulus_volume();
     let custom_stereo_projection = render_mode.uses_custom_stereo_projection();
     let draw_base_hand_meshes = should_draw_base_hand_meshes(
         hand_mesh_real_hands_visible,
@@ -2625,15 +2785,16 @@ unsafe fn record_projection_diagnostic(
         diagnostic_settings,
     );
     for (eye_index, eye) in buffer.eyes.iter().enumerate() {
-        let target_rect = projection_metadata.rect_for_eye(eye_index);
+        let target_rect =
+            projection_target_state.effective_rect(projection_metadata.rect_for_eye(eye_index));
         let eye_projection = views
             .get(eye_index)
             .map(hand_mesh_visual_eye_projection)
             .unwrap_or_default();
-        let background = if passthrough_graft_only {
-            [0.0, 0.0, 0.0, 0.0]
-        } else if render_mode.uses_solid_black_background() {
+        let background = if stimulus_volume_route || render_mode.uses_solid_black_background() {
             [0.0, 0.0, 0.0, 1.0]
+        } else if passthrough_alpha_clear {
+            [0.0, 0.0, 0.0, 0.0]
         } else if eye_index == 0 {
             [0.012, 0.030, 0.038, 1.0]
         } else {
@@ -2668,6 +2829,19 @@ unsafe fn record_projection_diagnostic(
                 .clear_values(&clear_values),
             vk::SubpassContents::INLINE,
         );
+        if stimulus_volume_route {
+            if let Some(renderer) = gpu_stimulus_volume_renderer {
+                if stimulus_volume_stats.ready {
+                    renderer.record_projection_eye(
+                        device,
+                        cmd,
+                        swapchain.extent,
+                        eye_index,
+                        stimulus_volume_settings,
+                    );
+                }
+            }
+        }
         if custom_stereo_projection && camera_output_mode.direct_hwb_forced() {
             if let Some(prepared) = prepared_camera_projection {
                 record_camera_projection_eye(
@@ -3401,6 +3575,8 @@ fn write_projection_scorecard(
     hand_anchor_particle_stats: &GpuHandAnchorParticleFrameSetStats,
     environment_depth_particle_stats: &GpuEnvironmentDepthParticleFrameStats,
     environment_depth_settings: NativeEnvironmentDepthSettings,
+    stimulus_volume_stats: &GpuStimulusVolumeFrameStats,
+    stimulus_volume_settings: NativeStimulusVolumeSettings,
     gpu_sdf_stats: &GpuSdfFieldFrameStats,
     guide_blur_stats: &GuideBlurGraphFrameStats,
     private_extension_stats: PrivateExtensionSlotFrameStats,
@@ -3515,7 +3691,7 @@ fn write_projection_scorecard(
     crate::marker(
         "timing-scorecard",
         format!(
-            "frame={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} openxrDefaultHandVisualRequested={} nativePassthroughLayerActive={} environmentBlendMode={:?} projectionLayerAlphaBlend={} cameraRuntimeMode={} cameraOutputMode={} cameraYcbcrMode={} cameraYcbcrConversionMode={} cameraResolutionProfile={} readerMaxImages={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} cameraLumaDiagnosticRequested={} swapchainColorFormatMode={} directHwbBorderOpacity={:.3} camera_frames_acquired={} hardware_buffer_imports={} hardware_buffer_cache_hits={} hardware_buffer_cache_misses={} guide_graph_renders={} guide_graph_cache_hits={} sdf_field_updates={} private_layer_invocations={} xr_frames_submitted={} stale_frames={} releaseRetireCount={} observedOpenXrFps={:.1} recordCpuMs={:.3} submitCpuMs={:.3} {} {} projectionExtent={}x{} openxrSubmitReady=true vulkanExternalImportReady={} cameraProjectionReady={} directHwbProjectionDiagnostic={} cameraProjectionPath={} metadataDrivenTargetFootprint={} guideProjectionCoverage={} {} {} plannedFinalExternalHwbSamples={} plannedGuideTextureSamples={} actualFinalExternalHwbSamples={} actualGuideTextureSamples={} leftCameraId={} rightCameraId={} leftImageDataspace={} leftImageDataspaceStatus={} rightImageDataspace={} rightImageDataspaceStatus={} leftSourceFrame={} rightSourceFrame={} leftHardwareBufferId={} rightHardwareBufferId={} leftImportSequence={} rightImportSequence={} stereoPairDeltaNs={} stereoPairingPolicy={} cameraCaptureResultCorrelationReady={} {} {} {} {} recordedHandReplayVisible={} recordedHandReplayTarget=metadata-target-screen-uv {} {} replayVisualFrame={} replayTimestampNs={} replayVisualPointCount={} compactJointOverlayVisible=false handMeshRealHandsVisible={} nativePassthroughRealHandMeshVisible={} solidBlackRealHandMeshVisible={} {} {} sdfTarget=metadata-target-screen-uv {} {} {} {} {} visualAcceptance=target-area-orientation-pending-screenshot projectionReady=true",
+            "frame={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} openxrDefaultHandVisualRequested={} nativePassthroughLayerActive={} environmentBlendMode={:?} projectionLayerAlphaBlend={} cameraRuntimeMode={} cameraOutputMode={} cameraYcbcrMode={} cameraYcbcrConversionMode={} cameraResolutionProfile={} readerMaxImages={} cameraQualityProfile={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} cameraLumaDiagnosticRequested={} swapchainColorFormatMode={} directHwbBorderOpacity={:.3} camera_frames_acquired={} hardware_buffer_imports={} hardware_buffer_cache_hits={} hardware_buffer_cache_misses={} guide_graph_renders={} guide_graph_cache_hits={} sdf_field_updates={} private_layer_invocations={} xr_frames_submitted={} stale_frames={} releaseRetireCount={} observedOpenXrFps={:.1} recordCpuMs={:.3} submitCpuMs={:.3} {} {} {} {} projectionExtent={}x{} openxrSubmitReady=true vulkanExternalImportReady={} cameraProjectionReady={} directHwbProjectionDiagnostic={} cameraProjectionPath={} metadataDrivenTargetFootprint={} guideProjectionCoverage={} {} {} plannedFinalExternalHwbSamples={} plannedGuideTextureSamples={} actualFinalExternalHwbSamples={} actualGuideTextureSamples={} leftCameraId={} rightCameraId={} leftImageDataspace={} leftImageDataspaceStatus={} rightImageDataspace={} rightImageDataspaceStatus={} leftSourceFrame={} rightSourceFrame={} leftHardwareBufferId={} rightHardwareBufferId={} leftImportSequence={} rightImportSequence={} stereoPairDeltaNs={} stereoPairingPolicy={} cameraCaptureResultCorrelationReady={} {} {} {} {} recordedHandReplayVisible={} recordedHandReplayTarget=metadata-target-screen-uv {} {} replayVisualFrame={} replayTimestampNs={} replayVisualPointCount={} compactJointOverlayVisible=false handMeshRealHandsVisible={} nativePassthroughRealHandMeshVisible={} solidBlackRealHandMeshVisible={} {} {} sdfTarget=metadata-target-screen-uv {} {} {} {} {} visualAcceptance=target-area-orientation-pending-screenshot projectionReady=true",
             frame_count,
             render_mode.marker_value(),
             render_mode.uses_custom_stereo_projection(),
@@ -3524,7 +3700,7 @@ fn write_projection_scorecard(
             render_mode.requests_openxr_default_hand_visual(),
             native_passthrough_layer_active,
             environment_blend_mode,
-            render_mode.uses_native_passthrough(),
+            render_mode.projection_layer_alpha_blend(),
             render_mode.camera_runtime_mode(),
             camera_output_mode.marker_value(),
             camera_ycbcr_mode.marker_value(),
@@ -3554,6 +3730,8 @@ fn write_projection_scorecard(
             submit_ms,
             frame_timings.marker_fields(),
             gpu_stage_timings.marker_fields(),
+            stimulus_volume_settings.marker_fields(),
+            stimulus_volume_stats.marker_fields(),
             extent.width,
             extent.height,
             camera_projection_stats.rendered,
@@ -3648,6 +3826,20 @@ fn write_projection_scorecard(
             environment_depth_particle_stats.marker_fields(),
             gpu_stage_timings.stage_ms(GpuTimestampStage::HandMeshVisual),
             gpu_stage_timings.stage_ms(GpuTimestampStage::ProjectionComposite),
+        ),
+    );
+    crate::marker(
+        "stimulus-volume",
+        format!(
+            "status=scorecard frame={} observedOpenXrFps={:.1} renderMode={} nativePassthroughRequested={} projectionLayerAlphaBlend={} stimulusVolumeGpuMs={:.3} {} {}",
+            frame_count,
+            observed_openxr_fps,
+            render_mode.marker_value(),
+            render_mode.uses_native_passthrough(),
+            render_mode.projection_layer_alpha_blend(),
+            gpu_stage_timings.stage_ms(GpuTimestampStage::ProjectionComposite),
+            stimulus_volume_settings.marker_fields(),
+            stimulus_volume_stats.marker_fields(),
         ),
     );
     crate::marker(
@@ -3880,8 +4072,9 @@ impl NativePassthroughRuntime {
         crate::marker(
             "native-passthrough",
             format!(
-                "status=active passthroughExtension=XR_FB_passthrough nativePassthroughLayerActive=true passthroughCompositionLayer=CompositionLayerPassthroughFB passthroughPurpose=RECONSTRUCTION environmentBlendModeAlphaSupported={} environmentBlendMode=OPAQUE projectionLayerAlphaBlend=true passthroughLayerAlphaBlend=true",
+                "status=active passthroughExtension=XR_FB_passthrough nativePassthroughLayerActive=true passthroughCompositionLayer=CompositionLayerPassthroughFB passthroughPurpose=RECONSTRUCTION environmentBlendModeAlphaSupported={} environmentBlendMode=OPAQUE projectionLayerAlphaBlend={} passthroughLayerAlphaBlend=true",
                 alpha_blend_supported,
+                render_mode.projection_layer_alpha_blend(),
             ),
         );
         Some(Self {

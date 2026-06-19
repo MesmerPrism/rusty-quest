@@ -1,0 +1,27 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.damaged_breathing_room_makepad_property",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.projection.target.controls",
+    "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode",
+    "debug.rustyquest.makepad.projection.target.scale"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.controls",
+      "value": "true",
+      "source_setting_id": "native_renderer.projection.target.controls"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode",
+      "value": "manifold-state",
+      "source_setting_id": "native_renderer.projection.target.breath.bridge.mode"
+    },
+    {
+      "name": "debug.rustyquest.makepad.projection.target.scale",
+      "value": "1.25",
+      "source_setting_id": "makepad.projection.target.scale"
+    }
+  ]
+}

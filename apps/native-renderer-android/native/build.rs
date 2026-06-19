@@ -25,6 +25,9 @@ fn main() {
     println!("cargo:rerun-if-changed=shaders/environment_depth_particles_meta.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/environment_depth_particles.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/environment_depth_particles.frag.glsl");
+    println!("cargo:rerun-if-changed=shaders/stimulus_volume_raymarch.comp.glsl");
+    println!("cargo:rerun-if-changed=shaders/stimulus_volume_projection.vert.glsl");
+    println!("cargo:rerun-if-changed=shaders/stimulus_volume_projection.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/private_kuramoto_particles_placeholder.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/private_layer_placeholder.frag.glsl");
     println!(
@@ -171,6 +174,24 @@ fn main() {
         "fragment",
         Path::new("shaders/environment_depth_particles.frag.glsl"),
         &out_dir.join("environment_depth_particles.frag.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "compute",
+        Path::new("shaders/stimulus_volume_raymarch.comp.glsl"),
+        &out_dir.join("stimulus_volume_raymarch.comp.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "vertex",
+        Path::new("shaders/stimulus_volume_projection.vert.glsl"),
+        &out_dir.join("stimulus_volume_projection.vert.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "fragment",
+        Path::new("shaders/stimulus_volume_projection.frag.glsl"),
+        &out_dir.join("stimulus_volume_projection.frag.spv"),
     );
     if let Some(payload) = private_kuramoto_payload.as_ref() {
         println!("cargo:rerun-if-changed={}", payload.shader.display());

@@ -1,0 +1,45 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.damaged_stimulus_volume_invalid_randomize_range",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.render.mode",
+    "debug.rustyquest.native_renderer.stimulus_volume.enabled",
+    "debug.rustyquest.native_renderer.stimulus_volume.profile",
+    "debug.rustyquest.native_renderer.stimulus_volume.randomize.min_hz",
+    "debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz",
+    "debug.rustyquest.native_renderer.stimulus_volume.safety_ack"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.render.mode",
+      "value": "solid-black-stimulus-volume",
+      "source_setting_id": "native_renderer.render.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.enabled",
+      "value": "true",
+      "source_setting_id": "native_renderer.stimulus_volume.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.profile",
+      "value": "volume-only-bright-interference",
+      "source_setting_id": "native_renderer.stimulus_volume.profile"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.randomize.min_hz",
+      "value": "14.0",
+      "source_setting_id": "native_renderer.stimulus_volume.randomize.min_hz"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz",
+      "value": "18.0",
+      "source_setting_id": "native_renderer.stimulus_volume.randomize.max_hz"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.safety_ack",
+      "value": "true",
+      "source_setting_id": "native_renderer.stimulus_volume.safety_ack"
+    }
+  ]
+}

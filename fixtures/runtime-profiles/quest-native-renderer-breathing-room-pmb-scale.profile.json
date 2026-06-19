@@ -1,0 +1,249 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.breathing_room_pmb_scale",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.render.mode",
+    "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.input.source",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+    "debug.rustyquest.native_renderer.sdf.visual.enabled",
+    "debug.rustyquest.native_renderer.processing.layer",
+    "debug.rustyquest.native_renderer.projection.border.policy",
+    "debug.rustyquest.native_renderer.projection.border.opacity",
+    "debug.rustyquest.native_renderer.projection.area.opacity",
+    "debug.rustyquest.native_renderer.peripheral.stretch.core.scale",
+    "debug.rustyquest.native_renderer.peripheral.stretch.edge.inset.uv",
+    "debug.rustyquest.native_renderer.peripheral.stretch.max.inset.uv",
+    "debug.rustyquest.native_renderer.peripheral.stretch.curve",
+    "debug.rustyquest.native_renderer.peripheral.stretch.inner.blend.uv",
+    "debug.rustyquest.native_renderer.peripheral.stretch.blend.curve",
+    "debug.rustyquest.native_renderer.peripheral.stretch.blend.mode",
+    "debug.rustyquest.native_renderer.peripheral.stretch.debug",
+    "debug.rustyquest.native_renderer.projection.target.controls",
+    "debug.rustyquest.native_renderer.projection.target.scale",
+    "debug.rustyquest.native_renderer.projection.target.tuned.max.scale",
+    "debug.rustyquest.native_renderer.projection.target.min.scale",
+    "debug.rustyquest.native_renderer.projection.target.max.scale",
+    "debug.rustyquest.native_renderer.projection.target.offset.x.uv",
+    "debug.rustyquest.native_renderer.projection.target.offset.y.uv",
+    "debug.rustyquest.native_renderer.projection.target.joystick.controls",
+    "debug.rustyquest.native_renderer.projection.target.joystick.scale.rate_per_second",
+    "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode",
+    "debug.rustyquest.native_renderer.projection.target.breath.state.stream",
+    "debug.rustyquest.native_renderer.projection.target.breath.value.stream",
+    "debug.rustyquest.native_renderer.projection.target.breath.inhale.seconds.min_to_max",
+    "debug.rustyquest.native_renderer.projection.target.breath.exhale.seconds.max_to_min",
+    "debug.rustyquest.native_renderer.projection.target.breath.synthetic.period.seconds",
+    "debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload",
+    "debug.rustyquest.native_renderer.manifold.broker.host",
+    "debug.rustyquest.native_renderer.manifold.broker.port",
+    "debug.rustyquest.native_renderer.manifold.broker.path"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.render.mode",
+      "value": "custom-stereo-projection",
+      "source_setting_id": "native_renderer.render.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.replay.visual_proof.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.input.source",
+      "value": "auto",
+      "source_setting_id": "native_renderer.hand_mesh.input.source"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.graft_copies.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.sdf.visual.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.sdf.visual.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.processing.layer",
+      "value": "peripheral-stretch",
+      "source_setting_id": "native_renderer.processing.layer"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.border.policy",
+      "value": "passthrough-underlay",
+      "source_setting_id": "native_renderer.projection.border.policy"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.border.opacity",
+      "value": "0.0",
+      "source_setting_id": "native_renderer.projection.border.opacity"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.area.opacity",
+      "value": "1.0",
+      "source_setting_id": "native_renderer.projection.area.opacity"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.peripheral.stretch.core.scale",
+      "value": "1.0",
+      "source_setting_id": "native_renderer.peripheral.stretch.core.scale"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.peripheral.stretch.edge.inset.uv",
+      "value": "0.015",
+      "source_setting_id": "native_renderer.peripheral.stretch.edge.inset.uv"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.peripheral.stretch.max.inset.uv",
+      "value": "0.14",
+      "source_setting_id": "native_renderer.peripheral.stretch.max.inset.uv"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.peripheral.stretch.curve",
+      "value": "1.6",
+      "source_setting_id": "native_renderer.peripheral.stretch.curve"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.peripheral.stretch.inner.blend.uv",
+      "value": "0.040",
+      "source_setting_id": "native_renderer.peripheral.stretch.inner.blend.uv"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.peripheral.stretch.blend.curve",
+      "value": "1.6",
+      "source_setting_id": "native_renderer.peripheral.stretch.blend.curve"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.peripheral.stretch.blend.mode",
+      "value": "target-inner-band",
+      "source_setting_id": "native_renderer.peripheral.stretch.blend.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.peripheral.stretch.debug",
+      "value": "off",
+      "source_setting_id": "native_renderer.peripheral.stretch.debug"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.controls",
+      "value": "true",
+      "source_setting_id": "native_renderer.projection.target.controls"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.scale",
+      "value": "1.0",
+      "source_setting_id": "native_renderer.projection.target.scale"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.tuned.max.scale",
+      "value": "1.25",
+      "source_setting_id": "native_renderer.projection.target.tuned.max.scale"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.min.scale",
+      "value": "0.05",
+      "source_setting_id": "native_renderer.projection.target.min.scale"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.max.scale",
+      "value": "5.0",
+      "source_setting_id": "native_renderer.projection.target.max.scale"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.offset.x.uv",
+      "value": "0.0",
+      "source_setting_id": "native_renderer.projection.target.offset.x.uv"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.offset.y.uv",
+      "value": "0.0",
+      "source_setting_id": "native_renderer.projection.target.offset.y.uv"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.joystick.controls",
+      "value": "true",
+      "source_setting_id": "native_renderer.projection.target.joystick.controls"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.joystick.scale.rate_per_second",
+      "value": "0.45",
+      "source_setting_id": "native_renderer.projection.target.joystick.scale.rate_per_second"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode",
+      "value": "manifold-state",
+      "source_setting_id": "native_renderer.projection.target.breath.bridge.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.breath.state.stream",
+      "value": "stream.breath.state",
+      "source_setting_id": "native_renderer.projection.target.breath.state.stream"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.breath.value.stream",
+      "value": "stream.breath.state.value",
+      "source_setting_id": "native_renderer.projection.target.breath.value.stream"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.breath.inhale.seconds.min_to_max",
+      "value": "4.0",
+      "source_setting_id": "native_renderer.projection.target.breath.inhale.seconds.min_to_max"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.breath.exhale.seconds.max_to_min",
+      "value": "4.0",
+      "source_setting_id": "native_renderer.projection.target.breath.exhale.seconds.max_to_min"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.breath.synthetic.period.seconds",
+      "value": "6.0",
+      "source_setting_id": "native_renderer.projection.target.breath.synthetic.period.seconds"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload",
+      "value": "false",
+      "source_setting_id": "native_renderer.projection.target.breath.high_rate_json_payload"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.manifold.broker.host",
+      "value": "127.0.0.1",
+      "source_setting_id": "native_renderer.manifold.broker.host"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.manifold.broker.port",
+      "value": "8765",
+      "source_setting_id": "native_renderer.manifold.broker.port"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.manifold.broker.path",
+      "value": "/manifold/v1/events",
+      "source_setting_id": "native_renderer.manifold.broker.path"
+    }
+  ],
+  "expected_markers": [
+    "RUSTY_QUEST_NATIVE_RENDERER channel=projection-target",
+    "renderMode=custom-stereo-projection",
+    "processingLayer=peripheral-stretch",
+    "guideProjectionCoverage=full-eye-peripheral-stretch",
+    "projectionTargetRuntimeAuthority=native-renderer",
+    "startupDefaultsAuthority=runtime-profile",
+    "pmbSourceAuthority=hostess-manifold",
+    "breathBridgeMode=manifold-state",
+    "projectionTargetJoystickControlsEnabled=true",
+    "rightControllerThumbstickY=/user/hand/right/input/thumbstick/y",
+    "rightControllerPrimaryReset=/user/hand/right/input/a/click",
+    "highRateBreathViaAndroidProperties=false",
+    "breathHighRateJsonPayload=false"
+  ],
+  "validation_commands": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-breathing-room-pmb-scale.profile.json -DryRun -Out local-artifacts/native-renderer-breathing-room-pmb-scale-property-write-plan.json"
+  ]
+}

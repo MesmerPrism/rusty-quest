@@ -1,0 +1,144 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.native_passthrough_stimulus_volume",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.render.mode",
+    "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.input.source",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
+    "debug.rustyquest.native_renderer.sdf.visual.enabled",
+    "debug.rustyquest.native_renderer.environment_depth.mode",
+    "debug.rustyquest.native_renderer.environment_depth.source",
+    "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload",
+    "debug.rustyquest.native_renderer.stimulus_volume.enabled",
+    "debug.rustyquest.native_renderer.stimulus_volume.profile",
+    "debug.rustyquest.native_renderer.stimulus_volume.composition",
+    "debug.rustyquest.native_renderer.stimulus_volume.render_target",
+    "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples",
+    "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled",
+    "debug.rustyquest.native_renderer.stimulus_volume.randomize.min_hz",
+    "debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz",
+    "debug.rustyquest.native_renderer.stimulus_volume.safety_ack"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.render.mode",
+      "value": "native-passthrough-stimulus-volume",
+      "source_setting_id": "native_renderer.render.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.replay.visual_proof.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.input.source",
+      "value": "disabled",
+      "source_setting_id": "native_renderer.hand_mesh.input.source"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.graft_copies.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.real_hands.visible"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_anchor_particles.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.sdf.visual.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.sdf.visual.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.mode",
+      "value": "disabled",
+      "source_setting_id": "native_renderer.environment_depth.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.source",
+      "value": "synthetic-gpu-proof",
+      "source_setting_id": "native_renderer.environment_depth.source"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload",
+      "value": "false",
+      "source_setting_id": "native_renderer.environment_depth.high_rate_json_payload"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.enabled",
+      "value": "true",
+      "source_setting_id": "native_renderer.stimulus_volume.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.profile",
+      "value": "volume-only-bright-interference",
+      "source_setting_id": "native_renderer.stimulus_volume.profile"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.composition",
+      "value": "opaque-black-projection",
+      "source_setting_id": "native_renderer.stimulus_volume.composition"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.render_target",
+      "value": "512x512x2-rgba16f",
+      "source_setting_id": "native_renderer.stimulus_volume.render_target"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples",
+      "value": "8",
+      "source_setting_id": "native_renderer.stimulus_volume.raymarch_samples"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled",
+      "value": "true",
+      "source_setting_id": "native_renderer.stimulus_volume.randomize.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.randomize.min_hz",
+      "value": "8.0",
+      "source_setting_id": "native_renderer.stimulus_volume.randomize.min_hz"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz",
+      "value": "15.0",
+      "source_setting_id": "native_renderer.stimulus_volume.randomize.max_hz"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.safety_ack",
+      "value": "true",
+      "source_setting_id": "native_renderer.stimulus_volume.safety_ack"
+    }
+  ],
+  "expected_markers": [
+    "RUSTY_QUEST_NATIVE_RENDERER channel=stimulus-volume",
+    "renderMode=native-passthrough-stimulus-volume",
+    "nativePassthroughRequested=true",
+    "stimulusVolumeEnabled=true",
+    "renderPath=native-vulkan-stimulus-volume",
+    "makepadRuntime=false",
+    "hostessRuntime=false",
+    "volumeOnly=true",
+    "projectionLayerAlphaBlend=false",
+    "rightControllerPrimaryButtonRandomize=true"
+  ],
+  "validation_commands": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-native-passthrough-stimulus-volume.profile.json -DryRun -Out local-artifacts/native-renderer-native-passthrough-stimulus-volume-property-write-plan.json"
+  ]
+}

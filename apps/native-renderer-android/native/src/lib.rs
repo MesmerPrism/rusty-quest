@@ -30,10 +30,13 @@ mod gpu_mesh_replay;
 #[cfg(target_os = "android")]
 mod gpu_sdf_field;
 #[cfg(target_os = "android")]
+mod gpu_stimulus_volume;
+#[cfg(target_os = "android")]
 mod guide_blur_graph;
 mod hand_mesh_graft;
 #[cfg(target_os = "android")]
 mod live_hand_compact;
+mod manifold_breath_bridge;
 #[cfg(target_os = "android")]
 mod native_camera;
 #[cfg(target_os = "android")]
@@ -48,7 +51,10 @@ mod native_renderer_timing;
 #[cfg(target_os = "android")]
 mod openxr_environment_depth;
 #[cfg(target_os = "android")]
+mod openxr_stimulus_actions;
+#[cfg(target_os = "android")]
 mod private_extension_slot;
+mod projection_target_state;
 mod recorded_hand_replay;
 #[cfg(target_os = "android")]
 mod xr_vulkan;
@@ -179,6 +185,17 @@ fn android_main(app: android_activity::AndroidApp) {
             runtime_options
                 .projection_border_stretch_settings
                 .marker_fields(),
+        ),
+    );
+    marker(
+        "stimulus-volume",
+        format!(
+            "status=config renderMode={} nativePassthroughRequested={} solidBlackBackground={} stimulusVolumeRoute={} {}",
+            runtime_options.render_mode.marker_value(),
+            runtime_options.render_mode.uses_native_passthrough(),
+            runtime_options.render_mode.uses_solid_black_background(),
+            runtime_options.render_mode.uses_stimulus_volume(),
+            runtime_options.stimulus_volume_settings.marker_fields()
         ),
     );
     marker(

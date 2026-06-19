@@ -47,6 +47,62 @@ const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE: &str =
     "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_coherence";
 const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY: &str =
     "debug.rustyquest.native_renderer.environment_depth.surface_support.free_space_decay";
+const STIMULUS_VOLUME_PROP_PREFIX: &str = "debug.rustyquest.native_renderer.stimulus_volume.";
+const STIMULUS_VOLUME_ENABLED: &str = "debug.rustyquest.native_renderer.stimulus_volume.enabled";
+const STIMULUS_VOLUME_PROFILE: &str = "debug.rustyquest.native_renderer.stimulus_volume.profile";
+const STIMULUS_VOLUME_COMPOSITION: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.composition";
+const STIMULUS_VOLUME_RENDER_TARGET: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.render_target";
+const STIMULUS_VOLUME_RAYMARCH_SAMPLES: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples";
+const STIMULUS_VOLUME_RANDOMIZE_ENABLED: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled";
+const STIMULUS_VOLUME_RANDOMIZE_MIN_HZ: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.randomize.min_hz";
+const STIMULUS_VOLUME_RANDOMIZE_MAX_HZ: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz";
+const STIMULUS_VOLUME_SAFETY_ACK: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.safety_ack";
+const NATIVE_PROJECTION_TARGET_PROP_PREFIX: &str =
+    "debug.rustyquest.native_renderer.projection.target.";
+const NATIVE_PROJECTION_TARGET_CONTROLS: &str =
+    "debug.rustyquest.native_renderer.projection.target.controls";
+const NATIVE_PROJECTION_TARGET_SCALE: &str =
+    "debug.rustyquest.native_renderer.projection.target.scale";
+const NATIVE_PROJECTION_TARGET_TUNED_MAX_SCALE: &str =
+    "debug.rustyquest.native_renderer.projection.target.tuned.max.scale";
+const NATIVE_PROJECTION_TARGET_MIN_SCALE: &str =
+    "debug.rustyquest.native_renderer.projection.target.min.scale";
+const NATIVE_PROJECTION_TARGET_MAX_SCALE: &str =
+    "debug.rustyquest.native_renderer.projection.target.max.scale";
+const NATIVE_PROJECTION_TARGET_OFFSET_X_UV: &str =
+    "debug.rustyquest.native_renderer.projection.target.offset.x.uv";
+const NATIVE_PROJECTION_TARGET_OFFSET_Y_UV: &str =
+    "debug.rustyquest.native_renderer.projection.target.offset.y.uv";
+const NATIVE_PROJECTION_TARGET_JOYSTICK_CONTROLS: &str =
+    "debug.rustyquest.native_renderer.projection.target.joystick.controls";
+const NATIVE_PROJECTION_TARGET_JOYSTICK_RATE: &str =
+    "debug.rustyquest.native_renderer.projection.target.joystick.scale.rate_per_second";
+const NATIVE_PROJECTION_TARGET_BREATH_MODE: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode";
+const NATIVE_PROJECTION_TARGET_BREATH_STATE_STREAM: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.state.stream";
+const NATIVE_PROJECTION_TARGET_BREATH_VALUE_STREAM: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.value.stream";
+const NATIVE_PROJECTION_TARGET_BREATH_INHALE_SECONDS: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.inhale.seconds.min_to_max";
+const NATIVE_PROJECTION_TARGET_BREATH_EXHALE_SECONDS: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.exhale.seconds.max_to_min";
+const NATIVE_PROJECTION_TARGET_BREATH_SYNTHETIC_PERIOD_SECONDS: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.synthetic.period.seconds";
+const NATIVE_PROJECTION_TARGET_BREATH_HIGH_RATE_JSON_PAYLOAD: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload";
+const NATIVE_MANIFOLD_BROKER_PROP_PREFIX: &str = "debug.rustyquest.native_renderer.manifold.";
+const NATIVE_MANIFOLD_BROKER_HOST: &str = "debug.rustyquest.native_renderer.manifold.broker.host";
+const NATIVE_MANIFOLD_BROKER_PORT: &str = "debug.rustyquest.native_renderer.manifold.broker.port";
+const NATIVE_MANIFOLD_BROKER_PATH: &str = "debug.rustyquest.native_renderer.manifold.broker.path";
+const MAKEPAD_PROP_PREFIX: &str = "debug.rustyquest.makepad.";
 
 /// Quest runtime profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -195,11 +251,144 @@ pub fn validate_runtime_profile(profile: &RuntimeProfile) -> Result<(), Vec<Vali
         }
     }
     validate_environment_depth_profile(&set_properties, &mut errors);
+    validate_stimulus_volume_profile(&set_properties, &mut errors);
+    validate_native_projection_target_profile(profile, &owned_lookup, &set_properties, &mut errors);
 
     if errors.is_empty() {
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+fn validate_native_projection_target_profile(
+    profile: &RuntimeProfile,
+    owned_properties: &BTreeSet<&str>,
+    set_properties: &BTreeMap<&str, &PropertyValue>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let native_projection_target_profile = normalized_value(&profile.profile_id)
+        .contains("breathing-room")
+        || owned_properties
+            .iter()
+            .any(|property| property.starts_with(NATIVE_PROJECTION_TARGET_PROP_PREFIX))
+        || set_properties
+            .keys()
+            .any(|property| property.starts_with(NATIVE_PROJECTION_TARGET_PROP_PREFIX));
+    if !native_projection_target_profile {
+        return;
+    }
+
+    for property in owned_properties {
+        if property.starts_with(MAKEPAD_PROP_PREFIX) {
+            errors.push(ValidationError::new(format!(
+                "native projection target profile must not own Makepad property {}",
+                property
+            )));
+        }
+    }
+    for property in set_properties.values() {
+        if property.name.starts_with(MAKEPAD_PROP_PREFIX) {
+            errors.push(ValidationError::new(format!(
+                "native projection target profile must not set Makepad property {}",
+                property.name
+            )));
+        }
+        if property
+            .name
+            .starts_with(NATIVE_PROJECTION_TARGET_PROP_PREFIX)
+            || property
+                .name
+                .starts_with(NATIVE_MANIFOLD_BROKER_PROP_PREFIX)
+        {
+            validate_native_projection_target_property(property, errors);
+        }
+    }
+}
+
+fn validate_native_projection_target_property(
+    property: &PropertyValue,
+    errors: &mut Vec<ValidationError>,
+) {
+    match property.name.as_str() {
+        NATIVE_PROJECTION_TARGET_CONTROLS
+        | NATIVE_PROJECTION_TARGET_JOYSTICK_CONTROLS
+        | NATIVE_PROJECTION_TARGET_BREATH_HIGH_RATE_JSON_PAYLOAD => {
+            validate_bool(property, errors);
+            if property.name == NATIVE_PROJECTION_TARGET_BREATH_HIGH_RATE_JSON_PAYLOAD
+                && normalized_bool_true(&property.value)
+            {
+                errors.push(ValidationError::new(
+                    "native projection target breath high_rate_json_payload must be false",
+                ));
+            }
+        }
+        NATIVE_PROJECTION_TARGET_SCALE
+        | NATIVE_PROJECTION_TARGET_TUNED_MAX_SCALE
+        | NATIVE_PROJECTION_TARGET_MIN_SCALE
+        | NATIVE_PROJECTION_TARGET_MAX_SCALE
+        | NATIVE_PROJECTION_TARGET_OFFSET_X_UV
+        | NATIVE_PROJECTION_TARGET_OFFSET_Y_UV
+        | NATIVE_PROJECTION_TARGET_JOYSTICK_RATE
+        | NATIVE_PROJECTION_TARGET_BREATH_INHALE_SECONDS
+        | NATIVE_PROJECTION_TARGET_BREATH_EXHALE_SECONDS
+        | NATIVE_PROJECTION_TARGET_BREATH_SYNTHETIC_PERIOD_SECONDS => {
+            validate_native_projection_target_f32(property, errors);
+        }
+        NATIVE_PROJECTION_TARGET_BREATH_MODE => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(
+                normalized.as_str(),
+                "disabled"
+                    | "off"
+                    | "manifold-state"
+                    | "pmb-state"
+                    | "manifold-state-value"
+                    | "pmb-state-value"
+                    | "synthetic"
+            );
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "native projection target breath bridge mode {} is not supported",
+                    property.value
+                )));
+            }
+        }
+        NATIVE_PROJECTION_TARGET_BREATH_STATE_STREAM
+        | NATIVE_PROJECTION_TARGET_BREATH_VALUE_STREAM
+        | NATIVE_MANIFOLD_BROKER_HOST
+        | NATIVE_MANIFOLD_BROKER_PATH => {
+            if property.value.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "{} value must not be empty",
+                    property.name
+                )));
+            }
+        }
+        NATIVE_MANIFOLD_BROKER_PORT => match property.value.trim().parse::<u16>() {
+            Ok(value) if value > 0 => {}
+            _ => errors.push(ValidationError::new(format!(
+                "{} value {} must be a TCP port",
+                property.name, property.value
+            ))),
+        },
+        _ => errors.push(ValidationError::new(format!(
+            "unknown native projection target property {}",
+            property.name
+        ))),
+    }
+}
+
+fn validate_native_projection_target_f32(
+    property: &PropertyValue,
+    errors: &mut Vec<ValidationError>,
+) {
+    match property.value.trim().parse::<f32>() {
+        Ok(value) if value.is_finite() => {}
+        _ => errors.push(ValidationError::new(format!(
+            "{} value {} must be a finite number",
+            property.name, property.value
+        ))),
     }
 }
 
@@ -227,6 +416,179 @@ fn validate_environment_depth_profile(
             )));
         }
     }
+}
+
+fn validate_stimulus_volume_profile(
+    set_properties: &BTreeMap<&str, &PropertyValue>,
+    errors: &mut Vec<ValidationError>,
+) {
+    for property in set_properties.values() {
+        if property.name.starts_with(STIMULUS_VOLUME_PROP_PREFIX) {
+            validate_stimulus_volume_property(property, errors);
+        }
+    }
+
+    let min_hz = stimulus_volume_f32(set_properties, STIMULUS_VOLUME_RANDOMIZE_MIN_HZ, errors);
+    let max_hz = stimulus_volume_f32(set_properties, STIMULUS_VOLUME_RANDOMIZE_MAX_HZ, errors);
+    if let (Some(min_hz), Some(max_hz)) = (min_hz, max_hz) {
+        if min_hz < 0.0 {
+            errors.push(ValidationError::new(
+                "stimulus volume randomize min_hz must be greater than or equal to 0",
+            ));
+        }
+        if max_hz > 15.0 {
+            errors.push(ValidationError::new(
+                "stimulus volume randomize max_hz must be less than or equal to 15",
+            ));
+        }
+        if min_hz > max_hz {
+            errors.push(ValidationError::new(format!(
+                "stimulus volume randomize min_hz {min_hz} must be less than or equal to max_hz {max_hz}",
+            )));
+        }
+    }
+
+    if set_properties
+        .get(STIMULUS_VOLUME_ENABLED)
+        .is_some_and(|property| normalized_bool_true(&property.value))
+    {
+        let safety_acknowledged = set_properties
+            .get(STIMULUS_VOLUME_SAFETY_ACK)
+            .is_some_and(|property| normalized_bool_true(&property.value));
+        if !safety_acknowledged {
+            errors.push(ValidationError::new(
+                "stimulus volume safety_ack must be true when stimulus_volume.enabled is true",
+            ));
+        }
+    }
+}
+
+fn validate_stimulus_volume_property(property: &PropertyValue, errors: &mut Vec<ValidationError>) {
+    match property.name.as_str() {
+        STIMULUS_VOLUME_ENABLED
+        | STIMULUS_VOLUME_RANDOMIZE_ENABLED
+        | STIMULUS_VOLUME_SAFETY_ACK => {
+            validate_bool(property, errors);
+        }
+        STIMULUS_VOLUME_PROFILE => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(
+                normalized.as_str(),
+                "volume-only-bright-interference"
+                    | "stimulus.profile.volume-only-bright-interference"
+            );
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "stimulus volume profile {} is not supported",
+                    property.value
+                )));
+            }
+        }
+        STIMULUS_VOLUME_COMPOSITION => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(
+                normalized.as_str(),
+                "opaque-black-projection" | "alpha-over-native-passthrough"
+            );
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "stimulus volume composition {} is not supported",
+                    property.value
+                )));
+            }
+        }
+        STIMULUS_VOLUME_RENDER_TARGET => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(
+                normalized.as_str(),
+                "512x512x2-rgba16f" | "512x512x2-rgba8-unorm" | "512x512x2-rgba8"
+            );
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "stimulus volume render_target {} is not supported",
+                    property.value
+                )));
+            }
+        }
+        STIMULUS_VOLUME_RAYMARCH_SAMPLES => {
+            validate_stimulus_volume_u32(property, 1, 24, errors);
+        }
+        STIMULUS_VOLUME_RANDOMIZE_MIN_HZ | STIMULUS_VOLUME_RANDOMIZE_MAX_HZ => {
+            validate_stimulus_volume_f32(property, errors);
+        }
+        _ => errors.push(ValidationError::new(format!(
+            "unknown stimulus volume property {}",
+            property.name
+        ))),
+    }
+}
+
+fn validate_stimulus_volume_u32(
+    property: &PropertyValue,
+    min_value: u32,
+    max_value: u32,
+    errors: &mut Vec<ValidationError>,
+) {
+    match property.value.trim().parse::<u32>() {
+        Ok(value) if value >= min_value && value <= max_value => {}
+        Ok(value) => errors.push(ValidationError::new(format!(
+            "{} value {value} must be between {min_value} and {max_value}",
+            property.name
+        ))),
+        Err(_) => errors.push(ValidationError::new(format!(
+            "{} value {} must be an integer",
+            property.name, property.value
+        ))),
+    }
+}
+
+fn validate_stimulus_volume_f32(property: &PropertyValue, errors: &mut Vec<ValidationError>) {
+    match property.value.trim().parse::<f32>() {
+        Ok(value) if value.is_finite() => {}
+        _ => errors.push(ValidationError::new(format!(
+            "{} value {} must be a finite number",
+            property.name, property.value
+        ))),
+    }
+}
+
+fn stimulus_volume_f32(
+    set_properties: &BTreeMap<&str, &PropertyValue>,
+    name: &str,
+    errors: &mut Vec<ValidationError>,
+) -> Option<f32> {
+    let property = set_properties.get(name)?;
+    match property.value.trim().parse::<f32>() {
+        Ok(value) if value.is_finite() => Some(value),
+        _ => {
+            errors.push(ValidationError::new(format!(
+                "{} value {} must be a finite number",
+                property.name, property.value
+            )));
+            None
+        }
+    }
+}
+
+fn validate_bool(property: &PropertyValue, errors: &mut Vec<ValidationError>) {
+    let normalized = normalized_value(&property.value);
+    let valid = matches!(
+        normalized.as_str(),
+        "0" | "1" | "true" | "false" | "yes" | "no" | "on" | "off"
+    );
+    if !valid {
+        errors.push(ValidationError::new(format!(
+            "{} value {} must be boolean",
+            property.name, property.value
+        )));
+    }
+}
+
+fn normalized_bool_true(value: &str) -> bool {
+    matches!(
+        normalized_value(value).as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
 fn validate_environment_depth_property(
@@ -869,6 +1231,94 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.message.contains("min_neighbors value 99")));
+    }
+
+    #[test]
+    fn stimulus_volume_profiles_validate() {
+        for (profile_json, expected_mode) in [
+            (
+                include_str!(
+                    "../../../fixtures/runtime-profiles/quest-native-renderer-solid-black-stimulus-volume.profile.json"
+                ),
+                "solid-black-stimulus-volume",
+            ),
+            (
+                include_str!(
+                    "../../../fixtures/runtime-profiles/quest-native-renderer-native-passthrough-stimulus-volume.profile.json"
+                ),
+                "native-passthrough-stimulus-volume",
+            ),
+        ] {
+            let profile: RuntimeProfile =
+                serde_json::from_str(profile_json).expect("stimulus volume profile JSON");
+            validate_runtime_profile(&profile).expect("stimulus volume profile validates");
+            let plan = build_write_plan(&profile).expect("write plan");
+            assert!(plan.operations.iter().any(|operation| {
+                operation.name == "debug.rustyquest.native_renderer.render.mode"
+                    && operation.value.as_deref() == Some(expected_mode)
+            }));
+            assert!(plan.operations.iter().any(|operation| {
+                operation.name == "debug.rustyquest.native_renderer.stimulus_volume.safety_ack"
+                    && operation.value.as_deref() == Some("true")
+            }));
+        }
+    }
+
+    #[test]
+    fn stimulus_volume_invalid_randomize_range_is_rejected() {
+        let damaged: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/damaged/native-renderer-stimulus-volume-invalid-randomize-range.profile.json"
+        ))
+        .expect("damaged stimulus profile JSON");
+        let errors =
+            validate_runtime_profile(&damaged).expect_err("must reject invalid randomize range");
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("randomize max_hz must be less")));
+    }
+
+    #[test]
+    fn stimulus_volume_missing_safety_ack_is_rejected() {
+        let damaged: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/damaged/native-renderer-stimulus-volume-missing-safety-ack.profile.json"
+        ))
+        .expect("damaged stimulus profile JSON");
+        let errors =
+            validate_runtime_profile(&damaged).expect_err("must reject missing safety ack");
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("safety_ack must be true")));
+    }
+
+    #[test]
+    fn native_breathing_room_profile_validates() {
+        let profile: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/runtime-profiles/quest-native-renderer-breathing-room-pmb-scale.profile.json"
+        ))
+        .expect("native breathing room profile JSON");
+        validate_runtime_profile(&profile).expect("native breathing room profile validates");
+        let plan = build_write_plan(&profile).expect("write plan");
+        assert!(plan.operations.iter().any(|operation| {
+            operation.name
+                == "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode"
+                && operation.value.as_deref() == Some("manifold-state")
+        }));
+        assert!(!plan
+            .operations
+            .iter()
+            .any(|operation| operation.name.starts_with("debug.rustyquest.makepad.")));
+    }
+
+    #[test]
+    fn native_breathing_room_makepad_property_is_rejected() {
+        let damaged: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/damaged/native-renderer-breathing-room-makepad-property.profile.json"
+        ))
+        .expect("damaged native breathing room profile JSON");
+        let errors = validate_runtime_profile(&damaged).expect_err("must reject Makepad property");
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("must not set Makepad property")));
     }
 
     #[test]
