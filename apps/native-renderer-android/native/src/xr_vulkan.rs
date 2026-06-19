@@ -1669,6 +1669,7 @@ unsafe fn run_projection_frames(
                 frame_state.predicted_display_time,
                 frame_count,
                 dt_seconds,
+                projection_target_state.breath_haptics_enabled(),
             );
             for input in controller_events.projection_target_inputs {
                 projection_target_state.apply_input(input);

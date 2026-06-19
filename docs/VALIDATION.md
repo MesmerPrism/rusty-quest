@@ -359,6 +359,10 @@ peripheral stretch/blend route is captured in
 its dry-run evidence checks the Makepad-matched stretch controls and expected
 markers, including `guideProjectionCoverage=full-eye-peripheral-stretch` and
 `cameraProjectionPath=metadata-target-guide-texture-peripheral-stretch-final`.
+The Breathing Room PMB scale profile extends that route with Manifold
+controller-pose publishing, PMB/joystick scale-driver switching, and expected
+OpenXR haptic markers for a gentle right-controller pulse while PMB mode has a
+tracked grip pose.
 The live-hand diagnostic
 bundle is captured in
 `fixtures/runtime-profiles/quest-native-renderer-live-hand-visual-diagnostic.profile.json`;

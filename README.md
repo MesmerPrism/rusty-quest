@@ -119,6 +119,9 @@ controller pose to `stream.motion.object_pose` as
 `provider.native_renderer.controller_pose`, matching the Makepad
 source-agnostic controller-pose provider contract; right controller B toggles
 the scale driver between PMB and joystick, while A resets the target scale.
+When PMB is the active scale driver and the right grip pose is tracked, the
+native OpenXR action layer also emits a regular right-controller haptic pulse
+through the right-hand subaction path as the Breathing Room breathing-mode cue.
 The same native guide projection pass can optionally expand to a
 full-eye peripheral stretch border using the Makepad HWB stack's target-local
 raster model as a reference: the profile

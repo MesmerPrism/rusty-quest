@@ -13,6 +13,13 @@ use crate::{
     projection_target_state::{ProjectionTargetInput, ProjectionTargetSettings},
 };
 
+const RIGHT_HAND_HAPTIC_OUTPUT_PATH: &str = "/user/hand/right/output/haptic";
+const RIGHT_HAND_SUBACTION_PATH: &str = "/user/hand/right";
+const BREATH_HAPTIC_PULSE_PERIOD_SECONDS: f32 = 0.75;
+const BREATH_HAPTIC_PULSE_DURATION_MS: i64 = 100;
+const BREATH_HAPTIC_PULSE_DURATION_NANOS: i64 = BREATH_HAPTIC_PULSE_DURATION_MS * 1_000_000;
+const BREATH_HAPTIC_AMPLITUDE: f32 = 0.45;
+
 pub(crate) struct StimulusVolumeActions {
     action_set: xr::ActionSet,
     right_primary_randomize: xr::Action<bool>,
@@ -20,7 +27,12 @@ pub(crate) struct StimulusVolumeActions {
     right_secondary_scale_driver_toggle: xr::Action<bool>,
     right_thumbstick_y: xr::Action<f32>,
     right_grip_pose: xr::Action<xr::Posef>,
+    right_breath_haptic: xr::Action<xr::Haptic>,
+    right_hand_subaction_path: xr::Path,
     right_grip_space: Option<xr::Space>,
+    breath_haptic_cadence: BreathHapticCadence,
+    breath_haptic_pulse_count: u64,
+    breath_haptic_error_count: u64,
     manifold_pose_publisher: Option<ManifoldPosePublisher>,
     manifold_pose_config: ManifoldPosePublisherConfig,
     manifold_pose_seconds_since_publish: f64,
@@ -40,6 +52,36 @@ pub(crate) struct NativeRendererControllerEvents {
     pub(crate) stimulus_randomize_triggered: bool,
     pub(crate) projection_target_inputs: Vec<ProjectionTargetInput>,
     pub(crate) right_grip_pose_active: bool,
+    pub(crate) right_grip_pose_tracked: bool,
+}
+
+#[derive(Debug, Clone)]
+struct BreathHapticCadence {
+    seconds_since_pulse: f32,
+}
+
+impl BreathHapticCadence {
+    fn new_ready() -> Self {
+        Self {
+            seconds_since_pulse: BREATH_HAPTIC_PULSE_PERIOD_SECONDS,
+        }
+    }
+
+    fn update(&mut self, dt_seconds: f32, enabled: bool, tracked: bool) -> bool {
+        if !enabled || !tracked {
+            self.seconds_since_pulse = BREATH_HAPTIC_PULSE_PERIOD_SECONDS;
+            return false;
+        }
+        if dt_seconds.is_finite() && dt_seconds > 0.0 {
+            self.seconds_since_pulse += dt_seconds.min(1.0);
+        }
+        if self.seconds_since_pulse < BREATH_HAPTIC_PULSE_PERIOD_SECONDS {
+            return false;
+        }
+        self.seconds_since_pulse = (self.seconds_since_pulse - BREATH_HAPTIC_PULSE_PERIOD_SECONDS)
+            .clamp(0.0, BREATH_HAPTIC_PULSE_PERIOD_SECONDS);
+        true
+    }
 }
 
 impl StimulusVolumeActions {
@@ -63,6 +105,11 @@ impl StimulusVolumeActions {
         let action_set = instance
             .create_action_set("stimulus_volume", "Native Renderer Controls", 20)
             .map_err(|error| format!("create native renderer OpenXR action set: {error}"))?;
+        let right_hand_subaction_path = instance
+            .string_to_path(RIGHT_HAND_SUBACTION_PATH)
+            .map_err(|error| {
+                format!("create OpenXR path for right hand haptic subaction: {error}")
+            })?;
         let right_primary_randomize = action_set
             .create_action::<bool>("right_primary_randomize", "Right Primary Randomize", &[])
             .map_err(|error| format!("create stimulus randomize action: {error}"))?;
@@ -84,6 +131,13 @@ impl StimulusVolumeActions {
         let right_grip_pose = action_set
             .create_action::<xr::Posef>("right_grip_pose", "Right Grip Pose", &[])
             .map_err(|error| format!("create right grip pose action: {error}"))?;
+        let right_breath_haptic = action_set
+            .create_action::<xr::Haptic>(
+                "right_breath_haptic",
+                "Right Breath Haptic",
+                &[right_hand_subaction_path],
+            )
+            .map_err(|error| format!("create right breath haptic action: {error}"))?;
 
         let mut suggested_binding_count = 0_usize;
         for profile in INTERACTION_PROFILES {
@@ -124,29 +178,37 @@ impl StimulusVolumeActions {
                 })?;
                 bindings.push(xr::Binding::new(&right_grip_pose, input));
             }
+            if let Some(output_path) = profile.right_haptic_output_path {
+                let output = instance.string_to_path(output_path).map_err(|error| {
+                    format!("create OpenXR path for right haptic output {output_path}: {error}")
+                })?;
+                bindings.push(xr::Binding::new(&right_breath_haptic, output));
+            }
             match instance.suggest_interaction_profile_bindings(profile_path, &bindings) {
                 Ok(()) => {
                     suggested_binding_count = suggested_binding_count.saturating_add(bindings.len());
                     crate::marker(
                         "projection-target-input",
                         format!(
-                            "status=binding-suggested interactionProfile={} rightPrimaryInputPath={} rightSecondaryInputPath={} rightThumbstickYInputPath={} rightGripPoseInputPath={} rightControllerThumbstickYBinding={} rightControllerPrimaryResetBinding={} rightControllerSecondaryScaleDriverToggleBinding={} rightGripPoseBinding={}",
+                            "status=binding-suggested interactionProfile={} rightPrimaryInputPath={} rightSecondaryInputPath={} rightThumbstickYInputPath={} rightGripPoseInputPath={} rightHapticOutputPath={} rightControllerThumbstickYBinding={} rightControllerPrimaryResetBinding={} rightControllerSecondaryScaleDriverToggleBinding={} rightGripPoseBinding={} rightBreathHapticBinding={}",
                             profile.profile_path,
                             profile.right_primary_path.unwrap_or("none"),
                             profile.right_secondary_path.unwrap_or("none"),
                             profile.right_thumbstick_y_path.unwrap_or("none"),
                             profile.right_grip_pose_path.unwrap_or("none"),
+                            profile.right_haptic_output_path.unwrap_or("none"),
                             profile.right_thumbstick_y_path.is_some(),
                             profile.right_primary_path.is_some(),
                             profile.right_secondary_path.is_some(),
                             profile.right_grip_pose_path.is_some(),
+                            profile.right_haptic_output_path.is_some(),
                         ),
                     );
                 }
                 Err(error) => crate::marker(
                     "projection-target-input",
                     format!(
-                        "status=binding-warning interactionProfile={} reason={} rightControllerThumbstickYBinding=false rightControllerPrimaryResetBinding=false rightControllerSecondaryScaleDriverToggleBinding=false rightGripPoseBinding=false",
+                        "status=binding-warning interactionProfile={} reason={} rightControllerThumbstickYBinding=false rightControllerPrimaryResetBinding=false rightControllerSecondaryScaleDriverToggleBinding=false rightGripPoseBinding=false rightBreathHapticBinding=false",
                         profile.profile_path,
                         crate::sanitize(&error.to_string())
                     ),
@@ -165,8 +227,16 @@ impl StimulusVolumeActions {
         crate::marker(
             "projection-target-input",
             format!(
-                "status=config actionSet=stimulus_volume projectionTargetControlsEnabled={} rightThumbstickYAction=true rightControllerThumbstickY=/user/hand/right/input/thumbstick/y rightPrimaryResetAction=true rightControllerPrimaryReset=/user/hand/right/input/a/click rightSecondaryScaleDriverToggleAction=true rightControllerSecondaryScaleDriverToggle=/user/hand/right/input/b/click rightGripPoseAction=true optionalRightGripPose=/user/hand/right/input/grip/pose actionSetAttached=false highRatePoseViaAndroidProperties=false highRateBreathViaAndroidProperties=false",
+                "status=config actionSet=stimulus_volume projectionTargetControlsEnabled={} rightThumbstickYAction=true rightControllerThumbstickY=/user/hand/right/input/thumbstick/y rightPrimaryResetAction=true rightControllerPrimaryReset=/user/hand/right/input/a/click rightSecondaryScaleDriverToggleAction=true rightControllerSecondaryScaleDriverToggle=/user/hand/right/input/b/click rightGripPoseAction=true optionalRightGripPose=/user/hand/right/input/grip/pose rightBreathHapticAction=true rightBreathHaptic={} rightBreathHapticSubaction={} breathHapticsConfigured={} breathHapticRequiresScaleDriver=pmb breathHapticRequiresRightGripTracked=true breathHapticPulseHz={:.3} breathHapticAmplitude={:.3} breathHapticDurationMs={} breathHapticFrequencyHz=runtime-default actionSetAttached=false highRatePoseViaAndroidProperties=false highRateBreathViaAndroidProperties=false",
                 projection_target_settings.controls_enabled,
+                RIGHT_HAND_HAPTIC_OUTPUT_PATH,
+                RIGHT_HAND_SUBACTION_PATH,
+                projection_target_settings
+                    .breath_bridge_mode
+                    .uses_breath_stream(),
+                breath_haptic_pulse_hz(),
+                BREATH_HAPTIC_AMPLITUDE,
+                BREATH_HAPTIC_PULSE_DURATION_MS,
             ),
         );
 
@@ -196,7 +266,12 @@ impl StimulusVolumeActions {
             right_secondary_scale_driver_toggle,
             right_thumbstick_y,
             right_grip_pose,
+            right_breath_haptic,
+            right_hand_subaction_path,
             right_grip_space: None,
+            breath_haptic_cadence: BreathHapticCadence::new_ready(),
+            breath_haptic_pulse_count: 0,
+            breath_haptic_error_count: 0,
             manifold_pose_publisher: None,
             manifold_pose_config,
             manifold_pose_seconds_since_publish: 0.0,
@@ -248,7 +323,7 @@ impl StimulusVolumeActions {
         crate::marker(
             "projection-target-input",
             format!(
-                "status=attached actionSet=stimulus_volume actionSetAttached=true suggestedBindingCount={} rightThumbstickYAction=true rightPrimaryResetAction=true rightSecondaryScaleDriverToggleAction=true rightGripPoseAction=true",
+                "status=attached actionSet=stimulus_volume actionSetAttached=true suggestedBindingCount={} rightThumbstickYAction=true rightPrimaryResetAction=true rightSecondaryScaleDriverToggleAction=true rightGripPoseAction=true rightBreathHapticAction=true",
                 self.suggested_binding_count
             ),
         );
@@ -262,6 +337,7 @@ impl StimulusVolumeActions {
         predicted_display_time: xr::Time,
         frame_count: u64,
         dt_seconds: f32,
+        breath_haptics_enabled: bool,
     ) -> NativeRendererControllerEvents {
         let mut events = NativeRendererControllerEvents::default();
         if let Err(error) = session.sync_actions(&[(&self.action_set).into()]) {
@@ -307,6 +383,16 @@ impl StimulusVolumeActions {
                 false
             }
         };
+        events.right_grip_pose_tracked = if breath_haptics_enabled {
+            self.right_grip_pose_tracked(
+                reference_space,
+                predicted_display_time,
+                events.right_grip_pose_active,
+                frame_count,
+            )
+        } else {
+            false
+        };
         self.publish_right_grip_pose(
             reference_space,
             predicted_display_time,
@@ -314,21 +400,178 @@ impl StimulusVolumeActions {
             frame_count,
             dt_seconds,
         );
+        self.pulse_breath_haptic(
+            session,
+            breath_haptics_enabled,
+            events.right_grip_pose_tracked,
+            frame_count,
+            dt_seconds,
+        );
         if frame_count == 0 || frame_count % 120 == 0 {
             crate::marker(
                 "projection-target-input",
                 format!(
-                    "status=polled frame={} rightGripPoseActive={} nativeControllerPosePublisherEnabled={} nativeControllerPosePublishedCount={} nativeControllerPoseDroppedCount={} rightControllerThumbstickYAction=true rightPrimaryResetAction=true rightSecondaryScaleDriverToggleAction=true highRatePoseViaManifold={} highRatePoseViaAndroidProperties=false",
+                    "status=polled frame={} rightGripPoseActive={} rightGripPoseTracked={} nativeControllerPosePublisherEnabled={} nativeControllerPosePublishedCount={} nativeControllerPoseDroppedCount={} rightControllerThumbstickYAction=true rightPrimaryResetAction=true rightSecondaryScaleDriverToggleAction=true rightBreathHapticAction=true breathHapticsEnabled={} highRatePoseViaManifold={} highRatePoseViaAndroidProperties=false",
                     frame_count,
                     events.right_grip_pose_active,
+                    events.right_grip_pose_tracked,
                     self.manifold_pose_config.enabled,
                     self.manifold_pose_published_count,
                     self.manifold_pose_dropped_count,
+                    breath_haptics_enabled,
                     self.manifold_pose_config.enabled,
                 ),
             );
         }
         events
+    }
+
+    fn right_grip_pose_tracked(
+        &self,
+        reference_space: &xr::Space,
+        predicted_display_time: xr::Time,
+        active: bool,
+        frame_count: u64,
+    ) -> bool {
+        let Some(space) = self.right_grip_space.as_ref() else {
+            if frame_count == 0 || frame_count % 120 == 0 {
+                crate::marker(
+                    "projection-target-haptics",
+                    format!(
+                        "status=tracking-skipped frame={} reason=right-grip-action-space-unavailable breathHapticsEnabled=true rightGripPoseTracked=false rightGripPoseActionSpace=false breathHapticPulseCount={} breathHapticErrorCount={}",
+                        frame_count,
+                        self.breath_haptic_pulse_count,
+                        self.breath_haptic_error_count,
+                    ),
+                );
+            }
+            return false;
+        };
+        let location = match space.locate(reference_space, predicted_display_time) {
+            Ok(location) => location,
+            Err(error) => {
+                if frame_count == 0 || frame_count % 120 == 0 {
+                    crate::marker(
+                        "projection-target-haptics",
+                        format!(
+                            "status=tracking-warning frame={} reason={} breathHapticsEnabled=true rightGripPoseTracked=false breathHapticPulseCount={} breathHapticErrorCount={}",
+                            frame_count,
+                            crate::sanitize(&error.to_string()),
+                            self.breath_haptic_pulse_count,
+                            self.breath_haptic_error_count,
+                        ),
+                    );
+                }
+                return false;
+            }
+        };
+        let position = [
+            location.pose.position.x,
+            location.pose.position.y,
+            location.pose.position.z,
+        ];
+        let orientation = [
+            location.pose.orientation.x,
+            location.pose.orientation.y,
+            location.pose.orientation.z,
+            location.pose.orientation.w,
+        ];
+        let pose_finite = position.iter().all(|value| value.is_finite())
+            && orientation.iter().all(|value| value.is_finite());
+        let tracked = active && pose_finite && space_location_pose_usable(location);
+        if frame_count == 0 || frame_count % 120 == 0 {
+            crate::marker(
+                "projection-target-haptics",
+                format!(
+                    "status=tracking-polled frame={} breathHapticsEnabled=true rightGripPoseActive={} rightGripPoseTracked={} locationFlags={:?} breathHapticPulseCount={} breathHapticErrorCount={}",
+                    frame_count,
+                    active,
+                    tracked,
+                    location.location_flags,
+                    self.breath_haptic_pulse_count,
+                    self.breath_haptic_error_count,
+                ),
+            );
+        }
+        tracked
+    }
+
+    fn pulse_breath_haptic<G>(
+        &mut self,
+        session: &xr::Session<G>,
+        enabled: bool,
+        tracked: bool,
+        frame_count: u64,
+        dt_seconds: f32,
+    ) {
+        let should_pulse = self
+            .breath_haptic_cadence
+            .update(dt_seconds, enabled, tracked);
+        if !enabled || !tracked {
+            if frame_count == 0 || frame_count % 120 == 0 {
+                crate::marker(
+                    "projection-target-haptics",
+                    format!(
+                        "status=inactive frame={} breathHapticsEnabled={} rightGripPoseTracked={} breathHapticRequiresScaleDriver=pmb breathHapticRequiresRightGripTracked=true breathHapticPulseCount={} breathHapticErrorCount={}",
+                        frame_count,
+                        enabled,
+                        tracked,
+                        self.breath_haptic_pulse_count,
+                        self.breath_haptic_error_count,
+                    ),
+                );
+            }
+            return;
+        }
+        if !should_pulse {
+            return;
+        }
+
+        let vibration = xr::HapticVibration::new()
+            .duration(xr::Duration::from_nanos(BREATH_HAPTIC_PULSE_DURATION_NANOS))
+            .frequency(xr::FREQUENCY_UNSPECIFIED)
+            .amplitude(BREATH_HAPTIC_AMPLITUDE);
+        match self.right_breath_haptic.apply_feedback(
+            session,
+            self.right_hand_subaction_path,
+            &vibration,
+        ) {
+            Ok(()) => {
+                self.breath_haptic_pulse_count = self.breath_haptic_pulse_count.saturating_add(1);
+                if self.breath_haptic_pulse_count == 1 || self.breath_haptic_pulse_count % 10 == 0 {
+                    crate::marker(
+                        "projection-target-haptics",
+                        format!(
+                            "status=pulse-applied frame={} breathHapticsEnabled=true rightGripPoseTracked=true breathHapticPulseCount={} breathHapticErrorCount={} breathHapticPulseHz={:.3} breathHapticAmplitude={:.3} breathHapticDurationMs={} breathHapticFrequencyHz=runtime-default",
+                            frame_count,
+                            self.breath_haptic_pulse_count,
+                            self.breath_haptic_error_count,
+                            breath_haptic_pulse_hz(),
+                            BREATH_HAPTIC_AMPLITUDE,
+                            BREATH_HAPTIC_PULSE_DURATION_MS,
+                        ),
+                    );
+                }
+            }
+            Err(error) => {
+                self.breath_haptic_error_count = self.breath_haptic_error_count.saturating_add(1);
+                if self.breath_haptic_error_count == 1 || frame_count % 120 == 0 {
+                    crate::marker(
+                        "projection-target-haptics",
+                        format!(
+                            "status=pulse-error frame={} reason={} breathHapticsEnabled=true rightGripPoseTracked=true breathHapticPulseCount={} breathHapticErrorCount={} breathHapticPulseHz={:.3} breathHapticAmplitude={:.3} breathHapticDurationMs={}",
+                            frame_count,
+                            crate::sanitize(&error.to_string()),
+                            self.breath_haptic_pulse_count,
+                            self.breath_haptic_error_count,
+                            breath_haptic_pulse_hz(),
+                            BREATH_HAPTIC_AMPLITUDE,
+                            BREATH_HAPTIC_PULSE_DURATION_MS,
+                        ),
+                    );
+                }
+            }
+        }
     }
 
     fn publish_right_grip_pose(
@@ -674,12 +917,17 @@ fn space_location_pose_usable(location: xr::SpaceLocation) -> bool {
     position_usable && orientation_usable
 }
 
+fn breath_haptic_pulse_hz() -> f32 {
+    1.0 / BREATH_HAPTIC_PULSE_PERIOD_SECONDS
+}
+
 struct InteractionProfileBindings {
     profile_path: &'static str,
     right_primary_path: Option<&'static str>,
     right_secondary_path: Option<&'static str>,
     right_thumbstick_y_path: Option<&'static str>,
     right_grip_pose_path: Option<&'static str>,
+    right_haptic_output_path: Option<&'static str>,
 }
 
 const INTERACTION_PROFILES: &[InteractionProfileBindings] = &[
@@ -689,6 +937,7 @@ const INTERACTION_PROFILES: &[InteractionProfileBindings] = &[
         right_secondary_path: Some("/user/hand/right/input/b/click"),
         right_thumbstick_y_path: Some("/user/hand/right/input/thumbstick/y"),
         right_grip_pose_path: Some("/user/hand/right/input/grip/pose"),
+        right_haptic_output_path: Some(RIGHT_HAND_HAPTIC_OUTPUT_PATH),
     },
     InteractionProfileBindings {
         profile_path: "/interaction_profiles/meta/touch_controller_plus",
@@ -696,6 +945,7 @@ const INTERACTION_PROFILES: &[InteractionProfileBindings] = &[
         right_secondary_path: Some("/user/hand/right/input/b/click"),
         right_thumbstick_y_path: Some("/user/hand/right/input/thumbstick/y"),
         right_grip_pose_path: Some("/user/hand/right/input/grip/pose"),
+        right_haptic_output_path: Some(RIGHT_HAND_HAPTIC_OUTPUT_PATH),
     },
     InteractionProfileBindings {
         profile_path: "/interaction_profiles/khr/simple_controller",
@@ -703,5 +953,27 @@ const INTERACTION_PROFILES: &[InteractionProfileBindings] = &[
         right_secondary_path: None,
         right_thumbstick_y_path: None,
         right_grip_pose_path: Some("/user/hand/right/input/grip/pose"),
+        right_haptic_output_path: Some(RIGHT_HAND_HAPTIC_OUTPUT_PATH),
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::{BreathHapticCadence, BREATH_HAPTIC_PULSE_PERIOD_SECONDS};
+
+    #[test]
+    fn breath_haptic_cadence_pulses_immediately_then_at_period() {
+        let mut cadence = BreathHapticCadence::new_ready();
+        assert!(cadence.update(0.0, true, true));
+        assert!(!cadence.update(BREATH_HAPTIC_PULSE_PERIOD_SECONDS * 0.5, true, true));
+        assert!(cadence.update(BREATH_HAPTIC_PULSE_PERIOD_SECONDS * 0.5, true, true));
+    }
+
+    #[test]
+    fn breath_haptic_cadence_requires_enabled_and_tracked() {
+        let mut cadence = BreathHapticCadence::new_ready();
+        assert!(!cadence.update(BREATH_HAPTIC_PULSE_PERIOD_SECONDS, false, true));
+        assert!(!cadence.update(BREATH_HAPTIC_PULSE_PERIOD_SECONDS, true, false));
+        assert!(cadence.update(0.0, true, true));
+    }
+}

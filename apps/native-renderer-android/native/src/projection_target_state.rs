@@ -520,6 +520,12 @@ impl ProjectionTargetState {
         )
     }
 
+    pub(crate) fn breath_haptics_enabled(&self) -> bool {
+        self.settings.controls_enabled
+            && self.settings.breath_bridge_mode.uses_breath_stream()
+            && self.scale_driver == ProjectionTargetScaleDriver::Pmb
+    }
+
     #[cfg(test)]
     pub(crate) fn live_scale(&self) -> f32 {
         self.live_scale
@@ -846,6 +852,8 @@ mod tests {
         settings.breath_bridge_mode = BreathBridgeMode::ManifoldState;
         let mut state = ProjectionTargetState::new(settings);
 
+        assert!(state.breath_haptics_enabled());
+
         state.apply_input(ProjectionTargetInput::BreathState {
             state: ProjectionTargetBreathState::Inhale,
             sequence_id: Some(1),
@@ -858,6 +866,7 @@ mod tests {
         assert!(state
             .marker_fields()
             .contains("projectionTargetScaleDriver=joystick"));
+        assert!(!state.breath_haptics_enabled());
         assert!(state
             .marker_fields()
             .contains("projectionTargetScaleDriverSwitch=right-controller-secondary-to-joystick"));
@@ -866,6 +875,7 @@ mod tests {
         assert!(state
             .marker_fields()
             .contains("projectionTargetScaleDriver=pmb"));
+        assert!(state.breath_haptics_enabled());
         assert!(state
             .marker_fields()
             .contains("projectionTargetScaleDriverSwitch=right-controller-secondary-to-pmb"));
@@ -874,6 +884,7 @@ mod tests {
         assert!(state
             .marker_fields()
             .contains("projectionTargetScaleDriver=joystick"));
+        assert!(!state.breath_haptics_enabled());
         assert!(state
             .marker_fields()
             .contains("projectionTargetScaleDriverSwitch=right-controller-secondary-to-joystick"));
