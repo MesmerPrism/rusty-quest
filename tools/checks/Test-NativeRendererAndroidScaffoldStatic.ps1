@@ -90,6 +90,17 @@ Assert-ContainsTokens $controlPanel @(
     'photosensitive_risk_ack',
     'Request active stimulus after launch',
     'Enable right-primary randomize',
+    'Volumetric Pattern Panel',
+    'GridLayout',
+    'SeekBar',
+    'buildChoiceGrid',
+    'buildDynamicsJson',
+    'spatial_oscillator_hz',
+    'mirror_mode',
+    'twist',
+    'scramble',
+    'jumble',
+    'stretch',
     'Stage \+ Launch VR',
     'ACTION_TOGGLE_PANEL',
     'onNewIntent',
@@ -152,7 +163,12 @@ Assert-ContainsTokens $stimulusPanel @(
     'ProjectionTargetSettings::disabled_for_volume_only_route',
     'safety_ack_missing',
     'randomize_hz_out_of_range',
-    'unsupported_pattern_family'
+    'unsupported_pattern_family',
+    'parse_startup_dynamics',
+    'temporal_frequency_hz',
+    'spatial_oscillator_hz',
+    'source_shift',
+    'unsupported_mirror_mode'
 ) "Rust panel candidate adapter"
 
 Assert-ContainsTokens $androidEvents @(

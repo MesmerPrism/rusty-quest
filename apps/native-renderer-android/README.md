@@ -76,13 +76,17 @@ files/stimulus_volume_candidate.json
 The candidate schema is `rusty.quest.stimulus_volume.profile.v1`. It can select
 the solid-black or native-passthrough stimulus-volume render route, safety
 acknowledgement, active/inactive request state, render target tier, raymarch
-sample count, central-FOV fraction, gradient smoothing, pattern family, and
-randomization Hz bounds. The Rust NativeActivity is the authority: it rejects
-missing safety acknowledgement for active requests, rejects randomization ranges
-outside `3.0` to `40.0` Hz, rejects unsupported pattern families or render
-targets, disables stale Breathing Room projection-target controls for
-volume-only routes, and emits `stimulus-panel` markers when a candidate is
-missing, rejected, or applied.
+sample count, central-FOV fraction, gradient smoothing, pattern family,
+Trevor-style mirror/warp dynamics, oscillator frequencies, phase offsets, and
+randomization Hz bounds. The native panel exposes those fields through pattern
+tiles, mirror tiles, and bounded Android `SeekBar` controls; it keeps a visible
+Close button inside the panel as well as the platform panel close affordance.
+The Rust NativeActivity is the authority: it rejects missing safety
+acknowledgement for active requests, rejects randomization and oscillator
+frequencies outside `3.0` to `40.0` Hz, rejects unsupported pattern families,
+mirror modes, or render targets, disables stale Breathing Room projection-target
+controls for volume-only routes, and emits `stimulus-panel` markers when a
+candidate is missing, rejected, or applied.
 
 The panel also writes an app-private status witness:
 

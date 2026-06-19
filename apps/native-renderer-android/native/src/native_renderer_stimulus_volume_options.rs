@@ -32,6 +32,7 @@ pub(crate) struct NativeStimulusVolumeSettings {
     pub(crate) randomize_enabled: bool,
     pub(crate) randomize_min_hz: f32,
     pub(crate) randomize_max_hz: f32,
+    pub(crate) startup_dynamics: NativeStimulusVolumeStartupDynamics,
     pub(crate) safety_acknowledged: bool,
     pub(crate) safety_acknowledgement_required: bool,
     pub(crate) allow_autostart: bool,
@@ -65,6 +66,9 @@ impl NativeStimulusVolumeSettings {
         } else {
             (3.0, 40.0)
         };
+        let pattern_family = NativeStimulusVolumePatternFamily::from_property(lookup(
+            PROP_STIMULUS_VOLUME_PATTERN_FAMILY,
+        ));
         Self {
             enabled: bool_value(
                 lookup(PROP_STIMULUS_VOLUME_ENABLED),
@@ -78,9 +82,7 @@ impl NativeStimulusVolumeSettings {
                 PROP_STIMULUS_VOLUME_RENDER_TARGET,
             )),
             color_mode: NativeStimulusVolumeColorMode::DepthRamp,
-            pattern_family: NativeStimulusVolumePatternFamily::from_property(lookup(
-                PROP_STIMULUS_VOLUME_PATTERN_FAMILY,
-            )),
+            pattern_family,
             raymarch_samples: u32_value(lookup(PROP_STIMULUS_VOLUME_RAYMARCH_SAMPLES), 6, 1, 48),
             central_fov_fraction: f32_clamped_value(
                 lookup(PROP_STIMULUS_VOLUME_CENTRAL_FOV_FRACTION),
@@ -97,6 +99,9 @@ impl NativeStimulusVolumeSettings {
             randomize_enabled: bool_value(lookup(PROP_STIMULUS_VOLUME_RANDOMIZE_ENABLED), true),
             randomize_min_hz,
             randomize_max_hz,
+            startup_dynamics: NativeStimulusVolumeStartupDynamics::saved_default_for_family(
+                pattern_family,
+            ),
             safety_acknowledged: bool_value(lookup(PROP_STIMULUS_VOLUME_SAFETY_ACK), false),
             safety_acknowledgement_required: true,
             allow_autostart: false,
@@ -184,21 +189,117 @@ impl NativeStimulusVolumeSettings {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NativeStimulusVolumeStartupDynamics {
+    pub(crate) temporal_frequency_hz: f32,
+    pub(crate) oscillator_hz: [f32; 3],
+    pub(crate) spatial_frequency_scale: f32,
+    pub(crate) source_shift: [f32; 2],
+    pub(crate) noise_scale: f32,
+    pub(crate) depth_warp: f32,
+    pub(crate) pattern_family: NativeStimulusVolumePatternFamily,
+    pub(crate) mirror_mode: u32,
+    pub(crate) twist: f32,
+    pub(crate) pinch: f32,
+    pub(crate) scramble: f32,
+    pub(crate) jumble: f32,
+    pub(crate) stretch: [f32; 2],
+    pub(crate) phase_offsets: [f32; 3],
+}
+
+impl NativeStimulusVolumeStartupDynamics {
+    pub(crate) const SOURCE_MARKER: &'static str = "headset-randomize-count-28-2026-06-20";
+
+    pub(crate) fn saved_default() -> Self {
+        Self {
+            temporal_frequency_hz: 3.083_864,
+            oscillator_hz: [6.041_369, 35.362_293, 37.530_54],
+            spatial_frequency_scale: 0.900_433,
+            source_shift: [-0.052_117, 0.099_197],
+            noise_scale: 6.632_848,
+            depth_warp: 0.103_063,
+            pattern_family: NativeStimulusVolumePatternFamily::Spiral,
+            mirror_mode: 0,
+            twist: -0.791_351,
+            pinch: -0.281_597,
+            scramble: 0.127_603,
+            jumble: 0.165_175,
+            stretch: [1.390_104, 1.071_787],
+            phase_offsets: [0.964_848, 1.612_527, 3.835_902],
+        }
+    }
+
+    pub(crate) fn saved_default_for_family(
+        pattern_family: NativeStimulusVolumePatternFamily,
+    ) -> Self {
+        let mut dynamics = Self::saved_default();
+        if !pattern_family.randomizes_family() {
+            dynamics.pattern_family = pattern_family.runtime_initial_family();
+        }
+        dynamics
+    }
+
+    pub(crate) fn mirror_mode_marker(self) -> &'static str {
+        mirror_mode_marker(self.mirror_mode)
+    }
+
+    pub(crate) fn marker_fields(self) -> String {
+        format!(
+            "stimulusVolumePatternFamily={} stimulusVolumeMirrorMode={} stimulusVolumeTwist={:.3} stimulusVolumePinch={:.3} stimulusVolumeScramble={:.3} stimulusVolumeJumble={:.3} stimulusVolumeStretch={:.3},{:.3} stimulusVolumeTemporalFrequencyHz={:.3} stimulusVolumeSpatialOscillatorHz={:.3},{:.3},{:.3} stimulusVolumeSpatialFrequencyScale={:.3} stimulusVolumeSpatialSourceShift={:.3},{:.3} stimulusVolumeSpatialNoiseScale={:.3} stimulusVolumeDepthWarp={:.3} stimulusVolumePhaseOffsets={:.3},{:.3},{:.3}",
+            self.pattern_family.marker_value(),
+            self.mirror_mode_marker(),
+            self.twist,
+            self.pinch,
+            self.scramble,
+            self.jumble,
+            self.stretch[0],
+            self.stretch[1],
+            self.temporal_frequency_hz,
+            self.oscillator_hz[0],
+            self.oscillator_hz[1],
+            self.oscillator_hz[2],
+            self.spatial_frequency_scale,
+            self.source_shift[0],
+            self.source_shift[1],
+            self.noise_scale,
+            self.depth_warp,
+            self.phase_offsets[0],
+            self.phase_offsets[1],
+            self.phase_offsets[2],
+        )
+    }
+}
+
+pub(crate) fn mirror_mode_marker(mode: u32) -> &'static str {
+    match mode {
+        1 => "mirror-x",
+        2 => "mirror-y",
+        3 => "mirror-xy",
+        4 => "radial-wedge",
+        5 => "grid-fold",
+        _ => "none",
+    }
+}
+
 impl Default for NativeStimulusVolumeSettings {
     fn default() -> Self {
+        let pattern_family = NativeStimulusVolumePatternFamily::RandomizedTrevorVocabulary;
         Self {
             enabled: false,
             profile: NativeStimulusVolumeProfile::VolumeOnlyBrightInterference,
             composition: NativeStimulusVolumeCompositionMode::OpaqueBlackProjection,
             render_target: NativeStimulusVolumeRenderTarget::Rgba16f512Stereo,
             color_mode: NativeStimulusVolumeColorMode::DepthRamp,
-            pattern_family: NativeStimulusVolumePatternFamily::RandomizedTrevorVocabulary,
+            pattern_family,
             raymarch_samples: 6,
             central_fov_fraction: 0.78,
             gradient_smoothing: 0.65,
             randomize_enabled: true,
             randomize_min_hz: 3.0,
             randomize_max_hz: 40.0,
+            startup_dynamics: NativeStimulusVolumeStartupDynamics::saved_default_for_family(
+                pattern_family,
+            ),
             safety_acknowledged: false,
             safety_acknowledgement_required: true,
             allow_autostart: false,
@@ -406,5 +507,62 @@ impl NativeStimulusVolumeRenderTarget {
             Self::Rgba16f768Stereo => "balanced-768",
             Self::Rgba16f1024Stereo => "limit-1024",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 0.000_001,
+            "actual {actual} expected {expected}"
+        );
+    }
+
+    #[test]
+    fn startup_dynamics_match_saved_headset_randomization() {
+        let dynamics = NativeStimulusVolumeSettings::default().startup_dynamics;
+        assert_eq!(
+            NativeStimulusVolumeStartupDynamics::SOURCE_MARKER,
+            "headset-randomize-count-28-2026-06-20"
+        );
+        assert_eq!(
+            dynamics.pattern_family,
+            NativeStimulusVolumePatternFamily::Spiral
+        );
+        assert_eq!(dynamics.mirror_mode, 0);
+        assert_close(dynamics.temporal_frequency_hz, 3.083_864);
+        assert_close(dynamics.oscillator_hz[0], 6.041_369);
+        assert_close(dynamics.oscillator_hz[1], 35.362_293);
+        assert_close(dynamics.oscillator_hz[2], 37.530_54);
+        assert_close(dynamics.spatial_frequency_scale, 0.900_433);
+        assert_close(dynamics.source_shift[0], -0.052_117);
+        assert_close(dynamics.source_shift[1], 0.099_197);
+        assert_close(dynamics.noise_scale, 6.632_848);
+        assert_close(dynamics.depth_warp, 0.103_063);
+        assert_close(dynamics.twist, -0.791_351);
+        assert_close(dynamics.pinch, -0.281_597);
+        assert_close(dynamics.scramble, 0.127_603);
+        assert_close(dynamics.jumble, 0.165_175);
+        assert_close(dynamics.stretch[0], 1.390_104);
+        assert_close(dynamics.stretch[1], 1.071_787);
+        assert_close(dynamics.phase_offsets[0], 0.964_848);
+        assert_close(dynamics.phase_offsets[1], 1.612_527);
+        assert_close(dynamics.phase_offsets[2], 3.835_902);
+    }
+
+    #[test]
+    fn explicit_profile_family_overrides_saved_default_family_only() {
+        let dynamics = NativeStimulusVolumeStartupDynamics::saved_default_for_family(
+            NativeStimulusVolumePatternFamily::Checker,
+        );
+        assert_eq!(
+            dynamics.pattern_family,
+            NativeStimulusVolumePatternFamily::Checker
+        );
+        assert_close(dynamics.temporal_frequency_hz, 3.083_864);
+        assert_close(dynamics.oscillator_hz[1], 35.362_293);
     }
 }

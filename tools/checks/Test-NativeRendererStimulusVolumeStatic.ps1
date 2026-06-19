@@ -85,6 +85,8 @@ Assert-ContainsTokens "$nativeBuildRs`n$nativeLib`n$nativeRendererOptionSurface`
     'volumePatternFamily=',
     'randomizeHzRange={:.3}-{:.3}',
     'stimulusVolumeRandomizeMode=trevor-vocabulary-temporal-spatial',
+    'NativeStimulusVolumeStartupDynamics',
+    'marker_fields',
     'status=startup-dynamics',
     'headset-randomize-count-28-2026-06-20',
     '3.083_864',

@@ -129,12 +129,20 @@ stimulus_volume_candidate.json
 The candidate schema is `rusty.quest.stimulus_volume.profile.v1`. It can select
 the stimulus composition, active request state, safety acknowledgement, render
 target tier, raymarch samples, central-FOV fraction, gradient smoothing, pattern
-family, and randomize Hz range. The panel cannot write Android system
-properties and does not directly mutate renderer state. On startup the Rust
-`NativeActivity` reads the file through `AndroidApp::internal_data_path()`,
-rejects damaged or unsafe candidates, maps accepted values into
-`NativeStimulusVolumeSettings`, disables stale Breathing Room controls for the
-volume-only route, emits a `stimulus-panel` marker, and writes:
+family, randomize Hz range, and a `stimulus.dynamics` object. The dynamics
+object is the native bridge for the Trevor-style vocabulary: `mirror_mode`,
+`temporal_frequency_hz`, three `spatial_oscillator_hz` values,
+`spatial_frequency_scale`, `source_shift`, `noise_scale`, `depth_warp`,
+`twist`, `pinch`, `scramble`, `jumble`, `stretch`, and `phase_offsets`.
+The panel exposes these through native Android pattern/mirror tiles and bounded
+sliders rather than a WebView. It also includes visible in-panel Close buttons
+so the right trigger can remain an open-panel affordance while the 2D panel owns
+controller focus. The panel cannot write Android system properties and does not
+directly mutate renderer state. On startup the Rust `NativeActivity` reads the
+file through `AndroidApp::internal_data_path()`, rejects damaged or unsafe
+candidates, maps accepted values into `NativeStimulusVolumeSettings`, disables
+stale Breathing Room controls for the volume-only route, emits a
+`stimulus-panel` marker, and writes:
 
 ```text
 stimulus_volume_status.json

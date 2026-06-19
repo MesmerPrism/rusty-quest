@@ -23,6 +23,7 @@ use crate::{
     },
     native_renderer_stimulus_volume_options::{
         NativeStimulusVolumeCompositionMode, NativeStimulusVolumeSettings,
+        NativeStimulusVolumeStartupDynamics,
     },
     projection_target_state::ProjectionTargetSettings,
 };
@@ -196,6 +197,7 @@ pub(crate) fn parse_candidate_json(text: &str) -> Result<StimulusPanelCandidate,
         }
         _ => NativeStimulusVolumeCompositionMode::OpaqueBlackProjection,
     };
+    settings.startup_dynamics = parse_startup_dynamics(stimulus, settings.startup_dynamics)?;
 
     Ok(StimulusPanelCandidate {
         revision,
@@ -273,6 +275,83 @@ pub(crate) fn apply_app_private_candidate(
             options
         }
     }
+}
+
+fn parse_startup_dynamics(
+    stimulus: &Value,
+    fallback: NativeStimulusVolumeStartupDynamics,
+) -> Result<NativeStimulusVolumeStartupDynamics, String> {
+    let Some(dynamics_value) = value_at(stimulus, &["dynamics"]) else {
+        return Ok(fallback);
+    };
+    if !dynamics_value.is_object() {
+        return Err("missing_object:stimulus.dynamics".to_string());
+    }
+
+    let mut dynamics = fallback;
+    dynamics.temporal_frequency_hz = bounded_number_at(
+        dynamics_value,
+        "temporal_frequency_hz",
+        dynamics.temporal_frequency_hz,
+        3.0,
+        40.0,
+    )?;
+    dynamics.oscillator_hz = bounded_number_triplet_at(
+        dynamics_value,
+        "spatial_oscillator_hz",
+        dynamics.oscillator_hz,
+        3.0,
+        40.0,
+    )?;
+    dynamics.spatial_frequency_scale = bounded_number_at(
+        dynamics_value,
+        "spatial_frequency_scale",
+        dynamics.spatial_frequency_scale,
+        0.35,
+        3.0,
+    )?;
+    dynamics.source_shift = bounded_number_pair_at(
+        dynamics_value,
+        "source_shift",
+        dynamics.source_shift,
+        -0.5,
+        0.5,
+    )?;
+    dynamics.noise_scale = bounded_number_at(
+        dynamics_value,
+        "noise_scale",
+        dynamics.noise_scale,
+        0.0,
+        12.0,
+    )?;
+    dynamics.depth_warp =
+        bounded_number_at(dynamics_value, "depth_warp", dynamics.depth_warp, 0.0, 0.25)?;
+    dynamics.twist = bounded_number_at(dynamics_value, "twist", dynamics.twist, -1.6, 1.6)?;
+    dynamics.pinch = bounded_number_at(dynamics_value, "pinch", dynamics.pinch, -1.2, 1.2)?;
+    dynamics.scramble = bounded_number_at(dynamics_value, "scramble", dynamics.scramble, 0.0, 1.0)?;
+    dynamics.jumble = bounded_number_at(dynamics_value, "jumble", dynamics.jumble, 0.0, 1.0)?;
+    dynamics.stretch =
+        bounded_number_pair_at(dynamics_value, "stretch", dynamics.stretch, 0.4, 2.0)?;
+    dynamics.phase_offsets = bounded_number_triplet_at(
+        dynamics_value,
+        "phase_offsets",
+        dynamics.phase_offsets,
+        0.0,
+        std::f64::consts::TAU,
+    )?;
+    if let Some(mirror_mode) = string_at(dynamics_value, &["mirror_mode"]) {
+        dynamics.mirror_mode = match mirror_mode.as_str() {
+            "none" => 0,
+            "mirror-x" => 1,
+            "mirror-y" => 2,
+            "mirror-xy" => 3,
+            "radial-wedge" => 4,
+            "grid-fold" => 5,
+            _ => return Err(format!("unsupported_mirror_mode:{mirror_mode}")),
+        };
+    }
+
+    Ok(dynamics)
 }
 
 #[cfg(target_os = "android")]
@@ -354,12 +433,91 @@ fn validate_token(name: &str, value: &str, allowed: &[&str]) -> Result<(), Strin
     }
 }
 
+fn bounded_number_at(
+    value: &Value,
+    key: &str,
+    fallback: f32,
+    min: f64,
+    max: f64,
+) -> Result<f32, String> {
+    let number = value.get(key).and_then(Value::as_f64);
+    let Some(number) = number else {
+        return Ok(fallback);
+    };
+    if !number.is_finite() || number < min || number > max {
+        return Err(format!("{key}_out_of_range:{number:.3}"));
+    }
+    Ok(number as f32)
+}
+
+fn bounded_number_pair_at(
+    value: &Value,
+    key: &str,
+    fallback: [f32; 2],
+    min: f64,
+    max: f64,
+) -> Result<[f32; 2], String> {
+    let Some(array) = value.get(key) else {
+        return Ok(fallback);
+    };
+    let Some(array) = array.as_array() else {
+        return Err(format!("{key}_must_be_number_pair"));
+    };
+    if array.len() != 2 {
+        return Err(format!("{key}_must_be_number_pair"));
+    }
+    Ok([
+        bounded_array_number(key, &array[0], min, max)?,
+        bounded_array_number(key, &array[1], min, max)?,
+    ])
+}
+
+fn bounded_number_triplet_at(
+    value: &Value,
+    key: &str,
+    fallback: [f32; 3],
+    min: f64,
+    max: f64,
+) -> Result<[f32; 3], String> {
+    let Some(array) = value.get(key) else {
+        return Ok(fallback);
+    };
+    let Some(array) = array.as_array() else {
+        return Err(format!("{key}_must_be_number_triplet"));
+    };
+    if array.len() != 3 {
+        return Err(format!("{key}_must_be_number_triplet"));
+    }
+    Ok([
+        bounded_array_number(key, &array[0], min, max)?,
+        bounded_array_number(key, &array[1], min, max)?,
+        bounded_array_number(key, &array[2], min, max)?,
+    ])
+}
+
+fn bounded_array_number(key: &str, value: &Value, min: f64, max: f64) -> Result<f32, String> {
+    let Some(number) = value.as_f64() else {
+        return Err(format!("{key}_must_be_number"));
+    };
+    if !number.is_finite() || number < min || number > max {
+        return Err(format!("{key}_out_of_range:{number:.3}"));
+    }
+    Ok(number as f32)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::native_renderer_options::{
         NativeStimulusVolumePatternFamily, NativeStimulusVolumeRenderTarget,
     };
+
+    fn assert_close(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 0.000_5,
+            "actual {actual} expected {expected}"
+        );
+    }
 
     fn valid_candidate() -> String {
         json!({
@@ -386,6 +544,21 @@ mod tests {
                     "enabled": true,
                     "min_hz": 4.0,
                     "max_hz": 30.0
+                },
+                "dynamics": {
+                    "mirror_mode": "grid-fold",
+                    "temporal_frequency_hz": 3.084,
+                    "spatial_oscillator_hz": [6.041, 35.362, 37.531],
+                    "spatial_frequency_scale": 0.900,
+                    "source_shift": [-0.052, 0.099],
+                    "noise_scale": 6.633,
+                    "depth_warp": 0.103,
+                    "twist": -0.791,
+                    "pinch": -0.282,
+                    "scramble": 0.128,
+                    "jumble": 0.165,
+                    "stretch": [1.390, 1.072],
+                    "phase_offsets": [0.965, 1.613, 3.836]
                 }
             },
             "apply": {
@@ -415,6 +588,30 @@ mod tests {
             candidate.settings.pattern_family,
             NativeStimulusVolumePatternFamily::Spiral
         );
+        let dynamics = candidate.settings.startup_dynamics;
+        assert_eq!(dynamics.mirror_mode, 5);
+        assert_eq!(
+            dynamics.pattern_family,
+            NativeStimulusVolumePatternFamily::Spiral
+        );
+        assert_close(dynamics.temporal_frequency_hz, 3.084);
+        assert_close(dynamics.oscillator_hz[0], 6.041);
+        assert_close(dynamics.oscillator_hz[1], 35.362);
+        assert_close(dynamics.oscillator_hz[2], 37.531);
+        assert_close(dynamics.spatial_frequency_scale, 0.900);
+        assert_close(dynamics.source_shift[0], -0.052);
+        assert_close(dynamics.source_shift[1], 0.099);
+        assert_close(dynamics.noise_scale, 6.633);
+        assert_close(dynamics.depth_warp, 0.103);
+        assert_close(dynamics.twist, -0.791);
+        assert_close(dynamics.pinch, -0.282);
+        assert_close(dynamics.scramble, 0.128);
+        assert_close(dynamics.jumble, 0.165);
+        assert_close(dynamics.stretch[0], 1.390);
+        assert_close(dynamics.stretch[1], 1.072);
+        assert_close(dynamics.phase_offsets[0], 0.965);
+        assert_close(dynamics.phase_offsets[1], 1.613);
+        assert_close(dynamics.phase_offsets[2], 3.836);
     }
 
     #[test]
@@ -439,5 +636,21 @@ mod tests {
         value["stimulus"]["pattern_family"] = Value::from("unexpected");
         let error = parse_candidate_json(&value.to_string()).unwrap_err();
         assert_eq!(error, "unsupported_pattern_family:unexpected");
+    }
+
+    #[test]
+    fn rejects_out_of_range_dynamics() {
+        let mut value: Value = serde_json::from_str(&valid_candidate()).unwrap();
+        value["stimulus"]["dynamics"]["twist"] = Value::from(2.0);
+        let error = parse_candidate_json(&value.to_string()).unwrap_err();
+        assert!(error.starts_with("twist_out_of_range"));
+    }
+
+    #[test]
+    fn rejects_unknown_mirror_mode() {
+        let mut value: Value = serde_json::from_str(&valid_candidate()).unwrap();
+        value["stimulus"]["dynamics"]["mirror_mode"] = Value::from("kaleidoscope");
+        let error = parse_candidate_json(&value.to_string()).unwrap_err();
+        assert_eq!(error, "unsupported_mirror_mode:kaleidoscope");
     }
 }

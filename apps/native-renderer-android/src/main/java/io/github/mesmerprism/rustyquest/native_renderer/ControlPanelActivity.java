@@ -3,21 +3,27 @@ package io.github.mesmerprism.rustyquest.native_renderer;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
-import android.text.InputType;
+import android.view.Gravity;
 import android.view.View;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
-import android.widget.EditText;
+import android.widget.GridLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Locale;
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 public final class ControlPanelActivity extends Activity {
@@ -26,18 +32,44 @@ public final class ControlPanelActivity extends Activity {
     private static final String CANDIDATE_FILE = "stimulus_volume_candidate.json";
     private static final String STATUS_FILE = "stimulus_volume_status.json";
     private static final String PROFILE_SCHEMA = "rusty.quest.stimulus_volume.profile.v1";
+    private static final int PANEL_BG = Color.rgb(17, 18, 22);
+    private static final int PANEL_FG = Color.rgb(238, 240, 244);
+    private static final int PANEL_MUTED = Color.rgb(170, 176, 186);
+    private static final int PANEL_SURFACE = Color.rgb(35, 38, 45);
+    private static final int PANEL_ACCENT = Color.rgb(255, 214, 68);
 
     private CheckBox safetyAck;
     private CheckBox enabledRequested;
     private CheckBox randomizeEnabled;
-    private EditText minHz;
-    private EditText maxHz;
-    private EditText raymarchSamples;
-    private EditText centralFovFraction;
-    private EditText gradientSmoothing;
     private Spinner renderTarget;
-    private Spinner patternFamily;
     private TextView status;
+    private Button[] patternButtons = new Button[0];
+    private Button[] mirrorButtons = new Button[0];
+    private String selectedPatternFamily = "randomized-trevor-vocabulary";
+    private String selectedMirrorMode = "none";
+    private SliderControl minHz;
+    private SliderControl maxHz;
+    private SliderControl raymarchSamples;
+    private SliderControl centralFovFraction;
+    private SliderControl gradientSmoothing;
+    private SliderControl temporalHz;
+    private SliderControl oscillatorAHz;
+    private SliderControl oscillatorBHz;
+    private SliderControl oscillatorCHz;
+    private SliderControl spatialScale;
+    private SliderControl sourceShiftX;
+    private SliderControl sourceShiftY;
+    private SliderControl noiseScale;
+    private SliderControl depthWarp;
+    private SliderControl twist;
+    private SliderControl pinch;
+    private SliderControl scramble;
+    private SliderControl jumble;
+    private SliderControl stretchX;
+    private SliderControl stretchY;
+    private SliderControl phaseA;
+    private SliderControl phaseB;
+    private SliderControl phaseC;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -57,70 +89,198 @@ public final class ControlPanelActivity extends Activity {
 
     private View buildContentView() {
         ScrollView scroll = new ScrollView(this);
+        scroll.setBackgroundColor(PANEL_BG);
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         int pad = dp(18);
         root.setPadding(pad, pad, pad, pad);
         scroll.addView(root);
 
-        TextView title = text("Rusty Quest Stimulus Panel", 22);
-        root.addView(title);
-        root.addView(text("Stages a low-rate stimulus candidate for the native OpenXR/Vulkan renderer.", 14));
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = text("Volumetric Pattern Panel", 22, PANEL_FG);
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button headerClose = button("Close");
+        headerClose.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                finish();
+            }
+        });
+        header.addView(headerClose);
+        root.addView(header);
+        root.addView(text("App-private candidate for the native OpenXR/Vulkan renderer.", 13, PANEL_MUTED));
+        root.addView(previewBand());
 
-        safetyAck = new CheckBox(this);
-        safetyAck.setText("Photosensitive-risk acknowledgement");
+        safetyAck = checkBox("Photosensitive-risk acknowledgement", false);
+        enabledRequested = checkBox("Request active stimulus after launch", false);
+        randomizeEnabled = checkBox("Enable right-primary randomize", true);
         root.addView(safetyAck);
-
-        enabledRequested = new CheckBox(this);
-        enabledRequested.setText("Request active stimulus after launch");
-        enabledRequested.setChecked(false);
         root.addView(enabledRequested);
-
-        randomizeEnabled = new CheckBox(this);
-        randomizeEnabled.setText("Enable right-primary randomize");
-        randomizeEnabled.setChecked(true);
         root.addView(randomizeEnabled);
 
+        root.addView(sectionTitle("Render"));
         renderTarget = spinner(new String[] {
             "512x512x2-rgba16f",
             "768x768x2-rgba16f",
             "1024x1024x2-rgba16f"
-        });
+        }, 1);
         root.addView(label("Render target"));
         root.addView(renderTarget);
+        raymarchSamples = slider("Raymarch samples", 1.0, 48.0, 12.0, 47, "", true);
+        centralFovFraction = slider("Central FOV fraction", 0.45, 1.0, 0.72, 1000, "", false);
+        gradientSmoothing = slider("Gradient smoothing", 0.0, 1.0, 0.78, 1000, "", false);
+        root.addView(raymarchSamples.view);
+        root.addView(centralFovFraction.view);
+        root.addView(gradientSmoothing.view);
 
-        patternFamily = spinner(new String[] {
-            "randomized-trevor-vocabulary",
-            "trevor-mix",
-            "stripes",
-            "ripples",
-            "rays",
-            "checker",
-            "spiral",
-            "noise-field"
-        });
-        root.addView(label("Pattern family"));
-        root.addView(patternFamily);
+        root.addView(sectionTitle("Pattern"));
+        root.addView(buildChoiceGrid(true, new String[][] {
+            {"Random", "randomized-trevor-vocabulary"},
+            {"Mix", "trevor-mix"},
+            {"Stripes", "stripes"},
+            {"Ripples", "ripples"},
+            {"Rays", "rays"},
+            {"Checker", "checker"},
+            {"Spiral", "spiral"},
+            {"Noise", "noise-field"}
+        }));
 
-        minHz = decimalInput("3.0");
-        maxHz = decimalInput("40.0");
-        raymarchSamples = integerInput("12");
-        centralFovFraction = decimalInput("0.78");
-        gradientSmoothing = decimalInput("0.65");
-        root.addView(label("Randomize min Hz"));
-        root.addView(minHz);
-        root.addView(label("Randomize max Hz"));
-        root.addView(maxHz);
-        root.addView(label("Raymarch samples"));
-        root.addView(raymarchSamples);
-        root.addView(label("Central FOV fraction"));
-        root.addView(centralFovFraction);
-        root.addView(label("Gradient smoothing"));
-        root.addView(gradientSmoothing);
+        root.addView(sectionTitle("Mirroring"));
+        root.addView(buildChoiceGrid(false, new String[][] {
+            {"None", "none"},
+            {"Mirror X", "mirror-x"},
+            {"Mirror Y", "mirror-y"},
+            {"Mirror XY", "mirror-xy"},
+            {"Radial", "radial-wedge"},
+            {"Grid", "grid-fold"}
+        }));
 
+        root.addView(sectionTitle("Timing"));
+        minHz = slider("Randomize min Hz", 3.0, 40.0, 3.0, 1000, " Hz", false);
+        maxHz = slider("Randomize max Hz", 3.0, 40.0, 40.0, 1000, " Hz", false);
+        temporalHz = slider("Temporal Hz", 3.0, 40.0, 3.083864, 1000, " Hz", false);
+        oscillatorAHz = slider("Oscillator A", 3.0, 40.0, 6.041369, 1000, " Hz", false);
+        oscillatorBHz = slider("Oscillator B", 3.0, 40.0, 35.362293, 1000, " Hz", false);
+        oscillatorCHz = slider("Oscillator C", 3.0, 40.0, 37.53054, 1000, " Hz", false);
+        root.addView(minHz.view);
+        root.addView(maxHz.view);
+        root.addView(temporalHz.view);
+        root.addView(oscillatorAHz.view);
+        root.addView(oscillatorBHz.view);
+        root.addView(oscillatorCHz.view);
+
+        root.addView(sectionTitle("Volume Field"));
+        spatialScale = slider("Shape size", 0.35, 3.0, 0.900433, 1000, "", false);
+        sourceShiftX = slider("Source shift X", -0.5, 0.5, -0.052117, 1000, "", false);
+        sourceShiftY = slider("Source shift Y", -0.5, 0.5, 0.099197, 1000, "", false);
+        noiseScale = slider("Noise scale", 0.0, 12.0, 6.632848, 1000, "", false);
+        depthWarp = slider("Depth warp", 0.0, 0.25, 0.103063, 1000, "", false);
+        root.addView(spatialScale.view);
+        root.addView(sourceShiftX.view);
+        root.addView(sourceShiftY.view);
+        root.addView(noiseScale.view);
+        root.addView(depthWarp.view);
+
+        root.addView(sectionTitle("Warp"));
+        twist = slider("Twist", -1.6, 1.6, -0.791351, 1000, "", false);
+        pinch = slider("Bulge/pinch", -1.2, 1.2, -0.281597, 1000, "", false);
+        scramble = slider("Scramble", 0.0, 1.0, 0.127603, 1000, "", false);
+        jumble = slider("Jumble", 0.0, 1.0, 0.165175, 1000, "", false);
+        stretchX = slider("Stretch X", 0.4, 2.0, 1.390104, 1000, "", false);
+        stretchY = slider("Stretch Y", 0.4, 2.0, 1.071787, 1000, "", false);
+        root.addView(twist.view);
+        root.addView(pinch.view);
+        root.addView(scramble.view);
+        root.addView(jumble.view);
+        root.addView(stretchX.view);
+        root.addView(stretchY.view);
+
+        root.addView(sectionTitle("Phase"));
+        phaseA = slider("Phase A", 0.0, Math.PI * 2.0, 0.964848, 1000, "", false);
+        phaseB = slider("Phase B", 0.0, Math.PI * 2.0, 1.612527, 1000, "", false);
+        phaseC = slider("Phase C", 0.0, Math.PI * 2.0, 3.835902, 1000, "", false);
+        root.addView(phaseA.view);
+        root.addView(phaseB.view);
+        root.addView(phaseC.view);
+
+        root.addView(buildActionRow());
+
+        status = text("", 13, PANEL_MUTED);
+        status.setPadding(0, dp(10), 0, dp(8));
+        root.addView(status);
+        return scroll;
+    }
+
+    private View previewBand() {
+        TextView preview = text("depth ramp volume", 13, Color.WHITE);
+        preview.setGravity(Gravity.CENTER);
+        preview.setPadding(dp(12), dp(12), dp(12), dp(12));
+        GradientDrawable background = new GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            new int[] {
+                Color.BLACK,
+                Color.rgb(0, 255, 255),
+                Color.rgb(255, 0, 180),
+                Color.rgb(255, 230, 0),
+                Color.BLACK
+            }
+        );
+        background.setCornerRadius(dp(3));
+        preview.setBackground(background);
+        LinearLayout.LayoutParams params =
+            new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54));
+        params.setMargins(0, dp(12), 0, dp(12));
+        preview.setLayoutParams(params);
+        return preview;
+    }
+
+    private GridLayout buildChoiceGrid(final boolean patternGrid, String[][] choices) {
+        GridLayout grid = new GridLayout(this);
+        grid.setColumnCount(3);
+        grid.setUseDefaultMargins(false);
+        ArrayList<Button> buttons = new ArrayList<Button>();
+        for (int i = 0; i < choices.length; i++) {
+            Button choice = button(choices[i][0]);
+            choice.setTag(choices[i][1]);
+            choice.setMinHeight(dp(42));
+            choice.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    if (patternGrid) {
+                        selectedPatternFamily = String.valueOf(view.getTag());
+                        updateChoiceButtons(patternButtons, selectedPatternFamily);
+                    } else {
+                        selectedMirrorMode = String.valueOf(view.getTag());
+                        updateChoiceButtons(mirrorButtons, selectedMirrorMode);
+                    }
+                }
+            });
+            GridLayout.LayoutParams params = new GridLayout.LayoutParams();
+            params.width = 0;
+            params.height = GridLayout.LayoutParams.WRAP_CONTENT;
+            params.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f);
+            params.setMargins(dp(3), dp(3), dp(3), dp(3));
+            grid.addView(choice, params);
+            buttons.add(choice);
+        }
+        if (patternGrid) {
+            patternButtons = buttons.toArray(new Button[buttons.size()]);
+            updateChoiceButtons(patternButtons, selectedPatternFamily);
+        } else {
+            mirrorButtons = buttons.toArray(new Button[buttons.size()]);
+            updateChoiceButtons(mirrorButtons, selectedMirrorMode);
+        }
+        return grid;
+    }
+
+    private View buildActionRow() {
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
         buttons.setPadding(0, dp(14), 0, dp(10));
+
         Button validate = button("Validate");
         validate.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -155,15 +315,26 @@ public final class ControlPanelActivity extends Activity {
                 finish();
             }
         });
-        buttons.addView(validate);
-        buttons.addView(stage);
-        buttons.addView(stageLaunch);
-        buttons.addView(close);
-        root.addView(buttons);
 
-        status = text("", 13);
-        root.addView(status);
-        return scroll;
+        buttons.addView(validate, rowButtonParams());
+        buttons.addView(stage, rowButtonParams());
+        buttons.addView(stageLaunch, rowButtonParams());
+        buttons.addView(close, rowButtonParams());
+        return buttons;
+    }
+
+    private LinearLayout.LayoutParams rowButtonParams() {
+        LinearLayout.LayoutParams params =
+            new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f);
+        params.setMargins(dp(2), 0, dp(2), 0);
+        return params;
+    }
+
+    private void updateChoiceButtons(Button[] buttons, String selectedValue) {
+        for (int i = 0; i < buttons.length; i++) {
+            boolean selected = selectedValue.equals(String.valueOf(buttons[i].getTag()));
+            styleButton(buttons[i], selected);
+        }
     }
 
     private void stageCandidate(boolean launchAfterStage) {
@@ -186,22 +357,10 @@ public final class ControlPanelActivity extends Activity {
         if (active && !acknowledged) {
             throw new IllegalArgumentException("acknowledgement is required before requesting active stimulus");
         }
-        float min = parseFloat(minHz, "min Hz");
-        float max = parseFloat(maxHz, "max Hz");
-        if (min < 3.0f || max > 40.0f || min > max) {
+        double min = minHz.value();
+        double max = maxHz.value();
+        if (min < 3.0 || max > 40.0 || min > max) {
             throw new IllegalArgumentException("randomize Hz must stay within 3.0-40.0 and min <= max");
-        }
-        int samples = parseInt(raymarchSamples, "raymarch samples");
-        if (samples < 1 || samples > 48) {
-            throw new IllegalArgumentException("raymarch samples must stay within 1-48");
-        }
-        float fov = parseFloat(centralFovFraction, "central FOV fraction");
-        if (fov < 0.45f || fov > 1.0f) {
-            throw new IllegalArgumentException("central FOV fraction must stay within 0.45-1.0");
-        }
-        float smoothing = parseFloat(gradientSmoothing, "gradient smoothing");
-        if (smoothing < 0.0f || smoothing > 1.0f) {
-            throw new IllegalArgumentException("gradient smoothing must stay within 0.0-1.0");
         }
 
         JSONObject source = new JSONObject()
@@ -221,11 +380,12 @@ public final class ControlPanelActivity extends Activity {
             .put("enabled_requested", active)
             .put("composition", "opaque-black-projection")
             .put("render_target", selected(renderTarget))
-            .put("raymarch_samples", samples)
-            .put("central_fov_fraction", fov)
-            .put("gradient_smoothing", smoothing)
-            .put("pattern_family", selected(patternFamily))
-            .put("randomize", randomize);
+            .put("raymarch_samples", raymarchSamples.intValue())
+            .put("central_fov_fraction", centralFovFraction.value())
+            .put("gradient_smoothing", gradientSmoothing.value())
+            .put("pattern_family", selectedPatternFamily)
+            .put("randomize", randomize)
+            .put("dynamics", buildDynamicsJson());
         JSONObject apply = new JSONObject()
             .put("mode", "stage")
             .put("expected_effective_revision", -1);
@@ -237,6 +397,29 @@ public final class ControlPanelActivity extends Activity {
             .put("safety", safety)
             .put("stimulus", stimulus)
             .put("apply", apply);
+    }
+
+    private JSONObject buildDynamicsJson() throws Exception {
+        return new JSONObject()
+            .put("mirror_mode", selectedMirrorMode)
+            .put("temporal_frequency_hz", temporalHz.value())
+            .put("spatial_oscillator_hz", new JSONArray()
+                .put(oscillatorAHz.value())
+                .put(oscillatorBHz.value())
+                .put(oscillatorCHz.value()))
+            .put("spatial_frequency_scale", spatialScale.value())
+            .put("source_shift", new JSONArray().put(sourceShiftX.value()).put(sourceShiftY.value()))
+            .put("noise_scale", noiseScale.value())
+            .put("depth_warp", depthWarp.value())
+            .put("twist", twist.value())
+            .put("pinch", pinch.value())
+            .put("scramble", scramble.value())
+            .put("jumble", jumble.value())
+            .put("stretch", new JSONArray().put(stretchX.value()).put(stretchY.value()))
+            .put("phase_offsets", new JSONArray()
+                .put(phaseA.value())
+                .put(phaseB.value())
+                .put(phaseC.value()));
     }
 
     private void launchImmersiveRenderer() {
@@ -273,65 +456,74 @@ public final class ControlPanelActivity extends Activity {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
     }
 
-    private TextView text(String value, int sp) {
+    private TextView text(String value, int sp, int color) {
         TextView view = new TextView(this);
         view.setText(value);
         view.setTextSize(sp);
+        view.setTextColor(color);
         view.setPadding(0, dp(4), 0, dp(4));
         return view;
     }
 
     private TextView label(String value) {
-        TextView view = text(value, 13);
+        TextView view = text(value, 13, PANEL_MUTED);
         view.setPadding(0, dp(10), 0, dp(2));
         return view;
+    }
+
+    private TextView sectionTitle(String value) {
+        TextView view = text(value, 17, PANEL_FG);
+        view.setPadding(0, dp(18), 0, dp(6));
+        return view;
+    }
+
+    private CheckBox checkBox(String value, boolean checked) {
+        CheckBox box = new CheckBox(this);
+        box.setText(value);
+        box.setTextColor(PANEL_FG);
+        box.setChecked(checked);
+        box.setPadding(0, dp(2), 0, dp(2));
+        return box;
     }
 
     private Button button(String value) {
         Button button = new Button(this);
         button.setText(value);
+        button.setTextSize(12);
+        button.setAllCaps(false);
+        styleButton(button, false);
         return button;
     }
 
-    private Spinner spinner(String[] values) {
+    private void styleButton(Button button, boolean selected) {
+        GradientDrawable background = new GradientDrawable();
+        background.setCornerRadius(dp(3));
+        background.setStroke(dp(selected ? 2 : 1), selected ? Color.WHITE : Color.rgb(80, 86, 98));
+        background.setColor(selected ? PANEL_ACCENT : PANEL_SURFACE);
+        button.setTextColor(selected ? Color.BLACK : PANEL_FG);
+        button.setBackground(background);
+    }
+
+    private Spinner spinner(String[] values, int selectedIndex) {
         Spinner spinner = new Spinner(this);
         ArrayAdapter<String> adapter =
             new ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, values);
         adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
         spinner.setAdapter(adapter);
+        spinner.setSelection(selectedIndex);
         return spinner;
     }
 
-    private EditText decimalInput(String value) {
-        EditText input = new EditText(this);
-        input.setSingleLine(true);
-        input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
-        input.setText(value);
-        return input;
-    }
-
-    private EditText integerInput(String value) {
-        EditText input = new EditText(this);
-        input.setSingleLine(true);
-        input.setInputType(InputType.TYPE_CLASS_NUMBER);
-        input.setText(value);
-        return input;
-    }
-
-    private float parseFloat(EditText input, String label) {
-        String value = input.getText().toString().trim();
-        if (value.length() == 0) {
-            throw new IllegalArgumentException(label + " is empty");
-        }
-        return Float.parseFloat(value);
-    }
-
-    private int parseInt(EditText input, String label) {
-        String value = input.getText().toString().trim();
-        if (value.length() == 0) {
-            throw new IllegalArgumentException(label + " is empty");
-        }
-        return Integer.parseInt(value);
+    private SliderControl slider(
+        String title,
+        double min,
+        double max,
+        double initial,
+        int steps,
+        String suffix,
+        boolean integer
+    ) {
+        return new SliderControl(title, min, max, initial, steps, suffix, integer);
     }
 
     private String selected(Spinner spinner) {
@@ -340,5 +532,78 @@ public final class ControlPanelActivity extends Activity {
 
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private final class SliderControl {
+        final LinearLayout view;
+        final TextView valueLabel;
+        final SeekBar seekBar;
+        final String title;
+        final double min;
+        final double max;
+        final int steps;
+        final String suffix;
+        final boolean integer;
+
+        SliderControl(
+            String title,
+            double min,
+            double max,
+            double initial,
+            int steps,
+            String suffix,
+            boolean integer
+        ) {
+            this.title = title;
+            this.min = min;
+            this.max = max;
+            this.steps = Math.max(1, steps);
+            this.suffix = suffix;
+            this.integer = integer;
+            this.view = new LinearLayout(ControlPanelActivity.this);
+            this.view.setOrientation(LinearLayout.VERTICAL);
+            this.view.setPadding(0, dp(6), 0, dp(4));
+            this.valueLabel = text("", 13, PANEL_FG);
+            this.seekBar = new SeekBar(ControlPanelActivity.this);
+            this.seekBar.setMax(this.steps);
+            this.seekBar.setProgress(progressFor(initial));
+            this.seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+                @Override
+                public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
+                    refresh();
+                }
+
+                @Override
+                public void onStartTrackingTouch(SeekBar bar) {
+                }
+
+                @Override
+                public void onStopTrackingTouch(SeekBar bar) {
+                }
+            });
+            this.view.addView(this.valueLabel);
+            this.view.addView(this.seekBar);
+            refresh();
+        }
+
+        double value() {
+            return min + (max - min) * ((double) seekBar.getProgress() / (double) steps);
+        }
+
+        int intValue() {
+            return (int) Math.round(value());
+        }
+
+        private int progressFor(double requested) {
+            double clamped = Math.max(min, Math.min(max, requested));
+            return (int) Math.round(((clamped - min) / (max - min)) * steps);
+        }
+
+        private void refresh() {
+            String formatted = integer
+                ? String.format(Locale.US, "%d%s", intValue(), suffix)
+                : String.format(Locale.US, "%.3f%s", value(), suffix);
+            valueLabel.setText(title + ": " + formatted);
+        }
     }
 }
