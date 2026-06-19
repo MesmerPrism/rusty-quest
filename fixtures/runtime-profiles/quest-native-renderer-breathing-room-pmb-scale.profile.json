@@ -4,12 +4,22 @@
   "target_platform": "quest",
   "owned_android_properties": [
     "debug.rustyquest.native_renderer.render.mode",
+    "debug.rustyquest.native_renderer.camera.output",
+    "debug.rustyquest.native_renderer.guide.blur.enabled",
+    "debug.rustyquest.native_renderer.camera.luma_diagnostic.enabled",
     "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
     "debug.rustyquest.native_renderer.hand_mesh.input.source",
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
     "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
     "debug.rustyquest.native_renderer.sdf.visual.enabled",
+    "debug.rustyquest.native_renderer.environment_depth.mode",
+    "debug.rustyquest.native_renderer.environment_depth.source",
+    "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload",
+    "debug.rustyquest.native_renderer.stimulus_volume.enabled",
     "debug.rustyquest.native_renderer.processing.layer",
+    "debug.rustyquest.native_renderer.private_layer.enabled",
     "debug.rustyquest.native_renderer.projection.border.policy",
     "debug.rustyquest.native_renderer.projection.border.opacity",
     "debug.rustyquest.native_renderer.projection.area.opacity",
@@ -48,13 +58,28 @@
       "source_setting_id": "native_renderer.render.mode"
     },
     {
+      "name": "debug.rustyquest.native_renderer.camera.output",
+      "value": "guide-public",
+      "source_setting_id": "native_renderer.camera.output"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.guide.blur.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.guide.blur.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.luma_diagnostic.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.camera.luma_diagnostic.enabled"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
       "value": "false",
       "source_setting_id": "native_renderer.replay.visual_proof.enabled"
     },
     {
       "name": "debug.rustyquest.native_renderer.hand_mesh.input.source",
-      "value": "auto",
+      "value": "disabled",
       "source_setting_id": "native_renderer.hand_mesh.input.source"
     },
     {
@@ -68,14 +93,49 @@
       "source_setting_id": "native_renderer.hand_mesh.graft_copies.enabled"
     },
     {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.real_hands.visible"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_anchor_particles.enabled"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.sdf.visual.enabled",
       "value": "false",
       "source_setting_id": "native_renderer.sdf.visual.enabled"
     },
     {
+      "name": "debug.rustyquest.native_renderer.environment_depth.mode",
+      "value": "disabled",
+      "source_setting_id": "native_renderer.environment_depth.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.source",
+      "value": "synthetic-gpu-proof",
+      "source_setting_id": "native_renderer.environment_depth.source"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload",
+      "value": "false",
+      "source_setting_id": "native_renderer.environment_depth.high_rate_json_payload"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.stimulus_volume.enabled"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.processing.layer",
       "value": "peripheral-stretch",
       "source_setting_id": "native_renderer.processing.layer"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_layer.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.private_layer.enabled"
     },
     {
       "name": "debug.rustyquest.native_renderer.projection.border.policy",
@@ -231,15 +291,29 @@
   "expected_markers": [
     "RUSTY_QUEST_NATIVE_RENDERER channel=projection-target",
     "renderMode=custom-stereo-projection",
+    "RUSTY_QUEST_NATIVE_RENDERER channel=camera-output",
+    "cameraOutputMode=guide-public",
+    "guideGraphBlurEnabled=false",
+    "guideGraphPath=low-resolution-downsample-no-blur",
     "processingLayer=peripheral-stretch",
     "guideProjectionCoverage=full-eye-peripheral-stretch",
+    "compactHandInputSourceMode=disabled",
+    "selectsLiveFrame=false",
+    "handMeshRealHandsVisible=false",
+    "handAnchorParticlesEnabled=false",
+    "environmentDepthMode=disabled",
+    "stimulusVolumeEnabled=false",
+    "privateLayerEnabled=false",
     "projectionTargetRuntimeAuthority=native-renderer",
     "startupDefaultsAuthority=runtime-profile",
     "pmbSourceAuthority=hostess-manifold",
     "breathBridgeMode=manifold-state",
+    "projectionTargetScaleDriver=pmb",
+    "projectionTargetPmbAvailable=false",
     "projectionTargetJoystickControlsEnabled=true",
     "rightControllerThumbstickY=/user/hand/right/input/thumbstick/y",
     "rightControllerPrimaryReset=/user/hand/right/input/a/click",
+    "rightControllerSecondaryScaleDriverToggle=/user/hand/right/input/b/click",
     "highRateBreathViaAndroidProperties=false",
     "breathHighRateJsonPayload=false"
   ],

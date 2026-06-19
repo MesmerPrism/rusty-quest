@@ -11,10 +11,12 @@ pub(crate) struct StimulusVolumeActions {
     action_set: xr::ActionSet,
     right_primary_randomize: xr::Action<bool>,
     right_primary_reset: xr::Action<bool>,
+    right_secondary_scale_driver_toggle: xr::Action<bool>,
     right_thumbstick_y: xr::Action<f32>,
     right_grip_pose: xr::Action<xr::Posef>,
     previous_right_primary_randomize_pressed: bool,
     previous_right_primary_reset_pressed: bool,
+    previous_right_secondary_scale_driver_toggle_pressed: bool,
     suggested_binding_count: usize,
     stimulus_settings: NativeStimulusVolumeSettings,
     projection_target_settings: ProjectionTargetSettings,
@@ -40,7 +42,7 @@ impl StimulusVolumeActions {
             );
             crate::marker(
                 "projection-target-input",
-                "status=disabled reason=projection-target-controls-disabled actionSetAttached=false rightThumbstickYAction=false rightPrimaryResetAction=false rightGripPoseAction=false",
+                "status=disabled reason=projection-target-controls-disabled actionSetAttached=false rightThumbstickYAction=false rightPrimaryResetAction=false rightSecondaryScaleDriverToggleAction=false rightGripPoseAction=false",
             );
             return Ok(None);
         }
@@ -54,6 +56,15 @@ impl StimulusVolumeActions {
         let right_primary_reset = action_set
             .create_action::<bool>("right_primary_reset", "Right Primary Reset", &[])
             .map_err(|error| format!("create projection target reset action: {error}"))?;
+        let right_secondary_scale_driver_toggle = action_set
+            .create_action::<bool>(
+                "right_secondary_scale_driver_toggle",
+                "Right Secondary Scale Driver Toggle",
+                &[],
+            )
+            .map_err(|error| {
+                format!("create projection target scale driver toggle action: {error}")
+            })?;
         let right_thumbstick_y = action_set
             .create_action::<f32>("right_thumbstick_y", "Right Thumbstick Y", &[])
             .map_err(|error| format!("create projection target thumbstick action: {error}"))?;
@@ -79,6 +90,15 @@ impl StimulusVolumeActions {
                 bindings.push(xr::Binding::new(&right_primary_randomize, input));
                 bindings.push(xr::Binding::new(&right_primary_reset, input));
             }
+            if let Some(input_path) = profile.right_secondary_path {
+                let input = instance.string_to_path(input_path).map_err(|error| {
+                    format!("create OpenXR path for secondary input {input_path}: {error}")
+                })?;
+                bindings.push(xr::Binding::new(
+                    &right_secondary_scale_driver_toggle,
+                    input,
+                ));
+            }
             if let Some(input_path) = profile.right_thumbstick_y_path {
                 let input = instance.string_to_path(input_path).map_err(|error| {
                     format!("create OpenXR path for thumbstick Y input {input_path}: {error}")
@@ -97,13 +117,15 @@ impl StimulusVolumeActions {
                     crate::marker(
                         "projection-target-input",
                         format!(
-                            "status=binding-suggested interactionProfile={} rightPrimaryInputPath={} rightThumbstickYInputPath={} rightGripPoseInputPath={} rightControllerThumbstickYBinding={} rightControllerPrimaryResetBinding={} rightGripPoseBinding={}",
+                            "status=binding-suggested interactionProfile={} rightPrimaryInputPath={} rightSecondaryInputPath={} rightThumbstickYInputPath={} rightGripPoseInputPath={} rightControllerThumbstickYBinding={} rightControllerPrimaryResetBinding={} rightControllerSecondaryScaleDriverToggleBinding={} rightGripPoseBinding={}",
                             profile.profile_path,
                             profile.right_primary_path.unwrap_or("none"),
+                            profile.right_secondary_path.unwrap_or("none"),
                             profile.right_thumbstick_y_path.unwrap_or("none"),
                             profile.right_grip_pose_path.unwrap_or("none"),
                             profile.right_thumbstick_y_path.is_some(),
                             profile.right_primary_path.is_some(),
+                            profile.right_secondary_path.is_some(),
                             profile.right_grip_pose_path.is_some(),
                         ),
                     );
@@ -111,7 +133,7 @@ impl StimulusVolumeActions {
                 Err(error) => crate::marker(
                     "projection-target-input",
                     format!(
-                        "status=binding-warning interactionProfile={} reason={} rightControllerThumbstickYBinding=false rightControllerPrimaryResetBinding=false rightGripPoseBinding=false",
+                        "status=binding-warning interactionProfile={} reason={} rightControllerThumbstickYBinding=false rightControllerPrimaryResetBinding=false rightControllerSecondaryScaleDriverToggleBinding=false rightGripPoseBinding=false",
                         profile.profile_path,
                         crate::sanitize(&error.to_string())
                     ),
@@ -130,7 +152,7 @@ impl StimulusVolumeActions {
         crate::marker(
             "projection-target-input",
             format!(
-                "status=config actionSet=stimulus_volume projectionTargetControlsEnabled={} rightThumbstickYAction=true rightControllerThumbstickY=/user/hand/right/input/thumbstick/y rightPrimaryResetAction=true rightControllerPrimaryReset=/user/hand/right/input/a/click rightGripPoseAction=true optionalRightGripPose=/user/hand/right/input/grip/pose actionSetAttached=false highRatePoseViaAndroidProperties=false highRateBreathViaAndroidProperties=false",
+                "status=config actionSet=stimulus_volume projectionTargetControlsEnabled={} rightThumbstickYAction=true rightControllerThumbstickY=/user/hand/right/input/thumbstick/y rightPrimaryResetAction=true rightControllerPrimaryReset=/user/hand/right/input/a/click rightSecondaryScaleDriverToggleAction=true rightControllerSecondaryScaleDriverToggle=/user/hand/right/input/b/click rightGripPoseAction=true optionalRightGripPose=/user/hand/right/input/grip/pose actionSetAttached=false highRatePoseViaAndroidProperties=false highRateBreathViaAndroidProperties=false",
                 projection_target_settings.controls_enabled,
             ),
         );
@@ -139,10 +161,12 @@ impl StimulusVolumeActions {
             action_set,
             right_primary_randomize,
             right_primary_reset,
+            right_secondary_scale_driver_toggle,
             right_thumbstick_y,
             right_grip_pose,
             previous_right_primary_randomize_pressed: false,
             previous_right_primary_reset_pressed: false,
+            previous_right_secondary_scale_driver_toggle_pressed: false,
             suggested_binding_count,
             stimulus_settings,
             projection_target_settings,
@@ -163,7 +187,7 @@ impl StimulusVolumeActions {
         crate::marker(
             "projection-target-input",
             format!(
-                "status=attached actionSet=stimulus_volume actionSetAttached=true suggestedBindingCount={} rightThumbstickYAction=true rightPrimaryResetAction=true rightGripPoseAction=true",
+                "status=attached actionSet=stimulus_volume actionSetAttached=true suggestedBindingCount={} rightThumbstickYAction=true rightPrimaryResetAction=true rightSecondaryScaleDriverToggleAction=true rightGripPoseAction=true",
                 self.suggested_binding_count
             ),
         );
@@ -180,12 +204,12 @@ impl StimulusVolumeActions {
         if let Err(error) = session.sync_actions(&[(&self.action_set).into()]) {
             if frame_count == 0 || frame_count % 120 == 0 {
                 crate::marker(
-                    "projection-target-input",
-                    format!(
-                        "status=sync-error frame={} reason={} rightControllerThumbstickYActive=false rightControllerPrimaryResetActive=false",
-                        frame_count,
-                        crate::sanitize(&error.to_string())
-                    ),
+                        "projection-target-input",
+                        format!(
+                            "status=sync-error frame={} reason={} rightControllerThumbstickYActive=false rightControllerPrimaryResetActive=false rightControllerSecondaryScaleDriverToggleActive=false",
+                            frame_count,
+                            crate::sanitize(&error.to_string())
+                        ),
                 );
             }
             return events;
@@ -193,6 +217,9 @@ impl StimulusVolumeActions {
 
         events.stimulus_randomize_triggered = self.poll_primary_randomize(session, frame_count);
         if let Some(input) = self.poll_projection_reset(session, frame_count) {
+            events.projection_target_inputs.push(input);
+        }
+        if let Some(input) = self.poll_scale_driver_toggle(session, frame_count) {
             events.projection_target_inputs.push(input);
         }
         if let Some(input) = self.poll_thumbstick_y(session, frame_count, dt_seconds) {
@@ -221,7 +248,7 @@ impl StimulusVolumeActions {
             crate::marker(
                 "projection-target-input",
                 format!(
-                    "status=polled frame={} rightGripPoseActive={} rightControllerThumbstickYAction=true rightPrimaryResetAction=true highRatePoseViaAndroidProperties=false",
+                    "status=polled frame={} rightGripPoseActive={} rightControllerThumbstickYAction=true rightPrimaryResetAction=true rightSecondaryScaleDriverToggleAction=true highRatePoseViaAndroidProperties=false",
                     frame_count, events.right_grip_pose_active
                 ),
             );
@@ -311,6 +338,51 @@ impl StimulusVolumeActions {
         None
     }
 
+    fn poll_scale_driver_toggle<G>(
+        &mut self,
+        session: &xr::Session<G>,
+        frame_count: u64,
+    ) -> Option<ProjectionTargetInput> {
+        if !self.projection_target_settings.controls_enabled {
+            return None;
+        }
+        let state = match self
+            .right_secondary_scale_driver_toggle
+            .state(session, xr::Path::NULL)
+        {
+            Ok(state) => state,
+            Err(error) => {
+                if frame_count == 0 || frame_count % 120 == 0 {
+                    crate::marker(
+                        "projection-target-input",
+                        format!(
+                            "status=secondary-scale-driver-toggle-state-error frame={} reason={} rightSecondaryScaleDriverToggleActive=false",
+                            frame_count,
+                            crate::sanitize(&error.to_string())
+                        ),
+                    );
+                }
+                return None;
+            }
+        };
+        let pressed = state.is_active && state.current_state;
+        let triggered = pressed && !self.previous_right_secondary_scale_driver_toggle_pressed;
+        self.previous_right_secondary_scale_driver_toggle_pressed = pressed;
+        if triggered {
+            crate::marker(
+                "projection-target-input",
+                format!(
+                    "event=right-secondary-scale-driver-toggle status=triggered frame={} actionActive={} changedSinceLastSync={}",
+                    frame_count,
+                    state.is_active,
+                    state.changed_since_last_sync
+                ),
+            );
+            return Some(ProjectionTargetInput::ToggleScaleDriver);
+        }
+        None
+    }
+
     fn poll_thumbstick_y<G>(
         &self,
         session: &xr::Session<G>,
@@ -351,6 +423,7 @@ impl StimulusVolumeActions {
 struct InteractionProfileBindings {
     profile_path: &'static str,
     right_primary_path: Option<&'static str>,
+    right_secondary_path: Option<&'static str>,
     right_thumbstick_y_path: Option<&'static str>,
     right_grip_pose_path: Option<&'static str>,
 }
@@ -359,18 +432,21 @@ const INTERACTION_PROFILES: &[InteractionProfileBindings] = &[
     InteractionProfileBindings {
         profile_path: "/interaction_profiles/oculus/touch_controller",
         right_primary_path: Some("/user/hand/right/input/a/click"),
+        right_secondary_path: Some("/user/hand/right/input/b/click"),
         right_thumbstick_y_path: Some("/user/hand/right/input/thumbstick/y"),
         right_grip_pose_path: Some("/user/hand/right/input/grip/pose"),
     },
     InteractionProfileBindings {
         profile_path: "/interaction_profiles/meta/touch_controller_plus",
         right_primary_path: Some("/user/hand/right/input/a/click"),
+        right_secondary_path: Some("/user/hand/right/input/b/click"),
         right_thumbstick_y_path: Some("/user/hand/right/input/thumbstick/y"),
         right_grip_pose_path: Some("/user/hand/right/input/grip/pose"),
     },
     InteractionProfileBindings {
         profile_path: "/interaction_profiles/khr/simple_controller",
         right_primary_path: Some("/user/hand/right/input/select/click"),
+        right_secondary_path: None,
         right_thumbstick_y_path: None,
         right_grip_pose_path: Some("/user/hand/right/input/grip/pose"),
     },

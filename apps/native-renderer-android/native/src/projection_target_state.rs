@@ -295,6 +295,7 @@ pub(crate) enum ProjectionTargetInput {
         dt_seconds: f32,
     },
     ResetBaseScale,
+    ToggleScaleDriver,
     BreathState {
         state: ProjectionTargetBreathState,
         sequence_id: Option<u64>,
@@ -303,6 +304,29 @@ pub(crate) enum ProjectionTargetInput {
         value01: f32,
         sequence_id: Option<u64>,
     },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProjectionTargetScaleDriver {
+    Joystick,
+    Pmb,
+}
+
+impl ProjectionTargetScaleDriver {
+    fn initial(settings: &ProjectionTargetSettings) -> Self {
+        if settings.breath_bridge_mode.uses_breath_stream() {
+            Self::Pmb
+        } else {
+            Self::Joystick
+        }
+    }
+
+    fn marker_value(self) -> &'static str {
+        match self {
+            Self::Joystick => "joystick",
+            Self::Pmb => "pmb",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -336,8 +360,11 @@ pub(crate) struct ProjectionTargetState {
     breath_state: ProjectionTargetBreathState,
     breath_age_seconds: f32,
     last_breath_sequence_id: Option<u64>,
+    last_breath_value01: Option<f32>,
     state_ramp_dt_seconds: f32,
     received_breath_samples: u64,
+    scale_driver: ProjectionTargetScaleDriver,
+    last_scale_driver_switch: &'static str,
 }
 
 impl ProjectionTargetState {
@@ -349,6 +376,7 @@ impl ProjectionTargetState {
             .tuned_max_scale
             .max(base_scale)
             .clamp(settings.min_scale, settings.max_scale);
+        let scale_driver = ProjectionTargetScaleDriver::initial(&settings);
         Self {
             settings,
             base_scale,
@@ -358,8 +386,11 @@ impl ProjectionTargetState {
             breath_state: ProjectionTargetBreathState::Unknown,
             breath_age_seconds: 0.0,
             last_breath_sequence_id: None,
+            last_breath_value01: None,
             state_ramp_dt_seconds: 0.0,
             received_breath_samples: 0,
+            scale_driver,
+            last_scale_driver_switch: "profile-default",
         }
     }
 
@@ -373,18 +404,24 @@ impl ProjectionTargetState {
                 dt_seconds,
             } => self.apply_joystick(right_thumbstick_y, dt_seconds),
             ProjectionTargetInput::ResetBaseScale => {
-                self.tuned_max_scale = self.base_scale;
+                if self.scale_driver == ProjectionTargetScaleDriver::Joystick {
+                    self.tuned_max_scale = self.base_scale;
+                }
                 self.live_scale = self.base_scale;
                 self.breath_state = ProjectionTargetBreathState::Unknown;
+                self.last_breath_value01 = None;
                 self.source = ProjectionTargetScaleSource::ControllerReset;
             }
+            ProjectionTargetInput::ToggleScaleDriver => self.toggle_scale_driver(),
             ProjectionTargetInput::BreathState { state, sequence_id } => {
                 if self.settings.breath_bridge_mode.uses_breath_stream() {
                     self.breath_state = state;
                     self.breath_age_seconds = 0.0;
                     self.last_breath_sequence_id = sequence_id;
                     self.received_breath_samples = self.received_breath_samples.saturating_add(1);
-                    self.source = ProjectionTargetScaleSource::BreathStateRamp;
+                    if self.scale_driver == ProjectionTargetScaleDriver::Pmb {
+                        self.source = ProjectionTargetScaleSource::BreathStateRamp;
+                    }
                 }
             }
             ProjectionTargetInput::BreathValue {
@@ -393,12 +430,15 @@ impl ProjectionTargetState {
             } => {
                 if self.settings.breath_bridge_mode.uses_breath_stream() {
                     let clamped = value01.clamp(0.0, 1.0);
-                    self.live_scale =
-                        self.base_scale + (self.tuned_max_scale - self.base_scale) * clamped;
+                    self.last_breath_value01 = Some(clamped);
+                    if self.scale_driver == ProjectionTargetScaleDriver::Pmb {
+                        self.live_scale =
+                            self.base_scale + (self.tuned_max_scale - self.base_scale) * clamped;
+                        self.source = ProjectionTargetScaleSource::BreathValue;
+                    }
                     self.breath_age_seconds = 0.0;
                     self.last_breath_sequence_id = sequence_id;
                     self.received_breath_samples = self.received_breath_samples.saturating_add(1);
-                    self.source = ProjectionTargetScaleSource::BreathValue;
                 }
             }
         }
@@ -413,7 +453,9 @@ impl ProjectionTargetState {
         self.state_ramp_dt_seconds = dt_seconds;
         self.breath_age_seconds += dt_seconds;
 
-        if !self.settings.breath_bridge_mode.uses_breath_stream() {
+        if self.scale_driver == ProjectionTargetScaleDriver::Joystick
+            || !self.settings.breath_bridge_mode.uses_breath_stream()
+        {
             self.live_scale = self.tuned_max_scale;
             return;
         }
@@ -458,14 +500,20 @@ impl ProjectionTargetState {
 
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "{} projectionTargetLiveScale={:.4} projectionTargetScaleSource={} breathState={} breathStateAgeMs={} breathLastSequenceId={} breathReceivedSamples={} stateRampDtSeconds={:.6} projectionTargetRuntimeAuthority=native-renderer",
+            "{} projectionTargetLiveScale={:.4} projectionTargetScaleSource={} projectionTargetScaleDriver={} projectionTargetPmbAvailable={} projectionTargetScaleDriverSwitch={} breathState={} breathStateAgeMs={} breathLastSequenceId={} breathLastValue01={} breathReceivedSamples={} stateRampDtSeconds={:.6} projectionTargetRuntimeAuthority=native-renderer",
             self.settings.marker_fields(),
             self.live_scale,
             self.source.marker_value(),
+            self.scale_driver.marker_value(),
+            self.pmb_available(),
+            self.last_scale_driver_switch,
             self.breath_state.marker_value(),
             (self.breath_age_seconds * 1000.0).round() as u64,
             self.last_breath_sequence_id
                 .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".to_string()),
+            self.last_breath_value01
+                .map(|value| format!("{value:.4}"))
                 .unwrap_or_else(|| "none".to_string()),
             self.received_breath_samples,
             self.state_ramp_dt_seconds,
@@ -481,6 +529,9 @@ impl ProjectionTargetState {
         if !self.settings.joystick_controls_enabled {
             return;
         }
+        if self.scale_driver != ProjectionTargetScaleDriver::Joystick {
+            return;
+        }
         if !right_thumbstick_y.is_finite() || right_thumbstick_y.abs() <= DEFAULT_JOYSTICK_DEADZONE
         {
             return;
@@ -494,10 +545,42 @@ impl ProjectionTargetState {
         self.tuned_max_scale = self.clamp_scale(
             self.tuned_max_scale + signed * self.settings.joystick_rate_per_second * dt_seconds,
         );
-        if !self.settings.breath_bridge_mode.uses_breath_stream() {
-            self.live_scale = self.tuned_max_scale;
-        }
+        self.live_scale = self.tuned_max_scale;
         self.source = ProjectionTargetScaleSource::Controller;
+    }
+
+    fn toggle_scale_driver(&mut self) {
+        if self.scale_driver == ProjectionTargetScaleDriver::Pmb {
+            self.scale_driver = ProjectionTargetScaleDriver::Joystick;
+            self.tuned_max_scale = self.clamp_scale(self.live_scale);
+            self.live_scale = self.tuned_max_scale;
+            self.source = ProjectionTargetScaleSource::Controller;
+            self.last_scale_driver_switch = "right-controller-secondary-to-joystick";
+            return;
+        }
+        if self.settings.breath_bridge_mode.uses_breath_stream() && self.pmb_available() {
+            self.scale_driver = ProjectionTargetScaleDriver::Pmb;
+            self.last_scale_driver_switch = "right-controller-secondary-to-pmb";
+            match self.settings.breath_bridge_mode {
+                BreathBridgeMode::ManifoldValue => {
+                    if let Some(value01) = self.last_breath_value01 {
+                        self.live_scale =
+                            self.base_scale + (self.tuned_max_scale - self.base_scale) * value01;
+                    }
+                    self.source = ProjectionTargetScaleSource::BreathValue;
+                }
+                BreathBridgeMode::ManifoldState | BreathBridgeMode::Synthetic => {
+                    self.source = ProjectionTargetScaleSource::BreathStateRamp;
+                }
+                BreathBridgeMode::Disabled => {}
+            }
+        } else {
+            self.last_scale_driver_switch = "right-controller-secondary-pmb-unavailable-no-samples";
+        }
+    }
+
+    fn pmb_available(&self) -> bool {
+        self.received_breath_samples > 0
     }
 
     fn scale_delta_per_second(&self, seconds: f32) -> f32 {
@@ -658,6 +741,103 @@ mod tests {
         assert!(state
             .marker_fields()
             .contains("projectionTargetScaleSource=right-controller-primary-reset"));
+    }
+
+    #[test]
+    fn pmb_reset_returns_live_scale_to_base_without_erasing_max_endpoint() {
+        let mut settings = enabled_settings();
+        settings.breath_bridge_mode = BreathBridgeMode::ManifoldState;
+        settings.breath_inhale_seconds_min_to_max = 4.0;
+        let mut state = ProjectionTargetState::new(settings);
+
+        state.apply_input(ProjectionTargetInput::BreathState {
+            state: ProjectionTargetBreathState::Inhale,
+            sequence_id: Some(1),
+        });
+        state.update_frame(1.0);
+        assert!(state.live_scale() > 1.0);
+
+        state.apply_input(ProjectionTargetInput::ResetBaseScale);
+        state.update_frame(1.0 / 72.0);
+        assert!((state.live_scale() - 1.0).abs() < 0.000_001);
+
+        state.apply_input(ProjectionTargetInput::BreathState {
+            state: ProjectionTargetBreathState::Inhale,
+            sequence_id: Some(2),
+        });
+        state.update_frame(1.0);
+        assert!(state.live_scale() > 1.0);
+    }
+
+    #[test]
+    fn pmb_driver_blocks_joystick_until_secondary_toggle_selects_joystick() {
+        let mut settings = enabled_settings();
+        settings.breath_bridge_mode = BreathBridgeMode::ManifoldState;
+        let mut state = ProjectionTargetState::new(settings);
+        state.apply_input(ProjectionTargetInput::JoystickScaleDelta {
+            right_thumbstick_y: 1.0,
+            dt_seconds: 1.0,
+        });
+        state.update_frame(1.0 / 72.0);
+        assert!((state.live_scale() - 1.0).abs() < 0.000_001);
+        assert!(state
+            .marker_fields()
+            .contains("projectionTargetScaleDriver=pmb"));
+
+        state.apply_input(ProjectionTargetInput::ToggleScaleDriver);
+        state.apply_input(ProjectionTargetInput::JoystickScaleDelta {
+            right_thumbstick_y: 1.0,
+            dt_seconds: 1.0,
+        });
+        state.update_frame(1.0 / 72.0);
+        assert!(state.live_scale() > 1.0);
+        assert!(state
+            .marker_fields()
+            .contains("projectionTargetScaleSource=right-controller-thumbstick"));
+        assert!(state
+            .marker_fields()
+            .contains("projectionTargetScaleDriver=joystick"));
+    }
+
+    #[test]
+    fn secondary_toggle_returns_to_pmb_only_after_breath_samples_exist() {
+        let mut settings = enabled_settings();
+        settings.breath_bridge_mode = BreathBridgeMode::ManifoldState;
+        settings.breath_inhale_seconds_min_to_max = 4.0;
+        let mut state = ProjectionTargetState::new(settings);
+
+        state.apply_input(ProjectionTargetInput::ToggleScaleDriver);
+        assert!(state
+            .marker_fields()
+            .contains("projectionTargetScaleDriver=joystick"));
+        state.apply_input(ProjectionTargetInput::ToggleScaleDriver);
+        assert!(state
+            .marker_fields()
+            .contains("projectionTargetScaleDriver=joystick"));
+        assert!(state
+            .marker_fields()
+            .contains("projectionTargetScaleDriverSwitch=right-controller-secondary-pmb-unavailable-no-samples"));
+
+        state.apply_input(ProjectionTargetInput::JoystickScaleDelta {
+            right_thumbstick_y: 1.0,
+            dt_seconds: 1.0,
+        });
+        state.update_frame(1.0 / 72.0);
+        let joystick_scale = state.live_scale();
+        assert!(joystick_scale > 1.0);
+        state.apply_input(ProjectionTargetInput::BreathState {
+            state: ProjectionTargetBreathState::Exhale,
+            sequence_id: Some(1),
+        });
+        state.apply_input(ProjectionTargetInput::ToggleScaleDriver);
+        state.update_frame(1.0);
+        assert!(state.live_scale() < joystick_scale);
+        assert!(state
+            .marker_fields()
+            .contains("projectionTargetScaleDriver=pmb"));
+        assert!(state
+            .marker_fields()
+            .contains("projectionTargetScaleSource=hostess-manifold-breath-state-ramp"));
     }
 
     #[test]

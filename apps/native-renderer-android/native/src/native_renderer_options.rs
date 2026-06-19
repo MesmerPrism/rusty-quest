@@ -7,6 +7,8 @@ pub(crate) const PROP_ENABLE_SDF_VISUAL: &str =
     "debug.rustyquest.native_renderer.sdf.visual.enabled";
 pub(crate) const PROP_RENDER_MODE: &str = "debug.rustyquest.native_renderer.render.mode";
 pub(crate) const PROP_CAMERA_OUTPUT_MODE: &str = "debug.rustyquest.native_renderer.camera.output";
+pub(crate) const PROP_GUIDE_BLUR_ENABLED: &str =
+    "debug.rustyquest.native_renderer.guide.blur.enabled";
 pub(crate) const PROP_CAMERA_YCBCR_MODE: &str =
     "debug.rustyquest.native_renderer.camera.ycbcr.mode";
 pub(crate) const PROP_CAMERA_RESOLUTION_PROFILE: &str =
@@ -2181,6 +2183,7 @@ pub(crate) struct NativeProjectionBorderStretchPush {
 pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) render_mode: NativeRendererRenderMode,
     pub(crate) camera_output_mode: NativeCameraOutputMode,
+    pub(crate) guide_blur_enabled: bool,
     pub(crate) camera_ycbcr_mode: NativeCameraYcbcrMode,
     pub(crate) camera_resolution_profile: NativeCameraResolutionProfile,
     pub(crate) camera_reader_max_images: u32,
@@ -2211,6 +2214,7 @@ impl NativeRendererRuntimeOptions {
         let render_mode = NativeRendererRenderMode::from_property(lookup(PROP_RENDER_MODE));
         let camera_output_mode =
             NativeCameraOutputMode::from_property(lookup(PROP_CAMERA_OUTPUT_MODE));
+        let guide_blur_enabled = bool_value(lookup(PROP_GUIDE_BLUR_ENABLED), true);
         let camera_ycbcr_mode =
             NativeCameraYcbcrMode::from_property(lookup(PROP_CAMERA_YCBCR_MODE));
         let camera_resolution_profile =
@@ -2265,6 +2269,7 @@ impl NativeRendererRuntimeOptions {
         Self {
             render_mode,
             camera_output_mode,
+            guide_blur_enabled,
             camera_ycbcr_mode,
             camera_resolution_profile,
             camera_reader_max_images,
@@ -2408,8 +2413,9 @@ mod tests {
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_OBSERVATIONS,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_SOURCE_LAYERS,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE,
-        PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_RADIUS_CELLS, PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
-        PROP_HAND_ANCHOR_PARTICLES_ENABLED, PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
+        PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_RADIUS_CELLS, PROP_GUIDE_BLUR_ENABLED,
+        PROP_HAND_ANCHOR_PARTICLES_DYNAMICS, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
+        PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
         PROP_HAND_ANCHOR_PARTICLES_RADIUS_M, PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_BLEND_MODE,
@@ -2555,6 +2561,7 @@ mod tests {
     fn camera_output_mode_defaults_to_auto_and_parses_diagnostics() {
         let options = options_from(&[]);
         assert_eq!(options.camera_output_mode, NativeCameraOutputMode::Auto);
+        assert!(options.guide_blur_enabled);
         assert_eq!(options.camera_output_mode.marker_value(), "auto");
         assert!(options.camera_output_mode.camera_import_enabled());
         assert!(options
@@ -2595,6 +2602,7 @@ mod tests {
 
         let direct = options_from(&[
             (PROP_CAMERA_OUTPUT_MODE, "raw_hwb"),
+            (PROP_GUIDE_BLUR_ENABLED, "false"),
             (PROP_CAMERA_YCBCR_MODE, "cpuyuv-reference"),
             (PROP_CAMERA_RESOLUTION_PROFILE, "1280x960"),
             (PROP_CAMERA_READER_MAX_IMAGES, "8"),
@@ -2606,6 +2614,7 @@ mod tests {
             (PROP_CAMERA_DIRECT_BORDER_OPACITY, "0"),
         ]);
         assert_eq!(direct.camera_output_mode, NativeCameraOutputMode::DirectHwb);
+        assert!(!direct.guide_blur_enabled);
         assert!(direct.camera_output_mode.camera_import_enabled());
         assert!(direct.camera_output_mode.direct_hwb_forced());
         assert!(!direct.camera_output_mode.private_layer_projection_enabled());

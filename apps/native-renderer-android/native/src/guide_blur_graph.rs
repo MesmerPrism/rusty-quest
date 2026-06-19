@@ -20,6 +20,7 @@ pub(crate) struct GuideBlurGraphFrameStats {
     pub(crate) ready: bool,
     pub(crate) rendered: bool,
     pub(crate) cache_hit: bool,
+    pub(crate) blur_enabled: bool,
     pub(crate) left_source_frame: u64,
     pub(crate) right_source_frame: u64,
     pub(crate) left_hardware_buffer_id: u64,
@@ -33,16 +34,44 @@ impl GuideBlurGraphFrameStats {
         Self::default()
     }
 
+    pub(crate) fn unavailable_with_blur(blur_enabled: bool) -> Self {
+        Self {
+            blur_enabled,
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn marker_fields(&self) -> String {
+        let path = if self.blur_enabled {
+            "low-resolution-two-phase-5tap-blur"
+        } else {
+            "low-resolution-downsample-no-blur"
+        };
+        let passes = if self.blur_enabled {
+            "downsample,horizontal-5tap,vertical-5tap"
+        } else {
+            "downsample"
+        };
         format!(
-            "guideGraphReady={} guideGraphRendered={} guideGraphCacheHit={} guideGraphPath=low-resolution-two-phase-5tap-blur guideGraphDownsampleResolution={}x{} guideGraphHorizontalTaps={} guideGraphVerticalTaps={} guideGraphPasses=downsample,horizontal-5tap,vertical-5tap guideGraphSource=imported-camera-hwb-descriptor guideGraphFinalProjectionSource=guide-texture guideGraphFinalExternalHwbSamples={} guideTextureSamples={} guideGraphRenderCount={} guideGraphCacheHits={} guideGraphLeftSourceFrame={} guideGraphRightSourceFrame={} guideGraphLeftHardwareBufferId={} guideGraphRightHardwareBufferId={}",
+            "guideGraphReady={} guideGraphRendered={} guideGraphCacheHit={} guideGraphBlurEnabled={} guideGraphPath={} guideGraphDownsampleResolution={}x{} guideGraphHorizontalTaps={} guideGraphVerticalTaps={} guideGraphPasses={} guideGraphSource=imported-camera-hwb-descriptor guideGraphFinalProjectionSource=guide-texture guideGraphFinalExternalHwbSamples={} guideTextureSamples={} guideGraphRenderCount={} guideGraphCacheHits={} guideGraphLeftSourceFrame={} guideGraphRightSourceFrame={} guideGraphLeftHardwareBufferId={} guideGraphRightHardwareBufferId={}",
             self.ready,
             self.rendered,
             self.cache_hit,
+            self.blur_enabled,
+            path,
             GUIDE_WIDTH,
             GUIDE_HEIGHT,
-            GUIDE_BLUR_TAPS_PER_AXIS,
-            GUIDE_BLUR_TAPS_PER_AXIS,
+            if self.blur_enabled {
+                GUIDE_BLUR_TAPS_PER_AXIS
+            } else {
+                0
+            },
+            if self.blur_enabled {
+                GUIDE_BLUR_TAPS_PER_AXIS
+            } else {
+                0
+            },
+            passes,
             if self.ready { 0 } else { 2 },
             if self.ready { 1 } else { 0 },
             self.render_count,
@@ -113,12 +142,13 @@ impl GuideBlurGraphRenderer {
         cmd: vk::CommandBuffer,
         prepared: &PreparedCameraProjection,
         projection_metadata: &CameraProjectionMetadata,
+        blur_enabled: bool,
     ) -> Result<GuideBlurGraphFrameStats, String> {
         self.ensure_resources(device, prepared.descriptor_set_layout)?;
         let key = GuideFrameKey::from_prepared(prepared);
         if self.last_frame_key == Some(key) {
             self.cache_hits = self.cache_hits.saturating_add(1);
-            return Ok(self.stats_for_key(key, false, true));
+            return Ok(self.stats_for_key(key, false, true, blur_enabled));
         }
 
         let resources = self
@@ -178,29 +208,31 @@ impl GuideBlurGraphRenderer {
             device.cmd_end_render_pass(cmd);
             transition_guide_image_for_sampling(device, cmd, eye.downsample.image);
 
-            self.record_blur_axis(
-                device,
-                cmd,
-                resources,
-                eye.source_descriptor_set,
-                eye.horizontal.framebuffer,
-                eye.horizontal.image,
-                [1.0 / GUIDE_WIDTH as f32, 0.0, 0.0, 0.0],
-            );
-            self.record_blur_axis(
-                device,
-                cmd,
-                resources,
-                eye.ping_descriptor_set,
-                eye.vertical.framebuffer,
-                eye.vertical.image,
-                [0.0, 1.0 / GUIDE_HEIGHT as f32, 1.0, 0.0],
-            );
+            if blur_enabled {
+                self.record_blur_axis(
+                    device,
+                    cmd,
+                    resources,
+                    eye.source_descriptor_set,
+                    eye.horizontal.framebuffer,
+                    eye.horizontal.image,
+                    [1.0 / GUIDE_WIDTH as f32, 0.0, 0.0, 0.0],
+                );
+                self.record_blur_axis(
+                    device,
+                    cmd,
+                    resources,
+                    eye.ping_descriptor_set,
+                    eye.vertical.framebuffer,
+                    eye.vertical.image,
+                    [0.0, 1.0 / GUIDE_HEIGHT as f32, 1.0, 0.0],
+                );
+            }
         }
 
         self.last_frame_key = Some(key);
         self.render_count = self.render_count.saturating_add(1);
-        Ok(self.stats_for_key(key, true, false))
+        Ok(self.stats_for_key(key, true, false, blur_enabled))
     }
 
     pub(crate) unsafe fn record_projection_eye(
@@ -211,6 +243,7 @@ impl GuideBlurGraphRenderer {
         eye_index: usize,
         target_rect: TargetRect,
         projection_settings: NativeProjectionBorderStretchSettings,
+        blur_enabled: bool,
     ) {
         let Some(resources) = self.resources.as_ref() else {
             return;
@@ -243,7 +276,11 @@ impl GuideBlurGraphRenderer {
             vk::PipelineBindPoint::GRAPHICS,
             resources.final_pipeline_layout,
             0,
-            &[eye.final_descriptor_set],
+            &[if blur_enabled {
+                eye.final_descriptor_set
+            } else {
+                eye.final_downsample_descriptor_set
+            }],
             &[],
         );
         let projection_push = projection_settings.push_params();
@@ -349,7 +386,7 @@ impl GuideBlurGraphRenderer {
         crate::marker(
             "guide-blur-graph",
             format!(
-                "status=created guideGraphPath=low-resolution-two-phase-5tap-blur guideGraphDownsampleResolution={}x{} guideGraphHorizontalTaps={} guideGraphVerticalTaps={} guideGraphFinalProjectionSource=guide-texture cameraProjectionPath=metadata-target-guide-texture-final finalExternalHwbSamples=0 guideTextureSamples=1",
+                "status=created guideGraphSupportedPaths=low-resolution-downsample-no-blur,low-resolution-two-phase-5tap-blur guideGraphDefaultBlurEnabled=true guideGraphDownsampleResolution={}x{} guideGraphHorizontalTaps={} guideGraphVerticalTaps={} guideGraphFinalProjectionSource=guide-texture cameraProjectionPath=metadata-target-guide-texture-final finalExternalHwbSamples=0 guideTextureSamples=1",
                 GUIDE_WIDTH, GUIDE_HEIGHT, GUIDE_BLUR_TAPS_PER_AXIS, GUIDE_BLUR_TAPS_PER_AXIS
             ),
         );
@@ -361,11 +398,13 @@ impl GuideBlurGraphRenderer {
         key: GuideFrameKey,
         rendered: bool,
         cache_hit: bool,
+        blur_enabled: bool,
     ) -> GuideBlurGraphFrameStats {
         GuideBlurGraphFrameStats {
             ready: true,
             rendered,
             cache_hit,
+            blur_enabled,
             left_source_frame: key.left_source_frame,
             right_source_frame: key.right_source_frame,
             left_hardware_buffer_id: key.left_hardware_buffer_id,
@@ -638,6 +677,7 @@ struct GuideEyeResources {
     source_descriptor_set: vk::DescriptorSet,
     ping_descriptor_set: vk::DescriptorSet,
     final_descriptor_set: vk::DescriptorSet,
+    final_downsample_descriptor_set: vk::DescriptorSet,
 }
 
 impl GuideEyeResources {
@@ -716,9 +756,25 @@ impl GuideEyeResources {
                     return Err(error);
                 }
             };
+        let final_downsample_descriptor_set =
+            match allocate_sample_descriptor_set(device, descriptor_pool, descriptor_set_layout) {
+                Ok(set) => set,
+                Err(error) => {
+                    vertical.destroy(device);
+                    horizontal.destroy(device);
+                    downsample.destroy(device);
+                    return Err(error);
+                }
+            };
         write_sample_descriptor(device, source_descriptor_set, sampler, downsample.view);
         write_sample_descriptor(device, ping_descriptor_set, sampler, horizontal.view);
         write_sample_descriptor(device, final_descriptor_set, sampler, vertical.view);
+        write_sample_descriptor(
+            device,
+            final_downsample_descriptor_set,
+            sampler,
+            downsample.view,
+        );
 
         Ok(Self {
             downsample,
@@ -727,6 +783,7 @@ impl GuideEyeResources {
             source_descriptor_set,
             ping_descriptor_set,
             final_descriptor_set,
+            final_downsample_descriptor_set,
         })
     }
 
@@ -989,13 +1046,13 @@ fn create_sample_descriptor_set_layout(
 fn create_descriptor_pool(device: &ash::Device) -> Result<vk::DescriptorPool, String> {
     let pool_sizes = [vk::DescriptorPoolSize::default()
         .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .descriptor_count((GUIDE_EYE_COUNT as u32) * 3)];
+        .descriptor_count((GUIDE_EYE_COUNT as u32) * 4)];
     unsafe {
         device
             .create_descriptor_pool(
                 &vk::DescriptorPoolCreateInfo::default()
                     .pool_sizes(&pool_sizes)
-                    .max_sets((GUIDE_EYE_COUNT as u32) * 3),
+                    .max_sets((GUIDE_EYE_COUNT as u32) * 4),
                 None,
             )
             .map_err(|error| format!("create guide descriptor pool: {error}"))
