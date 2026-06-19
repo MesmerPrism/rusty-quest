@@ -22,6 +22,7 @@ The currently documented public routes are:
 | --- | --- | --- | --- | --- |
 | Direct HWB camera quality | Camera2 `50`/`51` sampled directly in the final projection | Disabled by profile | Forced direct `AHardwareBuffer` sample | Raw camera acquisition/projection baseline before guide/private processing |
 | Custom stereo projection | Camera2 `50`/`51` via Vulkan HWB guide textures | Recorded/live GPU-skinned hand mesh, optional SDF visual, optional peripheral stretch border | Enabled | Camera projection, blur, stretch/blend border, SDF, and replay evidence |
+| Live hand anchor particles | Camera2 `50`/`51` via Vulkan HWB guide textures | Live base hand meshes plus resident GPU anchor particles | Enabled | Inspect live hand topology anchors over the camera projection route |
 | Native passthrough hands and grafts | `XR_FB_passthrough` | Live GPU-skinned base hands plus fingertip graft copies | Disabled | World-space hand mesh/graft visuals over Meta passthrough |
 | Native passthrough graft only | `XR_FB_passthrough` | Fingertip graft copies only | Disabled | Graft-fit isolation |
 | Solid black hands and grafts | Opaque black OpenXR projection layer | Live GPU-skinned base hands plus fingertip graft copies | Disabled | Non-passthrough world-space control view |
@@ -122,6 +123,18 @@ the scale driver between PMB and joystick, while A resets the target scale.
 When PMB is the active scale driver and the right grip pose is tracked, the
 native OpenXR action layer also emits a regular right-controller haptic pulse
 through the right-hand subaction path as the Breathing Room breathing-mode cue.
+Stimulus-volume render modes are volume-only routes: they sanitize
+projection-target settings to disabled defaults, do not bind Breathing Room
+reset/scale/haptic actions, and reserve right-controller A for stimulus
+randomization. The solid-black stimulus fixture now uses the central-FOV
+limit tier (`1024x1024x2`, 18 raymarch samples, 0.72 central-FOV fraction) so
+the native GPU path spends its resolution budget on the main field of view
+instead of the periphery; the companion balanced solid-black profile keeps the
+same route and safety settings at `768x768x2` with 12 raymarch samples for
+72 Hz quality A/B runs. The performance solid-black profile keeps the same
+authority surface at `512x512x2` with 12 raymarch samples; the 2026-06-19
+Quest 3S resolution sweep made that the first native tier with enough headroom
+for 120 Hz/high-clock stimulus exploration.
 The same native guide projection pass can optionally expand to a
 full-eye peripheral stretch border using the Makepad HWB stack's target-local
 raster model as a reference: the profile
@@ -141,9 +154,77 @@ mesh or SDF representation in the headset, so live mesh/SDF visual acceptance
 still needs an explicit hand-mesh diagnostic offset/tint retest. The replay
 profile and the future live-hand diagnostic profile are separate
 runtime-profile fixtures so recorded replay acceptance cannot be confused with
-live visual acceptance. Replay-proof, compact hand input source, hand mesh
-diagnostic, and SDF cadence properties are parsed in
-`native_renderer_options` rather than inside the Vulkan frame loop.
+live visual acceptance. Native renderer property names are centralized in
+`native_renderer_properties`; generic value parsing lives in
+`native_renderer_property_values`; camera/output option parsing lives in
+`native_renderer_camera_options`; environment-depth parsing lives in
+`native_renderer_environment_depth_options`; hand-anchor particle parsing lives
+in `native_renderer_hand_anchor_particle_options`; projection-border and
+peripheral-stretch parsing lives in
+`native_renderer_projection_border_stretch_options`; stimulus-volume parsing
+lives in `native_renderer_stimulus_volume_options`; render-route, compact hand
+source, hand-visual diagnostic, and private-layer parsing lives in
+`native_renderer_visual_options`; and
+`native_renderer_options` remains the aggregate facade consumed by the Vulkan
+frame loop. Aggregate parser regression tests live in
+`native_renderer_options_tests`. The frame loop keeps projection submission
+authority in `xr_vulkan.rs`, while marker scorecard emission lives in the
+child module `xr_vulkan/scorecard.rs` and replay/live visual evidence rectangle
+math lives in `xr_vulkan/replay_visual_stats.rs` so timing/acceptance reporting
+can evolve without making the integration file another settings or evidence
+schema owner.
+Environment-depth particle Vulkan resource and command recording stays in
+`gpu_environment_depth_particles`, while readback statistics, marker-policy
+strings, surface-support depth flags, and grid sizing live in
+`gpu_environment_depth_particle_stats`.
+The typed low-rate property manifest at
+`fixtures/native-renderer/native-renderer-property-manifest.json` records the
+current Android property surface, value kinds, ranges, parser owners,
+startup-effective lifecycle, profile-owned explicit-set clear behavior, and
+runtime-owner default behavior; `check_native_renderer_property_parity.py`
+rejects runtime/profile drift and requires every manifest entry to name the
+generic low-rate validators. The manifest does not duplicate default values:
+defaults remain owned by the runtime parser module named by each entry.
+`tools/checks/Test-NativeRendererPropertyManifestStatic.ps1`
+owns the static manifest/parity-tool wiring assertions used by the Android
+scaffold harness. Android manifest, Rust NativeActivity, input pump, Cargo
+manifest, build script, and app README assertions live in
+`tools/checks/Test-NativeRendererAndroidScaffoldStatic.ps1`. Both
+`Apply-RuntimeProfile.ps1` and the
+`rusty-quest-profile` Rust validator load the same manifest before ADB writes
+or dry-run write-plan generation, so generic native renderer tokens and ranges
+are not a second hand-maintained validator layer. The app-source public/private
+boundary scan for the native renderer source/build path lives in
+`tools/checks/Test-NativeRendererPublicBoundaryStatic.ps1`. Environment-depth
+source, profile, fixture, and smoke-wrapper static assertions live in
+`tools/checks/Test-NativeRendererEnvironmentDepthStatic.ps1`. General
+runtime-evidence checker, replay-smoke wrapper, and permission-pregrant static
+assertions live in
+`tools/checks/Test-NativeRendererRuntimeEvidenceStatic.ps1`. Runtime-profile
+apply-tool serial scoping and Rust validator manifest-hook assertions live in
+`tools/checks/Test-NativeRendererRuntimeProfileStatic.ps1`. Stimulus-volume
+renderer, shader, OpenXR action, timing, and route-marker assertions live in
+`tools/checks/Test-NativeRendererStimulusVolumeStatic.ps1`. Breathing Room
+projection-target route assertions, including Manifold breath/pose transport
+and right-hand OpenXR input/haptic markers, live in
+`tools/checks/Test-NativeRendererProjectionTargetStatic.ps1`. Recorded-hand
+replay, live compact hand input, GPU-skinned hand mesh visual, graft-copy, and
+GPU mesh replay boundary assertions live in
+`tools/checks/Test-NativeRendererHandVisualStatic.ps1`. Target-space GPU SDF
+field, tile-bin, overlay shader, compact-joint upload, cadence/cache, and SDF
+marker assertions live in `tools/checks/Test-NativeRendererGpuSdfStatic.ps1`.
+Camera projection metadata, guide blur/projection, direct-HWB camera quality
+diagnostic, peripheral-stretch, source-route profile snippet, and native camera
+scaffold assertions live in
+`tools/checks/Test-NativeRendererCameraGuideStatic.ps1`. OpenXR/Vulkan
+prerequisite, timing marker, private-slot, render-mode, scorecard, and native
+timing counter assertions live in
+`tools/checks/Test-NativeRendererOpenXrVulkanStatic.ps1`; the main Android
+harness keeps the executable runtime-evidence logcat checks. The full
+native-renderer profile and damaged-profile inventories are owned by
+`tools/Test-NativeRendererProfileMatrix.ps1`, which dry-runs every valid
+profile and rejects every damaged fixture through the manifest-backed runtime
+profile tool.
 
 ## Remote Camera Streaming
 

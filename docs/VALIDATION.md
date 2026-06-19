@@ -196,6 +196,70 @@ agreement profiles additionally require
 or two-layer agreement accepted by themselves. This is not yet
 connected-component or global-surface acceptance; those remain pending alongside
 the movement-required world-space proof.
+`check_all.ps1` delegates the native renderer runtime-profile matrix to
+`tools\Test-NativeRendererProfileMatrix.ps1`. That helper owns the exact
+native-renderer profile and damaged-profile inventories, runs each valid
+profile's declared dry-run command, and rejects every damaged native-renderer
+profile under `fixtures\damaged`.
+`check_all.ps1` also runs `tools\check_native_renderer_property_parity.py` and
+writes `local-artifacts\native-renderer-property-parity.json`. This gate
+loads `fixtures\native-renderer\native-renderer-property-manifest.json`,
+compares all `quest-native-renderer*.profile.json` property names against the
+manifest and native runtime parser constants, validates fixture values against
+manifest value kinds, allowed tokens, and numeric ranges, requires every owned
+profile property to be explicitly set, requires every manifest entry to name
+startup-effective lifecycle, profile-owned explicit-set clear behavior,
+runtime-owner default behavior, the runtime parser, profile matrix,
+`Apply-RuntimeProfile.ps1`, and the `rusty-quest-profile` Rust validator,
+checks that the apply tool and Rust validator are actually wired to the
+manifest, checks specialized profile families against literal cross-field
+validator surfaces, and protects the Breathing Room profile's explicit
+camera/guide/environment-depth/stimulus/private-layer clears. The profile
+matrix also runs every native renderer damaged profile through
+`Apply-RuntimeProfile.ps1`; that apply tool loads the same manifest, so generic
+camera, guide, hand, render, private-layer, and projection-border token/range
+mistakes are rejected before any ADB write. The `rusty-quest-profile` Rust
+validator embeds that manifest as well, so dry-run write-plan generation rejects
+the same generic native renderer token/range/type mistakes and manifest
+authority-metadata drift before specialized cross-field checks run. The
+manifest records runtime-owner default behavior instead of duplicating default
+values. The Android scaffold static harness calls
+`tools\checks\Test-NativeRendererPropertyManifestStatic.ps1` for the smaller
+manifest schema, cardinality, and parity-tool wiring assertions that used to
+live inline in `Test-NativeRendererAndroid.ps1`. Android manifest, Rust
+NativeActivity, input pump, Cargo manifest, build script, and app README
+assertions live in
+`tools\checks\Test-NativeRendererAndroidScaffoldStatic.ps1`. It also delegates the
+native-renderer public/private app-source scan to
+`tools\checks\Test-NativeRendererPublicBoundaryStatic.ps1` and the
+environment-depth source/profile/fixture/smoke-wrapper token ledger to
+`tools\checks\Test-NativeRendererEnvironmentDepthStatic.ps1`. General
+runtime-evidence checker, replay-smoke wrapper, and permission-pregrant static
+assertions live in
+`tools\checks\Test-NativeRendererRuntimeEvidenceStatic.ps1`. Runtime-profile
+apply-tool serial scoping and Rust validator manifest-hook assertions live in
+`tools\checks\Test-NativeRendererRuntimeProfileStatic.ps1`. Stimulus-volume
+renderer, shader, OpenXR action, timing, and route-marker assertions live in
+`tools\checks\Test-NativeRendererStimulusVolumeStatic.ps1`. Breathing Room
+projection-target route assertions, including Manifold breath/pose transport
+and right-hand OpenXR input/haptic markers, live in
+`tools\checks\Test-NativeRendererProjectionTargetStatic.ps1`.
+Recorded-hand replay, live compact hand input, GPU-skinned hand mesh visual,
+graft-copy, and GPU mesh replay boundary assertions live in
+`tools\checks\Test-NativeRendererHandVisualStatic.ps1`.
+Target-space GPU SDF field, tile-bin, overlay shader, compact-joint upload,
+cadence/cache, and SDF marker assertions live in
+`tools\checks\Test-NativeRendererGpuSdfStatic.ps1`. Camera projection metadata,
+guide blur/projection, direct-HWB camera quality diagnostic, peripheral-stretch,
+source-route profile snippet, and native camera scaffold assertions live in
+`tools\checks\Test-NativeRendererCameraGuideStatic.ps1`. OpenXR/Vulkan
+prerequisite, timing marker, private-slot, render-mode, scorecard, and native
+timing counter assertions live in
+`tools\checks\Test-NativeRendererOpenXrVulkanStatic.ps1`.
+`Test-NativeRendererAndroid.ps1` no longer mirrors native-renderer profile
+fixture contents as literal token checks; profile acceptance is owned by the
+profile matrix plus manifest-backed parity and validator gates.
+
 Use `docs/environment-depth-known-distance-raw-d16-runbook.md` for the
 headset known-distance run that compares `environmentDepthRawCenterD16`,
 `environmentDepthCenterReconstructedMeters`, and
@@ -222,6 +286,7 @@ The Quest-native Android renderer scaffold has static and APK build validation:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererProfileMatrix.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
@@ -317,8 +382,9 @@ skinning pass, resident skinned-position buffer, opt-in SDF overlay scorecard
 markers, tile-bin shader compilation, triangle-bounds/tile-header/tile-index
 storage buffers, tile-local SDF shader reads, SDF update cadence/cache markers,
 the `native_renderer_options`
-property parser boundary for replay visual proof and compact hand source
-selection, host CPU per-stage timing markers for camera/import, guide graph,
+aggregate facade and `native_renderer_visual_options` parser boundary for
+replay visual proof and compact hand source selection, host CPU per-stage
+timing markers for camera/import, guide graph,
 live-hand locate, SDF preparation, hand visual, projection composite, swapchain
 wait, queue submit, and OpenXR end-frame, the modular Vulkan timestamp-query
 owner and marker fields for camera projection, guide graph, hand SDF,
@@ -333,6 +399,37 @@ live acceptance without screenshot proof. It also rejects
 Java/C++ packaging tokens for this low-level route. The build command requires
 Android SDK, JDK, and NDK paths in the current process and writes a debug APK plus
 `rusty.quest.native_renderer_android.build_manifest.v1` under `target/`.
+
+`Test-NativeRendererAndroid.ps1` delegates twelve focused static families to
+`tools\checks`: `Test-NativeRendererAndroidScaffoldStatic.ps1` owns the
+Android manifest, Rust NativeActivity, input pump, Cargo manifest, build
+script, and app README ledger. `Test-NativeRendererPropertyManifestStatic.ps1` owns the
+manifest schema/cardinality and parity-tool wiring assertions,
+`Test-NativeRendererPublicBoundaryStatic.ps1` owns the source/build boundary
+scan that rejects legacy route names and private visual-layer tokens, and
+`Test-NativeRendererEnvironmentDepthStatic.ps1` owns the environment-depth
+source, profile, fixture, and smoke-wrapper token ledger.
+`Test-NativeRendererRuntimeEvidenceStatic.ps1` owns the general
+runtime-evidence checker, replay-smoke wrapper, and permission-pregrant static
+ledger. `Test-NativeRendererRuntimeProfileStatic.ps1` owns the runtime-profile
+apply-tool serial scoping and Rust validator manifest-hook ledger.
+`Test-NativeRendererStimulusVolumeStatic.ps1` owns the stimulus-volume
+renderer, shader, OpenXR action, timing, and route-marker ledger.
+`Test-NativeRendererProjectionTargetStatic.ps1` owns the Breathing Room
+projection-target, Manifold breath/pose transport, right-hand OpenXR
+input/haptic, and runtime-authority marker ledger.
+`Test-NativeRendererHandVisualStatic.ps1` owns the recorded-hand replay, live
+compact hand input, GPU-skinned hand mesh visual, graft-copy, and GPU mesh
+replay boundary ledger. `Test-NativeRendererGpuSdfStatic.ps1` owns the
+target-space GPU SDF field, tile-bin, overlay shader, compact-joint upload,
+cadence/cache, and SDF marker ledger.
+`Test-NativeRendererCameraGuideStatic.ps1` owns the camera projection metadata,
+guide blur/projection, direct-HWB camera quality diagnostic,
+peripheral-stretch, source-route profile snippet, and native camera scaffold
+ledger. `Test-NativeRendererOpenXrVulkanStatic.ps1` owns the OpenXR/Vulkan
+prerequisite, timing marker, private-slot, render-mode, scorecard, and native
+timing counter ledger. The main harness still executes the runtime-evidence
+logcat gates for the accepted and damaged fixtures.
 
 Current caveat: this validates the Android NativeActivity scaffold and native
 HWB acquisition shape. The 2026-06-17 headset smokes visually validate the
@@ -356,13 +453,25 @@ mistaken for a mesh/SDF visual test. The runtime property bundle is captured in
 with a dry-run plan emitted by `tools/check_all.ps1`. The public HWB
 peripheral stretch/blend route is captured in
 `fixtures/runtime-profiles/quest-native-renderer-hwb-peripheral-stretch.profile.json`;
-its dry-run evidence checks the Makepad-matched stretch controls and expected
+the profile matrix dry-run checks the Makepad-matched stretch controls and expected
 markers, including `guideProjectionCoverage=full-eye-peripheral-stretch` and
 `cameraProjectionPath=metadata-target-guide-texture-peripheral-stretch-final`.
 The Breathing Room PMB scale profile extends that route with Manifold
 controller-pose publishing, PMB/joystick scale-driver switching, and expected
 OpenXR haptic markers for a gentle right-controller pulse while PMB mode has a
 tracked grip pose.
+The solid-black stimulus-volume profile is the current native GPU headroom
+stress fixture for smooth central-FOV interference: it requests the
+1024x1024x2 limit tier, 18 raymarch samples, `central_fov_fraction=0.72`, and
+`gradient_smoothing=0.78` while preserving the 3-40 Hz randomization range and
+keeping Breathing Room haptic/reset actions disabled. The balanced solid-black
+stimulus-volume profile keeps the same visual/safety route at 768x768x2 and 12
+raymarch samples for 72 Hz quality A/B checks. The performance solid-black
+stimulus-volume profile keeps the same visual/safety route at 512x512x2 and 12
+raymarch samples; the 2026-06-19 Quest 3S resolution sweep made it the first
+native tier with enough headroom for 120 Hz/high-clock exploration. The
+native-passthrough stimulus-volume fixture is the balanced 768x768x2 comparison
+route.
 The live-hand diagnostic
 bundle is captured in
 `fixtures/runtime-profiles/quest-native-renderer-live-hand-visual-diagnostic.profile.json`;

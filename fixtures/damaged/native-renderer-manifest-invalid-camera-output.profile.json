@@ -1,0 +1,15 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.damaged_manifest_invalid_camera_output",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.camera.output"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.camera.output",
+      "value": "unmanifested-camera-route",
+      "source_setting_id": "native_renderer.camera.output"
+    }
+  ]
+}

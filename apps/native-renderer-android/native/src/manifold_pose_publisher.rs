@@ -19,8 +19,6 @@ pub(crate) const DEFAULT_MANIFOLD_POSE_CONTROLLER: &str = "right";
 pub(crate) const DEFAULT_MANIFOLD_POSE_KIND: &str = "grip";
 pub(crate) const DEFAULT_MANIFOLD_POSE_SAMPLE_HZ: f32 = 72.0;
 pub(crate) const MANIFOLD_COMMAND_SCHEMA: &str = "rusty.manifold.command.envelope.v1";
-#[cfg(test)]
-const LEGACY_RUSTY_XR_BROKER_COMMAND_SCHEMA: &str = "rusty.xr.broker.command.v1";
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ManifoldPosePublisherConfig {
@@ -365,7 +363,7 @@ mod tests {
         let command = build_publish_stream_command(&config(), &sample());
         assert_eq!(command["command"], "publish_stream_event");
         assert_eq!(command["schema"], MANIFOLD_COMMAND_SCHEMA);
-        assert_ne!(command["schema"], LEGACY_RUSTY_XR_BROKER_COMMAND_SCHEMA);
+        assert!(MANIFOLD_COMMAND_SCHEMA.starts_with("rusty.manifold."));
         assert_eq!(command["params"]["stream"], DEFAULT_MANIFOLD_POSE_STREAM);
         assert_eq!(command["params"]["sequence_id"], 42);
         assert_eq!(command["client_id"], "rusty-quest-native-renderer");

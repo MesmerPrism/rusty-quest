@@ -27,6 +27,7 @@ param(
     [switch]$RequireGuideGraph,
     [switch]$RequireSdfVisual,
     [switch]$RequireGpuTimestampReady,
+    [switch]$RequireStimulusGpuTimestampStages,
     [switch]$RequirePerformanceBudget,
     [int]$ExpectedEnvironmentDepthParticleCount = 0,
     [int]$MinimumEnvironmentDepthSourceDepthSamples = 0,
@@ -1013,7 +1014,11 @@ if ($RequireGpuTimestampReady) {
     )) {
         Assert-Contains $gpuTimingLine $token "latest gpu-timestamp-timing marker"
     }
-    foreach ($field in @("cameraProjectionGpuMs", "guideGraphGpuMs", "handSdfGpuMs", "handMeshVisualGpuMs", "projectionCompositeGpuMs")) {
+    $gpuTimingFields = @("cameraProjectionGpuMs", "guideGraphGpuMs", "handSdfGpuMs", "handMeshVisualGpuMs", "projectionCompositeGpuMs")
+    if ($RequireStimulusGpuTimestampStages) {
+        $gpuTimingFields += @("stimulusVolumeComputeGpuMs", "stimulusVolumeProjectionGpuMs")
+    }
+    foreach ($field in $gpuTimingFields) {
         if ($gpuTimingLine -notmatch "$field=([0-9]+(\.[0-9]+)?)") {
             throw "latest gpu-timestamp-timing marker missing non-negative $field"
         }

@@ -4,12 +4,8 @@ use std::{ffi::CString, mem};
 
 use ash::vk;
 
-use crate::native_renderer_options::{
-    NativeStimulusVolumeRenderTarget, NativeStimulusVolumeSettings,
-};
+use crate::native_renderer_options::NativeStimulusVolumeSettings;
 
-const STIMULUS_WIDTH: u32 = 512;
-const STIMULUS_HEIGHT: u32 = 512;
 const STIMULUS_LAYERS: u32 = 2;
 const STIMULUS_LOCAL_SIZE_X: u32 = 8;
 const STIMULUS_LOCAL_SIZE_Y: u32 = 8;
@@ -26,7 +22,15 @@ pub(crate) struct GpuStimulusVolumeFrameStats {
     pub(crate) layers: u32,
     pub(crate) requested_format: &'static str,
     pub(crate) actual_format: &'static str,
+    pub(crate) resolution_tier: &'static str,
+    pub(crate) central_fov_fraction: f32,
+    pub(crate) gradient_smoothing: f32,
     pub(crate) temporal_frequency_hz: f32,
+    pub(crate) oscillator_hz: [f32; 3],
+    pub(crate) spatial_frequency_scale: f32,
+    pub(crate) source_shift: [f32; 2],
+    pub(crate) noise_scale: f32,
+    pub(crate) depth_warp: f32,
     pub(crate) phase: f32,
     pub(crate) cpu_upload_bytes: u64,
     pub(crate) gpu_buffers_resident: bool,
@@ -35,12 +39,16 @@ pub(crate) struct GpuStimulusVolumeFrameStats {
 
 impl GpuStimulusVolumeFrameStats {
     pub(crate) fn unavailable(settings: NativeStimulusVolumeSettings) -> Self {
+        let extent = settings.render_target.extent();
         Self {
-            render_width: STIMULUS_WIDTH,
-            render_height: STIMULUS_HEIGHT,
+            render_width: extent[0],
+            render_height: extent[1],
             layers: STIMULUS_LAYERS,
             requested_format: settings.render_target.marker_value(),
             actual_format: "none",
+            resolution_tier: settings.render_target.resolution_tier_marker(),
+            central_fov_fraction: settings.central_fov_fraction,
+            gradient_smoothing: settings.gradient_smoothing,
             safety_acknowledged: settings.safety_acknowledged,
             ..Default::default()
         }
@@ -48,7 +56,7 @@ impl GpuStimulusVolumeFrameStats {
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "stimulusVolumeReady={} stimulusVolumeVisible={} stimulusVolumeDispatchCount={} stimulusVolumeRandomizeCount={} stimulusVolumeImageSize={}x{} stimulusVolumeLayerCount={} stimulusVolumeRequestedRenderTarget={} stimulusVolumeFormat={} stimulusVolumeFormatFallback={} stimulusVolumeTemporalFrequencyHz={:.3} stimulusVolumePhase={:.3} stimulusVolumeCpuUploadBytes={} stimulusVolumeGpuBuffersResident={} stimulusVolumeBufferMemory=device-local stimulusVolumeExpandedVolumeUploadPerFrame=false stimulusVolumeGpuMs=pending-gpu-timestamp stimulusVolumeProjectionPath=fullscreen-stereo-sampled-storage-image stimulusSafetyAcknowledged={}",
+            "stimulusVolumeReady={} stimulusVolumeVisible={} stimulusVolumeDispatchCount={} stimulusVolumeRandomizeCount={} stimulusVolumeImageSize={}x{} stimulusVolumeLayerCount={} stimulusVolumeRequestedRenderTarget={} stimulusVolumeFormat={} stimulusVolumeFormatFallback={} stimulusVolumeResolutionTier={} stimulusVolumeCentralFovFraction={:.2} stimulusVolumeGradientSmoothing={:.2} stimulusVolumeTemporalFrequencyHz={:.3} stimulusVolumeSpatialOscillatorHz={:.3},{:.3},{:.3} stimulusVolumeSpatialFrequencyScale={:.3} stimulusVolumeSpatialSourceShift={:.3},{:.3} stimulusVolumeSpatialNoiseScale={:.3} stimulusVolumeDepthWarp={:.3} stimulusVolumePhase={:.3} stimulusVolumeCpuUploadBytes={} stimulusVolumeGpuBuffersResident={} stimulusVolumeBufferMemory=device-local stimulusVolumeExpandedVolumeUploadPerFrame=false stimulusVolumeProjectionPath=central-fov-stereo-sampled-storage-image stimulusSafetyAcknowledged={}",
             self.ready,
             self.visible,
             self.dispatch_count,
@@ -58,12 +66,19 @@ impl GpuStimulusVolumeFrameStats {
             self.layers,
             self.requested_format,
             self.actual_format,
-            if self.requested_format == "512x512x2-rgba16f" {
-                "rgba16f-requested-rgba8-unorm-storage"
-            } else {
-                "none"
-            },
+            format_fallback_marker(self.requested_format),
+            self.resolution_tier,
+            self.central_fov_fraction,
+            self.gradient_smoothing,
             self.temporal_frequency_hz,
+            self.oscillator_hz[0],
+            self.oscillator_hz[1],
+            self.oscillator_hz[2],
+            self.spatial_frequency_scale,
+            self.source_shift[0],
+            self.source_shift[1],
+            self.noise_scale,
+            self.depth_warp,
             self.phase,
             self.cpu_upload_bytes,
             self.gpu_buffers_resident,
@@ -85,8 +100,14 @@ pub(crate) struct GpuStimulusVolumeRenderer {
     image_layout: vk::ImageLayout,
     dispatch_count: u64,
     randomize_count: u64,
+    last_reported_randomize_count: u64,
     random_seed: u32,
     temporal_frequency_hz: f32,
+    oscillator_hz: [f32; 3],
+    spatial_frequency_scale: f32,
+    source_shift: [f32; 2],
+    noise_scale: f32,
+    depth_warp: f32,
     phase_offsets: [f32; 3],
 }
 
@@ -101,7 +122,8 @@ impl GpuStimulusVolumeRenderer {
             return Err("stimulus volume renderer requires enabled settings".to_string());
         }
 
-        let stereo_image = OwnedImage::new(device, memory_properties)?;
+        let stereo_image =
+            OwnedImage::new(device, memory_properties, settings.render_target.extent())?;
         let sampler = match device.create_sampler(
             &vk::SamplerCreateInfo::default()
                 .mag_filter(vk::Filter::LINEAR)
@@ -266,8 +288,8 @@ impl GpuStimulusVolumeRenderer {
             format!(
                 "status=created {} stimulusVolumeImageSize={}x{} stimulusVolumeLayerCount={} stimulusVolumeFormat={} stimulusVolumeRequestedRenderTarget={} stimulusVolumeGpuBuffersResident=true stimulusVolumeCpuUploadBytes={} stimulusVolumeUniformBufferBytes={} stimulusVolumeUniformBufferMemory={} stimulusVolumeImageMemory={} stimulusVolumeExpandedVolumeUploadPerFrame=false",
                 settings.marker_fields(),
-                STIMULUS_WIDTH,
-                STIMULUS_HEIGHT,
+                stereo_image.width,
+                stereo_image.height,
                 STIMULUS_LAYERS,
                 actual_format_marker(),
                 settings.render_target.marker_value(),
@@ -291,8 +313,14 @@ impl GpuStimulusVolumeRenderer {
             image_layout: vk::ImageLayout::UNDEFINED,
             dispatch_count: 0,
             randomize_count: 0,
+            last_reported_randomize_count: 0,
             random_seed: 0x51A7_5EED,
             temporal_frequency_hz: 12.0,
+            oscillator_hz: [9.25, 13.5, 10.75],
+            spatial_frequency_scale: 1.0,
+            source_shift: [0.0, 0.0],
+            noise_scale: 4.7,
+            depth_warp: 0.045,
             phase_offsets: [0.0, 1.7, 3.1],
         })
     }
@@ -308,16 +336,32 @@ impl GpuStimulusVolumeRenderer {
             );
             return;
         }
-        self.random_seed = lcg(self.random_seed);
-        let frequency01 = unit_float(self.random_seed);
-        self.random_seed = lcg(self.random_seed);
-        let phase01 = unit_float(self.random_seed);
-        self.random_seed = lcg(self.random_seed);
-        let phase11 = unit_float(self.random_seed);
-        self.random_seed = lcg(self.random_seed);
-        let phase21 = unit_float(self.random_seed);
-        self.temporal_frequency_hz = settings.randomize_min_hz
-            + frequency01 * (settings.randomize_max_hz - settings.randomize_min_hz);
+        let frequency01 = next_unit_float(&mut self.random_seed);
+        let oscillator01 = next_unit_float(&mut self.random_seed);
+        let oscillator11 = next_unit_float(&mut self.random_seed);
+        let oscillator21 = next_unit_float(&mut self.random_seed);
+        let spatial_scale01 = next_unit_float(&mut self.random_seed);
+        let source_x01 = next_unit_float(&mut self.random_seed);
+        let source_y01 = next_unit_float(&mut self.random_seed);
+        let noise01 = next_unit_float(&mut self.random_seed);
+        let depth_warp01 = next_unit_float(&mut self.random_seed);
+        let phase01 = next_unit_float(&mut self.random_seed);
+        let phase11 = next_unit_float(&mut self.random_seed);
+        let phase21 = next_unit_float(&mut self.random_seed);
+        let frequency_span = settings.randomize_max_hz - settings.randomize_min_hz;
+        self.temporal_frequency_hz = settings.randomize_min_hz + frequency01 * frequency_span;
+        self.oscillator_hz = [
+            settings.randomize_min_hz + oscillator01 * frequency_span,
+            settings.randomize_min_hz + oscillator11 * frequency_span,
+            settings.randomize_min_hz + oscillator21 * frequency_span,
+        ];
+        self.spatial_frequency_scale = 0.70 + spatial_scale01 * 0.95;
+        self.source_shift = [
+            (source_x01 * 2.0 - 1.0) * 0.24,
+            (source_y01 * 2.0 - 1.0) * 0.18,
+        ];
+        self.noise_scale = 3.2 + noise01 * 4.8;
+        self.depth_warp = 0.02 + depth_warp01 * 0.12;
         self.phase_offsets = [
             phase01 * std::f32::consts::TAU,
             phase11 * std::f32::consts::TAU,
@@ -327,12 +371,20 @@ impl GpuStimulusVolumeRenderer {
         crate::marker(
             "stimulus-volume-input",
             format!(
-                "event=right-primary-randomize status=applied frame={} stimulusVolumeRandomizeCount={} stimulusVolumeTemporalFrequencyHz={:.3} randomizeHzRange={:.3}-{:.3} stimulusVolumePhaseOffsets={:.3},{:.3},{:.3}",
+                "event=right-primary-randomize status=applied frame={} stimulusVolumeRandomizeCount={} stimulusVolumeRandomizeMode=temporal-spatial stimulusVolumeTemporalFrequencyHz={:.3} stimulusVolumeSpatialOscillatorHz={:.3},{:.3},{:.3} randomizeHzRange={:.3}-{:.3} stimulusVolumeSpatialFrequencyScale={:.3} stimulusVolumeSpatialSourceShift={:.3},{:.3} stimulusVolumeSpatialNoiseScale={:.3} stimulusVolumeDepthWarp={:.3} stimulusVolumePhaseOffsets={:.3},{:.3},{:.3}",
                 frame_count,
                 self.randomize_count,
                 self.temporal_frequency_hz,
+                self.oscillator_hz[0],
+                self.oscillator_hz[1],
+                self.oscillator_hz[2],
                 settings.randomize_min_hz,
                 settings.randomize_max_hz,
+                self.spatial_frequency_scale,
+                self.source_shift[0],
+                self.source_shift[1],
+                self.noise_scale,
+                self.depth_warp,
                 self.phase_offsets[0],
                 self.phase_offsets[1],
                 self.phase_offsets[2],
@@ -356,7 +408,7 @@ impl GpuStimulusVolumeRenderer {
             params0: [
                 time_seconds,
                 frame_count as f32,
-                self.random_seed as f32,
+                self.spatial_frequency_scale,
                 self.temporal_frequency_hz,
             ],
             params1: [
@@ -365,7 +417,18 @@ impl GpuStimulusVolumeRenderer {
                 self.phase_offsets[2],
                 if settings.active() { 1.0 } else { 0.0 },
             ],
-            params2: [self.randomize_count as f32, 0.0, phase, 0.0],
+            params2: [
+                self.oscillator_hz[0],
+                self.oscillator_hz[1],
+                phase,
+                self.oscillator_hz[2],
+            ],
+            params3: [
+                self.source_shift[0],
+                self.source_shift[1],
+                self.noise_scale,
+                self.depth_warp,
+            ],
         };
 
         transition_image_to_compute_write(device, cmd, self.stereo_image.image, self.image_layout);
@@ -388,8 +451,8 @@ impl GpuStimulusVolumeRenderer {
         );
         device.cmd_dispatch(
             cmd,
-            STIMULUS_WIDTH.div_ceil(STIMULUS_LOCAL_SIZE_X),
-            STIMULUS_HEIGHT.div_ceil(STIMULUS_LOCAL_SIZE_Y),
+            self.stereo_image.width.div_ceil(STIMULUS_LOCAL_SIZE_X),
+            self.stereo_image.height.div_ceil(STIMULUS_LOCAL_SIZE_Y),
             STIMULUS_LAYERS,
         );
         transition_image_to_fragment_read(device, cmd, self.stereo_image.image);
@@ -397,7 +460,8 @@ impl GpuStimulusVolumeRenderer {
         self.dispatch_count = self.dispatch_count.saturating_add(1);
 
         let stats = self.stats(settings, phase);
-        if frame_count == 0 || frame_count % 120 == 0 || self.randomize_count > 0 {
+        let randomize_count_changed = self.randomize_count != self.last_reported_randomize_count;
+        if frame_count == 0 || frame_count % 120 == 0 || randomize_count_changed {
             crate::marker(
                 "stimulus-volume",
                 format!(
@@ -406,6 +470,7 @@ impl GpuStimulusVolumeRenderer {
                     stats.marker_fields()
                 ),
             );
+            self.last_reported_randomize_count = self.randomize_count;
         }
         stats
     }
@@ -437,7 +502,7 @@ impl GpuStimulusVolumeRenderer {
             params0: [
                 0.0,
                 0.0,
-                self.random_seed as f32,
+                self.spatial_frequency_scale,
                 self.temporal_frequency_hz,
             ],
             params1: [
@@ -446,7 +511,18 @@ impl GpuStimulusVolumeRenderer {
                 self.phase_offsets[2],
                 if settings.active() { 1.0 } else { 0.0 },
             ],
-            params2: [self.randomize_count as f32, eye_index as f32, 0.0, 0.0],
+            params2: [
+                self.randomize_count as f32,
+                eye_index as f32,
+                0.0,
+                settings.central_fov_fraction,
+            ],
+            params3: [
+                self.source_shift[0],
+                self.source_shift[1],
+                self.noise_scale,
+                self.depth_warp,
+            ],
         };
         device.cmd_set_viewport(cmd, 0, &viewport);
         device.cmd_set_scissor(cmd, 0, &scissor);
@@ -490,12 +566,20 @@ impl GpuStimulusVolumeRenderer {
             visible: settings.active(),
             dispatch_count: self.dispatch_count,
             randomize_count: self.randomize_count,
-            render_width: STIMULUS_WIDTH,
-            render_height: STIMULUS_HEIGHT,
+            render_width: self.stereo_image.width,
+            render_height: self.stereo_image.height,
             layers: STIMULUS_LAYERS,
             requested_format: settings.render_target.marker_value(),
             actual_format: actual_format_marker(),
+            resolution_tier: settings.render_target.resolution_tier_marker(),
+            central_fov_fraction: settings.central_fov_fraction,
+            gradient_smoothing: settings.gradient_smoothing,
             temporal_frequency_hz: self.temporal_frequency_hz,
+            oscillator_hz: self.oscillator_hz,
+            spatial_frequency_scale: self.spatial_frequency_scale,
+            source_shift: self.source_shift,
+            noise_scale: self.noise_scale,
+            depth_warp: self.depth_warp,
             phase,
             cpu_upload_bytes: mem::size_of::<StimulusVolumeUniforms>() as u64,
             gpu_buffers_resident: true,
@@ -514,14 +598,11 @@ struct StimulusVolumeUniforms {
     color_near: [f32; 4],
     color_mid: [f32; 4],
     color_far: [f32; 4],
+    quality_params: [f32; 4],
 }
 
 impl StimulusVolumeUniforms {
     fn from_settings(settings: NativeStimulusVolumeSettings) -> Self {
-        let requested_target_code = match settings.render_target {
-            NativeStimulusVolumeRenderTarget::Rgba16f512Stereo => 16.0,
-            NativeStimulusVolumeRenderTarget::Rgba8Unorm512Stereo => 8.0,
-        };
         Self {
             source_a: [-0.30, -0.06, 0.96, 0.42],
             source_b: [0.30, 0.06, 0.72, settings.emission_gain()],
@@ -530,11 +611,17 @@ impl StimulusVolumeUniforms {
                 settings.depth_color_mix(),
                 settings.depth_contrast(),
                 settings.raymarch_samples as f32,
-                requested_target_code,
+                settings.render_target.requested_format_code(),
             ],
             color_near: [0.02, 0.92, 1.00, 1.0],
             color_mid: [1.00, 0.02, 0.78, 1.0],
             color_far: [1.00, 0.96, 0.04, 1.0],
+            quality_params: [
+                settings.central_fov_fraction,
+                settings.gradient_smoothing,
+                settings.render_target.extent()[0] as f32,
+                settings.render_target.extent()[1] as f32,
+            ],
         }
     }
 }
@@ -545,6 +632,7 @@ struct StimulusVolumePush {
     params0: [f32; 4],
     params1: [f32; 4],
     params2: [f32; 4],
+    params3: [f32; 4],
 }
 
 struct OwnedImage {
@@ -552,12 +640,15 @@ struct OwnedImage {
     memory: vk::DeviceMemory,
     view: vk::ImageView,
     memory_flags: vk::MemoryPropertyFlags,
+    width: u32,
+    height: u32,
 }
 
 impl OwnedImage {
     unsafe fn new(
         device: &ash::Device,
         memory_properties: &vk::PhysicalDeviceMemoryProperties,
+        extent: [u32; 2],
     ) -> Result<Self, String> {
         let image = device
             .create_image(
@@ -565,8 +656,8 @@ impl OwnedImage {
                     .image_type(vk::ImageType::TYPE_2D)
                     .format(STIMULUS_ACTUAL_FORMAT)
                     .extent(vk::Extent3D {
-                        width: STIMULUS_WIDTH,
-                        height: STIMULUS_HEIGHT,
+                        width: extent[0],
+                        height: extent[1],
                         depth: 1,
                     })
                     .mip_levels(1)
@@ -629,6 +720,8 @@ impl OwnedImage {
             memory,
             view,
             memory_flags: memory_properties.memory_types[memory_type_index as usize].property_flags,
+            width: extent[0],
+            height: extent[1],
         })
     }
 
@@ -995,6 +1088,14 @@ fn actual_format_marker() -> &'static str {
     "VK_FORMAT_R8G8B8A8_UNORM"
 }
 
+fn format_fallback_marker(requested_format: &str) -> &'static str {
+    if requested_format.ends_with("rgba16f") {
+        "rgba16f-requested-rgba8-unorm-storage"
+    } else {
+        "none"
+    }
+}
+
 fn spirv_words(bytes: &[u8]) -> Result<Vec<u32>, String> {
     if bytes.len() % 4 != 0 {
         return Err("SPIR-V bytecode length is not word-aligned".to_string());
@@ -1011,6 +1112,11 @@ fn as_bytes<T>(value: &T) -> &[u8] {
 
 fn lcg(seed: u32) -> u32 {
     seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223)
+}
+
+fn next_unit_float(seed: &mut u32) -> f32 {
+    *seed = lcg(*seed);
+    unit_float(*seed)
 }
 
 fn unit_float(seed: u32) -> f32 {

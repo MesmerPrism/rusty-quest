@@ -1,11 +1,15 @@
 {
   "schema": "rusty.quest.runtime_profile.v1",
-  "profile_id": "profile.quest.native_renderer.damaged_stimulus_volume_invalid_randomize_range",
+  "profile_id": "profile.quest.native_renderer.damaged_stimulus_volume_invalid_quality_range",
   "target_platform": "quest",
   "owned_android_properties": [
     "debug.rustyquest.native_renderer.render.mode",
     "debug.rustyquest.native_renderer.stimulus_volume.enabled",
     "debug.rustyquest.native_renderer.stimulus_volume.profile",
+    "debug.rustyquest.native_renderer.stimulus_volume.render_target",
+    "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples",
+    "debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction",
+    "debug.rustyquest.native_renderer.stimulus_volume.gradient_smoothing",
     "debug.rustyquest.native_renderer.stimulus_volume.randomize.min_hz",
     "debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz",
     "debug.rustyquest.native_renderer.stimulus_volume.safety_ack"
@@ -27,13 +31,33 @@
       "source_setting_id": "native_renderer.stimulus_volume.profile"
     },
     {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.render_target",
+      "value": "1024x1024x2-rgba16f",
+      "source_setting_id": "native_renderer.stimulus_volume.render_target"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples",
+      "value": "18",
+      "source_setting_id": "native_renderer.stimulus_volume.raymarch_samples"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction",
+      "value": "0.10",
+      "source_setting_id": "native_renderer.stimulus_volume.central_fov_fraction"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.gradient_smoothing",
+      "value": "1.25",
+      "source_setting_id": "native_renderer.stimulus_volume.gradient_smoothing"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.stimulus_volume.randomize.min_hz",
-      "value": "14.0",
+      "value": "8.0",
       "source_setting_id": "native_renderer.stimulus_volume.randomize.min_hz"
     },
     {
       "name": "debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz",
-      "value": "45.0",
+      "value": "15.0",
       "source_setting_id": "native_renderer.stimulus_volume.randomize.max_hz"
     },
     {

@@ -1,6 +1,6 @@
 {
   "schema": "rusty.quest.runtime_profile.v1",
-  "profile_id": "profile.quest.native_renderer.solid_black_stimulus_volume",
+  "profile_id": "profile.quest.native_renderer.solid_black_stimulus_volume_performance",
   "target_platform": "quest",
   "owned_android_properties": [
     "debug.rustyquest.native_renderer.render.mode",
@@ -147,12 +147,12 @@
     },
     {
       "name": "debug.rustyquest.native_renderer.stimulus_volume.render_target",
-      "value": "1024x1024x2-rgba16f",
+      "value": "512x512x2-rgba16f",
       "source_setting_id": "native_renderer.stimulus_volume.render_target"
     },
     {
       "name": "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples",
-      "value": "18",
+      "value": "12",
       "source_setting_id": "native_renderer.stimulus_volume.raymarch_samples"
     },
     {
@@ -197,13 +197,13 @@
     "volumeOnly=true",
     "volumeColorMode=DepthRamp",
     "volumeCompositing=opaque-black-projection",
-    "stimulusVolumeRenderTarget=1024x1024x2-rgba16f",
-    "volumeResolutionTier=limit-1024",
+    "stimulusVolumeRenderTarget=512x512x2-rgba16f",
+    "volumeResolutionTier=baseline-512",
     "volumeCentralFovFraction=0.72",
     "volumeGradientSmoothing=0.78",
-    "volumeRaymarchSamples=18",
-    "stimulusVolumeImageSize=1024x1024",
-    "stimulusVolumeResolutionTier=limit-1024",
+    "volumeRaymarchSamples=12",
+    "stimulusVolumeImageSize=512x512",
+    "stimulusVolumeResolutionTier=baseline-512",
     "stimulusVolumeCentralFovFraction=0.72",
     "stimulusVolumeGradientSmoothing=0.78",
     "projectionTargetControlsEnabled=false",
@@ -219,6 +219,6 @@
     "projectionLayerAlphaBlend=false"
   ],
   "validation_commands": [
-    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-solid-black-stimulus-volume.profile.json -DryRun -Out local-artifacts/native-renderer-solid-black-stimulus-volume-property-write-plan.json"
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-solid-black-stimulus-volume-performance.profile.json -DryRun -Out local-artifacts/native-renderer-solid-black-stimulus-volume-performance-property-write-plan.json"
   ]
 }

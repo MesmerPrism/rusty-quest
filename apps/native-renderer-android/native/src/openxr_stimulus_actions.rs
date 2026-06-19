@@ -139,6 +139,19 @@ impl StimulusVolumeActions {
             )
             .map_err(|error| format!("create right breath haptic action: {error}"))?;
 
+        let stimulus_randomize_binding_enabled =
+            stimulus_settings.enabled && stimulus_settings.randomize_enabled;
+        let projection_controls_enabled = projection_target_settings.controls_enabled;
+        let projection_joystick_binding_enabled =
+            projection_controls_enabled && projection_target_settings.joystick_controls_enabled;
+        let breath_haptics_configured = projection_controls_enabled
+            && projection_target_settings
+                .breath_bridge_mode
+                .uses_breath_stream();
+        let right_grip_pose_binding_enabled = breath_haptics_configured;
+        let manifold_pose_config =
+            manifold_pose_config_from_projection_settings(&projection_target_settings);
+
         let mut suggested_binding_count = 0_usize;
         for profile in INTERACTION_PROFILES {
             let profile_path = instance
@@ -154,35 +167,47 @@ impl StimulusVolumeActions {
                 let input = instance.string_to_path(input_path).map_err(|error| {
                     format!("create OpenXR path for primary input {input_path}: {error}")
                 })?;
-                bindings.push(xr::Binding::new(&right_primary_randomize, input));
-                bindings.push(xr::Binding::new(&right_primary_reset, input));
+                if stimulus_randomize_binding_enabled {
+                    bindings.push(xr::Binding::new(&right_primary_randomize, input));
+                }
+                if projection_controls_enabled {
+                    bindings.push(xr::Binding::new(&right_primary_reset, input));
+                }
             }
             if let Some(input_path) = profile.right_secondary_path {
                 let input = instance.string_to_path(input_path).map_err(|error| {
                     format!("create OpenXR path for secondary input {input_path}: {error}")
                 })?;
-                bindings.push(xr::Binding::new(
-                    &right_secondary_scale_driver_toggle,
-                    input,
-                ));
+                if projection_controls_enabled {
+                    bindings.push(xr::Binding::new(
+                        &right_secondary_scale_driver_toggle,
+                        input,
+                    ));
+                }
             }
             if let Some(input_path) = profile.right_thumbstick_y_path {
                 let input = instance.string_to_path(input_path).map_err(|error| {
                     format!("create OpenXR path for thumbstick Y input {input_path}: {error}")
                 })?;
-                bindings.push(xr::Binding::new(&right_thumbstick_y, input));
+                if projection_joystick_binding_enabled {
+                    bindings.push(xr::Binding::new(&right_thumbstick_y, input));
+                }
             }
             if let Some(input_path) = profile.right_grip_pose_path {
                 let input = instance.string_to_path(input_path).map_err(|error| {
                     format!("create OpenXR path for right grip pose input {input_path}: {error}")
                 })?;
-                bindings.push(xr::Binding::new(&right_grip_pose, input));
+                if right_grip_pose_binding_enabled {
+                    bindings.push(xr::Binding::new(&right_grip_pose, input));
+                }
             }
             if let Some(output_path) = profile.right_haptic_output_path {
                 let output = instance.string_to_path(output_path).map_err(|error| {
                     format!("create OpenXR path for right haptic output {output_path}: {error}")
                 })?;
-                bindings.push(xr::Binding::new(&right_breath_haptic, output));
+                if breath_haptics_configured {
+                    bindings.push(xr::Binding::new(&right_breath_haptic, output));
+                }
             }
             match instance.suggest_interaction_profile_bindings(profile_path, &bindings) {
                 Ok(()) => {
@@ -190,18 +215,19 @@ impl StimulusVolumeActions {
                     crate::marker(
                         "projection-target-input",
                         format!(
-                            "status=binding-suggested interactionProfile={} rightPrimaryInputPath={} rightSecondaryInputPath={} rightThumbstickYInputPath={} rightGripPoseInputPath={} rightHapticOutputPath={} rightControllerThumbstickYBinding={} rightControllerPrimaryResetBinding={} rightControllerSecondaryScaleDriverToggleBinding={} rightGripPoseBinding={} rightBreathHapticBinding={}",
+                        "status=binding-suggested interactionProfile={} rightPrimaryInputPath={} rightSecondaryInputPath={} rightThumbstickYInputPath={} rightGripPoseInputPath={} rightHapticOutputPath={} rightControllerThumbstickYBinding={} rightControllerPrimaryResetBinding={} rightControllerSecondaryScaleDriverToggleBinding={} rightGripPoseBinding={} rightBreathHapticBinding={}",
                             profile.profile_path,
                             profile.right_primary_path.unwrap_or("none"),
                             profile.right_secondary_path.unwrap_or("none"),
                             profile.right_thumbstick_y_path.unwrap_or("none"),
                             profile.right_grip_pose_path.unwrap_or("none"),
                             profile.right_haptic_output_path.unwrap_or("none"),
-                            profile.right_thumbstick_y_path.is_some(),
-                            profile.right_primary_path.is_some(),
-                            profile.right_secondary_path.is_some(),
-                            profile.right_grip_pose_path.is_some(),
-                            profile.right_haptic_output_path.is_some(),
+                            profile.right_thumbstick_y_path.is_some()
+                                && projection_joystick_binding_enabled,
+                            profile.right_primary_path.is_some() && projection_controls_enabled,
+                            profile.right_secondary_path.is_some() && projection_controls_enabled,
+                            profile.right_grip_pose_path.is_some() && right_grip_pose_binding_enabled,
+                            profile.right_haptic_output_path.is_some() && breath_haptics_configured,
                         ),
                     );
                 }
@@ -219,29 +245,31 @@ impl StimulusVolumeActions {
         crate::marker(
             "stimulus-volume-input",
             format!(
-                "status=config actionSet=stimulus_volume action=right_primary_randomize randomizeEnabled={} suggestedBindingCount={} rightControllerPrimaryButtonRandomize=true inputPath=/user/hand/right/input/a/click fallbackInputPath=/user/hand/right/input/select/click actionSetAttached=false",
+                "status=config actionSet=stimulus_volume action=right_primary_randomize randomizeEnabled={} suggestedBindingCount={} rightControllerPrimaryButtonRandomize={} inputPath=/user/hand/right/input/a/click fallbackInputPath=/user/hand/right/input/select/click actionSetAttached=false",
                 stimulus_settings.randomize_enabled,
-                suggested_binding_count
+                suggested_binding_count,
+                stimulus_randomize_binding_enabled
             ),
         );
         crate::marker(
             "projection-target-input",
             format!(
-                "status=config actionSet=stimulus_volume projectionTargetControlsEnabled={} rightThumbstickYAction=true rightControllerThumbstickY=/user/hand/right/input/thumbstick/y rightPrimaryResetAction=true rightControllerPrimaryReset=/user/hand/right/input/a/click rightSecondaryScaleDriverToggleAction=true rightControllerSecondaryScaleDriverToggle=/user/hand/right/input/b/click rightGripPoseAction=true optionalRightGripPose=/user/hand/right/input/grip/pose rightBreathHapticAction=true rightBreathHaptic={} rightBreathHapticSubaction={} breathHapticsConfigured={} breathHapticRequiresScaleDriver=pmb breathHapticRequiresRightGripTracked=true breathHapticPulseHz={:.3} breathHapticAmplitude={:.3} breathHapticDurationMs={} breathHapticFrequencyHz=runtime-default actionSetAttached=false highRatePoseViaAndroidProperties=false highRateBreathViaAndroidProperties=false",
+                "status=config actionSet=stimulus_volume projectionTargetControlsEnabled={} rightThumbstickYAction={} rightControllerThumbstickY=/user/hand/right/input/thumbstick/y rightPrimaryResetAction={} rightControllerPrimaryReset=/user/hand/right/input/a/click rightSecondaryScaleDriverToggleAction={} rightControllerSecondaryScaleDriverToggle=/user/hand/right/input/b/click rightGripPoseAction={} optionalRightGripPose=/user/hand/right/input/grip/pose rightBreathHapticAction={} rightBreathHaptic={} rightBreathHapticSubaction={} breathHapticsConfigured={} breathHapticRequiresScaleDriver=pmb breathHapticRequiresRightGripTracked=true breathHapticPulseHz={:.3} breathHapticAmplitude={:.3} breathHapticDurationMs={} breathHapticFrequencyHz=runtime-default actionSetAttached=false highRatePoseViaAndroidProperties=false highRateBreathViaAndroidProperties=false",
                 projection_target_settings.controls_enabled,
+                projection_joystick_binding_enabled,
+                projection_controls_enabled,
+                projection_controls_enabled,
+                right_grip_pose_binding_enabled,
+                breath_haptics_configured,
                 RIGHT_HAND_HAPTIC_OUTPUT_PATH,
                 RIGHT_HAND_SUBACTION_PATH,
-                projection_target_settings
-                    .breath_bridge_mode
-                    .uses_breath_stream(),
+                breath_haptics_configured,
                 breath_haptic_pulse_hz(),
                 BREATH_HAPTIC_AMPLITUDE,
                 BREATH_HAPTIC_PULSE_DURATION_MS,
             ),
         );
 
-        let manifold_pose_config =
-            manifold_pose_config_from_projection_settings(&projection_target_settings);
         crate::marker(
             "manifold-pose-provider",
             format!(
@@ -316,15 +344,30 @@ impl StimulusVolumeActions {
         crate::marker(
             "stimulus-volume-input",
             format!(
-                "status=attached actionSet=stimulus_volume actionSetAttached=true suggestedBindingCount={} rightControllerPrimaryButtonRandomize=true",
-                self.suggested_binding_count
+                "status=attached actionSet=stimulus_volume actionSetAttached=true suggestedBindingCount={} rightControllerPrimaryButtonRandomize={}",
+                self.suggested_binding_count,
+                self.stimulus_settings.enabled && self.stimulus_settings.randomize_enabled
             ),
         );
         crate::marker(
             "projection-target-input",
             format!(
-                "status=attached actionSet=stimulus_volume actionSetAttached=true suggestedBindingCount={} rightThumbstickYAction=true rightPrimaryResetAction=true rightSecondaryScaleDriverToggleAction=true rightGripPoseAction=true rightBreathHapticAction=true",
-                self.suggested_binding_count
+                "status=attached actionSet=stimulus_volume actionSetAttached=true suggestedBindingCount={} rightThumbstickYAction={} rightPrimaryResetAction={} rightSecondaryScaleDriverToggleAction={} rightGripPoseAction={} rightBreathHapticAction={}",
+                self.suggested_binding_count,
+                self.projection_target_settings.controls_enabled
+                    && self.projection_target_settings.joystick_controls_enabled,
+                self.projection_target_settings.controls_enabled,
+                self.projection_target_settings.controls_enabled,
+                self.projection_target_settings.controls_enabled
+                    && self
+                        .projection_target_settings
+                        .breath_bridge_mode
+                        .uses_breath_stream(),
+                self.projection_target_settings.controls_enabled
+                    && self
+                        .projection_target_settings
+                        .breath_bridge_mode
+                        .uses_breath_stream(),
             ),
         );
         Ok(())
@@ -408,16 +451,26 @@ impl StimulusVolumeActions {
             dt_seconds,
         );
         if frame_count == 0 || frame_count % 120 == 0 {
+            let breath_haptic_action = self.projection_target_settings.controls_enabled
+                && self
+                    .projection_target_settings
+                    .breath_bridge_mode
+                    .uses_breath_stream();
             crate::marker(
                 "projection-target-input",
                 format!(
-                    "status=polled frame={} rightGripPoseActive={} rightGripPoseTracked={} nativeControllerPosePublisherEnabled={} nativeControllerPosePublishedCount={} nativeControllerPoseDroppedCount={} rightControllerThumbstickYAction=true rightPrimaryResetAction=true rightSecondaryScaleDriverToggleAction=true rightBreathHapticAction=true breathHapticsEnabled={} highRatePoseViaManifold={} highRatePoseViaAndroidProperties=false",
+                    "status=polled frame={} rightGripPoseActive={} rightGripPoseTracked={} nativeControllerPosePublisherEnabled={} nativeControllerPosePublishedCount={} nativeControllerPoseDroppedCount={} rightControllerThumbstickYAction={} rightPrimaryResetAction={} rightSecondaryScaleDriverToggleAction={} rightBreathHapticAction={} breathHapticsEnabled={} highRatePoseViaManifold={} highRatePoseViaAndroidProperties=false",
                     frame_count,
                     events.right_grip_pose_active,
                     events.right_grip_pose_tracked,
                     self.manifold_pose_config.enabled,
                     self.manifold_pose_published_count,
                     self.manifold_pose_dropped_count,
+                    self.projection_target_settings.controls_enabled
+                        && self.projection_target_settings.joystick_controls_enabled,
+                    self.projection_target_settings.controls_enabled,
+                    self.projection_target_settings.controls_enabled,
+                    breath_haptic_action,
                     breath_haptics_enabled,
                     self.manifold_pose_config.enabled,
                 ),
@@ -746,16 +799,31 @@ impl StimulusVolumeActions {
         };
 
         let pressed = state.is_active && state.current_state;
-        let triggered = pressed && !self.previous_right_primary_randomize_pressed;
+        if frame_count == 0 || frame_count % 120 == 0 {
+            crate::marker(
+                "stimulus-volume-input",
+                format!(
+                    "status=polled frame={} rightControllerPrimaryButtonRandomize=true actionActive={} currentState={} changedSinceLastSync={} stimulusRandomizeEnabled=true",
+                    frame_count,
+                    state.is_active,
+                    state.current_state,
+                    state.changed_since_last_sync
+                ),
+            );
+        }
+        let previous_pressed = self.previous_right_primary_randomize_pressed;
+        let triggered = pressed && !previous_pressed;
         self.previous_right_primary_randomize_pressed = pressed;
 
         if triggered {
             crate::marker(
                 "stimulus-volume-input",
                 format!(
-                    "event=right-primary-randomize status=triggered frame={} actionActive={} changedSinceLastSync={}",
+                    "event=right-primary-randomize status=triggered frame={} rightControllerPrimaryButtonRandomize=true actionActive={} currentState={} previousPressed={} changedSinceLastSync={}",
                     frame_count,
                     state.is_active,
+                    state.current_state,
+                    previous_pressed,
                     state.changed_since_last_sync
                 ),
             );
@@ -892,7 +960,7 @@ fn manifold_pose_config_from_projection_settings(
     settings: &ProjectionTargetSettings,
 ) -> ManifoldPosePublisherConfig {
     ManifoldPosePublisherConfig {
-        enabled: settings.breath_bridge_mode.uses_breath_stream(),
+        enabled: settings.controls_enabled && settings.breath_bridge_mode.uses_breath_stream(),
         broker_host: settings.manifold_broker_host.clone(),
         broker_port: settings.manifold_broker_port,
         broker_path: settings.manifold_broker_path.clone(),
@@ -959,7 +1027,11 @@ const INTERACTION_PROFILES: &[InteractionProfileBindings] = &[
 
 #[cfg(test)]
 mod tests {
-    use super::{BreathHapticCadence, BREATH_HAPTIC_PULSE_PERIOD_SECONDS};
+    use super::{
+        manifold_pose_config_from_projection_settings, BreathHapticCadence,
+        BREATH_HAPTIC_PULSE_PERIOD_SECONDS,
+    };
+    use crate::projection_target_state::{BreathBridgeMode, ProjectionTargetSettings};
 
     #[test]
     fn breath_haptic_cadence_pulses_immediately_then_at_period() {
@@ -975,5 +1047,15 @@ mod tests {
         assert!(!cadence.update(BREATH_HAPTIC_PULSE_PERIOD_SECONDS, false, true));
         assert!(!cadence.update(BREATH_HAPTIC_PULSE_PERIOD_SECONDS, true, false));
         assert!(cadence.update(0.0, true, true));
+    }
+
+    #[test]
+    fn manifold_pose_provider_requires_projection_target_controls() {
+        let mut settings = ProjectionTargetSettings::default();
+        settings.breath_bridge_mode = BreathBridgeMode::ManifoldState;
+        assert!(!manifold_pose_config_from_projection_settings(&settings).enabled);
+
+        settings.controls_enabled = true;
+        assert!(manifold_pose_config_from_projection_settings(&settings).enabled);
     }
 }

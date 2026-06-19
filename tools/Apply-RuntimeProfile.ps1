@@ -11,6 +11,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 $AndroidPropertyValueMaxBytes = 92
+$NativeRendererPropertyPrefix = "debug.rustyquest.native_renderer."
+$NativeRendererPropertyManifestRelativePath = "fixtures\native-renderer\native-renderer-property-manifest.json"
+$NativeRendererPropertyManifestSchema = "rusty.quest.native_renderer_property_manifest.v2"
+$NativeRendererPropertyManifestLifecycle = "startup-effective"
+$NativeRendererPropertyManifestClearBehavior = "profile-owned-explicit-set"
+$NativeRendererPropertyManifestDefaultBehavior = "runtime-owner-default-when-unset"
 $EnvironmentDepthPropertyPrefix = "debug.rustyquest.native_renderer.environment_depth."
 $EnvironmentDepthModeProperty = "debug.rustyquest.native_renderer.environment_depth.mode"
 $EnvironmentDepthSourceProperty = "debug.rustyquest.native_renderer.environment_depth.source"
@@ -38,6 +44,8 @@ $StimulusVolumeProfileProperty = "debug.rustyquest.native_renderer.stimulus_volu
 $StimulusVolumeCompositionProperty = "debug.rustyquest.native_renderer.stimulus_volume.composition"
 $StimulusVolumeRenderTargetProperty = "debug.rustyquest.native_renderer.stimulus_volume.render_target"
 $StimulusVolumeRaymarchSamplesProperty = "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples"
+$StimulusVolumeCentralFovFractionProperty = "debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction"
+$StimulusVolumeGradientSmoothingProperty = "debug.rustyquest.native_renderer.stimulus_volume.gradient_smoothing"
 $StimulusVolumeRandomizeEnabledProperty = "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled"
 $StimulusVolumeRandomizeMinHzProperty = "debug.rustyquest.native_renderer.stimulus_volume.randomize.min_hz"
 $StimulusVolumeRandomizeMaxHzProperty = "debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz"
@@ -95,6 +103,154 @@ function Resolve-AdbServerPortArgument {
 function Get-NormalizedProfileValue {
     param([Parameter(Mandatory=$true)][string]$Value)
     return $Value.Trim().ToLowerInvariant().Replace("_", "-")
+}
+
+function Get-ManifestFiniteFloat {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Value
+    )
+    try {
+        $parsed = [double]::Parse($Value.Trim(), [System.Globalization.CultureInfo]::InvariantCulture)
+    } catch {
+        throw "$Name value $Value must be a finite manifest float"
+    }
+    if ([double]::IsNaN($parsed) -or [double]::IsInfinity($parsed)) {
+        throw "$Name value $Value must be a finite manifest float"
+    }
+    return $parsed
+}
+
+function Assert-NativeRendererManifestRange {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][double]$Value,
+        [Parameter(Mandatory=$true)]$Entry
+    )
+    if ($null -eq $Entry.range) {
+        return
+    }
+    if ($null -ne $Entry.range.min -and $Value -lt [double]$Entry.range.min) {
+        throw "$Name value $Value is below manifest minimum $($Entry.range.min)"
+    }
+    if ($null -ne $Entry.range.max -and $Value -gt [double]$Entry.range.max) {
+        throw "$Name value $Value is above manifest maximum $($Entry.range.max)"
+    }
+}
+
+function Import-NativeRendererPropertyManifest {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$Path
+    )
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Native renderer property manifest is missing: $Path"
+    }
+    $manifest = Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+    if ($manifest.schema -ne $NativeRendererPropertyManifestSchema) {
+        throw "Native renderer property manifest has unsupported schema: $($manifest.schema)"
+    }
+    if ($manifest.prefix -ne $NativeRendererPropertyPrefix) {
+        throw "Native renderer property manifest has unsupported prefix: $($manifest.prefix)"
+    }
+    $entries = @($manifest.properties)
+    if ($manifest.property_count -ne $entries.Count) {
+        throw "Native renderer property manifest property_count does not match properties length"
+    }
+    $byName = @{}
+    foreach ($entry in $entries) {
+        $name = [string]$entry.name
+        if ([string]::IsNullOrWhiteSpace($name)) {
+            throw "Native renderer property manifest contains an empty property name"
+        }
+        if ($byName.ContainsKey($name)) {
+            throw "Native renderer property manifest contains duplicate property: $name"
+        }
+        if ([string]$entry.lifecycle -ne $NativeRendererPropertyManifestLifecycle) {
+            throw "Native renderer property manifest entry $name has unsupported lifecycle: $($entry.lifecycle)"
+        }
+        if ([string]$entry.clear_behavior -ne $NativeRendererPropertyManifestClearBehavior) {
+            throw "Native renderer property manifest entry $name has unsupported clear_behavior: $($entry.clear_behavior)"
+        }
+        if ([string]$entry.default_behavior -ne $NativeRendererPropertyManifestDefaultBehavior) {
+            throw "Native renderer property manifest entry $name has unsupported default_behavior: $($entry.default_behavior)"
+        }
+        $byName[$name] = $entry
+    }
+    return $byName
+}
+
+function Assert-NativeRendererManifestProperty {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Value,
+        [Parameter(Mandatory=$true)]$ManifestByName
+    )
+    if (-not $Name.StartsWith($NativeRendererPropertyPrefix)) {
+        return
+    }
+    if (-not $ManifestByName.ContainsKey($Name)) {
+        throw "Native renderer property is missing from manifest: $Name"
+    }
+    $entry = $ManifestByName[$Name]
+    $trimmed = $Value.Trim()
+    switch ([string]$entry.value_kind) {
+        "bool" {
+            if (@("true", "false") -cnotcontains $trimmed.ToLowerInvariant()) {
+                throw "$Name value $Value must be manifest bool true/false"
+            }
+            return
+        }
+        "token" {
+            $allowed = @($entry.allowed_values | ForEach-Object { [string]$_ })
+            if ($allowed -cnotcontains $Value) {
+                throw "$Name value $Value is not in manifest allowed_values: $($allowed -join ', ')"
+            }
+            return
+        }
+        { $_ -in @("u16", "u32", "u64") } {
+            if ($trimmed -notmatch '^\d+$') {
+                throw "$Name value $Value must be a base-10 unsigned manifest integer"
+            }
+            $parsed = [uint64]0
+            if (-not [uint64]::TryParse($trimmed, [ref]$parsed) -or $parsed.ToString() -ne $trimmed) {
+                throw "$Name value $Value must be a canonical base-10 unsigned manifest integer"
+            }
+            if ($entry.value_kind -eq "u16" -and $parsed -gt [uint16]::MaxValue) {
+                throw "$Name value $Value exceeds manifest u16 maximum"
+            }
+            if ($entry.value_kind -eq "u32" -and $parsed -gt [uint32]::MaxValue) {
+                throw "$Name value $Value exceeds manifest u32 maximum"
+            }
+            Assert-NativeRendererManifestRange -Name $Name -Value ([double]$parsed) -Entry $entry
+            return
+        }
+        "f32" {
+            $parsed = Get-ManifestFiniteFloat -Name $Name -Value $Value
+            Assert-NativeRendererManifestRange -Name $Name -Value $parsed -Entry $entry
+            return
+        }
+        "f32_pair" {
+            $parts = @($Value.Split(",") | ForEach-Object { $_.Trim() })
+            if ($parts.Count -ne 2) {
+                throw "$Name value $Value must contain two comma-separated manifest floats"
+            }
+            foreach ($part in $parts) {
+                $parsed = Get-ManifestFiniteFloat -Name $Name -Value $part
+                Assert-NativeRendererManifestRange -Name $Name -Value $parsed -Entry $entry
+            }
+            return
+        }
+        "string" {
+            if ($entry.non_empty -eq $true -and [string]::IsNullOrWhiteSpace($Value)) {
+                throw "$Name value must not be empty"
+            }
+            return
+        }
+        default {
+            throw "$Name has unsupported manifest value_kind: $($entry.value_kind)"
+        }
+    }
 }
 
 function Assert-EnvironmentDepthUInt {
@@ -164,6 +320,19 @@ function Get-StimulusVolumeFloat {
         throw "$Name value $Value must be a finite number"
     }
     return $parsed
+}
+
+function Assert-StimulusVolumeFloatRange {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Value,
+        [Parameter(Mandatory=$true)][double]$Min,
+        [Parameter(Mandatory=$true)][double]$Max
+    )
+    $parsed = Get-StimulusVolumeFloat -Name $Name -Value $Value
+    if ($parsed -lt $Min -or $parsed -gt $Max) {
+        throw "$Name value $Value must be a finite number from $Min to $Max"
+    }
 }
 
 function Get-NativeProjectionTargetFloat {
@@ -463,13 +632,21 @@ function Assert-StimulusVolumeProperty {
             return
         }
         $StimulusVolumeRenderTargetProperty {
-            if (@("512x512x2-rgba16f", "512x512x2-rgba8-unorm", "512x512x2-rgba8") -notcontains $normalized) {
+            if (@("512x512x2-rgba16f", "512x512x2-rgba8-unorm", "512x512x2-rgba8", "768x768x2-rgba16f", "768x768", "1024x1024x2-rgba16f", "1024x1024", "limit-1024") -notcontains $normalized) {
                 throw "Stimulus volume render_target is not supported: $Value"
             }
             return
         }
         $StimulusVolumeRaymarchSamplesProperty {
-            Assert-StimulusVolumeUInt -Name $Name -Value $Value -Min 1 -Max 24
+            Assert-StimulusVolumeUInt -Name $Name -Value $Value -Min 1 -Max 48
+            return
+        }
+        $StimulusVolumeCentralFovFractionProperty {
+            Assert-StimulusVolumeFloatRange -Name $Name -Value $Value -Min 0.45 -Max 1.0
+            return
+        }
+        $StimulusVolumeGradientSmoothingProperty {
+            Assert-StimulusVolumeFloatRange -Name $Name -Value $Value -Min 0.0 -Max 1.0
             return
         }
         $StimulusVolumeRandomizeEnabledProperty {
@@ -495,6 +672,8 @@ function Assert-StimulusVolumeProperty {
 }
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$nativeRendererPropertyManifestPath = Join-Path $RepoRoot $NativeRendererPropertyManifestRelativePath
+$nativeRendererPropertyManifestByName = Import-NativeRendererPropertyManifest -Path $nativeRendererPropertyManifestPath
 $resolvedProfile = Resolve-Path $ProfilePath
 $profile = Get-Content -Path $resolvedProfile -Raw | ConvertFrom-Json
 
@@ -526,6 +705,9 @@ foreach ($name in $profile.owned_android_properties) {
     }
     if (-not $name.StartsWith("debug.rustyquest.")) {
         throw "Quest runtime properties must use debug.rustyquest.*: $name"
+    }
+    if ($name.StartsWith($NativeRendererPropertyPrefix) -and -not $nativeRendererPropertyManifestByName.ContainsKey($name)) {
+        throw "Owned native renderer property is missing from manifest: $name"
     }
     if ($owned.ContainsKey($name)) {
         throw "Duplicate owned Android property: $name"
@@ -563,6 +745,7 @@ foreach ($property in $profile.set_properties) {
     if ($valueBytes -gt $AndroidPropertyValueMaxBytes) {
         throw "Set property $propertyName value is $valueBytes bytes, above Android setprop limit $AndroidPropertyValueMaxBytes"
     }
+    Assert-NativeRendererManifestProperty -Name $propertyName -Value $propertyValue -ManifestByName $nativeRendererPropertyManifestByName
     if ($propertyName.StartsWith($EnvironmentDepthPropertyPrefix)) {
         Assert-EnvironmentDepthProperty -Name $propertyName -Value $propertyValue
         $environmentDepthProperties[$propertyName] = $propertyValue
@@ -599,11 +782,11 @@ if ($environmentDepthProperties.ContainsKey($EnvironmentDepthNearMProperty) -and
 if ($stimulusVolumeProperties.ContainsKey($StimulusVolumeRandomizeMinHzProperty) -and $stimulusVolumeProperties.ContainsKey($StimulusVolumeRandomizeMaxHzProperty)) {
     $minHz = Get-StimulusVolumeFloat -Name $StimulusVolumeRandomizeMinHzProperty -Value $stimulusVolumeProperties[$StimulusVolumeRandomizeMinHzProperty]
     $maxHz = Get-StimulusVolumeFloat -Name $StimulusVolumeRandomizeMaxHzProperty -Value $stimulusVolumeProperties[$StimulusVolumeRandomizeMaxHzProperty]
-    if ($minHz -lt 0.0) {
-        throw "Stimulus volume randomize min_hz must be greater than or equal to 0"
+    if ($minHz -lt 3.0) {
+        throw "Stimulus volume randomize min_hz must be greater than or equal to 3"
     }
-    if ($maxHz -gt 15.0) {
-        throw "Stimulus volume randomize max_hz must be less than or equal to 15"
+    if ($maxHz -gt 40.0) {
+        throw "Stimulus volume randomize max_hz must be less than or equal to 40"
     }
     if ($minHz -gt $maxHz) {
         throw "Stimulus volume randomize min_hz $minHz must be less than or equal to max_hz $maxHz"

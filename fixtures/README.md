@@ -44,6 +44,24 @@
   fixed/eye-depth hand draw order plus resident GPU index-remap sorting.
   CPU-sorted render-buffer ordering is not used by the native Quest path
   because steady state must not upload expanded particle arrays.
+  The solid-black stimulus-volume profile is the current central-FOV limit
+  fixture for bright volumetric interference: it requests a 1024x1024x2 stereo
+  storage target, 18 raymarch samples, a 0.72 central-FOV fraction, and smooth
+  weighted gradient accumulation while preserving A/right-primary
+  randomization and keeping Breathing Room haptics/reset controls disabled.
+  The balanced solid-black stimulus-volume profile keeps the same route,
+  central-FOV fraction, smoothing, safety acknowledgement, and randomization
+  range while dropping to a 768x768x2 stereo target and 12 raymarch samples for
+  72 Hz quality A/B checks after the limit tier is GPU-bound.
+  The performance solid-black stimulus-volume profile keeps the same route,
+  central-FOV fraction, smoothing, safety acknowledgement, and randomization
+  range while dropping to a 512x512x2 stereo target and 12 raymarch samples for
+  the first high-headroom 120 Hz/native-clock exploration tier measured on the
+  2026-06-19 Quest 3S resolution sweep.
+  The native-passthrough stimulus-volume fixture is the balanced comparison
+  tier at 768x768x2 and 14 raymarch samples. Damaged stimulus-volume fixtures
+  reject invalid randomization, missing safety acknowledgement, and out-of-range
+  central-FOV or gradient-smoothing quality controls.
   `quest-native-renderer-environment-depth-status.profile.json` is the
   first environment-depth status-only profile. It sets only scalar
   environment-depth properties such as mode, source, reference space, capacity,
@@ -104,7 +122,45 @@
   boundary, resident compact-joint GPU-skinned visual examples,
   recorded-compatible live compact hand input evidence, target-space
   skinned-mesh GPU SDF cadence/cache examples, private extension ABI slots, and
-  accepted no-real-hands replay visual proof logcat evidence. Replay visual
+  accepted no-real-hands replay visual proof logcat evidence. The
+  `native-renderer-property-manifest.json` fixture is the typed low-rate
+  Android property manifest for the native renderer: it records each property
+  name, parser owner, startup-effective lifecycle, profile-owned explicit-set
+  clear behavior, runtime-owner default behavior, value kind, accepted profile
+  tokens/ranges, and expected validators. The manifest records where defaults
+  live instead of duplicating default values out of runtime parser modules.
+  Every entry names the runtime parser, profile matrix,
+  `Apply-RuntimeProfile.ps1`, and the `rusty-quest-profile` Rust validator as
+  low-rate validation surfaces. `check_native_renderer_property_parity.py`,
+  `Apply-RuntimeProfile.ps1`, and the `rusty-quest-profile` Rust validator all
+  consume or compare against this manifest before accepting native renderer
+  runtime-profile values. `tools/Test-NativeRendererProfileMatrix.ps1` owns the
+  exact native-renderer profile and damaged-profile inventories, dry-runs every
+  valid profile, and rejects every damaged fixture through that same
+  manifest-backed apply path.
+  `tools/checks/Test-NativeRendererAndroidScaffoldStatic.ps1` owns Android
+  manifest, Rust NativeActivity, input pump, Cargo manifest, build script, and
+  app README static checks.
+  `tools/checks/Test-NativeRendererStimulusVolumeStatic.ps1` owns the
+  stimulus-volume renderer, shader, OpenXR action, timing, and route-marker
+  static ledger, so stimulus-volume fixture acceptance stays separate from the
+  Android harness orchestration layer.
+  `tools/checks/Test-NativeRendererProjectionTargetStatic.ps1` owns the
+  Breathing Room projection-target, Manifold breath/pose transport, right-hand
+  OpenXR input/haptic, and runtime-authority marker static ledger.
+  `tools/checks/Test-NativeRendererHandVisualStatic.ps1` owns recorded-hand
+  replay, live compact hand input, GPU-skinned hand mesh visual, graft-copy,
+  and GPU mesh replay boundary static checks.
+  `tools/checks/Test-NativeRendererGpuSdfStatic.ps1` owns target-space GPU SDF
+  field, tile-bin, overlay shader, compact-joint upload, cadence/cache, and SDF
+  marker static checks.
+  `tools/checks/Test-NativeRendererCameraGuideStatic.ps1` owns camera
+  projection metadata, guide blur/projection, direct-HWB camera quality
+  diagnostic, peripheral-stretch, source-route profile snippet, and native
+  camera scaffold static checks.
+  `tools/checks/Test-NativeRendererOpenXrVulkanStatic.ps1` owns OpenXR/Vulkan
+  prerequisite, timing marker, private-slot, render-mode, scorecard, and native
+  timing counter static checks. Replay visual
   proof markers include camera target rectangles plus separate hand-mesh and
   SDF overlay evidence rectangles so screenshot checks do not confuse camera
   image variation with mesh/SDF visibility. Overlay evidence checks also track
@@ -123,4 +179,7 @@
   markers exist but the visual mesh was not actually reported visible, and a
   native renderer replay log whose FPS, stale-frame, CPU-stage, and GPU-stage
   timings exceed the performance-budget gate. Damaged live-hand visual evidence
-  also rejects marker-only acceptance without screenshot proof.
+  also rejects marker-only acceptance without screenshot proof. Native renderer
+  damaged profiles include manifest-driven generic property failures such as an
+  unsupported camera output token, proving the apply path consumes the typed
+  native renderer property manifest before ADB writes.

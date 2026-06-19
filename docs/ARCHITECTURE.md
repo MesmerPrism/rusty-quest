@@ -172,11 +172,93 @@ YCbCr model/range, component mapping, chroma offsets, conversion mode, and the
 selected OpenXR swapchain color-format preference so color acceptance can be
 reviewed from device evidence rather than inferred from route readiness.
 
-Runtime property parsing for replay visual proof, compact hand input source,
-hand mesh diagnostic settings, graft-copy enablement, and SDF cadence belongs to the
-`native_renderer_options` module. The OpenXR/Vulkan frame loop consumes typed
-options from that module so Android property transport, replay/live fallback
-semantics, and visual proof defaults remain testable without a headset.
+Native renderer Android property names belong to `native_renderer_properties`;
+shared string, boolean, integer, and float parsing belongs to
+`native_renderer_property_values`; camera/output option parsing belongs to
+`native_renderer_camera_options`; environment-depth settings parsing belongs to
+`native_renderer_environment_depth_options`; hand-anchor particle settings
+parsing belongs to `native_renderer_hand_anchor_particle_options`;
+projection-border and peripheral-stretch settings parsing belongs to
+`native_renderer_projection_border_stretch_options`; and
+stimulus-volume settings parsing belongs to
+`native_renderer_stimulus_volume_options`. Render-route, compact hand source,
+hand-visual diagnostic, and private-layer settings parsing belongs to
+`native_renderer_visual_options`. The `native_renderer_options` module
+remains the aggregate facade consumed by the OpenXR/Vulkan frame loop so
+Android property transport, replay/live fallback semantics, environment-depth
+defaults, camera/output defaults, hand-anchor particle defaults,
+projection-border/peripheral-stretch defaults, visual proof defaults, and
+stimulus safety defaults remain testable without a headset. The broad aggregate
+parser regression suite lives in `native_renderer_options_tests` so the facade
+does not also own the test-family source. The typed low-rate property manifest
+at `fixtures/native-renderer/native-renderer-property-manifest.json` is the
+inspection surface for Android property names, value kinds, accepted profile
+tokens/ranges, parser owners, startup-effective lifecycle, profile-owned
+explicit-set clear behavior, runtime-owner default behavior, and expected
+low-rate validators; the parity checker fails when runtime constants, profile
+fixtures, manifest authority metadata, manifest validator metadata, or
+specialized cross-field validator surfaces drift away from it. The manifest
+records where defaults are owned rather than copying default values out of the
+runtime parser modules. The runtime profile apply tool also consumes the
+manifest for all native renderer set operations before any ADB write, and the
+`rusty-quest-profile` Rust validator consumes it before dry-run write-plan
+generation. Every manifest entry names those low-rate validators;
+family-specific validators remain responsible for cross-field rules such as
+near/far ordering and stimulus safety acknowledgement. The Android scaffold
+validation delegates manifest schema and
+parity-tool wiring assertions to
+`tools/checks/Test-NativeRendererPropertyManifestStatic.ps1`, keeping that
+settings-authority gate out of the broader source-token ledger. The
+Android manifest, Rust NativeActivity, input pump, Cargo manifest, build
+script, and app README static checks live in
+`tools/checks/Test-NativeRendererAndroidScaffoldStatic.ps1`, so package/app
+scaffold assertions are not mixed with executable runtime-evidence checks. The
+native-renderer source/build public boundary scan lives in
+`tools/checks/Test-NativeRendererPublicBoundaryStatic.ps1`, so legacy route and
+private visual-token checks are not mixed into renderer-family feature checks.
+Environment-depth source, profile, fixture, and smoke-wrapper static checks
+live in `tools/checks/Test-NativeRendererEnvironmentDepthStatic.ps1`. General
+runtime-evidence checker, replay-smoke wrapper, and permission-pregrant static
+checks live in `tools/checks/Test-NativeRendererRuntimeEvidenceStatic.ps1`.
+Runtime-profile apply-tool serial scoping and Rust validator manifest-hook
+assertions live in
+`tools/checks/Test-NativeRendererRuntimeProfileStatic.ps1`. Stimulus-volume
+renderer, shader, OpenXR action, timing, and route-marker static checks live in
+`tools/checks/Test-NativeRendererStimulusVolumeStatic.ps1`. Breathing Room
+projection-target route static checks, including Manifold breath/pose
+transport and right-hand OpenXR input/haptic markers, live in
+`tools/checks/Test-NativeRendererProjectionTargetStatic.ps1`. Recorded-hand
+replay, live compact hand input, GPU-skinned hand mesh visual, graft-copy, and
+GPU mesh replay boundary static checks live in
+`tools/checks/Test-NativeRendererHandVisualStatic.ps1`. Target-space GPU SDF
+field, tile-bin, overlay shader, compact-joint upload, cadence/cache, and SDF
+marker static checks live in `tools/checks/Test-NativeRendererGpuSdfStatic.ps1`.
+Camera projection metadata, guide blur/projection, direct-HWB camera quality
+diagnostic, peripheral-stretch, source-route profile snippet, and native camera
+scaffold static checks live in
+`tools/checks/Test-NativeRendererCameraGuideStatic.ps1`. OpenXR/Vulkan
+prerequisite, timing marker, private-slot, render-mode, scorecard, and native
+timing counter static checks live in
+`tools/checks/Test-NativeRendererOpenXrVulkanStatic.ps1`, leaving the main
+Android harness to run executable runtime-evidence logcat gates. The full
+native-renderer profile and damaged-profile inventories are owned by
+`tools/Test-NativeRendererProfileMatrix.ps1`, which dry-runs every valid
+profile and rejects every damaged fixture through the manifest-backed runtime
+profile tool.
+
+The OpenXR/Vulkan integration file keeps session setup, frame submission, and
+projection composition authority in `xr_vulkan.rs`. Marker scorecard emission
+is split into the child module `xr_vulkan/scorecard.rs`, keeping timing and
+visual-acceptance evidence formatting out of the frame-loop authority while
+still allowing the child module to use the frame-loop's private runtime stats.
+Replay/live visual evidence rectangle math lives in
+`xr_vulkan/replay_visual_stats.rs`, so marker-field projection and UV evidence
+helpers are not another responsibility of the frame-loop integration file.
+The environment-depth particle Vulkan resource and command recording facade
+remains `gpu_environment_depth_particles.rs`; readback statistics, marker
+policy strings, surface-support depth flags, and depth-grid sizing live in
+`gpu_environment_depth_particle_stats.rs` so resource lifetime code does not
+also own the low-rate evidence policy.
 
 Only the blur guide path, public recorded-hand replay visual, resident
 compact-joint GPU-skinned triangle overlay, native GPU mesh boundary, and

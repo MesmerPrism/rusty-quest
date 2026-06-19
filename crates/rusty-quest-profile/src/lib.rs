@@ -10,6 +10,11 @@ pub const RUNTIME_PROFILE_SCHEMA: &str = "rusty.quest.runtime_profile.v1";
 /// Android system property value limit in bytes for `setprop` values.
 pub const ANDROID_PROPERTY_VALUE_MAX_BYTES: usize = 92;
 
+const NATIVE_RENDERER_PROP_PREFIX: &str = "debug.rustyquest.native_renderer.";
+const NATIVE_RENDERER_PROPERTY_MANIFEST_SCHEMA: &str =
+    "rusty.quest.native_renderer_property_manifest.v2";
+const NATIVE_RENDERER_PROPERTY_MANIFEST_JSON: &str =
+    include_str!("../../../fixtures/native-renderer/native-renderer-property-manifest.json");
 const ENVIRONMENT_DEPTH_PROP_PREFIX: &str = "debug.rustyquest.native_renderer.environment_depth.";
 const ENVIRONMENT_DEPTH_MODE: &str = "debug.rustyquest.native_renderer.environment_depth.mode";
 const ENVIRONMENT_DEPTH_SOURCE: &str = "debug.rustyquest.native_renderer.environment_depth.source";
@@ -56,6 +61,10 @@ const STIMULUS_VOLUME_RENDER_TARGET: &str =
     "debug.rustyquest.native_renderer.stimulus_volume.render_target";
 const STIMULUS_VOLUME_RAYMARCH_SAMPLES: &str =
     "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples";
+const STIMULUS_VOLUME_CENTRAL_FOV_FRACTION: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction";
+const STIMULUS_VOLUME_GRADIENT_SMOOTHING: &str =
+    "debug.rustyquest.native_renderer.stimulus_volume.gradient_smoothing";
 const STIMULUS_VOLUME_RANDOMIZE_ENABLED: &str =
     "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled";
 const STIMULUS_VOLUME_RANDOMIZE_MIN_HZ: &str =
@@ -134,6 +143,35 @@ pub struct PropertyValue {
     pub value: String,
     /// Canonical setting id that produced this property.
     pub source_setting_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct NativeRendererPropertyManifest {
+    schema: String,
+    prefix: String,
+    property_count: usize,
+    properties: Vec<NativeRendererPropertyManifestEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+struct NativeRendererPropertyManifestEntry {
+    name: String,
+    lifecycle: String,
+    clear_behavior: String,
+    default_behavior: String,
+    value_kind: String,
+    #[serde(default)]
+    allowed_values: Vec<String>,
+    #[serde(default)]
+    range: Option<NativeRendererManifestRange>,
+    #[serde(default)]
+    non_empty: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct NativeRendererManifestRange {
+    min: f64,
+    max: f64,
 }
 
 /// Dry-run write plan.
@@ -250,6 +288,7 @@ pub fn validate_runtime_profile(profile: &RuntimeProfile) -> Result<(), Vec<Vali
             )));
         }
     }
+    validate_native_renderer_profile_against_manifest(profile, &set_properties, &mut errors);
     validate_environment_depth_profile(&set_properties, &mut errors);
     validate_stimulus_volume_profile(&set_properties, &mut errors);
     validate_native_projection_target_profile(profile, &owned_lookup, &set_properties, &mut errors);
@@ -258,6 +297,311 @@ pub fn validate_runtime_profile(profile: &RuntimeProfile) -> Result<(), Vec<Vali
         Ok(())
     } else {
         Err(errors)
+    }
+}
+
+fn validate_native_renderer_profile_against_manifest(
+    profile: &RuntimeProfile,
+    set_properties: &BTreeMap<&str, &PropertyValue>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(manifest) = native_renderer_property_manifest(errors) else {
+        return;
+    };
+    let manifest_by_name: BTreeMap<&str, &NativeRendererPropertyManifestEntry> = manifest
+        .properties
+        .iter()
+        .map(|entry| (entry.name.as_str(), entry))
+        .collect();
+
+    for property in &profile.owned_android_properties {
+        if property.starts_with(NATIVE_RENDERER_PROP_PREFIX)
+            && !manifest_by_name.contains_key(property.as_str())
+        {
+            errors.push(ValidationError::new(format!(
+                "native renderer owned property {} is missing from property manifest",
+                property
+            )));
+        }
+    }
+
+    for property in set_properties.values() {
+        if !property.name.starts_with(NATIVE_RENDERER_PROP_PREFIX) {
+            continue;
+        }
+        match manifest_by_name.get(property.name.as_str()) {
+            Some(entry) => validate_native_renderer_manifest_value(property, entry, errors),
+            None => errors.push(ValidationError::new(format!(
+                "native renderer set property {} is missing from property manifest",
+                property.name
+            ))),
+        }
+    }
+}
+
+fn native_renderer_property_manifest(
+    errors: &mut Vec<ValidationError>,
+) -> Option<NativeRendererPropertyManifest> {
+    let manifest: NativeRendererPropertyManifest =
+        match serde_json::from_str(NATIVE_RENDERER_PROPERTY_MANIFEST_JSON) {
+            Ok(manifest) => manifest,
+            Err(error) => {
+                errors.push(ValidationError::new(format!(
+                    "native renderer property manifest must parse as JSON: {error}"
+                )));
+                return None;
+            }
+        };
+
+    if manifest.schema != NATIVE_RENDERER_PROPERTY_MANIFEST_SCHEMA {
+        errors.push(ValidationError::new(format!(
+            "native renderer property manifest schema {} is not supported",
+            manifest.schema
+        )));
+    }
+    if manifest.prefix != NATIVE_RENDERER_PROP_PREFIX {
+        errors.push(ValidationError::new(format!(
+            "native renderer property manifest prefix {} must be {}",
+            manifest.prefix, NATIVE_RENDERER_PROP_PREFIX
+        )));
+    }
+    if manifest.property_count != manifest.properties.len() {
+        errors.push(ValidationError::new(format!(
+            "native renderer property manifest property_count {} does not match {} entries",
+            manifest.property_count,
+            manifest.properties.len()
+        )));
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut previous_name: Option<&str> = None;
+    for entry in &manifest.properties {
+        if !entry.name.starts_with(NATIVE_RENDERER_PROP_PREFIX) {
+            errors.push(ValidationError::new(format!(
+                "native renderer property manifest entry {} must use {}",
+                entry.name, NATIVE_RENDERER_PROP_PREFIX
+            )));
+        }
+        if !seen.insert(entry.name.as_str()) {
+            errors.push(ValidationError::new(format!(
+                "native renderer property manifest contains duplicate entry {}",
+                entry.name
+            )));
+        }
+        if previous_name.is_some_and(|previous| previous > entry.name.as_str()) {
+            errors.push(ValidationError::new(
+                "native renderer property manifest entries must be sorted by name",
+            ));
+        }
+        previous_name = Some(entry.name.as_str());
+        validate_native_renderer_manifest_entry(entry, errors);
+    }
+
+    Some(manifest)
+}
+
+fn validate_native_renderer_manifest_entry(
+    entry: &NativeRendererPropertyManifestEntry,
+    errors: &mut Vec<ValidationError>,
+) {
+    if entry.lifecycle != "startup-effective" {
+        errors.push(ValidationError::new(format!(
+            "{} manifest lifecycle {} is not supported",
+            entry.name, entry.lifecycle
+        )));
+    }
+    if entry.clear_behavior != "profile-owned-explicit-set" {
+        errors.push(ValidationError::new(format!(
+            "{} manifest clear_behavior {} is not supported",
+            entry.name, entry.clear_behavior
+        )));
+    }
+    if entry.default_behavior != "runtime-owner-default-when-unset" {
+        errors.push(ValidationError::new(format!(
+            "{} manifest default_behavior {} is not supported",
+            entry.name, entry.default_behavior
+        )));
+    }
+
+    match entry.value_kind.as_str() {
+        "bool" | "f32" | "f32_pair" | "string" | "u16" | "u32" | "u64" => {}
+        "token" => {
+            if entry.allowed_values.is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "{} manifest token entry must declare allowed_values",
+                    entry.name
+                )));
+            }
+        }
+        _ => errors.push(ValidationError::new(format!(
+            "{} manifest value_kind {} is not supported",
+            entry.name, entry.value_kind
+        ))),
+    }
+
+    if let Some(range) = &entry.range {
+        if !range.min.is_finite() || !range.max.is_finite() {
+            errors.push(ValidationError::new(format!(
+                "{} manifest range must be finite",
+                entry.name
+            )));
+        } else if range.min > range.max {
+            errors.push(ValidationError::new(format!(
+                "{} manifest range min {} is greater than max {}",
+                entry.name, range.min, range.max
+            )));
+        }
+    }
+}
+
+fn validate_native_renderer_manifest_value(
+    property: &PropertyValue,
+    entry: &NativeRendererPropertyManifestEntry,
+    errors: &mut Vec<ValidationError>,
+) {
+    match entry.value_kind.as_str() {
+        "bool" => validate_native_renderer_manifest_bool(property, errors),
+        "token" => validate_native_renderer_manifest_token(property, entry, errors),
+        "u16" => validate_native_renderer_manifest_uint(property, entry, u16::MAX as u64, errors),
+        "u32" => validate_native_renderer_manifest_uint(property, entry, u32::MAX as u64, errors),
+        "u64" => validate_native_renderer_manifest_uint(property, entry, u64::MAX, errors),
+        "f32" => validate_native_renderer_manifest_f32(property, entry, errors),
+        "f32_pair" => validate_native_renderer_manifest_f32_pair(property, entry, errors),
+        "string" => {
+            if entry.non_empty && property.value.trim().is_empty() {
+                errors.push(ValidationError::new(format!(
+                    "{} value must be a non-empty manifest string",
+                    property.name
+                )));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn validate_native_renderer_manifest_bool(
+    property: &PropertyValue,
+    errors: &mut Vec<ValidationError>,
+) {
+    let normalized = property.value.trim().to_ascii_lowercase();
+    if !matches!(normalized.as_str(), "true" | "false") {
+        errors.push(ValidationError::new(format!(
+            "{} value {} must be a manifest bool true/false",
+            property.name, property.value
+        )));
+    }
+}
+
+fn validate_native_renderer_manifest_token(
+    property: &PropertyValue,
+    entry: &NativeRendererPropertyManifestEntry,
+    errors: &mut Vec<ValidationError>,
+) {
+    if !entry
+        .allowed_values
+        .iter()
+        .any(|allowed| allowed == &property.value)
+    {
+        errors.push(ValidationError::new(format!(
+            "{} value {} is not in manifest allowed_values",
+            property.name, property.value
+        )));
+    }
+}
+
+fn validate_native_renderer_manifest_uint(
+    property: &PropertyValue,
+    entry: &NativeRendererPropertyManifestEntry,
+    max_for_kind: u64,
+    errors: &mut Vec<ValidationError>,
+) {
+    let text = property.value.trim();
+    if text.is_empty()
+        || !text.chars().all(|character| character.is_ascii_digit())
+        || (text.len() > 1 && text.starts_with('0'))
+    {
+        errors.push(ValidationError::new(format!(
+            "{} value {} must be a manifest canonical unsigned integer",
+            property.name, property.value
+        )));
+        return;
+    }
+
+    let value = match text.parse::<u64>() {
+        Ok(value) => value,
+        Err(_) => {
+            errors.push(ValidationError::new(format!(
+                "{} value {} must fit in a manifest unsigned integer",
+                property.name, property.value
+            )));
+            return;
+        }
+    };
+    if value > max_for_kind {
+        errors.push(ValidationError::new(format!(
+            "{} value {value} exceeds manifest kind {}",
+            property.name, entry.value_kind
+        )));
+    }
+    validate_native_renderer_manifest_range(property, value as f64, entry, errors);
+}
+
+fn validate_native_renderer_manifest_f32(
+    property: &PropertyValue,
+    entry: &NativeRendererPropertyManifestEntry,
+    errors: &mut Vec<ValidationError>,
+) {
+    match property.value.trim().parse::<f32>() {
+        Ok(value) if value.is_finite() => {
+            validate_native_renderer_manifest_range(property, f64::from(value), entry, errors);
+        }
+        _ => errors.push(ValidationError::new(format!(
+            "{} value {} must be a manifest finite f32",
+            property.name, property.value
+        ))),
+    }
+}
+
+fn validate_native_renderer_manifest_f32_pair(
+    property: &PropertyValue,
+    entry: &NativeRendererPropertyManifestEntry,
+    errors: &mut Vec<ValidationError>,
+) {
+    let parts: Vec<_> = property.value.split(',').map(str::trim).collect();
+    if parts.len() != 2 {
+        errors.push(ValidationError::new(format!(
+            "{} value {} must be a manifest f32 pair",
+            property.name, property.value
+        )));
+        return;
+    }
+    for part in parts {
+        match part.parse::<f32>() {
+            Ok(value) if value.is_finite() => {
+                validate_native_renderer_manifest_range(property, f64::from(value), entry, errors);
+            }
+            _ => errors.push(ValidationError::new(format!(
+                "{} value {} must be a manifest finite f32 pair",
+                property.name, property.value
+            ))),
+        }
+    }
+}
+
+fn validate_native_renderer_manifest_range(
+    property: &PropertyValue,
+    value: f64,
+    entry: &NativeRendererPropertyManifestEntry,
+    errors: &mut Vec<ValidationError>,
+) {
+    let Some(range) = &entry.range else {
+        return;
+    };
+    if value < range.min || value > range.max {
+        errors.push(ValidationError::new(format!(
+            "{} value {value} must be between manifest range {} and {}",
+            property.name, range.min, range.max
+        )));
     }
 }
 
@@ -431,14 +775,14 @@ fn validate_stimulus_volume_profile(
     let min_hz = stimulus_volume_f32(set_properties, STIMULUS_VOLUME_RANDOMIZE_MIN_HZ, errors);
     let max_hz = stimulus_volume_f32(set_properties, STIMULUS_VOLUME_RANDOMIZE_MAX_HZ, errors);
     if let (Some(min_hz), Some(max_hz)) = (min_hz, max_hz) {
-        if min_hz < 0.0 {
+        if min_hz < 3.0 {
             errors.push(ValidationError::new(
-                "stimulus volume randomize min_hz must be greater than or equal to 0",
+                "stimulus volume randomize min_hz must be greater than or equal to 3",
             ));
         }
-        if max_hz > 15.0 {
+        if max_hz > 40.0 {
             errors.push(ValidationError::new(
-                "stimulus volume randomize max_hz must be less than or equal to 15",
+                "stimulus volume randomize max_hz must be less than or equal to 40",
             ));
         }
         if min_hz > max_hz {
@@ -501,7 +845,18 @@ fn validate_stimulus_volume_property(property: &PropertyValue, errors: &mut Vec<
             let normalized = normalized_value(&property.value);
             let valid = matches!(
                 normalized.as_str(),
-                "512x512x2-rgba16f" | "512x512x2-rgba8-unorm" | "512x512x2-rgba8"
+                "512x512x2-rgba16f"
+                    | "512x512x2-rgba8-unorm"
+                    | "512x512x2-rgba8"
+                    | "rgba8"
+                    | "rgba8-unorm"
+                    | "768x768x2-rgba16f"
+                    | "768x768"
+                    | "rgba16f-768"
+                    | "1024x1024x2-rgba16f"
+                    | "1024x1024"
+                    | "rgba16f-1024"
+                    | "limit-1024"
             );
             if !valid {
                 errors.push(ValidationError::new(format!(
@@ -511,7 +866,13 @@ fn validate_stimulus_volume_property(property: &PropertyValue, errors: &mut Vec<
             }
         }
         STIMULUS_VOLUME_RAYMARCH_SAMPLES => {
-            validate_stimulus_volume_u32(property, 1, 24, errors);
+            validate_stimulus_volume_u32(property, 1, 48, errors);
+        }
+        STIMULUS_VOLUME_CENTRAL_FOV_FRACTION => {
+            validate_stimulus_volume_f32_range(property, 0.45, 1.0, errors);
+        }
+        STIMULUS_VOLUME_GRADIENT_SMOOTHING => {
+            validate_stimulus_volume_f32_range(property, 0.0, 1.0, errors);
         }
         STIMULUS_VOLUME_RANDOMIZE_MIN_HZ | STIMULUS_VOLUME_RANDOMIZE_MAX_HZ => {
             validate_stimulus_volume_f32(property, errors);
@@ -545,6 +906,25 @@ fn validate_stimulus_volume_u32(
 fn validate_stimulus_volume_f32(property: &PropertyValue, errors: &mut Vec<ValidationError>) {
     match property.value.trim().parse::<f32>() {
         Ok(value) if value.is_finite() => {}
+        _ => errors.push(ValidationError::new(format!(
+            "{} value {} must be a finite number",
+            property.name, property.value
+        ))),
+    }
+}
+
+fn validate_stimulus_volume_f32_range(
+    property: &PropertyValue,
+    min_value: f32,
+    max_value: f32,
+    errors: &mut Vec<ValidationError>,
+) {
+    match property.value.trim().parse::<f32>() {
+        Ok(value) if value.is_finite() && value >= min_value && value <= max_value => {}
+        Ok(value) if value.is_finite() => errors.push(ValidationError::new(format!(
+            "{} value {value} must be between {min_value} and {max_value}",
+            property.name
+        ))),
         _ => errors.push(ValidationError::new(format!(
             "{} value {} must be a finite number",
             property.name, property.value
@@ -929,7 +1309,10 @@ fn validate_property_name(property: &str, label: &str, errors: &mut Vec<Validati
 
 #[cfg(test)]
 mod tests {
-    use super::{build_write_plan, validate_runtime_profile, RuntimeProfile};
+    use super::{
+        build_write_plan, validate_runtime_profile, PropertyValue, RuntimeProfile,
+        STIMULUS_VOLUME_RAYMARCH_SAMPLES, STIMULUS_VOLUME_RENDER_TARGET,
+    };
 
     fn valid_profile() -> RuntimeProfile {
         serde_json::from_str(include_str!(
@@ -1235,18 +1618,38 @@ mod tests {
 
     #[test]
     fn stimulus_volume_profiles_validate() {
-        for (profile_json, expected_mode) in [
+        for (profile_json, expected_mode, expected_target, expected_samples) in [
             (
                 include_str!(
                     "../../../fixtures/runtime-profiles/quest-native-renderer-solid-black-stimulus-volume.profile.json"
                 ),
                 "solid-black-stimulus-volume",
+                "1024x1024x2-rgba16f",
+                "18",
+            ),
+            (
+                include_str!(
+                    "../../../fixtures/runtime-profiles/quest-native-renderer-solid-black-stimulus-volume-balanced.profile.json"
+                ),
+                "solid-black-stimulus-volume",
+                "768x768x2-rgba16f",
+                "12",
+            ),
+            (
+                include_str!(
+                    "../../../fixtures/runtime-profiles/quest-native-renderer-solid-black-stimulus-volume-performance.profile.json"
+                ),
+                "solid-black-stimulus-volume",
+                "512x512x2-rgba16f",
+                "12",
             ),
             (
                 include_str!(
                     "../../../fixtures/runtime-profiles/quest-native-renderer-native-passthrough-stimulus-volume.profile.json"
                 ),
                 "native-passthrough-stimulus-volume",
+                "768x768x2-rgba16f",
+                "14",
             ),
         ] {
             let profile: RuntimeProfile =
@@ -1260,6 +1663,14 @@ mod tests {
             assert!(plan.operations.iter().any(|operation| {
                 operation.name == "debug.rustyquest.native_renderer.stimulus_volume.safety_ack"
                     && operation.value.as_deref() == Some("true")
+            }));
+            assert!(plan.operations.iter().any(|operation| {
+                operation.name == STIMULUS_VOLUME_RENDER_TARGET
+                    && operation.value.as_deref() == Some(expected_target)
+            }));
+            assert!(plan.operations.iter().any(|operation| {
+                operation.name == STIMULUS_VOLUME_RAYMARCH_SAMPLES
+                    && operation.value.as_deref() == Some(expected_samples)
             }));
         }
     }
@@ -1275,6 +1686,24 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.message.contains("randomize max_hz must be less")));
+    }
+
+    #[test]
+    fn stimulus_volume_invalid_quality_range_is_rejected() {
+        let damaged: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/damaged/native-renderer-stimulus-volume-invalid-quality-range.profile.json"
+        ))
+        .expect("damaged stimulus quality profile JSON");
+        let errors =
+            validate_runtime_profile(&damaged).expect_err("must reject invalid quality range");
+        assert!(errors.iter().any(|error| {
+            error
+                .message
+                .contains("stimulus_volume.central_fov_fraction")
+        }));
+        assert!(errors
+            .iter()
+            .any(|error| { error.message.contains("stimulus_volume.gradient_smoothing") }));
     }
 
     #[test]
@@ -1344,6 +1773,38 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.message.contains("must not set Makepad property")));
+    }
+
+    #[test]
+    fn native_renderer_manifest_invalid_camera_output_is_rejected() {
+        let damaged: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/damaged/native-renderer-manifest-invalid-camera-output.profile.json"
+        ))
+        .expect("damaged native renderer camera profile JSON");
+        let errors = validate_runtime_profile(&damaged)
+            .expect_err("must reject camera output outside manifest allowed_values");
+        assert!(errors.iter().any(|error| {
+            error.message.contains("camera.output")
+                && error.message.contains("manifest allowed_values")
+        }));
+    }
+
+    #[test]
+    fn native_renderer_manifest_unknown_property_is_rejected() {
+        let mut damaged = valid_profile();
+        let name = "debug.rustyquest.native_renderer.unlisted.setting".to_string();
+        damaged.owned_android_properties.push(name.clone());
+        damaged.set_properties.push(PropertyValue {
+            name,
+            value: "true".to_string(),
+            source_setting_id: "native_renderer.unlisted.setting".to_string(),
+        });
+
+        let errors = validate_runtime_profile(&damaged)
+            .expect_err("must reject native renderer property missing from manifest");
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("missing from property manifest")));
     }
 
     #[test]

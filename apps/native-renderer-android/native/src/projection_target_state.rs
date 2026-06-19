@@ -223,6 +223,10 @@ impl ProjectionTargetSettings {
         }
     }
 
+    pub(crate) fn disabled_for_volume_only_route() -> Self {
+        Self::default()
+    }
+
     pub(crate) fn marker_fields(&self) -> String {
         format!(
             "projectionTargetControlsEnabled={} projectionTargetBaseScale={:.4} projectionTargetTunedMaxScale={:.4} projectionTargetMinScale={:.4} projectionTargetMaxScale={:.4} projectionTargetOffsetUv={:.6},{:.6} projectionTargetJoystickControlsEnabled={} projectionTargetJoystickRatePerSecond={:.4} breathBridgeMode={} breathStateStream={} breathValueStream={} breathRampInhaleSeconds={:.4} breathRampExhaleSeconds={:.4} breathSyntheticPeriodSeconds={:.4} breathHighRateJsonPayload={} manifoldBrokerHost={} manifoldBrokerPort={} manifoldBrokerPath={}",

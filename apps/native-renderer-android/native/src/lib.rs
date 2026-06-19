@@ -20,6 +20,8 @@ mod camera_projection;
 mod camera_projection_metadata;
 mod environment_depth_geometry;
 #[cfg(target_os = "android")]
+mod gpu_environment_depth_particle_stats;
+#[cfg(target_os = "android")]
 mod gpu_environment_depth_particles;
 #[cfg(target_os = "android")]
 mod gpu_hand_anchor_particles;
@@ -46,9 +48,19 @@ mod native_camera_metadata;
 mod native_camera_profiles;
 #[cfg(target_os = "android")]
 mod native_camera_reader_selection;
+mod native_renderer_camera_options;
+mod native_renderer_environment_depth_options;
+mod native_renderer_hand_anchor_particle_options;
 mod native_renderer_options;
+#[cfg(test)]
+mod native_renderer_options_tests;
+mod native_renderer_projection_border_stretch_options;
+mod native_renderer_properties;
+mod native_renderer_property_values;
+mod native_renderer_stimulus_volume_options;
 #[cfg(target_os = "android")]
 mod native_renderer_timing;
+mod native_renderer_visual_options;
 #[cfg(target_os = "android")]
 mod openxr_environment_depth;
 #[cfg(target_os = "android")]

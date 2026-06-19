@@ -14,11 +14,17 @@
     "debug.rustyquest.native_renderer.environment_depth.mode",
     "debug.rustyquest.native_renderer.environment_depth.source",
     "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload",
+    "debug.rustyquest.native_renderer.projection.target.controls",
+    "debug.rustyquest.native_renderer.projection.target.joystick.controls",
+    "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode",
+    "debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload",
     "debug.rustyquest.native_renderer.stimulus_volume.enabled",
     "debug.rustyquest.native_renderer.stimulus_volume.profile",
     "debug.rustyquest.native_renderer.stimulus_volume.composition",
     "debug.rustyquest.native_renderer.stimulus_volume.render_target",
     "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples",
+    "debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction",
+    "debug.rustyquest.native_renderer.stimulus_volume.gradient_smoothing",
     "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled",
     "debug.rustyquest.native_renderer.stimulus_volume.randomize.min_hz",
     "debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz",
@@ -81,6 +87,26 @@
       "source_setting_id": "native_renderer.environment_depth.high_rate_json_payload"
     },
     {
+      "name": "debug.rustyquest.native_renderer.projection.target.controls",
+      "value": "false",
+      "source_setting_id": "native_renderer.projection.target.controls"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.joystick.controls",
+      "value": "false",
+      "source_setting_id": "native_renderer.projection.target.joystick.controls"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode",
+      "value": "disabled",
+      "source_setting_id": "native_renderer.projection.target.breath.bridge.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload",
+      "value": "false",
+      "source_setting_id": "native_renderer.projection.target.breath.high_rate_json_payload"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.stimulus_volume.enabled",
       "value": "true",
       "source_setting_id": "native_renderer.stimulus_volume.enabled"
@@ -97,13 +123,23 @@
     },
     {
       "name": "debug.rustyquest.native_renderer.stimulus_volume.render_target",
-      "value": "512x512x2-rgba16f",
+      "value": "768x768x2-rgba16f",
       "source_setting_id": "native_renderer.stimulus_volume.render_target"
     },
     {
       "name": "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples",
-      "value": "8",
+      "value": "14",
       "source_setting_id": "native_renderer.stimulus_volume.raymarch_samples"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction",
+      "value": "0.78",
+      "source_setting_id": "native_renderer.stimulus_volume.central_fov_fraction"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.gradient_smoothing",
+      "value": "0.70",
+      "source_setting_id": "native_renderer.stimulus_volume.gradient_smoothing"
     },
     {
       "name": "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled",
@@ -112,12 +148,12 @@
     },
     {
       "name": "debug.rustyquest.native_renderer.stimulus_volume.randomize.min_hz",
-      "value": "8.0",
+      "value": "3.0",
       "source_setting_id": "native_renderer.stimulus_volume.randomize.min_hz"
     },
     {
       "name": "debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz",
-      "value": "15.0",
+      "value": "40.0",
       "source_setting_id": "native_renderer.stimulus_volume.randomize.max_hz"
     },
     {
@@ -135,7 +171,21 @@
     "makepadRuntime=false",
     "hostessRuntime=false",
     "volumeOnly=true",
+    "stimulusVolumeRenderTarget=768x768x2-rgba16f",
+    "volumeResolutionTier=balanced-768",
+    "volumeCentralFovFraction=0.78",
+    "volumeGradientSmoothing=0.70",
+    "volumeRaymarchSamples=14",
+    "stimulusVolumeImageSize=768x768",
+    "stimulusVolumeResolutionTier=balanced-768",
+    "stimulusVolumeCentralFovFraction=0.78",
+    "stimulusVolumeGradientSmoothing=0.70",
+    "stimulusVolumeProjectionPath=central-fov-stereo-sampled-storage-image",
     "projectionLayerAlphaBlend=false",
+    "projectionTargetControlsEnabled=false",
+    "breathHapticsConfigured=false",
+    "rightPrimaryResetAction=false",
+    "rightBreathHapticAction=false",
     "rightControllerPrimaryButtonRandomize=true"
   ],
   "validation_commands": [

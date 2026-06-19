@@ -137,7 +137,8 @@ source-validated Vulkan timestamp query scaffold under the
 `gpu-timestamp-timing` marker. It reports `gpuTimestampQuerySupported`,
 `gpuTimestampQueryReady`, `gpuTimestampValidBits`, `gpuTimestampPeriodNs`,
 `cameraProjectionGpuMs`, `guideGraphGpuMs`, `handSdfGpuMs`,
-`handMeshVisualGpuMs`, and `projectionCompositeGpuMs`, with
+`handMeshVisualGpuMs`, `stimulusVolumeComputeGpuMs`,
+`stimulusVolumeProjectionGpuMs`, and `projectionCompositeGpuMs`, with
 `gpuTimingScope=vulkan-timestamp-query`. Runtime acceptance of those GPU values
 still requires a replay or live-headset run because timestamp support and
 query readiness are device/runtime evidence, not static evidence.
