@@ -45,10 +45,11 @@ const DEPTH_FLAG_SURFACE_SUPPORT_ENFORCED: u32 = 8;
 const DEPTH_FLAG_SURFACE_SUPPORT_LOCAL: u32 = 16;
 const DEPTH_FLAG_SURFACE_SUPPORT_GLOBAL: u32 = 32;
 const DEPTH_FLAG_SURFACE_SUPPORT_HYBRID: u32 = 64;
+const DEPTH_FLAG_SURFACE_SUPPORT_MIN_SOURCE_LAYERS_TWO: u32 = 128;
 const DEPTH_FLAG_SURFACE_SUPPORT_MIN_NEIGHBOR_SHIFT: u32 = 8;
 const DEPTH_FLAG_SURFACE_SUPPORT_RADIUS_SHIFT: u32 = 16;
 const DEPTH_FLAG_SURFACE_SUPPORT_MIN_OBSERVATION_SHIFT: u32 = 20;
-const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT: usize = 26;
+const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT: usize = 28;
 const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_BYTES: vk::DeviceSize =
     (ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT * mem::size_of::<u32>()) as vk::DeviceSize;
 const RAW_DEBUG_VALID_COUNT_INDEX: usize = 0;
@@ -77,6 +78,8 @@ const RAW_DEBUG_SURFACE_CANDIDATE_CELLS_INDEX: usize = 22;
 const RAW_DEBUG_SURFACE_CONFIRMED_CELLS_INDEX: usize = 23;
 const RAW_DEBUG_SURFACE_PROMOTED_CELLS_INDEX: usize = 24;
 const RAW_DEBUG_SURFACE_CANDIDATE_RETIRED_CELLS_INDEX: usize = 25;
+const RAW_DEBUG_SOURCE_LAYER_AGREEMENT_CELLS_INDEX: usize = 26;
+const RAW_DEBUG_SINGLE_LAYER_ONLY_CELLS_INDEX: usize = 27;
 const SCENE_PARTICLE_CELL_METERS: f32 = 0.06;
 const SCENE_PARTICLE_HASH_PROBE_COUNT: u32 = 8;
 const SCENE_PARTICLE_STALE_FADE_START_FRAMES: u32 = 720;
@@ -113,6 +116,8 @@ struct EnvironmentDepthRawDebugStats {
     surface_confirmed_cells: u32,
     surface_promoted_cells: u32,
     surface_candidate_retired_cells: u32,
+    source_layer_agreement_cells: u32,
+    single_layer_only_cells: u32,
 }
 
 impl EnvironmentDepthRawDebugStats {
@@ -145,6 +150,8 @@ impl EnvironmentDepthRawDebugStats {
             surface_confirmed_cells: 0,
             surface_promoted_cells: 0,
             surface_candidate_retired_cells: 0,
+            source_layer_agreement_cells: 0,
+            single_layer_only_cells: 0,
         }
     }
 
@@ -199,6 +206,8 @@ impl EnvironmentDepthRawDebugStats {
             surface_promoted_cells: values[RAW_DEBUG_SURFACE_PROMOTED_CELLS_INDEX],
             surface_candidate_retired_cells: values
                 [RAW_DEBUG_SURFACE_CANDIDATE_RETIRED_CELLS_INDEX],
+            source_layer_agreement_cells: values[RAW_DEBUG_SOURCE_LAYER_AGREEMENT_CELLS_INDEX],
+            single_layer_only_cells: values[RAW_DEBUG_SINGLE_LAYER_ONLY_CELLS_INDEX],
         }
     }
 }
@@ -516,7 +525,7 @@ impl GpuEnvironmentDepthParticleFrameStats {
 
     pub(crate) fn marker_fields(self) -> String {
         let marker_fields = format!(
-            "environmentDepthProviderState={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound={} environmentDepthSupported={} environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthRenderViewStateFlags={} environmentDepthPoseValid={} environmentDepthSwapchainIndex={} environmentDepthCaptureTimeNs={} environmentDepthDisplayTimeNs={} environmentDepthCaptureToDisplayMs={:.3} environmentDepthAcquireToRenderMs={:.3} environmentDepthFrameAgeMs={:.3} environmentDepthTextureTransformLabel={} environmentDepthRayUvPolicy={} environmentDepthSampleUvPolicy={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthMode={} environmentDepthParticleReady={} environmentDepthParticleVisible={} environmentDepthParticleCount={} environmentDepthParticleCapacity={} environmentDepthParticleSource={} environmentDepthParticleCoordinateSpace={} environmentDepthParticleReferenceSpace={} environmentDepthWorldSpaceReady={} environmentDepthWorldSpaceMotionEvidence={} environmentDepthHeadMotionPoseSource={} environmentDepthHeadMotionSamples={} environmentDepthHeadMotionYawDeltaDeg={:.3} environmentDepthHeadMotionMaxYawDeltaDeg={:.3} environmentDepthHeadMotionTranslationDeltaM={:.4} environmentDepthHeadMotionMaxTranslationDeltaM={:.4} environmentDepthParticleSourceDepthSamples={} environmentDepthParticleCpuUploadBytes=0 environmentDepthGpuBuffersResident={} environmentDepthParticleBufferMemory=device-local environmentDepthGpuReconstructPath={} environmentDepthGpuDrawPath={} environmentDepthParticleRetention={} environmentDepthParticleMapPolicy={} environmentDepthMapWritePolicy={} environmentDepthSceneParticleMap={} environmentDepthSceneCellMeters={:.3} environmentDepthSceneHashProbeCount={} environmentDepthSceneStaleFadeStartFrames={} environmentDepthSceneStaleRetireFrames={} environmentDepthInvalidSamplePolicy={} environmentDepthFreeSpaceCorrection={} environmentDepthSurfaceModel={} environmentDepthSurfaceSupportRequested={} environmentDepthSurfaceSupportEnforced={} environmentDepthSurfaceSupportMode={} environmentDepthSurfaceSupportRadiusCells={} environmentDepthSurfaceMinNeighborCount={} environmentDepthSurfaceMinObservationCount={} environmentDepthSurfaceMinSourceLayerCount={} environmentDepthSurfaceComponentMinCells={} environmentDepthSurfaceNormalCoherence={} environmentDepthSurfaceFreeSpaceDecay={} environmentDepthSurfaceSupportedCells={} environmentDepthSurfaceRejectedIsolatedCells={} environmentDepthSurfaceLargestComponentCells=0 environmentDepthSurfaceSupportStatus={} environmentDepthSurfaceLifecycleStatus={} environmentDepthSurfaceCandidateCells={} environmentDepthSurfaceConfirmedCells={} environmentDepthSurfacePromotedCells={} environmentDepthSurfaceCandidateRetiredCells={} environmentDepthRawStatsStatus={} environmentDepthRawCenterD16={} environmentDepthCenterReconstructedMeters={:.3} environmentDepthCenterConfidence={:.3} environmentDepthRawCenterWindowMedianD16={} environmentDepthRawCenterWindowValidCount={} environmentDepthMinValidReconstructedMeters={:.3} environmentDepthMaxValidReconstructedMeters={:.3} environmentDepthDebugValidSampleCount={} environmentDepthDebugInvalidSampleCount={} environmentDepthDebugConfidenceRejectedCount={} environmentDepthHashInsertSuccessCount={} environmentDepthHashMergeCount={} environmentDepthHashStaleReplaceCount={} environmentDepthHashProbeExhaustedCount={} environmentDepthFreeSpaceRetireAttemptCount={} environmentDepthFreeSpaceRetireSuccessCount={} environmentDepthHashOccupancyEstimate={} environmentDepthHashWriteConflictCount={} environmentDepthHashClaimFailedCount={} environmentDepthReadbackCadenceFrames=0 environmentDepthRawReadbackCadenceFrames=120",
+            "environmentDepthProviderState={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound={} environmentDepthSupported={} environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthRenderViewStateFlags={} environmentDepthPoseValid={} environmentDepthSwapchainIndex={} environmentDepthCaptureTimeNs={} environmentDepthDisplayTimeNs={} environmentDepthCaptureToDisplayMs={:.3} environmentDepthAcquireToRenderMs={:.3} environmentDepthFrameAgeMs={:.3} environmentDepthTextureTransformLabel={} environmentDepthRayUvPolicy={} environmentDepthSampleUvPolicy={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthMode={} environmentDepthParticleReady={} environmentDepthParticleVisible={} environmentDepthParticleCount={} environmentDepthParticleCapacity={} environmentDepthParticleSource={} environmentDepthParticleCoordinateSpace={} environmentDepthParticleReferenceSpace={} environmentDepthWorldSpaceReady={} environmentDepthWorldSpaceMotionEvidence={} environmentDepthHeadMotionPoseSource={} environmentDepthHeadMotionSamples={} environmentDepthHeadMotionYawDeltaDeg={:.3} environmentDepthHeadMotionMaxYawDeltaDeg={:.3} environmentDepthHeadMotionTranslationDeltaM={:.4} environmentDepthHeadMotionMaxTranslationDeltaM={:.4} environmentDepthParticleSourceDepthSamples={} environmentDepthParticleCpuUploadBytes=0 environmentDepthGpuBuffersResident={} environmentDepthParticleBufferMemory=device-local environmentDepthGpuReconstructPath={} environmentDepthGpuDrawPath={} environmentDepthParticleRetention={} environmentDepthParticleMapPolicy={} environmentDepthMapWritePolicy={} environmentDepthSceneParticleMap={} environmentDepthSceneCellMeters={:.3} environmentDepthSceneHashProbeCount={} environmentDepthSceneStaleFadeStartFrames={} environmentDepthSceneStaleRetireFrames={} environmentDepthInvalidSamplePolicy={} environmentDepthFreeSpaceCorrection={} environmentDepthSurfaceModel={} environmentDepthSurfaceSupportRequested={} environmentDepthSurfaceSupportEnforced={} environmentDepthSurfaceSupportMode={} environmentDepthSurfaceSupportRadiusCells={} environmentDepthSurfaceMinNeighborCount={} environmentDepthSurfaceMinObservationCount={} environmentDepthSurfaceMinSourceLayerCount={} environmentDepthSourceLayerAgreementRequired={} environmentDepthSourceLayerAgreementCells={} environmentDepthSingleLayerOnlyCells={} environmentDepthSurfaceComponentMinCells={} environmentDepthSurfaceNormalCoherence={} environmentDepthSurfaceFreeSpaceDecay={} environmentDepthSurfaceSupportedCells={} environmentDepthSurfaceRejectedIsolatedCells={} environmentDepthSurfaceLargestComponentCells=0 environmentDepthSurfaceSupportStatus={} environmentDepthSurfaceLifecycleStatus={} environmentDepthSurfaceCandidateCells={} environmentDepthSurfaceConfirmedCells={} environmentDepthSurfacePromotedCells={} environmentDepthSurfaceCandidateRetiredCells={} environmentDepthRawStatsStatus={} environmentDepthRawCenterD16={} environmentDepthCenterReconstructedMeters={:.3} environmentDepthCenterConfidence={:.3} environmentDepthRawCenterWindowMedianD16={} environmentDepthRawCenterWindowValidCount={} environmentDepthMinValidReconstructedMeters={:.3} environmentDepthMaxValidReconstructedMeters={:.3} environmentDepthDebugValidSampleCount={} environmentDepthDebugInvalidSampleCount={} environmentDepthDebugConfidenceRejectedCount={} environmentDepthHashInsertSuccessCount={} environmentDepthHashMergeCount={} environmentDepthHashStaleReplaceCount={} environmentDepthHashProbeExhaustedCount={} environmentDepthFreeSpaceRetireAttemptCount={} environmentDepthFreeSpaceRetireSuccessCount={} environmentDepthHashOccupancyEstimate={} environmentDepthHashWriteConflictCount={} environmentDepthHashClaimFailedCount={} environmentDepthReadbackCadenceFrames=0 environmentDepthRawReadbackCadenceFrames=120",
             self.provider_state,
             self.provider_available,
             self.real_provider_bound,
@@ -623,6 +632,9 @@ impl GpuEnvironmentDepthParticleFrameStats {
             self.surface_support_min_neighbors,
             self.surface_support_min_observations,
             self.surface_support_min_source_layers,
+            self.surface_support_min_source_layers > 1,
+            self.raw_debug_stats.source_layer_agreement_cells,
+            self.raw_debug_stats.single_layer_only_cells,
             self.surface_support_component_min_cells,
             self.surface_support_normal_coherence,
             self.surface_support_free_space_decay,
@@ -765,8 +777,14 @@ fn environment_depth_surface_support_depth_flags(settings: NativeEnvironmentDept
     let min_neighbors = settings.surface_support_min_neighbors.min(26);
     let radius_cells = settings.surface_support_radius_cells.clamp(1, 8);
     let min_observations = settings.surface_support_min_observations.clamp(1, 15);
+    let min_source_layers = if settings.surface_support_min_source_layers >= 2 {
+        DEPTH_FLAG_SURFACE_SUPPORT_MIN_SOURCE_LAYERS_TWO
+    } else {
+        0
+    };
     DEPTH_FLAG_SURFACE_SUPPORT_ENFORCED
         | environment_depth_surface_support_mode_flag(settings)
+        | min_source_layers
         | (min_neighbors << DEPTH_FLAG_SURFACE_SUPPORT_MIN_NEIGHBOR_SHIFT)
         | (radius_cells << DEPTH_FLAG_SURFACE_SUPPORT_RADIUS_SHIFT)
         | (min_observations << DEPTH_FLAG_SURFACE_SUPPORT_MIN_OBSERVATION_SHIFT)

@@ -169,8 +169,9 @@ space, particle capacity, sample stride, or the
 `xrSetEnvironmentDepthHandRemovalMETA` request path.
 The surface-support quality-control matrix is dry-run validated through
 `quest-native-renderer-envdepth-local-surfels.profile.json`,
-`quest-native-renderer-envdepth-global-surfaces.profile.json`, and
-`quest-native-renderer-envdepth-hybrid-surfaces.profile.json`. These profiles
+`quest-native-renderer-envdepth-global-surfaces.profile.json`,
+`quest-native-renderer-envdepth-hybrid-surfaces.profile.json`, and
+`quest-native-renderer-envdepth-source-layer-agreement.profile.json`. These profiles
 validate `environment_depth.surface_model`,
 `environment_depth.surface_support.radius_cells`,
 `environment_depth.surface_support.min_neighbors`,
@@ -187,9 +188,14 @@ real runtime frame, requested surface modes can now report
 and nonzero supported/rejected-cell counters from the GPU local-depth
 neighborhood gate. The same runtime marker now includes
 `environmentDepthSurfaceLifecycleStatus` plus candidate, confirmed, promoted,
-and candidate-retired cell counters for the scene-cell lifecycle. This is not
-yet connected-component or global-surface acceptance; those remain pending
-alongside the movement-required world-space proof.
+and candidate-retired cell counters for the scene-cell lifecycle. Source-layer
+agreement profiles additionally require
+`environmentDepthSourceLayerAgreementRequired`,
+`environmentDepthSourceLayerAgreementCells`, and
+`environmentDepthSingleLayerOnlyCells` markers; they do not make stereo fusion
+or two-layer agreement accepted by themselves. This is not yet
+connected-component or global-surface acceptance; those remain pending alongside
+the movement-required world-space proof.
 Use `docs/environment-depth-known-distance-raw-d16-runbook.md` for the
 headset known-distance run that compares `environmentDepthRawCenterD16`,
 `environmentDepthCenterReconstructedMeters`, and

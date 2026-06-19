@@ -92,7 +92,10 @@
   The surface-support profiles also expect pending
   `environmentDepthSurfaceLifecycleStatus` markers and zero lifecycle counters
   in dry-run output; runtime log fixtures carry active candidate/confirmed
-  lifecycle counters only after the GPU scene-map path has run.
+  lifecycle counters only after the GPU scene-map path has run. The
+  source-layer-agreement profile adds a non-default
+  `environmentDepthSourceLayerAgreementRequired=true` dry-run route so two-layer
+  agreement can be tested later without making stereo fusion the default.
 - `native-renderer/`: valid Quest-native renderer plans, timing scorecards, and
   public recorded-hand topology/shape fixtures for pure-HWB blur, GPU mesh
   boundary, resident compact-joint GPU-skinned visual examples,

@@ -795,6 +795,14 @@ mod tests {
                 "debug.rustyquest.native_renderer.environment_depth.surface_support.component_min_cells",
                 "16",
             ),
+            (
+                include_str!(
+                    "../../../fixtures/runtime-profiles/quest-native-renderer-envdepth-source-layer-agreement.profile.json"
+                ),
+                "profile.quest.native_renderer.envdepth_source_layer_agreement",
+                "debug.rustyquest.native_renderer.environment_depth.surface_support.min_source_layers",
+                "2",
+            ),
         ] {
             assert_plan_sets(profile_text, profile_id, property_name, value);
         }

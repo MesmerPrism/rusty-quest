@@ -1121,7 +1121,7 @@ impl NativeEnvironmentDepthSettings {
 
     pub(crate) fn surface_support_marker_fields(self) -> String {
         format!(
-            "environmentDepthSurfaceModel={} environmentDepthSurfaceSupportRequested={} environmentDepthSurfaceSupportEnforced=false environmentDepthSurfaceSupportMode={} environmentDepthSurfaceSupportRadiusCells={} environmentDepthSurfaceMinNeighborCount={} environmentDepthSurfaceMinObservationCount={} environmentDepthSurfaceMinSourceLayerCount={} environmentDepthSurfaceComponentMinCells={} environmentDepthSurfaceNormalCoherence={} environmentDepthSurfaceFreeSpaceDecay={} environmentDepthSurfaceSupportedCells=0 environmentDepthSurfaceRejectedIsolatedCells=0 environmentDepthSurfaceLargestComponentCells=0 environmentDepthSurfaceSupportStatus={} environmentDepthSurfaceLifecycleStatus={} environmentDepthSurfaceCandidateCells=0 environmentDepthSurfaceConfirmedCells=0 environmentDepthSurfacePromotedCells=0 environmentDepthSurfaceCandidateRetiredCells=0",
+            "environmentDepthSurfaceModel={} environmentDepthSurfaceSupportRequested={} environmentDepthSurfaceSupportEnforced=false environmentDepthSurfaceSupportMode={} environmentDepthSurfaceSupportRadiusCells={} environmentDepthSurfaceMinNeighborCount={} environmentDepthSurfaceMinObservationCount={} environmentDepthSurfaceMinSourceLayerCount={} environmentDepthSourceLayerAgreementRequired={} environmentDepthSourceLayerAgreementCells=0 environmentDepthSingleLayerOnlyCells=0 environmentDepthSurfaceComponentMinCells={} environmentDepthSurfaceNormalCoherence={} environmentDepthSurfaceFreeSpaceDecay={} environmentDepthSurfaceSupportedCells=0 environmentDepthSurfaceRejectedIsolatedCells=0 environmentDepthSurfaceLargestComponentCells=0 environmentDepthSurfaceSupportStatus={} environmentDepthSurfaceLifecycleStatus={} environmentDepthSurfaceCandidateCells=0 environmentDepthSurfaceConfirmedCells=0 environmentDepthSurfacePromotedCells=0 environmentDepthSurfaceCandidateRetiredCells=0",
             self.surface_model.marker_value(),
             self.surface_support_requested(),
             self.surface_model.support_mode_marker_value(),
@@ -1129,6 +1129,7 @@ impl NativeEnvironmentDepthSettings {
             self.surface_support_min_neighbors,
             self.surface_support_min_observations,
             self.surface_support_min_source_layers,
+            self.surface_support_min_source_layers > 1,
             self.surface_support_component_min_cells,
             self.surface_support_normal_coherence.marker_value(),
             self.surface_support_free_space_decay.marker_value(),

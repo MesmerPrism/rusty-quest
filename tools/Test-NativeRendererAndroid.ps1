@@ -100,13 +100,14 @@ $environmentDepthHandRemovalProfilePath = Join-Path $repoRoot "fixtures\runtime-
 $environmentDepthLocalSurfelsProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-envdepth-local-surfels.profile.json"
 $environmentDepthGlobalSurfacesProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-envdepth-global-surfaces.profile.json"
 $environmentDepthHybridSurfacesProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-envdepth-hybrid-surfaces.profile.json"
+$environmentDepthSourceLayerAgreementProfilePath = Join-Path $repoRoot "fixtures\runtime-profiles\quest-native-renderer-envdepth-source-layer-agreement.profile.json"
 $environmentDepthHighRateJsonDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-high-rate-json.profile.json"
 $environmentDepthInvalidRangeDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-invalid-range.profile.json"
 $environmentDepthInvalidCapacityDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-invalid-capacity.profile.json"
 $environmentDepthInvalidDepthUnitsPolicyDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-invalid-depth-units-policy.profile.json"
 $environmentDepthInvalidSurfaceSupportDamagedProfilePath = Join-Path $repoRoot "fixtures\damaged\native-renderer-environment-depth-invalid-surface-support.profile.json"
 
-foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $nativeCameraMetadataPath, $nativeCameraProfilesPath, $nativeCameraReaderSelectionPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $environmentDepthGeometryPath, $environmentDepthParticlesPath, $openxrEnvironmentDepthPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $cameraLumaDiagnosticShaderPath, $environmentDepthParticlesComputeShaderPath, $environmentDepthParticlesMetaComputeShaderPath, $environmentDepthParticlesVertexShaderPath, $environmentDepthParticlesFragmentShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $permissionPregrantToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $environmentDepthMotionProofToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $environmentDepthParticlesEvidenceFixturePath, $environmentDepthSurfaceSupportEvidenceFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowNoiseRecord30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath, $environmentDepthStatusProfilePath, $environmentDepthNativePassthroughParticlesProfilePath, $environmentDepthNativePassthroughMetaParticlesProfilePath, $environmentDepthNativePassthroughMetaParticlesLayer1ProfilePath, $environmentDepthNativePassthroughMetaParticlesLowCapacityProfilePath, $environmentDepthNativePassthroughMetaParticlesDebugColorsProfilePath, $environmentDepthLayer0ProfilePath, $environmentDepthLayer1ProfilePath, $environmentDepthRawDepthDebugProfilePath, $environmentDepthLocalSpaceProfilePath, $environmentDepthStageSpaceProfilePath, $environmentDepthCapacity65536ProfilePath, $environmentDepthStride8ProfilePath, $environmentDepthHandRemovalProfilePath, $environmentDepthLocalSurfelsProfilePath, $environmentDepthGlobalSurfacesProfilePath, $environmentDepthHybridSurfacesProfilePath, $environmentDepthHighRateJsonDamagedProfilePath, $environmentDepthInvalidRangeDamagedProfilePath, $environmentDepthInvalidCapacityDamagedProfilePath, $environmentDepthInvalidDepthUnitsPolicyDamagedProfilePath, $environmentDepthInvalidSurfaceSupportDamagedProfilePath)) {
+foreach ($path in @($manifestPath, $readmePath, $nativeCargoPath, $nativeBuildRsPath, $nativeLibPath, $androidEventsPath, $nativeCameraPath, $nativeCameraMetadataPath, $nativeCameraProfilesPath, $nativeCameraReaderSelectionPath, $acameraSysPath, $cameraProjectionPath, $cameraProjectionMetadataPath, $environmentDepthGeometryPath, $environmentDepthParticlesPath, $openxrEnvironmentDepthPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath, $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath, $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath, $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath, $guideProjectionFragmentPath, $handMeshVisualVertexPath, $handMeshVisualFragmentPath, $gpuHandSkinningShaderPath, $gpuSdfFieldShaderPath, $gpuSdfTileBinsShaderPath, $gpuSdfOverlayShaderPath, $cameraLumaDiagnosticShaderPath, $environmentDepthParticlesComputeShaderPath, $environmentDepthParticlesMetaComputeShaderPath, $environmentDepthParticlesVertexShaderPath, $environmentDepthParticlesFragmentShaderPath, $xrVulkanPath, $buildPath, $checkAllPath, $runtimeProfileToolPath, $permissionPregrantToolPath, $runtimeEvidenceToolPath, $runtimeSmokeToolPath, $environmentDepthMotionProofToolPath, $fixturePath, $recordedHandReplayPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath, $environmentDepthParticlesEvidenceFixturePath, $environmentDepthSurfaceSupportEvidenceFixturePath, $runtimeEvidenceDamagedPath, $runtimeEvidenceDamagedPerformancePath, $liveHandPrematureAcceptanceDamagedPath, $replayVisualProfilePath, $directHwbCameraQualityProfilePath, $directHwbCameraQualityBt601UnormProfilePath, $directHwbLowNoise30ProfilePath, $directHwbLowNoiseRecord30ProfilePath, $directHwbLowLatency60ProfilePath, $directHwbHoldSyncProfilePath, $directHwbHoldSyncReader6ProfilePath, $directHwbHoldSyncReader8ProfilePath, $directHwb1280x960ProfilePath, $hwbPeripheralStretchProfilePath, $liveHandVisualDiagnosticProfilePath, $nativePassthroughGraftOnlyProfilePath, $nativePassthroughHandsAndGraftsProfilePath, $solidBlackHandsAndGraftsProfilePath, $solidBlackOpenXrHandsAnchorParticlesProfilePath, $environmentDepthStatusProfilePath, $environmentDepthNativePassthroughParticlesProfilePath, $environmentDepthNativePassthroughMetaParticlesProfilePath, $environmentDepthNativePassthroughMetaParticlesLayer1ProfilePath, $environmentDepthNativePassthroughMetaParticlesLowCapacityProfilePath, $environmentDepthNativePassthroughMetaParticlesDebugColorsProfilePath, $environmentDepthLayer0ProfilePath, $environmentDepthLayer1ProfilePath, $environmentDepthRawDepthDebugProfilePath, $environmentDepthLocalSpaceProfilePath, $environmentDepthStageSpaceProfilePath, $environmentDepthCapacity65536ProfilePath, $environmentDepthStride8ProfilePath, $environmentDepthHandRemovalProfilePath, $environmentDepthLocalSurfelsProfilePath, $environmentDepthGlobalSurfacesProfilePath, $environmentDepthHybridSurfacesProfilePath, $environmentDepthSourceLayerAgreementProfilePath, $environmentDepthHighRateJsonDamagedProfilePath, $environmentDepthInvalidRangeDamagedProfilePath, $environmentDepthInvalidCapacityDamagedProfilePath, $environmentDepthInvalidDepthUnitsPolicyDamagedProfilePath, $environmentDepthInvalidSurfaceSupportDamagedProfilePath)) {
     if (-not (Test-Path $path)) {
         throw "Missing native renderer Android file: $path"
     }
@@ -199,6 +200,7 @@ $environmentDepthHandRemovalProfile = Get-Content -Raw -Path $environmentDepthHa
 $environmentDepthLocalSurfelsProfile = Get-Content -Raw -Path $environmentDepthLocalSurfelsProfilePath
 $environmentDepthGlobalSurfacesProfile = Get-Content -Raw -Path $environmentDepthGlobalSurfacesProfilePath
 $environmentDepthHybridSurfacesProfile = Get-Content -Raw -Path $environmentDepthHybridSurfacesProfilePath
+$environmentDepthSourceLayerAgreementProfile = Get-Content -Raw -Path $environmentDepthSourceLayerAgreementProfilePath
 $environmentDepthHighRateJsonDamagedProfile = Get-Content -Raw -Path $environmentDepthHighRateJsonDamagedProfilePath
 $environmentDepthInvalidRangeDamagedProfile = Get-Content -Raw -Path $environmentDepthInvalidRangeDamagedProfilePath
 $environmentDepthInvalidCapacityDamagedProfile = Get-Content -Raw -Path $environmentDepthInvalidCapacityDamagedProfilePath
@@ -1241,6 +1243,9 @@ foreach ($token in @(
     'environmentDepthSurfaceLifecycleStatus=candidate-confirmed-local-depth-neighborhood',
     'environmentDepthSurfaceSupportedCells=552',
     'environmentDepthSurfaceRejectedIsolatedCells=36',
+    'environmentDepthSourceLayerAgreementRequired=false',
+    'environmentDepthSourceLayerAgreementCells=552',
+    'environmentDepthSingleLayerOnlyCells=0',
     'environmentDepthSurfaceCandidateCells=0',
     'environmentDepthSurfaceConfirmedCells=552',
     'environmentDepthSurfacePromotedCells=0',
@@ -1850,6 +1855,9 @@ foreach ($token in @(
     'environmentDepthHighRateJsonPayload=false',
     'environmentDepthSurfaceSupportRequested',
     'environmentDepthSurfaceSupportEnforced=false',
+    'environmentDepthSourceLayerAgreementRequired',
+    'environmentDepthSourceLayerAgreementCells',
+    'environmentDepthSingleLayerOnlyCells',
     'environmentDepthSurfaceSupportStatus',
     'environmentDepthSurfaceLifecycleStatus',
     'environmentDepthSurfaceCandidateCells'
@@ -1907,6 +1915,9 @@ foreach ($token in @(
     'environmentDepthSurfaceSupportedCells',
     'environmentDepthSurfaceRejectedIsolatedCells',
     'environmentDepthSurfaceLargestComponentCells',
+    'environmentDepthSourceLayerAgreementRequired',
+    'environmentDepthSourceLayerAgreementCells',
+    'environmentDepthSingleLayerOnlyCells',
     'environmentDepthSurfaceSupportStatus',
     'environmentDepthSurfaceLifecycleStatus',
     'environmentDepthSurfaceCandidateCells',
@@ -1921,6 +1932,9 @@ foreach ($token in @(
     'RAW_DEBUG_SURFACE_CONFIRMED_CELLS',
     'RAW_DEBUG_SURFACE_PROMOTED_CELLS',
     'RAW_DEBUG_SURFACE_CANDIDATE_RETIRED_CELLS',
+    'RAW_DEBUG_SOURCE_LAYER_AGREEMENT_CELLS',
+    'RAW_DEBUG_SINGLE_LAYER_ONLY_CELLS',
+    'DEPTH_FLAG_SURFACE_SUPPORT_MIN_SOURCE_LAYERS_TWO',
     'surface_support_runtime_enforced',
     'candidate-confirmed-local-depth-neighborhood',
     'enforced-local-depth-neighborhood-component-pending',
@@ -2306,6 +2320,9 @@ foreach ($profileCase in @(
             'environmentDepthSurfaceModel=local-surfels',
             'environmentDepthSurfaceSupportRequested=true',
             'environmentDepthSurfaceSupportEnforced=false',
+            'environmentDepthSourceLayerAgreementRequired=false',
+            'environmentDepthSourceLayerAgreementCells=0',
+            'environmentDepthSingleLayerOnlyCells=0',
             'environmentDepthSurfaceSupportStatus=pending-gpu-support-pass',
             'environmentDepthSurfaceLifecycleStatus=pending-runtime-support',
             'environmentDepthSurfaceCandidateCells=0'
@@ -2325,6 +2342,7 @@ foreach ($profileCase in @(
             '"16"',
             'environmentDepthSurfaceModel=global-surfaces',
             'environmentDepthSurfaceMinNeighborCount=4',
+            'environmentDepthSourceLayerAgreementRequired=false',
             'environmentDepthSurfaceComponentMinCells=16',
             'environmentDepthSurfaceSupportStatus=pending-gpu-support-pass',
             'environmentDepthSurfaceLifecycleStatus=pending-runtime-support'
@@ -2343,6 +2361,26 @@ foreach ($profileCase in @(
             'environmentDepthSurfaceModel=hybrid',
             'environmentDepthSurfaceSupportMode=hybrid',
             'environmentDepthSurfaceFreeSpaceDecay=hard',
+            'environmentDepthSourceLayerAgreementRequired=false',
+            'environmentDepthSurfaceSupportStatus=pending-gpu-support-pass',
+            'environmentDepthSurfaceLifecycleStatus=pending-runtime-support'
+        )
+    },
+    @{
+        Text = $environmentDepthSourceLayerAgreementProfile
+        Label = "source-layer-agreement"
+        Tokens = @(
+            'profile.quest.native_renderer.envdepth_source_layer_agreement',
+            'quest-native-renderer-envdepth-source-layer-agreement.profile.json',
+            'debug.rustyquest.native_renderer.environment_depth.debug_view',
+            'source-layer',
+            'debug.rustyquest.native_renderer.environment_depth.surface_support.min_source_layers',
+            '"2"',
+            'environmentDepthSurfaceModel=global-surfaces',
+            'environmentDepthSurfaceMinSourceLayerCount=2',
+            'environmentDepthSourceLayerAgreementRequired=true',
+            'environmentDepthSourceLayerAgreementCells=0',
+            'environmentDepthSingleLayerOnlyCells=0',
             'environmentDepthSurfaceSupportStatus=pending-gpu-support-pass',
             'environmentDepthSurfaceLifecycleStatus=pending-runtime-support'
         )
@@ -2480,7 +2518,8 @@ foreach ($profileFile in @(
 foreach ($profileFile in @(
     'quest-native-renderer-envdepth-local-surfels.profile.json',
     'quest-native-renderer-envdepth-global-surfaces.profile.json',
-    'quest-native-renderer-envdepth-hybrid-surfaces.profile.json'
+    'quest-native-renderer-envdepth-hybrid-surfaces.profile.json',
+    'quest-native-renderer-envdepth-source-layer-agreement.profile.json'
 )) {
     $outFile = $profileFile -replace '\.profile\.json$', '-property-write-plan.json'
     if ($checkAllText -notmatch [regex]::Escape($profileFile) -or $checkAllText -notmatch [regex]::Escape($outFile)) {
@@ -2529,7 +2568,8 @@ foreach ($profileCase in @(
     @{ Path = $environmentDepthHandRemovalProfilePath; Out = "local-artifacts\quest-native-renderer-envdepth-hand-removal-property-write-plan.json" },
     @{ Path = $environmentDepthLocalSurfelsProfilePath; Out = "local-artifacts\quest-native-renderer-envdepth-local-surfels-property-write-plan.json" },
     @{ Path = $environmentDepthGlobalSurfacesProfilePath; Out = "local-artifacts\quest-native-renderer-envdepth-global-surfaces-property-write-plan.json" },
-    @{ Path = $environmentDepthHybridSurfacesProfilePath; Out = "local-artifacts\quest-native-renderer-envdepth-hybrid-surfaces-property-write-plan.json" }
+    @{ Path = $environmentDepthHybridSurfacesProfilePath; Out = "local-artifacts\quest-native-renderer-envdepth-hybrid-surfaces-property-write-plan.json" },
+    @{ Path = $environmentDepthSourceLayerAgreementProfilePath; Out = "local-artifacts\quest-native-renderer-envdepth-source-layer-agreement-property-write-plan.json" }
 )) {
     & $runtimeProfileToolPath `
         -ProfilePath $profileCase.Path `

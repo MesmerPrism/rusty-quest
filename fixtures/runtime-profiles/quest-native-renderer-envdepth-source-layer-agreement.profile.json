@@ -1,6 +1,6 @@
 {
   "schema": "rusty.quest.runtime_profile.v1",
-  "profile_id": "profile.quest.native_renderer.envdepth_global_surfaces",
+  "profile_id": "profile.quest.native_renderer.envdepth_source_layer_agreement",
   "target_platform": "quest",
   "owned_android_properties": [
     "debug.rustyquest.native_renderer.environment_depth.mode",
@@ -47,7 +47,7 @@
     },
     {
       "name": "debug.rustyquest.native_renderer.environment_depth.debug_view",
-      "value": "surface-support",
+      "value": "source-layer",
       "source_setting_id": "native_renderer.environment_depth.debug_view"
     },
     {
@@ -107,7 +107,7 @@
     },
     {
       "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.min_source_layers",
-      "value": "1",
+      "value": "2",
       "source_setting_id": "native_renderer.environment_depth.surface_support.min_source_layers"
     },
     {
@@ -128,7 +128,7 @@
   ],
   "expected_markers": [
     "RUSTY_QUEST_NATIVE_RENDERER channel=environment-depth-particles",
-    "environmentDepthDebugView=surface-support",
+    "environmentDepthDebugView=source-layer",
     "environmentDepthSurfaceModel=global-surfaces",
     "environmentDepthSurfaceSupportRequested=true",
     "environmentDepthSurfaceSupportEnforced=false",
@@ -136,8 +136,8 @@
     "environmentDepthSurfaceSupportRadiusCells=1",
     "environmentDepthSurfaceMinNeighborCount=4",
     "environmentDepthSurfaceMinObservationCount=3",
-    "environmentDepthSurfaceMinSourceLayerCount=1",
-    "environmentDepthSourceLayerAgreementRequired=false",
+    "environmentDepthSurfaceMinSourceLayerCount=2",
+    "environmentDepthSourceLayerAgreementRequired=true",
     "environmentDepthSourceLayerAgreementCells=0",
     "environmentDepthSingleLayerOnlyCells=0",
     "environmentDepthSurfaceComponentMinCells=16",
@@ -151,6 +151,6 @@
     "environmentDepthSurfaceCandidateRetiredCells=0"
   ],
   "validation_commands": [
-    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-envdepth-global-surfaces.profile.json -DryRun -Out local-artifacts/quest-native-renderer-envdepth-global-surfaces-property-write-plan.json"
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-envdepth-source-layer-agreement.profile.json -DryRun -Out local-artifacts/quest-native-renderer-envdepth-source-layer-agreement-property-write-plan.json"
   ]
 }

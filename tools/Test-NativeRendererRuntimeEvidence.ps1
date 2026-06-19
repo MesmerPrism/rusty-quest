@@ -752,6 +752,9 @@ if ($RequireEnvironmentDepthParticles) {
         "environmentDepthSurfaceMinNeighborCount=",
         "environmentDepthSurfaceMinObservationCount=",
         "environmentDepthSurfaceMinSourceLayerCount=",
+        "environmentDepthSourceLayerAgreementRequired=",
+        "environmentDepthSourceLayerAgreementCells=",
+        "environmentDepthSingleLayerOnlyCells=",
         "environmentDepthSurfaceComponentMinCells=",
         "environmentDepthSurfaceNormalCoherence=",
         "environmentDepthSurfaceFreeSpaceDecay=",
@@ -814,6 +817,9 @@ if ($RequireEnvironmentDepthParticles) {
     $surfaceSupportMinNeighbors = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceMinNeighborCount"
     $surfaceSupportMinObservations = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceMinObservationCount"
     $surfaceSupportMinSourceLayers = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceMinSourceLayerCount"
+    $sourceLayerAgreementRequired = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSourceLayerAgreementRequired"
+    $sourceLayerAgreementCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSourceLayerAgreementCells"
+    $singleLayerOnlyCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSingleLayerOnlyCells"
     $surfaceSupportComponentMinCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceComponentMinCells"
     $surfaceSupportedCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSupportedCells"
     $surfaceRejectedIsolatedCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceRejectedIsolatedCells"
@@ -826,6 +832,9 @@ if ($RequireEnvironmentDepthParticles) {
     Assert-True ($surfaceSupportMinNeighbors -ge 0) "environment-depth-particles surface support min-neighbor count is negative."
     Assert-True ($surfaceSupportMinObservations -ge 1) "environment-depth-particles surface support min-observation count must be positive."
     Assert-True ($surfaceSupportMinSourceLayers -ge 1) "environment-depth-particles surface support min-source-layer count must be positive."
+    Assert-True (@("true", "false") -contains $sourceLayerAgreementRequired) "environment-depth-particles marker has invalid source-layer agreement required value: $sourceLayerAgreementRequired"
+    Assert-True (($sourceLayerAgreementRequired -eq "true") -eq ($surfaceSupportMinSourceLayers -gt 1)) "environment-depth-particles source-layer agreement required marker does not match min-source-layer count."
+    Assert-True ($sourceLayerAgreementCells -ge 0 -and $singleLayerOnlyCells -ge 0) "environment-depth-particles source-layer agreement counters must be nonnegative."
     Assert-True ($surfaceSupportComponentMinCells -ge 1) "environment-depth-particles surface support component-min-cells must be positive."
     Assert-True ($surfaceSupportedCells -ge 0 -and $surfaceRejectedIsolatedCells -ge 0 -and $surfaceLargestComponentCells -ge 0) "environment-depth-particles surface support counters must be nonnegative."
     Assert-True ($surfaceCandidateCells -ge 0 -and $surfaceConfirmedCells -ge 0 -and $surfacePromotedCells -ge 0 -and $surfaceCandidateRetiredCells -ge 0) "environment-depth-particles surface lifecycle counters must be nonnegative."
@@ -930,6 +939,9 @@ if ($RequireEnvironmentDepthParticles) {
     $summary.environment_depth_surface_support_min_neighbors = $surfaceSupportMinNeighbors
     $summary.environment_depth_surface_support_min_observations = $surfaceSupportMinObservations
     $summary.environment_depth_surface_support_min_source_layers = $surfaceSupportMinSourceLayers
+    $summary.environment_depth_source_layer_agreement_required = $sourceLayerAgreementRequired
+    $summary.environment_depth_source_layer_agreement_cells = $sourceLayerAgreementCells
+    $summary.environment_depth_single_layer_only_cells = $singleLayerOnlyCells
     $summary.environment_depth_surface_support_component_min_cells = $surfaceSupportComponentMinCells
     $summary.environment_depth_surface_supported_cells = $surfaceSupportedCells
     $summary.environment_depth_surface_rejected_isolated_cells = $surfaceRejectedIsolatedCells

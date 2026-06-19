@@ -31,6 +31,7 @@ const uint DEPTH_FLAG_INFINITE_FAR = 1u;
 const uint DEPTH_FLAG_SCENE_PARTICLE_MAP = 2u;
 const uint DEPTH_FLAG_SOURCE_LAYER1 = 4u;
 const uint DEPTH_FLAG_SURFACE_SUPPORT_ENFORCED = 8u;
+const uint DEPTH_FLAG_SURFACE_SUPPORT_MIN_SOURCE_LAYERS_TWO = 128u;
 const uint DEPTH_FLAG_SURFACE_SUPPORT_MIN_NEIGHBOR_MASK = 0x0000ff00u;
 const uint DEPTH_FLAG_SURFACE_SUPPORT_MIN_NEIGHBOR_SHIFT = 8u;
 const uint DEPTH_FLAG_SURFACE_SUPPORT_RADIUS_MASK = 0x000f0000u;
@@ -74,6 +75,8 @@ const uint RAW_DEBUG_SURFACE_CANDIDATE_CELLS = 22u;
 const uint RAW_DEBUG_SURFACE_CONFIRMED_CELLS = 23u;
 const uint RAW_DEBUG_SURFACE_PROMOTED_CELLS = 24u;
 const uint RAW_DEBUG_SURFACE_CANDIDATE_RETIRED_CELLS = 25u;
+const uint RAW_DEBUG_SOURCE_LAYER_AGREEMENT_CELLS = 26u;
+const uint RAW_DEBUG_SINGLE_LAYER_ONLY_CELLS = 27u;
 const uint SCENE_META_WORDS_PER_SLOT = 4u;
 const uint SCENE_META_KEY = 0u;
 const uint SCENE_META_STATE = 1u;
@@ -120,6 +123,10 @@ uint surface_support_min_observation_count() {
     uint observations = (depth_flags() & DEPTH_FLAG_SURFACE_SUPPORT_MIN_OBSERVATION_MASK)
         >> DEPTH_FLAG_SURFACE_SUPPORT_MIN_OBSERVATION_SHIFT;
     return max(observations, 1u);
+}
+
+uint surface_support_min_source_layer_count() {
+    return ((depth_flags() & DEPTH_FLAG_SURFACE_SUPPORT_MIN_SOURCE_LAYERS_TWO) != 0u) ? 2u : 1u;
 }
 
 float depth_source_layer_index() {
@@ -318,8 +325,9 @@ bool scene_lifecycle_confirmed(
 ) {
     uint min_observations = surface_support_min_observation_count();
     bool enough_observations = observation_count >= min_observations;
-    bool has_source_layer = scene_layer_count(source_layer_mask) > 0u;
-    return (enough_observations && has_source_layer) || local_surface_supported;
+    bool enough_source_layers =
+        scene_layer_count(source_layer_mask) >= surface_support_min_source_layer_count();
+    return enough_source_layers && (enough_observations || local_surface_supported);
 }
 
 void record_scene_lifecycle(bool confirmed, bool promoted) {
@@ -333,6 +341,17 @@ void record_scene_lifecycle(bool confirmed, bool promoted) {
         1u);
     if (promoted) {
         atomicAdd(depth_debug.values[RAW_DEBUG_SURFACE_PROMOTED_CELLS], 1u);
+    }
+}
+
+void record_scene_source_layer_agreement(uint source_layer_mask) {
+    if (!surface_support_enforced_requested()) {
+        return;
+    }
+    if (scene_layer_count(source_layer_mask) >= surface_support_min_source_layer_count()) {
+        atomicAdd(depth_debug.values[RAW_DEBUG_SOURCE_LAYER_AGREEMENT_CELLS], 1u);
+    } else {
+        atomicAdd(depth_debug.values[RAW_DEBUG_SINGLE_LAYER_ONLY_CELLS], 1u);
     }
 }
 
@@ -450,6 +469,7 @@ void write_active_scene_cell(
         meta_base,
         packed_scene_metadata_flags(confidence, source_layer_mask, observation_count, confirmed),
         SCENE_META_STATE_ACTIVE);
+    record_scene_source_layer_agreement(source_layer_mask);
     record_scene_lifecycle(
         confirmed,
         confirmed && !was_confirmed && observation_count > 1u);
