@@ -15,6 +15,10 @@ const ENVIRONMENT_DEPTH_MODE: &str = "debug.rustyquest.native_renderer.environme
 const ENVIRONMENT_DEPTH_SOURCE: &str = "debug.rustyquest.native_renderer.environment_depth.source";
 const ENVIRONMENT_DEPTH_LAYER_POLICY: &str =
     "debug.rustyquest.native_renderer.environment_depth.layer_policy";
+const ENVIRONMENT_DEPTH_DEPTH_UNITS_POLICY: &str =
+    "debug.rustyquest.native_renderer.environment_depth.depth_units_policy";
+const ENVIRONMENT_DEPTH_DEBUG_VIEW: &str =
+    "debug.rustyquest.native_renderer.environment_depth.debug_view";
 const ENVIRONMENT_DEPTH_REFERENCE_SPACE: &str =
     "debug.rustyquest.native_renderer.environment_depth.reference_space";
 const ENVIRONMENT_DEPTH_PARTICLE_CAPACITY: &str =
@@ -269,6 +273,32 @@ fn validate_environment_depth_property(
             if !valid {
                 errors.push(ValidationError::new(format!(
                     "environment depth layer_policy {} is not supported",
+                    property.value
+                )));
+            }
+        }
+        ENVIRONMENT_DEPTH_DEPTH_UNITS_POLICY => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(
+                normalized.as_str(),
+                "projected-depth-from-near-far" | "projected-near-far" | "near-far-projection"
+            );
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "environment depth depth_units_policy {} is not supported",
+                    property.value
+                )));
+            }
+        }
+        ENVIRONMENT_DEPTH_DEBUG_VIEW => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(
+                normalized.as_str(),
+                "normal" | "off" | "disabled" | "raw-d16" | "raw-depth" | "debug-raw-d16"
+            );
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "environment depth debug_view {} is not supported",
                     property.value
                 )));
             }
@@ -531,6 +561,19 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.message.contains("particle_capacity value 0")));
+    }
+
+    #[test]
+    fn environment_depth_invalid_depth_units_policy_is_rejected() {
+        let damaged: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/damaged/native-renderer-environment-depth-invalid-depth-units-policy.profile.json"
+        ))
+        .expect("damaged profile JSON");
+        let errors =
+            validate_runtime_profile(&damaged).expect_err("must reject invalid depth units policy");
+        assert!(errors.iter().any(|error| error
+            .message
+            .contains("depth_units_policy metric-axial-meters is not supported")));
     }
 
     #[test]

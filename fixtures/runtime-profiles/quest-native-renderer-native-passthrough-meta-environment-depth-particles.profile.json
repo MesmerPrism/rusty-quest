@@ -14,6 +14,8 @@
     "debug.rustyquest.native_renderer.environment_depth.mode",
     "debug.rustyquest.native_renderer.environment_depth.source",
     "debug.rustyquest.native_renderer.environment_depth.layer_policy",
+    "debug.rustyquest.native_renderer.environment_depth.depth_units_policy",
+    "debug.rustyquest.native_renderer.environment_depth.debug_view",
     "debug.rustyquest.native_renderer.environment_depth.reference_space",
     "debug.rustyquest.native_renderer.environment_depth.particle_capacity",
     "debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels",
@@ -78,6 +80,16 @@
       "source_setting_id": "native_renderer.environment_depth.layer_policy"
     },
     {
+      "name": "debug.rustyquest.native_renderer.environment_depth.depth_units_policy",
+      "value": "projected-depth-from-near-far",
+      "source_setting_id": "native_renderer.environment_depth.depth_units_policy"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.debug_view",
+      "value": "raw-d16",
+      "source_setting_id": "native_renderer.environment_depth.debug_view"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.environment_depth.reference_space",
       "value": "openxr-local",
       "source_setting_id": "native_renderer.environment_depth.reference_space"
@@ -130,6 +142,9 @@
     "environmentDepthSourceViewCount=1",
     "environmentDepthSampledLayerMask=0x1",
     "environmentDepthShaderLayerPolicy=mono-layer0",
+    "environmentDepthDepthUnitsPolicy=projected-depth-from-near-far",
+    "environmentDepthRawToMetersPolicy=projected-depth-from-near-far",
+    "environmentDepthDebugView=raw-d16",
     "environmentDepthDepthViewPoseValidMask=0x1",
     "environmentDepthDepthViewFovValidMask=0x1",
     "environmentDepthPoseValid=true",
@@ -144,6 +159,9 @@
     "environmentDepthSourceViewCount=1",
     "environmentDepthSampledLayerMask=0x1",
     "environmentDepthShaderLayerPolicy=mono-layer0",
+    "environmentDepthDepthUnitsPolicy=projected-depth-from-near-far",
+    "environmentDepthRawToMetersPolicy=projected-depth-from-near-far",
+    "environmentDepthDebugView=raw-d16",
     "environmentDepthDepthViewPoseValidMask=0x1",
     "environmentDepthDepthViewFovValidMask=0x1",
     "environmentDepthParticleRetention=scene-owned-spatial-particle-map",

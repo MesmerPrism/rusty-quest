@@ -28,10 +28,95 @@ const META_ENVIRONMENT_DEPTH_TEXTURE_TRANSFORM_FLAGS: f32 = 8.0;
 const DEPTH_FLAG_INFINITE_FAR: u32 = 1;
 const DEPTH_FLAG_SCENE_PARTICLE_MAP: u32 = 2;
 const DEPTH_FLAG_SOURCE_LAYER1: u32 = 4;
+const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT: usize = 12;
+const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_BYTES: vk::DeviceSize =
+    (ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT * mem::size_of::<u32>()) as vk::DeviceSize;
+const RAW_DEBUG_VALID_COUNT_INDEX: usize = 0;
+const RAW_DEBUG_INVALID_COUNT_INDEX: usize = 1;
+const RAW_DEBUG_CONFIDENCE_REJECTED_COUNT_INDEX: usize = 2;
+const RAW_DEBUG_CENTER_D16_INDEX: usize = 3;
+const RAW_DEBUG_CENTER_RECONSTRUCTED_MM_INDEX: usize = 4;
+const RAW_DEBUG_CENTER_CONFIDENCE_MILLI_INDEX: usize = 5;
+const RAW_DEBUG_CENTER_MEDIAN_D16_INDEX: usize = 6;
+const RAW_DEBUG_MIN_VALID_INVERSE_MM_INDEX: usize = 7;
+const RAW_DEBUG_MAX_VALID_MM_INDEX: usize = 8;
+const RAW_DEBUG_CENTER_WINDOW_VALID_COUNT_INDEX: usize = 9;
 const SCENE_PARTICLE_CELL_METERS: f32 = 0.06;
 const SCENE_PARTICLE_HASH_PROBE_COUNT: u32 = 8;
 const SCENE_PARTICLE_STALE_FADE_START_FRAMES: u32 = 720;
 const SCENE_PARTICLE_STALE_RETIRE_FRAMES: u32 = 1440;
+
+#[derive(Clone, Copy, Debug)]
+struct EnvironmentDepthRawDebugStats {
+    status: &'static str,
+    valid_sample_count: u32,
+    invalid_sample_count: u32,
+    confidence_rejected_count: u32,
+    center_d16: u32,
+    center_reconstructed_m: f32,
+    center_confidence: f32,
+    center_window_median_d16: u32,
+    center_window_valid_count: u32,
+    min_valid_reconstructed_m: f32,
+    max_valid_reconstructed_m: f32,
+}
+
+impl EnvironmentDepthRawDebugStats {
+    fn unavailable() -> Self {
+        Self {
+            status: "unavailable",
+            valid_sample_count: 0,
+            invalid_sample_count: 0,
+            confidence_rejected_count: 0,
+            center_d16: 0,
+            center_reconstructed_m: 0.0,
+            center_confidence: 0.0,
+            center_window_median_d16: 0,
+            center_window_valid_count: 0,
+            min_valid_reconstructed_m: 0.0,
+            max_valid_reconstructed_m: 0.0,
+        }
+    }
+
+    fn pending() -> Self {
+        Self {
+            status: "pending-gpu-readback",
+            ..Self::unavailable()
+        }
+    }
+
+    fn from_raw(values: &[u32]) -> Self {
+        let valid_sample_count = values[RAW_DEBUG_VALID_COUNT_INDEX];
+        if valid_sample_count == 0 {
+            return Self::pending();
+        }
+        let min_valid_inverse_mm = values[RAW_DEBUG_MIN_VALID_INVERSE_MM_INDEX];
+        let min_valid_mm = if min_valid_inverse_mm == 0 {
+            0
+        } else {
+            u32::MAX.saturating_sub(min_valid_inverse_mm)
+        };
+        Self {
+            status: "readback",
+            valid_sample_count,
+            invalid_sample_count: values[RAW_DEBUG_INVALID_COUNT_INDEX],
+            confidence_rejected_count: values[RAW_DEBUG_CONFIDENCE_REJECTED_COUNT_INDEX],
+            center_d16: values[RAW_DEBUG_CENTER_D16_INDEX],
+            center_reconstructed_m: values[RAW_DEBUG_CENTER_RECONSTRUCTED_MM_INDEX] as f32 / 1000.0,
+            center_confidence: values[RAW_DEBUG_CENTER_CONFIDENCE_MILLI_INDEX] as f32 / 1000.0,
+            center_window_median_d16: values[RAW_DEBUG_CENTER_MEDIAN_D16_INDEX],
+            center_window_valid_count: values[RAW_DEBUG_CENTER_WINDOW_VALID_COUNT_INDEX],
+            min_valid_reconstructed_m: min_valid_mm as f32 / 1000.0,
+            max_valid_reconstructed_m: values[RAW_DEBUG_MAX_VALID_MM_INDEX] as f32 / 1000.0,
+        }
+    }
+}
+
+impl Default for EnvironmentDepthRawDebugStats {
+    fn default() -> Self {
+        Self::unavailable()
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct GpuEnvironmentDepthParticleFrameStats {
@@ -57,6 +142,10 @@ pub(crate) struct GpuEnvironmentDepthParticleFrameStats {
     source_view_count: u32,
     sampled_layer_mask: &'static str,
     shader_layer_policy: &'static str,
+    depth_units_policy: &'static str,
+    raw_to_meters_policy: &'static str,
+    debug_view: &'static str,
+    raw_debug_stats: EnvironmentDepthRawDebugStats,
     pose_valid: bool,
     swapchain_index: Option<u32>,
     capture_time_ns: Option<i64>,
@@ -84,6 +173,9 @@ impl GpuEnvironmentDepthParticleFrameStats {
             source_view_count: settings.source_view_count(),
             sampled_layer_mask: settings.sampled_layer_mask(),
             shader_layer_policy: settings.layer_policy_marker_value(),
+            depth_units_policy: settings.depth_units_policy_marker_value(),
+            raw_to_meters_policy: settings.raw_to_meters_policy_marker_value(),
+            debug_view: settings.debug_view_marker_value(),
             near_m: settings.near_m,
             far_m: settings.far_m,
             scene_particle_map: settings.scene_particle_map_requested(),
@@ -114,6 +206,9 @@ impl GpuEnvironmentDepthParticleFrameStats {
             source_view_count: settings.source_view_count(),
             sampled_layer_mask: settings.sampled_layer_mask(),
             shader_layer_policy: settings.layer_policy_marker_value(),
+            depth_units_policy: settings.depth_units_policy_marker_value(),
+            raw_to_meters_policy: settings.raw_to_meters_policy_marker_value(),
+            debug_view: settings.debug_view_marker_value(),
             pose_valid: true,
             near_m: settings.near_m,
             far_m: settings.far_m,
@@ -131,6 +226,7 @@ impl GpuEnvironmentDepthParticleFrameStats {
         capacity: u32,
         frame: &OpenXrEnvironmentDepthFrame,
         frame_count: u64,
+        raw_debug_stats: EnvironmentDepthRawDebugStats,
     ) -> Self {
         let grid_width = runtime_depth_particle_grid_width(frame.depth_width, settings);
         let grid_height = runtime_depth_particle_grid_height(frame.depth_height, settings);
@@ -166,6 +262,10 @@ impl GpuEnvironmentDepthParticleFrameStats {
             source_view_count: settings.source_view_count(),
             sampled_layer_mask: settings.sampled_layer_mask(),
             shader_layer_policy: settings.layer_policy_marker_value(),
+            depth_units_policy: settings.depth_units_policy_marker_value(),
+            raw_to_meters_policy: settings.raw_to_meters_policy_marker_value(),
+            debug_view: settings.debug_view_marker_value(),
+            raw_debug_stats,
             pose_valid: true,
             swapchain_index: Some(frame.swapchain_index),
             capture_time_ns: Some(frame.capture_time_ns),
@@ -204,6 +304,9 @@ impl GpuEnvironmentDepthParticleFrameStats {
             source_view_count: settings.source_view_count(),
             sampled_layer_mask: settings.sampled_layer_mask(),
             shader_layer_policy: settings.layer_policy_marker_value(),
+            depth_units_policy: settings.depth_units_policy_marker_value(),
+            raw_to_meters_policy: settings.raw_to_meters_policy_marker_value(),
+            debug_view: settings.debug_view_marker_value(),
             near_m: settings.near_m,
             far_m: settings.far_m,
             scene_particle_map: settings.scene_particle_map_requested(),
@@ -217,7 +320,7 @@ impl GpuEnvironmentDepthParticleFrameStats {
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "environmentDepthProviderState={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound={} environmentDepthSupported={} environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthPoseValid={} environmentDepthSwapchainIndex={} environmentDepthCaptureTimeNs={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthMode={} environmentDepthParticleReady={} environmentDepthParticleVisible={} environmentDepthParticleCount={} environmentDepthParticleCapacity={} environmentDepthParticleSource={} environmentDepthParticleCoordinateSpace={} environmentDepthParticleReferenceSpace={} environmentDepthWorldSpaceReady={} environmentDepthParticleSourceDepthSamples={} environmentDepthParticleCpuUploadBytes=0 environmentDepthGpuBuffersResident={} environmentDepthParticleBufferMemory=device-local environmentDepthGpuReconstructPath={} environmentDepthGpuDrawPath={} environmentDepthParticleRetention={} environmentDepthParticleMapPolicy={} environmentDepthSceneParticleMap={} environmentDepthSceneCellMeters={:.3} environmentDepthSceneHashProbeCount={} environmentDepthSceneStaleFadeStartFrames={} environmentDepthSceneStaleRetireFrames={} environmentDepthInvalidSamplePolicy={} environmentDepthFreeSpaceCorrection={} environmentDepthReadbackCadenceFrames=0",
+            "environmentDepthProviderState={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound={} environmentDepthSupported={} environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthPoseValid={} environmentDepthSwapchainIndex={} environmentDepthCaptureTimeNs={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthMode={} environmentDepthParticleReady={} environmentDepthParticleVisible={} environmentDepthParticleCount={} environmentDepthParticleCapacity={} environmentDepthParticleSource={} environmentDepthParticleCoordinateSpace={} environmentDepthParticleReferenceSpace={} environmentDepthWorldSpaceReady={} environmentDepthParticleSourceDepthSamples={} environmentDepthParticleCpuUploadBytes=0 environmentDepthGpuBuffersResident={} environmentDepthParticleBufferMemory=device-local environmentDepthGpuReconstructPath={} environmentDepthGpuDrawPath={} environmentDepthParticleRetention={} environmentDepthParticleMapPolicy={} environmentDepthSceneParticleMap={} environmentDepthSceneCellMeters={:.3} environmentDepthSceneHashProbeCount={} environmentDepthSceneStaleFadeStartFrames={} environmentDepthSceneStaleRetireFrames={} environmentDepthInvalidSamplePolicy={} environmentDepthFreeSpaceCorrection={} environmentDepthRawStatsStatus={} environmentDepthRawCenterD16={} environmentDepthCenterReconstructedMeters={:.3} environmentDepthCenterConfidence={:.3} environmentDepthRawCenterWindowMedianD16={} environmentDepthRawCenterWindowValidCount={} environmentDepthMinValidReconstructedMeters={:.3} environmentDepthMaxValidReconstructedMeters={:.3} environmentDepthDebugValidSampleCount={} environmentDepthDebugInvalidSampleCount={} environmentDepthDebugConfidenceRejectedCount={} environmentDepthReadbackCadenceFrames=0 environmentDepthRawReadbackCadenceFrames=120",
             self.provider_state,
             self.provider_available,
             self.real_provider_bound,
@@ -230,6 +333,9 @@ impl GpuEnvironmentDepthParticleFrameStats {
             self.source_view_count,
             self.sampled_layer_mask,
             self.shader_layer_policy,
+            self.depth_units_policy,
+            self.raw_to_meters_policy,
+            self.debug_view,
             if self.pose_valid {
                 META_ENVIRONMENT_DEPTH_DEPTH_VIEW_VALID_MASK
             } else {
@@ -295,6 +401,17 @@ impl GpuEnvironmentDepthParticleFrameStats {
             },
             self.invalid_sample_policy,
             self.free_space_correction,
+            self.raw_debug_stats.status,
+            self.raw_debug_stats.center_d16,
+            self.raw_debug_stats.center_reconstructed_m,
+            self.raw_debug_stats.center_confidence,
+            self.raw_debug_stats.center_window_median_d16,
+            self.raw_debug_stats.center_window_valid_count,
+            self.raw_debug_stats.min_valid_reconstructed_m,
+            self.raw_debug_stats.max_valid_reconstructed_m,
+            self.raw_debug_stats.valid_sample_count,
+            self.raw_debug_stats.invalid_sample_count,
+            self.raw_debug_stats.confidence_rejected_count,
         )
     }
 }
@@ -349,6 +466,7 @@ pub(crate) struct GpuEnvironmentDepthParticleRenderer {
     compute_pipeline: vk::Pipeline,
     graphics_pipeline: vk::Pipeline,
     particle_buffer: OwnedBuffer,
+    raw_debug_buffer: Option<EnvironmentDepthRawDebugBuffer>,
     capacity: u32,
     source_kind: EnvironmentDepthParticleRendererSource,
     scene_map_initialized: AtomicBool,
@@ -507,6 +625,7 @@ impl GpuEnvironmentDepthParticleRenderer {
             compute_pipeline,
             graphics_pipeline,
             particle_buffer,
+            raw_debug_buffer: None,
             capacity,
             source_kind: EnvironmentDepthParticleRendererSource::SyntheticGpuProof,
             scene_map_initialized: AtomicBool::new(false),
@@ -544,6 +663,14 @@ impl GpuEnvironmentDepthParticleRenderer {
             vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
             "runtime environment depth particle output",
         )?;
+        let raw_debug_buffer = match EnvironmentDepthRawDebugBuffer::new(device, memory_properties)
+        {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                particle_buffer.destroy(device);
+                return Err(error);
+            }
+        };
         let sampler = match device.create_sampler(
             &vk::SamplerCreateInfo::default()
                 .mag_filter(vk::Filter::NEAREST)
@@ -557,6 +684,7 @@ impl GpuEnvironmentDepthParticleRenderer {
         ) {
             Ok(sampler) => sampler,
             Err(error) => {
+                raw_debug_buffer.destroy(device);
                 particle_buffer.destroy(device);
                 return Err(format!("create runtime environment depth sampler: {error}"));
             }
@@ -567,6 +695,7 @@ impl GpuEnvironmentDepthParticleRenderer {
                 1,
                 vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX,
             ),
+            storage_binding(2, vk::ShaderStageFlags::COMPUTE),
         ];
         let descriptor_set_layout = match device.create_descriptor_set_layout(
             &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
@@ -574,6 +703,7 @@ impl GpuEnvironmentDepthParticleRenderer {
         ) {
             Ok(layout) => layout,
             Err(error) => {
+                raw_debug_buffer.destroy(device);
                 particle_buffer.destroy(device);
                 device.destroy_sampler(sampler, None);
                 return Err(format!(
@@ -588,7 +718,7 @@ impl GpuEnvironmentDepthParticleRenderer {
                 .descriptor_count(descriptor_count),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
-                .descriptor_count(descriptor_count),
+                .descriptor_count(descriptor_count.saturating_mul(2)),
         ];
         let descriptor_pool = match device.create_descriptor_pool(
             &vk::DescriptorPoolCreateInfo::default()
@@ -598,6 +728,7 @@ impl GpuEnvironmentDepthParticleRenderer {
         ) {
             Ok(pool) => pool,
             Err(error) => {
+                raw_debug_buffer.destroy(device);
                 particle_buffer.destroy(device);
                 device.destroy_descriptor_set_layout(descriptor_set_layout, None);
                 device.destroy_sampler(sampler, None);
@@ -629,6 +760,7 @@ impl GpuEnvironmentDepthParticleRenderer {
                     for view in image_views {
                         device.destroy_image_view(view, None);
                     }
+                    raw_debug_buffer.destroy(device);
                     particle_buffer.destroy(device);
                     device.destroy_descriptor_pool(descriptor_pool, None);
                     device.destroy_descriptor_set_layout(descriptor_set_layout, None);
@@ -651,6 +783,7 @@ impl GpuEnvironmentDepthParticleRenderer {
                 for view in image_views {
                     device.destroy_image_view(view, None);
                 }
+                raw_debug_buffer.destroy(device);
                 particle_buffer.destroy(device);
                 device.destroy_descriptor_pool(descriptor_pool, None);
                 device.destroy_descriptor_set_layout(descriptor_set_layout, None);
@@ -668,6 +801,7 @@ impl GpuEnvironmentDepthParticleRenderer {
                 sampler,
                 *image_view,
                 particle_buffer.descriptor(),
+                raw_debug_buffer.descriptor(),
             );
         }
 
@@ -687,6 +821,7 @@ impl GpuEnvironmentDepthParticleRenderer {
                 for view in image_views {
                     device.destroy_image_view(view, None);
                 }
+                raw_debug_buffer.destroy(device);
                 particle_buffer.destroy(device);
                 device.destroy_descriptor_pool(descriptor_pool, None);
                 device.destroy_descriptor_set_layout(descriptor_set_layout, None);
@@ -709,6 +844,7 @@ impl GpuEnvironmentDepthParticleRenderer {
                 for view in image_views {
                     device.destroy_image_view(view, None);
                 }
+                raw_debug_buffer.destroy(device);
                 particle_buffer.destroy(device);
                 device.destroy_pipeline_layout(pipeline_layout, None);
                 device.destroy_descriptor_pool(descriptor_pool, None);
@@ -724,6 +860,7 @@ impl GpuEnvironmentDepthParticleRenderer {
                 for view in image_views {
                     device.destroy_image_view(view, None);
                 }
+                raw_debug_buffer.destroy(device);
                 particle_buffer.destroy(device);
                 device.destroy_pipeline(compute_pipeline, None);
                 device.destroy_pipeline_layout(pipeline_layout, None);
@@ -737,18 +874,23 @@ impl GpuEnvironmentDepthParticleRenderer {
         crate::marker(
             "environment-depth-particles",
             format!(
-                "status=created environmentDepthParticlePath=meta-environment-depth-gpu-reference-space-billboards environmentDepthParticleSource={} environmentDepthParticleCoordinateSpace=openxr-reference-space environmentDepthParticleReferenceSpace={} environmentDepthParticleCapacity={} environmentDepthParticleBufferBytes={} environmentDepthParticleCpuUploadBytes=0 environmentDepthGpuBuffersResident=true environmentDepthParticleBufferMemory={} environmentDepthProviderState=provider-running environmentDepthRealProviderBound=true environmentDepthImageSize={}x{} environmentDepthFormat=VK_FORMAT_D16_UNORM environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthTextureTransform=rotate0+flipY environmentDepthParticleRetention={} environmentDepthParticleMapPolicy={} environmentDepthSceneParticleMap={} environmentDepthSceneCellMeters={:.3} environmentDepthSceneHashProbeCount={} environmentDepthInvalidSamplePolicy={} environmentDepthFreeSpaceCorrection={} environmentDepthHighRateJsonPayload={}",
+                "status=created environmentDepthParticlePath=meta-environment-depth-gpu-reference-space-billboards environmentDepthParticleSource={} environmentDepthParticleCoordinateSpace=openxr-reference-space environmentDepthParticleReferenceSpace={} environmentDepthParticleCapacity={} environmentDepthParticleBufferBytes={} environmentDepthParticleCpuUploadBytes=0 environmentDepthGpuBuffersResident=true environmentDepthParticleBufferMemory={} environmentDepthRawDebugBufferBytes={} environmentDepthRawDebugBufferMemory={} environmentDepthProviderState=provider-running environmentDepthRealProviderBound=true environmentDepthImageSize={}x{} environmentDepthFormat=VK_FORMAT_D16_UNORM environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthTextureTransform=rotate0+flipY environmentDepthParticleRetention={} environmentDepthParticleMapPolicy={} environmentDepthSceneParticleMap={} environmentDepthSceneCellMeters={:.3} environmentDepthSceneHashProbeCount={} environmentDepthInvalidSamplePolicy={} environmentDepthFreeSpaceCorrection={} environmentDepthHighRateJsonPayload={}",
                 settings.source_marker_value(),
                 settings.reference_space_marker_value(),
                 capacity,
                 particle_buffer.bytes,
                 particle_buffer.memory_marker(),
+                raw_debug_buffer.bytes(),
+                raw_debug_buffer.memory_marker(),
                 depth_width,
                 depth_height,
                 META_ENVIRONMENT_DEPTH_LAYER_COUNT,
                 settings.source_view_count(),
                 settings.sampled_layer_mask(),
                 settings.layer_policy_marker_value(),
+                settings.depth_units_policy_marker_value(),
+                settings.raw_to_meters_policy_marker_value(),
+                settings.debug_view_marker_value(),
                 META_ENVIRONMENT_DEPTH_DEPTH_VIEW_VALID_MASK,
                 META_ENVIRONMENT_DEPTH_DEPTH_VIEW_VALID_MASK,
                 environment_depth_particle_retention_marker(settings),
@@ -780,6 +922,7 @@ impl GpuEnvironmentDepthParticleRenderer {
             compute_pipeline,
             graphics_pipeline,
             particle_buffer,
+            raw_debug_buffer: Some(raw_debug_buffer),
             capacity,
             source_kind: EnvironmentDepthParticleRendererSource::MetaEnvironmentDepth,
             scene_map_initialized: AtomicBool::new(false),
@@ -787,6 +930,9 @@ impl GpuEnvironmentDepthParticleRenderer {
     }
 
     pub(crate) unsafe fn destroy(&mut self, device: &ash::Device) {
+        if let Some(raw_debug_buffer) = self.raw_debug_buffer.take() {
+            raw_debug_buffer.destroy(device);
+        }
         self.particle_buffer.destroy(device);
         device.destroy_pipeline(self.graphics_pipeline, None);
         device.destroy_pipeline(self.compute_pipeline, None);
@@ -911,11 +1057,17 @@ impl GpuEnvironmentDepthParticleRenderer {
         {
             return GpuEnvironmentDepthParticleFrameStats::unavailable(settings);
         }
+        let raw_debug_stats = self
+            .raw_debug_buffer
+            .as_ref()
+            .map(|buffer| buffer.read_stats())
+            .unwrap_or_else(EnvironmentDepthRawDebugStats::unavailable);
         let stats = GpuEnvironmentDepthParticleFrameStats::runtime_depth(
             settings,
             self.capacity,
             frame,
             frame_count,
+            raw_debug_stats,
         );
         if !stats.ready {
             return stats;
@@ -960,6 +1112,27 @@ impl GpuEnvironmentDepthParticleRenderer {
             }
         } else {
             self.scene_map_initialized.store(false, Ordering::Release);
+        }
+        if let Some(raw_debug_buffer) = self.raw_debug_buffer.as_ref() {
+            device.cmd_fill_buffer(
+                cmd,
+                raw_debug_buffer.buffer.buffer,
+                0,
+                raw_debug_buffer.buffer.bytes,
+                0,
+            );
+            let debug_reset_to_compute = [transfer_write_to_shader_write_barrier(
+                &raw_debug_buffer.buffer,
+            )];
+            device.cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &debug_reset_to_compute,
+                &[],
+            );
         }
         let depth_flags = (if frame.far_z.is_finite() {
             0
@@ -1044,6 +1217,18 @@ impl GpuEnvironmentDepthParticleRenderer {
             &compute_to_vertex,
             &[],
         );
+        if let Some(raw_debug_buffer) = self.raw_debug_buffer.as_ref() {
+            let compute_to_host = [compute_write_to_host_read_barrier(&raw_debug_buffer.buffer)];
+            device.cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::HOST,
+                vk::DependencyFlags::empty(),
+                &[],
+                &compute_to_host,
+                &[],
+            );
+        }
 
         if frame_count == 0 || frame_count % 120 == 0 {
             crate::marker(
@@ -1320,12 +1505,14 @@ unsafe fn update_runtime_depth_descriptors(
     sampler: vk::Sampler,
     image_view: vk::ImageView,
     particle_buffer: vk::DescriptorBufferInfo,
+    raw_debug_buffer: vk::DescriptorBufferInfo,
 ) {
     let image_info = [vk::DescriptorImageInfo::default()
         .sampler(sampler)
         .image_view(image_view)
         .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
     let particle_info = [particle_buffer];
+    let raw_debug_info = [raw_debug_buffer];
     let writes = [
         vk::WriteDescriptorSet::default()
             .dst_set(descriptor_set)
@@ -1333,6 +1520,7 @@ unsafe fn update_runtime_depth_descriptors(
             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
             .image_info(&image_info),
         write_storage_descriptor(descriptor_set, 1, &particle_info),
+        write_storage_descriptor(descriptor_set, 2, &raw_debug_info),
     ];
     device.update_descriptor_sets(&writes, &[]);
 }
@@ -1374,6 +1562,15 @@ fn compute_write_to_shader_read_barrier(buffer: &OwnedBuffer) -> vk::BufferMemor
         .size(buffer.bytes)
 }
 
+fn compute_write_to_host_read_barrier(buffer: &OwnedBuffer) -> vk::BufferMemoryBarrier<'static> {
+    vk::BufferMemoryBarrier::default()
+        .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+        .dst_access_mask(vk::AccessFlags::HOST_READ)
+        .buffer(buffer.buffer)
+        .offset(0)
+        .size(buffer.bytes)
+}
+
 fn transfer_write_to_shader_write_barrier(
     buffer: &OwnedBuffer,
 ) -> vk::BufferMemoryBarrier<'static> {
@@ -1399,6 +1596,68 @@ fn runtime_depth_particle_grid_height(
     (depth_height / settings.sample_stride_pixels.max(1)).max(1)
 }
 
+struct EnvironmentDepthRawDebugBuffer {
+    buffer: OwnedBuffer,
+    mapped: *mut u32,
+}
+
+impl EnvironmentDepthRawDebugBuffer {
+    unsafe fn new(
+        device: &ash::Device,
+        memory_properties: &vk::PhysicalDeviceMemoryProperties,
+    ) -> Result<Self, String> {
+        let buffer = OwnedBuffer::new_with_memory_flags(
+            device,
+            memory_properties,
+            ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_BYTES,
+            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            "runtime environment depth raw debug stats",
+        )?;
+        let mapped = match device.map_memory(
+            buffer.memory,
+            0,
+            ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_BYTES,
+            vk::MemoryMapFlags::empty(),
+        ) {
+            Ok(ptr) => ptr.cast::<u32>(),
+            Err(error) => {
+                buffer.destroy(device);
+                return Err(format!(
+                    "map runtime environment depth raw debug stats: {error}"
+                ));
+            }
+        };
+        std::ptr::write_bytes(mapped, 0, ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT);
+        Ok(Self { buffer, mapped })
+    }
+
+    fn descriptor(&self) -> vk::DescriptorBufferInfo {
+        self.buffer.descriptor()
+    }
+
+    fn bytes(&self) -> vk::DeviceSize {
+        self.buffer.bytes
+    }
+
+    fn memory_marker(&self) -> &'static str {
+        self.buffer.memory_marker()
+    }
+
+    unsafe fn read_stats(&self) -> EnvironmentDepthRawDebugStats {
+        let values =
+            std::slice::from_raw_parts(self.mapped, ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT);
+        EnvironmentDepthRawDebugStats::from_raw(values)
+    }
+
+    unsafe fn destroy(&self, device: &ash::Device) {
+        if !self.mapped.is_null() {
+            device.unmap_memory(self.buffer.memory);
+        }
+        self.buffer.destroy(device);
+    }
+}
+
 struct OwnedBuffer {
     buffer: vk::Buffer,
     memory: vk::DeviceMemory,
@@ -1412,6 +1671,24 @@ impl OwnedBuffer {
         memory_properties: &vk::PhysicalDeviceMemoryProperties,
         bytes: vk::DeviceSize,
         usage: vk::BufferUsageFlags,
+        label: &str,
+    ) -> Result<Self, String> {
+        Self::new_with_memory_flags(
+            device,
+            memory_properties,
+            bytes,
+            usage,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            label,
+        )
+    }
+
+    unsafe fn new_with_memory_flags(
+        device: &ash::Device,
+        memory_properties: &vk::PhysicalDeviceMemoryProperties,
+        bytes: vk::DeviceSize,
+        usage: vk::BufferUsageFlags,
+        required_memory_flags: vk::MemoryPropertyFlags,
         label: &str,
     ) -> Result<Self, String> {
         if bytes == 0 {
@@ -1430,7 +1707,7 @@ impl OwnedBuffer {
         let memory_type_index = match find_memory_type(
             memory_properties,
             requirements.memory_type_bits,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            required_memory_flags,
         ) {
             Ok(index) => index,
             Err(error) => {
@@ -1473,6 +1750,11 @@ impl OwnedBuffer {
             .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL)
         {
             "device-local"
+        } else if self
+            .memory_flags
+            .contains(vk::MemoryPropertyFlags::HOST_VISIBLE)
+        {
+            "host-visible"
         } else {
             "not-device-local"
         }

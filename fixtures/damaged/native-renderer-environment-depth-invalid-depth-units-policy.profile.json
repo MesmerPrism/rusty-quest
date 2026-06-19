@@ -1,0 +1,17 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.damaged.environment_depth_invalid_depth_units_policy",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.environment_depth.depth_units_policy"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.depth_units_policy",
+      "value": "metric-axial-meters",
+      "source_setting_id": "native_renderer.environment_depth.depth_units_policy"
+    }
+  ],
+  "expected_markers": [],
+  "validation_commands": []
+}

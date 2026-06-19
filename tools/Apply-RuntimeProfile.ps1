@@ -15,6 +15,8 @@ $EnvironmentDepthPropertyPrefix = "debug.rustyquest.native_renderer.environment_
 $EnvironmentDepthModeProperty = "debug.rustyquest.native_renderer.environment_depth.mode"
 $EnvironmentDepthSourceProperty = "debug.rustyquest.native_renderer.environment_depth.source"
 $EnvironmentDepthLayerPolicyProperty = "debug.rustyquest.native_renderer.environment_depth.layer_policy"
+$EnvironmentDepthDepthUnitsPolicyProperty = "debug.rustyquest.native_renderer.environment_depth.depth_units_policy"
+$EnvironmentDepthDebugViewProperty = "debug.rustyquest.native_renderer.environment_depth.debug_view"
 $EnvironmentDepthReferenceSpaceProperty = "debug.rustyquest.native_renderer.environment_depth.reference_space"
 $EnvironmentDepthParticleCapacityProperty = "debug.rustyquest.native_renderer.environment_depth.particle_capacity"
 $EnvironmentDepthSampleStridePixelsProperty = "debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels"
@@ -105,6 +107,18 @@ function Assert-EnvironmentDepthProperty {
         $EnvironmentDepthLayerPolicyProperty {
             if (@("mono-layer0", "layer0", "view0", "left", "mono-layer1", "layer1", "view1", "right") -notcontains $normalized) {
                 throw "Environment depth layer_policy is not supported: $Value"
+            }
+            return
+        }
+        $EnvironmentDepthDepthUnitsPolicyProperty {
+            if (@("projected-depth-from-near-far", "projected-near-far", "near-far-projection") -notcontains $normalized) {
+                throw "Environment depth depth_units_policy is not supported: $Value"
+            }
+            return
+        }
+        $EnvironmentDepthDebugViewProperty {
+            if (@("normal", "off", "disabled", "raw-d16", "raw-depth", "debug-raw-d16") -notcontains $normalized) {
+                throw "Environment depth debug_view is not supported: $Value"
             }
             return
         }

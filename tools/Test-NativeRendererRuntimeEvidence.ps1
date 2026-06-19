@@ -690,6 +690,9 @@ if ($RequireEnvironmentDepthParticles) {
         "environmentDepthSourceViewCount=1",
         "environmentDepthSampledLayerMask=0x1",
         "environmentDepthShaderLayerPolicy=mono-layer0",
+        "environmentDepthDepthUnitsPolicy=projected-depth-from-near-far",
+        "environmentDepthRawToMetersPolicy=projected-depth-from-near-far",
+        "environmentDepthDebugView=raw-d16",
         "environmentDepthDepthViewPoseValidMask=0x1",
         "environmentDepthDepthViewFovValidMask=0x1",
         "environmentDepthPoseValid=true"
@@ -726,6 +729,10 @@ if ($RequireEnvironmentDepthParticles) {
         "environmentDepthSourceViewCount=1",
         "environmentDepthSampledLayerMask=0x1",
         "environmentDepthShaderLayerPolicy=mono-layer0",
+        "environmentDepthDepthUnitsPolicy=projected-depth-from-near-far",
+        "environmentDepthRawToMetersPolicy=projected-depth-from-near-far",
+        "environmentDepthDebugView=raw-d16",
+        "environmentDepthRawStatsStatus=readback",
         "environmentDepthDepthViewPoseValidMask=0x1",
         "environmentDepthDepthViewFovValidMask=0x1"
     )) {
@@ -736,10 +743,29 @@ if ($RequireEnvironmentDepthParticles) {
     Assert-True ($particleCount -gt 0) "environment-depth-particles marker reports no particles."
     $sourceDepthSamples = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthParticleSourceDepthSamples"
     Assert-True ($sourceDepthSamples -gt 0) "environment-depth-particles marker reports no source depth samples."
+    $rawCenterD16 = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthRawCenterD16"
+    Assert-True ($rawCenterD16 -gt 0 -and $rawCenterD16 -le 65535) "environment-depth-particles raw center D16 is outside 1..65535: $rawCenterD16"
+    $centerReconstructedMeters = Get-MarkerNumber -Line $environmentDepthParticlesLine -Field "environmentDepthCenterReconstructedMeters"
+    Assert-True ($centerReconstructedMeters -gt 0.0) "environment-depth-particles center reconstructed meters must be positive."
+    $centerConfidence = Get-MarkerNumber -Line $environmentDepthParticlesLine -Field "environmentDepthCenterConfidence"
+    Assert-True ($centerConfidence -ge 0.0 -and $centerConfidence -le 1.0) "environment-depth-particles center confidence is outside 0..1: $centerConfidence"
+    $rawMedianD16 = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthRawCenterWindowMedianD16"
+    Assert-True ($rawMedianD16 -gt 0 -and $rawMedianD16 -le 65535) "environment-depth-particles center-window median D16 is outside 1..65535: $rawMedianD16"
+    $rawCenterWindowValidCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthRawCenterWindowValidCount"
+    Assert-True ($rawCenterWindowValidCount -gt 0) "environment-depth-particles center-window valid sample count must be positive."
+    $minValidReconstructedMeters = Get-MarkerNumber -Line $environmentDepthParticlesLine -Field "environmentDepthMinValidReconstructedMeters"
+    $maxValidReconstructedMeters = Get-MarkerNumber -Line $environmentDepthParticlesLine -Field "environmentDepthMaxValidReconstructedMeters"
+    Assert-True ($minValidReconstructedMeters -gt 0.0 -and $maxValidReconstructedMeters -ge $minValidReconstructedMeters) "environment-depth-particles reconstructed meter min/max are invalid."
+    $debugValidSampleCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthDebugValidSampleCount"
+    Assert-True ($debugValidSampleCount -gt 0) "environment-depth-particles raw debug readback reports no valid samples."
     $summary.environment_depth_line = $environmentDepthLine
     $summary.environment_depth_particles_line = $environmentDepthParticlesLine
     $summary.environment_depth_particle_count = $particleCount
     $summary.environment_depth_particle_source_depth_samples = $sourceDepthSamples
+    $summary.environment_depth_raw_center_d16 = $rawCenterD16
+    $summary.environment_depth_center_reconstructed_meters = $centerReconstructedMeters
+    $summary.environment_depth_raw_center_window_median_d16 = $rawMedianD16
+    $summary.environment_depth_debug_valid_sample_count = $debugValidSampleCount
 }
 
 if ($RequireGuideGraph) {

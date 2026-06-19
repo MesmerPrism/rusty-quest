@@ -110,13 +110,16 @@ runtime environment-depth provider.
 is the real Meta provider proof profile. It selects
 `environment_depth.mode=scene-particle-map` and
 `environment_depth.source=xr-meta-environment-depth`, sets
-`environment_depth.layer_policy=mono-layer0`, requires
+`environment_depth.layer_policy=mono-layer0`,
+`environment_depth.depth_units_policy=projected-depth-from-near-far`, and
+`environment_depth.debug_view=raw-d16`, requires
 `horizonos.permission.USE_SCENE` in the APK manifest and permission pregrant
 summary, and validates runtime markers for acquired D16 two-layer
 `XR_META_environment_depth` frames, explicit mono-layer source policy
 (`environmentDepthSourceViewCount=1`, `environmentDepthSampledLayerMask=0x1`,
-`environmentDepthShaderLayerPolicy=mono-layer0`), valid depth pose, nonzero source depth
-samples, OpenXR-local scene cells, the spatial-hash map policy,
+`environmentDepthShaderLayerPolicy=mono-layer0`), the projected-depth raw-to-meter
+policy marker, raw D16 aggregate readback fields, valid depth pose, nonzero
+source depth samples, OpenXR-local scene cells, the spatial-hash map policy,
 preserve-existing-cells invalid-sample behavior, visible-free-space
 correction, zero expanded CPU particle upload, resident GPU buffers, and
 `environmentDepthParticleBufferMemory=device-local`.
@@ -126,6 +129,11 @@ is the matching layer-1 comparison profile. It switches only
 `environmentDepthSampledLayerMask=0x2` plus
 `environmentDepthShaderLayerPolicy=mono-layer1`; this validates a second
 mono-source sample path before any stereo-two-layer policy is accepted.
+Use `docs/environment-depth-known-distance-raw-d16-runbook.md` for the
+headset known-distance run that compares `environmentDepthRawCenterD16`,
+`environmentDepthCenterReconstructedMeters`, and
+`environmentDepthRawCenterWindowMedianD16` against 0.5 m, 1 m, 2 m, and 4 m
+targets before accepting or replacing the projected-depth formula.
 
 Remote camera session plans are also source-only validation:
 

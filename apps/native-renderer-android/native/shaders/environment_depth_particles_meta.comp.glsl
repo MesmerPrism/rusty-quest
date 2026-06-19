@@ -8,6 +8,10 @@ layout(set = 0, binding = 1) buffer EnvironmentDepthParticles {
     vec4 rows[];
 } particles;
 
+layout(set = 0, binding = 2) buffer EnvironmentDepthRawDebugStats {
+    uint values[];
+} depth_debug;
+
 layout(push_constant) uniform EnvironmentDepthParticlePush {
     vec4 params0;
     vec4 params1;
@@ -30,6 +34,16 @@ const float SCENE_PARTICLE_ACTIVE_CORRECTION_CONFIDENCE = 0.78;
 const float SCENE_PARTICLE_ACTIVE_CORRECTION_STEP_METERS = SCENE_PARTICLE_CELL_METERS;
 const uint SCENE_PARTICLE_ACTIVE_CORRECTION_MAX_STEPS = 64u;
 const float SCENE_PARTICLE_ACTIVE_CORRECTION_SURFACE_KEEP_METERS = 0.18;
+const uint RAW_DEBUG_VALID_COUNT = 0u;
+const uint RAW_DEBUG_INVALID_COUNT = 1u;
+const uint RAW_DEBUG_CONFIDENCE_REJECTED_COUNT = 2u;
+const uint RAW_DEBUG_CENTER_D16 = 3u;
+const uint RAW_DEBUG_CENTER_RECONSTRUCTED_MM = 4u;
+const uint RAW_DEBUG_CENTER_CONFIDENCE_MILLI = 5u;
+const uint RAW_DEBUG_CENTER_MEDIAN_D16 = 6u;
+const uint RAW_DEBUG_MIN_VALID_INVERSE_MM = 7u;
+const uint RAW_DEBUG_MAX_VALID_MM = 8u;
+const uint RAW_DEBUG_CENTER_WINDOW_VALID_COUNT = 9u;
 
 uint depth_flags() {
     return uint(max(floor(pc.params1.z + 0.5), 0.0));
@@ -81,7 +95,18 @@ vec2 apply_depth_texture_transform(vec2 uv, int flags) {
     return uv;
 }
 
-float linear_depth_meters(float raw_depth) {
+float sample_raw_depth(vec2 uv) {
+    return textureLod(
+        u_environment_depth,
+        vec3(clamp(uv, vec2(0.0), vec2(1.0)), depth_source_layer_index()),
+        0.0).r;
+}
+
+bool raw_depth_is_valid(float raw_depth) {
+    return raw_depth >= 0.0 && raw_depth < 1.0 - (0.5 / 65535.0);
+}
+
+float raw_depth_to_meters(float raw_depth) {
     float near_z = max(pc.params1.x, 0.001);
     float far_z = pc.params1.y;
     bool infinite_far = infinite_far_requested() || !(far_z > near_z);
@@ -95,15 +120,11 @@ float linear_depth_meters(float raw_depth) {
 }
 
 float sample_depth_meters(vec2 uv) {
-    float raw_depth = textureLod(
-        u_environment_depth,
-        vec3(clamp(uv, vec2(0.0), vec2(1.0)), depth_source_layer_index()),
-        0.0).r;
-    bool infinity_cutoff = raw_depth >= 1.0 - (0.5 / 65535.0);
-    if (!(raw_depth >= 0.0) || infinity_cutoff) {
+    float raw_depth = sample_raw_depth(uv);
+    if (!raw_depth_is_valid(raw_depth)) {
         return pc.params1.y + 1.0;
     }
-    return linear_depth_meters(raw_depth);
+    return raw_depth_to_meters(raw_depth);
 }
 
 vec3 reconstruct_reference_space_position(vec2 surface_uv, float depth_meters) {
@@ -271,8 +292,98 @@ void write_scene_particle(
     }
 }
 
+uint meters_to_debug_mm(float meters) {
+    return uint(clamp(meters * 1000.0 + 0.5, 0.0, 4294967295.0));
+}
+
+uint raw_to_debug_d16(float raw_depth) {
+    return uint(clamp(raw_depth * 65535.0 + 0.5, 0.0, 65535.0));
+}
+
+float confidence_for_depth_uv(vec2 depth_uv, float depth_meters, ivec2 depth_size) {
+    vec2 sample_step = 1.0 / max(vec2(depth_size), vec2(1.0));
+    float right_depth = sample_depth_meters(depth_uv + vec2(sample_step.x, 0.0));
+    float up_depth = sample_depth_meters(depth_uv + vec2(0.0, sample_step.y));
+    float discontinuity = max(abs(depth_meters - right_depth), abs(depth_meters - up_depth));
+    return 1.0 - smoothstep(0.28, 0.56, discontinuity);
+}
+
+void sort_raw_prefix(inout float raw_values[9], int count) {
+    for (int outer_index = 0; outer_index < 8; outer_index++) {
+        for (int inner_index = outer_index + 1; inner_index < 9; inner_index++) {
+            if (outer_index < count && inner_index < count && raw_values[inner_index] < raw_values[outer_index]) {
+                float swap_value = raw_values[outer_index];
+                raw_values[outer_index] = raw_values[inner_index];
+                raw_values[inner_index] = swap_value;
+            }
+        }
+    }
+}
+
+void write_center_raw_debug_window(ivec2 depth_size) {
+    if (gl_GlobalInvocationID.x != 0u || gl_GlobalInvocationID.y != 0u || depth_size.x <= 0 || depth_size.y <= 0) {
+        return;
+    }
+
+    ivec2 center_pixel = depth_size / 2;
+    float raw_values[9];
+    int valid_count = 0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            ivec2 pixel = clamp(center_pixel + ivec2(x, y), ivec2(0), depth_size - ivec2(1));
+            vec2 surface_uv = (vec2(pixel) + vec2(0.5)) / max(vec2(depth_size), vec2(1.0));
+            vec2 depth_uv = clamp(
+                apply_depth_texture_transform(surface_uv, int(floor(pc.params0.z + 0.5))),
+                vec2(0.0),
+                vec2(1.0));
+            float raw_depth = sample_raw_depth(depth_uv);
+            if (raw_depth_is_valid(raw_depth)) {
+                raw_values[valid_count] = raw_depth;
+                valid_count++;
+            }
+        }
+    }
+
+    ivec2 center_clamped = clamp(center_pixel, ivec2(0), depth_size - ivec2(1));
+    vec2 center_surface_uv = (vec2(center_clamped) + vec2(0.5)) / max(vec2(depth_size), vec2(1.0));
+    vec2 center_depth_uv = clamp(
+        apply_depth_texture_transform(center_surface_uv, int(floor(pc.params0.z + 0.5))),
+        vec2(0.0),
+        vec2(1.0));
+    float center_raw_depth = sample_raw_depth(center_depth_uv);
+    if (raw_depth_is_valid(center_raw_depth)) {
+        float center_depth_meters = raw_depth_to_meters(center_raw_depth);
+        float center_confidence = confidence_for_depth_uv(center_depth_uv, center_depth_meters, depth_size);
+        depth_debug.values[RAW_DEBUG_CENTER_D16] = raw_to_debug_d16(center_raw_depth);
+        depth_debug.values[RAW_DEBUG_CENTER_RECONSTRUCTED_MM] = meters_to_debug_mm(center_depth_meters);
+        depth_debug.values[RAW_DEBUG_CENTER_CONFIDENCE_MILLI] = uint(clamp(center_confidence * 1000.0 + 0.5, 0.0, 1000.0));
+    }
+
+    if (valid_count > 0) {
+        sort_raw_prefix(raw_values, valid_count);
+        depth_debug.values[RAW_DEBUG_CENTER_MEDIAN_D16] = raw_to_debug_d16(raw_values[valid_count / 2]);
+        depth_debug.values[RAW_DEBUG_CENTER_WINDOW_VALID_COUNT] = uint(valid_count);
+    }
+}
+
+void accumulate_raw_debug_stats(bool raw_valid, bool in_range, bool confidence_valid, float depth_meters) {
+    if (confidence_valid) {
+        uint depth_mm = meters_to_debug_mm(depth_meters);
+        atomicAdd(depth_debug.values[RAW_DEBUG_VALID_COUNT], 1u);
+        atomicMax(depth_debug.values[RAW_DEBUG_MIN_VALID_INVERSE_MM], 0xffffffffu - depth_mm);
+        atomicMax(depth_debug.values[RAW_DEBUG_MAX_VALID_MM], depth_mm);
+        return;
+    }
+    if (raw_valid && in_range) {
+        atomicAdd(depth_debug.values[RAW_DEBUG_CONFIDENCE_REJECTED_COUNT], 1u);
+    } else {
+        atomicAdd(depth_debug.values[RAW_DEBUG_INVALID_COUNT], 1u);
+    }
+}
+
 void main() {
     ivec2 depth_size = textureSize(u_environment_depth, 0).xy;
+    write_center_raw_debug_window(depth_size);
     uint particle_count = uint(max(pc.params0.x, 0.0));
     uint sample_stride = max(uint(pc.params1.w), 1u);
     uvec2 grid_size = max(uvec2(depth_size) / uvec2(sample_stride), uvec2(1u));
@@ -297,16 +408,16 @@ void main() {
         vec2(0.0),
         vec2(1.0));
 
-    float depth_meters = sample_depth_meters(depth_uv);
-    vec2 sample_step = 1.0 / max(vec2(depth_size), vec2(1.0));
-    float right_depth = sample_depth_meters(depth_uv + vec2(sample_step.x, 0.0));
-    float up_depth = sample_depth_meters(depth_uv + vec2(0.0, sample_step.y));
-    float discontinuity = max(abs(depth_meters - right_depth), abs(depth_meters - up_depth));
-    float confidence = 1.0 - smoothstep(0.28, 0.56, discontinuity);
+    float raw_depth = sample_raw_depth(depth_uv);
+    bool raw_valid = raw_depth_is_valid(raw_depth);
+    float depth_meters = raw_valid ? raw_depth_to_meters(raw_depth) : pc.params1.y + 1.0;
+    float confidence = confidence_for_depth_uv(depth_uv, depth_meters, depth_size);
     float confidence_threshold = scene_map ? 0.58 : 0.52;
-    bool valid = depth_meters >= max(pc.params1.x, 0.001)
-        && depth_meters <= max(pc.params1.y, pc.params1.x + 0.01)
-        && confidence >= confidence_threshold;
+    bool in_range = raw_valid
+        && depth_meters >= max(pc.params1.x, 0.001)
+        && depth_meters <= max(pc.params1.y, pc.params1.x + 0.01);
+    bool valid = in_range && confidence >= confidence_threshold;
+    accumulate_raw_debug_stats(raw_valid, in_range, valid, depth_meters);
 
     if (!valid) {
         if (!scene_map) {

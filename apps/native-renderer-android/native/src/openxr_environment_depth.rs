@@ -106,7 +106,7 @@ impl OpenXrEnvironmentDepthRuntime {
         crate::marker(
             "environment-depth",
             format!(
-                "status=properties environmentDepthExtensionAvailable={} environmentDepthSupported={} environmentDepthHandRemovalSupported={} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthProviderAvailable={}",
+                "status=properties environmentDepthExtensionAvailable={} environmentDepthSupported={} environmentDepthHandRemovalSupported={} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthProviderAvailable={}",
                 properties.extension_available,
                 properties.supports_environment_depth,
                 properties.supports_hand_removal,
@@ -115,6 +115,9 @@ impl OpenXrEnvironmentDepthRuntime {
                 settings.source_view_count(),
                 settings.sampled_layer_mask(),
                 settings.layer_policy_marker_value(),
+                settings.depth_units_policy_marker_value(),
+                settings.raw_to_meters_policy_marker_value(),
+                settings.debug_view_marker_value(),
                 properties.supports_environment_depth
             ),
         );
@@ -218,7 +221,7 @@ impl OpenXrEnvironmentDepthRuntime {
         crate::marker(
             "environment-depth",
             format!(
-                "status=provider-created environmentDepthSource={} environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthReferenceSpace={} environmentDepthHandRemovalSupported={} environmentDepthHandRemovalEnabled={} environmentDepthSwapchainImages={} environmentDepthTextureTransform={}",
+                "status=provider-created environmentDepthSource={} environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthReferenceSpace={} environmentDepthHandRemovalSupported={} environmentDepthHandRemovalEnabled={} environmentDepthSwapchainImages={} environmentDepthTextureTransform={}",
                 settings.source_marker_value(),
                 swapchain_state.width,
                 swapchain_state.height,
@@ -227,6 +230,9 @@ impl OpenXrEnvironmentDepthRuntime {
                 settings.source_view_count(),
                 settings.sampled_layer_mask(),
                 settings.layer_policy_marker_value(),
+                settings.depth_units_policy_marker_value(),
+                settings.raw_to_meters_policy_marker_value(),
+                settings.debug_view_marker_value(),
                 settings.reference_space_marker_value(),
                 properties.supports_hand_removal,
                 hand_removal_enabled,
@@ -364,7 +370,7 @@ impl OpenXrEnvironmentDepthRuntime {
             crate::marker(
                 "environment-depth",
                 format!(
-                    "status=first-frame environmentDepthSource=xr-meta-environment-depth environmentDepthAcquireStatus=acquired environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthSwapchainIndex={} environmentDepthPoseValid=true environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCaptureTimeNs={} environmentDepthTextureTransform={} confidenceSource=depth-discontinuity-or-none confidencePayload=false",
+                    "status=first-frame environmentDepthSource=xr-meta-environment-depth environmentDepthAcquireStatus=acquired environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthSwapchainIndex={} environmentDepthPoseValid=true environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCaptureTimeNs={} environmentDepthTextureTransform={} confidenceSource=depth-discontinuity-or-none confidencePayload=false",
                     self.width,
                     self.height,
                     DEPTH_FORMAT_LABEL,
@@ -372,6 +378,9 @@ impl OpenXrEnvironmentDepthRuntime {
                     self.settings.source_view_count(),
                     self.settings.sampled_layer_mask(),
                     self.settings.layer_policy_marker_value(),
+                    self.settings.depth_units_policy_marker_value(),
+                    self.settings.raw_to_meters_policy_marker_value(),
+                    self.settings.debug_view_marker_value(),
                     self.settings.sampled_layer_mask(),
                     self.settings.sampled_layer_mask(),
                     image.swapchain_index,
@@ -428,7 +437,7 @@ impl OpenXrEnvironmentDepthRuntime {
         crate::marker(
             "environment-depth",
             format!(
-                "status=runtime frame={} environmentDepthSource=xr-meta-environment-depth environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthSwapchainIndex={} environmentDepthPoseValid={} openXrFrameCount={} observedOpenXrFps={:.1} acquireAttempts={} acquiredFrames={} unavailableFrames={} acquireErrors={} uniqueCaptureTimes={} repeatedCaptureTimes={} observedAcquireHz={:.1} observedDepthHz={:.1} lastAcquireCpuMs={:.3} avgAcquireCpuMs={:.3} captureTimeNs={} nearZ={:.3} farZ={:.3} handRemovalSupported={} handRemovalEnabled={} confidenceSource=depth-discontinuity-or-none confidencePayload=false textureTransform={}",
+                "status=runtime frame={} environmentDepthSource=xr-meta-environment-depth environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthSwapchainIndex={} environmentDepthPoseValid={} openXrFrameCount={} observedOpenXrFps={:.1} acquireAttempts={} acquiredFrames={} unavailableFrames={} acquireErrors={} uniqueCaptureTimes={} repeatedCaptureTimes={} observedAcquireHz={:.1} observedDepthHz={:.1} lastAcquireCpuMs={:.3} avgAcquireCpuMs={:.3} captureTimeNs={} nearZ={:.3} farZ={:.3} handRemovalSupported={} handRemovalEnabled={} confidenceSource=depth-discontinuity-or-none confidencePayload=false textureTransform={}",
                 frame_count,
                 if acquired { "acquired" } else { "not-available" },
                 self.width,
@@ -438,6 +447,9 @@ impl OpenXrEnvironmentDepthRuntime {
                 self.settings.source_view_count(),
                 self.settings.sampled_layer_mask(),
                 self.settings.layer_policy_marker_value(),
+                self.settings.depth_units_policy_marker_value(),
+                self.settings.raw_to_meters_policy_marker_value(),
+                self.settings.debug_view_marker_value(),
                 if self.last_acquired_frame.is_some() {
                     self.settings.sampled_layer_mask()
                 } else {
