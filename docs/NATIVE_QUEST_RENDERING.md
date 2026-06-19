@@ -209,6 +209,16 @@ For the real Meta environment-depth world-space motion proof, use
 serial-scoped smoke/pregrant/profile/evidence path but fixes
 `EnvironmentDepthParticles` mode and default head-motion thresholds so a static
 headset run cannot satisfy the movement gate.
+The source-side surface-support profiles
+`quest-native-renderer-envdepth-local-surfels.profile.json`,
+`quest-native-renderer-envdepth-global-surfaces.profile.json`, and
+`quest-native-renderer-envdepth-hybrid-surfaces.profile.json` validate the
+planned local-candidate, connected-surface, and hybrid control settings without
+requiring headset movement. They intentionally report
+`environmentDepthSurfaceSupportEnforced=false` and
+`environmentDepthSurfaceSupportStatus=pending-gpu-support-pass` until the
+native Vulkan support pass computes neighbor/component support and filters or
+dims unsupported cells.
 Wrapper runs also require
 the performance budget gate by default; the checker records the observed FPS,
 stale-frame count, and CPU/GPU stage timing budget results, and fails if a

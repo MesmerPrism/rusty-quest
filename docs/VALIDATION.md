@@ -167,6 +167,24 @@ the real Meta provider scene-map path fixed and vary one acceptance axis at a
 time: sampled depth layer, raw-D16 debug view, OpenXR local/stage reference
 space, particle capacity, sample stride, or the
 `xrSetEnvironmentDepthHandRemovalMETA` request path.
+The surface-support quality-control matrix is dry-run validated through
+`quest-native-renderer-envdepth-local-surfels.profile.json`,
+`quest-native-renderer-envdepth-global-surfaces.profile.json`, and
+`quest-native-renderer-envdepth-hybrid-surfaces.profile.json`. These profiles
+validate `environment_depth.surface_model`,
+`environment_depth.surface_support.radius_cells`,
+`environment_depth.surface_support.min_neighbors`,
+`environment_depth.surface_support.min_observations`,
+`environment_depth.surface_support.min_source_layers`,
+`environment_depth.surface_support.component_min_cells`,
+`environment_depth.surface_support.normal_coherence`, and
+`environment_depth.surface_support.free_space_decay`. Runtime evidence now
+requires the matching `environmentDepthSurfaceSupport*` marker fields. Until
+the GPU neighborhood/component pass lands, requested support modes must report
+`environmentDepthSurfaceSupportEnforced=false` and
+`environmentDepthSurfaceSupportStatus=pending-gpu-support-pass`; acceptance
+must not treat these profiles as proof that isolated floating particles are
+being filtered.
 Use `docs/environment-depth-known-distance-raw-d16-runbook.md` for the
 headset known-distance run that compares `environmentDepthRawCenterD16`,
 `environmentDepthCenterReconstructedMeters`, and

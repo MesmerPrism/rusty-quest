@@ -1,0 +1,21 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.damaged_environment_depth_invalid_surface_support",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.environment_depth.surface_model",
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.min_neighbors"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_model",
+      "value": "global-surfaces",
+      "source_setting_id": "native_renderer.environment_depth.surface_model"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.min_neighbors",
+      "value": "99",
+      "source_setting_id": "native_renderer.environment_depth.surface_support.min_neighbors"
+    }
+  ]
+}

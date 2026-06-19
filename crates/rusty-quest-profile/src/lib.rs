@@ -31,6 +31,22 @@ const ENVIRONMENT_DEPTH_NEAR_M: &str = "debug.rustyquest.native_renderer.environ
 const ENVIRONMENT_DEPTH_FAR_M: &str = "debug.rustyquest.native_renderer.environment_depth.far_m";
 const ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD: &str =
     "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload";
+const ENVIRONMENT_DEPTH_SURFACE_MODEL: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_model";
+const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_RADIUS_CELLS: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.radius_cells";
+const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_NEIGHBORS: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.min_neighbors";
+const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_OBSERVATIONS: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.min_observations";
+const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_SOURCE_LAYERS: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.min_source_layers";
+const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MIN_CELLS: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.component_min_cells";
+const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_coherence";
+const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.free_space_decay";
 
 /// Quest runtime profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -321,6 +337,10 @@ fn validate_environment_depth_property(
                     | "free-space"
                     | "retired-state"
                     | "debug-free-space-state"
+                    | "surface-support"
+                    | "surface"
+                    | "support"
+                    | "debug-surface-support"
             );
             if !valid {
                 errors.push(ValidationError::new(format!(
@@ -361,6 +381,68 @@ fn validate_environment_depth_property(
                 errors.push(ValidationError::new(
                     "environment depth high_rate_json_payload must be false",
                 ));
+            }
+        }
+        ENVIRONMENT_DEPTH_SURFACE_MODEL => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(
+                normalized.as_str(),
+                "particles"
+                    | "particle-cloud"
+                    | "legacy-particles"
+                    | "local-surfels"
+                    | "local-surfels-candidates"
+                    | "local"
+                    | "global-surfaces"
+                    | "confirmed-surfaces"
+                    | "global"
+                    | "hybrid"
+                    | "hybrid-surfaces"
+                    | "local-and-global"
+            );
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "environment depth surface_model {} is not supported",
+                    property.value
+                )));
+            }
+        }
+        ENVIRONMENT_DEPTH_SURFACE_SUPPORT_RADIUS_CELLS => {
+            validate_environment_depth_u32(property, 1, 8, errors);
+        }
+        ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_NEIGHBORS => {
+            validate_environment_depth_u32(property, 0, 26, errors);
+        }
+        ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_OBSERVATIONS => {
+            validate_environment_depth_u32(property, 1, 64, errors);
+        }
+        ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_SOURCE_LAYERS => {
+            validate_environment_depth_u32(property, 1, 2, errors);
+        }
+        ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MIN_CELLS => {
+            validate_environment_depth_u32(property, 1, 4096, errors);
+        }
+        ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(
+                normalized.as_str(),
+                "off" | "loose" | "low" | "strict" | "high"
+            );
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "environment depth surface_support.normal_coherence {} is not supported",
+                    property.value
+                )));
+            }
+        }
+        ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY => {
+            let normalized = normalized_value(&property.value);
+            let valid = matches!(normalized.as_str(), "soft" | "hard" | "immediate");
+            if !valid {
+                errors.push(ValidationError::new(format!(
+                    "environment depth surface_support.free_space_decay {} is not supported",
+                    property.value
+                )));
             }
         }
         _ => errors.push(ValidationError::new(format!(
@@ -687,6 +769,38 @@ mod tests {
     }
 
     #[test]
+    fn environment_depth_surface_support_profile_matrix_validates() {
+        for (profile_text, profile_id, property_name, value) in [
+            (
+                include_str!(
+                    "../../../fixtures/runtime-profiles/quest-native-renderer-envdepth-local-surfels.profile.json"
+                ),
+                "profile.quest.native_renderer.envdepth_local_surfels",
+                "debug.rustyquest.native_renderer.environment_depth.surface_model",
+                "local-surfels",
+            ),
+            (
+                include_str!(
+                    "../../../fixtures/runtime-profiles/quest-native-renderer-envdepth-global-surfaces.profile.json"
+                ),
+                "profile.quest.native_renderer.envdepth_global_surfaces",
+                "debug.rustyquest.native_renderer.environment_depth.surface_support.min_neighbors",
+                "4",
+            ),
+            (
+                include_str!(
+                    "../../../fixtures/runtime-profiles/quest-native-renderer-envdepth-hybrid-surfaces.profile.json"
+                ),
+                "profile.quest.native_renderer.envdepth_hybrid_surfaces",
+                "debug.rustyquest.native_renderer.environment_depth.surface_support.component_min_cells",
+                "16",
+            ),
+        ] {
+            assert_plan_sets(profile_text, profile_id, property_name, value);
+        }
+    }
+
+    #[test]
     fn environment_depth_high_rate_json_payload_is_rejected() {
         let damaged: RuntimeProfile = serde_json::from_str(include_str!(
             "../../../fixtures/damaged/native-renderer-environment-depth-high-rate-json.profile.json"
@@ -734,6 +848,19 @@ mod tests {
         assert!(errors.iter().any(|error| error
             .message
             .contains("depth_units_policy metric-axial-meters is not supported")));
+    }
+
+    #[test]
+    fn environment_depth_invalid_surface_support_is_rejected() {
+        let damaged: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/damaged/native-renderer-environment-depth-invalid-surface-support.profile.json"
+        ))
+        .expect("damaged profile JSON");
+        let errors =
+            validate_runtime_profile(&damaged).expect_err("must reject invalid surface support");
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("min_neighbors value 99")));
     }
 
     #[test]

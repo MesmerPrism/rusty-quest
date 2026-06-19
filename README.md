@@ -187,6 +187,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendere
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1
 ```
 
+`check_all.ps1` also dry-runs the environment-depth surface-support profiles:
+local surfels, global surfaces, and hybrid surfaces. These validate the
+properties and `environmentDepthSurfaceSupport*` markers without claiming GPU
+filtering; headset acceptance still requires a later support-pass build plus
+movement evidence.
+
 Device-facing smoke wrappers require `-Serial <quest-serial>` or
 `RUSTY_QUEST_SERIAL`; normal ADB work must not rely on an implicit default
 device. Use `RUSTY_QUEST_ADB_SERVER_PORT` or `-AdbServerPort` only when

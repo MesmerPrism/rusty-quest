@@ -1,0 +1,148 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.envdepth_hybrid_surfaces",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.environment_depth.mode",
+    "debug.rustyquest.native_renderer.environment_depth.source",
+    "debug.rustyquest.native_renderer.environment_depth.layer_policy",
+    "debug.rustyquest.native_renderer.environment_depth.depth_units_policy",
+    "debug.rustyquest.native_renderer.environment_depth.debug_view",
+    "debug.rustyquest.native_renderer.environment_depth.reference_space",
+    "debug.rustyquest.native_renderer.environment_depth.hand_removal.enabled",
+    "debug.rustyquest.native_renderer.environment_depth.particle_capacity",
+    "debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels",
+    "debug.rustyquest.native_renderer.environment_depth.near_m",
+    "debug.rustyquest.native_renderer.environment_depth.far_m",
+    "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload",
+    "debug.rustyquest.native_renderer.environment_depth.surface_model",
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.radius_cells",
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.min_neighbors",
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.min_observations",
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.min_source_layers",
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.component_min_cells",
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_coherence",
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.free_space_decay"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.mode",
+      "value": "scene-particle-map",
+      "source_setting_id": "native_renderer.environment_depth.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.source",
+      "value": "xr-meta-environment-depth",
+      "source_setting_id": "native_renderer.environment_depth.source"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.layer_policy",
+      "value": "mono-layer0",
+      "source_setting_id": "native_renderer.environment_depth.layer_policy"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.depth_units_policy",
+      "value": "projected-depth-from-near-far",
+      "source_setting_id": "native_renderer.environment_depth.depth_units_policy"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.debug_view",
+      "value": "surface-support",
+      "source_setting_id": "native_renderer.environment_depth.debug_view"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.reference_space",
+      "value": "openxr-local",
+      "source_setting_id": "native_renderer.environment_depth.reference_space"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.hand_removal.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.environment_depth.hand_removal.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.particle_capacity",
+      "value": "32768",
+      "source_setting_id": "native_renderer.environment_depth.particle_capacity"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels",
+      "value": "12",
+      "source_setting_id": "native_renderer.environment_depth.sample_stride_pixels"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.near_m",
+      "value": "0.20",
+      "source_setting_id": "native_renderer.environment_depth.near_m"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.far_m",
+      "value": "5.00",
+      "source_setting_id": "native_renderer.environment_depth.far_m"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload",
+      "value": "false",
+      "source_setting_id": "native_renderer.environment_depth.high_rate_json_payload"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_model",
+      "value": "hybrid",
+      "source_setting_id": "native_renderer.environment_depth.surface_model"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.radius_cells",
+      "value": "1",
+      "source_setting_id": "native_renderer.environment_depth.surface_support.radius_cells"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.min_neighbors",
+      "value": "4",
+      "source_setting_id": "native_renderer.environment_depth.surface_support.min_neighbors"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.min_observations",
+      "value": "3",
+      "source_setting_id": "native_renderer.environment_depth.surface_support.min_observations"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.min_source_layers",
+      "value": "1",
+      "source_setting_id": "native_renderer.environment_depth.surface_support.min_source_layers"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.component_min_cells",
+      "value": "16",
+      "source_setting_id": "native_renderer.environment_depth.surface_support.component_min_cells"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_coherence",
+      "value": "loose",
+      "source_setting_id": "native_renderer.environment_depth.surface_support.normal_coherence"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.free_space_decay",
+      "value": "hard",
+      "source_setting_id": "native_renderer.environment_depth.surface_support.free_space_decay"
+    }
+  ],
+  "expected_markers": [
+    "RUSTY_QUEST_NATIVE_RENDERER channel=environment-depth-particles",
+    "environmentDepthDebugView=surface-support",
+    "environmentDepthSurfaceModel=hybrid",
+    "environmentDepthSurfaceSupportRequested=true",
+    "environmentDepthSurfaceSupportEnforced=false",
+    "environmentDepthSurfaceSupportMode=hybrid",
+    "environmentDepthSurfaceSupportRadiusCells=1",
+    "environmentDepthSurfaceMinNeighborCount=4",
+    "environmentDepthSurfaceMinObservationCount=3",
+    "environmentDepthSurfaceMinSourceLayerCount=1",
+    "environmentDepthSurfaceComponentMinCells=16",
+    "environmentDepthSurfaceNormalCoherence=loose",
+    "environmentDepthSurfaceFreeSpaceDecay=hard",
+    "environmentDepthSurfaceSupportStatus=pending-gpu-support-pass"
+  ],
+  "validation_commands": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-envdepth-hybrid-surfaces.profile.json -DryRun -Out local-artifacts/quest-native-renderer-envdepth-hybrid-surfaces-property-write-plan.json"
+  ]
+}

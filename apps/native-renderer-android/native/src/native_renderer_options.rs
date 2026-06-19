@@ -86,6 +86,22 @@ pub(crate) const PROP_ENVIRONMENT_DEPTH_FAR_M: &str =
     "debug.rustyquest.native_renderer.environment_depth.far_m";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD: &str =
     "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload";
+pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_MODEL: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_model";
+pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_RADIUS_CELLS: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.radius_cells";
+pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_NEIGHBORS: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.min_neighbors";
+pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_OBSERVATIONS: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.min_observations";
+pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_SOURCE_LAYERS: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.min_source_layers";
+pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MIN_CELLS: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.component_min_cells";
+pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_coherence";
+pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY: &str =
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.free_space_decay";
 pub(crate) const PROP_PROCESSING_LAYER: &str = "debug.rustyquest.native_renderer.processing.layer";
 pub(crate) const PROP_PROJECTION_BORDER_POLICY: &str =
     "debug.rustyquest.native_renderer.projection.border.policy";
@@ -869,6 +885,14 @@ pub(crate) struct NativeEnvironmentDepthSettings {
     pub(crate) near_m: f32,
     pub(crate) far_m: f32,
     pub(crate) high_rate_json_payload: bool,
+    pub(crate) surface_model: NativeEnvironmentDepthSurfaceModel,
+    pub(crate) surface_support_radius_cells: u32,
+    pub(crate) surface_support_min_neighbors: u32,
+    pub(crate) surface_support_min_observations: u32,
+    pub(crate) surface_support_min_source_layers: u32,
+    pub(crate) surface_support_component_min_cells: u32,
+    pub(crate) surface_support_normal_coherence: NativeEnvironmentDepthSurfaceNormalCoherence,
+    pub(crate) surface_support_free_space_decay: NativeEnvironmentDepthSurfaceFreeSpaceDecay,
 }
 
 impl NativeEnvironmentDepthSettings {
@@ -924,18 +948,67 @@ impl NativeEnvironmentDepthSettings {
                 lookup(PROP_ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD),
                 false,
             ),
+            surface_model: NativeEnvironmentDepthSurfaceModel::from_property(lookup(
+                PROP_ENVIRONMENT_DEPTH_SURFACE_MODEL,
+            )),
+            surface_support_radius_cells: u32_value(
+                lookup(PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_RADIUS_CELLS),
+                1,
+                1,
+                8,
+            ),
+            surface_support_min_neighbors: u32_value(
+                lookup(PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_NEIGHBORS),
+                0,
+                0,
+                26,
+            ),
+            surface_support_min_observations: u32_value(
+                lookup(PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_OBSERVATIONS),
+                1,
+                1,
+                64,
+            ),
+            surface_support_min_source_layers: u32_value(
+                lookup(PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_SOURCE_LAYERS),
+                1,
+                1,
+                2,
+            ),
+            surface_support_component_min_cells: u32_value(
+                lookup(PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MIN_CELLS),
+                1,
+                1,
+                4096,
+            ),
+            surface_support_normal_coherence:
+                NativeEnvironmentDepthSurfaceNormalCoherence::from_property(lookup(
+                    PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE,
+                )),
+            surface_support_free_space_decay:
+                NativeEnvironmentDepthSurfaceFreeSpaceDecay::from_property(lookup(
+                    PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY,
+                )),
         }
     }
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "modeProperty={} sourceProperty={} layerPolicyProperty={} depthUnitsPolicyProperty={} debugViewProperty={} handRemovalProperty={} environmentDepthMode={} environmentDepthSource={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthProviderState={} environmentDepthProviderAvailable=false environmentDepthRealProviderBound=false environmentDepthSupported=false environmentDepthAcquireStatus={} environmentDepthImageSize=0x0 environmentDepthFormat=none environmentDepthLayerCount=0 environmentDepthReferenceSpace={} environmentDepthHandRemovalRequested={} environmentDepthHandRemovalEnabled=false environmentDepthPoseValid=false environmentDepthParticleCapacity={} environmentDepthSampleStridePixels={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCpuUploadBytes=0 environmentDepthGpuReconstructMs=0.000 environmentDepthGpuMapUpdateMs=0.000 environmentDepthGpuDrawMs=0.000 environmentDepthReadbackCadenceFrames=0 environmentDepthHighRateJsonPayload={}",
+            "modeProperty={} sourceProperty={} layerPolicyProperty={} depthUnitsPolicyProperty={} debugViewProperty={} handRemovalProperty={} surfaceModelProperty={} surfaceSupportRadiusCellsProperty={} surfaceSupportMinNeighborsProperty={} surfaceSupportMinObservationsProperty={} surfaceSupportMinSourceLayersProperty={} surfaceSupportComponentMinCellsProperty={} surfaceSupportNormalCoherenceProperty={} surfaceSupportFreeSpaceDecayProperty={} environmentDepthMode={} environmentDepthSource={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthProviderState={} environmentDepthProviderAvailable=false environmentDepthRealProviderBound=false environmentDepthSupported=false environmentDepthAcquireStatus={} environmentDepthImageSize=0x0 environmentDepthFormat=none environmentDepthLayerCount=0 environmentDepthReferenceSpace={} environmentDepthHandRemovalRequested={} environmentDepthHandRemovalEnabled=false environmentDepthPoseValid=false environmentDepthParticleCapacity={} environmentDepthSampleStridePixels={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCpuUploadBytes=0 environmentDepthGpuReconstructMs=0.000 environmentDepthGpuMapUpdateMs=0.000 environmentDepthGpuDrawMs=0.000 environmentDepthReadbackCadenceFrames=0 environmentDepthHighRateJsonPayload={} {}",
             PROP_ENVIRONMENT_DEPTH_MODE,
             PROP_ENVIRONMENT_DEPTH_SOURCE,
             PROP_ENVIRONMENT_DEPTH_LAYER_POLICY,
             PROP_ENVIRONMENT_DEPTH_DEPTH_UNITS_POLICY,
             PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW,
             PROP_ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED,
+            PROP_ENVIRONMENT_DEPTH_SURFACE_MODEL,
+            PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_RADIUS_CELLS,
+            PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_NEIGHBORS,
+            PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_OBSERVATIONS,
+            PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_SOURCE_LAYERS,
+            PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MIN_CELLS,
+            PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE,
+            PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY,
             self.mode.marker_value(),
             self.source.marker_value(),
             self.layer_policy.source_view_count(),
@@ -952,7 +1025,8 @@ impl NativeEnvironmentDepthSettings {
             self.sample_stride_pixels,
             self.near_m,
             self.far_m,
-            self.high_rate_json_payload
+            self.high_rate_json_payload,
+            self.surface_support_marker_fields()
         )
     }
 
@@ -1024,6 +1098,35 @@ impl NativeEnvironmentDepthSettings {
     pub(crate) fn acquire_status_marker_value(self) -> &'static str {
         self.source.acquire_status_marker(self.mode)
     }
+
+    pub(crate) fn surface_support_requested(self) -> bool {
+        self.surface_model.support_requested()
+    }
+
+    pub(crate) fn surface_support_status_marker(self) -> &'static str {
+        if self.surface_support_requested() {
+            "pending-gpu-support-pass"
+        } else {
+            "disabled"
+        }
+    }
+
+    pub(crate) fn surface_support_marker_fields(self) -> String {
+        format!(
+            "environmentDepthSurfaceModel={} environmentDepthSurfaceSupportRequested={} environmentDepthSurfaceSupportEnforced=false environmentDepthSurfaceSupportMode={} environmentDepthSurfaceSupportRadiusCells={} environmentDepthSurfaceMinNeighborCount={} environmentDepthSurfaceMinObservationCount={} environmentDepthSurfaceMinSourceLayerCount={} environmentDepthSurfaceComponentMinCells={} environmentDepthSurfaceNormalCoherence={} environmentDepthSurfaceFreeSpaceDecay={} environmentDepthSurfaceSupportedCells=0 environmentDepthSurfaceRejectedIsolatedCells=0 environmentDepthSurfaceLargestComponentCells=0 environmentDepthSurfaceSupportStatus={}",
+            self.surface_model.marker_value(),
+            self.surface_support_requested(),
+            self.surface_model.support_mode_marker_value(),
+            self.surface_support_radius_cells,
+            self.surface_support_min_neighbors,
+            self.surface_support_min_observations,
+            self.surface_support_min_source_layers,
+            self.surface_support_component_min_cells,
+            self.surface_support_normal_coherence.marker_value(),
+            self.surface_support_free_space_decay.marker_value(),
+            self.surface_support_status_marker(),
+        )
+    }
 }
 
 impl Default for NativeEnvironmentDepthSettings {
@@ -1041,6 +1144,102 @@ impl Default for NativeEnvironmentDepthSettings {
             near_m: 0.20,
             far_m: 5.0,
             high_rate_json_payload: false,
+            surface_model: NativeEnvironmentDepthSurfaceModel::Particles,
+            surface_support_radius_cells: 1,
+            surface_support_min_neighbors: 0,
+            surface_support_min_observations: 1,
+            surface_support_min_source_layers: 1,
+            surface_support_component_min_cells: 1,
+            surface_support_normal_coherence: NativeEnvironmentDepthSurfaceNormalCoherence::Off,
+            surface_support_free_space_decay: NativeEnvironmentDepthSurfaceFreeSpaceDecay::Soft,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeEnvironmentDepthSurfaceModel {
+    Particles,
+    LocalSurfels,
+    GlobalSurfaces,
+    Hybrid,
+}
+
+impl NativeEnvironmentDepthSurfaceModel {
+    fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "local-surfels" | "local-surfels-candidates" | "local" => Self::LocalSurfels,
+            "global-surfaces" | "confirmed-surfaces" | "global" => Self::GlobalSurfaces,
+            "hybrid" | "hybrid-surfaces" | "local-and-global" => Self::Hybrid,
+            _ => Self::Particles,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::Particles => "particles",
+            Self::LocalSurfels => "local-surfels",
+            Self::GlobalSurfaces => "global-surfaces",
+            Self::Hybrid => "hybrid",
+        }
+    }
+
+    pub(crate) fn support_mode_marker_value(self) -> &'static str {
+        match self {
+            Self::Particles => "disabled",
+            Self::LocalSurfels => "local-surfels",
+            Self::GlobalSurfaces => "global-surfaces",
+            Self::Hybrid => "hybrid",
+        }
+    }
+
+    pub(crate) fn support_requested(self) -> bool {
+        !matches!(self, Self::Particles)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeEnvironmentDepthSurfaceNormalCoherence {
+    Off,
+    Loose,
+    Strict,
+}
+
+impl NativeEnvironmentDepthSurfaceNormalCoherence {
+    fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "loose" | "low" => Self::Loose,
+            "strict" | "high" => Self::Strict,
+            _ => Self::Off,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Loose => "loose",
+            Self::Strict => "strict",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeEnvironmentDepthSurfaceFreeSpaceDecay {
+    Soft,
+    Hard,
+}
+
+impl NativeEnvironmentDepthSurfaceFreeSpaceDecay {
+    fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "hard" | "immediate" => Self::Hard,
+            _ => Self::Soft,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::Soft => "soft",
+            Self::Hard => "hard",
         }
     }
 }
@@ -1082,6 +1281,7 @@ pub(crate) enum NativeEnvironmentDepthDebugView {
     SourceLayer,
     HashProbe,
     FreeSpaceState,
+    SurfaceSupport,
 }
 
 impl NativeEnvironmentDepthDebugView {
@@ -1097,6 +1297,9 @@ impl NativeEnvironmentDepthDebugView {
             "free-space-state" | "free-space" | "retired-state" | "debug-free-space-state" => {
                 Self::FreeSpaceState
             }
+            "surface-support" | "surface" | "support" | "debug-surface-support" => {
+                Self::SurfaceSupport
+            }
             _ => Self::Normal,
         }
     }
@@ -1110,6 +1313,7 @@ impl NativeEnvironmentDepthDebugView {
             Self::SourceLayer => "source-layer",
             Self::HashProbe => "hash-probe",
             Self::FreeSpaceState => "free-space-state",
+            Self::SurfaceSupport => "surface-support",
         }
     }
 
@@ -1121,6 +1325,7 @@ impl NativeEnvironmentDepthDebugView {
             Self::SourceLayer => "source-layer",
             Self::HashProbe => "hash-probe",
             Self::FreeSpaceState => "free-space-state",
+            Self::SurfaceSupport => "surface-support",
         }
     }
 
@@ -1132,6 +1337,7 @@ impl NativeEnvironmentDepthDebugView {
             Self::SourceLayer => 3.0,
             Self::HashProbe => 4.0,
             Self::FreeSpaceState => 5.0,
+            Self::SurfaceSupport => 0.0,
         }
     }
 }
@@ -1870,7 +2076,9 @@ mod tests {
         NativeCameraYcbcrMode, NativeEnvironmentDepthDebugView,
         NativeEnvironmentDepthDepthUnitsPolicy, NativeEnvironmentDepthLayerPolicy,
         NativeEnvironmentDepthMode, NativeEnvironmentDepthReferenceSpace,
-        NativeEnvironmentDepthSource, NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
+        NativeEnvironmentDepthSource, NativeEnvironmentDepthSurfaceFreeSpaceDecay,
+        NativeEnvironmentDepthSurfaceModel, NativeEnvironmentDepthSurfaceNormalCoherence,
+        NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
         PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED,
         PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_READER_MAX_IMAGES,
         PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
@@ -1880,7 +2088,14 @@ mod tests {
         PROP_ENVIRONMENT_DEPTH_LAYER_POLICY, PROP_ENVIRONMENT_DEPTH_MODE,
         PROP_ENVIRONMENT_DEPTH_NEAR_M, PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY,
         PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE, PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS,
-        PROP_ENVIRONMENT_DEPTH_SOURCE, PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
+        PROP_ENVIRONMENT_DEPTH_SOURCE, PROP_ENVIRONMENT_DEPTH_SURFACE_MODEL,
+        PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MIN_CELLS,
+        PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY,
+        PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_NEIGHBORS,
+        PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_OBSERVATIONS,
+        PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_SOURCE_LAYERS,
+        PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE,
+        PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_RADIUS_CELLS, PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
         PROP_HAND_ANCHOR_PARTICLES_ENABLED, PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
@@ -2525,6 +2740,12 @@ mod tests {
                 "free-space-state",
                 5.0,
             ),
+            (
+                "surface-support",
+                NativeEnvironmentDepthDebugView::SurfaceSupport,
+                "surface-support",
+                0.0,
+            ),
         ];
         for (property_value, expected, marker, code) in cases {
             let options = options_from(&[(PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW, property_value)]);
@@ -2534,6 +2755,70 @@ mod tests {
             assert_eq!(debug_view.particle_debug_color_mode(), marker);
             assert_eq!(debug_view.particle_debug_color_code(), code);
         }
+    }
+
+    #[test]
+    fn environment_depth_surface_support_settings_are_non_enforcing_markers() {
+        let options = options_from(&[
+            (PROP_ENVIRONMENT_DEPTH_SURFACE_MODEL, "hybrid"),
+            (PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_RADIUS_CELLS, "2"),
+            (PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_NEIGHBORS, "4"),
+            (PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_OBSERVATIONS, "3"),
+            (
+                PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_SOURCE_LAYERS,
+                "1",
+            ),
+            (
+                PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MIN_CELLS,
+                "16",
+            ),
+            (
+                PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE,
+                "loose",
+            ),
+            (
+                PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY,
+                "hard",
+            ),
+            (PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW, "surface-support"),
+        ]);
+        let settings = options.environment_depth_settings;
+
+        assert_eq!(
+            settings.surface_model,
+            NativeEnvironmentDepthSurfaceModel::Hybrid
+        );
+        assert_eq!(settings.surface_support_radius_cells, 2);
+        assert_eq!(settings.surface_support_min_neighbors, 4);
+        assert_eq!(settings.surface_support_min_observations, 3);
+        assert_eq!(settings.surface_support_min_source_layers, 1);
+        assert_eq!(settings.surface_support_component_min_cells, 16);
+        assert_eq!(
+            settings.surface_support_normal_coherence,
+            NativeEnvironmentDepthSurfaceNormalCoherence::Loose
+        );
+        assert_eq!(
+            settings.surface_support_free_space_decay,
+            NativeEnvironmentDepthSurfaceFreeSpaceDecay::Hard
+        );
+        assert_eq!(
+            settings.debug_view,
+            NativeEnvironmentDepthDebugView::SurfaceSupport
+        );
+        assert!(settings.surface_support_requested());
+
+        let fields = settings.marker_fields();
+        assert!(fields.contains("environmentDepthSurfaceModel=hybrid"));
+        assert!(fields.contains("environmentDepthSurfaceSupportRequested=true"));
+        assert!(fields.contains("environmentDepthSurfaceSupportEnforced=false"));
+        assert!(fields.contains("environmentDepthSurfaceSupportMode=hybrid"));
+        assert!(fields.contains("environmentDepthSurfaceSupportRadiusCells=2"));
+        assert!(fields.contains("environmentDepthSurfaceMinNeighborCount=4"));
+        assert!(fields.contains("environmentDepthSurfaceMinObservationCount=3"));
+        assert!(fields.contains("environmentDepthSurfaceComponentMinCells=16"));
+        assert!(fields.contains("environmentDepthSurfaceNormalCoherence=loose"));
+        assert!(fields.contains("environmentDepthSurfaceFreeSpaceDecay=hard"));
+        assert!(fields.contains("environmentDepthSurfaceSupportStatus=pending-gpu-support-pass"));
     }
 
     #[test]

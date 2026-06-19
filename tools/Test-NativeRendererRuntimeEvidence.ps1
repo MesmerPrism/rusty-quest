@@ -742,6 +742,21 @@ if ($RequireEnvironmentDepthParticles) {
         "environmentDepthInvalidSamplePolicy=preserve-existing-cells",
         "environmentDepthFreeSpaceCorrection=confidence-gated-visible-free-space-ray-clear",
         "environmentDepthFreeSpaceRangePolicy=near-plus-cell-step-cap",
+        "environmentDepthSurfaceModel=",
+        "environmentDepthSurfaceSupportRequested=",
+        "environmentDepthSurfaceSupportEnforced=false",
+        "environmentDepthSurfaceSupportMode=",
+        "environmentDepthSurfaceSupportRadiusCells=",
+        "environmentDepthSurfaceMinNeighborCount=",
+        "environmentDepthSurfaceMinObservationCount=",
+        "environmentDepthSurfaceMinSourceLayerCount=",
+        "environmentDepthSurfaceComponentMinCells=",
+        "environmentDepthSurfaceNormalCoherence=",
+        "environmentDepthSurfaceFreeSpaceDecay=",
+        "environmentDepthSurfaceSupportedCells=",
+        "environmentDepthSurfaceRejectedIsolatedCells=",
+        "environmentDepthSurfaceLargestComponentCells=",
+        "environmentDepthSurfaceSupportStatus=",
         "environmentDepthConfidenceFilter=edge-aware-4tap-discontinuity-isolated-reject-v1",
         "environmentDepthSceneConfidenceThreshold=0.580",
         "environmentDepthFreeSpaceConfidenceThreshold=0.780",
@@ -776,6 +791,28 @@ if ($RequireEnvironmentDepthParticles) {
     Assert-True ($particleFrameAgeMs -ge 0.0) "environment-depth-particles frame age must be nonnegative."
     $particleDebugColorMode = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthParticleDebugColorMode"
     Assert-True (-not [string]::IsNullOrWhiteSpace($particleDebugColorMode)) "environment-depth-particles marker is missing particle debug color mode."
+    $surfaceModel = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceModel"
+    Assert-True (-not [string]::IsNullOrWhiteSpace($surfaceModel)) "environment-depth-particles marker is missing surface model."
+    $surfaceSupportRequested = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSupportRequested"
+    Assert-True (@("true", "false") -contains $surfaceSupportRequested) "environment-depth-particles marker has invalid surface support requested value: $surfaceSupportRequested"
+    $surfaceSupportMode = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSupportMode"
+    Assert-True (-not [string]::IsNullOrWhiteSpace($surfaceSupportMode)) "environment-depth-particles marker is missing surface support mode."
+    $surfaceSupportStatus = Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSupportStatus"
+    Assert-True (@("disabled", "pending-gpu-support-pass") -contains $surfaceSupportStatus) "environment-depth-particles marker has invalid surface support status: $surfaceSupportStatus"
+    $surfaceSupportRadiusCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSupportRadiusCells"
+    $surfaceSupportMinNeighbors = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceMinNeighborCount"
+    $surfaceSupportMinObservations = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceMinObservationCount"
+    $surfaceSupportMinSourceLayers = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceMinSourceLayerCount"
+    $surfaceSupportComponentMinCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceComponentMinCells"
+    $surfaceSupportedCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceSupportedCells"
+    $surfaceRejectedIsolatedCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceRejectedIsolatedCells"
+    $surfaceLargestComponentCells = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthSurfaceLargestComponentCells"
+    Assert-True ($surfaceSupportRadiusCells -ge 1) "environment-depth-particles surface support radius must be positive."
+    Assert-True ($surfaceSupportMinNeighbors -ge 0) "environment-depth-particles surface support min-neighbor count is negative."
+    Assert-True ($surfaceSupportMinObservations -ge 1) "environment-depth-particles surface support min-observation count must be positive."
+    Assert-True ($surfaceSupportMinSourceLayers -ge 1) "environment-depth-particles surface support min-source-layer count must be positive."
+    Assert-True ($surfaceSupportComponentMinCells -ge 1) "environment-depth-particles surface support component-min-cells must be positive."
+    Assert-True ($surfaceSupportedCells -ge 0 -and $surfaceRejectedIsolatedCells -ge 0 -and $surfaceLargestComponentCells -ge 0) "environment-depth-particles surface support counters must be nonnegative."
 
     $particleCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthParticleCount"
     Assert-True ($particleCount -gt 0) "environment-depth-particles marker reports no particles."
@@ -846,6 +883,18 @@ if ($RequireEnvironmentDepthParticles) {
     $summary.environment_depth_particle_acquire_to_render_ms = $particleAcquireToRenderMs
     $summary.environment_depth_particle_frame_age_ms = $particleFrameAgeMs
     $summary.environment_depth_particle_debug_color_mode = $particleDebugColorMode
+    $summary.environment_depth_surface_model = $surfaceModel
+    $summary.environment_depth_surface_support_requested = $surfaceSupportRequested
+    $summary.environment_depth_surface_support_mode = $surfaceSupportMode
+    $summary.environment_depth_surface_support_status = $surfaceSupportStatus
+    $summary.environment_depth_surface_support_radius_cells = $surfaceSupportRadiusCells
+    $summary.environment_depth_surface_support_min_neighbors = $surfaceSupportMinNeighbors
+    $summary.environment_depth_surface_support_min_observations = $surfaceSupportMinObservations
+    $summary.environment_depth_surface_support_min_source_layers = $surfaceSupportMinSourceLayers
+    $summary.environment_depth_surface_support_component_min_cells = $surfaceSupportComponentMinCells
+    $summary.environment_depth_surface_supported_cells = $surfaceSupportedCells
+    $summary.environment_depth_surface_rejected_isolated_cells = $surfaceRejectedIsolatedCells
+    $summary.environment_depth_surface_largest_component_cells = $surfaceLargestComponentCells
     $summary.environment_depth_particle_count = $particleCount
     $summary.environment_depth_particle_source_depth_samples = $sourceDepthSamples
     $summary.environment_depth_head_motion_samples = $headMotionSamples

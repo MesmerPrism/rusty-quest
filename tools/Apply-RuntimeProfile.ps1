@@ -24,6 +24,14 @@ $EnvironmentDepthSampleStridePixelsProperty = "debug.rustyquest.native_renderer.
 $EnvironmentDepthNearMProperty = "debug.rustyquest.native_renderer.environment_depth.near_m"
 $EnvironmentDepthFarMProperty = "debug.rustyquest.native_renderer.environment_depth.far_m"
 $EnvironmentDepthHighRateJsonPayloadProperty = "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload"
+$EnvironmentDepthSurfaceModelProperty = "debug.rustyquest.native_renderer.environment_depth.surface_model"
+$EnvironmentDepthSurfaceSupportRadiusCellsProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.radius_cells"
+$EnvironmentDepthSurfaceSupportMinNeighborsProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.min_neighbors"
+$EnvironmentDepthSurfaceSupportMinObservationsProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.min_observations"
+$EnvironmentDepthSurfaceSupportMinSourceLayersProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.min_source_layers"
+$EnvironmentDepthSurfaceSupportComponentMinCellsProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.component_min_cells"
+$EnvironmentDepthSurfaceSupportNormalCoherenceProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.normal_coherence"
+$EnvironmentDepthSurfaceSupportFreeSpaceDecayProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.free_space_decay"
 
 function ConvertTo-AndroidShellSingleQuoted {
     param(
@@ -154,7 +162,11 @@ function Assert-EnvironmentDepthProperty {
                 "free-space-state",
                 "free-space",
                 "retired-state",
-                "debug-free-space-state"
+                "debug-free-space-state",
+                "surface-support",
+                "surface",
+                "support",
+                "debug-surface-support"
             ) -notcontains $normalized) {
                 throw "Environment depth debug_view is not supported: $Value"
             }
@@ -189,6 +201,44 @@ function Assert-EnvironmentDepthProperty {
         $EnvironmentDepthHighRateJsonPayloadProperty {
             if (@("0", "false", "no", "off") -notcontains $normalized) {
                 throw "Environment depth high_rate_json_payload must be false"
+            }
+            return
+        }
+        $EnvironmentDepthSurfaceModelProperty {
+            if (@("particles", "particle-cloud", "legacy-particles", "local-surfels", "local-surfels-candidates", "local", "global-surfaces", "confirmed-surfaces", "global", "hybrid", "hybrid-surfaces", "local-and-global") -notcontains $normalized) {
+                throw "Environment depth surface_model is not supported: $Value"
+            }
+            return
+        }
+        $EnvironmentDepthSurfaceSupportRadiusCellsProperty {
+            Assert-EnvironmentDepthUInt -Name $Name -Value $Value -Min 1 -Max 8
+            return
+        }
+        $EnvironmentDepthSurfaceSupportMinNeighborsProperty {
+            Assert-EnvironmentDepthUInt -Name $Name -Value $Value -Min 0 -Max 26
+            return
+        }
+        $EnvironmentDepthSurfaceSupportMinObservationsProperty {
+            Assert-EnvironmentDepthUInt -Name $Name -Value $Value -Min 1 -Max 64
+            return
+        }
+        $EnvironmentDepthSurfaceSupportMinSourceLayersProperty {
+            Assert-EnvironmentDepthUInt -Name $Name -Value $Value -Min 1 -Max 2
+            return
+        }
+        $EnvironmentDepthSurfaceSupportComponentMinCellsProperty {
+            Assert-EnvironmentDepthUInt -Name $Name -Value $Value -Min 1 -Max 4096
+            return
+        }
+        $EnvironmentDepthSurfaceSupportNormalCoherenceProperty {
+            if (@("off", "loose", "low", "strict", "high") -notcontains $normalized) {
+                throw "Environment depth surface_support.normal_coherence is not supported: $Value"
+            }
+            return
+        }
+        $EnvironmentDepthSurfaceSupportFreeSpaceDecayProperty {
+            if (@("soft", "hard", "immediate") -notcontains $normalized) {
+                throw "Environment depth surface_support.free_space_decay is not supported: $Value"
             }
             return
         }

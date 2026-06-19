@@ -206,6 +206,18 @@ The Iteration 8 acceptance matrix is captured as dedicated dry-run profiles:
 real Meta scene-particle-map path while varying exactly one source-view,
 debug-view, reference-space, capacity, stride, or
 `xrSetEnvironmentDepthHandRemovalMETA` policy.
+The source-side surface-support profiles are
+`quest-native-renderer-envdepth-local-surfels.profile.json`,
+`quest-native-renderer-envdepth-global-surfaces.profile.json`, and
+`quest-native-renderer-envdepth-hybrid-surfaces.profile.json`. They add
+validated `environment_depth.surface_model` and
+`environment_depth.surface_support.*` properties plus
+`environmentDepthSurfaceSupport*` markers for local candidates, connected
+global surfaces, and hybrid mode. The current renderer reports
+`environmentDepthSurfaceSupportEnforced=false` and
+`environmentDepthSurfaceSupportStatus=pending-gpu-support-pass` whenever a
+surface-support model is requested; these profiles prepare the control plane
+and evidence contract, but do not yet hide or filter unsupported particles.
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-graft-only.profile.json`
 keeps native passthrough focused on graft instances only, while
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-hands-and-grafts.profile.json`
