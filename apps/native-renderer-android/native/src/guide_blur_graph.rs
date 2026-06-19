@@ -7,11 +7,9 @@ use ash::vk;
 use crate::{
     camera_projection::PreparedCameraProjection,
     camera_projection_metadata::{CameraProjectionMetadata, TargetRect},
-    native_renderer_options::NativeProjectionBorderStretchSettings,
+    native_renderer_options::{NativeGuideGraphResolution, NativeProjectionBorderStretchSettings},
 };
 
-const GUIDE_WIDTH: u32 = 384;
-const GUIDE_HEIGHT: u32 = 384;
 const GUIDE_EYE_COUNT: usize = 2;
 const GUIDE_BLUR_TAPS_PER_AXIS: u32 = 5;
 
@@ -21,6 +19,7 @@ pub(crate) struct GuideBlurGraphFrameStats {
     pub(crate) rendered: bool,
     pub(crate) cache_hit: bool,
     pub(crate) blur_enabled: bool,
+    pub(crate) resolution: NativeGuideGraphResolution,
     pub(crate) left_source_frame: u64,
     pub(crate) right_source_frame: u64,
     pub(crate) left_hardware_buffer_id: u64,
@@ -31,36 +30,50 @@ pub(crate) struct GuideBlurGraphFrameStats {
 
 impl GuideBlurGraphFrameStats {
     pub(crate) fn unavailable() -> Self {
-        Self::default()
+        Self::unavailable_with_options(false, NativeGuideGraphResolution::Low384)
     }
 
     pub(crate) fn unavailable_with_blur(blur_enabled: bool) -> Self {
+        Self::unavailable_with_options(blur_enabled, NativeGuideGraphResolution::Low384)
+    }
+
+    pub(crate) fn unavailable_with_options(
+        blur_enabled: bool,
+        resolution: NativeGuideGraphResolution,
+    ) -> Self {
         Self {
             blur_enabled,
+            resolution,
             ..Self::default()
         }
     }
 
     pub(crate) fn marker_fields(&self) -> String {
-        let path = if self.blur_enabled {
-            "low-resolution-two-phase-5tap-blur"
-        } else {
-            "low-resolution-downsample-no-blur"
-        };
+        let path = format!(
+            "{}-{}",
+            self.resolution.path_prefix(),
+            if self.blur_enabled {
+                "two-phase-5tap-blur"
+            } else {
+                "downsample-no-blur"
+            }
+        );
         let passes = if self.blur_enabled {
             "downsample,horizontal-5tap,vertical-5tap"
         } else {
             "downsample"
         };
+        let [width, height] = self.resolution.extent();
         format!(
-            "guideGraphReady={} guideGraphRendered={} guideGraphCacheHit={} guideGraphBlurEnabled={} guideGraphPath={} guideGraphDownsampleResolution={}x{} guideGraphHorizontalTaps={} guideGraphVerticalTaps={} guideGraphPasses={} guideGraphSource=imported-camera-hwb-descriptor guideGraphFinalProjectionSource=guide-texture guideGraphFinalExternalHwbSamples={} guideTextureSamples={} guideGraphRenderCount={} guideGraphCacheHits={} guideGraphLeftSourceFrame={} guideGraphRightSourceFrame={} guideGraphLeftHardwareBufferId={} guideGraphRightHardwareBufferId={}",
+            "guideGraphReady={} guideGraphRendered={} guideGraphCacheHit={} guideGraphBlurEnabled={} guideGraphResolutionPolicy={} guideGraphPath={} guideGraphDownsampleResolution={}x{} guideGraphHorizontalTaps={} guideGraphVerticalTaps={} guideGraphPasses={} guideGraphSource=imported-camera-hwb-descriptor guideGraphFinalProjectionSource=guide-texture guideGraphFinalExternalHwbSamples={} guideTextureSamples={} guideGraphRenderCount={} guideGraphCacheHits={} guideGraphLeftSourceFrame={} guideGraphRightSourceFrame={} guideGraphLeftHardwareBufferId={} guideGraphRightHardwareBufferId={}",
             self.ready,
             self.rendered,
             self.cache_hit,
             self.blur_enabled,
+            self.resolution.marker_value(),
             path,
-            GUIDE_WIDTH,
-            GUIDE_HEIGHT,
+            width,
+            height,
             if self.blur_enabled {
                 GUIDE_BLUR_TAPS_PER_AXIS
             } else {
@@ -107,6 +120,7 @@ pub(crate) struct GuideBlurGraphRenderer {
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     color_format: vk::Format,
     projection_render_pass: vk::RenderPass,
+    resolution: NativeGuideGraphResolution,
     resources: Option<GuideBlurGraphResources>,
     last_frame_key: Option<GuideFrameKey>,
     render_count: u64,
@@ -118,11 +132,13 @@ impl GuideBlurGraphRenderer {
         memory_properties: vk::PhysicalDeviceMemoryProperties,
         color_format: vk::Format,
         projection_render_pass: vk::RenderPass,
+        resolution: NativeGuideGraphResolution,
     ) -> Self {
         Self {
             memory_properties,
             color_format,
             projection_render_pass,
+            resolution,
             resources: None,
             last_frame_key: None,
             render_count: 0,
@@ -155,17 +171,19 @@ impl GuideBlurGraphRenderer {
             .resources
             .as_ref()
             .ok_or_else(|| "guide blur graph resources were not initialized".to_string())?;
+        let extent = guide_extent(self.resolution);
+        let [width, height] = self.resolution.extent();
         let viewport = [vk::Viewport {
             x: 0.0,
             y: 0.0,
-            width: GUIDE_WIDTH as f32,
-            height: GUIDE_HEIGHT as f32,
+            width: width as f32,
+            height: height as f32,
             min_depth: 0.0,
             max_depth: 1.0,
         }];
         let scissor = [vk::Rect2D {
             offset: vk::Offset2D { x: 0, y: 0 },
-            extent: guide_extent(),
+            extent,
         }];
         for eye_index in 0..GUIDE_EYE_COUNT {
             let eye = &resources.eyes[eye_index];
@@ -174,6 +192,7 @@ impl GuideBlurGraphRenderer {
                 cmd,
                 resources.render_pass,
                 eye.downsample.framebuffer,
+                extent,
             );
             device.cmd_set_viewport(cmd, 0, &viewport);
             device.cmd_set_scissor(cmd, 0, &scissor);
@@ -194,8 +213,8 @@ impl GuideBlurGraphRenderer {
                 params: [
                     eye_index as f32,
                     projection_metadata.source_sample_y_flip,
-                    GUIDE_WIDTH as f32,
-                    GUIDE_HEIGHT as f32,
+                    width as f32,
+                    height as f32,
                 ],
             };
             push_fragment_constants(
@@ -216,7 +235,7 @@ impl GuideBlurGraphRenderer {
                     eye.source_descriptor_set,
                     eye.horizontal.framebuffer,
                     eye.horizontal.image,
-                    [1.0 / GUIDE_WIDTH as f32, 0.0, 0.0, 0.0],
+                    [1.0 / width as f32, 0.0, 0.0, 0.0],
                 );
                 self.record_blur_axis(
                     device,
@@ -225,7 +244,7 @@ impl GuideBlurGraphRenderer {
                     eye.ping_descriptor_set,
                     eye.vertical.framebuffer,
                     eye.vertical.image,
-                    [0.0, 1.0 / GUIDE_HEIGHT as f32, 1.0, 0.0],
+                    [0.0, 1.0 / height as f32, 1.0, 0.0],
                 );
             }
         }
@@ -320,18 +339,20 @@ impl GuideBlurGraphRenderer {
         image: vk::Image,
         texel_step: [f32; 4],
     ) {
-        begin_guide_pass(device, cmd, resources.render_pass, framebuffer);
+        let extent = guide_extent(self.resolution);
+        let [width, height] = self.resolution.extent();
+        begin_guide_pass(device, cmd, resources.render_pass, framebuffer, extent);
         let viewport = [vk::Viewport {
             x: 0.0,
             y: 0.0,
-            width: GUIDE_WIDTH as f32,
-            height: GUIDE_HEIGHT as f32,
+            width: width as f32,
+            height: height as f32,
             min_depth: 0.0,
             max_depth: 1.0,
         }];
         let scissor = [vk::Rect2D {
             offset: vk::Offset2D { x: 0, y: 0 },
-            extent: guide_extent(),
+            extent,
         }];
         device.cmd_set_viewport(cmd, 0, &viewport);
         device.cmd_set_scissor(cmd, 0, &scissor);
@@ -367,7 +388,10 @@ impl GuideBlurGraphRenderer {
         if self
             .resources
             .as_ref()
-            .map(|resources| resources.camera_descriptor_set_layout == camera_descriptor_set_layout)
+            .map(|resources| {
+                resources.camera_descriptor_set_layout == camera_descriptor_set_layout
+                    && resources.resolution == self.resolution
+            })
             .unwrap_or(false)
         {
             return Ok(());
@@ -381,13 +405,19 @@ impl GuideBlurGraphRenderer {
             self.color_format,
             self.projection_render_pass,
             camera_descriptor_set_layout,
+            self.resolution,
         )?);
         self.last_frame_key = None;
+        let [width, height] = self.resolution.extent();
         crate::marker(
             "guide-blur-graph",
             format!(
-                "status=created guideGraphSupportedPaths=low-resolution-downsample-no-blur,low-resolution-two-phase-5tap-blur guideGraphDefaultBlurEnabled=true guideGraphDownsampleResolution={}x{} guideGraphHorizontalTaps={} guideGraphVerticalTaps={} guideGraphFinalProjectionSource=guide-texture cameraProjectionPath=metadata-target-guide-texture-final finalExternalHwbSamples=0 guideTextureSamples=1",
-                GUIDE_WIDTH, GUIDE_HEIGHT, GUIDE_BLUR_TAPS_PER_AXIS, GUIDE_BLUR_TAPS_PER_AXIS
+                "status=created guideGraphSupportedPaths=low-resolution-downsample-no-blur,low-resolution-two-phase-5tap-blur,camera-resolution-downsample-no-blur,camera-resolution-two-phase-5tap-blur guideGraphDefaultBlurEnabled=true guideGraphResolutionPolicy={} guideGraphDownsampleResolution={}x{} guideGraphHorizontalTaps={} guideGraphVerticalTaps={} guideGraphFinalProjectionSource=guide-texture cameraProjectionPath=metadata-target-guide-texture-final finalExternalHwbSamples=0 guideTextureSamples=1",
+                self.resolution.marker_value(),
+                width,
+                height,
+                GUIDE_BLUR_TAPS_PER_AXIS,
+                GUIDE_BLUR_TAPS_PER_AXIS
             ),
         );
         Ok(())
@@ -405,6 +435,7 @@ impl GuideBlurGraphRenderer {
             rendered,
             cache_hit,
             blur_enabled,
+            resolution: self.resolution,
             left_source_frame: key.left_source_frame,
             right_source_frame: key.right_source_frame,
             left_hardware_buffer_id: key.left_hardware_buffer_id,
@@ -417,6 +448,7 @@ impl GuideBlurGraphRenderer {
 
 struct GuideBlurGraphResources {
     camera_descriptor_set_layout: vk::DescriptorSetLayout,
+    resolution: NativeGuideGraphResolution,
     render_pass: vk::RenderPass,
     sampler: vk::Sampler,
     sample_descriptor_set_layout: vk::DescriptorSetLayout,
@@ -437,6 +469,7 @@ impl GuideBlurGraphResources {
         color_format: vk::Format,
         projection_render_pass: vk::RenderPass,
         camera_descriptor_set_layout: vk::DescriptorSetLayout,
+        resolution: NativeGuideGraphResolution,
     ) -> Result<Self, String> {
         let render_pass = create_guide_render_pass(device, color_format)?;
         let sampler = match device.create_sampler(
@@ -613,6 +646,7 @@ impl GuideBlurGraphResources {
                 sample_descriptor_set_layout,
                 sampler,
                 eye_index,
+                resolution,
             ) {
                 Ok(eye) => eyes.push(eye),
                 Err(error) => {
@@ -639,6 +673,7 @@ impl GuideBlurGraphResources {
 
         Ok(Self {
             camera_descriptor_set_layout,
+            resolution,
             render_pass,
             sampler,
             sample_descriptor_set_layout,
@@ -690,12 +725,15 @@ impl GuideEyeResources {
         descriptor_set_layout: vk::DescriptorSetLayout,
         sampler: vk::Sampler,
         eye_index: usize,
+        resolution: NativeGuideGraphResolution,
     ) -> Result<Self, String> {
+        let extent = guide_extent(resolution);
         let downsample = GuideImage::new(
             device,
             memory_properties,
             color_format,
             render_pass,
+            extent,
             &format!("guide eye {eye_index} downsample"),
         )?;
         let horizontal = match GuideImage::new(
@@ -703,6 +741,7 @@ impl GuideEyeResources {
             memory_properties,
             color_format,
             render_pass,
+            extent,
             &format!("guide eye {eye_index} horizontal"),
         ) {
             Ok(image) => image,
@@ -716,6 +755,7 @@ impl GuideEyeResources {
             memory_properties,
             color_format,
             render_pass,
+            extent,
             &format!("guide eye {eye_index} vertical"),
         ) {
             Ok(image) => image,
@@ -807,6 +847,7 @@ impl GuideImage {
         memory_properties: &vk::PhysicalDeviceMemoryProperties,
         format: vk::Format,
         render_pass: vk::RenderPass,
+        extent: vk::Extent2D,
         label: &str,
     ) -> Result<Self, String> {
         let image = device
@@ -815,8 +856,8 @@ impl GuideImage {
                     .image_type(vk::ImageType::TYPE_2D)
                     .format(format)
                     .extent(vk::Extent3D {
-                        width: GUIDE_WIDTH,
-                        height: GUIDE_HEIGHT,
+                        width: extent.width,
+                        height: extent.height,
                         depth: 1,
                     })
                     .mip_levels(1)
@@ -877,8 +918,8 @@ impl GuideImage {
             &vk::FramebufferCreateInfo::default()
                 .render_pass(render_pass)
                 .attachments(&[view])
-                .width(GUIDE_WIDTH)
-                .height(GUIDE_HEIGHT)
+                .width(extent.width)
+                .height(extent.height)
                 .layers(1),
             None,
         ) {
@@ -931,6 +972,7 @@ unsafe fn begin_guide_pass(
     cmd: vk::CommandBuffer,
     render_pass: vk::RenderPass,
     framebuffer: vk::Framebuffer,
+    extent: vk::Extent2D,
 ) {
     let clear_values = [vk::ClearValue {
         color: vk::ClearColorValue {
@@ -944,7 +986,7 @@ unsafe fn begin_guide_pass(
             .framebuffer(framebuffer)
             .render_area(vk::Rect2D {
                 offset: vk::Offset2D { x: 0, y: 0 },
-                extent: guide_extent(),
+                extent,
             })
             .clear_values(&clear_values),
         vk::SubpassContents::INLINE,
@@ -1199,11 +1241,9 @@ unsafe fn create_graphics_pipeline(
         .map_err(|(_, error)| format!("create {label} graphics pipeline: {error}"))
 }
 
-fn guide_extent() -> vk::Extent2D {
-    vk::Extent2D {
-        width: GUIDE_WIDTH,
-        height: GUIDE_HEIGHT,
-    }
+fn guide_extent(resolution: NativeGuideGraphResolution) -> vk::Extent2D {
+    let [width, height] = resolution.extent();
+    vk::Extent2D { width, height }
 }
 
 fn color_subresource_range() -> vk::ImageSubresourceRange {

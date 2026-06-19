@@ -6,7 +6,15 @@
     "debug.rustyquest.native_renderer.render.mode",
     "debug.rustyquest.native_renderer.camera.output",
     "debug.rustyquest.native_renderer.guide.blur.enabled",
+    "debug.rustyquest.native_renderer.guide.resolution",
+    "debug.rustyquest.native_renderer.camera.ycbcr.mode",
+    "debug.rustyquest.native_renderer.camera.resolution",
+    "debug.rustyquest.native_renderer.camera.reader_max_images",
+    "debug.rustyquest.native_renderer.camera.quality_profile",
+    "debug.rustyquest.native_renderer.camera.sync_mode",
     "debug.rustyquest.native_renderer.camera.luma_diagnostic.enabled",
+    "debug.rustyquest.native_renderer.camera.stereo_pairing",
+    "debug.rustyquest.native_renderer.swapchain.color_format",
     "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
     "debug.rustyquest.native_renderer.hand_mesh.input.source",
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
@@ -68,9 +76,49 @@
       "source_setting_id": "native_renderer.guide.blur.enabled"
     },
     {
+      "name": "debug.rustyquest.native_renderer.guide.resolution",
+      "value": "camera-native",
+      "source_setting_id": "native_renderer.guide.resolution"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.ycbcr.mode",
+      "value": "forced-bt601-narrow",
+      "source_setting_id": "native_renderer.camera.ycbcr.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.resolution",
+      "value": "1280x1280",
+      "source_setting_id": "native_renderer.camera.resolution"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.reader_max_images",
+      "value": "4",
+      "source_setting_id": "native_renderer.camera.reader_max_images"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.quality_profile",
+      "value": "direct-baseline",
+      "source_setting_id": "native_renderer.camera.quality_profile"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.sync_mode",
+      "value": "early-delete-ahb-retained",
+      "source_setting_id": "native_renderer.camera.sync_mode"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.camera.luma_diagnostic.enabled",
       "value": "false",
       "source_setting_id": "native_renderer.camera.luma_diagnostic.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.stereo_pairing",
+      "value": "latest-latest",
+      "source_setting_id": "native_renderer.camera.stereo_pairing"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.swapchain.color_format",
+      "value": "unorm",
+      "source_setting_id": "native_renderer.swapchain.color_format"
     },
     {
       "name": "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
@@ -294,7 +342,20 @@
     "RUSTY_QUEST_NATIVE_RENDERER channel=camera-output",
     "cameraOutputMode=guide-public",
     "guideGraphBlurEnabled=false",
-    "guideGraphPath=low-resolution-downsample-no-blur",
+    "guideGraphResolutionPolicy=camera-1280",
+    "guideGraphPath=camera-resolution-downsample-no-blur",
+    "guideGraphDownsampleResolution=1280x1280",
+    "cameraYcbcrMode=forced-bt601-narrow",
+    "conversionMode=forced-bt601-limited-cpuyuv-reference",
+    "cameraResolutionProfile=1280x1280",
+    "readerMaxImages=4",
+    "cameraQualityProfile=direct-baseline",
+    "cameraSyncRequested=early-delete-ahb-retained",
+    "cameraSyncActive=early-delete-ahb-retained",
+    "stereoPairingPolicy=latest-latest",
+    "effectiveYcbcrModel=YCBCR_601",
+    "effectiveYcbcrRange=ITU_NARROW",
+    "swapchainColorFormatMode=unorm",
     "processingLayer=peripheral-stretch",
     "guideProjectionCoverage=full-eye-peripheral-stretch",
     "compactHandInputSourceMode=disabled",
@@ -308,6 +369,11 @@
     "startupDefaultsAuthority=runtime-profile",
     "pmbSourceAuthority=hostess-manifold",
     "breathBridgeMode=manifold-state",
+    "nativeControllerPosePublisherEnabled=true",
+    "stream.motion.object_pose",
+    "provider.native_renderer.controller_pose",
+    "sourceAgnostic=true",
+    "controllerSpecificEstimator=false",
     "projectionTargetScaleDriver=pmb",
     "projectionTargetPmbAvailable=false",
     "projectionTargetJoystickControlsEnabled=true",

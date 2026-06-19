@@ -133,15 +133,21 @@ fn run_bridge_thread(
                         subscription_count(settings.breath_bridge_mode)
                     ),
                 );
-                while let Ok(Some(message)) = socket.recv_json(Duration::from_millis(500)) {
-                    if let Some(input) = parse_manifold_breath_event(
-                        &message,
-                        &settings.breath_state_stream,
-                        &settings.breath_value_stream,
-                    ) {
-                        if let Ok(mut latest) = latest_input.lock() {
-                            *latest = Some(input);
+                loop {
+                    match socket.recv_json(Duration::from_millis(500)) {
+                        Ok(Some(message)) => {
+                            if let Some(input) = parse_manifold_breath_event(
+                                &message,
+                                &settings.breath_state_stream,
+                                &settings.breath_value_stream,
+                            ) {
+                                if let Ok(mut latest) = latest_input.lock() {
+                                    *latest = Some(input);
+                                }
+                            }
                         }
+                        Ok(None) => continue,
+                        Err(_) => break,
                     }
                 }
             }
@@ -208,40 +214,40 @@ pub(crate) fn parse_manifold_breath_event(
     state_stream_id: &str,
     value_stream_id: &str,
 ) -> Option<ProjectionTargetInput> {
-    let payload = event.get("payload").and_then(Value::as_object);
-    let stream_id = event
-        .get("stream")
-        .or_else(|| event.get("stream_id"))
+    if event
+        .get("type")
         .and_then(Value::as_str)
-        .or_else(|| {
-            payload.and_then(|payload| {
-                payload
-                    .get("stream_id")
-                    .or_else(|| payload.get("stream"))
-                    .and_then(Value::as_str)
-            })
-        })?;
-    let sequence_id = event
-        .get("sequence_id")
-        .and_then(Value::as_u64)
-        .or_else(|| payload.and_then(|payload| payload.get("sequence_id").and_then(Value::as_u64)));
+        .is_some_and(|message_type| message_type != "stream_event")
+    {
+        return None;
+    }
+    let event_object = event.as_object()?;
+    let payload = event.get("payload").and_then(Value::as_object);
+    let data = event.get("data").and_then(Value::as_object);
+    let value = event.get("value").and_then(Value::as_object);
+    let sample = event.get("sample").and_then(Value::as_object);
+    let nested_event = event.get("event").and_then(Value::as_object);
+    let candidates = [
+        Some(event_object),
+        payload,
+        data,
+        value,
+        sample,
+        nested_event,
+    ];
+    let stream_id = string_field(&candidates, &["stream", "stream_id"])?;
+    let sequence_id = u64_field(&candidates, &["sequence_id"]);
     if stream_id == state_stream_id {
-        let state = payload
-            .and_then(|payload| payload.get("state").or_else(|| payload.get("phase")))
-            .and_then(Value::as_str)
-            .map(ProjectionTargetBreathState::from_text)
-            .unwrap_or(ProjectionTargetBreathState::Unknown);
+        let state = string_field(
+            &candidates,
+            &["state", "phase", "breath_state", "breathState"],
+        )
+        .map(ProjectionTargetBreathState::from_text)
+        .unwrap_or(ProjectionTargetBreathState::Unknown);
         return Some(ProjectionTargetInput::BreathState { state, sequence_id });
     }
     if stream_id == value_stream_id {
-        let value01 = payload
-            .and_then(|payload| {
-                payload
-                    .get("value01")
-                    .or_else(|| payload.get("target01"))
-                    .or_else(|| payload.get("volume01"))
-            })
-            .and_then(Value::as_f64)
+        let value01 = f64_field(&candidates, &["value01", "target01", "volume01", "state01"])
             .unwrap_or(0.0) as f32;
         return Some(ProjectionTargetInput::BreathValue {
             value01,
@@ -249,6 +255,30 @@ pub(crate) fn parse_manifold_breath_event(
         });
     }
     None
+}
+
+fn string_field<'a>(
+    objects: &'a [Option<&'a serde_json::Map<String, Value>>],
+    keys: &[&str],
+) -> Option<&'a str> {
+    objects.iter().flatten().find_map(|object| {
+        keys.iter()
+            .find_map(|key| object.get(*key).and_then(Value::as_str))
+    })
+}
+
+fn u64_field(objects: &[Option<&serde_json::Map<String, Value>>], keys: &[&str]) -> Option<u64> {
+    objects.iter().flatten().find_map(|object| {
+        keys.iter()
+            .find_map(|key| object.get(*key).and_then(Value::as_u64))
+    })
+}
+
+fn f64_field(objects: &[Option<&serde_json::Map<String, Value>>], keys: &[&str]) -> Option<f64> {
+    objects.iter().flatten().find_map(|object| {
+        keys.iter()
+            .find_map(|key| object.get(*key).and_then(Value::as_f64))
+    })
 }
 
 #[derive(Debug)]
@@ -480,6 +510,46 @@ mod tests {
     }
 
     #[test]
+    fn parses_top_level_pmb_state_sample() {
+        let event = json!({
+            "type": "stream_event",
+            "stream_id": "stream.breath.state",
+            "sequence_id": 17,
+            "state": "bad_tracking",
+            "phase": "bad_tracking",
+            "tracking01": 0.0
+        });
+        let input =
+            parse_manifold_breath_event(&event, "stream.breath.state", "stream.breath.state.value")
+                .expect("state event parsed");
+        match input {
+            ProjectionTargetInput::BreathState { state, sequence_id } => {
+                assert_eq!(state, ProjectionTargetBreathState::BadTracking);
+                assert_eq!(sequence_id, Some(17));
+            }
+            _ => panic!("expected breath state input"),
+        }
+    }
+
+    #[test]
+    fn ignores_subscribe_ack_for_breath_state_stream() {
+        let event = json!({
+            "type": "command_ack",
+            "schema": "rusty.manifold.command.ack.v1",
+            "command": "subscribe",
+            "status": "subscribed",
+            "accepted": true,
+            "stream": "stream.breath.state"
+        });
+        assert!(parse_manifold_breath_event(
+            &event,
+            "stream.breath.state",
+            "stream.breath.state.value"
+        )
+        .is_none());
+    }
+
+    #[test]
     fn parses_processed_breath_value_event() {
         let event = json!({
             "type": "stream_event",
@@ -499,6 +569,32 @@ mod tests {
             } => {
                 assert!((value01 - 0.75).abs() < 0.000_001);
                 assert_eq!(sequence_id, Some(7));
+            }
+            _ => panic!("expected breath value input"),
+        }
+    }
+
+    #[test]
+    fn parses_nested_processed_breath_value_event_aliases() {
+        let event = json!({
+            "type": "stream_event",
+            "stream": "stream.breath.state.value",
+            "data": {
+                "sequence_id": 31,
+                "target01": 0.25,
+                "state": "exhale"
+            }
+        });
+        let input =
+            parse_manifold_breath_event(&event, "stream.breath.state", "stream.breath.state.value")
+                .expect("value event parsed");
+        match input {
+            ProjectionTargetInput::BreathValue {
+                value01,
+                sequence_id,
+            } => {
+                assert!((value01 - 0.25).abs() < 0.000_001);
+                assert_eq!(sequence_id, Some(31));
             }
             _ => panic!("expected breath value input"),
         }

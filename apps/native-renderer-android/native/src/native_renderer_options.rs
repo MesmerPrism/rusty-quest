@@ -9,6 +9,7 @@ pub(crate) const PROP_RENDER_MODE: &str = "debug.rustyquest.native_renderer.rend
 pub(crate) const PROP_CAMERA_OUTPUT_MODE: &str = "debug.rustyquest.native_renderer.camera.output";
 pub(crate) const PROP_GUIDE_BLUR_ENABLED: &str =
     "debug.rustyquest.native_renderer.guide.blur.enabled";
+pub(crate) const PROP_GUIDE_RESOLUTION: &str = "debug.rustyquest.native_renderer.guide.resolution";
 pub(crate) const PROP_CAMERA_YCBCR_MODE: &str =
     "debug.rustyquest.native_renderer.camera.ycbcr.mode";
 pub(crate) const PROP_CAMERA_RESOLUTION_PROFILE: &str =
@@ -340,6 +341,49 @@ impl NativeCameraOutputMode {
 
     pub(crate) fn direct_hwb_forced(self) -> bool {
         matches!(self, Self::DirectHwb)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeGuideGraphResolution {
+    Low384,
+    Camera1280,
+}
+
+impl Default for NativeGuideGraphResolution {
+    fn default() -> Self {
+        Self::Low384
+    }
+}
+
+impl NativeGuideGraphResolution {
+    pub(crate) fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "camera" | "camera-native" | "camera-sized" | "native-camera" | "1280"
+            | "1280x1280" => Self::Camera1280,
+            _ => Self::Low384,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::Low384 => "low-384",
+            Self::Camera1280 => "camera-1280",
+        }
+    }
+
+    pub(crate) fn extent(self) -> [u32; 2] {
+        match self {
+            Self::Low384 => [384, 384],
+            Self::Camera1280 => [1280, 1280],
+        }
+    }
+
+    pub(crate) fn path_prefix(self) -> &'static str {
+        match self {
+            Self::Low384 => "low-resolution",
+            Self::Camera1280 => "camera-resolution",
+        }
     }
 }
 
@@ -2184,6 +2228,7 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) render_mode: NativeRendererRenderMode,
     pub(crate) camera_output_mode: NativeCameraOutputMode,
     pub(crate) guide_blur_enabled: bool,
+    pub(crate) guide_graph_resolution: NativeGuideGraphResolution,
     pub(crate) camera_ycbcr_mode: NativeCameraYcbcrMode,
     pub(crate) camera_resolution_profile: NativeCameraResolutionProfile,
     pub(crate) camera_reader_max_images: u32,
@@ -2215,6 +2260,8 @@ impl NativeRendererRuntimeOptions {
         let camera_output_mode =
             NativeCameraOutputMode::from_property(lookup(PROP_CAMERA_OUTPUT_MODE));
         let guide_blur_enabled = bool_value(lookup(PROP_GUIDE_BLUR_ENABLED), true);
+        let guide_graph_resolution =
+            NativeGuideGraphResolution::from_property(lookup(PROP_GUIDE_RESOLUTION));
         let camera_ycbcr_mode =
             NativeCameraYcbcrMode::from_property(lookup(PROP_CAMERA_YCBCR_MODE));
         let camera_resolution_profile =
@@ -2270,6 +2317,7 @@ impl NativeRendererRuntimeOptions {
             render_mode,
             camera_output_mode,
             guide_blur_enabled,
+            guide_graph_resolution,
             camera_ycbcr_mode,
             camera_resolution_profile,
             camera_reader_max_images,
@@ -2395,18 +2443,19 @@ mod tests {
         NativeEnvironmentDepthMode, NativeEnvironmentDepthReferenceSpace,
         NativeEnvironmentDepthSource, NativeEnvironmentDepthSurfaceFreeSpaceDecay,
         NativeEnvironmentDepthSurfaceModel, NativeEnvironmentDepthSurfaceNormalCoherence,
-        NativeRendererRuntimeOptions, NativeStimulusVolumeCompositionMode,
-        NativeStimulusVolumeRenderTarget, NativeSwapchainColorFormatMode,
-        PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED,
-        PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_READER_MAX_IMAGES,
-        PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
-        PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL, PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW,
-        PROP_ENVIRONMENT_DEPTH_DEPTH_UNITS_POLICY, PROP_ENVIRONMENT_DEPTH_FAR_M,
-        PROP_ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED, PROP_ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD,
-        PROP_ENVIRONMENT_DEPTH_LAYER_POLICY, PROP_ENVIRONMENT_DEPTH_MODE,
-        PROP_ENVIRONMENT_DEPTH_NEAR_M, PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY,
-        PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE, PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS,
-        PROP_ENVIRONMENT_DEPTH_SOURCE, PROP_ENVIRONMENT_DEPTH_SURFACE_MODEL,
+        NativeGuideGraphResolution, NativeRendererRuntimeOptions,
+        NativeStimulusVolumeCompositionMode, NativeStimulusVolumeRenderTarget,
+        NativeSwapchainColorFormatMode, PROP_CAMERA_DIRECT_BORDER_OPACITY,
+        PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED, PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE,
+        PROP_CAMERA_READER_MAX_IMAGES, PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING,
+        PROP_CAMERA_SYNC_MODE, PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL,
+        PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW, PROP_ENVIRONMENT_DEPTH_DEPTH_UNITS_POLICY,
+        PROP_ENVIRONMENT_DEPTH_FAR_M, PROP_ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED,
+        PROP_ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD, PROP_ENVIRONMENT_DEPTH_LAYER_POLICY,
+        PROP_ENVIRONMENT_DEPTH_MODE, PROP_ENVIRONMENT_DEPTH_NEAR_M,
+        PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY, PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE,
+        PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS, PROP_ENVIRONMENT_DEPTH_SOURCE,
+        PROP_ENVIRONMENT_DEPTH_SURFACE_MODEL,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MIN_CELLS,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_NEIGHBORS,
@@ -2414,8 +2463,8 @@ mod tests {
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_SOURCE_LAYERS,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_RADIUS_CELLS, PROP_GUIDE_BLUR_ENABLED,
-        PROP_HAND_ANCHOR_PARTICLES_DYNAMICS, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
-        PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
+        PROP_GUIDE_RESOLUTION, PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
+        PROP_HAND_ANCHOR_PARTICLES_ENABLED, PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
         PROP_HAND_ANCHOR_PARTICLES_RADIUS_M, PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_BLEND_MODE,
@@ -2562,6 +2611,10 @@ mod tests {
         let options = options_from(&[]);
         assert_eq!(options.camera_output_mode, NativeCameraOutputMode::Auto);
         assert!(options.guide_blur_enabled);
+        assert_eq!(
+            options.guide_graph_resolution,
+            NativeGuideGraphResolution::Low384
+        );
         assert_eq!(options.camera_output_mode.marker_value(), "auto");
         assert!(options.camera_output_mode.camera_import_enabled());
         assert!(options
@@ -2603,6 +2656,7 @@ mod tests {
         let direct = options_from(&[
             (PROP_CAMERA_OUTPUT_MODE, "raw_hwb"),
             (PROP_GUIDE_BLUR_ENABLED, "false"),
+            (PROP_GUIDE_RESOLUTION, "camera-native"),
             (PROP_CAMERA_YCBCR_MODE, "cpuyuv-reference"),
             (PROP_CAMERA_RESOLUTION_PROFILE, "1280x960"),
             (PROP_CAMERA_READER_MAX_IMAGES, "8"),
@@ -2615,6 +2669,11 @@ mod tests {
         ]);
         assert_eq!(direct.camera_output_mode, NativeCameraOutputMode::DirectHwb);
         assert!(!direct.guide_blur_enabled);
+        assert_eq!(
+            direct.guide_graph_resolution,
+            NativeGuideGraphResolution::Camera1280
+        );
+        assert_eq!(direct.guide_graph_resolution.extent(), [1280, 1280]);
         assert!(direct.camera_output_mode.camera_import_enabled());
         assert!(direct.camera_output_mode.direct_hwb_forced());
         assert!(!direct.camera_output_mode.private_layer_projection_enabled());

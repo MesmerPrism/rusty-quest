@@ -36,14 +36,15 @@ use crate::{
     native_renderer_options::{
         CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings, NativeCameraOutputMode,
         NativeCameraQualityProfile, NativeCameraSyncMode, NativeEnvironmentDepthSettings,
-        NativeHandAnchorParticleOrderingMode, NativeHandAnchorParticleSettings,
-        NativePrivateLayerSettings, NativeProjectionBorderStretchSettings,
-        NativeRendererRenderMode, NativeRendererRuntimeOptions, NativeStimulusVolumeSettings,
-        NativeSwapchainColorFormatMode, PROP_CAMERA_DIRECT_BORDER_OPACITY,
-        PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED, PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE,
-        PROP_CAMERA_READER_MAX_IMAGES, PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING,
-        PROP_CAMERA_SYNC_MODE, PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL,
-        PROP_GUIDE_BLUR_ENABLED, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
+        NativeGuideGraphResolution, NativeHandAnchorParticleOrderingMode,
+        NativeHandAnchorParticleSettings, NativePrivateLayerSettings,
+        NativeProjectionBorderStretchSettings, NativeRendererRenderMode,
+        NativeRendererRuntimeOptions, NativeStimulusVolumeSettings, NativeSwapchainColorFormatMode,
+        PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED,
+        PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_READER_MAX_IMAGES,
+        PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
+        PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL, PROP_GUIDE_BLUR_ENABLED,
+        PROP_GUIDE_RESOLUTION, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
@@ -423,7 +424,7 @@ unsafe fn run_projection_loop_inner(
             },
         )
         .map_err(|error| format!("create OpenXR Vulkan session: {error}"))?;
-    if let Some(actions) = stimulus_actions.as_ref() {
+    if let Some(actions) = stimulus_actions.as_mut() {
         if let Err(error) = actions.attach_session(&session) {
             crate::marker(
                 "stimulus-volume-input",
@@ -461,11 +462,16 @@ unsafe fn run_projection_loop_inner(
         vulkan_external_import_prereqs_ready,
         runtime_options.camera_ycbcr_mode,
     );
-    let mut guide_blur_graph_renderer =
-        GuideBlurGraphRenderer::new(memory_properties, color_format, render_pass);
+    let mut guide_blur_graph_renderer = GuideBlurGraphRenderer::new(
+        memory_properties,
+        color_format,
+        render_pass,
+        runtime_options.guide_graph_resolution,
+    );
     let render_mode = runtime_options.render_mode;
     let camera_output_mode = runtime_options.camera_output_mode;
     let guide_blur_enabled = runtime_options.guide_blur_enabled;
+    let guide_graph_resolution = runtime_options.guide_graph_resolution;
     let camera_ycbcr_mode = runtime_options.camera_ycbcr_mode;
     let camera_resolution_profile = runtime_options.camera_resolution_profile;
     let camera_reader_max_images = runtime_options.camera_reader_max_images;
@@ -517,7 +523,7 @@ unsafe fn run_projection_loop_inner(
     crate::marker(
         "camera-output",
         format!(
-            "status=config property={} cameraOutputMode={} renderMode={} customStereoProjectionEnabled={} cameraImportEnabled={} privateLayerProjectionEnabled={} guideProjectionEnabled={} directHwbForced={} guideBlurProperty={} guideGraphBlurEnabled={} ycbcrProperty={} cameraYcbcrMode={} conversionMode={} resolutionProperty={} cameraResolutionProfile={} readerMaxImagesProperty={} readerMaxImages={} qualityProfileProperty={} cameraQualityProfile={} syncModeProperty={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} lumaDiagnosticProperty={} cameraLumaDiagnosticRequested={} stereoPairingProperty={} stereoPairingPolicy={} swapchainProperty={} swapchainColorFormatMode={} directBorderProperty={} directBorderOpacity={:.3} cameraQualityDiagnostic=raw-direct-hwb-baseline",
+            "status=config property={} cameraOutputMode={} renderMode={} customStereoProjectionEnabled={} cameraImportEnabled={} privateLayerProjectionEnabled={} guideProjectionEnabled={} directHwbForced={} guideBlurProperty={} guideGraphBlurEnabled={} guideResolutionProperty={} guideGraphResolutionPolicy={} ycbcrProperty={} cameraYcbcrMode={} conversionMode={} resolutionProperty={} cameraResolutionProfile={} readerMaxImagesProperty={} readerMaxImages={} qualityProfileProperty={} cameraQualityProfile={} syncModeProperty={} cameraSyncRequested={} cameraSyncActive={} cameraSyncImplementation={} lumaDiagnosticProperty={} cameraLumaDiagnosticRequested={} stereoPairingProperty={} stereoPairingPolicy={} swapchainProperty={} swapchainColorFormatMode={} directBorderProperty={} directBorderOpacity={:.3} cameraQualityDiagnostic=raw-direct-hwb-baseline",
             PROP_CAMERA_OUTPUT_MODE,
             camera_output_mode.marker_value(),
             render_mode.marker_value(),
@@ -528,6 +534,8 @@ unsafe fn run_projection_loop_inner(
             camera_output_mode.direct_hwb_forced(),
             PROP_GUIDE_BLUR_ENABLED,
             guide_blur_enabled,
+            PROP_GUIDE_RESOLUTION,
+            guide_graph_resolution.marker_value(),
             PROP_CAMERA_YCBCR_MODE,
             camera_ycbcr_mode.marker_value(),
             camera_ycbcr_mode.conversion_mode(),
@@ -1088,6 +1096,7 @@ unsafe fn run_projection_loop_inner(
         projection_target_settings,
         camera_output_mode,
         guide_blur_enabled,
+        guide_graph_resolution,
         camera_ycbcr_mode,
         camera_resolution_profile,
         camera_reader_max_images,
@@ -1473,6 +1482,7 @@ unsafe fn run_projection_frames(
     projection_target_settings: ProjectionTargetSettings,
     camera_output_mode: NativeCameraOutputMode,
     guide_blur_enabled: bool,
+    guide_graph_resolution: NativeGuideGraphResolution,
     camera_ycbcr_mode: crate::native_renderer_options::NativeCameraYcbcrMode,
     camera_resolution_profile: crate::native_renderer_options::NativeCameraResolutionProfile,
     camera_reader_max_images: u32,
@@ -1653,7 +1663,13 @@ unsafe fn run_projection_frames(
         previous_frame_instant = frame_instant;
 
         if let Some(actions) = stimulus_actions.as_deref_mut() {
-            let controller_events = actions.sync_and_poll(session, frame_count, dt_seconds);
+            let controller_events = actions.sync_and_poll(
+                session,
+                reference_space,
+                frame_state.predicted_display_time,
+                frame_count,
+                dt_seconds,
+            );
             for input in controller_events.projection_target_inputs {
                 projection_target_state.apply_input(input);
             }
@@ -1881,27 +1897,32 @@ unsafe fn run_projection_frames(
                     Err(error) => {
                         if frame_count == 0 || frame_count % 120 == 0 {
                             crate::marker(
-                            "guide-blur-graph",
-                            format!(
-                                "status=error reason={} guideGraphReady=false guideGraphBlurEnabled={} guideGraphPath={} finalExternalHwbSamples=2 guideTextureSamples=0",
-                                crate::sanitize(&error),
-                                guide_blur_enabled,
-                                if guide_blur_enabled {
-                                    "low-resolution-two-phase-5tap-blur"
-                                } else {
-                                    "low-resolution-downsample-no-blur"
-                                }
-                            ),
-                        );
+                                "guide-blur-graph",
+                                GuideBlurGraphFrameStats::unavailable_with_options(
+                                    guide_blur_enabled,
+                                    guide_graph_resolution,
+                                )
+                                .marker_fields()
+                                    + &format!(" status=error reason={}", crate::sanitize(&error)),
+                            );
                         }
-                        GuideBlurGraphFrameStats::unavailable_with_blur(guide_blur_enabled)
+                        GuideBlurGraphFrameStats::unavailable_with_options(
+                            guide_blur_enabled,
+                            guide_graph_resolution,
+                        )
                     }
                 }
             } else {
-                GuideBlurGraphFrameStats::unavailable_with_blur(guide_blur_enabled)
+                GuideBlurGraphFrameStats::unavailable_with_options(
+                    guide_blur_enabled,
+                    guide_graph_resolution,
+                )
             }
         } else {
-            GuideBlurGraphFrameStats::unavailable_with_blur(guide_blur_enabled)
+            GuideBlurGraphFrameStats::unavailable_with_options(
+                guide_blur_enabled,
+                guide_graph_resolution,
+            )
         };
         gpu_timestamp_tracker.write_stage_end(
             vk_device,

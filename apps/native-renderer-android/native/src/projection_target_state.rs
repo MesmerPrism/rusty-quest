@@ -841,6 +841,45 @@ mod tests {
     }
 
     #[test]
+    fn secondary_button_repeated_presses_toggle_between_pmb_and_joystick() {
+        let mut settings = enabled_settings();
+        settings.breath_bridge_mode = BreathBridgeMode::ManifoldState;
+        let mut state = ProjectionTargetState::new(settings);
+
+        state.apply_input(ProjectionTargetInput::BreathState {
+            state: ProjectionTargetBreathState::Inhale,
+            sequence_id: Some(1),
+        });
+        assert!(state
+            .marker_fields()
+            .contains("projectionTargetScaleDriver=pmb"));
+
+        state.apply_input(ProjectionTargetInput::ToggleScaleDriver);
+        assert!(state
+            .marker_fields()
+            .contains("projectionTargetScaleDriver=joystick"));
+        assert!(state
+            .marker_fields()
+            .contains("projectionTargetScaleDriverSwitch=right-controller-secondary-to-joystick"));
+
+        state.apply_input(ProjectionTargetInput::ToggleScaleDriver);
+        assert!(state
+            .marker_fields()
+            .contains("projectionTargetScaleDriver=pmb"));
+        assert!(state
+            .marker_fields()
+            .contains("projectionTargetScaleDriverSwitch=right-controller-secondary-to-pmb"));
+
+        state.apply_input(ProjectionTargetInput::ToggleScaleDriver);
+        assert!(state
+            .marker_fields()
+            .contains("projectionTargetScaleDriver=joystick"));
+        assert!(state
+            .marker_fields()
+            .contains("projectionTargetScaleDriverSwitch=right-controller-secondary-to-joystick"));
+    }
+
+    #[test]
     fn target_rect_scales_around_center_and_clamps() {
         let mut settings = enabled_settings();
         settings.tuned_max_scale = 2.0;

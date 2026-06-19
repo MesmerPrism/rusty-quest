@@ -29,6 +29,7 @@ $gpuStimulusVolumePath = Join-Path $appRoot "native\src\gpu_stimulus_volume.rs"
 $openxrStimulusActionsPath = Join-Path $appRoot "native\src\openxr_stimulus_actions.rs"
 $projectionTargetStatePath = Join-Path $appRoot "native\src\projection_target_state.rs"
 $manifoldBreathBridgePath = Join-Path $appRoot "native\src\manifold_breath_bridge.rs"
+$manifoldPosePublisherPath = Join-Path $appRoot "native\src\manifold_pose_publisher.rs"
 $guideBlurGraphPath = Join-Path $appRoot "native\src\guide_blur_graph.rs"
 $recordedHandReplayModulePath = Join-Path $appRoot "native\src\recorded_hand_replay.rs"
 $liveHandCompactPath = Join-Path $appRoot "native\src\live_hand_compact.rs"
@@ -127,7 +128,7 @@ $requiredPaths = @(
     $cameraProjectionPath, $cameraProjectionMetadataPath, $environmentDepthGeometryPath,
     $environmentDepthParticlesPath, $openxrEnvironmentDepthPath, $gpuStimulusVolumePath,
     $openxrStimulusActionsPath, $projectionTargetStatePath, $manifoldBreathBridgePath,
-    $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath,
+    $manifoldPosePublisherPath, $guideBlurGraphPath, $recordedHandReplayModulePath, $liveHandCompactPath,
     $nativeRendererOptionsPath, $nativeRendererTimingPath, $privateExtensionSlotPath,
     $handMeshGraftPath, $gpuHandMeshVisualPath, $gpuMeshReplayPath, $gpuSdfFieldPath,
     $cameraProjectionFragmentPath, $guideBlurDownsampleFragmentPath, $guideBlurFragmentPath,
@@ -198,6 +199,7 @@ $gpuStimulusVolume = Get-Content -Raw -Path $gpuStimulusVolumePath
 $openxrStimulusActions = Get-Content -Raw -Path $openxrStimulusActionsPath
 $projectionTargetState = Get-Content -Raw -Path $projectionTargetStatePath
 $manifoldBreathBridge = Get-Content -Raw -Path $manifoldBreathBridgePath
+$manifoldPosePublisher = Get-Content -Raw -Path $manifoldPosePublisherPath
 $guideBlurGraph = Get-Content -Raw -Path $guideBlurGraphPath
 $recordedHandReplay = Get-Content -Raw -Path $recordedHandReplayPath
 $recordedHandReplayModule = Get-Content -Raw -Path $recordedHandReplayModulePath
@@ -291,6 +293,7 @@ if ($manifest -notmatch 'package="io\.github\.mesmerprism\.rustyquest\.native_re
 }
 foreach ($permission in @(
     'android\.permission\.CAMERA',
+    'android\.permission\.INTERNET',
     'com\.oculus\.permission\.HAND_TRACKING',
     'horizonos\.permission\.HEADSET_CAMERA',
     'horizonos\.permission\.SPATIAL_CAMERA',
@@ -670,9 +673,16 @@ foreach ($token in @(
     'guide_blur_downsample.frag.glsl',
     'guide_blur_5tap.frag.glsl',
     'guide_projection.frag.glsl',
+    'NativeGuideGraphResolution',
+    'PROP_GUIDE_RESOLUTION',
+    'debug\.rustyquest\.native_renderer\.guide\.resolution',
+    'guideResolutionProperty',
+    'guideGraphResolutionPolicy',
     'guideGraphPath=',
     'low-resolution-two-phase-5tap-blur',
     'low-resolution-downsample-no-blur',
+    'camera-resolution-two-phase-5tap-blur',
+    'camera-resolution-downsample-no-blur',
     'guideGraphBlurEnabled',
     'guideGraphReady',
     'guideGraphDownsampleResolution=',
@@ -690,7 +700,7 @@ foreach ($token in @(
     'finalExternalHwbSamples=0',
     'guideTextureSamples=1'
 )) {
-    if ("$nativeBuildRs`n$nativeLib`n$nativeCamera`n$cameraProjection`n$guideBlurGraph`n$guideBlurDownsampleFragment`n$guideBlurFragment`n$guideProjectionFragment`n$xrVulkan" -notmatch $token) {
+    if ("$nativeBuildRs`n$nativeLib`n$nativeCamera`n$cameraProjection`n$guideBlurGraph`n$nativeRendererOptions`n$guideBlurDownsampleFragment`n$guideBlurFragment`n$guideProjectionFragment`n$xrVulkan" -notmatch $token) {
         throw "Native guide blur graph route missing token: $token"
     }
 }
@@ -1770,7 +1780,15 @@ foreach ($token in @(
     'quest-native-renderer-breathing-room-pmb-scale.profile.json',
     'debug.rustyquest.native_renderer.camera.output',
     'debug.rustyquest.native_renderer.guide.blur.enabled',
+    'debug.rustyquest.native_renderer.guide.resolution',
+    'debug.rustyquest.native_renderer.camera.ycbcr.mode',
+    'debug.rustyquest.native_renderer.camera.resolution',
+    'debug.rustyquest.native_renderer.camera.reader_max_images',
+    'debug.rustyquest.native_renderer.camera.quality_profile',
+    'debug.rustyquest.native_renderer.camera.sync_mode',
     'debug.rustyquest.native_renderer.camera.luma_diagnostic.enabled',
+    'debug.rustyquest.native_renderer.camera.stereo_pairing',
+    'debug.rustyquest.native_renderer.swapchain.color_format',
     'debug.rustyquest.native_renderer.hand_mesh.input.source',
     'debug.rustyquest.native_renderer.hand_mesh.real_hands.visible',
     'debug.rustyquest.native_renderer.hand_anchor_particles.enabled',
@@ -1790,9 +1808,24 @@ foreach ($token in @(
     'debug.rustyquest.native_renderer.manifold.broker.path',
     'stream.breath.state',
     'stream.breath.state.value',
+    'stream.motion.object_pose',
+    'provider.native_renderer.controller_pose',
     'cameraOutputMode=guide-public',
     'guideGraphBlurEnabled=false',
-    'guideGraphPath=low-resolution-downsample-no-blur',
+    'guideGraphResolutionPolicy=camera-1280',
+    'guideGraphPath=camera-resolution-downsample-no-blur',
+    'guideGraphDownsampleResolution=1280x1280',
+    'cameraYcbcrMode=forced-bt601-narrow',
+    'conversionMode=forced-bt601-limited-cpuyuv-reference',
+    'cameraResolutionProfile=1280x1280',
+    'readerMaxImages=4',
+    'cameraQualityProfile=direct-baseline',
+    'cameraSyncRequested=early-delete-ahb-retained',
+    'cameraSyncActive=early-delete-ahb-retained',
+    'stereoPairingPolicy=latest-latest',
+    'effectiveYcbcrModel=YCBCR_601',
+    'effectiveYcbcrRange=ITU_NARROW',
+    'swapchainColorFormatMode=unorm',
     'compactHandInputSourceMode=disabled',
     'handMeshRealHandsVisible=false',
     'handAnchorParticlesEnabled=false',
@@ -1805,6 +1838,9 @@ foreach ($token in @(
     'projectionTargetRuntimeAuthority=native-renderer',
     'startupDefaultsAuthority=runtime-profile',
     'pmbSourceAuthority=hostess-manifold',
+    'nativeControllerPosePublisherEnabled=true',
+    'sourceAgnostic=true',
+    'controllerSpecificEstimator=false',
     'rightControllerThumbstickY=/user/hand/right/input/thumbstick/y',
     'rightControllerPrimaryReset=/user/hand/right/input/a/click',
     'rightControllerSecondaryScaleDriverToggle=/user/hand/right/input/b/click',
@@ -2169,6 +2205,7 @@ foreach ($token in @(
 foreach ($token in @(
     'mod projection_target_state',
     'mod manifold_breath_bridge',
+    'mod manifold_pose_publisher',
     'ProjectionTargetState',
     'ProjectionTargetSettings',
     'ProjectionTargetInput',
@@ -2176,19 +2213,35 @@ foreach ($token in @(
     'ToggleScaleDriver',
     'BreathBridgeMode',
     'ManifoldBreathBridge',
+    'ManifoldPosePublisher',
+    'ManifoldPosePublisherConfig',
+    'ManifoldPoseSample',
     'stream.breath.state',
     'stream.breath.state.value',
+    'stream.motion.object_pose',
+    'provider.native_renderer.controller_pose',
+    'controller_pose_provider',
+    'rusty.manifold.motion.object_pose.sample.v1',
+    'publish_stream_event',
+    'source_agnostic',
+    'controller_specific_estimator',
     'subscribe',
     'right_thumbstick_y',
     'right_primary_reset',
     'right_secondary_scale_driver_toggle',
     'right_grip_pose',
+    'create_space',
+    'space.locate',
     '/user/hand/right/input/thumbstick/y',
     '/user/hand/right/input/b/click',
     '/user/hand/right/input/grip/pose',
     'projectionTargetScaleDriver',
     'projectionTargetPmbAvailable',
     'rightControllerSecondaryScaleDriverToggle',
+    'rightGripPoseTracked',
+    'nativeControllerPosePublisherEnabled',
+    'nativeControllerPosePublishedCount',
+    'highRatePoseViaManifold=true',
     'projectionTargetRuntimeAuthority=native-renderer',
     'startupDefaultsAuthority=runtime-profile',
     'pmbSourceAuthority=hostess-manifold',
@@ -2196,7 +2249,7 @@ foreach ($token in @(
     'highRatePoseViaAndroidProperties=false',
     'debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload'
 )) {
-    if ("$nativeLib`n$nativeRendererOptions`n$projectionTargetState`n$manifoldBreathBridge`n$openxrStimulusActions`n$xrVulkan" -notmatch [regex]::Escape($token)) {
+    if ("$nativeLib`n$nativeRendererOptions`n$projectionTargetState`n$manifoldBreathBridge`n$manifoldPosePublisher`n$openxrStimulusActions`n$xrVulkan" -notmatch [regex]::Escape($token)) {
         throw "Native renderer breathing-room projection target route missing token: $token"
     }
 }

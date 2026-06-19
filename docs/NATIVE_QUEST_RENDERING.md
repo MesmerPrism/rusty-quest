@@ -28,7 +28,7 @@ Build the pure-HWB camera path as a Quest-native renderer adapter:
 ```text
 Camera2 AHardwareBuffer
 -> Vulkan external image import/cache
--> low-resolution guide blur graph
+-> profile-selectable guide graph
 -> optional public Matter SDF/hand-mesh inputs
 -> optional private extension ABI slots
 -> Optics-owned custom projection composite
@@ -329,10 +329,17 @@ The runtime scaffold:
   the submitted Vulkan frame-slot fence completes; `AImage_deleteAsync` with
   async ImageReader acquire/release is available as a lower-latency diagnostic,
   while Vulkan external-semaphore ownership transfer remains explicitly pending;
-- builds a public low-resolution guide graph from those imported camera
-  descriptors: per-eye 384x384 downsample, horizontal 5-tap blur, vertical
-  5-tap blur, and final guide-texture projection inside the same metadata
-  target rectangles;
+- builds a public guide graph from those imported camera descriptors: the
+  default diagnostic path uses per-eye 384x384 downsample, horizontal 5-tap
+  blur, vertical 5-tap blur, and final guide-texture projection inside the
+  same metadata target rectangles;
+- can request a camera-sized no-blur guide graph through
+  `debug.rustyquest.native_renderer.guide.resolution=camera-native` plus
+  `debug.rustyquest.native_renderer.guide.blur.enabled=false`. The Breathing
+  Room PMB scale profile uses that route with forced BT.601 narrow YCbCr and
+  `debug.rustyquest.native_renderer.swapchain.color_format=unorm` so the
+  stretch border does not force the raw camera feed through the older 384x384
+  diagnostic intermediate;
 - can expand that final guide-texture projection to full-eye coverage when
   `debug.rustyquest.native_renderer.processing.layer=peripheral-stretch`,
   using the metadata target as the core region, stretching exterior pixels from
@@ -431,8 +438,18 @@ The runtime scaffold:
   Submitted frames report `guideGraphReady=true`,
   `cameraProjectionPath=metadata-target-guide-texture-final`,
   `actualFinalExternalHwbSamples=0`, and `actualGuideTextureSamples=1` when
-  the guide graph is ready. The direct HWB projection remains only as a
-  fallback when the guide graph is unavailable.
+  the guide graph is ready. Breathing Room should additionally report
+  `guideGraphResolutionPolicy=camera-1280`,
+  `guideGraphPath=camera-resolution-downsample-no-blur`,
+  `cameraYcbcrMode=forced-bt601-narrow`, and
+  `swapchainColorFormatMode=unorm`. In Manifold PMB mode it should also report
+  `nativeControllerPosePublisherEnabled=true`, publish
+  `stream.motion.object_pose` from
+  `provider.native_renderer.controller_pose`, and keep
+  `sourceAgnostic=true` with `controllerSpecificEstimator=false` so the same
+  PMB processor contract can consume Makepad or native controller data. The
+  direct HWB projection remains only as a fallback when the guide graph is
+  unavailable.
 
 The OpenXR/Vulkan probe still reports `openxrSubmitReady=false` because it is a
 prerequisite check. Runtime frame scorecards report `openxrSubmitReady=true`
@@ -470,10 +487,11 @@ Local APK builds can embed the real recorded
 -RequireRecordedHandCapture`.
 This acceptance is intentionally scoped to native projection, recorded replay
 ingestion, resident GPU-skinned hand drawing, the live compact input adapter,
-the GPU source-mesh boundary, replay evidence for the public guide blur graph,
-and replay evidence of the resident skinned-mesh SDF visual path. It does not
-claim camera projection color parity, live hand visual acceptance, direct Meta
-hand-mesh topology import, or Matter/Lattice-backed SDF parity.
+the GPU source-mesh boundary, replay evidence for the public guide graph, and
+replay evidence of the resident skinned-mesh SDF visual path. It does not
+claim broad camera projection color parity outside the profiled BT.601/UNORM
+Breathing Room route, live hand visual acceptance, direct Meta hand-mesh
+topology import, or Matter/Lattice-backed SDF parity.
 
 The public package exposes the guide blur path plus the target-edge peripheral
 stretch/blend border needed by the native camera projection route. Other
@@ -493,7 +511,9 @@ Next slices should:
 
 - build/install/launch the native renderer with the guide graph and confirm
   `guideGraphReady=true`, `actualFinalExternalHwbSamples=0`,
-  `actualGuideTextureSamples=1`, and acceptable color/framing in-headset;
+  `actualGuideTextureSamples=1`, and for Breathing Room
+  `guideGraphResolutionPolicy=camera-1280` with acceptable color/framing
+  in-headset;
 - use the passed no-real-hands recorded replay smoke as the baseline for
   performance and screenshot evidence while tuning the next rendering slices;
 - visually validate live OpenXR compact hand input on headset and compare it
@@ -503,7 +523,8 @@ Next slices should:
 - validate and tune the existing triangle-bounds/tile-bin/narrow-band SDF
   kernel on device, then independently tune visual/particle field resolutions
   when the live/replay visual proof is stable;
-- tighten color/reference behavior for imported external HWB textures;
+- broaden color/reference behavior beyond the profiled BT.601/UNORM Breathing
+  Room route for imported external HWB textures;
 - bind the compact hand input and skinned field to the Matter/Lattice hand
   resource shape;
 - use the public no-op private extension slot as the future downstream layer

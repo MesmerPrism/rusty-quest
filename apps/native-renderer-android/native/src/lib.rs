@@ -37,6 +37,7 @@ mod hand_mesh_graft;
 #[cfg(target_os = "android")]
 mod live_hand_compact;
 mod manifold_breath_bridge;
+mod manifold_pose_publisher;
 #[cfg(target_os = "android")]
 mod native_camera;
 #[cfg(target_os = "android")]

@@ -1303,6 +1303,31 @@ mod tests {
                 == "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode"
                 && operation.value.as_deref() == Some("manifold-state")
         }));
+        for (name, value) in [
+            (
+                "debug.rustyquest.native_renderer.guide.resolution",
+                "camera-native",
+            ),
+            (
+                "debug.rustyquest.native_renderer.camera.ycbcr.mode",
+                "forced-bt601-narrow",
+            ),
+            (
+                "debug.rustyquest.native_renderer.camera.resolution",
+                "1280x1280",
+            ),
+            (
+                "debug.rustyquest.native_renderer.swapchain.color_format",
+                "unorm",
+            ),
+        ] {
+            assert!(
+                plan.operations.iter().any(|operation| {
+                    operation.name == name && operation.value.as_deref() == Some(value)
+                }),
+                "native breathing room profile should set {name}={value}"
+            );
+        }
         assert!(!plan
             .operations
             .iter()

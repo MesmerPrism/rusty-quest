@@ -10,6 +10,11 @@ effects, private tuning, and Morphovision-specific behavior are out of scope.
   SDF, private-layer, and direct-border overlays for raw camera inspection.
 - The default direct-HWB baseline is Android-suggested YCbCr with a UNORM
   swapchain preference.
+- The Breathing Room PMB scale profile is profile-owned rather than default:
+  it keeps `camera.output=guide-public` for the stretch border route, disables
+  guide blur, requests `guide.resolution=camera-native`, and pins forced
+  BT.601 narrow YCbCr plus UNORM swapchain markers to match the documented raw
+  stack color behavior.
 - Comparison profiles cover forced BT.601 limited conversion, low-noise 30 FPS
   Camera2 requests, low-latency 60 FPS Camera2 requests, 1280x960 reader size,
   and hold-image-until-GPU-fence synchronization.
@@ -54,7 +59,8 @@ lifetime safety:
 | `preview-template-quality-ceiling` | Android preview templates may prioritize preview cadence over quality. | Do not replace the baseline template globally. | Add a separate `TEMPLATE_RECORD` low-noise A/B profile. | Compare preview-low-noise-30 vs record-low-noise-30. |
 | `fps-exact-match-blindness` | Supported AE ranges differ by device and OS. | Do not silently widen every profile. | Select exact preferred range first, then nearest support-gated range with markers. | Marker checks plus result-side frame duration/exposure correlation. |
 | `reader-size-list-order` | Stream configuration list order is not a quality ranking. | Do not choose largest resolution by default. | Rank fallbacks by tested preferred sizes, aspect fit, target FPS feasibility, and min frame duration. | Profile A/B for 1280x1280, 1280x960, and closest-supported. |
-| `range-brightness-ambiguity` | YCbCr model/range and swapchain color format can shift perceived brightness. | Do not make forced BT.601 the default without proof. | Keep Android-suggested default and add dataspace/luma diagnostics. | Gray/black/white chart headset run plus GPU luma summaries. |
+| `range-brightness-ambiguity` | YCbCr model/range and swapchain color format can shift perceived brightness. | Do not make forced BT.601 the global default without proof. | Keep Android-suggested default, pin BT.601/UNORM only in profiles that have accepted visual evidence, and add dataspace/luma diagnostics. | Gray/black/white chart headset run plus GPU luma summaries. |
+| `guide-downsample-artifacts` | A low-resolution guide texture is useful for blur diagnostics but can visibly damage a no-blur raw camera route. | Do not remove the low-resolution guide blur path; it remains a useful diagnostic and performance route. | Add a profile-owned guide resolution policy so no-blur Breathing Room can use camera-sized guide textures while blur profiles keep 384x384 by default. | `guideGraphResolutionPolicy`, `guideGraphDownsampleResolution`, and in-headset raw-camera inspection. |
 | `stereo-latest-latest-shimmer` | Separate left/right streams may not arrive in lockstep. | Do not drop frames until metadata proves a useful threshold. | Add nearest-timestamp pairing after result metadata and frame-age markers land. | Compare latest/latest vs nearest-pairing with pair delta and temporal-diff evidence. |
 
 ## Implementation Slices

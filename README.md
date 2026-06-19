@@ -107,12 +107,21 @@ is available: live frames upload only the 21 runtime joint poses plus packed tip
 lengths and then reuse the resident topology/bind/SDF graph. The SDF visual
 path now also separates kernel dispatch from cached field reuse through
 cadence/cache scorecard markers. The native camera path now includes a public
-low-resolution guide blur graph: imported Camera2 HWB frames are downsampled to
-384x384 per-eye guide textures, blurred with split horizontal/vertical 5-tap
-passes, and final projection samples the guide texture when the graph is ready
-instead of sampling external HWB again. The same native guide projection pass
-can optionally expand to a full-eye peripheral stretch border using the
-Makepad HWB stack's target-local raster model as a reference: the profile
+guide graph: imported Camera2 HWB frames are rendered into per-eye guide
+textures, optionally blurred with split horizontal/vertical 5-tap passes, and
+final projection samples the guide texture when the graph is ready instead of
+sampling external HWB again. The default guide graph remains a 384x384
+diagnostic blur path. The Breathing Room profile uses the same guide projection
+without blur at camera-sized 1280x1280 resolution, and pins the documented
+forced BT.601 narrow YCbCr plus UNORM swapchain settings for raw-camera color
+parity. In Manifold PMB mode it also publishes the native OpenXR right-grip
+controller pose to `stream.motion.object_pose` as
+`provider.native_renderer.controller_pose`, matching the Makepad
+source-agnostic controller-pose provider contract; right controller B toggles
+the scale driver between PMB and joystick, while A resets the target scale.
+The same native guide projection pass can optionally expand to a
+full-eye peripheral stretch border using the Makepad HWB stack's target-local
+raster model as a reference: the profile
 `quest-native-renderer-hwb-peripheral-stretch.profile.json` sets
 `debug.rustyquest.native_renderer.processing.layer=peripheral-stretch`,
 keeps the metadata-owned camera target as the core region, stretches exterior

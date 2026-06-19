@@ -3,6 +3,12 @@
 use openxr as xr;
 
 use crate::{
+    manifold_pose_publisher::{
+        ManifoldPosePublisher, ManifoldPosePublisherConfig, ManifoldPoseSample,
+        DEFAULT_MANIFOLD_POSE_CONTROLLER, DEFAULT_MANIFOLD_POSE_KIND,
+        DEFAULT_MANIFOLD_POSE_SAMPLE_HZ, DEFAULT_MANIFOLD_POSE_SOURCE,
+        DEFAULT_MANIFOLD_POSE_STREAM,
+    },
     native_renderer_options::NativeStimulusVolumeSettings,
     projection_target_state::{ProjectionTargetInput, ProjectionTargetSettings},
 };
@@ -14,6 +20,13 @@ pub(crate) struct StimulusVolumeActions {
     right_secondary_scale_driver_toggle: xr::Action<bool>,
     right_thumbstick_y: xr::Action<f32>,
     right_grip_pose: xr::Action<xr::Posef>,
+    right_grip_space: Option<xr::Space>,
+    manifold_pose_publisher: Option<ManifoldPosePublisher>,
+    manifold_pose_config: ManifoldPosePublisherConfig,
+    manifold_pose_seconds_since_publish: f64,
+    manifold_pose_sequence_id: u64,
+    manifold_pose_published_count: u64,
+    manifold_pose_dropped_count: u64,
     previous_right_primary_randomize_pressed: bool,
     previous_right_primary_reset_pressed: bool,
     previous_right_secondary_scale_driver_toggle_pressed: bool,
@@ -157,6 +170,25 @@ impl StimulusVolumeActions {
             ),
         );
 
+        let manifold_pose_config =
+            manifold_pose_config_from_projection_settings(&projection_target_settings);
+        crate::marker(
+            "manifold-pose-provider",
+            format!(
+                "status=config nativeControllerPosePublisherEnabled={} stream={} source={} sourceKind=controller_pose_provider controller={} poseKind={} brokerHost={} brokerPort={} brokerPath={} sampleHz={:.3} providerBoundary=stream.motion.object_pose sourceAgnostic=true controllerSpecificEstimator=false highRatePoseViaManifold={} highRatePoseViaAndroidProperties=false",
+                manifold_pose_config.enabled,
+                crate::projection_target_state::marker_token(&manifold_pose_config.stream_id),
+                crate::projection_target_state::marker_token(&manifold_pose_config.source_id),
+                crate::projection_target_state::marker_token(&manifold_pose_config.controller),
+                crate::projection_target_state::marker_token(&manifold_pose_config.pose_kind),
+                crate::projection_target_state::marker_token(&manifold_pose_config.broker_host),
+                manifold_pose_config.broker_port,
+                crate::projection_target_state::marker_token(&manifold_pose_config.broker_path),
+                manifold_pose_config.sample_hz,
+                manifold_pose_config.enabled,
+            ),
+        );
+
         Ok(Some(Self {
             action_set,
             right_primary_randomize,
@@ -164,6 +196,13 @@ impl StimulusVolumeActions {
             right_secondary_scale_driver_toggle,
             right_thumbstick_y,
             right_grip_pose,
+            right_grip_space: None,
+            manifold_pose_publisher: None,
+            manifold_pose_config,
+            manifold_pose_seconds_since_publish: 0.0,
+            manifold_pose_sequence_id: 0,
+            manifold_pose_published_count: 0,
+            manifold_pose_dropped_count: 0,
             previous_right_primary_randomize_pressed: false,
             previous_right_primary_reset_pressed: false,
             previous_right_secondary_scale_driver_toggle_pressed: false,
@@ -173,10 +212,32 @@ impl StimulusVolumeActions {
         }))
     }
 
-    pub(crate) fn attach_session<G>(&self, session: &xr::Session<G>) -> Result<(), String> {
+    pub(crate) fn attach_session<G>(&mut self, session: &xr::Session<G>) -> Result<(), String> {
         session
             .attach_action_sets(&[&self.action_set])
             .map_err(|error| format!("attach native renderer OpenXR action set: {error}"))?;
+        match self
+            .right_grip_pose
+            .create_space(session, xr::Path::NULL, xr::Posef::IDENTITY)
+        {
+            Ok(space) => {
+                self.right_grip_space = Some(space);
+                crate::marker(
+                    "manifold-pose-provider",
+                    "status=action-space-ready rightGripPoseActionSpace=true referenceSpace=native-renderer-openxr-reference-space",
+                );
+            }
+            Err(error) => {
+                self.right_grip_space = None;
+                crate::marker(
+                    "manifold-pose-provider",
+                    format!(
+                        "status=action-space-warning rightGripPoseActionSpace=false reason={}",
+                        crate::sanitize(&error.to_string())
+                    ),
+                );
+            }
+        }
         crate::marker(
             "stimulus-volume-input",
             format!(
@@ -197,6 +258,8 @@ impl StimulusVolumeActions {
     pub(crate) fn sync_and_poll<G>(
         &mut self,
         session: &xr::Session<G>,
+        reference_space: &xr::Space,
+        predicted_display_time: xr::Time,
         frame_count: u64,
         dt_seconds: f32,
     ) -> NativeRendererControllerEvents {
@@ -244,16 +307,178 @@ impl StimulusVolumeActions {
                 false
             }
         };
+        self.publish_right_grip_pose(
+            reference_space,
+            predicted_display_time,
+            events.right_grip_pose_active,
+            frame_count,
+            dt_seconds,
+        );
         if frame_count == 0 || frame_count % 120 == 0 {
             crate::marker(
                 "projection-target-input",
                 format!(
-                    "status=polled frame={} rightGripPoseActive={} rightControllerThumbstickYAction=true rightPrimaryResetAction=true rightSecondaryScaleDriverToggleAction=true highRatePoseViaAndroidProperties=false",
-                    frame_count, events.right_grip_pose_active
+                    "status=polled frame={} rightGripPoseActive={} nativeControllerPosePublisherEnabled={} nativeControllerPosePublishedCount={} nativeControllerPoseDroppedCount={} rightControllerThumbstickYAction=true rightPrimaryResetAction=true rightSecondaryScaleDriverToggleAction=true highRatePoseViaManifold={} highRatePoseViaAndroidProperties=false",
+                    frame_count,
+                    events.right_grip_pose_active,
+                    self.manifold_pose_config.enabled,
+                    self.manifold_pose_published_count,
+                    self.manifold_pose_dropped_count,
+                    self.manifold_pose_config.enabled,
                 ),
             );
         }
         events
+    }
+
+    fn publish_right_grip_pose(
+        &mut self,
+        reference_space: &xr::Space,
+        predicted_display_time: xr::Time,
+        active: bool,
+        frame_count: u64,
+        dt_seconds: f32,
+    ) {
+        if !self.manifold_pose_config.enabled {
+            return;
+        }
+        if self.right_grip_space.is_none() {
+            if frame_count == 0 || frame_count % 120 == 0 {
+                crate::marker(
+                    "manifold-pose-provider",
+                    format!(
+                        "status=sample-skipped frame={} reason=right-grip-action-space-unavailable nativeControllerPosePublisherEnabled=true rightGripPoseActionSpace=false nativeControllerPosePublishedCount={} nativeControllerPoseDroppedCount={} highRatePoseViaManifold=true highRatePoseViaAndroidProperties=false",
+                        frame_count,
+                        self.manifold_pose_published_count,
+                        self.manifold_pose_dropped_count
+                    ),
+                );
+            }
+            return;
+        }
+
+        if dt_seconds.is_finite() && dt_seconds > 0.0 {
+            self.manifold_pose_seconds_since_publish += f64::from(dt_seconds.min(1.0));
+        }
+        let interval_seconds = self.manifold_pose_config.interval_seconds();
+        if self.manifold_pose_sequence_id > 0
+            && self.manifold_pose_seconds_since_publish < interval_seconds
+        {
+            return;
+        }
+        self.manifold_pose_seconds_since_publish = if self.manifold_pose_sequence_id > 0 {
+            (self.manifold_pose_seconds_since_publish - interval_seconds)
+                .clamp(0.0, interval_seconds)
+        } else {
+            0.0
+        };
+
+        let needs_publisher = match self.manifold_pose_publisher.as_ref() {
+            Some(publisher) => publisher.config() != &self.manifold_pose_config,
+            None => true,
+        };
+        if needs_publisher {
+            crate::marker(
+                "manifold-pose-provider",
+                format!(
+                    "status=publisher-ready nativeControllerPosePublisherEnabled=true stream={} source={} sourceKind=controller_pose_provider brokerHost={} brokerPort={} brokerPath={} sampleHz={:.3} providerBoundary=stream.motion.object_pose sourceAgnostic=true controllerSpecificEstimator=false",
+                    crate::projection_target_state::marker_token(&self.manifold_pose_config.stream_id),
+                    crate::projection_target_state::marker_token(&self.manifold_pose_config.source_id),
+                    crate::projection_target_state::marker_token(&self.manifold_pose_config.broker_host),
+                    self.manifold_pose_config.broker_port,
+                    crate::projection_target_state::marker_token(&self.manifold_pose_config.broker_path),
+                    self.manifold_pose_config.sample_hz,
+                ),
+            );
+            self.manifold_pose_publisher = Some(ManifoldPosePublisher::new(
+                self.manifold_pose_config.clone(),
+            ));
+        }
+
+        let space = self.right_grip_space.as_ref().expect("checked above");
+        let location = match space.locate(reference_space, predicted_display_time) {
+            Ok(location) => location,
+            Err(error) => {
+                if frame_count == 0 || frame_count % 120 == 0 {
+                    crate::marker(
+                        "manifold-pose-provider",
+                        format!(
+                            "status=locate-warning frame={} reason={} nativeControllerPosePublisherEnabled=true rightGripPoseTracked=false nativeControllerPosePublishedCount={} nativeControllerPoseDroppedCount={}",
+                            frame_count,
+                            crate::sanitize(&error.to_string()),
+                            self.manifold_pose_published_count,
+                            self.manifold_pose_dropped_count
+                        ),
+                    );
+                }
+                return;
+            }
+        };
+
+        let position = [
+            location.pose.position.x,
+            location.pose.position.y,
+            location.pose.position.z,
+        ];
+        let orientation = [
+            location.pose.orientation.x,
+            location.pose.orientation.y,
+            location.pose.orientation.z,
+            location.pose.orientation.w,
+        ];
+        let pose_finite = position.iter().all(|value| value.is_finite())
+            && orientation.iter().all(|value| value.is_finite());
+        let tracked = active && pose_finite && space_location_pose_usable(location);
+        self.manifold_pose_sequence_id = self.manifold_pose_sequence_id.saturating_add(1);
+        let sequence_id = self.manifold_pose_sequence_id;
+        let sample = ManifoldPoseSample {
+            sequence_id,
+            sample_time_unix_ns: ManifoldPoseSample::now_unix_ns(),
+            xr_predicted_display_time_ns: predicted_display_time.as_nanos(),
+            controller: self.manifold_pose_config.controller.clone(),
+            pose_kind: self.manifold_pose_config.pose_kind.clone(),
+            active,
+            tracked,
+            position_m: position,
+            orientation_xyzw: orientation,
+        };
+        let queued = self
+            .manifold_pose_publisher
+            .as_ref()
+            .is_some_and(|publisher| publisher.publish(sample));
+        if queued {
+            self.manifold_pose_published_count =
+                self.manifold_pose_published_count.saturating_add(1);
+        } else {
+            self.manifold_pose_dropped_count = self.manifold_pose_dropped_count.saturating_add(1);
+        }
+        if !queued
+            || self.manifold_pose_published_count == 1
+            || self.manifold_pose_published_count % 120 == 0
+            || frame_count == 0
+        {
+            crate::marker(
+                "manifold-pose-provider",
+                format!(
+                    "status={} frame={} stream={} sequenceId={} controller={} poseKind={} rightGripPoseActive={} rightGripPoseTracked={} queued={} nativeControllerPosePublishedCount={} nativeControllerPoseDroppedCount={} locationFlags={:?} positionM={:.5},{:.5},{:.5} highRatePoseViaManifold=true highRatePoseViaAndroidProperties=false",
+                    if queued { "sample-queued" } else { "sample-dropped" },
+                    frame_count,
+                    crate::projection_target_state::marker_token(&self.manifold_pose_config.stream_id),
+                    sequence_id,
+                    crate::projection_target_state::marker_token(&self.manifold_pose_config.controller),
+                    crate::projection_target_state::marker_token(&self.manifold_pose_config.pose_kind),
+                    active,
+                    tracked,
+                    queued,
+                    self.manifold_pose_published_count,
+                    self.manifold_pose_dropped_count,
+                    location.location_flags,
+                    position[0],
+                    position[1],
+                    position[2],
+                ),
+            );
+        }
     }
 
     fn poll_primary_randomize<G>(&mut self, session: &xr::Session<G>, frame_count: u64) -> bool {
@@ -418,6 +643,35 @@ impl StimulusVolumeActions {
         }
         None
     }
+}
+
+fn manifold_pose_config_from_projection_settings(
+    settings: &ProjectionTargetSettings,
+) -> ManifoldPosePublisherConfig {
+    ManifoldPosePublisherConfig {
+        enabled: settings.breath_bridge_mode.uses_breath_stream(),
+        broker_host: settings.manifold_broker_host.clone(),
+        broker_port: settings.manifold_broker_port,
+        broker_path: settings.manifold_broker_path.clone(),
+        stream_id: DEFAULT_MANIFOLD_POSE_STREAM.to_string(),
+        source_id: DEFAULT_MANIFOLD_POSE_SOURCE.to_string(),
+        controller: DEFAULT_MANIFOLD_POSE_CONTROLLER.to_string(),
+        pose_kind: DEFAULT_MANIFOLD_POSE_KIND.to_string(),
+        sample_hz: DEFAULT_MANIFOLD_POSE_SAMPLE_HZ,
+        connect_timeout_ms: 250,
+    }
+}
+
+fn space_location_pose_usable(location: xr::SpaceLocation) -> bool {
+    let flags = location.location_flags;
+    let position_usable = flags.intersects(
+        xr::sys::SpaceLocationFlags::POSITION_VALID | xr::sys::SpaceLocationFlags::POSITION_TRACKED,
+    );
+    let orientation_usable = flags.intersects(
+        xr::sys::SpaceLocationFlags::ORIENTATION_VALID
+            | xr::sys::SpaceLocationFlags::ORIENTATION_TRACKED,
+    );
+    position_usable && orientation_usable
 }
 
 struct InteractionProfileBindings {
