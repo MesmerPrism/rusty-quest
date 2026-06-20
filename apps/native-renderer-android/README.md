@@ -95,10 +95,15 @@ files/stimulus_volume_status.json
 ```
 
 The native runtime may replace that file with
-`rusty.quest.stimulus_volume.apply_status.v1` after startup validation. This is
-startup-effective by design. Future live editing should add a same-process JNI
-or command-queue adapter that drains at a frame boundary; it should not poll
-panel files in the GPU command-recording hot path.
+`rusty.quest.stimulus_volume.apply_status.v1` after startup validation. For
+running immersive sessions, the same panel also supports two live paths:
+`Apply Live` queues one candidate immediately, while `Live auto update`
+debounces control edits and keeps only the newest pending candidate. Both live
+paths use a same-process JNI queue that the Rust frame loop drains at a frame
+boundary; they do not poll panel files in the GPU command-recording hot path.
+Live changes update scalar stimulus settings, dynamics, and the right-primary
+randomize gate. Render-mode or render-target changes are rejected as
+restart-required so the live path never reallocates Vulkan storage images.
 
 While the immersive native renderer is running, the OpenXR action set binds the
 right controller trigger value to a panel toggle. Pressing the right trigger

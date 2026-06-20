@@ -6,6 +6,8 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.ArrayAdapter;
@@ -37,12 +39,28 @@ public final class ControlPanelActivity extends Activity {
     private static final int PANEL_MUTED = Color.rgb(170, 176, 186);
     private static final int PANEL_SURFACE = Color.rgb(35, 38, 45);
     private static final int PANEL_ACCENT = Color.rgb(255, 214, 68);
+    private static boolean nativeBridgeLoaded;
+    private static String nativeBridgeLoadError;
+
+    static {
+        try {
+            System.loadLibrary("rusty_quest_native_renderer");
+            nativeBridgeLoaded = true;
+            nativeBridgeLoadError = "";
+        } catch (UnsatisfiedLinkError error) {
+            nativeBridgeLoaded = false;
+            nativeBridgeLoadError = error.getMessage();
+        }
+    }
 
     private CheckBox safetyAck;
     private CheckBox enabledRequested;
     private CheckBox randomizeEnabled;
+    private CheckBox liveAutoApply;
     private Spinner renderTarget;
     private TextView status;
+    private Handler liveApplyHandler;
+    private Runnable pendingLiveApply;
     private Button[] patternButtons = new Button[0];
     private Button[] mirrorButtons = new Button[0];
     private String selectedPatternFamily = "randomized-trevor-vocabulary";
@@ -74,6 +92,7 @@ public final class ControlPanelActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        liveApplyHandler = new Handler(Looper.getMainLooper());
         setContentView(buildContentView());
         updateStatus("Panel ready. Candidate path: " + new File(getFilesDir(), CANDIDATE_FILE));
     }
@@ -117,9 +136,31 @@ public final class ControlPanelActivity extends Activity {
         safetyAck = checkBox("Photosensitive-risk acknowledgement", false);
         enabledRequested = checkBox("Request active stimulus after launch", false);
         randomizeEnabled = checkBox("Enable right-primary randomize", true);
+        View.OnClickListener liveControlListener = new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                scheduleLiveApplyFromControl();
+            }
+        };
+        safetyAck.setOnClickListener(liveControlListener);
+        enabledRequested.setOnClickListener(liveControlListener);
+        randomizeEnabled.setOnClickListener(liveControlListener);
+        liveAutoApply = checkBox("Live auto update", false);
+        liveAutoApply.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (liveAutoApply.isChecked()) {
+                    scheduleLiveApplyFromControl();
+                } else {
+                    cancelPendingLiveApply();
+                    setStatusText("Live auto update off. Use Apply Live for explicit changes.");
+                }
+            }
+        });
         root.addView(safetyAck);
         root.addView(enabledRequested);
         root.addView(randomizeEnabled);
+        root.addView(liveAutoApply);
 
         root.addView(sectionTitle("Render"));
         renderTarget = spinner(new String[] {
@@ -256,6 +297,7 @@ public final class ControlPanelActivity extends Activity {
                         selectedMirrorMode = String.valueOf(view.getTag());
                         updateChoiceButtons(mirrorButtons, selectedMirrorMode);
                     }
+                    scheduleLiveApplyFromControl();
                 }
             });
             GridLayout.LayoutParams params = new GridLayout.LayoutParams();
@@ -277,16 +319,16 @@ public final class ControlPanelActivity extends Activity {
     }
 
     private View buildActionRow() {
-        LinearLayout buttons = new LinearLayout(this);
-        buttons.setOrientation(LinearLayout.HORIZONTAL);
-        buttons.setPadding(0, dp(14), 0, dp(10));
+        LinearLayout actionBlock = new LinearLayout(this);
+        actionBlock.setOrientation(LinearLayout.VERTICAL);
+        actionBlock.setPadding(0, dp(14), 0, dp(10));
 
         Button validate = button("Validate");
         validate.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 try {
-                    buildCandidateJson();
+                    buildCandidateJson("validate-only");
                     writeStatus("validated_by_panel");
                     updateStatus("Panel validation passed.");
                 } catch (Exception error) {
@@ -299,6 +341,13 @@ public final class ControlPanelActivity extends Activity {
             @Override
             public void onClick(View view) {
                 stageCandidate(false);
+            }
+        });
+        Button applyLive = button("Apply Live");
+        applyLive.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                submitLiveCandidate(true);
             }
         });
         Button stageLaunch = button("Stage + Launch VR");
@@ -316,11 +365,18 @@ public final class ControlPanelActivity extends Activity {
             }
         });
 
-        buttons.addView(validate, rowButtonParams());
-        buttons.addView(stage, rowButtonParams());
-        buttons.addView(stageLaunch, rowButtonParams());
-        buttons.addView(close, rowButtonParams());
-        return buttons;
+        LinearLayout firstRow = new LinearLayout(this);
+        firstRow.setOrientation(LinearLayout.HORIZONTAL);
+        firstRow.addView(validate, rowButtonParams());
+        firstRow.addView(applyLive, rowButtonParams());
+        firstRow.addView(stage, rowButtonParams());
+        LinearLayout secondRow = new LinearLayout(this);
+        secondRow.setOrientation(LinearLayout.HORIZONTAL);
+        secondRow.addView(stageLaunch, rowButtonParams());
+        secondRow.addView(close, rowButtonParams());
+        actionBlock.addView(firstRow);
+        actionBlock.addView(secondRow);
+        return actionBlock;
     }
 
     private LinearLayout.LayoutParams rowButtonParams() {
@@ -339,7 +395,7 @@ public final class ControlPanelActivity extends Activity {
 
     private void stageCandidate(boolean launchAfterStage) {
         try {
-            JSONObject candidate = buildCandidateJson();
+            JSONObject candidate = buildCandidateJson("stage");
             writeFile(CANDIDATE_FILE, candidate.toString(2));
             writeStatus("staged_by_panel");
             updateStatus("Candidate staged.");
@@ -351,7 +407,7 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
-    private JSONObject buildCandidateJson() throws Exception {
+    private JSONObject buildCandidateJson(String applyMode) throws Exception {
         boolean active = enabledRequested.isChecked();
         boolean acknowledged = safetyAck.isChecked();
         if (active && !acknowledged) {
@@ -387,7 +443,7 @@ public final class ControlPanelActivity extends Activity {
             .put("randomize", randomize)
             .put("dynamics", buildDynamicsJson());
         JSONObject apply = new JSONObject()
-            .put("mode", "stage")
+            .put("mode", applyMode)
             .put("expected_effective_revision", -1);
         return new JSONObject()
             .put("schema", PROFILE_SCHEMA)
@@ -397,6 +453,59 @@ public final class ControlPanelActivity extends Activity {
             .put("safety", safety)
             .put("stimulus", stimulus)
             .put("apply", apply);
+    }
+
+    private void scheduleLiveApplyFromControl() {
+        if (liveAutoApply == null || !liveAutoApply.isChecked()) {
+            return;
+        }
+        cancelPendingLiveApply();
+        pendingLiveApply = new Runnable() {
+            @Override
+            public void run() {
+                pendingLiveApply = null;
+                submitLiveCandidate(false);
+            }
+        };
+        liveApplyHandler.postDelayed(pendingLiveApply, 180);
+        setStatusText("Live auto update pending.");
+    }
+
+    private void cancelPendingLiveApply() {
+        if (liveApplyHandler != null && pendingLiveApply != null) {
+            liveApplyHandler.removeCallbacks(pendingLiveApply);
+            pendingLiveApply = null;
+        }
+    }
+
+    private void submitLiveCandidate(boolean userVisible) {
+        try {
+            if (!nativeBridgeLoaded) {
+                throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
+            }
+            JSONObject candidate = buildCandidateJson("apply-on-next-safe-frame");
+            String responseText = nativeSubmitLiveStimulusCandidate(candidate.toString());
+            JSONObject response = new JSONObject(responseText);
+            String responseStatus = response.optString("status", "unknown");
+            if (!"queued".equals(responseStatus)) {
+                throw new IllegalStateException(responseText);
+            }
+            String message = "Live candidate queued for next safe frame.";
+            if (response.optBoolean("overwrote_pending", false)) {
+                message = "Live candidate queued; older pending edit was replaced.";
+            }
+            if (userVisible) {
+                updateStatus(message);
+            } else {
+                setStatusText(message);
+            }
+        } catch (Exception error) {
+            if (userVisible) {
+                updateStatus("Live apply failed: " + error.getMessage());
+            } else {
+                setStatusText("Live auto update failed: " + error.getMessage());
+            }
+        }
     }
 
     private JSONObject buildDynamicsJson() throws Exception {
@@ -450,10 +559,14 @@ public final class ControlPanelActivity extends Activity {
     }
 
     private void updateStatus(String message) {
+        setStatusText(message);
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
+    }
+
+    private void setStatusText(String message) {
         if (status != null) {
             status.setText(message);
         }
-        Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
     }
 
     private TextView text(String value, int sp, int color) {
@@ -571,6 +684,9 @@ public final class ControlPanelActivity extends Activity {
                 @Override
                 public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
                     refresh();
+                    if (fromUser) {
+                        scheduleLiveApplyFromControl();
+                    }
                 }
 
                 @Override
@@ -606,4 +722,6 @@ public final class ControlPanelActivity extends Activity {
             valueLabel.setText(title + ": " + formatted);
         }
     }
+
+    private static native String nativeSubmitLiveStimulusCandidate(String candidateJson);
 }

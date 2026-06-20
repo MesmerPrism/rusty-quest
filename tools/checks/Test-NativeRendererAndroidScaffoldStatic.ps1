@@ -90,6 +90,7 @@ Assert-ContainsTokens $controlPanel @(
     'photosensitive_risk_ack',
     'Request active stimulus after launch',
     'Enable right-primary randomize',
+    'Live auto update',
     'Volumetric Pattern Panel',
     'GridLayout',
     'SeekBar',
@@ -102,6 +103,11 @@ Assert-ContainsTokens $controlPanel @(
     'jumble',
     'stretch',
     'Stage \+ Launch VR',
+    'Apply Live',
+    'apply-on-next-safe-frame',
+    'scheduleLiveApplyFromControl',
+    'nativeSubmitLiveStimulusCandidate',
+    'System\.loadLibrary\("rusty_quest_native_renderer"\)',
     'ACTION_TOGGLE_PANEL',
     'onNewIntent',
     'Close',
@@ -158,6 +164,11 @@ Assert-ContainsTokens $stimulusPanel @(
     'apply_app_private_candidate',
     'status=applied transport=app-private-file',
     'status=rejected transport=app-private-file',
+    'take_live_candidate',
+    'write_live_status',
+    'status=live-queued transport=jni-live-queue',
+    'status=live-rejected transport=jni-live-queue',
+    'Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLiveStimulusCandidate',
     'NativeRendererRenderMode::SolidBlackStimulusVolume',
     'NativeRendererRenderMode::NativePassthroughStimulusVolume',
     'ProjectionTargetSettings::disabled_for_volume_only_route',
@@ -170,6 +181,15 @@ Assert-ContainsTokens $stimulusPanel @(
     'source_shift',
     'unsupported_mirror_mode'
 ) "Rust panel candidate adapter"
+
+Assert-ContainsTokens $xrVulkan @(
+    'apply_live_stimulus_candidate',
+    'render_mode_requires_restart',
+    'render_target_requires_restart',
+    'status=live-applied transport=jni-live-queue',
+    'status=live-rejected transport=jni-live-queue',
+    'update_stimulus_settings'
+) "Rust live stimulus frame-loop adapter"
 
 Assert-ContainsTokens $androidEvents @(
     'pump_activity_events',

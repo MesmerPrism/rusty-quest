@@ -413,6 +413,23 @@ impl StimulusVolumeActions {
         Ok(())
     }
 
+    pub(crate) fn update_stimulus_settings(
+        &mut self,
+        stimulus_settings: NativeStimulusVolumeSettings,
+        frame_count: u64,
+    ) {
+        self.stimulus_settings = stimulus_settings;
+        crate::marker(
+            "stimulus-volume-input",
+            format!(
+                "status=live-settings-updated frame={} rightControllerPrimaryButtonRandomize={} stimulusRandomizeEnabled={}",
+                frame_count,
+                self.stimulus_settings.enabled && self.stimulus_settings.randomize_enabled,
+                self.stimulus_settings.randomize_enabled
+            ),
+        );
+    }
+
     pub(crate) fn sync_and_poll<G>(
         &mut self,
         session: &xr::Session<G>,

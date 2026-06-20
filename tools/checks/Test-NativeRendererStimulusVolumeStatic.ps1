@@ -142,7 +142,15 @@ Assert-ContainsTokens "$nativeBuildRs`n$nativeLib`n$nativeRendererOptionSurface`
     'sync_actions',
     'projection_layer_alpha_blend',
     'record_compute_frame',
-    'record_projection_eye'
+    'record_projection_eye',
+    'apply_live_settings',
+    'take_live_candidate',
+    'status=live-applied',
+    'status=live-rejected',
+    'transport=jni-live-queue',
+    'stimulusVolumeUniformBufferBytes',
+    'update_stimulus_settings',
+    'status=live-settings-updated'
 ) "stimulus-volume GPU route"
 
 Write-Host "Rusty Quest native renderer stimulus-volume static validation passed"

@@ -6,6 +6,8 @@
 use std::collections::BTreeMap;
 #[cfg(target_os = "android")]
 use std::path::Path;
+#[cfg(target_os = "android")]
+use std::sync::{Mutex, OnceLock};
 
 #[cfg(any(target_os = "android", test))]
 use serde_json::json;
@@ -38,6 +40,115 @@ pub(crate) struct StimulusPanelCandidate {
     pub(crate) revision: i64,
     pub(crate) render_mode: NativeRendererRenderMode,
     pub(crate) settings: NativeStimulusVolumeSettings,
+}
+
+#[cfg(target_os = "android")]
+static LIVE_CANDIDATE_QUEUE: OnceLock<Mutex<Option<StimulusPanelCandidate>>> = OnceLock::new();
+
+#[cfg(target_os = "android")]
+#[derive(Clone, Copy, Debug)]
+struct LiveQueueOutcome {
+    revision: i64,
+    overwrote_pending: bool,
+}
+
+#[cfg(target_os = "android")]
+fn live_candidate_queue() -> &'static Mutex<Option<StimulusPanelCandidate>> {
+    LIVE_CANDIDATE_QUEUE.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn take_live_candidate() -> Option<StimulusPanelCandidate> {
+    let mut queue = live_candidate_queue().lock().ok()?;
+    queue.take()
+}
+
+#[cfg(target_os = "android")]
+fn queue_live_candidate(text: &str) -> Result<LiveQueueOutcome, String> {
+    let candidate = parse_candidate_json(text)?;
+    let revision = candidate.revision;
+    let pattern_family = candidate.settings.pattern_family.marker_value();
+    let mut queue = live_candidate_queue()
+        .lock()
+        .map_err(|_| "live_queue_poisoned".to_string())?;
+    let overwrote_pending = queue.replace(candidate).is_some();
+    crate::marker(
+        "stimulus-panel",
+        format!(
+            "status=live-queued transport=jni-live-queue schema={} candidateRevision={} activePatternFamily={} overwrotePendingCandidate={}",
+            PROFILE_SCHEMA, revision, pattern_family, overwrote_pending
+        ),
+    );
+    Ok(LiveQueueOutcome {
+        revision,
+        overwrote_pending,
+    })
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLiveStimulusCandidate(
+    mut env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    candidate_json: jni::objects::JString,
+) -> jni::sys::jstring {
+    match env
+        .with_env(|env| -> jni::errors::Result<jni::sys::jstring> {
+            let candidate_json = candidate_json.try_to_string(env)?;
+            let response = match queue_live_candidate(&candidate_json) {
+                Ok(outcome) => json!({
+                    "schema": STATUS_SCHEMA,
+                    "status": "queued",
+                    "transport": "jni_live_queue",
+                    "candidate_revision": outcome.revision,
+                    "overwrote_pending": outcome.overwrote_pending
+                })
+                .to_string(),
+                Err(reason) => {
+                    crate::marker(
+                        "stimulus-panel",
+                        format!(
+                            "status=live-rejected transport=jni-live-queue schema={} reason={}",
+                            PROFILE_SCHEMA,
+                            crate::sanitize(&reason)
+                        ),
+                    );
+                    json!({
+                        "schema": STATUS_SCHEMA,
+                        "status": "rejected",
+                        "transport": "jni_live_queue",
+                        "rejection_code": reason
+                    })
+                    .to_string()
+                }
+            };
+            env.new_string(response).map(|value| value.into_raw())
+        })
+        .into_outcome()
+    {
+        jni::Outcome::Ok(value) => value,
+        jni::Outcome::Err(error) => {
+            crate::marker(
+                "stimulus-panel",
+                format!(
+                    "status=live-rejected transport=jni-live-queue schema={} reason=jni_error:{}",
+                    PROFILE_SCHEMA,
+                    crate::sanitize(&error.to_string())
+                ),
+            );
+            std::ptr::null_mut()
+        }
+        jni::Outcome::Panic(_) => {
+            crate::marker(
+                "stimulus-panel",
+                format!(
+                    "status=live-rejected transport=jni-live-queue schema={} reason=jni_panic",
+                    PROFILE_SCHEMA
+                ),
+            );
+            std::ptr::null_mut()
+        }
+    }
 }
 
 impl StimulusPanelCandidate {
@@ -233,7 +344,7 @@ pub(crate) fn apply_app_private_candidate(
         Ok(text) => text,
         Err(error) => {
             let reason = format!("read_failed:{error}");
-            write_status(&data_path, "rejected", 0, &reason, None);
+            write_status(&data_path, "rejected", 0, &reason, "app_private_file", None);
             crate::marker(
                 "stimulus-panel",
                 format!("status=rejected reason={}", crate::sanitize(&reason)),
@@ -247,7 +358,14 @@ pub(crate) fn apply_app_private_candidate(
             let render_mode = candidate.render_mode.marker_value();
             let pattern_family = candidate.settings.pattern_family.marker_value();
             let updated = candidate.apply_to(options);
-            write_status(&data_path, "applied", revision, "none", Some(&updated));
+            write_status(
+                &data_path,
+                "applied",
+                revision,
+                "none",
+                "app_private_file",
+                Some(&updated.stimulus_volume_settings),
+            );
             crate::marker(
                 "stimulus-panel",
                 format!(
@@ -263,7 +381,7 @@ pub(crate) fn apply_app_private_candidate(
             updated
         }
         Err(reason) => {
-            write_status(&data_path, "rejected", 0, &reason, None);
+            write_status(&data_path, "rejected", 0, &reason, "app_private_file", None);
             crate::marker(
                 "stimulus-panel",
                 format!(
@@ -355,12 +473,33 @@ fn parse_startup_dynamics(
 }
 
 #[cfg(target_os = "android")]
+pub(crate) fn write_live_status(
+    app: &android_activity::AndroidApp,
+    status: &str,
+    revision: i64,
+    reason: &str,
+    settings: Option<&NativeStimulusVolumeSettings>,
+) {
+    if let Some(data_path) = app.internal_data_path() {
+        write_status(
+            &data_path,
+            status,
+            revision,
+            reason,
+            "jni_live_queue",
+            settings,
+        );
+    }
+}
+
+#[cfg(target_os = "android")]
 fn write_status(
     data_path: &Path,
     status: &str,
     revision: i64,
     reason: &str,
-    options: Option<&NativeRendererRuntimeOptions>,
+    transport: &str,
+    settings: Option<&NativeStimulusVolumeSettings>,
 ) {
     let effective_revision = if status == "applied" { revision } else { 0 };
     let body = json!({
@@ -369,19 +508,19 @@ fn write_status(
         "candidate_revision": revision,
         "effective_revision": effective_revision,
         "rejection_code": if reason == "none" { Value::Null } else { Value::String(reason.to_string()) },
-        "transport": "app_private_file",
-        "active_pattern_family": options
-            .map(|options| options.stimulus_volume_settings.pattern_family.marker_value())
+        "transport": transport,
+        "active_pattern_family": settings
+            .map(|settings| settings.pattern_family.marker_value())
             .unwrap_or("none"),
-        "active_randomize": options.map(|options| json!({
-            "enabled": options.stimulus_volume_settings.randomize_enabled,
-            "min_hz": options.stimulus_volume_settings.randomize_min_hz,
-            "max_hz": options.stimulus_volume_settings.randomize_max_hz
+        "active_randomize": settings.map(|settings| json!({
+            "enabled": settings.randomize_enabled,
+            "min_hz": settings.randomize_min_hz,
+            "max_hz": settings.randomize_max_hz
         })).unwrap_or(Value::Null),
-        "safety_gate": options
-            .map(|options| if options.stimulus_volume_settings.active() {
+        "safety_gate": settings
+            .map(|settings| if settings.active() {
                 "acknowledged-active"
-            } else if options.stimulus_volume_settings.enabled {
+            } else if settings.enabled {
                 "render-black-until-safety-ack"
             } else {
                 "disabled"

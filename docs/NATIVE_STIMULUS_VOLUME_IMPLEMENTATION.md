@@ -150,10 +150,18 @@ stimulus_volume_status.json
 
 with schema `rusty.quest.stimulus_volume.apply_status.v1`.
 
-This is a startup-effective proof slice. Future browser-like editing should
-reuse the same candidate/status schema through a same-process JNI or command
-queue adapter and apply only at a safe frame boundary. The renderer should not
-poll panel files or WebView state inside the Vulkan command-recording hot path.
+The staged file is startup-effective, but the panel also has two live apply
+modes for running immersive sessions. `Apply Live` submits the current
+candidate immediately through JNI. `Live auto update` debounces control edits
+and overwrites any older pending live candidate before the renderer consumes
+it. The Rust frame loop drains this same-process queue at a frame boundary,
+updates the low-rate uniform buffer and runtime dynamics, refreshes the
+right-primary randomize gate, and writes the same apply-status schema with
+`transport=jni_live_queue`. The renderer does not poll panel files or WebView
+state inside the Vulkan command-recording hot path. Live candidates that change
+render mode or render target are rejected as restart-required, because those
+changes would alter OpenXR/Vulkan resource ownership instead of just scalar
+stimulus parameters.
 
 The first in-VR panel affordance is a right-controller trigger toggle. The
 native OpenXR action set binds `/user/hand/right/input/trigger/value` for

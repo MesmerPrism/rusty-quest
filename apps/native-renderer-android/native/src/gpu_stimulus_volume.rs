@@ -460,6 +460,43 @@ impl GpuStimulusVolumeRenderer {
         );
     }
 
+    pub(crate) unsafe fn apply_live_settings(
+        &mut self,
+        device: &ash::Device,
+        settings: NativeStimulusVolumeSettings,
+        frame_count: u64,
+        candidate_revision: i64,
+    ) -> Result<(), String> {
+        self.uniform_buffer
+            .write(device, &StimulusVolumeUniforms::from_settings(settings))?;
+        let dynamics = settings.startup_dynamics;
+        self.temporal_frequency_hz = dynamics.temporal_frequency_hz;
+        self.oscillator_hz = dynamics.oscillator_hz;
+        self.spatial_frequency_scale = dynamics.spatial_frequency_scale;
+        self.source_shift = dynamics.source_shift;
+        self.noise_scale = dynamics.noise_scale;
+        self.depth_warp = dynamics.depth_warp;
+        self.pattern_family = dynamics.pattern_family.runtime_initial_family();
+        self.mirror_mode = dynamics.mirror_mode;
+        self.twist = dynamics.twist;
+        self.pinch = dynamics.pinch;
+        self.scramble = dynamics.scramble;
+        self.jumble = dynamics.jumble;
+        self.stretch = dynamics.stretch;
+        self.phase_offsets = dynamics.phase_offsets;
+        crate::marker(
+            "stimulus-volume",
+            format!(
+                "status=live-applied transport=jni-live-queue frame={} candidateRevision={} stimulusVolumeUniformBufferBytes={} {}",
+                frame_count,
+                candidate_revision,
+                self.uniform_buffer.bytes,
+                dynamics.marker_fields(),
+            ),
+        );
+        Ok(())
+    }
+
     pub(crate) unsafe fn record_compute_frame(
         &mut self,
         device: &ash::Device,

@@ -1482,7 +1482,7 @@ unsafe fn run_projection_frames(
     hand_mesh_real_hands_visible: bool,
     hand_anchor_particle_settings: NativeHandAnchorParticleSettings,
     environment_depth_settings: NativeEnvironmentDepthSettings,
-    stimulus_volume_settings: NativeStimulusVolumeSettings,
+    mut stimulus_volume_settings: NativeStimulusVolumeSettings,
     projection_target_settings: ProjectionTargetSettings,
     camera_output_mode: NativeCameraOutputMode,
     guide_blur_enabled: bool,
@@ -1665,6 +1665,19 @@ unsafe fn run_projection_frames(
             .as_secs_f32()
             .clamp(0.0, 1.0);
         previous_frame_instant = frame_instant;
+
+        if let Some(candidate) = crate::native_renderer_stimulus_panel::take_live_candidate() {
+            apply_live_stimulus_candidate(
+                app,
+                vk_device,
+                render_mode,
+                &mut stimulus_volume_settings,
+                gpu_stimulus_volume_renderer.as_deref_mut(),
+                stimulus_actions.as_deref_mut(),
+                candidate,
+                frame_count,
+            );
+        }
 
         if let Some(actions) = stimulus_actions.as_deref_mut() {
             let controller_events = actions.sync_and_poll(
@@ -2561,6 +2574,94 @@ unsafe fn run_projection_frames(
         swapchain.destroy(vk_device);
     }
     Ok(())
+}
+
+fn apply_live_stimulus_candidate(
+    app: &android_activity::AndroidApp,
+    vk_device: &ash::Device,
+    render_mode: NativeRendererRenderMode,
+    stimulus_volume_settings: &mut NativeStimulusVolumeSettings,
+    gpu_stimulus_volume_renderer: Option<&mut GpuStimulusVolumeRenderer>,
+    stimulus_actions: Option<&mut StimulusVolumeActions>,
+    candidate: crate::native_renderer_stimulus_panel::StimulusPanelCandidate,
+    frame_count: u64,
+) {
+    let revision = candidate.revision;
+    if candidate.render_mode != render_mode {
+        let reason = format!(
+            "render_mode_requires_restart:{}->{}",
+            render_mode.marker_value(),
+            candidate.render_mode.marker_value()
+        );
+        reject_live_stimulus_candidate(app, frame_count, revision, &reason);
+        return;
+    }
+    if candidate.settings.render_target != stimulus_volume_settings.render_target {
+        let reason = format!(
+            "render_target_requires_restart:{}->{}",
+            stimulus_volume_settings.render_target.marker_value(),
+            candidate.settings.render_target.marker_value()
+        );
+        reject_live_stimulus_candidate(app, frame_count, revision, &reason);
+        return;
+    }
+    let Some(renderer) = gpu_stimulus_volume_renderer else {
+        reject_live_stimulus_candidate(
+            app,
+            frame_count,
+            revision,
+            "stimulus_volume_renderer_unavailable",
+        );
+        return;
+    };
+
+    *stimulus_volume_settings = candidate.settings;
+    match unsafe {
+        renderer.apply_live_settings(vk_device, *stimulus_volume_settings, frame_count, revision)
+    } {
+        Ok(()) => {
+            crate::marker(
+                "stimulus-panel",
+                format!(
+                    "status=live-applied transport=jni-live-queue frame={} candidateRevision={} {}",
+                    frame_count,
+                    revision,
+                    stimulus_volume_settings.marker_fields()
+                ),
+            );
+            crate::native_renderer_stimulus_panel::write_live_status(
+                app,
+                "applied",
+                revision,
+                "none",
+                Some(&*stimulus_volume_settings),
+            );
+            if let Some(actions) = stimulus_actions {
+                actions.update_stimulus_settings(*stimulus_volume_settings, frame_count);
+            }
+        }
+        Err(reason) => reject_live_stimulus_candidate(app, frame_count, revision, &reason),
+    }
+}
+
+fn reject_live_stimulus_candidate(
+    app: &android_activity::AndroidApp,
+    frame_count: u64,
+    revision: i64,
+    reason: &str,
+) {
+    crate::marker(
+        "stimulus-panel",
+        format!(
+            "status=live-rejected transport=jni-live-queue frame={} candidateRevision={} reason={}",
+            frame_count,
+            revision,
+            crate::sanitize(reason)
+        ),
+    );
+    crate::native_renderer_stimulus_panel::write_live_status(
+        app, "rejected", revision, reason, None,
+    );
 }
 
 fn create_projection_reference_space(
