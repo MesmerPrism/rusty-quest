@@ -37,6 +37,7 @@ REQUIRED_MANIFEST_VALIDATORS = (
 
 RUNTIME_PROPERTY_SOURCES = (
     Path("apps/native-renderer-android/native/src/native_renderer_camera_options.rs"),
+    Path("apps/native-renderer-android/native/src/native_renderer_display_composite_options.rs"),
     Path("apps/native-renderer-android/native/src/native_renderer_properties.rs"),
     Path("apps/native-renderer-android/native/src/native_renderer_property_values.rs"),
     Path("apps/native-renderer-android/native/src/native_renderer_environment_depth_options.rs"),

@@ -26,6 +26,7 @@ Runtime routes are selected by profile/property, not by separate APKs:
 | `quest-native-renderer-direct-hwb-hold-sync-reader6.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for queue-depth A/B inspection | Enabled, hold-sync with `readerMaxImages=6` |
 | `quest-native-renderer-direct-hwb-hold-sync-reader8.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for queue-depth A/B inspection | Enabled, hold-sync with `readerMaxImages=8` |
 | `quest-native-renderer-direct-hwb-1280x960.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for resolution A/B inspection | Enabled, Android-suggested YCbCr with requested 1280x960 reader size and support-gated fallback |
+| `quest-native-renderer-display-composite-feedback.profile.json` | Native Meta passthrough with Android MediaProjection feedback plane | Recursive MediaProjection feedback target only; hand/SDF/graft visuals disabled | Camera2 disabled; guide blur disabled; Rust/NDK `AImageReader`/`AHardwareBuffer` sampled through Vulkan, then folded through an app-owned ping-pong feedback texture without CPU pixel copy |
 | `quest-native-renderer-replay-visual-proof.profile.json` | Custom camera projection | Recorded GPU-skinned mesh and SDF visual | Enabled |
 | `quest-native-renderer-hwb-peripheral-stretch.profile.json` | Custom camera projection with full-eye target-edge stretch/blend border | Optional recorded/live mesh controls remain profile-selectable | Enabled |
 | `quest-native-renderer-live-hand-visual-diagnostic.profile.json` | Custom camera projection | Live diagnostic mesh/SDF, pending screenshot acceptance | Enabled |
@@ -57,6 +58,23 @@ Quest live hand tracking also requires the APK manifest to declare
 `com.oculus.permission.HAND_TRACKING` and optional
 `oculus.software.handtracking`; OS-level hand tracking must be enabled before
 OpenXR reports active joints.
+Display-composite feedback uses the same APK identity and a non-exported
+foreground `mediaProjection` service. The panel action
+`io.github.mesmerprism.rustyquest.native_renderer.action.REQUEST_DISPLAY_COMPOSITE_CAPTURE`
+calls Android `createScreenCaptureIntent` on every launch, so a lab
+`PROJECT_MEDIA` app-op pregrant only suppresses the prompt; it does not replace
+the single-use result-data token. The service passes a Rust-created `Surface`
+to `VirtualDisplay`; frame objects stay in Rust through NDK `AImageReader`.
+Generic Vulkan `AHardwareBuffer` property query, image import, memory binding,
+image-view creation, layout transition, and retained-handle ownership live in
+`ahardware_buffer_vulkan.rs`; Camera2 keeps its YCbCr policy above that module,
+and display-composite sampling reuses it rather than coupling to Camera2. The
+recursive feedback effect is an app-owned device-local ping-pong texture inside
+the display-composite renderer; it does not assume MediaProjection can recapture
+native passthrough or later compositor layers.
+Use
+`tools/Grant-NativeRendererPermissions.ps1 -GrantMediaProjectionAppOp` for the
+lab pregrant and `-ResetMediaProjectionAppOp` after validation.
 The NativeActivity event pump drains `MainEvent::InputAvailable` through
 `AndroidApp::input_events_iter()` so controller/menu key events are
 acknowledged by Android's input queue while remaining unhandled by the renderer
@@ -551,6 +569,20 @@ summary for direct inspection. It also requires stage-level performance budgets
 by default; pass
 `-AllowPerformanceBudgetMiss` only when collecting failed-run artifacts is the
 priority.
+
+Display-composite MediaProjection smoke:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererDisplayCompositeSmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
+```
+
+The display-composite wrapper installs the APK unless `-SkipInstall` is passed,
+applies the display-composite runtime profile, grants and later resets the lab
+`PROJECT_MEDIA` app-op, launches the panel capture action with a fresh
+`display_composite_request_token`, and requires PID-scoped markers for the
+Rust-created `Surface`, native `AImageReader`, and `AHardwareBuffer` frame
+handoff without Java per-frame buffers or CPU pixel copies.
+
 Device-facing smoke runs require `-Serial <quest-serial>` or
 `RUSTY_QUEST_SERIAL`. Use `-AdbServerPort` or `RUSTY_QUEST_ADB_SERVER_PORT`
 only when deliberately routing through a non-default ADB server. Logcat capture

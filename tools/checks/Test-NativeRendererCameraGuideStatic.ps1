@@ -40,6 +40,8 @@ function Assert-ContainsTokens {
 $nativeBuildRs = Read-RequiredText (Join-Path $nativeRoot "build.rs") "native build script"
 $nativeLib = Read-RequiredText (Join-Path $srcRoot "lib.rs") "native lib"
 $nativeCamera = Read-RequiredText (Join-Path $srcRoot "native_camera.rs") "native camera"
+$nativeAhb = Read-RequiredText (Join-Path $srcRoot "android_hardware_buffer.rs") "shared Android hardware buffer helper"
+$ahbVulkan = Read-RequiredText (Join-Path $srcRoot "ahardware_buffer_vulkan.rs") "shared Android hardware buffer Vulkan helper"
 $nativeCameraMetadata = Read-RequiredText (Join-Path $srcRoot "native_camera_metadata.rs") "native camera metadata"
 $nativeCameraProfiles = Read-RequiredText (Join-Path $srcRoot "native_camera_profiles.rs") "native camera profiles"
 $nativeCameraReaderSelection = Read-RequiredText (Join-Path $srcRoot "native_camera_reader_selection.rs") "native camera reader selection"
@@ -316,6 +318,7 @@ Assert-ContainsTokens $nativeBuildRs @(
 ) "native shader build script guide entries"
 
 foreach ($token in @(
+    'mod ahardware_buffer_vulkan',
     'ACameraManager_create',
     'ACameraManager_getCameraIdList',
     'ACameraManager_openCamera',
@@ -336,9 +339,27 @@ foreach ($token in @(
     'releaseRetireCount',
     'descriptorShape=combined-immutable-sampler-ycbcr-conversion'
 )) {
-    if ($nativeCamera -notmatch $token -and $acameraSys -notmatch $token) {
+    if ($nativeLib -notmatch $token -and $nativeCamera -notmatch $token -and $nativeAhb -notmatch $token -and $ahbVulkan -notmatch $token -and $acameraSys -notmatch $token) {
         throw "Rust native camera scaffold missing token: $token"
     }
 }
+
+Assert-ContainsTokens $cameraProjection @(
+    'query_ahb_vulkan_import_properties',
+    'import_ahb_sampled_image',
+    'transition_ahb_sampled_image_to_shader_read',
+    'AhbVulkanSampledImage'
+) "camera projection shared AHB Vulkan import use"
+
+Assert-ContainsTokens $ahbVulkan @(
+    'AhbVulkanDevice',
+    'AhbVulkanFormatKey',
+    'AndroidHardwareBufferFormatPropertiesANDROID',
+    'ExternalMemoryImageCreateInfo',
+    'ImportAndroidHardwareBufferInfoANDROID',
+    'MemoryDedicatedAllocateInfo',
+    'SamplerYcbcrConversionInfo',
+    'ANDROID_HARDWARE_BUFFER_ANDROID'
+) "shared AHB Vulkan import helper"
 
 Write-Host "Rusty Quest native renderer camera/guide static validation passed"

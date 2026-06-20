@@ -9,6 +9,8 @@
 
 use std::os::raw::{c_char, c_int, c_uint, c_void};
 
+use jni::sys::{jobject, JNIEnv};
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct ACameraManager {
@@ -23,7 +25,11 @@ pub struct ACameraIdList {
 }
 
 pub const AIMAGE_FORMAT_PRIVATE: u32 = 0x22;
+pub const AIMAGE_FORMAT_RGBA_8888: u32 = 0x1;
+pub const AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN: u64 = 3;
 pub const AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE: u64 = 1 << 8;
+pub const AHARDWAREBUFFER_USAGE_GPU_FRAMEBUFFER: u64 = 1 << 9;
+pub const AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT: u64 = AHARDWAREBUFFER_USAGE_GPU_FRAMEBUFFER;
 
 pub const ACAMERA_CONTROL_AE_TARGET_FPS_RANGE: u32 = (ACAMERA_CONTROL << 16) + 5;
 pub const ACAMERA_CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES: u32 = (ACAMERA_CONTROL << 16) + 20;
@@ -290,6 +296,7 @@ pub struct ACameraCaptureSession_captureCallbacks {
 extern "C" {
     pub fn ANativeWindow_acquire(window: *mut ANativeWindow);
     pub fn ANativeWindow_release(window: *mut ANativeWindow);
+    pub fn ANativeWindow_toSurface(env: *mut JNIEnv, window: *mut ANativeWindow) -> jobject;
 }
 
 #[link(name = "mediandk")]

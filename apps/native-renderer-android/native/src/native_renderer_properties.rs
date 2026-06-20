@@ -25,6 +25,26 @@ pub(crate) const PROP_CAMERA_STEREO_PAIRING: &str =
     "debug.rustyquest.native_renderer.camera.stereo_pairing";
 pub(crate) const PROP_CAMERA_DIRECT_BORDER_OPACITY: &str =
     "debug.rustyquest.native_renderer.camera.direct_border.opacity";
+pub(crate) const PROP_DISPLAY_COMPOSITE_ENABLED: &str =
+    "debug.rustyquest.native_renderer.display_composite.enabled";
+pub(crate) const PROP_DISPLAY_COMPOSITE_SOURCE: &str =
+    "debug.rustyquest.native_renderer.display_composite.source";
+pub(crate) const PROP_DISPLAY_COMPOSITE_MODE: &str =
+    "debug.rustyquest.native_renderer.display_composite.mode";
+pub(crate) const PROP_DISPLAY_COMPOSITE_WIDTH: &str =
+    "debug.rustyquest.native_renderer.display_composite.width";
+pub(crate) const PROP_DISPLAY_COMPOSITE_HEIGHT: &str =
+    "debug.rustyquest.native_renderer.display_composite.height";
+pub(crate) const PROP_DISPLAY_COMPOSITE_MAX_IMAGES: &str =
+    "debug.rustyquest.native_renderer.display_composite.max_images";
+pub(crate) const PROP_DISPLAY_COMPOSITE_FPS_CAP: &str =
+    "debug.rustyquest.native_renderer.display_composite.fps_cap";
+pub(crate) const PROP_DISPLAY_COMPOSITE_FEEDBACK_ENABLED: &str =
+    "debug.rustyquest.native_renderer.display_composite.feedback.enabled";
+pub(crate) const PROP_DISPLAY_COMPOSITE_FEEDBACK_PROJECTION: &str =
+    "debug.rustyquest.native_renderer.display_composite.feedback.projection";
+pub(crate) const PROP_DISPLAY_COMPOSITE_HIGH_RATE_JSON_PAYLOAD: &str =
+    "debug.rustyquest.native_renderer.display_composite.high_rate_json_payload";
 pub(crate) const PROP_SWAPCHAIN_COLOR_FORMAT_MODE: &str =
     "debug.rustyquest.native_renderer.swapchain.color_format";
 pub(crate) const PROP_SDF_UPDATE_PERIOD_FRAMES: &str =

@@ -16,6 +16,11 @@ use crate::{
         PreparedCameraProjection,
     },
     camera_projection_metadata::{CameraProjectionMetadata, TargetRect},
+    display_composite_feedback::{
+        DisplayCompositeFeedbackRenderer, DisplayCompositeFrameStats,
+        PreparedDisplayCompositeFeedback,
+    },
+    display_composite_projection_metadata::DisplayCompositeProjectionMetadata,
     gpu_environment_depth_particle_stats::GpuEnvironmentDepthParticleFrameStats,
     gpu_environment_depth_particles::GpuEnvironmentDepthParticleRenderer,
     gpu_hand_anchor_particles::{
@@ -32,6 +37,10 @@ use crate::{
     live_hand_compact::{LiveHandCompactFrameSet, LiveHandCompactInput, LiveHandCompactStats},
     manifold_breath_bridge::ManifoldBreathBridge,
     native_camera::NativeCameraRuntime,
+    native_renderer_display_composite_options::{
+        NativeDisplayCompositeFeedbackProjection, NativeDisplayCompositeMode,
+        NativeDisplayCompositeSettings,
+    },
     native_renderer_options::{
         CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings, NativeCameraOutputMode,
         NativeCameraQualityProfile, NativeCameraSyncMode, NativeEnvironmentDepthSettings,
@@ -155,6 +164,9 @@ pub(crate) fn run_projection_loop(
 ) -> Result<(), String> {
     let replay_set = RecordedHandReplaySet::load()?;
     let projection_metadata = CameraProjectionMetadata::load();
+    let display_composite_projection_metadata = DisplayCompositeProjectionMetadata::from_settings(
+        runtime_options.display_composite_settings,
+    );
     crate::marker(
         "recorded-hand-replay",
         format!(
@@ -167,6 +179,13 @@ pub(crate) fn run_projection_loop(
         "camera-projection-metadata",
         format!("status=loaded {}", projection_metadata.marker_fields()),
     );
+    crate::marker(
+        "display-composite-projection-metadata",
+        format!(
+            "status=loaded {}",
+            display_composite_projection_metadata.marker_fields()
+        ),
+    );
 
     let started = Instant::now();
     let result = unsafe {
@@ -176,6 +195,7 @@ pub(crate) fn run_projection_loop(
             runtime_options,
             replay_set,
             projection_metadata,
+            display_composite_projection_metadata,
         )
     };
     if let Err(error) = &result {
@@ -197,6 +217,7 @@ unsafe fn run_projection_loop_inner(
     runtime_options: NativeRendererRuntimeOptions,
     replay_set: RecordedHandReplaySet,
     projection_metadata: CameraProjectionMetadata,
+    display_composite_projection_metadata: DisplayCompositeProjectionMetadata,
 ) -> Result<(), String> {
     let replay = &replay_set.left;
     let secondary_replay = &replay_set.right;
@@ -466,6 +487,14 @@ unsafe fn run_projection_loop_inner(
         vulkan_external_import_prereqs_ready,
         runtime_options.camera_ycbcr_mode,
     );
+    let mut display_composite_feedback_renderer = DisplayCompositeFeedbackRenderer::new(
+        &vk_instance,
+        &vk_device,
+        memory_properties,
+        render_pass,
+        color_format,
+        vulkan_external_import_prereqs_ready,
+    );
     let mut guide_blur_graph_renderer = GuideBlurGraphRenderer::new(
         memory_properties,
         color_format,
@@ -495,6 +524,7 @@ unsafe fn run_projection_loop_inner(
     let hand_mesh_real_hands_visible = runtime_options.hand_mesh_real_hands_visible;
     let hand_anchor_particle_settings = runtime_options.hand_anchor_particle_settings;
     let environment_depth_settings = runtime_options.environment_depth_settings;
+    let display_composite_settings = runtime_options.display_composite_settings;
     let stimulus_volume_settings = runtime_options.stimulus_volume_settings;
     let projection_target_settings = runtime_options.projection_target_settings.clone();
     let projection_border_stretch_settings = runtime_options.projection_border_stretch_settings;
@@ -1065,6 +1095,7 @@ unsafe fn run_projection_loop_inner(
         &cmds,
         &fences,
         &mut camera_projection_renderer,
+        &mut display_composite_feedback_renderer,
         &mut guide_blur_graph_renderer,
         camera_runtime,
         render_mode,
@@ -1096,6 +1127,7 @@ unsafe fn run_projection_loop_inner(
         hand_mesh_real_hands_visible,
         hand_anchor_particle_settings,
         environment_depth_settings,
+        display_composite_settings,
         stimulus_volume_settings,
         projection_target_settings,
         camera_output_mode,
@@ -1112,6 +1144,7 @@ unsafe fn run_projection_loop_inner(
         projection_border_stretch_settings,
         private_layer_settings,
         &projection_metadata,
+        &display_composite_projection_metadata,
     );
 
     let _ = vk_device.device_wait_idle();
@@ -1151,6 +1184,7 @@ unsafe fn run_projection_loop_inner(
     gpu_timestamp_tracker.destroy(&vk_device);
     private_extension_slot_runtime.destroy(&vk_device);
     guide_blur_graph_renderer.destroy(&vk_device);
+    display_composite_feedback_renderer.destroy(&vk_device);
     camera_projection_renderer.destroy(&vk_device);
     gpu_mesh_replay.destroy(&vk_device);
     vk_device.destroy_command_pool(cmd_pool, None);
@@ -1451,6 +1485,7 @@ unsafe fn run_projection_frames(
     cmds: &[vk::CommandBuffer],
     fences: &[vk::Fence],
     camera_projection_renderer: &mut CameraProjectionRenderer,
+    display_composite_feedback_renderer: &mut DisplayCompositeFeedbackRenderer,
     guide_blur_graph_renderer: &mut GuideBlurGraphRenderer,
     camera_runtime: Option<&NativeCameraRuntime>,
     render_mode: NativeRendererRenderMode,
@@ -1482,6 +1517,7 @@ unsafe fn run_projection_frames(
     hand_mesh_real_hands_visible: bool,
     hand_anchor_particle_settings: NativeHandAnchorParticleSettings,
     environment_depth_settings: NativeEnvironmentDepthSettings,
+    display_composite_settings: NativeDisplayCompositeSettings,
     mut stimulus_volume_settings: NativeStimulusVolumeSettings,
     projection_target_settings: ProjectionTargetSettings,
     camera_output_mode: NativeCameraOutputMode,
@@ -1498,6 +1534,7 @@ unsafe fn run_projection_frames(
     projection_border_stretch_settings: NativeProjectionBorderStretchSettings,
     private_layer_settings: NativePrivateLayerSettings,
     projection_metadata: &CameraProjectionMetadata,
+    display_composite_projection_metadata: &DisplayCompositeProjectionMetadata,
 ) -> Result<(), String> {
     let mut swapchain: Option<ProjectionSwapchain> = None;
     let mut event_storage = xr::EventDataBuffer::new();
@@ -1733,6 +1770,9 @@ unsafe fn run_projection_frames(
             .map_err(|error| format!("wait Vulkan fence: {error}"))?;
         let retired_image_leases =
             camera_projection_renderer.retire_completed_frame_leases(frame_slot);
+        display_composite_feedback_renderer
+            .collect_completed_diagnostic_exports(vk_device, frame_slot);
+        display_composite_feedback_renderer.retire_completed_frame_handles(frame_slot);
         let _completed_luma_diagnostic = camera_projection_renderer
             .collect_completed_luma_diagnostic(frame_slot, camera_luma_diagnostic_enabled);
         if retired_image_leases > 0 {
@@ -2377,6 +2417,83 @@ unsafe fn run_projection_frames(
                 GpuTimestampStage::StimulusVolumeProjection,
             );
         }
+        let (prepared_display_composite_feedback, display_composite_feedback_stats) =
+            if display_composite_feedback_requested(display_composite_settings) {
+                let display_composite_xr_ready_marker_active =
+                    !render_mode.uses_native_passthrough() || native_passthrough.is_some();
+                match crate::display_composite_native_stream::latest_display_composite_frame() {
+                    Some(frame) => match display_composite_feedback_renderer.prepare_frame(
+                        vk_device,
+                        cmd,
+                        frame_slot,
+                        frame_count,
+                        display_composite_xr_ready_marker_active,
+                        &frame,
+                        display_composite_settings,
+                        display_composite_projection_metadata,
+                    ) {
+                        Ok(Some(prepared)) => {
+                            let stats = prepared.stats.clone();
+                            (Some(prepared), stats)
+                        }
+                        Ok(None) => (
+                            None,
+                            DisplayCompositeFrameStats::unavailable(
+                                display_composite_settings.feedback_projection,
+                                "renderer-inactive",
+                            ),
+                        ),
+                        Err(error) => {
+                            if frame_count == 0 || frame_count % 120 == 0 {
+                                crate::marker(
+                                    "display-composite-feedback",
+                                    format!(
+                                        "status=error reason={} displayCompositeFeedbackReady=false displayCompositeFeedbackRendered=false displayCompositeGpuImportReady=false displayCompositeGpuAdoptionPath=android-mediaprojection-aimage-reader-ahardwarebuffer-to-vulkan-sampled-image",
+                                        crate::sanitize(&error)
+                                    ),
+                                );
+                            }
+                            (
+                                None,
+                                DisplayCompositeFrameStats::unavailable(
+                                    display_composite_settings.feedback_projection,
+                                    "import-error",
+                                ),
+                            )
+                        }
+                    },
+                    None => (
+                        None,
+                        DisplayCompositeFrameStats::unavailable(
+                            display_composite_settings.feedback_projection,
+                            "no-latest-frame",
+                        ),
+                    ),
+                }
+            } else {
+                (
+                    None,
+                    DisplayCompositeFrameStats::unavailable(
+                        display_composite_settings.feedback_projection,
+                        display_composite_feedback_disabled_reason(display_composite_settings),
+                    ),
+                )
+            };
+        if frame_count == 0 || frame_count % 60 == 0 {
+            crate::marker(
+                "display-composite-feedback",
+                format!(
+                    "status={} renderFrame={} {}",
+                    if display_composite_feedback_stats.rendered {
+                        "rendered"
+                    } else {
+                        "pending"
+                    },
+                    frame_count,
+                    display_composite_feedback_stats.marker_fields()
+                ),
+            );
+        }
         let replay_visual_stats = record_projection_diagnostic(
             vk_device,
             cmd,
@@ -2391,6 +2508,11 @@ unsafe fn run_projection_frames(
             replay_visual_proof_enabled,
             projection_border_stretch_settings,
             prepared_camera_projection.as_ref(),
+            display_composite_feedback_renderer,
+            prepared_display_composite_feedback.as_ref(),
+            &display_composite_feedback_stats,
+            display_composite_settings,
+            display_composite_projection_metadata,
             gpu_stimulus_volume_renderer.as_deref(),
             &stimulus_volume_stats,
             stimulus_volume_settings,
@@ -2933,6 +3055,11 @@ unsafe fn record_projection_diagnostic(
     draw_recorded_replay_overlay: bool,
     projection_settings: NativeProjectionBorderStretchSettings,
     prepared_camera_projection: Option<&PreparedCameraProjection>,
+    display_composite_feedback_renderer: &DisplayCompositeFeedbackRenderer,
+    prepared_display_composite_feedback: Option<&PreparedDisplayCompositeFeedback>,
+    display_composite_feedback_stats: &DisplayCompositeFrameStats,
+    display_composite_settings: NativeDisplayCompositeSettings,
+    display_composite_projection_metadata: &DisplayCompositeProjectionMetadata,
     gpu_stimulus_volume_renderer: Option<&GpuStimulusVolumeRenderer>,
     stimulus_volume_stats: &GpuStimulusVolumeFrameStats,
     stimulus_volume_settings: NativeStimulusVolumeSettings,
@@ -3080,6 +3207,30 @@ unsafe fn record_projection_diagnostic(
                     prepared,
                     projection_metadata,
                     camera_direct_border_opacity,
+                );
+            }
+        }
+        if display_composite_feedback_stats.rendered
+            && display_composite_settings.mode != NativeDisplayCompositeMode::GpuReadbackDiagnostic
+        {
+            if let Some(prepared) = prepared_display_composite_feedback {
+                let display_base_rect = match display_composite_settings.feedback_projection {
+                    NativeDisplayCompositeFeedbackProjection::MetadataTargetScreenUv => {
+                        display_composite_projection_metadata.rect_for_eye(eye_index)
+                    }
+                    NativeDisplayCompositeFeedbackProjection::FullEyePeripheralStretch => {
+                        TargetRect::UNIT
+                    }
+                };
+                let display_target_rect = projection_target_state.effective_rect(display_base_rect);
+                display_composite_feedback_renderer.record_feedback_eye(
+                    device,
+                    cmd,
+                    swapchain.extent,
+                    eye_index,
+                    display_composite_projection_metadata,
+                    display_target_rect,
+                    prepared,
                 );
             }
         }
@@ -3232,6 +3383,39 @@ fn should_draw_base_hand_meshes(
     diagnostic_settings: HandMeshVisualDiagnosticSettings,
 ) -> bool {
     hand_mesh_real_hands_visible || draw_recorded_replay_overlay || diagnostic_settings.enabled
+}
+
+fn display_composite_feedback_requested(settings: NativeDisplayCompositeSettings) -> bool {
+    settings.enabled
+        && settings.feedback_enabled
+        && !settings.high_rate_json_payload
+        && matches!(
+            settings.mode,
+            NativeDisplayCompositeMode::GpuFeedbackDiagnostic
+                | NativeDisplayCompositeMode::GpuRecursiveFeedbackDiagnostic
+                | NativeDisplayCompositeMode::GpuReadbackDiagnostic
+        )
+}
+
+fn display_composite_feedback_disabled_reason(
+    settings: NativeDisplayCompositeSettings,
+) -> &'static str {
+    if !settings.enabled {
+        "display-composite-disabled"
+    } else if !settings.feedback_enabled {
+        "feedback-disabled"
+    } else if settings.high_rate_json_payload {
+        "high-rate-json-payload-forbidden"
+    } else if !matches!(
+        settings.mode,
+        NativeDisplayCompositeMode::GpuFeedbackDiagnostic
+            | NativeDisplayCompositeMode::GpuRecursiveFeedbackDiagnostic
+            | NativeDisplayCompositeMode::GpuReadbackDiagnostic
+    ) {
+        "mode-not-gpu-feedback-diagnostic"
+    } else {
+        "unknown"
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

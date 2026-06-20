@@ -92,6 +92,30 @@ route also disables passthrough and custom Camera2 projection, clears to black,
 keeps the app's custom hand mesh and graft visuals disabled, requests the
 runtime/default OpenXR hand visual, and draws only resident-mesh anchor
 particles for topology comparison.
+`quest-native-renderer-display-composite-feedback.profile.json` validates the
+MediaProjection display-composite settings surface over native Meta
+passthrough. It selects `native-passthrough-media-only`, disables Camera2
+output, guide blur, hand/SDF/graft/stimulus/depth/private visual routes,
+normalizes projection target scale/offset, configures the native
+`AImageReader` size, queue depth, frame cap, feedback projection label, and
+`high_rate_json_payload=false`; the selected display-composite mode is
+`gpu-recursive-feedback-diagnostic`, which samples the current MediaProjection
+`AHardwareBuffer` into an app-owned device-local feedback texture with
+diagnostic borders and previous-feedback blending disabled before the eye
+projection draw, applies luma damping to avoid recursive brightness ratcheting,
+then submits it through fully opaque premultiplied-alpha projection-layer
+composition into an aggressively shrunken centered target footprint. The
+Android path still must call `createScreenCaptureIntent`
+so every launch receives fresh result data. The
+device-facing lab pregrant is
+`tools/Grant-NativeRendererPermissions.ps1 -GrantMediaProjectionAppOp`, with
+`-ResetMediaProjectionAppOp` after the smoke. Static checks require the Android
+14 foreground-service media-projection declaration, the `PROJECT_MEDIA` app-op
+route, Rust-created `Surface`, native `AImageReader`/`AHardwareBuffer`
+descriptor handoff, the reusable `ahardware_buffer_vulkan.rs` import helper,
+the recursive feedback texture markers, the serial-scoped display-composite
+smoke wrapper, `XR_FB_passthrough` active, camera projection disabled, and no
+service `ByteBuffer`/plane-copy path.
 `quest-native-renderer-environment-depth-status.profile.json` is the first
 environment-depth source-only profile. It validates the low-rate status
 surface, explicit capacity/stride/range properties, requested OpenXR reference
@@ -290,7 +314,12 @@ cadence/cache, and SDF marker assertions live in
 `tools\checks\Test-NativeRendererGpuSdfStatic.ps1`. Camera projection metadata,
 guide blur/projection, direct-HWB camera quality diagnostic, peripheral-stretch,
 source-route profile snippet, and native camera scaffold assertions live in
-`tools\checks\Test-NativeRendererCameraGuideStatic.ps1`. OpenXR/Vulkan
+`tools\checks\Test-NativeRendererCameraGuideStatic.ps1`. MediaProjection
+foreground-service declaration, display-composite capture action,
+Rust-created `Surface`, native `AImageReader`/`AHardwareBuffer` descriptor
+bridge, reusable AHB Vulkan import helper, profile fixture, display-composite
+smoke wrapper, and `PROJECT_MEDIA` lab pregrant/reset assertions live in
+`tools\checks\Test-NativeRendererDisplayCompositeStatic.ps1`. OpenXR/Vulkan
 prerequisite, timing marker, private-slot, render-mode, scorecard, and native
 timing counter assertions live in
 `tools\checks\Test-NativeRendererOpenXrVulkanStatic.ps1`.
@@ -354,6 +383,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererA
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererProfileMatrix.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererDisplayCompositeSmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthKnownDistanceProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -TargetDistanceMeters 1.0 -ToleranceMeters 0.15 -RunSeconds 8
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12

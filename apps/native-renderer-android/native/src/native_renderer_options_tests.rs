@@ -5,7 +5,8 @@ mod tests {
     use crate::native_renderer_options::{
         CompactHandInputSourceMode, NativeCameraOutputMode, NativeCameraQualityProfile,
         NativeCameraResolutionProfile, NativeCameraStereoPairingPolicy, NativeCameraSyncMode,
-        NativeCameraYcbcrMode, NativeEnvironmentDepthDebugView,
+        NativeCameraYcbcrMode, NativeDisplayCompositeFeedbackProjection,
+        NativeDisplayCompositeMode, NativeDisplayCompositeSource, NativeEnvironmentDepthDebugView,
         NativeEnvironmentDepthDepthUnitsPolicy, NativeEnvironmentDepthLayerPolicy,
         NativeEnvironmentDepthMode, NativeEnvironmentDepthReferenceSpace,
         NativeEnvironmentDepthSource, NativeEnvironmentDepthSurfaceComponentMode,
@@ -16,7 +17,12 @@ mod tests {
         PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED,
         PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_READER_MAX_IMAGES,
         PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
-        PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL, PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW,
+        PROP_CAMERA_YCBCR_MODE, PROP_DISPLAY_COMPOSITE_ENABLED,
+        PROP_DISPLAY_COMPOSITE_FEEDBACK_ENABLED, PROP_DISPLAY_COMPOSITE_FEEDBACK_PROJECTION,
+        PROP_DISPLAY_COMPOSITE_FPS_CAP, PROP_DISPLAY_COMPOSITE_HEIGHT,
+        PROP_DISPLAY_COMPOSITE_HIGH_RATE_JSON_PAYLOAD, PROP_DISPLAY_COMPOSITE_MAX_IMAGES,
+        PROP_DISPLAY_COMPOSITE_MODE, PROP_DISPLAY_COMPOSITE_SOURCE, PROP_DISPLAY_COMPOSITE_WIDTH,
+        PROP_ENABLE_SDF_VISUAL, PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW,
         PROP_ENVIRONMENT_DEPTH_DEPTH_UNITS_POLICY, PROP_ENVIRONMENT_DEPTH_FAR_M,
         PROP_ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED, PROP_ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD,
         PROP_ENVIRONMENT_DEPTH_LAYER_POLICY, PROP_ENVIRONMENT_DEPTH_MODE,
@@ -427,6 +433,42 @@ mod tests {
         assert!(!options.sdf_visual_enabled);
         assert!(options.hand_mesh_graft_copies_enabled);
         assert_eq!(options.hand_mesh_graft_copy_scale, 0.85);
+        assert!(!options.hand_mesh_real_hands_visible);
+    }
+
+    #[test]
+    fn native_passthrough_media_only_keeps_visual_extras_explicitly_disabled() {
+        let options = options_from(&[
+            (PROP_RENDER_MODE, "native-passthrough-media-only"),
+            (PROP_CAMERA_OUTPUT_MODE, "disabled"),
+            (PROP_GUIDE_BLUR_ENABLED, "false"),
+            (PROP_HAND_MESH_INPUT_SOURCE, "disabled"),
+            (PROP_ENABLE_SDF_VISUAL, "true"),
+            (PROP_HAND_MESH_GRAFT_COPIES_ENABLED, "false"),
+            (PROP_HAND_MESH_REAL_HANDS_VISIBLE, "false"),
+        ]);
+        assert_eq!(
+            options.render_mode.marker_value(),
+            "native-passthrough-media-only"
+        );
+        assert!(options.render_mode.uses_native_passthrough());
+        assert!(!options.render_mode.uses_custom_stereo_projection());
+        assert_eq!(
+            options.render_mode.camera_runtime_mode(),
+            "skipped-native-passthrough-media-only"
+        );
+        assert_eq!(
+            options.render_mode.disabled_camera_projection_path(),
+            "disabled-native-passthrough-media-only"
+        );
+        assert_eq!(options.camera_output_mode, NativeCameraOutputMode::Disabled);
+        assert!(!options.guide_blur_enabled);
+        assert_eq!(
+            options.compact_hand_input_source_mode,
+            CompactHandInputSourceMode::Disabled
+        );
+        assert!(!options.sdf_visual_enabled);
+        assert!(!options.hand_mesh_graft_copies_enabled);
         assert!(!options.hand_mesh_real_hands_visible);
     }
 
@@ -1078,6 +1120,104 @@ mod tests {
         let fields = settings.marker_fields();
         assert!(fields.contains("environmentDepthMode=scene-particle-map"));
         assert!(fields.contains("environmentDepthSource=xr-meta-environment-depth"));
+    }
+
+    #[test]
+    fn display_composite_settings_keep_mediaprojection_as_hardware_buffer_source() {
+        let options = options_from(&[
+            (PROP_DISPLAY_COMPOSITE_ENABLED, "true"),
+            (PROP_DISPLAY_COMPOSITE_SOURCE, "android-mediaprojection"),
+            (PROP_DISPLAY_COMPOSITE_MODE, "gpu-feedback-diagnostic"),
+            (PROP_DISPLAY_COMPOSITE_WIDTH, "1920"),
+            (PROP_DISPLAY_COMPOSITE_HEIGHT, "1080"),
+            (PROP_DISPLAY_COMPOSITE_MAX_IMAGES, "4"),
+            (PROP_DISPLAY_COMPOSITE_FPS_CAP, "45"),
+            (PROP_DISPLAY_COMPOSITE_FEEDBACK_ENABLED, "true"),
+            (
+                PROP_DISPLAY_COMPOSITE_FEEDBACK_PROJECTION,
+                "full-eye-peripheral-stretch",
+            ),
+            (PROP_DISPLAY_COMPOSITE_HIGH_RATE_JSON_PAYLOAD, "false"),
+        ]);
+        let settings = options.display_composite_settings;
+
+        assert!(settings.enabled);
+        assert_eq!(
+            settings.source,
+            NativeDisplayCompositeSource::AndroidMediaProjection
+        );
+        assert_eq!(
+            settings.mode,
+            NativeDisplayCompositeMode::GpuFeedbackDiagnostic
+        );
+        assert_eq!(settings.width, 1920);
+        assert_eq!(settings.height, 1080);
+        assert_eq!(settings.max_images, 4);
+        assert_eq!(settings.fps_cap, 45);
+        assert!(settings.feedback_enabled);
+        assert_eq!(
+            settings.feedback_projection,
+            NativeDisplayCompositeFeedbackProjection::FullEyePeripheralStretch
+        );
+        assert!(!settings.high_rate_json_payload);
+
+        let fields = settings.marker_fields();
+        assert!(fields.contains("displayCompositeStream=display_composite"));
+        assert!(fields.contains("sourceAuthority=android-mediaprojection"));
+        assert!(fields.contains("rawCamera=false"));
+        assert!(fields.contains("passthroughTexture=false"));
+        assert!(fields.contains("environmentDepth=false"));
+        assert!(fields.contains("geometryWitness=false"));
+        assert!(fields.contains("highRateJsonPayload=false"));
+        assert!(fields.contains("displayCompositeTransport=ndk-aimage-reader-ahardwarebuffer"));
+        assert!(fields.contains("nativeImageReader=true"));
+        assert!(fields.contains("javaHardwareBufferBridge=false"));
+        assert!(fields.contains(
+            "displayCompositeGpuAdoptionPath=android-mediaprojection-aimage-reader-ahardwarebuffer-to-vulkan-sampled-image"
+        ));
+    }
+
+    #[test]
+    fn display_composite_readback_mode_enables_capture_export() {
+        let options = options_from(&[
+            (PROP_DISPLAY_COMPOSITE_ENABLED, "true"),
+            (PROP_DISPLAY_COMPOSITE_MODE, "gpu-readback-diagnostic"),
+            (PROP_DISPLAY_COMPOSITE_FEEDBACK_ENABLED, "true"),
+            (PROP_DISPLAY_COMPOSITE_HIGH_RATE_JSON_PAYLOAD, "false"),
+        ]);
+        let settings = options.display_composite_settings;
+
+        assert_eq!(
+            settings.mode,
+            NativeDisplayCompositeMode::GpuReadbackDiagnostic
+        );
+        assert!(settings.capture_export_enabled());
+        assert!(settings
+            .marker_fields()
+            .contains("displayCompositeMode=gpu-readback-diagnostic"));
+    }
+
+    #[test]
+    fn display_composite_recursive_mode_enables_level_capture_export() {
+        let options = options_from(&[
+            (PROP_DISPLAY_COMPOSITE_ENABLED, "true"),
+            (
+                PROP_DISPLAY_COMPOSITE_MODE,
+                "gpu-recursive-feedback-diagnostic",
+            ),
+            (PROP_DISPLAY_COMPOSITE_FEEDBACK_ENABLED, "true"),
+            (PROP_DISPLAY_COMPOSITE_HIGH_RATE_JSON_PAYLOAD, "false"),
+        ]);
+        let settings = options.display_composite_settings;
+
+        assert_eq!(
+            settings.mode,
+            NativeDisplayCompositeMode::GpuRecursiveFeedbackDiagnostic
+        );
+        assert!(settings.capture_export_enabled());
+        assert!(settings
+            .marker_fields()
+            .contains("displayCompositeMode=gpu-recursive-feedback-diagnostic"));
     }
 
     #[test]

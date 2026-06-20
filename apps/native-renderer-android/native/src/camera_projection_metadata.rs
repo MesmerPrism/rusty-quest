@@ -1,5 +1,7 @@
 //! Metadata-owned target footprint and source-orientation contract.
 
+pub(crate) use crate::projection_rect::TargetRect;
+
 const TARGET_SCREEN_FOOTPRINT_SCHEMA: &str = "rusty.optics.target_screen_footprint.v1";
 const DEFAULT_GEOMETRY_PROFILE: &str = "camera-projection";
 const DEFAULT_SOURCE_SAMPLING_MODE: &str = "target-local-raster";
@@ -30,65 +32,6 @@ const PROP_SOURCE_SAMPLING_MODE: &str =
 const PROP_GEOMETRY_PROFILE: &str =
     "debug.rustyquest.native_renderer.camera.projection.geometry.profile";
 const PROP_SOURCE_SAMPLE_Y_FLIP: &str = "debug.rustyquest.native_renderer.source.sample.y.flip";
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct TargetRect {
-    pub(crate) x: f32,
-    pub(crate) y: f32,
-    pub(crate) width: f32,
-    pub(crate) height: f32,
-}
-
-impl TargetRect {
-    const UNIT: Self = Self {
-        x: 0.0,
-        y: 0.0,
-        width: 1.0,
-        height: 1.0,
-    };
-
-    const fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
-        Self {
-            x,
-            y,
-            width,
-            height,
-        }
-    }
-
-    fn parse(text: &str) -> Option<Self> {
-        let parts = text
-            .split(|character| matches!(character, ',' | ';' | ' ' | '\t'))
-            .filter(|part| !part.trim().is_empty())
-            .filter_map(|part| part.trim().parse::<f32>().ok())
-            .collect::<Vec<_>>();
-        if parts.len() != 4 {
-            return None;
-        }
-        let rect = Self::new(parts[0], parts[1], parts[2], parts[3]);
-        rect.is_valid().then_some(rect)
-    }
-
-    pub(crate) fn as_xywh_token(self) -> String {
-        format!(
-            "{:.6},{:.6},{:.6},{:.6}",
-            self.x, self.y, self.width, self.height
-        )
-    }
-
-    pub(crate) fn is_valid(self) -> bool {
-        self.x.is_finite()
-            && self.y.is_finite()
-            && self.width.is_finite()
-            && self.height.is_finite()
-            && self.x >= 0.0
-            && self.y >= 0.0
-            && self.width > 0.0
-            && self.height > 0.0
-            && self.x + self.width <= 1.0
-            && self.y + self.height <= 1.0
-    }
-}
 
 #[derive(Clone, Debug)]
 pub(crate) struct CameraProjectionMetadata {
@@ -220,22 +163,7 @@ fn marker_token(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_bool_float, TargetRect, DEFAULT_LEFT_TARGET_RECT};
-
-    #[test]
-    fn parses_reference_default_target_rect() {
-        let rect = TargetRect::parse(DEFAULT_LEFT_TARGET_RECT).expect("rect parses");
-        assert!((rect.x - 0.171875).abs() < 0.000_001);
-        assert!((rect.y - 0.21875).abs() < 0.000_001);
-        assert!((rect.width - 0.75).abs() < 0.000_001);
-        assert!((rect.height - 0.65625).abs() < 0.000_001);
-    }
-
-    #[test]
-    fn rejects_out_of_bounds_target_rect() {
-        assert!(TargetRect::parse("0.5;0.5;0.75;0.75").is_none());
-        assert!(TargetRect::parse("0.1;0.1;0.0;0.3").is_none());
-    }
+    use super::parse_bool_float;
 
     #[test]
     fn parses_flip_values_as_metadata() {

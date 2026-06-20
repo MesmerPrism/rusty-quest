@@ -1,0 +1,21 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.display_composite_invalid_mode",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.display_composite.enabled",
+    "debug.rustyquest.native_renderer.display_composite.mode"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.enabled",
+      "value": "true",
+      "source_setting_id": "native_renderer.display_composite.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.mode",
+      "value": "cpu-rgba-json",
+      "source_setting_id": "native_renderer.display_composite.mode"
+    }
+  ]
+}

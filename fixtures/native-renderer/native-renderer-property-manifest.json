@@ -4,9 +4,10 @@
   "authority": "native-renderer low-rate Android property settings",
   "generated_from": [
     "apps/native-renderer-android/native/src/native_renderer_properties.rs",
+    "apps/native-renderer-android/native/src/native_renderer_display_composite_options.rs",
     "apps/native-renderer-android/native/src/projection_target_state.rs"
   ],
-  "property_count": 106,
+  "property_count": 116,
   "properties": [
     {
       "name": "debug.rustyquest.native_renderer.camera.direct_border.opacity",
@@ -175,6 +176,186 @@
         "android-suggested",
         "forced-bt601-narrow"
       ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.enabled",
+      "family": "display_composite",
+      "runtime_owner": "native_renderer_display_composite_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.feedback.enabled",
+      "family": "display_composite",
+      "runtime_owner": "native_renderer_display_composite_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.feedback.projection",
+      "family": "display_composite",
+      "runtime_owner": "native_renderer_display_composite_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "metadata-target-screen-uv",
+        "metadata-target-guide-texture",
+        "full-eye-peripheral-stretch"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.fps_cap",
+      "family": "display_composite",
+      "runtime_owner": "native_renderer_display_composite_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "u32",
+      "range": {
+        "min": 1,
+        "max": 90
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.height",
+      "family": "display_composite",
+      "runtime_owner": "native_renderer_display_composite_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "u32",
+      "range": {
+        "min": 240,
+        "max": 4096
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.high_rate_json_payload",
+      "family": "display_composite",
+      "runtime_owner": "native_renderer_display_composite_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.max_images",
+      "family": "display_composite",
+      "runtime_owner": "native_renderer_display_composite_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "u32",
+      "range": {
+        "min": 2,
+        "max": 6
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.mode",
+      "family": "display_composite",
+      "runtime_owner": "native_renderer_display_composite_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "hardware-buffer-witness",
+        "gpu-feedback-diagnostic",
+        "gpu-recursive-feedback-diagnostic",
+        "gpu-readback-diagnostic"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.source",
+      "family": "display_composite",
+      "runtime_owner": "native_renderer_display_composite_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "android-mediaprojection"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.width",
+      "family": "display_composite",
+      "runtime_owner": "native_renderer_display_composite_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "u32",
+      "range": {
+        "min": 320,
+        "max": 4096
+      },
       "validators": [
         "runtime-parser",
         "profile-matrix",
@@ -1689,6 +1870,7 @@
       "value_kind": "token",
       "allowed_values": [
         "custom-stereo-projection",
+        "native-passthrough-media-only",
         "native-passthrough-graft-only",
         "native-passthrough-stimulus-volume",
         "solid-black-hands-and-grafts",

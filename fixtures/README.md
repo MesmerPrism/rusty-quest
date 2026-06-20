@@ -44,6 +44,23 @@
   fixed/eye-depth hand draw order plus resident GPU index-remap sorting.
   CPU-sorted render-buffer ordering is not used by the native Quest path
   because steady state must not upload expanded particle arrays.
+  The display-composite feedback profile configures native Meta passthrough as
+  the background and Android MediaProjection as the only app-rendered feedback
+  plane. It owns stale visual switches so Camera2 output, guide blur, hand/SDF
+  visuals, environment-depth particles, stimulus volume, and private visual
+  layers are disabled before the Rust/NDK `AImageReader`/`AHardwareBuffer`
+  stream is sampled through Vulkan. The selected
+  `gpu-recursive-feedback-diagnostic` mode folds that sampled stream through an
+  app-owned device-local feedback texture without diagnostic borders or
+  previous-feedback blending before projecting it into the field of view with
+  fully opaque premultiplied alpha, luma-damped feedback, and an aggressively
+  shrunken centered target footprint.
+  The stream has bounded resolution, queue depth, frame cap, explicit
+  projection metadata, and `high_rate_json_payload=false`; it is not raw camera,
+  passthrough texture, environment-depth, or geometry evidence. Device evidence
+  for this fixture is owned by `tools/Invoke-NativeRendererDisplayCompositeSmoke.ps1`, which uses a
+  fresh `display_composite_request_token`, marker-scoped logcat, screenshot
+  evidence, and `PROJECT_MEDIA` reset after the run.
   The solid-black stimulus-volume profile is the current central-FOV limit
   fixture for bright volumetric interference: it requests a 1024x1024x2 stereo
   storage target, 18 raymarch samples, a 0.72 central-FOV fraction, and smooth
@@ -189,6 +206,12 @@
   projection metadata, guide blur/projection, direct-HWB camera quality
   diagnostic, peripheral-stretch, source-route profile snippet, and native
   camera scaffold static checks.
+  `tools/checks/Test-NativeRendererDisplayCompositeStatic.ps1` owns the
+  MediaProjection foreground-service declaration, control-panel capture action,
+  Rust-created `Surface`, native `AImageReader`/`AHardwareBuffer` descriptor
+  bridge, reusable AHB Vulkan import helper, `PROJECT_MEDIA` lab pregrant/reset
+  script, display-composite smoke wrapper, profile fixture, and no-CPU-copy
+  guard.
   `tools/checks/Test-NativeRendererOpenXrVulkanStatic.ps1` owns OpenXR/Vulkan
   prerequisite, timing marker, private-slot, render-mode, scorecard, and native
   timing counter static checks. Replay visual
@@ -212,6 +235,7 @@
   timings exceed the performance-budget gate. Damaged live-hand visual evidence
   also rejects marker-only acceptance without screenshot proof. Native renderer
   damaged profiles include manifest-driven generic property failures such as an
-  unsupported camera output token, plus environment-depth cross-field failures
-  such as impossible local support thresholds, proving the apply path consumes
-  the typed native renderer property manifest before ADB writes.
+  unsupported camera output token and an unsupported display-composite mode,
+  plus environment-depth cross-field failures such as impossible local support
+  thresholds, proving the apply path consumes the typed native renderer property
+  manifest before ADB writes.

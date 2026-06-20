@@ -4,6 +4,11 @@ use std::{ffi::CString, mem, sync::Arc};
 
 use ash::vk;
 
+use crate::ahardware_buffer_vulkan::{
+    import_ahb_sampled_image, query_ahb_vulkan_import_properties,
+    transition_ahb_sampled_image_to_shader_read, AhbVulkanDevice, AhbVulkanFormatKey,
+    AhbVulkanSampledImage, AhbVulkanSampledImageCreateInfo,
+};
 use crate::camera_projection_metadata::{CameraProjectionMetadata, TargetRect};
 use crate::native_camera::{NativeCameraFrame, NativeCameraImageLease, NativeStereoCameraFrame};
 use crate::native_camera_metadata::NativeCameraCaptureResultCorrelation;
@@ -158,7 +163,7 @@ impl CameraCacheEvictionStats {
 }
 
 pub(crate) struct CameraProjectionRenderer {
-    ahb: Option<ash::android::external_memory_android_hardware_buffer::Device>,
+    ahb: Option<AhbVulkanDevice>,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     render_pass: vk::RenderPass,
     resources: Option<CameraProjectionResources>,
@@ -640,12 +645,16 @@ impl CameraProjectionRenderer {
         if let Some(index) = self.imports.iter().position(|import| import.key == key) {
             self.import_cache_hits = self.import_cache_hits.saturating_add(1);
             if self.imports[index].needs_layout_transition {
-                transition_imported_camera_image(device, cmd, self.imports[index].image);
+                transition_ahb_sampled_image_to_shader_read(
+                    device,
+                    cmd,
+                    self.imports[index].sampled_image.image,
+                );
                 self.imports[index].needs_layout_transition = false;
             }
             return Ok(PreparedCameraImport {
                 key,
-                image_view: self.imports[index].image_view,
+                image_view: self.imports[index].sampled_image.image_view,
             });
         }
         self.import_cache_misses = self.import_cache_misses.saturating_add(1);
@@ -654,26 +663,9 @@ impl CameraProjectionRenderer {
             .ahb
             .as_ref()
             .ok_or_else(|| "Android hardware-buffer Vulkan extension is unavailable".to_string())?;
-        let mut format_props = vk::AndroidHardwareBufferFormatPropertiesANDROID::default();
-        let (allocation_size, memory_type_bits) = {
-            let mut properties =
-                vk::AndroidHardwareBufferPropertiesANDROID::default().push_next(&mut format_props);
-            ahb.get_android_hardware_buffer_properties(
-                frame.hardware_buffer.as_ptr().cast(),
-                &mut properties,
-            )
-            .map_err(|error| format!("query AHardwareBuffer Vulkan properties: {error}"))?;
-            (properties.allocation_size, properties.memory_type_bits)
-        };
-
-        let format_key = CameraFormatKey {
-            format: if format_props.external_format != 0 {
-                vk::Format::UNDEFINED
-            } else {
-                format_props.format
-            },
-            external_format: format_props.external_format,
-        };
+        let (import_properties, format_props) =
+            query_ahb_vulkan_import_properties(ahb, &frame.hardware_buffer)?;
+        let format_key = import_properties.format_key;
         if self
             .resources
             .as_ref()
@@ -727,12 +719,16 @@ impl CameraProjectionRenderer {
             frame,
             key,
             format_key,
-            allocation_size,
-            memory_type_bits,
+            import_properties.allocation_size,
+            import_properties.memory_type_bits,
         )?;
         self.imports.push(import);
         let index = self.imports.len() - 1;
-        transition_imported_camera_image(device, cmd, self.imports[index].image);
+        transition_ahb_sampled_image_to_shader_read(
+            device,
+            cmd,
+            self.imports[index].sampled_image.image,
+        );
         self.imports[index].needs_layout_transition = false;
 
         crate::marker(
@@ -751,15 +747,15 @@ impl CameraProjectionRenderer {
                 frame.usage,
                 format_key.external_format,
                 format_key.format,
-                allocation_size,
-                memory_type_bits,
+                import_properties.allocation_size,
+                import_properties.memory_type_bits,
                 resources.ycbcr_metadata.marker_fields()
             ),
         );
 
         Ok(PreparedCameraImport {
             key,
-            image_view: self.imports[index].image_view,
+            image_view: self.imports[index].sampled_image.image_view,
         })
     }
 
@@ -889,14 +885,8 @@ impl CameraImportKey {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct CameraFormatKey {
-    format: vk::Format,
-    external_format: u64,
-}
-
 struct CameraProjectionResources {
-    format_key: CameraFormatKey,
+    format_key: AhbVulkanFormatKey,
     sampler_ycbcr_conversion: vk::SamplerYcbcrConversion,
     sampler: vk::Sampler,
     ycbcr_metadata: CameraYcbcrConversionMetadata,
@@ -1163,18 +1153,13 @@ impl CameraYcbcrConversionMetadata {
 
 struct CameraImport {
     key: CameraImportKey,
-    image: vk::Image,
-    memory: vk::DeviceMemory,
-    image_view: vk::ImageView,
+    sampled_image: AhbVulkanSampledImage,
     needs_layout_transition: bool,
-    _hardware_buffer: crate::native_camera::AndroidHardwareBufferHandle,
 }
 
 impl CameraImport {
     unsafe fn destroy(self, device: &ash::Device) {
-        device.destroy_image_view(self.image_view, None);
-        device.destroy_image(self.image, None);
-        device.free_memory(self.memory, None);
+        self.sampled_image.destroy(device);
     }
 }
 
@@ -1253,7 +1238,7 @@ unsafe fn create_camera_projection_resources(
     device: &ash::Device,
     memory_properties: &vk::PhysicalDeviceMemoryProperties,
     render_pass: vk::RenderPass,
-    format_key: CameraFormatKey,
+    format_key: AhbVulkanFormatKey,
     format_props: &vk::AndroidHardwareBufferFormatPropertiesANDROID<'_>,
     ycbcr_mode: NativeCameraYcbcrMode,
 ) -> Result<CameraProjectionResources, String> {
@@ -1583,99 +1568,29 @@ unsafe fn import_camera_hardware_buffer(
     resources: &CameraProjectionResources,
     frame: &NativeCameraFrame,
     key: CameraImportKey,
-    format_key: CameraFormatKey,
+    format_key: AhbVulkanFormatKey,
     allocation_size: vk::DeviceSize,
     memory_type_bits: u32,
 ) -> Result<CameraImport, String> {
-    let mut external_memory = vk::ExternalMemoryImageCreateInfo::default()
-        .handle_types(vk::ExternalMemoryHandleTypeFlags::ANDROID_HARDWARE_BUFFER_ANDROID);
-    let mut external_format =
-        vk::ExternalFormatANDROID::default().external_format(format_key.external_format);
-    let mut image_info = vk::ImageCreateInfo::default()
-        .image_type(vk::ImageType::TYPE_2D)
-        .format(format_key.format)
-        .extent(vk::Extent3D {
+    let sampled_image = import_ahb_sampled_image(
+        device,
+        memory_properties,
+        &frame.hardware_buffer,
+        AhbVulkanSampledImageCreateInfo {
             width: frame.width,
             height: frame.height,
-            depth: 1,
-        })
-        .mip_levels(1)
-        .array_layers(1)
-        .samples(vk::SampleCountFlags::TYPE_1)
-        .tiling(vk::ImageTiling::OPTIMAL)
-        .usage(vk::ImageUsageFlags::SAMPLED)
-        .sharing_mode(vk::SharingMode::EXCLUSIVE)
-        .initial_layout(vk::ImageLayout::UNDEFINED)
-        .push_next(&mut external_memory);
-    if format_key.external_format != 0 {
-        image_info = image_info.push_next(&mut external_format);
-    }
-    let image = device
-        .create_image(&image_info, None)
-        .map_err(|error| format!("create imported camera image: {error}"))?;
-
-    let memory_type_index = match find_memory_type_relaxed(memory_properties, memory_type_bits) {
-        Ok(index) => index,
-        Err(error) => {
-            device.destroy_image(image, None);
-            return Err(error);
-        }
-    };
-    let mut import_info = vk::ImportAndroidHardwareBufferInfoANDROID::default()
-        .buffer(frame.hardware_buffer.as_ptr().cast());
-    let mut dedicated = vk::MemoryDedicatedAllocateInfo::default().image(image);
-    let memory = match device.allocate_memory(
-        &vk::MemoryAllocateInfo::default()
-            .allocation_size(allocation_size)
-            .memory_type_index(memory_type_index)
-            .push_next(&mut import_info)
-            .push_next(&mut dedicated),
-        None,
-    ) {
-        Ok(memory) => memory,
-        Err(error) => {
-            device.destroy_image(image, None);
-            return Err(format!("allocate imported camera memory: {error}"));
-        }
-    };
-    if let Err(error) = device.bind_image_memory(image, memory, 0) {
-        device.free_memory(memory, None);
-        device.destroy_image(image, None);
-        return Err(format!("bind imported camera memory: {error}"));
-    }
-
-    let mut view_conversion =
-        vk::SamplerYcbcrConversionInfo::default().conversion(resources.sampler_ycbcr_conversion);
-    let image_view = match device.create_image_view(
-        &vk::ImageViewCreateInfo::default()
-            .image(image)
-            .view_type(vk::ImageViewType::TYPE_2D)
-            .format(format_key.format)
-            .subresource_range(vk::ImageSubresourceRange {
-                aspect_mask: vk::ImageAspectFlags::COLOR,
-                base_mip_level: 0,
-                level_count: 1,
-                base_array_layer: 0,
-                layer_count: 1,
-            })
-            .push_next(&mut view_conversion),
-        None,
-    ) {
-        Ok(image_view) => image_view,
-        Err(error) => {
-            device.free_memory(memory, None);
-            device.destroy_image(image, None);
-            return Err(format!("create imported camera image view: {error}"));
-        }
-    };
+            format_key,
+            allocation_size,
+            memory_type_bits,
+            sampler_ycbcr_conversion: Some(resources.sampler_ycbcr_conversion),
+            debug_label: "camera",
+        },
+    )?;
 
     Ok(CameraImport {
         key,
-        image,
-        memory,
-        image_view,
+        sampled_image,
         needs_layout_transition: true,
-        _hardware_buffer: frame.hardware_buffer.clone(),
     })
 }
 
@@ -1804,56 +1719,6 @@ fn spirv_words(bytes: &[u8]) -> Result<Vec<u32>, String> {
         .chunks_exact(4)
         .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
         .collect())
-}
-
-unsafe fn transition_imported_camera_image(
-    device: &ash::Device,
-    cmd: vk::CommandBuffer,
-    image: vk::Image,
-) {
-    let barrier = [vk::ImageMemoryBarrier::default()
-        .image(image)
-        .subresource_range(vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            base_mip_level: 0,
-            level_count: 1,
-            base_array_layer: 0,
-            layer_count: 1,
-        })
-        .old_layout(vk::ImageLayout::UNDEFINED)
-        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-        .src_access_mask(vk::AccessFlags::empty())
-        .dst_access_mask(vk::AccessFlags::SHADER_READ)];
-    device.cmd_pipeline_barrier(
-        cmd,
-        vk::PipelineStageFlags::TOP_OF_PIPE,
-        vk::PipelineStageFlags::FRAGMENT_SHADER,
-        vk::DependencyFlags::empty(),
-        &[],
-        &[],
-        &barrier,
-    );
-}
-
-fn find_memory_type_relaxed(
-    memory_properties: &vk::PhysicalDeviceMemoryProperties,
-    memory_type_bits: u32,
-) -> Result<u32, String> {
-    find_memory_type(
-        memory_properties,
-        memory_type_bits,
-        vk::MemoryPropertyFlags::DEVICE_LOCAL,
-    )
-    .or_else(|_| {
-        for index in 0..memory_properties.memory_type_count {
-            if (memory_type_bits & (1 << index)) != 0 {
-                return Ok(index);
-            }
-        }
-        Err(format!(
-            "no Vulkan memory type supports imported Android hardware buffer bits 0x{memory_type_bits:x}"
-        ))
-    })
 }
 
 fn find_memory_type(

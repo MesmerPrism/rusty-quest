@@ -14,10 +14,21 @@ const MARKER_PREFIX: &str = "RUSTY_QUEST_NATIVE_RENDERER";
 #[cfg(target_os = "android")]
 mod acamera_sys;
 #[cfg(target_os = "android")]
+mod ahardware_buffer_vulkan;
+#[cfg(target_os = "android")]
 mod android_events;
+#[cfg(target_os = "android")]
+mod android_hardware_buffer;
 #[cfg(target_os = "android")]
 mod camera_projection;
 mod camera_projection_metadata;
+#[cfg(target_os = "android")]
+mod display_composite_capture_export;
+#[cfg(target_os = "android")]
+mod display_composite_feedback;
+#[cfg(target_os = "android")]
+mod display_composite_native_stream;
+mod display_composite_projection_metadata;
 mod environment_depth_geometry;
 #[cfg(any(test, not(target_os = "android")))]
 mod environment_depth_scene_map;
@@ -53,6 +64,7 @@ mod native_camera_profiles;
 #[cfg(target_os = "android")]
 mod native_camera_reader_selection;
 mod native_renderer_camera_options;
+mod native_renderer_display_composite_options;
 mod native_renderer_environment_depth_options;
 mod native_renderer_hand_anchor_particle_options;
 mod native_renderer_options;
@@ -74,6 +86,7 @@ mod openxr_environment_depth;
 mod openxr_stimulus_actions;
 #[cfg(target_os = "android")]
 mod private_extension_slot;
+mod projection_rect;
 mod projection_target_state;
 mod recorded_hand_replay;
 #[cfg(target_os = "android")]
@@ -187,6 +200,7 @@ fn android_main(app: android_activity::AndroidApp) {
         native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties();
     let runtime_options =
         native_renderer_stimulus_panel::apply_app_private_candidate(&app, runtime_options);
+    display_composite_capture_export::configure(&app, runtime_options.display_composite_settings);
     marker(
         "render-mode",
         format!(
@@ -225,6 +239,13 @@ fn android_main(app: android_activity::AndroidApp) {
         format!(
             "status=config {}",
             runtime_options.environment_depth_settings.marker_fields()
+        ),
+    );
+    marker(
+        "display-composite",
+        format!(
+            "status=config {}",
+            runtime_options.display_composite_settings.marker_fields()
         ),
     );
 

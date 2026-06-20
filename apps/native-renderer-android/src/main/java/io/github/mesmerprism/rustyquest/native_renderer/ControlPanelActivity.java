@@ -5,6 +5,8 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
+import android.media.projection.MediaProjectionManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -35,6 +37,9 @@ public final class ControlPanelActivity extends Activity {
         "io.github.mesmerprism.rustyquest.native_renderer.action.TOGGLE_PANEL";
     public static final String ACTION_APPLY_LIVE_SELF_TEST =
         "io.github.mesmerprism.rustyquest.native_renderer.action.APPLY_LIVE_SELF_TEST";
+    public static final String ACTION_REQUEST_DISPLAY_COMPOSITE_CAPTURE =
+        "io.github.mesmerprism.rustyquest.native_renderer.action.REQUEST_DISPLAY_COMPOSITE_CAPTURE";
+    private static final int REQUEST_DISPLAY_COMPOSITE_CAPTURE = 7401;
     private static final String CANDIDATE_FILE = "stimulus_volume_candidate.json";
     private static final String STATUS_FILE = "stimulus_volume_status.json";
     private static final String PROFILE_SCHEMA = "rusty.quest.stimulus_volume.profile.v1";
@@ -52,6 +57,18 @@ public final class ControlPanelActivity extends Activity {
         "debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction";
     private static final String PROP_STIMULUS_GRADIENT =
         "debug.rustyquest.native_renderer.stimulus_volume.gradient_smoothing";
+    private static final String PROP_DISPLAY_COMPOSITE_WIDTH =
+        "debug.rustyquest.native_renderer.display_composite.width";
+    private static final String PROP_DISPLAY_COMPOSITE_HEIGHT =
+        "debug.rustyquest.native_renderer.display_composite.height";
+    private static final String PROP_DISPLAY_COMPOSITE_MAX_IMAGES =
+        "debug.rustyquest.native_renderer.display_composite.max_images";
+    private static final String PROP_DISPLAY_COMPOSITE_FPS_CAP =
+        "debug.rustyquest.native_renderer.display_composite.fps_cap";
+    private static final String PROP_DISPLAY_COMPOSITE_MODE =
+        "debug.rustyquest.native_renderer.display_composite.mode";
+    private static final String PROP_DISPLAY_COMPOSITE_FEEDBACK_ENABLED =
+        "debug.rustyquest.native_renderer.display_composite.feedback.enabled";
     private static final int PANEL_BG = Color.rgb(17, 18, 22);
     private static final int PANEL_FG = Color.rgb(238, 240, 244);
     private static final int PANEL_MUTED = Color.rgb(170, 176, 186);
@@ -80,6 +97,8 @@ public final class ControlPanelActivity extends Activity {
     private Handler liveApplyHandler;
     private Runnable pendingLiveApply;
     private String handledDiagnosticIntentToken = "";
+    private String handledDisplayCompositeIntentToken = "";
+    private boolean displayCompositeRequestInFlight;
     private Button[] patternButtons = new Button[0];
     private Button[] mirrorButtons = new Button[0];
     private String selectedPatternFamily = "randomized-trevor-vocabulary";
@@ -114,6 +133,7 @@ public final class ControlPanelActivity extends Activity {
         liveApplyHandler = new Handler(Looper.getMainLooper());
         setContentView(buildContentView());
         updateStatus("Panel ready. Candidate path: " + new File(getFilesDir(), CANDIDATE_FILE));
+        handleDisplayCompositeIntent(getIntent());
         handleDiagnosticIntent(getIntent());
     }
 
@@ -124,6 +144,7 @@ public final class ControlPanelActivity extends Activity {
         if (intent != null && ACTION_TOGGLE_PANEL.equals(intent.getAction())) {
             finish();
         } else {
+            handleDisplayCompositeIntent(intent);
             handleDiagnosticIntent(intent);
         }
     }
@@ -131,7 +152,55 @@ public final class ControlPanelActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        handleDisplayCompositeIntent(getIntent());
         handleDiagnosticIntent(getIntent());
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQUEST_DISPLAY_COMPOSITE_CAPTURE) {
+            return;
+        }
+        displayCompositeRequestInFlight = false;
+        if (resultCode != RESULT_OK || data == null) {
+            setStatusText("Display composite capture was not approved.");
+            return;
+        }
+        Intent serviceIntent = new Intent(this, DisplayCompositeProjectionService.class);
+        serviceIntent.putExtra(DisplayCompositeProjectionService.EXTRA_RESULT_CODE, resultCode);
+        serviceIntent.putExtra(DisplayCompositeProjectionService.EXTRA_RESULT_DATA, data);
+        serviceIntent.putExtra(
+            DisplayCompositeProjectionService.EXTRA_WIDTH,
+            readIntProperty(PROP_DISPLAY_COMPOSITE_WIDTH, 1280, 320, 4096)
+        );
+        serviceIntent.putExtra(
+            DisplayCompositeProjectionService.EXTRA_HEIGHT,
+            readIntProperty(PROP_DISPLAY_COMPOSITE_HEIGHT, 720, 240, 4096)
+        );
+        serviceIntent.putExtra(
+            DisplayCompositeProjectionService.EXTRA_MAX_IMAGES,
+            readIntProperty(PROP_DISPLAY_COMPOSITE_MAX_IMAGES, 3, 2, 6)
+        );
+        serviceIntent.putExtra(
+            DisplayCompositeProjectionService.EXTRA_FPS_CAP,
+            readIntProperty(PROP_DISPLAY_COMPOSITE_FPS_CAP, 30, 1, 90)
+        );
+        serviceIntent.putExtra(
+            DisplayCompositeProjectionService.EXTRA_MODE,
+            readSystemProperty(PROP_DISPLAY_COMPOSITE_MODE)
+        );
+        serviceIntent.putExtra(
+            DisplayCompositeProjectionService.EXTRA_FEEDBACK_ENABLED,
+            readBooleanProperty(PROP_DISPLAY_COMPOSITE_FEEDBACK_ENABLED, false)
+        );
+        if (Build.VERSION.SDK_INT >= 26) {
+            startForegroundService(serviceIntent);
+        } else {
+            startService(serviceIntent);
+        }
+        setStatusText("Display composite capture token accepted; hardware-buffer service starting.");
+        launchImmersiveRenderer();
     }
 
     private View buildContentView() {
@@ -601,6 +670,30 @@ public final class ControlPanelActivity extends Activity {
         setStatusText("Diagnostic Apply Live self-test pending.");
     }
 
+    private void handleDisplayCompositeIntent(Intent intent) {
+        if (intent == null || !ACTION_REQUEST_DISPLAY_COMPOSITE_CAPTURE.equals(intent.getAction())) {
+            return;
+        }
+        String token = intent.getAction() + ":" + intent.getLongExtra("display_composite_request_token", 0L);
+        if (token.equals(handledDisplayCompositeIntentToken) || displayCompositeRequestInFlight) {
+            return;
+        }
+        handledDisplayCompositeIntentToken = token;
+        displayCompositeRequestInFlight = true;
+        MediaProjectionManager manager =
+            (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+        if (manager == null) {
+            displayCompositeRequestInFlight = false;
+            setStatusText("MediaProjectionManager is unavailable.");
+            return;
+        }
+        startActivityForResult(
+            manager.createScreenCaptureIntent(),
+            REQUEST_DISPLAY_COMPOSITE_CAPTURE
+        );
+        setStatusText("Display composite capture request launched.");
+    }
+
     private JSONObject buildDynamicsJson() throws Exception {
         return new JSONObject()
             .put("mirror_mode", selectedMirrorMode)
@@ -765,6 +858,19 @@ public final class ControlPanelActivity extends Activity {
         }
         try {
             return Double.parseDouble(value);
+        } catch (NumberFormatException error) {
+            return fallback;
+        }
+    }
+
+    private int readIntProperty(String name, int fallback, int minValue, int maxValue) {
+        String value = readSystemProperty(name);
+        if (value == null || value.length() == 0) {
+            return fallback;
+        }
+        try {
+            int parsed = Integer.parseInt(value);
+            return Math.max(minValue, Math.min(maxValue, parsed));
         } catch (NumberFormatException error) {
             return fallback;
         }

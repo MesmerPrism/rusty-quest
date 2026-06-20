@@ -21,6 +21,7 @@ The currently documented public routes are:
 | Route | Background | Hand visual | Camera/HWB path | Primary use |
 | --- | --- | --- | --- | --- |
 | Direct HWB camera quality | Camera2 `50`/`51` sampled directly in the final projection | Disabled by profile | Forced direct `AHardwareBuffer` sample | Raw camera acquisition/projection baseline before guide/private processing |
+| Display-composite feedback witness | Native Meta passthrough via `XR_FB_passthrough` | MediaProjection feedback plane only | Native `AImage`/`AHardwareBuffer` descriptor bridge sampled by the shared Vulkan AHB import module; Camera2 and guide blur disabled | Lab route for screen-composite visual feedback without high-rate JSON or CPU pixel copies |
 | Custom stereo projection | Camera2 `50`/`51` via Vulkan HWB guide textures | Recorded/live GPU-skinned hand mesh, optional SDF visual, optional peripheral stretch border | Enabled | Camera projection, blur, stretch/blend border, SDF, and replay evidence |
 | Live hand anchor particles | Camera2 `50`/`51` via Vulkan HWB guide textures | Live base hand meshes plus resident GPU anchor particles | Enabled | Inspect live hand topology anchors over the camera projection route |
 | Native passthrough hands and grafts | `XR_FB_passthrough` | Live GPU-skinned base hands plus fingertip graft copies | Disabled | World-space hand mesh/graft visuals over Meta passthrough |
@@ -102,7 +103,33 @@ route is the resident-topology comparison view against the runtime hand visual:
 it skips Camera2/custom stereo projection, clears to black, keeps the app's
 custom hand mesh visual and graft copies disabled, requests the OpenXR/default
 hand visual as the reference, and draws only GPU anchor particles generated from
-the resident skinned mesh buffers. A compact-joint GPU
+the resident skinned mesh buffers. The
+`quest-native-renderer-display-composite-feedback.profile.json` route configures
+native Meta passthrough plus an Android MediaProjection display-composite
+feedback plane. The profile explicitly selects
+`native-passthrough-media-only`, disables Camera2 output, guide blur, hand
+visuals, SDF, environment-depth particles, stimulus volume, and private visual
+layers, then uses the Rust/NDK `AImageReader`/`AHardwareBuffer` handoff with
+foreground-service media-projection permissions. The selected mode is
+`gpu-recursive-feedback-diagnostic`: MediaProjection remains the live input
+stream, while an app-owned device-local feedback texture stages the current
+captured frame without diagnostic borders or previous-feedback blending before
+projection into an aggressively shrunken centered field-of-view footprint with
+fully opaque premultiplied alpha and a luma-damped feedback pass. The visible
+recursive effect comes from later
+MediaProjection frames recapturing that app-rendered plane. The stream remains
+display-composite evidence, not raw camera, passthrough texture,
+environment-depth, or geometry evidence. Lab validation can pregrant
+`PROJECT_MEDIA` with `tools/Grant-NativeRendererPermissions.ps1
+-GrantMediaProjectionAppOp`, then launch `ControlPanelActivity` with
+`io.github.mesmerprism.rustyquest.native_renderer.action.REQUEST_DISPLAY_COMPOSITE_CAPTURE`
+so Android still generates fresh `createScreenCaptureIntent` result data on
+each launch. `ahardware_buffer_vulkan.rs` is now the reusable Vulkan import
+module used by Camera2 and display-composite sampling, while the recursive
+feedback texture stays inside the display-composite renderer rather than the
+large OpenXR frame loop.
+`tools/Invoke-NativeRendererDisplayCompositeSmoke.ps1` owns the serial-scoped
+device smoke for this MediaProjection route. A compact-joint GPU
 path now parses the real rig blend indices/weights, bind-joint sources, compact
 runtime joint frames, and tip lengths; keeps source mesh and bind metadata
 buffers resident; uploads only runtime poses plus tip-length rows per frame;
@@ -299,6 +326,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-ques
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererDisplayCompositeSmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial>
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1

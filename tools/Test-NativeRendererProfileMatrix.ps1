@@ -36,6 +36,8 @@ if ($checkAllText -notmatch 'Test-NativeRendererProfileMatrix\.ps1') {
 
 $expectedProfileNames = @(
     "quest-native-renderer-breathing-room-pmb-scale.profile.json",
+    "quest-native-renderer-display-composite-capture-only.profile.json",
+    "quest-native-renderer-display-composite-feedback.profile.json",
     "quest-native-renderer-direct-hwb-1280x960.profile.json",
     "quest-native-renderer-direct-hwb-camera-quality-bt601-unorm.profile.json",
     "quest-native-renderer-direct-hwb-camera-quality.profile.json",
@@ -79,6 +81,7 @@ $expectedProfileNames = @(
 
 $expectedDamagedProfileNames = @(
     "native-renderer-breathing-room-makepad-property.profile.json",
+    "native-renderer-display-composite-invalid-mode.profile.json",
     "native-renderer-environment-depth-high-rate-json.profile.json",
     "native-renderer-environment-depth-impossible-neighbor-threshold.profile.json",
     "native-renderer-environment-depth-invalid-capacity.profile.json",

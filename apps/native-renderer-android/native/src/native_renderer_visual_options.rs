@@ -12,6 +12,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeRendererRenderMode {
     CustomStereoProjection,
+    NativePassthroughMediaOnly,
     NativePassthroughGraftOnly,
     NativePassthroughStimulusVolume,
     SolidBlackHandsAndGrafts,
@@ -27,6 +28,11 @@ impl NativeRendererRenderMode {
             .trim()
             .to_ascii_lowercase();
         match normalized.as_str() {
+            "native-passthrough-media-only"
+            | "passthrough-media-only"
+            | "native-passthrough-overlay-only"
+            | "passthrough-overlay-only"
+            | "native-passthrough-display-composite" => Self::NativePassthroughMediaOnly,
             "native-passthrough-graft-only"
             | "passthrough-graft-only"
             | "graft-only"
@@ -55,6 +61,7 @@ impl NativeRendererRenderMode {
     pub(crate) fn marker_value(self) -> &'static str {
         match self {
             Self::CustomStereoProjection => "custom-stereo-projection",
+            Self::NativePassthroughMediaOnly => "native-passthrough-media-only",
             Self::NativePassthroughGraftOnly => "native-passthrough-graft-only",
             Self::NativePassthroughStimulusVolume => "native-passthrough-stimulus-volume",
             Self::SolidBlackHandsAndGrafts => "solid-black-hands-and-grafts",
@@ -72,7 +79,9 @@ impl NativeRendererRenderMode {
     pub(crate) fn uses_native_passthrough(self) -> bool {
         matches!(
             self,
-            Self::NativePassthroughGraftOnly | Self::NativePassthroughStimulusVolume
+            Self::NativePassthroughMediaOnly
+                | Self::NativePassthroughGraftOnly
+                | Self::NativePassthroughStimulusVolume
         )
     }
 
@@ -114,6 +123,7 @@ impl NativeRendererRenderMode {
     pub(crate) fn camera_runtime_mode(self) -> &'static str {
         match self {
             Self::CustomStereoProjection => "camera2-hwb",
+            Self::NativePassthroughMediaOnly => "skipped-native-passthrough-media-only",
             Self::NativePassthroughGraftOnly => "skipped-native-passthrough",
             Self::NativePassthroughStimulusVolume => "skipped-native-passthrough-stimulus-volume",
             Self::SolidBlackHandsAndGrafts => "skipped-solid-black-hands-and-grafts",
@@ -127,6 +137,7 @@ impl NativeRendererRenderMode {
     pub(crate) fn disabled_camera_projection_path(self) -> &'static str {
         match self {
             Self::CustomStereoProjection => "metadata-target-direct-hwb-fallback",
+            Self::NativePassthroughMediaOnly => "disabled-native-passthrough-media-only",
             Self::NativePassthroughGraftOnly => "disabled-native-passthrough-graft-only",
             Self::NativePassthroughStimulusVolume => "disabled-native-passthrough-stimulus-volume",
             Self::SolidBlackHandsAndGrafts => "disabled-solid-black-hands-and-grafts",

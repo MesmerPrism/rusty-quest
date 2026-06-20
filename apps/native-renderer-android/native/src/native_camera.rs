@@ -51,6 +51,7 @@ use crate::{
         ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS, AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE,
         AIMAGE_FORMAT_PRIVATE,
     },
+    android_hardware_buffer::AndroidHardwareBufferHandle,
     android_log_error, marker,
     native_camera_profiles::CameraRequestTemplate,
     native_camera_reader_selection::{
@@ -266,45 +267,6 @@ pub(crate) struct NativeStereoCameraFrame {
     pub(crate) right: NativeCameraFrame,
     pub(crate) pair_delta_ns: u64,
     pub(crate) pairing_policy: &'static str,
-}
-
-#[derive(Debug)]
-pub(crate) struct AndroidHardwareBufferHandle {
-    ptr: *mut ndk_sys::AHardwareBuffer,
-}
-
-unsafe impl Send for AndroidHardwareBufferHandle {}
-unsafe impl Sync for AndroidHardwareBufferHandle {}
-
-impl AndroidHardwareBufferHandle {
-    unsafe fn acquire(ptr: *mut ndk_sys::AHardwareBuffer) -> Result<Self, String> {
-        if ptr.is_null() {
-            return Err("AHardwareBuffer pointer is null".to_string());
-        }
-        ndk_sys::AHardwareBuffer_acquire(ptr);
-        Ok(Self { ptr })
-    }
-
-    pub(crate) fn as_ptr(&self) -> *mut ndk_sys::AHardwareBuffer {
-        self.ptr
-    }
-}
-
-impl Clone for AndroidHardwareBufferHandle {
-    fn clone(&self) -> Self {
-        unsafe {
-            ndk_sys::AHardwareBuffer_acquire(self.ptr);
-        }
-        Self { ptr: self.ptr }
-    }
-}
-
-impl Drop for AndroidHardwareBufferHandle {
-    fn drop(&mut self) {
-        unsafe {
-            ndk_sys::AHardwareBuffer_release(self.ptr);
-        }
-    }
 }
 
 pub(crate) struct NativeCameraImageLease {

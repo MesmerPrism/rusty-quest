@@ -3,6 +3,8 @@ param(
     [string]$Serial = $env:RUSTY_QUEST_SERIAL,
     [string]$AdbServerPort = $env:RUSTY_QUEST_ADB_SERVER_PORT,
     [string]$PackageName = "io.github.mesmerprism.rustyquest.native_renderer",
+    [switch]$GrantMediaProjectionAppOp,
+    [switch]$ResetMediaProjectionAppOp,
     [string]$Out = ""
 )
 
@@ -109,6 +111,8 @@ if (-not [string]::IsNullOrWhiteSpace($outDir)) {
 
 $permissions = @(
     "android.permission.CAMERA",
+    "android.permission.FOREGROUND_SERVICE",
+    "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
     "com.oculus.permission.HAND_TRACKING",
     "horizonos.permission.HEADSET_CAMERA",
     "horizonos.permission.SPATIAL_CAMERA",
@@ -127,7 +131,8 @@ $summary = [ordered]@{
     package_name = $PackageName
     permissions = $permissions
     grant_results = @()
-    note = "pm grant can legitimately fail for normal or signature permissions; runtime-dangerous grants are the acceptance-critical path."
+    media_projection_appop_results = @()
+    note = "pm grant can legitimately fail for normal or signature permissions; runtime-dangerous grants are the acceptance-critical path. PROJECT_MEDIA app-op is an ADB lab pregrant that still requires the app to call createScreenCaptureIntent and receive fresh resultData."
 }
 
 try {
@@ -147,6 +152,18 @@ try {
             -Name "grant $permission" `
             -Arguments @("shell", "pm", "grant", $PackageName, $permission) `
             -AllowFailure
+    }
+
+    if ($GrantMediaProjectionAppOp) {
+        $summary.media_projection_appop_results += Invoke-AdbCommand `
+            -Name "appops PROJECT_MEDIA allow" `
+            -Arguments @("shell", "cmd", "appops", "set", $PackageName, "PROJECT_MEDIA", "allow")
+    }
+
+    if ($ResetMediaProjectionAppOp) {
+        $summary.media_projection_appop_results += Invoke-AdbCommand `
+            -Name "appops PROJECT_MEDIA default" `
+            -Arguments @("shell", "cmd", "appops", "set", $PackageName, "PROJECT_MEDIA", "default")
     }
 
     $summary.dumpsys_permission_excerpt = (Invoke-AdbCommand `

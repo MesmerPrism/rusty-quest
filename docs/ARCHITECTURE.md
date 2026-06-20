@@ -78,6 +78,21 @@ effective startup settings for the stimulus-volume route, and writes
 `rusty.quest.stimulus_volume.apply_status.v1` status. Live editor work should
 reuse that candidate/status contract through a same-process command queue
 rather than polling files from the GPU hot path.
+The same panel owns the hidden display-composite capture request action for
+MediaProjection diagnostics. Android remains the authority for
+`createScreenCaptureIntent` result data, while the non-exported foreground
+`mediaProjection` service only adapts approved tokens into a `VirtualDisplay`
+that writes into a Rust-created `Surface`. Rust owns the NDK `AImageReader`,
+native `AImage` acquisition, and `AHardwareBuffer` descriptor evidence. This
+route is explicitly `display_composite` media evidence: it must not be treated
+as raw camera, passthrough texture, environment-depth, or geometry truth, and
+high-rate JSON frame payloads are out of contract.
+`ahardware_buffer_vulkan.rs` owns the reusable Vulkan import mechanics for
+Android `AHardwareBuffer` images: property query, external-memory image
+creation, memory binding, image-view creation, layout transition, and retained
+buffer lifetime. Camera2 keeps YCbCr conversion and descriptor policy above
+that helper; display-composite RGBA sampling should adopt the same helper
+without making Camera2 the owner of MediaProjection buffers.
 The Rust code opens outside camera ids `50` and `51` through NDK
 `ACameraManager`, acquires `PRIVATE` GPU-sampled `AHardwareBuffer` frames,
 initializes the Android OpenXR loader, probes the
