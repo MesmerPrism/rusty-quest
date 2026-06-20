@@ -577,6 +577,12 @@ peripheral stretch/blend route is captured in
 the profile matrix dry-run checks the Makepad-matched stretch controls and expected
 markers, including `guideProjectionCoverage=full-eye-peripheral-stretch` and
 `cameraProjectionPath=metadata-target-guide-texture-peripheral-stretch-final`.
+The related video-border blend route is captured in
+`fixtures/runtime-profiles/quest-native-renderer-hwb-video-border-blend.profile.json`;
+it dry-runs the same camera guide projection plus the stereo video input path
+and expects `guideProjectionCoverage=full-eye-video-border-blend`,
+`videoBorderBlendActive=true`, and
+`cameraProjectionPath=metadata-target-guide-texture-video-border-blend-final`.
 The Breathing Room PMB scale profile extends that route with Manifold
 controller-pose publishing, PMB/joystick scale-driver switching, and expected
 OpenXR haptic markers for a gentle right-controller pulse while PMB mode has a

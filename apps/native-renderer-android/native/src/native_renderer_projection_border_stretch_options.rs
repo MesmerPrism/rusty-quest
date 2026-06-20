@@ -14,6 +14,7 @@ use crate::native_renderer_property_values::{f32_clamped_value, normalized_prope
 pub(crate) enum NativeProjectionProcessingLayer {
     Blur,
     PeripheralStretch,
+    VideoBorderBlend,
 }
 
 impl NativeProjectionProcessingLayer {
@@ -25,6 +26,11 @@ impl NativeProjectionProcessingLayer {
             | "border-stretch"
             | "projection-border-stretch"
             | "edge-stretch" => Self::PeripheralStretch,
+            "video-border"
+            | "video-border-blend"
+            | "peripheral-video"
+            | "peripheral-video-blend"
+            | "projection-video-border" => Self::VideoBorderBlend,
             _ => Self::Blur,
         }
     }
@@ -33,11 +39,24 @@ impl NativeProjectionProcessingLayer {
         match self {
             Self::Blur => "blur",
             Self::PeripheralStretch => "peripheral-stretch",
+            Self::VideoBorderBlend => "video-border-blend",
         }
     }
 
     pub(crate) fn consumes_projection_exterior(self) -> bool {
         matches!(self, Self::PeripheralStretch)
+    }
+
+    pub(crate) fn video_border_blend(self) -> bool {
+        matches!(self, Self::VideoBorderBlend)
+    }
+
+    fn shader_code(self) -> f32 {
+        match self {
+            Self::Blur => 0.0,
+            Self::PeripheralStretch => 1.0,
+            Self::VideoBorderBlend => 2.0,
+        }
     }
 }
 
@@ -217,9 +236,24 @@ impl NativeProjectionBorderStretchSettings {
         self.processing_layer.consumes_projection_exterior()
     }
 
+    pub(crate) fn video_border_blend_active(self) -> bool {
+        self.processing_layer.video_border_blend()
+    }
+
+    pub(crate) fn guide_projection_coverage(self) -> &'static str {
+        if self.peripheral_stretch_active() {
+            "full-eye-peripheral-stretch"
+        } else if self.video_border_blend_active() {
+            "full-eye-video-border-blend"
+        } else {
+            "metadata-target-only"
+        }
+    }
+
     pub(crate) fn transition_active(self) -> bool {
         self.blend_mode == NativePeripheralStretchBlendMode::TargetInnerBand
             && self.inner_blend_uv > 0.0001
+            && (self.peripheral_stretch_active() || self.video_border_blend_active())
     }
 
     pub(crate) fn marker_fields(self) -> String {
@@ -240,19 +274,36 @@ impl NativeProjectionBorderStretchSettings {
                     "hard-edge-preblend-reference",
                 )
             };
-        let projection_exterior_mode = if self.peripheral_stretch_active() && transition_active {
+        let projection_exterior_mode = if self.video_border_blend_active() && transition_active {
+            "video-background-with-inner-band-camera-blend"
+        } else if self.video_border_blend_active() {
+            "video-background-hard-edge-camera-overlay"
+        } else if self.peripheral_stretch_active() && transition_active {
             "target-edge-stretch-with-inner-band-blend"
         } else if self.peripheral_stretch_active() {
             "target-edge-stretch-hard-edge"
         } else {
             "projection-border-policy-fallback"
         };
+        let exterior_source = if self.video_border_blend_active() {
+            "video-projection-background"
+        } else if self.peripheral_stretch_active() {
+            "curved-target-edge-sample"
+        } else {
+            "projection-border-policy"
+        };
+        let blend_semantics = if self.video_border_blend_active() {
+            "camera-guide-alpha-fades-to-video-through-inner-band"
+        } else {
+            "curved-sample-blends-through-inner-band"
+        };
         format!(
-            "processingLayer={} projectionBorderPolicy={} projectionAreaOpacity={:.3} projectionBorderOpacity={:.3} peripheralStretchMode=edge-stretch peripheralStretchCoreScale={:.3} peripheralStretchEdgeInsetUv={:.3} peripheralStretchMaxInsetUv={:.3} peripheralStretchCurve={:.3} peripheralStretchInnerBlendUv={:.3} peripheralStretchBlendCurve={:.3} peripheralStretchBlendMode={} peripheralStretchCornerMode=target-footprint peripheralStretchDebug={} peripheralStretchActive={} peripheralStretchTransitionActive={} peripheralStretchConsumesProjectionExterior={} peripheralStretchCoreRegion={} peripheralStretchTransitionRegion={} peripheralStretchExteriorRegion=visible-render-surface-minus-target-footprint peripheralStretchTransitionSpace={} peripheralStretchTransitionSemantics={} peripheralStretchProjectionExteriorMode={} peripheralStretchMapping=mirrored-curved-target-footprint peripheralStretchDistanceCurve=mirrored-border-smoothstep-swirl peripheralStretchBorderSource=mirrored-projection-edge-trail peripheralStretchExteriorSource=curved-target-edge-sample peripheralStretchBlendSemantics=curved-sample-blends-through-inner-band peripheralStretchTargetLocalRasterRegionModel=projection-area-plus-single-border-region peripheralStretchSourceInvalidConsumesSolidRed=false peripheralStretchReference=pure-hwb-target-local-raster-curved-inner-band",
+            "processingLayer={} projectionBorderPolicy={} projectionAreaOpacity={:.3} projectionBorderOpacity={:.3} guideProjectionCoverage={} peripheralStretchMode=edge-stretch peripheralStretchCoreScale={:.3} peripheralStretchEdgeInsetUv={:.3} peripheralStretchMaxInsetUv={:.3} peripheralStretchCurve={:.3} peripheralStretchInnerBlendUv={:.3} peripheralStretchBlendCurve={:.3} peripheralStretchBlendMode={} peripheralStretchCornerMode=target-footprint peripheralStretchDebug={} peripheralStretchActive={} videoBorderBlendActive={} peripheralStretchTransitionActive={} peripheralStretchConsumesProjectionExterior={} videoBorderBlendConsumesProjectionExterior=false peripheralStretchCoreRegion={} peripheralStretchTransitionRegion={} peripheralStretchExteriorRegion=visible-render-surface-minus-target-footprint peripheralStretchTransitionSpace={} peripheralStretchTransitionSemantics={} peripheralStretchProjectionExteriorMode={} peripheralStretchMapping=mirrored-curved-target-footprint peripheralStretchDistanceCurve=mirrored-border-smoothstep-swirl peripheralStretchBorderSource=mirrored-projection-edge-trail peripheralStretchExteriorSource={} peripheralStretchBlendSemantics={} videoBorderBlendSource=prepared-stereo-video-projection-background videoBorderBlendCameraSource=guide-texture videoBorderBlendDrawOrder=video-background-then-camera-guide-overlay videoBorderBlendAlphaSemantics=premultiplied-camera-guide-over-video-background peripheralStretchTargetLocalRasterRegionModel=projection-area-plus-single-border-region peripheralStretchSourceInvalidConsumesSolidRed=false peripheralStretchReference=pure-hwb-target-local-raster-curved-inner-band videoBorderBlendReference=peripheral-stretch-inner-band-blend-over-video",
             self.processing_layer.marker_value(),
             self.border_policy.marker_value(),
             self.projection_area_opacity,
             self.projection_border_opacity,
+            self.guide_projection_coverage(),
             self.core_scale,
             self.edge_inset_uv,
             self.max_inset_uv,
@@ -262,6 +313,7 @@ impl NativeProjectionBorderStretchSettings {
             self.blend_mode.marker_value(),
             self.debug.marker_value(),
             self.peripheral_stretch_active(),
+            self.video_border_blend_active(),
             transition_active,
             self.processing_layer.consumes_projection_exterior(),
             core_region,
@@ -269,17 +321,15 @@ impl NativeProjectionBorderStretchSettings {
             transition_space,
             transition_semantics,
             projection_exterior_mode,
+            exterior_source,
+            blend_semantics,
         )
     }
 
     pub(crate) fn push_params(self) -> NativeProjectionBorderStretchPush {
         NativeProjectionBorderStretchPush {
             params: [
-                if self.peripheral_stretch_active() {
-                    1.0
-                } else {
-                    0.0
-                },
+                self.processing_layer.shader_code(),
                 self.border_policy.shader_code(),
                 self.projection_area_opacity,
                 self.projection_border_opacity,

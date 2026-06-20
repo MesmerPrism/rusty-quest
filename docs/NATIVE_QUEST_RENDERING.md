@@ -351,6 +351,12 @@ The runtime scaffold:
   the target edge, blending through the inner target band, and reporting
   `cameraProjectionPath=metadata-target-guide-texture-peripheral-stretch-final`
   plus `guideProjectionCoverage=full-eye-peripheral-stretch`;
+- can use the same inner-band blend curve with
+  `debug.rustyquest.native_renderer.processing.layer=video-border-blend`,
+  where the already decoded stereo video projection is drawn as a full-eye
+  background and the camera guide texture fades to that video through the
+  target-edge band instead of sampling stretched camera pixels outside the
+  metadata target;
 - creates an OpenXR/Vulkan session and stereo swapchain, records per-eye
   projection clears into array-layer image views, and submits a real
   `CompositionLayerProjection`;

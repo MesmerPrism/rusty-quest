@@ -90,6 +90,9 @@ $directHwbLowNoiseRecord30Profile = Read-RequiredText `
 $hwbPeripheralStretchProfile = Read-RequiredText `
     (Join-Path $repoRootPath "fixtures\runtime-profiles\quest-native-renderer-hwb-peripheral-stretch.profile.json") `
     "HWB peripheral stretch profile"
+$hwbVideoBorderBlendProfile = Read-RequiredText `
+    (Join-Path $repoRootPath "fixtures\runtime-profiles\quest-native-renderer-hwb-video-border-blend.profile.json") `
+    "HWB video border blend profile"
 $fixture = Read-RequiredText `
     (Join-Path $repoRootPath "fixtures\native-renderer\native-hwb-blur-sdf-public.plan.json") `
     "native HWB blur/SDF public plan fixture"
@@ -290,7 +293,7 @@ Assert-ContainsTokens $guideBlurFragment @(
     'rgb \* 0\.2'
 ) "guide 5-tap blur shader"
 
-Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$guideBlurGraph`n$guideProjectionFragment`n$xrVulkanSurface`n$hwbPeripheralStretchProfile" @(
+Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$guideBlurGraph`n$guideProjectionFragment`n$xrVulkanSurface`n$hwbPeripheralStretchProfile`n$hwbVideoBorderBlendProfile" @(
     'NativeProjectionBorderStretchSettings',
     'debug\.rustyquest\.native_renderer\.processing\.layer',
     'debug\.rustyquest\.native_renderer\.projection\.border\.policy',
@@ -298,6 +301,14 @@ Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$guideBlurGraph
     'peripheralStretchReference=pure-hwb-target-local-raster-curved-inner-band',
     'peripheralStretchProjectionExteriorMode=target-edge-stretch-with-inner-band-blend',
     'guideProjectionCoverage=full-eye-peripheral-stretch',
+    'video-border-blend',
+    'guideProjectionCoverage=full-eye-video-border-blend',
+    'videoBorderBlendActive=true',
+    'peripheralStretchProjectionExteriorMode=video-background-with-inner-band-camera-blend',
+    'videoBorderBlendSource=prepared-stereo-video-projection-background',
+    'videoBorderBlendCameraSource=guide-texture',
+    'cameraProjectionPath=metadata-target-guide-texture-video-border-blend-final',
+    'video_border_blend_active',
     'full_extent_scissor',
     'projection_area_rect_edge_uv',
     'peripheral_stretch_blend_weight',
@@ -307,6 +318,8 @@ Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$guideBlurGraph
 Assert-ContainsTokens $guideProjectionFragment @(
     'u_guide',
     'target_rect',
+    'video_border_blend_active',
+    'video_border_weight',
     'discard',
     'border_color'
 ) "guide projection shader"

@@ -111,6 +111,8 @@ pub(super) fn write_projection_scorecard(
         "metadata-target-private-extension-slot-final"
     } else if guide_projection_active && projection_settings.peripheral_stretch_active() {
         "metadata-target-guide-texture-peripheral-stretch-final"
+    } else if guide_projection_active && projection_settings.video_border_blend_active() {
+        "metadata-target-guide-texture-video-border-blend-final"
     } else if guide_projection_active {
         "metadata-target-guide-texture-final"
     } else {
@@ -194,11 +196,7 @@ pub(super) fn write_projection_scorecard(
             direct_hwb_projection_diagnostic,
             camera_projection_path,
             render_mode.uses_custom_stereo_projection(),
-            if projection_settings.peripheral_stretch_active() {
-                "full-eye-peripheral-stretch"
-            } else {
-                "metadata-target-only"
-            },
+            projection_settings.guide_projection_coverage(),
             projection_settings.marker_fields(),
             projection_metadata.marker_fields(),
             planned_final_external_hwb_samples,
@@ -327,11 +325,7 @@ pub(super) fn write_projection_scorecard(
             submit_ms,
             frame_timings.guide_graph_ms,
             gpu_stage_timings.stage_ms(GpuTimestampStage::GuideGraph),
-            if projection_settings.peripheral_stretch_active() {
-                "full-eye-peripheral-stretch"
-            } else {
-                "metadata-target-only"
-            },
+            projection_settings.guide_projection_coverage(),
             projection_settings.marker_fields(),
             guide_blur_stats.marker_fields()
         ),

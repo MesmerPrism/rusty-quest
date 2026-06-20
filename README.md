@@ -204,8 +204,18 @@ raster model as a reference: the profile
 `debug.rustyquest.native_renderer.processing.layer=peripheral-stretch`,
 keeps the metadata-owned camera target as the core region, stretches exterior
 pixels from the target edge, and blends through the inner target band while
-reporting `guideProjectionCoverage=full-eye-peripheral-stretch`. Live headset
-visual acceptance,
+reporting `guideProjectionCoverage=full-eye-peripheral-stretch`.
+The companion profile
+`quest-native-renderer-hwb-video-border-blend.profile.json` keeps the same
+custom Camera2/HWB guide projection but sets
+`debug.rustyquest.native_renderer.processing.layer=video-border-blend` and
+enables the stereo video input path. Video renders first as a full-eye
+background, then the camera guide projection draws over the metadata-owned
+target and fades through the same inner-band blend controls to the video
+outside the target instead of stretching camera pixels into the border.
+Runtime markers report `guideProjectionCoverage=full-eye-video-border-blend`
+and `cameraProjectionPath=metadata-target-guide-texture-video-border-blend-final`.
+Live headset visual acceptance,
 Matter/Lattice SDF parity, color conformance, projection parity,
 and higher-order SDF acceleration remain separate validation gates. The
 2026-06-17 no-real-hands recorded replay smoke visually verified the

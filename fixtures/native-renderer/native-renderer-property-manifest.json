@@ -1507,7 +1507,8 @@
       "value_kind": "token",
       "allowed_values": [
         "blur",
-        "peripheral-stretch"
+        "peripheral-stretch",
+        "video-border-blend"
       ],
       "validators": [
         "runtime-parser",

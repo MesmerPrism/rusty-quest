@@ -623,11 +623,7 @@ unsafe fn run_projection_loop_inner(
             PROP_PROCESSING_LAYER,
             render_mode.marker_value(),
             render_mode.uses_custom_stereo_projection(),
-            if projection_border_stretch_settings.peripheral_stretch_active() {
-                "full-eye-peripheral-stretch"
-            } else {
-                "metadata-target-only"
-            },
+            projection_border_stretch_settings.guide_projection_coverage(),
             projection_border_stretch_settings.marker_fields()
         ),
     );

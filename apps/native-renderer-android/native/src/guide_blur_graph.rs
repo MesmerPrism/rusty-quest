@@ -412,7 +412,7 @@ impl GuideBlurGraphRenderer {
         crate::marker(
             "guide-blur-graph",
             format!(
-                "status=created guideGraphSupportedPaths=low-resolution-downsample-no-blur,low-resolution-two-phase-5tap-blur,camera-resolution-downsample-no-blur,camera-resolution-two-phase-5tap-blur guideGraphDefaultBlurEnabled=true guideGraphResolutionPolicy={} guideGraphDownsampleResolution={}x{} guideGraphHorizontalTaps={} guideGraphVerticalTaps={} guideGraphFinalProjectionSource=guide-texture cameraProjectionPath=metadata-target-guide-texture-final finalExternalHwbSamples=0 guideTextureSamples=1",
+                "status=created guideGraphSupportedPaths=low-resolution-downsample-no-blur,low-resolution-two-phase-5tap-blur,camera-resolution-downsample-no-blur,camera-resolution-two-phase-5tap-blur guideGraphDefaultBlurEnabled=true guideGraphResolutionPolicy={} guideGraphDownsampleResolution={}x{} guideGraphHorizontalTaps={} guideGraphVerticalTaps={} guideGraphFinalProjectionSource=guide-texture cameraProjectionPath=metadata-target-guide-texture-final videoBorderBlendSupported=true videoBorderBlendFinalProjectionSource=guide-texture-over-video-background finalExternalHwbSamples=0 guideTextureSamples=1",
                 self.resolution.marker_value(),
                 width,
                 height,

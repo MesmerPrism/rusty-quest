@@ -193,7 +193,7 @@ fn android_main(app: android_activity::AndroidApp) {
     marker(
         "plan-loaded",
         format!(
-            "status=ok planId={} targetRuntime={} publicEffectLayers=blur-guide,peripheral-stretch-border privateLayerSlots=abi-only privatePayloads=false cameraLeft={} cameraRight={} finalExternalHwbSamples={} guideTextureSamples={} colorConformanceRequired={}",
+            "status=ok planId={} targetRuntime={} publicEffectLayers=blur-guide,peripheral-stretch-border,video-border-blend privateLayerSlots=abi-only privatePayloads=false cameraLeft={} cameraRight={} finalExternalHwbSamples={} guideTextureSamples={} colorConformanceRequired={}",
             sanitize(&plan.plan_id),
             sanitize(&plan.target_runtime),
             sanitize(&plan.camera_source.camera_ids.left),
@@ -328,14 +328,9 @@ fn android_main(app: android_activity::AndroidApp) {
             runtime_options.render_mode.marker_value(),
             runtime_options.render_mode.uses_custom_stereo_projection(),
             runtime_options.render_mode.uses_native_passthrough(),
-            if runtime_options
+            runtime_options
                 .projection_border_stretch_settings
-                .peripheral_stretch_active()
-            {
-                "full-eye-peripheral-stretch"
-            } else {
-                "metadata-target-only"
-            },
+                .guide_projection_coverage(),
             xr_vulkan_readiness.marker_fields(),
             active_guide_texture_samples,
         ),

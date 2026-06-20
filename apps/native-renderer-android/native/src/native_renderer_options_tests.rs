@@ -1310,11 +1310,49 @@ mod tests {
         assert!(fields.contains("peripheralStretchBlendMode=target-inner-band"));
         assert!(fields.contains("peripheralStretchTransitionActive=true"));
         assert!(fields.contains("peripheralStretchConsumesProjectionExterior=true"));
+        assert!(fields.contains("videoBorderBlendActive=false"));
         assert!(fields.contains(
             "peripheralStretchProjectionExteriorMode=target-edge-stretch-with-inner-band-blend"
         ));
         assert!(fields
             .contains("peripheralStretchReference=pure-hwb-target-local-raster-curved-inner-band"));
+    }
+
+    #[test]
+    fn video_border_blend_reuses_stretch_inner_band_over_video_background() {
+        let options = options_from(&[
+            (PROP_PROCESSING_LAYER, "video-border-blend"),
+            (PROP_PROJECTION_BORDER_POLICY, "passthrough-underlay"),
+            (PROP_VIDEO_PROJECTION_ENABLED, "true"),
+            (PROP_VIDEO_PROJECTION_PATH, "video/noodletest-sbs.mp4"),
+        ]);
+        let settings = options.projection_border_stretch_settings;
+
+        assert!(!settings.peripheral_stretch_active());
+        assert!(settings.video_border_blend_active());
+        assert!(settings.transition_active());
+        assert_eq!(
+            settings.guide_projection_coverage(),
+            "full-eye-video-border-blend"
+        );
+
+        let fields = settings.marker_fields();
+        assert!(fields.contains("processingLayer=video-border-blend"));
+        assert!(fields.contains("guideProjectionCoverage=full-eye-video-border-blend"));
+        assert!(fields.contains("videoBorderBlendActive=true"));
+        assert!(fields.contains("peripheralStretchConsumesProjectionExterior=false"));
+        assert!(fields.contains("videoBorderBlendConsumesProjectionExterior=false"));
+        assert!(fields.contains(
+            "peripheralStretchProjectionExteriorMode=video-background-with-inner-band-camera-blend"
+        ));
+        assert!(fields.contains("peripheralStretchExteriorSource=video-projection-background"));
+        assert!(fields.contains(
+            "peripheralStretchBlendSemantics=camera-guide-alpha-fades-to-video-through-inner-band"
+        ));
+        assert!(
+            fields.contains("videoBorderBlendSource=prepared-stereo-video-projection-background")
+        );
+        assert!(fields.contains("videoBorderBlendCameraSource=guide-texture"));
     }
 
     #[test]

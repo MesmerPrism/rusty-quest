@@ -94,7 +94,10 @@ vec2 projection_area_rect_edge_uv(
 
 void main() {
     int eye = int(floor(pc.params.x + 0.5));
-    float stretch_active = step(0.5, pc.params.y);
+    float processing_mode = floor(pc.params.y + 0.5);
+    float stretch_active = 1.0 - step(0.5, abs(processing_mode - 1.0));
+    float video_border_blend_active = 1.0 - step(0.5, abs(processing_mode - 2.0));
+    float processing_active = max(stretch_active, video_border_blend_active);
     float passthrough_border_policy = step(0.5, pc.params.z);
     float projection_area_opacity = clamp(pc.params.w, 0.0, 1.0);
     float projection_border_opacity = clamp(pc.alpha.x, 0.0, 1.0);
@@ -113,12 +116,14 @@ void main() {
     );
     float signed_distance_uv = target_footprint_signed_distance_uv(local_uv);
     float projection_area_mask = 1.0 - step(0.0001, signed_distance_uv);
-    float stretch_weight = stretch_active * peripheral_stretch_blend_weight(signed_distance_uv);
+    float blend_weight = peripheral_stretch_blend_weight(signed_distance_uv);
+    float stretch_weight = stretch_active * blend_weight;
+    float video_border_weight = video_border_blend_active * blend_weight * projection_area_mask;
     float stretch_exterior = stretch_active * (1.0 - projection_area_mask);
     float target_transition_band =
-        stretch_active * projection_area_mask * step(0.0001, stretch_weight);
+        processing_active * projection_area_mask * step(0.0001, blend_weight);
     float target_stretch_effect_region =
-        clamp(max(stretch_exterior, target_transition_band), 0.0, 1.0);
+        clamp(max(stretch_exterior, stretch_active * target_transition_band), 0.0, 1.0);
     vec2 stretch_uv = projection_area_rect_edge_uv(local_uv, domain_min_uv, domain_max_uv);
     vec2 guide_uv = mix(
         local_uv,
@@ -134,7 +139,7 @@ void main() {
     float border = 1.0 - smoothstep(0.0, 0.018, edge);
     vec3 rgb = mix(guide_color.rgb, border_color, border * 0.72 * (1.0 - stretch_active));
 
-    if (stretch_active > 0.5) {
+    if (processing_active > 0.5) {
         if (debug_mode > 1.5 && target_stretch_effect_region > 0.5) {
             out_color = vec4(
                 sample_uv.x,
@@ -146,7 +151,11 @@ void main() {
         }
         float region_debug = step(0.5, debug_mode) * step(debug_mode, 1.5);
         vec3 transition_tint = mix(rgb, vec3(0.96, 1.0, 0.08), 0.42);
-        vec3 exterior_tint = mix(rgb, vec3(0.0, 0.88, 1.0), 0.48);
+        vec3 exterior_tint = mix(
+            rgb,
+            mix(vec3(0.0, 0.88, 1.0), vec3(0.38, 0.12, 1.0), video_border_blend_active),
+            0.48
+        );
         vec3 region_rgb = mix(
             mix(rgb, exterior_tint, stretch_exterior),
             transition_tint,
@@ -160,6 +169,7 @@ void main() {
     float border_alpha = projection_border_opacity * (1.0 - passthrough_border_policy);
     float area_alpha = projection_area_opacity;
     float alpha = mix(border_alpha, area_alpha, projection_valid);
+    alpha = mix(alpha, area_alpha * projection_area_mask * (1.0 - video_border_weight), video_border_blend_active);
     vec3 premultiplied = clamp(window_rgb, vec3(0.0), vec3(1.0)) * alpha;
     out_color = vec4(premultiplied, alpha);
 }

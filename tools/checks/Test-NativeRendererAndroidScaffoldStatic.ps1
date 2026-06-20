@@ -142,7 +142,7 @@ Assert-ContainsTokens $nativeLib @(
     'apply_app_private_candidate',
     'requestPermissions',
     'rust-native-jni',
-    'publicEffectLayers=blur-guide,peripheral-stretch-border',
+    'publicEffectLayers=blur-guide,peripheral-stretch-border,video-border-blend',
     'privatePayloads=false',
     'minimal-projection-layer',
     'recordedHandReplayRequested=true',

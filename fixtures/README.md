@@ -23,7 +23,11 @@
   `camera.reader_max_images` for queue-headroom A/B checks. The
   HWB peripheral stretch
   profile keeps the custom Camera2 projection route active while enabling the public
-  full-eye target-edge stretch/blend border profile. The Breathing Room PMB
+  full-eye target-edge stretch/blend border profile. The HWB video-border
+  blend profile keeps the same custom Camera2 guide projection route but uses
+  the stereo video stream as the full-eye background and fades the camera guide
+  overlay into that video through the existing target inner-band blend controls.
+  The Breathing Room PMB
   scale profile adds the same stretch route plus the source-agnostic Manifold
   controller-pose bridge and a right-controller haptic pulse when PMB drives
   scale and the right grip pose is tracked. The native passthrough

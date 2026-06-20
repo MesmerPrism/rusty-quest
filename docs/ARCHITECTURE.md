@@ -113,6 +113,12 @@ payloads, or CPU pixel-copy surfaces. The fullscreen video route is a
 background video input stream for the custom projection path; future camera,
 private, or diagnostic overlays should compose above it instead of coupling the
 video decoder to Camera2 or display-composite ownership.
+The `video-border-blend` camera processing layer follows that boundary: the
+video projection renderer draws the prepared stereo frame first, while the
+guide/camera projection pass only changes its own alpha at the target edge
+using the existing inner-band blend controls. Camera2 remains the guide source;
+MediaCodec remains the video source; the final OpenXR/Vulkan frame loop is the
+only composition authority between them.
 The Rust code opens outside camera ids `50` and `51` through NDK
 `ACameraManager`, acquires `PRIVATE` GPU-sampled `AHardwareBuffer` frames,
 initializes the Android OpenXR loader, probes the
