@@ -21,6 +21,7 @@ The currently documented public routes are:
 | Route | Background | Hand visual | Camera/HWB path | Primary use |
 | --- | --- | --- | --- | --- |
 | Direct HWB camera quality | Camera2 `50`/`51` sampled directly in the final projection | Disabled by profile | Forced direct `AHardwareBuffer` sample | Raw camera acquisition/projection baseline before guide/private processing |
+| Fullscreen stereo video projection | Full-eye custom projection layer from app-private side-by-side MP4 | Disabled by profile | Android `MediaCodec` decodes into a Rust-owned `AImageReader` `Surface`, then Vulkan imports the decoded `AHardwareBuffer`; Camera2 and display-composite disabled | Stereo video background route for later camera/composite overlays without high-rate JSON or CPU pixel copies |
 | Display-composite feedback witness | Native Meta passthrough via `XR_FB_passthrough` | MediaProjection feedback plane only | Native `AImage`/`AHardwareBuffer` descriptor bridge sampled by the shared Vulkan AHB import module; Camera2 and guide blur disabled | Lab route for screen-composite visual feedback without high-rate JSON or CPU pixel copies |
 | Custom stereo projection | Camera2 `50`/`51` via Vulkan HWB guide textures | Recorded/live GPU-skinned hand mesh, optional SDF visual, optional peripheral stretch border | Enabled | Camera projection, blur, stretch/blend border, SDF, and replay evidence |
 | Live hand anchor particles | Camera2 `50`/`51` via Vulkan HWB guide textures | Live base hand meshes plus resident GPU anchor particles | Enabled | Inspect live hand topology anchors over the camera projection route |
@@ -129,7 +130,26 @@ module used by Camera2 and display-composite sampling, while the recursive
 feedback texture stays inside the display-composite renderer rather than the
 large OpenXR frame loop.
 `tools/Invoke-NativeRendererDisplayCompositeSmoke.ps1` owns the serial-scoped
-device smoke for this MediaProjection route. A compact-joint GPU
+device smoke for this MediaProjection route.
+The `quest-native-renderer-fullscreen-stereo-video.profile.json` route uses the
+same custom stereo projection shell without Camera2 acquisition or
+MediaProjection capture. Java controls `MediaExtractor`/`MediaCodec` only at
+the stream-control layer and decodes an app-accessible video file into a
+Rust-created `AImageReader`
+`Surface`; Rust acquires the decoded `AImage`/`AHardwareBuffer`, publishes
+source metadata for side-by-side left/right UV halves, and Vulkan samples it as
+a full-eye background before later overlay paths. The route is a video input
+stream, not raw camera, passthrough texture, display-composite feedback,
+environment-depth, or geometry evidence. It keeps
+`high_rate_json_payload=false`, avoids Java `HardwareBuffer` frame bridges, and
+does not use CPU pixel copies. Stage a user-provided MP4 with
+`tools/Stage-NativeRendererVideo.ps1`, passing `-SourcePath <mp4>` and
+`-Serial <quest-serial>`, before launching the fullscreen stereo video profile.
+The staging helper defaults to the package-scoped external
+`/sdcard/Android/data/.../files/v.mp4` path so release-style APKs do not depend
+on `run-as`; use the receipt's `video_projection_path` as the runtime property
+override.
+A compact-joint GPU
 path now parses the real rig blend indices/weights, bind-joint sources, compact
 runtime joint frames, and tip lengths; keeps source mesh and bind metadata
 buffers resident; uploads only runtime poses plus tip-length rows per frame;

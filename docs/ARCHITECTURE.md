@@ -17,6 +17,9 @@ apps.
 - native OpenXR/Vulkan renderer plan contracts, pure-HWB import evidence,
   public/private layer ABI boundaries, and timing scorecards for Quest-native
   rendering examples.
+- profile-owned fullscreen stereo video input settings, stream metadata, and
+  validation guards for app-private video projected through the native
+  OpenXR/Vulkan path.
 
 ## Non-Ownership
 
@@ -93,6 +96,23 @@ creation, memory binding, image-view creation, layout transition, and retained
 buffer lifetime. Camera2 keeps YCbCr conversion and descriptor policy above
 that helper; display-composite RGBA sampling should adopt the same helper
 without making Camera2 the owner of MediaProjection buffers.
+Fullscreen stereo video projection is a separate input family. The Android
+adapter owns only low-rate `MediaExtractor`/`MediaCodec` control and writes
+decoded frames into a Rust-created `AImageReader` `Surface`. Rust owns native
+`AImage` acquisition, `AHardwareBuffer` descriptors, side-by-side left/right
+source UV metadata, and Vulkan import/sampling through the reusable AHB helper.
+The source video path, stereo layout, decoder dimensions, queue depth, frame
+cap, looping flag, target, and opacity are profile-owned low-rate settings.
+`tools/Stage-NativeRendererVideo.ps1` is the device-facing adapter that stages
+user-provided MP4 files into the package-scoped external files tree with
+serial-scoped ADB. It emits the compact absolute `video_projection_path` for
+the runtime property override, avoids `run-as` so release-style APKs work, and
+does not add broad shared-storage authority to the app.
+Decoded frames must not become high-rate JSON, Java `HardwareBuffer` bridge
+payloads, or CPU pixel-copy surfaces. The fullscreen video route is a
+background video input stream for the custom projection path; future camera,
+private, or diagnostic overlays should compose above it instead of coupling the
+video decoder to Camera2 or display-composite ownership.
 The Rust code opens outside camera ids `50` and `51` through NDK
 `ACameraManager`, acquires `PRIVATE` GPU-sampled `AHardwareBuffer` frames,
 initializes the Android OpenXR loader, probes the
@@ -205,9 +225,11 @@ shared string, boolean, integer, and float parsing belongs to
 `native_renderer_environment_depth_options`; hand-anchor particle settings
 parsing belongs to `native_renderer_hand_anchor_particle_options`;
 projection-border and peripheral-stretch settings parsing belongs to
-`native_renderer_projection_border_stretch_options`; and
+`native_renderer_projection_border_stretch_options`;
 stimulus-volume settings parsing belongs to
-`native_renderer_stimulus_volume_options`. Same-APK 2D panel candidate parsing,
+`native_renderer_stimulus_volume_options`; and fullscreen stereo video input
+settings parsing belongs to `native_renderer_video_projection_options`.
+Same-APK 2D panel candidate parsing,
 status writing, and startup-effective stimulus override logic belongs to
 `native_renderer_stimulus_panel`; it adapts the panel schema into the existing
 stimulus-volume settings owner without making Java UI code runtime authority.
@@ -266,7 +288,12 @@ marker static checks live in `tools/checks/Test-NativeRendererGpuSdfStatic.ps1`.
 Camera projection metadata, guide blur/projection, direct-HWB camera quality
 diagnostic, peripheral-stretch, source-route profile snippet, and native camera
 scaffold static checks live in
-`tools/checks/Test-NativeRendererCameraGuideStatic.ps1`. OpenXR/Vulkan
+`tools/checks/Test-NativeRendererCameraGuideStatic.ps1`. Fullscreen stereo
+video projection settings, Java `MediaCodec` control, Rust-owned
+`AImageReader` stream creation, video metadata, Vulkan import/sampling,
+profile fixture, staging wrapper, shader compilation, and no-CPU-copy guard
+checks live in
+`tools/checks/Test-NativeRendererVideoProjectionStatic.ps1`. OpenXR/Vulkan
 prerequisite, timing marker, private-slot, render-mode, scorecard, and native
 timing counter static checks live in
 `tools/checks/Test-NativeRendererOpenXrVulkanStatic.ps1`, leaving the main

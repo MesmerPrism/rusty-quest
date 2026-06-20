@@ -1,0 +1,285 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.fullscreen_stereo_video",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.render.mode",
+    "debug.rustyquest.native_renderer.camera.output",
+    "debug.rustyquest.native_renderer.guide.blur.enabled",
+    "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.input.source",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
+    "debug.rustyquest.native_renderer.sdf.visual.enabled",
+    "debug.rustyquest.native_renderer.environment_depth.mode",
+    "debug.rustyquest.native_renderer.stimulus_volume.enabled",
+    "debug.rustyquest.native_renderer.private_layer.enabled",
+    "debug.rustyquest.native_renderer.projection.target.controls",
+    "debug.rustyquest.native_renderer.projection.target.scale",
+    "debug.rustyquest.native_renderer.projection.target.offset.x.uv",
+    "debug.rustyquest.native_renderer.projection.target.offset.y.uv",
+    "debug.rustyquest.native_renderer.projection.target.joystick.controls",
+    "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode",
+    "debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload",
+    "debug.rustyquest.native_renderer.display_composite.enabled",
+    "debug.rustyquest.native_renderer.display_composite.source",
+    "debug.rustyquest.native_renderer.display_composite.mode",
+    "debug.rustyquest.native_renderer.display_composite.width",
+    "debug.rustyquest.native_renderer.display_composite.height",
+    "debug.rustyquest.native_renderer.display_composite.max_images",
+    "debug.rustyquest.native_renderer.display_composite.fps_cap",
+    "debug.rustyquest.native_renderer.display_composite.feedback.enabled",
+    "debug.rustyquest.native_renderer.display_composite.feedback.projection",
+    "debug.rustyquest.native_renderer.display_composite.high_rate_json_payload",
+    "debug.rustyquest.native_renderer.video_projection.enabled",
+    "debug.rustyquest.native_renderer.video_projection.source",
+    "debug.rustyquest.native_renderer.video_projection.path",
+    "debug.rustyquest.native_renderer.video_projection.stereo_layout",
+    "debug.rustyquest.native_renderer.video_projection.width",
+    "debug.rustyquest.native_renderer.video_projection.height",
+    "debug.rustyquest.native_renderer.video_projection.max_images",
+    "debug.rustyquest.native_renderer.video_projection.fps_cap",
+    "debug.rustyquest.native_renderer.video_projection.looping",
+    "debug.rustyquest.native_renderer.video_projection.target",
+    "debug.rustyquest.native_renderer.video_projection.opacity",
+    "debug.rustyquest.native_renderer.video_projection.high_rate_json_payload"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.render.mode",
+      "value": "custom-stereo-projection",
+      "source_setting_id": "native_renderer.render.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.output",
+      "value": "disabled",
+      "source_setting_id": "native_renderer.camera.output"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.guide.blur.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.guide.blur.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.replay.visual_proof.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.input.source",
+      "value": "disabled",
+      "source_setting_id": "native_renderer.hand_mesh.input.source"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.graft_copies.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.real_hands.visible"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_anchor_particles.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.sdf.visual.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.sdf.visual.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.mode",
+      "value": "disabled",
+      "source_setting_id": "native_renderer.environment_depth.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.stimulus_volume.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_layer.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.private_layer.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.controls",
+      "value": "false",
+      "source_setting_id": "native_renderer.projection.target.controls"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.scale",
+      "value": "1.0",
+      "source_setting_id": "native_renderer.projection.target.scale"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.offset.x.uv",
+      "value": "0.0",
+      "source_setting_id": "native_renderer.projection.target.offset.x.uv"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.offset.y.uv",
+      "value": "0.0",
+      "source_setting_id": "native_renderer.projection.target.offset.y.uv"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.joystick.controls",
+      "value": "false",
+      "source_setting_id": "native_renderer.projection.target.joystick.controls"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode",
+      "value": "disabled",
+      "source_setting_id": "native_renderer.projection.target.breath.bridge.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload",
+      "value": "false",
+      "source_setting_id": "native_renderer.projection.target.breath.high_rate_json_payload"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.display_composite.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.source",
+      "value": "android-mediaprojection",
+      "source_setting_id": "native_renderer.display_composite.source"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.mode",
+      "value": "hardware-buffer-witness",
+      "source_setting_id": "native_renderer.display_composite.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.width",
+      "value": "1280",
+      "source_setting_id": "native_renderer.display_composite.width"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.height",
+      "value": "720",
+      "source_setting_id": "native_renderer.display_composite.height"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.max_images",
+      "value": "3",
+      "source_setting_id": "native_renderer.display_composite.max_images"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.fps_cap",
+      "value": "30",
+      "source_setting_id": "native_renderer.display_composite.fps_cap"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.feedback.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.display_composite.feedback.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.feedback.projection",
+      "value": "metadata-target-screen-uv",
+      "source_setting_id": "native_renderer.display_composite.feedback.projection"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.high_rate_json_payload",
+      "value": "false",
+      "source_setting_id": "native_renderer.display_composite.high_rate_json_payload"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_projection.enabled",
+      "value": "true",
+      "source_setting_id": "native_renderer.video_projection.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_projection.source",
+      "value": "app-private-file",
+      "source_setting_id": "native_renderer.video_projection.source"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_projection.path",
+      "value": "video/noodletest-sbs.mp4",
+      "source_setting_id": "native_renderer.video_projection.path"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_projection.stereo_layout",
+      "value": "side-by-side-left-right",
+      "source_setting_id": "native_renderer.video_projection.stereo_layout"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_projection.width",
+      "value": "3840",
+      "source_setting_id": "native_renderer.video_projection.width"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_projection.height",
+      "value": "1920",
+      "source_setting_id": "native_renderer.video_projection.height"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_projection.max_images",
+      "value": "3",
+      "source_setting_id": "native_renderer.video_projection.max_images"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_projection.fps_cap",
+      "value": "30",
+      "source_setting_id": "native_renderer.video_projection.fps_cap"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_projection.looping",
+      "value": "true",
+      "source_setting_id": "native_renderer.video_projection.looping"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_projection.target",
+      "value": "full-eye",
+      "source_setting_id": "native_renderer.video_projection.target"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_projection.opacity",
+      "value": "1.0",
+      "source_setting_id": "native_renderer.video_projection.opacity"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_projection.high_rate_json_payload",
+      "value": "false",
+      "source_setting_id": "native_renderer.video_projection.high_rate_json_payload"
+    }
+  ],
+  "expected_markers": [
+    "RUSTY_QUEST_NATIVE_RENDERER channel=render-mode",
+    "renderMode=custom-stereo-projection",
+    "customStereoProjectionEnabled=true",
+    "RUSTY_QUEST_NATIVE_RENDERER channel=camera-runtime",
+    "cameraOutputMode=disabled",
+    "cameraFramesRequested=false",
+    "RUSTY_QUEST_NATIVE_RENDERER channel=video-projection",
+    "videoProjectionEnabled=true",
+    "videoProjectionSource=app-private-file",
+    "videoProjectionPath=video/noodletest-sbs.mp4",
+    "videoProjectionStereoLayout=side-by-side-left-right",
+    "videoProjectionLeftSourceUvRect=0.000000,0.000000,0.500000,1.000000",
+    "videoProjectionRightSourceUvRect=0.500000,0.000000,0.500000,1.000000",
+    "videoProjectionTarget=full-eye",
+    "videoProjectionTransport=mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer",
+    "nativeImageReader=true",
+    "javaHardwareBufferBridge=false",
+    "cpuPixelCopy=false",
+    "highRateJsonPayload=false"
+  ],
+  "validation_commands": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-fullscreen-stereo-video.profile.json -DryRun -Out local-artifacts/native-renderer-fullscreen-stereo-video-property-write-plan.json"
+  ]
+}

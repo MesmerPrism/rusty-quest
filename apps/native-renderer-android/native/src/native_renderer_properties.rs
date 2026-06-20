@@ -45,6 +45,30 @@ pub(crate) const PROP_DISPLAY_COMPOSITE_FEEDBACK_PROJECTION: &str =
     "debug.rustyquest.native_renderer.display_composite.feedback.projection";
 pub(crate) const PROP_DISPLAY_COMPOSITE_HIGH_RATE_JSON_PAYLOAD: &str =
     "debug.rustyquest.native_renderer.display_composite.high_rate_json_payload";
+pub(crate) const PROP_VIDEO_PROJECTION_ENABLED: &str =
+    "debug.rustyquest.native_renderer.video_projection.enabled";
+pub(crate) const PROP_VIDEO_PROJECTION_SOURCE: &str =
+    "debug.rustyquest.native_renderer.video_projection.source";
+pub(crate) const PROP_VIDEO_PROJECTION_PATH: &str =
+    "debug.rustyquest.native_renderer.video_projection.path";
+pub(crate) const PROP_VIDEO_PROJECTION_STEREO_LAYOUT: &str =
+    "debug.rustyquest.native_renderer.video_projection.stereo_layout";
+pub(crate) const PROP_VIDEO_PROJECTION_WIDTH: &str =
+    "debug.rustyquest.native_renderer.video_projection.width";
+pub(crate) const PROP_VIDEO_PROJECTION_HEIGHT: &str =
+    "debug.rustyquest.native_renderer.video_projection.height";
+pub(crate) const PROP_VIDEO_PROJECTION_MAX_IMAGES: &str =
+    "debug.rustyquest.native_renderer.video_projection.max_images";
+pub(crate) const PROP_VIDEO_PROJECTION_FPS_CAP: &str =
+    "debug.rustyquest.native_renderer.video_projection.fps_cap";
+pub(crate) const PROP_VIDEO_PROJECTION_LOOPING: &str =
+    "debug.rustyquest.native_renderer.video_projection.looping";
+pub(crate) const PROP_VIDEO_PROJECTION_TARGET: &str =
+    "debug.rustyquest.native_renderer.video_projection.target";
+pub(crate) const PROP_VIDEO_PROJECTION_OPACITY: &str =
+    "debug.rustyquest.native_renderer.video_projection.opacity";
+pub(crate) const PROP_VIDEO_PROJECTION_HIGH_RATE_JSON_PAYLOAD: &str =
+    "debug.rustyquest.native_renderer.video_projection.high_rate_json_payload";
 pub(crate) const PROP_SWAPCHAIN_COLOR_FORMAT_MODE: &str =
     "debug.rustyquest.native_renderer.swapchain.color_format";
 pub(crate) const PROP_SDF_UPDATE_PERIOD_FRAMES: &str =

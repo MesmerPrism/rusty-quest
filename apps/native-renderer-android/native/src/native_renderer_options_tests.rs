@@ -13,7 +13,8 @@ mod tests {
         NativeEnvironmentDepthSurfaceFreeSpaceDecay, NativeEnvironmentDepthSurfaceModel,
         NativeEnvironmentDepthSurfaceNormalCoherence, NativeEnvironmentDepthSurfaceNormalSource,
         NativeEnvironmentDepthSurfaceSmallComponentPolicy, NativeGuideGraphResolution,
-        NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
+        NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode, NativeVideoProjectionSource,
+        NativeVideoProjectionStereoLayout, NativeVideoProjectionTarget,
         PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED,
         PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_READER_MAX_IMAGES,
         PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
@@ -60,6 +61,12 @@ mod tests {
         PROP_STIMULUS_VOLUME_RANDOMIZE_MAX_HZ, PROP_STIMULUS_VOLUME_RANDOMIZE_MIN_HZ,
         PROP_STIMULUS_VOLUME_RAYMARCH_SAMPLES, PROP_STIMULUS_VOLUME_RENDER_TARGET,
         PROP_STIMULUS_VOLUME_SAFETY_ACK, PROP_SWAPCHAIN_COLOR_FORMAT_MODE,
+        PROP_VIDEO_PROJECTION_ENABLED, PROP_VIDEO_PROJECTION_FPS_CAP, PROP_VIDEO_PROJECTION_HEIGHT,
+        PROP_VIDEO_PROJECTION_HIGH_RATE_JSON_PAYLOAD, PROP_VIDEO_PROJECTION_LOOPING,
+        PROP_VIDEO_PROJECTION_MAX_IMAGES, PROP_VIDEO_PROJECTION_OPACITY,
+        PROP_VIDEO_PROJECTION_PATH, PROP_VIDEO_PROJECTION_SOURCE,
+        PROP_VIDEO_PROJECTION_STEREO_LAYOUT, PROP_VIDEO_PROJECTION_TARGET,
+        PROP_VIDEO_PROJECTION_WIDTH,
     };
     use crate::native_renderer_stimulus_volume_options::{
         NativeStimulusVolumeCompositionMode, NativeStimulusVolumePatternFamily,
@@ -1218,6 +1225,68 @@ mod tests {
         assert!(settings
             .marker_fields()
             .contains("displayCompositeMode=gpu-recursive-feedback-diagnostic"));
+    }
+
+    #[test]
+    fn video_projection_settings_map_side_by_side_halves_to_eyes() {
+        let options = options_from(&[
+            (PROP_VIDEO_PROJECTION_ENABLED, "true"),
+            (PROP_VIDEO_PROJECTION_SOURCE, "app-private-file"),
+            (PROP_VIDEO_PROJECTION_PATH, "video/noodletest-sbs.mp4"),
+            (
+                PROP_VIDEO_PROJECTION_STEREO_LAYOUT,
+                "side-by-side-left-right",
+            ),
+            (PROP_VIDEO_PROJECTION_WIDTH, "3840"),
+            (PROP_VIDEO_PROJECTION_HEIGHT, "1920"),
+            (PROP_VIDEO_PROJECTION_MAX_IMAGES, "3"),
+            (PROP_VIDEO_PROJECTION_FPS_CAP, "30"),
+            (PROP_VIDEO_PROJECTION_LOOPING, "true"),
+            (PROP_VIDEO_PROJECTION_TARGET, "full-eye"),
+            (PROP_VIDEO_PROJECTION_OPACITY, "1.0"),
+            (PROP_VIDEO_PROJECTION_HIGH_RATE_JSON_PAYLOAD, "false"),
+        ]);
+        let settings = options.video_projection_settings;
+
+        assert!(settings.active());
+        assert_eq!(settings.source, NativeVideoProjectionSource::AppPrivateFile);
+        assert_eq!(
+            settings.stereo_layout,
+            NativeVideoProjectionStereoLayout::SideBySideLeftRight
+        );
+        assert_eq!(settings.width, 3840);
+        assert_eq!(settings.height, 1920);
+        assert_eq!(settings.target, NativeVideoProjectionTarget::FullEye);
+        assert!((settings.stereo_layout.per_eye_aspect_ratio(3840, 1920) - 1.0).abs() < 0.001);
+        assert_eq!(
+            settings
+                .stereo_layout
+                .source_uv_rect_for_eye(0)
+                .as_xywh_token(),
+            "0.000000,0.000000,0.500000,1.000000"
+        );
+        assert_eq!(
+            settings
+                .stereo_layout
+                .source_uv_rect_for_eye(1)
+                .as_xywh_token(),
+            "0.500000,0.000000,0.500000,1.000000"
+        );
+
+        let fields = settings.marker_fields();
+        assert!(fields.contains("videoProjectionStream=stereo_video"));
+        assert!(
+            fields.contains("videoProjectionSourceAuthority=android-mediacodec-surface-decoder")
+        );
+        assert!(fields.contains(
+            "videoProjectionTransport=mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer"
+        ));
+        assert!(fields.contains("videoProjectionStereoLayout=side-by-side-left-right"));
+        assert!(fields.contains("videoProjectionTarget=full-eye"));
+        assert!(fields.contains("nativeImageReader=true"));
+        assert!(fields.contains("javaHardwareBufferBridge=false"));
+        assert!(fields.contains("cpuPixelCopy=false"));
+        assert!(fields.contains("highRateJsonPayload=false"));
     }
 
     #[test]

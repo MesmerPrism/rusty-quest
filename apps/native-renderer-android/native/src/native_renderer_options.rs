@@ -55,6 +55,12 @@ pub(crate) use crate::native_renderer_stimulus_volume_options::{
     NativeStimulusVolumePatternFamily, NativeStimulusVolumeProfile,
     NativeStimulusVolumeRenderTarget,
 };
+pub(crate) use crate::native_renderer_video_projection_options::NativeVideoProjectionSettings;
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(crate) use crate::native_renderer_video_projection_options::{
+    NativeVideoProjectionSource, NativeVideoProjectionStereoLayout, NativeVideoProjectionTarget,
+};
 pub(crate) use crate::native_renderer_visual_options::{
     CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings, NativePrivateLayerSettings,
     NativeRendererRenderMode,
@@ -86,6 +92,7 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) hand_anchor_particle_settings: NativeHandAnchorParticleSettings,
     pub(crate) environment_depth_settings: NativeEnvironmentDepthSettings,
     pub(crate) display_composite_settings: NativeDisplayCompositeSettings,
+    pub(crate) video_projection_settings: NativeVideoProjectionSettings,
     pub(crate) stimulus_volume_settings: NativeStimulusVolumeSettings,
     pub(crate) projection_target_settings: ProjectionTargetSettings,
     pub(crate) projection_border_stretch_settings: NativeProjectionBorderStretchSettings,
@@ -145,6 +152,8 @@ impl NativeRendererRuntimeOptions {
             NativeEnvironmentDepthSettings::from_property_lookup(&mut lookup);
         let display_composite_settings =
             NativeDisplayCompositeSettings::from_property_lookup(&mut lookup);
+        let video_projection_settings =
+            NativeVideoProjectionSettings::from_property_lookup(&mut lookup);
         let stimulus_volume_settings =
             NativeStimulusVolumeSettings::from_property_lookup(&mut lookup, render_mode);
         let projection_target_settings = if render_mode.uses_stimulus_volume() {
@@ -185,6 +194,7 @@ impl NativeRendererRuntimeOptions {
             hand_anchor_particle_settings,
             environment_depth_settings,
             display_composite_settings,
+            video_projection_settings,
             stimulus_volume_settings,
             projection_target_settings,
             projection_border_stretch_settings,

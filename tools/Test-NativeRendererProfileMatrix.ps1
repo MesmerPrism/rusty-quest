@@ -60,6 +60,7 @@ $expectedProfileNames = @(
     "quest-native-renderer-envdepth-stage-space.profile.json",
     "quest-native-renderer-envdepth-stride-8.profile.json",
     "quest-native-renderer-environment-depth-status.profile.json",
+    "quest-native-renderer-fullscreen-stereo-video.profile.json",
     "quest-native-renderer-hwb-peripheral-stretch.profile.json",
     "quest-native-renderer-live-hand-anchor-particles.profile.json",
     "quest-native-renderer-live-hand-visual-diagnostic.profile.json",

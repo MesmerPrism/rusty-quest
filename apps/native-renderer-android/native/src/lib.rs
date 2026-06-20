@@ -79,6 +79,7 @@ mod native_renderer_stimulus_panel;
 mod native_renderer_stimulus_volume_options;
 #[cfg(target_os = "android")]
 mod native_renderer_timing;
+mod native_renderer_video_projection_options;
 mod native_renderer_visual_options;
 #[cfg(target_os = "android")]
 mod openxr_environment_depth;
@@ -89,6 +90,13 @@ mod private_extension_slot;
 mod projection_rect;
 mod projection_target_state;
 mod recorded_hand_replay;
+#[cfg(target_os = "android")]
+mod video_projection;
+mod video_projection_metadata;
+#[cfg(target_os = "android")]
+mod video_projection_native_stream;
+#[cfg(target_os = "android")]
+mod video_projection_player_bridge;
 #[cfg(target_os = "android")]
 mod xr_vulkan;
 
@@ -248,10 +256,23 @@ fn android_main(app: android_activity::AndroidApp) {
             runtime_options.display_composite_settings.marker_fields()
         ),
     );
+    marker(
+        "video-projection",
+        format!(
+            "status=config {}",
+            runtime_options.video_projection_settings.marker_fields()
+        ),
+    );
+    let video_projection_playback = video_projection_player_bridge::start_if_enabled(
+        &app,
+        &runtime_options.video_projection_settings,
+    );
 
     let xr_vulkan_readiness = xr_vulkan::probe(&app);
 
-    let camera_runtime = if runtime_options.render_mode.uses_custom_stereo_projection() {
+    let camera_runtime = if runtime_options.render_mode.uses_custom_stereo_projection()
+        && runtime_options.camera_output_mode.camera_import_enabled()
+    {
         match native_camera::NativeCameraRuntime::start_from_plan(
             &plan,
             runtime_options.camera_resolution_profile,
@@ -273,15 +294,31 @@ fn android_main(app: android_activity::AndroidApp) {
             }
         }
     } else {
+        let skipped_reason = if !runtime_options.camera_output_mode.camera_import_enabled() {
+            runtime_options.camera_output_mode.marker_value()
+        } else {
+            runtime_options.render_mode.marker_value()
+        };
         marker(
             "camera-runtime",
             format!(
-                "status=skipped reason={} cameraRuntimeMode={} customStereoProjectionEnabled=false cameraFramesRequested=false cameraProjectionReady=false",
-                runtime_options.render_mode.marker_value(),
+                "status=skipped reason={} cameraRuntimeMode={} customStereoProjectionEnabled={} cameraFramesRequested=false cameraProjectionReady=false",
+                skipped_reason,
                 runtime_options.render_mode.camera_runtime_mode(),
+                runtime_options.render_mode.uses_custom_stereo_projection(),
             ),
         );
         None
+    };
+
+    let active_guide_texture_samples = if runtime_options
+        .camera_output_mode
+        .guide_projection_enabled()
+        && runtime_options.render_mode.uses_custom_stereo_projection()
+    {
+        1
+    } else {
+        0
     };
 
     marker(
@@ -300,7 +337,7 @@ fn android_main(app: android_activity::AndroidApp) {
                 "metadata-target-only"
             },
             xr_vulkan_readiness.marker_fields(),
-            if runtime_options.render_mode.uses_custom_stereo_projection() { 1 } else { 0 },
+            active_guide_texture_samples,
         ),
     );
 
@@ -322,6 +359,7 @@ fn android_main(app: android_activity::AndroidApp) {
     }
 
     drop(camera_runtime);
+    drop(video_projection_playback);
     marker("render-loop", "status=stopped");
 }
 

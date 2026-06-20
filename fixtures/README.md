@@ -61,6 +61,20 @@
   for this fixture is owned by `tools/Invoke-NativeRendererDisplayCompositeSmoke.ps1`, which uses a
   fresh `display_composite_request_token`, marker-scoped logcat, screenshot
   evidence, and `PROJECT_MEDIA` reset after the run.
+  The fullscreen stereo video profile is a video-only custom projection route:
+  Camera2 output, display-composite capture, guide blur, hand/SDF visuals,
+  environment-depth particles, stimulus volume, private layers, and projection
+  target controls are disabled while Android `MediaCodec` decodes the
+  app-private `video/noodletest-sbs.mp4` side-by-side source into a Rust-owned
+  `AImageReader` surface. The profile records left-eye UV
+  `0.0,0.0,0.5,1.0`, right-eye UV `0.5,0.0,0.5,1.0`, full-eye target metadata,
+  queue depth, frame cap, looping, opacity, and
+  `high_rate_json_payload=false` so downstream scale/overlay work can adapt the
+  source without baking stereo layout assumptions into the renderer.
+  `tools/Stage-NativeRendererVideo.ps1` stages the user-provided MP4 into the
+  package-scoped external `files/v.mp4` path through serial-scoped ADB and
+  records the compact absolute `video_projection_path` for the property
+  override without adding broad storage permissions.
   The solid-black stimulus-volume profile is the current central-FOV limit
   fixture for bright volumetric interference: it requests a 1024x1024x2 stereo
   storage target, 18 raymarch samples, a 0.72 central-FOV fraction, and smooth
@@ -212,6 +226,12 @@
   bridge, reusable AHB Vulkan import helper, `PROJECT_MEDIA` lab pregrant/reset
   script, display-composite smoke wrapper, profile fixture, and no-CPU-copy
   guard.
+  `tools/checks/Test-NativeRendererVideoProjectionStatic.ps1` owns fullscreen
+  stereo video settings, Java `MediaCodec`/`MediaExtractor` control,
+  Rust-created video `Surface`, native `AImageReader`/`AHardwareBuffer`
+  descriptor stream, per-eye source-UV metadata, Vulkan import/sampling,
+  profile fixture, staging wrapper, shader compilation, and the Java
+  no-CPU-copy guard.
   `tools/checks/Test-NativeRendererOpenXrVulkanStatic.ps1` owns OpenXR/Vulkan
   prerequisite, timing marker, private-slot, render-mode, scorecard, and native
   timing counter static checks. Replay visual

@@ -11,6 +11,8 @@ fn main() {
     println!("cargo:rerun-if-changed=shaders/display_composite_feedback.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/display_composite_feedback.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/display_composite_recursive_feedback.frag.glsl");
+    println!("cargo:rerun-if-changed=shaders/video_projection.vert.glsl");
+    println!("cargo:rerun-if-changed=shaders/video_projection.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/camera_luma_diagnostic.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/guide_blur_downsample.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/guide_blur_5tap.frag.glsl");
@@ -93,6 +95,18 @@ fn main() {
         "fragment",
         Path::new("shaders/display_composite_recursive_feedback.frag.glsl"),
         &out_dir.join("display_composite_recursive_feedback.frag.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "vertex",
+        Path::new("shaders/video_projection.vert.glsl"),
+        &out_dir.join("video_projection.vert.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "fragment",
+        Path::new("shaders/video_projection.frag.glsl"),
+        &out_dir.join("video_projection.frag.spv"),
     );
     compile_shader(
         &glslc,

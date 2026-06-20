@@ -21,6 +21,7 @@ $runtimeEvidenceStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRen
 $runtimeProfileStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererRuntimeProfileStatic.ps1"
 $stimulusVolumeStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererStimulusVolumeStatic.ps1"
 $displayCompositeStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererDisplayCompositeStatic.ps1"
+$videoProjectionStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererVideoProjectionStatic.ps1"
 $projectionTargetStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererProjectionTargetStatic.ps1"
 $handVisualStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererHandVisualStatic.ps1"
 $gpuSdfStaticCheckPath = Join-Path $PSScriptRoot "checks\Test-NativeRendererGpuSdfStatic.ps1"
@@ -41,6 +42,7 @@ $requiredPaths = @(
     $androidScaffoldStaticCheckPath, $propertyManifestStaticCheckPath, $publicBoundaryStaticCheckPath,
     $environmentDepthStaticCheckPath, $runtimeEvidenceStaticCheckPath,
     $runtimeProfileStaticCheckPath, $stimulusVolumeStaticCheckPath, $displayCompositeStaticCheckPath,
+    $videoProjectionStaticCheckPath,
     $projectionTargetStaticCheckPath, $handVisualStaticCheckPath, $gpuSdfStaticCheckPath,
     $cameraGuideStaticCheckPath, $openXrVulkanStaticCheckPath,
     $nativeRendererPropertyManifestPath, $runtimeEvidenceFixturePath, $liveHandDiagnosticPendingFixturePath,
@@ -66,6 +68,7 @@ foreach ($path in $requiredPaths) {
 & $runtimeProfileStaticCheckPath -RepoRoot $repoRoot
 & $stimulusVolumeStaticCheckPath -RepoRoot $repoRoot
 & $displayCompositeStaticCheckPath -RepoRoot $repoRoot
+& $videoProjectionStaticCheckPath -RepoRoot $repoRoot
 & $projectionTargetStaticCheckPath -RepoRoot $repoRoot
 & $handVisualStaticCheckPath -RepoRoot $repoRoot
 & $gpuSdfStaticCheckPath -RepoRoot $repoRoot
