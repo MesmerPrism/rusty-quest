@@ -768,6 +768,26 @@ fn validate_environment_depth_profile(
             )));
         }
     }
+
+    let surface_radius_cells = environment_depth_u32(
+        set_properties,
+        ENVIRONMENT_DEPTH_SURFACE_SUPPORT_RADIUS_CELLS,
+        errors,
+    );
+    let surface_min_neighbors = environment_depth_u32(
+        set_properties,
+        ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_NEIGHBORS,
+        errors,
+    );
+    if let (Some(radius_cells), Some(min_neighbors)) = (surface_radius_cells, surface_min_neighbors)
+    {
+        let max_neighbors = max_surface_support_neighbors(radius_cells);
+        if min_neighbors > max_neighbors {
+            errors.push(ValidationError::new(format!(
+                "environment depth surface_support.min_neighbors {min_neighbors} cannot exceed {max_neighbors} for radius_cells {radius_cells}",
+            )));
+        }
+    }
 }
 
 fn validate_stimulus_volume_profile(
@@ -1360,6 +1380,29 @@ fn environment_depth_f32(
     }
 }
 
+fn environment_depth_u32(
+    set_properties: &BTreeMap<&str, &PropertyValue>,
+    name: &str,
+    errors: &mut Vec<ValidationError>,
+) -> Option<u32> {
+    let property = set_properties.get(name)?;
+    match property.value.trim().parse::<u32>() {
+        Ok(value) => Some(value),
+        Err(_) => {
+            errors.push(ValidationError::new(format!(
+                "{} value {} must be an integer",
+                property.name, property.value
+            )));
+            None
+        }
+    }
+}
+
+fn max_surface_support_neighbors(radius_cells: u32) -> u32 {
+    let diameter = radius_cells.saturating_mul(2).saturating_add(1);
+    diameter.saturating_mul(diameter).saturating_sub(1)
+}
+
 fn normalized_value(value: &str) -> String {
     value.trim().to_ascii_lowercase().replace('_', "-")
 }
@@ -1721,6 +1764,31 @@ mod tests {
         assert!(errors
             .iter()
             .any(|error| error.message.contains("min_neighbors value 99")));
+    }
+
+    #[test]
+    fn environment_depth_impossible_neighbor_threshold_is_rejected() {
+        let damaged: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/damaged/native-renderer-environment-depth-impossible-neighbor-threshold.profile.json"
+        ))
+        .expect("damaged profile JSON");
+        let errors =
+            validate_runtime_profile(&damaged).expect_err("must reject impossible threshold");
+        assert!(errors.iter().any(|error| error
+            .message
+            .contains("surface_support.min_neighbors 9 cannot exceed 8 for radius_cells 1")));
+    }
+
+    #[test]
+    fn environment_depth_invalid_source_layers_is_rejected() {
+        let damaged: RuntimeProfile = serde_json::from_str(include_str!(
+            "../../../fixtures/damaged/native-renderer-environment-depth-invalid-source-layers.profile.json"
+        ))
+        .expect("damaged profile JSON");
+        let errors = validate_runtime_profile(&damaged).expect_err("must reject source layers");
+        assert!(errors
+            .iter()
+            .any(|error| error.message.contains("min_source_layers value 3")));
     }
 
     #[test]

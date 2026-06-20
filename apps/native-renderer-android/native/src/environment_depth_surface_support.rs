@@ -3,11 +3,13 @@
 //! The Android runtime path stays GPU-owned. This module gives host tests a
 //! small reference for the future compute shader: reconstruct local depth
 //! neighborhoods in OpenXR reference-space meters, prefer invalid normals over
-//! noisy edge normals, and expose only aggregate counters.
+//! noisy edge normals, and expose aggregate counters plus compact descriptor
+//! shapes for future GPU-owned support buffers.
 
 use crate::environment_depth_geometry::{
     reconstruct_reference_space_point, FovTangents, ReferencePose,
 };
+pub(crate) use crate::environment_depth_scene_map::scene_cell_for_reference_space_position;
 use crate::native_renderer_environment_depth_options::{
     NativeEnvironmentDepthSurfaceComponentMode, NativeEnvironmentDepthSurfaceSmallComponentPolicy,
 };
@@ -16,6 +18,17 @@ const DEFAULT_MAX_DEPTH_STEP_M: f32 = 0.18;
 const DEFAULT_MIN_NORMAL_AREA_M2: f32 = 0.000_001;
 pub(crate) const LOOSE_NORMAL_COHERENCE_MIN_DOT: f32 = 0.75;
 pub(crate) const STRICT_NORMAL_COHERENCE_MIN_DOT: f32 = 0.92;
+pub(crate) const COMPACT_SURFACE_INVALID_PACKED_NORMAL: u32 = u32::MAX;
+pub(crate) const COMPACT_SURFACE_FLAG_CONFIRMED_LIFECYCLE: u32 = 1 << 0;
+pub(crate) const COMPACT_SURFACE_FLAG_CANDIDATE_LIFECYCLE: u32 = 1 << 1;
+pub(crate) const COMPACT_SURFACE_FLAG_RETIRED_CANDIDATE: u32 = 1 << 2;
+pub(crate) const COMPACT_SURFACE_FLAG_VALID_NORMAL: u32 = 1 << 3;
+pub(crate) const COMPACT_SURFACE_FLAG_COMPONENT_CONFIRMED: u32 = 1 << 4;
+pub(crate) const COMPACT_SURFACE_FLAG_SMALL_COMPONENT: u32 = 1 << 5;
+pub(crate) const COMPACT_SURFACE_FLAG_SOURCE_LAYER_AGREEMENT: u32 = 1 << 6;
+pub(crate) const COMPACT_SURFACE_FLAG_NORMAL_VISIBLE: u32 = 1 << 7;
+pub(crate) const COMPACT_SURFACE_FLAG_DEBUG_VISIBLE: u32 = 1 << 8;
+pub(crate) const COMPACT_SURFACE_FLAG_DRAWABLE_SURFACE: u32 = 1 << 9;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DepthNeighborhoodNormalPolicy {
@@ -28,6 +41,38 @@ impl Default for DepthNeighborhoodNormalPolicy {
         Self {
             max_depth_step_m: DEFAULT_MAX_DEPTH_STEP_M,
             min_normal_area_m2: DEFAULT_MIN_NORMAL_AREA_M2,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RetainedCellNormalSample {
+    pub(crate) observed: bool,
+    pub(crate) reference_space_position_m: [f32; 3],
+}
+
+impl Default for RetainedCellNormalSample {
+    fn default() -> Self {
+        Self {
+            observed: false,
+            reference_space_position_m: [0.0; 3],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RetainedSceneCellSample {
+    pub(crate) observed: bool,
+    pub(crate) reference_space_position_m: [f32; 3],
+    pub(crate) scene_cell: [i32; 3],
+}
+
+impl Default for RetainedSceneCellSample {
+    fn default() -> Self {
+        Self {
+            observed: false,
+            reference_space_position_m: [0.0; 3],
+            scene_cell: [0; 3],
         }
     }
 }
@@ -192,6 +237,63 @@ pub(crate) enum SurfaceLifecycleCellState {
     RetiredCandidate,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct CompactSurfaceDescriptorGrid {
+    pub(crate) width: usize,
+    pub(crate) height: usize,
+    pub(crate) descriptors: Vec<CompactSurfaceDescriptor>,
+    pub(crate) counters: CompactSurfaceDescriptorCounters,
+}
+
+impl CompactSurfaceDescriptorGrid {
+    pub(crate) fn descriptor(&self, x: usize, y: usize) -> Option<&CompactSurfaceDescriptor> {
+        (x < self.width && y < self.height).then(|| &self.descriptors[y * self.width + x])
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct CompactSurfaceDescriptor {
+    pub(crate) flags: u32,
+    pub(crate) packed_normal_snorm10: u32,
+    pub(crate) residual_mm: u16,
+    pub(crate) support_count: u16,
+    pub(crate) source_layer_count: u8,
+    pub(crate) component_id: u32,
+    pub(crate) component_size_cells: u32,
+}
+
+impl CompactSurfaceDescriptor {
+    fn empty() -> Self {
+        Self {
+            flags: 0,
+            packed_normal_snorm10: COMPACT_SURFACE_INVALID_PACKED_NORMAL,
+            residual_mm: 0,
+            support_count: 0,
+            source_layer_count: 0,
+            component_id: 0,
+            component_size_cells: 0,
+        }
+    }
+
+    pub(crate) fn has_flag(self, flag: u32) -> bool {
+        self.flags & flag != 0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct CompactSurfaceDescriptorCounters {
+    pub(crate) confirmed_lifecycle_cells: u32,
+    pub(crate) candidate_lifecycle_cells: u32,
+    pub(crate) retired_candidate_cells: u32,
+    pub(crate) valid_normal_cells: u32,
+    pub(crate) drawable_surface_cells: u32,
+    pub(crate) normal_visible_cells: u32,
+    pub(crate) debug_visible_cells: u32,
+    pub(crate) small_component_cells: u32,
+    pub(crate) source_layer_agreement_cells: u32,
+    pub(crate) rejected_missing_normal_cells: u32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SurfaceNormalEstimate {
     pub(crate) normal: Option<[f32; 3]>,
@@ -261,20 +363,7 @@ pub(crate) fn estimate_depth_neighborhood_normals(
 
     let mut estimates = Vec::with_capacity(depth_meters.len());
     let mut counters = SurfaceNormalCounters::default();
-    let policy = DepthNeighborhoodNormalPolicy {
-        max_depth_step_m: if policy.max_depth_step_m.is_finite() && policy.max_depth_step_m > 0.0 {
-            policy.max_depth_step_m
-        } else {
-            DEFAULT_MAX_DEPTH_STEP_M
-        },
-        min_normal_area_m2: if policy.min_normal_area_m2.is_finite()
-            && policy.min_normal_area_m2 > 0.0
-        {
-            policy.min_normal_area_m2
-        } else {
-            DEFAULT_MIN_NORMAL_AREA_M2
-        },
-    };
+    let policy = sanitize_normal_policy(policy);
 
     for y in 0..height {
         for x in 0..width {
@@ -305,6 +394,110 @@ pub(crate) fn estimate_depth_neighborhood_normals(
         estimates,
         counters,
     })
+}
+
+pub(crate) fn estimate_retained_cell_neighborhood_normals(
+    samples: &[RetainedCellNormalSample],
+    width: usize,
+    height: usize,
+    observer_position_m: [f32; 3],
+    policy: DepthNeighborhoodNormalPolicy,
+) -> Result<SurfaceNormalGrid, String> {
+    if width == 0 || height == 0 {
+        return Err("retained-cell normal grid dimensions must be nonzero".to_string());
+    }
+    if samples.len() != width.saturating_mul(height) {
+        return Err(format!(
+            "retained-cell normal grid length mismatch: got {} expected {}",
+            samples.len(),
+            width.saturating_mul(height)
+        ));
+    }
+
+    let mut estimates = Vec::with_capacity(samples.len());
+    let mut counters = SurfaceNormalCounters::default();
+    let policy = sanitize_normal_policy(policy);
+
+    for y in 0..height {
+        for x in 0..width {
+            let estimate = estimate_retained_cell_neighborhood_normal(
+                samples,
+                width,
+                height,
+                x,
+                y,
+                observer_position_m,
+                policy,
+            );
+            if estimate.is_valid() {
+                counters.valid_cells = counters.valid_cells.saturating_add(1);
+            } else if estimate.reason.is_rejected() {
+                counters.rejected_cells = counters.rejected_cells.saturating_add(1);
+            } else {
+                counters.invalid_cells = counters.invalid_cells.saturating_add(1);
+            }
+            estimates.push(estimate);
+        }
+    }
+
+    Ok(SurfaceNormalGrid {
+        width,
+        height,
+        estimates,
+        counters,
+    })
+}
+
+pub(crate) fn reconstruct_retained_scene_cell_samples(
+    depth_meters: &[f32],
+    width: usize,
+    height: usize,
+    depth_view_fov: FovTangents,
+    depth_view_pose: ReferencePose,
+) -> Result<Vec<RetainedSceneCellSample>, String> {
+    if width == 0 || height == 0 {
+        return Err("retained scene-cell grid dimensions must be nonzero".to_string());
+    }
+    if depth_meters.len() != width.saturating_mul(height) {
+        return Err(format!(
+            "retained scene-cell grid length mismatch: got {} expected {}",
+            depth_meters.len(),
+            width.saturating_mul(height)
+        ));
+    }
+
+    let mut samples = Vec::with_capacity(depth_meters.len());
+    for y in 0..height {
+        for x in 0..width {
+            let depth = depth_meters[y * width + x];
+            let sample = valid_depth(depth)
+                .then(|| {
+                    reconstruct_grid_point(
+                        x,
+                        y,
+                        depth,
+                        width,
+                        height,
+                        depth_view_fov,
+                        depth_view_pose,
+                    )
+                })
+                .flatten()
+                .and_then(|reference_space_position_m| {
+                    scene_cell_for_reference_space_position(reference_space_position_m).map(
+                        |scene_cell| RetainedSceneCellSample {
+                            observed: true,
+                            reference_space_position_m,
+                            scene_cell,
+                        },
+                    )
+                })
+                .unwrap_or_default();
+            samples.push(sample);
+        }
+    }
+
+    Ok(samples)
 }
 
 pub(crate) fn normals_are_coherent(a: [f32; 3], b: [f32; 3], min_dot: f32) -> bool {
@@ -498,6 +691,63 @@ pub(crate) fn classify_surface_lifecycle(
     })
 }
 
+pub(crate) fn build_compact_surface_descriptors(
+    lifecycle: &SurfaceLifecycleGrid,
+    normals: &SurfaceNormalGrid,
+    components: &SurfaceComponentGrid,
+) -> Result<CompactSurfaceDescriptorGrid, String> {
+    if lifecycle.width == 0 || lifecycle.height == 0 {
+        return Err("compact surface descriptor grid dimensions must be nonzero".to_string());
+    }
+    if lifecycle.width != normals.width
+        || lifecycle.height != normals.height
+        || lifecycle.width != components.width
+        || lifecycle.height != components.height
+    {
+        return Err(format!(
+            "compact surface descriptor grid mismatch: lifecycle={}x{} normals={}x{} components={}x{}",
+            lifecycle.width,
+            lifecycle.height,
+            normals.width,
+            normals.height,
+            components.width,
+            components.height
+        ));
+    }
+    let expected_len = lifecycle.width.saturating_mul(lifecycle.height);
+    if lifecycle.cells.len() != expected_len
+        || normals.estimates.len() != expected_len
+        || components.cells.len() != expected_len
+    {
+        return Err(format!(
+            "compact surface descriptor length mismatch: expected {} lifecycle={} normals={} components={}",
+            expected_len,
+            lifecycle.cells.len(),
+            normals.estimates.len(),
+            components.cells.len()
+        ));
+    }
+
+    let mut counters = CompactSurfaceDescriptorCounters::default();
+    let descriptors = (0..expected_len)
+        .map(|index| {
+            compact_surface_descriptor_cell(
+                lifecycle.cells[index],
+                normals.estimates[index],
+                components.cells[index],
+                &mut counters,
+            )
+        })
+        .collect();
+
+    Ok(CompactSurfaceDescriptorGrid {
+        width: lifecycle.width,
+        height: lifecycle.height,
+        descriptors,
+        counters,
+    })
+}
+
 fn classify_surface_lifecycle_cell(
     sample: SurfaceLifecycleSample,
     policy: SurfaceLifecyclePolicy,
@@ -543,6 +793,155 @@ fn classify_surface_lifecycle_cell(
         source_layer_count,
         support_count: sample.neighbor_count,
     }
+}
+
+fn compact_surface_descriptor_cell(
+    lifecycle: SurfaceLifecycleCell,
+    normal: SurfaceNormalEstimate,
+    component: SurfaceComponentCell,
+    counters: &mut CompactSurfaceDescriptorCounters,
+) -> CompactSurfaceDescriptor {
+    let mut descriptor = CompactSurfaceDescriptor::empty();
+    descriptor.support_count = lifecycle.support_count.min(u16::MAX as u32) as u16;
+    descriptor.source_layer_count = lifecycle.source_layer_count.min(u8::MAX as u32) as u8;
+    descriptor.component_id = component.component_id;
+    descriptor.component_size_cells = component.component_size_cells;
+
+    match lifecycle.state {
+        SurfaceLifecycleCellState::Empty => {}
+        SurfaceLifecycleCellState::Candidate => {
+            descriptor.flags |= COMPACT_SURFACE_FLAG_CANDIDATE_LIFECYCLE;
+            counters.candidate_lifecycle_cells =
+                counters.candidate_lifecycle_cells.saturating_add(1);
+        }
+        SurfaceLifecycleCellState::Confirmed => {
+            descriptor.flags |= COMPACT_SURFACE_FLAG_CONFIRMED_LIFECYCLE;
+            counters.confirmed_lifecycle_cells =
+                counters.confirmed_lifecycle_cells.saturating_add(1);
+        }
+        SurfaceLifecycleCellState::RetiredCandidate => {
+            descriptor.flags |= COMPACT_SURFACE_FLAG_RETIRED_CANDIDATE;
+            counters.retired_candidate_cells = counters.retired_candidate_cells.saturating_add(1);
+        }
+    }
+
+    if lifecycle.source_layer_count >= 2 {
+        descriptor.flags |= COMPACT_SURFACE_FLAG_SOURCE_LAYER_AGREEMENT;
+        counters.source_layer_agreement_cells =
+            counters.source_layer_agreement_cells.saturating_add(1);
+    }
+
+    let packed_normal = normal
+        .normal
+        .filter(|_| normal.is_valid())
+        .map(pack_normal_snorm10)
+        .unwrap_or(COMPACT_SURFACE_INVALID_PACKED_NORMAL);
+    if packed_normal != COMPACT_SURFACE_INVALID_PACKED_NORMAL {
+        descriptor.flags |= COMPACT_SURFACE_FLAG_VALID_NORMAL;
+        descriptor.packed_normal_snorm10 = packed_normal;
+        descriptor.residual_mm = meters_to_u16_mm(normal.residual_m);
+        counters.valid_normal_cells = counters.valid_normal_cells.saturating_add(1);
+    } else if matches!(
+        lifecycle.state,
+        SurfaceLifecycleCellState::Candidate | SurfaceLifecycleCellState::Confirmed
+    ) {
+        counters.rejected_missing_normal_cells =
+            counters.rejected_missing_normal_cells.saturating_add(1);
+    }
+
+    let mut normal_visible = false;
+    let mut debug_visible = false;
+    match component.state {
+        SurfaceComponentCellState::Empty => {}
+        SurfaceComponentCellState::ComponentModeOff
+        | SurfaceComponentCellState::ConfirmedComponent => {
+            descriptor.flags |= COMPACT_SURFACE_FLAG_COMPONENT_CONFIRMED;
+            normal_visible = true;
+            debug_visible = true;
+        }
+        SurfaceComponentCellState::SmallComponentDimmed => {
+            descriptor.flags |= COMPACT_SURFACE_FLAG_SMALL_COMPONENT;
+            normal_visible = true;
+            debug_visible = true;
+        }
+        SurfaceComponentCellState::SmallComponentHidden => {
+            descriptor.flags |= COMPACT_SURFACE_FLAG_SMALL_COMPONENT;
+        }
+        SurfaceComponentCellState::SmallComponentDebugOnly => {
+            descriptor.flags |= COMPACT_SURFACE_FLAG_SMALL_COMPONENT;
+            debug_visible = true;
+        }
+    }
+
+    if descriptor.has_flag(COMPACT_SURFACE_FLAG_SMALL_COMPONENT) {
+        counters.small_component_cells = counters.small_component_cells.saturating_add(1);
+    }
+
+    if normal_visible && descriptor.has_flag(COMPACT_SURFACE_FLAG_VALID_NORMAL) {
+        descriptor.flags |= COMPACT_SURFACE_FLAG_NORMAL_VISIBLE;
+        counters.normal_visible_cells = counters.normal_visible_cells.saturating_add(1);
+    }
+    if debug_visible {
+        descriptor.flags |= COMPACT_SURFACE_FLAG_DEBUG_VISIBLE;
+        counters.debug_visible_cells = counters.debug_visible_cells.saturating_add(1);
+    }
+    if descriptor.has_flag(COMPACT_SURFACE_FLAG_CONFIRMED_LIFECYCLE)
+        && descriptor.has_flag(COMPACT_SURFACE_FLAG_NORMAL_VISIBLE)
+    {
+        descriptor.flags |= COMPACT_SURFACE_FLAG_DRAWABLE_SURFACE;
+        counters.drawable_surface_cells = counters.drawable_surface_cells.saturating_add(1);
+    }
+
+    descriptor
+}
+
+fn sanitize_normal_policy(policy: DepthNeighborhoodNormalPolicy) -> DepthNeighborhoodNormalPolicy {
+    DepthNeighborhoodNormalPolicy {
+        max_depth_step_m: if policy.max_depth_step_m.is_finite() && policy.max_depth_step_m > 0.0 {
+            policy.max_depth_step_m
+        } else {
+            DEFAULT_MAX_DEPTH_STEP_M
+        },
+        min_normal_area_m2: if policy.min_normal_area_m2.is_finite()
+            && policy.min_normal_area_m2 > 0.0
+        {
+            policy.min_normal_area_m2
+        } else {
+            DEFAULT_MIN_NORMAL_AREA_M2
+        },
+    }
+}
+
+fn estimate_retained_cell_neighborhood_normal(
+    samples: &[RetainedCellNormalSample],
+    width: usize,
+    height: usize,
+    x: usize,
+    y: usize,
+    observer_position_m: [f32; 3],
+    policy: DepthNeighborhoodNormalPolicy,
+) -> SurfaceNormalEstimate {
+    if x == 0 || y == 0 || x + 1 >= width || y + 1 >= height {
+        return SurfaceNormalEstimate::invalid(SurfaceNormalRejectReason::Boundary);
+    }
+
+    let Some(center) = retained_cell_position(samples[y * width + x]) else {
+        return SurfaceNormalEstimate::invalid(SurfaceNormalRejectReason::InvalidDepth);
+    };
+    let Some(left) = retained_cell_position(samples[y * width + (x - 1)]) else {
+        return SurfaceNormalEstimate::invalid(SurfaceNormalRejectReason::MissingNeighbor);
+    };
+    let Some(right) = retained_cell_position(samples[y * width + (x + 1)]) else {
+        return SurfaceNormalEstimate::invalid(SurfaceNormalRejectReason::MissingNeighbor);
+    };
+    let Some(down) = retained_cell_position(samples[(y - 1) * width + x]) else {
+        return SurfaceNormalEstimate::invalid(SurfaceNormalRejectReason::MissingNeighbor);
+    };
+    let Some(up) = retained_cell_position(samples[(y + 1) * width + x]) else {
+        return SurfaceNormalEstimate::invalid(SurfaceNormalRejectReason::MissingNeighbor);
+    };
+
+    normal_from_cross_neighbors(center, left, right, down, up, observer_position_m, policy)
 }
 
 fn estimate_depth_neighborhood_normal(
@@ -633,6 +1032,26 @@ fn estimate_depth_neighborhood_normal(
         return SurfaceNormalEstimate::invalid(SurfaceNormalRejectReason::MissingNeighbor);
     };
 
+    normal_from_cross_neighbors(
+        center,
+        left,
+        right,
+        down,
+        up,
+        depth_view_pose.position_m,
+        policy,
+    )
+}
+
+fn normal_from_cross_neighbors(
+    center: [f32; 3],
+    left: [f32; 3],
+    right: [f32; 3],
+    down: [f32; 3],
+    up: [f32; 3],
+    observer_position_m: [f32; 3],
+    policy: DepthNeighborhoodNormalPolicy,
+) -> SurfaceNormalEstimate {
     let dx = sub3(right, left);
     let dy = sub3(up, down);
     let normal_area = cross3(dx, dy);
@@ -643,7 +1062,7 @@ fn estimate_depth_neighborhood_normal(
         return SurfaceNormalEstimate::invalid(SurfaceNormalRejectReason::DegenerateNeighborhood);
     };
 
-    let center_to_eye = sub3(depth_view_pose.position_m, center);
+    let center_to_eye = sub3(observer_position_m, center);
     if dot3(normal, center_to_eye) < 0.0 {
         normal = mul3(normal, -1.0);
     }
@@ -652,8 +1071,46 @@ fn estimate_depth_neighborhood_normal(
         .iter()
         .map(|point| dot3(sub3(*point, center), normal).abs())
         .fold(0.0_f32, f32::max);
+    if residual_m > policy.max_depth_step_m {
+        return SurfaceNormalEstimate::invalid(SurfaceNormalRejectReason::DepthDiscontinuity);
+    }
 
     SurfaceNormalEstimate::valid(normal, residual_m)
+}
+
+fn retained_cell_position(sample: RetainedCellNormalSample) -> Option<[f32; 3]> {
+    if sample.observed
+        && sample
+            .reference_space_position_m
+            .iter()
+            .all(|value| value.is_finite())
+    {
+        Some(sample.reference_space_position_m)
+    } else {
+        None
+    }
+}
+
+fn pack_normal_snorm10(normal: [f32; 3]) -> u32 {
+    let Some(normal) = normalize3(normal) else {
+        return COMPACT_SURFACE_INVALID_PACKED_NORMAL;
+    };
+    pack_snorm10_component(normal[0])
+        | (pack_snorm10_component(normal[1]) << 10)
+        | (pack_snorm10_component(normal[2]) << 20)
+}
+
+fn pack_snorm10_component(value: f32) -> u32 {
+    let scaled = (value.clamp(-1.0, 1.0) * 511.0).round() as i32;
+    (scaled & 0x3ff) as u32
+}
+
+fn meters_to_u16_mm(value: f32) -> u16 {
+    if value.is_finite() && value > 0.0 {
+        (value * 1000.0).round().clamp(0.0, u16::MAX as f32) as u16
+    } else {
+        0
+    }
 }
 
 fn component_neighbors(x: usize, y: usize, width: usize, height: usize) -> [usize; 4] {
@@ -743,13 +1200,22 @@ fn normalize3(value: [f32; 3]) -> Option<[f32; 3]> {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_surface_lifecycle, estimate_depth_neighborhood_normals, label_surface_components,
-        normals_are_coherent, DepthNeighborhoodNormalPolicy, SurfaceComponentCellState,
+        build_compact_surface_descriptors, classify_surface_lifecycle,
+        estimate_depth_neighborhood_normals, estimate_retained_cell_neighborhood_normals,
+        label_surface_components, normals_are_coherent, reconstruct_retained_scene_cell_samples,
+        scene_cell_for_reference_space_position, CompactSurfaceDescriptorGrid,
+        DepthNeighborhoodNormalPolicy, RetainedCellNormalSample, SurfaceComponentCellState,
         SurfaceComponentPolicy, SurfaceLifecycleCellState, SurfaceLifecyclePolicy,
-        SurfaceLifecycleSample, SurfaceNormalRejectReason, LOOSE_NORMAL_COHERENCE_MIN_DOT,
-        STRICT_NORMAL_COHERENCE_MIN_DOT,
+        SurfaceLifecycleSample, SurfaceNormalCounters, SurfaceNormalEstimate, SurfaceNormalGrid,
+        SurfaceNormalRejectReason, COMPACT_SURFACE_FLAG_COMPONENT_CONFIRMED,
+        COMPACT_SURFACE_FLAG_CONFIRMED_LIFECYCLE, COMPACT_SURFACE_FLAG_DEBUG_VISIBLE,
+        COMPACT_SURFACE_FLAG_DRAWABLE_SURFACE, COMPACT_SURFACE_FLAG_NORMAL_VISIBLE,
+        COMPACT_SURFACE_FLAG_SMALL_COMPONENT, COMPACT_SURFACE_FLAG_SOURCE_LAYER_AGREEMENT,
+        COMPACT_SURFACE_FLAG_VALID_NORMAL, COMPACT_SURFACE_INVALID_PACKED_NORMAL,
+        LOOSE_NORMAL_COHERENCE_MIN_DOT, STRICT_NORMAL_COHERENCE_MIN_DOT,
     };
     use crate::environment_depth_geometry::{FovTangents, ReferencePose};
+    use crate::environment_depth_scene_map::SOURCE_ONLY_SCENE_PARTICLE_CELL_METERS;
     use crate::native_renderer_environment_depth_options::{
         NativeEnvironmentDepthSurfaceComponentMode,
         NativeEnvironmentDepthSurfaceSmallComponentPolicy,
@@ -766,6 +1232,26 @@ mod tests {
         vec![depth_m; width * height]
     }
 
+    fn retained_plane_grid(width: usize, height: usize, z_m: f32) -> Vec<RetainedCellNormalSample> {
+        let center_x = (width as f32 - 1.0) * 0.5;
+        let center_y = (height as f32 - 1.0) * 0.5;
+        let spacing = 0.10;
+        let mut cells = Vec::with_capacity(width * height);
+        for y in 0..height {
+            for x in 0..width {
+                cells.push(RetainedCellNormalSample {
+                    observed: true,
+                    reference_space_position_m: [
+                        (x as f32 - center_x) * spacing,
+                        (y as f32 - center_y) * spacing,
+                        z_m,
+                    ],
+                });
+            }
+        }
+        cells
+    }
+
     fn component_policy(
         min_component_cells: usize,
         small_component_policy: NativeEnvironmentDepthSurfaceSmallComponentPolicy,
@@ -775,6 +1261,62 @@ mod tests {
             min_component_cells,
             small_component_policy,
         }
+    }
+
+    fn confirmed_lifecycle_grid(width: usize, height: usize) -> Vec<SurfaceLifecycleSample> {
+        vec![
+            SurfaceLifecycleSample {
+                observed: true,
+                was_candidate: true,
+                observation_count: 3,
+                neighbor_count: 4,
+                source_layer_mask: 0b11,
+                free_space_contradicted: false,
+            };
+            width * height
+        ]
+    }
+
+    fn descriptor_grid_from_retained_plane(
+        width: usize,
+        height: usize,
+        min_component_cells: usize,
+        small_component_policy: NativeEnvironmentDepthSurfaceSmallComponentPolicy,
+    ) -> CompactSurfaceDescriptorGrid {
+        let normal_grid = estimate_retained_cell_neighborhood_normals(
+            &retained_plane_grid(width, height, -2.0),
+            width,
+            height,
+            [0.0, 0.0, 0.0],
+            default_policy(),
+        )
+        .expect("retained plane normals");
+        let lifecycle_grid = classify_surface_lifecycle(
+            &confirmed_lifecycle_grid(width, height),
+            width,
+            height,
+            SurfaceLifecyclePolicy {
+                min_observations: 2,
+                min_neighbors: 2,
+                min_source_layers: 2,
+            },
+        )
+        .expect("confirmed lifecycle");
+        let supported = normal_grid
+            .estimates
+            .iter()
+            .map(|estimate| estimate.is_valid())
+            .collect::<Vec<_>>();
+        let component_grid = label_surface_components(
+            &supported,
+            width,
+            height,
+            component_policy(min_component_cells, small_component_policy),
+        )
+        .expect("component labels");
+
+        build_compact_surface_descriptors(&lifecycle_grid, &normal_grid, &component_grid)
+            .expect("compact descriptors")
     }
 
     #[test]
@@ -871,6 +1413,134 @@ mod tests {
             grid.estimate(2, 1).expect("hole neighbor").reason,
             SurfaceNormalRejectReason::MissingNeighbor
         );
+    }
+
+    #[test]
+    fn retained_cell_plane_produces_coherent_camera_facing_normals() {
+        let grid = estimate_retained_cell_neighborhood_normals(
+            &retained_plane_grid(5, 5, -2.0),
+            5,
+            5,
+            [0.0, 0.0, 0.0],
+            default_policy(),
+        )
+        .expect("retained plane estimates");
+
+        assert_eq!(grid.counters.valid_cells, 9);
+        assert_eq!(grid.counters.invalid_cells, 16);
+        assert_eq!(grid.counters.rejected_cells, 0);
+        let normal = grid
+            .estimate(2, 2)
+            .and_then(|estimate| estimate.normal)
+            .expect("center retained-cell normal");
+        assert!(normal[2] > 0.999, "normal {normal:?}");
+        let neighbor = grid
+            .estimate(2, 3)
+            .and_then(|estimate| estimate.normal)
+            .expect("neighbor retained-cell normal");
+        assert!(normals_are_coherent(
+            normal,
+            neighbor,
+            STRICT_NORMAL_COHERENCE_MIN_DOT
+        ));
+    }
+
+    #[test]
+    fn retained_cell_missing_neighbor_invalidates_normal() {
+        let mut cells = retained_plane_grid(5, 5, -2.0);
+        cells[2 * 5 + 1].observed = false;
+
+        let grid = estimate_retained_cell_neighborhood_normals(
+            &cells,
+            5,
+            5,
+            [0.0, 0.0, 0.0],
+            default_policy(),
+        )
+        .expect("retained missing-neighbor estimates");
+
+        assert_eq!(
+            grid.estimate(2, 2).expect("center estimate").reason,
+            SurfaceNormalRejectReason::MissingNeighbor
+        );
+    }
+
+    #[test]
+    fn retained_cell_discontinuous_neighbor_rejects_normal() {
+        let mut cells = retained_plane_grid(5, 5, -2.0);
+        cells[2 * 5 + 3].reference_space_position_m[2] = -4.0;
+
+        let grid = estimate_retained_cell_neighborhood_normals(
+            &cells,
+            5,
+            5,
+            [0.0, 0.0, 0.0],
+            DepthNeighborhoodNormalPolicy {
+                max_depth_step_m: 0.05,
+                min_normal_area_m2: 0.000_001,
+            },
+        )
+        .expect("retained discontinuity estimates");
+
+        assert_eq!(
+            grid.estimate(2, 2).expect("discontinuous estimate").reason,
+            SurfaceNormalRejectReason::DepthDiscontinuity
+        );
+        assert!(grid.counters.rejected_cells > 0);
+    }
+
+    #[test]
+    fn retained_scene_cells_stay_world_space_across_lateral_pose_shift() {
+        let depths = flat_grid(5, 5, 2.0);
+        let fov = FovTangents::symmetric(0.12);
+        let anchor_samples =
+            reconstruct_retained_scene_cell_samples(&depths, 5, 5, fov, ReferencePose::identity())
+                .expect("anchor scene cells");
+        let shifted_pose = ReferencePose {
+            position_m: [SOURCE_ONLY_SCENE_PARTICLE_CELL_METERS * 2.0, 0.0, 0.0],
+            orientation_xyzw: [0.0, 0.0, 0.0, 1.0],
+        };
+        let shifted_samples =
+            reconstruct_retained_scene_cell_samples(&depths, 5, 5, fov, shifted_pose)
+                .expect("shifted scene cells");
+
+        let anchor_center = anchor_samples[2 * 5 + 2];
+        let shifted_same_world_point = shifted_samples[2 * 5 + 1];
+        let shifted_center = shifted_samples[2 * 5 + 2];
+
+        assert!(anchor_center.observed);
+        assert!(shifted_same_world_point.observed);
+        assert!(shifted_center.observed);
+        assert_eq!(
+            shifted_same_world_point.scene_cell, anchor_center.scene_cell,
+            "same reference-space point should retain its scene cell after camera motion"
+        );
+        assert_ne!(
+            shifted_center.scene_cell, anchor_center.scene_cell,
+            "screen-fixed center samples should not masquerade as retained world cells"
+        );
+        assert_eq!(
+            shifted_center.scene_cell[0],
+            anchor_center.scene_cell[0] + 2
+        );
+    }
+
+    #[test]
+    fn retained_scene_cells_reject_invalid_depth_and_nonfinite_positions() {
+        let samples = reconstruct_retained_scene_cell_samples(
+            &[2.0, f32::NAN, 2.0, 0.0],
+            2,
+            2,
+            FovTangents::symmetric(0.12),
+            ReferencePose::identity(),
+        )
+        .expect("scene cell samples");
+
+        assert!(samples[0].observed);
+        assert!(!samples[1].observed);
+        assert!(samples[2].observed);
+        assert!(!samples[3].observed);
+        assert!(scene_cell_for_reference_space_position([0.0, f32::NAN, -2.0]).is_none());
     }
 
     #[test]
@@ -1002,6 +1672,187 @@ mod tests {
             grid.cell(1, 0).expect("empty").state,
             SurfaceComponentCellState::Empty
         );
+    }
+
+    #[test]
+    fn compact_surface_descriptors_pack_confirmed_plane_normals() {
+        let grid = descriptor_grid_from_retained_plane(
+            5,
+            5,
+            4,
+            NativeEnvironmentDepthSurfaceSmallComponentPolicy::Hide,
+        );
+
+        assert_eq!(grid.counters.confirmed_lifecycle_cells, 25);
+        assert_eq!(grid.counters.source_layer_agreement_cells, 25);
+        assert_eq!(grid.counters.valid_normal_cells, 9);
+        assert_eq!(grid.counters.rejected_missing_normal_cells, 16);
+        assert_eq!(grid.counters.drawable_surface_cells, 9);
+        assert_eq!(grid.counters.normal_visible_cells, 9);
+        assert_eq!(grid.counters.debug_visible_cells, 9);
+        let center = *grid.descriptor(2, 2).expect("center descriptor");
+        assert!(center.has_flag(COMPACT_SURFACE_FLAG_CONFIRMED_LIFECYCLE));
+        assert!(center.has_flag(COMPACT_SURFACE_FLAG_VALID_NORMAL));
+        assert!(center.has_flag(COMPACT_SURFACE_FLAG_COMPONENT_CONFIRMED));
+        assert!(center.has_flag(COMPACT_SURFACE_FLAG_SOURCE_LAYER_AGREEMENT));
+        assert!(center.has_flag(COMPACT_SURFACE_FLAG_NORMAL_VISIBLE));
+        assert!(center.has_flag(COMPACT_SURFACE_FLAG_DEBUG_VISIBLE));
+        assert!(center.has_flag(COMPACT_SURFACE_FLAG_DRAWABLE_SURFACE));
+        assert_ne!(
+            center.packed_normal_snorm10,
+            COMPACT_SURFACE_INVALID_PACKED_NORMAL
+        );
+        assert_eq!(center.residual_mm, 0);
+        assert_eq!(center.support_count, 4);
+        assert_eq!(center.source_layer_count, 2);
+        assert_eq!(center.component_size_cells, 9);
+
+        let boundary = *grid.descriptor(0, 0).expect("boundary descriptor");
+        assert!(boundary.has_flag(COMPACT_SURFACE_FLAG_CONFIRMED_LIFECYCLE));
+        assert!(boundary.has_flag(COMPACT_SURFACE_FLAG_SOURCE_LAYER_AGREEMENT));
+        assert!(!boundary.has_flag(COMPACT_SURFACE_FLAG_VALID_NORMAL));
+        assert!(!boundary.has_flag(COMPACT_SURFACE_FLAG_DRAWABLE_SURFACE));
+        assert_eq!(
+            boundary.packed_normal_snorm10,
+            COMPACT_SURFACE_INVALID_PACKED_NORMAL
+        );
+    }
+
+    #[test]
+    fn compact_surface_descriptors_hide_small_normal_components() {
+        let normal_grid = estimate_retained_cell_neighborhood_normals(
+            &retained_plane_grid(5, 5, -2.0),
+            5,
+            5,
+            [0.0, 0.0, 0.0],
+            default_policy(),
+        )
+        .expect("retained plane normals");
+        let lifecycle_grid = classify_surface_lifecycle(
+            &confirmed_lifecycle_grid(5, 5),
+            5,
+            5,
+            SurfaceLifecyclePolicy {
+                min_observations: 2,
+                min_neighbors: 2,
+                min_source_layers: 2,
+            },
+        )
+        .expect("confirmed lifecycle");
+        let mut supported = vec![false; 25];
+        supported[2 * 5 + 2] = true;
+        let component_grid = label_surface_components(
+            &supported,
+            5,
+            5,
+            component_policy(2, NativeEnvironmentDepthSurfaceSmallComponentPolicy::Hide),
+        )
+        .expect("component labels");
+
+        let grid =
+            build_compact_surface_descriptors(&lifecycle_grid, &normal_grid, &component_grid)
+                .expect("compact descriptors");
+
+        assert_eq!(grid.counters.valid_normal_cells, 9);
+        assert_eq!(grid.counters.small_component_cells, 1);
+        assert_eq!(grid.counters.drawable_surface_cells, 0);
+        assert_eq!(grid.counters.normal_visible_cells, 0);
+        assert_eq!(grid.counters.debug_visible_cells, 0);
+        let center = *grid.descriptor(2, 2).expect("center descriptor");
+        assert!(center.has_flag(COMPACT_SURFACE_FLAG_CONFIRMED_LIFECYCLE));
+        assert!(center.has_flag(COMPACT_SURFACE_FLAG_VALID_NORMAL));
+        assert!(center.has_flag(COMPACT_SURFACE_FLAG_SMALL_COMPONENT));
+        assert!(!center.has_flag(COMPACT_SURFACE_FLAG_NORMAL_VISIBLE));
+        assert!(!center.has_flag(COMPACT_SURFACE_FLAG_DEBUG_VISIBLE));
+        assert!(!center.has_flag(COMPACT_SURFACE_FLAG_DRAWABLE_SURFACE));
+    }
+
+    #[test]
+    fn compact_surface_descriptors_reject_unpacked_invalid_normals() {
+        let lifecycle_grid = classify_surface_lifecycle(
+            &confirmed_lifecycle_grid(1, 1),
+            1,
+            1,
+            SurfaceLifecyclePolicy {
+                min_observations: 2,
+                min_neighbors: 2,
+                min_source_layers: 2,
+            },
+        )
+        .expect("confirmed lifecycle");
+        let normal_grid = SurfaceNormalGrid {
+            width: 1,
+            height: 1,
+            estimates: vec![SurfaceNormalEstimate {
+                normal: Some([0.0, 0.0, 0.0]),
+                support_count: 4,
+                residual_m: 0.0,
+                reason: SurfaceNormalRejectReason::Valid,
+            }],
+            counters: SurfaceNormalCounters {
+                valid_cells: 1,
+                invalid_cells: 0,
+                rejected_cells: 0,
+            },
+        };
+        let component_grid = label_surface_components(
+            &[true],
+            1,
+            1,
+            component_policy(1, NativeEnvironmentDepthSurfaceSmallComponentPolicy::Dim),
+        )
+        .expect("component labels");
+
+        let grid =
+            build_compact_surface_descriptors(&lifecycle_grid, &normal_grid, &component_grid)
+                .expect("compact descriptors");
+
+        assert_eq!(grid.counters.valid_normal_cells, 0);
+        assert_eq!(grid.counters.rejected_missing_normal_cells, 1);
+        assert_eq!(grid.counters.normal_visible_cells, 0);
+        assert_eq!(grid.counters.drawable_surface_cells, 0);
+        let descriptor = *grid.descriptor(0, 0).expect("descriptor");
+        assert!(descriptor.has_flag(COMPACT_SURFACE_FLAG_CONFIRMED_LIFECYCLE));
+        assert!(descriptor.has_flag(COMPACT_SURFACE_FLAG_COMPONENT_CONFIRMED));
+        assert!(!descriptor.has_flag(COMPACT_SURFACE_FLAG_VALID_NORMAL));
+        assert!(!descriptor.has_flag(COMPACT_SURFACE_FLAG_NORMAL_VISIBLE));
+        assert!(!descriptor.has_flag(COMPACT_SURFACE_FLAG_DRAWABLE_SURFACE));
+        assert_eq!(
+            descriptor.packed_normal_snorm10,
+            COMPACT_SURFACE_INVALID_PACKED_NORMAL
+        );
+    }
+
+    #[test]
+    fn compact_surface_descriptors_reject_mismatched_grids() {
+        let lifecycle_grid = classify_surface_lifecycle(
+            &confirmed_lifecycle_grid(2, 2),
+            2,
+            2,
+            SurfaceLifecyclePolicy::default(),
+        )
+        .expect("lifecycle grid");
+        let normal_grid = estimate_retained_cell_neighborhood_normals(
+            &retained_plane_grid(3, 3, -2.0),
+            3,
+            3,
+            [0.0, 0.0, 0.0],
+            default_policy(),
+        )
+        .expect("normal grid");
+        let component_grid = label_surface_components(
+            &[true, true, true, true],
+            2,
+            2,
+            component_policy(1, NativeEnvironmentDepthSurfaceSmallComponentPolicy::Dim),
+        )
+        .expect("component grid");
+
+        let error =
+            build_compact_surface_descriptors(&lifecycle_grid, &normal_grid, &component_grid)
+                .expect_err("mismatched grids reject");
+
+        assert!(error.contains("grid mismatch"));
     }
 
     #[test]

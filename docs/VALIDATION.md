@@ -96,8 +96,9 @@ particles for topology comparison.
 environment-depth source-only profile. It validates the low-rate status
 surface, explicit capacity/stride/range properties, requested OpenXR reference
 space label, and `environmentDepthHighRateJsonPayload=false`; damaged profiles
-reject high-rate JSON payloads, invalid capacities, and invalid near/far
-ranges before any ADB write.
+reject high-rate JSON payloads, invalid capacities, invalid near/far ranges,
+invalid source-layer requirements, and impossible radius/min-neighbor support
+thresholds before any ADB write.
 `quest-native-renderer-native-passthrough-environment-depth-particles.profile.json`
 validates the next native GPU proof profile. It selects native passthrough,
 sets `environment_depth.mode=retained-particles` and
@@ -201,17 +202,35 @@ agreement profiles additionally require
 `environmentDepthSourceLayerAgreementCells`, and
 `environmentDepthSingleLayerOnlyCells` markers; they do not make stereo fusion
 or two-layer agreement accepted by themselves. Host-side
+`environment_depth_geometry` tests provide the synthetic CPU mirror for
+reference-space reconstruction, render-eye reprojection, retained-point
+projection through current view pose/FOV, and pose-delta evidence. Host-side
+`environment_depth_scene_map` tests provide the synthetic CPU mirror for
+spatial hash keys, same-cell merge/promotion, same-cell two-source-layer
+promotion, layer-offset single-layer candidate separation, fresh collision
+probe exhaustion, stale replacement, free-space retire behavior, and rejection
+of impossible oracle thresholds. Host-side
 `environment_depth_surface_support` tests provide the synthetic CPU mirror for
 flat-plane coherent normals, invalid hole neighborhoods, depth-step rejection,
 connected-component small-cluster policy, candidate promotion, candidate
 retirement, source-layer agreement, and dynamic-object ghost retirement across
-appear/confirm/move sequence fixtures. Runtime surface-support evidence now
-requires
+appear/confirm/move sequence fixtures. They also cover retained-cell
+neighborhood normals for flat retained planes, missing retained neighbors,
+discontinuous retained cell positions, pose-shifted retained scene-cell
+samples, plus compact surface descriptor packing for confirmed cells, hidden
+small components, and mismatched grids. Runtime
+surface-support evidence now requires
 `environmentDepthSurfaceNormalStatus=depth-neighborhood-gpu-readback` plus
 nonzero depth-neighborhood normal counters before the GPU normal pass is
 accepted. This is not yet
 connected-component or global-surface acceptance; those remain pending alongside
 the movement-required world-space proof.
+The static environment-depth gate also checks that the scene-map and
+surface-support CPU mirror modules are host/test-only and are not imported by
+the live GPU/OpenXR runtime path. The headset CPU may orchestrate profiles,
+permissions, provider setup, command submission, low-rate pose/timing
+calculations, and aggregate evidence, but the high-rate depth map, support
+counters, retained particles, and draw path remain GPU-owned.
 `check_all.ps1` delegates the native renderer runtime-profile matrix to
 `tools\Test-NativeRendererProfileMatrix.ps1`. That helper owns the exact
 native-renderer profile and damaged-profile inventories, runs each valid
@@ -234,10 +253,13 @@ camera/guide/environment-depth/stimulus/private-layer clears. The profile
 matrix also runs every native renderer damaged profile through
 `Apply-RuntimeProfile.ps1`; that apply tool loads the same manifest, so generic
 camera, guide, hand, render, private-layer, and projection-border token/range
-mistakes are rejected before any ADB write. The `rusty-quest-profile` Rust
+mistakes are rejected before any ADB write; it also rejects
+environment-depth cross-field mistakes such as a local support neighbor
+threshold that exceeds the selected radius. The `rusty-quest-profile` Rust
 validator embeds that manifest as well, so dry-run write-plan generation rejects
-the same generic native renderer token/range/type mistakes and manifest
-authority-metadata drift before specialized cross-field checks run. The
+the same generic native renderer token/range/type mistakes, environment-depth
+cross-field mistakes, and manifest authority-metadata drift before specialized
+checks run. The
 manifest records runtime-owner default behavior instead of duplicating default
 values. The Android scaffold static harness calls
 `tools\checks\Test-NativeRendererPropertyManifestStatic.ps1` for the smaller
@@ -299,7 +321,15 @@ Use `docs/environment-depth-known-distance-raw-d16-runbook.md` for the
 headset known-distance run that compares `environmentDepthRawCenterD16`,
 `environmentDepthCenterReconstructedMeters`, and
 `environmentDepthRawCenterWindowMedianD16` against 0.5 m, 1 m, 2 m, and 4 m
-targets before accepting or replacing the projected-depth formula.
+targets before accepting or replacing the projected-depth formula. The
+source-testable wrapper is
+`tools\Invoke-NativeRendererEnvironmentDepthKnownDistanceProof.ps1`; it passes
+`-RequireEnvironmentDepthKnownDistance`,
+`-ExpectedEnvironmentDepthCenterMeters`,
+`-EnvironmentDepthCenterToleranceMeters`,
+`-MinimumEnvironmentDepthCenterConfidence`, and
+`-MinimumEnvironmentDepthCenterWindowValidCount` into the runtime-evidence
+checker.
 
 Remote camera session plans are also source-only validation:
 
@@ -325,7 +355,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererP
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthKnownDistanceProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -TargetDistanceMeters 1.0 -ToleranceMeters 0.15 -RunSeconds 8
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial>
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -ProfilePath fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity.profile.json -ExpectedEnvironmentDepthParticleCount 64 -MinimumEnvironmentDepthHashProbeExhaustedCount 1 -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -ProfilePath fixtures\runtime-profiles\quest-native-renderer-envdepth-local-surfels.profile.json -RequireEnvironmentDepthSurfaceSupport -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
@@ -376,6 +408,16 @@ For the real environment-depth particle proof, run the same wrapper with
 `-EvidenceMode EnvironmentDepthParticles`; that applies the Meta depth profile
 by default and switches the marker gate to
 `Test-NativeRendererRuntimeEvidence.ps1 -RequireEnvironmentDepthParticles`.
+For a known-distance raw-D16 proof, prefer
+`Invoke-NativeRendererEnvironmentDepthKnownDistanceProof.ps1`; it is a thin
+single-distance wrapper around the same smoke path with
+`-EvidenceMode EnvironmentDepthParticles`,
+`-RequireEnvironmentDepthKnownDistance`, raw-D16 debug-view requirements,
+center reconstructed-meter tolerance, center confidence, and center-window
+valid-count checks. Run it once per measured target distance and compare the
+resulting summaries with
+`Test-NativeRendererEnvironmentDepthKnownDistanceSeries.ps1` for monotonicity
+across 0.5 m, 1 m, 2 m, and 4 m.
 For a world-space head-motion proof, prefer
 `Invoke-NativeRendererEnvironmentDepthMotionProof.ps1`; it is a thin wrapper
 around the same smoke path with `-EvidenceMode EnvironmentDepthParticles`,
@@ -389,6 +431,20 @@ For custom thresholds, the lower-level smoke wrapper also accepts
 `-MinimumEnvironmentDepthHeadMotionTranslationM`; those thresholds are checked
 against the particle marker's render-view pose-delta evidence while the same
 marker still requires `environmentDepthWorldSpaceReady=true`.
+After a movement run and the four known-distance runs are captured, use
+`Test-NativeRendererEnvironmentDepthEvidenceBundle.ps1` against the
+wrapper-produced `run-summary.json` files plus the known-distance series result.
+It validates the serial-scoped pregrant/profile/pid-logcat route, the motion
+runtime-evidence summary, the known-distance run summaries, and the monotonic
+series result as one machine-readable bundle. The bundle checker still records
+`human_device_visual_acceptance_required=true`; it does not replace headset
+inspection or the visual movement artifact.
+For the planned final device pass, prefer
+`Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1`. It runs the motion
+wrapper first, then the four known-distance wrappers with install skipped after
+the first run, then the known-distance series checker, then the evidence-bundle
+checker. It requires an explicit serial and preserves the lower-level artifact
+directories so individual failures can still be inspected.
 ADB and child PowerShell calls are captured with `ErrorActionPreference`
 temporarily set to `Continue`, so native stderr is recorded in the run summary
 with the real exit code instead of surfacing as a PowerShell

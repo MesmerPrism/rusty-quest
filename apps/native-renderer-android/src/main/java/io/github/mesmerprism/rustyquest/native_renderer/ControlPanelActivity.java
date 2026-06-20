@@ -20,8 +20,10 @@ import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Locale;
@@ -31,9 +33,25 @@ import org.json.JSONObject;
 public final class ControlPanelActivity extends Activity {
     public static final String ACTION_TOGGLE_PANEL =
         "io.github.mesmerprism.rustyquest.native_renderer.action.TOGGLE_PANEL";
+    public static final String ACTION_APPLY_LIVE_SELF_TEST =
+        "io.github.mesmerprism.rustyquest.native_renderer.action.APPLY_LIVE_SELF_TEST";
     private static final String CANDIDATE_FILE = "stimulus_volume_candidate.json";
     private static final String STATUS_FILE = "stimulus_volume_status.json";
     private static final String PROFILE_SCHEMA = "rusty.quest.stimulus_volume.profile.v1";
+    private static final String PROP_STIMULUS_ENABLED =
+        "debug.rustyquest.native_renderer.stimulus_volume.enabled";
+    private static final String PROP_STIMULUS_SAFETY_ACK =
+        "debug.rustyquest.native_renderer.stimulus_volume.safety_ack";
+    private static final String PROP_STIMULUS_RANDOMIZE =
+        "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled";
+    private static final String PROP_STIMULUS_RENDER_TARGET =
+        "debug.rustyquest.native_renderer.stimulus_volume.render_target";
+    private static final String PROP_STIMULUS_RAYMARCH =
+        "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples";
+    private static final String PROP_STIMULUS_CENTRAL_FOV =
+        "debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction";
+    private static final String PROP_STIMULUS_GRADIENT =
+        "debug.rustyquest.native_renderer.stimulus_volume.gradient_smoothing";
     private static final int PANEL_BG = Color.rgb(17, 18, 22);
     private static final int PANEL_FG = Color.rgb(238, 240, 244);
     private static final int PANEL_MUTED = Color.rgb(170, 176, 186);
@@ -61,6 +79,7 @@ public final class ControlPanelActivity extends Activity {
     private TextView status;
     private Handler liveApplyHandler;
     private Runnable pendingLiveApply;
+    private String handledDiagnosticIntentToken = "";
     private Button[] patternButtons = new Button[0];
     private Button[] mirrorButtons = new Button[0];
     private String selectedPatternFamily = "randomized-trevor-vocabulary";
@@ -95,6 +114,7 @@ public final class ControlPanelActivity extends Activity {
         liveApplyHandler = new Handler(Looper.getMainLooper());
         setContentView(buildContentView());
         updateStatus("Panel ready. Candidate path: " + new File(getFilesDir(), CANDIDATE_FILE));
+        handleDiagnosticIntent(getIntent());
     }
 
     @Override
@@ -103,7 +123,15 @@ public final class ControlPanelActivity extends Activity {
         setIntent(intent);
         if (intent != null && ACTION_TOGGLE_PANEL.equals(intent.getAction())) {
             finish();
+        } else {
+            handleDiagnosticIntent(intent);
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        handleDiagnosticIntent(getIntent());
     }
 
     private View buildContentView() {
@@ -133,9 +161,18 @@ public final class ControlPanelActivity extends Activity {
         root.addView(text("App-private candidate for the native OpenXR/Vulkan renderer.", 13, PANEL_MUTED));
         root.addView(previewBand());
 
-        safetyAck = checkBox("Photosensitive-risk acknowledgement", false);
-        enabledRequested = checkBox("Request active stimulus after launch", false);
-        randomizeEnabled = checkBox("Enable right-primary randomize", true);
+        safetyAck = checkBox(
+            "Photosensitive-risk acknowledgement",
+            readBooleanProperty(PROP_STIMULUS_SAFETY_ACK, false)
+        );
+        enabledRequested = checkBox(
+            "Request active stimulus after launch",
+            readBooleanProperty(PROP_STIMULUS_ENABLED, false)
+        );
+        randomizeEnabled = checkBox(
+            "Enable right-primary randomize",
+            readBooleanProperty(PROP_STIMULUS_RANDOMIZE, true)
+        );
         View.OnClickListener liveControlListener = new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -163,16 +200,44 @@ public final class ControlPanelActivity extends Activity {
         root.addView(liveAutoApply);
 
         root.addView(sectionTitle("Render"));
-        renderTarget = spinner(new String[] {
+        String[] renderTargets = new String[] {
             "512x512x2-rgba16f",
             "768x768x2-rgba16f",
             "1024x1024x2-rgba16f"
-        }, 1);
+        };
+        renderTarget = spinner(
+            renderTargets,
+            indexOf(renderTargets, readSystemProperty(PROP_STIMULUS_RENDER_TARGET), 0)
+        );
         root.addView(label("Render target"));
         root.addView(renderTarget);
-        raymarchSamples = slider("Raymarch samples", 1.0, 48.0, 12.0, 47, "", true);
-        centralFovFraction = slider("Central FOV fraction", 0.45, 1.0, 0.72, 1000, "", false);
-        gradientSmoothing = slider("Gradient smoothing", 0.0, 1.0, 0.78, 1000, "", false);
+        raymarchSamples = slider(
+            "Raymarch samples",
+            1.0,
+            48.0,
+            readDoubleProperty(PROP_STIMULUS_RAYMARCH, 12.0),
+            47,
+            "",
+            true
+        );
+        centralFovFraction = slider(
+            "Central FOV fraction",
+            0.45,
+            1.0,
+            readDoubleProperty(PROP_STIMULUS_CENTRAL_FOV, 0.72),
+            1000,
+            "",
+            false
+        );
+        gradientSmoothing = slider(
+            "Gradient smoothing",
+            0.0,
+            1.0,
+            readDoubleProperty(PROP_STIMULUS_GRADIENT, 0.78),
+            1000,
+            "",
+            false
+        );
         root.addView(raymarchSamples.view);
         root.addView(centralFovFraction.view);
         root.addView(gradientSmoothing.view);
@@ -508,6 +573,34 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
+    private void handleDiagnosticIntent(Intent intent) {
+        if (intent == null || !ACTION_APPLY_LIVE_SELF_TEST.equals(intent.getAction())) {
+            return;
+        }
+        String token = intent.getAction() + ":" + intent.getLongExtra("diagnostic_token", 0L);
+        if (token.equals(handledDiagnosticIntentToken)) {
+            return;
+        }
+        handledDiagnosticIntentToken = token;
+        if (safetyAck != null) {
+            safetyAck.setChecked(true);
+        }
+        if (enabledRequested != null) {
+            enabledRequested.setChecked(true);
+        }
+        if (randomizeEnabled != null) {
+            randomizeEnabled.setChecked(true);
+        }
+        cancelPendingLiveApply();
+        liveApplyHandler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                submitLiveCandidate(true);
+            }
+        }, 120);
+        setStatusText("Diagnostic Apply Live self-test pending.");
+    }
+
     private JSONObject buildDynamicsJson() throws Exception {
         return new JSONObject()
             .put("mirror_mode", selectedMirrorMode)
@@ -641,6 +734,64 @@ public final class ControlPanelActivity extends Activity {
 
     private String selected(Spinner spinner) {
         return String.valueOf(spinner.getSelectedItem());
+    }
+
+    private int indexOf(String[] values, String requested, int fallback) {
+        if (requested != null) {
+            for (int i = 0; i < values.length; i++) {
+                if (requested.equals(values[i])) {
+                    return i;
+                }
+            }
+        }
+        return Math.max(0, Math.min(values.length - 1, fallback));
+    }
+
+    private boolean readBooleanProperty(String name, boolean fallback) {
+        String value = readSystemProperty(name);
+        if ("true".equalsIgnoreCase(value) || "1".equals(value) || "yes".equalsIgnoreCase(value)) {
+            return true;
+        }
+        if ("false".equalsIgnoreCase(value) || "0".equals(value) || "no".equalsIgnoreCase(value)) {
+            return false;
+        }
+        return fallback;
+    }
+
+    private double readDoubleProperty(String name, double fallback) {
+        String value = readSystemProperty(name);
+        if (value == null || value.length() == 0) {
+            return fallback;
+        }
+        try {
+            return Double.parseDouble(value);
+        } catch (NumberFormatException error) {
+            return fallback;
+        }
+    }
+
+    private String readSystemProperty(String name) {
+        Process process = null;
+        try {
+            process = new ProcessBuilder("/system/bin/getprop", name)
+                .redirectErrorStream(true)
+                .start();
+            BufferedReader reader = new BufferedReader(
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8)
+            );
+            String line = reader.readLine();
+            int exitCode = process.waitFor();
+            if (exitCode == 0 && line != null) {
+                return line.trim();
+            }
+        } catch (Exception ignored) {
+            return "";
+        } finally {
+            if (process != null) {
+                process.destroy();
+            }
+        }
+        return "";
     }
 
     private int dp(int value) {

@@ -1,0 +1,21 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.damaged_environment_depth_impossible_neighbor_threshold",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.radius_cells",
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.min_neighbors"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.radius_cells",
+      "value": "1",
+      "source_setting_id": "native_renderer.environment_depth.surface_support.radius_cells"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.min_neighbors",
+      "value": "9",
+      "source_setting_id": "native_renderer.environment_depth.surface_support.min_neighbors"
+    }
+  ]
+}

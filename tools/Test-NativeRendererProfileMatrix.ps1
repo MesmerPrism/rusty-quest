@@ -80,9 +80,11 @@ $expectedProfileNames = @(
 $expectedDamagedProfileNames = @(
     "native-renderer-breathing-room-makepad-property.profile.json",
     "native-renderer-environment-depth-high-rate-json.profile.json",
+    "native-renderer-environment-depth-impossible-neighbor-threshold.profile.json",
     "native-renderer-environment-depth-invalid-capacity.profile.json",
     "native-renderer-environment-depth-invalid-depth-units-policy.profile.json",
     "native-renderer-environment-depth-invalid-range.profile.json",
+    "native-renderer-environment-depth-invalid-source-layers.profile.json",
     "native-renderer-environment-depth-invalid-surface-support.profile.json",
     "native-renderer-manifest-invalid-camera-output.profile.json",
     "native-renderer-stimulus-volume-invalid-quality-range.profile.json",

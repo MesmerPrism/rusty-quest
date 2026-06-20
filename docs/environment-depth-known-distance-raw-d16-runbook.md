@@ -25,17 +25,23 @@ policy is needed and the shader branch is implemented.
 
 ## Device Run
 
-1. Install the native renderer APK and pregrant the native renderer permission
-   set, including `android.permission.CAMERA`, `horizonos.permission.USE_SCENE`,
-   `horizonos.permission.HEADSET_CAMERA`, `horizonos.permission.SPATIAL_CAMERA`,
-   and OpenXR permissions.
-2. Apply the profile with `tools\Apply-RuntimeProfile.ps1 -Execute`.
-3. Clear logcat, launch the native renderer, and let it run for at least 6
-   seconds so the frame-120 or frame-240 aggregate readback marker is emitted.
-4. Place a flat target centered in the headset view at 0.5 m, 1 m, 2 m, and
-   4 m. Hold each position steady for at least 3 seconds.
-5. Save logcat after each distance with a filename that includes the measured
-   distance.
+Use the wrapper so permission pregrant, profile application, log capture, and
+raw-D16 evidence checks stay mechanical:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\Invoke-NativeRendererEnvironmentDepthKnownDistanceProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -TargetDistanceMeters 1.0 -ToleranceMeters 0.15 -RunSeconds 8
+```
+
+Run one capture per measured target distance. Place a flat target centered in
+the headset view at 0.5 m, 1 m, 2 m, and 4 m, then pass the matching
+`-TargetDistanceMeters` value for each run. The wrapper delegates to
+`Invoke-NativeRendererReplaySmoke.ps1 -EvidenceMode EnvironmentDepthParticles`,
+pregrants the native renderer permission set, applies the profile, captures
+pid-scoped logcat plus a screenshot, and calls
+`Test-NativeRendererRuntimeEvidence.ps1 -RequireEnvironmentDepthKnownDistance`.
+Adjust `-ToleranceMeters`, `-MinimumCenterConfidence`, and
+`-MinimumCenterWindowValidCount` only when the artifact bundle records why the
+target or room setup requires a different gate.
 
 ## Required Marker Fields
 
@@ -61,3 +67,37 @@ shows whether `environmentDepthCenterReconstructedMeters` tracks 0.5 m, 1 m,
 2 m, and 4 m monotonically and within a defensible tolerance while raw D16 also
 changes monotonically. If the projected formula is wrong, record the raw D16
 pattern and add a separate metric/axial branch behind a new validated policy.
+The wrapper enforces the per-distance tolerance, confidence, and center-window
+valid-count checks; the monotonic cross-distance table is still assembled from
+the per-run `runtime-evidence-summary.json` artifacts. Use the series checker
+to validate that table mechanically:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\Test-NativeRendererEnvironmentDepthKnownDistanceSeries.ps1 -SummaryPath <0p5m-summary.json>,<1m-summary.json>,<2m-summary.json>,<4m-summary.json> -MinimumDistances 4
+```
+
+The checker requires every summary to come from the known-distance evidence
+gate, verifies each per-run error remains within its tolerance, requires
+reconstructed meters to increase with measured target distance, and requires raw
+D16 to change monotonically in one direction across the series.
+
+After the movement proof run also exists, tie the machine-readable artifacts
+together with the evidence-bundle checker:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\Test-NativeRendererEnvironmentDepthEvidenceBundle.ps1 -MotionRunSummaryPath <motion-run-summary.json> -KnownDistanceSeriesPath <known-distance-series-result.json> -KnownDistanceRunSummaryPath <0p5m-run-summary.json>,<1m-run-summary.json>,<2m-run-summary.json>,<4m-run-summary.json>
+```
+
+The bundle checker validates wrapper provenance, pid-scoped runtime evidence,
+motion thresholds, the known-distance series, and the four known-distance run
+summaries. It still records that human headset visual acceptance is required.
+
+For the final headset session, the acceptance-suite wrapper runs those steps in
+order:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial>
+```
+
+Use the lower-level commands above when a specific target distance or motion
+threshold needs to be repeated.

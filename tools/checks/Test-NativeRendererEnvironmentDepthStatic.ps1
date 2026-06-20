@@ -38,6 +38,30 @@ function Assert-ContainsTokens {
     }
 }
 
+function Assert-DoesNotContainTokens {
+    param(
+        [string]$Text,
+        [string[]]$Tokens,
+        [string]$Label
+    )
+    foreach ($token in $Tokens) {
+        if ($Text -match [regex]::Escape($token)) {
+            throw "Native renderer environment-depth static check failed for ${Label}: forbidden token: $token"
+        }
+    }
+}
+
+function Assert-MatchesRegex {
+    param(
+        [string]$Text,
+        [string]$Pattern,
+        [string]$Label
+    )
+    if ($Text -notmatch $Pattern) {
+        throw "Native renderer environment-depth static check failed for ${Label}: missing pattern: $Pattern"
+    }
+}
+
 function Assert-PowerShellParses {
     param(
         [string]$Path,
@@ -54,6 +78,7 @@ function Assert-PowerShellParses {
 $nativeLib = Read-RequiredText (Join-Path $srcRoot "lib.rs") "native lib"
 $nativeBuildRs = Read-RequiredText (Join-Path $nativeRoot "build.rs") "native build script"
 $environmentDepthGeometry = Read-RequiredText (Join-Path $srcRoot "environment_depth_geometry.rs") "environment depth geometry"
+$environmentDepthSceneMap = Read-RequiredText (Join-Path $srcRoot "environment_depth_scene_map.rs") "environment depth scene-map mirror"
 $environmentDepthSurfaceSupport = Read-RequiredText (Join-Path $srcRoot "environment_depth_surface_support.rs") "environment depth surface support mirror"
 $environmentDepthParticleStats = Read-RequiredText (Join-Path $srcRoot "gpu_environment_depth_particle_stats.rs") "environment depth particle stats"
 $environmentDepthParticles = Read-RequiredText (Join-Path $srcRoot "gpu_environment_depth_particles.rs") "environment depth particle renderer"
@@ -80,22 +105,65 @@ $runtimeEvidenceToolText = Read-RequiredText (Join-Path $toolsRoot "Test-NativeR
 $runtimeSmokeToolText = Read-RequiredText (Join-Path $toolsRoot "Invoke-NativeRendererReplaySmoke.ps1") "runtime smoke runner"
 $environmentDepthMotionProofToolPath = Join-Path $toolsRoot "Invoke-NativeRendererEnvironmentDepthMotionProof.ps1"
 $environmentDepthMotionProofToolText = Read-RequiredText $environmentDepthMotionProofToolPath "environment depth motion proof wrapper"
+$environmentDepthKnownDistanceProofToolPath = Join-Path $toolsRoot "Invoke-NativeRendererEnvironmentDepthKnownDistanceProof.ps1"
+$environmentDepthKnownDistanceProofToolText = Read-RequiredText $environmentDepthKnownDistanceProofToolPath "environment depth known-distance proof wrapper"
+$environmentDepthKnownDistanceSeriesToolPath = Join-Path $toolsRoot "Test-NativeRendererEnvironmentDepthKnownDistanceSeries.ps1"
+$environmentDepthKnownDistanceSeriesToolText = Read-RequiredText $environmentDepthKnownDistanceSeriesToolPath "environment depth known-distance series checker"
+$environmentDepthEvidenceBundleToolPath = Join-Path $toolsRoot "Test-NativeRendererEnvironmentDepthEvidenceBundle.ps1"
+$environmentDepthEvidenceBundleToolText = Read-RequiredText $environmentDepthEvidenceBundleToolPath "environment depth evidence bundle checker"
+$environmentDepthAcceptanceSuiteToolPath = Join-Path $toolsRoot "Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1"
+$environmentDepthAcceptanceSuiteToolText = Read-RequiredText $environmentDepthAcceptanceSuiteToolPath "environment depth acceptance suite wrapper"
 $environmentDepthParticlesEvidenceFixtureText = Read-RequiredText (Join-Path $repoRootPath "fixtures\native-renderer\native-renderer-meta-environment-depth-particles.logcat.txt") "environment depth particle logcat fixture"
 $environmentDepthSurfaceSupportEvidenceFixtureText = Read-RequiredText (Join-Path $repoRootPath "fixtures\native-renderer\native-renderer-meta-environment-depth-surface-support.logcat.txt") "environment depth surface support logcat fixture"
 
 Assert-PowerShellParses $environmentDepthMotionProofToolPath "environment depth motion proof wrapper"
+Assert-PowerShellParses $environmentDepthKnownDistanceProofToolPath "environment depth known-distance proof wrapper"
+Assert-PowerShellParses $environmentDepthKnownDistanceSeriesToolPath "environment depth known-distance series checker"
+Assert-PowerShellParses $environmentDepthEvidenceBundleToolPath "environment depth evidence bundle checker"
+Assert-PowerShellParses $environmentDepthAcceptanceSuiteToolPath "environment depth acceptance suite wrapper"
+
+Assert-MatchesRegex $nativeLib '(?m)#\[cfg\(any\(test, not\(target_os = "android"\)\)\)\]\s*mod environment_depth_scene_map;' "source-only scene-map module gate"
+Assert-MatchesRegex $nativeLib '(?m)#\[cfg\(any\(test, not\(target_os = "android"\)\)\)\]\s*mod environment_depth_surface_support;' "source-only surface-support module gate"
+Assert-DoesNotContainTokens "$environmentDepthParticleSourceSurface`n$openxrEnvironmentDepth`n$xrVulkanSurface" @(
+    'crate::environment_depth_scene_map',
+    'crate::environment_depth_surface_support',
+    'environment_depth_scene_map::',
+    'environment_depth_surface_support::'
+) "live GPU/OpenXR runtime must not import source-only CPU mirrors"
+Assert-ContainsTokens $environmentDepthGeometry @(
+    'Environment-depth reference-space math',
+    'The Android runtime uses this module only for low-rate pose-delta evidence',
+    '#[cfg(any(test, not(target_os = "android")))]',
+    'pub(crate) fn reconstruct_reference_space_point',
+    'pub(crate) fn project_reference_space_point_to_render_eye',
+    'pub(crate) fn reference_pose_translation_delta_m',
+    'pub(crate) fn reference_pose_yaw_delta_degrees'
+) "geometry runtime pose and host projection boundary"
+Assert-ContainsTokens $environmentDepthSceneMap @(
+    'Source-only scene-map oracle',
+    'The Android runtime owns the real Vulkan buffers and atomics'
+) "source-only scene-map mirror boundary"
+Assert-ContainsTokens $environmentDepthSurfaceSupport @(
+    'Source-only surface-support mirror',
+    'The Android runtime path stays GPU-owned'
+) "source-only surface-support mirror boundary"
 
 Assert-ContainsTokens $runtimeEvidenceToolText @(
     'RequireEnvironmentDepthParticles',
     'environment_depth_particles_checked',
     'RequireEnvironmentDepthSurfaceSupport',
     'environment_depth_surface_support_checked',
+    'RequireEnvironmentDepthKnownDistance',
     'ExpectedEnvironmentDepthParticleCount',
     'MinimumEnvironmentDepthSourceDepthSamples',
     'MinimumEnvironmentDepthHashProbeExhaustedCount',
     'MinimumEnvironmentDepthHeadMotionSamples',
     'MinimumEnvironmentDepthHeadMotionYawDeg',
     'MinimumEnvironmentDepthHeadMotionTranslationM',
+    'ExpectedEnvironmentDepthCenterMeters',
+    'EnvironmentDepthCenterToleranceMeters',
+    'MinimumEnvironmentDepthCenterConfidence',
+    'MinimumEnvironmentDepthCenterWindowValidCount',
     'environmentDepthRenderViewStateFlags',
     'environmentDepthCaptureToDisplayMs',
     'environmentDepthAcquireToRenderMs',
@@ -220,8 +288,9 @@ Assert-ContainsTokens $environmentDepthSurfaceSupportEvidenceFixtureText @(
     'environmentDepthSurfaceCandidateRetiredCells=0'
 ) "Meta environment-depth surface-support fixture"
 
-Assert-ContainsTokens "$nativeLib`n$environmentDepthGeometry`n$environmentDepthSurfaceSupport`n$environmentDepthParticleSourceSurface`n$openxrEnvironmentDepth`n$nativeRendererOptionSurface" @(
+Assert-ContainsTokens "$nativeLib`n$environmentDepthGeometry`n$environmentDepthSceneMap`n$environmentDepthSurfaceSupport`n$environmentDepthParticleSourceSurface`n$openxrEnvironmentDepth`n$nativeRendererOptionSurface" @(
     'mod environment_depth_geometry',
+    'mod environment_depth_scene_map',
     'mod environment_depth_surface_support',
     'mod gpu_environment_depth_particle_stats',
     'mod gpu_environment_depth_particles',
@@ -231,19 +300,58 @@ Assert-ContainsTokens "$nativeLib`n$environmentDepthGeometry`n$environmentDepthS
     'depth_view_pose_rotation_and_translation_are_applied_once',
     'retained_reference_point_projects_through_current_render_eye',
     'estimate_depth_neighborhood_normals',
+    'estimate_retained_cell_neighborhood_normals',
+    'reconstruct_retained_scene_cell_samples',
+    'scene_cell_for_reference_space_position',
+    'SOURCE_ONLY_SCENE_PARTICLE_CELL_METERS',
+    'SOURCE_ONLY_SCENE_PARTICLE_HASH_PROBE_COUNT',
+    'SOURCE_ONLY_SCENE_PARTICLE_STALE_REPLACE_FRAMES',
+    'SourceOnlySceneMap',
+    'SourceOnlySceneMapCounters',
+    'SourceOnlySceneMapSlot',
+    'SourceOnlySceneCellState',
+    'SourceOnlySceneObservation',
+    'SourceOnlySceneMapWriteOutcome',
+    'SourceOnlySceneMapRetireOutcome',
+    'hash_scene_cell',
+    'compact_scene_cell_key',
+    'RetainedCellNormalSample',
+    'RetainedSceneCellSample',
     'SurfaceNormalCounters',
     'SurfaceNormalRejectReason',
     'SurfaceComponentCounters',
     'SurfaceComponentCellState',
     'SurfaceLifecycleCounters',
     'SurfaceLifecycleCellState',
+    'build_compact_surface_descriptors',
+    'CompactSurfaceDescriptor',
+    'CompactSurfaceDescriptorCounters',
+    'COMPACT_SURFACE_INVALID_PACKED_NORMAL',
+    'COMPACT_SURFACE_FLAG_DRAWABLE_SURFACE',
     'LOOSE_NORMAL_COHERENCE_MIN_DOT',
     'STRICT_NORMAL_COHERENCE_MIN_DOT',
     'flat_depth_plane_produces_coherent_camera_facing_normals',
     'depth_step_rejects_normals_along_discontinuity_without_erasing_planes',
     'holes_make_neighbor_normals_invalid_not_accepted',
+    'retained_cell_plane_produces_coherent_camera_facing_normals',
+    'retained_cell_missing_neighbor_invalidates_normal',
+    'retained_cell_discontinuous_neighbor_rejects_normal',
+    'retained_scene_cells_stay_world_space_across_lateral_pose_shift',
+    'retained_scene_cells_reject_invalid_depth_and_nonfinite_positions',
+    'scene_cell_key_matches_shader_hash_shape',
+    'scene_map_policy_rejects_impossible_thresholds',
+    'same_scene_cell_observations_merge_and_promote',
+    'same_scene_cell_two_source_layers_promote_when_required',
+    'offset_source_layers_in_neighbor_cells_stay_single_layer_candidates',
+    'active_collision_probe_exhausts_without_overwriting_fresh_slot',
+    'stale_nonmatching_slot_is_replaced_before_probe_exhaustion',
+    'free_space_retire_marks_candidate_without_erasing_key',
     'connected_components_keep_large_plane_and_classify_isolated_floaters',
     'small_component_hide_policy_removes_tiny_clusters_from_normal_view',
+    'compact_surface_descriptors_pack_confirmed_plane_normals',
+    'compact_surface_descriptors_hide_small_normal_components',
+    'compact_surface_descriptors_reject_unpacked_invalid_normals',
+    'compact_surface_descriptors_reject_mismatched_grids',
     'lifecycle_promotes_supported_candidates_and_counts_layer_agreement',
     'lifecycle_rejects_mismatched_grid_dimensions',
     'lifecycle_sequence_retires_dynamic_object_ghost_on_free_space',
@@ -417,6 +525,82 @@ Assert-ContainsTokens $environmentDepthMotionProofToolText @(
     'SkipInstall',
     'StopAfterRun'
 ) "environment-depth motion proof tool"
+
+Assert-ContainsTokens $environmentDepthKnownDistanceProofToolText @(
+    'Invoke-NativeRendererReplaySmoke.ps1',
+    'EvidenceMode',
+    'EnvironmentDepthParticles',
+    'TargetDistanceMeters',
+    'ToleranceMeters',
+    'MinimumCenterConfidence',
+    'MinimumCenterWindowValidCount',
+    'RequireEnvironmentDepthKnownDistance',
+    'ExpectedEnvironmentDepthCenterMeters',
+    'EnvironmentDepthCenterToleranceMeters',
+    'MinimumEnvironmentDepthCenterConfidence',
+    'MinimumEnvironmentDepthCenterWindowValidCount',
+    'AllowFlatScreenshot',
+    'AllowPerformanceBudgetMiss',
+    'native-renderer-envdepth-known-distance',
+    'quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json',
+    'Serial',
+    'AdbServerPort',
+    'SkipInstall',
+    'StopAfterRun'
+) "environment-depth known-distance proof tool"
+
+Assert-ContainsTokens $environmentDepthKnownDistanceSeriesToolText @(
+    'rusty.quest.environment_depth_known_distance_series.v1',
+    'environment_depth_known_distance_required',
+    'environment_depth_expected_center_meters',
+    'environment_depth_center_reconstructed_meters',
+    'environment_depth_center_tolerance_meters',
+    'environment_depth_center_error_meters',
+    'environment_depth_raw_center_d16',
+    'SummaryPath',
+    'SummaryGlob',
+    'MinimumDistances',
+    'raw_center_d16_direction',
+    'Known-distance reconstructed meters are not strictly increasing',
+    'Known-distance raw center D16 is not monotonic'
+) "environment-depth known-distance series checker"
+
+Assert-ContainsTokens $environmentDepthEvidenceBundleToolText @(
+    'rusty.quest.environment_depth_evidence_bundle.v1',
+    'MotionRunSummaryPath',
+    'KnownDistanceSeriesPath',
+    'KnownDistanceRunSummaryPath',
+    'RequiredTargetDistancesMeters',
+    'MinimumMotionSamples',
+    'MinimumYawDeg',
+    'MinimumTranslationM',
+    'RequireSurfaceSupport',
+    'runtime_evidence_summary_path',
+    'environment_depth_head_motion_max_yaw_delta_deg',
+    'environment_depth_known_distance_required',
+    'raw_center_d16_direction',
+    'human_device_visual_acceptance_required'
+) "environment-depth evidence bundle checker"
+
+Assert-ContainsTokens $environmentDepthAcceptanceSuiteToolText @(
+    'rusty.quest.environment_depth_acceptance_suite_run.v1',
+    'Invoke-NativeRendererEnvironmentDepthMotionProof.ps1',
+    'Invoke-NativeRendererEnvironmentDepthKnownDistanceProof.ps1',
+    'Test-NativeRendererEnvironmentDepthKnownDistanceSeries.ps1',
+    'Test-NativeRendererEnvironmentDepthEvidenceBundle.ps1',
+    'TargetDistancesMeters',
+    '0.5',
+    '1.0',
+    '2.0',
+    '4.0',
+    'MinimumHeadMotionSamples',
+    'MinimumYawDeg',
+    'KnownDistanceToleranceMeters',
+    'RUSTY_QUEST_ADB_SERVER_PORT',
+    'known-distance-series-result.json',
+    'environment-depth-evidence-bundle-result.json',
+    'human_device_visual_acceptance_required'
+) "environment-depth acceptance suite wrapper"
 
 $profilesRoot = Join-Path $repoRootPath "fixtures\runtime-profiles"
 $damagedRoot = Join-Path $repoRootPath "fixtures\damaged"
@@ -637,6 +821,8 @@ foreach ($damagedCase in @(
     @{ File = "native-renderer-environment-depth-invalid-range.profile.json"; Label = "invalid range"; Tokens = @('near_m','2.0','far_m','1.0') },
     @{ File = "native-renderer-environment-depth-invalid-capacity.profile.json"; Label = "invalid capacity"; Tokens = @('particle_capacity','"0"') },
     @{ File = "native-renderer-environment-depth-invalid-depth-units-policy.profile.json"; Label = "invalid depth-units policy"; Tokens = @('depth_units_policy','metric-axial-meters') },
+    @{ File = "native-renderer-environment-depth-impossible-neighbor-threshold.profile.json"; Label = "impossible neighbor threshold"; Tokens = @('surface_support.radius_cells','"1"','surface_support.min_neighbors','"9"') },
+    @{ File = "native-renderer-environment-depth-invalid-source-layers.profile.json"; Label = "invalid source layers"; Tokens = @('surface_support.min_source_layers','"3"') },
     @{ File = "native-renderer-environment-depth-invalid-surface-support.profile.json"; Label = "invalid surface support"; Tokens = @('surface_model','global-surfaces','surface_support.min_neighbors','"99"') }
 )) {
     $damagedText = Read-RequiredText (Join-Path $damagedRoot $damagedCase.File) "damaged environment-depth $($damagedCase.Label) profile"

@@ -154,14 +154,23 @@ The staged file is startup-effective, but the panel also has two live apply
 modes for running immersive sessions. `Apply Live` submits the current
 candidate immediately through JNI. `Live auto update` debounces control edits
 and overwrites any older pending live candidate before the renderer consumes
-it. The Rust frame loop drains this same-process queue at a frame boundary,
-updates the low-rate uniform buffer and runtime dynamics, refreshes the
-right-primary randomize gate, and writes the same apply-status schema with
+it. On open, the panel reads the current startup-effective Android properties
+for safety, active/randomize, render target, raymarch samples, central FOV, and
+gradient smoothing so the default live candidate matches the running profile.
+The Rust frame loop drains this same-process queue at a frame boundary, updates
+the low-rate uniform buffer and runtime dynamics, refreshes the right-primary
+randomize gate, and writes the same apply-status schema with
 `transport=jni_live_queue`. The renderer does not poll panel files or WebView
 state inside the Vulkan command-recording hot path. Live candidates that change
 render mode or render target are rejected as restart-required, because those
 changes would alter OpenXR/Vulkan resource ownership instead of just scalar
-stimulus parameters.
+stimulus parameters. For device-side validation, the explicit
+`APPLY_LIVE_SELF_TEST` Activity action invokes the same Java submit method as
+the visible `Apply Live` button, avoiding unreliable synthetic taps on Quest 2D
+panels while still exercising the Java/JNI/render-loop path. The diagnostic
+hook runs from both `onNewIntent` and `onResume`; a fresh `diagnostic_token`
+extra makes repeated ADB-driven self-tests unambiguous for an already-open
+single-task panel.
 
 The first in-VR panel affordance is a right-controller trigger toggle. The
 native OpenXR action set binds `/user/hand/right/input/trigger/value` for

@@ -70,7 +70,9 @@
   first environment-depth status-only profile. It sets only scalar
   environment-depth properties such as mode, source, reference space, capacity,
   stride, range, and `high_rate_json_payload=false`; damaged fixtures reject
-  high-rate JSON, invalid capacity, and invalid near/far range attempts.
+  high-rate JSON, invalid capacity, invalid near/far range, invalid
+  source-layer requirements, and impossible radius/min-neighbor threshold
+  attempts.
   `quest-native-renderer-native-passthrough-environment-depth-particles.profile.json`
   is the synthetic pure-GPU proof route: native passthrough is enabled, hand/SDF
   overlays are disabled, a compute shader writes reference-space particle rows
@@ -93,6 +95,16 @@
   view-state flags, capture-to-display/frame-age timing, repeated-capture and
   unavailable-streak counters, texture-transform/ray-UV/sample-UV policy
   labels, and the free-space confidence-skip counter.
+  The known-distance raw-D16 wrapper can run the same profile with
+  `-RequireEnvironmentDepthKnownDistance`, checking center reconstructed
+  meters, center confidence, and center-window valid counts against a measured
+  target distance before the projected-depth formula is accepted or replaced.
+  The series checker validates monotonic reconstructed meters and raw D16 across
+  the 0.5 m, 1 m, 2 m, and 4 m artifact summaries.
+  The evidence-bundle checker ties those known-distance run summaries to the
+  movement run summary and keeps the human headset visual gate explicit.
+  The acceptance-suite wrapper runs the motion, known-distance, series, and
+  bundle gates in the intended final device order.
   `quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json`
   is the matching mono-layer1 comparison route; it requires
   `environmentDepthSampledLayerMask=0x2` and
@@ -119,8 +131,19 @@
   small-component policy, normal-source, and zero aggregate component/normal
   counters in dry-run output; runtime log fixtures carry active
   candidate/confirmed/local-patch component-hint lifecycle counters only after
-  the GPU scene-map path has run. Source-only mirror tests cover dynamic object
-  appear/confirm/move retirement before headset movement evidence is available.
+  the GPU scene-map path has run. Source-only mirror tests cover
+  reference-space reconstruction/reprojection, scene-map
+  hash/probe/merge/stale/free-space-retire behavior, same-cell
+  two-source-layer promotion, layer-offset single-layer candidate separation,
+  impossible oracle-threshold rejection,
+  retained-cell neighborhood normals, pose-shifted retained scene-cell samples,
+  compact surface descriptor packing, and dynamic object appear/confirm/move
+  retirement before headset movement evidence is available.
+  Those mirror fixtures are host/test-only evidence. The Quest runtime CPU
+  still only coordinates profiles, permissions, provider setup, command
+  submission, low-rate pose/timing calculations, and aggregate markers; depth
+  projection, retained scene-map writes, support/normal counters, particles,
+  and drawing stay in the native GPU path.
   The
   source-layer-agreement profile adds a non-default
   `environmentDepthSourceLayerAgreementRequired=true` dry-run route so two-layer
@@ -189,5 +212,6 @@
   timings exceed the performance-budget gate. Damaged live-hand visual evidence
   also rejects marker-only acceptance without screenshot proof. Native renderer
   damaged profiles include manifest-driven generic property failures such as an
-  unsupported camera output token, proving the apply path consumes the typed
-  native renderer property manifest before ADB writes.
+  unsupported camera output token, plus environment-depth cross-field failures
+  such as impossible local support thresholds, proving the apply path consumes
+  the typed native renderer property manifest before ADB writes.

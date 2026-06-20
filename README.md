@@ -192,9 +192,14 @@ Environment-depth particle Vulkan resource and command recording stays in
 `gpu_environment_depth_particles`, while readback statistics, marker-policy
 strings, surface-support depth flags, normal-source/counter markers, and grid
 sizing live in `gpu_environment_depth_particle_stats`. Source-only
+scene-map hash/probe/free-space policy lives in `environment_depth_scene_map`;
 normal/coherence regression math lives in `environment_depth_surface_support`;
-it reconstructs bounded depth neighborhoods into reference-space meters for
-host tests and does not become runtime authority.
+it reconstructs bounded depth neighborhoods, retained scene-cell
+neighborhoods, and pose-shifted scene-cell samples into reference-space
+meters, builds compact surface descriptor fixtures for host tests, and mirrors
+hash insert/merge/stale-replace/probe-exhaustion/free-space-retire behavior
+plus retained-map source-layer agreement and offset separation without becoming
+runtime authority.
 The typed low-rate property manifest at
 `fixtures/native-renderer/native-renderer-property-manifest.json` records the
 current Android property surface, value kinds, ranges, parser owners,
@@ -295,6 +300,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererA
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial>
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1
 ```
 
@@ -313,6 +319,10 @@ small-component, confirmed-component, and nonzero local-patch max counters.
 These are aggregate GPU local-hint counters, not accepted connected-labels.
 Connected-component/global surface acceptance and world-space motion proof still
 require a headset run.
+When the headset is ready, the environment-depth acceptance-suite wrapper runs
+the deliberate motion proof, the 0.5 m, 1 m, 2 m, and 4 m known-distance runs,
+the known-distance series checker, and the evidence-bundle checker in one
+serial-scoped route. It still leaves human headset visual acceptance explicit.
 
 Device-facing smoke wrappers require `-Serial <quest-serial>` or
 `RUSTY_QUEST_SERIAL`; normal ADB work must not rely on an implicit default

@@ -1,0 +1,15 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.damaged_environment_depth_invalid_source_layers",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.environment_depth.surface_support.min_source_layers"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.surface_support.min_source_layers",
+      "value": "3",
+      "source_setting_id": "native_renderer.environment_depth.surface_support.min_source_layers"
+    }
+  ]
+}

@@ -50,16 +50,28 @@ function Assert-PowerShellParses {
 
 $runtimeEvidenceToolPath = Join-Path $toolsRoot "Test-NativeRendererRuntimeEvidence.ps1"
 $runtimeSmokeToolPath = Join-Path $toolsRoot "Invoke-NativeRendererReplaySmoke.ps1"
+$knownDistanceProofToolPath = Join-Path $toolsRoot "Invoke-NativeRendererEnvironmentDepthKnownDistanceProof.ps1"
+$knownDistanceSeriesToolPath = Join-Path $toolsRoot "Test-NativeRendererEnvironmentDepthKnownDistanceSeries.ps1"
+$environmentDepthEvidenceBundleToolPath = Join-Path $toolsRoot "Test-NativeRendererEnvironmentDepthEvidenceBundle.ps1"
+$environmentDepthAcceptanceSuiteToolPath = Join-Path $toolsRoot "Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1"
 $permissionPregrantToolPath = Join-Path $toolsRoot "Grant-NativeRendererPermissions.ps1"
 
 $runtimeEvidenceToolText = Read-RequiredText $runtimeEvidenceToolPath "runtime evidence checker"
 $runtimeSmokeToolText = Read-RequiredText $runtimeSmokeToolPath "runtime smoke wrapper"
+$knownDistanceProofToolText = Read-RequiredText $knownDistanceProofToolPath "environment-depth known-distance wrapper"
+$knownDistanceSeriesToolText = Read-RequiredText $knownDistanceSeriesToolPath "environment-depth known-distance series checker"
+$environmentDepthEvidenceBundleToolText = Read-RequiredText $environmentDepthEvidenceBundleToolPath "environment-depth evidence bundle checker"
+$environmentDepthAcceptanceSuiteToolText = Read-RequiredText $environmentDepthAcceptanceSuiteToolPath "environment-depth acceptance suite wrapper"
 $permissionPregrantToolText = Read-RequiredText $permissionPregrantToolPath "permission pregrant helper"
 $runtimeEvidenceFixtureText = Read-RequiredText (Join-Path $fixturesRoot "native-renderer-replay-visual-proof.logcat.txt") "accepted replay visual logcat fixture"
 $liveHandDiagnosticPendingFixtureText = Read-RequiredText (Join-Path $fixturesRoot "native-renderer-live-hand-visual-diagnostic-pending.logcat.txt") "live-hand diagnostic pending logcat fixture"
 
 Assert-PowerShellParses $runtimeEvidenceToolPath "runtime evidence checker"
 Assert-PowerShellParses $runtimeSmokeToolPath "runtime smoke wrapper"
+Assert-PowerShellParses $knownDistanceProofToolPath "environment-depth known-distance wrapper"
+Assert-PowerShellParses $knownDistanceSeriesToolPath "environment-depth known-distance series checker"
+Assert-PowerShellParses $environmentDepthEvidenceBundleToolPath "environment-depth evidence bundle checker"
+Assert-PowerShellParses $environmentDepthAcceptanceSuiteToolPath "environment-depth acceptance suite wrapper"
 Assert-PowerShellParses $permissionPregrantToolPath "permission pregrant helper"
 
 Assert-ContainsTokens $runtimeEvidenceToolText @(
@@ -127,6 +139,17 @@ Assert-ContainsTokens $runtimeEvidenceToolText @(
     'stimulusVolumeComputeGpuMs',
     'stimulusVolumeProjectionGpuMs',
     'RequirePrivateSlotNoPayload',
+    'RequireEnvironmentDepthKnownDistance',
+    'ExpectedEnvironmentDepthCenterMeters',
+    'EnvironmentDepthCenterToleranceMeters',
+    'MinimumEnvironmentDepthCenterConfidence',
+    'MinimumEnvironmentDepthCenterWindowValidCount',
+    'environment_depth_known_distance_required',
+    'environment_depth_center_error_meters',
+    'environmentDepthRawStatsStatus',
+    'environmentDepthCenterReconstructedMeters',
+    'environmentDepthCenterConfidence',
+    'environmentDepthRawCenterWindowValidCount',
     'animatedHandMeshVisualVisible=true',
     'gpuTimestampQueryReady=true',
     'privateLayerPayloadLinked=false'
@@ -162,6 +185,11 @@ Assert-ContainsTokens "$runtimeSmokeToolText`n$permissionPregrantToolText" @(
     'EvidenceMode',
     'ReplayVisualProof',
     'LiveVisualDiagnosticCaveat',
+    'RequireEnvironmentDepthKnownDistance',
+    'ExpectedEnvironmentDepthCenterMeters',
+    'EnvironmentDepthCenterToleranceMeters',
+    'MinimumEnvironmentDepthCenterConfidence',
+    'MinimumEnvironmentDepthCenterWindowValidCount',
     'previousErrorActionPreference',
     'NativeCommandError',
     'RUSTY_QUEST_ADB_SERVER_PORT',
@@ -212,6 +240,67 @@ Assert-ContainsTokens "$runtimeSmokeToolText`n$permissionPregrantToolText" @(
     'RequirePerformanceBudget',
     'StopAfterRun'
 ) "runtime smoke wrapper"
+
+Assert-ContainsTokens "$knownDistanceProofToolPath`n$knownDistanceProofToolText" @(
+    'Invoke-NativeRendererEnvironmentDepthKnownDistanceProof.ps1',
+    'Invoke-NativeRendererReplaySmoke.ps1',
+    'TargetDistanceMeters',
+    'ToleranceMeters',
+    'MinimumCenterConfidence',
+    'MinimumCenterWindowValidCount',
+    'EnvironmentDepthParticles',
+    'RequireEnvironmentDepthKnownDistance',
+    'ExpectedEnvironmentDepthCenterMeters',
+    'EnvironmentDepthCenterToleranceMeters',
+    'MinimumEnvironmentDepthCenterConfidence',
+    'MinimumEnvironmentDepthCenterWindowValidCount',
+    'AllowFlatScreenshot',
+    'AllowPerformanceBudgetMiss',
+    'RUSTY_QUEST_ADB_SERVER_PORT',
+    'AdbServerPort',
+    'SkipInstall',
+    'ClearLogcat',
+    'StopAfterRun'
+) "environment-depth known-distance wrapper"
+
+Assert-ContainsTokens "$knownDistanceSeriesToolPath`n$knownDistanceSeriesToolText" @(
+    'Test-NativeRendererEnvironmentDepthKnownDistanceSeries.ps1',
+    'rusty.quest.environment_depth_known_distance_series.v1',
+    'SummaryPath',
+    'SummaryGlob',
+    'MinimumDistances',
+    'environment_depth_known_distance_required',
+    'environment_depth_center_reconstructed_meters',
+    'environment_depth_raw_center_d16',
+    'raw_center_d16_direction'
+) "environment-depth known-distance series checker"
+
+Assert-ContainsTokens "$environmentDepthEvidenceBundleToolPath`n$environmentDepthEvidenceBundleToolText" @(
+    'Test-NativeRendererEnvironmentDepthEvidenceBundle.ps1',
+    'rusty.quest.environment_depth_evidence_bundle.v1',
+    'MotionRunSummaryPath',
+    'KnownDistanceSeriesPath',
+    'KnownDistanceRunSummaryPath',
+    'runtime_evidence_summary_path',
+    'environment_depth_particles_checked',
+    'environment_depth_head_motion_max_yaw_delta_deg',
+    'environment_depth_known_distance_required',
+    'human_device_visual_acceptance_required'
+) "environment-depth evidence bundle checker"
+
+Assert-ContainsTokens "$environmentDepthAcceptanceSuiteToolPath`n$environmentDepthAcceptanceSuiteToolText" @(
+    'Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1',
+    'rusty.quest.environment_depth_acceptance_suite_run.v1',
+    'Invoke-NativeRendererEnvironmentDepthMotionProof.ps1',
+    'Invoke-NativeRendererEnvironmentDepthKnownDistanceProof.ps1',
+    'Test-NativeRendererEnvironmentDepthKnownDistanceSeries.ps1',
+    'Test-NativeRendererEnvironmentDepthEvidenceBundle.ps1',
+    'TargetDistancesMeters',
+    'MinimumHeadMotionSamples',
+    'KnownDistanceToleranceMeters',
+    'RUSTY_QUEST_ADB_SERVER_PORT',
+    'human_device_visual_acceptance_required'
+) "environment-depth acceptance suite wrapper"
 
 Assert-ContainsTokens "$runtimeSmokeToolPath`n$permissionPregrantToolPath`n$runtimeSmokeToolText`n$permissionPregrantToolText" @(
     'Grant-NativeRendererPermissions.ps1',

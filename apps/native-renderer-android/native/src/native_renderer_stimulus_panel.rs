@@ -754,6 +754,32 @@ mod tests {
     }
 
     #[test]
+    fn parses_live_panel_candidate_for_performance_render_target() {
+        let mut value: Value = serde_json::from_str(&valid_candidate()).unwrap();
+        value["stimulus"]["render_target"] = Value::from("512x512x2-rgba16f");
+        value["stimulus"]["central_fov_fraction"] = Value::from(0.72);
+        value["stimulus"]["gradient_smoothing"] = Value::from(0.78);
+        value["stimulus"]["randomize"]["min_hz"] = Value::from(3.0);
+        value["stimulus"]["randomize"]["max_hz"] = Value::from(40.0);
+        value["apply"]["mode"] = Value::from("apply-on-next-safe-frame");
+
+        let candidate = parse_candidate_json(&value.to_string()).expect("live candidate parses");
+
+        assert_eq!(candidate.revision, 7);
+        assert_eq!(
+            candidate.settings.render_target,
+            NativeStimulusVolumeRenderTarget::Rgba16f512Stereo
+        );
+        assert_eq!(candidate.settings.raymarch_samples, 12);
+        assert_close(candidate.settings.central_fov_fraction, 0.72);
+        assert_close(candidate.settings.gradient_smoothing, 0.78);
+        assert_close(candidate.settings.randomize_min_hz, 3.0);
+        assert_close(candidate.settings.randomize_max_hz, 40.0);
+        assert!(candidate.settings.enabled);
+        assert!(candidate.settings.safety_acknowledged);
+    }
+
+    #[test]
     fn rejects_active_candidate_without_safety_ack() {
         let mut value: Value = serde_json::from_str(&valid_candidate()).unwrap();
         value["safety"]["photosensitive_risk_ack"] = Value::Bool(false);

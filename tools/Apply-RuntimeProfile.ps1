@@ -270,6 +270,18 @@ function Assert-EnvironmentDepthUInt {
     }
 }
 
+function Get-EnvironmentDepthUInt {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Value
+    )
+    $parsed = [uint32]0
+    if (-not [uint32]::TryParse($Value.Trim(), [ref]$parsed)) {
+        throw "$Name value $Value must be an integer"
+    }
+    return $parsed
+}
+
 function Assert-EnvironmentDepthBool {
     param(
         [Parameter(Mandatory=$true)][string]$Name,
@@ -837,6 +849,16 @@ if ($environmentDepthProperties.ContainsKey($EnvironmentDepthNearMProperty) -and
     }
     if ($farM -le $nearM) {
         throw "Environment depth far_m $farM must be greater than near_m $nearM"
+    }
+}
+
+if ($environmentDepthProperties.ContainsKey($EnvironmentDepthSurfaceSupportRadiusCellsProperty) -and $environmentDepthProperties.ContainsKey($EnvironmentDepthSurfaceSupportMinNeighborsProperty)) {
+    $radiusCells = Get-EnvironmentDepthUInt -Name $EnvironmentDepthSurfaceSupportRadiusCellsProperty -Value $environmentDepthProperties[$EnvironmentDepthSurfaceSupportRadiusCellsProperty]
+    $minNeighbors = Get-EnvironmentDepthUInt -Name $EnvironmentDepthSurfaceSupportMinNeighborsProperty -Value $environmentDepthProperties[$EnvironmentDepthSurfaceSupportMinNeighborsProperty]
+    $diameter = ($radiusCells * 2) + 1
+    $maxNeighbors = ($diameter * $diameter) - 1
+    if ($minNeighbors -gt $maxNeighbors) {
+        throw "Environment depth surface_support.min_neighbors $minNeighbors cannot exceed $maxNeighbors for radius_cells $radiusCells"
     }
 }
 

@@ -1,9 +1,10 @@
-//! Source-only environment-depth reference-space math.
+//! Environment-depth reference-space math.
 //!
-//! Runtime depth acquisition and GPU ownership stay in the OpenXR/Vulkan
-//! renderer. This module only proves the coordinate semantics that the first
-//! environment-depth GPU path must preserve.
+//! The Android runtime uses this module only for low-rate pose-delta evidence.
+//! Host tests also use the projection/reprojection helpers to prove coordinate
+//! semantics that the GPU environment-depth path must preserve.
 
+#[cfg(any(test, not(target_os = "android")))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct FovTangents {
     pub(crate) left: f32,
@@ -12,6 +13,7 @@ pub(crate) struct FovTangents {
     pub(crate) up: f32,
 }
 
+#[cfg(any(test, not(target_os = "android")))]
 impl FovTangents {
     pub(crate) const fn symmetric(unit_tangent: f32) -> Self {
         Self {
@@ -39,6 +41,7 @@ pub(crate) struct ReferencePose {
 }
 
 impl ReferencePose {
+    #[cfg(any(test, not(target_os = "android")))]
     pub(crate) const fn identity() -> Self {
         Self {
             position_m: [0.0, 0.0, 0.0],
@@ -47,6 +50,7 @@ impl ReferencePose {
     }
 }
 
+#[cfg(any(test, not(target_os = "android")))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct RenderEyeProjection {
     pub(crate) eye_position_m: [f32; 3],
@@ -55,6 +59,7 @@ pub(crate) struct RenderEyeProjection {
     pub(crate) forward_m: f32,
 }
 
+#[cfg(any(test, not(target_os = "android")))]
 pub(crate) fn reconstruct_reference_space_point(
     depth_uv: [f32; 2],
     depth_meters: f32,
@@ -87,6 +92,7 @@ pub(crate) fn reconstruct_reference_space_point(
     ])
 }
 
+#[cfg(any(test, not(target_os = "android")))]
 pub(crate) fn project_reference_space_point_to_render_eye(
     reference_point_m: [f32; 3],
     render_eye_fov: FovTangents,
@@ -173,10 +179,12 @@ fn reference_pose_heading_radians(pose: ReferencePose) -> Option<f32> {
     Some(forward[0].atan2(-forward[2]))
 }
 
+#[cfg(any(test, not(target_os = "android")))]
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
+#[cfg(any(test, not(target_os = "android")))]
 fn inverse_quat(quat: [f32; 4]) -> [f32; 4] {
     let q = normalize_quat(quat);
     [-q[0], -q[1], -q[2], q[3]]

@@ -25,10 +25,33 @@ param(
     [int]$MinimumEnvironmentDepthHeadMotionSamples = 0,
     [double]$MinimumEnvironmentDepthHeadMotionYawDeg = 0.0,
     [double]$MinimumEnvironmentDepthHeadMotionTranslationM = 0.0,
+    [switch]$RequireEnvironmentDepthKnownDistance,
+    [double]$ExpectedEnvironmentDepthCenterMeters = 0.0,
+    [double]$EnvironmentDepthCenterToleranceMeters = 0.15,
+    [double]$MinimumEnvironmentDepthCenterConfidence = 0.0,
+    [int]$MinimumEnvironmentDepthCenterWindowValidCount = 0,
     [switch]$StopAfterRun
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($RequireEnvironmentDepthKnownDistance) {
+    if ($EvidenceMode -ne "EnvironmentDepthParticles") {
+        throw "RequireEnvironmentDepthKnownDistance requires -EvidenceMode EnvironmentDepthParticles."
+    }
+    if ($ExpectedEnvironmentDepthCenterMeters -le 0.0) {
+        throw "ExpectedEnvironmentDepthCenterMeters must be positive when RequireEnvironmentDepthKnownDistance is set."
+    }
+    if ($EnvironmentDepthCenterToleranceMeters -le 0.0) {
+        throw "EnvironmentDepthCenterToleranceMeters must be positive when RequireEnvironmentDepthKnownDistance is set."
+    }
+    if ($MinimumEnvironmentDepthCenterConfidence -lt 0.0 -or $MinimumEnvironmentDepthCenterConfidence -gt 1.0) {
+        throw "MinimumEnvironmentDepthCenterConfidence must be in 0..1."
+    }
+    if ($MinimumEnvironmentDepthCenterWindowValidCount -lt 0) {
+        throw "MinimumEnvironmentDepthCenterWindowValidCount must be nonnegative."
+    }
+}
 
 function Resolve-ToolPath {
     param(
@@ -228,6 +251,11 @@ $summary = [ordered]@{
     minimum_environment_depth_head_motion_samples = $MinimumEnvironmentDepthHeadMotionSamples
     minimum_environment_depth_head_motion_yaw_deg = $MinimumEnvironmentDepthHeadMotionYawDeg
     minimum_environment_depth_head_motion_translation_m = $MinimumEnvironmentDepthHeadMotionTranslationM
+    environment_depth_known_distance_required = [bool]$RequireEnvironmentDepthKnownDistance
+    expected_environment_depth_center_meters = $ExpectedEnvironmentDepthCenterMeters
+    environment_depth_center_tolerance_meters = $EnvironmentDepthCenterToleranceMeters
+    minimum_environment_depth_center_confidence = $MinimumEnvironmentDepthCenterConfidence
+    minimum_environment_depth_center_window_valid_count = $MinimumEnvironmentDepthCenterWindowValidCount
     stop_after_run = [bool]$StopAfterRun
     property_plan_path = $propertyPlanPath
     permission_pregrant_path = $permissionPregrantPath
@@ -335,6 +363,19 @@ try {
         }
         if ($MinimumEnvironmentDepthHeadMotionTranslationM -gt 0.0) {
             $evidenceArgs += @("-MinimumEnvironmentDepthHeadMotionTranslationM", $MinimumEnvironmentDepthHeadMotionTranslationM.ToString([System.Globalization.CultureInfo]::InvariantCulture))
+        }
+        if ($RequireEnvironmentDepthKnownDistance) {
+            $evidenceArgs += @(
+                "-RequireEnvironmentDepthKnownDistance",
+                "-ExpectedEnvironmentDepthCenterMeters",
+                $ExpectedEnvironmentDepthCenterMeters.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+                "-EnvironmentDepthCenterToleranceMeters",
+                $EnvironmentDepthCenterToleranceMeters.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+                "-MinimumEnvironmentDepthCenterConfidence",
+                $MinimumEnvironmentDepthCenterConfidence.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+                "-MinimumEnvironmentDepthCenterWindowValidCount",
+                $MinimumEnvironmentDepthCenterWindowValidCount.ToString()
+            )
         }
     } else {
         $evidenceArgs += @(

@@ -274,10 +274,26 @@ remains `gpu_environment_depth_particles.rs`; readback statistics, marker
 policy strings, surface-support depth flags, normal-source/counter markers,
 and depth-grid sizing live in
 `gpu_environment_depth_particle_stats.rs` so resource lifetime code does not
-also own the low-rate evidence policy. The source-only
+also own the low-rate evidence policy. The
+`environment_depth_geometry.rs` helper owns reference-space
+projection/reprojection math for coordinate-semantics tests and low-rate
+provider pose-delta evidence. The source-only
+`environment_depth_scene_map.rs` mirror owns host-testable spatial hash,
+probe, merge, stale-replace, free-space retire, source-layer agreement, and
+layer-offset separation policy. The source-only
 `environment_depth_surface_support.rs` mirror owns host-testable
-depth-neighborhood normal/coherence policy for synthetic planes, holes, and
-depth steps; the Android runtime remains GPU-owned.
+depth-neighborhood and retained-cell normal/coherence policy for synthetic
+planes, holes, and depth steps, pose-shifted retained scene-cell samples, plus
+compact surface descriptor fixtures for future GPU support buffers; the
+Android runtime remains GPU-owned.
+The scene-map and surface-support CPU mirrors are compiled only for host/test
+builds. In the headset app, the CPU role is limited to profile/property
+loading, permission and provider setup, Vulkan/OpenXR resource orchestration,
+command submission, low-rate pose/timing calculations, and aggregate
+marker/readback evidence; it must not expand Meta depth images into particle
+rows or become the scene-map authority. The live depth-to-reference-space
+projection, retained-cell hashing, support counters, normal counters, particle
+buffers, and draw path stay in the native GPU stack.
 
 Only the blur guide path, public recorded-hand replay visual, resident
 compact-joint GPU-skinned triangle overlay, native GPU mesh boundary, and

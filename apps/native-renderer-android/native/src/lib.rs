@@ -19,6 +19,9 @@ mod android_events;
 mod camera_projection;
 mod camera_projection_metadata;
 mod environment_depth_geometry;
+#[cfg(any(test, not(target_os = "android")))]
+mod environment_depth_scene_map;
+#[cfg(any(test, not(target_os = "android")))]
 mod environment_depth_surface_support;
 #[cfg(target_os = "android")]
 mod gpu_environment_depth_particle_stats;

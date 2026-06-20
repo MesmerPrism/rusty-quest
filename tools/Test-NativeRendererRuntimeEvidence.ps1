@@ -35,6 +35,11 @@ param(
     [int]$MinimumEnvironmentDepthHeadMotionSamples = 0,
     [double]$MinimumEnvironmentDepthHeadMotionYawDeg = 0.0,
     [double]$MinimumEnvironmentDepthHeadMotionTranslationM = 0.0,
+    [switch]$RequireEnvironmentDepthKnownDistance,
+    [double]$ExpectedEnvironmentDepthCenterMeters = 0.0,
+    [double]$EnvironmentDepthCenterToleranceMeters = 0.15,
+    [double]$MinimumEnvironmentDepthCenterConfidence = 0.0,
+    [int]$MinimumEnvironmentDepthCenterWindowValidCount = 0,
     [double]$MinimumObservedOpenXrFps = 70.0,
     [int]$MaximumStaleFrames = 0,
     [double]$MaximumRecordCpuMs = 4.0,
@@ -943,6 +948,27 @@ if ($RequireEnvironmentDepthParticles) {
     Assert-True ($minValidReconstructedMeters -gt 0.0 -and $maxValidReconstructedMeters -ge $minValidReconstructedMeters) "environment-depth-particles reconstructed meter min/max are invalid."
     $debugValidSampleCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthDebugValidSampleCount"
     Assert-True ($debugValidSampleCount -gt 0) "environment-depth-particles raw debug readback reports no valid samples."
+    if ($RequireEnvironmentDepthKnownDistance) {
+        Assert-True ($ExpectedEnvironmentDepthCenterMeters -gt 0.0) "known-distance environment-depth proof requires ExpectedEnvironmentDepthCenterMeters > 0."
+        Assert-True ($EnvironmentDepthCenterToleranceMeters -gt 0.0) "known-distance environment-depth proof requires EnvironmentDepthCenterToleranceMeters > 0."
+        Assert-True ($MinimumEnvironmentDepthCenterConfidence -ge 0.0 -and $MinimumEnvironmentDepthCenterConfidence -le 1.0) "known-distance environment-depth proof has invalid minimum center confidence: $MinimumEnvironmentDepthCenterConfidence"
+        Assert-True ($MinimumEnvironmentDepthCenterWindowValidCount -ge 0) "known-distance environment-depth proof has invalid minimum center-window valid count: $MinimumEnvironmentDepthCenterWindowValidCount"
+        Assert-True ((Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthRawStatsStatus") -eq "readback") "known-distance environment-depth proof requires raw stats readback."
+        Assert-True ((Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthDepthUnitsPolicy") -eq "projected-depth-from-near-far") "known-distance environment-depth proof currently requires projected-depth-from-near-far depth units."
+        Assert-True ((Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthRawToMetersPolicy") -eq "projected-depth-from-near-far") "known-distance environment-depth proof currently requires projected-depth-from-near-far raw-to-meters policy."
+        Assert-True ((Get-MarkerValue -Line $environmentDepthParticlesLine -Field "environmentDepthDebugView") -eq "raw-d16") "known-distance environment-depth proof requires raw-d16 debug view."
+        Assert-True ($centerConfidence -ge $MinimumEnvironmentDepthCenterConfidence) "known-distance environment-depth proof center confidence $centerConfidence is below minimum $MinimumEnvironmentDepthCenterConfidence."
+        Assert-True ($rawCenterWindowValidCount -ge $MinimumEnvironmentDepthCenterWindowValidCount) "known-distance environment-depth proof center-window valid count $rawCenterWindowValidCount is below minimum $MinimumEnvironmentDepthCenterWindowValidCount."
+        $centerErrorMeters = [Math]::Abs($centerReconstructedMeters - $ExpectedEnvironmentDepthCenterMeters)
+        Assert-True ($centerErrorMeters -le $EnvironmentDepthCenterToleranceMeters) "known-distance environment-depth proof center meters $centerReconstructedMeters differs from expected $ExpectedEnvironmentDepthCenterMeters by $centerErrorMeters m; tolerance is $EnvironmentDepthCenterToleranceMeters m."
+        Assert-True ($ExpectedEnvironmentDepthCenterMeters -ge $minValidReconstructedMeters -and $ExpectedEnvironmentDepthCenterMeters -le $maxValidReconstructedMeters) "known-distance environment-depth expected distance $ExpectedEnvironmentDepthCenterMeters m is outside reconstructed min/max window $minValidReconstructedMeters..$maxValidReconstructedMeters m."
+        $summary.environment_depth_known_distance_required = $true
+        $summary.environment_depth_expected_center_meters = $ExpectedEnvironmentDepthCenterMeters
+        $summary.environment_depth_center_tolerance_meters = $EnvironmentDepthCenterToleranceMeters
+        $summary.environment_depth_center_error_meters = $centerErrorMeters
+        $summary.environment_depth_minimum_center_confidence = $MinimumEnvironmentDepthCenterConfidence
+        $summary.environment_depth_minimum_center_window_valid_count = $MinimumEnvironmentDepthCenterWindowValidCount
+    }
     $hashInsertSuccessCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashInsertSuccessCount"
     $hashMergeCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashMergeCount"
     $hashStaleReplaceCount = Get-MarkerInteger -Line $environmentDepthParticlesLine -Field "environmentDepthHashStaleReplaceCount"
@@ -1004,7 +1030,11 @@ if ($RequireEnvironmentDepthParticles) {
     $summary.environment_depth_head_motion_max_translation_delta_m = $headMotionMaxTranslationDeltaM
     $summary.environment_depth_raw_center_d16 = $rawCenterD16
     $summary.environment_depth_center_reconstructed_meters = $centerReconstructedMeters
+    $summary.environment_depth_center_confidence = $centerConfidence
     $summary.environment_depth_raw_center_window_median_d16 = $rawMedianD16
+    $summary.environment_depth_raw_center_window_valid_count = $rawCenterWindowValidCount
+    $summary.environment_depth_min_valid_reconstructed_meters = $minValidReconstructedMeters
+    $summary.environment_depth_max_valid_reconstructed_meters = $maxValidReconstructedMeters
     $summary.environment_depth_debug_valid_sample_count = $debugValidSampleCount
     $summary.environment_depth_hash_insert_success_count = $hashInsertSuccessCount
     $summary.environment_depth_hash_merge_count = $hashMergeCount

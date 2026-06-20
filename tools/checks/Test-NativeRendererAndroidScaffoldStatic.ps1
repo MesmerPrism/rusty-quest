@@ -109,10 +109,18 @@ Assert-ContainsTokens $controlPanel @(
     'nativeSubmitLiveStimulusCandidate',
     'System\.loadLibrary\("rusty_quest_native_renderer"\)',
     'ACTION_TOGGLE_PANEL',
+    'ACTION_APPLY_LIVE_SELF_TEST',
     'onNewIntent',
+    'onResume',
     'Close',
     'com.oculus.intent.category.VR',
-    'android.app.NativeActivity'
+    'android.app.NativeActivity',
+    'readSystemProperty',
+    'debug\.rustyquest\.native_renderer\.stimulus_volume\.render_target',
+    'debug\.rustyquest\.native_renderer\.stimulus_volume\.enabled',
+    'diagnostic_token',
+    'handleDiagnosticIntent',
+    'Diagnostic Apply Live self-test pending'
 ) "same-APK 2D control panel"
 foreach ($token in @('WebView', 'addJavascriptInterface', 'androidx', 'AppSystemActivity', 'VrActivity', 'GLXF', 'Spatial SDK')) {
     if ($controlPanel -match $token) {

@@ -101,9 +101,19 @@ running immersive sessions, the same panel also supports two live paths:
 debounces control edits and keeps only the newest pending candidate. Both live
 paths use a same-process JNI queue that the Rust frame loop drains at a frame
 boundary; they do not poll panel files in the GPU command-recording hot path.
-Live changes update scalar stimulus settings, dynamics, and the right-primary
-randomize gate. Render-mode or render-target changes are rejected as
-restart-required so the live path never reallocates Vulkan storage images.
+When opened, the panel seeds safety, active/randomize, render-target, and
+quality controls from the current `debug.rustyquest.native_renderer.*`
+properties so `Apply Live` starts from the active runtime profile instead of a
+hard-coded render target. Live changes update scalar stimulus settings,
+dynamics, and the right-primary randomize gate. Render-mode or render-target
+changes are still rejected as restart-required so the live path never
+reallocates Vulkan storage images. The hidden
+`io.github.mesmerprism.rustyquest.native_renderer.action.APPLY_LIVE_SELF_TEST`
+intent is a device-validation hook that calls the same Java submit path as the
+visible `Apply Live` button when Quest 2D panel pointer automation is not
+reliable. It is handled from both `onNewIntent` and `onResume`; pass a fresh
+`diagnostic_token` extra when repeating the self-test against an already-open
+single-task panel.
 
 While the immersive native renderer is running, the OpenXR action set binds the
 right controller trigger value to a panel toggle. Pressing the right trigger
@@ -239,6 +249,26 @@ Meta environment-depth particle path and requires render-view pose-delta
 evidence, defaulting to at least 120 head-motion samples and 25 degrees of yaw.
 Pass `-MinimumTranslationM` when a lateral-translation gate is needed in the
 same run.
+For the known-distance raw-D16 proof, use
+`tools/Invoke-NativeRendererEnvironmentDepthKnownDistanceProof.ps1`; it runs
+the same Meta environment-depth particle path but requires the raw-D16 debug
+view and checks `environmentDepthCenterReconstructedMeters`,
+`environmentDepthCenterConfidence`, and
+`environmentDepthRawCenterWindowValidCount` against the supplied
+`-TargetDistanceMeters`, tolerance, and minimum evidence thresholds. Run it once
+per measured target distance; then run
+`tools/Test-NativeRendererEnvironmentDepthKnownDistanceSeries.ps1` over the
+resulting summaries to require reconstructed meters and raw D16 to be monotonic
+across the measured target set.
+After the deliberate motion proof and the four known-distance runs exist, run
+`tools/Test-NativeRendererEnvironmentDepthEvidenceBundle.ps1` over the motion
+`run-summary.json`, known-distance `run-summary.json` files, and known-distance
+series result. That checker verifies the wrapper route and runtime summaries as
+one bundle while keeping the headset visual acceptance requirement explicit.
+For the final device session, prefer
+`tools/Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1`; it runs the
+motion proof, the 0.5 m, 1 m, 2 m, and 4 m known-distance proofs, the
+known-distance series checker, and the evidence-bundle checker in that order.
 `fixtures/runtime-profiles/quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json`
 is the A/B comparison profile for `environment_depth.layer_policy=mono-layer1`.
 It samples texture-array layer 1 and depth view 1 with
