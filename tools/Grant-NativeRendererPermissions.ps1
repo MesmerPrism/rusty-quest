@@ -3,6 +3,7 @@ param(
     [string]$Serial = $env:RUSTY_QUEST_SERIAL,
     [string]$AdbServerPort = $env:RUSTY_QUEST_ADB_SERVER_PORT,
     [string]$PackageName = "io.github.mesmerprism.rustyquest.native_renderer",
+    [string[]]$Permissions = @(),
     [switch]$GrantMediaProjectionAppOp,
     [switch]$ResetMediaProjectionAppOp,
     [string]$Out = ""
@@ -109,7 +110,7 @@ if (-not [string]::IsNullOrWhiteSpace($outDir)) {
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
 }
 
-$permissions = @(
+$defaultPermissions = @(
     "android.permission.CAMERA",
     "android.permission.FOREGROUND_SERVICE",
     "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
@@ -120,6 +121,11 @@ $permissions = @(
     "org.khronos.openxr.permission.OPENXR",
     "org.khronos.openxr.permission.OPENXR_SYSTEM"
 )
+$permissions = if ($Permissions.Count -gt 0) {
+    @($Permissions | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Sort-Object -Unique)
+} else {
+    $defaultPermissions
+}
 
 $summary = [ordered]@{
     schema = "rusty.quest.native_renderer_permission_pregrant.v1"

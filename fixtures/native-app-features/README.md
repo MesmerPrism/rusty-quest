@@ -7,7 +7,10 @@ App-building agents should request stable `feature_id` values in
 profile or Android manifest. The resolver selects the transitive feature
 closure, writes `native-app-settings.json` as the master settings surface, and
 then emits runtime profile, property write plan, build env, and Android
-manifest adapters from that settings artifact.
+manifest adapters from that settings artifact. The generated lock also emits a
+hotload policy for low-rate settings and a permission pregrant plan derived
+from the resolved manifest, so app builders do not rediscover those launch
+steps by adding broad modules or broad permission helpers.
 
 Module families:
 

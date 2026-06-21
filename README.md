@@ -46,6 +46,13 @@ of any appended tracer rows. Downstream repos supply their own shader, payload
 data, kind string, marker prefix, and opaque marker fields through
 `RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_*`; effect-specific constants and
 profile bodies remain outside Rusty Quest.
+The slot also exposes a small runtime-polled scalar Android-property family
+under `debug.rustyquest.native_renderer.private_particles.*` for visual scale,
+tracer draw slots/lifetime/cadence, and transparency opacity/alpha/depth/RGB
+coupling. Runtime markers must report the accepted effective values; raw
+`getprop` readback is only transport evidence. Shader payloads, texture
+dimensions, buffer capacities, render mode, and fixed-function graphics
+pipeline blend factors remain rebuild/relaunch scope.
 
 New native APK variants must start from the source-only native app-build
 workflow instead of hand-editing runtime profiles, Android manifest
@@ -53,8 +60,9 @@ permissions, or build wrapper environment variables. App-build specs under
 `fixtures/native-app-builds/` resolve against feature descriptors under
 `fixtures/native-app-features/` through
 `tools/Resolve-NativeAppBuild.ps1 -DryRun`, producing a feature lock, generated
-runtime profile, generated manifest surface, build env, build manifest, and
-audit report under ignored `local-artifacts/native-app-builds/`. The committed
+runtime profile, generated manifest surface, hotload policy, permission
+pregrant plan, build env, build manifest, and audit report under ignored
+`local-artifacts/native-app-builds/`. The committed
 public-safe canary proves that camera, video, display-composite, stimulus,
 hand-anchor, depth, SDF, Makepad, native passthrough, and private-layer
 features cannot enter a solid-black private-particle app unless explicitly

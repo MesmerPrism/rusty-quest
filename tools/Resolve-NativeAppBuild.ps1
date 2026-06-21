@@ -17,6 +17,14 @@ $NativeRendererPropertyManifestSchema = "rusty.quest.native_renderer_property_ma
 $NativeRendererPropertyManifestRelativePath = "fixtures\native-renderer\native-renderer-property-manifest.json"
 $NativeRendererPropertyPrefix = "debug.rustyquest.native_renderer."
 $RenderModeProperty = "debug.rustyquest.native_renderer.render.mode"
+$RuntimeDangerousPermissionNames = @(
+    "android.permission.CAMERA",
+    "com.oculus.permission.HAND_TRACKING",
+    "horizonos.permission.HEADSET_CAMERA",
+    "horizonos.permission.SPATIAL_CAMERA",
+    "horizonos.permission.USE_SCENE"
+)
+$MediaProjectionForegroundServicePermission = "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"
 
 if (-not $DryRun) {
     throw "Resolve-NativeAppBuild.ps1 currently supports source-only -DryRun resolution. APK/package generation is intentionally out of scope."
@@ -674,6 +682,7 @@ $androidManifestPath = Join-Path $appOutputDir "AndroidManifest.xml"
 $buildEnvPath = Join-Path $appOutputDir "build-env.json"
 $buildManifestPath = Join-Path $appOutputDir "build-manifest.json"
 $auditPath = Join-Path $appOutputDir "app-build-audit.json"
+$permissionPregrantPath = Join-Path $appOutputDir "permission-pregrant.json"
 
 $featureDescriptorRecords = @()
 foreach ($featureId in $selectedFeatureIds) {
@@ -700,6 +709,111 @@ $generatedOutputs = [ordered]@{
     build_env = Get-RepoRelativePath -RepoRoot $repoRootText -Path $buildEnvPath
     build_manifest = Get-RepoRelativePath -RepoRoot $repoRootText -Path $buildManifestPath
     app_build_audit = Get-RepoRelativePath -RepoRoot $repoRootText -Path $auditPath
+}
+
+$runtimePolledPropertyFamilies = @()
+$privateParticleHotloadProperties = @()
+$settingsHotloadPollingContract = @()
+$settingsHotloadRuntimeMarkerContract = @()
+$settingsHotloadLiveUpdateScope = @()
+$settingsHotloadRestartRequiredScope = @()
+if ($selectedFeatureIds -contains "renderer.private_particles") {
+    $runtimePolledPropertyFamilies += "private_particles"
+    $privateParticleHotloadProperties = @(
+        "debug.rustyquest.native_renderer.private_particles.visual.scale",
+        "debug.rustyquest.native_renderer.private_particles.tracer.draw_slots_per_oscillator",
+        "debug.rustyquest.native_renderer.private_particles.tracer.lifetime_seconds",
+        "debug.rustyquest.native_renderer.private_particles.tracer.copies_per_second",
+        "debug.rustyquest.native_renderer.private_particles.transparency.opacity",
+        "debug.rustyquest.native_renderer.private_particles.transparency.output_alpha_scale",
+        "debug.rustyquest.native_renderer.private_particles.transparency.depth_suppression_strength",
+        "debug.rustyquest.native_renderer.private_particles.transparency.rgb_alpha_coupling",
+        "debug.rustyquest.native_renderer.private_particles.color.facing_attenuation_strength"
+    )
+    $settingsHotloadPollingContract = @(
+        "private-particle scalar properties are polled by the runtime owner",
+        "accepted values are reported by privateParticleSettingsHotload markers",
+        "buffer capacities, shader payloads, texture payloads, render modes, and fixed-function blend factors are rebuild/relaunch scope"
+    )
+    $settingsHotloadRuntimeMarkerContract = @(
+        "RUSTY_QUEST_NATIVE_RENDERER channel=private-particle-slot status=hotload-applied",
+        "privateParticleSettingsHotload=true",
+        "privateParticleVisualParameterSource=runtime-hotload-android-property",
+        "privateParticleTracerParameterSource=runtime-hotload-android-property",
+        "privateParticleTransparencyParameterSource=runtime-hotload-android-property",
+        "privateParticleColorParameterSource=runtime-hotload-android-property"
+    )
+    $settingsHotloadLiveUpdateScope = @(
+        "serial-scoped adb setprop for named runtime-polled diagnostic properties"
+    )
+    $settingsHotloadRestartRequiredScope = @(
+        "private-particle buffer capacities, texture dimensions, shader payloads, and fixed-function graphics pipeline blend factors"
+    )
+}
+
+$settingsHotload = [ordered]@{
+    policy = "hotloadable-low-rate-settings-with-explicit-restart-boundaries"
+    master_surface = $generatedOutputs.native_app_settings
+    low_rate_only = $true
+    default_transport = "startup-runtime-profile"
+    allowed_transports = @(
+        "startup-runtime-profile",
+        "same-process-jni-live-queue",
+        "app-private-revision-sidecar",
+        "serial-scoped-adb-setprop"
+    )
+    runtime_polled_property_families = $runtimePolledPropertyFamilies
+    accepted_scalar_properties = $privateParticleHotloadProperties
+    polling_contract = $settingsHotloadPollingContract
+    runtime_marker_contract = $settingsHotloadRuntimeMarkerContract
+    live_update_scope = @(
+        "scalar settings explicitly accepted by the runtime owner",
+        "control-panel Apply Live changes routed through the native app settings layer",
+        "app-private revision sidecar changes with applied-or-rejected runtime receipts"
+    ) + $settingsHotloadLiveUpdateScope
+    restart_required_scope = @(
+        "Android manifest permissions, activities, services, queries, or uses-feature declarations",
+        "build inputs, assets, shaders, native library contents, or APK package identity",
+        "render modes or render targets whose runtime owner does not advertise live adoption",
+        "OpenXR provider/session setup and media-projection capture token acquisition"
+    ) + $settingsHotloadRestartRequiredScope
+    evidence = @(
+        "runtime effective-settings marker or status payload reports the accepted value",
+        "revision sidecar reports applied or rejected revision instead of only file write success",
+        "raw adb getprop readback is transport evidence only"
+    )
+    high_rate_payloads_forbidden = $true
+}
+
+$runtimeDangerousPermissions = @($permissions | Where-Object { $RuntimeDangerousPermissionNames -contains $_ })
+$mediaProjectionAppOps = @()
+if ($permissions -contains $MediaProjectionForegroundServicePermission -or $services -contains "DisplayCompositeProjectionService") {
+    $mediaProjectionAppOps += "PROJECT_MEDIA"
+}
+$permissionPregrantRequired = ($runtimeDangerousPermissions.Count -gt 0 -or $mediaProjectionAppOps.Count -gt 0)
+$permissionPregrantSummaryPath = Get-RepoRelativePath -RepoRoot $repoRootText -Path $permissionPregrantPath
+$permissionArgumentText = if ($permissions.Count -gt 0) { " -Permissions $($permissions -join ',')" } else { "" }
+$mediaProjectionArgumentText = if ($mediaProjectionAppOps -contains "PROJECT_MEDIA") { " -GrantMediaProjectionAppOp" } else { "" }
+$permissionPregrantCommand = if ($permissionPregrantRequired) {
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Grant-NativeRendererPermissions.ps1 -PackageName $([string]$app.package_name) -Serial <quest-serial>$permissionArgumentText$mediaProjectionArgumentText -Out $permissionPregrantSummaryPath"
+} else {
+    ""
+}
+$permissionPregrant = [ordered]@{
+    policy = "pregrant-declared-permissions-before-first-launch"
+    package_name = [string]$app.package_name
+    declared_permissions = $permissions
+    runtime_dangerous_permissions = $runtimeDangerousPermissions
+    app_ops = $mediaProjectionAppOps
+    required_before_first_launch = $permissionPregrantRequired
+    tool = "tools/Grant-NativeRendererPermissions.ps1"
+    command = $permissionPregrantCommand
+    summary_path = $permissionPregrantSummaryPath
+    notes = @(
+        "Only permissions declared by the resolved app manifest should be requested for this app.",
+        "pm grant can fail for normal or signature permissions; dangerous permission and app-op evidence is acceptance-critical.",
+        "PROJECT_MEDIA app-op reduces lab prompt friction but does not replace fresh MediaProjection resultData from createScreenCaptureIntent."
+    )
 }
 
 $validationCommands = @(
@@ -741,6 +855,7 @@ $nativeAppSettings = [ordered]@{
     modules = $moduleRecords
     values = $settingsValues
     disabled_modules = $clearFamilies
+    settings_hotload = $settingsHotload
     adapters = [ordered]@{
         android_properties = $setProperties
         clear_families = $clearFamilies
@@ -787,6 +902,8 @@ $featureLock = [ordered]@{
         sha256 = Get-FileSha256 -Path $nativeAppSettingsPath
         authority = $NativeAppSettingsSchema
     }
+    settings_hotload = $settingsHotload
+    permission_pregrant = $permissionPregrant
     build_inputs = [ordered]@{
         env = @($envByName.Keys | Sort-Object | ForEach-Object { $envByName[$_] })
         assets = @(Get-SortedSet -Set $assetSet)
@@ -862,6 +979,8 @@ $audit = [ordered]@{
     runtime_property_count = $ownedProperties.Count
     set_property_count = $setProperties.Count
     settings_authority = $NativeAppSettingsSchema
+    settings_hotload = $settingsHotload
+    permission_pregrant = $permissionPregrant
     generated_outputs = $generatedOutputs
     artifact_hashes = $buildManifest
     result = "accepted"

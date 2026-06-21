@@ -13,6 +13,7 @@ $appBuildDir = Join-Path $repoRootPath "fixtures\native-app-builds"
 $schemaDir = Join-Path $repoRootPath "schemas"
 $profileGate = Join-Path $repoRootPath "tools\Test-NativeAppBuildProfile.ps1"
 $resolver = Join-Path $repoRootPath "tools\Resolve-NativeAppBuild.ps1"
+$permissionTool = Join-Path $repoRootPath "tools\Grant-NativeRendererPermissions.ps1"
 
 function Read-Json {
     param([Parameter(Mandatory=$true)][string]$Path)
@@ -75,11 +76,39 @@ foreach ($path in @(
     (Join-Path $schemaDir "rusty.quest.native_app_feature_lock.v1.schema.json"),
     (Join-Path $schemaDir "rusty.quest.native_app_settings.v1.schema.json"),
     $resolver,
+    $permissionTool,
     $profileGate
 )) {
     if (-not (Test-Path -LiteralPath $path)) {
         throw "Native app-build workflow file is missing: $path"
     }
+}
+
+$settingsSchema = Read-Json -Path (Join-Path $schemaDir "rusty.quest.native_app_settings.v1.schema.json")
+if (-not (@($settingsSchema.required | ForEach-Object { [string]$_ }) -contains "settings_hotload")) {
+    throw "Native app settings schema must require settings_hotload"
+}
+$featureLockSchema = Read-Json -Path (Join-Path $schemaDir "rusty.quest.native_app_feature_lock.v1.schema.json")
+foreach ($requiredLockField in @("settings_hotload", "permission_pregrant")) {
+    if (-not (@($featureLockSchema.required | ForEach-Object { [string]$_ }) -contains $requiredLockField)) {
+        throw "Native app feature lock schema must require $requiredLockField"
+    }
+}
+$resolverText = Get-Content -Raw -LiteralPath $resolver
+foreach ($requiredResolverNeedle in @(
+    "hotloadable-low-rate-settings-with-explicit-restart-boundaries",
+    "pregrant-declared-permissions-before-first-launch",
+    "same-process-jni-live-queue",
+    "app-private-revision-sidecar",
+    "PROJECT_MEDIA"
+)) {
+    if ($resolverText -notmatch [regex]::Escape($requiredResolverNeedle)) {
+        throw "Native app-build resolver is missing workflow guardrail: $requiredResolverNeedle"
+    }
+}
+$permissionToolText = Get-Content -Raw -LiteralPath $permissionTool
+if ($permissionToolText -notmatch '\[string\[\]\]\$Permissions') {
+    throw "Permission pregrant helper must accept an explicit permission list"
 }
 
 $featureFiles = @(Get-ChildItem -LiteralPath $featureDir -Filter "*.feature.json" -File -Recurse |
@@ -109,7 +138,7 @@ foreach ($requiredFeature in @(
     "particles.private.placeholder_compute",
     "particles.private.ordering.gpu_index_remap",
     "particles.private.mask.r8_texture",
-    "particles.private.tracers",
+    "particles.tracers.snapshot_rows",
     "input.right_primary_private_particle_recenter",
     "camera.hwb",
     "display_composite",

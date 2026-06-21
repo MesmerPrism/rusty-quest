@@ -13,6 +13,7 @@
     "modules",
     "values",
     "disabled_modules",
+    "settings_hotload",
     "adapters"
   ],
   "properties": {
@@ -52,6 +53,9 @@
         "type": "string"
       },
       "uniqueItems": true
+    },
+    "settings_hotload": {
+      "type": "object"
     },
     "adapters": {
       "type": "object"

@@ -77,7 +77,7 @@ Assert-SetEquals -Label "canary selected feature closure" -Expected @(
     "particles.private.ordering.gpu_index_remap",
     "particles.private.payload_slot",
     "particles.private.placeholder_compute",
-    "particles.private.tracers",
+    "particles.tracers.snapshot_rows",
     "quest.native.openxr_vulkan_base",
     "renderer.background.solid_black",
     "renderer.private_particles"
@@ -86,6 +86,35 @@ Assert-SetEquals -Label "canary Android permission surface" -Expected @(
     "org.khronos.openxr.permission.OPENXR",
     "org.khronos.openxr.permission.OPENXR_SYSTEM"
 ) -Actual @($lock.android_manifest.permissions | ForEach-Object { [string]$_ })
+if ($null -eq $lock.PSObject.Properties["settings_hotload"]) {
+    throw "Generated canary feature lock is missing settings_hotload policy"
+}
+if ([string]$lock.settings_hotload.policy -ne "hotloadable-low-rate-settings-with-explicit-restart-boundaries") {
+    throw "Generated canary feature lock has wrong settings hotload policy: $($lock.settings_hotload.policy)"
+}
+foreach ($transport in @("startup-runtime-profile", "same-process-jni-live-queue", "app-private-revision-sidecar")) {
+    if (-not (@($lock.settings_hotload.allowed_transports | ForEach-Object { [string]$_ }) -contains $transport)) {
+        throw "Generated canary feature lock hotload policy is missing transport: $transport"
+    }
+}
+if (-not [bool]$lock.settings_hotload.high_rate_payloads_forbidden) {
+    throw "Generated canary feature lock must forbid high-rate settings payloads"
+}
+if ($null -eq $lock.PSObject.Properties["permission_pregrant"]) {
+    throw "Generated canary feature lock is missing permission_pregrant plan"
+}
+Assert-SetEquals -Label "canary permission pregrant declared surface" `
+    -Expected @($lock.android_manifest.permissions | ForEach-Object { [string]$_ }) `
+    -Actual @($lock.permission_pregrant.declared_permissions | ForEach-Object { [string]$_ })
+if ([string]$lock.permission_pregrant.policy -ne "pregrant-declared-permissions-before-first-launch") {
+    throw "Generated canary permission pregrant plan has wrong policy: $($lock.permission_pregrant.policy)"
+}
+if ([bool]$lock.permission_pregrant.required_before_first_launch) {
+    throw "Generated canary must not require permission pregrant before first launch"
+}
+if (-not [string]::IsNullOrWhiteSpace([string]$lock.permission_pregrant.command)) {
+    throw "Generated canary permission pregrant plan should not emit a device command when no dangerous permission or app-op is required"
+}
 Assert-SetEquals -Label "canary Android uses-feature surface" -Expected @(
     "android.hardware.vr.headtracking",
     "android.opengl.gles.3.1"
@@ -141,8 +170,8 @@ foreach ($requiredModule in @(
     "particles/private/placeholder",
     "particles/private/ordering/gpu-index-remap",
     "particles/private/mask/r8-texture",
-    "particles/private/tracers",
     "particles/private/renderer",
+    "particles/tracers/snapshot-rows",
     "input/private-particles/right-primary-recenter"
 )) {
     if (-not (@($settings.modules | ForEach-Object { [string]$_.module_path }) -contains $requiredModule)) {
@@ -183,6 +212,17 @@ foreach ($requiredDisabled in @(
 if ([string]$settings.values.'native_renderer.render.mode'.value -ne "solid-black-private-particles") {
     throw "Generated canary native app settings did not set the master render mode"
 }
+if ($null -eq $settings.PSObject.Properties["settings_hotload"]) {
+    throw "Generated canary native app settings is missing settings_hotload policy"
+}
+if ([string]$settings.settings_hotload.master_surface -ne "local-artifacts/native-app-builds/private_particle_solid_black_canary/native-app-settings.json") {
+    throw "Generated canary native app settings hotload policy points at the wrong master surface: $($settings.settings_hotload.master_surface)"
+}
+foreach ($restartBoundary in @("Android manifest permissions", "build inputs", "OpenXR provider")) {
+    if (-not (@($settings.settings_hotload.restart_required_scope | ForEach-Object { [string]$_ }) -match [regex]::Escape($restartBoundary))) {
+        throw "Generated canary native app settings hotload policy is missing restart boundary containing: $restartBoundary"
+    }
+}
 
 $manifestText = Get-Content -Raw -LiteralPath $manifestPath
 foreach ($forbiddenPermission in @(
@@ -195,6 +235,21 @@ foreach ($forbiddenPermission in @(
 )) {
     if ($manifestText -match [regex]::Escape($forbiddenPermission)) {
         throw "Generated canary manifest contains denied permission: $forbiddenPermission"
+    }
+}
+
+$stimulusDir = Join-Path $repoRootPath "local-artifacts\native-app-builds\native_stimulus_volume_panel"
+$stimulusSettingsPath = Join-Path $stimulusDir "native-app-settings.json"
+if (-not (Test-Path -LiteralPath $stimulusSettingsPath)) {
+    throw "Expected generated stimulus native app settings artifact is missing: $stimulusSettingsPath"
+}
+$stimulusSettings = Read-Json -Path $stimulusSettingsPath
+if (@($stimulusSettings.settings_hotload.runtime_polled_property_families | ForEach-Object { [string]$_ }) -contains "private_particles") {
+    throw "Generated stimulus app settings must not advertise private-particle runtime-polled hotload families"
+}
+foreach ($propertyName in @($stimulusSettings.settings_hotload.accepted_scalar_properties | ForEach-Object { [string]$_ })) {
+    if ($propertyName -like "*.private_particles.*") {
+        throw "Generated stimulus app settings must not advertise private-particle hotload property: $propertyName"
     }
 }
 
