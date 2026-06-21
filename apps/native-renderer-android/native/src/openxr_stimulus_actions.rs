@@ -49,12 +49,14 @@ pub(crate) struct StimulusVolumeActions {
     suggested_binding_count: usize,
     stimulus_settings: NativeStimulusVolumeSettings,
     projection_target_settings: ProjectionTargetSettings,
+    private_particle_recenter_enabled: bool,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct NativeRendererControllerEvents {
     pub(crate) stimulus_randomize_triggered: bool,
     pub(crate) panel_toggle_triggered: bool,
+    pub(crate) private_particle_recenter_triggered: bool,
     pub(crate) projection_target_inputs: Vec<ProjectionTargetInput>,
     pub(crate) right_grip_pose_active: bool,
     pub(crate) right_grip_pose_tracked: bool,
@@ -94,8 +96,12 @@ impl StimulusVolumeActions {
         instance: &xr::Instance,
         stimulus_settings: NativeStimulusVolumeSettings,
         projection_target_settings: ProjectionTargetSettings,
+        private_particle_recenter_enabled: bool,
     ) -> Result<Option<Self>, String> {
-        if !stimulus_settings.enabled && !projection_target_settings.controls_enabled {
+        if !stimulus_settings.enabled
+            && !projection_target_settings.controls_enabled
+            && !private_particle_recenter_enabled
+        {
             crate::marker(
                 "stimulus-volume-input",
                 "status=panel-toggle-only reason=native-controller-controls-disabled actionSetAttached=false rightPrimaryRandomizeAction=false rightTriggerPanelToggleAction=true",
@@ -160,6 +166,8 @@ impl StimulusVolumeActions {
         let stimulus_randomize_binding_enabled =
             stimulus_settings.enabled && stimulus_settings.randomize_enabled;
         let projection_controls_enabled = projection_target_settings.controls_enabled;
+        let primary_recenter_binding_enabled =
+            projection_controls_enabled || private_particle_recenter_enabled;
         let projection_joystick_binding_enabled =
             projection_controls_enabled && projection_target_settings.joystick_controls_enabled;
         let breath_haptics_configured = projection_controls_enabled
@@ -188,7 +196,7 @@ impl StimulusVolumeActions {
                 if stimulus_randomize_binding_enabled {
                     bindings.push(xr::Binding::new(&right_primary_randomize, input));
                 }
-                if projection_controls_enabled {
+                if primary_recenter_binding_enabled {
                     bindings.push(xr::Binding::new(&right_primary_reset, input));
                 }
             }
@@ -260,7 +268,7 @@ impl StimulusVolumeActions {
                             profile.right_select_fallback_path.is_some(),
                             profile.right_thumbstick_y_path.is_some()
                                 && projection_joystick_binding_enabled,
-                            profile.right_primary_path.is_some() && projection_controls_enabled,
+                            profile.right_primary_path.is_some() && primary_recenter_binding_enabled,
                             profile.right_secondary_path.is_some() && projection_controls_enabled,
                             profile.right_grip_pose_path.is_some() && right_grip_pose_binding_enabled,
                             profile.right_haptic_output_path.is_some() && breath_haptics_configured,
@@ -303,6 +311,14 @@ impl StimulusVolumeActions {
                 breath_haptic_pulse_hz(),
                 BREATH_HAPTIC_AMPLITUDE,
                 BREATH_HAPTIC_PULSE_DURATION_MS,
+            ),
+        );
+        crate::marker(
+            "private-particle-anchor",
+            format!(
+                "status=input-config actionSet=stimulus_volume privateParticleWorldAnchorRecenterEnabled={} rightControllerPrimaryPrivateParticleRecenterBinding={} rightControllerPrimaryPrivateParticleRecenter=/user/hand/right/input/a/click actionSetAttached=false",
+                private_particle_recenter_enabled,
+                primary_recenter_binding_enabled,
             ),
         );
 
@@ -352,6 +368,7 @@ impl StimulusVolumeActions {
             suggested_binding_count,
             stimulus_settings,
             projection_target_settings,
+            private_particle_recenter_enabled,
         }))
     }
 
@@ -456,8 +473,22 @@ impl StimulusVolumeActions {
 
         events.stimulus_randomize_triggered = self.poll_primary_randomize(session, frame_count);
         events.panel_toggle_triggered = self.poll_panel_toggle(session, frame_count);
-        if let Some(input) = self.poll_projection_reset(session, frame_count) {
-            events.projection_target_inputs.push(input);
+        if self.poll_primary_reset(session, frame_count) {
+            if self.projection_target_settings.controls_enabled {
+                events
+                    .projection_target_inputs
+                    .push(ProjectionTargetInput::ResetBaseScale);
+            }
+            if self.private_particle_recenter_enabled {
+                events.private_particle_recenter_triggered = true;
+                crate::marker(
+                    "private-particle-anchor",
+                    format!(
+                        "event=right-primary-recenter status=triggered frame={} privateParticleWorldAnchorRecenterRequested=true",
+                        frame_count
+                    ),
+                );
+            }
         }
         if let Some(input) = self.poll_scale_driver_toggle(session, frame_count) {
             events.projection_target_inputs.push(input);
@@ -517,7 +548,7 @@ impl StimulusVolumeActions {
             crate::marker(
                 "projection-target-input",
                 format!(
-                    "status=polled frame={} rightGripPoseActive={} rightGripPoseTracked={} nativeControllerPosePublisherEnabled={} nativeControllerPosePublishedCount={} nativeControllerPoseDroppedCount={} rightControllerThumbstickYAction={} rightPrimaryResetAction={} rightSecondaryScaleDriverToggleAction={} rightBreathHapticAction={} breathHapticsEnabled={} highRatePoseViaManifold={} highRatePoseViaAndroidProperties=false",
+                    "status=polled frame={} rightGripPoseActive={} rightGripPoseTracked={} nativeControllerPosePublisherEnabled={} nativeControllerPosePublishedCount={} nativeControllerPoseDroppedCount={} rightControllerThumbstickYAction={} rightPrimaryResetAction={} rightControllerPrimaryPrivateParticleRecenterAction={} rightSecondaryScaleDriverToggleAction={} rightBreathHapticAction={} breathHapticsEnabled={} highRatePoseViaManifold={} highRatePoseViaAndroidProperties=false",
                     frame_count,
                     events.right_grip_pose_active,
                     events.right_grip_pose_tracked,
@@ -527,6 +558,7 @@ impl StimulusVolumeActions {
                     self.projection_target_settings.controls_enabled
                         && self.projection_target_settings.joystick_controls_enabled,
                     self.projection_target_settings.controls_enabled,
+                    self.private_particle_recenter_enabled,
                     self.projection_target_settings.controls_enabled,
                     breath_haptic_action,
                     breath_haptics_enabled,
@@ -976,13 +1008,11 @@ impl StimulusVolumeActions {
         triggered
     }
 
-    fn poll_projection_reset<G>(
-        &mut self,
-        session: &xr::Session<G>,
-        frame_count: u64,
-    ) -> Option<ProjectionTargetInput> {
-        if !self.projection_target_settings.controls_enabled {
-            return None;
+    fn poll_primary_reset<G>(&mut self, session: &xr::Session<G>, frame_count: u64) -> bool {
+        if !self.projection_target_settings.controls_enabled
+            && !self.private_particle_recenter_enabled
+        {
+            return false;
         }
         let state = match self.right_primary_reset.state(session, xr::Path::NULL) {
             Ok(state) => state,
@@ -997,7 +1027,7 @@ impl StimulusVolumeActions {
                         ),
                     );
                 }
-                return None;
+                return false;
             }
         };
         let pressed = state.is_active && state.current_state;
@@ -1013,9 +1043,9 @@ impl StimulusVolumeActions {
                     state.changed_since_last_sync
                 ),
             );
-            return Some(ProjectionTargetInput::ResetBaseScale);
+            return true;
         }
-        None
+        false
     }
 
     fn poll_scale_driver_toggle<G>(

@@ -92,6 +92,8 @@ mod scorecard;
 use replay_visual_stats::{EvidenceUvRect, ReplayVisualStats};
 
 const PIPELINE_DEPTH: u32 = 2;
+const PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M: f32 = 1.70;
+const PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M: f32 = 0.46;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct XrVulkanReadiness {
@@ -290,6 +292,9 @@ unsafe fn run_projection_loop_inner(
         &xr_instance,
         runtime_options.stimulus_volume_settings,
         runtime_options.projection_target_settings.clone(),
+        runtime_options
+            .render_mode
+            .requests_private_particle_recenter_input(),
     ) {
         Ok(actions) => actions,
         Err(error) => {
@@ -1607,6 +1612,7 @@ unsafe fn run_projection_frames(
         ProjectionTargetState::new(projection_target_settings.clone());
     let mut breath_bridge = ManifoldBreathBridge::start(projection_target_settings);
     let mut previous_frame_instant = Instant::now();
+    let mut private_particle_world_anchor = PrivateParticleWorldAnchor::new();
     crate::marker(
         "projection-target",
         format!(
@@ -1758,6 +1764,14 @@ unsafe fn run_projection_frames(
             .as_secs_f32()
             .clamp(0.0, 1.0);
         previous_frame_instant = frame_instant;
+        let particle_sort_eye_projection = views
+            .first()
+            .map(hand_mesh_visual_eye_projection)
+            .unwrap_or_default();
+        if gpu_private_particle_renderer.is_some() {
+            private_particle_world_anchor
+                .capture_startup_if_needed(particle_sort_eye_projection, frame_count);
+        }
         if let Some(runtime) = native_passthrough.as_deref_mut() {
             runtime.update_audio_reactive_style(session, dt_seconds, frame_count);
         }
@@ -1804,6 +1818,11 @@ unsafe fn run_projection_frames(
             }
             if controller_events.panel_toggle_triggered {
                 crate::native_renderer_panel_bridge::toggle_control_panel(app, frame_count);
+            }
+            if controller_events.private_particle_recenter_triggered
+                && gpu_private_particle_renderer.is_some()
+            {
+                private_particle_world_anchor.recenter(particle_sort_eye_projection, frame_count);
             }
         }
         if let Some(bridge) = breath_bridge.as_mut() {
@@ -2345,10 +2364,6 @@ unsafe fn run_projection_frames(
                 frame_count,
             );
         }
-        let particle_sort_eye_projection = views
-            .first()
-            .map(hand_mesh_visual_eye_projection)
-            .unwrap_or_default();
         let openxr_environment_depth_frame =
             if environment_depth_settings.runtime_provider_requested() {
                 openxr_environment_depth_runtime
@@ -2418,7 +2433,13 @@ unsafe fn run_projection_frames(
             };
         let private_particle_stats = if let Some(renderer) = gpu_private_particle_renderer.as_ref()
         {
-            renderer.record_compute_frame(vk_device, cmd, particle_sort_eye_projection, frame_count)
+            renderer.record_compute_frame(
+                vk_device,
+                cmd,
+                particle_sort_eye_projection,
+                private_particle_world_anchor.world_center_scale(),
+                frame_count,
+            )
         } else {
             GpuPrivateParticleFrameStats::unavailable()
         };
@@ -2687,6 +2708,7 @@ unsafe fn run_projection_frames(
             environment_depth_settings,
             gpu_private_particle_renderer.as_deref(),
             &private_particle_stats,
+            private_particle_world_anchor.world_center_scale(),
             gpu_sdf_field_renderer.as_deref(),
             &gpu_sdf_stats,
             &live_hand_frames,
@@ -3294,6 +3316,7 @@ unsafe fn record_projection_diagnostic(
     environment_depth_settings: NativeEnvironmentDepthSettings,
     gpu_private_particle_renderer: Option<&GpuPrivateParticleRenderer>,
     private_particle_stats: &GpuPrivateParticleFrameStats,
+    private_particle_world_center_scale: [f32; 4],
     gpu_sdf_field_renderer: Option<&GpuSdfFieldRenderer>,
     gpu_sdf_stats: &GpuSdfFieldFrameStats,
     live_hand_frames: &LiveHandCompactFrameSet,
@@ -3577,6 +3600,7 @@ unsafe fn record_projection_diagnostic(
                 cmd,
                 swapchain.extent,
                 eye_projection,
+                private_particle_world_center_scale,
                 private_particle_stats,
             );
         }
@@ -3754,6 +3778,76 @@ fn hand_forward_depth_m(
         center_position[2] - eye_projection.position[2],
     ];
     dot3(delta, forward)
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PrivateParticleWorldAnchor {
+    center_scale: [f32; 4],
+    initialized: bool,
+}
+
+impl PrivateParticleWorldAnchor {
+    fn new() -> Self {
+        Self {
+            center_scale: [
+                0.0,
+                0.0,
+                -PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M,
+                PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M,
+            ],
+            initialized: false,
+        }
+    }
+
+    fn capture_startup_if_needed(
+        &mut self,
+        eye_projection: HandMeshVisualEyeProjection,
+        frame_count: u64,
+    ) {
+        if !self.initialized {
+            self.capture(eye_projection, frame_count, "startup");
+        }
+    }
+
+    fn recenter(&mut self, eye_projection: HandMeshVisualEyeProjection, frame_count: u64) {
+        self.capture(eye_projection, frame_count, "right-controller-primary");
+    }
+
+    fn world_center_scale(&self) -> [f32; 4] {
+        self.center_scale
+    }
+
+    fn capture(
+        &mut self,
+        eye_projection: HandMeshVisualEyeProjection,
+        frame_count: u64,
+        reason: &'static str,
+    ) {
+        let forward_offset = rotate_by_quat(
+            eye_projection.orientation_xyzw,
+            [0.0, 0.0, -PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M],
+        );
+        self.center_scale = [
+            eye_projection.position[0] + forward_offset[0],
+            eye_projection.position[1] + forward_offset[1],
+            eye_projection.position[2] + forward_offset[2],
+            PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M,
+        ];
+        self.initialized = true;
+        crate::marker(
+            "private-particle-anchor",
+            format!(
+                "status=captured frame={} reason={} privateParticleWorldAnchorInitialized=true privateParticleWorldAnchorFollowCamera=false privateParticleWorldAnchorCenter={:.4},{:.4},{:.4} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorDistanceM={:.3}",
+                frame_count,
+                reason,
+                self.center_scale[0],
+                self.center_scale[1],
+                self.center_scale[2],
+                self.center_scale[3],
+                PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M,
+            ),
+        );
+    }
 }
 
 fn rotate_by_quat(quat: [f32; 4], vector: [f32; 3]) -> [f32; 3] {
