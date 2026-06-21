@@ -22,6 +22,7 @@ The currently documented public routes are:
 | --- | --- | --- | --- | --- |
 | Direct HWB camera quality | Camera2 `50`/`51` sampled directly in the final projection | Disabled by profile | Forced direct `AHardwareBuffer` sample | Raw camera acquisition/projection baseline before guide/private processing |
 | Fullscreen stereo video projection | Full-eye custom projection layer from app-private side-by-side MP4 | Disabled by profile | Android `MediaCodec` decodes into a Rust-owned `AImageReader` `Surface`, then Vulkan imports the decoded `AHardwareBuffer`; Camera2 and display-composite disabled | Stereo video background route for later camera/composite overlays without high-rate JSON or CPU pixel copies |
+| Video-border blend | Full-eye stereo video background | Disabled by profile | Camera2 `50`/`51` via guide texture, optionally composited with the video texture in the public guide/video shader | Compare public camera/video border blend modes and costs |
 | Display-composite feedback witness | Native Meta passthrough via `XR_FB_passthrough` | MediaProjection feedback plane only | Native `AImage`/`AHardwareBuffer` descriptor bridge sampled by the shared Vulkan AHB import module; Camera2 and guide blur disabled | Lab route for screen-composite visual feedback without high-rate JSON or CPU pixel copies |
 | Custom stereo projection | Camera2 `50`/`51` via Vulkan HWB guide textures | Recorded/live GPU-skinned hand mesh, optional SDF visual, optional peripheral stretch border | Enabled | Camera projection, blur, stretch/blend border, SDF, and replay evidence |
 | Live hand anchor particles | Camera2 `50`/`51` via Vulkan HWB guide textures | Live base hand meshes plus resident GPU anchor particles | Enabled | Inspect live hand topology anchors over the camera projection route |
@@ -161,6 +162,14 @@ The staging helper defaults to the package-scoped external
 `/sdcard/Android/data/.../files/v.mp4` path so release-style APKs do not depend
 on `run-as`; use the receipt's `video_projection_path` as the runtime property
 override.
+The `quest-native-renderer-hwb-video-border-blend.profile.json` route uses that
+same video stream as the full-eye background, keeps Camera2/HWB guide output
+public, and selects a generic `video_border_blend.mode` so the transition band
+can be tested as fixed-function alpha, shader crossfade, luma/chroma variants,
+artistic blend modes, gradient-aware blend, two-band blend, or
+temporal-stabilized mask smoothing. `tools/Invoke-NativeRendererVideoBorderBlendSweep.ps1`
+generates per-mode visual and timing artifacts without baking private effect
+semantics into Rusty Quest.
 A compact-joint GPU
 path now parses the real rig blend indices/weights, bind-joint sources, compact
 runtime joint frames, and tip lengths; keeps source mesh and bind metadata

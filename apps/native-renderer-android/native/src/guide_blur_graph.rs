@@ -118,6 +118,38 @@ impl GuideFrameKey {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct VideoBlendTemporalState {
+    initialized: bool,
+    rect: TargetRect,
+}
+
+impl VideoBlendTemporalState {
+    fn resolve(&mut self, requested: TargetRect, temporal_enabled: bool) -> TargetRect {
+        if !temporal_enabled {
+            self.initialized = false;
+            self.rect = requested;
+            return requested;
+        }
+        if !self.initialized {
+            self.initialized = true;
+            self.rect = requested;
+            return requested;
+        }
+        self.rect = lerp_target_rect(self.rect, requested, 0.18);
+        self.rect
+    }
+}
+
+impl Default for VideoBlendTemporalState {
+    fn default() -> Self {
+        Self {
+            initialized: false,
+            rect: TargetRect::UNIT,
+        }
+    }
+}
+
 pub(crate) struct GuideBlurGraphRenderer {
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     color_format: vk::Format,
@@ -127,6 +159,7 @@ pub(crate) struct GuideBlurGraphRenderer {
     last_frame_key: Option<GuideFrameKey>,
     render_count: u64,
     cache_hits: u64,
+    video_blend_temporal: [VideoBlendTemporalState; GUIDE_EYE_COUNT],
 }
 
 impl GuideBlurGraphRenderer {
@@ -145,6 +178,7 @@ impl GuideBlurGraphRenderer {
             last_frame_key: None,
             render_count: 0,
             cache_hits: 0,
+            video_blend_temporal: [VideoBlendTemporalState::default(); GUIDE_EYE_COUNT],
         }
     }
 
@@ -345,6 +379,13 @@ impl GuideBlurGraphRenderer {
         video_opacity: f32,
         prepared_video_projection: &PreparedVideoProjection,
     ) -> bool {
+        let target_rect = self.video_composite_target_rect(
+            eye_index,
+            target_rect,
+            projection_settings
+                .video_border_blend_mode
+                .uses_temporal_target_rect_state(),
+        );
         let Some(resources) = self.resources.as_mut() else {
             return false;
         };
@@ -447,6 +488,18 @@ impl GuideBlurGraphRenderer {
         push_fragment_constants(device, cmd, composite.pipeline_layout, &push);
         device.cmd_draw(cmd, 3, 1, 0, 0);
         true
+    }
+
+    fn video_composite_target_rect(
+        &mut self,
+        eye_index: usize,
+        target_rect: TargetRect,
+        temporal_enabled: bool,
+    ) -> TargetRect {
+        let Some(state) = self.video_blend_temporal.get_mut(eye_index) else {
+            return target_rect;
+        };
+        state.resolve(target_rect, temporal_enabled)
     }
 
     unsafe fn record_blur_axis(
@@ -1476,6 +1529,16 @@ fn target_rect_to_scissor(extent: vk::Extent2D, rect: TargetRect) -> vk::Rect2D 
     vk::Rect2D {
         offset: vk::Offset2D { x, y },
         extent: vk::Extent2D { width, height },
+    }
+}
+
+fn lerp_target_rect(previous: TargetRect, requested: TargetRect, alpha: f32) -> TargetRect {
+    let alpha = alpha.clamp(0.0, 1.0);
+    TargetRect {
+        x: previous.x + (requested.x - previous.x) * alpha,
+        y: previous.y + (requested.y - previous.y) * alpha,
+        width: previous.width + (requested.width - previous.width) * alpha,
+        height: previous.height + (requested.height - previous.height) * alpha,
     }
 }
 

@@ -653,6 +653,44 @@ mod tests {
     }
 
     #[test]
+    fn solid_black_private_particles_requests_no_hand_or_volume_route() {
+        let options = options_from(&[
+            (PROP_RENDER_MODE, "solid-black-private-particles"),
+            (PROP_HAND_MESH_INPUT_SOURCE, "live-meta"),
+            (PROP_ENABLE_SDF_VISUAL, "true"),
+            (PROP_HAND_MESH_GRAFT_COPIES_ENABLED, "false"),
+            (PROP_HAND_MESH_REAL_HANDS_VISIBLE, "false"),
+            (PROP_HAND_ANCHOR_PARTICLES_ENABLED, "false"),
+            (PROP_STIMULUS_VOLUME_ENABLED, "true"),
+        ]);
+
+        assert_eq!(
+            options.render_mode.marker_value(),
+            "solid-black-private-particles"
+        );
+        assert!(!options.render_mode.uses_custom_stereo_projection());
+        assert!(!options.render_mode.uses_native_passthrough());
+        assert!(options.render_mode.uses_solid_black_background());
+        assert!(!options.render_mode.uses_stimulus_volume());
+        assert!(!options.render_mode.requests_openxr_default_hand_visual());
+        assert!(options
+            .render_mode
+            .requests_private_particle_recenter_input());
+        assert!(!options.sdf_visual_enabled);
+        assert!(!options.hand_mesh_graft_copies_enabled);
+        assert!(!options.hand_mesh_real_hands_visible);
+        assert!(!options.hand_anchor_particle_settings.enabled);
+        assert_eq!(
+            options.render_mode.camera_runtime_mode(),
+            "skipped-solid-black-private-particles"
+        );
+        assert_eq!(
+            options.render_mode.disabled_camera_projection_path(),
+            "disabled-solid-black-private-particles"
+        );
+    }
+
+    #[test]
     fn native_passthrough_stimulus_volume_enables_opaque_volume_route() {
         let options = options_from(&[
             (PROP_RENDER_MODE, "native-passthrough-stimulus-volume"),
@@ -1478,6 +1516,46 @@ mod tests {
         assert!(fields.contains(
             "peripheralStretchBlendSemantics=camera-guide-and-video-sampled-shader-composite-through-inner-band"
         ));
+    }
+
+    #[test]
+    fn video_border_blend_advanced_modes_are_public_shader_composites() {
+        let cases = [
+            (
+                "linear-crossfade",
+                NativeVideoBorderBlendMode::LinearCrossfade,
+            ),
+            ("luma-match", NativeVideoBorderBlendMode::LumaMatch),
+            ("chroma-luma", NativeVideoBorderBlendMode::ChromaLuma),
+            ("soft-light", NativeVideoBorderBlendMode::SoftLight),
+            ("overlay", NativeVideoBorderBlendMode::Overlay),
+            ("screen", NativeVideoBorderBlendMode::Screen),
+            ("multiply", NativeVideoBorderBlendMode::Multiply),
+            ("gradient-aware", NativeVideoBorderBlendMode::GradientAware),
+            ("two-band", NativeVideoBorderBlendMode::TwoBand),
+            (
+                "temporal-stabilized",
+                NativeVideoBorderBlendMode::TemporalStabilized,
+            ),
+        ];
+        for (token, expected_mode) in cases {
+            let options = options_from(&[
+                (PROP_PROCESSING_LAYER, "video-border-blend"),
+                (PROP_VIDEO_BORDER_BLEND_MODE, token),
+                (PROP_VIDEO_PROJECTION_ENABLED, "true"),
+                (PROP_VIDEO_PROJECTION_PATH, "video/noodletest-sbs.mp4"),
+            ]);
+            let settings = options.projection_border_stretch_settings;
+            assert_eq!(settings.video_border_blend_mode, expected_mode);
+            assert!(settings.video_border_shader_composite_active());
+            let fields = settings.marker_fields();
+            assert!(fields.contains(&format!("videoBorderBlendMode={token}")));
+            assert!(fields.contains("videoBorderBlendCompositor=guide-video-shader-composite"));
+            assert!(fields.contains("videoBorderBlendShaderCompositeActive=true"));
+            assert!(fields.contains("videoBorderBlendFormula="));
+            assert!(fields.contains("videoBorderBlendCostTier="));
+            assert!(fields.contains("videoBorderBlendSamplePattern="));
+        }
     }
 
     #[test]

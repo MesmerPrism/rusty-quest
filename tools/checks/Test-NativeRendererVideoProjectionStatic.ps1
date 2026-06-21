@@ -46,6 +46,7 @@ $nativeBuild = Read-RepoText "apps\native-renderer-android\native\build.rs"
 $vertexShader = Read-RepoText "apps\native-renderer-android\native\shaders\video_projection.vert.glsl"
 $fragmentShader = Read-RepoText "apps\native-renderer-android\native\shaders\video_projection.frag.glsl"
 $stageVideo = Read-RepoText "tools\Stage-NativeRendererVideo.ps1"
+$blendSweep = Read-RepoText "tools\Invoke-NativeRendererVideoBorderBlendSweep.ps1"
 $videoProjectionDoc = Read-RepoText "docs\NATIVE_VIDEO_PROJECTION.md"
 $propertyManifest = Read-RepoText "fixtures\native-renderer\native-renderer-property-manifest.json"
 $validProfile = Read-RepoText "fixtures\runtime-profiles\quest-native-renderer-fullscreen-stereo-video.profile.json"
@@ -161,7 +162,11 @@ foreach ($token in @(
     "PROP_VIDEO_BORDER_BLEND_MODE",
     "videoBorderBlendMode",
     "videoBorderBlendCompositor",
-    "videoBorderBlendShaderCompositeActive"
+    "videoBorderBlendShaderCompositeActive",
+    "videoBorderBlendFormula",
+    "videoBorderBlendCostTier",
+    "videoBorderBlendSamplePattern",
+    "videoBorderBlendTemporalState"
 )) {
     Assert-Contains -Text ($guideProjectionShader + $projectionBorderStretchOptions) -Needle $token -Label "video border diagnostic edge tint"
 }
@@ -174,7 +179,14 @@ foreach ($token in @(
     "video_target_rect",
     "video_sample_rgb",
     "linear_to_srgb",
-    "luma_matched_camera_rgb"
+    "luma_matched_camera_rgb",
+    "chroma_luma_split_rgb",
+    "soft_light_rgb",
+    "overlay_rgb",
+    "screen_rgb",
+    "gradient_aware_rgb",
+    "two_band_rgb",
+    "transition_band_weight"
 )) {
     Assert-Contains -Text $guideVideoProjectionShader -Needle $token -Label "guide/video composite shader"
 }
@@ -259,9 +271,44 @@ foreach ($token in @(
     "videoProjectionRightSourceUvRect=0.500000,0.000000,0.500000,1.000000",
     "videoBorderBlendMode=crossfade",
     "videoBorderBlendCompositor=guide-video-shader-composite",
+    "videoBorderBlendFormula",
+    "videoBorderBlendCostTier",
     "high_rate_json_payload"
 )) {
     Assert-Contains -Text ($propertyManifest + $validProfile + $videoBorderBlendProfile + $profileMatrix + $parityTool) -Needle $token -Label "profile contract"
+}
+
+foreach ($mode in @(
+    "alpha-over",
+    "crossfade",
+    "linear-crossfade",
+    "luma-match",
+    "chroma-luma",
+    "soft-light",
+    "overlay",
+    "screen",
+    "multiply",
+    "gradient-aware",
+    "two-band",
+    "temporal-stabilized"
+)) {
+    Assert-Contains -Text ($projectionBorderStretchOptions + $propertyManifest + $blendSweep + $videoProjectionDoc) -Needle $mode -Label "video-border blend mode token"
+}
+
+foreach ($token in @(
+    "rusty.quest.native_renderer.video_border_blend_sweep.v1",
+    "Invoke-NativeRendererVideoBorderBlendSweep.ps1",
+    "mode-summary.json",
+    "video-border-blend-sweep-report.md",
+    "Test-NativeRendererRuntimeEvidence.ps1",
+    "set_properties",
+    "expected_markers",
+    'videoBorderBlendMode=$Mode',
+    "projectionCompositeCpuMs",
+    "observedOpenXrFps",
+    "screenshot.png"
+)) {
+    Assert-Contains -Text $blendSweep -Needle $token -Label "video-border blend sweep wrapper"
 }
 
 Write-Output "Native renderer video-projection static checks passed."

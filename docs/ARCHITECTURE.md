@@ -115,10 +115,12 @@ private, or diagnostic overlays should compose above it instead of coupling the
 video decoder to Camera2 or display-composite ownership.
 The `video-border-blend` camera processing layer follows that boundary: the
 video projection renderer draws the prepared stereo frame first, while the
-guide/camera projection pass only changes its own alpha at the target edge
-using the existing inner-band blend controls. Camera2 remains the guide source;
-MediaCodec remains the video source; the final OpenXR/Vulkan frame loop is the
-only composition authority between them.
+guide/camera projection pass owns the target-edge transition. `alpha-over`
+keeps the fixed-function guide alpha baseline. Other public modes use a
+guide/video shader composite that samples the Camera2 guide texture and the
+prepared stereo video texture together inside the inner band. Camera2 remains
+the guide source; MediaCodec remains the video source; the final OpenXR/Vulkan
+frame loop is the only composition authority between them.
 The Rust code opens outside camera ids `50` and `51` through NDK
 `ACameraManager`, acquires `PRIVATE` GPU-sampled `AHardwareBuffer` frames,
 initializes the Android OpenXR loader, probes the

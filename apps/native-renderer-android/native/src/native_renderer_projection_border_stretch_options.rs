@@ -160,6 +160,14 @@ pub(crate) enum NativeVideoBorderBlendMode {
     Crossfade,
     LinearCrossfade,
     LumaMatch,
+    ChromaLuma,
+    SoftLight,
+    Overlay,
+    Screen,
+    Multiply,
+    GradientAware,
+    TwoBand,
+    TemporalStabilized,
 }
 
 impl NativeVideoBorderBlendMode {
@@ -171,6 +179,19 @@ impl NativeVideoBorderBlendMode {
                 Self::LinearCrossfade
             }
             "luma" | "luma-match" | "luma-matched" | "luminance-match" => Self::LumaMatch,
+            "chroma-luma" | "luma-chroma" | "chroma-luma-split" | "luma-chroma-split"
+            | "split-luma-chroma" => Self::ChromaLuma,
+            "soft-light" | "softlight" => Self::SoftLight,
+            "overlay" => Self::Overlay,
+            "screen" => Self::Screen,
+            "multiply" => Self::Multiply,
+            "gradient-aware" | "edge-aware" | "edge-preserving" | "sharpness-aware" => {
+                Self::GradientAware
+            }
+            "two-band" | "multi-band" | "multiband" | "frequency-split" => Self::TwoBand,
+            "temporal" | "temporal-stabilized" | "temporal-stabilized-mask" => {
+                Self::TemporalStabilized
+            }
             _ => Self::AlphaOver,
         }
     }
@@ -181,6 +202,14 @@ impl NativeVideoBorderBlendMode {
             Self::Crossfade => "crossfade",
             Self::LinearCrossfade => "linear-crossfade",
             Self::LumaMatch => "luma-match",
+            Self::ChromaLuma => "chroma-luma",
+            Self::SoftLight => "soft-light",
+            Self::Overlay => "overlay",
+            Self::Screen => "screen",
+            Self::Multiply => "multiply",
+            Self::GradientAware => "gradient-aware",
+            Self::TwoBand => "two-band",
+            Self::TemporalStabilized => "temporal-stabilized",
         }
     }
 
@@ -190,7 +219,77 @@ impl NativeVideoBorderBlendMode {
             Self::Crossfade => 1.0,
             Self::LinearCrossfade => 2.0,
             Self::LumaMatch => 3.0,
+            Self::ChromaLuma => 4.0,
+            Self::SoftLight => 5.0,
+            Self::Overlay => 6.0,
+            Self::Screen => 7.0,
+            Self::Multiply => 8.0,
+            Self::GradientAware => 9.0,
+            Self::TwoBand => 10.0,
+            Self::TemporalStabilized => 11.0,
         }
+    }
+
+    pub(crate) fn cost_tier(self) -> &'static str {
+        match self {
+            Self::AlphaOver => "baseline-fixed-function",
+            Self::Crossfade => "low",
+            Self::LinearCrossfade => "low-medium",
+            Self::LumaMatch
+            | Self::ChromaLuma
+            | Self::SoftLight
+            | Self::Overlay
+            | Self::Screen
+            | Self::Multiply => "medium",
+            Self::GradientAware => "medium-high",
+            Self::TwoBand => "high",
+            Self::TemporalStabilized => "low-medium",
+        }
+    }
+
+    pub(crate) fn sample_pattern(self) -> &'static str {
+        match self {
+            Self::AlphaOver => "fixed-function-alpha",
+            Self::Crossfade
+            | Self::LinearCrossfade
+            | Self::LumaMatch
+            | Self::ChromaLuma
+            | Self::SoftLight
+            | Self::Overlay
+            | Self::Screen
+            | Self::Multiply
+            | Self::TemporalStabilized => "guide-and-video-single-sample",
+            Self::GradientAware => "guide-and-video-single-sample-plus-derivatives",
+            Self::TwoBand => "guide-and-video-five-tap-low-high-split",
+        }
+    }
+
+    pub(crate) fn formula_marker(self) -> &'static str {
+        match self {
+            Self::AlphaOver => "premultiplied-alpha-over",
+            Self::Crossfade => "srgb-crossfade",
+            Self::LinearCrossfade => "linear-light-crossfade",
+            Self::LumaMatch => "luma-matched-crossfade",
+            Self::ChromaLuma => "chroma-luma-split",
+            Self::SoftLight => "soft-light-band",
+            Self::Overlay => "overlay-band",
+            Self::Screen => "screen-band",
+            Self::Multiply => "multiply-band",
+            Self::GradientAware => "gradient-aware-weight-bias",
+            Self::TwoBand => "two-band-low-high-split",
+            Self::TemporalStabilized => "temporal-stabilized-mask-crossfade",
+        }
+    }
+
+    pub(crate) fn temporal_state(self) -> &'static str {
+        match self {
+            Self::TemporalStabilized => "per-eye-target-rect-ema",
+            _ => "none",
+        }
+    }
+
+    pub(crate) fn uses_temporal_target_rect_state(self) -> bool {
+        matches!(self, Self::TemporalStabilized)
     }
 }
 
@@ -360,7 +459,7 @@ impl NativeProjectionBorderStretchSettings {
             "fixed-function-premultiplied-alpha"
         };
         format!(
-            "processingLayer={} projectionBorderPolicy={} projectionAreaOpacity={:.3} projectionBorderOpacity={:.3} guideProjectionCoverage={} guideProjectionEdgeTint=diagnostic-debug-only guideProjectionEdgeTintActive={} peripheralStretchMode=edge-stretch peripheralStretchCoreScale={:.3} peripheralStretchEdgeInsetUv={:.3} peripheralStretchMaxInsetUv={:.3} peripheralStretchCurve={:.3} peripheralStretchInnerBlendUv={:.3} peripheralStretchBlendCurve={:.3} peripheralStretchBlendMode={} peripheralStretchCornerMode=target-footprint peripheralStretchDebug={} peripheralStretchActive={} videoBorderBlendActive={} videoBorderBlendMode={} videoBorderBlendCompositor={} videoBorderBlendShaderCompositeActive={} peripheralStretchTransitionActive={} peripheralStretchConsumesProjectionExterior={} videoBorderBlendConsumesProjectionExterior=false peripheralStretchCoreRegion={} peripheralStretchTransitionRegion={} peripheralStretchExteriorRegion=visible-render-surface-minus-target-footprint peripheralStretchTransitionSpace={} peripheralStretchTransitionSemantics={} peripheralStretchProjectionExteriorMode={} peripheralStretchMapping=mirrored-curved-target-footprint peripheralStretchDistanceCurve=mirrored-border-smoothstep-swirl peripheralStretchBorderSource=mirrored-projection-edge-trail peripheralStretchExteriorSource={} peripheralStretchBlendSemantics={} videoBorderBlendSource=prepared-stereo-video-projection-background videoBorderBlendCameraSource=guide-texture videoBorderBlendDrawOrder=video-background-then-camera-guide-overlay videoBorderBlendAlphaSemantics=premultiplied-camera-guide-over-video-background peripheralStretchTargetLocalRasterRegionModel=projection-area-plus-single-border-region peripheralStretchSourceInvalidConsumesSolidRed=false peripheralStretchReference=pure-hwb-target-local-raster-curved-inner-band videoBorderBlendReference=peripheral-stretch-inner-band-blend-over-video",
+            "processingLayer={} projectionBorderPolicy={} projectionAreaOpacity={:.3} projectionBorderOpacity={:.3} guideProjectionCoverage={} guideProjectionEdgeTint=diagnostic-debug-only guideProjectionEdgeTintActive={} peripheralStretchMode=edge-stretch peripheralStretchCoreScale={:.3} peripheralStretchEdgeInsetUv={:.3} peripheralStretchMaxInsetUv={:.3} peripheralStretchCurve={:.3} peripheralStretchInnerBlendUv={:.3} peripheralStretchBlendCurve={:.3} peripheralStretchBlendMode={} peripheralStretchCornerMode=target-footprint peripheralStretchDebug={} peripheralStretchActive={} videoBorderBlendActive={} videoBorderBlendMode={} videoBorderBlendCompositor={} videoBorderBlendShaderCompositeActive={} videoBorderBlendFormula={} videoBorderBlendCostTier={} videoBorderBlendSamplePattern={} videoBorderBlendTemporalState={} peripheralStretchTransitionActive={} peripheralStretchConsumesProjectionExterior={} videoBorderBlendConsumesProjectionExterior=false peripheralStretchCoreRegion={} peripheralStretchTransitionRegion={} peripheralStretchExteriorRegion=visible-render-surface-minus-target-footprint peripheralStretchTransitionSpace={} peripheralStretchTransitionSemantics={} peripheralStretchProjectionExteriorMode={} peripheralStretchMapping=mirrored-curved-target-footprint peripheralStretchDistanceCurve=mirrored-border-smoothstep-swirl peripheralStretchBorderSource=mirrored-projection-edge-trail peripheralStretchExteriorSource={} peripheralStretchBlendSemantics={} videoBorderBlendSource=prepared-stereo-video-projection-background videoBorderBlendCameraSource=guide-texture videoBorderBlendDrawOrder=video-background-then-camera-guide-overlay videoBorderBlendAlphaSemantics={} peripheralStretchTargetLocalRasterRegionModel=projection-area-plus-single-border-region peripheralStretchSourceInvalidConsumesSolidRed=false peripheralStretchReference=pure-hwb-target-local-raster-curved-inner-band videoBorderBlendReference=peripheral-stretch-inner-band-blend-over-video",
             self.processing_layer.marker_value(),
             self.border_policy.marker_value(),
             self.projection_area_opacity,
@@ -380,6 +479,10 @@ impl NativeProjectionBorderStretchSettings {
             self.video_border_blend_mode.marker_value(),
             video_border_compositor,
             self.video_border_shader_composite_active(),
+            self.video_border_blend_mode.formula_marker(),
+            self.video_border_blend_mode.cost_tier(),
+            self.video_border_blend_mode.sample_pattern(),
+            self.video_border_blend_mode.temporal_state(),
             transition_active,
             self.processing_layer.consumes_projection_exterior(),
             core_region,
@@ -389,6 +492,7 @@ impl NativeProjectionBorderStretchSettings {
             projection_exterior_mode,
             exterior_source,
             blend_semantics,
+            self.video_border_blend_mode.formula_marker(),
         )
     }
 

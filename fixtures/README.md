@@ -27,6 +27,11 @@
   blend profile keeps the same custom Camera2 guide projection route but uses
   the stereo video stream as the full-eye background and fades the camera guide
   overlay into that video through the existing target inner-band blend controls.
+  It explicitly owns `debug.rustyquest.native_renderer.video_border_blend.mode`
+  so shader-composite modes cannot be confused with the fixed-function
+  `alpha-over` baseline. `tools/Invoke-NativeRendererVideoBorderBlendSweep.ps1`
+  generates transient per-mode profiles and captures visual/timing artifacts for
+  all public modes except Poisson/gradient-domain blending.
   The Breathing Room PMB
   scale profile adds the same stretch route plus the source-agnostic Manifold
   controller-pose bridge and a right-controller haptic pulse when PMB drives

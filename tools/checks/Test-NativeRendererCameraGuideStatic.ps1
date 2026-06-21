@@ -311,6 +311,10 @@ Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$guideBlurGraph
     'videoBorderBlendMode=crossfade',
     'videoBorderBlendCompositor=guide-video-shader-composite',
     'videoBorderBlendShaderCompositeActive=true',
+    'videoBorderBlendFormula',
+    'videoBorderBlendCostTier',
+    'videoBorderBlendSamplePattern',
+    'videoBorderBlendTemporalState',
     'peripheralStretchProjectionExteriorMode=video-background-with-inner-band-camera-blend',
     'videoBorderBlendSource=prepared-stereo-video-projection-background',
     'videoBorderBlendCameraSource=guide-texture',
@@ -330,7 +334,14 @@ Assert-ContainsTokens $guideVideoProjectionFragment @(
     'GuideVideoProjectionPush',
     'video_source_uv_rect',
     'linear_to_srgb',
-    'luma_matched_camera_rgb'
+    'luma_matched_camera_rgb',
+    'chroma_luma_split_rgb',
+    'soft_light_rgb',
+    'overlay_rgb',
+    'screen_rgb',
+    'gradient_aware_rgb',
+    'two_band_rgb',
+    'transition_band_weight'
 ) "guide/video projection shader"
 
 Assert-ContainsTokens $guideProjectionFragment @(

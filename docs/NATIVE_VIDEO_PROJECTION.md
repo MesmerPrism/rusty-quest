@@ -52,9 +52,15 @@ is `off`, the video-border transition has no cyan/orange debug rim.
 
 `debug.rustyquest.native_renderer.video_border_blend.mode` selects the public
 composition mode. `alpha-over` keeps the fixed-function premultiplied-alpha
-path. `crossfade`, `linear-crossfade`, and `luma-match` use the guide/video
-shader composite path, where the final pass samples both the Camera2 guide
-texture and the prepared stereo video texture inside the camera target band.
+path. `crossfade`, `linear-crossfade`, `luma-match`, `chroma-luma`,
+`soft-light`, `overlay`, `screen`, `multiply`, `gradient-aware`, `two-band`,
+and `temporal-stabilized` use the guide/video shader composite path, where the
+final pass samples both the Camera2 guide texture and the prepared stereo video
+texture inside the camera target band.
+
+See `docs/NATIVE_VIDEO_BORDER_BLEND_MODES.md` for the mode table and
+`tools/Invoke-NativeRendererVideoBorderBlendSweep.ps1` for the per-mode visual
+and performance sweep harness.
 
 ## Looping
 
