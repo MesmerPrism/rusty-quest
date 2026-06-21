@@ -16,6 +16,7 @@
     "permission_allowlist",
     "declared_manifest",
     "expected_render_mode",
+    "settings_assertions",
     "expected_markers",
     "validation_tier"
   ],
@@ -112,6 +113,48 @@
     "expected_render_mode": {
       "type": "string",
       "minLength": 1
+    },
+    "settings_assertions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_values",
+        "required_disabled_modules",
+        "required_modules",
+        "forbidden_modules"
+      ],
+      "properties": {
+        "required_values": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "required_disabled_modules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "required_modules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "forbidden_modules": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      }
     },
     "expected_markers": {
       "type": "object",

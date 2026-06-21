@@ -1,0 +1,53 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "particles.private.tracers",
+  "module_path": "particles/private/tracers",
+  "module_kind": "particle-tracers",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Resident private-particle tracer rows and output merge budget.",
+  "provides": [
+    "particles.private.tracers"
+  ],
+  "depends_on": [
+    "particles.private.payload_slot"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": [
+      "solid-black-private-particles"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "privateParticleTracerOutputMode=merged-billboard-output",
+      "privateParticleTracerCpuUploadPerFrame=false"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Tracer infrastructure is public; downstream apps own private dynamics and effect vocabulary."
+}

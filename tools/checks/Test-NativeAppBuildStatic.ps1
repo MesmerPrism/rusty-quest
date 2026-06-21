@@ -35,7 +35,7 @@ function Assert-FeatureDescriptorShape {
         [Parameter(Mandatory=$true)]$Feature,
         [Parameter(Mandatory=$true)][string]$Path
     )
-    foreach ($field in @("schema", "feature_id", "owner_lane", "status", "description", "provides", "depends_on", "incompatible_with", "exclusive_groups", "android_manifest", "runtime_profile", "build_inputs", "markers", "validation", "public_private_boundary")) {
+    foreach ($field in @("schema", "feature_id", "module_path", "module_kind", "settings_surface", "owner_lane", "status", "description", "provides", "depends_on", "incompatible_with", "exclusive_groups", "android_manifest", "runtime_profile", "build_inputs", "markers", "validation", "public_private_boundary")) {
         Assert-RequiredProperty -Object $Feature -Name $field -Label $Path
     }
     if ([string]$Feature.schema -ne "rusty.quest.native_app_feature.v1") {
@@ -43,6 +43,17 @@ function Assert-FeatureDescriptorShape {
     }
     if ([string]::IsNullOrWhiteSpace([string]$Feature.feature_id)) {
         throw "$Path has empty feature_id"
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Feature.module_path)) {
+        throw "$Path has empty module_path"
+    }
+    if ([string]$Feature.module_path -notmatch '^[a-z0-9_]+([-/][a-z0-9_]+)*$') {
+        throw "$Path has invalid module_path: $($Feature.module_path)"
+    }
+    Assert-RequiredProperty -Object $Feature.settings_surface -Name "authority" -Label "$Path settings_surface"
+    Assert-RequiredProperty -Object $Feature.settings_surface -Name "adapter" -Label "$Path settings_surface"
+    if ([string]$Feature.settings_surface.authority -ne "rusty.quest.native_app_settings.v1") {
+        throw "$Path has wrong settings authority: $($Feature.settings_surface.authority)"
     }
     foreach ($field in @("permissions", "uses_features", "activities", "services", "queries")) {
         Assert-RequiredProperty -Object $Feature.android_manifest -Name $field -Label "$Path android_manifest"
@@ -62,6 +73,7 @@ foreach ($path in @(
     (Join-Path $schemaDir "rusty.quest.native_app_feature.v1.schema.json"),
     (Join-Path $schemaDir "rusty.quest.native_app_build.v1.schema.json"),
     (Join-Path $schemaDir "rusty.quest.native_app_feature_lock.v1.schema.json"),
+    (Join-Path $schemaDir "rusty.quest.native_app_settings.v1.schema.json"),
     $resolver,
     $profileGate
 )) {
@@ -70,7 +82,11 @@ foreach ($path in @(
     }
 }
 
-$featureFiles = @(Get-ChildItem -LiteralPath $featureDir -Filter "*.feature.json" -File | Sort-Object Name)
+$featureFiles = @(Get-ChildItem -LiteralPath $featureDir -Filter "*.feature.json" -File -Recurse |
+    Where-Object {
+        $_.FullName.Replace("\", "/") -notmatch '/damaged/'
+    } |
+    Sort-Object FullName)
 if ($featureFiles.Count -lt 12) {
     throw "Native app-build feature library is unexpectedly small: $($featureFiles.Count)"
 }
@@ -89,6 +105,11 @@ foreach ($requiredFeature in @(
     "quest.native.openxr_vulkan_base",
     "renderer.background.solid_black",
     "renderer.private_particles",
+    "particles.private.payload_slot",
+    "particles.private.placeholder_compute",
+    "particles.private.ordering.gpu_index_remap",
+    "particles.private.mask.r8_texture",
+    "particles.private.tracers",
     "input.right_primary_private_particle_recenter",
     "camera.hwb",
     "display_composite",
@@ -97,6 +118,7 @@ foreach ($requiredFeature in @(
     "environment_depth",
     "hand_mesh_visual",
     "hand_anchor_particles",
+    "particles.hand_anchor.ordering.gpu_index_remap",
     "sdf_visual",
     "projection_target.breathing_room",
     "manifold.bridge",
@@ -108,8 +130,10 @@ foreach ($requiredFeature in @(
 }
 
 $publicFixtureFiles = @()
-$publicFixtureFiles += Get-ChildItem -LiteralPath $featureDir -Filter "*.feature.json" -File
-$publicFixtureFiles += Get-ChildItem -LiteralPath $appBuildDir -Filter "*.app.json" -File
+$publicFixtureFiles += Get-ChildItem -LiteralPath $featureDir -Filter "*.feature.json" -File -Recurse |
+    Where-Object { $_.FullName.Replace("\", "/") -notmatch '/damaged/' }
+$publicFixtureFiles += Get-ChildItem -LiteralPath $appBuildDir -Filter "*.app.json" -File -Recurse |
+    Where-Object { $_.FullName.Replace("\", "/") -notmatch '/damaged/' }
 foreach ($file in $publicFixtureFiles) {
     $text = Get-Content -Raw -LiteralPath $file.FullName
     foreach ($forbidden in @("S:/", "S:\\", "rusty-gpu-viscereality", "Rusty-Viscereality", "viscereality")) {
@@ -119,7 +143,7 @@ foreach ($file in $publicFixtureFiles) {
     }
 }
 
-$damagedFeatureFiles = @(Get-ChildItem -LiteralPath (Join-Path $featureDir "damaged") -Filter "*.feature.json" -File | Sort-Object Name)
+$damagedFeatureFiles = @(Get-ChildItem -LiteralPath (Join-Path $featureDir "damaged") -Filter "*.feature.json" -File -Recurse | Sort-Object FullName)
 if ($damagedFeatureFiles.Count -lt 2) {
     throw "Native app-build damaged feature descriptor fixtures are missing"
 }

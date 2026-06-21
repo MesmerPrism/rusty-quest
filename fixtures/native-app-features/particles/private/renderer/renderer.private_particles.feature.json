@@ -1,6 +1,12 @@
 {
   "schema": "rusty.quest.native_app_feature.v1",
   "feature_id": "renderer.private_particles",
+  "module_path": "particles/private/renderer",
+  "module_kind": "particle-aggregate",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
   "owner_lane": "rusty-quest",
   "status": "public-substrate",
   "description": "Generic downstream-owned GPU private particle payload slot over the native renderer.",
@@ -10,7 +16,12 @@
   ],
   "depends_on": [
     "quest.native.openxr_vulkan_base",
-    "renderer.background.solid_black"
+    "renderer.background.solid_black",
+    "particles.private.payload_slot",
+    "particles.private.placeholder_compute",
+    "particles.private.ordering.gpu_index_remap",
+    "particles.private.mask.r8_texture",
+    "particles.private.tracers"
   ],
   "incompatible_with": [
     "camera.hwb",
@@ -75,18 +86,11 @@
     ]
   },
   "build_inputs": {
-    "env": [
-      {
-        "name": "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_KIND",
-        "value": "none",
-        "source": "feature-default-placeholder"
-      }
-    ],
+    "env": [],
     "assets": [],
     "shaders": [
       "apps/native-renderer-android/native/shaders/private_particles.vert.glsl",
-      "apps/native-renderer-android/native/shaders/private_particles.frag.glsl",
-      "apps/native-renderer-android/native/shaders/private_particles_placeholder.comp.glsl"
+      "apps/native-renderer-android/native/shaders/private_particles.frag.glsl"
     ]
   },
   "markers": {

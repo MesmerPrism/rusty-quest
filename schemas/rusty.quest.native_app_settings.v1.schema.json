@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rusty.quest.native_app_settings.v1",
+  "title": "Rusty Quest generated native app settings",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "app_id",
+    "authority",
+    "resolver_version",
+    "selected_feature_ids",
+    "modules",
+    "values",
+    "disabled_modules",
+    "adapters"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.quest.native_app_settings.v1"
+    },
+    "app_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "authority": {
+      "const": "rusty.quest.native_app_settings.v1"
+    },
+    "resolver_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "selected_feature_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "values": {
+      "type": "object"
+    },
+    "disabled_modules": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "adapters": {
+      "type": "object"
+    }
+  }
+}

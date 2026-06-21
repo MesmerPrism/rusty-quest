@@ -42,7 +42,11 @@ if (-not (Test-Path -LiteralPath $resolver)) {
     throw "Missing native app-build resolver: $resolver"
 }
 
-$validSpecs = @(Get-ChildItem -LiteralPath $validSpecDir -Filter "*.app.json" -File | Sort-Object Name)
+$validSpecs = @(Get-ChildItem -LiteralPath $validSpecDir -Filter "*.app.json" -File -Recurse |
+    Where-Object {
+        $_.FullName.Replace("\", "/") -notmatch '/damaged/'
+    } |
+    Sort-Object FullName)
 if ($validSpecs.Count -eq 0) {
     throw "No valid native app-build specs found under $validSpecDir"
 }
@@ -54,12 +58,13 @@ foreach ($spec in $validSpecs) {
 $canaryDir = Join-Path $repoRootPath "local-artifacts\native-app-builds\private_particle_solid_black_canary"
 $lockPath = Join-Path $canaryDir "feature-lock.json"
 $profilePath = Join-Path $canaryDir "runtime-profile.json"
+$settingsPath = Join-Path $canaryDir "native-app-settings.json"
 $propertyPlanPath = Join-Path $canaryDir "property-write-plan.json"
 $manifestPath = Join-Path $canaryDir "AndroidManifest.xml"
 $buildEnvPath = Join-Path $canaryDir "build-env.json"
 $buildManifestPath = Join-Path $canaryDir "build-manifest.json"
 $auditPath = Join-Path $canaryDir "app-build-audit.json"
-foreach ($path in @($lockPath, $profilePath, $propertyPlanPath, $manifestPath, $buildEnvPath, $buildManifestPath, $auditPath)) {
+foreach ($path in @($lockPath, $profilePath, $settingsPath, $propertyPlanPath, $manifestPath, $buildEnvPath, $buildManifestPath, $auditPath)) {
     if (-not (Test-Path -LiteralPath $path)) {
         throw "Expected generated native app-build artifact is missing: $path"
     }
@@ -68,6 +73,11 @@ foreach ($path in @($lockPath, $profilePath, $propertyPlanPath, $manifestPath, $
 $lock = Read-Json -Path $lockPath
 Assert-SetEquals -Label "canary selected feature closure" -Expected @(
     "input.right_primary_private_particle_recenter",
+    "particles.private.mask.r8_texture",
+    "particles.private.ordering.gpu_index_remap",
+    "particles.private.payload_slot",
+    "particles.private.placeholder_compute",
+    "particles.private.tracers",
     "quest.native.openxr_vulkan_base",
     "renderer.background.solid_black",
     "renderer.private_particles"
@@ -118,6 +128,60 @@ foreach ($name in @(
     if ($entry.Count -ne 1 -or [string]$entry[0].value -ne "false") {
         throw "Generated canary profile must explicitly set $name=false"
     }
+}
+
+$settings = Read-Json -Path $settingsPath
+if ([string]$settings.schema -ne "rusty.quest.native_app_settings.v1") {
+    throw "Generated canary native app settings has wrong schema: $($settings.schema)"
+}
+foreach ($requiredModule in @(
+    "core/openxr-vulkan",
+    "background/solid-black",
+    "particles/private/payload-slot",
+    "particles/private/placeholder",
+    "particles/private/ordering/gpu-index-remap",
+    "particles/private/mask/r8-texture",
+    "particles/private/tracers",
+    "particles/private/renderer",
+    "input/private-particles/right-primary-recenter"
+)) {
+    if (-not (@($settings.modules | ForEach-Object { [string]$_.module_path }) -contains $requiredModule)) {
+        throw "Generated canary native app settings is missing required module: $requiredModule"
+    }
+}
+foreach ($forbiddenModule in @(
+    "camera/hwb",
+    "display/composite",
+    "environment/depth",
+    "hand/mesh",
+    "particles/hand-anchor/renderer",
+    "private-layer",
+    "projection-target/breathing-room",
+    "stimulus/volume",
+    "video/projection"
+)) {
+    if (@($settings.modules | ForEach-Object { [string]$_.module_path }) -contains $forbiddenModule) {
+        throw "Generated canary native app settings selected forbidden module: $forbiddenModule"
+    }
+}
+foreach ($requiredDisabled in @(
+    "camera",
+    "display_composite",
+    "environment_depth",
+    "hand_anchor_particles",
+    "hand_mesh",
+    "private_layer",
+    "projection_target",
+    "sdf",
+    "stimulus_volume",
+    "video_projection"
+)) {
+    if (-not (@($settings.disabled_modules | ForEach-Object { [string]$_ }) -contains $requiredDisabled)) {
+        throw "Generated canary native app settings does not disable module family: $requiredDisabled"
+    }
+}
+if ([string]$settings.values.'native_renderer.render.mode'.value -ne "solid-black-private-particles") {
+    throw "Generated canary native app settings did not set the master render mode"
 }
 
 $manifestText = Get-Content -Raw -LiteralPath $manifestPath

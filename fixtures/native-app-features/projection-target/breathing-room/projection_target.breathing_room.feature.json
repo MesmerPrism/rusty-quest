@@ -1,6 +1,12 @@
 {
   "schema": "rusty.quest.native_app_feature.v1",
   "feature_id": "projection_target.breathing_room",
+  "module_path": "projection-target/breathing-room",
+  "module_kind": "projection-target",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
   "owner_lane": "rusty-quest",
   "status": "public-app-feature",
   "description": "Breathing Room projection-target controls and PMB-compatible low-rate bridge settings.",

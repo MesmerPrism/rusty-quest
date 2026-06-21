@@ -1,6 +1,12 @@
 {
   "schema": "rusty.quest.native_app_feature.v1",
   "feature_id": "camera.hwb",
+  "module_path": "camera/hwb",
+  "module_kind": "camera-input",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
   "owner_lane": "rusty-quest",
   "status": "public-app-feature",
   "description": "Camera2 hardware-buffer acquisition and Vulkan guide projection path.",

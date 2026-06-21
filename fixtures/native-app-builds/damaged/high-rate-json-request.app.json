@@ -26,6 +26,12 @@
     "services": []
   },
   "expected_render_mode": "native-passthrough-media-only",
+  "settings_assertions": {
+    "required_values": {},
+    "required_disabled_modules": [],
+    "required_modules": [],
+    "forbidden_modules": []
+  },
   "expected_markers": {
     "required": [],
     "forbidden": []

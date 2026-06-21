@@ -1,7 +1,7 @@
 param(
     [string]$ApkPath = "target\native-renderer-android\rusty-quest-native-renderer.apk",
     [string]$ProfilePath = "",
-    [ValidateSet("ReplayVisualProof", "LiveVisualDiagnosticCaveat", "EnvironmentDepthParticles")]
+    [ValidateSet("ReplayVisualProof", "LiveVisualDiagnosticCaveat", "EnvironmentDepthParticles", "PrivateParticleCanary")]
     [string]$EvidenceMode = "ReplayVisualProof",
     [string]$OutDir = "",
     [int]$RunSeconds = 12,
@@ -163,6 +163,9 @@ $defaultReplayProfilePath = "fixtures\runtime-profiles\quest-native-renderer-rep
 $defaultLiveDiagnosticProfilePath = "fixtures\runtime-profiles\quest-native-renderer-live-hand-visual-diagnostic.profile.json"
 $defaultEnvironmentDepthParticlesProfilePath = "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json"
 if ([string]::IsNullOrWhiteSpace($ProfilePath)) {
+    if ($EvidenceMode -eq "PrivateParticleCanary") {
+        throw "PrivateParticleCanary evidence mode requires -ProfilePath from a generated native app-build lock."
+    }
     $ProfilePath = switch ($EvidenceMode) {
         "LiveVisualDiagnosticCaveat" { $defaultLiveDiagnosticProfilePath }
         "EnvironmentDepthParticles" { $defaultEnvironmentDepthParticlesProfilePath }
@@ -242,6 +245,7 @@ $summary = [ordered]@{
     replay_visual_proof_required = ($EvidenceMode -eq "ReplayVisualProof")
     live_visual_diagnostic_caveat_required = ($EvidenceMode -eq "LiveVisualDiagnosticCaveat")
     environment_depth_particles_required = ($EvidenceMode -eq "EnvironmentDepthParticles")
+    private_particle_canary_required = ($EvidenceMode -eq "PrivateParticleCanary")
     environment_depth_surface_support_required = [bool]$RequireEnvironmentDepthSurfaceSupport
     performance_budget_required = (-not [bool]$AllowPerformanceBudgetMiss)
     private_layer_payload_allowed = [bool]$AllowPrivateLayerPayload
@@ -377,6 +381,8 @@ try {
                 $MinimumEnvironmentDepthCenterWindowValidCount.ToString()
             )
         }
+    } elseif ($EvidenceMode -eq "PrivateParticleCanary") {
+        $evidenceArgs += "-RequirePrivateParticleSlotNoPayload"
     } else {
         $evidenceArgs += @(
             "-RequireCameraProjection",
@@ -401,7 +407,7 @@ try {
     }
     if (-not $AllowFlatScreenshot) {
         $evidenceArgs += "-RequireNonFlatScreenshot"
-        if ($EvidenceMode -ne "EnvironmentDepthParticles") {
+        if ($EvidenceMode -in @("ReplayVisualProof", "LiveVisualDiagnosticCaveat")) {
             $evidenceArgs += @(
                 "-RequireTargetNonFlatScreenshot",
                 "-RequireHandMeshVisualScreenshot",

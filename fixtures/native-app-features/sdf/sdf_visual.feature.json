@@ -1,6 +1,12 @@
 {
   "schema": "rusty.quest.native_app_feature.v1",
   "feature_id": "sdf_visual",
+  "module_path": "sdf/visual",
+  "module_kind": "sdf-visual",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
   "owner_lane": "rusty-quest",
   "status": "public-app-feature",
   "description": "Target-space GPU SDF visual overlay for recorded or live hand mesh evidence.",

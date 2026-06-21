@@ -1,0 +1,53 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "particles.private.mask.r8_texture",
+  "module_path": "particles/private/mask/r8-texture",
+  "module_kind": "particle-mask-texture",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "R8_UNORM mask texture adapter for downstream private particle payloads.",
+  "provides": [
+    "particles.private.mask.r8_texture"
+  ],
+  "depends_on": [
+    "particles.private.payload_slot"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": [
+      "solid-black-private-particles"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "privateParticleMaskTextureFormat=R8_UNORM",
+      "privateParticleMaskTextureGpuResident=true"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Mask texture shape is public ABI; mask content and meaning remain downstream-owned."
+}

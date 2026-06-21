@@ -61,6 +61,8 @@ param(
     [double]$MaximumProjectionCompositeGpuMs = 2.0,
     [switch]$RequirePrivateSlotNoPayload,
     [switch]$RequirePrivateSlotPayload,
+    [switch]$RequirePrivateParticleSlotNoPayload,
+    [switch]$RequirePrivateParticleSlotPayload,
     [string]$ScreenshotCropOutDir = "",
     [string]$SummaryOut = ""
 )
@@ -472,8 +474,14 @@ Assert-NotRegex $logText "FATAL EXCEPTION|AndroidRuntime|\bANR\b|Application Not
 if ($RequirePrivateSlotNoPayload -and $RequirePrivateSlotPayload) {
     throw "Use either -RequirePrivateSlotNoPayload or -RequirePrivateSlotPayload, not both."
 }
+if ($RequirePrivateParticleSlotNoPayload -and $RequirePrivateParticleSlotPayload) {
+    throw "Use either -RequirePrivateParticleSlotNoPayload or -RequirePrivateParticleSlotPayload, not both."
+}
 if (-not $RequirePrivateSlotPayload) {
     Assert-NotRegex $logText "privateLayerPayloadLinked=true|privateLayerImplementationPath=(?!none\b)\S+" "native renderer private boundary"
+}
+if (-not $RequirePrivateParticleSlotPayload) {
+    Assert-NotRegex $logText "privateParticlePayloadLinked=true|privateParticleImplementationPath=(?!none\b)\S+" "native renderer private particle boundary"
 }
 
 $summary = [ordered]@{
@@ -491,6 +499,8 @@ $summary = [ordered]@{
     performance_budget_checked = [bool]$RequirePerformanceBudget
     private_slot_checked = ([bool]$RequirePrivateSlotNoPayload -or [bool]$RequirePrivateSlotPayload)
     private_slot_payload_checked = [bool]$RequirePrivateSlotPayload
+    private_particle_slot_checked = ([bool]$RequirePrivateParticleSlotNoPayload -or [bool]$RequirePrivateParticleSlotPayload)
+    private_particle_payload_checked = [bool]$RequirePrivateParticleSlotPayload
 }
 
 $timingScorecard = Get-LatestMarkerLine $logLines "timing-scorecard"
@@ -500,6 +510,7 @@ $gpuTimingLine = Get-LatestMarkerLine $logLines "gpu-timestamp-timing"
 $nativePassthroughLine = Get-LatestMarkerLine $logLines "native-passthrough"
 $environmentDepthLine = Get-LatestMarkerLine $logLines "environment-depth"
 $environmentDepthParticlesLine = Get-LatestMarkerLine $logLines "environment-depth-particles"
+$privateParticleLine = Get-LatestMarkerLine $logLines "private-particle-slot"
 
 if (($RequireNonFlatScreenshot -or $RequireTargetNonFlatScreenshot -or $RequireHandMeshVisualScreenshot -or $RequireSdfVisualScreenshot) -and -not $RequireScreenshot) {
     throw "Screenshot content requirements need -RequireScreenshot and -ScreenshotPath."
@@ -1169,6 +1180,32 @@ if ($RequirePrivateSlotPayload) {
         Assert-Contains $privateLine $token "latest private-extension-slot marker"
     }
     $summary.private_slot_payload_line = $privateLine
+}
+
+if ($RequirePrivateParticleSlotNoPayload) {
+    Assert-True (-not [string]::IsNullOrWhiteSpace($privateParticleLine)) "Missing private-particle-slot marker."
+    foreach ($token in @(
+        "privateParticlePayloadLinked=false",
+        "privateParticlePublicAbiOnly=true",
+        "privateParticleVisualAcceptance=not-applicable-public-noop"
+    )) {
+        Assert-Contains $privateParticleLine $token "latest private-particle-slot marker"
+    }
+    $summary.private_particle_slot_line = $privateParticleLine
+}
+
+if ($RequirePrivateParticleSlotPayload) {
+    Assert-True (-not [string]::IsNullOrWhiteSpace($privateParticleLine)) "Missing private-particle-slot marker."
+    foreach ($token in @(
+        "privateParticlePayloadLinked=true",
+        "privateParticleGpuBuffersResident=true",
+        "privateParticleOrderingImplementation=resident-gpu-index-remap",
+        "privateParticleOrderingCpuExpandedUploadPerFrame=false",
+        "privateParticleMaskTextureFormat=R8_UNORM"
+    )) {
+        Assert-Contains $privateParticleLine $token "latest private-particle-slot marker"
+    }
+    $summary.private_particle_slot_line = $privateParticleLine
 }
 
 if (-not [string]::IsNullOrWhiteSpace($SummaryOut)) {

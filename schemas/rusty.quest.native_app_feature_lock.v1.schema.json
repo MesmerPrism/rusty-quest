@@ -16,6 +16,7 @@
     "exclusive_groups",
     "android_manifest",
     "runtime_profile",
+    "app_settings",
     "build_inputs",
     "expected_markers",
     "validation_commands",
@@ -62,6 +63,9 @@
       "type": "object"
     },
     "runtime_profile": {
+      "type": "object"
+    },
+    "app_settings": {
       "type": "object"
     },
     "build_inputs": {

@@ -1,6 +1,12 @@
 {
   "schema": "rusty.quest.native_app_feature.v1",
   "feature_id": "hand_anchor_particles",
+  "module_path": "particles/hand-anchor/renderer",
+  "module_kind": "particle-aggregate",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
   "owner_lane": "rusty-quest",
   "status": "public-app-feature",
   "description": "Resident GPU hand-anchor particle route for topology and ordering diagnostics.",
@@ -9,7 +15,8 @@
   ],
   "depends_on": [
     "quest.native.openxr_vulkan_base",
-    "hand_mesh_visual"
+    "hand_mesh_visual",
+    "particles.hand_anchor.ordering.gpu_index_remap"
   ],
   "incompatible_with": [
     "renderer.private_particles"

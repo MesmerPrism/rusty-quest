@@ -11,6 +11,7 @@ $ResolverVersion = "native-app-build-resolver.ps1.v1"
 $FeatureSchema = "rusty.quest.native_app_feature.v1"
 $AppBuildSchema = "rusty.quest.native_app_build.v1"
 $FeatureLockSchema = "rusty.quest.native_app_feature_lock.v1"
+$NativeAppSettingsSchema = "rusty.quest.native_app_settings.v1"
 $RuntimeProfileSchema = "rusty.quest.runtime_profile.v1"
 $NativeRendererPropertyManifestSchema = "rusty.quest.native_renderer_property_manifest.v2"
 $NativeRendererPropertyManifestRelativePath = "fixtures\native-renderer\native-renderer-property-manifest.json"
@@ -221,7 +222,7 @@ function Assert-FeatureDescriptorShape {
         [Parameter(Mandatory=$true)][string]$Path
     )
     $label = "Feature descriptor $Path"
-    foreach ($field in @("schema", "feature_id", "owner_lane", "status", "description", "provides", "depends_on", "incompatible_with", "exclusive_groups", "android_manifest", "runtime_profile", "build_inputs", "markers", "validation", "public_private_boundary")) {
+    foreach ($field in @("schema", "feature_id", "module_path", "module_kind", "settings_surface", "owner_lane", "status", "description", "provides", "depends_on", "incompatible_with", "exclusive_groups", "android_manifest", "runtime_profile", "build_inputs", "markers", "validation", "public_private_boundary")) {
         Assert-RequiredProperty -Object $Feature -Name $field -Label $label
     }
     if ([string]$Feature.schema -ne $FeatureSchema) {
@@ -229,6 +230,20 @@ function Assert-FeatureDescriptorShape {
     }
     if ([string]::IsNullOrWhiteSpace([string]$Feature.feature_id)) {
         throw "$label has an empty feature_id"
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Feature.module_path)) {
+        throw "$label has an empty module_path"
+    }
+    if ([string]$Feature.module_path -notmatch '^[a-z0-9_]+([-/][a-z0-9_]+)*$') {
+        throw "$label module_path must be a stable lowercase module path: $($Feature.module_path)"
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Feature.module_kind)) {
+        throw "$label has an empty module_kind"
+    }
+    Assert-RequiredProperty -Object $Feature.settings_surface -Name "authority" -Label "$label settings_surface"
+    Assert-RequiredProperty -Object $Feature.settings_surface -Name "adapter" -Label "$label settings_surface"
+    if ([string]$Feature.settings_surface.authority -ne $NativeAppSettingsSchema) {
+        throw "$label settings_surface authority must be $NativeAppSettingsSchema"
     }
     foreach ($section in @("android_manifest", "runtime_profile", "build_inputs", "markers", "validation")) {
         if ($null -eq $Feature.$section) {
@@ -255,7 +270,7 @@ function Assert-AppSpecShape {
         [Parameter(Mandatory=$true)][string]$Path
     )
     $label = "App build spec $Path"
-    foreach ($field in @("schema", "app_id", "owner_repo", "package_policy", "package_name", "requested_features", "denied_features", "payloads", "permission_allowlist", "declared_manifest", "expected_render_mode", "expected_markers", "validation_tier")) {
+    foreach ($field in @("schema", "app_id", "owner_repo", "package_policy", "package_name", "requested_features", "denied_features", "payloads", "permission_allowlist", "declared_manifest", "expected_render_mode", "settings_assertions", "expected_markers", "validation_tier")) {
         Assert-RequiredProperty -Object $Spec -Name $field -Label $label
     }
     if ([string]$Spec.schema -ne $AppBuildSchema) {
@@ -273,6 +288,9 @@ function Assert-AppSpecShape {
     foreach ($field in @("required", "forbidden")) {
         Assert-RequiredProperty -Object $Spec.expected_markers -Name $field -Label "$label expected_markers"
     }
+    foreach ($field in @("required_values", "required_disabled_modules", "required_modules", "forbidden_modules")) {
+        Assert-RequiredProperty -Object $Spec.settings_assertions -Name $field -Label "$label settings_assertions"
+    }
 }
 
 function Read-FeatureLibrary {
@@ -285,7 +303,12 @@ function Read-FeatureLibrary {
         throw "Feature descriptor directory is missing: $FeatureDirPath"
     }
     $features = @{}
-    $featureFiles = @(Get-ChildItem -LiteralPath $FeatureDirPath -Filter "*.feature.json" -File | Sort-Object Name)
+    $featureFiles = @(Get-ChildItem -LiteralPath $FeatureDirPath -Filter "*.feature.json" -File -Recurse |
+        Where-Object {
+            $relative = Get-RepoRelativePath -RepoRoot $RepoRoot -Path $_.FullName
+            $relative -notmatch '(^|/)damaged/'
+        } |
+        Sort-Object FullName)
     if ($featureFiles.Count -eq 0) {
         throw "Feature descriptor directory contains no *.feature.json files: $FeatureDirPath"
     }
@@ -349,6 +372,7 @@ function Resolve-FeatureClosure {
 function Add-FeatureRuntimeSet {
     param(
         [Parameter(Mandatory=$true)]$RuntimeSet,
+        [Parameter(Mandatory=$true)]$RuntimeSources,
         [Parameter(Mandatory=$true)][string]$FeatureId,
         [Parameter(Mandatory=$true)]$Feature
     )
@@ -359,6 +383,61 @@ function Add-FeatureRuntimeSet {
             throw "Runtime property $name is set to conflicting values by selected features. Existing=$($RuntimeSet[$name]) feature=$FeatureId value=$value"
         }
         $RuntimeSet[$name] = $value
+        if (-not $RuntimeSources.Contains($name)) {
+            $RuntimeSources[$name] = $FeatureId
+        }
+    }
+}
+
+function ConvertTo-NativeRendererSettingId {
+    param([Parameter(Mandatory=$true)][string]$PropertyName)
+    if ($PropertyName.StartsWith($NativeRendererPropertyPrefix)) {
+        return "native_renderer." + $PropertyName.Substring($NativeRendererPropertyPrefix.Length)
+    }
+    return $PropertyName
+}
+
+function Assert-NativeAppSettingsAssertions {
+    param(
+        [Parameter(Mandatory=$true)]$AppSettings,
+        [Parameter(Mandatory=$true)]$Assertions
+    )
+
+    foreach ($property in @($Assertions.required_values.PSObject.Properties | Sort-Object Name)) {
+        $settingId = [string]$property.Name
+        $expected = [string]$property.Value
+        if (-not $AppSettings.values.Contains($settingId)) {
+            throw "App settings assertion requires missing setting: $settingId"
+        }
+        $actual = [string]$AppSettings.values[$settingId].value
+        if ($actual -ne $expected) {
+            throw "App settings assertion mismatch for ${settingId}: expected $expected but resolved $actual"
+        }
+    }
+
+    $disabledModules = @{}
+    foreach ($module in @($AppSettings.disabled_modules)) {
+        $disabledModules[[string]$module] = $true
+    }
+    foreach ($required in Get-StringArray $Assertions.required_disabled_modules) {
+        if (-not $disabledModules.ContainsKey($required)) {
+            throw "App settings assertion requires disabled module family that was not disabled: $required"
+        }
+    }
+
+    $modulePaths = @{}
+    foreach ($module in @($AppSettings.modules)) {
+        $modulePaths[[string]$module.module_path] = $true
+    }
+    foreach ($required in Get-StringArray $Assertions.required_modules) {
+        if (-not $modulePaths.ContainsKey($required)) {
+            throw "App settings assertion requires missing module: $required"
+        }
+    }
+    foreach ($forbidden in Get-StringArray $Assertions.forbidden_modules) {
+        if ($modulePaths.ContainsKey($forbidden)) {
+            throw "App settings assertion forbids selected module: $forbidden"
+        }
     }
 }
 
@@ -490,6 +569,7 @@ $forbiddenMarkerSet = @{}
 $assetSet = @{}
 $shaderSet = @{}
 $runtimeSet = [ordered]@{}
+$runtimeSources = [ordered]@{}
 $exclusiveGroups = [ordered]@{}
 $envByName = [ordered]@{}
 
@@ -506,7 +586,7 @@ foreach ($featureId in $selectedFeatureIds) {
     Add-StringsToSet -Set $forbiddenMarkerSet -Values $feature.markers.forbidden
     Add-StringsToSet -Set $assetSet -Values $feature.build_inputs.assets
     Add-StringsToSet -Set $shaderSet -Values $feature.build_inputs.shaders
-    Add-FeatureRuntimeSet -RuntimeSet $runtimeSet -FeatureId $featureId -Feature $feature
+    Add-FeatureRuntimeSet -RuntimeSet $runtimeSet -RuntimeSources $runtimeSources -FeatureId $featureId -Feature $feature
     foreach ($groupProperty in @($feature.exclusive_groups.PSObject.Properties | Sort-Object Name)) {
         $group = [string]$groupProperty.Name
         $value = [string]$groupProperty.Value
@@ -577,10 +657,7 @@ $ownedProperties = @(Get-SortedSet -Set $ownedPropertiesSet)
 
 $setProperties = @()
 foreach ($propertyName in @($runtimeSet.Keys | Sort-Object)) {
-    $settingId = $propertyName
-    if ($settingId.StartsWith($NativeRendererPropertyPrefix)) {
-        $settingId = "native_renderer." + $settingId.Substring($NativeRendererPropertyPrefix.Length)
-    }
+    $settingId = ConvertTo-NativeRendererSettingId -PropertyName $propertyName
     $setProperties += [ordered]@{
         name = [string]$propertyName
         value = [string]$runtimeSet[$propertyName]
@@ -591,6 +668,7 @@ foreach ($propertyName in @($runtimeSet.Keys | Sort-Object)) {
 $appOutputDir = Join-Path $outputRootPath ([string]$app.app_id)
 $featureLockPath = Join-Path $appOutputDir "feature-lock.json"
 $runtimeProfilePath = Join-Path $appOutputDir "runtime-profile.json"
+$nativeAppSettingsPath = Join-Path $appOutputDir "native-app-settings.json"
 $propertyWritePlanPath = Join-Path $appOutputDir "property-write-plan.json"
 $androidManifestPath = Join-Path $appOutputDir "AndroidManifest.xml"
 $buildEnvPath = Join-Path $appOutputDir "build-env.json"
@@ -601,6 +679,8 @@ $featureDescriptorRecords = @()
 foreach ($featureId in $selectedFeatureIds) {
     $featureDescriptorRecords += [ordered]@{
         feature_id = $featureId
+        module_path = [string]$features[$featureId].descriptor.module_path
+        module_kind = [string]$features[$featureId].descriptor.module_kind
         path = Get-RepoRelativePath -RepoRoot $repoRootText -Path $features[$featureId].path
         sha256 = [string]$features[$featureId].sha256
     }
@@ -614,6 +694,7 @@ foreach ($featureId in $selectedFeatureIds) {
 $generatedOutputs = [ordered]@{
     feature_lock = Get-RepoRelativePath -RepoRoot $repoRootText -Path $featureLockPath
     runtime_profile = Get-RepoRelativePath -RepoRoot $repoRootText -Path $runtimeProfilePath
+    native_app_settings = Get-RepoRelativePath -RepoRoot $repoRootText -Path $nativeAppSettingsPath
     property_write_plan = Get-RepoRelativePath -RepoRoot $repoRootText -Path $propertyWritePlanPath
     android_manifest = Get-RepoRelativePath -RepoRoot $repoRootText -Path $androidManifestPath
     build_env = Get-RepoRelativePath -RepoRoot $repoRootText -Path $buildEnvPath
@@ -626,6 +707,51 @@ $validationCommands = @(
     "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath $($generatedOutputs.runtime_profile) -DryRun -Out $($generatedOutputs.property_write_plan)",
     "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Test-NativeAppBuildProfile.ps1"
 )
+
+$moduleRecords = @()
+foreach ($featureId in $selectedFeatureIds) {
+    $feature = $features[$featureId].descriptor
+    $moduleRecords += [ordered]@{
+        feature_id = $featureId
+        module_path = [string]$feature.module_path
+        module_kind = [string]$feature.module_kind
+        owner_lane = [string]$feature.owner_lane
+        status = [string]$feature.status
+        settings_adapter = [string]$feature.settings_surface.adapter
+    }
+}
+
+$settingsValues = [ordered]@{}
+foreach ($propertyName in @($runtimeSet.Keys | Sort-Object)) {
+    $settingId = ConvertTo-NativeRendererSettingId -PropertyName $propertyName
+    $settingsValues[$settingId] = [ordered]@{
+        value = [string]$runtimeSet[$propertyName]
+        android_property = [string]$propertyName
+        source_feature_id = if ($runtimeSources.Contains($propertyName)) { [string]$runtimeSources[$propertyName] } else { "" }
+        source = "feature-runtime-profile"
+    }
+}
+
+$nativeAppSettings = [ordered]@{
+    schema = $NativeAppSettingsSchema
+    app_id = [string]$app.app_id
+    authority = $NativeAppSettingsSchema
+    resolver_version = $ResolverVersion
+    selected_feature_ids = $selectedFeatureIds
+    modules = $moduleRecords
+    values = $settingsValues
+    disabled_modules = $clearFamilies
+    adapters = [ordered]@{
+        android_properties = $setProperties
+        clear_families = $clearFamilies
+        runtime_profile = $generatedOutputs.runtime_profile
+        property_write_plan = $generatedOutputs.property_write_plan
+        android_manifest = $generatedOutputs.android_manifest
+        build_env = $generatedOutputs.build_env
+    }
+}
+Assert-NativeAppSettingsAssertions -AppSettings $nativeAppSettings -Assertions $app.settings_assertions
+Write-JsonArtifact -Value $nativeAppSettings -Path $nativeAppSettingsPath
 
 $featureLock = [ordered]@{
     schema = $FeatureLockSchema
@@ -654,6 +780,12 @@ $featureLock = [ordered]@{
         set_properties = $setProperties
         clear_families = $clearFamilies
         expected_render_modes = $expectedRenderModes
+    }
+    app_settings = [ordered]@{
+        schema = $NativeAppSettingsSchema
+        path = $generatedOutputs.native_app_settings
+        sha256 = Get-FileSha256 -Path $nativeAppSettingsPath
+        authority = $NativeAppSettingsSchema
     }
     build_inputs = [ordered]@{
         env = @($envByName.Keys | Sort-Object | ForEach-Object { $envByName[$_] })
@@ -709,6 +841,7 @@ $buildManifest = [ordered]@{
     package_policy = [string]$app.package_policy
     feature_lock_sha256 = Get-FileSha256 -Path $featureLockPath
     runtime_profile_sha256 = Get-FileSha256 -Path $runtimeProfilePath
+    native_app_settings_sha256 = Get-FileSha256 -Path $nativeAppSettingsPath
     property_write_plan_sha256 = Get-FileSha256 -Path $propertyWritePlanPath
     android_manifest_sha256 = Get-FileSha256 -Path $androidManifestPath
     build_env_sha256 = Get-FileSha256 -Path $buildEnvPath
@@ -728,6 +861,7 @@ $audit = [ordered]@{
     render_mode = $renderMode
     runtime_property_count = $ownedProperties.Count
     set_property_count = $setProperties.Count
+    settings_authority = $NativeAppSettingsSchema
     generated_outputs = $generatedOutputs
     artifact_hashes = $buildManifest
     result = "accepted"

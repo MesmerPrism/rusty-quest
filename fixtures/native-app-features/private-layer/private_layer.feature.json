@@ -1,6 +1,12 @@
 {
   "schema": "rusty.quest.native_app_feature.v1",
   "feature_id": "private_layer",
+  "module_path": "private-layer",
+  "module_kind": "private-layer",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
   "owner_lane": "rusty-quest",
   "status": "public-substrate",
   "description": "Generic private layer selector surface without downstream visual semantics.",

@@ -139,6 +139,8 @@ Assert-ContainsTokens $runtimeEvidenceToolText @(
     'stimulusVolumeComputeGpuMs',
     'stimulusVolumeProjectionGpuMs',
     'RequirePrivateSlotNoPayload',
+    'RequirePrivateParticleSlotNoPayload',
+    'private_particle_slot_checked',
     'RequireEnvironmentDepthKnownDistance',
     'ExpectedEnvironmentDepthCenterMeters',
     'EnvironmentDepthCenterToleranceMeters',
@@ -152,7 +154,8 @@ Assert-ContainsTokens $runtimeEvidenceToolText @(
     'environmentDepthRawCenterWindowValidCount',
     'animatedHandMeshVisualVisible=true',
     'gpuTimestampQueryReady=true',
-    'privateLayerPayloadLinked=false'
+    'privateLayerPayloadLinked=false',
+    'privateParticlePayloadLinked=false'
 ) "runtime evidence checker"
 
 Assert-ContainsTokens $runtimeEvidenceFixtureText @(
@@ -185,6 +188,8 @@ Assert-ContainsTokens "$runtimeSmokeToolText`n$permissionPregrantToolText" @(
     'EvidenceMode',
     'ReplayVisualProof',
     'LiveVisualDiagnosticCaveat',
+    'PrivateParticleCanary',
+    'private_particle_canary_required',
     'RequireEnvironmentDepthKnownDistance',
     'ExpectedEnvironmentDepthCenterMeters',
     'EnvironmentDepthCenterToleranceMeters',
@@ -236,6 +241,7 @@ Assert-ContainsTokens "$runtimeSmokeToolText`n$permissionPregrantToolText" @(
     'RequireGuideGraph',
     'RequireSdfVisual',
     'RequirePrivateSlotNoPayload',
+    'RequirePrivateParticleSlotNoPayload',
     'RequireGpuTimestampReady',
     'RequirePerformanceBudget',
     'StopAfterRun'

@@ -1,6 +1,12 @@
 {
   "schema": "rusty.quest.native_app_feature.v1",
   "feature_id": "makepad_runtime",
+  "module_path": "makepad/runtime",
+  "module_kind": "makepad-runtime",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
   "owner_lane": "rusty-makepad",
   "status": "compatibility-surface",
   "description": "Marker for builds that intentionally route through the Makepad runtime instead of the native renderer.",

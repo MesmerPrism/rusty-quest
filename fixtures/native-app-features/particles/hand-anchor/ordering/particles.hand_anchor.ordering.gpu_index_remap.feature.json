@@ -1,0 +1,56 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "particles.hand_anchor.ordering.gpu_index_remap",
+  "module_path": "particles/hand-anchor/ordering/gpu-index-remap",
+  "module_kind": "particle-ordering",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-app-feature",
+  "description": "Resident GPU hand-anchor particle back-to-front index remap.",
+  "provides": [
+    "particles.hand_anchor.ordering.gpu_index_remap"
+  ],
+  "depends_on": [
+    "hand_mesh_visual"
+  ],
+  "incompatible_with": [
+    "renderer.private_particles"
+  ],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": [
+      "solid-black-openxr-hands-anchor-particles"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": [
+      "apps/native-renderer-android/native/shaders/hand_anchor_particles_sort.comp.glsl"
+    ]
+  },
+  "markers": {
+    "required": [
+      "handAnchorParticleGpuSortActive=true"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Hand-anchor particle ordering is public diagnostic infrastructure."
+}

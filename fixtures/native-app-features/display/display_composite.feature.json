@@ -1,6 +1,12 @@
 {
   "schema": "rusty.quest.native_app_feature.v1",
   "feature_id": "display_composite",
+  "module_path": "display/composite",
+  "module_kind": "display-composite",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
   "owner_lane": "rusty-quest",
   "status": "public-app-feature",
   "description": "Android MediaProjection display-composite feedback surface sampled through native AHardwareBuffer.",

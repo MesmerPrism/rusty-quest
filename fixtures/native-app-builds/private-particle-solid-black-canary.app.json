@@ -41,6 +41,66 @@
     "services": []
   },
   "expected_render_mode": "solid-black-private-particles",
+  "settings_assertions": {
+    "required_values": {
+      "native_renderer.render.mode": "solid-black-private-particles",
+      "native_renderer.camera.output": "disabled",
+      "native_renderer.display_composite.enabled": "false",
+      "native_renderer.display_composite.high_rate_json_payload": "false",
+      "native_renderer.environment_depth.mode": "disabled",
+      "native_renderer.environment_depth.high_rate_json_payload": "false",
+      "native_renderer.hand_anchor_particles.enabled": "false",
+      "native_renderer.hand_mesh.input.source": "disabled",
+      "native_renderer.hand_mesh.real_hands.visible": "false",
+      "native_renderer.private_layer.enabled": "false",
+      "native_renderer.projection.target.controls": "false",
+      "native_renderer.replay.visual_proof.enabled": "false",
+      "native_renderer.sdf.visual.enabled": "false",
+      "native_renderer.stimulus_volume.enabled": "false",
+      "native_renderer.video_projection.enabled": "false",
+      "native_renderer.video_projection.high_rate_json_payload": "false"
+    },
+    "required_disabled_modules": [
+      "camera",
+      "display_composite",
+      "environment_depth",
+      "hand_anchor_particles",
+      "hand_mesh",
+      "passthrough_style",
+      "private_layer",
+      "projection_target",
+      "replay",
+      "sdf",
+      "stimulus_volume",
+      "video_projection"
+    ],
+    "required_modules": [
+      "background/solid-black",
+      "core/openxr-vulkan",
+      "input/private-particles/right-primary-recenter",
+      "particles/private/mask/r8-texture",
+      "particles/private/ordering/gpu-index-remap",
+      "particles/private/payload-slot",
+      "particles/private/placeholder",
+      "particles/private/renderer",
+      "particles/private/tracers"
+    ],
+    "forbidden_modules": [
+      "background/native-passthrough",
+      "camera/hwb",
+      "display/composite",
+      "environment/depth",
+      "hand/mesh",
+      "makepad/runtime",
+      "manifold/bridge",
+      "particles/hand-anchor/renderer",
+      "private-layer",
+      "projection-target/breathing-room",
+      "sdf/visual",
+      "stimulus/volume",
+      "video/projection"
+    ]
+  },
   "expected_markers": {
     "required": [
       "renderMode=solid-black-private-particles",

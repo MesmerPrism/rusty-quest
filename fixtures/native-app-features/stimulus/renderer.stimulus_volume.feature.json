@@ -1,6 +1,12 @@
 {
   "schema": "rusty.quest.native_app_feature.v1",
   "feature_id": "renderer.stimulus_volume",
+  "module_path": "stimulus/volume",
+  "module_kind": "stimulus-volume",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
   "owner_lane": "rusty-quest",
   "status": "public-app-feature",
   "description": "Native GPU stimulus-volume route with safety acknowledgement and bounded central-FOV render target.",

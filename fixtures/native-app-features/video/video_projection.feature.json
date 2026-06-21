@@ -1,6 +1,12 @@
 {
   "schema": "rusty.quest.native_app_feature.v1",
   "feature_id": "video_projection",
+  "module_path": "video/projection",
+  "module_kind": "video-projection",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
   "owner_lane": "rusty-quest",
   "status": "public-app-feature",
   "description": "App-private decoded video projection surface using MediaCodec into a Rust-owned AImageReader surface.",

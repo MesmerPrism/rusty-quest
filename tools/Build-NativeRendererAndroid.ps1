@@ -5,6 +5,7 @@ param(
     [string]$OpenXrLoader = "S:\Work\tools\Quest\openxr-loader\libopenxr_loader.so",
     [string]$OutDir = "",
     [string]$Keystore = "",
+    [string]$AppBuildLock = "",
     [string]$RecordedHandCaptureDir = "",
     [int]$RecordedHandFrameLimit = 12,
     [switch]$RequireRecordedHandCapture
@@ -42,6 +43,41 @@ function Invoke-Checked {
     if ($LASTEXITCODE -ne 0) {
         throw "$Name failed with exit code $LASTEXITCODE"
     }
+}
+
+function Resolve-RepoPath {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [Parameter(Mandatory=$true)][string]$RepoRoot
+    )
+    if ([System.IO.Path]::IsPathRooted($Path)) {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $Path))
+}
+
+function Read-JsonFile {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Missing JSON file: $Path"
+    }
+    return Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+}
+
+function Get-FileSha256 {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+}
+
+function Get-EffectiveBuildEnvValue {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)]$AppBuildEnvByName
+    )
+    if ($AppBuildEnvByName.ContainsKey($Name)) {
+        return [string]$AppBuildEnvByName[$Name]
+    }
+    return [Environment]::GetEnvironmentVariable($Name)
 }
 
 if ([string]::IsNullOrWhiteSpace($AndroidHome)) {
@@ -114,6 +150,55 @@ if ([string]::IsNullOrWhiteSpace($Keystore)) {
     $Keystore = Join-Path $targetRoot "rusty-quest-native-renderer-debug.keystore"
 }
 
+$appBuildLockObject = $null
+$appBuildLockPath = ""
+$appBuildEnvPath = ""
+$nativeAppSettingsPath = ""
+$generatedManifestPath = ""
+$manifestInputPath = Join-Path $appRoot "AndroidManifest.xml"
+$packageName = "io.github.mesmerprism.rustyquest.native_renderer"
+$activityName = "io.github.mesmerprism.rustyquest.native_renderer/android.app.NativeActivity"
+$appBuildEnvEntries = @()
+$appBuildEnvByName = @{}
+if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
+    $appBuildLockPath = Resolve-RepoPath -Path $AppBuildLock -RepoRoot ([string]$repoRoot)
+    $appBuildLockObject = Read-JsonFile -Path $appBuildLockPath
+    if ([string]$appBuildLockObject.schema -ne "rusty.quest.native_app_feature_lock.v1") {
+        throw "Unsupported native app-build feature lock schema: $($appBuildLockObject.schema)"
+    }
+    foreach ($field in @("android_manifest", "generated_outputs", "app_settings", "build_inputs")) {
+        if ($null -eq $appBuildLockObject.PSObject.Properties[$field]) {
+            throw "Native app-build feature lock is missing required field for APK build: $field"
+        }
+    }
+    $packageName = [string]$appBuildLockObject.android_manifest.package_name
+    $activityName = "$packageName/android.app.NativeActivity"
+    $generatedManifestPath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.android_manifest) -RepoRoot ([string]$repoRoot)
+    $nativeAppSettingsPath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.native_app_settings) -RepoRoot ([string]$repoRoot)
+    $appBuildEnvPath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.build_env) -RepoRoot ([string]$repoRoot)
+    foreach ($path in @($generatedManifestPath, $nativeAppSettingsPath, $appBuildEnvPath)) {
+        if (-not (Test-Path -LiteralPath $path)) {
+            throw "Native app-build generated artifact is missing: $path"
+        }
+    }
+    if ([string]$appBuildLockObject.app_settings.sha256 -ne (Get-FileSha256 -Path $nativeAppSettingsPath)) {
+        throw "Native app-build settings hash does not match feature lock app_settings.sha256"
+    }
+    $manifestInputPath = $generatedManifestPath
+    $appBuildEnv = Read-JsonFile -Path $appBuildEnvPath
+    $appBuildEnvEntries = @($appBuildEnv.env)
+    foreach ($entry in $appBuildEnvEntries) {
+        if ($null -eq $entry.PSObject.Properties["name"]) {
+            throw "Native app-build env entry is missing name"
+        }
+        $name = [string]$entry.name
+        if ($name -notmatch '^[A-Z0-9_]+$') {
+            throw "Native app-build env entry has invalid name: $name"
+        }
+        $appBuildEnvByName[$name] = if ($null -ne $entry.PSObject.Properties["value"]) { [string]$entry.value } else { "" }
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $assetsDir, $classesDir, $dexDir, $nativeLibDir | Out-Null
 Copy-Item -LiteralPath (Join-Path $repoRoot "fixtures\native-renderer\native-hwb-blur-sdf-public.plan.json") `
     -Destination (Join-Path $assetsDir "native-hwb-blur-sdf-public.plan.json") `
@@ -121,6 +206,10 @@ Copy-Item -LiteralPath (Join-Path $repoRoot "fixtures\native-renderer\native-hwb
 Copy-Item -LiteralPath (Join-Path $repoRoot "fixtures\native-renderer\recorded-hand-replay-public-shape.json") `
     -Destination (Join-Path $assetsDir "recorded-hand-replay-public-shape.json") `
     -Force
+if (-not [string]::IsNullOrWhiteSpace($nativeAppSettingsPath)) {
+    Copy-Item -LiteralPath $nativeAppSettingsPath -Destination (Join-Path $assetsDir "native-app-settings.json") -Force
+    Copy-Item -LiteralPath $appBuildLockPath -Destination (Join-Path $assetsDir "feature-lock.json") -Force
+}
 
 if ($RequireRecordedHandCapture -and [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
     throw "-RequireRecordedHandCapture needs -RecordedHandCaptureDir so the APK cannot silently fall back to the public metadata-only replay shape."
@@ -150,10 +239,16 @@ $previousNdkHome = $env:ANDROID_NDK_HOME
 $previousLinker = $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER
 $previousRecordedHandCaptureDir = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR
 $previousRecordedHandFrameLimit = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT
+$previousAppBuildEnv = @{}
 try {
     $env:ANDROID_HOME = $AndroidHome
     $env:ANDROID_NDK_HOME = $NdkHome
     $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = $linker
+    foreach ($entry in $appBuildEnvEntries) {
+        $name = [string]$entry.name
+        $previousAppBuildEnv[$name] = [Environment]::GetEnvironmentVariable($name)
+        [Environment]::SetEnvironmentVariable($name, [string]$appBuildEnvByName[$name], "Process")
+    }
     if (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
         if (-not (Test-Path $RecordedHandCaptureDir)) {
             throw "Recorded hand capture directory not found: $RecordedHandCaptureDir"
@@ -185,6 +280,13 @@ try {
     } else {
         $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT = $previousRecordedHandFrameLimit
     }
+    foreach ($name in $previousAppBuildEnv.Keys) {
+        if ($null -eq $previousAppBuildEnv[$name]) {
+            [Environment]::SetEnvironmentVariable([string]$name, $null, "Process")
+        } else {
+            [Environment]::SetEnvironmentVariable([string]$name, [string]$previousAppBuildEnv[$name], "Process")
+        }
+    }
 }
 
 $builtNativeLib = Join-Path $cargoTargetDir "aarch64-linux-android\release\librusty_quest_native_renderer.so"
@@ -194,16 +296,16 @@ if (-not (Test-Path $builtNativeLib)) {
 Copy-Item -LiteralPath $builtNativeLib -Destination $nativeLib -Force
 
 $privateLayerPayloadLinked =
-    (-not [string]::IsNullOrWhiteSpace($env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER)) -and
-    (-not [string]::IsNullOrWhiteSpace($env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_PROJECTION_SHADER)) -and
-    (Test-Path $env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER) -and
-    (Test-Path $env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_PROJECTION_SHADER)
+    (-not [string]::IsNullOrWhiteSpace((Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER" -AppBuildEnvByName $appBuildEnvByName))) -and
+    (-not [string]::IsNullOrWhiteSpace((Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_PROJECTION_SHADER" -AppBuildEnvByName $appBuildEnvByName))) -and
+    (Test-Path (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER" -AppBuildEnvByName $appBuildEnvByName)) -and
+    (Test-Path (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_PROJECTION_SHADER" -AppBuildEnvByName $appBuildEnvByName))
 
 $privateParticlePayloadLinked =
-    (-not [string]::IsNullOrWhiteSpace($env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DATA_DIR)) -and
-    (-not [string]::IsNullOrWhiteSpace($env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER)) -and
-    (Test-Path $env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DATA_DIR) -and
-    (Test-Path $env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER)
+    (-not [string]::IsNullOrWhiteSpace((Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DATA_DIR" -AppBuildEnvByName $appBuildEnvByName))) -and
+    (-not [string]::IsNullOrWhiteSpace((Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER" -AppBuildEnvByName $appBuildEnvByName))) -and
+    (Test-Path (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DATA_DIR" -AppBuildEnvByName $appBuildEnvByName)) -and
+    (Test-Path (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER" -AppBuildEnvByName $appBuildEnvByName))
 
 $openXrLoaderPackaged = $false
 if (-not [string]::IsNullOrWhiteSpace($OpenXrLoader) -and (Test-Path $OpenXrLoader)) {
@@ -214,7 +316,7 @@ if (-not [string]::IsNullOrWhiteSpace($OpenXrLoader) -and (Test-Path $OpenXrLoad
 Invoke-Checked "aapt2 link" $aapt2 @(
     "link",
     "-o", $apkUnsigned,
-    "--manifest", (Join-Path $appRoot "AndroidManifest.xml"),
+    "--manifest", $manifestInputPath,
     "-A", $assetsDir,
     "-I", $platformJar,
     "--min-sdk-version", "29",
@@ -256,8 +358,8 @@ Invoke-Checked "apksigner" $apksigner @(
 $sha256 = (Get-FileHash -Algorithm SHA256 -Path $apkSigned).Hash.ToLowerInvariant()
 $manifest = [ordered]@{
     '$schema' = "rusty.quest.native_renderer_android.build_manifest.v1"
-    package_name = "io.github.mesmerprism.rustyquest.native_renderer"
-    activity = "io.github.mesmerprism.rustyquest.native_renderer/android.app.NativeActivity"
+    package_name = $packageName
+    activity = $activityName
     entrypoint = "android.app.NativeActivity"
     authority = "rusty.quest.native_renderer"
     target_runtime = "quest-native-openxr-vulkan"
@@ -278,7 +380,7 @@ $manifest = [ordered]@{
     public_effect_layers = @("blur-guide", "recorded-hand-replay-visual", "gpu-mesh-boundary", "target-space-validation-mesh-sdf")
     private_extension_payloads_packaged = [bool]$privateLayerPayloadLinked
     private_particle_payloads_packaged = [bool]$privateParticlePayloadLinked
-    private_particle_payload_kind = if ($privateParticlePayloadLinked) { $env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_KIND } else { "none" }
+    private_particle_payload_kind = if ($privateParticlePayloadLinked) { Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_KIND" -AppBuildEnvByName $appBuildEnvByName } else { "none" }
     camera_ids = [ordered]@{
         left = "50"
         right = "51"
@@ -295,6 +397,13 @@ $manifest = [ordered]@{
     recorded_hand_capture_required = [bool]$RequireRecordedHandCapture
     recorded_hand_capture_embedded = (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir))
     recorded_hand_frame_limit = $RecordedHandFrameLimit
+    app_build_lock_path = if ([string]::IsNullOrWhiteSpace($appBuildLockPath)) { "" } else { $appBuildLockPath }
+    app_build_lock_sha256 = if ([string]::IsNullOrWhiteSpace($appBuildLockPath)) { "" } else { Get-FileSha256 -Path $appBuildLockPath }
+    native_app_settings_path = if ([string]::IsNullOrWhiteSpace($nativeAppSettingsPath)) { "" } else { $nativeAppSettingsPath }
+    native_app_settings_sha256 = if ([string]::IsNullOrWhiteSpace($nativeAppSettingsPath)) { "" } else { Get-FileSha256 -Path $nativeAppSettingsPath }
+    app_build_manifest_input = $manifestInputPath
+    app_build_selected_feature_ids = if ($null -eq $appBuildLockObject) { @() } else { @($appBuildLockObject.selected_feature_ids) }
+    settings_authority = if ($null -eq $appBuildLockObject) { "" } else { [string]$appBuildLockObject.app_settings.authority }
 }
 $manifestPath = Join-Path $OutDir "build-manifest.json"
 $manifest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -Path $manifestPath

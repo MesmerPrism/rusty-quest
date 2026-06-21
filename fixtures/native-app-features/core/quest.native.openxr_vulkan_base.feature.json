@@ -1,6 +1,12 @@
 {
   "schema": "rusty.quest.native_app_feature.v1",
   "feature_id": "quest.native.openxr_vulkan_base",
+  "module_path": "core/openxr-vulkan",
+  "module_kind": "platform-substrate",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
   "owner_lane": "rusty-quest",
   "status": "public-substrate",
   "description": "NativeActivity OpenXR/Vulkan base surface for Quest-native app builds.",

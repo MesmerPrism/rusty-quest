@@ -4,12 +4,19 @@
   `tools/Resolve-NativeAppBuild.ps1`. Each descriptor names dependencies,
   incompatibilities, manifest surface, runtime-profile property ownership,
   generated build inputs, and required/forbidden markers for one selectable
-  capability.
+  capability. The directory is a recursive module library: `module_path`
+  names the durable family, and particle capabilities are nested below
+  `particles/` so aggregate app features can depend on payload-slot,
+  placeholder, ordering, mask, and tracer submodules without hiding them in a
+  broad profile.
 - `native-app-builds/`: app-build specs for new native APK shapes. Agents
   should request feature ids here and run the resolver instead of copying a
   nearby runtime profile or broad Android manifest. Damaged app-build specs
   prove denied features, permission supersets, render-mode mismatches, and
-  high-rate JSON misuse are rejected before any APK build.
+  high-rate JSON misuse are rejected before any APK build. Resolved builds
+  generate `native-app-settings.json` as the master settings surface; Android
+  properties, generated manifests, build env, and headset launch profiles are
+  adapters from that file rather than separate launch-mode authorities.
 - `runtime-profiles/`: valid Quest runtime profiles, including separate native
   renderer profiles for no-real-hands recorded replay acceptance and the later
   live-hand visual diagnostic retest. The direct-HWB camera quality profiles

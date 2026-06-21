@@ -1,6 +1,12 @@
 {
   "schema": "rusty.quest.native_app_feature.v1",
   "feature_id": "renderer.background.native_passthrough",
+  "module_path": "background/native-passthrough",
+  "module_kind": "background-route",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
   "owner_lane": "rusty-quest",
   "status": "public-substrate",
   "description": "Native Meta passthrough background route through XR_FB_passthrough.",

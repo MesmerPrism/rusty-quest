@@ -7,6 +7,9 @@
   "required": [
     "schema",
     "feature_id",
+    "module_path",
+    "module_kind",
+    "settings_surface",
     "owner_lane",
     "status",
     "description",
@@ -28,6 +31,36 @@
     "feature_id": {
       "type": "string",
       "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)*$"
+    },
+    "module_path": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+([-/][a-z0-9_]+)*$"
+    },
+    "module_kind": {
+      "type": "string",
+      "minLength": 1
+    },
+    "settings_surface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority",
+        "adapter"
+      ],
+      "properties": {
+        "authority": {
+          "const": "rusty.quest.native_app_settings.v1"
+        },
+        "adapter": {
+          "type": "string",
+          "enum": [
+            "runtime_profile",
+            "build_input",
+            "manifest_only",
+            "validation_only"
+          ]
+        }
+      }
     },
     "owner_lane": {
       "type": "string",

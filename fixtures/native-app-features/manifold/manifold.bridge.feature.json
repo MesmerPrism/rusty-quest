@@ -1,6 +1,12 @@
 {
   "schema": "rusty.quest.native_app_feature.v1",
   "feature_id": "manifold.bridge",
+  "module_path": "manifold/bridge",
+  "module_kind": "manifold-bridge",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
   "owner_lane": "rusty-manifold",
   "status": "public-substrate",
   "description": "Low-rate local Manifold broker bridge for command/session stream routing.",

@@ -29,6 +29,12 @@
     "services": []
   },
   "expected_render_mode": "solid-black-private-particles",
+  "settings_assertions": {
+    "required_values": {},
+    "required_disabled_modules": [],
+    "required_modules": [],
+    "forbidden_modules": []
+  },
   "expected_markers": {
     "required": [],
     "forbidden": []

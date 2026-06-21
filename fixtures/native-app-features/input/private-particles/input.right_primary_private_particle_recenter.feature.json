@@ -1,6 +1,12 @@
 {
   "schema": "rusty.quest.native_app_feature.v1",
   "feature_id": "input.right_primary_private_particle_recenter",
+  "module_path": "input/private-particles/right-primary-recenter",
+  "module_kind": "input-binding",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
   "owner_lane": "rusty-quest",
   "status": "public-app-feature",
   "description": "Right primary button binding for recentering the private-particle world anchor.",
