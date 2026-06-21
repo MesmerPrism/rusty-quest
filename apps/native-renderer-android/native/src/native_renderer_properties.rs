@@ -155,6 +155,42 @@ pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_SMALL_COMPONENT_POLICY: 
     "debug.rustyquest.native_renderer.environment_depth.surface_support.small_component_policy";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY: &str =
     "debug.rustyquest.native_renderer.environment_depth.surface_support.free_space_decay";
+pub(crate) const PROP_PASSTHROUGH_STYLE_AUDIO_REACTIVE_AMPLITUDE: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.amplitude";
+pub(crate) const PROP_PASSTHROUGH_STYLE_AUDIO_REACTIVE_ENABLED: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.enabled";
+pub(crate) const PROP_PASSTHROUGH_STYLE_AUDIO_REACTIVE_OSCILLATOR_HZ: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.oscillator_hz";
+pub(crate) const PROP_PASSTHROUGH_STYLE_AUDIO_REACTIVE_PHASE_HZ: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.phase_hz";
+pub(crate) const PROP_PASSTHROUGH_STYLE_AUDIO_REACTIVE_SOURCE: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.source";
+pub(crate) const PROP_PASSTHROUGH_STYLE_AUDIO_REACTIVE_SPEED_BOOST: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.speed_boost";
+pub(crate) const PROP_PASSTHROUGH_STYLE_AUDIO_REACTIVE_UPDATE_HZ: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.update_hz";
+pub(crate) const PROP_PASSTHROUGH_STYLE_BRIGHTNESS: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.brightness";
+pub(crate) const PROP_PASSTHROUGH_STYLE_COLOR_AMPLITUDE: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.color.amplitude";
+pub(crate) const PROP_PASSTHROUGH_STYLE_COLOR_PHASE: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.color.phase";
+pub(crate) const PROP_PASSTHROUGH_STYLE_CONTRAST: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.contrast";
+pub(crate) const PROP_PASSTHROUGH_STYLE_EDGE_COLOR_A: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.edge_color.a";
+pub(crate) const PROP_PASSTHROUGH_STYLE_EDGE_COLOR_B: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.edge_color.b";
+pub(crate) const PROP_PASSTHROUGH_STYLE_EDGE_COLOR_G: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.edge_color.g";
+pub(crate) const PROP_PASSTHROUGH_STYLE_EDGE_COLOR_R: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.edge_color.r";
+pub(crate) const PROP_PASSTHROUGH_STYLE_MODE: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.mode";
+pub(crate) const PROP_PASSTHROUGH_STYLE_OPACITY: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.opacity";
+pub(crate) const PROP_PASSTHROUGH_STYLE_SATURATION: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.saturation";
 pub(crate) const PROP_STIMULUS_VOLUME_ENABLED: &str =
     "debug.rustyquest.native_renderer.stimulus_volume.enabled";
 pub(crate) const PROP_STIMULUS_VOLUME_PROFILE: &str =
@@ -179,6 +215,8 @@ pub(crate) const PROP_STIMULUS_VOLUME_RANDOMIZE_MAX_HZ: &str =
     "debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz";
 pub(crate) const PROP_STIMULUS_VOLUME_SAFETY_ACK: &str =
     "debug.rustyquest.native_renderer.stimulus_volume.safety_ack";
+pub(crate) const PROP_CONTROL_PANEL_MODE: &str =
+    "debug.rustyquest.native_renderer.control_panel.mode";
 pub(crate) const PROP_PROCESSING_LAYER: &str = "debug.rustyquest.native_renderer.processing.layer";
 pub(crate) const PROP_PROJECTION_BORDER_POLICY: &str =
     "debug.rustyquest.native_renderer.projection.border.policy";
@@ -202,6 +240,8 @@ pub(crate) const PROP_PERIPHERAL_STRETCH_BLEND_MODE: &str =
     "debug.rustyquest.native_renderer.peripheral.stretch.blend.mode";
 pub(crate) const PROP_PERIPHERAL_STRETCH_DEBUG: &str =
     "debug.rustyquest.native_renderer.peripheral.stretch.debug";
+pub(crate) const PROP_VIDEO_BORDER_BLEND_MODE: &str =
+    "debug.rustyquest.native_renderer.video_border_blend.mode";
 pub(crate) const PROP_PRIVATE_LAYER_ENABLED: &str =
     "debug.rustyquest.native_renderer.private_layer.enabled";
 pub(crate) const PROP_PRIVATE_LAYER_SECONDS: &str =

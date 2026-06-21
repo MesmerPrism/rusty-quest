@@ -27,6 +27,11 @@
   blend profile keeps the same custom Camera2 guide projection route but uses
   the stereo video stream as the full-eye background and fades the camera guide
   overlay into that video through the existing target inner-band blend controls.
+  It explicitly owns `debug.rustyquest.native_renderer.video_border_blend.mode`
+  so shader-composite modes cannot be confused with the fixed-function
+  `alpha-over` baseline. `tools/Invoke-NativeRendererVideoBorderBlendSweep.ps1`
+  generates transient per-mode profiles and captures visual/timing artifacts for
+  all public modes except Poisson/gradient-domain blending.
   The Breathing Room PMB
   scale profile adds the same stretch route plus the source-agnostic Manifold
   controller-pose bridge and a right-controller haptic pulse when PMB drives
@@ -48,6 +53,14 @@
   fixed/eye-depth hand draw order plus resident GPU index-remap sorting.
   CPU-sorted render-buffer ordering is not used by the native Quest path
   because steady state must not upload expanded particle arrays.
+  Downstream private particle effects can use the generic private particle slot
+  without adding private constants to Rusty Quest: public builds compile a
+  no-op placeholder, while private builds provide payload data, shader, kind,
+  marker prefix, and opaque marker fields through
+  `RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_*`. The public slot owns the
+  four-row billboard ABI, sampled R8 texture-array mask path, resident GPU
+  index-remap ordering, and parameterized transparency controls; downstream
+  payloads own only effect-specific compute behavior and proof markers.
   The display-composite feedback profile configures native Meta passthrough as
   the background and Android MediaProjection as the only app-rendered feedback
   plane. It owns stale visual switches so Camera2 output, guide blur, hand/SDF

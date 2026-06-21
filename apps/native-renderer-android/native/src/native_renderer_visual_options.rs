@@ -12,11 +12,13 @@ use crate::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeRendererRenderMode {
     CustomStereoProjection,
+    NativePassthroughStyleOnly,
     NativePassthroughMediaOnly,
     NativePassthroughGraftOnly,
     NativePassthroughStimulusVolume,
     SolidBlackHandsAndGrafts,
     SolidBlackOpenXrHandsAnchorParticles,
+    SolidBlackPrivateParticles,
     SolidBlackStimulusVolume,
 }
 
@@ -28,6 +30,10 @@ impl NativeRendererRenderMode {
             .trim()
             .to_ascii_lowercase();
         match normalized.as_str() {
+            "native-passthrough-style-only"
+            | "passthrough-style-only"
+            | "meta-passthrough-style-only"
+            | "native-passthrough-compositor-style" => Self::NativePassthroughStyleOnly,
             "native-passthrough-media-only"
             | "passthrough-media-only"
             | "native-passthrough-overlay-only"
@@ -51,6 +57,9 @@ impl NativeRendererRenderMode {
             | "black-background-openxr-hands-anchor-particles" => {
                 Self::SolidBlackOpenXrHandsAnchorParticles
             }
+            "solid-black-private-particles"
+            | "solid-black-private-particle"
+            | "black-background-private-particles" => Self::SolidBlackPrivateParticles,
             "solid-black-stimulus-volume"
             | "black-stimulus-volume"
             | "opaque-black-stimulus-volume" => Self::SolidBlackStimulusVolume,
@@ -61,6 +70,7 @@ impl NativeRendererRenderMode {
     pub(crate) fn marker_value(self) -> &'static str {
         match self {
             Self::CustomStereoProjection => "custom-stereo-projection",
+            Self::NativePassthroughStyleOnly => "native-passthrough-style-only",
             Self::NativePassthroughMediaOnly => "native-passthrough-media-only",
             Self::NativePassthroughGraftOnly => "native-passthrough-graft-only",
             Self::NativePassthroughStimulusVolume => "native-passthrough-stimulus-volume",
@@ -68,6 +78,7 @@ impl NativeRendererRenderMode {
             Self::SolidBlackOpenXrHandsAnchorParticles => {
                 "solid-black-openxr-hands-anchor-particles"
             }
+            Self::SolidBlackPrivateParticles => "solid-black-private-particles",
             Self::SolidBlackStimulusVolume => "solid-black-stimulus-volume",
         }
     }
@@ -79,7 +90,8 @@ impl NativeRendererRenderMode {
     pub(crate) fn uses_native_passthrough(self) -> bool {
         matches!(
             self,
-            Self::NativePassthroughMediaOnly
+            Self::NativePassthroughStyleOnly
+                | Self::NativePassthroughMediaOnly
                 | Self::NativePassthroughGraftOnly
                 | Self::NativePassthroughStimulusVolume
         )
@@ -90,6 +102,7 @@ impl NativeRendererRenderMode {
             self,
             Self::SolidBlackHandsAndGrafts
                 | Self::SolidBlackOpenXrHandsAnchorParticles
+                | Self::SolidBlackPrivateParticles
                 | Self::SolidBlackStimulusVolume
         )
     }
@@ -109,6 +122,10 @@ impl NativeRendererRenderMode {
         matches!(self, Self::SolidBlackOpenXrHandsAnchorParticles)
     }
 
+    pub(crate) fn requests_private_particle_recenter_input(self) -> bool {
+        matches!(self, Self::SolidBlackPrivateParticles)
+    }
+
     pub(crate) fn forces_graft_copies(self) -> bool {
         matches!(
             self,
@@ -123,6 +140,7 @@ impl NativeRendererRenderMode {
     pub(crate) fn camera_runtime_mode(self) -> &'static str {
         match self {
             Self::CustomStereoProjection => "camera2-hwb",
+            Self::NativePassthroughStyleOnly => "skipped-native-passthrough-style-only",
             Self::NativePassthroughMediaOnly => "skipped-native-passthrough-media-only",
             Self::NativePassthroughGraftOnly => "skipped-native-passthrough",
             Self::NativePassthroughStimulusVolume => "skipped-native-passthrough-stimulus-volume",
@@ -130,6 +148,7 @@ impl NativeRendererRenderMode {
             Self::SolidBlackOpenXrHandsAnchorParticles => {
                 "skipped-solid-black-openxr-hands-anchor-particles"
             }
+            Self::SolidBlackPrivateParticles => "skipped-solid-black-private-particles",
             Self::SolidBlackStimulusVolume => "skipped-solid-black-stimulus-volume",
         }
     }
@@ -137,6 +156,7 @@ impl NativeRendererRenderMode {
     pub(crate) fn disabled_camera_projection_path(self) -> &'static str {
         match self {
             Self::CustomStereoProjection => "metadata-target-direct-hwb-fallback",
+            Self::NativePassthroughStyleOnly => "disabled-native-passthrough-style-only",
             Self::NativePassthroughMediaOnly => "disabled-native-passthrough-media-only",
             Self::NativePassthroughGraftOnly => "disabled-native-passthrough-graft-only",
             Self::NativePassthroughStimulusVolume => "disabled-native-passthrough-stimulus-volume",
@@ -144,6 +164,7 @@ impl NativeRendererRenderMode {
             Self::SolidBlackOpenXrHandsAnchorParticles => {
                 "disabled-solid-black-openxr-hands-anchor-particles"
             }
+            Self::SolidBlackPrivateParticles => "disabled-solid-black-private-particles",
             Self::SolidBlackStimulusVolume => "disabled-solid-black-stimulus-volume",
         }
     }

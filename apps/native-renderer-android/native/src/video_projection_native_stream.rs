@@ -212,6 +212,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_St
         4 => "error",
         5 => "format",
         6 => "frame",
+        7 => "loop-restarted",
         _ => "unknown",
     };
     marker(

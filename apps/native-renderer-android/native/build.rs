@@ -17,6 +17,7 @@ fn main() {
     println!("cargo:rerun-if-changed=shaders/guide_blur_downsample.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/guide_blur_5tap.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/guide_projection.frag.glsl");
+    println!("cargo:rerun-if-changed=shaders/guide_video_projection.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/gpu_hand_skinning.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/gpu_sdf_tile_bins.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/gpu_sdf_field.comp.glsl");
@@ -30,6 +31,10 @@ fn main() {
     println!("cargo:rerun-if-changed=shaders/environment_depth_particles_meta.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/environment_depth_particles.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/environment_depth_particles.frag.glsl");
+    println!("cargo:rerun-if-changed=shaders/private_particles_placeholder.comp.glsl");
+    println!("cargo:rerun-if-changed=shaders/private_particles_sort.comp.glsl");
+    println!("cargo:rerun-if-changed=shaders/private_particles.vert.glsl");
+    println!("cargo:rerun-if-changed=shaders/private_particles.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/stimulus_volume_raymarch.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/stimulus_volume_projection.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/stimulus_volume_projection.frag.glsl");
@@ -43,6 +48,46 @@ fn main() {
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_DATA_DIR");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_SHADER");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_SHADER_DIR");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DATA_DIR");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER_DIR");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_KIND");
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_R8"
+    );
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS");
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_MODE"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_OPACITY"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_MAX_COUNT"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MARKER_PREFIX"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MARKER_FIELDS"
+    );
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_SHADER_DIR");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER");
     println!(
@@ -56,6 +101,9 @@ fn main() {
     let private_kuramoto_payload = private_kuramoto_payload_sources();
     write_private_kuramoto_payload_config(&out_dir, private_kuramoto_payload.as_ref());
     write_private_kuramoto_payload_files(&out_dir, private_kuramoto_payload.as_ref());
+    let private_particle_payload = private_particle_payload_sources();
+    write_private_particle_payload_config(&out_dir, private_particle_payload.as_ref());
+    write_private_particle_payload_files(&out_dir, private_particle_payload.as_ref());
 
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("android") {
         return;
@@ -131,6 +179,12 @@ fn main() {
         "fragment",
         Path::new("shaders/guide_projection.frag.glsl"),
         &out_dir.join("guide_projection.frag.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "fragment",
+        Path::new("shaders/guide_video_projection.frag.glsl"),
+        &out_dir.join("guide_video_projection.frag.spv"),
     );
     compile_shader(
         &glslc,
@@ -212,6 +266,24 @@ fn main() {
     );
     compile_shader(
         &glslc,
+        "vertex",
+        Path::new("shaders/private_particles.vert.glsl"),
+        &out_dir.join("private_particles.vert.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "fragment",
+        Path::new("shaders/private_particles.frag.glsl"),
+        &out_dir.join("private_particles.frag.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "compute",
+        Path::new("shaders/private_particles_sort.comp.glsl"),
+        &out_dir.join("private_particles_sort.comp.spv"),
+    );
+    compile_shader(
+        &glslc,
         "compute",
         Path::new("shaders/stimulus_volume_raymarch.comp.glsl"),
         &out_dir.join("stimulus_volume_raymarch.comp.spv"),
@@ -244,6 +316,22 @@ fn main() {
             &out_dir.join("private_kuramoto_particles.comp.spv"),
         );
     }
+    if let Some(payload) = private_particle_payload.as_ref() {
+        println!("cargo:rerun-if-changed={}", payload.shader.display());
+        compile_shader(
+            &glslc,
+            "compute",
+            &payload.shader,
+            &out_dir.join("private_particles.comp.spv"),
+        );
+    } else {
+        compile_shader(
+            &glslc,
+            "compute",
+            Path::new("shaders/private_particles_placeholder.comp.glsl"),
+            &out_dir.join("private_particles.comp.spv"),
+        );
+    }
     compile_private_layer_payload(&glslc, private_layer_sources.as_ref(), &out_dir);
 }
 
@@ -255,6 +343,27 @@ struct PrivateLayerShaderSources {
 struct PrivateKuramotoPayloadSources {
     data_dir: PathBuf,
     shader: PathBuf,
+}
+
+struct PrivateParticlePayloadSources {
+    data_dir: PathBuf,
+    shader: PathBuf,
+    kind: String,
+    marker_prefix: String,
+    marker_fields: String,
+    particle_count: usize,
+    aux0_rows: usize,
+    mask_texture: Option<PrivateParticleMaskTextureSource>,
+}
+
+struct PrivateParticleMaskTextureSource {
+    path: PathBuf,
+    width: usize,
+    height: usize,
+    layers: usize,
+    bytes: usize,
+    mode_code: u32,
+    mode_marker: &'static str,
 }
 
 const PRIVATE_LAYER_GUIDE_OUTPUTS: [(&str, &str); 6] = [
@@ -389,6 +498,457 @@ fn private_kuramoto_payload_sources() -> Option<PrivateKuramotoPayloadSources> {
     Some(PrivateKuramotoPayloadSources { data_dir, shader })
 }
 
+fn private_particle_payload_sources() -> Option<PrivateParticlePayloadSources> {
+    let data_dir = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DATA_DIR")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())?;
+    let explicit_shader = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.is_file());
+    let shader = explicit_shader.or_else(|| {
+        env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER_DIR")
+            .ok()
+            .map(PathBuf::from)
+            .map(|path| path.join("private_particles.comp.glsl"))
+            .filter(|path| path.is_file())
+    })?;
+    let positions = data_dir.join("private_particle_positions.f32.bin");
+    let normals = data_dir.join("private_particle_normals.f32.bin");
+    if !positions.is_file() || !normals.is_file() {
+        return None;
+    }
+    let position_bytes = file_len(&positions)?;
+    let normal_bytes = file_len(&normals)?;
+    if position_bytes == 0 || position_bytes != normal_bytes || position_bytes % 16 != 0 {
+        panic!(
+            "generic private particle payload requires matching non-empty vec4<f32> position/normal files, got positions={} bytes normals={} bytes",
+            position_bytes, normal_bytes
+        );
+    }
+    let particle_count = (position_bytes / 16) as usize;
+    let aux0 = data_dir.join("private_particle_aux0.u32.bin");
+    let aux0_rows = if aux0.is_file() {
+        let aux0_bytes = file_len(&aux0)?;
+        if aux0_bytes == 0 || aux0_bytes % 16 != 0 {
+            panic!(
+                "generic private particle aux0 payload must be a non-empty uvec4<u32> file, got {} bytes",
+                aux0_bytes
+            );
+        }
+        (aux0_bytes / 16) as usize
+    } else {
+        particle_count * 2
+    };
+    let kind = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_KIND")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "generic-private-particles".to_string());
+    let marker_prefix = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MARKER_PREFIX")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLES".to_string());
+    let marker_fields = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MARKER_FIELDS")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "privateParticleMarkerFields=generic".to_string());
+    let mask_texture = private_particle_mask_texture_source(&data_dir);
+    Some(PrivateParticlePayloadSources {
+        data_dir,
+        shader,
+        kind,
+        marker_prefix,
+        marker_fields,
+        particle_count,
+        aux0_rows,
+        mask_texture,
+    })
+}
+
+fn private_particle_mask_texture_source(
+    data_dir: &Path,
+) -> Option<PrivateParticleMaskTextureSource> {
+    let explicit = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_R8")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|path| path.is_file());
+    let path = explicit.or_else(|| {
+        let default_path = data_dir.join("private_particle_mask_texture.r8.bin");
+        default_path.is_file().then_some(default_path)
+    })?;
+    let bytes = file_len(&path)? as usize;
+    if bytes == 0 {
+        panic!(
+            "generic private particle mask texture must be a non-empty R8 file: {}",
+            path.display()
+        );
+    }
+    let width =
+        required_env_usize("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH");
+    let height =
+        required_env_usize("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT");
+    let layers =
+        required_env_usize("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS");
+    let expected_bytes = width
+        .checked_mul(height)
+        .and_then(|value| value.checked_mul(layers))
+        .expect("generic private particle mask texture dimensions overflow usize");
+    if expected_bytes != bytes {
+        panic!(
+            "generic private particle mask texture byte count mismatch for {}: got {}, expected {} from {}x{}x{} R8",
+            path.display(),
+            bytes,
+            expected_bytes,
+            width,
+            height,
+            layers
+        );
+    }
+    let (mode_code, mode_marker) = private_particle_mask_texture_mode();
+    println!("cargo:rerun-if-changed={}", path.display());
+    Some(PrivateParticleMaskTextureSource {
+        path,
+        width,
+        height,
+        layers,
+        bytes,
+        mode_code,
+        mode_marker,
+    })
+}
+
+fn required_env_usize(name: &str) -> usize {
+    let raw = env::var(name).unwrap_or_else(|_| {
+        panic!("{name} is required when a generic private particle mask texture is provided")
+    });
+    let value = raw
+        .parse::<usize>()
+        .unwrap_or_else(|error| panic!("{name} must be a positive integer, got {raw:?}: {error}"));
+    if value == 0 {
+        panic!("{name} must be positive");
+    }
+    value
+}
+
+fn private_particle_mask_texture_mode() -> (u32, &'static str) {
+    let raw = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_MODE")
+        .unwrap_or_else(|_| "texture-array-blend".to_string());
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "procedural" | "procedural-fallback" | "debug-procedural" => (0, "procedural-fallback"),
+        "texture-array" | "texture-array-nearest" | "nearest" => (1, "texture-array-nearest"),
+        "texture-array-blend" | "blend" | "two-layer-blend" => (2, "texture-array-blend"),
+        other => panic!("unsupported generic private particle mask texture mode: {other}"),
+    }
+}
+
+fn optional_env_f32(name: &str, default: f32, min: f32, max: f32) -> f32 {
+    let Some(raw) = env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return default;
+    };
+    let value = raw
+        .parse::<f32>()
+        .unwrap_or_else(|error| panic!("{name} must be a finite float, got {raw:?}: {error}"));
+    if !value.is_finite() || value < min || value > max {
+        panic!("{name} must be finite and in range [{min}, {max}], got {value}");
+    }
+    value
+}
+
+fn optional_env_usize(name: &str, default: usize, min: usize, max: usize) -> usize {
+    let Some(raw) = env::var(name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    else {
+        return default;
+    };
+    let value = raw
+        .parse::<usize>()
+        .unwrap_or_else(|error| panic!("{name} must be an integer, got {raw:?}: {error}"));
+    if value < min || value > max {
+        panic!("{name} must be in range [{min}, {max}], got {value}");
+    }
+    value
+}
+
+fn private_particle_transparency_config() -> (f32, f32, f32, f32, &'static str) {
+    let opacity_name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_OPACITY";
+    let alpha_scale_name =
+        "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE";
+    let depth_name =
+        "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH";
+    let coupling_name =
+        "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING";
+    let source = if [opacity_name, alpha_scale_name, depth_name, coupling_name]
+        .iter()
+        .any(|name| {
+            env::var(name)
+                .ok()
+                .is_some_and(|value| !value.trim().is_empty())
+        }) {
+        "particle-payload-build-env"
+    } else {
+        "default-generated-config"
+    };
+    (
+        optional_env_f32(opacity_name, 1.0, 0.0, 4.0),
+        optional_env_f32(alpha_scale_name, 1.0, 0.0, 4.0),
+        optional_env_f32(depth_name, 0.0, 0.0, 8.0),
+        optional_env_f32(coupling_name, 1.0, 0.0, 1.0),
+        source,
+    )
+}
+
+fn private_particle_tracer_config(_particle_count: usize) -> (usize, f32, f32, &'static str) {
+    let max_count_name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_MAX_COUNT";
+    let lifetime_name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS";
+    let copies_per_second_name =
+        "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND";
+    let source = if [max_count_name, lifetime_name, copies_per_second_name]
+        .iter()
+        .any(|name| {
+            env::var(name)
+                .ok()
+                .is_some_and(|value| !value.trim().is_empty())
+        }) {
+        "particle-payload-build-env"
+    } else {
+        "default-generated-config"
+    };
+    (
+        optional_env_usize(max_count_name, 0, 0, 1_000_000),
+        optional_env_f32(lifetime_name, 1.25, 0.001, 60.0),
+        optional_env_f32(copies_per_second_name, 14.0, 0.0, 240.0),
+        source,
+    )
+}
+
+fn write_private_particle_payload_config(
+    out_dir: &Path,
+    payload: Option<&PrivateParticlePayloadSources>,
+) {
+    let output = out_dir.join("private_particle_payload_config.rs");
+    let payload_linked = payload.is_some();
+    let (
+        transparency_opacity,
+        transparency_output_alpha_scale,
+        transparency_depth_suppression_strength,
+        transparency_rgb_alpha_coupling,
+        transparency_parameter_source,
+    ) = private_particle_transparency_config();
+    let (
+        data_path,
+        shader_path,
+        kind,
+        marker_prefix,
+        marker_fields,
+        particle_count,
+        aux0_rows,
+        mask_linked,
+        mask_path,
+        mask_width,
+        mask_height,
+        mask_layers,
+        mask_bytes,
+        mask_mode_code,
+        mask_mode_marker,
+    ) = payload
+        .map(|payload| {
+            let (
+                mask_linked,
+                mask_path,
+                mask_width,
+                mask_height,
+                mask_layers,
+                mask_bytes,
+                mask_mode_code,
+                mask_mode_marker,
+            ) = payload
+                .mask_texture
+                .as_ref()
+                .map(|mask| {
+                    (
+                        true,
+                        mask.path.display().to_string(),
+                        mask.width,
+                        mask.height,
+                        mask.layers,
+                        mask.bytes,
+                        mask.mode_code,
+                        mask.mode_marker,
+                    )
+                })
+                .unwrap_or((
+                    false,
+                    "none".to_string(),
+                    1,
+                    1,
+                    1,
+                    1,
+                    0,
+                    "procedural-fallback",
+                ));
+            (
+                payload.data_dir.display().to_string(),
+                payload.shader.display().to_string(),
+                payload.kind.clone(),
+                payload.marker_prefix.clone(),
+                payload.marker_fields.clone(),
+                payload.particle_count,
+                payload.aux0_rows,
+                mask_linked,
+                mask_path,
+                mask_width,
+                mask_height,
+                mask_layers,
+                mask_bytes,
+                mask_mode_code,
+                mask_mode_marker,
+            )
+        })
+        .unwrap_or_else(|| {
+            (
+                "none".to_string(),
+                "none".to_string(),
+                "none".to_string(),
+                "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLES".to_string(),
+                "privateParticleMarkerFields=none".to_string(),
+                1,
+                2,
+                false,
+                "none".to_string(),
+                1,
+                1,
+                1,
+                1,
+                0,
+                "procedural-fallback",
+            )
+        });
+    let (
+        tracer_max_count,
+        tracer_lifetime_seconds,
+        tracer_copies_per_second,
+        tracer_parameter_source,
+    ) = private_particle_tracer_config(particle_count);
+    let source = format!(
+        "pub(crate) const PRIVATE_PARTICLE_PAYLOAD_LINKED: bool = {payload_linked};\npub(crate) const PRIVATE_PARTICLE_IMPLEMENTATION_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DATA_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_KIND: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_PREFIX: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_FIELDS: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COUNT: usize = {particle_count};\npub(crate) const PRIVATE_PARTICLE_TRACER_MAX_COUNT: usize = {tracer_max_count};\npub(crate) const PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_AUX0_VEC4_ROWS: usize = {aux0_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LINKED: bool = {mask_linked};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH: u32 = {mask_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT: u32 = {mask_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS: u32 = {mask_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_BYTES: usize = {mask_bytes};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE: u32 = {mask_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OPACITY: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_PARAMETER_SOURCE: &str = \"{}\";\n",
+        rust_string_literal(&shader_path),
+        rust_string_literal(&data_path),
+        rust_string_literal(&kind),
+        rust_string_literal(&marker_prefix),
+        rust_string_literal(&marker_fields),
+        tracer_lifetime_seconds,
+        tracer_copies_per_second,
+        rust_string_literal(tracer_parameter_source),
+        rust_string_literal(&mask_path),
+        rust_string_literal(mask_mode_marker),
+        transparency_opacity,
+        transparency_output_alpha_scale,
+        transparency_depth_suppression_strength,
+        transparency_rgb_alpha_coupling,
+        rust_string_literal(transparency_parameter_source),
+    );
+    fs::write(&output, source).unwrap_or_else(|error| {
+        panic!(
+            "failed to write generated private particle payload config {}: {error}",
+            output.display()
+        )
+    });
+}
+
+fn write_private_particle_payload_files(
+    out_dir: &Path,
+    payload: Option<&PrivateParticlePayloadSources>,
+) {
+    let files = [
+        (
+            "private_particle_positions.f32.bin",
+            "private_particle_positions.f32.bin",
+        ),
+        (
+            "private_particle_normals.f32.bin",
+            "private_particle_normals.f32.bin",
+        ),
+    ];
+
+    for (source_name, output_name) in files {
+        let output = out_dir.join(output_name);
+        if let Some(payload) = payload {
+            let source = payload.data_dir.join(source_name);
+            println!("cargo:rerun-if-changed={}", source.display());
+            fs::copy(&source, &output).unwrap_or_else(|error| {
+                panic!(
+                    "failed to copy generic private particle payload {} -> {}: {error}",
+                    source.display(),
+                    output.display()
+                )
+            });
+            continue;
+        }
+        fs::write(&output, [0_u8; 16]).unwrap_or_else(|error| {
+            panic!(
+                "failed to write placeholder generic private particle payload {}: {error}",
+                output.display()
+            )
+        });
+    }
+
+    let aux0_output = out_dir.join("private_particle_aux0.u32.bin");
+    if let Some(payload) = payload {
+        let source = payload.data_dir.join("private_particle_aux0.u32.bin");
+        if source.is_file() {
+            println!("cargo:rerun-if-changed={}", source.display());
+            fs::copy(&source, &aux0_output).unwrap_or_else(|error| {
+                panic!(
+                    "failed to copy generic private particle aux0 payload {} -> {}: {error}",
+                    source.display(),
+                    aux0_output.display()
+                )
+            });
+        } else {
+            let zero_bytes = payload.aux0_rows * 16;
+            fs::write(&aux0_output, vec![0_u8; zero_bytes]).unwrap_or_else(|error| {
+                panic!(
+                    "failed to write zero generic private particle aux0 payload {}: {error}",
+                    aux0_output.display()
+                )
+            });
+        }
+    } else {
+        fs::write(&aux0_output, vec![0_u8; 32]).unwrap_or_else(|error| {
+            panic!(
+                "failed to write placeholder generic private particle aux0 payload {}: {error}",
+                aux0_output.display()
+            )
+        });
+    }
+
+    let mask_output = out_dir.join("private_particle_mask_texture.r8.bin");
+    if let Some(payload) = payload.and_then(|payload| payload.mask_texture.as_ref()) {
+        println!("cargo:rerun-if-changed={}", payload.path.display());
+        fs::copy(&payload.path, &mask_output).unwrap_or_else(|error| {
+            panic!(
+                "failed to copy generic private particle mask texture {} -> {}: {error}",
+                payload.path.display(),
+                mask_output.display()
+            )
+        });
+    } else {
+        fs::write(&mask_output, [255_u8]).unwrap_or_else(|error| {
+            panic!(
+                "failed to write placeholder generic private particle mask texture {}: {error}",
+                mask_output.display()
+            )
+        });
+    }
+}
+
 fn write_private_kuramoto_payload_files(
     out_dir: &Path,
     payload: Option<&PrivateKuramotoPayloadSources>,
@@ -459,6 +1019,10 @@ fn write_private_kuramoto_payload_files(
             )
         });
     }
+}
+
+fn file_len(path: &Path) -> Option<u64> {
+    fs::metadata(path).ok().map(|metadata| metadata.len())
 }
 
 fn compile_private_layer_payload(

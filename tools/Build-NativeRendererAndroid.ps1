@@ -199,6 +199,12 @@ $privateLayerPayloadLinked =
     (Test-Path $env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER) -and
     (Test-Path $env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_PROJECTION_SHADER)
 
+$privateParticlePayloadLinked =
+    (-not [string]::IsNullOrWhiteSpace($env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DATA_DIR)) -and
+    (-not [string]::IsNullOrWhiteSpace($env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER)) -and
+    (Test-Path $env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DATA_DIR) -and
+    (Test-Path $env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER)
+
 $openXrLoaderPackaged = $false
 if (-not [string]::IsNullOrWhiteSpace($OpenXrLoader) -and (Test-Path $OpenXrLoader)) {
     Copy-Item -LiteralPath $OpenXrLoader -Destination (Join-Path $nativeLibDir "libopenxr_loader.so") -Force
@@ -271,6 +277,8 @@ $manifest = [ordered]@{
     runtime_permission_request = "rust-jni-framework-activity-requestPermissions"
     public_effect_layers = @("blur-guide", "recorded-hand-replay-visual", "gpu-mesh-boundary", "target-space-validation-mesh-sdf")
     private_extension_payloads_packaged = [bool]$privateLayerPayloadLinked
+    private_particle_payloads_packaged = [bool]$privateParticlePayloadLinked
+    private_particle_payload_kind = if ($privateParticlePayloadLinked) { $env:RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_KIND } else { "none" }
     camera_ids = [ordered]@{
         left = "50"
         right = "51"

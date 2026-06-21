@@ -19,7 +19,16 @@ void main() {
     }
 
     float flip_y = step(0.5, pc.params0.x);
-    vec2 oriented_uv = vec2(local_uv.x, mix(local_uv.y, 1.0 - local_uv.y, flip_y));
+    vec2 source_position_offset_uv = pc.params0.zw;
+    vec2 positioned_local_uv = clamp(
+        local_uv - source_position_offset_uv,
+        vec2(0.0),
+        vec2(1.0)
+    );
+    vec2 oriented_uv = vec2(
+        positioned_local_uv.x,
+        mix(positioned_local_uv.y, 1.0 - positioned_local_uv.y, flip_y)
+    );
     vec2 source_uv = pc.source_uv_rect.xy + oriented_uv * pc.source_uv_rect.zw;
     vec4 sample_color = texture(u_video_projection, source_uv);
 

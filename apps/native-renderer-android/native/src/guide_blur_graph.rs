@@ -8,6 +8,8 @@ use crate::{
     camera_projection::PreparedCameraProjection,
     camera_projection_metadata::{CameraProjectionMetadata, TargetRect},
     native_renderer_options::{NativeGuideGraphResolution, NativeProjectionBorderStretchSettings},
+    video_projection::PreparedVideoProjection,
+    video_projection_metadata::VideoProjectionMetadata,
 };
 
 const GUIDE_EYE_COUNT: usize = 2;
@@ -116,6 +118,38 @@ impl GuideFrameKey {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+struct VideoBlendTemporalState {
+    initialized: bool,
+    rect: TargetRect,
+}
+
+impl VideoBlendTemporalState {
+    fn resolve(&mut self, requested: TargetRect, temporal_enabled: bool) -> TargetRect {
+        if !temporal_enabled {
+            self.initialized = false;
+            self.rect = requested;
+            return requested;
+        }
+        if !self.initialized {
+            self.initialized = true;
+            self.rect = requested;
+            return requested;
+        }
+        self.rect = lerp_target_rect(self.rect, requested, 0.18);
+        self.rect
+    }
+}
+
+impl Default for VideoBlendTemporalState {
+    fn default() -> Self {
+        Self {
+            initialized: false,
+            rect: TargetRect::UNIT,
+        }
+    }
+}
+
 pub(crate) struct GuideBlurGraphRenderer {
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     color_format: vk::Format,
@@ -125,6 +159,7 @@ pub(crate) struct GuideBlurGraphRenderer {
     last_frame_key: Option<GuideFrameKey>,
     render_count: u64,
     cache_hits: u64,
+    video_blend_temporal: [VideoBlendTemporalState; GUIDE_EYE_COUNT],
 }
 
 impl GuideBlurGraphRenderer {
@@ -143,6 +178,7 @@ impl GuideBlurGraphRenderer {
             last_frame_key: None,
             render_count: 0,
             cache_hits: 0,
+            video_blend_temporal: [VideoBlendTemporalState::default(); GUIDE_EYE_COUNT],
         }
     }
 
@@ -329,6 +365,143 @@ impl GuideBlurGraphRenderer {
         device.cmd_draw(cmd, 3, 1, 0, 0);
     }
 
+    pub(crate) unsafe fn record_video_composite_projection_eye(
+        &mut self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        extent: vk::Extent2D,
+        eye_index: usize,
+        target_rect: TargetRect,
+        video_target_rect: TargetRect,
+        projection_settings: NativeProjectionBorderStretchSettings,
+        blur_enabled: bool,
+        video_projection_metadata: &VideoProjectionMetadata,
+        video_opacity: f32,
+        prepared_video_projection: &PreparedVideoProjection,
+    ) -> bool {
+        let target_rect = self.video_composite_target_rect(
+            eye_index,
+            target_rect,
+            projection_settings
+                .video_border_blend_mode
+                .uses_temporal_target_rect_state(),
+        );
+        let Some(resources) = self.resources.as_mut() else {
+            return false;
+        };
+        if let Err(error) = resources.ensure_video_composite_resources(
+            device,
+            prepared_video_projection.descriptor_set_layout,
+        ) {
+            crate::marker(
+                "guide-video-composite",
+                format!(
+                    "status=unavailable reason={} videoBorderBlendShaderCompositeReady=false",
+                    crate::sanitize(&error)
+                ),
+            );
+            return false;
+        }
+        let Some(composite) = resources.video_composite.as_ref() else {
+            return false;
+        };
+        let Some(eye) = resources.eyes.get(eye_index) else {
+            return false;
+        };
+        let viewport = [vk::Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: extent.width as f32,
+            height: extent.height as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        }];
+        let scissor = [target_rect_to_scissor(extent, target_rect)];
+        device.cmd_set_viewport(cmd, 0, &viewport);
+        device.cmd_set_scissor(cmd, 0, &scissor);
+        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, composite.pipeline);
+        let guide_descriptor_set = if blur_enabled {
+            eye.final_descriptor_set
+        } else {
+            eye.final_downsample_descriptor_set
+        };
+        device.cmd_bind_descriptor_sets(
+            cmd,
+            vk::PipelineBindPoint::GRAPHICS,
+            composite.pipeline_layout,
+            0,
+            &[
+                guide_descriptor_set,
+                prepared_video_projection.descriptor_set,
+            ],
+            &[],
+        );
+        let projection_push = projection_settings.push_params();
+        let source_uv_rect = video_projection_metadata.source_rect_for_eye(eye_index);
+        let source_position_offset =
+            video_projection_metadata.source_position_offset_for_eye(eye_index);
+        let push = GuideVideoProjectionPush {
+            target_rect: [
+                target_rect.x,
+                target_rect.y,
+                target_rect.width,
+                target_rect.height,
+            ],
+            params: [
+                eye_index as f32,
+                projection_push.params[0],
+                projection_push.params[1],
+                projection_push.params[2],
+            ],
+            stretch0: projection_push.stretch0,
+            stretch1: [
+                projection_push.stretch1[0],
+                projection_push.stretch1[1],
+                projection_push.stretch1[2],
+                projection_push.stretch1[3],
+            ],
+            alpha: [
+                projection_push.params[3],
+                projection_settings.video_border_blend_mode.shader_code(),
+                video_opacity.clamp(0.0, 1.0),
+                video_projection_metadata.source_sample_y_flip,
+            ],
+            video_target_rect: [
+                video_target_rect.x,
+                video_target_rect.y,
+                video_target_rect.width,
+                video_target_rect.height,
+            ],
+            video_source_uv_rect: [
+                source_uv_rect.x,
+                source_uv_rect.y,
+                source_uv_rect.width,
+                source_uv_rect.height,
+            ],
+            video_params: [
+                source_position_offset[0],
+                source_position_offset[1],
+                0.0,
+                0.0,
+            ],
+        };
+        push_fragment_constants(device, cmd, composite.pipeline_layout, &push);
+        device.cmd_draw(cmd, 3, 1, 0, 0);
+        true
+    }
+
+    fn video_composite_target_rect(
+        &mut self,
+        eye_index: usize,
+        target_rect: TargetRect,
+        temporal_enabled: bool,
+    ) -> TargetRect {
+        let Some(state) = self.video_blend_temporal.get_mut(eye_index) else {
+            return target_rect;
+        };
+        state.resolve(target_rect, temporal_enabled)
+    }
+
     unsafe fn record_blur_axis(
         &self,
         device: &ash::Device,
@@ -449,6 +622,7 @@ impl GuideBlurGraphRenderer {
 struct GuideBlurGraphResources {
     camera_descriptor_set_layout: vk::DescriptorSetLayout,
     resolution: NativeGuideGraphResolution,
+    projection_render_pass: vk::RenderPass,
     render_pass: vk::RenderPass,
     sampler: vk::Sampler,
     sample_descriptor_set_layout: vk::DescriptorSetLayout,
@@ -459,6 +633,7 @@ struct GuideBlurGraphResources {
     downsample_pipeline: vk::Pipeline,
     blur_pipeline: vk::Pipeline,
     final_pipeline: vk::Pipeline,
+    video_composite: Option<GuideVideoCompositeResources>,
     eyes: Vec<GuideEyeResources>,
 }
 
@@ -674,6 +849,7 @@ impl GuideBlurGraphResources {
         Ok(Self {
             camera_descriptor_set_layout,
             resolution,
+            projection_render_pass,
             render_pass,
             sampler,
             sample_descriptor_set_layout,
@@ -684,6 +860,7 @@ impl GuideBlurGraphResources {
             downsample_pipeline,
             blur_pipeline,
             final_pipeline,
+            video_composite: None,
             eyes,
         })
     }
@@ -691,6 +868,9 @@ impl GuideBlurGraphResources {
     unsafe fn destroy(self, device: &ash::Device) {
         for eye in self.eyes {
             eye.destroy(device);
+        }
+        if let Some(video_composite) = self.video_composite {
+            video_composite.destroy(device);
         }
         device.destroy_pipeline(self.final_pipeline, None);
         device.destroy_pipeline(self.blur_pipeline, None);
@@ -702,6 +882,81 @@ impl GuideBlurGraphResources {
         device.destroy_descriptor_set_layout(self.sample_descriptor_set_layout, None);
         device.destroy_sampler(self.sampler, None);
         device.destroy_render_pass(self.render_pass, None);
+    }
+
+    unsafe fn ensure_video_composite_resources(
+        &mut self,
+        device: &ash::Device,
+        video_descriptor_set_layout: vk::DescriptorSetLayout,
+    ) -> Result<(), String> {
+        if self
+            .video_composite
+            .as_ref()
+            .map(|resources| resources.video_descriptor_set_layout == video_descriptor_set_layout)
+            .unwrap_or(false)
+        {
+            return Ok(());
+        }
+        if let Some(resources) = self.video_composite.take() {
+            resources.destroy(device);
+        }
+        self.video_composite = Some(GuideVideoCompositeResources::new(
+            device,
+            self.projection_render_pass,
+            self.sample_descriptor_set_layout,
+            video_descriptor_set_layout,
+        )?);
+        crate::marker(
+            "guide-video-composite",
+            "status=created videoBorderBlendShaderCompositeReady=true videoBorderBlendCompositeSets=guide-texture,video-projection videoBorderBlendCompositeShader=guide-video-projection".to_string(),
+        );
+        Ok(())
+    }
+}
+
+struct GuideVideoCompositeResources {
+    video_descriptor_set_layout: vk::DescriptorSetLayout,
+    pipeline_layout: vk::PipelineLayout,
+    pipeline: vk::Pipeline,
+}
+
+impl GuideVideoCompositeResources {
+    unsafe fn new(
+        device: &ash::Device,
+        projection_render_pass: vk::RenderPass,
+        guide_descriptor_set_layout: vk::DescriptorSetLayout,
+        video_descriptor_set_layout: vk::DescriptorSetLayout,
+    ) -> Result<Self, String> {
+        let pipeline_layout = create_pipeline_layout::<GuideVideoProjectionPush>(
+            device,
+            &[guide_descriptor_set_layout, video_descriptor_set_layout],
+        )
+        .map_err(|error| format!("create guide/video composite pipeline layout: {error}"))?;
+        let pipeline = match create_graphics_pipeline(
+            device,
+            projection_render_pass,
+            pipeline_layout,
+            include_bytes!(concat!(env!("OUT_DIR"), "/camera_projection.vert.spv")),
+            include_bytes!(concat!(env!("OUT_DIR"), "/guide_video_projection.frag.spv")),
+            false,
+            "guide/video composite projection",
+        ) {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                device.destroy_pipeline_layout(pipeline_layout, None);
+                return Err(error);
+            }
+        };
+        Ok(Self {
+            video_descriptor_set_layout,
+            pipeline_layout,
+            pipeline,
+        })
+    }
+
+    unsafe fn destroy(self, device: &ash::Device) {
+        device.destroy_pipeline(self.pipeline, None);
+        device.destroy_pipeline_layout(self.pipeline_layout, None);
     }
 }
 
@@ -965,6 +1220,18 @@ struct GuideProjectionPush {
     stretch0: [f32; 4],
     stretch1: [f32; 4],
     alpha: [f32; 4],
+}
+
+#[repr(C)]
+struct GuideVideoProjectionPush {
+    target_rect: [f32; 4],
+    params: [f32; 4],
+    stretch0: [f32; 4],
+    stretch1: [f32; 4],
+    alpha: [f32; 4],
+    video_target_rect: [f32; 4],
+    video_source_uv_rect: [f32; 4],
+    video_params: [f32; 4],
 }
 
 unsafe fn begin_guide_pass(
@@ -1262,6 +1529,16 @@ fn target_rect_to_scissor(extent: vk::Extent2D, rect: TargetRect) -> vk::Rect2D 
     vk::Rect2D {
         offset: vk::Offset2D { x, y },
         extent: vk::Extent2D { width, height },
+    }
+}
+
+fn lerp_target_rect(previous: TargetRect, requested: TargetRect, alpha: f32) -> TargetRect {
+    let alpha = alpha.clamp(0.0, 1.0);
+    TargetRect {
+        x: previous.x + (requested.x - previous.x) * alpha,
+        y: previous.y + (requested.y - previous.y) * alpha,
+        width: previous.width + (requested.width - previous.width) * alpha,
+        height: previous.height + (requested.height - previous.height) * alpha,
     }
 }
 

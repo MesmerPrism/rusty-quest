@@ -13,12 +13,12 @@ mod tests {
         NativeEnvironmentDepthSurfaceFreeSpaceDecay, NativeEnvironmentDepthSurfaceModel,
         NativeEnvironmentDepthSurfaceNormalCoherence, NativeEnvironmentDepthSurfaceNormalSource,
         NativeEnvironmentDepthSurfaceSmallComponentPolicy, NativeGuideGraphResolution,
-        NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode, NativeVideoProjectionSource,
-        NativeVideoProjectionStereoLayout, NativeVideoProjectionTarget,
-        PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED,
-        PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_READER_MAX_IMAGES,
-        PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
-        PROP_CAMERA_YCBCR_MODE, PROP_DISPLAY_COMPOSITE_ENABLED,
+        NativePassthroughStyleMode, NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
+        NativeVideoBorderBlendMode, NativeVideoProjectionSource, NativeVideoProjectionStereoLayout,
+        NativeVideoProjectionTarget, PROP_CAMERA_DIRECT_BORDER_OPACITY,
+        PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED, PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE,
+        PROP_CAMERA_READER_MAX_IMAGES, PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING,
+        PROP_CAMERA_SYNC_MODE, PROP_CAMERA_YCBCR_MODE, PROP_DISPLAY_COMPOSITE_ENABLED,
         PROP_DISPLAY_COMPOSITE_FEEDBACK_ENABLED, PROP_DISPLAY_COMPOSITE_FEEDBACK_PROJECTION,
         PROP_DISPLAY_COMPOSITE_FPS_CAP, PROP_DISPLAY_COMPOSITE_HEIGHT,
         PROP_DISPLAY_COMPOSITE_HIGH_RATE_JSON_PAYLOAD, PROP_DISPLAY_COMPOSITE_MAX_IMAGES,
@@ -50,21 +50,26 @@ mod tests {
         PROP_HAND_MESH_GRAFT_COPIES_ENABLED, PROP_HAND_MESH_GRAFT_COPY_SCALE,
         PROP_HAND_MESH_INPUT_SOURCE, PROP_HAND_MESH_REAL_HANDS_VISIBLE,
         PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED,
-        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV, PROP_PERIPHERAL_STRETCH_BLEND_MODE,
-        PROP_PERIPHERAL_STRETCH_CORE_SCALE, PROP_PERIPHERAL_STRETCH_EDGE_INSET_UV,
-        PROP_PERIPHERAL_STRETCH_MAX_INSET_UV, PROP_PROCESSING_LAYER,
-        PROP_PROJECTION_BORDER_OPACITY, PROP_PROJECTION_BORDER_POLICY, PROP_RENDER_MODE,
-        PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SDF_UPDATE_PERIOD_FRAMES,
+        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV, PROP_PASSTHROUGH_STYLE_BRIGHTNESS,
+        PROP_PASSTHROUGH_STYLE_COLOR_AMPLITUDE, PROP_PASSTHROUGH_STYLE_COLOR_PHASE,
+        PROP_PASSTHROUGH_STYLE_CONTRAST, PROP_PASSTHROUGH_STYLE_EDGE_COLOR_A,
+        PROP_PASSTHROUGH_STYLE_EDGE_COLOR_B, PROP_PASSTHROUGH_STYLE_EDGE_COLOR_G,
+        PROP_PASSTHROUGH_STYLE_EDGE_COLOR_R, PROP_PASSTHROUGH_STYLE_MODE,
+        PROP_PASSTHROUGH_STYLE_OPACITY, PROP_PASSTHROUGH_STYLE_SATURATION,
+        PROP_PERIPHERAL_STRETCH_BLEND_MODE, PROP_PERIPHERAL_STRETCH_CORE_SCALE,
+        PROP_PERIPHERAL_STRETCH_EDGE_INSET_UV, PROP_PERIPHERAL_STRETCH_MAX_INSET_UV,
+        PROP_PROCESSING_LAYER, PROP_PROJECTION_BORDER_OPACITY, PROP_PROJECTION_BORDER_POLICY,
+        PROP_RENDER_MODE, PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SDF_UPDATE_PERIOD_FRAMES,
         PROP_STIMULUS_VOLUME_CENTRAL_FOV_FRACTION, PROP_STIMULUS_VOLUME_COMPOSITION,
         PROP_STIMULUS_VOLUME_ENABLED, PROP_STIMULUS_VOLUME_GRADIENT_SMOOTHING,
         PROP_STIMULUS_VOLUME_PATTERN_FAMILY, PROP_STIMULUS_VOLUME_RANDOMIZE_ENABLED,
         PROP_STIMULUS_VOLUME_RANDOMIZE_MAX_HZ, PROP_STIMULUS_VOLUME_RANDOMIZE_MIN_HZ,
         PROP_STIMULUS_VOLUME_RAYMARCH_SAMPLES, PROP_STIMULUS_VOLUME_RENDER_TARGET,
         PROP_STIMULUS_VOLUME_SAFETY_ACK, PROP_SWAPCHAIN_COLOR_FORMAT_MODE,
-        PROP_VIDEO_PROJECTION_ENABLED, PROP_VIDEO_PROJECTION_FPS_CAP, PROP_VIDEO_PROJECTION_HEIGHT,
-        PROP_VIDEO_PROJECTION_HIGH_RATE_JSON_PAYLOAD, PROP_VIDEO_PROJECTION_LOOPING,
-        PROP_VIDEO_PROJECTION_MAX_IMAGES, PROP_VIDEO_PROJECTION_OPACITY,
-        PROP_VIDEO_PROJECTION_PATH, PROP_VIDEO_PROJECTION_SOURCE,
+        PROP_VIDEO_BORDER_BLEND_MODE, PROP_VIDEO_PROJECTION_ENABLED, PROP_VIDEO_PROJECTION_FPS_CAP,
+        PROP_VIDEO_PROJECTION_HEIGHT, PROP_VIDEO_PROJECTION_HIGH_RATE_JSON_PAYLOAD,
+        PROP_VIDEO_PROJECTION_LOOPING, PROP_VIDEO_PROJECTION_MAX_IMAGES,
+        PROP_VIDEO_PROJECTION_OPACITY, PROP_VIDEO_PROJECTION_PATH, PROP_VIDEO_PROJECTION_SOURCE,
         PROP_VIDEO_PROJECTION_STEREO_LAYOUT, PROP_VIDEO_PROJECTION_TARGET,
         PROP_VIDEO_PROJECTION_WIDTH,
     };
@@ -480,6 +485,89 @@ mod tests {
     }
 
     #[test]
+    fn native_passthrough_style_only_is_isolated_from_visual_extras() {
+        let options = options_from(&[
+            (PROP_RENDER_MODE, "native-passthrough-style-only"),
+            (PROP_CAMERA_OUTPUT_MODE, "disabled"),
+            (PROP_GUIDE_BLUR_ENABLED, "false"),
+            (PROP_HAND_MESH_INPUT_SOURCE, "disabled"),
+            (PROP_ENABLE_SDF_VISUAL, "true"),
+            (PROP_HAND_MESH_GRAFT_COPIES_ENABLED, "false"),
+            (PROP_HAND_MESH_REAL_HANDS_VISIBLE, "false"),
+            (PROP_PASSTHROUGH_STYLE_MODE, "mono-to-rgba"),
+            (PROP_PASSTHROUGH_STYLE_OPACITY, "0.82"),
+            (PROP_PASSTHROUGH_STYLE_EDGE_COLOR_R, "0.1"),
+            (PROP_PASSTHROUGH_STYLE_EDGE_COLOR_G, "0.9"),
+            (PROP_PASSTHROUGH_STYLE_EDGE_COLOR_B, "1.0"),
+            (PROP_PASSTHROUGH_STYLE_EDGE_COLOR_A, "0.35"),
+            (PROP_PASSTHROUGH_STYLE_COLOR_PHASE, "1.18"),
+            (PROP_PASSTHROUGH_STYLE_COLOR_AMPLITUDE, "0.75"),
+        ]);
+
+        assert_eq!(
+            options.render_mode.marker_value(),
+            "native-passthrough-style-only"
+        );
+        assert!(options.render_mode.uses_native_passthrough());
+        assert!(options.render_mode.projection_layer_alpha_blend());
+        assert!(!options.render_mode.uses_custom_stereo_projection());
+        assert_eq!(
+            options.render_mode.camera_runtime_mode(),
+            "skipped-native-passthrough-style-only"
+        );
+        assert_eq!(
+            options.render_mode.disabled_camera_projection_path(),
+            "disabled-native-passthrough-style-only"
+        );
+        assert_eq!(options.camera_output_mode, NativeCameraOutputMode::Disabled);
+        assert!(!options.guide_blur_enabled);
+        assert_eq!(
+            options.compact_hand_input_source_mode,
+            CompactHandInputSourceMode::Disabled
+        );
+        assert!(!options.sdf_visual_enabled);
+        assert!(!options.hand_mesh_graft_copies_enabled);
+        assert!(!options.hand_mesh_real_hands_visible);
+        assert_eq!(
+            options.passthrough_style_settings.mode,
+            NativePassthroughStyleMode::MonoToRgba
+        );
+        assert_eq!(options.passthrough_style_settings.opacity, 0.82);
+        assert_eq!(
+            options.passthrough_style_settings.edge_color_rgba,
+            [0.1, 0.9, 1.0, 0.35]
+        );
+        assert!((options.passthrough_style_settings.color_phase - 0.18).abs() < 0.0001);
+        assert_eq!(options.passthrough_style_settings.color_amplitude, 0.75);
+        assert!(options
+            .passthrough_style_settings
+            .marker_fields()
+            .contains("passthroughStyleExtensionChain=PassthroughColorMapMonoToRgbaFB"));
+    }
+
+    #[test]
+    fn native_passthrough_bcs_style_values_parse_separately_from_color_map() {
+        let options = options_from(&[
+            (PROP_PASSTHROUGH_STYLE_MODE, "bcs"),
+            (PROP_PASSTHROUGH_STYLE_BRIGHTNESS, "-0.35"),
+            (PROP_PASSTHROUGH_STYLE_CONTRAST, "1.65"),
+            (PROP_PASSTHROUGH_STYLE_SATURATION, "0.45"),
+        ]);
+        let settings = options.passthrough_style_settings;
+
+        assert_eq!(
+            settings.mode,
+            NativePassthroughStyleMode::BrightnessContrastSaturation
+        );
+        assert_eq!(settings.brightness, -0.35);
+        assert_eq!(settings.contrast, 1.65);
+        assert_eq!(settings.saturation, 0.45);
+        assert!(settings
+            .marker_fields()
+            .contains("passthroughStyleSingleExtensionChain=true"));
+    }
+
+    #[test]
     fn native_passthrough_real_hand_mesh_visibility_is_explicit() {
         let options = options_from(&[
             (PROP_RENDER_MODE, "native-passthrough-graft-only"),
@@ -561,6 +649,44 @@ mod tests {
         assert_eq!(
             options.render_mode.disabled_camera_projection_path(),
             "disabled-solid-black-openxr-hands-anchor-particles"
+        );
+    }
+
+    #[test]
+    fn solid_black_private_particles_requests_no_hand_or_volume_route() {
+        let options = options_from(&[
+            (PROP_RENDER_MODE, "solid-black-private-particles"),
+            (PROP_HAND_MESH_INPUT_SOURCE, "live-meta"),
+            (PROP_ENABLE_SDF_VISUAL, "true"),
+            (PROP_HAND_MESH_GRAFT_COPIES_ENABLED, "false"),
+            (PROP_HAND_MESH_REAL_HANDS_VISIBLE, "false"),
+            (PROP_HAND_ANCHOR_PARTICLES_ENABLED, "false"),
+            (PROP_STIMULUS_VOLUME_ENABLED, "true"),
+        ]);
+
+        assert_eq!(
+            options.render_mode.marker_value(),
+            "solid-black-private-particles"
+        );
+        assert!(!options.render_mode.uses_custom_stereo_projection());
+        assert!(!options.render_mode.uses_native_passthrough());
+        assert!(options.render_mode.uses_solid_black_background());
+        assert!(!options.render_mode.uses_stimulus_volume());
+        assert!(!options.render_mode.requests_openxr_default_hand_visual());
+        assert!(options
+            .render_mode
+            .requests_private_particle_recenter_input());
+        assert!(!options.sdf_visual_enabled);
+        assert!(!options.hand_mesh_graft_copies_enabled);
+        assert!(!options.hand_mesh_real_hands_visible);
+        assert!(!options.hand_anchor_particle_settings.enabled);
+        assert_eq!(
+            options.render_mode.camera_runtime_mode(),
+            "skipped-solid-black-private-particles"
+        );
+        assert_eq!(
+            options.render_mode.disabled_camera_projection_path(),
+            "disabled-solid-black-private-particles"
         );
     }
 
@@ -1332,6 +1458,11 @@ mod tests {
         assert!(settings.video_border_blend_active());
         assert!(settings.transition_active());
         assert_eq!(
+            settings.video_border_blend_mode,
+            NativeVideoBorderBlendMode::AlphaOver
+        );
+        assert!(!settings.video_border_shader_composite_active());
+        assert_eq!(
             settings.guide_projection_coverage(),
             "full-eye-video-border-blend"
         );
@@ -1339,7 +1470,12 @@ mod tests {
         let fields = settings.marker_fields();
         assert!(fields.contains("processingLayer=video-border-blend"));
         assert!(fields.contains("guideProjectionCoverage=full-eye-video-border-blend"));
+        assert!(fields.contains("guideProjectionEdgeTint=diagnostic-debug-only"));
+        assert!(fields.contains("guideProjectionEdgeTintActive=false"));
         assert!(fields.contains("videoBorderBlendActive=true"));
+        assert!(fields.contains("videoBorderBlendMode=alpha-over"));
+        assert!(fields.contains("videoBorderBlendCompositor=fixed-function-premultiplied-alpha"));
+        assert!(fields.contains("videoBorderBlendShaderCompositeActive=false"));
         assert!(fields.contains("peripheralStretchConsumesProjectionExterior=false"));
         assert!(fields.contains("videoBorderBlendConsumesProjectionExterior=false"));
         assert!(fields.contains(
@@ -1353,6 +1489,73 @@ mod tests {
             fields.contains("videoBorderBlendSource=prepared-stereo-video-projection-background")
         );
         assert!(fields.contains("videoBorderBlendCameraSource=guide-texture"));
+    }
+
+    #[test]
+    fn video_border_blend_crossfade_uses_shader_composite() {
+        let options = options_from(&[
+            (PROP_PROCESSING_LAYER, "video-border-blend"),
+            (PROP_VIDEO_BORDER_BLEND_MODE, "crossfade"),
+            (PROP_PROJECTION_BORDER_POLICY, "passthrough-underlay"),
+            (PROP_VIDEO_PROJECTION_ENABLED, "true"),
+            (PROP_VIDEO_PROJECTION_PATH, "video/noodletest-sbs.mp4"),
+        ]);
+        let settings = options.projection_border_stretch_settings;
+
+        assert!(settings.video_border_blend_active());
+        assert_eq!(
+            settings.video_border_blend_mode,
+            NativeVideoBorderBlendMode::Crossfade
+        );
+        assert!(settings.video_border_shader_composite_active());
+
+        let fields = settings.marker_fields();
+        assert!(fields.contains("videoBorderBlendMode=crossfade"));
+        assert!(fields.contains("videoBorderBlendCompositor=guide-video-shader-composite"));
+        assert!(fields.contains("videoBorderBlendShaderCompositeActive=true"));
+        assert!(fields.contains(
+            "peripheralStretchBlendSemantics=camera-guide-and-video-sampled-shader-composite-through-inner-band"
+        ));
+    }
+
+    #[test]
+    fn video_border_blend_advanced_modes_are_public_shader_composites() {
+        let cases = [
+            (
+                "linear-crossfade",
+                NativeVideoBorderBlendMode::LinearCrossfade,
+            ),
+            ("luma-match", NativeVideoBorderBlendMode::LumaMatch),
+            ("chroma-luma", NativeVideoBorderBlendMode::ChromaLuma),
+            ("soft-light", NativeVideoBorderBlendMode::SoftLight),
+            ("overlay", NativeVideoBorderBlendMode::Overlay),
+            ("screen", NativeVideoBorderBlendMode::Screen),
+            ("multiply", NativeVideoBorderBlendMode::Multiply),
+            ("gradient-aware", NativeVideoBorderBlendMode::GradientAware),
+            ("two-band", NativeVideoBorderBlendMode::TwoBand),
+            (
+                "temporal-stabilized",
+                NativeVideoBorderBlendMode::TemporalStabilized,
+            ),
+        ];
+        for (token, expected_mode) in cases {
+            let options = options_from(&[
+                (PROP_PROCESSING_LAYER, "video-border-blend"),
+                (PROP_VIDEO_BORDER_BLEND_MODE, token),
+                (PROP_VIDEO_PROJECTION_ENABLED, "true"),
+                (PROP_VIDEO_PROJECTION_PATH, "video/noodletest-sbs.mp4"),
+            ]);
+            let settings = options.projection_border_stretch_settings;
+            assert_eq!(settings.video_border_blend_mode, expected_mode);
+            assert!(settings.video_border_shader_composite_active());
+            let fields = settings.marker_fields();
+            assert!(fields.contains(&format!("videoBorderBlendMode={token}")));
+            assert!(fields.contains("videoBorderBlendCompositor=guide-video-shader-composite"));
+            assert!(fields.contains("videoBorderBlendShaderCompositeActive=true"));
+            assert!(fields.contains("videoBorderBlendFormula="));
+            assert!(fields.contains("videoBorderBlendCostTier="));
+            assert!(fields.contains("videoBorderBlendSamplePattern="));
+        }
     }
 
     #[test]

@@ -129,6 +129,7 @@ impl VideoProjectionFrameStats {
 
 pub(crate) struct PreparedVideoProjection {
     pub(crate) descriptor_set: vk::DescriptorSet,
+    pub(crate) descriptor_set_layout: vk::DescriptorSetLayout,
     pub(crate) pipeline_layout: vk::PipelineLayout,
     pub(crate) pipeline: vk::Pipeline,
     pub(crate) stats: VideoProjectionFrameStats,
@@ -331,6 +332,11 @@ impl VideoProjectionRenderer {
         self.track_frame_hardware_buffer_id(frame_slot, protected_hardware_buffer_id);
         Ok(Some(PreparedVideoProjection {
             descriptor_set: self.imports[import_index].descriptor_set,
+            descriptor_set_layout: self
+                .resources
+                .as_ref()
+                .expect("video projection resources were initialized")
+                .descriptor_set_layout,
             pipeline_layout,
             pipeline,
             stats: VideoProjectionFrameStats {
@@ -399,6 +405,7 @@ impl VideoProjectionRenderer {
             &[],
         );
         let source_uv_rect = projection_metadata.source_rect_for_eye(eye_index);
+        let source_position_offset = projection_metadata.source_position_offset_for_eye(eye_index);
         let push = VideoProjectionPush {
             target_rect: [
                 target_rect.x,
@@ -415,8 +422,8 @@ impl VideoProjectionRenderer {
             params0: [
                 projection_metadata.source_sample_y_flip,
                 opacity,
-                0.0,
-                eye_index as f32,
+                source_position_offset[0],
+                source_position_offset[1],
             ],
         };
         let push_bytes = std::slice::from_raw_parts(

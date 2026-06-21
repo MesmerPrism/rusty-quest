@@ -5,6 +5,7 @@
 //! rectangle without rewriting the media source contract.
 
 use crate::{
+    camera_projection_metadata::CameraProjectionMetadata,
     native_renderer_video_projection_options::NativeVideoProjectionSettings,
     projection_rect::TargetRect,
 };
@@ -27,6 +28,8 @@ pub(crate) struct VideoProjectionMetadata {
     pub(crate) source_sampling_mode: &'static str,
     pub(crate) left_source_uv_rect: TargetRect,
     pub(crate) right_source_uv_rect: TargetRect,
+    pub(crate) left_source_position_offset_uv: [f32; 2],
+    pub(crate) right_source_position_offset_uv: [f32; 2],
     pub(crate) left_target_rect: TargetRect,
     pub(crate) right_target_rect: TargetRect,
     pub(crate) target_footprint_default: bool,
@@ -42,7 +45,10 @@ pub(crate) struct VideoProjectionMetadata {
 }
 
 impl VideoProjectionMetadata {
-    pub(crate) fn from_settings(settings: &NativeVideoProjectionSettings) -> Self {
+    pub(crate) fn from_settings(
+        settings: &NativeVideoProjectionSettings,
+        camera_projection_metadata: &CameraProjectionMetadata,
+    ) -> Self {
         let requested_width = settings.width.max(1);
         let requested_height = settings.height.max(1);
         Self {
@@ -55,6 +61,12 @@ impl VideoProjectionMetadata {
             source_sampling_mode: DEFAULT_SOURCE_SAMPLING_MODE,
             left_source_uv_rect: settings.stereo_layout.source_uv_rect_for_eye(0),
             right_source_uv_rect: settings.stereo_layout.source_uv_rect_for_eye(1),
+            left_source_position_offset_uv: source_position_offset_from_camera_target(
+                camera_projection_metadata.rect_for_eye(0),
+            ),
+            right_source_position_offset_uv: source_position_offset_from_camera_target(
+                camera_projection_metadata.rect_for_eye(1),
+            ),
             left_target_rect: TargetRect::UNIT,
             right_target_rect: TargetRect::UNIT,
             target_footprint_default: true,
@@ -86,9 +98,17 @@ impl VideoProjectionMetadata {
         }
     }
 
+    pub(crate) fn source_position_offset_for_eye(&self, eye_index: usize) -> [f32; 2] {
+        if eye_index == 0 {
+            self.left_source_position_offset_uv
+        } else {
+            self.right_source_position_offset_uv
+        }
+    }
+
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "schema={} sourceSamplingMode={} projectionContentMappingMode=stereo-video-raster sourceResolution={}x{} fullSourceAspectRatio={:.6} perEyeAspectRatio={:.6} stereoLayout={} leftSourceUvRect={} rightSourceUvRect={} targetCoordinateSpace=display-eye-screen-uv videoProjectionTarget={} leftTargetScreenUvRect={} rightTargetScreenUvRect={} targetClipPolicy=clip-to-visible-eye targetFootprintMetadataSource=video-projection-runtime-metadata targetFootprintDefault={} orientationKind={} rasterOrientation={} uprightMarker={} orientationMetadataSource={} sourceSampleYFlip={:.1} sourceSampleYFlipReason={} sourceSampleTransformStage=pre-texture-sample sourceSampleTransform={} rendererSurfaceUvOrigin=native-vulkan-fullscreen-triangle videoScreenUvOrigin=top-left-origin-y-down dataInputMetadataAuthority=video-projection-stream downstreamProjectionScaleAuthority=projection-target-state",
+            "schema={} sourceSamplingMode={} projectionContentMappingMode=stereo-video-raster sourceResolution={}x{} fullSourceAspectRatio={:.6} perEyeAspectRatio={:.6} stereoLayout={} leftSourceUvRect={} rightSourceUvRect={} sourcePositionMode=camera-target-center-position-only leftSourcePositionOffsetUv={} rightSourcePositionOffsetUv={} targetCoordinateSpace=display-eye-screen-uv videoProjectionTarget={} leftTargetScreenUvRect={} rightTargetScreenUvRect={} targetClipPolicy=clip-to-visible-eye targetFootprintMetadataSource=video-projection-runtime-metadata targetFootprintDefault={} orientationKind={} rasterOrientation={} uprightMarker={} orientationMetadataSource={} sourceSampleYFlip={:.1} sourceSampleYFlipReason={} sourceSampleTransformStage=pre-texture-sample sourceSampleTransform={} rendererSurfaceUvOrigin=native-vulkan-fullscreen-triangle videoScreenUvOrigin=top-left-origin-y-down dataInputMetadataAuthority=video-projection-stream downstreamProjectionScaleAuthority=fixed-video-target",
             VIDEO_PROJECTION_METADATA_SCHEMA,
             marker_token(self.source_sampling_mode),
             self.requested_width,
@@ -98,6 +118,8 @@ impl VideoProjectionMetadata {
             marker_token(self.stereo_layout),
             self.left_source_uv_rect.as_xywh_token(),
             self.right_source_uv_rect.as_xywh_token(),
+            offset_token(self.left_source_position_offset_uv),
+            offset_token(self.right_source_position_offset_uv),
             marker_token(self.target),
             self.left_target_rect.as_xywh_token(),
             self.right_target_rect.as_xywh_token(),
@@ -113,6 +135,17 @@ impl VideoProjectionMetadata {
     }
 }
 
+fn source_position_offset_from_camera_target(rect: TargetRect) -> [f32; 2] {
+    [
+        rect.x + rect.width * 0.5 - 0.5,
+        rect.y + rect.height * 0.5 - 0.5,
+    ]
+}
+
+fn offset_token(value: [f32; 2]) -> String {
+    format!("{:.6},{:.6}", value[0], value[1])
+}
+
 fn marker_token(value: &str) -> String {
     value
         .trim()
@@ -125,29 +158,48 @@ fn marker_token(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use crate::{
+        camera_projection_metadata::CameraProjectionMetadata,
         native_renderer_options::{
             NativeVideoProjectionSettings, NativeVideoProjectionSource,
             NativeVideoProjectionStereoLayout, NativeVideoProjectionTarget,
         },
+        projection_rect::TargetRect,
         video_projection_metadata::VideoProjectionMetadata,
     };
 
     #[test]
     fn derives_sbs_source_rects_from_video_settings() {
-        let metadata = VideoProjectionMetadata::from_settings(&NativeVideoProjectionSettings {
-            enabled: true,
-            source: NativeVideoProjectionSource::AppPrivateFile,
-            path: "video/noodletest-sbs.mp4".to_string(),
-            stereo_layout: NativeVideoProjectionStereoLayout::SideBySideLeftRight,
-            width: 3840,
-            height: 1920,
-            max_images: 3,
-            fps_cap: 30,
-            looping: true,
-            target: NativeVideoProjectionTarget::FullEye,
-            opacity: 1.0,
-            high_rate_json_payload: false,
-        });
+        let camera_projection_metadata = CameraProjectionMetadata {
+            projection_geometry_profile: "camera-projection".to_string(),
+            source_sampling_mode: "target-local-raster".to_string(),
+            left_rect: TargetRect::new(0.171875, 0.21875, 0.75, 0.65625),
+            right_rect: TargetRect::new(0.078125, 0.21875, 0.75, 0.671875),
+            target_footprint_default: true,
+            source_sample_y_flip: 0.0,
+            source_sample_transform: "identity-top-left-camera-raster",
+            source_sample_y_flip_reason: "test",
+            raster_orientation: "top-left-origin-y-down",
+            orientation_kind: "camera-frame",
+            upright_marker: "camera-native-upright",
+            metadata_source: "test",
+        };
+        let metadata = VideoProjectionMetadata::from_settings(
+            &NativeVideoProjectionSettings {
+                enabled: true,
+                source: NativeVideoProjectionSource::AppPrivateFile,
+                path: "video/noodletest-sbs.mp4".to_string(),
+                stereo_layout: NativeVideoProjectionStereoLayout::SideBySideLeftRight,
+                width: 3840,
+                height: 1920,
+                max_images: 3,
+                fps_cap: 30,
+                looping: true,
+                target: NativeVideoProjectionTarget::FullEye,
+                opacity: 1.0,
+                high_rate_json_payload: false,
+            },
+            &camera_projection_metadata,
+        );
 
         assert_eq!(
             metadata.source_rect_for_eye(0).as_xywh_token(),
@@ -160,6 +212,14 @@ mod tests {
         assert_eq!(
             metadata.target_rect_for_eye(0).as_xywh_token(),
             "0.000000,0.000000,1.000000,1.000000"
+        );
+        assert_eq!(
+            metadata.source_position_offset_for_eye(0),
+            [0.046875, 0.046875]
+        );
+        assert_eq!(
+            metadata.source_position_offset_for_eye(1),
+            [-0.046875, 0.0546875]
         );
         assert!((metadata.per_eye_aspect_ratio - 1.0).abs() < 0.001);
     }

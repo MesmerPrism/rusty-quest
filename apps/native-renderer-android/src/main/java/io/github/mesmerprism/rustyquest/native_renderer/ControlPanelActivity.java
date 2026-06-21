@@ -43,6 +43,12 @@ public final class ControlPanelActivity extends Activity {
     private static final String CANDIDATE_FILE = "stimulus_volume_candidate.json";
     private static final String STATUS_FILE = "stimulus_volume_status.json";
     private static final String PROFILE_SCHEMA = "rusty.quest.stimulus_volume.profile.v1";
+    private static final String PRIVATE_LAYER_SELECTION_SCHEMA =
+        "rusty.quest.native_renderer.private_layer_selection.v1";
+    private static final String PROP_CONTROL_PANEL_MODE =
+        "debug.rustyquest.native_renderer.control_panel.mode";
+    private static final String PROP_PRIVATE_LAYER_OVERRIDE =
+        "debug.rustyquest.native_renderer.private_layer.layer_override";
     private static final String PROP_STIMULUS_ENABLED =
         "debug.rustyquest.native_renderer.stimulus_volume.enabled";
     private static final String PROP_STIMULUS_SAFETY_ACK =
@@ -101,8 +107,10 @@ public final class ControlPanelActivity extends Activity {
     private boolean displayCompositeRequestInFlight;
     private Button[] patternButtons = new Button[0];
     private Button[] mirrorButtons = new Button[0];
+    private Button[] privateLayerButtons = new Button[0];
     private String selectedPatternFamily = "randomized-trevor-vocabulary";
     private String selectedMirrorMode = "none";
+    private int selectedPrivateLayerIndex;
     private SliderControl minHz;
     private SliderControl maxHz;
     private SliderControl raymarchSamples;
@@ -132,7 +140,11 @@ public final class ControlPanelActivity extends Activity {
         super.onCreate(savedInstanceState);
         liveApplyHandler = new Handler(Looper.getMainLooper());
         setContentView(buildContentView());
-        updateStatus("Panel ready. Candidate path: " + new File(getFilesDir(), CANDIDATE_FILE));
+        if ("private-layer-selector".equals(readControlPanelMode())) {
+            updateStatus("Layer selector ready.");
+        } else {
+            updateStatus("Panel ready. Candidate path: " + new File(getFilesDir(), CANDIDATE_FILE));
+        }
         handleDisplayCompositeIntent(getIntent());
         handleDiagnosticIntent(getIntent());
     }
@@ -204,6 +216,13 @@ public final class ControlPanelActivity extends Activity {
     }
 
     private View buildContentView() {
+        if ("private-layer-selector".equals(readControlPanelMode())) {
+            return buildPrivateLayerSelectorView();
+        }
+        return buildStimulusPanelView();
+    }
+
+    private View buildStimulusPanelView() {
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(PANEL_BG);
         LinearLayout root = new LinearLayout(this);
@@ -387,6 +406,206 @@ public final class ControlPanelActivity extends Activity {
         status.setPadding(0, dp(10), 0, dp(8));
         root.addView(status);
         return scroll;
+    }
+
+    private View buildPrivateLayerSelectorView() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setBackgroundColor(PANEL_BG);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(18);
+        root.setPadding(pad, pad, pad, pad);
+        scroll.addView(root);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = text("Layer Selection Panel", 22, PANEL_FG);
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button headerClose = button("Close");
+        headerClose.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                finish();
+            }
+        });
+        header.addView(headerClose);
+        root.addView(header);
+        root.addView(text("Select the active private rendering layer.", 13, PANEL_MUTED));
+        root.addView(privateLayerPreviewBand());
+        selectedPrivateLayerIndex = readPrivateLayerOverride();
+
+        root.addView(sectionTitle("Active Rendering"));
+        root.addView(buildPrivateLayerChoiceGrid());
+
+        Button close = button("Close");
+        close.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                finish();
+            }
+        });
+        LinearLayout closeRow = new LinearLayout(this);
+        closeRow.setOrientation(LinearLayout.HORIZONTAL);
+        closeRow.setPadding(0, dp(14), 0, dp(10));
+        closeRow.addView(close, rowButtonParams());
+        root.addView(closeRow);
+
+        status = text("", 13, PANEL_MUTED);
+        status.setPadding(0, dp(10), 0, dp(8));
+        root.addView(status);
+        return scroll;
+    }
+
+    private View privateLayerPreviewBand() {
+        TextView preview = text("private layer selector", 13, Color.WHITE);
+        preview.setGravity(Gravity.CENTER);
+        preview.setPadding(dp(12), dp(12), dp(12), dp(12));
+        GradientDrawable background = new GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            new int[] {
+                Color.rgb(20, 24, 30),
+                Color.rgb(45, 120, 210),
+                Color.rgb(255, 214, 68),
+                Color.rgb(215, 70, 150),
+                Color.rgb(20, 24, 30)
+            }
+        );
+        background.setCornerRadius(dp(3));
+        preview.setBackground(background);
+        LinearLayout.LayoutParams params =
+            new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54));
+        params.setMargins(0, dp(12), 0, dp(12));
+        preview.setLayoutParams(params);
+        return preview;
+    }
+
+    private GridLayout buildPrivateLayerChoiceGrid() {
+        GridLayout grid = new GridLayout(this);
+        grid.setColumnCount(2);
+        grid.setUseDefaultMargins(false);
+        String[][] choices = new String[][] {
+            {"Final", "0"},
+            {"Raw brightness", "1"},
+            {"Preblur brightness", "2"},
+            {"Raw strength", "3"},
+            {"Blurred strength", "4"},
+            {"Displacement", "5"}
+        };
+        ArrayList<Button> buttons = new ArrayList<Button>();
+        for (int i = 0; i < choices.length; i++) {
+            Button choice = button(choices[i][0]);
+            choice.setTag(choices[i][1]);
+            choice.setMinHeight(dp(46));
+            choice.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    int layerIndex = Integer.parseInt(String.valueOf(view.getTag()));
+                    selectedPrivateLayerIndex = layerIndex;
+                    updatePrivateLayerButtons();
+                    submitLivePrivateLayerSelection(layerIndex, true);
+                }
+            });
+            GridLayout.LayoutParams params = new GridLayout.LayoutParams();
+            params.width = 0;
+            params.height = GridLayout.LayoutParams.WRAP_CONTENT;
+            params.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f);
+            params.setMargins(dp(3), dp(3), dp(3), dp(3));
+            grid.addView(choice, params);
+            buttons.add(choice);
+        }
+        privateLayerButtons = buttons.toArray(new Button[buttons.size()]);
+        updatePrivateLayerButtons();
+        return grid;
+    }
+
+    private void updatePrivateLayerButtons() {
+        for (int i = 0; i < privateLayerButtons.length; i++) {
+            int layerIndex = Integer.parseInt(String.valueOf(privateLayerButtons[i].getTag()));
+            styleButton(privateLayerButtons[i], layerIndex == selectedPrivateLayerIndex);
+        }
+    }
+
+    private void submitLivePrivateLayerSelection(int layerIndex, boolean userVisible) {
+        try {
+            if (!nativeBridgeLoaded) {
+                throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
+            }
+            JSONObject candidate = buildPrivateLayerSelectionJson(layerIndex);
+            String responseText = nativeSubmitLivePrivateLayerSelection(candidate.toString());
+            JSONObject response = new JSONObject(responseText);
+            String responseStatus = response.optString("status", "unknown");
+            if (!"queued".equals(responseStatus)) {
+                throw new IllegalStateException(responseText);
+            }
+            String message = "Layer queued: " + privateLayerLabel(layerIndex) + ".";
+            if (response.optBoolean("overwrote_pending", false)) {
+                message = "Layer queued; older pending selection was replaced: "
+                    + privateLayerLabel(layerIndex) + ".";
+            }
+            if (userVisible) {
+                updateStatus(message);
+            } else {
+                setStatusText(message);
+            }
+        } catch (Exception error) {
+            if (userVisible) {
+                updateStatus("Layer selection failed: " + error.getMessage());
+            } else {
+                setStatusText("Layer selection failed: " + error.getMessage());
+            }
+        }
+    }
+
+    private JSONObject buildPrivateLayerSelectionJson(int layerIndex) throws Exception {
+        if (layerIndex < 0 || layerIndex > 5) {
+            throw new IllegalArgumentException("layer index must be 0-5");
+        }
+        JSONObject source = new JSONObject()
+            .put("surface", "same_apk_panel")
+            .put("transport", "jni_live_queue");
+        JSONObject privateLayer = new JSONObject()
+            .put("layer_override", layerIndex)
+            .put("layer_label", privateLayerLabel(layerIndex));
+        JSONObject apply = new JSONObject()
+            .put("mode", "apply-on-next-safe-frame")
+            .put("expected_effective_revision", -1);
+        return new JSONObject()
+            .put("schema", PRIVATE_LAYER_SELECTION_SCHEMA)
+            .put("profile_id", "same-apk-private-layer-selector")
+            .put("revision", System.currentTimeMillis())
+            .put("source", source)
+            .put("private_layer", privateLayer)
+            .put("apply", apply);
+    }
+
+    private int readPrivateLayerOverride() {
+        double requested = readDoubleProperty(PROP_PRIVATE_LAYER_OVERRIDE, 0.0);
+        int layerIndex = (int) Math.round(requested);
+        if (layerIndex < 0 || layerIndex > 5) {
+            return 0;
+        }
+        return layerIndex;
+    }
+
+    private String privateLayerLabel(int layerIndex) {
+        switch (layerIndex) {
+            case 0:
+                return "final";
+            case 1:
+                return "raw-brightness";
+            case 2:
+                return "preblur-brightness";
+            case 3:
+                return "raw-strength";
+            case 4:
+                return "blurred-strength";
+            case 5:
+                return "displacement";
+            default:
+                return "unknown";
+        }
     }
 
     private View previewBand() {
@@ -646,6 +865,10 @@ public final class ControlPanelActivity extends Activity {
         if (intent == null || !ACTION_APPLY_LIVE_SELF_TEST.equals(intent.getAction())) {
             return;
         }
+        if ("private-layer-selector".equals(readControlPanelMode())) {
+            setStatusText("Stimulus diagnostic self-test ignored in layer selector mode.");
+            return;
+        }
         String token = intent.getAction() + ":" + intent.getLongExtra("diagnostic_token", 0L);
         if (token.equals(handledDiagnosticIntentToken)) {
             return;
@@ -900,6 +1123,14 @@ public final class ControlPanelActivity extends Activity {
         return "";
     }
 
+    private String readControlPanelMode() {
+        String requested = readSystemProperty(PROP_CONTROL_PANEL_MODE);
+        if ("private-layer-selector".equals(requested)) {
+            return requested;
+        }
+        return "stimulus-volume";
+    }
+
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
     }
@@ -981,4 +1212,5 @@ public final class ControlPanelActivity extends Activity {
     }
 
     private static native String nativeSubmitLiveStimulusCandidate(String candidateJson);
+    private static native String nativeSubmitLivePrivateLayerSelection(String selectionJson);
 }

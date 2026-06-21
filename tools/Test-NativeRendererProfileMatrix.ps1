@@ -72,6 +72,7 @@ $expectedProfileNames = @(
     "quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json",
     "quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity.profile.json",
     "quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json",
+    "quest-native-renderer-native-passthrough-style-only.profile.json",
     "quest-native-renderer-native-passthrough-stimulus-volume.profile.json",
     "quest-native-renderer-replay-visual-proof.profile.json",
     "quest-native-renderer-solid-black-hands-and-grafts.profile.json",

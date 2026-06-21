@@ -115,10 +115,12 @@ private, or diagnostic overlays should compose above it instead of coupling the
 video decoder to Camera2 or display-composite ownership.
 The `video-border-blend` camera processing layer follows that boundary: the
 video projection renderer draws the prepared stereo frame first, while the
-guide/camera projection pass only changes its own alpha at the target edge
-using the existing inner-band blend controls. Camera2 remains the guide source;
-MediaCodec remains the video source; the final OpenXR/Vulkan frame loop is the
-only composition authority between them.
+guide/camera projection pass owns the target-edge transition. `alpha-over`
+keeps the fixed-function guide alpha baseline. Other public modes use a
+guide/video shader composite that samples the Camera2 guide texture and the
+prepared stereo video texture together inside the inner band. Camera2 remains
+the guide source; MediaCodec remains the video source; the final OpenXR/Vulkan
+frame loop is the only composition authority between them.
 The Rust code opens outside camera ids `50` and `51` through NDK
 `ACameraManager`, acquires `PRIVATE` GPU-sampled `AHardwareBuffer` frames,
 initializes the Android OpenXR loader, probes the
@@ -232,6 +234,13 @@ shared string, boolean, integer, and float parsing belongs to
 parsing belongs to `native_renderer_hand_anchor_particle_options`;
 projection-border and peripheral-stretch settings parsing belongs to
 `native_renderer_projection_border_stretch_options`;
+native Meta passthrough compositor style parsing belongs to
+`native_renderer_passthrough_style_options`, with the raw
+`xrPassthroughLayerSetStyleFB` bridge kept in `openxr_passthrough_style`.
+The first audio-reactive parity slice also belongs to that style owner: it is
+profile-configured, oscillator-backed, and updates the effective mono-to-RGBA
+color-map phase plus edge tint at a bounded rate while leaving future
+microphone capture as a source adapter;
 stimulus-volume settings parsing belongs to
 `native_renderer_stimulus_volume_options`; and fullscreen stereo video input
 settings parsing belongs to `native_renderer_video_projection_options`.
@@ -347,8 +356,20 @@ Only the blur guide path, public recorded-hand replay visual, resident
 compact-joint GPU-skinned triangle overlay, native GPU mesh boundary, and
 opt-in recorded compact-joint GPU skinned-mesh SDF path are public in this
 package.
-Private visual layer implementations remain downstream extension-slot payloads
-and are not part of the public source, fixture, or APK build manifest.
+The generic private particle slot is public substrate only: Rusty Quest owns
+build-time discovery, placeholder behavior, static payload staging, the
+four-vec4 billboard row ABI, sampled R8 texture-array mask upload/sampling,
+resident GPU index-remap sorting, parameterized transparency/coverage controls,
+generic tracer budget/draw-capacity plumbing, generic draw/compute
+orchestration, and public slot markers. Public markers distinguish main
+particle count, tracer budget, and merged draw count so downstream shaders can
+append effect-owned tracer rows without introducing CPU-expanded particle lists.
+Downstream repos own effect-specific compute shader semantics, payload
+contents, marker prefix, opaque effect marker fields, screenshots, and proof
+profile bodies.
+Private visual layer implementations remain downstream extension-slot or
+private-particle payloads and are not part of the public source, fixture, or
+APK build manifest.
 
 ## Manifold Broker Android Package
 

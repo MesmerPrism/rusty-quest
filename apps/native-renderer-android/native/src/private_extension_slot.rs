@@ -7,7 +7,7 @@ use ash::vk;
 use crate::{
     camera_projection::PreparedCameraProjection,
     camera_projection_metadata::{CameraProjectionMetadata, TargetRect},
-    native_renderer_options::NativePrivateLayerSettings,
+    native_renderer_options::{NativePrivateLayerSettings, NativeProjectionBorderStretchSettings},
 };
 
 include!(concat!(env!("OUT_DIR"), "/private_layer_payload_config.rs"));
@@ -146,6 +146,7 @@ impl PrivateExtensionSlotRuntime {
         projection_metadata: &CameraProjectionMetadata,
         frame_count: u64,
         settings: NativePrivateLayerSettings,
+        projection_settings: NativeProjectionBorderStretchSettings,
     ) {
         if !PRIVATE_LAYER_PAYLOAD_LINKED || !settings.enabled {
             return;
@@ -160,6 +161,7 @@ impl PrivateExtensionSlotRuntime {
             projection_metadata,
             frame_count,
             settings,
+            projection_settings,
         );
     }
 }
@@ -391,6 +393,7 @@ impl PrivateLayerGraphRenderer {
         projection_metadata: &CameraProjectionMetadata,
         frame_count: u64,
         settings: NativePrivateLayerSettings,
+        projection_settings: NativeProjectionBorderStretchSettings,
     ) {
         let Some(resources) = self.resources.as_ref() else {
             return;
@@ -423,6 +426,7 @@ impl PrivateLayerGraphRenderer {
             &[],
         );
         let elapsed_seconds = elapsed_seconds_for_frame(frame_count);
+        let projection_push = projection_settings.push_params();
         let push = PrivateLayerProjectionPush {
             target_rect: [
                 target_rect.x,
@@ -442,6 +446,12 @@ impl PrivateLayerGraphRenderer {
                 settings.layer_seconds,
                 1.0,
                 0.0,
+            ],
+            border_blend: [
+                projection_push.params[0],
+                projection_push.stretch1[0],
+                projection_push.stretch1[1],
+                projection_settings.video_border_blend_mode.shader_code(),
             ],
         };
         push_fragment_constants(device, cmd, resources.projection_pipeline_layout, &push);
@@ -927,6 +937,7 @@ struct PrivateLayerProjectionPush {
     params0: [f32; 4],
     effect: [f32; 4],
     cycle: [f32; 4],
+    border_blend: [f32; 4],
 }
 
 unsafe fn begin_private_pass(

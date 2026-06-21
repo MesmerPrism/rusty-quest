@@ -45,6 +45,8 @@ mod gpu_hand_mesh_visual;
 #[cfg(target_os = "android")]
 mod gpu_mesh_replay;
 #[cfg(target_os = "android")]
+mod gpu_private_particles;
+#[cfg(target_os = "android")]
 mod gpu_sdf_field;
 #[cfg(target_os = "android")]
 mod gpu_stimulus_volume;
@@ -72,6 +74,7 @@ mod native_renderer_options;
 mod native_renderer_options_tests;
 #[cfg(target_os = "android")]
 mod native_renderer_panel_bridge;
+mod native_renderer_passthrough_style_options;
 mod native_renderer_projection_border_stretch_options;
 mod native_renderer_properties;
 mod native_renderer_property_values;
@@ -83,6 +86,8 @@ mod native_renderer_video_projection_options;
 mod native_renderer_visual_options;
 #[cfg(target_os = "android")]
 mod openxr_environment_depth;
+#[cfg(target_os = "android")]
+mod openxr_passthrough_style;
 #[cfg(target_os = "android")]
 mod openxr_stimulus_actions;
 #[cfg(target_os = "android")]
@@ -261,6 +266,13 @@ fn android_main(app: android_activity::AndroidApp) {
         format!(
             "status=config {}",
             runtime_options.video_projection_settings.marker_fields()
+        ),
+    );
+    marker(
+        "native-passthrough-style",
+        format!(
+            "status=config {}",
+            runtime_options.passthrough_style_settings.marker_fields()
         ),
     );
     let video_projection_playback = video_projection_player_bridge::start_if_enabled(
