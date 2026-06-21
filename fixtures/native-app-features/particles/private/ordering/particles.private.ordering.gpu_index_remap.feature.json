@@ -9,7 +9,7 @@
   },
   "owner_lane": "rusty-quest",
   "status": "public-substrate",
-  "description": "Resident GPU private-particle ordering infrastructure. Builds may select back-to-front depth remap or source-order direct output without CPU expansion.",
+  "description": "Resident GPU private-particle ordering infrastructure. Back-to-front mode sorts full merged draw rows; source-order mode bypasses depth sorting without CPU expansion.",
   "provides": [
     "particles.private.ordering.gpu_index_remap"
   ],
