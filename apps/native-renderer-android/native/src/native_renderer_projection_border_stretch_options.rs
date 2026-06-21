@@ -256,6 +256,10 @@ impl NativeProjectionBorderStretchSettings {
             && (self.peripheral_stretch_active() || self.video_border_blend_active())
     }
 
+    pub(crate) fn diagnostic_edge_tint_active(self) -> bool {
+        self.debug != NativePeripheralStretchDebug::Off
+    }
+
     pub(crate) fn marker_fields(self) -> String {
         let transition_active = self.transition_active();
         let (core_region, transition_region, transition_space, transition_semantics) =
@@ -298,12 +302,13 @@ impl NativeProjectionBorderStretchSettings {
             "curved-sample-blends-through-inner-band"
         };
         format!(
-            "processingLayer={} projectionBorderPolicy={} projectionAreaOpacity={:.3} projectionBorderOpacity={:.3} guideProjectionCoverage={} peripheralStretchMode=edge-stretch peripheralStretchCoreScale={:.3} peripheralStretchEdgeInsetUv={:.3} peripheralStretchMaxInsetUv={:.3} peripheralStretchCurve={:.3} peripheralStretchInnerBlendUv={:.3} peripheralStretchBlendCurve={:.3} peripheralStretchBlendMode={} peripheralStretchCornerMode=target-footprint peripheralStretchDebug={} peripheralStretchActive={} videoBorderBlendActive={} peripheralStretchTransitionActive={} peripheralStretchConsumesProjectionExterior={} videoBorderBlendConsumesProjectionExterior=false peripheralStretchCoreRegion={} peripheralStretchTransitionRegion={} peripheralStretchExteriorRegion=visible-render-surface-minus-target-footprint peripheralStretchTransitionSpace={} peripheralStretchTransitionSemantics={} peripheralStretchProjectionExteriorMode={} peripheralStretchMapping=mirrored-curved-target-footprint peripheralStretchDistanceCurve=mirrored-border-smoothstep-swirl peripheralStretchBorderSource=mirrored-projection-edge-trail peripheralStretchExteriorSource={} peripheralStretchBlendSemantics={} videoBorderBlendSource=prepared-stereo-video-projection-background videoBorderBlendCameraSource=guide-texture videoBorderBlendDrawOrder=video-background-then-camera-guide-overlay videoBorderBlendAlphaSemantics=premultiplied-camera-guide-over-video-background peripheralStretchTargetLocalRasterRegionModel=projection-area-plus-single-border-region peripheralStretchSourceInvalidConsumesSolidRed=false peripheralStretchReference=pure-hwb-target-local-raster-curved-inner-band videoBorderBlendReference=peripheral-stretch-inner-band-blend-over-video",
+            "processingLayer={} projectionBorderPolicy={} projectionAreaOpacity={:.3} projectionBorderOpacity={:.3} guideProjectionCoverage={} guideProjectionEdgeTint=diagnostic-debug-only guideProjectionEdgeTintActive={} peripheralStretchMode=edge-stretch peripheralStretchCoreScale={:.3} peripheralStretchEdgeInsetUv={:.3} peripheralStretchMaxInsetUv={:.3} peripheralStretchCurve={:.3} peripheralStretchInnerBlendUv={:.3} peripheralStretchBlendCurve={:.3} peripheralStretchBlendMode={} peripheralStretchCornerMode=target-footprint peripheralStretchDebug={} peripheralStretchActive={} videoBorderBlendActive={} peripheralStretchTransitionActive={} peripheralStretchConsumesProjectionExterior={} videoBorderBlendConsumesProjectionExterior=false peripheralStretchCoreRegion={} peripheralStretchTransitionRegion={} peripheralStretchExteriorRegion=visible-render-surface-minus-target-footprint peripheralStretchTransitionSpace={} peripheralStretchTransitionSemantics={} peripheralStretchProjectionExteriorMode={} peripheralStretchMapping=mirrored-curved-target-footprint peripheralStretchDistanceCurve=mirrored-border-smoothstep-swirl peripheralStretchBorderSource=mirrored-projection-edge-trail peripheralStretchExteriorSource={} peripheralStretchBlendSemantics={} videoBorderBlendSource=prepared-stereo-video-projection-background videoBorderBlendCameraSource=guide-texture videoBorderBlendDrawOrder=video-background-then-camera-guide-overlay videoBorderBlendAlphaSemantics=premultiplied-camera-guide-over-video-background peripheralStretchTargetLocalRasterRegionModel=projection-area-plus-single-border-region peripheralStretchSourceInvalidConsumesSolidRed=false peripheralStretchReference=pure-hwb-target-local-raster-curved-inner-band videoBorderBlendReference=peripheral-stretch-inner-band-blend-over-video",
             self.processing_layer.marker_value(),
             self.border_policy.marker_value(),
             self.projection_area_opacity,
             self.projection_border_opacity,
             self.guide_projection_coverage(),
+            self.diagnostic_edge_tint_active(),
             self.core_scale,
             self.edge_inset_uv,
             self.max_inset_uv,

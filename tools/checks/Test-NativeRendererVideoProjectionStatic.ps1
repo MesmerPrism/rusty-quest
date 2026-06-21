@@ -39,6 +39,8 @@ $playerBridge = Read-RepoText "apps\native-renderer-android\native\src\video_pro
 $projectionMetadata = Read-RepoText "apps\native-renderer-android\native\src\video_projection_metadata.rs"
 $videoRenderer = Read-RepoText "apps\native-renderer-android\native\src\video_projection.rs"
 $xrVulkan = Read-RepoText "apps\native-renderer-android\native\src\xr_vulkan.rs"
+$guideProjectionShader = Read-RepoText "apps\native-renderer-android\native\shaders\guide_projection.frag.glsl"
+$projectionBorderStretchOptions = Read-RepoText "apps\native-renderer-android\native\src\native_renderer_projection_border_stretch_options.rs"
 $nativeBuild = Read-RepoText "apps\native-renderer-android\native\build.rs"
 $vertexShader = Read-RepoText "apps\native-renderer-android\native\shaders\video_projection.vert.glsl"
 $fragmentShader = Read-RepoText "apps\native-renderer-android\native\shaders\video_projection.frag.glsl"
@@ -149,6 +151,15 @@ foreach ($token in @(
 }
 
 foreach ($token in @(
+    "diagnostic_edge_tint",
+    "border * 0.72 * (1.0 - stretch_active) * diagnostic_edge_tint",
+    "guideProjectionEdgeTint=diagnostic-debug-only",
+    "guideProjectionEdgeTintActive"
+)) {
+    Assert-Contains -Text ($guideProjectionShader + $projectionBorderStretchOptions) -Needle $token -Label "video border diagnostic edge tint"
+}
+
+foreach ($token in @(
     "video_projection.vert.glsl",
     "video_projection.frag.glsl",
     "video_projection.vert.spv",
@@ -173,6 +184,7 @@ foreach ($token in @(
     'Left source position offset: `0.046875,0.046875`',
     'Right source position offset: `-0.046875,0.054688`',
     "cannot bleed the left and right source halves",
+    "no cyan/orange debug rim",
     "same dequeued input buffer"
 )) {
     Assert-Contains -Text $videoProjectionDoc -Needle $token -Label "video projection doc"

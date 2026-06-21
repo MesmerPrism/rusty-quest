@@ -37,6 +37,15 @@ so this adjustment cannot bleed the left and right source halves into each
 other. Camera2/HWB guide textures and downstream private layers still compose as
 separate layers above or around the video plane.
 
+## Video-Border Blend Diagnostics
+
+`video-border-blend` draws the video first as the full-eye background, then draws
+the guide texture as a premultiplied-alpha overlay. The inner-band blend changes
+only the guide overlay alpha, so the video is revealed at the camera target
+edge. The eye-colored edge tint is diagnostic-only and is enabled by
+`debug.rustyquest.native_renderer.peripheral.stretch.debug`; when that property
+is `off`, the video-border transition has no cyan/orange debug rim.
+
 ## Looping
 
 Looping playback seeks the extractor before queueing codec EOS. After seeking,

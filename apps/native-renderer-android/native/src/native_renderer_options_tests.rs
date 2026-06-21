@@ -1339,6 +1339,8 @@ mod tests {
         let fields = settings.marker_fields();
         assert!(fields.contains("processingLayer=video-border-blend"));
         assert!(fields.contains("guideProjectionCoverage=full-eye-video-border-blend"));
+        assert!(fields.contains("guideProjectionEdgeTint=diagnostic-debug-only"));
+        assert!(fields.contains("guideProjectionEdgeTintActive=false"));
         assert!(fields.contains("videoBorderBlendActive=true"));
         assert!(fields.contains("peripheralStretchConsumesProjectionExterior=false"));
         assert!(fields.contains("videoBorderBlendConsumesProjectionExterior=false"));

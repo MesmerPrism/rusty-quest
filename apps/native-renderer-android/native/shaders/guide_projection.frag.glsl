@@ -137,7 +137,12 @@ void main() {
     vec3 border_color = eye == 0 ? vec3(0.0, 1.0, 0.82) : vec3(1.0, 0.72, 0.05);
     float edge = min(min(local_uv.x, 1.0 - local_uv.x), min(local_uv.y, 1.0 - local_uv.y));
     float border = 1.0 - smoothstep(0.0, 0.018, edge);
-    vec3 rgb = mix(guide_color.rgb, border_color, border * 0.72 * (1.0 - stretch_active));
+    float diagnostic_edge_tint = step(0.5, debug_mode);
+    vec3 rgb = mix(
+        guide_color.rgb,
+        border_color,
+        border * 0.72 * (1.0 - stretch_active) * diagnostic_edge_tint
+    );
 
     if (processing_active > 0.5) {
         if (debug_mode > 1.5 && target_stretch_effect_region > 0.5) {
