@@ -20,8 +20,7 @@
     "particles.private.payload_slot",
     "particles.private.placeholder_compute",
     "particles.private.ordering.gpu_index_remap",
-    "particles.private.mask.r8_texture",
-    "particles.private.tracers"
+    "particles.private.mask.r8_texture"
   ],
   "incompatible_with": [
     "camera.hwb",
@@ -100,7 +99,7 @@
       "nativePassthroughRequested=false",
       "solidBlackBackground=true",
       "RUSTY_QUEST_NATIVE_RENDERER channel=private-particle-slot",
-      "privateParticleCpuExpandedUploadPerFrame=false"
+      "privateParticleOrderingCpuExpandedUploadPerFrame=false"
     ],
     "forbidden": [
       "displayCompositeEnabled=true",

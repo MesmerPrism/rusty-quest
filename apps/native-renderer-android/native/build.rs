@@ -62,6 +62,9 @@ fn main() {
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_MODE"
     );
     println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE"
+    );
+    println!(
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_OPACITY"
     );
     println!(
@@ -74,13 +77,25 @@ fn main() {
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING"
     );
     println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ORDERING_MODE"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH"
+    );
+    println!(
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_MAX_COUNT"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_DRAW_SLOTS_PER_OSCILLATOR"
     );
     println!(
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS"
     );
     println!(
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_VISUAL_SCALE"
     );
     println!(
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MARKER_PREFIX"
@@ -676,7 +691,24 @@ fn optional_env_usize(name: &str, default: usize, min: usize, max: usize) -> usi
     value
 }
 
-fn private_particle_transparency_config() -> (f32, f32, f32, f32, &'static str) {
+fn private_particle_transparency_blend_mode() -> &'static str {
+    let raw = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE")
+        .unwrap_or_else(|_| "src-one-one-minus-src-alpha".to_string());
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "alpha-over" | "premultiplied-alpha-over" | "src-one-one-minus-src-alpha" => {
+            "src-one-one-minus-src-alpha"
+        }
+        "additive"
+        | "unity-additive"
+        | "shuriken-additive"
+        | "src-alpha-one"
+        | "src-alpha-one-additive" => "src-alpha-one-additive",
+        other => panic!("unsupported generic private particle transparency blend mode: {other}"),
+    }
+}
+
+fn private_particle_transparency_config() -> (f32, f32, f32, f32, &'static str, &'static str) {
+    let blend_mode_name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE";
     let opacity_name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_OPACITY";
     let alpha_scale_name =
         "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE";
@@ -684,13 +716,19 @@ fn private_particle_transparency_config() -> (f32, f32, f32, f32, &'static str) 
         "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH";
     let coupling_name =
         "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING";
-    let source = if [opacity_name, alpha_scale_name, depth_name, coupling_name]
-        .iter()
-        .any(|name| {
-            env::var(name)
-                .ok()
-                .is_some_and(|value| !value.trim().is_empty())
-        }) {
+    let source = if [
+        blend_mode_name,
+        opacity_name,
+        alpha_scale_name,
+        depth_name,
+        coupling_name,
+    ]
+    .iter()
+    .any(|name| {
+        env::var(name)
+            .ok()
+            .is_some_and(|value| !value.trim().is_empty())
+    }) {
         "particle-payload-build-env"
     } else {
         "default-generated-config"
@@ -700,28 +738,95 @@ fn private_particle_transparency_config() -> (f32, f32, f32, f32, &'static str) 
         optional_env_f32(alpha_scale_name, 1.0, 0.0, 4.0),
         optional_env_f32(depth_name, 0.0, 0.0, 8.0),
         optional_env_f32(coupling_name, 1.0, 0.0, 1.0),
+        private_particle_transparency_blend_mode(),
         source,
     )
 }
 
-fn private_particle_tracer_config(_particle_count: usize) -> (usize, f32, f32, &'static str) {
-    let max_count_name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_MAX_COUNT";
-    let lifetime_name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS";
-    let copies_per_second_name =
-        "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND";
-    let source = if [max_count_name, lifetime_name, copies_per_second_name]
-        .iter()
-        .any(|name| {
-            env::var(name)
-                .ok()
-                .is_some_and(|value| !value.trim().is_empty())
-        }) {
+fn private_particle_ordering_config() -> (u32, &'static str, &'static str) {
+    let name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ORDERING_MODE";
+    let source = if env::var(name)
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
         "particle-payload-build-env"
     } else {
         "default-generated-config"
     };
+    let raw = env::var(name).unwrap_or_else(|_| "back-to-front".to_string());
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "back-to-front" | "depth-sort" | "gpu-depth-sort" => (0, "back-to-front", source),
+        "source-order" | "legacy-source-order" | "unsorted" | "no-depth-sort" => {
+            (1, "source-order", source)
+        }
+        other => panic!("unsupported generic private particle ordering mode: {other}"),
+    }
+}
+
+fn private_particle_color_config() -> (f32, &'static str) {
+    let name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH";
+    let source = if env::var(name)
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        "particle-payload-build-env"
+    } else {
+        "default-generated-config"
+    };
+    (optional_env_f32(name, 0.0, 0.0, 1.0), source)
+}
+
+fn private_particle_visual_config() -> (f32, &'static str) {
+    let visual_scale_name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_VISUAL_SCALE";
+    let source = if env::var(visual_scale_name)
+        .ok()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        "particle-payload-build-env"
+    } else {
+        "default-generated-config"
+    };
+    (optional_env_f32(visual_scale_name, 1.0, 0.05, 1.0), source)
+}
+
+fn private_particle_tracer_config(particle_count: usize) -> (usize, usize, f32, f32, &'static str) {
+    let max_count_name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_MAX_COUNT";
+    let draw_slots_name =
+        "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_DRAW_SLOTS_PER_OSCILLATOR";
+    let lifetime_name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS";
+    let copies_per_second_name =
+        "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND";
+    let source = if [
+        max_count_name,
+        draw_slots_name,
+        lifetime_name,
+        copies_per_second_name,
+    ]
+    .iter()
+    .any(|name| {
+        env::var(name)
+            .ok()
+            .is_some_and(|value| !value.trim().is_empty())
+    }) {
+        "particle-payload-build-env"
+    } else {
+        "default-generated-config"
+    };
+    let max_count = optional_env_usize(max_count_name, 0, 0, 1_000_000);
+    let state_slots_per_oscillator = if particle_count == 0 {
+        0
+    } else {
+        max_count / particle_count
+    };
     (
-        optional_env_usize(max_count_name, 0, 0, 1_000_000),
+        max_count,
+        optional_env_usize(
+            draw_slots_name,
+            state_slots_per_oscillator,
+            0,
+            state_slots_per_oscillator.max(1024),
+        )
+        .min(state_slots_per_oscillator),
         optional_env_f32(lifetime_name, 1.25, 0.001, 60.0),
         optional_env_f32(copies_per_second_name, 14.0, 0.0, 240.0),
         source,
@@ -739,8 +844,13 @@ fn write_private_particle_payload_config(
         transparency_output_alpha_scale,
         transparency_depth_suppression_strength,
         transparency_rgb_alpha_coupling,
+        transparency_blend_mode,
         transparency_parameter_source,
     ) = private_particle_transparency_config();
+    let (ordering_mode_code, ordering_mode, ordering_parameter_source) =
+        private_particle_ordering_config();
+    let (color_facing_attenuation_strength, color_parameter_source) =
+        private_particle_color_config();
     let (
         data_path,
         shader_path,
@@ -830,19 +940,24 @@ fn write_private_particle_payload_config(
                 "procedural-fallback",
             )
         });
+    let (particle_visual_scale, particle_visual_parameter_source) =
+        private_particle_visual_config();
     let (
         tracer_max_count,
+        tracer_draw_slots_per_oscillator,
         tracer_lifetime_seconds,
         tracer_copies_per_second,
         tracer_parameter_source,
     ) = private_particle_tracer_config(particle_count);
     let source = format!(
-        "pub(crate) const PRIVATE_PARTICLE_PAYLOAD_LINKED: bool = {payload_linked};\npub(crate) const PRIVATE_PARTICLE_IMPLEMENTATION_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DATA_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_KIND: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_PREFIX: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_FIELDS: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COUNT: usize = {particle_count};\npub(crate) const PRIVATE_PARTICLE_TRACER_MAX_COUNT: usize = {tracer_max_count};\npub(crate) const PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_AUX0_VEC4_ROWS: usize = {aux0_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LINKED: bool = {mask_linked};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH: u32 = {mask_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT: u32 = {mask_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS: u32 = {mask_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_BYTES: usize = {mask_bytes};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE: u32 = {mask_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OPACITY: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_PARAMETER_SOURCE: &str = \"{}\";\n",
+        "pub(crate) const PRIVATE_PARTICLE_PAYLOAD_LINKED: bool = {payload_linked};\npub(crate) const PRIVATE_PARTICLE_IMPLEMENTATION_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DATA_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_KIND: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_PREFIX: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_FIELDS: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COUNT: usize = {particle_count};\npub(crate) const PRIVATE_PARTICLE_VISUAL_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRACER_MAX_COUNT: usize = {tracer_max_count};\npub(crate) const PRIVATE_PARTICLE_TRACER_DRAW_SLOTS_PER_OSCILLATOR: usize = {tracer_draw_slots_per_oscillator};\npub(crate) const PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_AUX0_VEC4_ROWS: usize = {aux0_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LINKED: bool = {mask_linked};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH: u32 = {mask_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT: u32 = {mask_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS: u32 = {mask_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_BYTES: usize = {mask_bytes};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE: u32 = {mask_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OPACITY: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE_CODE: u32 = {ordering_mode_code};\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE: &str = \"{}\";\n",
         rust_string_literal(&shader_path),
         rust_string_literal(&data_path),
         rust_string_literal(&kind),
         rust_string_literal(&marker_prefix),
         rust_string_literal(&marker_fields),
+        particle_visual_scale,
+        rust_string_literal(particle_visual_parameter_source),
         tracer_lifetime_seconds,
         tracer_copies_per_second,
         rust_string_literal(tracer_parameter_source),
@@ -852,7 +967,12 @@ fn write_private_particle_payload_config(
         transparency_output_alpha_scale,
         transparency_depth_suppression_strength,
         transparency_rgb_alpha_coupling,
+        rust_string_literal(transparency_blend_mode),
         rust_string_literal(transparency_parameter_source),
+        rust_string_literal(ordering_mode),
+        rust_string_literal(ordering_parameter_source),
+        color_facing_attenuation_strength,
+        rust_string_literal(color_parameter_source),
     );
     fs::write(&output, source).unwrap_or_else(|error| {
         panic!(

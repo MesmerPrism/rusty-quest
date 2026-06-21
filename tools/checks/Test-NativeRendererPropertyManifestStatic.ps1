@@ -20,8 +20,9 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-if ($manifest.property_count -ne 148 -or $manifest.properties.Count -ne 148) {
-    throw "Native renderer property manifest must cover the current 148-property runtime surface."
+$expectedPropertyCount = 157
+if ($manifest.property_count -ne $expectedPropertyCount -or $manifest.properties.Count -ne $expectedPropertyCount) {
+    throw "Native renderer property manifest must cover the current $expectedPropertyCount-property runtime surface."
 }
 foreach ($entry in @($manifest.properties)) {
     if ([string]$entry.lifecycle -ne "startup-effective") {
@@ -64,6 +65,11 @@ foreach ($token in @(
     'debug.rustyquest.native_renderer.passthrough.style.color.phase',
     'debug.rustyquest.native_renderer.passthrough.style.edge_color.a',
     'debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload',
+    'debug.rustyquest.native_renderer.private_particles.visual.scale',
+    'debug.rustyquest.native_renderer.private_particles.tracer.draw_slots_per_oscillator',
+    'debug.rustyquest.native_renderer.private_particles.transparency.opacity',
+    'debug.rustyquest.native_renderer.private_particles.color.facing_attenuation_strength',
+    'gpu_private_particles',
     'native_renderer_passthrough_style_options',
     'native_renderer_visual_options',
     'projection_target_state',

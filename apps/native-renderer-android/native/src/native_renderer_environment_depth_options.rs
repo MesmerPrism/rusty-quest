@@ -231,6 +231,10 @@ impl NativeEnvironmentDepthSettings {
         self.mode.marker_value()
     }
 
+    pub(crate) fn requires_scene_permission(self) -> bool {
+        self.mode.requires_scene_permission(self.source)
+    }
+
     pub(crate) fn source_marker_value(self) -> &'static str {
         self.source.marker_value()
     }
@@ -724,6 +728,10 @@ impl NativeEnvironmentDepthMode {
 
     fn enabled(self) -> bool {
         !matches!(self, Self::Disabled)
+    }
+
+    fn requires_scene_permission(self, source: NativeEnvironmentDepthSource) -> bool {
+        self.enabled() && !matches!(source, NativeEnvironmentDepthSource::SyntheticGpuProof)
     }
 
     fn draws_particles(self) -> bool {

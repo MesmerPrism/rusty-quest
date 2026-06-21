@@ -183,6 +183,45 @@ mod tests {
     }
 
     #[test]
+    fn app_build_defaults_select_stimulus_route_when_properties_are_missing() {
+        let defaults = [
+            (PROP_RENDER_MODE, "solid-black-stimulus-volume"),
+            (PROP_HAND_MESH_INPUT_SOURCE, "disabled"),
+            (PROP_STIMULUS_VOLUME_ENABLED, "true"),
+            (PROP_STIMULUS_VOLUME_RENDER_TARGET, "512x512x2-rgba16f"),
+            (PROP_STIMULUS_VOLUME_RAYMARCH_SAMPLES, "12"),
+            (PROP_STIMULUS_VOLUME_CENTRAL_FOV_FRACTION, "0.72"),
+            (PROP_STIMULUS_VOLUME_GRADIENT_SMOOTHING, "0.78"),
+            (PROP_STIMULUS_VOLUME_RANDOMIZE_ENABLED, "true"),
+            (PROP_STIMULUS_VOLUME_SAFETY_ACK, "true"),
+        ]
+        .into_iter()
+        .collect::<BTreeMap<_, _>>();
+
+        let options = NativeRendererRuntimeOptions::from_property_lookup_with_defaults(
+            |_| None,
+            |name| defaults.get(name).map(|value| (*value).to_owned()),
+        );
+
+        assert_eq!(
+            options.render_mode.marker_value(),
+            "solid-black-stimulus-volume"
+        );
+        assert!(options.stimulus_volume_settings.active());
+        assert_eq!(
+            options.stimulus_volume_settings.render_target,
+            NativeStimulusVolumeRenderTarget::Rgba16f512Stereo
+        );
+        assert_eq!(options.stimulus_volume_settings.raymarch_samples, 12);
+        assert!((options.stimulus_volume_settings.central_fov_fraction - 0.72).abs() < 0.001);
+        assert!((options.stimulus_volume_settings.gradient_smoothing - 0.78).abs() < 0.001);
+        assert_eq!(
+            options.compact_hand_input_source_mode,
+            CompactHandInputSourceMode::Disabled
+        );
+    }
+
+    #[test]
     fn canonical_live_source_value_selects_live_without_replay_fallback() {
         let options = options_from(&[(
             PROP_HAND_MESH_INPUT_SOURCE,

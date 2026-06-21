@@ -57,6 +57,7 @@ mod hand_mesh_graft;
 mod live_hand_compact;
 mod manifold_breath_bridge;
 mod manifold_pose_publisher;
+mod native_app_settings;
 #[cfg(target_os = "android")]
 mod native_camera;
 #[cfg(target_os = "android")]
@@ -125,10 +126,28 @@ fn android_on_create(_state: &android_activity::OnCreateState) {
         "activity-created",
         "entrypoint=NativeActivity rustNativeActivity=true javaPackaged=true panelActivity=ControlPanelActivity",
     );
-    match request_runtime_permissions(_state) {
+    let runtime_options =
+        native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties();
+    let permissions = runtime_permissions_for_route(&runtime_options);
+    let permission_marker = runtime_permission_marker_list(&permissions);
+    if permissions.is_empty() {
+        marker(
+            "permission-request",
+            format!(
+                "status=skipped owner=rust-native-jni reason=no-runtime-permissions route={} permissions=none",
+                runtime_options.render_mode.marker_value()
+            ),
+        );
+        return;
+    }
+    match request_runtime_permissions(_state, &permissions) {
         Ok(()) => marker(
             "permission-request",
-            "status=requested owner=rust-native-jni method=Activity.requestPermissions permissions=CAMERA,HAND_TRACKING,HEADSET_CAMERA,SPATIAL_CAMERA,USE_SCENE,OPENXR,OPENXR_SYSTEM",
+            format!(
+                "status=requested owner=rust-native-jni method=Activity.requestPermissions route={} permissions={}",
+                runtime_options.render_mode.marker_value(),
+                permission_marker
+            ),
         ),
         Err(error) => marker(
             "permission-request",
@@ -141,7 +160,65 @@ fn android_on_create(_state: &android_activity::OnCreateState) {
 }
 
 #[cfg(target_os = "android")]
-fn request_runtime_permissions(state: &android_activity::OnCreateState) -> Result<(), String> {
+fn runtime_permissions_for_route(
+    runtime_options: &native_renderer_options::NativeRendererRuntimeOptions,
+) -> Vec<&'static str> {
+    let mut permissions = Vec::new();
+    if runtime_options.render_mode.uses_custom_stereo_projection()
+        && runtime_options.camera_output_mode.camera_import_enabled()
+    {
+        permissions.extend([
+            "android.permission.CAMERA",
+            "horizonos.permission.HEADSET_CAMERA",
+            "horizonos.permission.SPATIAL_CAMERA",
+        ]);
+    }
+    if runtime_options
+        .compact_hand_input_source_mode
+        .selects_live_frame()
+        || runtime_options
+            .render_mode
+            .requests_openxr_default_hand_visual()
+        || runtime_options.render_mode.forces_graft_copies()
+        || runtime_options.render_mode.forces_real_hand_meshes()
+        || runtime_options.hand_mesh_graft_copies_enabled
+        || runtime_options.hand_mesh_real_hands_visible
+        || runtime_options.hand_anchor_particle_settings.enabled
+    {
+        permissions.push("com.oculus.permission.HAND_TRACKING");
+    }
+    if runtime_options
+        .environment_depth_settings
+        .requires_scene_permission()
+    {
+        permissions.push("horizonos.permission.USE_SCENE");
+    }
+    permissions.sort_unstable();
+    permissions.dedup();
+    permissions
+}
+
+#[cfg(target_os = "android")]
+fn runtime_permission_marker_list(permissions: &[&str]) -> String {
+    permissions
+        .iter()
+        .map(|permission| match *permission {
+            "android.permission.CAMERA" => "CAMERA",
+            "com.oculus.permission.HAND_TRACKING" => "HAND_TRACKING",
+            "horizonos.permission.HEADSET_CAMERA" => "HEADSET_CAMERA",
+            "horizonos.permission.SPATIAL_CAMERA" => "SPATIAL_CAMERA",
+            "horizonos.permission.USE_SCENE" => "USE_SCENE",
+            other => other,
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+#[cfg(target_os = "android")]
+fn request_runtime_permissions(
+    state: &android_activity::OnCreateState,
+    permissions: &[&str],
+) -> Result<(), String> {
     use jni::{
         jni_sig, jni_str,
         objects::{JObject, JValue},
@@ -153,15 +230,6 @@ fn request_runtime_permissions(state: &android_activity::OnCreateState) -> Resul
     vm.attach_current_thread(|env| -> jni::errors::Result<()> {
         let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
         let string_class = env.find_class(jni_str!("java/lang/String"))?;
-        let permissions = [
-            "android.permission.CAMERA",
-            "com.oculus.permission.HAND_TRACKING",
-            "horizonos.permission.HEADSET_CAMERA",
-            "horizonos.permission.SPATIAL_CAMERA",
-            "horizonos.permission.USE_SCENE",
-            "org.khronos.openxr.permission.OPENXR",
-            "org.khronos.openxr.permission.OPENXR_SYSTEM",
-        ];
         let permission_array =
             env.new_object_array(permissions.len() as i32, string_class, JObject::null())?;
         for (index, permission) in permissions.iter().enumerate() {
@@ -209,8 +277,13 @@ fn android_main(app: android_activity::AndroidApp) {
         ),
     );
 
+    let native_app_settings =
+        native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
+    marker("native-app-settings", native_app_settings.marker_fields());
     let runtime_options =
-        native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties();
+        native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties_with_defaults(
+            |name| native_app_settings.lookup(name),
+        );
     let runtime_options =
         native_renderer_stimulus_panel::apply_app_private_candidate(&app, runtime_options);
     display_composite_capture_export::configure(&app, runtime_options.display_composite_settings);

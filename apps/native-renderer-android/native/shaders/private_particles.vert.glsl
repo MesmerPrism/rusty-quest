@@ -22,6 +22,7 @@ layout(push_constant) uniform PrivateParticlePush {
 layout(location = 0) out vec2 v_mask_uv;
 layout(location = 1) out vec4 v_color;
 layout(location = 2) out vec4 v_render_params;
+layout(location = 3) out vec4 v_color_params;
 
 const vec2 QUAD_POSITIONS[6] = vec2[](
     vec2(-1.0, -1.0),
@@ -76,8 +77,17 @@ vec4 world_to_eye_clip(vec3 world) {
 
 void main() {
     uint draw_index = gl_InstanceIndex;
+    uint particle_count = max(uint(pc.params0.x), 1u);
     uint draw_count = max(uint(pc.tracer_params.x), 1u);
-    uint index = min(particle_sort.rows[draw_index].x, draw_count - 1u);
+    uint packed_mode = uint(pc.params0.z + 0.5);
+    uint ordering_mode = (packed_mode / 10u) % 10u;
+    uint index;
+    if (ordering_mode == 1u) {
+        index = min(draw_index, draw_count - 1u);
+    } else {
+        uint sort_rank = min(draw_index, draw_count - 1u);
+        index = min(particle_sort.rows[sort_rank].x, draw_count - 1u);
+    }
     uint base = index * 4u;
     vec4 position_radius = particle_output.rows[base];
     vec4 color_alpha = particle_output.rows[base + 1u];
@@ -103,5 +113,13 @@ void main() {
     v_mask_uv = raw_quad * 0.5 + vec2(0.5);
     v_color = valid ? color_alpha : vec4(0.0);
     v_render_params = vec4(center_forward_m, clamp(aux.y, 0.0, 0.99902344), aux.z, aux.w);
+    // This is sphere-surface facing, not billboard facing. Billboards always
+    // face the eye; this value lets the fragment shader optionally darken
+    // particles whose icosphere normal points away from the eye.
+    vec3 view_dir = normalize(pc.eye_position.xyz - position_radius.xyz);
+    float normal_len_sq = max(dot(normal_flags.xyz, normal_flags.xyz), 0.000001);
+    vec3 safe_normal = normal_flags.xyz * inversesqrt(normal_len_sq);
+    float facing = valid ? clamp(dot(safe_normal, view_dir), 0.0, 1.0) : 1.0;
+    v_color_params = vec4(facing, 0.0, 0.0, 0.0);
     gl_Position = valid ? world_to_eye_clip(world) : vec4(4.0, 4.0, 0.0, 1.0);
 }

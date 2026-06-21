@@ -270,7 +270,7 @@ public final class ControlPanelActivity extends Activity {
         safetyAck.setOnClickListener(liveControlListener);
         enabledRequested.setOnClickListener(liveControlListener);
         randomizeEnabled.setOnClickListener(liveControlListener);
-        liveAutoApply = checkBox("Live auto update", false);
+        liveAutoApply = checkBox("Live auto update", true);
         liveAutoApply.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {

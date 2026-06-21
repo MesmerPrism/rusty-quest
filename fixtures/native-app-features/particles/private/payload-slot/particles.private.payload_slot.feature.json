@@ -33,13 +33,7 @@
     ]
   },
   "build_inputs": {
-    "env": [
-      {
-        "name": "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_KIND",
-        "value": "none",
-        "source": "feature-default-placeholder"
-      }
-    ],
+    "env": [],
     "assets": [],
     "shaders": []
   },

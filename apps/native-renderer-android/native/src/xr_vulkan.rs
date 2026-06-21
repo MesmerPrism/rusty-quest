@@ -1560,7 +1560,7 @@ unsafe fn run_projection_frames(
     mut secondary_gpu_hand_anchor_particle_renderer: Option<&mut GpuHandAnchorParticleRenderer>,
     mut openxr_environment_depth_runtime: Option<&mut OpenXrEnvironmentDepthRuntime>,
     gpu_environment_depth_particle_renderer: Option<&mut GpuEnvironmentDepthParticleRenderer>,
-    gpu_private_particle_renderer: Option<&mut GpuPrivateParticleRenderer>,
+    mut gpu_private_particle_renderer: Option<&mut GpuPrivateParticleRenderer>,
     mut gpu_sdf_field_renderer: Option<&mut GpuSdfFieldRenderer>,
     mut secondary_gpu_sdf_field_renderer: Option<&mut GpuSdfFieldRenderer>,
     gpu_timestamp_tracker: &mut GpuTimestampTracker,
@@ -1700,14 +1700,19 @@ unsafe fn run_projection_frames(
             continue;
         }
 
+        trace_startup_frame(frame_count, "before-xr-wait-frame");
         let frame_state = frame_wait
             .wait()
             .map_err(|error| format!("wait OpenXR frame: {error}"))?;
+        trace_startup_frame(frame_count, "after-xr-wait-frame");
+        trace_startup_frame(frame_count, "before-xr-begin-frame");
         frame_stream
             .begin()
             .map_err(|error| format!("begin OpenXR frame: {error}"))?;
+        trace_startup_frame(frame_count, "after-xr-begin-frame");
 
         if !frame_state.should_render {
+            trace_startup_frame(frame_count, "skip-frame-should-render-false");
             frame_stream
                 .end(
                     frame_state.predicted_display_time,
@@ -1718,6 +1723,7 @@ unsafe fn run_projection_frames(
             continue;
         }
 
+        trace_startup_frame(frame_count, "before-ensure-swapchain");
         let swapchain = ensure_projection_swapchain(
             xr_instance,
             system,
@@ -1727,6 +1733,7 @@ unsafe fn run_projection_frames(
             color_format,
             &mut swapchain,
         )?;
+        trace_startup_frame(frame_count, "after-ensure-swapchain");
         let (view_flags, views) = session
             .locate_views(
                 VIEW_TYPE,
@@ -1758,6 +1765,7 @@ unsafe fn run_projection_frames(
             frame_count = frame_count.saturating_add(1);
             continue;
         }
+        trace_startup_frame(frame_count, "after-locate-views");
 
         let frame_instant = Instant::now();
         let dt_seconds = (frame_instant - previous_frame_instant)
@@ -1848,14 +1856,18 @@ unsafe fn run_projection_frames(
             );
         }
 
+        trace_startup_frame(frame_count, "before-swapchain-acquire-image");
         let image_index = swapchain
             .handle
             .acquire_image()
             .map_err(|error| format!("acquire OpenXR swapchain image: {error}"))?;
+        trace_startup_frame(frame_count, "after-swapchain-acquire-image");
         let cmd = cmds[frame_slot];
+        trace_startup_frame(frame_count, "before-vulkan-wait-fence");
         vk_device
             .wait_for_fences(&[fences[frame_slot]], true, u64::MAX)
             .map_err(|error| format!("wait Vulkan fence: {error}"))?;
+        trace_startup_frame(frame_count, "after-vulkan-wait-fence");
         let retired_image_leases =
             camera_projection_renderer.retire_completed_frame_leases(frame_slot);
         display_composite_feedback_renderer
@@ -1894,12 +1906,15 @@ unsafe fn run_projection_frames(
             }
         }
         let gpu_stage_timings = gpu_timestamp_tracker.read_frame(vk_device, frame_slot);
+        trace_startup_frame(frame_count, "before-vulkan-reset-fence");
         vk_device
             .reset_fences(&[fences[frame_slot]])
             .map_err(|error| format!("reset Vulkan fence: {error}"))?;
+        trace_startup_frame(frame_count, "after-vulkan-reset-fence");
         vk_device
             .reset_command_buffer(cmd, vk::CommandBufferResetFlags::empty())
             .map_err(|error| format!("reset Vulkan command buffer: {error}"))?;
+        trace_startup_frame(frame_count, "after-vulkan-reset-command-buffer");
 
         let record_started = Instant::now();
         let mut frame_timings = FrameCpuTimings::default();
@@ -2431,18 +2446,20 @@ unsafe fn run_projection_frames(
             } else {
                 GpuEnvironmentDepthParticleFrameStats::unavailable(environment_depth_settings)
             };
-        let private_particle_stats = if let Some(renderer) = gpu_private_particle_renderer.as_ref()
-        {
-            renderer.record_compute_frame(
-                vk_device,
-                cmd,
-                particle_sort_eye_projection,
-                private_particle_world_anchor.world_center_scale(),
-                frame_count,
-            )
-        } else {
-            GpuPrivateParticleFrameStats::unavailable()
-        };
+        let private_particle_stats =
+            if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
+                renderer.record_compute_frame(
+                    vk_device,
+                    cmd,
+                    gpu_timestamp_tracker,
+                    frame_slot,
+                    particle_sort_eye_projection,
+                    private_particle_world_anchor.world_center_scale(),
+                    frame_count,
+                )
+            } else {
+                GpuPrivateParticleFrameStats::unavailable()
+            };
         gpu_timestamp_tracker.write_stage_end(
             vk_device,
             cmd,
@@ -2667,6 +2684,8 @@ unsafe fn run_projection_frames(
         let replay_visual_stats = record_projection_diagnostic(
             vk_device,
             cmd,
+            gpu_timestamp_tracker,
+            frame_slot,
             swapchain,
             image_index as usize,
             frame_count,
@@ -2741,12 +2760,15 @@ unsafe fn run_projection_frames(
         frame_timings.command_record_ms = record_ms;
 
         let stage_started = Instant::now();
+        trace_startup_frame(frame_count, "before-swapchain-wait-image");
         swapchain
             .handle
             .wait_image(xr::Duration::INFINITE)
             .map_err(|error| format!("wait OpenXR swapchain image: {error}"))?;
+        trace_startup_frame(frame_count, "after-swapchain-wait-image");
         frame_timings.swapchain_wait_ms = elapsed_ms(stage_started);
         let submit_started = Instant::now();
+        trace_startup_frame(frame_count, "before-vulkan-queue-submit");
         vk_device
             .queue_submit(
                 queue,
@@ -2754,12 +2776,15 @@ unsafe fn run_projection_frames(
                 fences[frame_slot],
             )
             .map_err(|error| format!("submit Vulkan queue: {error}"))?;
+        trace_startup_frame(frame_count, "after-vulkan-queue-submit");
         let submit_ms = submit_started.elapsed().as_secs_f64() * 1000.0;
         frame_timings.queue_submit_ms = submit_ms;
+        trace_startup_frame(frame_count, "before-swapchain-release-image");
         swapchain
             .handle
             .release_image()
             .map_err(|error| format!("release OpenXR swapchain image: {error}"))?;
+        trace_startup_frame(frame_count, "after-swapchain-release-image");
 
         let rect = xr::Rect2Di {
             offset: xr::Offset2Di { x: 0, y: 0 },
@@ -2807,6 +2832,7 @@ unsafe fn run_projection_frames(
         }
         layers.push(&projection_layer);
         let stage_started = Instant::now();
+        trace_startup_frame(frame_count, "before-xr-end-frame");
         frame_stream
             .end(
                 frame_state.predicted_display_time,
@@ -2814,6 +2840,7 @@ unsafe fn run_projection_frames(
                 &layers,
             )
             .map_err(|error| format!("end OpenXR frame: {error}"))?;
+        trace_startup_frame(frame_count, "after-xr-end-frame");
         frame_timings.openxr_end_frame_ms = elapsed_ms(stage_started);
 
         frame_count = frame_count.saturating_add(1);
@@ -2875,6 +2902,15 @@ unsafe fn run_projection_frames(
         swapchain.destroy(vk_device);
     }
     Ok(())
+}
+
+fn trace_startup_frame(frame_count: u64, stage: &str) {
+    if frame_count < 4 {
+        crate::marker(
+            "openxr-frame-trace",
+            format!("frame={} stage={}", frame_count, crate::sanitize(stage)),
+        );
+    }
 }
 
 fn apply_live_stimulus_candidate(
@@ -3275,6 +3311,8 @@ unsafe fn create_projection_swapchain_buffer(
 unsafe fn record_projection_diagnostic(
     device: &ash::Device,
     cmd: vk::CommandBuffer,
+    gpu_timestamp_tracker: &GpuTimestampTracker,
+    frame_slot: usize,
     swapchain: &ProjectionSwapchain,
     image_index: usize,
     frame_count: u64,
@@ -3336,6 +3374,17 @@ unsafe fn record_projection_diagnostic(
         draw_recorded_replay_overlay,
         diagnostic_settings,
     );
+    let private_particle_tile_stage = gpu_private_particle_renderer.is_some()
+        && private_particle_stats.visible
+        && private_particle_stats.draw_count > 0;
+    if private_particle_tile_stage {
+        gpu_timestamp_tracker.write_stage_start(
+            device,
+            cmd,
+            frame_slot,
+            GpuTimestampStage::PrivateParticleTileComposite,
+        );
+    }
     for (eye_index, eye) in buffer.eyes.iter().enumerate() {
         let target_rect =
             projection_target_state.effective_rect(projection_metadata.rect_for_eye(eye_index));
@@ -3594,15 +3643,32 @@ unsafe fn record_projection_diagnostic(
                 environment_depth_settings,
             );
         }
+        let private_particle_draw_stage = if gpu_private_particle_renderer.is_some()
+            && private_particle_stats.visible
+            && private_particle_stats.draw_count > 0
+        {
+            match eye_index {
+                0 => Some(GpuTimestampStage::PrivateParticleDrawLeftEye),
+                1 => Some(GpuTimestampStage::PrivateParticleDrawRightEye),
+                _ => None,
+            }
+        } else {
+            None
+        };
         if let Some(renderer) = gpu_private_particle_renderer {
-            renderer.record_overlay_eye(
-                device,
-                cmd,
-                swapchain.extent,
-                eye_projection,
-                private_particle_world_center_scale,
-                private_particle_stats,
-            );
+            if private_particle_stats.visible && private_particle_stats.draw_count > 0 {
+                if let Some(stage) = private_particle_draw_stage {
+                    gpu_timestamp_tracker.write_stage_start(device, cmd, frame_slot, stage);
+                }
+                renderer.record_overlay_eye(
+                    device,
+                    cmd,
+                    swapchain.extent,
+                    eye_projection,
+                    private_particle_world_center_scale,
+                    private_particle_stats,
+                );
+            }
         }
         if let Some(renderer) = gpu_hand_mesh_visual_renderer {
             if hand_mesh_visual_stats.primary.graft_copy_count > 0 {
@@ -3666,6 +3732,17 @@ unsafe fn record_projection_diagnostic(
             }
         }
         device.cmd_end_render_pass(cmd);
+        if let Some(stage) = private_particle_draw_stage {
+            gpu_timestamp_tracker.write_stage_end(device, cmd, frame_slot, stage);
+        }
+    }
+    if private_particle_tile_stage {
+        gpu_timestamp_tracker.write_stage_end(
+            device,
+            cmd,
+            frame_slot,
+            GpuTimestampStage::PrivateParticleTileComposite,
+        );
     }
     visual_stats
 }

@@ -1,15 +1,11 @@
 {
   "schema": "rusty.quest.native_app_build.v1",
-  "app_id": "private_particle_solid_black_canary",
-  "owner_repo": "downstream-private-app",
+  "app_id": "native_stimulus_volume_panel",
+  "owner_repo": "rusty-quest",
   "package_policy": "native-renderer-dev-package",
   "package_name": "io.github.mesmerprism.rustyquest.native_renderer",
   "requested_features": [
-    "quest.native.openxr_vulkan_base",
-    "renderer.background.solid_black",
-    "renderer.private_particles",
-    "particles.tracers.snapshot_rows",
-    "input.right_primary_private_particle_recenter"
+    "renderer.stimulus_volume"
   ],
   "denied_features": [
     "camera.hwb",
@@ -17,11 +13,13 @@
     "environment_depth",
     "hand_anchor_particles",
     "hand_mesh_visual",
+    "input.right_primary_private_particle_recenter",
     "makepad_runtime",
+    "manifold.bridge",
     "private_layer",
     "projection_target.breathing_room",
     "renderer.background.native_passthrough",
-    "renderer.stimulus_volume",
+    "renderer.private_particles",
     "sdf_visual",
     "video_projection"
   ],
@@ -37,27 +35,44 @@
       "android.opengl.gles.3.1"
     ],
     "activities": [
+      "ControlPanelActivity",
       "android.app.NativeActivity"
     ],
     "services": []
   },
-  "expected_render_mode": "solid-black-private-particles",
+  "expected_render_mode": "solid-black-stimulus-volume",
   "settings_assertions": {
     "required_values": {
-      "native_renderer.render.mode": "solid-black-private-particles",
-      "native_renderer.camera.output": "disabled",
       "native_renderer.display_composite.enabled": "false",
+      "native_renderer.display_composite.feedback.enabled": "false",
       "native_renderer.display_composite.high_rate_json_payload": "false",
-      "native_renderer.environment_depth.mode": "disabled",
       "native_renderer.environment_depth.high_rate_json_payload": "false",
+      "native_renderer.environment_depth.mode": "disabled",
       "native_renderer.hand_anchor_particles.enabled": "false",
+      "native_renderer.hand_mesh.graft_copies.enabled": "false",
       "native_renderer.hand_mesh.input.source": "disabled",
       "native_renderer.hand_mesh.real_hands.visible": "false",
+      "native_renderer.hand_mesh.visual.diagnostic.enabled": "false",
       "native_renderer.private_layer.enabled": "false",
+      "native_renderer.projection.target.breath.bridge.mode": "disabled",
+      "native_renderer.projection.target.breath.high_rate_json_payload": "false",
       "native_renderer.projection.target.controls": "false",
+      "native_renderer.projection.target.joystick.controls": "false",
+      "native_renderer.render.mode": "solid-black-stimulus-volume",
       "native_renderer.replay.visual_proof.enabled": "false",
       "native_renderer.sdf.visual.enabled": "false",
-      "native_renderer.stimulus_volume.enabled": "false",
+      "native_renderer.stimulus_volume.central_fov_fraction": "0.72",
+      "native_renderer.stimulus_volume.composition": "opaque-black-projection",
+      "native_renderer.stimulus_volume.enabled": "true",
+      "native_renderer.stimulus_volume.gradient_smoothing": "0.78",
+      "native_renderer.stimulus_volume.pattern_family": "spiral",
+      "native_renderer.stimulus_volume.profile": "volume-only-bright-interference",
+      "native_renderer.stimulus_volume.randomize.enabled": "true",
+      "native_renderer.stimulus_volume.randomize.max_hz": "40.0",
+      "native_renderer.stimulus_volume.randomize.min_hz": "3.0",
+      "native_renderer.stimulus_volume.raymarch_samples": "12",
+      "native_renderer.stimulus_volume.render_target": "512x512x2-rgba16f",
+      "native_renderer.stimulus_volume.safety_ack": "true",
       "native_renderer.video_projection.enabled": "false",
       "native_renderer.video_projection.high_rate_json_payload": "false"
     },
@@ -70,6 +85,7 @@
       "passthrough_style",
       "private_layer",
       "projection_target",
+      "processing",
       "replay",
       "sdf",
       "stimulus_volume",
@@ -78,13 +94,7 @@
     "required_modules": [
       "background/solid-black",
       "core/openxr-vulkan",
-      "input/private-particles/right-primary-recenter",
-      "particles/private/mask/r8-texture",
-      "particles/private/ordering/gpu-index-remap",
-      "particles/private/payload-slot",
-      "particles/private/placeholder",
-      "particles/private/renderer",
-      "particles/tracers/snapshot-rows"
+      "stimulus/volume"
     ],
     "forbidden_modules": [
       "background/native-passthrough",
@@ -95,21 +105,34 @@
       "makepad/runtime",
       "manifold/bridge",
       "particles/hand-anchor/renderer",
+      "particles/private/renderer",
       "private-layer",
       "projection-target/breathing-room",
       "sdf/visual",
-      "stimulus/volume",
       "video/projection"
     ]
   },
   "expected_markers": {
     "required": [
-      "renderMode=solid-black-private-particles",
+      "renderMode=solid-black-stimulus-volume",
       "customStereoProjectionEnabled=false",
       "nativePassthroughRequested=false",
       "solidBlackBackground=true",
-      "privateParticleRecenterInputEnabled=true",
-      "RUSTY_QUEST_NATIVE_RENDERER channel=private-particle-slot"
+      "stimulusVolumeEnabled=true",
+      "stimulusVolumeActive=true",
+      "stimulusSafetyAcknowledged=true",
+      "rightControllerPrimaryButtonRandomize=true",
+      "rightTriggerPanelToggleAction=true",
+      "rightControllerTriggerPanelToggle=true",
+      "randomizeHzRange=3.000-40.000",
+      "stimulusVolumeRenderTarget=512x512x2-rgba16f",
+      "volumeGradientSmoothing=0.78",
+      "volumeRaymarchSamples=12",
+      "status=startup-dynamics",
+      "source=headset-randomize-count-28-2026-06-20",
+      "stimulusVolumePatternFamily=spiral",
+      "stimulusVolumeTemporalFrequencyHz=3.084",
+      "stimulusVolumeSpatialOscillatorHz=6.041,35.362,37.531"
     ],
     "forbidden": [
       "cameraProjectionPath=metadata-target-guide-texture",
@@ -120,7 +143,7 @@
       "makepadRuntimeEnabled=true",
       "nativePassthroughRequested=true",
       "privateLayerEnabled=true",
-      "stimulusVolumeEnabled=true",
+      "privateParticleRecenterInputEnabled=true",
       "videoProjectionEnabled=true"
     ]
   },

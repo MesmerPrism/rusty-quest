@@ -9,7 +9,7 @@
   },
   "owner_lane": "rusty-quest",
   "status": "public-substrate",
-  "description": "Resident GPU private-particle back-to-front index remap.",
+  "description": "Resident GPU private-particle ordering infrastructure. Builds may select back-to-front depth remap or source-order direct output without CPU expansion.",
   "provides": [
     "particles.private.ordering.gpu_index_remap"
   ],
@@ -41,7 +41,6 @@
   },
   "markers": {
     "required": [
-      "privateParticleOrderingImplementation=resident-gpu-index-remap",
       "privateParticleOrderingCpuExpandedUploadPerFrame=false"
     ],
     "forbidden": []

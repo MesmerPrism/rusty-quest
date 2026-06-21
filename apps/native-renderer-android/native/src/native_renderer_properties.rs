@@ -109,6 +109,24 @@ pub(crate) const PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION: &str =
     "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.implementation";
 pub(crate) const PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES: &str =
     "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.interval_frames";
+pub(crate) const PROP_PRIVATE_PARTICLES_VISUAL_SCALE: &str =
+    "debug.rustyquest.native_renderer.private_particles.visual.scale";
+pub(crate) const PROP_PRIVATE_PARTICLES_TRACER_DRAW_SLOTS_PER_OSCILLATOR: &str =
+    "debug.rustyquest.native_renderer.private_particles.tracer.draw_slots_per_oscillator";
+pub(crate) const PROP_PRIVATE_PARTICLES_TRACER_LIFETIME_SECONDS: &str =
+    "debug.rustyquest.native_renderer.private_particles.tracer.lifetime_seconds";
+pub(crate) const PROP_PRIVATE_PARTICLES_TRACER_COPIES_PER_SECOND: &str =
+    "debug.rustyquest.native_renderer.private_particles.tracer.copies_per_second";
+pub(crate) const PROP_PRIVATE_PARTICLES_TRANSPARENCY_OPACITY: &str =
+    "debug.rustyquest.native_renderer.private_particles.transparency.opacity";
+pub(crate) const PROP_PRIVATE_PARTICLES_TRANSPARENCY_OUTPUT_ALPHA_SCALE: &str =
+    "debug.rustyquest.native_renderer.private_particles.transparency.output_alpha_scale";
+pub(crate) const PROP_PRIVATE_PARTICLES_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH: &str =
+    "debug.rustyquest.native_renderer.private_particles.transparency.depth_suppression_strength";
+pub(crate) const PROP_PRIVATE_PARTICLES_TRANSPARENCY_RGB_ALPHA_COUPLING: &str =
+    "debug.rustyquest.native_renderer.private_particles.transparency.rgb_alpha_coupling";
+pub(crate) const PROP_PRIVATE_PARTICLES_COLOR_FACING_ATTENUATION_STRENGTH: &str =
+    "debug.rustyquest.native_renderer.private_particles.color.facing_attenuation_strength";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_MODE: &str =
     "debug.rustyquest.native_renderer.environment_depth.mode";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_SOURCE: &str =

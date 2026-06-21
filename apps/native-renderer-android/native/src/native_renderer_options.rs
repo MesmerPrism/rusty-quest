@@ -210,9 +210,23 @@ impl NativeRendererRuntimeOptions {
         }
     }
 
+    pub(crate) fn from_property_lookup_with_defaults(
+        mut lookup: impl FnMut(&str) -> Option<String>,
+        mut default_lookup: impl FnMut(&str) -> Option<String>,
+    ) -> Self {
+        Self::from_property_lookup(|name| lookup(name).or_else(|| default_lookup(name)))
+    }
+
     #[cfg(target_os = "android")]
     pub(crate) fn load_from_android_properties() -> Self {
-        Self::from_property_lookup(android_property)
+        Self::load_from_android_properties_with_defaults(|_| None)
+    }
+
+    #[cfg(target_os = "android")]
+    pub(crate) fn load_from_android_properties_with_defaults(
+        default_lookup: impl FnMut(&str) -> Option<String>,
+    ) -> Self {
+        Self::from_property_lookup_with_defaults(android_property, default_lookup)
     }
 }
 

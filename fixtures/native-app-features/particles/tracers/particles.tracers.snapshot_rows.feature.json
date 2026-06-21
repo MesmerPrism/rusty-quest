@@ -1,7 +1,7 @@
 {
   "schema": "rusty.quest.native_app_feature.v1",
-  "feature_id": "particles.private.tracers",
-  "module_path": "particles/private/tracers",
+  "feature_id": "particles.tracers.snapshot_rows",
+  "module_path": "particles/tracers/snapshot-rows",
   "module_kind": "particle-tracers",
   "settings_surface": {
     "authority": "rusty.quest.native_app_settings.v1",
@@ -9,13 +9,11 @@
   },
   "owner_lane": "rusty-quest",
   "status": "public-substrate",
-  "description": "Resident private-particle tracer rows and output merge budget.",
+  "description": "Resident GPU particle tracer snapshot rows and output merge budget.",
   "provides": [
-    "particles.private.tracers"
+    "particles.tracers.snapshot_rows"
   ],
-  "depends_on": [
-    "particles.private.payload_slot"
-  ],
+  "depends_on": [],
   "incompatible_with": [],
   "exclusive_groups": {},
   "android_manifest": {
@@ -49,5 +47,5 @@
     "standard": [],
     "device": []
   },
-  "public_private_boundary": "Tracer infrastructure is public; downstream apps own private dynamics and effect vocabulary."
+  "public_private_boundary": "Tracer infrastructure is public generic particle substrate; downstream apps own private dynamics and effect vocabulary."
 }

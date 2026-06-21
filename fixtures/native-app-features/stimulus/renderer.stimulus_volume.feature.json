@@ -37,22 +37,55 @@
   },
   "runtime_profile": {
     "set": {
+      "debug.rustyquest.native_renderer.display_composite.enabled": "false",
+      "debug.rustyquest.native_renderer.display_composite.feedback.enabled": "false",
+      "debug.rustyquest.native_renderer.display_composite.high_rate_json_payload": "false",
+      "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload": "false",
+      "debug.rustyquest.native_renderer.environment_depth.mode": "disabled",
+      "debug.rustyquest.native_renderer.environment_depth.source": "synthetic-gpu-proof",
+      "debug.rustyquest.native_renderer.hand_anchor_particles.enabled": "false",
+      "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled": "false",
+      "debug.rustyquest.native_renderer.hand_mesh.graft_copies.scale": "1.0",
+      "debug.rustyquest.native_renderer.hand_mesh.input.source": "disabled",
+      "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible": "false",
+      "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha": "0.0",
+      "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled": "false",
+      "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv": "0.0,0.0",
+      "debug.rustyquest.native_renderer.private_layer.enabled": "false",
+      "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode": "disabled",
+      "debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload": "false",
+      "debug.rustyquest.native_renderer.projection.target.controls": "false",
+      "debug.rustyquest.native_renderer.projection.target.joystick.controls": "false",
       "debug.rustyquest.native_renderer.render.mode": "solid-black-stimulus-volume",
+      "debug.rustyquest.native_renderer.replay.visual_proof.enabled": "false",
+      "debug.rustyquest.native_renderer.sdf.update_period_frames": "2",
+      "debug.rustyquest.native_renderer.sdf.visual.enabled": "false",
       "debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction": "0.72",
       "debug.rustyquest.native_renderer.stimulus_volume.composition": "opaque-black-projection",
       "debug.rustyquest.native_renderer.stimulus_volume.enabled": "true",
-      "debug.rustyquest.native_renderer.stimulus_volume.gradient_smoothing": "0.65",
+      "debug.rustyquest.native_renderer.stimulus_volume.gradient_smoothing": "0.78",
       "debug.rustyquest.native_renderer.stimulus_volume.pattern_family": "spiral",
       "debug.rustyquest.native_renderer.stimulus_volume.profile": "volume-only-bright-interference",
       "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled": "true",
       "debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz": "40.0",
       "debug.rustyquest.native_renderer.stimulus_volume.randomize.min_hz": "3.0",
       "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples": "12",
-      "debug.rustyquest.native_renderer.stimulus_volume.render_target": "768x768x2-rgba16f",
-      "debug.rustyquest.native_renderer.stimulus_volume.safety_ack": "true"
+      "debug.rustyquest.native_renderer.stimulus_volume.render_target": "512x512x2-rgba16f",
+      "debug.rustyquest.native_renderer.stimulus_volume.safety_ack": "true",
+      "debug.rustyquest.native_renderer.video_projection.enabled": "false",
+      "debug.rustyquest.native_renderer.video_projection.high_rate_json_payload": "false"
     },
     "clear_families": [
-      "stimulus_volume"
+      "display_composite",
+      "environment_depth",
+      "hand_anchor_particles",
+      "hand_mesh",
+      "private_layer",
+      "projection_target",
+      "replay",
+      "sdf",
+      "stimulus_volume",
+      "video_projection"
     ],
     "expected_render_modes": [
       "solid-black-stimulus-volume"
@@ -69,11 +102,23 @@
   },
   "markers": {
     "required": [
+      "renderMode=solid-black-stimulus-volume",
       "stimulusVolumeEnabled=true",
-      "photosensitiveSafetyAck=true"
+      "stimulusVolumeActive=true",
+      "stimulusSafetyAcknowledged=true",
+      "rightControllerPrimaryButtonRandomize=true",
+      "randomizeHzRange=3.000-40.000",
+      "stimulusVolumeRenderTarget=512x512x2-rgba16f",
+      "volumeGradientSmoothing=0.78",
+      "volumeRaymarchSamples=12",
+      "source=headset-randomize-count-28-2026-06-20"
     ],
     "forbidden": [
-      "privateParticleRecenterInputEnabled=true"
+      "displayCompositeEnabled=true",
+      "environmentDepthMode=scene-particle-map",
+      "handAnchorParticlesEnabled=true",
+      "privateParticleRecenterInputEnabled=true",
+      "videoProjectionEnabled=true"
     ]
   },
   "validation": {

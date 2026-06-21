@@ -1199,7 +1199,7 @@ if ($RequirePrivateParticleSlotPayload) {
     foreach ($token in @(
         "privateParticlePayloadLinked=true",
         "privateParticleGpuBuffersResident=true",
-        "privateParticleOrderingImplementation=resident-gpu-index-remap",
+        "privateParticleOrderingMode=back-to-front",
         "privateParticleOrderingCpuExpandedUploadPerFrame=false",
         "privateParticleMaskTextureFormat=R8_UNORM"
     )) {
