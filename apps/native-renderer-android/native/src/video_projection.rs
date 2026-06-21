@@ -129,6 +129,7 @@ impl VideoProjectionFrameStats {
 
 pub(crate) struct PreparedVideoProjection {
     pub(crate) descriptor_set: vk::DescriptorSet,
+    pub(crate) descriptor_set_layout: vk::DescriptorSetLayout,
     pub(crate) pipeline_layout: vk::PipelineLayout,
     pub(crate) pipeline: vk::Pipeline,
     pub(crate) stats: VideoProjectionFrameStats,
@@ -331,6 +332,11 @@ impl VideoProjectionRenderer {
         self.track_frame_hardware_buffer_id(frame_slot, protected_hardware_buffer_id);
         Ok(Some(PreparedVideoProjection {
             descriptor_set: self.imports[import_index].descriptor_set,
+            descriptor_set_layout: self
+                .resources
+                .as_ref()
+                .expect("video projection resources were initialized")
+                .descriptor_set_layout,
             pipeline_layout,
             pipeline,
             stats: VideoProjectionFrameStats {

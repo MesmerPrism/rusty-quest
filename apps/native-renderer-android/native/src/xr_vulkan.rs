@@ -31,6 +31,7 @@ use crate::{
         HandMeshVisualEyeProjection,
     },
     gpu_mesh_replay::{GpuMeshReplayResources, GpuMeshReplayStats},
+    gpu_private_particles::{GpuPrivateParticleFrameStats, GpuPrivateParticleRenderer},
     gpu_sdf_field::{GpuSdfFieldFrameStats, GpuSdfFieldRenderer},
     gpu_stimulus_volume::{GpuStimulusVolumeFrameStats, GpuStimulusVolumeRenderer},
     guide_blur_graph::{GuideBlurGraphFrameStats, GuideBlurGraphRenderer},
@@ -45,14 +46,14 @@ use crate::{
         CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings, NativeCameraOutputMode,
         NativeCameraQualityProfile, NativeCameraSyncMode, NativeEnvironmentDepthSettings,
         NativeGuideGraphResolution, NativeHandAnchorParticleOrderingMode,
-        NativeHandAnchorParticleSettings, NativePrivateLayerSettings,
-        NativeProjectionBorderStretchSettings, NativeRendererRenderMode,
-        NativeRendererRuntimeOptions, NativeStimulusVolumeSettings, NativeSwapchainColorFormatMode,
-        PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED,
-        PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_READER_MAX_IMAGES,
-        PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
-        PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL, PROP_GUIDE_BLUR_ENABLED,
-        PROP_GUIDE_RESOLUTION, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
+        NativeHandAnchorParticleSettings, NativePassthroughStyleSettings,
+        NativePrivateLayerSettings, NativeProjectionBorderStretchSettings,
+        NativeRendererRenderMode, NativeRendererRuntimeOptions, NativeStimulusVolumeSettings,
+        NativeSwapchainColorFormatMode, PROP_CAMERA_DIRECT_BORDER_OPACITY,
+        PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED, PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE,
+        PROP_CAMERA_READER_MAX_IMAGES, PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING,
+        PROP_CAMERA_SYNC_MODE, PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL,
+        PROP_GUIDE_BLUR_ENABLED, PROP_GUIDE_RESOLUTION, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
@@ -327,7 +328,7 @@ unsafe fn run_projection_loop_inner(
     crate::marker(
         "native-passthrough",
         format!(
-            "status=config renderMode={} nativePassthroughRequested={} solidBlackBackground={} fbPassthroughAvailable={} fbPassthroughEnabled={} alphaBlendSupported={} environmentBlendModes={} environmentBlendMode={:?} projectionLayerAlphaBlend={} cameraRuntimeMode={} cameraProjectionPath={}",
+            "status=config renderMode={} nativePassthroughRequested={} solidBlackBackground={} fbPassthroughAvailable={} fbPassthroughEnabled={} alphaBlendSupported={} environmentBlendModes={} environmentBlendMode={:?} projectionLayerAlphaBlend={} cameraRuntimeMode={} cameraProjectionPath={} {}",
             runtime_options.render_mode.marker_value(),
             runtime_options.render_mode.uses_native_passthrough(),
             runtime_options.render_mode.uses_solid_black_background(),
@@ -339,6 +340,7 @@ unsafe fn run_projection_loop_inner(
             runtime_options.render_mode.projection_layer_alpha_blend(),
             runtime_options.render_mode.camera_runtime_mode(),
             runtime_options.render_mode.disabled_camera_projection_path(),
+            runtime_options.passthrough_style_settings.marker_fields(),
         ),
     );
     let requirements = xr_instance
@@ -483,6 +485,7 @@ unsafe fn run_projection_loop_inner(
         runtime_options.render_mode,
         enabled_extensions.fb_passthrough,
         alpha_blend_supported,
+        runtime_options.passthrough_style_settings,
     );
     let mut live_hand_compact = LiveHandCompactInput::new(
         &xr_instance,
@@ -1073,6 +1076,25 @@ unsafe fn run_projection_loop_inner(
             gpu_timestamp_tracker.config_marker_fields()
         ),
     );
+    let mut gpu_private_particle_renderer = match GpuPrivateParticleRenderer::new(
+        &vk_device,
+        &memory_properties,
+        render_pass,
+        queue,
+        cmd_pool,
+    ) {
+        Ok(renderer) => renderer,
+        Err(error) => {
+            crate::marker(
+                "private-particle-slot",
+                format!(
+                    "status=unavailable reason={} privateParticleReady=false",
+                    crate::sanitize(&error)
+                ),
+            );
+            None
+        }
+    };
 
     crate::marker(
         "openxr-projection",
@@ -1134,6 +1156,7 @@ unsafe fn run_projection_loop_inner(
         secondary_gpu_hand_anchor_particle_renderer.as_mut(),
         openxr_environment_depth_runtime.as_mut(),
         gpu_environment_depth_particle_renderer.as_mut(),
+        gpu_private_particle_renderer.as_mut(),
         gpu_sdf_field_renderer.as_mut(),
         secondary_gpu_sdf_field_renderer.as_mut(),
         &mut gpu_timestamp_tracker,
@@ -1194,6 +1217,9 @@ unsafe fn run_projection_loop_inner(
         renderer.destroy(&vk_device);
     }
     if let Some(renderer) = gpu_environment_depth_particle_renderer.as_mut() {
+        renderer.destroy(&vk_device);
+    }
+    if let Some(renderer) = gpu_private_particle_renderer.as_mut() {
         renderer.destroy(&vk_device);
     }
     if let Some(renderer) = gpu_stimulus_volume_renderer.as_mut() {
@@ -1528,6 +1554,7 @@ unsafe fn run_projection_frames(
     mut secondary_gpu_hand_anchor_particle_renderer: Option<&mut GpuHandAnchorParticleRenderer>,
     mut openxr_environment_depth_runtime: Option<&mut OpenXrEnvironmentDepthRuntime>,
     gpu_environment_depth_particle_renderer: Option<&mut GpuEnvironmentDepthParticleRenderer>,
+    gpu_private_particle_renderer: Option<&mut GpuPrivateParticleRenderer>,
     mut gpu_sdf_field_renderer: Option<&mut GpuSdfFieldRenderer>,
     mut secondary_gpu_sdf_field_renderer: Option<&mut GpuSdfFieldRenderer>,
     gpu_timestamp_tracker: &mut GpuTimestampTracker,
@@ -1559,7 +1586,7 @@ unsafe fn run_projection_frames(
     swapchain_color_format_mode: NativeSwapchainColorFormatMode,
     camera_direct_border_opacity: f32,
     projection_border_stretch_settings: NativeProjectionBorderStretchSettings,
-    private_layer_settings: NativePrivateLayerSettings,
+    mut private_layer_settings: NativePrivateLayerSettings,
     projection_metadata: &CameraProjectionMetadata,
     display_composite_projection_metadata: &DisplayCompositeProjectionMetadata,
     video_projection_metadata: &VideoProjectionMetadata,
@@ -1740,6 +1767,16 @@ unsafe fn run_projection_frames(
                 gpu_stimulus_volume_renderer.as_deref_mut(),
                 stimulus_actions.as_deref_mut(),
                 candidate,
+                frame_count,
+            );
+        }
+        if let Some(selection) =
+            crate::native_renderer_stimulus_panel::take_live_private_layer_selection()
+        {
+            apply_live_private_layer_selection(
+                app,
+                &mut private_layer_settings,
+                selection,
                 frame_count,
             );
         }
@@ -2375,6 +2412,12 @@ unsafe fn run_projection_frames(
             } else {
                 GpuEnvironmentDepthParticleFrameStats::unavailable(environment_depth_settings)
             };
+        let private_particle_stats = if let Some(renderer) = gpu_private_particle_renderer.as_ref()
+        {
+            renderer.record_compute_frame(vk_device, cmd, particle_sort_eye_projection, frame_count)
+        } else {
+            GpuPrivateParticleFrameStats::unavailable()
+        };
         gpu_timestamp_tracker.write_stage_end(
             vk_device,
             cmd,
@@ -2638,6 +2681,8 @@ unsafe fn run_projection_frames(
             gpu_environment_depth_particle_renderer.as_deref(),
             &environment_depth_particle_stats,
             environment_depth_settings,
+            gpu_private_particle_renderer.as_deref(),
+            &private_particle_stats,
             gpu_sdf_field_renderer.as_deref(),
             &gpu_sdf_stats,
             &live_hand_frames,
@@ -2871,6 +2916,58 @@ fn apply_live_stimulus_candidate(
         }
         Err(reason) => reject_live_stimulus_candidate(app, frame_count, revision, &reason),
     }
+}
+
+fn apply_live_private_layer_selection(
+    app: &android_activity::AndroidApp,
+    private_layer_settings: &mut NativePrivateLayerSettings,
+    selection: crate::native_renderer_stimulus_panel::PrivateLayerPanelSelection,
+    frame_count: u64,
+) {
+    let revision = selection.revision;
+    if !private_layer_settings.enabled {
+        reject_live_private_layer_selection(app, frame_count, revision, "private_layer_disabled");
+        return;
+    }
+    private_layer_settings.layer_override = selection.layer_override;
+    crate::marker(
+        "private-layer-panel",
+        format!(
+            "status=live-applied transport=jni-live-queue frame={} candidateRevision={} privateLayerOverride={:.1} privateLayerActiveLayer={} {}",
+            frame_count,
+            revision,
+            selection.layer_override,
+            crate::sanitize(&selection.layer_label),
+            private_layer_settings.marker_fields()
+        ),
+    );
+    crate::native_renderer_stimulus_panel::write_private_layer_selection_status(
+        app,
+        "applied",
+        revision,
+        "none",
+        Some(&selection),
+    );
+}
+
+fn reject_live_private_layer_selection(
+    app: &android_activity::AndroidApp,
+    frame_count: u64,
+    revision: i64,
+    reason: &str,
+) {
+    crate::marker(
+        "private-layer-panel",
+        format!(
+            "status=live-rejected transport=jni-live-queue frame={} candidateRevision={} reason={}",
+            frame_count,
+            revision,
+            crate::sanitize(reason)
+        ),
+    );
+    crate::native_renderer_stimulus_panel::write_private_layer_selection_status(
+        app, "rejected", revision, reason, None,
+    );
 }
 
 fn reject_live_stimulus_candidate(
@@ -3178,7 +3275,7 @@ unsafe fn record_projection_diagnostic(
     private_extension_slot_runtime: &PrivateExtensionSlotRuntime,
     private_extension_stats: &PrivateExtensionSlotFrameStats,
     private_layer_settings: NativePrivateLayerSettings,
-    guide_blur_graph_renderer: &GuideBlurGraphRenderer,
+    guide_blur_graph_renderer: &mut GuideBlurGraphRenderer,
     guide_blur_stats: &GuideBlurGraphFrameStats,
     guide_blur_enabled: bool,
     gpu_hand_mesh_visual_renderer: Option<&GpuHandMeshVisualRenderer>,
@@ -3190,6 +3287,8 @@ unsafe fn record_projection_diagnostic(
     gpu_environment_depth_particle_renderer: Option<&GpuEnvironmentDepthParticleRenderer>,
     environment_depth_particle_stats: &GpuEnvironmentDepthParticleFrameStats,
     environment_depth_settings: NativeEnvironmentDepthSettings,
+    gpu_private_particle_renderer: Option<&GpuPrivateParticleRenderer>,
+    private_particle_stats: &GpuPrivateParticleFrameStats,
     gpu_sdf_field_renderer: Option<&GpuSdfFieldRenderer>,
     gpu_sdf_stats: &GpuSdfFieldFrameStats,
     live_hand_frames: &LiveHandCompactFrameSet,
@@ -3256,8 +3355,7 @@ unsafe fn record_projection_diagnostic(
         );
         if video_projection_stats.rendered {
             if let Some(prepared) = prepared_video_projection {
-                let video_base_rect = video_projection_metadata.target_rect_for_eye(eye_index);
-                let video_target_rect = projection_target_state.effective_rect(video_base_rect);
+                let video_target_rect = video_projection_metadata.target_rect_for_eye(eye_index);
                 video_projection_renderer.record_video_eye(
                     device,
                     cmd,
@@ -3310,21 +3408,50 @@ unsafe fn record_projection_diagnostic(
                     projection_metadata,
                     frame_count,
                     private_layer_settings,
+                    projection_settings,
                 );
             }
         } else if custom_stereo_projection
             && camera_output_mode.guide_projection_enabled()
             && guide_blur_stats.ready
         {
-            guide_blur_graph_renderer.record_projection_eye(
-                device,
-                cmd,
-                swapchain.extent,
-                eye_index,
-                target_rect,
-                projection_settings,
-                guide_blur_enabled,
-            );
+            let video_composite_rendered = if projection_settings
+                .video_border_shader_composite_active()
+                && video_projection_stats.rendered
+            {
+                if let Some(prepared_video) = prepared_video_projection {
+                    let video_target_rect =
+                        video_projection_metadata.target_rect_for_eye(eye_index);
+                    guide_blur_graph_renderer.record_video_composite_projection_eye(
+                        device,
+                        cmd,
+                        swapchain.extent,
+                        eye_index,
+                        target_rect,
+                        video_target_rect,
+                        projection_settings,
+                        guide_blur_enabled,
+                        video_projection_metadata,
+                        video_projection_settings.opacity,
+                        prepared_video,
+                    )
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if !video_composite_rendered {
+                guide_blur_graph_renderer.record_projection_eye(
+                    device,
+                    cmd,
+                    swapchain.extent,
+                    eye_index,
+                    target_rect,
+                    projection_settings,
+                    guide_blur_enabled,
+                );
+            }
         } else if custom_stereo_projection {
             if let Some(prepared) = prepared_camera_projection {
                 record_camera_projection_eye(
@@ -3437,6 +3564,15 @@ unsafe fn record_projection_diagnostic(
                 eye_projection,
                 environment_depth_particle_stats,
                 environment_depth_settings,
+            );
+        }
+        if let Some(renderer) = gpu_private_particle_renderer {
+            renderer.record_overlay_eye(
+                device,
+                cmd,
+                swapchain.extent,
+                eye_projection,
+                private_particle_stats,
             );
         }
         if let Some(renderer) = gpu_hand_mesh_visual_renderer {
@@ -4138,6 +4274,7 @@ impl NativePassthroughRuntime {
         render_mode: NativeRendererRenderMode,
         fb_passthrough_enabled: bool,
         alpha_blend_supported: bool,
+        passthrough_style_settings: NativePassthroughStyleSettings,
     ) -> Option<Self> {
         if !render_mode.uses_native_passthrough() {
             crate::marker(
@@ -4148,12 +4285,26 @@ impl NativePassthroughRuntime {
                     render_mode.uses_solid_black_background(),
                 ),
             );
+            crate::marker(
+                "native-passthrough-style",
+                format!(
+                    "status=skipped reason=native-passthrough-not-requested xrPassthroughLayerSetStyleFB=false {}",
+                    passthrough_style_settings.marker_fields()
+                ),
+            );
             return None;
         }
         if !fb_passthrough_enabled {
             crate::marker(
                 "native-passthrough",
                 "status=unavailable reason=XR_FB_passthrough-not-enabled nativePassthroughRequested=true fbPassthroughEnabled=false nativePassthroughLayerActive=false",
+            );
+            crate::marker(
+                "native-passthrough-style",
+                format!(
+                    "status=skipped reason=XR_FB_passthrough-not-enabled xrPassthroughLayerSetStyleFB=false {}",
+                    passthrough_style_settings.marker_fields()
+                ),
             );
             return None;
         }
@@ -4200,12 +4351,42 @@ impl NativePassthroughRuntime {
             );
             return None;
         }
+        match crate::openxr_passthrough_style::apply_passthrough_layer_style(
+            session,
+            &layer,
+            passthrough_style_settings,
+        ) {
+            Ok("disabled") => crate::marker(
+                "native-passthrough-style",
+                format!(
+                    "status=disabled xrPassthroughLayerSetStyleFB=false nativePassthroughLayerActive=true {}",
+                    passthrough_style_settings.marker_fields()
+                ),
+            ),
+            Ok(applied_chain) => crate::marker(
+                "native-passthrough-style",
+                format!(
+                    "status=applied xrPassthroughLayerSetStyleFB=true appliedStyleChain={} nativePassthroughLayerActive=true {}",
+                    applied_chain,
+                    passthrough_style_settings.marker_fields()
+                ),
+            ),
+            Err(error) => crate::marker(
+                "native-passthrough-style",
+                format!(
+                    "status=error stage=xrPassthroughLayerSetStyleFB reason={} xrPassthroughLayerSetStyleFB=false nativePassthroughLayerActive=true {}",
+                    crate::sanitize(&error),
+                    passthrough_style_settings.marker_fields()
+                ),
+            ),
+        }
         crate::marker(
             "native-passthrough",
             format!(
-                "status=active passthroughExtension=XR_FB_passthrough nativePassthroughLayerActive=true passthroughCompositionLayer=CompositionLayerPassthroughFB passthroughPurpose=RECONSTRUCTION environmentBlendModeAlphaSupported={} environmentBlendMode=OPAQUE projectionLayerAlphaBlend={} passthroughLayerAlphaBlend=true",
+                "status=active passthroughExtension=XR_FB_passthrough nativePassthroughLayerActive=true passthroughCompositionLayer=CompositionLayerPassthroughFB passthroughPurpose=RECONSTRUCTION environmentBlendModeAlphaSupported={} environmentBlendMode=OPAQUE projectionLayerAlphaBlend={} passthroughLayerAlphaBlend=true {}",
                 alpha_blend_supported,
                 render_mode.projection_layer_alpha_blend(),
+                passthrough_style_settings.marker_fields(),
             ),
         );
         Some(Self {

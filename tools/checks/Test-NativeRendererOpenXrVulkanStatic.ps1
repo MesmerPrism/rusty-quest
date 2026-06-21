@@ -46,6 +46,7 @@ $nativeRendererOptionSurface = @(
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_property_values.rs") "native renderer property values"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_environment_depth_options.rs") "native renderer environment-depth options"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_hand_anchor_particle_options.rs") "native renderer hand-anchor particle options"),
+    (Read-RequiredText (Join-Path $srcRoot "native_renderer_passthrough_style_options.rs") "native renderer passthrough style options"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_projection_border_stretch_options.rs") "native renderer projection border stretch options"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_stimulus_volume_options.rs") "native renderer stimulus volume options"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_visual_options.rs") "native renderer visual options"),
@@ -54,6 +55,7 @@ $nativeRendererOptionSurface = @(
 ) -join "`n"
 $xrVulkanSurface = @(
     (Read-RequiredText (Join-Path $srcRoot "xr_vulkan.rs") "xr_vulkan facade"),
+    (Read-RequiredText (Join-Path $srcRoot "openxr_passthrough_style.rs") "OpenXR passthrough style helper"),
     (Read-RequiredText (Join-Path $srcRoot "xr_vulkan\replay_visual_stats.rs") "xr_vulkan replay visual stats"),
     (Read-RequiredText (Join-Path $srcRoot "xr_vulkan\scorecard.rs") "xr_vulkan scorecard")
 ) -join "`n"
@@ -134,6 +136,7 @@ Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRe
     'recorded-replay-visual-proof',
     'NativeRendererRenderMode',
     'debug.rustyquest.native_renderer.render.mode',
+    'native-passthrough-style-only',
     'native-passthrough-media-only',
     'native-passthrough-graft-only',
     'solid-black-hands-and-grafts',
@@ -146,6 +149,8 @@ Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRe
     'customHandMeshVisualRequested',
     'cameraRuntimeMode=',
     'cameraProjectionPath=',
+    'skipped-native-passthrough-style-only',
+    'disabled-native-passthrough-style-only',
     'skipped-native-passthrough-media-only',
     'disabled-native-passthrough-media-only',
     'skipped-native-passthrough',
@@ -159,6 +164,14 @@ Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRe
     'NativePassthroughRuntime',
     'create_passthrough',
     'create_passthrough_layer',
+    'native-passthrough-style',
+    'NativePassthroughStyleSettings',
+    'debug.rustyquest.native_renderer.passthrough.style.mode',
+    'passthroughStyleSingleExtensionChain=true',
+    'PassthroughStyleFB',
+    'PassthroughColorMapMonoToRgbaFB',
+    'PassthroughBrightnessContrastSaturationFB',
+    'xrPassthroughLayerSetStyleFB',
     'CompositionLayerPassthroughFB',
     'PassthroughLayerPurposeFB::RECONSTRUCTION',
     'EnvironmentBlendMode::ALPHA_BLEND',

@@ -39,12 +39,16 @@ pub(crate) use crate::native_renderer_hand_anchor_particle_options::{
     NativeHandAnchorParticleOrderingMode, NativeHandAnchorParticleTransparencyBlendMode,
     NativeHandAnchorParticleTransparencyCompositionMode,
 };
+#[cfg(any(target_os = "android", test))]
+#[allow(unused_imports)]
+pub(crate) use crate::native_renderer_passthrough_style_options::NativePassthroughStyleMode;
+pub(crate) use crate::native_renderer_passthrough_style_options::NativePassthroughStyleSettings;
 pub(crate) use crate::native_renderer_projection_border_stretch_options::NativeProjectionBorderStretchSettings;
 #[cfg(any(target_os = "android", test))]
 #[allow(unused_imports)]
 pub(crate) use crate::native_renderer_projection_border_stretch_options::{
     NativePeripheralStretchBlendMode, NativePeripheralStretchDebug, NativeProjectionBorderPolicy,
-    NativeProjectionBorderStretchPush, NativeProjectionProcessingLayer,
+    NativeProjectionBorderStretchPush, NativeProjectionProcessingLayer, NativeVideoBorderBlendMode,
 };
 pub(crate) use crate::native_renderer_properties::*;
 pub(crate) use crate::native_renderer_stimulus_volume_options::NativeStimulusVolumeSettings;
@@ -91,6 +95,7 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) hand_mesh_real_hands_visible: bool,
     pub(crate) hand_anchor_particle_settings: NativeHandAnchorParticleSettings,
     pub(crate) environment_depth_settings: NativeEnvironmentDepthSettings,
+    pub(crate) passthrough_style_settings: NativePassthroughStyleSettings,
     pub(crate) display_composite_settings: NativeDisplayCompositeSettings,
     pub(crate) video_projection_settings: NativeVideoProjectionSettings,
     pub(crate) stimulus_volume_settings: NativeStimulusVolumeSettings,
@@ -150,6 +155,8 @@ impl NativeRendererRuntimeOptions {
             NativeHandAnchorParticleSettings::from_property_lookup(&mut lookup);
         let environment_depth_settings =
             NativeEnvironmentDepthSettings::from_property_lookup(&mut lookup);
+        let passthrough_style_settings =
+            NativePassthroughStyleSettings::from_property_lookup(&mut lookup);
         let display_composite_settings =
             NativeDisplayCompositeSettings::from_property_lookup(&mut lookup);
         let video_projection_settings =
@@ -193,6 +200,7 @@ impl NativeRendererRuntimeOptions {
             hand_mesh_real_hands_visible,
             hand_anchor_particle_settings,
             environment_depth_settings,
+            passthrough_style_settings,
             display_composite_settings,
             video_projection_settings,
             stimulus_volume_settings,

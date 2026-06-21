@@ -5,10 +5,11 @@
   "generated_from": [
     "apps/native-renderer-android/native/src/native_renderer_properties.rs",
     "apps/native-renderer-android/native/src/native_renderer_display_composite_options.rs",
+    "apps/native-renderer-android/native/src/native_renderer_passthrough_style_options.rs",
     "apps/native-renderer-android/native/src/native_renderer_video_projection_options.rs",
     "apps/native-renderer-android/native/src/projection_target_state.rs"
   ],
-  "property_count": 128,
+  "property_count": 141,
   "properties": [
     {
       "name": "debug.rustyquest.native_renderer.camera.direct_border.opacity",
@@ -176,6 +177,25 @@
       "allowed_values": [
         "android-suggested",
         "forced-bt601-narrow"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.control_panel.mode",
+      "family": "control_panel",
+      "runtime_owner": "ControlPanelActivity",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "stimulus-volume",
+        "private-layer-selector"
       ],
       "validators": [
         "runtime-parser",
@@ -1216,6 +1236,217 @@
       ]
     },
     {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.brightness",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": -1.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.color.amplitude",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.color.phase",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.contrast",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 4.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.edge_color.a",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.edge_color.b",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.edge_color.g",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.edge_color.r",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.mode",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "disabled",
+        "edge-and-opacity",
+        "brightness-contrast-saturation",
+        "mono-to-rgba"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.opacity",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.saturation",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 4.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
       "name": "debug.rustyquest.native_renderer.peripheral.stretch.blend.curve",
       "family": "peripheral_stretch",
       "runtime_owner": "native_renderer_projection_border_stretch_options",
@@ -1872,6 +2103,7 @@
       "value_kind": "token",
       "allowed_values": [
         "custom-stereo-projection",
+        "native-passthrough-style-only",
         "native-passthrough-media-only",
         "native-passthrough-graft-only",
         "native-passthrough-stimulus-volume",
@@ -2170,6 +2402,27 @@
         "auto",
         "srgb",
         "unorm"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_border_blend.mode",
+      "family": "video_border_blend",
+      "runtime_owner": "native_renderer_projection_border_stretch_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "alpha-over",
+        "crossfade",
+        "linear-crossfade",
+        "luma-match"
       ],
       "validators": [
         "runtime-parser",

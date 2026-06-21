@@ -34,6 +34,11 @@ pub(crate) const CANDIDATE_FILE: &str = "stimulus_volume_candidate.json";
 pub(crate) const STATUS_FILE: &str = "stimulus_volume_status.json";
 pub(crate) const PROFILE_SCHEMA: &str = "rusty.quest.stimulus_volume.profile.v1";
 pub(crate) const STATUS_SCHEMA: &str = "rusty.quest.stimulus_volume.apply_status.v1";
+pub(crate) const PRIVATE_LAYER_SELECTION_SCHEMA: &str =
+    "rusty.quest.native_renderer.private_layer_selection.v1";
+pub(crate) const PRIVATE_LAYER_SELECTION_STATUS_SCHEMA: &str =
+    "rusty.quest.native_renderer.private_layer_selection_status.v1";
+pub(crate) const PRIVATE_LAYER_SELECTION_STATUS_FILE: &str = "private_layer_selection_status.json";
 
 #[derive(Clone, Debug)]
 pub(crate) struct StimulusPanelCandidate {
@@ -42,8 +47,18 @@ pub(crate) struct StimulusPanelCandidate {
     pub(crate) settings: NativeStimulusVolumeSettings,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct PrivateLayerPanelSelection {
+    pub(crate) revision: i64,
+    pub(crate) layer_override: f32,
+    pub(crate) layer_label: String,
+}
+
 #[cfg(target_os = "android")]
 static LIVE_CANDIDATE_QUEUE: OnceLock<Mutex<Option<StimulusPanelCandidate>>> = OnceLock::new();
+#[cfg(target_os = "android")]
+static LIVE_PRIVATE_LAYER_SELECTION_QUEUE: OnceLock<Mutex<Option<PrivateLayerPanelSelection>>> =
+    OnceLock::new();
 
 #[cfg(target_os = "android")]
 #[derive(Clone, Copy, Debug)]
@@ -58,8 +73,19 @@ fn live_candidate_queue() -> &'static Mutex<Option<StimulusPanelCandidate>> {
 }
 
 #[cfg(target_os = "android")]
+fn live_private_layer_selection_queue() -> &'static Mutex<Option<PrivateLayerPanelSelection>> {
+    LIVE_PRIVATE_LAYER_SELECTION_QUEUE.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(target_os = "android")]
 pub(crate) fn take_live_candidate() -> Option<StimulusPanelCandidate> {
     let mut queue = live_candidate_queue().lock().ok()?;
+    queue.take()
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn take_live_private_layer_selection() -> Option<PrivateLayerPanelSelection> {
+    let mut queue = live_private_layer_selection_queue().lock().ok()?;
     queue.take()
 }
 
@@ -77,6 +103,33 @@ fn queue_live_candidate(text: &str) -> Result<LiveQueueOutcome, String> {
         format!(
             "status=live-queued transport=jni-live-queue schema={} candidateRevision={} activePatternFamily={} overwrotePendingCandidate={}",
             PROFILE_SCHEMA, revision, pattern_family, overwrote_pending
+        ),
+    );
+    Ok(LiveQueueOutcome {
+        revision,
+        overwrote_pending,
+    })
+}
+
+#[cfg(target_os = "android")]
+fn queue_live_private_layer_selection(text: &str) -> Result<LiveQueueOutcome, String> {
+    let selection = parse_private_layer_selection_json(text)?;
+    let revision = selection.revision;
+    let layer_override = selection.layer_override;
+    let layer_label = selection.layer_label.clone();
+    let mut queue = live_private_layer_selection_queue()
+        .lock()
+        .map_err(|_| "live_queue_poisoned".to_string())?;
+    let overwrote_pending = queue.replace(selection).is_some();
+    crate::marker(
+        "private-layer-panel",
+        format!(
+            "status=live-queued transport=jni-live-queue schema={} candidateRevision={} privateLayerOverride={:.1} privateLayerActiveLayer={} overwrotePendingSelection={}",
+            PRIVATE_LAYER_SELECTION_SCHEMA,
+            revision,
+            layer_override,
+            crate::sanitize(&layer_label),
+            overwrote_pending
         ),
     );
     Ok(LiveQueueOutcome {
@@ -151,6 +204,72 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
     }
 }
 
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLivePrivateLayerSelection(
+    mut env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    selection_json: jni::objects::JString,
+) -> jni::sys::jstring {
+    match env
+        .with_env(|env| -> jni::errors::Result<jni::sys::jstring> {
+            let selection_json = selection_json.try_to_string(env)?;
+            let response = match queue_live_private_layer_selection(&selection_json) {
+                Ok(outcome) => json!({
+                    "schema": PRIVATE_LAYER_SELECTION_STATUS_SCHEMA,
+                    "status": "queued",
+                    "transport": "jni_live_queue",
+                    "candidate_revision": outcome.revision,
+                    "overwrote_pending": outcome.overwrote_pending
+                })
+                .to_string(),
+                Err(reason) => {
+                    crate::marker(
+                        "private-layer-panel",
+                        format!(
+                            "status=live-rejected transport=jni-live-queue schema={} reason={}",
+                            PRIVATE_LAYER_SELECTION_SCHEMA,
+                            crate::sanitize(&reason)
+                        ),
+                    );
+                    json!({
+                        "schema": PRIVATE_LAYER_SELECTION_STATUS_SCHEMA,
+                        "status": "rejected",
+                        "transport": "jni_live_queue",
+                        "rejection_code": reason
+                    })
+                    .to_string()
+                }
+            };
+            env.new_string(response).map(|value| value.into_raw())
+        })
+        .into_outcome()
+    {
+        jni::Outcome::Ok(value) => value,
+        jni::Outcome::Err(error) => {
+            crate::marker(
+                "private-layer-panel",
+                format!(
+                    "status=live-rejected transport=jni-live-queue schema={} reason=jni_error:{}",
+                    PRIVATE_LAYER_SELECTION_SCHEMA,
+                    crate::sanitize(&error.to_string())
+                ),
+            );
+            std::ptr::null_mut()
+        }
+        jni::Outcome::Panic(_) => {
+            crate::marker(
+                "private-layer-panel",
+                format!(
+                    "status=live-rejected transport=jni-live-queue schema={} reason=jni_panic",
+                    PRIVATE_LAYER_SELECTION_SCHEMA
+                ),
+            );
+            std::ptr::null_mut()
+        }
+    }
+}
+
 impl StimulusPanelCandidate {
     pub(crate) fn apply_to(
         self,
@@ -162,6 +281,67 @@ impl StimulusPanelCandidate {
             ProjectionTargetSettings::disabled_for_volume_only_route();
         options
     }
+}
+
+pub(crate) fn parse_private_layer_selection_json(
+    text: &str,
+) -> Result<PrivateLayerPanelSelection, String> {
+    let value: Value = serde_json::from_str(text).map_err(|error| format!("json_parse:{error}"))?;
+    let schema = string_at(&value, &["schema"]).unwrap_or_default();
+    if schema != PRIVATE_LAYER_SELECTION_SCHEMA {
+        return Err(format!("schema_mismatch:{schema}"));
+    }
+
+    let revision = value
+        .get("revision")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .max(0);
+    let private_layer = object_value_at(&value, &["private_layer"])?;
+    let apply = value.get("apply").and_then(Value::as_object);
+    if let Some(mode) = apply
+        .and_then(|object| object.get("mode"))
+        .and_then(Value::as_str)
+    {
+        match mode {
+            "apply-on-next-safe-frame" => {}
+            _ => return Err(format!("unsupported_apply_mode:{mode}")),
+        }
+    }
+
+    let requested = number_at(private_layer, &["layer_override"])
+        .ok_or_else(|| "missing_number:private_layer.layer_override".to_string())?;
+    let rounded = requested.round();
+    if (requested - rounded).abs() > 0.001 {
+        return Err(format!(
+            "private_layer_override_not_integral:{requested:.3}"
+        ));
+    }
+    if !(0.0..=5.0).contains(&rounded) {
+        return Err(format!("private_layer_override_out_of_range:{rounded:.1}"));
+    }
+    let index = rounded as u32;
+    let expected_label = private_layer_label(index);
+    let layer_label =
+        string_at(private_layer, &["layer_label"]).unwrap_or_else(|| expected_label.to_string());
+    validate_token(
+        "private_layer.layer_label",
+        &layer_label,
+        &[
+            "final",
+            "raw-brightness",
+            "preblur-brightness",
+            "raw-strength",
+            "blurred-strength",
+            "displacement",
+        ],
+    )?;
+
+    Ok(PrivateLayerPanelSelection {
+        revision,
+        layer_override: rounded as f32,
+        layer_label,
+    })
 }
 
 pub(crate) fn parse_candidate_json(text: &str) -> Result<StimulusPanelCandidate, String> {
@@ -472,6 +652,18 @@ fn parse_startup_dynamics(
     Ok(dynamics)
 }
 
+fn private_layer_label(index: u32) -> &'static str {
+    match index {
+        0 => "final",
+        1 => "raw-brightness",
+        2 => "preblur-brightness",
+        3 => "raw-strength",
+        4 => "blurred-strength",
+        5 => "displacement",
+        _ => "unknown",
+    }
+}
+
 #[cfg(target_os = "android")]
 pub(crate) fn write_live_status(
     app: &android_activity::AndroidApp,
@@ -488,6 +680,37 @@ pub(crate) fn write_live_status(
             reason,
             "jni_live_queue",
             settings,
+        );
+    }
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn write_private_layer_selection_status(
+    app: &android_activity::AndroidApp,
+    status: &str,
+    revision: i64,
+    reason: &str,
+    selection: Option<&PrivateLayerPanelSelection>,
+) {
+    if let Some(data_path) = app.internal_data_path() {
+        let effective_revision = if status == "applied" { revision } else { 0 };
+        let body = json!({
+            "schema": PRIVATE_LAYER_SELECTION_STATUS_SCHEMA,
+            "status": status,
+            "candidate_revision": revision,
+            "effective_revision": effective_revision,
+            "rejection_code": if reason == "none" { Value::Null } else { Value::String(reason.to_string()) },
+            "transport": "jni_live_queue",
+            "private_layer_override": selection
+                .map(|selection| json!(selection.layer_override))
+                .unwrap_or(Value::Null),
+            "private_layer_active_layer": selection
+                .map(|selection| json!(selection.layer_label.clone()))
+                .unwrap_or(Value::Null)
+        });
+        let _ = std::fs::write(
+            data_path.join(PRIVATE_LAYER_SELECTION_STATUS_FILE),
+            body.to_string(),
         );
     }
 }

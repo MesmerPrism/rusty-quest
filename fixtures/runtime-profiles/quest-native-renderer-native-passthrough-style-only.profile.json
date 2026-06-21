@@ -1,0 +1,219 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.native_passthrough_style_only",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.render.mode",
+    "debug.rustyquest.native_renderer.camera.output",
+    "debug.rustyquest.native_renderer.guide.blur.enabled",
+    "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.input.source",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
+    "debug.rustyquest.native_renderer.sdf.visual.enabled",
+    "debug.rustyquest.native_renderer.environment_depth.mode",
+    "debug.rustyquest.native_renderer.display_composite.enabled",
+    "debug.rustyquest.native_renderer.video_projection.enabled",
+    "debug.rustyquest.native_renderer.stimulus_volume.enabled",
+    "debug.rustyquest.native_renderer.private_layer.enabled",
+    "debug.rustyquest.native_renderer.projection.target.controls",
+    "debug.rustyquest.native_renderer.projection.target.joystick.controls",
+    "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode",
+    "debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload",
+    "debug.rustyquest.native_renderer.passthrough.style.mode",
+    "debug.rustyquest.native_renderer.passthrough.style.opacity",
+    "debug.rustyquest.native_renderer.passthrough.style.edge_color.r",
+    "debug.rustyquest.native_renderer.passthrough.style.edge_color.g",
+    "debug.rustyquest.native_renderer.passthrough.style.edge_color.b",
+    "debug.rustyquest.native_renderer.passthrough.style.edge_color.a",
+    "debug.rustyquest.native_renderer.passthrough.style.brightness",
+    "debug.rustyquest.native_renderer.passthrough.style.contrast",
+    "debug.rustyquest.native_renderer.passthrough.style.saturation",
+    "debug.rustyquest.native_renderer.passthrough.style.color.phase",
+    "debug.rustyquest.native_renderer.passthrough.style.color.amplitude"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.render.mode",
+      "value": "native-passthrough-style-only",
+      "source_setting_id": "native_renderer.render.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.camera.output",
+      "value": "disabled",
+      "source_setting_id": "native_renderer.camera.output"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.guide.blur.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.guide.blur.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.replay.visual_proof.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.input.source",
+      "value": "disabled",
+      "source_setting_id": "native_renderer.hand_mesh.input.source"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.graft_copies.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_mesh.real_hands.visible"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_anchor_particles.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.sdf.visual.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.sdf.visual.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.mode",
+      "value": "disabled",
+      "source_setting_id": "native_renderer.environment_depth.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.display_composite.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.display_composite.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_projection.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.video_projection.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.stimulus_volume.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.stimulus_volume.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_layer.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.private_layer.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.controls",
+      "value": "false",
+      "source_setting_id": "native_renderer.projection.target.controls"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.joystick.controls",
+      "value": "false",
+      "source_setting_id": "native_renderer.projection.target.joystick.controls"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode",
+      "value": "disabled",
+      "source_setting_id": "native_renderer.projection.target.breath.bridge.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload",
+      "value": "false",
+      "source_setting_id": "native_renderer.projection.target.breath.high_rate_json_payload"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.mode",
+      "value": "mono-to-rgba",
+      "source_setting_id": "native_renderer.passthrough.style.mode"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.opacity",
+      "value": "1.0",
+      "source_setting_id": "native_renderer.passthrough.style.opacity"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.edge_color.r",
+      "value": "0.05",
+      "source_setting_id": "native_renderer.passthrough.style.edge_color.r"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.edge_color.g",
+      "value": "0.85",
+      "source_setting_id": "native_renderer.passthrough.style.edge_color.g"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.edge_color.b",
+      "value": "1.0",
+      "source_setting_id": "native_renderer.passthrough.style.edge_color.b"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.edge_color.a",
+      "value": "0.35",
+      "source_setting_id": "native_renderer.passthrough.style.edge_color.a"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.brightness",
+      "value": "0.0",
+      "source_setting_id": "native_renderer.passthrough.style.brightness"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.contrast",
+      "value": "1.0",
+      "source_setting_id": "native_renderer.passthrough.style.contrast"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.saturation",
+      "value": "1.0",
+      "source_setting_id": "native_renderer.passthrough.style.saturation"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.color.phase",
+      "value": "0.18",
+      "source_setting_id": "native_renderer.passthrough.style.color.phase"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.color.amplitude",
+      "value": "0.85",
+      "source_setting_id": "native_renderer.passthrough.style.color.amplitude"
+    }
+  ],
+  "expected_markers": [
+    "RUSTY_QUEST_NATIVE_RENDERER channel=render-mode",
+    "renderMode=native-passthrough-style-only",
+    "customStereoProjectionEnabled=false",
+    "nativePassthroughRequested=true",
+    "sdfVisualEnabled=false",
+    "handMeshGraftCopiesEnabled=false",
+    "handMeshRealHandsVisible=false",
+    "RUSTY_QUEST_NATIVE_RENDERER channel=camera-runtime",
+    "cameraRuntimeMode=skipped-native-passthrough-style-only",
+    "cameraFramesRequested=false",
+    "RUSTY_QUEST_NATIVE_RENDERER channel=native-passthrough",
+    "nativePassthroughLayerActive=true",
+    "projectionLayerAlphaBlend=true",
+    "cameraProjectionPath=disabled-native-passthrough-style-only",
+    "RUSTY_QUEST_NATIVE_RENDERER channel=native-passthrough-style",
+    "passthroughStyleMode=mono-to-rgba",
+    "passthroughStyleEnabled=true",
+    "passthroughStyleExtensionChain=PassthroughColorMapMonoToRgbaFB",
+    "passthroughColorMapEntries=256",
+    "xrPassthroughLayerSetStyleFB=true",
+    "environmentDepthMode=disabled",
+    "displayCompositeEnabled=false",
+    "videoProjectionEnabled=false",
+    "stimulusVolumeEnabled=false",
+    "privateLayerEnabled=false"
+  ],
+  "validation_commands": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-native-passthrough-style-only.profile.json -DryRun -Out local-artifacts/native-renderer-native-passthrough-style-only-property-write-plan.json"
+  ]
+}

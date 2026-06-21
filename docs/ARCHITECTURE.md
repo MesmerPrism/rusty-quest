@@ -232,6 +232,9 @@ shared string, boolean, integer, and float parsing belongs to
 parsing belongs to `native_renderer_hand_anchor_particle_options`;
 projection-border and peripheral-stretch settings parsing belongs to
 `native_renderer_projection_border_stretch_options`;
+native Meta passthrough compositor style parsing belongs to
+`native_renderer_passthrough_style_options`, with the raw
+`xrPassthroughLayerSetStyleFB` bridge kept in `openxr_passthrough_style`;
 stimulus-volume settings parsing belongs to
 `native_renderer_stimulus_volume_options`; and fullscreen stereo video input
 settings parsing belongs to `native_renderer_video_projection_options`.
@@ -347,8 +350,20 @@ Only the blur guide path, public recorded-hand replay visual, resident
 compact-joint GPU-skinned triangle overlay, native GPU mesh boundary, and
 opt-in recorded compact-joint GPU skinned-mesh SDF path are public in this
 package.
-Private visual layer implementations remain downstream extension-slot payloads
-and are not part of the public source, fixture, or APK build manifest.
+The generic private particle slot is public substrate only: Rusty Quest owns
+build-time discovery, placeholder behavior, static payload staging, the
+four-vec4 billboard row ABI, sampled R8 texture-array mask upload/sampling,
+resident GPU index-remap sorting, parameterized transparency/coverage controls,
+generic tracer budget/draw-capacity plumbing, generic draw/compute
+orchestration, and public slot markers. Public markers distinguish main
+particle count, tracer budget, and merged draw count so downstream shaders can
+append effect-owned tracer rows without introducing CPU-expanded particle lists.
+Downstream repos own effect-specific compute shader semantics, payload
+contents, marker prefix, opaque effect marker fields, screenshots, and proof
+profile bodies.
+Private visual layer implementations remain downstream extension-slot or
+private-particle payloads and are not part of the public source, fixture, or
+APK build manifest.
 
 ## Manifold Broker Android Package
 

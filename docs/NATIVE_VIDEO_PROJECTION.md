@@ -37,6 +37,10 @@ so this adjustment cannot bleed the left and right source halves into each
 other. Camera2/HWB guide textures and downstream private layers still compose as
 separate layers above or around the video plane.
 
+Projection-target scale controls apply to the Camera2/HWB guide or private
+guide overlay, not to the full-eye video background. Video metadata reports this
+as `downstreamProjectionScaleAuthority=fixed-video-target`.
+
 ## Video-Border Blend Diagnostics
 
 `video-border-blend` draws the video first as the full-eye background, then draws
@@ -45,6 +49,12 @@ only the guide overlay alpha, so the video is revealed at the camera target
 edge. The eye-colored edge tint is diagnostic-only and is enabled by
 `debug.rustyquest.native_renderer.peripheral.stretch.debug`; when that property
 is `off`, the video-border transition has no cyan/orange debug rim.
+
+`debug.rustyquest.native_renderer.video_border_blend.mode` selects the public
+composition mode. `alpha-over` keeps the fixed-function premultiplied-alpha
+path. `crossfade`, `linear-crossfade`, and `luma-match` use the guide/video
+shader composite path, where the final pass samples both the Camera2 guide
+texture and the prepared stereo video texture inside the camera target band.
 
 ## Looping
 

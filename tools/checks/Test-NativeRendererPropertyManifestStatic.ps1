@@ -20,8 +20,8 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-if ($manifest.property_count -ne 128 -or $manifest.properties.Count -ne 128) {
-    throw "Native renderer property manifest must cover the current 128-property runtime surface."
+if ($manifest.property_count -ne 141 -or $manifest.properties.Count -ne 141) {
+    throw "Native renderer property manifest must cover the current 141-property runtime surface."
 }
 foreach ($entry in @($manifest.properties)) {
     if ([string]$entry.lifecycle -ne "startup-effective") {
@@ -42,8 +42,14 @@ foreach ($token in @(
     'debug.rustyquest.native_renderer.environment_depth.surface_support.small_component_policy',
     'debug.rustyquest.native_renderer.environment_depth.surface_support.min_neighbors',
     'debug.rustyquest.native_renderer.display_composite.high_rate_json_payload',
+    'debug.rustyquest.native_renderer.control_panel.mode',
+    'debug.rustyquest.native_renderer.video_border_blend.mode',
     'debug.rustyquest.native_renderer.video_projection.high_rate_json_payload',
+    'debug.rustyquest.native_renderer.passthrough.style.mode',
+    'debug.rustyquest.native_renderer.passthrough.style.color.phase',
+    'debug.rustyquest.native_renderer.passthrough.style.edge_color.a',
     'debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload',
+    'native_renderer_passthrough_style_options',
     'native_renderer_visual_options',
     'projection_target_state',
     'runtime-parser',

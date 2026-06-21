@@ -42,6 +42,7 @@ RUNTIME_PROPERTY_SOURCES = (
     Path("apps/native-renderer-android/native/src/native_renderer_property_values.rs"),
     Path("apps/native-renderer-android/native/src/native_renderer_environment_depth_options.rs"),
     Path("apps/native-renderer-android/native/src/native_renderer_hand_anchor_particle_options.rs"),
+    Path("apps/native-renderer-android/native/src/native_renderer_passthrough_style_options.rs"),
     Path("apps/native-renderer-android/native/src/native_renderer_projection_border_stretch_options.rs"),
     Path("apps/native-renderer-android/native/src/native_renderer_stimulus_volume_options.rs"),
     Path("apps/native-renderer-android/native/src/native_renderer_video_projection_options.rs"),

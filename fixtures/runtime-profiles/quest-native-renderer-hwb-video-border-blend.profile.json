@@ -29,6 +29,7 @@
     "debug.rustyquest.native_renderer.peripheral.stretch.blend.curve",
     "debug.rustyquest.native_renderer.peripheral.stretch.blend.mode",
     "debug.rustyquest.native_renderer.peripheral.stretch.debug",
+    "debug.rustyquest.native_renderer.video_border_blend.mode",
     "debug.rustyquest.native_renderer.video_projection.enabled",
     "debug.rustyquest.native_renderer.video_projection.source",
     "debug.rustyquest.native_renderer.video_projection.path",
@@ -174,6 +175,11 @@
       "source_setting_id": "native_renderer.peripheral.stretch.debug"
     },
     {
+      "name": "debug.rustyquest.native_renderer.video_border_blend.mode",
+      "value": "crossfade",
+      "source_setting_id": "native_renderer.video_border_blend.mode"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.video_projection.enabled",
       "value": "true",
       "source_setting_id": "native_renderer.video_projection.enabled"
@@ -241,6 +247,9 @@
     "processingLayer=video-border-blend",
     "guideProjectionCoverage=full-eye-video-border-blend",
     "videoBorderBlendActive=true",
+    "videoBorderBlendMode=crossfade",
+    "videoBorderBlendCompositor=guide-video-shader-composite",
+    "videoBorderBlendShaderCompositeActive=true",
     "peripheralStretchProjectionExteriorMode=video-background-with-inner-band-camera-blend",
     "videoBorderBlendSource=prepared-stereo-video-projection-background",
     "videoBorderBlendCameraSource=guide-texture",

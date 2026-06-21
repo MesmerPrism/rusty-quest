@@ -33,6 +33,18 @@ The currently documented public routes are:
 These routes are public AGPL examples. Private downstream effects can attach
 later through the public extension-slot boundary, but Colorama, distortion, and
 other private visual layers are not part of this package.
+The native renderer also exposes a generic private particle payload slot for
+downstream GPU-resident particle proofs. The public side owns only generic
+build-time env-var discovery, a no-payload placeholder, static position/normal
+payload staging, four-vec4 billboard output rows, sampled R8 texture-array
+particle masks, resident GPU index-remap sorting, parameterized
+transparency/coverage controls, generic tracer budget/draw capacity, and
+public `private-particle-slot` markers. The public slot reports main count,
+tracer budget, and merged draw count while downstream shaders own the semantics
+of any appended tracer rows. Downstream repos supply their own shader, payload
+data, kind string, marker prefix, and opaque marker fields through
+`RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_*`; effect-specific constants and
+profile bodies remain outside Rusty Quest.
 
 `crates/rusty-quest-native-renderer` defines the first clean contract for a
 pure Quest-native OpenXR/Vulkan camera renderer. It models the public AGPL
@@ -233,9 +245,12 @@ live visual acceptance. Native renderer property names are centralized in
 `native_renderer_environment_depth_options`; hand-anchor particle parsing lives
 in `native_renderer_hand_anchor_particle_options`; projection-border and
 peripheral-stretch parsing lives in
-`native_renderer_projection_border_stretch_options`; stimulus-volume parsing
-lives in `native_renderer_stimulus_volume_options`; render-route, compact hand
-source, hand-visual diagnostic, and private-layer parsing lives in
+`native_renderer_projection_border_stretch_options`; native Meta passthrough
+compositor style parsing lives in `native_renderer_passthrough_style_options`
+and the raw XR_FB_passthrough style call lives in `openxr_passthrough_style`;
+stimulus-volume parsing lives in `native_renderer_stimulus_volume_options`;
+render-route, compact hand source, hand-visual diagnostic, and private-layer
+parsing lives in
 `native_renderer_visual_options`; and
 `native_renderer_options` remains the aggregate facade consumed by the Vulkan
 frame loop. Aggregate parser regression tests live in

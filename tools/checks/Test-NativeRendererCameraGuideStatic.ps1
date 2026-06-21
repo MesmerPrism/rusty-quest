@@ -73,6 +73,9 @@ $guideBlurFragment = Read-RequiredText `
 $guideProjectionFragment = Read-RequiredText `
     (Join-Path $shaderRoot "guide_projection.frag.glsl") `
     "guide projection fragment shader"
+$guideVideoProjectionFragment = Read-RequiredText `
+    (Join-Path $shaderRoot "guide_video_projection.frag.glsl") `
+    "guide/video projection fragment shader"
 $cameraLumaDiagnosticShader = Read-RequiredText `
     (Join-Path $shaderRoot "camera_luma_diagnostic.comp.glsl") `
     "camera luma diagnostic shader"
@@ -293,9 +296,10 @@ Assert-ContainsTokens $guideBlurFragment @(
     'rgb \* 0\.2'
 ) "guide 5-tap blur shader"
 
-Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$guideBlurGraph`n$guideProjectionFragment`n$xrVulkanSurface`n$hwbPeripheralStretchProfile`n$hwbVideoBorderBlendProfile" @(
+Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$guideBlurGraph`n$guideProjectionFragment`n$guideVideoProjectionFragment`n$xrVulkanSurface`n$hwbPeripheralStretchProfile`n$hwbVideoBorderBlendProfile" @(
     'NativeProjectionBorderStretchSettings',
     'debug\.rustyquest\.native_renderer\.processing\.layer',
+    'debug\.rustyquest\.native_renderer\.video_border_blend\.mode',
     'debug\.rustyquest\.native_renderer\.projection\.border\.policy',
     'debug\.rustyquest\.native_renderer\.peripheral\.stretch\.inner\.blend\.uv',
     'peripheralStretchReference=pure-hwb-target-local-raster-curved-inner-band',
@@ -304,16 +308,30 @@ Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$guideBlurGraph
     'video-border-blend',
     'guideProjectionCoverage=full-eye-video-border-blend',
     'videoBorderBlendActive=true',
+    'videoBorderBlendMode=crossfade',
+    'videoBorderBlendCompositor=guide-video-shader-composite',
+    'videoBorderBlendShaderCompositeActive=true',
     'peripheralStretchProjectionExteriorMode=video-background-with-inner-band-camera-blend',
     'videoBorderBlendSource=prepared-stereo-video-projection-background',
     'videoBorderBlendCameraSource=guide-texture',
     'cameraProjectionPath=metadata-target-guide-texture-video-border-blend-final',
     'video_border_blend_active',
+    'record_video_composite_projection_eye',
+    'guide-video-shader-composite',
     'full_extent_scissor',
     'projection_area_rect_edge_uv',
     'peripheral_stretch_blend_weight',
     'target_stretch_effect_region'
 ) "peripheral stretch border route"
+
+Assert-ContainsTokens $guideVideoProjectionFragment @(
+    'u_guide',
+    'u_video_projection',
+    'GuideVideoProjectionPush',
+    'video_source_uv_rect',
+    'linear_to_srgb',
+    'luma_matched_camera_rgb'
+) "guide/video projection shader"
 
 Assert-ContainsTokens $guideProjectionFragment @(
     'u_guide',
@@ -327,7 +345,8 @@ Assert-ContainsTokens $guideProjectionFragment @(
 Assert-ContainsTokens $nativeBuildRs @(
     'guide_blur_downsample\.frag\.glsl',
     'guide_blur_5tap\.frag\.glsl',
-    'guide_projection\.frag\.glsl'
+    'guide_projection\.frag\.glsl',
+    'guide_video_projection\.frag\.glsl'
 ) "native shader build script guide entries"
 
 foreach ($token in @(

@@ -40,6 +40,7 @@ $projectionMetadata = Read-RepoText "apps\native-renderer-android\native\src\vid
 $videoRenderer = Read-RepoText "apps\native-renderer-android\native\src\video_projection.rs"
 $xrVulkan = Read-RepoText "apps\native-renderer-android\native\src\xr_vulkan.rs"
 $guideProjectionShader = Read-RepoText "apps\native-renderer-android\native\shaders\guide_projection.frag.glsl"
+$guideVideoProjectionShader = Read-RepoText "apps\native-renderer-android\native\shaders\guide_video_projection.frag.glsl"
 $projectionBorderStretchOptions = Read-RepoText "apps\native-renderer-android\native\src\native_renderer_projection_border_stretch_options.rs"
 $nativeBuild = Read-RepoText "apps\native-renderer-android\native\build.rs"
 $vertexShader = Read-RepoText "apps\native-renderer-android\native\shaders\video_projection.vert.glsl"
@@ -48,6 +49,7 @@ $stageVideo = Read-RepoText "tools\Stage-NativeRendererVideo.ps1"
 $videoProjectionDoc = Read-RepoText "docs\NATIVE_VIDEO_PROJECTION.md"
 $propertyManifest = Read-RepoText "fixtures\native-renderer\native-renderer-property-manifest.json"
 $validProfile = Read-RepoText "fixtures\runtime-profiles\quest-native-renderer-fullscreen-stereo-video.profile.json"
+$videoBorderBlendProfile = Read-RepoText "fixtures\runtime-profiles\quest-native-renderer-hwb-video-border-blend.profile.json"
 $profileMatrix = Read-RepoText "tools\Test-NativeRendererProfileMatrix.ps1"
 $parityTool = Read-RepoText "tools\check_native_renderer_property_parity.py"
 
@@ -126,7 +128,7 @@ foreach ($token in @(
     "rightSourcePositionOffsetUv",
     "videoProjectionTarget",
     "dataInputMetadataAuthority=video-projection-stream",
-    "downstreamProjectionScaleAuthority=projection-target-state"
+    "downstreamProjectionScaleAuthority=fixed-video-target"
 )) {
     Assert-Contains -Text $projectionMetadata -Needle $token -Label "projection metadata"
 }
@@ -154,16 +156,36 @@ foreach ($token in @(
     "diagnostic_edge_tint",
     "border * 0.72 * (1.0 - stretch_active) * diagnostic_edge_tint",
     "guideProjectionEdgeTint=diagnostic-debug-only",
-    "guideProjectionEdgeTintActive"
+    "guideProjectionEdgeTintActive",
+    "NativeVideoBorderBlendMode",
+    "PROP_VIDEO_BORDER_BLEND_MODE",
+    "videoBorderBlendMode",
+    "videoBorderBlendCompositor",
+    "videoBorderBlendShaderCompositeActive"
 )) {
     Assert-Contains -Text ($guideProjectionShader + $projectionBorderStretchOptions) -Needle $token -Label "video border diagnostic edge tint"
 }
 
 foreach ($token in @(
+    "u_guide",
+    "u_video_projection",
+    "GuideVideoProjectionPush",
+    "video_source_uv_rect",
+    "video_target_rect",
+    "video_sample_rgb",
+    "linear_to_srgb",
+    "luma_matched_camera_rgb"
+)) {
+    Assert-Contains -Text $guideVideoProjectionShader -Needle $token -Label "guide/video composite shader"
+}
+
+foreach ($token in @(
     "video_projection.vert.glsl",
     "video_projection.frag.glsl",
+    "guide_video_projection.frag.glsl",
     "video_projection.vert.spv",
-    "video_projection.frag.spv"
+    "video_projection.frag.spv",
+    "guide_video_projection.frag.spv"
 )) {
     Assert-Contains -Text $nativeBuild -Needle $token -Label "shader build"
 }
@@ -209,6 +231,7 @@ if ($stageVideo.Contains("run-as")) {
 }
 
 foreach ($propertyName in @(
+    "debug.rustyquest.native_renderer.video_border_blend.mode",
     "debug.rustyquest.native_renderer.video_projection.enabled",
     "debug.rustyquest.native_renderer.video_projection.source",
     "debug.rustyquest.native_renderer.video_projection.path",
@@ -224,7 +247,7 @@ foreach ($propertyName in @(
 )) {
     Assert-Contains -Text $nativeProperties -Needle $propertyName -Label "native property registry"
     Assert-Contains -Text $propertyManifest -Needle $propertyName -Label "property manifest"
-    Assert-Contains -Text $validProfile -Needle $propertyName -Label "valid profile"
+    Assert-Contains -Text ($validProfile + $videoBorderBlendProfile) -Needle $propertyName -Label "valid profile"
 }
 
 foreach ($token in @(
@@ -234,9 +257,11 @@ foreach ($token in @(
     "side-by-side-left-right",
     "videoProjectionLeftSourceUvRect=0.000000,0.000000,0.500000,1.000000",
     "videoProjectionRightSourceUvRect=0.500000,0.000000,0.500000,1.000000",
+    "videoBorderBlendMode=crossfade",
+    "videoBorderBlendCompositor=guide-video-shader-composite",
     "high_rate_json_payload"
 )) {
-    Assert-Contains -Text ($propertyManifest + $validProfile + $profileMatrix + $parityTool) -Needle $token -Label "profile contract"
+    Assert-Contains -Text ($propertyManifest + $validProfile + $videoBorderBlendProfile + $profileMatrix + $parityTool) -Needle $token -Label "profile contract"
 }
 
 Write-Output "Native renderer video-projection static checks passed."
