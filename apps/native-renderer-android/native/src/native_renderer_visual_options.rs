@@ -18,6 +18,7 @@ pub(crate) enum NativeRendererRenderMode {
     NativePassthroughStimulusVolume,
     SolidBlackHandsAndGrafts,
     SolidBlackOpenXrHandsAnchorParticles,
+    SolidBlackPrivateParticles,
     SolidBlackStimulusVolume,
 }
 
@@ -56,6 +57,9 @@ impl NativeRendererRenderMode {
             | "black-background-openxr-hands-anchor-particles" => {
                 Self::SolidBlackOpenXrHandsAnchorParticles
             }
+            "solid-black-private-particles"
+            | "solid-black-private-particle"
+            | "black-background-private-particles" => Self::SolidBlackPrivateParticles,
             "solid-black-stimulus-volume"
             | "black-stimulus-volume"
             | "opaque-black-stimulus-volume" => Self::SolidBlackStimulusVolume,
@@ -74,6 +78,7 @@ impl NativeRendererRenderMode {
             Self::SolidBlackOpenXrHandsAnchorParticles => {
                 "solid-black-openxr-hands-anchor-particles"
             }
+            Self::SolidBlackPrivateParticles => "solid-black-private-particles",
             Self::SolidBlackStimulusVolume => "solid-black-stimulus-volume",
         }
     }
@@ -97,6 +102,7 @@ impl NativeRendererRenderMode {
             self,
             Self::SolidBlackHandsAndGrafts
                 | Self::SolidBlackOpenXrHandsAnchorParticles
+                | Self::SolidBlackPrivateParticles
                 | Self::SolidBlackStimulusVolume
         )
     }
@@ -114,6 +120,10 @@ impl NativeRendererRenderMode {
 
     pub(crate) fn requests_openxr_default_hand_visual(self) -> bool {
         matches!(self, Self::SolidBlackOpenXrHandsAnchorParticles)
+    }
+
+    pub(crate) fn requests_private_particle_recenter_input(self) -> bool {
+        matches!(self, Self::SolidBlackPrivateParticles)
     }
 
     pub(crate) fn forces_graft_copies(self) -> bool {
@@ -138,6 +148,7 @@ impl NativeRendererRenderMode {
             Self::SolidBlackOpenXrHandsAnchorParticles => {
                 "skipped-solid-black-openxr-hands-anchor-particles"
             }
+            Self::SolidBlackPrivateParticles => "skipped-solid-black-private-particles",
             Self::SolidBlackStimulusVolume => "skipped-solid-black-stimulus-volume",
         }
     }
@@ -153,6 +164,7 @@ impl NativeRendererRenderMode {
             Self::SolidBlackOpenXrHandsAnchorParticles => {
                 "disabled-solid-black-openxr-hands-anchor-particles"
             }
+            Self::SolidBlackPrivateParticles => "disabled-solid-black-private-particles",
             Self::SolidBlackStimulusVolume => "disabled-solid-black-stimulus-volume",
         }
     }

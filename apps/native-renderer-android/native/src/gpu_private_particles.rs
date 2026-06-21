@@ -605,6 +605,7 @@ impl GpuPrivateParticleRenderer {
         device: &ash::Device,
         cmd: vk::CommandBuffer,
         eye_projection: HandMeshVisualEyeProjection,
+        world_center_scale: [f32; 4],
         frame_count: u64,
     ) -> GpuPrivateParticleFrameStats {
         let descriptor_index = frame_count as usize & 1;
@@ -614,6 +615,7 @@ impl GpuPrivateParticleRenderer {
             self.draw_count,
             self.tracer_max_count,
             eye_projection,
+            world_center_scale,
             frame_count,
         );
         let compute_write_barrier = [
@@ -816,6 +818,7 @@ impl GpuPrivateParticleRenderer {
         cmd: vk::CommandBuffer,
         extent: vk::Extent2D,
         eye_projection: HandMeshVisualEyeProjection,
+        world_center_scale: [f32; 4],
         stats: &GpuPrivateParticleFrameStats,
     ) {
         if !stats.visible || stats.draw_count == 0 {
@@ -826,6 +829,7 @@ impl GpuPrivateParticleRenderer {
             stats.draw_count,
             stats.tracer_max_count,
             eye_projection,
+            world_center_scale,
             0,
         );
         let viewport = [vk::Viewport {
@@ -867,6 +871,7 @@ fn private_particle_push(
     draw_count: u32,
     tracer_max_count: u32,
     eye_projection: HandMeshVisualEyeProjection,
+    world_center_scale: [f32; 4],
     frame_count: u64,
 ) -> PrivateParticlePush {
     let frame = frame_count as f32;
@@ -890,7 +895,7 @@ fn private_particle_push(
             PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS,
             PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND,
         ],
-        world_center_scale: [0.0, 0.0, 0.0, 0.46],
+        world_center_scale,
         eye_position: eye_projection.position,
         eye_orientation_xyzw: eye_projection.orientation_xyzw,
         fov_tangents: eye_projection.fov_tangents,
@@ -945,6 +950,41 @@ fn log_private_marker(
         private_particle_transparency_marker_fields(),
         PRIVATE_PARTICLE_MARKER_FIELDS,
     ));
+    log_private_effect_marker_fields(status, frame_count);
+}
+
+fn log_private_effect_marker_fields(status: &str, frame_count: u64) {
+    let fields = PRIVATE_PARTICLE_MARKER_FIELDS.trim();
+    if fields.is_empty() {
+        return;
+    }
+
+    const MAX_EFFECT_MARKER_FIELD_CHARS: usize = 2400;
+    let mut chunk = String::new();
+    let mut chunk_index = 0usize;
+    for field in fields.split_whitespace() {
+        let separator_len = if chunk.is_empty() { 0 } else { 1 };
+        if !chunk.is_empty()
+            && chunk.len() + separator_len + field.len() > MAX_EFFECT_MARKER_FIELD_CHARS
+        {
+            crate::android_log(format!(
+                "{} channel=effect-marker status={} frame={} chunk={} {}",
+                PRIVATE_PARTICLE_MARKER_PREFIX, status, frame_count, chunk_index, chunk
+            ));
+            chunk.clear();
+            chunk_index += 1;
+        }
+        if !chunk.is_empty() {
+            chunk.push(' ');
+        }
+        chunk.push_str(field);
+    }
+    if !chunk.is_empty() {
+        crate::android_log(format!(
+            "{} channel=effect-marker status={} frame={} chunk={} {}",
+            PRIVATE_PARTICLE_MARKER_PREFIX, status, frame_count, chunk_index, chunk
+        ));
+    }
 }
 
 struct PrivateParticlePayload {

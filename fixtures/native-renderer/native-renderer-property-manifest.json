@@ -2238,6 +2238,7 @@
         "native-passthrough-stimulus-volume",
         "solid-black-hands-and-grafts",
         "solid-black-openxr-hands-anchor-particles",
+        "solid-black-private-particles",
         "solid-black-stimulus-volume"
       ],
       "validators": [

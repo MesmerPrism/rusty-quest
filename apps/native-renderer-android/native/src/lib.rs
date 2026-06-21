@@ -236,17 +236,21 @@ fn android_main(app: android_activity::AndroidApp) {
                 .marker_fields(),
         ),
     );
-    marker(
-        "stimulus-volume",
-        format!(
-            "status=config renderMode={} nativePassthroughRequested={} solidBlackBackground={} stimulusVolumeRoute={} {}",
-            runtime_options.render_mode.marker_value(),
-            runtime_options.render_mode.uses_native_passthrough(),
-            runtime_options.render_mode.uses_solid_black_background(),
-            runtime_options.render_mode.uses_stimulus_volume(),
-            runtime_options.stimulus_volume_settings.marker_fields()
-        ),
-    );
+    if runtime_options.render_mode.uses_stimulus_volume()
+        || runtime_options.stimulus_volume_settings.enabled
+    {
+        marker(
+            "stimulus-volume",
+            format!(
+                "status=config renderMode={} nativePassthroughRequested={} solidBlackBackground={} stimulusVolumeRoute={} {}",
+                runtime_options.render_mode.marker_value(),
+                runtime_options.render_mode.uses_native_passthrough(),
+                runtime_options.render_mode.uses_solid_black_background(),
+                runtime_options.render_mode.uses_stimulus_volume(),
+                runtime_options.stimulus_volume_settings.marker_fields()
+            ),
+        );
+    }
     marker(
         "environment-depth",
         format!(

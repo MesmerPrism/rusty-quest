@@ -142,6 +142,17 @@ pub(super) fn write_projection_scorecard(
         replay_visual_stats.hand_mesh_screen_rect_marker_fields(projection_metadata);
     let sdf_visual_evidence_rects =
         replay_visual_stats.sdf_screen_rect_marker_fields(projection_metadata);
+    let stimulus_volume_scorecard_fields =
+        if render_mode.uses_stimulus_volume() || stimulus_volume_settings.enabled {
+            format!(
+                "{} {}",
+                stimulus_volume_settings.marker_fields(),
+                stimulus_volume_stats.marker_fields()
+            )
+        } else {
+            "stimulusVolumeRoute=false stimulusVolumeEnabled=false stimulusVolumeActive=false"
+                .to_string()
+        };
     let camera_capture_result_correlation_ready =
         camera_projection_stats.left_capture_result.ready()
             && camera_projection_stats.right_capture_result.ready();
@@ -187,8 +198,8 @@ pub(super) fn write_projection_scorecard(
             submit_ms,
             frame_timings.marker_fields(),
             gpu_stage_timings.marker_fields(),
-            stimulus_volume_settings.marker_fields(),
-            stimulus_volume_stats.marker_fields(),
+            stimulus_volume_scorecard_fields,
+            "",
             extent.width,
             extent.height,
             camera_projection_stats.rendered,
@@ -281,22 +292,24 @@ pub(super) fn write_projection_scorecard(
             gpu_stage_timings.stage_ms(GpuTimestampStage::ProjectionComposite),
         ),
     );
-    crate::marker(
-        "stimulus-volume",
-        format!(
-            "status=scorecard frame={} observedOpenXrFps={:.1} renderMode={} nativePassthroughRequested={} projectionLayerAlphaBlend={} stimulusVolumeGpuMs={:.3} stimulusVolumeComputeGpuMs={:.3} stimulusVolumeProjectionGpuMs={:.3} {} {}",
-            frame_count,
-            observed_openxr_fps,
-            render_mode.marker_value(),
-            render_mode.uses_native_passthrough(),
-            render_mode.projection_layer_alpha_blend(),
-            gpu_stage_timings.stage_ms(GpuTimestampStage::ProjectionComposite),
-            gpu_stage_timings.stage_ms(GpuTimestampStage::StimulusVolumeCompute),
-            gpu_stage_timings.stage_ms(GpuTimestampStage::StimulusVolumeProjection),
-            stimulus_volume_settings.marker_fields(),
-            stimulus_volume_stats.marker_fields(),
-        ),
-    );
+    if render_mode.uses_stimulus_volume() || stimulus_volume_settings.enabled {
+        crate::marker(
+            "stimulus-volume",
+            format!(
+                "status=scorecard frame={} observedOpenXrFps={:.1} renderMode={} nativePassthroughRequested={} projectionLayerAlphaBlend={} stimulusVolumeGpuMs={:.3} stimulusVolumeComputeGpuMs={:.3} stimulusVolumeProjectionGpuMs={:.3} {} {}",
+                frame_count,
+                observed_openxr_fps,
+                render_mode.marker_value(),
+                render_mode.uses_native_passthrough(),
+                render_mode.projection_layer_alpha_blend(),
+                gpu_stage_timings.stage_ms(GpuTimestampStage::ProjectionComposite),
+                gpu_stage_timings.stage_ms(GpuTimestampStage::StimulusVolumeCompute),
+                gpu_stage_timings.stage_ms(GpuTimestampStage::StimulusVolumeProjection),
+                stimulus_volume_settings.marker_fields(),
+                stimulus_volume_stats.marker_fields(),
+            ),
+        );
+    }
     crate::marker(
         "gpu-sdf-field",
         format!(
