@@ -43,6 +43,7 @@ $nativeBuild = Read-RepoText "apps\native-renderer-android\native\build.rs"
 $vertexShader = Read-RepoText "apps\native-renderer-android\native\shaders\video_projection.vert.glsl"
 $fragmentShader = Read-RepoText "apps\native-renderer-android\native\shaders\video_projection.frag.glsl"
 $stageVideo = Read-RepoText "tools\Stage-NativeRendererVideo.ps1"
+$videoProjectionDoc = Read-RepoText "docs\NATIVE_VIDEO_PROJECTION.md"
 $propertyManifest = Read-RepoText "fixtures\native-renderer\native-renderer-property-manifest.json"
 $validProfile = Read-RepoText "fixtures\runtime-profiles\quest-native-renderer-fullscreen-stereo-video.profile.json"
 $profileMatrix = Read-RepoText "tools\Test-NativeRendererProfileMatrix.ps1"
@@ -68,6 +69,10 @@ foreach ($token in @(
     "nativeStopStereoVideoStream",
     "nativeStereoVideoLifecycleEvent",
     "decodeOnce",
+    "EVENT_LOOP_RESTARTED",
+    "extractor.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC)",
+    "presentationOffsetUs",
+    "video loop restart produced no sample",
     "releaseOutputBuffer",
     "resolvePath",
     "video/noodletest-sbs.mp4"
@@ -99,6 +104,7 @@ foreach ($token in @(
     "AIMAGE_FORMAT_PRIVATE",
     "AHARDWAREBUFFER_USAGE_GPU_COLOR_OUTPUT",
     "stream=stereo_video",
+    "loop-restarted",
     "sourceAuthority=android-mediacodec-surface-decoder",
     "highRateJsonPayload=false",
     "nativeImageReader=true",
@@ -113,6 +119,9 @@ foreach ($token in @(
     "rusty.quest.native_renderer.video_projection_metadata.v1",
     "leftSourceUvRect",
     "rightSourceUvRect",
+    "sourcePositionMode=camera-target-center-position-only",
+    "leftSourcePositionOffsetUv",
+    "rightSourcePositionOffsetUv",
     "videoProjectionTarget",
     "dataInputMetadataAuthority=video-projection-stream",
     "downstreamProjectionScaleAuthority=projection-target-state"
@@ -126,6 +135,7 @@ foreach ($token in @(
     "query_ahb_vulkan_import_properties",
     "import_ahb_sampled_image",
     "transition_ahb_sampled_image_to_shader_read",
+    "source_position_offset_for_eye",
     "video-projection-import",
     "video-projection-resources",
     "videoProjectionRendered",
@@ -151,9 +161,21 @@ foreach ($token in @(
     "u_video_projection",
     "source_uv_rect",
     "target_rect",
-    "flip_y"
+    "flip_y",
+    "source_position_offset_uv",
+    "positioned_local_uv"
 )) {
     Assert-Contains -Text ($vertexShader + $fragmentShader) -Needle $token -Label "shader"
+}
+
+foreach ($token in @(
+    "Per-Eye Positioning",
+    'Left source position offset: `0.046875,0.046875`',
+    'Right source position offset: `-0.046875,0.054688`',
+    "cannot bleed the left and right source halves",
+    "same dequeued input buffer"
+)) {
+    Assert-Contains -Text $videoProjectionDoc -Needle $token -Label "video projection doc"
 }
 
 foreach ($token in @(

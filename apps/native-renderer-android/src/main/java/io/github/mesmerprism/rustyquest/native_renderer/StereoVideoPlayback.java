@@ -18,6 +18,7 @@ public final class StereoVideoPlayback {
     private static final int EVENT_ERROR = 4;
     private static final int EVENT_FORMAT = 5;
     private static final int EVENT_FRAME = 6;
+    private static final int EVENT_LOOP_RESTARTED = 7;
     private static final long DEQUEUE_TIMEOUT_US = 10_000L;
 
     private static final Object LOCK = new Object();
@@ -180,9 +181,7 @@ public final class StereoVideoPlayback {
                 fpsCap,
                 loopingFlag
             );
-            do {
-                decodeOnce(path, surface, width, height, maxImages, fpsCap, loopingFlag);
-            } while (looping && !stopRequested);
+            decodeOnce(path, surface, width, height, maxImages, fpsCap, looping);
             nativeStereoVideoLifecycleEvent(
                 EVENT_STOPPED,
                 0,
@@ -222,8 +221,9 @@ public final class StereoVideoPlayback {
         int height,
         int maxImages,
         int fpsCap,
-        int loopingFlag
+        boolean looping
     ) throws IOException {
+        int loopingFlag = looping ? 1 : 0;
         MediaExtractor extractor = new MediaExtractor();
         MediaCodec codec = null;
         try {
@@ -260,25 +260,66 @@ public final class StereoVideoPlayback {
             boolean outputDone = false;
             long firstPresentationUs = -1L;
             long firstFrameReleaseNs = -1L;
+            long firstLoopSamplePresentationUs = -1L;
+            long lastQueuedPresentationUs = -1L;
+            long presentationOffsetUs = 0L;
+            long loopCount = 0L;
+            long frameDurationUs = estimateFrameDurationUs(format, fpsCap);
             long renderedFrames = 0L;
             while (!outputDone && !stopRequested) {
                 if (!inputDone) {
                     int inputIndex = codec.dequeueInputBuffer(DEQUEUE_TIMEOUT_US);
                     if (inputIndex >= 0) {
                         ByteBuffer inputBuffer = codec.getInputBuffer(inputIndex);
+                        if (inputBuffer == null) {
+                            throw new IOException("decoder input buffer unavailable");
+                        }
+                        inputBuffer.clear();
                         int sampleSize = extractor.readSampleData(inputBuffer, 0);
                         if (sampleSize < 0) {
-                            codec.queueInputBuffer(
-                                inputIndex,
-                                0,
-                                0,
-                                0,
-                                MediaCodec.BUFFER_FLAG_END_OF_STREAM
-                            );
-                            inputDone = true;
-                        } else {
-                            long presentationTimeUs = extractor.getSampleTime();
+                            if (looping) {
+                                if (lastQueuedPresentationUs < 0L) {
+                                    throw new IOException("video track empty");
+                                }
+                                presentationOffsetUs = lastQueuedPresentationUs + frameDurationUs;
+                                firstLoopSamplePresentationUs = -1L;
+                                lastQueuedPresentationUs = -1L;
+                                loopCount += 1L;
+                                extractor.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC);
+                                nativeStereoVideoLifecycleEvent(
+                                    EVENT_LOOP_RESTARTED,
+                                    (int) Math.min(loopCount, Integer.MAX_VALUE),
+                                    width,
+                                    height,
+                                    maxImages,
+                                    fpsCap,
+                                    loopingFlag
+                                );
+                                inputBuffer.clear();
+                                sampleSize = extractor.readSampleData(inputBuffer, 0);
+                                if (sampleSize < 0) {
+                                    throw new IOException("video loop restart produced no sample");
+                                }
+                            } else {
+                                codec.queueInputBuffer(
+                                    inputIndex,
+                                    0,
+                                    0,
+                                    0,
+                                    MediaCodec.BUFFER_FLAG_END_OF_STREAM
+                                );
+                                inputDone = true;
+                            }
+                        }
+                        if (sampleSize >= 0) {
+                            long samplePresentationUs = extractor.getSampleTime();
+                            if (firstLoopSamplePresentationUs < 0L) {
+                                firstLoopSamplePresentationUs = samplePresentationUs;
+                            }
+                            long presentationTimeUs = presentationOffsetUs
+                                + Math.max(0L, samplePresentationUs - firstLoopSamplePresentationUs);
                             codec.queueInputBuffer(inputIndex, 0, sampleSize, presentationTimeUs, 0);
+                            lastQueuedPresentationUs = presentationTimeUs;
                             extractor.advance();
                         }
                     }
@@ -324,6 +365,18 @@ public final class StereoVideoPlayback {
             }
             extractor.release();
         }
+    }
+
+    private static long estimateFrameDurationUs(MediaFormat format, int fpsCap) {
+        int frameRate = fpsCap;
+        if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+            try {
+                frameRate = format.getInteger(MediaFormat.KEY_FRAME_RATE);
+            } catch (ClassCastException ignored) {
+                frameRate = fpsCap;
+            }
+        }
+        return 1_000_000L / clamp(frameRate, 1, 240);
     }
 
     private static int selectVideoTrack(MediaExtractor extractor) {

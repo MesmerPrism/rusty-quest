@@ -171,8 +171,10 @@ pub(crate) fn run_projection_loop(
     let display_composite_projection_metadata = DisplayCompositeProjectionMetadata::from_settings(
         runtime_options.display_composite_settings,
     );
-    let video_projection_metadata =
-        VideoProjectionMetadata::from_settings(&runtime_options.video_projection_settings);
+    let video_projection_metadata = VideoProjectionMetadata::from_settings(
+        &runtime_options.video_projection_settings,
+        &projection_metadata,
+    );
     crate::marker(
         "recorded-hand-replay",
         format!(

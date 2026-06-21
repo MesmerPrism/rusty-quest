@@ -399,6 +399,7 @@ impl VideoProjectionRenderer {
             &[],
         );
         let source_uv_rect = projection_metadata.source_rect_for_eye(eye_index);
+        let source_position_offset = projection_metadata.source_position_offset_for_eye(eye_index);
         let push = VideoProjectionPush {
             target_rect: [
                 target_rect.x,
@@ -415,8 +416,8 @@ impl VideoProjectionRenderer {
             params0: [
                 projection_metadata.source_sample_y_flip,
                 opacity,
-                0.0,
-                eye_index as f32,
+                source_position_offset[0],
+                source_position_offset[1],
             ],
         };
         let push_bytes = std::slice::from_raw_parts(
