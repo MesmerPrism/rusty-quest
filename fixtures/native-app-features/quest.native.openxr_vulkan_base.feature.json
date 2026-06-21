@@ -1,0 +1,64 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "quest.native.openxr_vulkan_base",
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "NativeActivity OpenXR/Vulkan base surface for Quest-native app builds.",
+  "provides": [
+    "quest.native_activity",
+    "quest.openxr",
+    "quest.vulkan"
+  ],
+  "depends_on": [],
+  "incompatible_with": [],
+  "exclusive_groups": {
+    "runtime_shell": "native-openxr-vulkan"
+  },
+  "android_manifest": {
+    "permissions": [
+      "org.khronos.openxr.permission.OPENXR",
+      "org.khronos.openxr.permission.OPENXR_SYSTEM"
+    ],
+    "uses_features": [
+      "android.opengl.gles.3.1",
+      "android.hardware.vr.headtracking"
+    ],
+    "activities": [
+      "android.app.NativeActivity"
+    ],
+    "services": [],
+    "queries": [
+      "org.khronos.openxr.runtime_broker",
+      "org.khronos.openxr.system_runtime_broker",
+      "org.khronos.openxr.OpenXRRuntimeService",
+      "org.khronos.openxr.OpenXRApiLayerService"
+    ]
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [
+      "fixtures/native-renderer/native-hwb-blur-sdf-public.plan.json",
+      "fixtures/native-renderer/recorded-hand-replay-public-shape.json"
+    ],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "RUSTY_QUEST_NATIVE_RENDERER channel=render-mode"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-NativeRendererOpenXrVulkanStatic.ps1 -RepoRoot ."
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Rusty Quest owns the generic Quest-native OpenXR/Vulkan package substrate only."
+}

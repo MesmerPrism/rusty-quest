@@ -1,0 +1,34 @@
+{
+  "schema": "rusty.quest.native_app_build.v1",
+  "app_id": "damaged_high_rate_json_request",
+  "owner_repo": "downstream-private-app",
+  "package_policy": "native-renderer-dev-package",
+  "package_name": "io.github.mesmerprism.rustyquest.native_renderer",
+  "requested_features": [
+    "quest.native.openxr_vulkan_base",
+    "damaged.display_composite_high_rate_json"
+  ],
+  "denied_features": [],
+  "payloads": [],
+  "permission_allowlist": [],
+  "declared_manifest": {
+    "permissions": [
+      "org.khronos.openxr.permission.OPENXR",
+      "org.khronos.openxr.permission.OPENXR_SYSTEM"
+    ],
+    "uses_features": [
+      "android.hardware.vr.headtracking",
+      "android.opengl.gles.3.1"
+    ],
+    "activities": [
+      "android.app.NativeActivity"
+    ],
+    "services": []
+  },
+  "expected_render_mode": "native-passthrough-media-only",
+  "expected_markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation_tier": "quick"
+}

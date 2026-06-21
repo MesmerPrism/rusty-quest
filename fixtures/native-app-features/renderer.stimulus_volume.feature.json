@@ -1,0 +1,81 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "renderer.stimulus_volume",
+  "owner_lane": "rusty-quest",
+  "status": "public-app-feature",
+  "description": "Native GPU stimulus-volume route with safety acknowledgement and bounded central-FOV render target.",
+  "provides": [
+    "render.stimulus_volume"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base",
+    "renderer.background.solid_black"
+  ],
+  "incompatible_with": [
+    "input.right_primary_private_particle_recenter",
+    "renderer.private_particles"
+  ],
+  "exclusive_groups": {
+    "primary_visual": "stimulus-volume",
+    "render_route": "solid-black-stimulus-volume",
+    "right_primary_action": "stimulus-randomize"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [
+      "ControlPanelActivity"
+    ],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.render.mode": "solid-black-stimulus-volume",
+      "debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction": "0.72",
+      "debug.rustyquest.native_renderer.stimulus_volume.composition": "opaque-black-projection",
+      "debug.rustyquest.native_renderer.stimulus_volume.enabled": "true",
+      "debug.rustyquest.native_renderer.stimulus_volume.gradient_smoothing": "0.65",
+      "debug.rustyquest.native_renderer.stimulus_volume.pattern_family": "spiral",
+      "debug.rustyquest.native_renderer.stimulus_volume.profile": "volume-only-bright-interference",
+      "debug.rustyquest.native_renderer.stimulus_volume.randomize.enabled": "true",
+      "debug.rustyquest.native_renderer.stimulus_volume.randomize.max_hz": "40.0",
+      "debug.rustyquest.native_renderer.stimulus_volume.randomize.min_hz": "3.0",
+      "debug.rustyquest.native_renderer.stimulus_volume.raymarch_samples": "12",
+      "debug.rustyquest.native_renderer.stimulus_volume.render_target": "768x768x2-rgba16f",
+      "debug.rustyquest.native_renderer.stimulus_volume.safety_ack": "true"
+    },
+    "clear_families": [
+      "stimulus_volume"
+    ],
+    "expected_render_modes": [
+      "solid-black-stimulus-volume"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": [
+      "apps/native-renderer-android/native/shaders/stimulus_volume_projection.vert.glsl",
+      "apps/native-renderer-android/native/shaders/stimulus_volume_projection.frag.glsl",
+      "apps/native-renderer-android/native/shaders/stimulus_volume_raymarch.comp.glsl"
+    ]
+  },
+  "markers": {
+    "required": [
+      "stimulusVolumeEnabled=true",
+      "photosensitiveSafetyAck=true"
+    ],
+    "forbidden": [
+      "privateParticleRecenterInputEnabled=true"
+    ]
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-NativeRendererStimulusVolumeStatic.ps1 -RepoRoot ."
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Stimulus-volume route remains public only after safety and runtime-profile gates are selected explicitly."
+}

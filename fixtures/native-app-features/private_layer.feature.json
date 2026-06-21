@@ -1,0 +1,58 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "private_layer",
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Generic private layer selector surface without downstream visual semantics.",
+  "provides": [
+    "render.private_layer_selector"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [
+    "renderer.private_particles"
+  ],
+  "exclusive_groups": {
+    "private_visual_source": "private-layer"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [
+      "ControlPanelActivity"
+    ],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.private_layer.enabled": "true",
+      "debug.rustyquest.native_renderer.private_layer.layer_override": "-1.0",
+      "debug.rustyquest.native_renderer.private_layer.layer_seconds": "0.0"
+    },
+    "clear_families": [
+      "private_layer"
+    ],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": [
+      "apps/native-renderer-android/native/shaders/private_layer_placeholder.frag.glsl"
+    ]
+  },
+  "markers": {
+    "required": [
+      "privateLayerEnabled=true"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "The selector and placeholder are public; private layer effects remain outside Rusty Quest."
+}

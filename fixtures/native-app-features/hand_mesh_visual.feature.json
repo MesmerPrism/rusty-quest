@@ -1,0 +1,66 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "hand_mesh_visual",
+  "owner_lane": "rusty-quest",
+  "status": "public-app-feature",
+  "description": "Live OpenXR hand mesh visual route using the resident compact hand topology.",
+  "provides": [
+    "hand_mesh.live_visual"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [
+    "renderer.private_particles"
+  ],
+  "exclusive_groups": {
+    "hand_visual": "live-hand-mesh"
+  },
+  "android_manifest": {
+    "permissions": [
+      "com.oculus.permission.HAND_TRACKING"
+    ],
+    "uses_features": [
+      "oculus.software.handtracking"
+    ],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled": "false",
+      "debug.rustyquest.native_renderer.hand_mesh.input.source": "live-meta-openxr-hand-tracking",
+      "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible": "true",
+      "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled": "true"
+    },
+    "clear_families": [
+      "hand_mesh"
+    ],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [
+      "fixtures/native-renderer/synthetic-hand-mesh-sequence.json"
+    ],
+    "shaders": [
+      "apps/native-renderer-android/native/shaders/hand_mesh_visual.vert.glsl",
+      "apps/native-renderer-android/native/shaders/hand_mesh_visual.frag.glsl"
+    ]
+  },
+  "markers": {
+    "required": [
+      "handMeshRealHandsVisible=true"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-NativeRendererHandVisualStatic.ps1 -RepoRoot ."
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Hand visual topology and markers are public; downstream effects must request their own feature."
+}

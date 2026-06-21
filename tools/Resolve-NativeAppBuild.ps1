@@ -1,0 +1,739 @@
+param(
+    [Parameter(Mandatory=$true)]
+    [string]$AppSpec,
+    [string]$FeatureDir = "fixtures\native-app-features",
+    [string]$OutputRoot = "local-artifacts\native-app-builds",
+    [switch]$DryRun
+)
+
+$ErrorActionPreference = "Stop"
+$ResolverVersion = "native-app-build-resolver.ps1.v1"
+$FeatureSchema = "rusty.quest.native_app_feature.v1"
+$AppBuildSchema = "rusty.quest.native_app_build.v1"
+$FeatureLockSchema = "rusty.quest.native_app_feature_lock.v1"
+$RuntimeProfileSchema = "rusty.quest.runtime_profile.v1"
+$NativeRendererPropertyManifestSchema = "rusty.quest.native_renderer_property_manifest.v2"
+$NativeRendererPropertyManifestRelativePath = "fixtures\native-renderer\native-renderer-property-manifest.json"
+$NativeRendererPropertyPrefix = "debug.rustyquest.native_renderer."
+$RenderModeProperty = "debug.rustyquest.native_renderer.render.mode"
+
+if (-not $DryRun) {
+    throw "Resolve-NativeAppBuild.ps1 currently supports source-only -DryRun resolution. APK/package generation is intentionally out of scope."
+}
+
+function Resolve-RepoPath {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [Parameter(Mandatory=$true)][string]$RepoRoot
+    )
+    if ([System.IO.Path]::IsPathRooted($Path)) {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $Path))
+}
+
+function Get-RepoRelativePath {
+    param(
+        [Parameter(Mandatory=$true)][string]$RepoRoot,
+        [Parameter(Mandatory=$true)][string]$Path
+    )
+    $root = [System.IO.Path]::GetFullPath($RepoRoot).TrimEnd("\", "/")
+    $full = [System.IO.Path]::GetFullPath($Path)
+    if ($full.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $full.Substring($root.Length).TrimStart("\", "/").Replace("\", "/")
+    }
+    return $full.Replace("\", "/")
+}
+
+function Read-JsonFile {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Missing JSON file: $Path"
+    }
+    return Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
+}
+
+function Get-FileSha256 {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $Path))
+        return ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-StringArray {
+    param($Value)
+    if ($null -eq $Value) {
+        return @()
+    }
+    return @($Value | ForEach-Object {
+        $item = [string]$_
+        if (-not [string]::IsNullOrWhiteSpace($item)) {
+            $item
+        }
+    })
+}
+
+function Get-SortedSet {
+    param([Parameter(Mandatory=$true)]$Set)
+    return @($Set.Keys | Sort-Object)
+}
+
+function Add-StringsToSet {
+    param(
+        [Parameter(Mandatory=$true)]$Set,
+        $Values
+    )
+    foreach ($value in Get-StringArray $Values) {
+        $Set[$value] = $true
+    }
+}
+
+function Assert-RequiredProperty {
+    param(
+        [Parameter(Mandatory=$true)]$Object,
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Label
+    )
+    if ($null -eq $Object.PSObject.Properties[$Name]) {
+        throw "$Label is missing required property: $Name"
+    }
+}
+
+function Assert-SetEquals {
+    param(
+        [Parameter(Mandatory=$true)][string]$Label,
+        [string[]]$Expected,
+        [string[]]$Actual
+    )
+    $expectedSorted = @($Expected | Sort-Object)
+    $actualSorted = @($Actual | Sort-Object)
+    $expectedText = $expectedSorted -join "`n"
+    $actualText = $actualSorted -join "`n"
+    if ($expectedText -ne $actualText) {
+        throw "$Label mismatch. Expected [$($expectedSorted -join ', ')] but resolved [$($actualSorted -join ', ')]."
+    }
+}
+
+function Get-NativeRendererPropertyManifest {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    $manifest = Read-JsonFile -Path $Path
+    if ($manifest.schema -ne $NativeRendererPropertyManifestSchema) {
+        throw "Unsupported native renderer property manifest schema: $($manifest.schema)"
+    }
+    $byName = @{}
+    $byFamily = @{}
+    foreach ($entry in @($manifest.properties)) {
+        $name = [string]$entry.name
+        if ([string]::IsNullOrWhiteSpace($name)) {
+            throw "Native renderer property manifest contains an empty property name."
+        }
+        if ($byName.ContainsKey($name)) {
+            throw "Native renderer property manifest contains duplicate property: $name"
+        }
+        $byName[$name] = $entry
+        $family = [string]$entry.family
+        if (-not $byFamily.ContainsKey($family)) {
+            $byFamily[$family] = New-Object System.Collections.ArrayList
+        }
+        [void]$byFamily[$family].Add($name)
+    }
+    return [ordered]@{
+        raw = $manifest
+        by_name = $byName
+        by_family = $byFamily
+    }
+}
+
+function Assert-NativeRendererPropertyValue {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string]$Value,
+        [Parameter(Mandatory=$true)]$ManifestByName
+    )
+    if (-not $Name.StartsWith($NativeRendererPropertyPrefix)) {
+        throw "Native app-build runtime properties must use the native renderer property namespace in this workflow slice: $Name"
+    }
+    if (-not $ManifestByName.ContainsKey($Name)) {
+        throw "Native app-build property is not in native renderer property manifest: $Name"
+    }
+    $entry = $ManifestByName[$Name]
+    $kind = [string]$entry.value_kind
+    $trimmed = $Value.Trim()
+    switch ($kind) {
+        "bool" {
+            if (@("true", "false") -cnotcontains $trimmed.ToLowerInvariant()) {
+                throw "$Name value $Value must be manifest bool true/false"
+            }
+        }
+        "token" {
+            $allowed = @($entry.allowed_values | ForEach-Object { [string]$_ })
+            if ($allowed -cnotcontains $Value) {
+                throw "$Name value $Value is not in manifest allowed_values: $($allowed -join ', ')"
+            }
+        }
+        "string" {
+            if ($entry.non_empty -eq $true -and [string]::IsNullOrWhiteSpace($Value)) {
+                throw "$Name value must not be empty"
+            }
+        }
+        { $_ -in @("u16", "u32", "u64") } {
+            if ($trimmed -notmatch '^\d+$') {
+                throw "$Name value $Value must be an unsigned integer"
+            }
+        }
+        "f32" {
+            $parsed = 0.0
+            if (-not [double]::TryParse($trimmed, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsed)) {
+                throw "$Name value $Value must be a finite float"
+            }
+            if ([double]::IsNaN($parsed) -or [double]::IsInfinity($parsed)) {
+                throw "$Name value $Value must be a finite float"
+            }
+        }
+        "f32_pair" {
+            $parts = @($Value.Split(",") | ForEach-Object { $_.Trim() })
+            if ($parts.Count -ne 2) {
+                throw "$Name value $Value must be two comma-separated floats"
+            }
+            foreach ($part in $parts) {
+                $parsed = 0.0
+                if (-not [double]::TryParse($part, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsed)) {
+                    throw "$Name value $Value must be two comma-separated floats"
+                }
+            }
+        }
+        default {
+            throw "$Name has unsupported manifest value_kind for app-build resolver: $kind"
+        }
+    }
+    if ($Name -like "*.high_rate_json_payload" -and $Value.Trim().ToLowerInvariant() -ne "false") {
+        throw "High-rate payload transport through JSON/properties is forbidden in native app-build specs: $Name=$Value"
+    }
+}
+
+function Assert-FeatureDescriptorShape {
+    param(
+        [Parameter(Mandatory=$true)]$Feature,
+        [Parameter(Mandatory=$true)][string]$Path
+    )
+    $label = "Feature descriptor $Path"
+    foreach ($field in @("schema", "feature_id", "owner_lane", "status", "description", "provides", "depends_on", "incompatible_with", "exclusive_groups", "android_manifest", "runtime_profile", "build_inputs", "markers", "validation", "public_private_boundary")) {
+        Assert-RequiredProperty -Object $Feature -Name $field -Label $label
+    }
+    if ([string]$Feature.schema -ne $FeatureSchema) {
+        throw "$label has unsupported schema: $($Feature.schema)"
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Feature.feature_id)) {
+        throw "$label has an empty feature_id"
+    }
+    foreach ($section in @("android_manifest", "runtime_profile", "build_inputs", "markers", "validation")) {
+        if ($null -eq $Feature.$section) {
+            throw "$label has null section: $section"
+        }
+    }
+    foreach ($field in @("permissions", "uses_features", "activities", "services", "queries")) {
+        Assert-RequiredProperty -Object $Feature.android_manifest -Name $field -Label "$label android_manifest"
+    }
+    foreach ($field in @("set", "clear_families", "expected_render_modes")) {
+        Assert-RequiredProperty -Object $Feature.runtime_profile -Name $field -Label "$label runtime_profile"
+    }
+    foreach ($field in @("env", "assets", "shaders")) {
+        Assert-RequiredProperty -Object $Feature.build_inputs -Name $field -Label "$label build_inputs"
+    }
+    foreach ($field in @("required", "forbidden")) {
+        Assert-RequiredProperty -Object $Feature.markers -Name $field -Label "$label markers"
+    }
+}
+
+function Assert-AppSpecShape {
+    param(
+        [Parameter(Mandatory=$true)]$Spec,
+        [Parameter(Mandatory=$true)][string]$Path
+    )
+    $label = "App build spec $Path"
+    foreach ($field in @("schema", "app_id", "owner_repo", "package_policy", "package_name", "requested_features", "denied_features", "payloads", "permission_allowlist", "declared_manifest", "expected_render_mode", "expected_markers", "validation_tier")) {
+        Assert-RequiredProperty -Object $Spec -Name $field -Label $label
+    }
+    if ([string]$Spec.schema -ne $AppBuildSchema) {
+        throw "$label has unsupported schema: $($Spec.schema)"
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$Spec.app_id)) {
+        throw "$label app_id must not be empty"
+    }
+    if ([string]$Spec.app_id -notmatch '^[a-z0-9_]+(\.[a-z0-9_]+)*$') {
+        throw "$label app_id must be stable snake_case/dotted lowercase: $($Spec.app_id)"
+    }
+    foreach ($field in @("permissions", "uses_features", "activities", "services")) {
+        Assert-RequiredProperty -Object $Spec.declared_manifest -Name $field -Label "$label declared_manifest"
+    }
+    foreach ($field in @("required", "forbidden")) {
+        Assert-RequiredProperty -Object $Spec.expected_markers -Name $field -Label "$label expected_markers"
+    }
+}
+
+function Read-FeatureLibrary {
+    param(
+        [Parameter(Mandatory=$true)][string]$FeatureDirPath,
+        [Parameter(Mandatory=$true)][string]$RepoRoot,
+        [Parameter(Mandatory=$true)]$ManifestByName
+    )
+    if (-not (Test-Path -LiteralPath $FeatureDirPath)) {
+        throw "Feature descriptor directory is missing: $FeatureDirPath"
+    }
+    $features = @{}
+    $featureFiles = @(Get-ChildItem -LiteralPath $FeatureDirPath -Filter "*.feature.json" -File | Sort-Object Name)
+    if ($featureFiles.Count -eq 0) {
+        throw "Feature descriptor directory contains no *.feature.json files: $FeatureDirPath"
+    }
+    foreach ($file in $featureFiles) {
+        $feature = Read-JsonFile -Path $file.FullName
+        Assert-FeatureDescriptorShape -Feature $feature -Path (Get-RepoRelativePath -RepoRoot $RepoRoot -Path $file.FullName)
+        $featureId = [string]$feature.feature_id
+        if ($features.ContainsKey($featureId)) {
+            throw "Duplicate native app feature descriptor id: $featureId"
+        }
+        foreach ($property in @($feature.runtime_profile.set.PSObject.Properties)) {
+            Assert-NativeRendererPropertyValue -Name ([string]$property.Name) -Value ([string]$property.Value) -ManifestByName $ManifestByName
+        }
+        $features[$featureId] = [ordered]@{
+            path = $file.FullName
+            descriptor = $feature
+            sha256 = Get-FileSha256 -Path $file.FullName
+        }
+    }
+    return $features
+}
+
+function New-FeatureResolverState {
+    return [ordered]@{
+        selected = @{}
+        reasons = @{}
+        visiting = @{}
+    }
+}
+
+function Resolve-FeatureClosure {
+    param(
+        [Parameter(Mandatory=$true)][string]$FeatureId,
+        [Parameter(Mandatory=$true)][string]$Reason,
+        [Parameter(Mandatory=$true)]$Features,
+        [Parameter(Mandatory=$true)]$Denied,
+        [Parameter(Mandatory=$true)]$State
+    )
+    if ($Denied.ContainsKey($FeatureId)) {
+        throw "Denied feature entered app-build closure: $FeatureId ($Reason)"
+    }
+    if (-not $Features.ContainsKey($FeatureId)) {
+        throw "Requested or dependent feature is not in native app feature library: $FeatureId"
+    }
+    if ($State.selected.ContainsKey($FeatureId)) {
+        return
+    }
+    if ($State.visiting.ContainsKey($FeatureId)) {
+        throw "Feature dependency cycle detected at $FeatureId"
+    }
+    $State.visiting[$FeatureId] = $true
+    $feature = $Features[$FeatureId].descriptor
+    foreach ($dependency in Get-StringArray $feature.depends_on) {
+        Resolve-FeatureClosure -FeatureId $dependency -Reason "dependency of $FeatureId" -Features $Features -Denied $Denied -State $State
+    }
+    $State.visiting.Remove($FeatureId)
+    $State.selected[$FeatureId] = $true
+    $State.reasons[$FeatureId] = $Reason
+}
+
+function Add-FeatureRuntimeSet {
+    param(
+        [Parameter(Mandatory=$true)]$RuntimeSet,
+        [Parameter(Mandatory=$true)][string]$FeatureId,
+        [Parameter(Mandatory=$true)]$Feature
+    )
+    foreach ($property in @($Feature.runtime_profile.set.PSObject.Properties | Sort-Object Name)) {
+        $name = [string]$property.Name
+        $value = [string]$property.Value
+        if ($RuntimeSet.Contains($name) -and [string]$RuntimeSet[$name] -ne $value) {
+            throw "Runtime property $name is set to conflicting values by selected features. Existing=$($RuntimeSet[$name]) feature=$FeatureId value=$value"
+        }
+        $RuntimeSet[$name] = $value
+    }
+}
+
+function New-GeneratedAndroidManifestText {
+    param(
+        [Parameter(Mandatory=$true)][string]$PackageName,
+        [string[]]$Permissions,
+        [string[]]$UsesFeatures,
+        [string[]]$Activities,
+        [string[]]$Services,
+        [string[]]$Queries
+    )
+    $lines = New-Object System.Collections.ArrayList
+    [void]$lines.Add('<manifest xmlns:android="http://schemas.android.com/apk/res/android"')
+    [void]$lines.Add("    package=""$([System.Security.SecurityElement]::Escape($PackageName))"">")
+    [void]$lines.Add("")
+    [void]$lines.Add('    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="35" />')
+    foreach ($feature in $UsesFeatures) {
+        if ($feature -eq "android.opengl.gles.3.1") {
+            [void]$lines.Add('    <uses-feature android:glEsVersion="0x00030001" android:required="true" />')
+        } elseif ($feature -eq "android.hardware.vr.headtracking") {
+            [void]$lines.Add('    <uses-feature android:name="android.hardware.vr.headtracking" android:version="1" android:required="true" />')
+        } else {
+            [void]$lines.Add("    <uses-feature android:name=""$([System.Security.SecurityElement]::Escape($feature))"" android:required=""false"" />")
+        }
+    }
+    foreach ($permission in $Permissions) {
+        [void]$lines.Add("    <uses-permission android:name=""$([System.Security.SecurityElement]::Escape($permission))"" />")
+    }
+    [void]$lines.Add("")
+    [void]$lines.Add('    <application')
+    [void]$lines.Add('        android:allowBackup="false"')
+    [void]$lines.Add('        android:extractNativeLibs="true"')
+    [void]$lines.Add('        android:hasCode="true"')
+    [void]$lines.Add('        android:label="Rusty Quest Generated Native App"')
+    [void]$lines.Add('        android:theme="@android:style/Theme.Material.NoActionBar">')
+    [void]$lines.Add('        <meta-data android:name="com.samsung.android.vr.application.mode" android:value="vr_only" />')
+    if ($Activities -contains "android.app.NativeActivity") {
+        [void]$lines.Add('        <activity')
+        [void]$lines.Add('            android:name="android.app.NativeActivity"')
+        [void]$lines.Add('            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode"')
+        [void]$lines.Add('            android:excludeFromRecents="true"')
+        [void]$lines.Add('            android:exported="true"')
+        [void]$lines.Add('            android:launchMode="singleTask"')
+        [void]$lines.Add('            android:screenOrientation="landscape">')
+        [void]$lines.Add('            <meta-data android:name="com.oculus.intent.category.VR" android:value="vr_only" />')
+        [void]$lines.Add('            <meta-data android:name="android.app.lib_name" android:value="rusty_quest_native_renderer" />')
+        [void]$lines.Add('            <intent-filter>')
+        [void]$lines.Add('                <action android:name="android.intent.action.MAIN" />')
+        [void]$lines.Add('                <category android:name="com.oculus.intent.category.VR" />')
+        [void]$lines.Add('                <category android:name="android.intent.category.LAUNCHER" />')
+        [void]$lines.Add('            </intent-filter>')
+        [void]$lines.Add('        </activity>')
+    }
+    if ($Activities -contains "ControlPanelActivity") {
+        [void]$lines.Add('        <activity android:name=".ControlPanelActivity" android:exported="true" android:resizeableActivity="true" />')
+    }
+    if ($Services -contains "DisplayCompositeProjectionService") {
+        [void]$lines.Add('        <service android:name=".DisplayCompositeProjectionService" android:exported="false" android:foregroundServiceType="mediaProjection" />')
+    }
+    [void]$lines.Add('    </application>')
+    if ($Queries.Count -gt 0) {
+        [void]$lines.Add("")
+        [void]$lines.Add("    <queries>")
+        if ($Queries -contains "org.khronos.openxr.runtime_broker" -or $Queries -contains "org.khronos.openxr.system_runtime_broker") {
+            [void]$lines.Add('        <provider android:name="x" android:authorities="org.khronos.openxr.runtime_broker;org.khronos.openxr.system_runtime_broker" />')
+        }
+        foreach ($query in $Queries) {
+            if ($query -in @("org.khronos.openxr.runtime_broker", "org.khronos.openxr.system_runtime_broker")) {
+                continue
+            }
+            [void]$lines.Add("        <intent><action android:name=""$([System.Security.SecurityElement]::Escape($query))"" /></intent>")
+        }
+        [void]$lines.Add("    </queries>")
+    }
+    [void]$lines.Add("</manifest>")
+    return ($lines -join "`r`n") + "`r`n"
+}
+
+function Write-JsonArtifact {
+    param(
+        [Parameter(Mandatory=$true)]$Value,
+        [Parameter(Mandatory=$true)][string]$Path
+    )
+    New-Item -ItemType Directory -Path (Split-Path -Parent $Path) -Force | Out-Null
+    $Value | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $Path -Encoding UTF8
+}
+
+$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$repoRootText = [string]$RepoRoot
+$appSpecPath = Resolve-RepoPath -Path $AppSpec -RepoRoot $repoRootText
+$featureDirPath = Resolve-RepoPath -Path $FeatureDir -RepoRoot $repoRootText
+$outputRootPath = Resolve-RepoPath -Path $OutputRoot -RepoRoot $repoRootText
+$manifestPath = Resolve-RepoPath -Path $NativeRendererPropertyManifestRelativePath -RepoRoot $repoRootText
+
+$propertyManifest = Get-NativeRendererPropertyManifest -Path $manifestPath
+$nativeRendererPropertyByName = $propertyManifest.by_name
+$nativeRendererPropertiesByFamily = $propertyManifest.by_family
+$app = Read-JsonFile -Path $appSpecPath
+Assert-AppSpecShape -Spec $app -Path (Get-RepoRelativePath -RepoRoot $repoRootText -Path $appSpecPath)
+$features = Read-FeatureLibrary -FeatureDirPath $featureDirPath -RepoRoot $repoRootText -ManifestByName $nativeRendererPropertyByName
+
+$denied = @{}
+Add-StringsToSet -Set $denied -Values $app.denied_features
+$state = New-FeatureResolverState
+foreach ($requestedFeature in Get-StringArray $app.requested_features) {
+    Resolve-FeatureClosure -FeatureId $requestedFeature -Reason "requested by app spec" -Features $features -Denied $denied -State $state
+}
+$selectedFeatureIds = @(Get-SortedSet -Set $state.selected)
+
+foreach ($featureId in $selectedFeatureIds) {
+    $feature = $features[$featureId].descriptor
+    foreach ($other in Get-StringArray $feature.incompatible_with) {
+        if ($state.selected.ContainsKey($other)) {
+            throw "Selected feature $featureId is incompatible with selected feature $other"
+        }
+    }
+}
+
+$permissionsSet = @{}
+$usesFeaturesSet = @{}
+$activitiesSet = @{}
+$servicesSet = @{}
+$queriesSet = @{}
+$clearFamiliesSet = @{}
+$expectedRenderModesSet = @{}
+$requiredMarkerSet = @{}
+$forbiddenMarkerSet = @{}
+$assetSet = @{}
+$shaderSet = @{}
+$runtimeSet = [ordered]@{}
+$exclusiveGroups = [ordered]@{}
+$envByName = [ordered]@{}
+
+foreach ($featureId in $selectedFeatureIds) {
+    $feature = $features[$featureId].descriptor
+    Add-StringsToSet -Set $permissionsSet -Values $feature.android_manifest.permissions
+    Add-StringsToSet -Set $usesFeaturesSet -Values $feature.android_manifest.uses_features
+    Add-StringsToSet -Set $activitiesSet -Values $feature.android_manifest.activities
+    Add-StringsToSet -Set $servicesSet -Values $feature.android_manifest.services
+    Add-StringsToSet -Set $queriesSet -Values $feature.android_manifest.queries
+    Add-StringsToSet -Set $clearFamiliesSet -Values $feature.runtime_profile.clear_families
+    Add-StringsToSet -Set $expectedRenderModesSet -Values $feature.runtime_profile.expected_render_modes
+    Add-StringsToSet -Set $requiredMarkerSet -Values $feature.markers.required
+    Add-StringsToSet -Set $forbiddenMarkerSet -Values $feature.markers.forbidden
+    Add-StringsToSet -Set $assetSet -Values $feature.build_inputs.assets
+    Add-StringsToSet -Set $shaderSet -Values $feature.build_inputs.shaders
+    Add-FeatureRuntimeSet -RuntimeSet $runtimeSet -FeatureId $featureId -Feature $feature
+    foreach ($groupProperty in @($feature.exclusive_groups.PSObject.Properties | Sort-Object Name)) {
+        $group = [string]$groupProperty.Name
+        $value = [string]$groupProperty.Value
+        if ($exclusiveGroups.Contains($group) -and [string]$exclusiveGroups[$group] -ne $value) {
+            throw "Exclusive feature group $group selected multiple values: $($exclusiveGroups[$group]) and $value"
+        }
+        $exclusiveGroups[$group] = $value
+    }
+    foreach ($envEntry in @($feature.build_inputs.env)) {
+        if ($null -eq $envEntry.PSObject.Properties["name"]) {
+            throw "Feature $featureId build_inputs.env entry is missing name"
+        }
+        $envName = [string]$envEntry.name
+        $envValue = if ($null -ne $envEntry.PSObject.Properties["value"]) { [string]$envEntry.value } else { "" }
+        if ($envByName.Contains($envName) -and [string]$envByName[$envName].value -ne $envValue) {
+            throw "Build env $envName is set to conflicting values by selected features"
+        }
+        $envByName[$envName] = [ordered]@{
+            name = $envName
+            value = $envValue
+            source = if ($null -ne $envEntry.PSObject.Properties["source"]) { [string]$envEntry.source } else { "feature:$featureId" }
+        }
+    }
+}
+Add-StringsToSet -Set $permissionsSet -Values $app.permission_allowlist
+Add-StringsToSet -Set $requiredMarkerSet -Values $app.expected_markers.required
+Add-StringsToSet -Set $forbiddenMarkerSet -Values $app.expected_markers.forbidden
+
+$permissions = @(Get-SortedSet -Set $permissionsSet)
+$usesFeatures = @(Get-SortedSet -Set $usesFeaturesSet)
+$activities = @(Get-SortedSet -Set $activitiesSet)
+$services = @(Get-SortedSet -Set $servicesSet)
+$queries = @(Get-SortedSet -Set $queriesSet)
+$clearFamilies = @(Get-SortedSet -Set $clearFamiliesSet)
+$expectedRenderModes = @(Get-SortedSet -Set $expectedRenderModesSet)
+$requiredMarkers = @(Get-SortedSet -Set $requiredMarkerSet)
+$forbiddenMarkers = @(Get-SortedSet -Set $forbiddenMarkerSet)
+
+Assert-SetEquals -Label "Android permission surface" -Expected (Get-StringArray $app.declared_manifest.permissions) -Actual $permissions
+Assert-SetEquals -Label "Android uses-feature surface" -Expected (Get-StringArray $app.declared_manifest.uses_features) -Actual $usesFeatures
+Assert-SetEquals -Label "Android activity surface" -Expected (Get-StringArray $app.declared_manifest.activities) -Actual $activities
+Assert-SetEquals -Label "Android service surface" -Expected (Get-StringArray $app.declared_manifest.services) -Actual $services
+
+if (-not $runtimeSet.Contains($RenderModeProperty)) {
+    throw "Resolved app build did not set native renderer render mode: $RenderModeProperty"
+}
+$renderMode = [string]$runtimeSet[$RenderModeProperty]
+if ([string]$app.expected_render_mode -ne $renderMode) {
+    throw "App spec expected render mode $($app.expected_render_mode) but resolved $renderMode"
+}
+if ($expectedRenderModes.Count -gt 0 -and $expectedRenderModes -cnotcontains $renderMode) {
+    throw "Resolved render mode $renderMode is not allowed by selected feature expected_render_modes: $($expectedRenderModes -join ', ')"
+}
+
+$ownedPropertiesSet = @{}
+foreach ($propertyName in $runtimeSet.Keys) {
+    $ownedPropertiesSet[[string]$propertyName] = $true
+}
+foreach ($family in $clearFamilies) {
+    if (-not $nativeRendererPropertiesByFamily.ContainsKey($family)) {
+        throw "Selected feature declared unknown native renderer property family for clearing: $family"
+    }
+    foreach ($propertyName in @($nativeRendererPropertiesByFamily[$family])) {
+        $ownedPropertiesSet[[string]$propertyName] = $true
+    }
+}
+$ownedProperties = @(Get-SortedSet -Set $ownedPropertiesSet)
+
+$setProperties = @()
+foreach ($propertyName in @($runtimeSet.Keys | Sort-Object)) {
+    $settingId = $propertyName
+    if ($settingId.StartsWith($NativeRendererPropertyPrefix)) {
+        $settingId = "native_renderer." + $settingId.Substring($NativeRendererPropertyPrefix.Length)
+    }
+    $setProperties += [ordered]@{
+        name = [string]$propertyName
+        value = [string]$runtimeSet[$propertyName]
+        source_setting_id = $settingId
+    }
+}
+
+$appOutputDir = Join-Path $outputRootPath ([string]$app.app_id)
+$featureLockPath = Join-Path $appOutputDir "feature-lock.json"
+$runtimeProfilePath = Join-Path $appOutputDir "runtime-profile.json"
+$propertyWritePlanPath = Join-Path $appOutputDir "property-write-plan.json"
+$androidManifestPath = Join-Path $appOutputDir "AndroidManifest.xml"
+$buildEnvPath = Join-Path $appOutputDir "build-env.json"
+$buildManifestPath = Join-Path $appOutputDir "build-manifest.json"
+$auditPath = Join-Path $appOutputDir "app-build-audit.json"
+
+$featureDescriptorRecords = @()
+foreach ($featureId in $selectedFeatureIds) {
+    $featureDescriptorRecords += [ordered]@{
+        feature_id = $featureId
+        path = Get-RepoRelativePath -RepoRoot $repoRootText -Path $features[$featureId].path
+        sha256 = [string]$features[$featureId].sha256
+    }
+}
+
+$dependencyReasons = [ordered]@{}
+foreach ($featureId in $selectedFeatureIds) {
+    $dependencyReasons[$featureId] = [string]$state.reasons[$featureId]
+}
+
+$generatedOutputs = [ordered]@{
+    feature_lock = Get-RepoRelativePath -RepoRoot $repoRootText -Path $featureLockPath
+    runtime_profile = Get-RepoRelativePath -RepoRoot $repoRootText -Path $runtimeProfilePath
+    property_write_plan = Get-RepoRelativePath -RepoRoot $repoRootText -Path $propertyWritePlanPath
+    android_manifest = Get-RepoRelativePath -RepoRoot $repoRootText -Path $androidManifestPath
+    build_env = Get-RepoRelativePath -RepoRoot $repoRootText -Path $buildEnvPath
+    build_manifest = Get-RepoRelativePath -RepoRoot $repoRootText -Path $buildManifestPath
+    app_build_audit = Get-RepoRelativePath -RepoRoot $repoRootText -Path $auditPath
+}
+
+$validationCommands = @(
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Resolve-NativeAppBuild.ps1 -AppSpec $(Get-RepoRelativePath -RepoRoot $repoRootText -Path $appSpecPath) -DryRun",
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath $($generatedOutputs.runtime_profile) -DryRun -Out $($generatedOutputs.property_write_plan)",
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Test-NativeAppBuildProfile.ps1"
+)
+
+$featureLock = [ordered]@{
+    schema = $FeatureLockSchema
+    app_id = [string]$app.app_id
+    resolver_version = $ResolverVersion
+    app_spec_path = Get-RepoRelativePath -RepoRoot $repoRootText -Path $appSpecPath
+    app_spec_sha256 = Get-FileSha256 -Path $appSpecPath
+    selected_feature_ids = $selectedFeatureIds
+    denied_feature_ids = @(Get-StringArray $app.denied_features | Sort-Object)
+    feature_descriptors = $featureDescriptorRecords
+    dependency_reasons = $dependencyReasons
+    exclusive_groups = $exclusiveGroups
+    android_manifest = [ordered]@{
+        permissions = $permissions
+        uses_features = $usesFeatures
+        activities = $activities
+        services = $services
+        queries = $queries
+        package_name = [string]$app.package_name
+        package_policy = [string]$app.package_policy
+    }
+    runtime_profile = [ordered]@{
+        profile_id = "profile.quest.native_app.$($app.app_id)"
+        render_mode = $renderMode
+        owned_android_properties = $ownedProperties
+        set_properties = $setProperties
+        clear_families = $clearFamilies
+        expected_render_modes = $expectedRenderModes
+    }
+    build_inputs = [ordered]@{
+        env = @($envByName.Keys | Sort-Object | ForEach-Object { $envByName[$_] })
+        assets = @(Get-SortedSet -Set $assetSet)
+        shaders = @(Get-SortedSet -Set $shaderSet)
+        payloads = @($app.payloads)
+    }
+    expected_markers = [ordered]@{
+        required = $requiredMarkers
+        forbidden = $forbiddenMarkers
+    }
+    validation_commands = $validationCommands
+    generated_outputs = $generatedOutputs
+}
+Write-JsonArtifact -Value $featureLock -Path $featureLockPath
+
+$runtimeProfile = [ordered]@{
+    schema = $RuntimeProfileSchema
+    profile_id = "profile.quest.native_app.$($app.app_id)"
+    target_platform = "quest"
+    owned_android_properties = $ownedProperties
+    set_properties = $setProperties
+    expected_markers = $requiredMarkers
+    validation_commands = @(
+        "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath $($generatedOutputs.runtime_profile) -DryRun -Out $($generatedOutputs.property_write_plan)"
+    )
+}
+Write-JsonArtifact -Value $runtimeProfile -Path $runtimeProfilePath
+
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRootText "tools\Apply-RuntimeProfile.ps1") -ProfilePath $runtimeProfilePath -DryRun -Out $propertyWritePlanPath | Out-Host
+if ($LASTEXITCODE -ne 0) {
+    throw "Generated runtime profile failed Apply-RuntimeProfile.ps1 dry-run"
+}
+
+$manifestText = New-GeneratedAndroidManifestText -PackageName ([string]$app.package_name) -Permissions $permissions -UsesFeatures $usesFeatures -Activities $activities -Services $services -Queries $queries
+New-Item -ItemType Directory -Path (Split-Path -Parent $androidManifestPath) -Force | Out-Null
+Set-Content -LiteralPath $androidManifestPath -Value $manifestText -Encoding UTF8
+
+$buildEnv = [ordered]@{
+    schema = "rusty.quest.native_app_build_env.v1"
+    app_id = [string]$app.app_id
+    env = @($envByName.Keys | Sort-Object | ForEach-Object { $envByName[$_] })
+    assets = @(Get-SortedSet -Set $assetSet)
+    shaders = @(Get-SortedSet -Set $shaderSet)
+    payloads = @($app.payloads)
+}
+Write-JsonArtifact -Value $buildEnv -Path $buildEnvPath
+
+$buildManifest = [ordered]@{
+    schema = "rusty.quest.native_app_build_manifest.v1"
+    app_id = [string]$app.app_id
+    package_name = [string]$app.package_name
+    package_policy = [string]$app.package_policy
+    feature_lock_sha256 = Get-FileSha256 -Path $featureLockPath
+    runtime_profile_sha256 = Get-FileSha256 -Path $runtimeProfilePath
+    property_write_plan_sha256 = Get-FileSha256 -Path $propertyWritePlanPath
+    android_manifest_sha256 = Get-FileSha256 -Path $androidManifestPath
+    build_env_sha256 = Get-FileSha256 -Path $buildEnvPath
+}
+Write-JsonArtifact -Value $buildManifest -Path $buildManifestPath
+
+$audit = [ordered]@{
+    schema = "rusty.quest.native_app_build_audit.v1"
+    app_id = [string]$app.app_id
+    resolver_version = $ResolverVersion
+    dry_run = $true
+    source_app_spec = Get-RepoRelativePath -RepoRoot $repoRootText -Path $appSpecPath
+    selected_feature_ids = $selectedFeatureIds
+    denied_feature_ids = @(Get-StringArray $app.denied_features | Sort-Object)
+    android_permissions = $permissions
+    android_uses_features = $usesFeatures
+    render_mode = $renderMode
+    runtime_property_count = $ownedProperties.Count
+    set_property_count = $setProperties.Count
+    generated_outputs = $generatedOutputs
+    artifact_hashes = $buildManifest
+    result = "accepted"
+}
+Write-JsonArtifact -Value $audit -Path $auditPath
+
+Write-Output "native app-build dry-run accepted: $($app.app_id)"
+Write-Output "feature lock: $featureLockPath"
+Write-Output "audit report: $auditPath"

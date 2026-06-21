@@ -1,0 +1,68 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "environment_depth",
+  "owner_lane": "rusty-quest",
+  "status": "public-app-feature",
+  "description": "Meta environment-depth provider status and particle-map route.",
+  "provides": [
+    "environment_depth.scene_particle_map"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base",
+    "renderer.background.native_passthrough"
+  ],
+  "incompatible_with": [
+    "renderer.private_particles"
+  ],
+  "exclusive_groups": {
+    "depth_source": "xr-meta-environment-depth"
+  },
+  "android_manifest": {
+    "permissions": [
+      "horizonos.permission.USE_SCENE"
+    ],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.environment_depth.depth_units_policy": "projected-depth-from-near-far",
+      "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload": "false",
+      "debug.rustyquest.native_renderer.environment_depth.layer_policy": "mono-layer0",
+      "debug.rustyquest.native_renderer.environment_depth.mode": "scene-particle-map",
+      "debug.rustyquest.native_renderer.environment_depth.reference_space": "openxr-local",
+      "debug.rustyquest.native_renderer.environment_depth.source": "xr-meta-environment-depth"
+    },
+    "clear_families": [
+      "environment_depth"
+    ],
+    "expected_render_modes": [
+      "native-passthrough-style-only"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": [
+      "apps/native-renderer-android/native/shaders/environment_depth_particles.vert.glsl",
+      "apps/native-renderer-android/native/shaders/environment_depth_particles.frag.glsl"
+    ]
+  },
+  "markers": {
+    "required": [
+      "environmentDepthMode=scene-particle-map",
+      "environmentDepthHighRateJsonPayload=false"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-NativeRendererEnvironmentDepthStatic.ps1 -RepoRoot ."
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Environment-depth provider and aggregate markers are public; headset visual acceptance remains a separate device gate."
+}

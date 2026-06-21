@@ -1,0 +1,70 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "camera.hwb",
+  "owner_lane": "rusty-quest",
+  "status": "public-app-feature",
+  "description": "Camera2 hardware-buffer acquisition and Vulkan guide projection path.",
+  "provides": [
+    "camera.hwb",
+    "render.guide_texture"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [
+    "renderer.private_particles"
+  ],
+  "exclusive_groups": {
+    "camera_source": "camera2-hwb"
+  },
+  "android_manifest": {
+    "permissions": [
+      "android.permission.CAMERA",
+      "horizonos.permission.HEADSET_CAMERA",
+      "horizonos.permission.SPATIAL_CAMERA"
+    ],
+    "uses_features": [
+      "android.hardware.camera",
+      "android.hardware.camera2.full"
+    ],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.camera.output": "guide-public",
+      "debug.rustyquest.native_renderer.processing.layer": "blur",
+      "debug.rustyquest.native_renderer.render.mode": "custom-stereo-projection"
+    },
+    "clear_families": [
+      "camera",
+      "processing"
+    ],
+    "expected_render_modes": [
+      "custom-stereo-projection"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": [
+      "apps/native-renderer-android/native/shaders/camera_projection.vert.glsl",
+      "apps/native-renderer-android/native/shaders/camera_projection.frag.glsl"
+    ]
+  },
+  "markers": {
+    "required": [
+      "cameraProjectionPath=metadata-target-guide-texture"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-NativeRendererCameraGuideStatic.ps1 -RepoRoot ."
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Rusty Quest owns public camera acquisition and guide projection contracts, not private downstream visual effects."
+}

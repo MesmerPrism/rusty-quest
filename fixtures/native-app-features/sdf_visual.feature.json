@@ -1,0 +1,60 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "sdf_visual",
+  "owner_lane": "rusty-quest",
+  "status": "public-app-feature",
+  "description": "Target-space GPU SDF visual overlay for recorded or live hand mesh evidence.",
+  "provides": [
+    "sdf.gpu_visual"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base",
+    "hand_mesh_visual"
+  ],
+  "incompatible_with": [
+    "renderer.private_particles",
+    "renderer.stimulus_volume"
+  ],
+  "exclusive_groups": {
+    "sdf_visual": "target-space-gpu"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.sdf.update_period_frames": "2",
+      "debug.rustyquest.native_renderer.sdf.visual.enabled": "true"
+    },
+    "clear_families": [
+      "sdf"
+    ],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": [
+      "apps/native-renderer-android/native/shaders/gpu_sdf_field.comp.glsl",
+      "apps/native-renderer-android/native/shaders/gpu_sdf_overlay.frag.glsl"
+    ]
+  },
+  "markers": {
+    "required": [
+      "sdfVisualEnabled=true"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-NativeRendererGpuSdfStatic.ps1 -RepoRoot ."
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "SDF visual evidence is public; private effects must not be embedded in this descriptor."
+}

@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rusty.quest.native_app_feature.v1",
+  "title": "Rusty Quest native app feature descriptor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "feature_id",
+    "owner_lane",
+    "status",
+    "description",
+    "provides",
+    "depends_on",
+    "incompatible_with",
+    "exclusive_groups",
+    "android_manifest",
+    "runtime_profile",
+    "build_inputs",
+    "markers",
+    "validation",
+    "public_private_boundary"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.quest.native_app_feature.v1"
+    },
+    "feature_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)*$"
+    },
+    "owner_lane": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "public-substrate",
+        "public-app-feature",
+        "private-app-adapter",
+        "compatibility-surface",
+        "damaged-fixture"
+      ]
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provides": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "depends_on": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "incompatible_with": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "exclusive_groups": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "android_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "permissions",
+        "uses_features",
+        "activities",
+        "services",
+        "queries"
+      ],
+      "properties": {
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "uses_features": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "activities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "queries": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "runtime_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "set",
+        "clear_families",
+        "expected_render_modes"
+      ],
+      "properties": {
+        "set": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "clear_families": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "expected_render_modes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "build_inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "env",
+        "assets",
+        "shaders"
+      ],
+      "properties": {
+        "env": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "assets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "shaders": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "markers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "forbidden"
+      ],
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "forbidden": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "quick",
+        "standard",
+        "device"
+      ],
+      "properties": {
+        "quick": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "standard": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "device": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "public_private_boundary": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

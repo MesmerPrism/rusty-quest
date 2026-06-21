@@ -1,0 +1,54 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "manifold.bridge",
+  "owner_lane": "rusty-manifold",
+  "status": "public-substrate",
+  "description": "Low-rate local Manifold broker bridge for command/session stream routing.",
+  "provides": [
+    "manifold.local_broker_bridge"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {
+    "control_bridge": "manifold-local-broker"
+  },
+  "android_manifest": {
+    "permissions": [
+      "android.permission.INTERNET"
+    ],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.manifold.broker.host": "127.0.0.1",
+      "debug.rustyquest.native_renderer.manifold.broker.path": "/manifold/v1/events",
+      "debug.rustyquest.native_renderer.manifold.broker.port": "8765"
+    },
+    "clear_families": [
+      "manifold"
+    ],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "manifoldBrokerBridgeConfigured=true"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Manifold owns command/session authority; Rusty Quest owns only the native app bridge configuration."
+}

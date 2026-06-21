@@ -47,6 +47,19 @@ data, kind string, marker prefix, and opaque marker fields through
 `RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_*`; effect-specific constants and
 profile bodies remain outside Rusty Quest.
 
+New native APK variants must start from the source-only native app-build
+workflow instead of hand-editing runtime profiles, Android manifest
+permissions, or build wrapper environment variables. App-build specs under
+`fixtures/native-app-builds/` resolve against feature descriptors under
+`fixtures/native-app-features/` through
+`tools/Resolve-NativeAppBuild.ps1 -DryRun`, producing a feature lock, generated
+runtime profile, generated manifest surface, build env, build manifest, and
+audit report under ignored `local-artifacts/native-app-builds/`. The committed
+public-safe canary proves that camera, video, display-composite, stimulus,
+hand-anchor, depth, SDF, Makepad, native passthrough, and private-layer
+features cannot enter a solid-black private-particle app unless explicitly
+selected.
+
 `crates/rusty-quest-native-renderer` defines the first clean contract for a
 pure Quest-native OpenXR/Vulkan camera renderer. It models the public AGPL
 HWB import, offscreen guide blur, SDF input hook, private extension ABI slot,
@@ -380,6 +393,7 @@ evidence remain later validation work.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeAppBuildProfile.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-native-renderer"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-remote-camera"
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1

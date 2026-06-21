@@ -1,5 +1,15 @@
 # Rusty Quest Fixtures
 
+- `native-app-features/`: source-only native APK feature descriptors used by
+  `tools/Resolve-NativeAppBuild.ps1`. Each descriptor names dependencies,
+  incompatibilities, manifest surface, runtime-profile property ownership,
+  generated build inputs, and required/forbidden markers for one selectable
+  capability.
+- `native-app-builds/`: app-build specs for new native APK shapes. Agents
+  should request feature ids here and run the resolver instead of copying a
+  nearby runtime profile or broad Android manifest. Damaged app-build specs
+  prove denied features, permission supersets, render-mode mismatches, and
+  high-rate JSON misuse are rejected before any APK build.
 - `runtime-profiles/`: valid Quest runtime profiles, including separate native
   renderer profiles for no-real-hands recorded replay acceptance and the later
   live-hand visual diagnostic retest. The direct-HWB camera quality profiles

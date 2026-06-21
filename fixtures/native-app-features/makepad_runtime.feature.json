@@ -1,0 +1,45 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "makepad_runtime",
+  "owner_lane": "rusty-makepad",
+  "status": "compatibility-surface",
+  "description": "Marker for builds that intentionally route through the Makepad runtime instead of the native renderer.",
+  "provides": [
+    "makepad.runtime"
+  ],
+  "depends_on": [],
+  "incompatible_with": [
+    "quest.native.openxr_vulkan_base",
+    "renderer.private_particles"
+  ],
+  "exclusive_groups": {
+    "runtime_shell": "makepad"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Makepad runtime authority lives in the Makepad lane; native app builds must not pull it in accidentally."
+}

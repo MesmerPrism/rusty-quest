@@ -1,0 +1,63 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "renderer.background.native_passthrough",
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Native Meta passthrough background route through XR_FB_passthrough.",
+  "provides": [
+    "render.background.native_passthrough"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [
+    "renderer.background.solid_black"
+  ],
+  "exclusive_groups": {
+    "background": "native-passthrough"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [
+      "com.oculus.feature.PASSTHROUGH"
+    ],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.camera.output": "disabled",
+      "debug.rustyquest.native_renderer.passthrough.style.mode": "disabled"
+    },
+    "clear_families": [
+      "camera",
+      "passthrough_style"
+    ],
+    "expected_render_modes": [
+      "native-passthrough-style-only",
+      "native-passthrough-media-only",
+      "native-passthrough-graft-only",
+      "native-passthrough-stimulus-volume"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "nativePassthroughRequested=true"
+    ],
+    "forbidden": [
+      "solidBlackBackground=true"
+    ]
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Native passthrough is a public Quest route; downstream overlays must be selected separately."
+}

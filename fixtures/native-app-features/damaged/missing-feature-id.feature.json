@@ -1,0 +1,37 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "owner_lane": "rusty-quest",
+  "status": "damaged-fixture",
+  "description": "Damaged descriptor missing feature_id.",
+  "provides": [],
+  "depends_on": [],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Damaged fixture: descriptors must name a feature id."
+}

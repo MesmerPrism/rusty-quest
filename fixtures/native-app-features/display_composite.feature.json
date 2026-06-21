@@ -1,0 +1,77 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "display_composite",
+  "owner_lane": "rusty-quest",
+  "status": "public-app-feature",
+  "description": "Android MediaProjection display-composite feedback surface sampled through native AHardwareBuffer.",
+  "provides": [
+    "display_composite.feedback_surface"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base",
+    "renderer.background.native_passthrough"
+  ],
+  "incompatible_with": [
+    "renderer.private_particles",
+    "video_projection"
+  ],
+  "exclusive_groups": {
+    "media_plane": "display-composite"
+  },
+  "android_manifest": {
+    "permissions": [
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION"
+    ],
+    "uses_features": [],
+    "activities": [
+      "ControlPanelActivity"
+    ],
+    "services": [
+      "DisplayCompositeProjectionService"
+    ],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.display_composite.enabled": "true",
+      "debug.rustyquest.native_renderer.display_composite.feedback.enabled": "true",
+      "debug.rustyquest.native_renderer.display_composite.feedback.projection": "metadata-target-screen-uv",
+      "debug.rustyquest.native_renderer.display_composite.high_rate_json_payload": "false",
+      "debug.rustyquest.native_renderer.display_composite.mode": "gpu-recursive-feedback-diagnostic",
+      "debug.rustyquest.native_renderer.display_composite.source": "android-mediaprojection",
+      "debug.rustyquest.native_renderer.render.mode": "native-passthrough-media-only"
+    },
+    "clear_families": [
+      "display_composite"
+    ],
+    "expected_render_modes": [
+      "native-passthrough-media-only"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": [
+      "apps/native-renderer-android/native/shaders/display_composite_feedback.vert.glsl",
+      "apps/native-renderer-android/native/shaders/display_composite_feedback.frag.glsl"
+    ]
+  },
+  "markers": {
+    "required": [
+      "displayCompositeEnabled=true",
+      "displayCompositeHighRateJsonPayload=false"
+    ],
+    "forbidden": [
+      "cameraProjectionPath=metadata-target-guide-texture"
+    ]
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-NativeRendererDisplayCompositeStatic.ps1 -RepoRoot ."
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Display-composite capture is a public lab route and must not be implied by unrelated visual apps."
+}

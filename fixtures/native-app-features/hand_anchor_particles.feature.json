@@ -1,0 +1,70 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "hand_anchor_particles",
+  "owner_lane": "rusty-quest",
+  "status": "public-app-feature",
+  "description": "Resident GPU hand-anchor particle route for topology and ordering diagnostics.",
+  "provides": [
+    "hand_anchor_particles.gpu_resident"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base",
+    "hand_mesh_visual"
+  ],
+  "incompatible_with": [
+    "renderer.private_particles"
+  ],
+  "exclusive_groups": {
+    "primary_visual": "hand-anchor-particles"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.hand_anchor_particles.dynamics": "deterministic-anchors",
+      "debug.rustyquest.native_renderer.hand_anchor_particles.enabled": "true",
+      "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.implementation": "gpu-index-remap",
+      "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.interval_frames": "1",
+      "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.mode": "per-particle-back-to-front",
+      "debug.rustyquest.native_renderer.hand_anchor_particles.per_hand": "1024",
+      "debug.rustyquest.native_renderer.hand_anchor_particles.radius_m": "0.0045",
+      "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.blend_mode": "legacy-additive-multiply",
+      "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.composition_mode": "approximate-depth-suppressed",
+      "debug.rustyquest.native_renderer.hand_anchor_particles.transparency.depth_suppression_strength": "1.5"
+    },
+    "clear_families": [
+      "hand_anchor_particles"
+    ],
+    "expected_render_modes": [
+      "solid-black-openxr-hands-anchor-particles"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": [
+      "apps/native-renderer-android/native/shaders/hand_anchor_particles.vert.glsl",
+      "apps/native-renderer-android/native/shaders/hand_anchor_particles.frag.glsl"
+    ]
+  },
+  "markers": {
+    "required": [
+      "handAnchorParticlesEnabled=true",
+      "handAnchorParticleGpuSortActive=true"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-NativeRendererHandVisualStatic.ps1 -RepoRoot ."
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Anchor particle rendering is public; private payload dynamics require a separate selected feature."
+}

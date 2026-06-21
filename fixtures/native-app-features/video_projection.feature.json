@@ -1,0 +1,71 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "video_projection",
+  "owner_lane": "rusty-quest",
+  "status": "public-app-feature",
+  "description": "App-private decoded video projection surface using MediaCodec into a Rust-owned AImageReader surface.",
+  "provides": [
+    "video_projection.full_eye"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [
+    "display_composite",
+    "renderer.private_particles"
+  ],
+  "exclusive_groups": {
+    "media_plane": "video-projection"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.render.mode": "custom-stereo-projection",
+      "debug.rustyquest.native_renderer.video_projection.enabled": "true",
+      "debug.rustyquest.native_renderer.video_projection.high_rate_json_payload": "false",
+      "debug.rustyquest.native_renderer.video_projection.looping": "true",
+      "debug.rustyquest.native_renderer.video_projection.opacity": "1.0",
+      "debug.rustyquest.native_renderer.video_projection.path": "video/v.mp4",
+      "debug.rustyquest.native_renderer.video_projection.source": "app-private-file",
+      "debug.rustyquest.native_renderer.video_projection.stereo_layout": "side-by-side-left-right",
+      "debug.rustyquest.native_renderer.video_projection.target": "full-eye"
+    },
+    "clear_families": [
+      "video_projection"
+    ],
+    "expected_render_modes": [
+      "custom-stereo-projection"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": [
+      "apps/native-renderer-android/native/shaders/video_projection.vert.glsl",
+      "apps/native-renderer-android/native/shaders/video_projection.frag.glsl"
+    ]
+  },
+  "markers": {
+    "required": [
+      "videoProjectionEnabled=true",
+      "videoProjectionHighRateJsonPayload=false"
+    ],
+    "forbidden": [
+      "displayCompositeEnabled=true"
+    ]
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-NativeRendererVideoProjectionStatic.ps1 -RepoRoot ."
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "The public contract owns the video surface and source metadata, not user media contents."
+}

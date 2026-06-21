@@ -1,0 +1,66 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "projection_target.breathing_room",
+  "owner_lane": "rusty-quest",
+  "status": "public-app-feature",
+  "description": "Breathing Room projection-target controls and PMB-compatible low-rate bridge settings.",
+  "provides": [
+    "projection_target.breathing_room"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base",
+    "camera.hwb",
+    "manifold.bridge"
+  ],
+  "incompatible_with": [
+    "input.right_primary_private_particle_recenter",
+    "renderer.private_particles",
+    "renderer.stimulus_volume"
+  ],
+  "exclusive_groups": {
+    "projection_target": "breathing-room",
+    "right_primary_action": "projection-target-reset"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload": "false",
+      "debug.rustyquest.native_renderer.projection.target.controls": "true",
+      "debug.rustyquest.native_renderer.projection.target.scale": "1.0"
+    },
+    "clear_families": [
+      "projection_target"
+    ],
+    "expected_render_modes": [
+      "custom-stereo-projection"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "projectionTargetControlsEnabled=true",
+      "projectionTargetBreathHighRateJsonPayload=false"
+    ],
+    "forbidden": [
+      "privateParticleRecenterInputEnabled=true"
+    ]
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-NativeRendererProjectionTargetStatic.ps1 -RepoRoot ."
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Breathing Room projection-target control belongs to Rusty Quest; PMB profile semantics stay in the package lane."
+}

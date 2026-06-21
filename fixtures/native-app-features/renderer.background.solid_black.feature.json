@@ -1,0 +1,64 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "renderer.background.solid_black",
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Opaque black OpenXR projection-layer background with passthrough and camera projection disabled.",
+  "provides": [
+    "render.background.solid_black"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [
+    "renderer.background.native_passthrough"
+  ],
+  "exclusive_groups": {
+    "background": "solid-black"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.camera.output": "disabled",
+      "debug.rustyquest.native_renderer.replay.visual_proof.enabled": "false",
+      "debug.rustyquest.native_renderer.processing.layer": "blur"
+    },
+    "clear_families": [
+      "camera",
+      "passthrough_style",
+      "processing"
+    ],
+    "expected_render_modes": [
+      "solid-black-hands-and-grafts",
+      "solid-black-openxr-hands-anchor-particles",
+      "solid-black-private-particles",
+      "solid-black-stimulus-volume"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "solidBlackBackground=true"
+    ],
+    "forbidden": [
+      "nativePassthroughRequested=true",
+      "cameraProjectionPath=metadata-target-guide-texture"
+    ]
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Solid black background policy is public; private visuals must attach through a selected visual feature."
+}

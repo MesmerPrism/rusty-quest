@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rusty.quest.native_app_build.v1",
+  "title": "Rusty Quest native app build spec",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "app_id",
+    "owner_repo",
+    "package_policy",
+    "package_name",
+    "requested_features",
+    "denied_features",
+    "payloads",
+    "permission_allowlist",
+    "declared_manifest",
+    "expected_render_mode",
+    "expected_markers",
+    "validation_tier"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.quest.native_app_build.v1"
+    },
+    "app_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)*$"
+    },
+    "owner_repo": {
+      "type": "string",
+      "minLength": 1
+    },
+    "package_policy": {
+      "type": "string",
+      "enum": [
+        "native-renderer-dev-package",
+        "app-specific-package"
+      ]
+    },
+    "package_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "requested_features": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "denied_features": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "payloads": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "permission_allowlist": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true
+    },
+    "declared_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "permissions",
+        "uses_features",
+        "activities",
+        "services"
+      ],
+      "properties": {
+        "permissions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "uses_features": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "activities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "services": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "expected_render_mode": {
+      "type": "string",
+      "minLength": 1
+    },
+    "expected_markers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "forbidden"
+      ],
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        },
+        "forbidden": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "validation_tier": {
+      "type": "string",
+      "enum": [
+        "quick",
+        "standard",
+        "device"
+      ]
+    }
+  }
+}

@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rusty.quest.native_app_feature_lock.v1",
+  "title": "Rusty Quest native app resolved feature lock",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "app_id",
+    "resolver_version",
+    "app_spec_sha256",
+    "selected_feature_ids",
+    "denied_feature_ids",
+    "feature_descriptors",
+    "dependency_reasons",
+    "exclusive_groups",
+    "android_manifest",
+    "runtime_profile",
+    "build_inputs",
+    "expected_markers",
+    "validation_commands",
+    "generated_outputs"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.quest.native_app_feature_lock.v1"
+    },
+    "app_id": {
+      "type": "string"
+    },
+    "resolver_version": {
+      "type": "string"
+    },
+    "app_spec_sha256": {
+      "type": "string"
+    },
+    "selected_feature_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "denied_feature_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "feature_descriptors": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "dependency_reasons": {
+      "type": "object"
+    },
+    "exclusive_groups": {
+      "type": "object"
+    },
+    "android_manifest": {
+      "type": "object"
+    },
+    "runtime_profile": {
+      "type": "object"
+    },
+    "build_inputs": {
+      "type": "object"
+    },
+    "expected_markers": {
+      "type": "object"
+    },
+    "validation_commands": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "generated_outputs": {
+      "type": "object"
+    }
+  }
+}

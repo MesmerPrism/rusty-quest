@@ -1,0 +1,49 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "damaged.display_composite_high_rate_json",
+  "owner_lane": "rusty-quest",
+  "status": "damaged-fixture",
+  "description": "Damaged descriptor that tries to route high-rate media through Android properties.",
+  "provides": [
+    "damaged.high_rate_json"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.display_composite.high_rate_json_payload": "true",
+      "debug.rustyquest.native_renderer.render.mode": "native-passthrough-media-only"
+    },
+    "clear_families": [
+      "display_composite"
+    ],
+    "expected_render_modes": [
+      "native-passthrough-media-only"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Damaged fixture: high-rate JSON must be rejected."
+}

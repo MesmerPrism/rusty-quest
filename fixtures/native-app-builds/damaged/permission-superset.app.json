@@ -1,0 +1,50 @@
+{
+  "schema": "rusty.quest.native_app_build.v1",
+  "app_id": "damaged_permission_superset",
+  "owner_repo": "downstream-private-app",
+  "package_policy": "native-renderer-dev-package",
+  "package_name": "io.github.mesmerprism.rustyquest.native_renderer",
+  "requested_features": [
+    "quest.native.openxr_vulkan_base",
+    "renderer.background.solid_black",
+    "renderer.private_particles",
+    "input.right_primary_private_particle_recenter"
+  ],
+  "denied_features": [
+    "camera.hwb",
+    "display_composite",
+    "environment_depth",
+    "hand_anchor_particles",
+    "hand_mesh_visual",
+    "makepad_runtime",
+    "private_layer",
+    "projection_target.breathing_room",
+    "renderer.background.native_passthrough",
+    "renderer.stimulus_volume",
+    "sdf_visual",
+    "video_projection"
+  ],
+  "payloads": [],
+  "permission_allowlist": [],
+  "declared_manifest": {
+    "permissions": [
+      "android.permission.CAMERA",
+      "org.khronos.openxr.permission.OPENXR",
+      "org.khronos.openxr.permission.OPENXR_SYSTEM"
+    ],
+    "uses_features": [
+      "android.hardware.vr.headtracking",
+      "android.opengl.gles.3.1"
+    ],
+    "activities": [
+      "android.app.NativeActivity"
+    ],
+    "services": []
+  },
+  "expected_render_mode": "solid-black-private-particles",
+  "expected_markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation_tier": "quick"
+}

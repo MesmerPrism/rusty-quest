@@ -1,0 +1,55 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "input.right_primary_private_particle_recenter",
+  "owner_lane": "rusty-quest",
+  "status": "public-app-feature",
+  "description": "Right primary button binding for recentering the private-particle world anchor.",
+  "provides": [
+    "input.right_primary.private_particle_recenter"
+  ],
+  "depends_on": [
+    "renderer.private_particles"
+  ],
+  "incompatible_with": [
+    "projection_target.breathing_room",
+    "renderer.stimulus_volume"
+  ],
+  "exclusive_groups": {
+    "right_primary_action": "private-particle-recenter"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": [
+      "solid-black-private-particles"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "privateParticleRecenterInputEnabled=true",
+      "rightPrimaryBinding=private-particle-anchor"
+    ],
+    "forbidden": [
+      "rightPrimaryBinding=stimulus-randomize",
+      "rightPrimaryBinding=projection-target-reset"
+    ]
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Only the generic input binding is public; app-specific recenter semantics remain downstream-owned."
+}
