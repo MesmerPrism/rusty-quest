@@ -9,7 +9,7 @@
     "apps/native-renderer-android/native/src/native_renderer_video_projection_options.rs",
     "apps/native-renderer-android/native/src/projection_target_state.rs"
   ],
-  "property_count": 141,
+  "property_count": 148,
   "properties": [
     {
       "name": "debug.rustyquest.native_renderer.camera.direct_border.opacity",
@@ -1236,6 +1236,135 @@
       ]
     },
     {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.amplitude",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.enabled",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.oscillator_hz",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.01,
+        "max": 12.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.phase_hz",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 4.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.source",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "disabled",
+        "oscillator"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.speed_boost",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 4.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.update_hz",
+      "family": "passthrough_style",
+      "runtime_owner": "native_renderer_passthrough_style_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 1.0,
+        "max": 60.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
       "name": "debug.rustyquest.native_renderer.passthrough.style.brightness",
       "family": "passthrough_style",
       "runtime_owner": "native_renderer_passthrough_style_options",
@@ -2422,7 +2551,15 @@
         "alpha-over",
         "crossfade",
         "linear-crossfade",
-        "luma-match"
+        "luma-match",
+        "chroma-luma",
+        "soft-light",
+        "overlay",
+        "screen",
+        "multiply",
+        "gradient-aware",
+        "two-band",
+        "temporal-stabilized"
       ],
       "validators": [
         "runtime-parser",

@@ -234,7 +234,11 @@ projection-border and peripheral-stretch settings parsing belongs to
 `native_renderer_projection_border_stretch_options`;
 native Meta passthrough compositor style parsing belongs to
 `native_renderer_passthrough_style_options`, with the raw
-`xrPassthroughLayerSetStyleFB` bridge kept in `openxr_passthrough_style`;
+`xrPassthroughLayerSetStyleFB` bridge kept in `openxr_passthrough_style`.
+The first audio-reactive parity slice also belongs to that style owner: it is
+profile-configured, oscillator-backed, and updates the effective mono-to-RGBA
+color-map phase plus edge tint at a bounded rate while leaving future
+microphone capture as a source adapter;
 stimulus-volume settings parsing belongs to
 `native_renderer_stimulus_volume_options`; and fullscreen stereo video input
 settings parsing belongs to `native_renderer_video_projection_options`.

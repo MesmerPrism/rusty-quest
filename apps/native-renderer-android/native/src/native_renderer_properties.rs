@@ -155,6 +155,20 @@ pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_SMALL_COMPONENT_POLICY: 
     "debug.rustyquest.native_renderer.environment_depth.surface_support.small_component_policy";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY: &str =
     "debug.rustyquest.native_renderer.environment_depth.surface_support.free_space_decay";
+pub(crate) const PROP_PASSTHROUGH_STYLE_AUDIO_REACTIVE_AMPLITUDE: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.amplitude";
+pub(crate) const PROP_PASSTHROUGH_STYLE_AUDIO_REACTIVE_ENABLED: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.enabled";
+pub(crate) const PROP_PASSTHROUGH_STYLE_AUDIO_REACTIVE_OSCILLATOR_HZ: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.oscillator_hz";
+pub(crate) const PROP_PASSTHROUGH_STYLE_AUDIO_REACTIVE_PHASE_HZ: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.phase_hz";
+pub(crate) const PROP_PASSTHROUGH_STYLE_AUDIO_REACTIVE_SOURCE: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.source";
+pub(crate) const PROP_PASSTHROUGH_STYLE_AUDIO_REACTIVE_SPEED_BOOST: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.speed_boost";
+pub(crate) const PROP_PASSTHROUGH_STYLE_AUDIO_REACTIVE_UPDATE_HZ: &str =
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.update_hz";
 pub(crate) const PROP_PASSTHROUGH_STYLE_BRIGHTNESS: &str =
     "debug.rustyquest.native_renderer.passthrough.style.brightness";
 pub(crate) const PROP_PASSTHROUGH_STYLE_COLOR_AMPLITUDE: &str =

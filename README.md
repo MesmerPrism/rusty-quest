@@ -247,7 +247,12 @@ in `native_renderer_hand_anchor_particle_options`; projection-border and
 peripheral-stretch parsing lives in
 `native_renderer_projection_border_stretch_options`; native Meta passthrough
 compositor style parsing lives in `native_renderer_passthrough_style_options`
-and the raw XR_FB_passthrough style call lives in `openxr_passthrough_style`;
+and the raw XR_FB_passthrough style call lives in `openxr_passthrough_style`.
+The same style owner now includes an opt-in oscillator-backed audio-reactive
+controller that reuses the approved mono-to-RGBA gradient and shifts color
+phase/edge tint through bounded `xrPassthroughLayerSetStyleFB` updates; real
+microphone capture remains a later source adapter, not a parallel parameter
+authority;
 stimulus-volume parsing lives in `native_renderer_stimulus_volume_options`;
 render-route, compact hand source, hand-visual diagnostic, and private-layer
 parsing lives in

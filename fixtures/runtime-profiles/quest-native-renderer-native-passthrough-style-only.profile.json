@@ -23,6 +23,13 @@
     "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode",
     "debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload",
     "debug.rustyquest.native_renderer.passthrough.style.mode",
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.enabled",
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.source",
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.update_hz",
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.oscillator_hz",
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.amplitude",
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.phase_hz",
+    "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.speed_boost",
     "debug.rustyquest.native_renderer.passthrough.style.opacity",
     "debug.rustyquest.native_renderer.passthrough.style.edge_color.r",
     "debug.rustyquest.native_renderer.passthrough.style.edge_color.g",
@@ -136,6 +143,41 @@
       "source_setting_id": "native_renderer.passthrough.style.mode"
     },
     {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.enabled",
+      "value": "true",
+      "source_setting_id": "native_renderer.passthrough.style.audio_reactive.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.source",
+      "value": "oscillator",
+      "source_setting_id": "native_renderer.passthrough.style.audio_reactive.source"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.update_hz",
+      "value": "30.0",
+      "source_setting_id": "native_renderer.passthrough.style.audio_reactive.update_hz"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.oscillator_hz",
+      "value": "1.35",
+      "source_setting_id": "native_renderer.passthrough.style.audio_reactive.oscillator_hz"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.amplitude",
+      "value": "0.72",
+      "source_setting_id": "native_renderer.passthrough.style.audio_reactive.amplitude"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.phase_hz",
+      "value": "0.125",
+      "source_setting_id": "native_renderer.passthrough.style.audio_reactive.phase_hz"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.speed_boost",
+      "value": "0.65",
+      "source_setting_id": "native_renderer.passthrough.style.audio_reactive.speed_boost"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.passthrough.style.opacity",
       "value": "1.0",
       "source_setting_id": "native_renderer.passthrough.style.opacity"
@@ -206,6 +248,11 @@
     "passthroughStyleEnabled=true",
     "passthroughStyleExtensionChain=PassthroughColorMapMonoToRgbaFB",
     "passthroughColorMapEntries=256",
+    "passthroughAudioReactiveEnabled=true",
+    "passthroughAudioReactiveSource=oscillator",
+    "status=audio-reactive-applied",
+    "passthroughAudioAmplitude=",
+    "passthroughAudioPhase=",
     "xrPassthroughLayerSetStyleFB=true",
     "environmentDepthMode=disabled",
     "displayCompositeEnabled=false",

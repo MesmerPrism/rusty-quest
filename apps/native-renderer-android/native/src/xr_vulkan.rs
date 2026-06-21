@@ -66,6 +66,7 @@ use crate::{
         PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV, PROP_PROCESSING_LAYER, PROP_RENDER_MODE,
         PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SWAPCHAIN_COLOR_FORMAT_MODE,
     },
+    native_renderer_passthrough_style_options::NativePassthroughStyleAudioReactiveState,
     native_renderer_timing::{
         elapsed_ms, FrameCpuTimings, GpuStageTimings, GpuTimestampStage, GpuTimestampTracker,
     },
@@ -480,7 +481,7 @@ unsafe fn run_projection_loop_inner(
             stimulus_actions = None;
         }
     }
-    let native_passthrough = NativePassthroughRuntime::create(
+    let mut native_passthrough = NativePassthroughRuntime::create(
         &session,
         runtime_options.render_mode,
         enabled_extensions.fb_passthrough,
@@ -1144,7 +1145,7 @@ unsafe fn run_projection_loop_inner(
         camera_runtime,
         render_mode,
         environment_blend_mode,
-        native_passthrough.as_ref(),
+        native_passthrough.as_mut(),
         stimulus_actions.as_mut(),
         gpu_stimulus_volume_renderer.as_mut(),
         replay,
@@ -1542,7 +1543,7 @@ unsafe fn run_projection_frames(
     camera_runtime: Option<&NativeCameraRuntime>,
     render_mode: NativeRendererRenderMode,
     environment_blend_mode: xr::EnvironmentBlendMode,
-    native_passthrough: Option<&NativePassthroughRuntime>,
+    mut native_passthrough: Option<&mut NativePassthroughRuntime>,
     mut stimulus_actions: Option<&mut StimulusVolumeActions>,
     mut gpu_stimulus_volume_renderer: Option<&mut GpuStimulusVolumeRenderer>,
     replay: &RecordedHandReplaySummary,
@@ -1757,6 +1758,9 @@ unsafe fn run_projection_frames(
             .as_secs_f32()
             .clamp(0.0, 1.0);
         previous_frame_instant = frame_instant;
+        if let Some(runtime) = native_passthrough.as_deref_mut() {
+            runtime.update_audio_reactive_style(session, dt_seconds, frame_count);
+        }
 
         if let Some(candidate) = crate::native_renderer_stimulus_panel::take_live_candidate() {
             apply_live_stimulus_candidate(
@@ -2772,8 +2776,9 @@ unsafe fn run_projection_frames(
             .layer_flags(projection_layer_flags)
             .space(reference_space)
             .views(&projection_views);
-        let passthrough_layer =
-            native_passthrough.map(|runtime| runtime.composition_layer_raw(reference_space));
+        let passthrough_layer = native_passthrough
+            .as_ref()
+            .map(|runtime| runtime.composition_layer_raw(reference_space));
         let mut layers: Vec<&xr::CompositionLayerBase<xr::Vulkan>> = Vec::with_capacity(2);
         if let Some(passthrough_layer) = passthrough_layer.as_ref() {
             layers.push(passthrough_layer_base(passthrough_layer));
@@ -4266,6 +4271,8 @@ impl ProjectionSwapchain {
 struct NativePassthroughRuntime {
     _passthrough: xr::Passthrough,
     layer: xr::PassthroughLayerFB,
+    passthrough_style_settings: NativePassthroughStyleSettings,
+    audio_reactive_state: NativePassthroughStyleAudioReactiveState,
 }
 
 impl NativePassthroughRuntime {
@@ -4392,7 +4399,66 @@ impl NativePassthroughRuntime {
         Some(Self {
             _passthrough: passthrough,
             layer,
+            passthrough_style_settings,
+            audio_reactive_state: NativePassthroughStyleAudioReactiveState::new(),
         })
+    }
+
+    fn update_audio_reactive_style(
+        &mut self,
+        session: &xr::Session<xr::Vulkan>,
+        delta_seconds: f32,
+        frame_count: u64,
+    ) {
+        let snapshot = self.audio_reactive_state.advance(
+            self.passthrough_style_settings.audio_reactive,
+            delta_seconds,
+        );
+        if !self
+            .audio_reactive_state
+            .should_update(self.passthrough_style_settings, delta_seconds)
+        {
+            return;
+        }
+
+        let effective_settings = self
+            .passthrough_style_settings
+            .with_audio_snapshot(snapshot);
+        match crate::openxr_passthrough_style::apply_passthrough_layer_style(
+            session,
+            &self.layer,
+            effective_settings,
+        ) {
+            Ok("disabled") => crate::marker(
+                "native-passthrough-style",
+                format!(
+                    "status=audio-reactive-disabled frame={} xrPassthroughLayerSetStyleFB=false nativePassthroughLayerActive=true {} {}",
+                    frame_count,
+                    snapshot.marker_fields(),
+                    effective_settings.marker_fields()
+                ),
+            ),
+            Ok(applied_chain) => crate::marker(
+                "native-passthrough-style",
+                format!(
+                    "status=audio-reactive-applied frame={} xrPassthroughLayerSetStyleFB=true appliedStyleChain={} nativePassthroughLayerActive=true {} {}",
+                    frame_count,
+                    applied_chain,
+                    snapshot.marker_fields(),
+                    effective_settings.marker_fields()
+                ),
+            ),
+            Err(error) => crate::marker(
+                "native-passthrough-style",
+                format!(
+                    "status=audio-reactive-error frame={} stage=xrPassthroughLayerSetStyleFB reason={} xrPassthroughLayerSetStyleFB=false nativePassthroughLayerActive=true {} {}",
+                    frame_count,
+                    crate::sanitize(&error),
+                    snapshot.marker_fields(),
+                    effective_settings.marker_fields()
+                ),
+            ),
+        }
     }
 
     fn composition_layer_raw(&self, _space: &xr::Space) -> xr::sys::CompositionLayerPassthroughFB {
