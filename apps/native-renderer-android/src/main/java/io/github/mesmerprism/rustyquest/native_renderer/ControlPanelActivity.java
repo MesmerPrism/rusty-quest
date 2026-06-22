@@ -12,6 +12,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
+import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
@@ -128,6 +129,34 @@ public final class ControlPanelActivity extends Activity {
         "Driver 6 orbit angle",
         "Driver 7 animation frame"
     };
+    private static final int DEPTH_WAVE_DRIVER_INDEX = 3;
+    private static final double DEPTH_WAVE_MIN_PERCENT = 0.0;
+    private static final double DEPTH_WAVE_MAX_PERCENT = 0.1;
+    private static final int DEPTH_WAVE_DIMENSION_INDEX = 4;
+    private static final int DEPTH_WAVE_CYCLE_MULTIPLIER = 0;
+    private static final String[] DEPTH_WAVE_DRIVER_POLICIES = new String[] {
+        "driver3.value01 live",
+        "oscillator payload rebuild",
+        "unassigned fallback payload rebuild"
+    };
+    private static final double[] AKD_HUMP_SAMPLES01 = new double[] {
+        0.000000,
+        0.148741,
+        0.318815,
+        0.496000,
+        0.666074,
+        0.814815,
+        0.928000,
+        0.991407,
+        0.991407,
+        0.928000,
+        0.814815,
+        0.666074,
+        0.496000,
+        0.318815,
+        0.148741,
+        0.000000
+    };
     private static boolean nativeBridgeLoaded;
     private static String nativeBridgeLoadError;
 
@@ -195,6 +224,11 @@ public final class ControlPanelActivity extends Activity {
     private SliderControl privateParticleTracerDrawSlots;
     private SliderControl privateParticleTracerLifetime;
     private SliderControl privateParticleTracerCopies;
+    private Runnable pendingPrivateParticleDepthWaveApply;
+    private Spinner depthWaveDriverPolicy;
+    private SliderControl depthWavePercent;
+    private SliderControl depthWaveDriverValue01;
+    private TextView depthWaveResolvedLabel;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -206,6 +240,8 @@ public final class ControlPanelActivity extends Activity {
             updateStatus("Layer selector ready.");
         } else if ("private-particle-dynamics".equals(panelMode)) {
             updateStatus("Particle dynamics panel ready.");
+        } else if ("private-particle-depth-wave".equals(panelMode)) {
+            updateStatus("Depth wave panel ready.");
         } else {
             updateStatus("Panel ready. Candidate path: " + new File(getFilesDir(), CANDIDATE_FILE));
         }
@@ -286,6 +322,9 @@ public final class ControlPanelActivity extends Activity {
         }
         if ("private-particle-dynamics".equals(panelMode)) {
             return buildPrivateParticleDynamicsView();
+        }
+        if ("private-particle-depth-wave".equals(panelMode)) {
+            return buildPrivateParticleDepthWaveView();
         }
         return buildStimulusPanelView();
     }
@@ -761,6 +800,208 @@ public final class ControlPanelActivity extends Activity {
         return actionBlock;
     }
 
+    private View buildPrivateParticleDepthWaveView() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setBackgroundColor(PANEL_BG);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(18);
+        root.setPadding(pad, pad, pad, pad);
+        scroll.addView(root);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = text("Depth Wave Panel", 22, PANEL_FG);
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button headerClose = button("Close");
+        headerClose.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                closePanelAndReturnToImmersive();
+            }
+        });
+        header.addView(headerClose);
+        root.addView(header);
+        root.addView(text("AKD depth_wave_percent control surface.", 13, PANEL_MUTED));
+        root.addView(depthWavePreviewBand());
+
+        liveAutoApply = checkBox("Live auto update", true);
+        liveAutoApply.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (liveAutoApply.isChecked()) {
+                    schedulePrivateParticleDepthWaveApplyFromControl();
+                } else {
+                    cancelPendingPrivateParticleDepthWaveApply();
+                    setStatusText("Live auto update off. Use Apply Live for explicit depth-wave changes.");
+                }
+            }
+        });
+        root.addView(liveAutoApply);
+
+        JSONObject statusJson = readPrivateParticleDynamicsStatusJson();
+        double currentDriver = privateParticleDriverValueFromStatusOrProperty(
+            privateParticleStatusBody(statusJson),
+            DEPTH_WAVE_DRIVER_INDEX,
+            0.0
+        );
+        double currentPercent = depthWavePercentForDriverValue01(currentDriver);
+
+        root.addView(sectionTitle("Value"));
+        depthWavePercent = slider(
+            "Depth wave percent",
+            DEPTH_WAVE_MIN_PERCENT,
+            DEPTH_WAVE_MAX_PERCENT,
+            currentPercent,
+            1000,
+            "",
+            false,
+            new Runnable() {
+                @Override
+                public void run() {
+                    setSliderValue(depthWaveDriverValue01, driverValue01ForDepthWavePercent(depthWavePercent.value()));
+                    updateDepthWaveResolvedLabel();
+                    schedulePrivateParticleDepthWaveApplyFromControl();
+                }
+            }
+        );
+        depthWaveDriverValue01 = slider(
+            "Resolved driver3.value01",
+            0.0,
+            1.0,
+            currentDriver,
+            1000,
+            "",
+            false,
+            new Runnable() {
+                @Override
+                public void run() {
+                    setSliderValue(depthWavePercent, depthWavePercentForDriverValue01(depthWaveDriverValue01.value()));
+                    updateDepthWaveResolvedLabel();
+                    schedulePrivateParticleDepthWaveApplyFromControl();
+                }
+            }
+        );
+        root.addView(depthWavePercent.view);
+        root.addView(depthWaveDriverValue01.view);
+
+        root.addView(sectionTitle("Driver Policy"));
+        depthWaveDriverPolicy = new Spinner(this);
+        ArrayAdapter<String> adapter =
+            new ArrayAdapter<String>(this, android.R.layout.simple_spinner_item, DEPTH_WAVE_DRIVER_POLICIES);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        depthWaveDriverPolicy.setAdapter(adapter);
+        depthWaveDriverPolicy.setSelection(0);
+        depthWaveDriverPolicy.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (position == 0) {
+                    schedulePrivateParticleDepthWaveApplyFromControl();
+                    return;
+                }
+                cancelPendingPrivateParticleDepthWaveApply();
+                setStatusText("Selected depth-wave policy needs a payload rebuild.");
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+        root.addView(depthWaveDriverPolicy);
+
+        root.addView(sectionTitle("AKD Contract"));
+        root.addView(text(String.format(
+            Locale.US,
+            "Range: %.3f to %.3f",
+            DEPTH_WAVE_MIN_PERCENT,
+            DEPTH_WAVE_MAX_PERCENT
+        ), 13, PANEL_MUTED));
+        root.addView(text("Curve: akd-hump, first rising branch, 16 samples", 13, PANEL_MUTED));
+        root.addView(text(String.format(
+            Locale.US,
+            "Dimension: wave index %d",
+            DEPTH_WAVE_DIMENSION_INDEX
+        ), 13, PANEL_MUTED));
+        root.addView(text(String.format(
+            Locale.US,
+            "Cycle multiplier: %d, current visibility cycle-gated off",
+            DEPTH_WAVE_CYCLE_MULTIPLIER
+        ), 13, PANEL_MUTED));
+        root.addView(text("Live transport: debug.rustyquest.native_renderer.private_particles.driver3.value01", 13, PANEL_MUTED));
+        depthWaveResolvedLabel = text("", 13, PANEL_FG);
+        depthWaveResolvedLabel.setPadding(0, dp(8), 0, dp(6));
+        root.addView(depthWaveResolvedLabel);
+        updateDepthWaveResolvedLabel();
+
+        root.addView(buildPrivateParticleDepthWaveActionRow());
+
+        status = text("", 13, PANEL_MUTED);
+        status.setPadding(0, dp(10), 0, dp(8));
+        root.addView(status);
+        return scroll;
+    }
+
+    private View depthWavePreviewBand() {
+        TextView preview = text("depth wave", 13, Color.WHITE);
+        preview.setGravity(Gravity.CENTER);
+        preview.setPadding(dp(12), dp(12), dp(12), dp(12));
+        GradientDrawable background = new GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            new int[] {
+                Color.rgb(18, 22, 27),
+                Color.rgb(30, 110, 190),
+                Color.rgb(35, 190, 160),
+                Color.rgb(255, 214, 68),
+                Color.rgb(18, 22, 27)
+            }
+        );
+        background.setCornerRadius(dp(3));
+        preview.setBackground(background);
+        LinearLayout.LayoutParams params =
+            new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54));
+        params.setMargins(0, dp(12), 0, dp(12));
+        preview.setLayoutParams(params);
+        return preview;
+    }
+
+    private View buildPrivateParticleDepthWaveActionRow() {
+        LinearLayout actionBlock = new LinearLayout(this);
+        actionBlock.setOrientation(LinearLayout.VERTICAL);
+        actionBlock.setPadding(0, dp(14), 0, dp(10));
+
+        Button refresh = button("Refresh");
+        refresh.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                refreshPrivateParticleDepthWaveFromStatus(true);
+            }
+        });
+        Button applyLive = button("Apply Live");
+        applyLive.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                submitLivePrivateParticleDepthWave(true);
+            }
+        });
+        Button close = button("Close");
+        close.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                closePanelAndReturnToImmersive();
+            }
+        });
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.addView(refresh, rowButtonParams());
+        row.addView(applyLive, rowButtonParams());
+        row.addView(close, rowButtonParams());
+        actionBlock.addView(row);
+        return actionBlock;
+    }
+
     private View privateLayerPreviewBand() {
         TextView preview = text("private layer selector", 13, Color.WHITE);
         preview.setGravity(Gravity.CENTER);
@@ -1145,6 +1386,29 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
+    private void schedulePrivateParticleDepthWaveApplyFromControl() {
+        if (liveAutoApply == null || !liveAutoApply.isChecked()) {
+            return;
+        }
+        cancelPendingPrivateParticleDepthWaveApply();
+        pendingPrivateParticleDepthWaveApply = new Runnable() {
+            @Override
+            public void run() {
+                pendingPrivateParticleDepthWaveApply = null;
+                submitLivePrivateParticleDepthWave(false);
+            }
+        };
+        liveApplyHandler.postDelayed(pendingPrivateParticleDepthWaveApply, 180);
+        setStatusText("Depth wave update pending.");
+    }
+
+    private void cancelPendingPrivateParticleDepthWaveApply() {
+        if (liveApplyHandler != null && pendingPrivateParticleDepthWaveApply != null) {
+            liveApplyHandler.removeCallbacks(pendingPrivateParticleDepthWaveApply);
+            pendingPrivateParticleDepthWaveApply = null;
+        }
+    }
+
     private void submitLivePrivateParticleDynamics(boolean userVisible) {
         try {
             if (!nativeBridgeLoaded) {
@@ -1175,21 +1439,125 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
+    private void submitLivePrivateParticleDepthWave(boolean userVisible) {
+        try {
+            if (!nativeBridgeLoaded) {
+                throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
+            }
+            if (depthWaveDriverPolicy != null && depthWaveDriverPolicy.getSelectedItemPosition() != 0) {
+                throw new IllegalStateException("selected driver policy requires a payload rebuild");
+            }
+            JSONObject candidate = buildPrivateParticleDepthWaveJson();
+            String responseText = nativeSubmitLivePrivateParticleDynamics(candidate.toString());
+            JSONObject response = new JSONObject(responseText);
+            String responseStatus = response.optString("status", "unknown");
+            if (!"queued".equals(responseStatus)) {
+                throw new IllegalStateException(responseText);
+            }
+            String message = "Depth wave queued: " + depthWaveSummary() + ".";
+            if (response.optBoolean("overwrote_pending", false)) {
+                message = "Depth wave queued; older pending edit was replaced.";
+            }
+            if (userVisible) {
+                updateStatus(message);
+            } else {
+                setStatusText(message);
+            }
+        } catch (Exception error) {
+            if (userVisible) {
+                updateStatus("Depth wave failed: " + error.getMessage());
+            } else {
+                setStatusText("Depth wave update failed: " + error.getMessage());
+            }
+        }
+    }
+
     private JSONObject buildPrivateParticleDynamicsJson() throws Exception {
+        double[] drivers = new double[privateParticleDrivers.length];
+        for (int i = 0; i < privateParticleDrivers.length; i++) {
+            drivers[i] = privateParticleDrivers[i].value();
+        }
+        return buildPrivateParticleDynamicsJsonFromValues(
+            "same-apk-private-particle-dynamics",
+            "same_apk_panel",
+            privateParticleVisualScale.value(),
+            privateParticleWorldAnchorScale.value(),
+            drivers,
+            privateParticleTracerDrawSlots.intValue(),
+            privateParticleTracerLifetime.value(),
+            privateParticleTracerCopies.value()
+        );
+    }
+
+    private JSONObject buildPrivateParticleDepthWaveJson() throws Exception {
+        JSONObject statusJson = readPrivateParticleDynamicsStatusJson();
+        JSONObject privateParticles = privateParticleStatusBody(statusJson);
+        JSONObject tracerStatus = privateParticles == null
+            ? null
+            : privateParticles.optJSONObject("tracer");
+        double visualScale = readPrivateParticleStatusDouble(
+            privateParticles,
+            "visual_scale",
+            readDoubleProperty(PROP_PRIVATE_PARTICLE_VISUAL_SCALE, 0.70)
+        );
+        double worldAnchorScale = readPrivateParticleStatusDouble(
+            privateParticles,
+            "world_anchor_scale_m",
+            readDoubleProperty(PROP_PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE, 2.0)
+        );
+        double[] drivers = privateParticleDriverValuesFromStatusOrProperties(privateParticles);
+        drivers[DEPTH_WAVE_DRIVER_INDEX] = depthWaveDriverValue01.value();
+        int tracerDrawSlots = (int) Math.round(readPrivateParticleStatusTracerDouble(
+            tracerStatus,
+            "draw_slots_per_oscillator",
+            readDoubleProperty(PROP_PRIVATE_PARTICLE_TRACER_DRAW_SLOTS, 7.0)
+        ));
+        double tracerLifetime = readPrivateParticleStatusTracerDouble(
+            tracerStatus,
+            "lifetime_seconds",
+            readDoubleProperty(PROP_PRIVATE_PARTICLE_TRACER_LIFETIME, 0.5)
+        );
+        double tracerCopies = readPrivateParticleStatusTracerDouble(
+            tracerStatus,
+            "copies_per_second",
+            readDoubleProperty(PROP_PRIVATE_PARTICLE_TRACER_COPIES, 14.0)
+        );
+        return buildPrivateParticleDynamicsJsonFromValues(
+            "same-apk-private-particle-depth-wave",
+            "akd_depth_wave_panel",
+            visualScale,
+            worldAnchorScale,
+            drivers,
+            tracerDrawSlots,
+            tracerLifetime,
+            tracerCopies
+        );
+    }
+
+    private JSONObject buildPrivateParticleDynamicsJsonFromValues(
+        String profileId,
+        String surface,
+        double visualScale,
+        double worldAnchorScale,
+        double[] driverValues01,
+        int tracerDrawSlotsPerOscillator,
+        double tracerLifetimeSeconds,
+        double tracerCopiesPerSecond
+    ) throws Exception {
         JSONObject source = new JSONObject()
-            .put("surface", "same_apk_panel")
+            .put("surface", surface)
             .put("transport", "jni_live_queue");
         JSONArray drivers = new JSONArray();
-        for (int i = 0; i < privateParticleDrivers.length; i++) {
-            drivers.put(privateParticleDrivers[i].value());
+        for (int i = 0; i < driverValues01.length; i++) {
+            drivers.put(driverValues01[i]);
         }
         JSONObject tracer = new JSONObject()
-            .put("draw_slots_per_oscillator", privateParticleTracerDrawSlots.intValue())
-            .put("lifetime_seconds", privateParticleTracerLifetime.value())
-            .put("copies_per_second", privateParticleTracerCopies.value());
+            .put("draw_slots_per_oscillator", tracerDrawSlotsPerOscillator)
+            .put("lifetime_seconds", tracerLifetimeSeconds)
+            .put("copies_per_second", tracerCopiesPerSecond);
         JSONObject privateParticles = new JSONObject()
-            .put("visual_scale", privateParticleVisualScale.value())
-            .put("world_anchor_scale_m", privateParticleWorldAnchorScale.value())
+            .put("visual_scale", visualScale)
+            .put("world_anchor_scale_m", worldAnchorScale)
             .put("driver_values01", drivers)
             .put("tracer", tracer);
         JSONObject apply = new JSONObject()
@@ -1197,7 +1565,7 @@ public final class ControlPanelActivity extends Activity {
             .put("expected_effective_revision", -1);
         return new JSONObject()
             .put("schema", PRIVATE_PARTICLE_DYNAMICS_SCHEMA)
-            .put("profile_id", "same-apk-private-particle-dynamics")
+            .put("profile_id", profileId)
             .put("revision", System.currentTimeMillis())
             .put("source", source)
             .put("private_particles", privateParticles)
@@ -1268,6 +1636,33 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
+    private void refreshPrivateParticleDepthWaveFromStatus(boolean userVisible) {
+        JSONObject statusJson = readPrivateParticleDynamicsStatusJson();
+        JSONObject privateParticles = privateParticleStatusBody(statusJson);
+        if (privateParticles == null) {
+            if (userVisible) {
+                updateStatus("Depth wave status is not available yet.");
+            } else {
+                setStatusText("Depth wave status is not available yet.");
+            }
+            return;
+        }
+        double driverValue = privateParticleDriverValueFromStatusOrProperty(
+            privateParticles,
+            DEPTH_WAVE_DRIVER_INDEX,
+            0.0
+        );
+        setSliderValue(depthWaveDriverValue01, driverValue);
+        setSliderValue(depthWavePercent, depthWavePercentForDriverValue01(driverValue));
+        updateDepthWaveResolvedLabel();
+        String message = "Depth wave refreshed: " + depthWaveSummary() + ".";
+        if (userVisible) {
+            updateStatus(message);
+        } else {
+            setStatusText(message);
+        }
+    }
+
     private JSONObject readPrivateParticleDynamicsStatusJson() {
         try {
             String text = readFile(PRIVATE_PARTICLE_DYNAMICS_STATUS_FILE);
@@ -1313,10 +1708,114 @@ public final class ControlPanelActivity extends Activity {
         return tracerStatus.optDouble(key, fallback);
     }
 
+    private double privateParticleDriverValueFromStatusOrProperty(
+        JSONObject privateParticles,
+        int index,
+        double fallback
+    ) {
+        JSONArray driverStatus = privateParticles == null
+            ? null
+            : privateParticles.optJSONArray("driver_values01");
+        if (driverStatus != null && index >= 0 && index < driverStatus.length()) {
+            return driverStatus.optDouble(index, fallback);
+        }
+        if (index >= 0 && index < PROP_PRIVATE_PARTICLE_DRIVERS.length) {
+            return readDoubleProperty(PROP_PRIVATE_PARTICLE_DRIVERS[index], fallback);
+        }
+        return fallback;
+    }
+
+    private double[] privateParticleDriverValuesFromStatusOrProperties(JSONObject privateParticles) {
+        double[] drivers = new double[PROP_PRIVATE_PARTICLE_DRIVERS.length];
+        for (int i = 0; i < drivers.length; i++) {
+            drivers[i] = privateParticleDriverValueFromStatusOrProperty(
+                privateParticles,
+                i,
+                privateParticleDriverDefaultValue(i)
+            );
+        }
+        return drivers;
+    }
+
+    private double privateParticleDriverDefaultValue(int index) {
+        return index == 0 || index == 1 ? 1.0 : 0.0;
+    }
+
     private void setSliderValue(SliderControl slider, double value) {
         if (slider != null) {
             slider.setValue(value);
         }
+    }
+
+    private double driverValue01ForDepthWavePercent(double percent) {
+        double target01 = (clamp(percent, DEPTH_WAVE_MIN_PERCENT, DEPTH_WAVE_MAX_PERCENT) -
+            DEPTH_WAVE_MIN_PERCENT) / (DEPTH_WAVE_MAX_PERCENT - DEPTH_WAVE_MIN_PERCENT);
+        return firstRisingBranchInputForAkdHump(target01);
+    }
+
+    private double depthWavePercentForDriverValue01(double value01) {
+        double curveOutput = sampleAkdHump(clamp(value01, 0.0, 1.0));
+        return DEPTH_WAVE_MIN_PERCENT + curveOutput * (DEPTH_WAVE_MAX_PERCENT - DEPTH_WAVE_MIN_PERCENT);
+    }
+
+    private double firstRisingBranchInputForAkdHump(double requestedOutput01) {
+        double target = clamp(requestedOutput01, 0.0, 1.0);
+        int peakIndex = 0;
+        for (int i = 1; i < AKD_HUMP_SAMPLES01.length; i++) {
+            if (AKD_HUMP_SAMPLES01[i] > AKD_HUMP_SAMPLES01[peakIndex]) {
+                peakIndex = i;
+            }
+        }
+        if (target >= AKD_HUMP_SAMPLES01[peakIndex]) {
+            return (double) peakIndex / (double) (AKD_HUMP_SAMPLES01.length - 1);
+        }
+        for (int i = 0; i < peakIndex; i++) {
+            double start = AKD_HUMP_SAMPLES01[i];
+            double end = AKD_HUMP_SAMPLES01[i + 1];
+            if (target >= start && target <= end) {
+                double segment = end - start;
+                double local = segment <= 0.000001 ? 0.0 : (target - start) / segment;
+                return ((double) i + local) / (double) (AKD_HUMP_SAMPLES01.length - 1);
+            }
+        }
+        return 0.0;
+    }
+
+    private double sampleAkdHump(double value01) {
+        double scaled = clamp(value01, 0.0, 1.0) * (double) (AKD_HUMP_SAMPLES01.length - 1);
+        int lower = (int) Math.floor(scaled);
+        int upper = Math.min(AKD_HUMP_SAMPLES01.length - 1, lower + 1);
+        double local = scaled - (double) lower;
+        return AKD_HUMP_SAMPLES01[lower] * (1.0 - local) + AKD_HUMP_SAMPLES01[upper] * local;
+    }
+
+    private double clamp(double value, double min, double max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private void updateDepthWaveResolvedLabel() {
+        if (depthWaveResolvedLabel == null || depthWaveDriverValue01 == null || depthWavePercent == null) {
+            return;
+        }
+        double driver = depthWaveDriverValue01.value();
+        double curveOutput = sampleAkdHump(driver);
+        double effectivePercent = depthWavePercentForDriverValue01(driver);
+        depthWaveResolvedLabel.setText(String.format(
+            Locale.US,
+            "Resolved: driver3 %.3f -> curve %.3f -> %.4f depth wave percent",
+            driver,
+            curveOutput,
+            effectivePercent
+        ));
+    }
+
+    private String depthWaveSummary() {
+        return String.format(
+            Locale.US,
+            "%.4f percent via driver3 %.3f",
+            depthWavePercent.value(),
+            depthWaveDriverValue01.value()
+        );
     }
 
     private String privateParticleDynamicsSummary() {
@@ -1957,6 +2456,9 @@ public final class ControlPanelActivity extends Activity {
             return requested;
         }
         if ("private-particle-dynamics".equals(requested)) {
+            return requested;
+        }
+        if ("private-particle-depth-wave".equals(requested)) {
             return requested;
         }
         return "stimulus-volume";
