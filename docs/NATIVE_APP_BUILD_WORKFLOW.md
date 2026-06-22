@@ -6,7 +6,11 @@ Use this workflow when creating a new Rusty Quest native APK profile.
    Browse by module path; particle capabilities are nested below `particles/`.
 2. Create or update a spec in `fixtures/native-app-builds/`. List requested
    features, denied features, expected manifest entries, expected markers, and
-   `settings_assertions`.
+   `settings_assertions`. App specs may also include `runtime_profile.set` for
+   manifest-validated, app-owned scalar startup defaults that are not already
+   set by selected features; the resolver rejects conflicts. Keep effect-specific
+   meanings in the downstream app contract, not in Rusty Quest feature
+   descriptors.
 3. Resolve the spec:
 
    ```powershell

@@ -94,9 +94,15 @@ foreach ($requiredLockField in @("app_spec_path", "settings_hotload", "permissio
         throw "Native app feature lock schema must require $requiredLockField"
     }
 }
+$appBuildSchema = Read-Json -Path (Join-Path $schemaDir "rusty.quest.native_app_build.v1.schema.json")
+if ($null -eq $appBuildSchema.properties.runtime_profile.properties.set) {
+    throw "Native app build schema must support optional app-owned runtime_profile.set"
+}
 $resolverText = Get-Content -Raw -LiteralPath $resolver
 foreach ($requiredResolverNeedle in @(
     "hotloadable-low-rate-settings-with-explicit-restart-boundaries",
+    "app-spec:",
+    "Assert-NativeRendererPropertyValue -Name `$name -Value `$value -ManifestByName `$ManifestByName",
     "pregrant-declared-permissions-before-first-launch",
     "same-process-jni-live-queue",
     "app-private-revision-sidecar",

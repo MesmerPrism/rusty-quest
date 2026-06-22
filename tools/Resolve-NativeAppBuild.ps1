@@ -305,6 +305,9 @@ function Assert-AppSpecShape {
     foreach ($field in @("required_values", "required_disabled_modules", "required_modules", "forbidden_modules")) {
         Assert-RequiredProperty -Object $Spec.settings_assertions -Name $field -Label "$label settings_assertions"
     }
+    if ($null -ne $Spec.PSObject.Properties["runtime_profile"]) {
+        Assert-RequiredProperty -Object $Spec.runtime_profile -Name "set" -Label "$label runtime_profile"
+    }
 }
 
 function Read-FeatureLibrary {
@@ -399,6 +402,31 @@ function Add-FeatureRuntimeSet {
         $RuntimeSet[$name] = $value
         if (-not $RuntimeSources.Contains($name)) {
             $RuntimeSources[$name] = $FeatureId
+        }
+    }
+}
+
+function Add-AppRuntimeSet {
+    param(
+        [Parameter(Mandatory=$true)]$RuntimeSet,
+        [Parameter(Mandatory=$true)]$RuntimeSources,
+        [Parameter(Mandatory=$true)][string]$AppId,
+        $AppRuntimeProfile,
+        [Parameter(Mandatory=$true)]$ManifestByName
+    )
+    if ($null -eq $AppRuntimeProfile -or $null -eq $AppRuntimeProfile.PSObject.Properties["set"]) {
+        return
+    }
+    foreach ($property in @($AppRuntimeProfile.set.PSObject.Properties | Sort-Object Name)) {
+        $name = [string]$property.Name
+        $value = [string]$property.Value
+        Assert-NativeRendererPropertyValue -Name $name -Value $value -ManifestByName $ManifestByName
+        if ($RuntimeSet.Contains($name) -and [string]$RuntimeSet[$name] -ne $value) {
+            throw "Runtime property $name is set to conflicting values by selected features and app spec. Existing=$($RuntimeSet[$name]) app=$AppId value=$value"
+        }
+        $RuntimeSet[$name] = $value
+        if (-not $RuntimeSources.Contains($name)) {
+            $RuntimeSources[$name] = "app-spec:$AppId"
         }
     }
 }
@@ -651,6 +679,12 @@ foreach ($featureId in $selectedFeatureIds) {
         }
     }
 }
+Add-AppRuntimeSet `
+    -RuntimeSet $runtimeSet `
+    -RuntimeSources $runtimeSources `
+    -AppId ([string]$app.app_id) `
+    -AppRuntimeProfile $app.runtime_profile `
+    -ManifestByName $nativeRendererPropertyByName
 Add-StringsToSet -Set $permissionsSet -Values $app.permission_allowlist
 Add-StringsToSet -Set $requiredMarkerSet -Values $app.expected_markers.required
 Add-StringsToSet -Set $forbiddenMarkerSet -Values $app.expected_markers.forbidden

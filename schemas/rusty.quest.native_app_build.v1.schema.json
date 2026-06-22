@@ -114,6 +114,21 @@
       "type": "string",
       "minLength": 1
     },
+    "runtime_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "set"
+      ],
+      "properties": {
+        "set": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "settings_assertions": {
       "type": "object",
       "additionalProperties": false,
