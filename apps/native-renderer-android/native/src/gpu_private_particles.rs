@@ -1237,6 +1237,7 @@ impl GpuPrivateParticleRenderer {
         frame_slot: usize,
         eye_projection: HandMeshVisualEyeProjection,
         world_center_scale: [f32; 4],
+        world_anchor_forward_axis: [f32; 4],
         frame_count: u64,
     ) -> GpuPrivateParticleFrameStats {
         let runtime_settings = self.runtime_settings(frame_count);
@@ -1280,6 +1281,7 @@ impl GpuPrivateParticleRenderer {
             eye_projection,
             world_center_scale,
             frame_count,
+            Some(world_anchor_forward_axis),
         );
         device.cmd_fill_buffer(
             cmd,
@@ -1598,6 +1600,7 @@ impl GpuPrivateParticleRenderer {
             eye_projection,
             world_center_scale,
             0,
+            None,
         );
         let viewport = [vk::Viewport {
             x: 0.0,
@@ -1641,6 +1644,7 @@ fn private_particle_push(
     eye_projection: HandMeshVisualEyeProjection,
     world_center_scale: [f32; 4],
     frame_count: u64,
+    fov_tangents_override: Option<[f32; 4]>,
 ) -> PrivateParticlePush {
     let frame = frame_count as f32;
     PrivateParticlePush {
@@ -1671,7 +1675,7 @@ fn private_particle_push(
         world_center_scale,
         eye_position: eye_projection.position,
         eye_orientation_xyzw: eye_projection.orientation_xyzw,
-        fov_tangents: eye_projection.fov_tangents,
+        fov_tangents: fov_tangents_override.unwrap_or(eye_projection.fov_tangents),
     }
 }
 

@@ -177,6 +177,9 @@ foreach ($requiredFeature in @(
 
 $privateParticleFeature = Read-Json -Path (Join-Path $featureDir "particles\private\renderer\renderer.private_particles.feature.json")
 foreach ($marker in @(
+    "RUSTY_QUEST_NATIVE_RENDERER channel=private-particle-anchor",
+    "privateParticleWorldAnchorForwardAxis=",
+    "privateParticleComputeFovTangentPayload=world-anchor-forward-axis",
     "privateParticleDiagnosticStorageBinding=9",
     "privateParticleDiagnosticWords=16",
     "privateParticleDiagnosticTracerSpawnedCount=",

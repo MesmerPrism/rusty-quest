@@ -361,8 +361,12 @@ build-time discovery, placeholder behavior, static payload staging, the
 four-vec4 billboard row ABI, sampled R8 texture-array mask upload/sampling,
 resident GPU index-remap sorting, parameterized transparency/coverage controls,
 generic tracer budget/draw-capacity plumbing, generic draw/compute
-orchestration, a 16-word host-visible diagnostic storage buffer at descriptor
-binding `9`, and public slot markers. The diagnostic buffer is generic: private
+orchestration, captured world-anchor center/scale and forward-axis state, a
+16-word host-visible diagnostic storage buffer at descriptor binding `9`, and
+public slot markers. The private-particle compute push keeps the 128-byte ABI:
+draw passes receive real FOV tangents, while compute passes receive the
+captured anchor forward axis in the same vector for downstream shaders that
+need startup/recenter-stable orientation. The diagnostic buffer is generic: private
 compute shaders may write compact integer counters or fixed-point reductions,
 while Rusty Quest only clears it, reads it after the frame-slot fence, and emits
 `privateParticleDiagnostic*` markers, including optional tracer active,

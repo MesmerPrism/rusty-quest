@@ -2607,6 +2607,7 @@ unsafe fn run_projection_frames(
                     frame_slot,
                     particle_sort_eye_projection,
                     private_particle_world_anchor.world_center_scale(),
+                    private_particle_world_anchor.world_forward_axis(),
                     frame_count,
                 )
             } else {
@@ -4083,6 +4084,7 @@ fn hand_forward_depth_m(
 #[derive(Clone, Copy, Debug)]
 struct PrivateParticleWorldAnchor {
     center_scale: [f32; 4],
+    forward_axis: [f32; 4],
     initialized: bool,
 }
 
@@ -4095,6 +4097,7 @@ impl PrivateParticleWorldAnchor {
                 -PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M,
                 PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M,
             ],
+            forward_axis: [0.0, 0.0, -1.0, 1.0],
             initialized: false,
         }
     }
@@ -4117,6 +4120,10 @@ impl PrivateParticleWorldAnchor {
         self.center_scale
     }
 
+    fn world_forward_axis(&self) -> [f32; 4] {
+        self.forward_axis
+    }
+
     fn capture(
         &mut self,
         eye_projection: HandMeshVisualEyeProjection,
@@ -4127,17 +4134,19 @@ impl PrivateParticleWorldAnchor {
             eye_projection.orientation_xyzw,
             [0.0, 0.0, -PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M],
         );
+        let forward_axis = normalize3(forward_offset);
         self.center_scale = [
             eye_projection.position[0] + forward_offset[0],
             eye_projection.position[1] + forward_offset[1],
             eye_projection.position[2] + forward_offset[2],
             PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M,
         ];
+        self.forward_axis = [forward_axis[0], forward_axis[1], forward_axis[2], 1.0];
         self.initialized = true;
         crate::marker(
             "private-particle-anchor",
             format!(
-                "status=captured frame={} reason={} privateParticleWorldAnchorInitialized=true privateParticleWorldAnchorFollowCamera=false privateParticleWorldAnchorCenter={:.4},{:.4},{:.4} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorDistanceM={:.3}",
+                "status=captured frame={} reason={} privateParticleWorldAnchorInitialized=true privateParticleWorldAnchorFollowCamera=false privateParticleWorldAnchorCenter={:.4},{:.4},{:.4} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorDistanceM={:.3} privateParticleWorldAnchorForwardAxis={:.4},{:.4},{:.4} privateParticleComputeFovTangentPayload=world-anchor-forward-axis",
                 frame_count,
                 reason,
                 self.center_scale[0],
@@ -4145,6 +4154,9 @@ impl PrivateParticleWorldAnchor {
                 self.center_scale[2],
                 self.center_scale[3],
                 PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M,
+                self.forward_axis[0],
+                self.forward_axis[1],
+                self.forward_axis[2],
             ),
         );
     }
@@ -4158,6 +4170,16 @@ fn rotate_by_quat(quat: [f32; 4], vector: [f32; 3]) -> [f32; 3] {
         vector[0] + uv[0] * (2.0 * q[3]) + uuv[0] * 2.0,
         vector[1] + uv[1] * (2.0 * q[3]) + uuv[1] * 2.0,
         vector[2] + uv[2] * (2.0 * q[3]) + uuv[2] * 2.0,
+    ]
+}
+
+fn normalize3(value: [f32; 3]) -> [f32; 3] {
+    let length_sq = dot3(value, value).max(0.000000000001);
+    let inv_length = 1.0 / length_sq.sqrt();
+    [
+        value[0] * inv_length,
+        value[1] * inv_length,
+        value[2] * inv_length,
     ]
 }
 
