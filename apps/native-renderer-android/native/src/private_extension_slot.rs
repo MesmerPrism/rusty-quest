@@ -2,12 +2,20 @@
 
 use std::{ffi::CString, mem};
 
-use ash::vk;
+use ash::vk::{self, Handle};
 
 use crate::{
     camera_projection::PreparedCameraProjection,
     camera_projection_metadata::{CameraProjectionMetadata, TargetRect},
-    native_renderer_options::{NativePrivateLayerSettings, NativeProjectionBorderStretchSettings},
+    gpu_environment_depth_particle_stats::{
+        DEPTH_FLAG_INFINITE_FAR, META_ENVIRONMENT_DEPTH_FORMAT, META_ENVIRONMENT_DEPTH_LAYER_COUNT,
+        META_ENVIRONMENT_DEPTH_TEXTURE_TRANSFORM_FLAGS,
+    },
+    native_renderer_options::{
+        NativeEnvironmentDepthSettings, NativePrivateLayerSettings,
+        NativeProjectionBorderStretchSettings,
+    },
+    openxr_environment_depth::OpenXrEnvironmentDepthFrame,
 };
 
 include!(concat!(env!("OUT_DIR"), "/private_layer_payload_config.rs"));
@@ -21,7 +29,7 @@ const PRIVATE_GUIDE_HEIGHT: u32 = 384;
 const PRIVATE_EYE_COUNT: usize = 2;
 const PRIVATE_GUIDE_TARGET_COUNT: usize = 5;
 const PRIVATE_GUIDE_PASS_COUNT: usize = 6;
-const PRIVATE_LAYER_COUNT: u32 = 6;
+const PRIVATE_LAYER_COUNT: u32 = 7;
 const ASSUMED_DISPLAY_HZ: f32 = 90.0;
 
 pub(crate) struct PrivateExtensionSlotRuntime {
@@ -34,6 +42,9 @@ impl PrivateExtensionSlotRuntime {
         memory_properties: vk::PhysicalDeviceMemoryProperties,
         color_format: vk::Format,
         projection_render_pass: vk::RenderPass,
+        environment_depth_image_handles: &[u64],
+        environment_depth_width: u32,
+        environment_depth_height: u32,
     ) -> Self {
         Self {
             invocation_sequence: 0,
@@ -41,6 +52,9 @@ impl PrivateExtensionSlotRuntime {
                 memory_properties,
                 color_format,
                 projection_render_pass,
+                environment_depth_image_handles,
+                environment_depth_width,
+                environment_depth_height,
             ),
         }
     }
@@ -69,6 +83,17 @@ impl PrivateExtensionSlotRuntime {
 
     pub(crate) unsafe fn destroy(&mut self, device: &ash::Device) {
         self.renderer.destroy(device);
+    }
+
+    pub(crate) unsafe fn set_environment_depth_images(
+        &mut self,
+        device: &ash::Device,
+        image_handles: &[u64],
+        width: u32,
+        height: u32,
+    ) {
+        self.renderer
+            .set_environment_depth_images(device, image_handles, width, height);
     }
 
     pub(crate) unsafe fn record_frame(
@@ -136,7 +161,7 @@ impl PrivateExtensionSlotRuntime {
     }
 
     pub(crate) unsafe fn record_projection_eye(
-        &self,
+        &mut self,
         device: &ash::Device,
         cmd: vk::CommandBuffer,
         extent: vk::Extent2D,
@@ -147,6 +172,8 @@ impl PrivateExtensionSlotRuntime {
         frame_count: u64,
         settings: NativePrivateLayerSettings,
         projection_settings: NativeProjectionBorderStretchSettings,
+        environment_depth_settings: NativeEnvironmentDepthSettings,
+        environment_depth_frame: Option<&OpenXrEnvironmentDepthFrame>,
     ) {
         if !PRIVATE_LAYER_PAYLOAD_LINKED || !settings.enabled {
             return;
@@ -162,6 +189,8 @@ impl PrivateExtensionSlotRuntime {
             frame_count,
             settings,
             projection_settings,
+            environment_depth_settings,
+            environment_depth_frame,
         );
     }
 }
@@ -272,6 +301,9 @@ struct PrivateLayerGraphRenderer {
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     color_format: vk::Format,
     projection_render_pass: vk::RenderPass,
+    environment_depth_image_handles: Vec<u64>,
+    environment_depth_width: u32,
+    environment_depth_height: u32,
     resources: Option<PrivateLayerResources>,
     render_count: u64,
     cache_hits: u64,
@@ -282,11 +314,17 @@ impl PrivateLayerGraphRenderer {
         memory_properties: vk::PhysicalDeviceMemoryProperties,
         color_format: vk::Format,
         projection_render_pass: vk::RenderPass,
+        environment_depth_image_handles: &[u64],
+        environment_depth_width: u32,
+        environment_depth_height: u32,
     ) -> Self {
         Self {
             memory_properties,
             color_format,
             projection_render_pass,
+            environment_depth_image_handles: environment_depth_image_handles.to_vec(),
+            environment_depth_width,
+            environment_depth_height,
             resources: None,
             render_count: 0,
             cache_hits: 0,
@@ -297,6 +335,36 @@ impl PrivateLayerGraphRenderer {
         if let Some(resources) = self.resources.take() {
             resources.destroy(device);
         }
+    }
+
+    unsafe fn set_environment_depth_images(
+        &mut self,
+        device: &ash::Device,
+        image_handles: &[u64],
+        width: u32,
+        height: u32,
+    ) {
+        if self.environment_depth_image_handles.as_slice() == image_handles
+            && self.environment_depth_width == width
+            && self.environment_depth_height == height
+        {
+            return;
+        }
+        if let Some(resources) = self.resources.take() {
+            resources.destroy(device);
+        }
+        self.environment_depth_image_handles = image_handles.to_vec();
+        self.environment_depth_width = width;
+        self.environment_depth_height = height;
+        crate::marker(
+            "private-extension-slot",
+            format!(
+                "status=depth-resources-updated privateLayerEnvironmentDepthImages={} privateLayerEnvironmentDepthImageSize={}x{}",
+                self.environment_depth_image_handles.len(),
+                self.environment_depth_width,
+                self.environment_depth_height
+            ),
+        );
     }
 
     unsafe fn record_frame(
@@ -383,7 +451,7 @@ impl PrivateLayerGraphRenderer {
     }
 
     unsafe fn record_projection_eye(
-        &self,
+        &mut self,
         device: &ash::Device,
         cmd: vk::CommandBuffer,
         extent: vk::Extent2D,
@@ -394,13 +462,25 @@ impl PrivateLayerGraphRenderer {
         frame_count: u64,
         settings: NativePrivateLayerSettings,
         projection_settings: NativeProjectionBorderStretchSettings,
+        environment_depth_settings: NativeEnvironmentDepthSettings,
+        environment_depth_frame: Option<&OpenXrEnvironmentDepthFrame>,
     ) {
-        let Some(resources) = self.resources.as_ref() else {
+        let Some(resources) = self.resources.as_mut() else {
             return;
         };
         let Some(eye) = resources.eyes.get(eye_index) else {
             return;
         };
+        let depth_binding = resources
+            .depth_resources
+            .descriptor_for_frame(environment_depth_frame);
+        if !depth_binding.real_depth_bound {
+            resources
+                .depth_resources
+                .transition_fallback_for_sampling(device, cmd);
+        }
+        let depth_source_layer =
+            eye_index.min((META_ENVIRONMENT_DEPTH_LAYER_COUNT - 1) as usize) as f32;
         let viewport = [vk::Viewport {
             x: 0.0,
             y: 0.0,
@@ -422,11 +502,68 @@ impl PrivateLayerGraphRenderer {
             vk::PipelineBindPoint::GRAPHICS,
             resources.projection_pipeline_layout,
             0,
-            &[prepared.descriptor_set, eye.descriptor_set],
+            &[
+                prepared.descriptor_set,
+                eye.descriptor_set,
+                depth_binding.descriptor_set,
+            ],
             &[],
         );
         let elapsed_seconds = elapsed_seconds_for_frame(frame_count);
         let projection_push = projection_settings.push_params();
+        let depth_near_z = environment_depth_frame
+            .filter(|_| depth_binding.real_depth_bound)
+            .map(|frame| frame.near_z.max(0.001))
+            .unwrap_or(0.001);
+        let depth_infinite_far = environment_depth_frame
+            .filter(|_| depth_binding.real_depth_bound)
+            .map(|frame| !frame.far_z.is_finite() || frame.far_z <= frame.near_z)
+            .unwrap_or(false);
+        let depth_far_z = environment_depth_frame
+            .filter(|_| depth_binding.real_depth_bound)
+            .map(|frame| {
+                if frame.far_z.is_finite() && frame.far_z > frame.near_z {
+                    frame.far_z
+                } else {
+                    environment_depth_settings.far_m.max(depth_near_z + 0.001)
+                }
+            })
+            .unwrap_or(environment_depth_settings.far_m.max(depth_near_z + 0.001));
+        let depth_flags = if depth_infinite_far {
+            DEPTH_FLAG_INFINITE_FAR
+        } else {
+            0
+        };
+        if eye_index == 0 && (frame_count == 0 || frame_count % 120 == 0) {
+            let (swapchain_index, depth_width, depth_height) = environment_depth_frame
+                .filter(|_| depth_binding.real_depth_bound)
+                .map(|frame| {
+                    (
+                        frame.swapchain_index as i32,
+                        frame.depth_width,
+                        frame.depth_height,
+                    )
+                })
+                .unwrap_or((-1, 0, 0));
+            crate::marker(
+                "private-extension-slot",
+                format!(
+                    "status=projection-depth frame={} privateLayerEnvironmentDepthBound={} privateLayerEnvironmentDepthFallbackActive={} privateLayerEnvironmentDepthSourceLayer={} privateLayerEnvironmentDepthLayerPolicy={} privateLayerEnvironmentDepthProjectionLayerPolicy=per-eye-current-eye privateLayerEnvironmentDepthSampledLayerMask={} privateLayerEnvironmentDepthSwapchainIndex={} privateLayerEnvironmentDepthImageSize={}x{} privateLayerEnvironmentDepthNearZ={:.3} privateLayerEnvironmentDepthFarZ={:.3} privateLayerEnvironmentDepthInfiniteFar={} privateLayerEnvironmentDepthTextureTransform=rotate0+flipY",
+                    frame_count,
+                    depth_binding.real_depth_bound,
+                    !depth_binding.real_depth_bound,
+                    depth_source_layer as u32,
+                    environment_depth_settings.layer_policy_marker_value(),
+                    environment_depth_settings.sampled_layer_mask(),
+                    swapchain_index,
+                    depth_width,
+                    depth_height,
+                    depth_near_z,
+                    depth_far_z,
+                    depth_infinite_far,
+                ),
+            );
+        }
         let push = PrivateLayerProjectionPush {
             target_rect: [
                 target_rect.x,
@@ -452,6 +589,22 @@ impl PrivateLayerGraphRenderer {
                 projection_push.stretch1[0],
                 projection_push.stretch1[1],
                 projection_settings.video_border_blend_mode.shader_code(),
+            ],
+            depth: [
+                if depth_binding.real_depth_bound {
+                    1.0
+                } else {
+                    0.0
+                },
+                depth_near_z,
+                depth_far_z,
+                depth_source_layer,
+            ],
+            depth_aux: [
+                depth_flags as f32,
+                META_ENVIRONMENT_DEPTH_TEXTURE_TRANSFORM_FLAGS,
+                environment_depth_settings.near_m,
+                environment_depth_settings.far_m,
             ],
         };
         push_fragment_constants(device, cmd, resources.projection_pipeline_layout, &push);
@@ -480,11 +633,12 @@ impl PrivateLayerGraphRenderer {
             self.color_format,
             self.projection_render_pass,
             camera_descriptor_set_layout,
+            &self.environment_depth_image_handles,
         )?);
         crate::marker(
             "private-extension-slot",
             format!(
-                "status=created privateLayerSlotId={} privateLayerAbiId={} privateLayerPayloadLinked={} privateLayerImplementationPath={} privateLayerGraphPath=external-fragment-payload privateLayerGuideResolution={}x{} privateLayerGuideTargets={} privateLayerGuidePasses={} privateLayerDescriptorShape=set0-camera-2-samplers,set1-guide-5-samplers privateLayerFinalProjectionSource=camera-plus-resident-guide-textures",
+                "status=created privateLayerSlotId={} privateLayerAbiId={} privateLayerPayloadLinked={} privateLayerImplementationPath={} privateLayerGraphPath=external-fragment-payload privateLayerGuideResolution={}x{} privateLayerGuideTargets={} privateLayerGuidePasses={} privateLayerDescriptorShape=set0-camera-2-samplers,set1-guide-5-samplers,set2-environment-depth-1-sampler privateLayerEnvironmentDepthFallback=true privateLayerEnvironmentDepthImages={} privateLayerEnvironmentDepthImageSize={}x{} privateLayerFinalProjectionSource=camera-plus-resident-guide-textures",
                 PRIVATE_LAYER_SLOT_ID,
                 PRIVATE_LAYER_SLOT_ABI_ID,
                 PRIVATE_LAYER_PAYLOAD_LINKED,
@@ -492,7 +646,10 @@ impl PrivateLayerGraphRenderer {
                 PRIVATE_GUIDE_WIDTH,
                 PRIVATE_GUIDE_HEIGHT,
                 PRIVATE_GUIDE_TARGET_COUNT,
-                PRIVATE_GUIDE_PASS_COUNT
+                PRIVATE_GUIDE_PASS_COUNT,
+                self.environment_depth_image_handles.len(),
+                self.environment_depth_width,
+                self.environment_depth_height
             ),
         );
         Ok(())
@@ -511,7 +668,9 @@ struct PrivateLayerResources {
     render_pass: vk::RenderPass,
     sampler: vk::Sampler,
     guide_descriptor_set_layout: vk::DescriptorSetLayout,
+    depth_descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
+    depth_resources: PrivateLayerDepthResources,
     guide_pipeline_layout: vk::PipelineLayout,
     projection_pipeline_layout: vk::PipelineLayout,
     guide_pipelines: [vk::Pipeline; PRIVATE_GUIDE_PASS_COUNT],
@@ -526,6 +685,7 @@ impl PrivateLayerResources {
         color_format: vk::Format,
         projection_render_pass: vk::RenderPass,
         camera_descriptor_set_layout: vk::DescriptorSetLayout,
+        environment_depth_image_handles: &[u64],
     ) -> Result<Self, String> {
         let render_pass = create_private_render_pass(device, color_format)?;
         let sampler = device
@@ -551,12 +711,41 @@ impl PrivateLayerResources {
                 return Err(error);
             }
         };
-        let descriptor_pool = match create_descriptor_pool(device) {
-            Ok(pool) => pool,
+        let depth_descriptor_set_layout = match create_depth_descriptor_set_layout(device) {
+            Ok(layout) => layout,
             Err(error) => {
                 device.destroy_descriptor_set_layout(guide_descriptor_set_layout, None);
                 device.destroy_sampler(sampler, None);
                 device.destroy_render_pass(render_pass, None);
+                return Err(error);
+            }
+        };
+        let descriptor_pool = match create_descriptor_pool(device) {
+            Ok(pool) => pool,
+            Err(error) => {
+                device.destroy_descriptor_set_layout(depth_descriptor_set_layout, None);
+                device.destroy_descriptor_set_layout(guide_descriptor_set_layout, None);
+                device.destroy_sampler(sampler, None);
+                device.destroy_render_pass(render_pass, None);
+                return Err(error);
+            }
+        };
+        let depth_resources = match PrivateLayerDepthResources::new(
+            device,
+            memory_properties,
+            depth_descriptor_set_layout,
+            environment_depth_image_handles,
+        ) {
+            Ok(resources) => resources,
+            Err(error) => {
+                destroy_descriptor_scaffold(
+                    device,
+                    descriptor_pool,
+                    guide_descriptor_set_layout,
+                    depth_descriptor_set_layout,
+                    sampler,
+                    render_pass,
+                );
                 return Err(error);
             }
         };
@@ -570,9 +759,11 @@ impl PrivateLayerResources {
                     device,
                     descriptor_pool,
                     guide_descriptor_set_layout,
+                    depth_descriptor_set_layout,
                     sampler,
                     render_pass,
                 );
+                depth_resources.destroy(device);
                 return Err(format!(
                     "create private layer guide pipeline layout: {error}"
                 ));
@@ -580,7 +771,11 @@ impl PrivateLayerResources {
         };
         let projection_pipeline_layout = match create_pipeline_layout::<PrivateLayerProjectionPush>(
             device,
-            &[camera_descriptor_set_layout, guide_descriptor_set_layout],
+            &[
+                camera_descriptor_set_layout,
+                guide_descriptor_set_layout,
+                depth_descriptor_set_layout,
+            ],
         ) {
             Ok(layout) => layout,
             Err(error) => {
@@ -589,9 +784,11 @@ impl PrivateLayerResources {
                     device,
                     descriptor_pool,
                     guide_descriptor_set_layout,
+                    depth_descriptor_set_layout,
                     sampler,
                     render_pass,
                 );
+                depth_resources.destroy(device);
                 return Err(format!(
                     "create private layer projection pipeline layout: {error}"
                 ));
@@ -646,9 +843,11 @@ impl PrivateLayerResources {
                         guide_pipeline_layout,
                         descriptor_pool,
                         guide_descriptor_set_layout,
+                        depth_descriptor_set_layout,
                         sampler,
                         render_pass,
                     );
+                    depth_resources.destroy(device);
                     return Err(error);
                 }
             }
@@ -680,9 +879,11 @@ impl PrivateLayerResources {
                     guide_pipeline_layout,
                     descriptor_pool,
                     guide_descriptor_set_layout,
+                    depth_descriptor_set_layout,
                     sampler,
                     render_pass,
                 );
+                depth_resources.destroy(device);
                 return Err(error);
             }
         };
@@ -714,9 +915,11 @@ impl PrivateLayerResources {
                         guide_pipeline_layout,
                         descriptor_pool,
                         guide_descriptor_set_layout,
+                        depth_descriptor_set_layout,
                         sampler,
                         render_pass,
                     );
+                    depth_resources.destroy(device);
                     return Err(error);
                 }
             }
@@ -727,7 +930,9 @@ impl PrivateLayerResources {
             render_pass,
             sampler,
             guide_descriptor_set_layout,
+            depth_descriptor_set_layout,
             descriptor_pool,
+            depth_resources,
             guide_pipeline_layout,
             projection_pipeline_layout,
             guide_pipelines,
@@ -747,6 +952,8 @@ impl PrivateLayerResources {
         device.destroy_pipeline_layout(self.projection_pipeline_layout, None);
         device.destroy_pipeline_layout(self.guide_pipeline_layout, None);
         device.destroy_descriptor_pool(self.descriptor_pool, None);
+        self.depth_resources.destroy(device);
+        device.destroy_descriptor_set_layout(self.depth_descriptor_set_layout, None);
         device.destroy_descriptor_set_layout(self.guide_descriptor_set_layout, None);
         device.destroy_sampler(self.sampler, None);
         device.destroy_render_pass(self.render_pass, None);
@@ -808,6 +1015,187 @@ impl PrivateLayerEyeResources {
         for target in self.targets {
             target.destroy(device);
         }
+    }
+}
+
+struct PrivateLayerDepthBinding {
+    descriptor_set: vk::DescriptorSet,
+    real_depth_bound: bool,
+}
+
+struct PrivateLayerDepthResources {
+    descriptor_pool: vk::DescriptorPool,
+    sampler: vk::Sampler,
+    fallback: PrivateLayerDepthFallbackImage,
+    fallback_ready: bool,
+    fallback_descriptor_set: vk::DescriptorSet,
+    real_image_views: Vec<vk::ImageView>,
+    real_descriptor_sets: Vec<vk::DescriptorSet>,
+}
+
+impl PrivateLayerDepthResources {
+    unsafe fn new(
+        device: &ash::Device,
+        memory_properties: &vk::PhysicalDeviceMemoryProperties,
+        descriptor_set_layout: vk::DescriptorSetLayout,
+        depth_image_handles: &[u64],
+    ) -> Result<Self, String> {
+        let sampler = match device.create_sampler(
+            &vk::SamplerCreateInfo::default()
+                .mag_filter(vk::Filter::NEAREST)
+                .min_filter(vk::Filter::NEAREST)
+                .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
+                .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .border_color(vk::BorderColor::FLOAT_OPAQUE_BLACK),
+            None,
+        ) {
+            Ok(sampler) => sampler,
+            Err(error) => {
+                return Err(format!("create private layer depth sampler: {error}"));
+            }
+        };
+        let fallback = match PrivateLayerDepthFallbackImage::new(device, memory_properties) {
+            Ok(image) => image,
+            Err(error) => {
+                device.destroy_sampler(sampler, None);
+                return Err(error);
+            }
+        };
+        let descriptor_count = depth_image_handles.len().saturating_add(1) as u32;
+        let descriptor_pool = match create_depth_descriptor_pool(device, descriptor_count) {
+            Ok(pool) => pool,
+            Err(error) => {
+                fallback.destroy(device);
+                device.destroy_sampler(sampler, None);
+                return Err(error);
+            }
+        };
+
+        let mut real_image_views = Vec::with_capacity(depth_image_handles.len());
+        for (index, image_handle) in depth_image_handles.iter().copied().enumerate() {
+            let image = vk::Image::from_raw(image_handle);
+            match device.create_image_view(
+                &vk::ImageViewCreateInfo::default()
+                    .image(image)
+                    .view_type(vk::ImageViewType::TYPE_2D_ARRAY)
+                    .format(META_ENVIRONMENT_DEPTH_FORMAT)
+                    .subresource_range(depth_subresource_range()),
+                None,
+            ) {
+                Ok(view) => real_image_views.push(view),
+                Err(error) => {
+                    for view in real_image_views {
+                        device.destroy_image_view(view, None);
+                    }
+                    device.destroy_descriptor_pool(descriptor_pool, None);
+                    fallback.destroy(device);
+                    device.destroy_sampler(sampler, None);
+                    return Err(format!(
+                        "create private layer environment depth image view index={index}: {error}"
+                    ));
+                }
+            }
+        }
+
+        let set_layouts = vec![descriptor_set_layout; descriptor_count as usize];
+        let descriptor_sets = match device.allocate_descriptor_sets(
+            &vk::DescriptorSetAllocateInfo::default()
+                .descriptor_pool(descriptor_pool)
+                .set_layouts(&set_layouts),
+        ) {
+            Ok(sets) => sets,
+            Err(error) => {
+                for view in real_image_views {
+                    device.destroy_image_view(view, None);
+                }
+                device.destroy_descriptor_pool(descriptor_pool, None);
+                fallback.destroy(device);
+                device.destroy_sampler(sampler, None);
+                return Err(format!(
+                    "allocate private layer depth descriptor sets: {error}"
+                ));
+            }
+        };
+        let fallback_descriptor_set = descriptor_sets[0];
+        write_depth_descriptor_set(device, fallback_descriptor_set, sampler, fallback.view);
+        let real_descriptor_sets = descriptor_sets.iter().copied().skip(1).collect::<Vec<_>>();
+        for (descriptor_set, image_view) in real_descriptor_sets
+            .iter()
+            .copied()
+            .zip(real_image_views.iter().copied())
+        {
+            write_depth_descriptor_set(device, descriptor_set, sampler, image_view);
+        }
+
+        Ok(Self {
+            descriptor_pool,
+            sampler,
+            fallback,
+            fallback_ready: false,
+            fallback_descriptor_set,
+            real_image_views,
+            real_descriptor_sets,
+        })
+    }
+
+    fn descriptor_for_frame(
+        &self,
+        frame: Option<&OpenXrEnvironmentDepthFrame>,
+    ) -> PrivateLayerDepthBinding {
+        if let Some(frame) = frame {
+            if let Some(descriptor_set) = self
+                .real_descriptor_sets
+                .get(frame.swapchain_index as usize)
+                .copied()
+            {
+                return PrivateLayerDepthBinding {
+                    descriptor_set,
+                    real_depth_bound: true,
+                };
+            }
+        }
+        PrivateLayerDepthBinding {
+            descriptor_set: self.fallback_descriptor_set,
+            real_depth_bound: false,
+        }
+    }
+
+    unsafe fn transition_fallback_for_sampling(
+        &mut self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+    ) {
+        if self.fallback_ready {
+            return;
+        }
+        let barrier = [vk::ImageMemoryBarrier::default()
+            .image(self.fallback.image)
+            .subresource_range(depth_subresource_range())
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .src_access_mask(vk::AccessFlags::empty())
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)];
+        device.cmd_pipeline_barrier(
+            cmd,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &barrier,
+        );
+        self.fallback_ready = true;
+    }
+
+    unsafe fn destroy(self, device: &ash::Device) {
+        for view in self.real_image_views {
+            device.destroy_image_view(view, None);
+        }
+        device.destroy_descriptor_pool(self.descriptor_pool, None);
+        self.fallback.destroy(device);
+        device.destroy_sampler(self.sampler, None);
     }
 }
 
@@ -924,6 +1312,101 @@ impl PrivateLayerImage {
     }
 }
 
+struct PrivateLayerDepthFallbackImage {
+    image: vk::Image,
+    memory: vk::DeviceMemory,
+    view: vk::ImageView,
+}
+
+impl PrivateLayerDepthFallbackImage {
+    unsafe fn new(
+        device: &ash::Device,
+        memory_properties: &vk::PhysicalDeviceMemoryProperties,
+    ) -> Result<Self, String> {
+        let image = device
+            .create_image(
+                &vk::ImageCreateInfo::default()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(META_ENVIRONMENT_DEPTH_FORMAT)
+                    .extent(vk::Extent3D {
+                        width: 1,
+                        height: 1,
+                        depth: 1,
+                    })
+                    .mip_levels(1)
+                    .array_layers(META_ENVIRONMENT_DEPTH_LAYER_COUNT)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(vk::ImageUsageFlags::SAMPLED)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                    .initial_layout(vk::ImageLayout::UNDEFINED),
+                None,
+            )
+            .map_err(|error| format!("create private layer fallback depth image: {error}"))?;
+        let requirements = device.get_image_memory_requirements(image);
+        let memory_type_index = match find_memory_type(
+            memory_properties,
+            requirements.memory_type_bits,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        ) {
+            Ok(index) => index,
+            Err(error) => {
+                device.destroy_image(image, None);
+                return Err(error);
+            }
+        };
+        let memory = match device.allocate_memory(
+            &vk::MemoryAllocateInfo::default()
+                .allocation_size(requirements.size)
+                .memory_type_index(memory_type_index),
+            None,
+        ) {
+            Ok(memory) => memory,
+            Err(error) => {
+                device.destroy_image(image, None);
+                return Err(format!(
+                    "allocate private layer fallback depth image memory: {error}"
+                ));
+            }
+        };
+        if let Err(error) = device.bind_image_memory(image, memory, 0) {
+            device.free_memory(memory, None);
+            device.destroy_image(image, None);
+            return Err(format!(
+                "bind private layer fallback depth image memory: {error}"
+            ));
+        }
+        let view = match device.create_image_view(
+            &vk::ImageViewCreateInfo::default()
+                .image(image)
+                .view_type(vk::ImageViewType::TYPE_2D_ARRAY)
+                .format(META_ENVIRONMENT_DEPTH_FORMAT)
+                .subresource_range(depth_subresource_range()),
+            None,
+        ) {
+            Ok(view) => view,
+            Err(error) => {
+                device.free_memory(memory, None);
+                device.destroy_image(image, None);
+                return Err(format!(
+                    "create private layer fallback depth image view: {error}"
+                ));
+            }
+        };
+        Ok(Self {
+            image,
+            memory,
+            view,
+        })
+    }
+
+    unsafe fn destroy(self, device: &ash::Device) {
+        device.destroy_image_view(self.view, None);
+        device.destroy_image(self.image, None);
+        device.free_memory(self.memory, None);
+    }
+}
+
 #[repr(C)]
 struct PrivateLayerGuidePush {
     params0: [f32; 4],
@@ -938,6 +1421,8 @@ struct PrivateLayerProjectionPush {
     effect: [f32; 4],
     cycle: [f32; 4],
     border_blend: [f32; 4],
+    depth: [f32; 4],
+    depth_aux: [f32; 4],
 }
 
 unsafe fn begin_private_pass(
@@ -1059,6 +1544,24 @@ fn create_guide_descriptor_set_layout(
     }
 }
 
+fn create_depth_descriptor_set_layout(
+    device: &ash::Device,
+) -> Result<vk::DescriptorSetLayout, String> {
+    let bindings = [vk::DescriptorSetLayoutBinding::default()
+        .binding(0)
+        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        .descriptor_count(1)
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT)];
+    unsafe {
+        device
+            .create_descriptor_set_layout(
+                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
+                None,
+            )
+            .map_err(|error| format!("create private layer depth descriptor layout: {error}"))
+    }
+}
+
 fn create_descriptor_pool(device: &ash::Device) -> Result<vk::DescriptorPool, String> {
     let pool_sizes = [vk::DescriptorPoolSize::default()
         .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
@@ -1072,6 +1575,25 @@ fn create_descriptor_pool(device: &ash::Device) -> Result<vk::DescriptorPool, St
                 None,
             )
             .map_err(|error| format!("create private layer descriptor pool: {error}"))
+    }
+}
+
+fn create_depth_descriptor_pool(
+    device: &ash::Device,
+    descriptor_count: u32,
+) -> Result<vk::DescriptorPool, String> {
+    let pool_sizes = [vk::DescriptorPoolSize::default()
+        .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        .descriptor_count(descriptor_count)];
+    unsafe {
+        device
+            .create_descriptor_pool(
+                &vk::DescriptorPoolCreateInfo::default()
+                    .pool_sizes(&pool_sizes)
+                    .max_sets(descriptor_count),
+                None,
+            )
+            .map_err(|error| format!("create private layer depth descriptor pool: {error}"))
     }
 }
 
@@ -1109,6 +1631,24 @@ unsafe fn write_guide_descriptor_set(
             .image_info(&image_info)];
         device.update_descriptor_sets(&writes, &[]);
     }
+}
+
+unsafe fn write_depth_descriptor_set(
+    device: &ash::Device,
+    descriptor_set: vk::DescriptorSet,
+    sampler: vk::Sampler,
+    image_view: vk::ImageView,
+) {
+    let image_info = [vk::DescriptorImageInfo::default()
+        .sampler(sampler)
+        .image_view(image_view)
+        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+    let writes = [vk::WriteDescriptorSet::default()
+        .dst_set(descriptor_set)
+        .dst_binding(0)
+        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+        .image_info(&image_info)];
+    device.update_descriptor_sets(&writes, &[]);
 }
 
 unsafe fn create_pipeline_layout<T>(
@@ -1234,6 +1774,16 @@ fn color_subresource_range() -> vk::ImageSubresourceRange {
     }
 }
 
+fn depth_subresource_range() -> vk::ImageSubresourceRange {
+    vk::ImageSubresourceRange {
+        aspect_mask: vk::ImageAspectFlags::DEPTH,
+        base_mip_level: 0,
+        level_count: 1,
+        base_array_layer: 0,
+        layer_count: META_ENVIRONMENT_DEPTH_LAYER_COUNT,
+    }
+}
+
 fn target_rect_to_scissor(extent: vk::Extent2D, rect: TargetRect) -> vk::Rect2D {
     let (x, width) = normalized_interval_to_pixels(extent.width, rect.x, rect.x + rect.width);
     let (y, height) = normalized_interval_to_pixels(extent.height, rect.y, rect.y + rect.height);
@@ -1314,10 +1864,12 @@ unsafe fn destroy_descriptor_scaffold(
     device: &ash::Device,
     descriptor_pool: vk::DescriptorPool,
     guide_descriptor_set_layout: vk::DescriptorSetLayout,
+    depth_descriptor_set_layout: vk::DescriptorSetLayout,
     sampler: vk::Sampler,
     render_pass: vk::RenderPass,
 ) {
     device.destroy_descriptor_pool(descriptor_pool, None);
+    device.destroy_descriptor_set_layout(depth_descriptor_set_layout, None);
     device.destroy_descriptor_set_layout(guide_descriptor_set_layout, None);
     device.destroy_sampler(sampler, None);
     device.destroy_render_pass(render_pass, None);
@@ -1329,6 +1881,7 @@ unsafe fn destroy_layout_scaffold(
     guide_pipeline_layout: vk::PipelineLayout,
     descriptor_pool: vk::DescriptorPool,
     guide_descriptor_set_layout: vk::DescriptorSetLayout,
+    depth_descriptor_set_layout: vk::DescriptorSetLayout,
     sampler: vk::Sampler,
     render_pass: vk::RenderPass,
 ) {
@@ -1338,6 +1891,7 @@ unsafe fn destroy_layout_scaffold(
         device,
         descriptor_pool,
         guide_descriptor_set_layout,
+        depth_descriptor_set_layout,
         sampler,
         render_pass,
     );

@@ -9,7 +9,7 @@
     "apps/native-renderer-android/native/src/native_renderer_video_projection_options.rs",
     "apps/native-renderer-android/native/src/projection_target_state.rs"
   ],
-  "property_count": 157,
+  "property_count": 166,
   "properties": [
     {
       "name": "debug.rustyquest.native_renderer.camera.direct_border.opacity",
@@ -509,9 +509,25 @@
       "allowed_values": [
         "disabled",
         "status-only",
+        "projection-sampler",
         "retained-particles",
         "scene-particle-map"
       ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.native_passthrough.required",
+      "family": "environment_depth",
+      "runtime_owner": "native_renderer_environment_depth_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
       "validators": [
         "runtime-parser",
         "profile-matrix",
@@ -1829,7 +1845,7 @@
       "value_kind": "f32",
       "range": {
         "min": -1.0,
-        "max": 5.0
+        "max": 6.0
       },
       "validators": [
         "runtime-parser",
@@ -1859,6 +1875,158 @@
     },
     {
       "name": "debug.rustyquest.native_renderer.private_particles.color.facing_attenuation_strength",
+      "family": "private_particles",
+      "runtime_owner": "gpu_private_particles",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.driver0.value01",
+      "family": "private_particles",
+      "runtime_owner": "gpu_private_particles",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.driver1.value01",
+      "family": "private_particles",
+      "runtime_owner": "gpu_private_particles",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.driver2.value01",
+      "family": "private_particles",
+      "runtime_owner": "gpu_private_particles",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.driver3.value01",
+      "family": "private_particles",
+      "runtime_owner": "gpu_private_particles",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.driver4.value01",
+      "family": "private_particles",
+      "runtime_owner": "gpu_private_particles",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.driver5.value01",
+      "family": "private_particles",
+      "runtime_owner": "gpu_private_particles",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.driver6.value01",
+      "family": "private_particles",
+      "runtime_owner": "gpu_private_particles",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.driver7.value01",
       "family": "private_particles",
       "runtime_owner": "gpu_private_particles",
       "lifecycle": "startup-effective",

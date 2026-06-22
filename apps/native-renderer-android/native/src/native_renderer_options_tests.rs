@@ -27,9 +27,10 @@ mod tests {
         PROP_ENVIRONMENT_DEPTH_DEPTH_UNITS_POLICY, PROP_ENVIRONMENT_DEPTH_FAR_M,
         PROP_ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED, PROP_ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD,
         PROP_ENVIRONMENT_DEPTH_LAYER_POLICY, PROP_ENVIRONMENT_DEPTH_MODE,
-        PROP_ENVIRONMENT_DEPTH_NEAR_M, PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY,
-        PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE, PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS,
-        PROP_ENVIRONMENT_DEPTH_SOURCE, PROP_ENVIRONMENT_DEPTH_SURFACE_MODEL,
+        PROP_ENVIRONMENT_DEPTH_NATIVE_PASSTHROUGH_REQUIRED, PROP_ENVIRONMENT_DEPTH_NEAR_M,
+        PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY, PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE,
+        PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS, PROP_ENVIRONMENT_DEPTH_SOURCE,
+        PROP_ENVIRONMENT_DEPTH_SURFACE_MODEL,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MIN_CELLS,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MODE,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY,
@@ -1004,6 +1005,7 @@ mod tests {
         assert_eq!(settings.particle_capacity, 32_768);
         assert_eq!(settings.sample_stride_pixels, 12);
         assert!(!settings.high_rate_json_payload);
+        assert!(!settings.native_passthrough_required);
         assert_eq!(
             settings.surface_support_normal_source,
             NativeEnvironmentDepthSurfaceNormalSource::Off
@@ -1018,6 +1020,7 @@ mod tests {
         assert!(fields.contains("environmentDepthDebugView=normal"));
         assert!(fields.contains("environmentDepthProviderState=not-requested"));
         assert!(fields.contains("environmentDepthHandRemovalRequested=false"));
+        assert!(fields.contains("environmentDepthNativePassthroughRequired=false"));
         assert!(fields.contains("environmentDepthHandRemovalEnabled=false"));
         assert!(fields.contains("environmentDepthHighRateJsonPayload=false"));
         assert!(fields.contains("environmentDepthSurfaceNormalSource=off"));
@@ -1038,6 +1041,7 @@ mod tests {
             (PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW, "raw-d16"),
             (PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE, "stage"),
             (PROP_ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED, "true"),
+            (PROP_ENVIRONMENT_DEPTH_NATIVE_PASSTHROUGH_REQUIRED, "true"),
             (PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY, "999999"),
             (PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS, "0"),
             (PROP_ENVIRONMENT_DEPTH_NEAR_M, "0.50"),
@@ -1067,6 +1071,7 @@ mod tests {
             NativeEnvironmentDepthReferenceSpace::OpenXrStage
         );
         assert!(settings.hand_removal_requested);
+        assert!(settings.native_passthrough_required);
         assert_eq!(settings.particle_capacity, 262_144);
         assert_eq!(settings.sample_stride_pixels, 12);
         assert_eq!(settings.near_m, 0.50);
@@ -1082,8 +1087,27 @@ mod tests {
         assert!(fields.contains("environmentDepthProviderState=status-only-skeleton"));
         assert!(fields.contains("environmentDepthReferenceSpace=openxr-stage"));
         assert!(fields.contains("environmentDepthHandRemovalRequested=true"));
+        assert!(fields.contains("environmentDepthNativePassthroughRequired=true"));
         assert!(fields.contains("environmentDepthParticleCapacity=262144"));
         assert!(fields.contains("environmentDepthSampleStridePixels=12"));
+    }
+
+    #[test]
+    fn environment_depth_projection_sampler_requests_provider_without_particles() {
+        let options = options_from(&[
+            (PROP_ENVIRONMENT_DEPTH_MODE, "projection-sampler"),
+            (PROP_ENVIRONMENT_DEPTH_SOURCE, "runtime-provider"),
+        ]);
+        let settings = options.environment_depth_settings;
+
+        assert_eq!(settings.mode, NativeEnvironmentDepthMode::ProjectionSampler);
+        assert!(settings.runtime_provider_requested());
+        assert!(!settings.mode_draws_particles());
+        assert!(settings.requires_scene_permission());
+
+        let fields = settings.marker_fields();
+        assert!(fields.contains("environmentDepthMode=projection-sampler"));
+        assert!(fields.contains("environmentDepthProviderState=provider-not-bound"));
     }
 
     #[test]

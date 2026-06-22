@@ -154,7 +154,7 @@ public final class ControlPanelActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         if (intent != null && ACTION_TOGGLE_PANEL.equals(intent.getAction())) {
-            finish();
+            closePanelAndReturnToImmersive();
         } else {
             handleDisplayCompositeIntent(intent);
             handleDiagnosticIntent(intent);
@@ -241,7 +241,7 @@ public final class ControlPanelActivity extends Activity {
         headerClose.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                finish();
+                closePanelAndReturnToImmersive();
             }
         });
         header.addView(headerClose);
@@ -427,7 +427,7 @@ public final class ControlPanelActivity extends Activity {
         headerClose.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                finish();
+                closePanelAndReturnToImmersive();
             }
         });
         header.addView(headerClose);
@@ -443,7 +443,7 @@ public final class ControlPanelActivity extends Activity {
         close.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                finish();
+                closePanelAndReturnToImmersive();
             }
         });
         LinearLayout closeRow = new LinearLayout(this);
@@ -491,7 +491,8 @@ public final class ControlPanelActivity extends Activity {
             {"Preblur brightness", "2"},
             {"Raw strength", "3"},
             {"Blurred strength", "4"},
-            {"Displacement", "5"}
+            {"Displacement", "5"},
+            {"Depth gradient", "6"}
         };
         ArrayList<Button> buttons = new ArrayList<Button>();
         for (int i = 0; i < choices.length; i++) {
@@ -559,8 +560,8 @@ public final class ControlPanelActivity extends Activity {
     }
 
     private JSONObject buildPrivateLayerSelectionJson(int layerIndex) throws Exception {
-        if (layerIndex < 0 || layerIndex > 5) {
-            throw new IllegalArgumentException("layer index must be 0-5");
+        if (layerIndex < 0 || layerIndex > 6) {
+            throw new IllegalArgumentException("layer index must be 0-6");
         }
         JSONObject source = new JSONObject()
             .put("surface", "same_apk_panel")
@@ -583,7 +584,7 @@ public final class ControlPanelActivity extends Activity {
     private int readPrivateLayerOverride() {
         double requested = readDoubleProperty(PROP_PRIVATE_LAYER_OVERRIDE, 0.0);
         int layerIndex = (int) Math.round(requested);
-        if (layerIndex < 0 || layerIndex > 5) {
+        if (layerIndex < 0 || layerIndex > 6) {
             return 0;
         }
         return layerIndex;
@@ -603,6 +604,8 @@ public final class ControlPanelActivity extends Activity {
                 return "blurred-strength";
             case 5:
                 return "displacement";
+            case 6:
+                return "depth-gradient";
             default:
                 return "unknown";
         }
@@ -714,7 +717,7 @@ public final class ControlPanelActivity extends Activity {
         close.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                finish();
+                closePanelAndReturnToImmersive();
             }
         });
 
@@ -944,7 +947,17 @@ public final class ControlPanelActivity extends Activity {
         Intent intent = new Intent(Intent.ACTION_MAIN);
         intent.setComponent(new ComponentName(getPackageName(), "android.app.NativeActivity"));
         intent.addCategory("com.oculus.intent.category.VR");
+        intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         startActivity(intent);
+    }
+
+    private void closePanelAndReturnToImmersive() {
+        launchImmersiveRenderer();
+        if (Build.VERSION.SDK_INT >= 21) {
+            finishAndRemoveTask();
+        } else {
+            finish();
+        }
     }
 
     private void writeStatus(String panelStatus) throws Exception {

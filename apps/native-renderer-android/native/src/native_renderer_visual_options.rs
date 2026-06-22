@@ -271,7 +271,7 @@ impl NativePrivateLayerSettings {
         Self {
             enabled: bool_value(lookup(PROP_PRIVATE_LAYER_ENABLED), false),
             layer_seconds: f32_clamped_value(lookup(PROP_PRIVATE_LAYER_SECONDS), 5.0, 0.25, 60.0),
-            layer_override: f32_clamped_value(lookup(PROP_PRIVATE_LAYER_OVERRIDE), -1.0, -1.0, 5.0),
+            layer_override: f32_clamped_value(lookup(PROP_PRIVATE_LAYER_OVERRIDE), -1.0, -1.0, 6.0),
             effect: [
                 f32_clamped_value(lookup(PROP_PRIVATE_LAYER_EFFECT0), 1.0, 0.0, 4.0),
                 f32_clamped_value(lookup(PROP_PRIVATE_LAYER_EFFECT1), 1.0, 0.0, 4.0),

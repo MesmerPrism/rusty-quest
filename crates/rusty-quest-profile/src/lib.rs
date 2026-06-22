@@ -28,6 +28,8 @@ const ENVIRONMENT_DEPTH_REFERENCE_SPACE: &str =
     "debug.rustyquest.native_renderer.environment_depth.reference_space";
 const ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED: &str =
     "debug.rustyquest.native_renderer.environment_depth.hand_removal.enabled";
+const ENVIRONMENT_DEPTH_NATIVE_PASSTHROUGH_REQUIRED: &str =
+    "debug.rustyquest.native_renderer.environment_depth.native_passthrough.required";
 const ENVIRONMENT_DEPTH_PARTICLE_CAPACITY: &str =
     "debug.rustyquest.native_renderer.environment_depth.particle_capacity";
 const ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS: &str =
@@ -1048,6 +1050,9 @@ fn validate_environment_depth_property(
                     | "status"
                     | "status-only"
                     | "provider-status"
+                    | "projection-sampler"
+                    | "sampled-provider"
+                    | "provider-sampler"
                     | "retained-particles"
                     | "retained-particle-map"
                     | "scene-particle-map"
@@ -1177,6 +1182,9 @@ fn validate_environment_depth_property(
             }
         }
         ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED => {
+            validate_environment_depth_bool(property, errors);
+        }
+        ENVIRONMENT_DEPTH_NATIVE_PASSTHROUGH_REQUIRED => {
             validate_environment_depth_bool(property, errors);
         }
         ENVIRONMENT_DEPTH_PARTICLE_CAPACITY => {

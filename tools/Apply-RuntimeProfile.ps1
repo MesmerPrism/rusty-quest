@@ -25,6 +25,7 @@ $EnvironmentDepthDepthUnitsPolicyProperty = "debug.rustyquest.native_renderer.en
 $EnvironmentDepthDebugViewProperty = "debug.rustyquest.native_renderer.environment_depth.debug_view"
 $EnvironmentDepthReferenceSpaceProperty = "debug.rustyquest.native_renderer.environment_depth.reference_space"
 $EnvironmentDepthHandRemovalEnabledProperty = "debug.rustyquest.native_renderer.environment_depth.hand_removal.enabled"
+$EnvironmentDepthNativePassthroughRequiredProperty = "debug.rustyquest.native_renderer.environment_depth.native_passthrough.required"
 $EnvironmentDepthParticleCapacityProperty = "debug.rustyquest.native_renderer.environment_depth.particle_capacity"
 $EnvironmentDepthSampleStridePixelsProperty = "debug.rustyquest.native_renderer.environment_depth.sample_stride_pixels"
 $EnvironmentDepthNearMProperty = "debug.rustyquest.native_renderer.environment_depth.near_m"
@@ -489,7 +490,7 @@ function Assert-EnvironmentDepthProperty {
     $normalized = Get-NormalizedProfileValue -Value $Value
     switch -Exact ($Name) {
         $EnvironmentDepthModeProperty {
-            if (@("disabled", "off", "status", "status-only", "provider-status", "retained-particles", "retained-particle-map", "scene-particle-map", "scene-map") -notcontains $normalized) {
+            if (@("disabled", "off", "status", "status-only", "provider-status", "projection-sampler", "sampled-provider", "provider-sampler", "retained-particles", "retained-particle-map", "scene-particle-map", "scene-map") -notcontains $normalized) {
                 throw "Environment depth mode is not supported: $Value"
             }
             return
@@ -564,6 +565,10 @@ function Assert-EnvironmentDepthProperty {
             return
         }
         $EnvironmentDepthHandRemovalEnabledProperty {
+            Assert-EnvironmentDepthBool -Name $Name -Value $Value
+            return
+        }
+        $EnvironmentDepthNativePassthroughRequiredProperty {
             Assert-EnvironmentDepthBool -Name $Name -Value $Value
             return
         }

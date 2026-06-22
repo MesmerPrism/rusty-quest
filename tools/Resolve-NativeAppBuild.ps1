@@ -468,6 +468,8 @@ function New-GeneratedAndroidManifestText {
             [void]$lines.Add('    <uses-feature android:glEsVersion="0x00030001" android:required="true" />')
         } elseif ($feature -eq "android.hardware.vr.headtracking") {
             [void]$lines.Add('    <uses-feature android:name="android.hardware.vr.headtracking" android:version="1" android:required="true" />')
+        } elseif ($feature -eq "com.oculus.feature.PASSTHROUGH") {
+            [void]$lines.Add('    <uses-feature android:name="com.oculus.feature.PASSTHROUGH" android:required="true" />')
         } else {
             [void]$lines.Add("    <uses-feature android:name=""$([System.Security.SecurityElement]::Escape($feature))"" android:required=""false"" />")
         }
@@ -489,8 +491,12 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode"')
         [void]$lines.Add('            android:excludeFromRecents="true"')
         [void]$lines.Add('            android:exported="true"')
+        [void]$lines.Add('            android:hardwareAccelerated="false"')
         [void]$lines.Add('            android:launchMode="singleTask"')
-        [void]$lines.Add('            android:screenOrientation="landscape">')
+        [void]$lines.Add('            android:resizeableActivity="false"')
+        [void]$lines.Add('            android:screenOrientation="landscape"')
+        [void]$lines.Add('            android:windowSoftInputMode="adjustNothing|stateUnchanged">')
+        [void]$lines.Add('            <meta-data android:name="com.oculus.vr.focusaware" android:value="true" />')
         [void]$lines.Add('            <meta-data android:name="com.oculus.intent.category.VR" android:value="vr_only" />')
         [void]$lines.Add('            <meta-data android:name="android.app.lib_name" android:value="rusty_quest_native_renderer" />')
         [void]$lines.Add('            <intent-filter>')
@@ -501,7 +507,27 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('        </activity>')
     }
     if ($Activities -contains "ControlPanelActivity") {
-        [void]$lines.Add('        <activity android:name=".ControlPanelActivity" android:exported="true" android:resizeableActivity="true" />')
+        [void]$lines.Add('        <activity')
+        [void]$lines.Add('            android:name=".ControlPanelActivity"')
+        [void]$lines.Add('            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode"')
+        [void]$lines.Add('            android:exported="true"')
+        [void]$lines.Add('            android:hardwareAccelerated="true"')
+        [void]$lines.Add('            android:label="Rusty Quest Stimulus Panel"')
+        [void]$lines.Add('            android:launchMode="singleTask"')
+        [void]$lines.Add('            android:resizeableActivity="true"')
+        [void]$lines.Add('            android:screenOrientation="landscape"')
+        [void]$lines.Add('            android:windowSoftInputMode="adjustResize">')
+        [void]$lines.Add('            <layout')
+        [void]$lines.Add('                android:defaultHeight="720dp"')
+        [void]$lines.Add('                android:defaultWidth="960dp"')
+        [void]$lines.Add('                android:minHeight="480dp"')
+        [void]$lines.Add('                android:minWidth="640dp" />')
+        [void]$lines.Add('            <intent-filter>')
+        [void]$lines.Add('                <action android:name="android.intent.action.MAIN" />')
+        [void]$lines.Add('                <category android:name="com.oculus.intent.category.2D" />')
+        [void]$lines.Add('                <category android:name="android.intent.category.LAUNCHER" />')
+        [void]$lines.Add('            </intent-filter>')
+        [void]$lines.Add('        </activity>')
     }
     if ($Services -contains "DisplayCompositeProjectionService") {
         [void]$lines.Add('        <service android:name=".DisplayCompositeProjectionService" android:exported="false" android:foregroundServiceType="mediaProjection" />')
@@ -721,6 +747,14 @@ if ($selectedFeatureIds -contains "renderer.private_particles") {
     $runtimePolledPropertyFamilies += "private_particles"
     $privateParticleHotloadProperties = @(
         "debug.rustyquest.native_renderer.private_particles.visual.scale",
+        "debug.rustyquest.native_renderer.private_particles.driver0.value01",
+        "debug.rustyquest.native_renderer.private_particles.driver1.value01",
+        "debug.rustyquest.native_renderer.private_particles.driver2.value01",
+        "debug.rustyquest.native_renderer.private_particles.driver3.value01",
+        "debug.rustyquest.native_renderer.private_particles.driver4.value01",
+        "debug.rustyquest.native_renderer.private_particles.driver5.value01",
+        "debug.rustyquest.native_renderer.private_particles.driver6.value01",
+        "debug.rustyquest.native_renderer.private_particles.driver7.value01",
         "debug.rustyquest.native_renderer.private_particles.tracer.draw_slots_per_oscillator",
         "debug.rustyquest.native_renderer.private_particles.tracer.lifetime_seconds",
         "debug.rustyquest.native_renderer.private_particles.tracer.copies_per_second",
@@ -739,6 +773,8 @@ if ($selectedFeatureIds -contains "renderer.private_particles") {
         "RUSTY_QUEST_NATIVE_RENDERER channel=private-particle-slot status=hotload-applied",
         "privateParticleSettingsHotload=true",
         "privateParticleVisualParameterSource=runtime-hotload-android-property",
+        "privateParticleDriverParameterSource=runtime-hotload-android-property",
+        "privateParticleDriverBankSlotCount=8",
         "privateParticleTracerParameterSource=runtime-hotload-android-property",
         "privateParticleTransparencyParameterSource=runtime-hotload-android-property",
         "privateParticleColorParameterSource=runtime-hotload-android-property"

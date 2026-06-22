@@ -286,6 +286,10 @@ fn android_main(app: android_activity::AndroidApp) {
         );
     let runtime_options =
         native_renderer_stimulus_panel::apply_app_private_candidate(&app, runtime_options);
+    let native_passthrough_requested = runtime_options.render_mode.uses_native_passthrough()
+        || runtime_options
+            .environment_depth_settings
+            .native_passthrough_required();
     display_composite_capture_export::configure(&app, runtime_options.display_composite_settings);
     marker(
         "render-mode",
@@ -294,7 +298,7 @@ fn android_main(app: android_activity::AndroidApp) {
             native_renderer_options::PROP_RENDER_MODE,
             runtime_options.render_mode.marker_value(),
             runtime_options.render_mode.uses_custom_stereo_projection(),
-            runtime_options.render_mode.uses_native_passthrough(),
+            native_passthrough_requested,
             runtime_options.render_mode.uses_solid_black_background(),
             runtime_options
                 .render_mode
@@ -317,7 +321,7 @@ fn android_main(app: android_activity::AndroidApp) {
             format!(
                 "status=config renderMode={} nativePassthroughRequested={} solidBlackBackground={} stimulusVolumeRoute={} {}",
                 runtime_options.render_mode.marker_value(),
-                runtime_options.render_mode.uses_native_passthrough(),
+                native_passthrough_requested,
                 runtime_options.render_mode.uses_solid_black_background(),
                 runtime_options.render_mode.uses_stimulus_volume(),
                 runtime_options.stimulus_volume_settings.marker_fields()
@@ -416,7 +420,7 @@ fn android_main(app: android_activity::AndroidApp) {
             "status=starting minimal-projection-layer=true recordedHandReplayRequested=true openxrProjectionLayer=runtime-submit renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} guideProjectionCoverage={} {} finalExternalHwbSamples=0 guideTextureSamples=1 activeGuideTextureSamples={}",
             runtime_options.render_mode.marker_value(),
             runtime_options.render_mode.uses_custom_stereo_projection(),
-            runtime_options.render_mode.uses_native_passthrough(),
+            native_passthrough_requested,
             runtime_options
                 .projection_border_stretch_settings
                 .guide_projection_coverage(),

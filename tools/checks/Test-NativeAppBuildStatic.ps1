@@ -100,7 +100,14 @@ foreach ($requiredResolverNeedle in @(
     "pregrant-declared-permissions-before-first-launch",
     "same-process-jni-live-queue",
     "app-private-revision-sidecar",
-    "PROJECT_MEDIA"
+    "PROJECT_MEDIA",
+    "com.oculus.vr.focusaware",
+    'android:resizeableActivity="false"',
+    "ControlPanelActivity",
+    'android:hardwareAccelerated="true"',
+    'android:defaultHeight="720dp"',
+    'android:defaultWidth="960dp"',
+    "com.oculus.intent.category.2D"
 )) {
     if ($resolverText -notmatch [regex]::Escape($requiredResolverNeedle)) {
         throw "Native app-build resolver is missing workflow guardrail: $requiredResolverNeedle"

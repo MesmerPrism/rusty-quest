@@ -88,6 +88,13 @@ const uint RAW_DEBUG_SURFACE_COMPONENT_LARGEST_CELLS = 31u;
 const uint RAW_DEBUG_SURFACE_COMPONENT_SMALL_REJECTED_CELLS = 32u;
 const uint RAW_DEBUG_SURFACE_COMPONENT_CANDIDATE_CELLS = 33u;
 const uint RAW_DEBUG_SURFACE_COMPONENT_CONFIRMED_CELLS = 34u;
+const uint RAW_DEBUG_RAW_SAMPLE_COUNT = 35u;
+const uint RAW_DEBUG_RAW_ZERO_D16_COUNT = 36u;
+const uint RAW_DEBUG_RAW_MAX_D16_COUNT = 37u;
+const uint RAW_DEBUG_RAW_MIDDLE_D16_COUNT = 38u;
+const uint RAW_DEBUG_RAW_MIN_INVERSE_D16 = 39u;
+const uint RAW_DEBUG_RAW_MAX_D16 = 40u;
+const uint RAW_DEBUG_RAW_CENTER_D16 = 41u;
 const uint SCENE_META_WORDS_PER_SLOT = 4u;
 const uint SCENE_META_KEY = 0u;
 const uint SCENE_META_STATE = 1u;
@@ -988,6 +995,7 @@ void write_center_raw_debug_window(ivec2 depth_size) {
         vec2(0.0),
         vec2(1.0));
     float center_raw_depth = sample_raw_depth(center_depth_uv);
+    depth_debug.values[RAW_DEBUG_RAW_CENTER_D16] = raw_to_debug_d16(center_raw_depth);
     if (raw_depth_is_valid(center_raw_depth)) {
         float center_depth_meters = raw_depth_to_meters(center_raw_depth);
         float center_confidence = confidence_for_depth_uv(center_depth_uv, center_depth_meters, depth_size);
@@ -1000,6 +1008,20 @@ void write_center_raw_debug_window(ivec2 depth_size) {
         sort_raw_prefix(raw_values, valid_count);
         depth_debug.values[RAW_DEBUG_CENTER_MEDIAN_D16] = raw_to_debug_d16(raw_values[valid_count / 2]);
         depth_debug.values[RAW_DEBUG_CENTER_WINDOW_VALID_COUNT] = uint(valid_count);
+    }
+}
+
+void accumulate_unfiltered_raw_debug_stats(float raw_depth) {
+    uint raw_d16 = raw_to_debug_d16(raw_depth);
+    atomicAdd(depth_debug.values[RAW_DEBUG_RAW_SAMPLE_COUNT], 1u);
+    atomicMax(depth_debug.values[RAW_DEBUG_RAW_MIN_INVERSE_D16], 65535u - min(raw_d16, 65535u));
+    atomicMax(depth_debug.values[RAW_DEBUG_RAW_MAX_D16], raw_d16);
+    if (raw_d16 == 0u) {
+        atomicAdd(depth_debug.values[RAW_DEBUG_RAW_ZERO_D16_COUNT], 1u);
+    } else if (raw_d16 >= 65534u) {
+        atomicAdd(depth_debug.values[RAW_DEBUG_RAW_MAX_D16_COUNT], 1u);
+    } else {
+        atomicAdd(depth_debug.values[RAW_DEBUG_RAW_MIDDLE_D16_COUNT], 1u);
     }
 }
 
@@ -1046,6 +1068,7 @@ void main() {
         vec2(1.0));
 
     float raw_depth = sample_raw_depth(depth_uv);
+    accumulate_unfiltered_raw_debug_stats(raw_depth);
     bool raw_valid = raw_depth_is_valid(raw_depth);
     float depth_meters = raw_valid ? raw_depth_to_meters(raw_depth) : pc.params1.y + 1.0;
     float confidence = confidence_for_depth_uv(depth_uv, depth_meters, depth_size);

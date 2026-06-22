@@ -54,6 +54,7 @@ pub(super) fn write_projection_scorecard(
     camera_projection_stats: &CameraProjectionFrameStats,
     projection_metadata: &CameraProjectionMetadata,
     projection_settings: NativeProjectionBorderStretchSettings,
+    native_passthrough_requested: bool,
 ) {
     let (
         camera_frames_acquired,
@@ -135,7 +136,7 @@ pub(super) fn write_projection_scorecard(
     let actual_final_external_hwb_samples = planned_final_external_hwb_samples;
     let actual_guide_texture_samples = planned_guide_texture_samples;
     let native_passthrough_real_hand_mesh_visible =
-        render_mode.uses_native_passthrough() && hand_mesh_real_hands_visible;
+        native_passthrough_requested && hand_mesh_real_hands_visible;
     let solid_black_real_hand_mesh_visible =
         render_mode.uses_solid_black_background() && hand_mesh_real_hands_visible;
     let hand_mesh_visual_evidence_rects =
@@ -163,7 +164,7 @@ pub(super) fn write_projection_scorecard(
             frame_count,
             render_mode.marker_value(),
             render_mode.uses_custom_stereo_projection(),
-            render_mode.uses_native_passthrough(),
+            native_passthrough_requested,
             render_mode.uses_solid_black_background(),
             render_mode.requests_openxr_default_hand_visual(),
             native_passthrough_layer_active,
@@ -285,7 +286,7 @@ pub(super) fn write_projection_scorecard(
             frame_count,
             observed_openxr_fps,
             render_mode.marker_value(),
-            render_mode.uses_native_passthrough(),
+            native_passthrough_requested,
             environment_depth_settings.marker_fields(),
             environment_depth_particle_stats.marker_fields(),
             gpu_stage_timings.stage_ms(GpuTimestampStage::HandMeshVisual),
@@ -300,7 +301,7 @@ pub(super) fn write_projection_scorecard(
                 frame_count,
                 observed_openxr_fps,
                 render_mode.marker_value(),
-                render_mode.uses_native_passthrough(),
+                native_passthrough_requested,
                 render_mode.projection_layer_alpha_blend(),
                 gpu_stage_timings.stage_ms(GpuTimestampStage::ProjectionComposite),
                 gpu_stage_timings.stage_ms(GpuTimestampStage::StimulusVolumeCompute),

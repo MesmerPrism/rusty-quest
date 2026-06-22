@@ -111,6 +111,22 @@ pub(crate) const PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES: &str =
     "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.interval_frames";
 pub(crate) const PROP_PRIVATE_PARTICLES_VISUAL_SCALE: &str =
     "debug.rustyquest.native_renderer.private_particles.visual.scale";
+pub(crate) const PROP_PRIVATE_PARTICLES_DRIVER0_VALUE01: &str =
+    "debug.rustyquest.native_renderer.private_particles.driver0.value01";
+pub(crate) const PROP_PRIVATE_PARTICLES_DRIVER1_VALUE01: &str =
+    "debug.rustyquest.native_renderer.private_particles.driver1.value01";
+pub(crate) const PROP_PRIVATE_PARTICLES_DRIVER2_VALUE01: &str =
+    "debug.rustyquest.native_renderer.private_particles.driver2.value01";
+pub(crate) const PROP_PRIVATE_PARTICLES_DRIVER3_VALUE01: &str =
+    "debug.rustyquest.native_renderer.private_particles.driver3.value01";
+pub(crate) const PROP_PRIVATE_PARTICLES_DRIVER4_VALUE01: &str =
+    "debug.rustyquest.native_renderer.private_particles.driver4.value01";
+pub(crate) const PROP_PRIVATE_PARTICLES_DRIVER5_VALUE01: &str =
+    "debug.rustyquest.native_renderer.private_particles.driver5.value01";
+pub(crate) const PROP_PRIVATE_PARTICLES_DRIVER6_VALUE01: &str =
+    "debug.rustyquest.native_renderer.private_particles.driver6.value01";
+pub(crate) const PROP_PRIVATE_PARTICLES_DRIVER7_VALUE01: &str =
+    "debug.rustyquest.native_renderer.private_particles.driver7.value01";
 pub(crate) const PROP_PRIVATE_PARTICLES_TRACER_DRAW_SLOTS_PER_OSCILLATOR: &str =
     "debug.rustyquest.native_renderer.private_particles.tracer.draw_slots_per_oscillator";
 pub(crate) const PROP_PRIVATE_PARTICLES_TRACER_LIFETIME_SECONDS: &str =
@@ -141,6 +157,8 @@ pub(crate) const PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE: &str =
     "debug.rustyquest.native_renderer.environment_depth.reference_space";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED: &str =
     "debug.rustyquest.native_renderer.environment_depth.hand_removal.enabled";
+pub(crate) const PROP_ENVIRONMENT_DEPTH_NATIVE_PASSTHROUGH_REQUIRED: &str =
+    "debug.rustyquest.native_renderer.environment_depth.native_passthrough.required";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY: &str =
     "debug.rustyquest.native_renderer.environment_depth.particle_capacity";
 pub(crate) const PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS: &str =

@@ -70,7 +70,10 @@ use crate::{
     native_renderer_timing::{
         elapsed_ms, FrameCpuTimings, GpuStageTimings, GpuTimestampStage, GpuTimestampTracker,
     },
-    openxr_environment_depth::OpenXrEnvironmentDepthRuntime,
+    openxr_environment_depth::{
+        OpenXrEnvironmentDepthFrame, OpenXrEnvironmentDepthProperties,
+        OpenXrEnvironmentDepthRuntime,
+    },
     openxr_stimulus_actions::StimulusVolumeActions,
     private_extension_slot::{PrivateExtensionSlotFrameStats, PrivateExtensionSlotRuntime},
     projection_target_state::{ProjectionTargetSettings, ProjectionTargetState},
@@ -255,12 +258,16 @@ unsafe fn run_projection_loop_inner(
         return Err("OpenXR runtime does not expose XR_KHR_vulkan_enable2".to_string());
     }
 
+    let native_passthrough_requested = runtime_options.render_mode.uses_native_passthrough()
+        || runtime_options
+            .environment_depth_settings
+            .native_passthrough_required();
     let mut enabled_extensions = xr::ExtensionSet::default();
     enabled_extensions.khr_android_create_instance = true;
     enabled_extensions.khr_vulkan_enable2 = true;
     enabled_extensions.ext_hand_tracking = available_extensions.ext_hand_tracking;
-    enabled_extensions.fb_passthrough = runtime_options.render_mode.uses_native_passthrough()
-        && available_extensions.fb_passthrough;
+    enabled_extensions.fb_passthrough =
+        native_passthrough_requested && available_extensions.fb_passthrough;
     enabled_extensions.meta_environment_depth = runtime_options
         .environment_depth_settings
         .runtime_provider_requested()
@@ -336,7 +343,7 @@ unsafe fn run_projection_loop_inner(
         format!(
             "status=config renderMode={} nativePassthroughRequested={} solidBlackBackground={} fbPassthroughAvailable={} fbPassthroughEnabled={} alphaBlendSupported={} environmentBlendModes={} environmentBlendMode={:?} projectionLayerAlphaBlend={} cameraRuntimeMode={} cameraProjectionPath={} {}",
             runtime_options.render_mode.marker_value(),
-            runtime_options.render_mode.uses_native_passthrough(),
+            native_passthrough_requested,
             runtime_options.render_mode.uses_solid_black_background(),
             available_extensions.fb_passthrough,
             enabled_extensions.fb_passthrough,
@@ -489,6 +496,7 @@ unsafe fn run_projection_loop_inner(
     let mut native_passthrough = NativePassthroughRuntime::create(
         &session,
         runtime_options.render_mode,
+        native_passthrough_requested,
         enabled_extensions.fb_passthrough,
         alpha_blend_supported,
         runtime_options.passthrough_style_settings,
@@ -570,7 +578,7 @@ unsafe fn run_projection_loop_inner(
             PROP_RENDER_MODE,
             render_mode.marker_value(),
             render_mode.uses_custom_stereo_projection(),
-            render_mode.uses_native_passthrough(),
+            native_passthrough_requested,
             render_mode.uses_solid_black_background(),
             render_mode.requests_openxr_default_hand_visual(),
             PROP_REPLAY_VISUAL_PROOF_ENABLED,
@@ -663,7 +671,7 @@ unsafe fn run_projection_loop_inner(
             hand_mesh_graft_copies_enabled,
             hand_mesh_graft_copy_scale,
             hand_mesh_real_hands_visible,
-            render_mode.uses_native_passthrough() && hand_mesh_real_hands_visible,
+            native_passthrough_requested && hand_mesh_real_hands_visible,
             render_mode.uses_solid_black_background() && hand_mesh_real_hands_visible,
             hand_mesh_visual_diagnostic_settings.marker_fields(),
         ),
@@ -694,41 +702,34 @@ unsafe fn run_projection_loop_inner(
         format!(
             "status=config renderMode={} nativePassthroughRequested={} syntheticGpuProofRequested={} runtimeProviderRequested={} {} environmentDepthParticleVisualAcceptance=pending-headset-screenshot",
             render_mode.marker_value(),
-            render_mode.uses_native_passthrough(),
+            native_passthrough_requested,
             environment_depth_settings.synthetic_gpu_proof_requested(),
             environment_depth_settings.runtime_provider_requested(),
             environment_depth_settings.marker_fields(),
         ),
     );
-    let mut openxr_environment_depth_runtime = if environment_depth_settings
-        .runtime_provider_requested()
-    {
-        match OpenXrEnvironmentDepthRuntime::create(
-            &xr_instance,
-            &session,
-            environment_depth_settings,
-            environment_depth_properties,
-            0,
-        ) {
-            Ok(runtime) => Some(runtime),
-            Err(error) => {
-                crate::marker(
-                    "environment-depth",
-                    format!(
-                        "status=unavailable reason={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound=false environmentDepthSupported={} environmentDepthAcquireStatus=not-attempted-provider-not-bound",
-                        crate::sanitize(&error),
-                        environment_depth_properties.extension_available,
-                        environment_depth_properties.supports_environment_depth,
-                    ),
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
-    let mut private_extension_slot_runtime =
-        PrivateExtensionSlotRuntime::new(memory_properties, color_format, render_pass);
+    let mut openxr_environment_depth_runtime: Option<OpenXrEnvironmentDepthRuntime> = None;
+    if environment_depth_settings.runtime_provider_requested() {
+        crate::marker(
+            "environment-depth",
+            format!(
+                "status=provider-deferred reason=session-not-begun environmentDepthProviderAvailable={} environmentDepthRealProviderBound=false environmentDepthSupported={} environmentDepthAcquireStatus=not-attempted-session-not-running",
+                environment_depth_properties.extension_available,
+                environment_depth_properties.supports_environment_depth,
+            ),
+        );
+    }
+    let environment_depth_image_handles = Vec::new();
+    let environment_depth_width = 0;
+    let environment_depth_height = 0;
+    let mut private_extension_slot_runtime = PrivateExtensionSlotRuntime::new(
+        memory_properties,
+        color_format,
+        render_pass,
+        &environment_depth_image_handles,
+        environment_depth_width,
+        environment_depth_height,
+    );
     crate::marker(
         "private-extension-slot",
         format!(
@@ -783,36 +784,11 @@ unsafe fn run_projection_loop_inner(
     } else if environment_depth_settings.runtime_provider_requested()
         && environment_depth_settings.mode_draws_particles()
     {
-        match openxr_environment_depth_runtime.as_ref().map(|runtime| {
-            GpuEnvironmentDepthParticleRenderer::new_runtime_depth(
-                &vk_device,
-                &memory_properties,
-                render_pass,
-                environment_depth_settings,
-                runtime.depth_image_handles(),
-                runtime.width(),
-                runtime.height(),
-            )
-        }) {
-            Some(Ok(renderer)) => Some(renderer),
-            Some(Err(error)) => {
-                crate::marker(
-                    "environment-depth-particles",
-                    format!(
-                        "status=unavailable reason={} environmentDepthParticleReady=false environmentDepthRealProviderBound=true",
-                        crate::sanitize(&error)
-                    ),
-                );
-                None
-            }
-            None => {
-                crate::marker(
-                    "environment-depth-particles",
-                    "status=unavailable reason=no-openxr-environment-depth-runtime environmentDepthParticleReady=false environmentDepthRealProviderBound=false",
-                );
-                None
-            }
-        }
+        crate::marker(
+            "environment-depth-particles",
+            "status=provider-deferred reason=session-not-begun environmentDepthParticleReady=false environmentDepthRealProviderBound=false",
+        );
+        None
     } else {
         None
     };
@@ -1108,7 +1084,7 @@ unsafe fn run_projection_loop_inner(
             "status=created renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} nativePassthroughLayerActive={} environmentBlendMode={:?} runtimeName={} runtimeVersion={} deviceName={} queueFamily={} colorFormat={:?} openxrSubmitReady=pending vulkanExternalImportPrereqsReady={} vulkanExternalImportReady=false recordedHandReplayVisible=pending gpuMeshPath=native-vulkan-storage-buffer",
             render_mode.marker_value(),
             render_mode.uses_custom_stereo_projection(),
-            render_mode.uses_native_passthrough(),
+            native_passthrough_requested,
             native_passthrough.is_some(),
             environment_blend_mode,
             crate::sanitize(&properties.runtime_name),
@@ -1141,6 +1117,7 @@ unsafe fn run_projection_loop_inner(
         &reference_space,
         render_pass,
         color_format,
+        &memory_properties,
         &cmds,
         &fences,
         &mut camera_projection_renderer,
@@ -1150,6 +1127,7 @@ unsafe fn run_projection_loop_inner(
         camera_runtime,
         render_mode,
         environment_blend_mode,
+        native_passthrough_requested,
         native_passthrough.as_mut(),
         stimulus_actions.as_mut(),
         gpu_stimulus_volume_renderer.as_mut(),
@@ -1160,8 +1138,8 @@ unsafe fn run_projection_loop_inner(
         secondary_gpu_hand_mesh_visual_renderer.as_mut(),
         gpu_hand_anchor_particle_renderer.as_mut(),
         secondary_gpu_hand_anchor_particle_renderer.as_mut(),
-        openxr_environment_depth_runtime.as_mut(),
-        gpu_environment_depth_particle_renderer.as_mut(),
+        &mut openxr_environment_depth_runtime,
+        &mut gpu_environment_depth_particle_renderer,
         gpu_private_particle_renderer.as_mut(),
         gpu_sdf_field_renderer.as_mut(),
         secondary_gpu_sdf_field_renderer.as_mut(),
@@ -1178,6 +1156,7 @@ unsafe fn run_projection_loop_inner(
         hand_mesh_real_hands_visible,
         hand_anchor_particle_settings,
         environment_depth_settings,
+        environment_depth_properties,
         display_composite_settings,
         video_projection_settings,
         stimulus_volume_settings,
@@ -1527,6 +1506,92 @@ unsafe fn physical_device_supports_extension(
 }
 
 #[allow(clippy::too_many_arguments)]
+unsafe fn ensure_openxr_environment_depth_runtime(
+    xr_instance: &xr::Instance,
+    vk_device: &ash::Device,
+    memory_properties: &vk::PhysicalDeviceMemoryProperties,
+    render_pass: vk::RenderPass,
+    session: &xr::Session<xr::Vulkan>,
+    settings: NativeEnvironmentDepthSettings,
+    properties: OpenXrEnvironmentDepthProperties,
+    frame_count: u64,
+    attempt: u32,
+    runtime_slot: &mut Option<OpenXrEnvironmentDepthRuntime>,
+    particle_renderer_slot: &mut Option<GpuEnvironmentDepthParticleRenderer>,
+    private_extension_slot_runtime: &mut PrivateExtensionSlotRuntime,
+) {
+    if runtime_slot.is_some() {
+        return;
+    }
+    crate::marker(
+        "environment-depth",
+        format!(
+            "status=provider-create-attempt frame={} attempt={} environmentDepthProviderAvailable={} environmentDepthSupported={}",
+            frame_count,
+            attempt,
+            properties.extension_available,
+            properties.supports_environment_depth
+        ),
+    );
+    match OpenXrEnvironmentDepthRuntime::create(
+        xr_instance,
+        session,
+        settings,
+        properties,
+        frame_count,
+    ) {
+        Ok(runtime) => {
+            let image_handles = runtime.depth_image_handles().to_vec();
+            let width = runtime.width();
+            let height = runtime.height();
+            private_extension_slot_runtime.set_environment_depth_images(
+                vk_device,
+                &image_handles,
+                width,
+                height,
+            );
+            if settings.mode_draws_particles() && particle_renderer_slot.is_none() {
+                match GpuEnvironmentDepthParticleRenderer::new_runtime_depth(
+                    vk_device,
+                    memory_properties,
+                    render_pass,
+                    settings,
+                    &image_handles,
+                    width,
+                    height,
+                ) {
+                    Ok(renderer) => {
+                        *particle_renderer_slot = Some(renderer);
+                    }
+                    Err(error) => {
+                        crate::marker(
+                            "environment-depth-particles",
+                            format!(
+                                "status=unavailable reason={} environmentDepthParticleReady=false environmentDepthRealProviderBound=true",
+                                crate::sanitize(&error)
+                            ),
+                        );
+                    }
+                }
+            }
+            *runtime_slot = Some(runtime);
+        }
+        Err(error) => {
+            crate::marker(
+                "environment-depth",
+                format!(
+                    "status=unavailable reason={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound=false environmentDepthSupported={} environmentDepthAcquireStatus=not-attempted-provider-not-bound attempt={}",
+                    crate::sanitize(&error),
+                    properties.extension_available,
+                    properties.supports_environment_depth,
+                    attempt
+                ),
+            );
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 unsafe fn run_projection_frames(
     app: &android_activity::AndroidApp,
     xr_instance: &xr::Instance,
@@ -1539,6 +1604,7 @@ unsafe fn run_projection_frames(
     reference_space: &xr::Space,
     render_pass: vk::RenderPass,
     color_format: vk::Format,
+    memory_properties: &vk::PhysicalDeviceMemoryProperties,
     cmds: &[vk::CommandBuffer],
     fences: &[vk::Fence],
     camera_projection_renderer: &mut CameraProjectionRenderer,
@@ -1548,6 +1614,7 @@ unsafe fn run_projection_frames(
     camera_runtime: Option<&NativeCameraRuntime>,
     render_mode: NativeRendererRenderMode,
     environment_blend_mode: xr::EnvironmentBlendMode,
+    native_passthrough_requested: bool,
     mut native_passthrough: Option<&mut NativePassthroughRuntime>,
     mut stimulus_actions: Option<&mut StimulusVolumeActions>,
     mut gpu_stimulus_volume_renderer: Option<&mut GpuStimulusVolumeRenderer>,
@@ -1558,8 +1625,8 @@ unsafe fn run_projection_frames(
     mut secondary_gpu_hand_mesh_visual_renderer: Option<&mut GpuHandMeshVisualRenderer>,
     mut gpu_hand_anchor_particle_renderer: Option<&mut GpuHandAnchorParticleRenderer>,
     mut secondary_gpu_hand_anchor_particle_renderer: Option<&mut GpuHandAnchorParticleRenderer>,
-    mut openxr_environment_depth_runtime: Option<&mut OpenXrEnvironmentDepthRuntime>,
-    gpu_environment_depth_particle_renderer: Option<&mut GpuEnvironmentDepthParticleRenderer>,
+    openxr_environment_depth_runtime: &mut Option<OpenXrEnvironmentDepthRuntime>,
+    gpu_environment_depth_particle_renderer: &mut Option<GpuEnvironmentDepthParticleRenderer>,
     mut gpu_private_particle_renderer: Option<&mut GpuPrivateParticleRenderer>,
     mut gpu_sdf_field_renderer: Option<&mut GpuSdfFieldRenderer>,
     mut secondary_gpu_sdf_field_renderer: Option<&mut GpuSdfFieldRenderer>,
@@ -1576,6 +1643,7 @@ unsafe fn run_projection_frames(
     hand_mesh_real_hands_visible: bool,
     hand_anchor_particle_settings: NativeHandAnchorParticleSettings,
     environment_depth_settings: NativeEnvironmentDepthSettings,
+    environment_depth_properties: OpenXrEnvironmentDepthProperties,
     display_composite_settings: NativeDisplayCompositeSettings,
     video_projection_settings: crate::native_renderer_options::NativeVideoProjectionSettings,
     mut stimulus_volume_settings: NativeStimulusVolumeSettings,
@@ -1613,6 +1681,7 @@ unsafe fn run_projection_frames(
     let mut breath_bridge = ManifoldBreathBridge::start(projection_target_settings);
     let mut previous_frame_instant = Instant::now();
     let mut private_particle_world_anchor = PrivateParticleWorldAnchor::new();
+    let mut environment_depth_provider_attempts = 0_u32;
     crate::marker(
         "projection-target",
         format!(
@@ -1698,6 +1767,28 @@ unsafe fn run_projection_frames(
             }
             std::thread::sleep(Duration::from_millis(25));
             continue;
+        }
+
+        if environment_depth_settings.runtime_provider_requested()
+            && openxr_environment_depth_runtime.is_none()
+            && environment_depth_provider_attempts < 3
+        {
+            environment_depth_provider_attempts =
+                environment_depth_provider_attempts.saturating_add(1);
+            ensure_openxr_environment_depth_runtime(
+                xr_instance,
+                vk_device,
+                memory_properties,
+                render_pass,
+                session,
+                environment_depth_settings,
+                environment_depth_properties,
+                frame_count,
+                environment_depth_provider_attempts,
+                openxr_environment_depth_runtime,
+                gpu_environment_depth_particle_renderer,
+                private_extension_slot_runtime,
+            );
         }
 
         trace_startup_frame(frame_count, "before-xr-wait-frame");
@@ -1976,7 +2067,7 @@ unsafe fn run_projection_frames(
                             render_mode.marker_value(),
                             camera_output_mode.marker_value(),
                             render_mode.uses_custom_stereo_projection(),
-                            render_mode.uses_native_passthrough(),
+                            native_passthrough_requested,
                             render_mode.uses_solid_black_background(),
                         ),
                     );
@@ -2607,7 +2698,7 @@ unsafe fn run_projection_frames(
         let (prepared_display_composite_feedback, display_composite_feedback_stats) =
             if display_composite_feedback_requested(display_composite_settings) {
                 let display_composite_xr_ready_marker_active =
-                    !render_mode.uses_native_passthrough() || native_passthrough.is_some();
+                    !native_passthrough_requested || native_passthrough.is_some();
                 match crate::display_composite_native_stream::latest_display_composite_frame() {
                     Some(frame) => match display_composite_feedback_renderer.prepare_frame(
                         vk_device,
@@ -2722,8 +2813,9 @@ unsafe fn run_projection_frames(
             gpu_hand_anchor_particle_renderer.as_deref(),
             secondary_gpu_hand_anchor_particle_renderer.as_deref(),
             &hand_anchor_particle_stats,
-            gpu_environment_depth_particle_renderer.as_deref(),
+            gpu_environment_depth_particle_renderer.as_ref(),
             &environment_depth_particle_stats,
+            openxr_environment_depth_frame.as_ref(),
             environment_depth_settings,
             gpu_private_particle_renderer.as_deref(),
             &private_particle_stats,
@@ -2891,6 +2983,7 @@ unsafe fn run_projection_frames(
                 &camera_projection_stats,
                 projection_metadata,
                 projection_border_stretch_settings,
+                native_passthrough_requested,
             );
             pacing_window_start = Instant::now();
             pacing_window_frames = 0;
@@ -3337,7 +3430,7 @@ unsafe fn record_projection_diagnostic(
     gpu_stimulus_volume_renderer: Option<&GpuStimulusVolumeRenderer>,
     stimulus_volume_stats: &GpuStimulusVolumeFrameStats,
     stimulus_volume_settings: NativeStimulusVolumeSettings,
-    private_extension_slot_runtime: &PrivateExtensionSlotRuntime,
+    private_extension_slot_runtime: &mut PrivateExtensionSlotRuntime,
     private_extension_stats: &PrivateExtensionSlotFrameStats,
     private_layer_settings: NativePrivateLayerSettings,
     guide_blur_graph_renderer: &mut GuideBlurGraphRenderer,
@@ -3351,6 +3444,7 @@ unsafe fn record_projection_diagnostic(
     hand_anchor_particle_stats: &GpuHandAnchorParticleFrameSetStats,
     gpu_environment_depth_particle_renderer: Option<&GpuEnvironmentDepthParticleRenderer>,
     environment_depth_particle_stats: &GpuEnvironmentDepthParticleFrameStats,
+    openxr_environment_depth_frame: Option<&OpenXrEnvironmentDepthFrame>,
     environment_depth_settings: NativeEnvironmentDepthSettings,
     gpu_private_particle_renderer: Option<&GpuPrivateParticleRenderer>,
     private_particle_stats: &GpuPrivateParticleFrameStats,
@@ -3486,6 +3580,8 @@ unsafe fn record_projection_diagnostic(
                     frame_count,
                     private_layer_settings,
                     projection_settings,
+                    environment_depth_settings,
+                    openxr_environment_depth_frame,
                 );
             }
         } else if custom_stereo_projection
@@ -4450,11 +4546,12 @@ impl NativePassthroughRuntime {
     fn create(
         session: &xr::Session<xr::Vulkan>,
         render_mode: NativeRendererRenderMode,
+        native_passthrough_requested: bool,
         fb_passthrough_enabled: bool,
         alpha_blend_supported: bool,
         passthrough_style_settings: NativePassthroughStyleSettings,
     ) -> Option<Self> {
-        if !render_mode.uses_native_passthrough() {
+        if !native_passthrough_requested {
             crate::marker(
                 "native-passthrough",
                 format!(

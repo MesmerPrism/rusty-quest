@@ -20,6 +20,14 @@ The profile sets:
 - `environment_depth.depth_units_policy=projected-depth-from-near-far`
 - `environment_depth.debug_view=raw-d16`
 
+Quest validation on 2026-06-22 found that `XR_META_environment_depth` can be
+extension-supported, provider-running, and image-acquired while raw D16 sampling
+still returns only the sentinel value `65535` when no native
+`XR_FB_passthrough` layer is active. Treat provider/acquire status as API
+liveness only. Known-distance and depth-visual runs must record
+`nativePassthroughLayerActive=true` plus raw D16 or valid-sample counters before
+using the data to judge depth units or shader behavior.
+
 `metric-axial-meters` is intentionally rejected until a headset run proves that
 policy is needed and the shader branch is implemented.
 
@@ -47,6 +55,7 @@ target or room setup requires a different gate.
 
 Use the latest `channel=environment-depth-particles` marker for each distance:
 
+- `nativePassthroughLayerActive=true`
 - `environmentDepthRawStatsStatus=readback`
 - `environmentDepthDepthUnitsPolicy=projected-depth-from-near-far`
 - `environmentDepthRawToMetersPolicy=projected-depth-from-near-far`

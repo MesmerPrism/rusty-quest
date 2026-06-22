@@ -317,7 +317,7 @@ pub(crate) fn parse_private_layer_selection_json(
             "private_layer_override_not_integral:{requested:.3}"
         ));
     }
-    if !(0.0..=5.0).contains(&rounded) {
+    if !(0.0..=6.0).contains(&rounded) {
         return Err(format!("private_layer_override_out_of_range:{rounded:.1}"));
     }
     let index = rounded as u32;
@@ -334,6 +334,7 @@ pub(crate) fn parse_private_layer_selection_json(
             "raw-strength",
             "blurred-strength",
             "displacement",
+            "depth-gradient",
         ],
     )?;
 
@@ -660,6 +661,7 @@ fn private_layer_label(index: u32) -> &'static str {
         3 => "raw-strength",
         4 => "blurred-strength",
         5 => "displacement",
+        6 => "depth-gradient",
         _ => "unknown",
     }
 }

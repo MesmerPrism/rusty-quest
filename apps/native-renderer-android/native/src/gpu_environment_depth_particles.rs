@@ -684,11 +684,19 @@ impl GpuEnvironmentDepthParticleRenderer {
         {
             return GpuEnvironmentDepthParticleFrameStats::unavailable(settings);
         }
+        if frame_count != 0 && frame_count % 120 == 0 {
+            let _ = device.device_wait_idle();
+        }
         let raw_debug_stats = self
             .raw_debug_buffer
             .as_ref()
             .map(|buffer| buffer.read_stats())
             .unwrap_or_else(EnvironmentDepthRawDebugStats::unavailable);
+        let far_m = if frame.far_z.is_finite() && frame.far_z > frame.near_z {
+            frame.far_z
+        } else {
+            settings.far_m
+        };
         let stats = GpuEnvironmentDepthParticleFrameStats::runtime_depth(
             settings,
             self.capacity,
@@ -696,6 +704,22 @@ impl GpuEnvironmentDepthParticleRenderer {
             frame_count,
             raw_debug_stats,
         );
+        if frame_count == 0 || frame_count % 120 == 0 {
+            crate::marker(
+                "environment-depth-raw-range",
+                format!(
+                    "status=range frame={} environmentDepthSource={} environmentDepthSwapchainIndex={} environmentDepthImageSize={}x{} environmentDepthNearM={:.3} environmentDepthFarM={:.3} {}",
+                    frame_count,
+                    settings.source_marker_value(),
+                    frame.swapchain_index,
+                    frame.depth_width,
+                    frame.depth_height,
+                    frame.near_z,
+                    far_m,
+                    raw_debug_stats.range_marker_fields(),
+                ),
+            );
+        }
         if !stats.ready {
             return stats;
         }
@@ -708,11 +732,6 @@ impl GpuEnvironmentDepthParticleRenderer {
                 settings,
                 self.capacity,
             );
-        };
-        let far_m = if frame.far_z.is_finite() && frame.far_z > frame.near_z {
-            frame.far_z
-        } else {
-            settings.far_m
         };
         let scene_particle_map = settings.scene_particle_map_requested();
         if scene_particle_map {
@@ -752,24 +771,42 @@ impl GpuEnvironmentDepthParticleRenderer {
         } else {
             self.scene_map_initialized.store(false, Ordering::Release);
         }
-        if let Some(raw_debug_buffer) = self.raw_debug_buffer.as_ref() {
-            device.cmd_fill_buffer(
-                cmd,
-                raw_debug_buffer.buffer.buffer,
-                0,
-                raw_debug_buffer.buffer.bytes,
-                0,
-            );
-            let debug_reset_to_compute = [transfer_write_to_shader_write_barrier(
-                &raw_debug_buffer.buffer,
-            )];
+        if frame_count == 0 {
+            if let Some(raw_debug_buffer) = self.raw_debug_buffer.as_ref() {
+                device.cmd_fill_buffer(
+                    cmd,
+                    raw_debug_buffer.buffer.buffer,
+                    0,
+                    raw_debug_buffer.buffer.bytes,
+                    0,
+                );
+                let debug_reset_to_compute = [transfer_write_to_shader_write_barrier(
+                    &raw_debug_buffer.buffer,
+                )];
+                device.cmd_pipeline_barrier(
+                    cmd,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::PipelineStageFlags::COMPUTE_SHADER,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &debug_reset_to_compute,
+                    &[],
+                );
+            }
+        } else if let Some(raw_debug_buffer) = self.raw_debug_buffer.as_ref() {
+            let debug_accumulate_to_compute = [vk::BufferMemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::SHADER_WRITE | vk::AccessFlags::TRANSFER_READ)
+                .dst_access_mask(vk::AccessFlags::SHADER_WRITE)
+                .buffer(raw_debug_buffer.buffer.buffer)
+                .offset(0)
+                .size(raw_debug_buffer.buffer.bytes)];
             device.cmd_pipeline_barrier(
                 cmd,
-                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::COMPUTE_SHADER | vk::PipelineStageFlags::TRANSFER,
                 vk::PipelineStageFlags::COMPUTE_SHADER,
                 vk::DependencyFlags::empty(),
                 &[],
-                &debug_reset_to_compute,
+                &debug_accumulate_to_compute,
                 &[],
             );
         }
@@ -867,14 +904,41 @@ impl GpuEnvironmentDepthParticleRenderer {
             &[],
         );
         if let Some(raw_debug_buffer) = self.raw_debug_buffer.as_ref() {
-            let compute_to_host = [compute_write_to_host_read_barrier(&raw_debug_buffer.buffer)];
+            let compute_to_transfer = [vk::BufferMemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+                .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+                .buffer(raw_debug_buffer.buffer.buffer)
+                .offset(0)
+                .size(raw_debug_buffer.buffer.bytes)];
             device.cmd_pipeline_barrier(
                 cmd,
                 vk::PipelineStageFlags::COMPUTE_SHADER,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &compute_to_transfer,
+                &[],
+            );
+            let copy_regions = [vk::BufferCopy::default().size(raw_debug_buffer.buffer.bytes)];
+            device.cmd_copy_buffer(
+                cmd,
+                raw_debug_buffer.buffer.buffer,
+                raw_debug_buffer.readback_buffer.buffer,
+                &copy_regions,
+            );
+            let transfer_to_host = [vk::BufferMemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags::HOST_READ)
+                .buffer(raw_debug_buffer.readback_buffer.buffer)
+                .offset(0)
+                .size(raw_debug_buffer.readback_buffer.bytes)];
+            device.cmd_pipeline_barrier(
+                cmd,
+                vk::PipelineStageFlags::TRANSFER,
                 vk::PipelineStageFlags::HOST,
                 vk::DependencyFlags::empty(),
                 &[],
-                &compute_to_host,
+                &transfer_to_host,
                 &[],
             );
         }
@@ -1242,6 +1306,7 @@ fn transfer_write_to_shader_write_barrier(
 
 struct EnvironmentDepthRawDebugBuffer {
     buffer: OwnedBuffer,
+    readback_buffer: OwnedBuffer,
     mapped: *mut u32,
 }
 
@@ -1250,22 +1315,38 @@ impl EnvironmentDepthRawDebugBuffer {
         device: &ash::Device,
         memory_properties: &vk::PhysicalDeviceMemoryProperties,
     ) -> Result<Self, String> {
-        let buffer = OwnedBuffer::new_with_memory_flags(
+        let buffer = OwnedBuffer::new(
             device,
             memory_properties,
             ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_BYTES,
-            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            vk::BufferUsageFlags::STORAGE_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_DST
+                | vk::BufferUsageFlags::TRANSFER_SRC,
             "runtime environment depth raw debug stats",
         )?;
+        let readback_buffer = match OwnedBuffer::new_with_memory_flags(
+            device,
+            memory_properties,
+            ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_BYTES,
+            vk::BufferUsageFlags::TRANSFER_DST,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            "runtime environment depth raw debug stats readback",
+        ) {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                buffer.destroy(device);
+                return Err(error);
+            }
+        };
         let mapped = match device.map_memory(
-            buffer.memory,
+            readback_buffer.memory,
             0,
             ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_BYTES,
             vk::MemoryMapFlags::empty(),
         ) {
             Ok(ptr) => ptr.cast::<u32>(),
             Err(error) => {
+                readback_buffer.destroy(device);
                 buffer.destroy(device);
                 return Err(format!(
                     "map runtime environment depth raw debug stats: {error}"
@@ -1273,7 +1354,11 @@ impl EnvironmentDepthRawDebugBuffer {
             }
         };
         std::ptr::write_bytes(mapped, 0, ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT);
-        Ok(Self { buffer, mapped })
+        Ok(Self {
+            buffer,
+            readback_buffer,
+            mapped,
+        })
     }
 
     fn descriptor(&self) -> vk::DescriptorBufferInfo {
@@ -1296,8 +1381,9 @@ impl EnvironmentDepthRawDebugBuffer {
 
     unsafe fn destroy(&self, device: &ash::Device) {
         if !self.mapped.is_null() {
-            device.unmap_memory(self.buffer.memory);
+            device.unmap_memory(self.readback_buffer.memory);
         }
+        self.readback_buffer.destroy(device);
         self.buffer.destroy(device);
     }
 }

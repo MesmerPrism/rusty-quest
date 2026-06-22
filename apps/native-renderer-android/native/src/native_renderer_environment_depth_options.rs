@@ -9,10 +9,10 @@ use crate::{
         PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW, PROP_ENVIRONMENT_DEPTH_DEPTH_UNITS_POLICY,
         PROP_ENVIRONMENT_DEPTH_FAR_M, PROP_ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED,
         PROP_ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD, PROP_ENVIRONMENT_DEPTH_LAYER_POLICY,
-        PROP_ENVIRONMENT_DEPTH_MODE, PROP_ENVIRONMENT_DEPTH_NEAR_M,
-        PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY, PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE,
-        PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS, PROP_ENVIRONMENT_DEPTH_SOURCE,
-        PROP_ENVIRONMENT_DEPTH_SURFACE_MODEL,
+        PROP_ENVIRONMENT_DEPTH_MODE, PROP_ENVIRONMENT_DEPTH_NATIVE_PASSTHROUGH_REQUIRED,
+        PROP_ENVIRONMENT_DEPTH_NEAR_M, PROP_ENVIRONMENT_DEPTH_PARTICLE_CAPACITY,
+        PROP_ENVIRONMENT_DEPTH_REFERENCE_SPACE, PROP_ENVIRONMENT_DEPTH_SAMPLE_STRIDE_PIXELS,
+        PROP_ENVIRONMENT_DEPTH_SOURCE, PROP_ENVIRONMENT_DEPTH_SURFACE_MODEL,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MIN_CELLS,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_COMPONENT_MODE,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_FREE_SPACE_DECAY,
@@ -38,6 +38,7 @@ pub(crate) struct NativeEnvironmentDepthSettings {
     pub(crate) debug_view: NativeEnvironmentDepthDebugView,
     pub(crate) reference_space: NativeEnvironmentDepthReferenceSpace,
     pub(crate) hand_removal_requested: bool,
+    pub(crate) native_passthrough_required: bool,
     pub(crate) particle_capacity: u32,
     pub(crate) sample_stride_pixels: u32,
     pub(crate) near_m: f32,
@@ -90,6 +91,10 @@ impl NativeEnvironmentDepthSettings {
             )),
             hand_removal_requested: bool_value(
                 lookup(PROP_ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED),
+                false,
+            ),
+            native_passthrough_required: bool_value(
+                lookup(PROP_ENVIRONMENT_DEPTH_NATIVE_PASSTHROUGH_REQUIRED),
                 false,
             ),
             particle_capacity: u32_value(
@@ -167,13 +172,14 @@ impl NativeEnvironmentDepthSettings {
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "modeProperty={} sourceProperty={} layerPolicyProperty={} depthUnitsPolicyProperty={} debugViewProperty={} handRemovalProperty={} surfaceModelProperty={} surfaceSupportRadiusCellsProperty={} surfaceSupportMinNeighborsProperty={} surfaceSupportMinObservationsProperty={} surfaceSupportMinSourceLayersProperty={} surfaceSupportComponentMinCellsProperty={} surfaceSupportComponentModeProperty={} surfaceSupportNormalSourceProperty={} surfaceSupportNormalCoherenceProperty={} surfaceSupportSmallComponentPolicyProperty={} surfaceSupportFreeSpaceDecayProperty={} environmentDepthMode={} environmentDepthSource={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthProviderState={} environmentDepthProviderAvailable=false environmentDepthRealProviderBound=false environmentDepthSupported=false environmentDepthAcquireStatus={} environmentDepthImageSize=0x0 environmentDepthFormat=none environmentDepthLayerCount=0 environmentDepthReferenceSpace={} environmentDepthHandRemovalRequested={} environmentDepthHandRemovalEnabled=false environmentDepthPoseValid=false environmentDepthParticleCapacity={} environmentDepthSampleStridePixels={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCpuUploadBytes=0 environmentDepthGpuReconstructMs=0.000 environmentDepthGpuMapUpdateMs=0.000 environmentDepthGpuDrawMs=0.000 environmentDepthReadbackCadenceFrames=0 environmentDepthHighRateJsonPayload={} {}",
+            "modeProperty={} sourceProperty={} layerPolicyProperty={} depthUnitsPolicyProperty={} debugViewProperty={} handRemovalProperty={} nativePassthroughRequiredProperty={} surfaceModelProperty={} surfaceSupportRadiusCellsProperty={} surfaceSupportMinNeighborsProperty={} surfaceSupportMinObservationsProperty={} surfaceSupportMinSourceLayersProperty={} surfaceSupportComponentMinCellsProperty={} surfaceSupportComponentModeProperty={} surfaceSupportNormalSourceProperty={} surfaceSupportNormalCoherenceProperty={} surfaceSupportSmallComponentPolicyProperty={} surfaceSupportFreeSpaceDecayProperty={} environmentDepthMode={} environmentDepthSource={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthProviderState={} environmentDepthProviderAvailable=false environmentDepthRealProviderBound=false environmentDepthSupported=false environmentDepthAcquireStatus={} environmentDepthImageSize=0x0 environmentDepthFormat=none environmentDepthLayerCount=0 environmentDepthReferenceSpace={} environmentDepthHandRemovalRequested={} environmentDepthNativePassthroughRequired={} environmentDepthHandRemovalEnabled=false environmentDepthPoseValid=false environmentDepthParticleCapacity={} environmentDepthSampleStridePixels={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCpuUploadBytes=0 environmentDepthGpuReconstructMs=0.000 environmentDepthGpuMapUpdateMs=0.000 environmentDepthGpuDrawMs=0.000 environmentDepthReadbackCadenceFrames=0 environmentDepthHighRateJsonPayload={} {}",
             PROP_ENVIRONMENT_DEPTH_MODE,
             PROP_ENVIRONMENT_DEPTH_SOURCE,
             PROP_ENVIRONMENT_DEPTH_LAYER_POLICY,
             PROP_ENVIRONMENT_DEPTH_DEPTH_UNITS_POLICY,
             PROP_ENVIRONMENT_DEPTH_DEBUG_VIEW,
             PROP_ENVIRONMENT_DEPTH_HAND_REMOVAL_ENABLED,
+            PROP_ENVIRONMENT_DEPTH_NATIVE_PASSTHROUGH_REQUIRED,
             PROP_ENVIRONMENT_DEPTH_SURFACE_MODEL,
             PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_RADIUS_CELLS,
             PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_MIN_NEIGHBORS,
@@ -197,6 +203,7 @@ impl NativeEnvironmentDepthSettings {
             self.source.acquire_status_marker(self.mode),
             self.reference_space.marker_value(),
             self.hand_removal_requested,
+            self.native_passthrough_required,
             self.particle_capacity,
             self.sample_stride_pixels,
             self.near_m,
@@ -213,6 +220,10 @@ impl NativeEnvironmentDepthSettings {
 
     pub(crate) fn runtime_provider_requested(self) -> bool {
         self.mode.enabled() && self.source.runtime_provider_requested()
+    }
+
+    pub(crate) fn native_passthrough_required(self) -> bool {
+        self.native_passthrough_required
     }
 
     pub(crate) fn mode_draws_particles(self) -> bool {
@@ -356,6 +367,7 @@ impl Default for NativeEnvironmentDepthSettings {
             debug_view: NativeEnvironmentDepthDebugView::Normal,
             reference_space: NativeEnvironmentDepthReferenceSpace::OpenXrLocal,
             hand_removal_requested: false,
+            native_passthrough_required: false,
             particle_capacity: 32_768,
             sample_stride_pixels: 12,
             near_m: 0.20,
@@ -687,6 +699,7 @@ impl NativeEnvironmentDepthDebugView {
 pub(crate) enum NativeEnvironmentDepthMode {
     Disabled,
     StatusOnly,
+    ProjectionSampler,
     RetainedParticles,
     SceneParticleMap,
 }
@@ -695,6 +708,9 @@ impl NativeEnvironmentDepthMode {
     fn from_property(value: Option<String>) -> Self {
         match normalized_property(value).as_str() {
             "status" | "status-only" | "provider-status" => Self::StatusOnly,
+            "projection-sampler" | "sampled-provider" | "provider-sampler" => {
+                Self::ProjectionSampler
+            }
             "retained-particles" | "retained-particle-map" => Self::RetainedParticles,
             "scene-particle-map" | "scene-map" => Self::SceneParticleMap,
             _ => Self::Disabled,
@@ -705,6 +721,7 @@ impl NativeEnvironmentDepthMode {
         match self {
             Self::Disabled => "disabled",
             Self::StatusOnly => "status-only",
+            Self::ProjectionSampler => "projection-sampler",
             Self::RetainedParticles => "retained-particles",
             Self::SceneParticleMap => "scene-particle-map",
         }
@@ -714,6 +731,7 @@ impl NativeEnvironmentDepthMode {
         match self {
             Self::Disabled => "not-requested",
             Self::StatusOnly => "status-only-skeleton",
+            Self::ProjectionSampler => "provider-not-bound",
             Self::RetainedParticles | Self::SceneParticleMap => "provider-not-bound",
         }
     }
@@ -722,6 +740,7 @@ impl NativeEnvironmentDepthMode {
         match self {
             Self::Disabled => "skipped-disabled",
             Self::StatusOnly => "not-attempted-status-only",
+            Self::ProjectionSampler => "not-attempted-provider-not-bound",
             Self::RetainedParticles | Self::SceneParticleMap => "not-attempted-provider-not-bound",
         }
     }

@@ -34,7 +34,7 @@ const DEPTH_FLAG_SURFACE_SUPPORT_MIN_SOURCE_LAYERS_TWO: u32 = 128;
 const DEPTH_FLAG_SURFACE_SUPPORT_MIN_NEIGHBOR_SHIFT: u32 = 8;
 const DEPTH_FLAG_SURFACE_SUPPORT_RADIUS_SHIFT: u32 = 16;
 const DEPTH_FLAG_SURFACE_SUPPORT_MIN_OBSERVATION_SHIFT: u32 = 20;
-pub(crate) const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT: usize = 35;
+pub(crate) const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT: usize = 42;
 pub(crate) const ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_BYTES: vk::DeviceSize =
     (ENVIRONMENT_DEPTH_RAW_DEBUG_STATS_U32_COUNT * mem::size_of::<u32>()) as vk::DeviceSize;
 const RAW_DEBUG_VALID_COUNT_INDEX: usize = 0;
@@ -72,6 +72,13 @@ const RAW_DEBUG_SURFACE_COMPONENT_LARGEST_CELLS_INDEX: usize = 31;
 const RAW_DEBUG_SURFACE_COMPONENT_SMALL_REJECTED_CELLS_INDEX: usize = 32;
 const RAW_DEBUG_SURFACE_COMPONENT_CANDIDATE_CELLS_INDEX: usize = 33;
 const RAW_DEBUG_SURFACE_COMPONENT_CONFIRMED_CELLS_INDEX: usize = 34;
+const RAW_DEBUG_RAW_SAMPLE_COUNT_INDEX: usize = 35;
+const RAW_DEBUG_RAW_ZERO_D16_COUNT_INDEX: usize = 36;
+const RAW_DEBUG_RAW_MAX_D16_COUNT_INDEX: usize = 37;
+const RAW_DEBUG_RAW_MIDDLE_D16_COUNT_INDEX: usize = 38;
+const RAW_DEBUG_RAW_MIN_INVERSE_D16_INDEX: usize = 39;
+const RAW_DEBUG_RAW_MAX_D16_INDEX: usize = 40;
+const RAW_DEBUG_RAW_CENTER_D16_INDEX: usize = 41;
 pub(crate) const SCENE_PARTICLE_CELL_METERS: f32 = 0.06;
 pub(crate) const SCENE_PARTICLE_HASH_PROBE_COUNT: u32 = 8;
 pub(crate) const SCENE_PARTICLE_STALE_FADE_START_FRAMES: u32 = 720;
@@ -118,6 +125,13 @@ pub(crate) struct EnvironmentDepthRawDebugStats {
     surface_component_small_rejected_cells: u32,
     surface_component_candidate_cells: u32,
     surface_component_confirmed_cells: u32,
+    raw_sample_count: u32,
+    raw_zero_d16_count: u32,
+    raw_max_d16_count: u32,
+    raw_middle_d16_count: u32,
+    raw_min_d16: u32,
+    raw_max_d16: u32,
+    raw_center_d16: u32,
 }
 
 impl EnvironmentDepthRawDebugStats {
@@ -159,6 +173,13 @@ impl EnvironmentDepthRawDebugStats {
             surface_component_small_rejected_cells: 0,
             surface_component_candidate_cells: 0,
             surface_component_confirmed_cells: 0,
+            raw_sample_count: 0,
+            raw_zero_d16_count: 0,
+            raw_max_d16_count: 0,
+            raw_middle_d16_count: 0,
+            raw_min_d16: 0,
+            raw_max_d16: 0,
+            raw_center_d16: 0,
         }
     }
 
@@ -171,25 +192,46 @@ impl EnvironmentDepthRawDebugStats {
 
     pub(crate) fn from_raw(values: &[u32]) -> Self {
         let valid_sample_count = values[RAW_DEBUG_VALID_COUNT_INDEX];
-        if valid_sample_count == 0 {
+        let invalid_sample_count = values[RAW_DEBUG_INVALID_COUNT_INDEX];
+        let confidence_rejected_count = values[RAW_DEBUG_CONFIDENCE_REJECTED_COUNT_INDEX];
+        let center_d16 = values[RAW_DEBUG_CENTER_D16_INDEX];
+        let center_window_valid_count = values[RAW_DEBUG_CENTER_WINDOW_VALID_COUNT_INDEX];
+        let raw_sample_count = values[RAW_DEBUG_RAW_SAMPLE_COUNT_INDEX];
+        if valid_sample_count == 0
+            && invalid_sample_count == 0
+            && confidence_rejected_count == 0
+            && center_d16 == 0
+            && center_window_valid_count == 0
+            && raw_sample_count == 0
+        {
             return Self::pending();
         }
         let min_valid_inverse_mm = values[RAW_DEBUG_MIN_VALID_INVERSE_MM_INDEX];
-        let min_valid_mm = if min_valid_inverse_mm == 0 {
+        let min_valid_mm = if valid_sample_count == 0 || min_valid_inverse_mm == 0 {
             0
         } else {
             u32::MAX.saturating_sub(min_valid_inverse_mm)
         };
+        let raw_min_inverse_d16 = values[RAW_DEBUG_RAW_MIN_INVERSE_D16_INDEX];
+        let raw_min_d16 = if raw_sample_count == 0 {
+            0
+        } else {
+            65535u32.saturating_sub(raw_min_inverse_d16.min(65535))
+        };
         Self {
-            status: "readback",
+            status: if valid_sample_count == 0 {
+                "readback-no-valid-depth"
+            } else {
+                "readback"
+            },
             valid_sample_count,
-            invalid_sample_count: values[RAW_DEBUG_INVALID_COUNT_INDEX],
-            confidence_rejected_count: values[RAW_DEBUG_CONFIDENCE_REJECTED_COUNT_INDEX],
-            center_d16: values[RAW_DEBUG_CENTER_D16_INDEX],
+            invalid_sample_count,
+            confidence_rejected_count,
+            center_d16,
             center_reconstructed_m: values[RAW_DEBUG_CENTER_RECONSTRUCTED_MM_INDEX] as f32 / 1000.0,
             center_confidence: values[RAW_DEBUG_CENTER_CONFIDENCE_MILLI_INDEX] as f32 / 1000.0,
             center_window_median_d16: values[RAW_DEBUG_CENTER_MEDIAN_D16_INDEX],
-            center_window_valid_count: values[RAW_DEBUG_CENTER_WINDOW_VALID_COUNT_INDEX],
+            center_window_valid_count,
             min_valid_reconstructed_m: min_valid_mm as f32 / 1000.0,
             max_valid_reconstructed_m: values[RAW_DEBUG_MAX_VALID_MM_INDEX] as f32 / 1000.0,
             hash_insert_success_count: values[RAW_DEBUG_HASH_INSERT_SUCCESS_COUNT_INDEX],
@@ -226,7 +268,37 @@ impl EnvironmentDepthRawDebugStats {
                 [RAW_DEBUG_SURFACE_COMPONENT_CANDIDATE_CELLS_INDEX],
             surface_component_confirmed_cells: values
                 [RAW_DEBUG_SURFACE_COMPONENT_CONFIRMED_CELLS_INDEX],
+            raw_sample_count,
+            raw_zero_d16_count: values[RAW_DEBUG_RAW_ZERO_D16_COUNT_INDEX],
+            raw_max_d16_count: values[RAW_DEBUG_RAW_MAX_D16_COUNT_INDEX],
+            raw_middle_d16_count: values[RAW_DEBUG_RAW_MIDDLE_D16_COUNT_INDEX],
+            raw_min_d16,
+            raw_max_d16: values[RAW_DEBUG_RAW_MAX_D16_INDEX],
+            raw_center_d16: values[RAW_DEBUG_RAW_CENTER_D16_INDEX],
         }
+    }
+
+    pub(crate) fn range_marker_fields(self) -> String {
+        format!(
+            "environmentDepthRawStatsStatus={} environmentDepthRawCenterD16={} environmentDepthRawCenterD16Unfiltered={} environmentDepthCenterReconstructedMeters={:.3} environmentDepthRawCenterWindowMedianD16={} environmentDepthRawCenterWindowValidCount={} environmentDepthMinValidReconstructedMeters={:.3} environmentDepthMaxValidReconstructedMeters={:.3} environmentDepthDebugValidSampleCount={} environmentDepthDebugInvalidSampleCount={} environmentDepthDebugConfidenceRejectedCount={} environmentDepthRawSampleCount={} environmentDepthRawZeroD16Count={} environmentDepthRawMaxD16Count={} environmentDepthRawMiddleD16Count={} environmentDepthRawMinD16={} environmentDepthRawMaxD16={}",
+            self.status,
+            self.center_d16,
+            self.raw_center_d16,
+            self.center_reconstructed_m,
+            self.center_window_median_d16,
+            self.center_window_valid_count,
+            self.min_valid_reconstructed_m,
+            self.max_valid_reconstructed_m,
+            self.valid_sample_count,
+            self.invalid_sample_count,
+            self.confidence_rejected_count,
+            self.raw_sample_count,
+            self.raw_zero_d16_count,
+            self.raw_max_d16_count,
+            self.raw_middle_d16_count,
+            self.raw_min_d16,
+            self.raw_max_d16,
+        )
     }
 }
 

@@ -147,7 +147,9 @@
   `quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json`
   is the real Meta provider proof route: it selects
   `scene-particle-map`, `xr-meta-environment-depth`, and
-  `layer_policy=mono-layer0`, requires the `USE_SCENE` permission path, and
+  `layer_policy=mono-layer0`, requires the `USE_SCENE` permission path and an
+  active native `XR_FB_passthrough` layer for non-sentinel Quest depth payloads,
+  and
   expects acquired D16 two-layer depth with explicit mono-layer source markers
   (`environmentDepthSourceViewCount=1`,
   `environmentDepthSampledLayerMask=0x1`,
