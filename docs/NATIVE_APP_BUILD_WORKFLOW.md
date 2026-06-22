@@ -114,9 +114,9 @@ Use the smallest route that matches the change:
   applied or rejected effective-settings revision.
 - Private-particle scalar diagnostics: use the generated `settings_hotload`
   `accepted_scalar_properties` list and serial-scoped `adb setprop` only for
-  runtime-polled `private_particles.*` values, including visual scale,
-  bounded generic driver scalars, tracer scalars, transparency scalars, and
-  color facing attenuation. The renderer must emit
+  runtime-polled `private_particles.*` values, including world-anchor scale,
+  visual scale, bounded generic driver scalars, tracer scalars, transparency
+  scalars, and color facing attenuation. The renderer must emit
   `privateParticleSettingsHotload=true` plus the matching effective value
   markers before the change is accepted.
 - Same APK, same manifest: skip rebuild/reinstall and run launch/smoke with

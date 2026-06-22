@@ -111,6 +111,8 @@ pub(crate) const PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES: &str =
     "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.interval_frames";
 pub(crate) const PROP_PRIVATE_PARTICLES_VISUAL_SCALE: &str =
     "debug.rustyquest.native_renderer.private_particles.visual.scale";
+pub(crate) const PROP_PRIVATE_PARTICLES_WORLD_ANCHOR_SCALE_M: &str =
+    "debug.rustyquest.native_renderer.private_particles.world_anchor.scale_m";
 pub(crate) const PROP_PRIVATE_PARTICLES_DRIVER0_VALUE01: &str =
     "debug.rustyquest.native_renderer.private_particles.driver0.value01";
 pub(crate) const PROP_PRIVATE_PARTICLES_DRIVER1_VALUE01: &str =

@@ -379,10 +379,11 @@ Main particles keep two generic state rows for phase-like ping-pong use;
 tracer slots allocate four state rows so downstream shaders can preserve a
 frozen billboard snapshot separately from age/fade updates.
 The slot owns only generic runtime-polled scalar adoption for
-`debug.rustyquest.native_renderer.private_particles.*`: visual scale, tracer
-draw slots/lifetime/cadence, transparency opacity/alpha/depth/RGB coupling, and
-the generic color facing-attenuation strength, plus bounded generic driver
-scalars in the `driver0.value01` through `driver7.value01` bank.
+`debug.rustyquest.native_renderer.private_particles.*`: world-anchor scale,
+visual scale, tracer draw slots/lifetime/cadence, transparency
+opacity/alpha/depth/RGB coupling, and the generic color facing-attenuation
+strength, plus bounded generic driver scalars in the `driver0.value01` through
+`driver7.value01` bank.
 The runtime reports accepted values through `privateParticleSettingsHotload`
 markers. This does not make Rusty Quest the authority for downstream phase
 dynamics, payload constants, or effect-specific visual interpretation.

@@ -790,6 +790,7 @@ if ($selectedFeatureIds -contains "renderer.private_particles") {
     $runtimePolledPropertyFamilies += "private_particles"
     $privateParticleHotloadProperties = @(
         "debug.rustyquest.native_renderer.private_particles.visual.scale",
+        "debug.rustyquest.native_renderer.private_particles.world_anchor.scale_m",
         "debug.rustyquest.native_renderer.private_particles.driver0.value01",
         "debug.rustyquest.native_renderer.private_particles.driver1.value01",
         "debug.rustyquest.native_renderer.private_particles.driver2.value01",
@@ -815,6 +816,7 @@ if ($selectedFeatureIds -contains "renderer.private_particles") {
     $settingsHotloadRuntimeMarkerContract = @(
         "RUSTY_QUEST_NATIVE_RENDERER channel=private-particle-slot status=hotload-applied",
         "privateParticleSettingsHotload=true",
+        "privateParticleWorldAnchorScaleParameterSource=runtime-hotload-android-property",
         "privateParticleVisualParameterSource=runtime-hotload-android-property",
         "privateParticleDriverParameterSource=runtime-hotload-android-property",
         "privateParticleDriverBankSlotCount=8",

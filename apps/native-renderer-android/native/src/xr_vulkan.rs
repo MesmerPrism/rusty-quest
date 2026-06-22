@@ -70,6 +70,8 @@ use crate::{
         PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SWAPCHAIN_COLOR_FORMAT_MODE,
     },
     native_renderer_passthrough_style_options::NativePassthroughStyleAudioReactiveState,
+    native_renderer_properties::PROP_PRIVATE_PARTICLES_WORLD_ANCHOR_SCALE_M,
+    native_renderer_property_values::f32_clamped_value,
     native_renderer_timing::{
         elapsed_ms, FrameCpuTimings, GpuStageTimings, GpuTimestampStage, GpuTimestampTracker,
     },
@@ -100,6 +102,9 @@ use replay_visual_stats::{EvidenceUvRect, ReplayVisualStats};
 const PIPELINE_DEPTH: u32 = 2;
 const PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M: f32 = 1.70;
 const PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M: f32 = 0.46;
+const PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MIN_M: f32 = 0.05;
+const PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MAX_M: f32 = 4.0;
+const PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_POLL_INTERVAL_FRAMES: u64 = 30;
 
 #[derive(Clone, Debug, Default)]
 pub(crate) struct XrVulkanReadiness {
@@ -1898,6 +1903,7 @@ unsafe fn run_projection_frames(
             .map(hand_mesh_visual_eye_projection)
             .unwrap_or_default();
         if gpu_private_particle_renderer.is_some() {
+            private_particle_world_anchor.refresh_scale_from_android_properties(frame_count);
             private_particle_world_anchor
                 .capture_startup_if_needed(particle_sort_eye_projection, frame_count);
         }
@@ -2607,6 +2613,7 @@ unsafe fn run_projection_frames(
                     frame_slot,
                     particle_sort_eye_projection,
                     private_particle_world_anchor.world_center_scale(),
+                    private_particle_world_anchor.scale_parameter_source(),
                     private_particle_world_anchor.world_forward_axis(),
                     frame_count,
                 )
@@ -4086,6 +4093,8 @@ struct PrivateParticleWorldAnchor {
     center_scale: [f32; 4],
     forward_axis: [f32; 4],
     initialized: bool,
+    scale_parameter_source: &'static str,
+    last_scale_poll_frame: u64,
 }
 
 impl PrivateParticleWorldAnchor {
@@ -4099,6 +4108,8 @@ impl PrivateParticleWorldAnchor {
             ],
             forward_axis: [0.0, 0.0, -1.0, 1.0],
             initialized: false,
+            scale_parameter_source: "particle-world-anchor-default",
+            last_scale_poll_frame: u64::MAX,
         }
     }
 
@@ -4124,6 +4135,53 @@ impl PrivateParticleWorldAnchor {
         self.forward_axis
     }
 
+    fn scale_parameter_source(&self) -> &'static str {
+        self.scale_parameter_source
+    }
+
+    fn refresh_scale_from_android_properties(&mut self, frame_count: u64) {
+        let should_poll = self.last_scale_poll_frame == u64::MAX
+            || frame_count.saturating_sub(self.last_scale_poll_frame)
+                >= PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_POLL_INTERVAL_FRAMES;
+        if !should_poll {
+            return;
+        }
+
+        let property = private_particle_world_anchor_scale_property();
+        let property_overridden = property.is_some();
+        let scale_m = f32_clamped_value(
+            property,
+            PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M,
+            PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MIN_M,
+            PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MAX_M,
+        );
+        let scale_parameter_source = if property_overridden {
+            "runtime-hotload-android-property"
+        } else {
+            "particle-world-anchor-default"
+        };
+        let scale_changed = (self.center_scale[3] - scale_m).abs() > f32::EPSILON
+            || self.scale_parameter_source != scale_parameter_source;
+
+        self.center_scale[3] = scale_m;
+        self.scale_parameter_source = scale_parameter_source;
+        self.last_scale_poll_frame = frame_count;
+
+        if scale_changed {
+            crate::marker(
+                "private-particle-anchor",
+                format!(
+                    "status=scale-hotload-applied frame={} privateParticleWorldAnchorInitialized={} privateParticleWorldAnchorFollowCamera=false privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleWorldAnchorScalePollIntervalFrames={}",
+                    frame_count,
+                    self.initialized,
+                    self.center_scale[3],
+                    crate::sanitize(self.scale_parameter_source),
+                    PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_POLL_INTERVAL_FRAMES,
+                ),
+            );
+        }
+    }
+
     fn capture(
         &mut self,
         eye_projection: HandMeshVisualEyeProjection,
@@ -4139,20 +4197,22 @@ impl PrivateParticleWorldAnchor {
             eye_projection.position[0] + forward_offset[0],
             eye_projection.position[1] + forward_offset[1],
             eye_projection.position[2] + forward_offset[2],
-            PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M,
+            self.center_scale[3],
         ];
         self.forward_axis = [forward_axis[0], forward_axis[1], forward_axis[2], 1.0];
         self.initialized = true;
         crate::marker(
             "private-particle-anchor",
             format!(
-                "status=captured frame={} reason={} privateParticleWorldAnchorInitialized=true privateParticleWorldAnchorFollowCamera=false privateParticleWorldAnchorCenter={:.4},{:.4},{:.4} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorDistanceM={:.3} privateParticleWorldAnchorForwardAxis={:.4},{:.4},{:.4} privateParticleComputeFovTangentPayload=world-anchor-forward-axis",
+                "status=captured frame={} reason={} privateParticleWorldAnchorInitialized=true privateParticleWorldAnchorFollowCamera=false privateParticleWorldAnchorCenter={:.4},{:.4},{:.4} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleWorldAnchorScalePollIntervalFrames={} privateParticleWorldAnchorDistanceM={:.3} privateParticleWorldAnchorForwardAxis={:.4},{:.4},{:.4} privateParticleComputeFovTangentPayload=world-anchor-forward-axis",
                 frame_count,
                 reason,
                 self.center_scale[0],
                 self.center_scale[1],
                 self.center_scale[2],
                 self.center_scale[3],
+                crate::sanitize(self.scale_parameter_source),
+                PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_POLL_INTERVAL_FRAMES,
                 PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M,
                 self.forward_axis[0],
                 self.forward_axis[1],
@@ -4160,6 +4220,20 @@ impl PrivateParticleWorldAnchor {
             ),
         );
     }
+}
+
+#[cfg(target_os = "android")]
+fn private_particle_world_anchor_scale_property() -> Option<String> {
+    let mut property = android_properties::getprop(PROP_PRIVATE_PARTICLES_WORLD_ANCHOR_SCALE_M);
+    property.value().and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_owned())
+    })
+}
+
+#[cfg(not(target_os = "android"))]
+fn private_particle_world_anchor_scale_property() -> Option<String> {
+    None
 }
 
 fn rotate_by_quat(quat: [f32; 4], vector: [f32; 3]) -> [f32; 3] {

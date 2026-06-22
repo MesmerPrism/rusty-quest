@@ -400,6 +400,8 @@ pub(crate) struct GpuPrivateParticleFrameStats {
     pub(crate) sort_input_count: u32,
     pub(crate) sort_count: u32,
     pub(crate) sort_capacity: u32,
+    pub(crate) world_anchor_scale_m: f32,
+    pub(crate) world_anchor_scale_parameter_source: &'static str,
     runtime_settings: PrivateParticleRuntimeSettings,
     tracer_draw_slots_capacity: u32,
     diagnostic_snapshot: PrivateParticleDiagnosticSnapshot,
@@ -412,7 +414,7 @@ impl GpuPrivateParticleFrameStats {
 
     fn marker_fields(self) -> String {
         format!(
-            "privateParticleReady={} privateParticleVisible={} privateParticlePayloadLinked={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleOutputAbi=four-vec4-billboard-rows privateParticleStatePingPong={} privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} {} privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident={} privateParticleMaskTextureGpuResident={}",
+            "privateParticleReady={} privateParticleVisible={} privateParticlePayloadLinked={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleOutputAbi=four-vec4-billboard-rows privateParticleStatePingPong={} privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} {} privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident={} privateParticleMaskTextureGpuResident={}",
             self.ready,
             self.visible,
             PRIVATE_PARTICLE_PAYLOAD_LINKED,
@@ -421,6 +423,8 @@ impl GpuPrivateParticleFrameStats {
             self.main_particle_count,
             self.draw_count,
             PRIVATE_PARTICLE_SETTINGS_POLL_INTERVAL_FRAMES,
+            self.world_anchor_scale_m,
+            crate::sanitize(self.world_anchor_scale_parameter_source),
             self.runtime_settings.visual_scale,
             crate::sanitize(self.runtime_settings.visual_parameter_source),
             self.runtime_settings.driver0_value01,
@@ -511,6 +515,8 @@ impl Default for GpuPrivateParticleFrameStats {
             sort_input_count: 0,
             sort_count: 0,
             sort_capacity: 0,
+            world_anchor_scale_m: 0.46,
+            world_anchor_scale_parameter_source: "particle-world-anchor-default",
             runtime_settings: PrivateParticleRuntimeSettings::from_generated_defaults(),
             tracer_draw_slots_capacity: 0,
             diagnostic_snapshot: PrivateParticleDiagnosticSnapshot::unavailable(),
@@ -1238,6 +1244,7 @@ impl GpuPrivateParticleRenderer {
         frame_slot: usize,
         eye_projection: HandMeshVisualEyeProjection,
         world_center_scale: [f32; 4],
+        world_anchor_scale_parameter_source: &'static str,
         world_anchor_forward_axis: [f32; 4],
         frame_count: u64,
     ) -> GpuPrivateParticleFrameStats {
@@ -1404,6 +1411,8 @@ impl GpuPrivateParticleRenderer {
             sort_input_count: if sort_active { draw_count } else { 0 },
             sort_count,
             sort_capacity: self.sort_capacity,
+            world_anchor_scale_m: world_center_scale[3],
+            world_anchor_scale_parameter_source,
             runtime_settings,
             tracer_draw_slots_capacity: self.tracer_draw_slots_per_oscillator,
             diagnostic_snapshot: self.last_diagnostic_snapshot,
@@ -1431,6 +1440,8 @@ impl GpuPrivateParticleRenderer {
                 sort_count,
                 self.sort_capacity,
                 self.tracer_draw_slots_per_oscillator,
+                world_center_scale[3],
+                world_anchor_scale_parameter_source,
                 runtime_settings,
                 self.last_diagnostic_snapshot,
             );
@@ -1735,12 +1746,14 @@ fn log_private_marker(
     sort_count: u32,
     sort_capacity: u32,
     tracer_draw_slots_capacity: u32,
+    world_anchor_scale_m: f32,
+    world_anchor_scale_parameter_source: &'static str,
     runtime_settings: PrivateParticleRuntimeSettings,
     diagnostic_snapshot: PrivateParticleDiagnosticSnapshot,
 ) {
     let sort_active = private_particle_sort_enabled();
     crate::android_log(format!(
-        "{} channel=frame status={} frame={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleOutputAbi=four-vec4-billboard-rows privateParticleStatePingPong=true privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} privateParticleMaskTextureGpuResident=true {} {}",
+        "{} channel=frame status={} frame={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleOutputAbi=four-vec4-billboard-rows privateParticleStatePingPong=true privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} privateParticleMaskTextureGpuResident=true {} {}",
         PRIVATE_PARTICLE_MARKER_PREFIX,
         status,
         frame_count,
@@ -1749,6 +1762,8 @@ fn log_private_marker(
         particle_count,
         draw_count,
         PRIVATE_PARTICLE_SETTINGS_POLL_INTERVAL_FRAMES,
+        world_anchor_scale_m,
+        crate::sanitize(world_anchor_scale_parameter_source),
         runtime_settings.visual_scale,
         crate::sanitize(runtime_settings.visual_parameter_source),
         runtime_settings.driver0_value01,

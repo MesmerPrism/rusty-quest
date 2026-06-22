@@ -10,7 +10,7 @@
     "apps/native-renderer-android/native/src/environment_depth_alignment_state.rs",
     "apps/native-renderer-android/native/src/projection_target_state.rs"
   ],
-  "property_count": 175,
+  "property_count": 176,
   "properties": [
     {
       "name": "debug.rustyquest.native_renderer.camera.direct_border.opacity",
@@ -2352,6 +2352,25 @@
       "range": {
         "min": 0.05,
         "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.world_anchor.scale_m",
+      "family": "private_particles",
+      "runtime_owner": "xr_vulkan::PrivateParticleWorldAnchor",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.05,
+        "max": 4.0
       },
       "validators": [
         "runtime-parser",

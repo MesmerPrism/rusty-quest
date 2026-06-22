@@ -47,9 +47,10 @@ data, kind string, marker prefix, and opaque marker fields through
 `RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_*`; effect-specific constants and
 profile bodies remain outside Rusty Quest.
 The slot also exposes a small runtime-polled scalar Android-property family
-under `debug.rustyquest.native_renderer.private_particles.*` for visual scale,
-bounded generic driver scalars, tracer draw slots/lifetime/cadence, and
-transparency opacity/alpha/depth/RGB coupling. Runtime markers must report the accepted effective values; raw
+under `debug.rustyquest.native_renderer.private_particles.*` for world-anchor
+scale, visual scale, bounded generic driver scalars, tracer draw
+slots/lifetime/cadence, and transparency opacity/alpha/depth/RGB coupling.
+Runtime markers must report the accepted effective values; raw
 `getprop` readback is only transport evidence. Shader payloads, texture
 dimensions, buffer capacities, render mode, and fixed-function graphics
 pipeline blend factors remain rebuild/relaunch scope.
