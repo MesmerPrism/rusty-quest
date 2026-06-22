@@ -179,6 +179,8 @@ $privateParticleFeature = Read-Json -Path (Join-Path $featureDir "particles\priv
 foreach ($marker in @(
     "privateParticleDiagnosticStorageBinding=9",
     "privateParticleDiagnosticWords=16",
+    "privateParticleDiagnosticTracerSpawnedCount=",
+    "privateParticleDiagnosticTracerDiscardedCount=",
     "privateParticleDiagnosticCpuFullBufferReadback=false"
 )) {
     if (@($privateParticleFeature.markers.required) -notcontains $marker) {

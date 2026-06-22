@@ -101,6 +101,8 @@
       "RUSTY_QUEST_NATIVE_RENDERER channel=private-particle-slot",
       "privateParticleDiagnosticStorageBinding=9",
       "privateParticleDiagnosticWords=16",
+      "privateParticleDiagnosticTracerSpawnedCount=",
+      "privateParticleDiagnosticTracerDiscardedCount=",
       "privateParticleDiagnosticCpuFullBufferReadback=false",
       "privateParticleOrderingCpuExpandedUploadPerFrame=false"
     ],

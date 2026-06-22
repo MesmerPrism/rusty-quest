@@ -301,6 +301,8 @@ struct PrivateParticleDiagnosticSnapshot {
     particle_count: u32,
     order: [f32; 6],
     tracer_active_count: u32,
+    tracer_spawned_count: u32,
+    tracer_discarded_count: u32,
     saturation_count: u32,
     raw: [i32; PRIVATE_PARTICLE_DIAGNOSTIC_WORDS],
 }
@@ -312,6 +314,8 @@ impl PrivateParticleDiagnosticSnapshot {
             particle_count: 0,
             order: [0.0; 6],
             tracer_active_count: 0,
+            tracer_spawned_count: 0,
+            tracer_discarded_count: 0,
             saturation_count: 0,
             raw: [0; PRIVATE_PARTICLE_DIAGNOSTIC_WORDS],
         }
@@ -323,6 +327,8 @@ impl PrivateParticleDiagnosticSnapshot {
             particle_count: 0,
             order: [0.0; 6],
             tracer_active_count: 0,
+            tracer_spawned_count: 0,
+            tracer_discarded_count: 0,
             saturation_count: 0,
             raw: [0; PRIVATE_PARTICLE_DIAGNOSTIC_WORDS],
         }
@@ -339,11 +345,14 @@ impl PrivateParticleDiagnosticSnapshot {
             order[dim] = ((cos_sum * cos_sum + sin_sum * sin_sum).sqrt() / denominator)
                 .clamp(0.0, 1.0) as f32;
         }
+        let tracer_events = raw[15].max(0) as u32;
         Self {
             status: "readback",
             particle_count,
             order,
             tracer_active_count: raw[13].max(0) as u32,
+            tracer_spawned_count: tracer_events & 0x0000_ffff,
+            tracer_discarded_count: (tracer_events >> 16) & 0x0000_ffff,
             saturation_count: raw[14].max(0) as u32,
             raw,
         }
@@ -351,7 +360,7 @@ impl PrivateParticleDiagnosticSnapshot {
 
     fn marker_fields(self) -> String {
         format!(
-            "privateParticleDiagnosticReadbackStatus={} privateParticleDiagnosticStorageBinding=9 privateParticleDiagnosticWords={} privateParticleDiagnosticFixedPointScale={} privateParticleDiagnosticCpuFullBufferReadback=false privateParticleDiagnosticParticleCount={} privateParticleDiagnosticOrderDim0={:.4} privateParticleDiagnosticOrderDim1={:.4} privateParticleDiagnosticOrderDim2={:.4} privateParticleDiagnosticOrderDim3={:.4} privateParticleDiagnosticOrderDim4={:.4} privateParticleDiagnosticOrderDim5={:.4} privateParticleDiagnosticTracerActiveCount={} privateParticleDiagnosticSaturationCount={} privateParticleDiagnosticRawParticleCount={} privateParticleDiagnosticRawOrderDim0Cos={} privateParticleDiagnosticRawOrderDim0Sin={}",
+            "privateParticleDiagnosticReadbackStatus={} privateParticleDiagnosticStorageBinding=9 privateParticleDiagnosticWords={} privateParticleDiagnosticFixedPointScale={} privateParticleDiagnosticCpuFullBufferReadback=false privateParticleDiagnosticParticleCount={} privateParticleDiagnosticOrderDim0={:.4} privateParticleDiagnosticOrderDim1={:.4} privateParticleDiagnosticOrderDim2={:.4} privateParticleDiagnosticOrderDim3={:.4} privateParticleDiagnosticOrderDim4={:.4} privateParticleDiagnosticOrderDim5={:.4} privateParticleDiagnosticTracerActiveCount={} privateParticleDiagnosticTracerSpawnedCount={} privateParticleDiagnosticTracerDiscardedCount={} privateParticleDiagnosticSaturationCount={} privateParticleDiagnosticRawParticleCount={} privateParticleDiagnosticRawOrderDim0Cos={} privateParticleDiagnosticRawOrderDim0Sin={} privateParticleDiagnosticRawTracerEvents={}",
             self.status,
             PRIVATE_PARTICLE_DIAGNOSTIC_WORDS,
             PRIVATE_PARTICLE_DIAGNOSTIC_FIXED_POINT_SCALE as u32,
@@ -363,10 +372,13 @@ impl PrivateParticleDiagnosticSnapshot {
             self.order[4],
             self.order[5],
             self.tracer_active_count,
+            self.tracer_spawned_count,
+            self.tracer_discarded_count,
             self.saturation_count,
             self.raw[0],
             self.raw[1],
             self.raw[2],
+            self.raw[15],
         )
     }
 }
