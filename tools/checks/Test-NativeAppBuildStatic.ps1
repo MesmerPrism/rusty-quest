@@ -161,6 +161,7 @@ foreach ($requiredFeature in @(
     "particles.private.ordering.gpu_index_remap",
     "particles.private.mask.r8_texture",
     "particles.tracers.snapshot_rows",
+    "particles.private.manifold_scalar_driver",
     "input.right_primary_private_particle_recenter",
     "camera.hwb",
     "display_composite",
@@ -187,9 +188,11 @@ foreach ($marker in @(
     "privateParticleWorldAnchorForwardAxis=",
     "privateParticleComputeFovTangentPayload=world-anchor-forward-axis",
     "privateParticleDiagnosticStorageBinding=9",
-    "privateParticleDiagnosticWords=16",
+    "privateParticleDiagnosticWords=24",
     "privateParticleDiagnosticTracerSpawnedCount=",
     "privateParticleDiagnosticTracerDiscardedCount=",
+    "privateParticleDiagnosticActiveEdgeCount=",
+    "privateParticleDiagnosticPassHealthFlags=",
     "privateParticleDiagnosticCpuFullBufferReadback=false"
 )) {
     if (@($privateParticleFeature.markers.required) -notcontains $marker) {

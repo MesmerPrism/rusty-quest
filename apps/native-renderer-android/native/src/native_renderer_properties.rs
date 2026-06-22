@@ -129,6 +129,20 @@ pub(crate) const PROP_PRIVATE_PARTICLES_DRIVER6_VALUE01: &str =
     "debug.rustyquest.native_renderer.private_particles.driver6.value01";
 pub(crate) const PROP_PRIVATE_PARTICLES_DRIVER7_VALUE01: &str =
     "debug.rustyquest.native_renderer.private_particles.driver7.value01";
+pub(crate) const PROP_PRIVATE_PARTICLES_MANIFOLD_DRIVER_BROKER_HOST: &str =
+    "debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.host";
+pub(crate) const PROP_PRIVATE_PARTICLES_MANIFOLD_DRIVER_BROKER_PATH: &str =
+    "debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.path";
+pub(crate) const PROP_PRIVATE_PARTICLES_MANIFOLD_DRIVER_BROKER_PORT: &str =
+    "debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.port";
+pub(crate) const PROP_PRIVATE_PARTICLES_MANIFOLD_DRIVER_ENABLED: &str =
+    "debug.rustyquest.native_renderer.private_particles.manifold_driver.enabled";
+pub(crate) const PROP_PRIVATE_PARTICLES_MANIFOLD_DRIVER_HIGH_RATE_JSON_PAYLOAD: &str =
+    "debug.rustyquest.native_renderer.private_particles.manifold_driver.high_rate_json_payload";
+pub(crate) const PROP_PRIVATE_PARTICLES_MANIFOLD_DRIVER_ROUTES: &str =
+    "debug.rustyquest.native_renderer.private_particles.manifold_driver.routes";
+pub(crate) const PROP_PRIVATE_PARTICLES_MANIFOLD_DRIVER_SAMPLE_HOLD_SECONDS: &str =
+    "debug.rustyquest.native_renderer.private_particles.manifold_driver.sample_hold_seconds";
 pub(crate) const PROP_PRIVATE_PARTICLES_TRACER_DRAW_SLOTS_PER_OSCILLATOR: &str =
     "debug.rustyquest.native_renderer.private_particles.tracer.draw_slots_per_oscillator";
 pub(crate) const PROP_PRIVATE_PARTICLES_TRACER_LIFETIME_SECONDS: &str =

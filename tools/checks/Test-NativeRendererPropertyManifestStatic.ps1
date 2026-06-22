@@ -20,7 +20,7 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-$expectedPropertyCount = 176
+$expectedPropertyCount = 183
 if ($manifest.property_count -ne $expectedPropertyCount -or $manifest.properties.Count -ne $expectedPropertyCount) {
     throw "Native renderer property manifest must cover the current $expectedPropertyCount-property runtime surface."
 }
@@ -81,10 +81,17 @@ foreach ($token in @(
     'debug.rustyquest.native_renderer.private_particles.driver1.value01',
     'debug.rustyquest.native_renderer.private_particles.driver2.value01',
     'debug.rustyquest.native_renderer.private_particles.driver7.value01',
+    'debug.rustyquest.native_renderer.private_particles.manifold_driver.enabled',
+    'debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.host',
+    'debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.port',
+    'debug.rustyquest.native_renderer.private_particles.manifold_driver.routes',
+    'debug.rustyquest.native_renderer.private_particles.manifold_driver.sample_hold_seconds',
+    'debug.rustyquest.native_renderer.private_particles.manifold_driver.high_rate_json_payload',
     'debug.rustyquest.native_renderer.private_particles.tracer.draw_slots_per_oscillator',
     'debug.rustyquest.native_renderer.private_particles.transparency.opacity',
     'debug.rustyquest.native_renderer.private_particles.color.facing_attenuation_strength',
     'gpu_private_particles',
+    'manifold_scalar_driver_bridge',
     'xr_vulkan::PrivateParticleWorldAnchor',
     'native_renderer_passthrough_style_options',
     'native_renderer_visual_options',

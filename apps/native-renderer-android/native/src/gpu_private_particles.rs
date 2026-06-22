@@ -5,6 +5,9 @@ use std::{ffi::CString, mem};
 use ash::vk;
 
 use crate::gpu_hand_mesh_visual::HandMeshVisualEyeProjection;
+use crate::manifold_scalar_driver_bridge::{
+    ManifoldScalarDriverBridge, ManifoldScalarDriverBridgeSettings,
+};
 use crate::native_renderer_properties::{
     PROP_PRIVATE_PARTICLES_COLOR_FACING_ATTENUATION_STRENGTH,
     PROP_PRIVATE_PARTICLES_DRIVER0_VALUE01, PROP_PRIVATE_PARTICLES_DRIVER1_VALUE01,
@@ -36,7 +39,7 @@ const PARTICLE_MAIN_STATE_ROWS_PER_INSTANCE: usize = 2;
 const PARTICLE_TRACER_STATE_ROWS_PER_SLOT: usize = 4;
 const PARTICLE_DESCRIPTOR_SET_COUNT: usize = 2;
 const PRIVATE_PARTICLE_DRIVER_BANK_VEC4_ROWS: usize = PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT / 4;
-const PRIVATE_PARTICLE_DIAGNOSTIC_WORDS: usize = 16;
+const PRIVATE_PARTICLE_DIAGNOSTIC_WORDS: usize = 24;
 const PRIVATE_PARTICLE_DIAGNOSTIC_BYTES: vk::DeviceSize =
     (PRIVATE_PARTICLE_DIAGNOSTIC_WORDS * mem::size_of::<i32>()) as vk::DeviceSize;
 const PRIVATE_PARTICLE_DIAGNOSTIC_FIXED_POINT_SCALE: f64 = 100_000.0;
@@ -305,6 +308,8 @@ struct PrivateParticleDiagnosticSnapshot {
     tracer_spawned_count: u32,
     tracer_discarded_count: u32,
     saturation_count: u32,
+    active_edge_count: u32,
+    pass_health_flags: u32,
     raw: [i32; PRIVATE_PARTICLE_DIAGNOSTIC_WORDS],
 }
 
@@ -318,6 +323,8 @@ impl PrivateParticleDiagnosticSnapshot {
             tracer_spawned_count: 0,
             tracer_discarded_count: 0,
             saturation_count: 0,
+            active_edge_count: 0,
+            pass_health_flags: 0,
             raw: [0; PRIVATE_PARTICLE_DIAGNOSTIC_WORDS],
         }
     }
@@ -331,6 +338,8 @@ impl PrivateParticleDiagnosticSnapshot {
             tracer_spawned_count: 0,
             tracer_discarded_count: 0,
             saturation_count: 0,
+            active_edge_count: 0,
+            pass_health_flags: 0,
             raw: [0; PRIVATE_PARTICLE_DIAGNOSTIC_WORDS],
         }
     }
@@ -355,13 +364,15 @@ impl PrivateParticleDiagnosticSnapshot {
             tracer_spawned_count: tracer_events & 0x0000_ffff,
             tracer_discarded_count: (tracer_events >> 16) & 0x0000_ffff,
             saturation_count: raw[14].max(0) as u32,
+            active_edge_count: raw[16].max(0) as u32,
+            pass_health_flags: raw[17].max(0) as u32,
             raw,
         }
     }
 
     fn marker_fields(self) -> String {
         format!(
-            "privateParticleDiagnosticReadbackStatus={} privateParticleDiagnosticStorageBinding=9 privateParticleDiagnosticWords={} privateParticleDiagnosticFixedPointScale={} privateParticleDiagnosticCpuFullBufferReadback=false privateParticleDiagnosticParticleCount={} privateParticleDiagnosticOrderDim0={:.4} privateParticleDiagnosticOrderDim1={:.4} privateParticleDiagnosticOrderDim2={:.4} privateParticleDiagnosticOrderDim3={:.4} privateParticleDiagnosticOrderDim4={:.4} privateParticleDiagnosticOrderDim5={:.4} privateParticleDiagnosticTracerActiveCount={} privateParticleDiagnosticTracerSpawnedCount={} privateParticleDiagnosticTracerDiscardedCount={} privateParticleDiagnosticSaturationCount={} privateParticleDiagnosticRawParticleCount={} privateParticleDiagnosticRawOrderDim0Cos={} privateParticleDiagnosticRawOrderDim0Sin={} privateParticleDiagnosticRawTracerEvents={}",
+            "privateParticleDiagnosticReadbackStatus={} privateParticleDiagnosticStorageBinding=9 privateParticleDiagnosticWords={} privateParticleDiagnosticFixedPointScale={} privateParticleDiagnosticCpuFullBufferReadback=false privateParticleDiagnosticParticleCount={} privateParticleDiagnosticOrderDim0={:.4} privateParticleDiagnosticOrderDim1={:.4} privateParticleDiagnosticOrderDim2={:.4} privateParticleDiagnosticOrderDim3={:.4} privateParticleDiagnosticOrderDim4={:.4} privateParticleDiagnosticOrderDim5={:.4} privateParticleDiagnosticTracerActiveCount={} privateParticleDiagnosticTracerSpawnedCount={} privateParticleDiagnosticTracerDiscardedCount={} privateParticleDiagnosticSaturationCount={} privateParticleDiagnosticActiveEdgeCount={} privateParticleDiagnosticPassHealthFlags={} privateParticleDiagnosticRawParticleCount={} privateParticleDiagnosticRawOrderDim0Cos={} privateParticleDiagnosticRawOrderDim0Sin={} privateParticleDiagnosticRawTracerEvents={} privateParticleDiagnosticRawActiveEdgeCount={} privateParticleDiagnosticRawPassHealthFlags={}",
             self.status,
             PRIVATE_PARTICLE_DIAGNOSTIC_WORDS,
             PRIVATE_PARTICLE_DIAGNOSTIC_FIXED_POINT_SCALE as u32,
@@ -376,10 +387,14 @@ impl PrivateParticleDiagnosticSnapshot {
             self.tracer_spawned_count,
             self.tracer_discarded_count,
             self.saturation_count,
+            self.active_edge_count,
+            self.pass_health_flags,
             self.raw[0],
             self.raw[1],
             self.raw[2],
             self.raw[15],
+            self.raw[16],
+            self.raw[17],
         )
     }
 }
@@ -552,6 +567,8 @@ pub(crate) struct GpuPrivateParticleRenderer {
     sort_capacity: u32,
     runtime_settings: PrivateParticleRuntimeSettings,
     runtime_settings_last_poll_frame: u64,
+    manifold_driver_bridge: Option<ManifoldScalarDriverBridge>,
+    manifold_driver_connected_marker_emitted: bool,
 }
 
 impl GpuPrivateParticleRenderer {
@@ -1080,6 +1097,9 @@ impl GpuPrivateParticleRenderer {
             }
         };
 
+        let manifold_driver_bridge = ManifoldScalarDriverBridge::start(
+            ManifoldScalarDriverBridgeSettings::load_from_android_properties(),
+        );
         let sort_active = private_particle_sort_enabled();
         let marker_sort_input_count = if sort_active { sort_input_count } else { 0 };
         let marker_sort_count = if sort_active { sort_capacity } else { 0 };
@@ -1133,6 +1153,7 @@ impl GpuPrivateParticleRenderer {
                 PRIVATE_PARTICLE_MASK_TEXTURE_BYTES,
             ),
         );
+        let startup_world_anchor_stats = GpuPrivateParticleFrameStats::default();
         log_private_marker(
             "created",
             0,
@@ -1146,6 +1167,8 @@ impl GpuPrivateParticleRenderer {
             marker_sort_count,
             sort_capacity,
             tracer_draw_slots_per_oscillator,
+            startup_world_anchor_stats.world_anchor_scale_m,
+            startup_world_anchor_stats.world_anchor_scale_parameter_source,
             runtime_settings,
             PrivateParticleDiagnosticSnapshot::pending(),
         );
@@ -1178,6 +1201,8 @@ impl GpuPrivateParticleRenderer {
             sort_capacity,
             runtime_settings,
             runtime_settings_last_poll_frame: u64::MAX,
+            manifold_driver_bridge,
+            manifold_driver_connected_marker_emitted: false,
         }))
     }
 
@@ -1454,12 +1479,32 @@ impl GpuPrivateParticleRenderer {
             || frame_count.saturating_sub(self.runtime_settings_last_poll_frame)
                 >= PRIVATE_PARTICLE_SETTINGS_POLL_INTERVAL_FRAMES;
         if should_poll {
-            let next = PrivateParticleRuntimeSettings::load_from_android_properties();
+            let mut next = PrivateParticleRuntimeSettings::load_from_android_properties();
+            let manifold_driver_active_count =
+                self.manifold_driver_bridge.as_ref().map_or(0, |bridge| {
+                    bridge.apply_to_driver_values(&mut next.driver_values01)
+                });
+            if manifold_driver_active_count > 0 {
+                next.driver0_value01 = next.driver_values01[0];
+                next.driver1_value01 = next.driver_values01[1];
+                next.driver_parameter_source = "manifold-scalar-stream";
+                if !self.manifold_driver_connected_marker_emitted {
+                    crate::marker(
+                        "private-particle-slot",
+                        format!(
+                            "status=manifold-driver-connected frame={} privateParticleDriverParameterSource=manifold-scalar-stream privateParticleManifoldDriverActiveSamples={} privateParticleManifoldDriverReceipt=render-thread-applied-sample",
+                            frame_count,
+                            manifold_driver_active_count,
+                        ),
+                    );
+                    self.manifold_driver_connected_marker_emitted = true;
+                }
+            }
             if next != self.runtime_settings {
                 crate::marker(
                     "private-particle-slot",
                     format!(
-                        "status=hotload-applied frame={} privateParticleSettingsHotload=true privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTransparencyOpacity={:.3} privateParticleTransparencyOutputAlphaScale={:.3} privateParticleTransparencyDepthSuppressionStrength={:.3} privateParticleTransparencyRgbAlphaCoupling={:.3} privateParticleTransparencyParameterSource={} privateParticleColorFacingAttenuationStrength={:.3} privateParticleColorParameterSource={}",
+                        "status=hotload-applied frame={} privateParticleSettingsHotload=true privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleManifoldDriverActiveSamples={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTransparencyOpacity={:.3} privateParticleTransparencyOutputAlphaScale={:.3} privateParticleTransparencyDepthSuppressionStrength={:.3} privateParticleTransparencyRgbAlphaCoupling={:.3} privateParticleTransparencyParameterSource={} privateParticleColorFacingAttenuationStrength={:.3} privateParticleColorParameterSource={}",
                         frame_count,
                         next.visual_scale,
                         crate::sanitize(next.visual_parameter_source),
@@ -1467,6 +1512,7 @@ impl GpuPrivateParticleRenderer {
                         next.driver1_value01,
                         private_particle_driver_bank_marker_fields(next),
                         crate::sanitize(next.driver_parameter_source),
+                        manifold_driver_active_count,
                         next.tracer_draw_slots_per_oscillator.min(self.tracer_draw_slots_per_oscillator),
                         self.tracer_draw_slots_per_oscillator,
                         next.tracer_lifetime_seconds,

@@ -8,9 +8,10 @@
     "apps/native-renderer-android/native/src/native_renderer_passthrough_style_options.rs",
     "apps/native-renderer-android/native/src/native_renderer_video_projection_options.rs",
     "apps/native-renderer-android/native/src/environment_depth_alignment_state.rs",
-    "apps/native-renderer-android/native/src/projection_target_state.rs"
+    "apps/native-renderer-android/native/src/projection_target_state.rs",
+    "apps/native-renderer-android/native/src/manifold_scalar_driver_bridge.rs"
   ],
-  "property_count": 176,
+  "property_count": 183,
   "properties": [
     {
       "name": "debug.rustyquest.native_renderer.camera.direct_border.opacity",
@@ -2200,6 +2201,121 @@
       "range": {
         "min": 0.0,
         "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.host",
+      "family": "private_particles",
+      "runtime_owner": "manifold_scalar_driver_bridge",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "string",
+      "non_empty": true,
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.path",
+      "family": "private_particles",
+      "runtime_owner": "manifold_scalar_driver_bridge",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "string",
+      "non_empty": true,
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.port",
+      "family": "private_particles",
+      "runtime_owner": "manifold_scalar_driver_bridge",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "u32",
+      "range": {
+        "min": 1,
+        "max": 65535
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.manifold_driver.enabled",
+      "family": "private_particles",
+      "runtime_owner": "manifold_scalar_driver_bridge",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.manifold_driver.high_rate_json_payload",
+      "family": "private_particles",
+      "runtime_owner": "manifold_scalar_driver_bridge",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.manifold_driver.routes",
+      "family": "private_particles",
+      "runtime_owner": "manifold_scalar_driver_bridge",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "string",
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.private_particles.manifold_driver.sample_hold_seconds",
+      "family": "private_particles",
+      "runtime_owner": "manifold_scalar_driver_bridge",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.033,
+        "max": 60.0
       },
       "validators": [
         "runtime-parser",

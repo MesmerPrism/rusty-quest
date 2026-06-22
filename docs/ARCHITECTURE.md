@@ -362,7 +362,7 @@ four-vec4 billboard row ABI, sampled R8 texture-array mask upload/sampling,
 resident GPU index-remap sorting, parameterized transparency/coverage controls,
 generic tracer budget/draw-capacity plumbing, generic draw/compute
 orchestration, captured world-anchor center/scale and forward-axis state, a
-16-word host-visible diagnostic storage buffer at descriptor binding `9`, and
+24-word host-visible diagnostic storage buffer at descriptor binding `9`, and
 public slot markers. The private-particle compute push keeps the 128-byte ABI:
 draw passes receive real FOV tangents, while compute passes receive the
 captured anchor forward axis in the same vector for downstream shaders that
@@ -370,8 +370,8 @@ need startup/recenter-stable orientation. The diagnostic buffer is generic: priv
 compute shaders may write compact integer counters or fixed-point reductions,
 while Rusty Quest only clears it, reads it after the frame-slot fence, and emits
 `privateParticleDiagnostic*` markers, including optional tracer active,
-spawned, discarded, and saturation counter fields when the private shader writes
-them. Public markers distinguish main particle count, tracer budget, merged
+spawned, discarded, saturation, active-edge, and pass-health fields when the
+private shader writes them. Public markers distinguish main particle count, tracer budget, merged
 draw count, and compact diagnostic status so downstream shaders can append
 effect-owned tracer rows without introducing CPU-expanded particle lists or
 full particle-buffer readback.
@@ -384,6 +384,14 @@ visual scale, tracer draw slots/lifetime/cadence, transparency
 opacity/alpha/depth/RGB coupling, and the generic color facing-attenuation
 strength, plus bounded generic driver scalars in the `driver0.value01` through
 `driver7.value01` bank.
+The opt-in `particles.private.manifold_scalar_driver` feature adds a public
+Manifold stream-to-driver adapter. It subscribes to configured Manifold scalar
+stream ids, parses bounded `value01` samples, clamps them to `0..=1`, and
+overlays them onto selected generic driver slots. Routes use
+`stream_id:driverN.value01` entries separated by semicolons. This adapter owns
+no downstream effect semantics, Kuramoto state, coupling parameters, or private
+payload content; it only bridges honest Manifold scalar streams into the
+generic driver bank.
 The runtime reports accepted values through `privateParticleSettingsHotload`
 markers. This does not make Rusty Quest the authority for downstream phase
 dynamics, payload constants, or effect-specific visual interpretation.

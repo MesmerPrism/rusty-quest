@@ -1,0 +1,70 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "particles.private.manifold_scalar_driver",
+  "module_path": "particles/private/manifold_scalar_driver",
+  "module_kind": "manifold-driver-adapter",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Generic Manifold scalar stream adapter for private-particle driver slots.",
+  "provides": [
+    "input.private_particle_driver.scalar_streams"
+  ],
+  "depends_on": [
+    "renderer.private_particles",
+    "manifold.bridge"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {
+    "private_particle_driver_input": "manifold-scalar-streams"
+  },
+  "android_manifest": {
+    "permissions": [
+      "android.permission.INTERNET"
+    ],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.private_particles.manifold_driver.enabled": "true",
+      "debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.host": "127.0.0.1",
+      "debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.path": "/manifold/v1/events",
+      "debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.port": "8765",
+      "debug.rustyquest.native_renderer.private_particles.manifold_driver.routes": "stream.synthetic_wave:driver1.value01",
+      "debug.rustyquest.native_renderer.private_particles.manifold_driver.sample_hold_seconds": "1.0",
+      "debug.rustyquest.native_renderer.private_particles.manifold_driver.high_rate_json_payload": "false"
+    },
+    "clear_families": [],
+    "expected_render_modes": [
+      "solid-black-private-particles"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "status=manifold-driver-started",
+      "highRateSamplesViaAndroidProperties=false"
+    ],
+    "forbidden": [
+      "status=manifold-driver-disabled reason=high-rate-json-payload-disallowed"
+    ]
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath <generated-profile> -DryRun -Out <generated-property-plan>"
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Rusty Quest owns only the generic stream-to-driver adapter and bounded driver slots; downstream private effects own driver semantics."
+}

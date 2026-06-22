@@ -103,9 +103,11 @@
       "privateParticleWorldAnchorForwardAxis=",
       "privateParticleComputeFovTangentPayload=world-anchor-forward-axis",
       "privateParticleDiagnosticStorageBinding=9",
-      "privateParticleDiagnosticWords=16",
+      "privateParticleDiagnosticWords=24",
       "privateParticleDiagnosticTracerSpawnedCount=",
       "privateParticleDiagnosticTracerDiscardedCount=",
+      "privateParticleDiagnosticActiveEdgeCount=",
+      "privateParticleDiagnosticPassHealthFlags=",
       "privateParticleDiagnosticCpuFullBufferReadback=false",
       "privateParticleOrderingCpuExpandedUploadPerFrame=false"
     ],

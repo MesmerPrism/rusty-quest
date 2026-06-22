@@ -306,6 +306,22 @@ renderer, shader, OpenXR action, timing, and route-marker assertions live in
 projection-target route assertions, including Manifold breath/pose transport
 and right-hand OpenXR input/haptic markers, live in
 `tools\checks\Test-NativeRendererProjectionTargetStatic.ps1`.
+Manifold scalar private-particle driver changes should run the host parser and
+loopback websocket-adoption tests, property parity, and native app-build static
+gate:
+
+```powershell
+cargo test -p rusty-quest-native-renderer-android-native manifold_scalar_driver_bridge
+python .\tools\check_native_renderer_property_parity.py
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-NativeAppBuildStatic.ps1 -RepoRoot .
+```
+
+Those checks prove the public adapter parses Manifold scalar samples, can send
+a Manifold websocket `subscribe` command to a local loopback broker, can adopt
+a `stream_event` sample into the generic private-particle driver bank, the
+runtime property manifest covers its low-rate settings, and the opt-in
+`particles.private.manifold_scalar_driver` feature can be selected without
+folding Manifold stream input into every private-particle build.
 Recorded-hand replay, live compact hand input, GPU-skinned hand mesh visual,
 graft-copy, and GPU mesh replay boundary assertions live in
 `tools\checks\Test-NativeRendererHandVisualStatic.ps1`.
