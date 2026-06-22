@@ -13,6 +13,11 @@ use std::sync::{Mutex, OnceLock};
 use serde_json::json;
 use serde_json::Value;
 
+#[cfg(target_os = "android")]
+use crate::gpu_private_particles::{
+    GpuPrivateParticlePanelEffectiveSettings, GpuPrivateParticlePanelSettings,
+};
+
 use crate::{
     native_renderer_options::{
         NativeRendererRenderMode, NativeRendererRuntimeOptions,
@@ -44,6 +49,13 @@ pub(crate) const ENVIRONMENT_DEPTH_ALIGNMENT_SCHEMA: &str =
 pub(crate) const ENVIRONMENT_DEPTH_ALIGNMENT_STATUS_SCHEMA: &str =
     "rusty.quest.native_renderer.environment_depth_alignment_status.v1";
 pub(crate) const ENVIRONMENT_DEPTH_ALIGNMENT_STATUS_FILE: &str = "depth_alignment_status.json";
+pub(crate) const PRIVATE_PARTICLE_DYNAMICS_SCHEMA: &str =
+    "rusty.quest.native_renderer.private_particle_dynamics.v1";
+pub(crate) const PRIVATE_PARTICLE_DYNAMICS_STATUS_SCHEMA: &str =
+    "rusty.quest.native_renderer.private_particle_dynamics_status.v1";
+pub(crate) const PRIVATE_PARTICLE_DYNAMICS_STATUS_FILE: &str =
+    "private_particle_dynamics_status.json";
+pub(crate) const PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT: usize = 8;
 
 #[derive(Clone, Debug)]
 pub(crate) struct StimulusPanelCandidate {
@@ -66,6 +78,38 @@ pub(crate) struct EnvironmentDepthAlignmentPanelCandidate {
     pub(crate) sample_scale: f32,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct PrivateParticleDynamicsPanelCandidate {
+    pub(crate) revision: i64,
+    pub(crate) visual_scale: f32,
+    pub(crate) world_anchor_scale_m: f32,
+    pub(crate) driver_values01: [f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    pub(crate) tracer_draw_slots_per_oscillator: u32,
+    pub(crate) tracer_lifetime_seconds: f32,
+    pub(crate) tracer_copies_per_second: f32,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Clone, Debug)]
+pub(crate) struct PrivateParticleDynamicsPanelAppliedState {
+    pub(crate) world_anchor_scale_m: f32,
+    pub(crate) world_anchor_scale_parameter_source: &'static str,
+    pub(crate) settings: GpuPrivateParticlePanelEffectiveSettings,
+}
+
+impl PrivateParticleDynamicsPanelCandidate {
+    #[cfg(target_os = "android")]
+    pub(crate) fn panel_settings(&self) -> GpuPrivateParticlePanelSettings {
+        GpuPrivateParticlePanelSettings {
+            visual_scale: self.visual_scale,
+            driver_values01: self.driver_values01,
+            tracer_draw_slots_per_oscillator: self.tracer_draw_slots_per_oscillator,
+            tracer_lifetime_seconds: self.tracer_lifetime_seconds,
+            tracer_copies_per_second: self.tracer_copies_per_second,
+        }
+    }
+}
+
 #[cfg(target_os = "android")]
 static LIVE_CANDIDATE_QUEUE: OnceLock<Mutex<Option<StimulusPanelCandidate>>> = OnceLock::new();
 #[cfg(target_os = "android")]
@@ -74,6 +118,10 @@ static LIVE_PRIVATE_LAYER_SELECTION_QUEUE: OnceLock<Mutex<Option<PrivateLayerPan
 #[cfg(target_os = "android")]
 static LIVE_ENVIRONMENT_DEPTH_ALIGNMENT_QUEUE: OnceLock<
     Mutex<Option<EnvironmentDepthAlignmentPanelCandidate>>,
+> = OnceLock::new();
+#[cfg(target_os = "android")]
+static LIVE_PRIVATE_PARTICLE_DYNAMICS_QUEUE: OnceLock<
+    Mutex<Option<PrivateParticleDynamicsPanelCandidate>>,
 > = OnceLock::new();
 
 #[cfg(target_os = "android")]
@@ -100,6 +148,12 @@ fn live_environment_depth_alignment_queue(
 }
 
 #[cfg(target_os = "android")]
+fn live_private_particle_dynamics_queue(
+) -> &'static Mutex<Option<PrivateParticleDynamicsPanelCandidate>> {
+    LIVE_PRIVATE_PARTICLE_DYNAMICS_QUEUE.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(target_os = "android")]
 pub(crate) fn take_live_candidate() -> Option<StimulusPanelCandidate> {
     let mut queue = live_candidate_queue().lock().ok()?;
     queue.take()
@@ -115,6 +169,13 @@ pub(crate) fn take_live_private_layer_selection() -> Option<PrivateLayerPanelSel
 pub(crate) fn take_live_environment_depth_alignment(
 ) -> Option<EnvironmentDepthAlignmentPanelCandidate> {
     let mut queue = live_environment_depth_alignment_queue().lock().ok()?;
+    queue.take()
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn take_live_private_particle_dynamics() -> Option<PrivateParticleDynamicsPanelCandidate>
+{
+    let mut queue = live_private_particle_dynamics_queue().lock().ok()?;
     queue.take()
 }
 
@@ -188,6 +249,36 @@ fn queue_live_private_layer_selection(text: &str) -> Result<LiveQueueOutcome, St
             revision,
             layer_override,
             crate::sanitize(&layer_label),
+            overwrote_pending
+        ),
+    );
+    Ok(LiveQueueOutcome {
+        revision,
+        overwrote_pending,
+    })
+}
+
+#[cfg(target_os = "android")]
+fn queue_live_private_particle_dynamics(text: &str) -> Result<LiveQueueOutcome, String> {
+    let candidate = parse_private_particle_dynamics_json(text)?;
+    let revision = candidate.revision;
+    let mut queue = live_private_particle_dynamics_queue()
+        .lock()
+        .map_err(|_| "live_queue_poisoned".to_string())?;
+    let overwrote_pending = queue.replace(candidate.clone()).is_some();
+    crate::marker(
+        "private-particle-panel",
+        format!(
+            "status=live-queued transport=jni-live-queue schema={} candidateRevision={} privateParticleVisualScale={:.3} privateParticleWorldAnchorScaleM={:.3} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} overwrotePendingDynamics={}",
+            PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
+            revision,
+            candidate.visual_scale,
+            candidate.world_anchor_scale_m,
+            candidate.driver_values01[0],
+            candidate.driver_values01[1],
+            candidate.tracer_draw_slots_per_oscillator,
+            candidate.tracer_lifetime_seconds,
+            candidate.tracer_copies_per_second,
             overwrote_pending
         ),
     );
@@ -395,6 +486,72 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
     }
 }
 
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLivePrivateParticleDynamics(
+    mut env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    dynamics_json: jni::objects::JString,
+) -> jni::sys::jstring {
+    match env
+        .with_env(|env| -> jni::errors::Result<jni::sys::jstring> {
+            let dynamics_json = dynamics_json.try_to_string(env)?;
+            let response = match queue_live_private_particle_dynamics(&dynamics_json) {
+                Ok(outcome) => json!({
+                    "schema": PRIVATE_PARTICLE_DYNAMICS_STATUS_SCHEMA,
+                    "status": "queued",
+                    "transport": "jni_live_queue",
+                    "candidate_revision": outcome.revision,
+                    "overwrote_pending": outcome.overwrote_pending
+                })
+                .to_string(),
+                Err(reason) => {
+                    crate::marker(
+                        "private-particle-panel",
+                        format!(
+                            "status=live-rejected transport=jni-live-queue schema={} reason={}",
+                            PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
+                            crate::sanitize(&reason)
+                        ),
+                    );
+                    json!({
+                        "schema": PRIVATE_PARTICLE_DYNAMICS_STATUS_SCHEMA,
+                        "status": "rejected",
+                        "transport": "jni_live_queue",
+                        "rejection_code": reason
+                    })
+                    .to_string()
+                }
+            };
+            env.new_string(response).map(|value| value.into_raw())
+        })
+        .into_outcome()
+    {
+        jni::Outcome::Ok(value) => value,
+        jni::Outcome::Err(error) => {
+            crate::marker(
+                "private-particle-panel",
+                format!(
+                    "status=live-rejected transport=jni-live-queue schema={} reason=jni_error:{}",
+                    PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
+                    crate::sanitize(&error.to_string())
+                ),
+            );
+            std::ptr::null_mut()
+        }
+        jni::Outcome::Panic(_) => {
+            crate::marker(
+                "private-particle-panel",
+                format!(
+                    "status=live-rejected transport=jni-live-queue schema={} reason=jni_panic",
+                    PRIVATE_PARTICLE_DYNAMICS_SCHEMA
+                ),
+            );
+            std::ptr::null_mut()
+        }
+    }
+}
+
 impl StimulusPanelCandidate {
     pub(crate) fn apply_to(
         self,
@@ -406,6 +563,60 @@ impl StimulusPanelCandidate {
             ProjectionTargetSettings::disabled_for_volume_only_route();
         options
     }
+}
+
+pub(crate) fn parse_private_particle_dynamics_json(
+    text: &str,
+) -> Result<PrivateParticleDynamicsPanelCandidate, String> {
+    let value: Value = serde_json::from_str(text).map_err(|error| format!("json_parse:{error}"))?;
+    let schema = string_at(&value, &["schema"]).unwrap_or_default();
+    if schema != PRIVATE_PARTICLE_DYNAMICS_SCHEMA {
+        return Err(format!("schema_mismatch:{schema}"));
+    }
+
+    let revision = value
+        .get("revision")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .max(0);
+    let private_particles = object_value_at(&value, &["private_particles"])?;
+    let apply = value.get("apply").and_then(Value::as_object);
+    if let Some(mode) = apply
+        .and_then(|object| object.get("mode"))
+        .and_then(Value::as_str)
+    {
+        match mode {
+            "apply-on-next-safe-frame" => {}
+            _ => return Err(format!("unsupported_apply_mode:{mode}")),
+        }
+    }
+
+    let visual_scale = bounded_number_at(private_particles, "visual_scale", 0.7, 0.05, 1.0)? as f32;
+    let world_anchor_scale_m =
+        bounded_number_at(private_particles, "world_anchor_scale_m", 0.46, 0.05, 4.0)? as f32;
+    let driver_values01 = bounded_number_array_at::<{ PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT }>(
+        private_particles,
+        "driver_values01",
+        0.0,
+        1.0,
+    )?;
+    let tracer = object_value_at(private_particles, &["tracer"])?;
+    let tracer_draw_slots_per_oscillator =
+        bounded_u32_at(tracer, "draw_slots_per_oscillator", 7, 0, 1024)?;
+    let tracer_lifetime_seconds =
+        bounded_number_at(tracer, "lifetime_seconds", 0.5, 0.016, 30.0)? as f32;
+    let tracer_copies_per_second =
+        bounded_number_at(tracer, "copies_per_second", 14.0, 0.0, 120.0)? as f32;
+
+    Ok(PrivateParticleDynamicsPanelCandidate {
+        revision,
+        visual_scale,
+        world_anchor_scale_m,
+        driver_values01,
+        tracer_draw_slots_per_oscillator,
+        tracer_lifetime_seconds,
+        tracer_copies_per_second,
+    })
 }
 
 pub(crate) fn parse_environment_depth_alignment_json(
@@ -936,6 +1147,68 @@ pub(crate) fn write_environment_depth_alignment_status(
 }
 
 #[cfg(target_os = "android")]
+pub(crate) fn write_private_particle_dynamics_status(
+    app: &android_activity::AndroidApp,
+    status: &str,
+    revision: i64,
+    reason: &str,
+    candidate: Option<&PrivateParticleDynamicsPanelCandidate>,
+    effective: Option<&PrivateParticleDynamicsPanelAppliedState>,
+) {
+    if let Some(data_path) = app.internal_data_path() {
+        let effective_revision = if status == "applied" { revision } else { 0 };
+        let private_particles = if let Some(effective) = effective {
+            json!({
+                "visual_scale": effective.settings.visual_scale,
+                "visual_parameter_source": "same-apk-panel-live",
+                "world_anchor_scale_m": effective.world_anchor_scale_m,
+                "world_anchor_scale_parameter_source": effective.world_anchor_scale_parameter_source,
+                "driver_values01": effective.settings.driver_values01,
+                "driver_parameter_source": effective.settings.driver_parameter_source,
+                "tracer": {
+                    "draw_slots_per_oscillator": effective.settings.tracer_draw_slots_per_oscillator,
+                    "draw_slots_capacity": effective.settings.tracer_draw_slots_capacity,
+                    "lifetime_seconds": effective.settings.tracer_lifetime_seconds,
+                    "copies_per_second": effective.settings.tracer_copies_per_second,
+                    "parameter_source": effective.settings.tracer_parameter_source
+                }
+            })
+        } else if let Some(candidate) = candidate {
+            json!({
+                "visual_scale": candidate.visual_scale,
+                "visual_parameter_source": "requested",
+                "world_anchor_scale_m": candidate.world_anchor_scale_m,
+                "world_anchor_scale_parameter_source": "requested",
+                "driver_values01": candidate.driver_values01,
+                "driver_parameter_source": "requested",
+                "tracer": {
+                    "draw_slots_per_oscillator": candidate.tracer_draw_slots_per_oscillator,
+                    "draw_slots_capacity": Value::Null,
+                    "lifetime_seconds": candidate.tracer_lifetime_seconds,
+                    "copies_per_second": candidate.tracer_copies_per_second,
+                    "parameter_source": "requested"
+                }
+            })
+        } else {
+            Value::Null
+        };
+        let body = json!({
+            "schema": PRIVATE_PARTICLE_DYNAMICS_STATUS_SCHEMA,
+            "status": status,
+            "candidate_revision": revision,
+            "effective_revision": effective_revision,
+            "rejection_code": if reason == "none" { Value::Null } else { Value::String(reason.to_string()) },
+            "transport": "jni_live_queue",
+            "private_particles": private_particles
+        });
+        let _ = std::fs::write(
+            data_path.join(PRIVATE_PARTICLE_DYNAMICS_STATUS_FILE),
+            body.to_string(),
+        );
+    }
+}
+
+#[cfg(target_os = "android")]
 fn write_status(
     data_path: &Path,
     status: &str,
@@ -1085,6 +1358,49 @@ fn bounded_array_number(key: &str, value: &Value, min: f64, max: f64) -> Result<
         return Err(format!("{key}_out_of_range:{number:.3}"));
     }
     Ok(number as f32)
+}
+
+fn bounded_number_array_at<const N: usize>(
+    value: &Value,
+    key: &str,
+    min: f64,
+    max: f64,
+) -> Result<[f32; N], String> {
+    let Some(array) = value.get(key).and_then(Value::as_array) else {
+        return Err(format!("missing_array:{key}"));
+    };
+    if array.len() != N {
+        return Err(format!("{key}_length_mismatch:{}!={N}", array.len()));
+    }
+    let mut result = [0.0_f32; N];
+    for (index, entry) in array.iter().enumerate() {
+        let Some(number) = entry.as_f64() else {
+            return Err(format!("{key}_{index}_must_be_number"));
+        };
+        if !number.is_finite() || number < min || number > max {
+            return Err(format!("{key}_{index}_out_of_range:{number:.3}"));
+        }
+        result[index] = number as f32;
+    }
+    Ok(result)
+}
+
+fn bounded_u32_at(
+    value: &Value,
+    key: &str,
+    fallback: u32,
+    min: u32,
+    max: u32,
+) -> Result<u32, String> {
+    let requested = number_at(value, &[key]).unwrap_or(fallback as f64);
+    let rounded = requested.round();
+    if (requested - rounded).abs() > 0.001 {
+        return Err(format!("{key}_not_integral:{requested:.3}"));
+    }
+    if !rounded.is_finite() || rounded < min as f64 || rounded > max as f64 {
+        return Err(format!("{key}_out_of_range:{rounded:.0}"));
+    }
+    Ok(rounded as u32)
 }
 
 #[cfg(test)]
@@ -1290,5 +1606,66 @@ mod tests {
         assert_close(candidate.effective_offsets_uv[1][0], -0.030);
         assert_close(candidate.effective_offsets_uv[1][1], 0.040);
         assert_close(candidate.sample_scale, 1.35);
+    }
+
+    #[test]
+    fn parses_private_particle_dynamics_candidate() {
+        let value = json!({
+            "schema": PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
+            "revision": 11,
+            "source": {
+                "surface": "same_apk_panel",
+                "transport": "jni_live_queue"
+            },
+            "private_particles": {
+                "visual_scale": 0.62,
+                "world_anchor_scale_m": 0.88,
+                "driver_values01": [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80],
+                "tracer": {
+                    "draw_slots_per_oscillator": 9,
+                    "lifetime_seconds": 1.25,
+                    "copies_per_second": 22.5
+                }
+            },
+            "apply": {
+                "mode": "apply-on-next-safe-frame"
+            }
+        });
+
+        let candidate =
+            parse_private_particle_dynamics_json(&value.to_string()).expect("dynamics parses");
+
+        assert_eq!(candidate.revision, 11);
+        assert_close(candidate.visual_scale, 0.62);
+        assert_close(candidate.world_anchor_scale_m, 0.88);
+        assert_close(candidate.driver_values01[0], 0.10);
+        assert_close(candidate.driver_values01[7], 0.80);
+        assert_eq!(candidate.tracer_draw_slots_per_oscillator, 9);
+        assert_close(candidate.tracer_lifetime_seconds, 1.25);
+        assert_close(candidate.tracer_copies_per_second, 22.5);
+    }
+
+    #[test]
+    fn rejects_out_of_range_private_particle_driver() {
+        let value = json!({
+            "schema": PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
+            "revision": 12,
+            "private_particles": {
+                "visual_scale": 0.62,
+                "world_anchor_scale_m": 0.88,
+                "driver_values01": [0.10, 0.20, 1.30, 0.40, 0.50, 0.60, 0.70, 0.80],
+                "tracer": {
+                    "draw_slots_per_oscillator": 9,
+                    "lifetime_seconds": 1.25,
+                    "copies_per_second": 22.5
+                }
+            },
+            "apply": {
+                "mode": "apply-on-next-safe-frame"
+            }
+        });
+
+        let error = parse_private_particle_dynamics_json(&value.to_string()).unwrap_err();
+        assert!(error.starts_with("driver_values01_2_out_of_range"));
     }
 }

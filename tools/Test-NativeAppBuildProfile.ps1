@@ -72,6 +72,7 @@ foreach ($path in @($lockPath, $profilePath, $settingsPath, $propertyPlanPath, $
 
 $lock = Read-Json -Path $lockPath
 Assert-SetEquals -Label "canary selected feature closure" -Expected @(
+    "input.controllers_and_hands_optional",
     "input.right_primary_private_particle_recenter",
     "particles.private.mask.r8_texture",
     "particles.private.ordering.gpu_index_remap",
@@ -80,9 +81,11 @@ Assert-SetEquals -Label "canary selected feature closure" -Expected @(
     "particles.tracers.snapshot_rows",
     "quest.native.openxr_vulkan_base",
     "renderer.background.solid_black",
-    "renderer.private_particles"
+    "renderer.private_particles",
+    "ui.same_apk_control_panel"
 ) -Actual @($lock.selected_feature_ids | ForEach-Object { [string]$_ })
 Assert-SetEquals -Label "canary Android permission surface" -Expected @(
+    "com.oculus.permission.HAND_TRACKING",
     "org.khronos.openxr.permission.OPENXR",
     "org.khronos.openxr.permission.OPENXR_SYSTEM"
 ) -Actual @($lock.android_manifest.permissions | ForEach-Object { [string]$_ })
@@ -109,15 +112,19 @@ Assert-SetEquals -Label "canary permission pregrant declared surface" `
 if ([string]$lock.permission_pregrant.policy -ne "pregrant-declared-permissions-before-first-launch") {
     throw "Generated canary permission pregrant plan has wrong policy: $($lock.permission_pregrant.policy)"
 }
-if ([bool]$lock.permission_pregrant.required_before_first_launch) {
-    throw "Generated canary must not require permission pregrant before first launch"
+if (-not [bool]$lock.permission_pregrant.required_before_first_launch) {
+    throw "Generated canary must require permission pregrant before first launch for optional hand tracking"
 }
-if (-not [string]::IsNullOrWhiteSpace([string]$lock.permission_pregrant.command)) {
-    throw "Generated canary permission pregrant plan should not emit a device command when no dangerous permission or app-op is required"
+if ([string]::IsNullOrWhiteSpace([string]$lock.permission_pregrant.command)) {
+    throw "Generated canary permission pregrant plan must emit a device command for optional hand tracking"
+}
+if (-not (@($lock.permission_pregrant.runtime_dangerous_permissions | ForEach-Object { [string]$_ }) -contains "com.oculus.permission.HAND_TRACKING")) {
+    throw "Generated canary permission pregrant plan must include HAND_TRACKING as a runtime dangerous permission"
 }
 Assert-SetEquals -Label "canary Android uses-feature surface" -Expected @(
     "android.hardware.vr.headtracking",
-    "android.opengl.gles.3.1"
+    "android.opengl.gles.3.1",
+    "oculus.software.handtracking"
 ) -Actual @($lock.android_manifest.uses_features | ForEach-Object { [string]$_ })
 
 $forbiddenFeatures = @(
@@ -166,6 +173,7 @@ if ([string]$settings.schema -ne "rusty.quest.native_app_settings.v1") {
 foreach ($requiredModule in @(
     "core/openxr-vulkan",
     "background/solid-black",
+    "input/controllers-and-hands",
     "particles/private/payload-slot",
     "particles/private/placeholder",
     "particles/private/ordering/gpu-index-remap",
@@ -228,7 +236,6 @@ $manifestText = Get-Content -Raw -LiteralPath $manifestPath
 foreach ($forbiddenPermission in @(
     "android.permission.CAMERA",
     "android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION",
-    "com.oculus.permission.HAND_TRACKING",
     "horizonos.permission.HEADSET_CAMERA",
     "horizonos.permission.SPATIAL_CAMERA",
     "horizonos.permission.USE_SCENE"
@@ -236,6 +243,15 @@ foreach ($forbiddenPermission in @(
     if ($manifestText -match [regex]::Escape($forbiddenPermission)) {
         throw "Generated canary manifest contains denied permission: $forbiddenPermission"
     }
+}
+if ($manifestText -notmatch 'com\.oculus\.permission\.HAND_TRACKING') {
+    throw "Generated canary manifest must declare HAND_TRACKING for optional hands-and-controllers support"
+}
+if ($manifestText -notmatch 'android:name="oculus\.software\.handtracking"\s+android:required="false"') {
+    throw "Generated canary manifest must declare optional oculus.software.handtracking"
+}
+if ($manifestText -notmatch 'android:name="\.ControlPanelActivity"') {
+    throw "Generated canary manifest must include the same-APK control panel activity"
 }
 
 $stimulusDir = Join-Path $repoRootPath "local-artifacts\native-app-builds\native_stimulus_volume_panel"

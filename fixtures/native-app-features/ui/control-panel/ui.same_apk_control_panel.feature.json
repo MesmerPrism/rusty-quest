@@ -1,0 +1,50 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.same_apk_control_panel",
+  "module_path": "ui/control-panel",
+  "module_kind": "same-apk-panel",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Same-APK Android control panel activity for low-rate in-app renderer controls.",
+  "provides": [
+    "ui.same_apk_control_panel"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [
+      "ControlPanelActivity"
+    ],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "The Android panel shell is public; panel modes and private renderer payload semantics stay with the owning renderer feature."
+}

@@ -5,7 +5,9 @@
   "package_policy": "native-renderer-dev-package",
   "package_name": "io.github.mesmerprism.rustyquest.native_renderer",
   "requested_features": [
+    "input.controllers_and_hands_optional",
     "quest.native.openxr_vulkan_base",
+    "ui.same_apk_control_panel",
     "renderer.background.solid_black",
     "renderer.private_particles",
     "particles.tracers.snapshot_rows",
@@ -29,14 +31,17 @@
   "permission_allowlist": [],
   "declared_manifest": {
     "permissions": [
+      "com.oculus.permission.HAND_TRACKING",
       "org.khronos.openxr.permission.OPENXR",
       "org.khronos.openxr.permission.OPENXR_SYSTEM"
     ],
     "uses_features": [
       "android.hardware.vr.headtracking",
-      "android.opengl.gles.3.1"
+      "android.opengl.gles.3.1",
+      "oculus.software.handtracking"
     ],
     "activities": [
+      "ControlPanelActivity",
       "android.app.NativeActivity"
     ],
     "services": []
@@ -78,13 +83,15 @@
     "required_modules": [
       "background/solid-black",
       "core/openxr-vulkan",
+      "input/controllers-and-hands",
       "input/private-particles/right-primary-recenter",
       "particles/private/mask/r8-texture",
       "particles/private/ordering/gpu-index-remap",
       "particles/private/payload-slot",
       "particles/private/placeholder",
       "particles/private/renderer",
-      "particles/tracers/snapshot-rows"
+      "particles/tracers/snapshot-rows",
+      "ui/control-panel"
     ],
     "forbidden_modules": [
       "background/native-passthrough",

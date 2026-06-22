@@ -46,6 +46,8 @@ const PRIVATE_PARTICLE_DIAGNOSTIC_FIXED_POINT_SCALE: f64 = 100_000.0;
 const PRIVATE_PARTICLE_SETTINGS_POLL_INTERVAL_FRAMES: u64 = 30;
 const PRIVATE_PARTICLE_ORDERING_BACK_TO_FRONT: u32 = 0;
 const PRIVATE_PARTICLE_ORDERING_SOURCE_ORDER: u32 = 1;
+pub(crate) const GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT: usize =
+    PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct PrivateParticleRuntimeSettings {
@@ -66,6 +68,43 @@ struct PrivateParticleRuntimeSettings {
     transparency_parameter_source: &'static str,
     color_facing_attenuation_strength: f32,
     color_parameter_source: &'static str,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct GpuPrivateParticlePanelSettings {
+    pub(crate) visual_scale: f32,
+    pub(crate) driver_values01: [f32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+    pub(crate) tracer_draw_slots_per_oscillator: u32,
+    pub(crate) tracer_lifetime_seconds: f32,
+    pub(crate) tracer_copies_per_second: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct GpuPrivateParticlePanelEffectiveSettings {
+    pub(crate) visual_scale: f32,
+    pub(crate) driver_values01: [f32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+    pub(crate) driver_parameter_source: &'static str,
+    pub(crate) tracer_draw_slots_per_oscillator: u32,
+    pub(crate) tracer_draw_slots_capacity: u32,
+    pub(crate) tracer_lifetime_seconds: f32,
+    pub(crate) tracer_copies_per_second: f32,
+    pub(crate) tracer_parameter_source: &'static str,
+}
+
+impl GpuPrivateParticlePanelSettings {
+    fn clamped(self) -> Self {
+        let mut driver_values01 = self.driver_values01;
+        for value in &mut driver_values01 {
+            *value = value.clamp(0.0, 1.0);
+        }
+        Self {
+            visual_scale: self.visual_scale.clamp(0.05, 1.0),
+            driver_values01,
+            tracer_draw_slots_per_oscillator: self.tracer_draw_slots_per_oscillator.min(1024),
+            tracer_lifetime_seconds: self.tracer_lifetime_seconds.clamp(0.016, 30.0),
+            tracer_copies_per_second: self.tracer_copies_per_second.clamp(0.0, 120.0),
+        }
+    }
 }
 
 impl PrivateParticleRuntimeSettings {
@@ -211,6 +250,20 @@ impl PrivateParticleRuntimeSettings {
                 PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE
             },
         }
+    }
+
+    fn apply_panel_override(&mut self, panel: GpuPrivateParticlePanelSettings) {
+        let panel = panel.clamped();
+        self.visual_scale = panel.visual_scale;
+        self.visual_parameter_source = "same-apk-panel-live";
+        self.driver_values01 = panel.driver_values01;
+        self.driver0_value01 = self.driver_values01[0];
+        self.driver1_value01 = self.driver_values01[1];
+        self.driver_parameter_source = "same-apk-panel-live";
+        self.tracer_draw_slots_per_oscillator = panel.tracer_draw_slots_per_oscillator;
+        self.tracer_lifetime_seconds = panel.tracer_lifetime_seconds;
+        self.tracer_copies_per_second = panel.tracer_copies_per_second;
+        self.tracer_parameter_source = "same-apk-panel-live";
     }
 
     #[cfg(target_os = "android")]
@@ -567,6 +620,7 @@ pub(crate) struct GpuPrivateParticleRenderer {
     sort_capacity: u32,
     runtime_settings: PrivateParticleRuntimeSettings,
     runtime_settings_last_poll_frame: u64,
+    panel_settings_override: Option<GpuPrivateParticlePanelSettings>,
     manifold_driver_bridge: Option<ManifoldScalarDriverBridge>,
     manifold_driver_connected_marker_emitted: bool,
 }
@@ -1201,6 +1255,7 @@ impl GpuPrivateParticleRenderer {
             sort_capacity,
             runtime_settings,
             runtime_settings_last_poll_frame: u64::MAX,
+            panel_settings_override: None,
             manifold_driver_bridge,
             manifold_driver_connected_marker_emitted: false,
         }))
@@ -1474,12 +1529,38 @@ impl GpuPrivateParticleRenderer {
         stats
     }
 
+    pub(crate) fn apply_panel_settings(
+        &mut self,
+        settings: GpuPrivateParticlePanelSettings,
+        frame_count: u64,
+        _revision: i64,
+    ) -> GpuPrivateParticlePanelEffectiveSettings {
+        self.panel_settings_override = Some(settings.clamped());
+        self.runtime_settings_last_poll_frame = u64::MAX;
+        let runtime_settings = self.runtime_settings(frame_count);
+        GpuPrivateParticlePanelEffectiveSettings {
+            visual_scale: runtime_settings.visual_scale,
+            driver_values01: runtime_settings.driver_values01,
+            driver_parameter_source: runtime_settings.driver_parameter_source,
+            tracer_draw_slots_per_oscillator: runtime_settings
+                .tracer_draw_slots_per_oscillator
+                .min(self.tracer_draw_slots_per_oscillator),
+            tracer_draw_slots_capacity: self.tracer_draw_slots_per_oscillator,
+            tracer_lifetime_seconds: runtime_settings.tracer_lifetime_seconds,
+            tracer_copies_per_second: runtime_settings.tracer_copies_per_second,
+            tracer_parameter_source: runtime_settings.tracer_parameter_source,
+        }
+    }
+
     fn runtime_settings(&mut self, frame_count: u64) -> PrivateParticleRuntimeSettings {
         let should_poll = self.runtime_settings_last_poll_frame == u64::MAX
             || frame_count.saturating_sub(self.runtime_settings_last_poll_frame)
                 >= PRIVATE_PARTICLE_SETTINGS_POLL_INTERVAL_FRAMES;
         if should_poll {
             let mut next = PrivateParticleRuntimeSettings::load_from_android_properties();
+            if let Some(panel_override) = self.panel_settings_override {
+                next.apply_panel_override(panel_override);
+            }
             let manifold_driver_active_count =
                 self.manifold_driver_bridge.as_ref().map_or(0, |bridge| {
                     bridge.apply_to_driver_values(&mut next.driver_values01)

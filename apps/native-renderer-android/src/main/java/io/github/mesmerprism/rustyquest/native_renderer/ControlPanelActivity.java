@@ -44,15 +44,39 @@ public final class ControlPanelActivity extends Activity {
     private static final String CANDIDATE_FILE = "stimulus_volume_candidate.json";
     private static final String STATUS_FILE = "stimulus_volume_status.json";
     private static final String DEPTH_ALIGNMENT_STATUS_FILE = "depth_alignment_status.json";
+    private static final String PRIVATE_PARTICLE_DYNAMICS_STATUS_FILE =
+        "private_particle_dynamics_status.json";
     private static final String PROFILE_SCHEMA = "rusty.quest.stimulus_volume.profile.v1";
     private static final String PRIVATE_LAYER_SELECTION_SCHEMA =
         "rusty.quest.native_renderer.private_layer_selection.v1";
     private static final String ENVIRONMENT_DEPTH_ALIGNMENT_SCHEMA =
         "rusty.quest.native_renderer.environment_depth_alignment.v1";
+    private static final String PRIVATE_PARTICLE_DYNAMICS_SCHEMA =
+        "rusty.quest.native_renderer.private_particle_dynamics.v1";
     private static final String PROP_CONTROL_PANEL_MODE =
         "debug.rustyquest.native_renderer.control_panel.mode";
     private static final String PROP_PRIVATE_LAYER_OVERRIDE =
         "debug.rustyquest.native_renderer.private_layer.layer_override";
+    private static final String PROP_PRIVATE_PARTICLE_VISUAL_SCALE =
+        "debug.rustyquest.native_renderer.private_particles.visual.scale";
+    private static final String PROP_PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE =
+        "debug.rustyquest.native_renderer.private_particles.world_anchor.scale_m";
+    private static final String PROP_PRIVATE_PARTICLE_TRACER_DRAW_SLOTS =
+        "debug.rustyquest.native_renderer.private_particles.tracer.draw_slots_per_oscillator";
+    private static final String PROP_PRIVATE_PARTICLE_TRACER_LIFETIME =
+        "debug.rustyquest.native_renderer.private_particles.tracer.lifetime_seconds";
+    private static final String PROP_PRIVATE_PARTICLE_TRACER_COPIES =
+        "debug.rustyquest.native_renderer.private_particles.tracer.copies_per_second";
+    private static final String[] PROP_PRIVATE_PARTICLE_DRIVERS = new String[] {
+        "debug.rustyquest.native_renderer.private_particles.driver0.value01",
+        "debug.rustyquest.native_renderer.private_particles.driver1.value01",
+        "debug.rustyquest.native_renderer.private_particles.driver2.value01",
+        "debug.rustyquest.native_renderer.private_particles.driver3.value01",
+        "debug.rustyquest.native_renderer.private_particles.driver4.value01",
+        "debug.rustyquest.native_renderer.private_particles.driver5.value01",
+        "debug.rustyquest.native_renderer.private_particles.driver6.value01",
+        "debug.rustyquest.native_renderer.private_particles.driver7.value01"
+    };
     private static final String PROP_ENVIRONMENT_DEPTH_ALIGNMENT_LEFT_OFFSET_X =
         "debug.rustyquest.native_renderer.environment_depth.alignment.left.offset.x.uv";
     private static final String PROP_ENVIRONMENT_DEPTH_ALIGNMENT_LEFT_OFFSET_Y =
@@ -94,6 +118,16 @@ public final class ControlPanelActivity extends Activity {
     private static final int PANEL_MUTED = Color.rgb(170, 176, 186);
     private static final int PANEL_SURFACE = Color.rgb(35, 38, 45);
     private static final int PANEL_ACCENT = Color.rgb(255, 214, 68);
+    private static final String[] PRIVATE_PARTICLE_DRIVER_LABELS = new String[] {
+        "Driver 0 deformation",
+        "Driver 1 coupling",
+        "Driver 2 particle size",
+        "Driver 3 depth wave",
+        "Driver 4 spin",
+        "Driver 5 orbit radius",
+        "Driver 6 orbit angle",
+        "Driver 7 animation frame"
+    };
     private static boolean nativeBridgeLoaded;
     private static String nativeBridgeLoadError;
 
@@ -117,6 +151,7 @@ public final class ControlPanelActivity extends Activity {
     private Handler liveApplyHandler;
     private Runnable pendingLiveApply;
     private Runnable pendingDepthAlignmentApply;
+    private Runnable pendingPrivateParticleDynamicsApply;
     private String handledDiagnosticIntentToken = "";
     private String handledDisplayCompositeIntentToken = "";
     private boolean displayCompositeRequestInFlight;
@@ -154,14 +189,23 @@ public final class ControlPanelActivity extends Activity {
     private SliderControl depthRightOffsetX;
     private SliderControl depthRightOffsetY;
     private SliderControl depthSampleScale;
+    private SliderControl privateParticleVisualScale;
+    private SliderControl privateParticleWorldAnchorScale;
+    private SliderControl[] privateParticleDrivers = new SliderControl[8];
+    private SliderControl privateParticleTracerDrawSlots;
+    private SliderControl privateParticleTracerLifetime;
+    private SliderControl privateParticleTracerCopies;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         liveApplyHandler = new Handler(Looper.getMainLooper());
         setContentView(buildContentView());
-        if ("private-layer-selector".equals(readControlPanelMode())) {
+        String panelMode = readControlPanelMode();
+        if ("private-layer-selector".equals(panelMode)) {
             updateStatus("Layer selector ready.");
+        } else if ("private-particle-dynamics".equals(panelMode)) {
+            updateStatus("Particle dynamics panel ready.");
         } else {
             updateStatus("Panel ready. Candidate path: " + new File(getFilesDir(), CANDIDATE_FILE));
         }
@@ -236,8 +280,12 @@ public final class ControlPanelActivity extends Activity {
     }
 
     private View buildContentView() {
-        if ("private-layer-selector".equals(readControlPanelMode())) {
+        String panelMode = readControlPanelMode();
+        if ("private-layer-selector".equals(panelMode)) {
             return buildPrivateLayerSelectorView();
+        }
+        if ("private-particle-dynamics".equals(panelMode)) {
+            return buildPrivateParticleDynamicsView();
         }
         return buildStimulusPanelView();
     }
@@ -478,6 +526,239 @@ public final class ControlPanelActivity extends Activity {
         status.setPadding(0, dp(10), 0, dp(8));
         root.addView(status);
         return scroll;
+    }
+
+    private View buildPrivateParticleDynamicsView() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setBackgroundColor(PANEL_BG);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(18);
+        root.setPadding(pad, pad, pad, pad);
+        scroll.addView(root);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = text("Particle Dynamics Panel", 22, PANEL_FG);
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button headerClose = button("Close");
+        headerClose.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                closePanelAndReturnToImmersive();
+            }
+        });
+        header.addView(headerClose);
+        root.addView(header);
+        root.addView(text("Live scalar controls for the generic private-particle slot.", 13, PANEL_MUTED));
+        root.addView(privateParticlePreviewBand());
+
+        liveAutoApply = checkBox("Live auto update", true);
+        liveAutoApply.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (liveAutoApply.isChecked()) {
+                    schedulePrivateParticleDynamicsApplyFromControl();
+                } else {
+                    cancelPendingPrivateParticleDynamicsApply();
+                    setStatusText("Live auto update off. Use Apply Live for explicit particle changes.");
+                }
+            }
+        });
+        root.addView(liveAutoApply);
+
+        JSONObject statusJson = readPrivateParticleDynamicsStatusJson();
+        JSONObject privateParticles = privateParticleStatusBody(statusJson);
+        JSONArray driverStatus = privateParticles == null
+            ? null
+            : privateParticles.optJSONArray("driver_values01");
+        JSONObject tracerStatus = privateParticles == null
+            ? null
+            : privateParticles.optJSONObject("tracer");
+
+        root.addView(sectionTitle("Particle Shape"));
+        privateParticleVisualScale = privateParticleSlider(
+            "Particle visual scale",
+            0.05,
+            1.0,
+            readPrivateParticleStatusDouble(
+                privateParticles,
+                "visual_scale",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_VISUAL_SCALE, 0.70)
+            ),
+            1000,
+            "",
+            false
+        );
+        privateParticleWorldAnchorScale = privateParticleSlider(
+            "Sphere scale",
+            0.05,
+            4.0,
+            readPrivateParticleStatusDouble(
+                privateParticles,
+                "world_anchor_scale_m",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE, 0.46)
+            ),
+            1000,
+            " m",
+            false
+        );
+        root.addView(privateParticleVisualScale.view);
+        root.addView(privateParticleWorldAnchorScale.view);
+
+        root.addView(sectionTitle("Dynamics Drivers"));
+        for (int i = 0; i < privateParticleDrivers.length; i++) {
+            double fallback = readDoubleProperty(PROP_PRIVATE_PARTICLE_DRIVERS[i], 0.0);
+            double initial = driverStatus == null ? fallback : driverStatus.optDouble(i, fallback);
+            privateParticleDrivers[i] = privateParticleSlider(
+                PRIVATE_PARTICLE_DRIVER_LABELS[i],
+                0.0,
+                1.0,
+                initial,
+                1000,
+                "",
+                false
+            );
+            root.addView(privateParticleDrivers[i].view);
+        }
+
+        root.addView(sectionTitle("Tracers"));
+        privateParticleTracerDrawSlots = privateParticleSlider(
+            "Tracer draw slots",
+            0.0,
+            1024.0,
+            readPrivateParticleStatusTracerDouble(
+                tracerStatus,
+                "draw_slots_per_oscillator",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRACER_DRAW_SLOTS, 7.0)
+            ),
+            1024,
+            "",
+            true
+        );
+        privateParticleTracerLifetime = privateParticleSlider(
+            "Tracer lifetime",
+            0.016,
+            30.0,
+            readPrivateParticleStatusTracerDouble(
+                tracerStatus,
+                "lifetime_seconds",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRACER_LIFETIME, 0.5)
+            ),
+            1000,
+            " s",
+            false
+        );
+        privateParticleTracerCopies = privateParticleSlider(
+            "Tracer copies/sec",
+            0.0,
+            120.0,
+            readPrivateParticleStatusTracerDouble(
+                tracerStatus,
+                "copies_per_second",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRACER_COPIES, 14.0)
+            ),
+            1000,
+            "",
+            false
+        );
+        root.addView(privateParticleTracerDrawSlots.view);
+        root.addView(privateParticleTracerLifetime.view);
+        root.addView(privateParticleTracerCopies.view);
+
+        root.addView(buildPrivateParticleDynamicsActionRow());
+
+        status = text("", 13, PANEL_MUTED);
+        status.setPadding(0, dp(10), 0, dp(8));
+        root.addView(status);
+        return scroll;
+    }
+
+    private View privateParticlePreviewBand() {
+        TextView preview = text("private particle dynamics", 13, Color.WHITE);
+        preview.setGravity(Gravity.CENTER);
+        preview.setPadding(dp(12), dp(12), dp(12), dp(12));
+        GradientDrawable background = new GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            new int[] {
+                Color.rgb(18, 22, 27),
+                Color.rgb(35, 170, 155),
+                Color.rgb(255, 214, 68),
+                Color.rgb(190, 85, 170),
+                Color.rgb(18, 22, 27)
+            }
+        );
+        background.setCornerRadius(dp(3));
+        preview.setBackground(background);
+        LinearLayout.LayoutParams params =
+            new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(54));
+        params.setMargins(0, dp(12), 0, dp(12));
+        preview.setLayoutParams(params);
+        return preview;
+    }
+
+    private SliderControl privateParticleSlider(
+        String title,
+        double min,
+        double max,
+        double initial,
+        int steps,
+        String suffix,
+        boolean integer
+    ) {
+        return slider(
+            title,
+            min,
+            max,
+            initial,
+            steps,
+            suffix,
+            integer,
+            new Runnable() {
+                @Override
+                public void run() {
+                    schedulePrivateParticleDynamicsApplyFromControl();
+                }
+            }
+        );
+    }
+
+    private View buildPrivateParticleDynamicsActionRow() {
+        LinearLayout actionBlock = new LinearLayout(this);
+        actionBlock.setOrientation(LinearLayout.VERTICAL);
+        actionBlock.setPadding(0, dp(14), 0, dp(10));
+
+        Button refresh = button("Refresh");
+        refresh.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                refreshPrivateParticleDynamicsFromStatus(true);
+            }
+        });
+        Button applyLive = button("Apply Live");
+        applyLive.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                submitLivePrivateParticleDynamics(true);
+            }
+        });
+        Button close = button("Close");
+        close.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                closePanelAndReturnToImmersive();
+            }
+        });
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.addView(refresh, rowButtonParams());
+        row.addView(applyLive, rowButtonParams());
+        row.addView(close, rowButtonParams());
+        actionBlock.addView(row);
+        return actionBlock;
     }
 
     private View privateLayerPreviewBand() {
@@ -841,6 +1122,214 @@ public final class ControlPanelActivity extends Activity {
         );
     }
 
+    private void schedulePrivateParticleDynamicsApplyFromControl() {
+        if (liveAutoApply == null || !liveAutoApply.isChecked()) {
+            return;
+        }
+        cancelPendingPrivateParticleDynamicsApply();
+        pendingPrivateParticleDynamicsApply = new Runnable() {
+            @Override
+            public void run() {
+                pendingPrivateParticleDynamicsApply = null;
+                submitLivePrivateParticleDynamics(false);
+            }
+        };
+        liveApplyHandler.postDelayed(pendingPrivateParticleDynamicsApply, 180);
+        setStatusText("Particle dynamics update pending.");
+    }
+
+    private void cancelPendingPrivateParticleDynamicsApply() {
+        if (liveApplyHandler != null && pendingPrivateParticleDynamicsApply != null) {
+            liveApplyHandler.removeCallbacks(pendingPrivateParticleDynamicsApply);
+            pendingPrivateParticleDynamicsApply = null;
+        }
+    }
+
+    private void submitLivePrivateParticleDynamics(boolean userVisible) {
+        try {
+            if (!nativeBridgeLoaded) {
+                throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
+            }
+            JSONObject candidate = buildPrivateParticleDynamicsJson();
+            String responseText = nativeSubmitLivePrivateParticleDynamics(candidate.toString());
+            JSONObject response = new JSONObject(responseText);
+            String responseStatus = response.optString("status", "unknown");
+            if (!"queued".equals(responseStatus)) {
+                throw new IllegalStateException(responseText);
+            }
+            String message = "Particle dynamics queued: " + privateParticleDynamicsSummary() + ".";
+            if (response.optBoolean("overwrote_pending", false)) {
+                message = "Particle dynamics queued; older pending edit was replaced.";
+            }
+            if (userVisible) {
+                updateStatus(message);
+            } else {
+                setStatusText(message);
+            }
+        } catch (Exception error) {
+            if (userVisible) {
+                updateStatus("Particle dynamics failed: " + error.getMessage());
+            } else {
+                setStatusText("Particle dynamics update failed: " + error.getMessage());
+            }
+        }
+    }
+
+    private JSONObject buildPrivateParticleDynamicsJson() throws Exception {
+        JSONObject source = new JSONObject()
+            .put("surface", "same_apk_panel")
+            .put("transport", "jni_live_queue");
+        JSONArray drivers = new JSONArray();
+        for (int i = 0; i < privateParticleDrivers.length; i++) {
+            drivers.put(privateParticleDrivers[i].value());
+        }
+        JSONObject tracer = new JSONObject()
+            .put("draw_slots_per_oscillator", privateParticleTracerDrawSlots.intValue())
+            .put("lifetime_seconds", privateParticleTracerLifetime.value())
+            .put("copies_per_second", privateParticleTracerCopies.value());
+        JSONObject privateParticles = new JSONObject()
+            .put("visual_scale", privateParticleVisualScale.value())
+            .put("world_anchor_scale_m", privateParticleWorldAnchorScale.value())
+            .put("driver_values01", drivers)
+            .put("tracer", tracer);
+        JSONObject apply = new JSONObject()
+            .put("mode", "apply-on-next-safe-frame")
+            .put("expected_effective_revision", -1);
+        return new JSONObject()
+            .put("schema", PRIVATE_PARTICLE_DYNAMICS_SCHEMA)
+            .put("profile_id", "same-apk-private-particle-dynamics")
+            .put("revision", System.currentTimeMillis())
+            .put("source", source)
+            .put("private_particles", privateParticles)
+            .put("apply", apply);
+    }
+
+    private void refreshPrivateParticleDynamicsFromStatus(boolean userVisible) {
+        JSONObject statusJson = readPrivateParticleDynamicsStatusJson();
+        JSONObject privateParticles = privateParticleStatusBody(statusJson);
+        if (privateParticles == null) {
+            if (userVisible) {
+                updateStatus("Particle dynamics status is not available yet.");
+            } else {
+                setStatusText("Particle dynamics status is not available yet.");
+            }
+            return;
+        }
+        setSliderValue(
+            privateParticleVisualScale,
+            readPrivateParticleStatusDouble(privateParticles, "visual_scale", privateParticleVisualScale.value())
+        );
+        setSliderValue(
+            privateParticleWorldAnchorScale,
+            readPrivateParticleStatusDouble(
+                privateParticles,
+                "world_anchor_scale_m",
+                privateParticleWorldAnchorScale.value()
+            )
+        );
+        JSONArray driverStatus = privateParticles.optJSONArray("driver_values01");
+        if (driverStatus != null) {
+            for (int i = 0; i < privateParticleDrivers.length; i++) {
+                setSliderValue(privateParticleDrivers[i], driverStatus.optDouble(i, privateParticleDrivers[i].value()));
+            }
+        }
+        JSONObject tracerStatus = privateParticles.optJSONObject("tracer");
+        if (tracerStatus != null) {
+            setSliderValue(
+                privateParticleTracerDrawSlots,
+                readPrivateParticleStatusTracerDouble(
+                    tracerStatus,
+                    "draw_slots_per_oscillator",
+                    privateParticleTracerDrawSlots.value()
+                )
+            );
+            setSliderValue(
+                privateParticleTracerLifetime,
+                readPrivateParticleStatusTracerDouble(
+                    tracerStatus,
+                    "lifetime_seconds",
+                    privateParticleTracerLifetime.value()
+                )
+            );
+            setSliderValue(
+                privateParticleTracerCopies,
+                readPrivateParticleStatusTracerDouble(
+                    tracerStatus,
+                    "copies_per_second",
+                    privateParticleTracerCopies.value()
+                )
+            );
+        }
+        String message = "Particle dynamics refreshed: " + privateParticleDynamicsSummary() + ".";
+        if (userVisible) {
+            updateStatus(message);
+        } else {
+            setStatusText(message);
+        }
+    }
+
+    private JSONObject readPrivateParticleDynamicsStatusJson() {
+        try {
+            String text = readFile(PRIVATE_PARTICLE_DYNAMICS_STATUS_FILE);
+            if (text.length() == 0) {
+                return null;
+            }
+            JSONObject statusJson = new JSONObject(text);
+            if (statusJson.optJSONObject("private_particles") == null) {
+                return null;
+            }
+            return statusJson;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private JSONObject privateParticleStatusBody(JSONObject statusJson) {
+        if (statusJson == null) {
+            return null;
+        }
+        return statusJson.optJSONObject("private_particles");
+    }
+
+    private double readPrivateParticleStatusDouble(
+        JSONObject privateParticles,
+        String key,
+        double fallback
+    ) {
+        if (privateParticles == null) {
+            return fallback;
+        }
+        return privateParticles.optDouble(key, fallback);
+    }
+
+    private double readPrivateParticleStatusTracerDouble(
+        JSONObject tracerStatus,
+        String key,
+        double fallback
+    ) {
+        if (tracerStatus == null) {
+            return fallback;
+        }
+        return tracerStatus.optDouble(key, fallback);
+    }
+
+    private void setSliderValue(SliderControl slider, double value) {
+        if (slider != null) {
+            slider.setValue(value);
+        }
+    }
+
+    private String privateParticleDynamicsSummary() {
+        return String.format(
+            Locale.US,
+            "scale %.2f m, d0 %.2f, d1 %.2f, tracers %d",
+            privateParticleWorldAnchorScale.value(),
+            privateParticleDrivers[0].value(),
+            privateParticleDrivers[1].value(),
+            privateParticleTracerDrawSlots.intValue()
+        );
+    }
+
     private JSONObject buildPrivateLayerSelectionJson(int layerIndex) throws Exception {
         if (layerIndex < 0 || layerIndex > 6) {
             throw new IllegalArgumentException("layer index must be 0-6");
@@ -1150,8 +1639,8 @@ public final class ControlPanelActivity extends Activity {
         if (intent == null || !ACTION_APPLY_LIVE_SELF_TEST.equals(intent.getAction())) {
             return;
         }
-        if ("private-layer-selector".equals(readControlPanelMode())) {
-            setStatusText("Stimulus diagnostic self-test ignored in layer selector mode.");
+        if (!"stimulus-volume".equals(readControlPanelMode())) {
+            setStatusText("Stimulus diagnostic self-test ignored in this panel mode.");
             return;
         }
         String token = intent.getAction() + ":" + intent.getLongExtra("diagnostic_token", 0L);
@@ -1467,6 +1956,9 @@ public final class ControlPanelActivity extends Activity {
         if ("private-layer-selector".equals(requested)) {
             return requested;
         }
+        if ("private-particle-dynamics".equals(requested)) {
+            return requested;
+        }
         return "stimulus-volume";
     }
 
@@ -1561,4 +2053,5 @@ public final class ControlPanelActivity extends Activity {
     private static native String nativeSubmitLiveStimulusCandidate(String candidateJson);
     private static native String nativeSubmitLivePrivateLayerSelection(String selectionJson);
     private static native String nativeSubmitLiveDepthAlignment(String alignmentJson);
+    private static native String nativeSubmitLivePrivateParticleDynamics(String dynamicsJson);
 }

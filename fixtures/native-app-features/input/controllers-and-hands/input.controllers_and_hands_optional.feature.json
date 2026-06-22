@@ -1,0 +1,53 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "input.controllers_and_hands_optional",
+  "module_path": "input/controllers-and-hands",
+  "module_kind": "input-affordance",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Quest input manifest affordance for apps that support controllers and optional hands.",
+  "provides": [
+    "input.controllers",
+    "input.hand_tracking.optional"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [
+      "com.oculus.permission.HAND_TRACKING"
+    ],
+    "uses_features": [
+      "oculus.software.handtracking"
+    ],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Manifest-level hand input support is public substrate; app-specific hand visuals and semantics remain separate features."
+}

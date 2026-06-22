@@ -1943,6 +1943,17 @@ unsafe fn run_projection_frames(
                 frame_count,
             );
         }
+        if let Some(candidate) =
+            crate::native_renderer_stimulus_panel::take_live_private_particle_dynamics()
+        {
+            apply_live_private_particle_dynamics(
+                app,
+                gpu_private_particle_renderer.as_deref_mut(),
+                &mut private_particle_world_anchor,
+                candidate,
+                frame_count,
+            );
+        }
 
         if let Some(actions) = stimulus_actions.as_deref_mut() {
             let controller_events = actions.sync_and_poll(
@@ -3213,6 +3224,63 @@ fn apply_live_environment_depth_alignment(
     );
 }
 
+fn apply_live_private_particle_dynamics(
+    app: &android_activity::AndroidApp,
+    gpu_private_particle_renderer: Option<&mut GpuPrivateParticleRenderer>,
+    private_particle_world_anchor: &mut PrivateParticleWorldAnchor,
+    candidate: crate::native_renderer_stimulus_panel::PrivateParticleDynamicsPanelCandidate,
+    frame_count: u64,
+) {
+    let revision = candidate.revision;
+    let Some(renderer) = gpu_private_particle_renderer else {
+        reject_live_private_particle_dynamics(
+            app,
+            frame_count,
+            revision,
+            "private_particle_renderer_unavailable",
+            Some(&candidate),
+        );
+        return;
+    };
+    let world_anchor_scale_m = private_particle_world_anchor
+        .apply_panel_scale(candidate.world_anchor_scale_m, frame_count);
+    let effective_settings =
+        renderer.apply_panel_settings(candidate.panel_settings(), frame_count, revision);
+    let effective =
+        crate::native_renderer_stimulus_panel::PrivateParticleDynamicsPanelAppliedState {
+            world_anchor_scale_m,
+            world_anchor_scale_parameter_source: private_particle_world_anchor
+                .scale_parameter_source(),
+            settings: effective_settings,
+        };
+    crate::marker(
+        "private-particle-panel",
+        format!(
+            "status=live-applied transport=jni-live-queue frame={} candidateRevision={} privateParticleVisualScale={:.3} privateParticleWorldAnchorScaleM={:.3} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} privateParticleDriverParameterSource={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={}",
+            frame_count,
+            revision,
+            effective.settings.visual_scale,
+            effective.world_anchor_scale_m,
+            effective.settings.driver_values01[0],
+            effective.settings.driver_values01[1],
+            crate::sanitize(effective.settings.driver_parameter_source),
+            effective.settings.tracer_draw_slots_per_oscillator,
+            effective.settings.tracer_draw_slots_capacity,
+            effective.settings.tracer_lifetime_seconds,
+            effective.settings.tracer_copies_per_second,
+            crate::sanitize(effective.settings.tracer_parameter_source)
+        ),
+    );
+    crate::native_renderer_stimulus_panel::write_private_particle_dynamics_status(
+        app,
+        "applied",
+        revision,
+        "none",
+        Some(&candidate),
+        Some(&effective),
+    );
+}
+
 fn reject_live_environment_depth_alignment(
     app: &android_activity::AndroidApp,
     environment_depth_alignment_state: &EnvironmentDepthAlignmentState,
@@ -3236,6 +3304,29 @@ fn reject_live_environment_depth_alignment(
         revision,
         reason,
         environment_depth_alignment_state,
+    );
+}
+
+fn reject_live_private_particle_dynamics(
+    app: &android_activity::AndroidApp,
+    frame_count: u64,
+    revision: i64,
+    reason: &str,
+    candidate: Option<
+        &crate::native_renderer_stimulus_panel::PrivateParticleDynamicsPanelCandidate,
+    >,
+) {
+    crate::marker(
+        "private-particle-panel",
+        format!(
+            "status=live-rejected transport=jni-live-queue frame={} candidateRevision={} reason={}",
+            frame_count,
+            revision,
+            crate::sanitize(reason)
+        ),
+    );
+    crate::native_renderer_stimulus_panel::write_private_particle_dynamics_status(
+        app, "rejected", revision, reason, candidate, None,
     );
 }
 
@@ -4095,6 +4186,7 @@ struct PrivateParticleWorldAnchor {
     initialized: bool,
     scale_parameter_source: &'static str,
     last_scale_poll_frame: u64,
+    panel_scale_override_m: Option<f32>,
 }
 
 impl PrivateParticleWorldAnchor {
@@ -4110,6 +4202,7 @@ impl PrivateParticleWorldAnchor {
             initialized: false,
             scale_parameter_source: "particle-world-anchor-default",
             last_scale_poll_frame: u64::MAX,
+            panel_scale_override_m: None,
         }
     }
 
@@ -4139,6 +4232,32 @@ impl PrivateParticleWorldAnchor {
         self.scale_parameter_source
     }
 
+    fn apply_panel_scale(&mut self, scale_m: f32, frame_count: u64) -> f32 {
+        let scale_m = scale_m.clamp(
+            PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MIN_M,
+            PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MAX_M,
+        );
+        self.panel_scale_override_m = Some(scale_m);
+        let scale_changed = (self.center_scale[3] - scale_m).abs() > f32::EPSILON
+            || self.scale_parameter_source != "same-apk-panel-live";
+        self.center_scale[3] = scale_m;
+        self.scale_parameter_source = "same-apk-panel-live";
+        self.last_scale_poll_frame = frame_count;
+        if scale_changed {
+            crate::marker(
+                "private-particle-anchor",
+                format!(
+                    "status=scale-panel-live-applied frame={} privateParticleWorldAnchorInitialized={} privateParticleWorldAnchorFollowCamera=false privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={}",
+                    frame_count,
+                    self.initialized,
+                    self.center_scale[3],
+                    crate::sanitize(self.scale_parameter_source),
+                ),
+            );
+        }
+        self.center_scale[3]
+    }
+
     fn refresh_scale_from_android_properties(&mut self, frame_count: u64) {
         let should_poll = self.last_scale_poll_frame == u64::MAX
             || frame_count.saturating_sub(self.last_scale_poll_frame)
@@ -4147,19 +4266,31 @@ impl PrivateParticleWorldAnchor {
             return;
         }
 
-        let property = private_particle_world_anchor_scale_property();
-        let property_overridden = property.is_some();
-        let scale_m = f32_clamped_value(
-            property,
-            PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M,
-            PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MIN_M,
-            PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MAX_M,
-        );
-        let scale_parameter_source = if property_overridden {
-            "runtime-hotload-android-property"
-        } else {
-            "particle-world-anchor-default"
-        };
+        let (scale_m, scale_parameter_source) =
+            if let Some(panel_scale_m) = self.panel_scale_override_m {
+                (
+                    panel_scale_m.clamp(
+                        PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MIN_M,
+                        PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MAX_M,
+                    ),
+                    "same-apk-panel-live",
+                )
+            } else {
+                let property = private_particle_world_anchor_scale_property();
+                let property_overridden = property.is_some();
+                let scale_m = f32_clamped_value(
+                    property,
+                    PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_M,
+                    PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MIN_M,
+                    PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_MAX_M,
+                );
+                let scale_parameter_source = if property_overridden {
+                    "runtime-hotload-android-property"
+                } else {
+                    "particle-world-anchor-default"
+                };
+                (scale_m, scale_parameter_source)
+            };
         let scale_changed = (self.center_scale[3] - scale_m).abs() > f32::EPSILON
             || self.scale_parameter_source != scale_parameter_source;
 
