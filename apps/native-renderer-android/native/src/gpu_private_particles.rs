@@ -32,7 +32,8 @@ const PARTICLE_COMPUTE_LOCAL_SIZE: u32 = 64;
 const PARTICLE_SORT_LOCAL_SIZE: u32 = 128;
 const PARTICLE_SORT_ROW_BYTES: vk::DeviceSize = 16;
 const PARTICLE_OUTPUT_ROWS_PER_INSTANCE: usize = 4;
-const PARTICLE_STATE_ROWS_PER_INSTANCE: usize = 2;
+const PARTICLE_MAIN_STATE_ROWS_PER_INSTANCE: usize = 2;
+const PARTICLE_TRACER_STATE_ROWS_PER_SLOT: usize = 4;
 const PARTICLE_DESCRIPTOR_SET_COUNT: usize = 2;
 const PRIVATE_PARTICLE_DRIVER_BANK_VEC4_ROWS: usize = PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT / 4;
 const PRIVATE_PARTICLE_DIAGNOSTIC_WORDS: usize = 16;
@@ -434,7 +435,7 @@ impl GpuPrivateParticleFrameStats {
             self.runtime_settings.tracer_lifetime_seconds,
             self.runtime_settings.tracer_copies_per_second,
             crate::sanitize(self.runtime_settings.tracer_parameter_source),
-            self.tracer_max_count * PARTICLE_STATE_ROWS_PER_INSTANCE as u32,
+            self.tracer_max_count * PARTICLE_TRACER_STATE_ROWS_PER_SLOT as u32,
             self.tracer_draw_count > 0,
             self.state_ping_pong,
             self.aux0_rows,
@@ -586,8 +587,8 @@ impl GpuPrivateParticleRenderer {
             .ok_or_else(|| "generic private particle draw count overflowed u32".to_string())?;
         let sort_input_count = draw_count;
         let particle_output_rows = draw_count as usize * PARTICLE_OUTPUT_ROWS_PER_INSTANCE;
-        let effect_state_rows = (particle_count as usize + tracer_max_count as usize)
-            * PARTICLE_STATE_ROWS_PER_INSTANCE;
+        let effect_state_rows = (particle_count as usize * PARTICLE_MAIN_STATE_ROWS_PER_INSTANCE)
+            + (tracer_max_count as usize * PARTICLE_TRACER_STATE_ROWS_PER_SLOT);
         let zero_particle_rows = vec![[0.0_f32; 4]; particle_output_rows];
         let zero_particle_state_rows = vec![[0.0_f32; 4]; effect_state_rows];
         let aux0_rows = payload.aux0.len().min(u32::MAX as usize) as u32;
@@ -1100,7 +1101,7 @@ impl GpuPrivateParticleRenderer {
                 PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS,
                 PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND,
                 crate::sanitize(PRIVATE_PARTICLE_TRACER_PARAMETER_SOURCE),
-                tracer_max_count * PARTICLE_STATE_ROWS_PER_INSTANCE as u32,
+                tracer_max_count * PARTICLE_TRACER_STATE_ROWS_PER_SLOT as u32,
                 tracer_draw_count > 0,
                 position_buffer.bytes,
                 normal_buffer.bytes,
@@ -1762,7 +1763,7 @@ fn log_private_marker(
         runtime_settings.tracer_lifetime_seconds,
         runtime_settings.tracer_copies_per_second,
         crate::sanitize(runtime_settings.tracer_parameter_source),
-        tracer_max_count * PARTICLE_STATE_ROWS_PER_INSTANCE as u32,
+        tracer_max_count * PARTICLE_TRACER_STATE_ROWS_PER_SLOT as u32,
         tracer_draw_count > 0,
         aux0_rows,
         crate::sanitize(PRIVATE_PARTICLE_ORDERING_MODE),
@@ -1869,11 +1870,11 @@ impl PrivateParticlePayload {
                 PRIVATE_PARTICLE_AUX0_VEC4_ROWS
             ));
         }
-        if aux0.len() < positions.len() * PARTICLE_STATE_ROWS_PER_INSTANCE {
+        if aux0.len() < positions.len() * PARTICLE_MAIN_STATE_ROWS_PER_INSTANCE {
             return Err(format!(
                 "generic private particle aux0 payload has {} rows, expected at least {}",
                 aux0.len(),
-                positions.len() * PARTICLE_STATE_ROWS_PER_INSTANCE
+                positions.len() * PARTICLE_MAIN_STATE_ROWS_PER_INSTANCE
             ));
         }
         Ok(Self {

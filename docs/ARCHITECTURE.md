@@ -375,6 +375,9 @@ them. Public markers distinguish main particle count, tracer budget, merged
 draw count, and compact diagnostic status so downstream shaders can append
 effect-owned tracer rows without introducing CPU-expanded particle lists or
 full particle-buffer readback.
+Main particles keep two generic state rows for phase-like ping-pong use;
+tracer slots allocate four state rows so downstream shaders can preserve a
+frozen billboard snapshot separately from age/fade updates.
 The slot owns only generic runtime-polled scalar adoption for
 `debug.rustyquest.native_renderer.private_particles.*`: visual scale, tracer
 draw slots/lifetime/cadence, transparency opacity/alpha/depth/RGB coupling, and
