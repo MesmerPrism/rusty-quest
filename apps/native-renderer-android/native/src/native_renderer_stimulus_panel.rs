@@ -9,9 +9,7 @@ use std::path::Path;
 #[cfg(target_os = "android")]
 use std::sync::{Mutex, OnceLock};
 
-#[cfg(any(target_os = "android", test))]
-use serde_json::json;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 #[cfg(target_os = "android")]
 use crate::gpu_private_particles::{
@@ -56,6 +54,16 @@ pub(crate) const PRIVATE_PARTICLE_DYNAMICS_STATUS_SCHEMA: &str =
 pub(crate) const PRIVATE_PARTICLE_DYNAMICS_STATUS_FILE: &str =
     "private_particle_dynamics_status.json";
 pub(crate) const PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT: usize = 8;
+const PRIVATE_PARTICLE_DRIVER_CONTROL_OSCILLATOR: u32 = 0;
+const PRIVATE_PARTICLE_DRIVER_CONTROL_MANUAL: u32 = 1;
+const PRIVATE_PARTICLE_DRIVER_CONTROL_INPUT_SLOT: u32 = 2;
+const PRIVATE_PARTICLE_DRIVER_CONTROL_DIRECT: u32 = 3;
+const PRIVATE_PARTICLE_CURVE_LINEAR: u32 = 0;
+const PRIVATE_PARTICLE_CURVE_AKD_HUMP: u32 = 1;
+const PRIVATE_PARTICLE_CURVE_SMOOTHSTEP: u32 = 2;
+const PRIVATE_PARTICLE_CURVE_REVERSE_LINEAR: u32 = 3;
+const PRIVATE_PARTICLE_CURVE_HOLD_LOW: u32 = 4;
+const PRIVATE_PARTICLE_CURVE_HOLD_HIGH: u32 = 5;
 
 #[derive(Clone, Debug)]
 pub(crate) struct StimulusPanelCandidate {
@@ -84,9 +92,20 @@ pub(crate) struct PrivateParticleDynamicsPanelCandidate {
     pub(crate) visual_scale: f32,
     pub(crate) world_anchor_scale_m: f32,
     pub(crate) driver_values01: [f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    pub(crate) driver_control_modes: [u32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    pub(crate) driver_control_source_slots: [u32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    pub(crate) driver_control_curve_codes: [u32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    pub(crate) driver_control_range_mins: [f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    pub(crate) driver_control_range_maxs: [f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    pub(crate) driver_control_cycle_multipliers: [f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
     pub(crate) tracer_draw_slots_per_oscillator: u32,
     pub(crate) tracer_lifetime_seconds: f32,
     pub(crate) tracer_copies_per_second: f32,
+    pub(crate) transparency_opacity: f32,
+    pub(crate) transparency_output_alpha_scale: f32,
+    pub(crate) transparency_depth_suppression_strength: f32,
+    pub(crate) transparency_rgb_alpha_coupling: f32,
+    pub(crate) color_facing_attenuation_strength: f32,
 }
 
 #[cfg(target_os = "android")]
@@ -103,9 +122,20 @@ impl PrivateParticleDynamicsPanelCandidate {
         GpuPrivateParticlePanelSettings {
             visual_scale: self.visual_scale,
             driver_values01: self.driver_values01,
+            driver_control_modes: self.driver_control_modes,
+            driver_control_source_slots: self.driver_control_source_slots,
+            driver_control_curve_codes: self.driver_control_curve_codes,
+            driver_control_range_mins: self.driver_control_range_mins,
+            driver_control_range_maxs: self.driver_control_range_maxs,
+            driver_control_cycle_multipliers: self.driver_control_cycle_multipliers,
             tracer_draw_slots_per_oscillator: self.tracer_draw_slots_per_oscillator,
             tracer_lifetime_seconds: self.tracer_lifetime_seconds,
             tracer_copies_per_second: self.tracer_copies_per_second,
+            transparency_opacity: self.transparency_opacity,
+            transparency_output_alpha_scale: self.transparency_output_alpha_scale,
+            transparency_depth_suppression_strength: self.transparency_depth_suppression_strength,
+            transparency_rgb_alpha_coupling: self.transparency_rgb_alpha_coupling,
+            color_facing_attenuation_strength: self.color_facing_attenuation_strength,
         }
     }
 }
@@ -269,7 +299,7 @@ fn queue_live_private_particle_dynamics(text: &str) -> Result<LiveQueueOutcome, 
     crate::marker(
         "private-particle-panel",
         format!(
-            "status=live-queued transport=jni-live-queue schema={} candidateRevision={} privateParticleVisualScale={:.3} privateParticleWorldAnchorScaleM={:.3} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} overwrotePendingDynamics={}",
+            "status=live-queued transport=jni-live-queue schema={} candidateRevision={} privateParticleVisualScale={:.3} privateParticleWorldAnchorScaleM={:.3} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTransparencyOpacity={:.3} privateParticleTransparencyOutputAlphaScale={:.3} privateParticleTransparencyDepthSuppressionStrength={:.3} privateParticleTransparencyRgbAlphaCoupling={:.3} privateParticleColorFacingAttenuationStrength={:.3} overwrotePendingDynamics={}",
             PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
             revision,
             candidate.visual_scale,
@@ -279,6 +309,11 @@ fn queue_live_private_particle_dynamics(text: &str) -> Result<LiveQueueOutcome, 
             candidate.tracer_draw_slots_per_oscillator,
             candidate.tracer_lifetime_seconds,
             candidate.tracer_copies_per_second,
+            candidate.transparency_opacity,
+            candidate.transparency_output_alpha_scale,
+            candidate.transparency_depth_suppression_strength,
+            candidate.transparency_rgb_alpha_coupling,
+            candidate.color_facing_attenuation_strength,
             overwrote_pending
         ),
     );
@@ -600,6 +635,7 @@ pub(crate) fn parse_private_particle_dynamics_json(
         0.0,
         1.0,
     )?;
+    let driver_controls = private_particle_driver_controls(private_particles)?;
     let tracer = object_value_at(private_particles, &["tracer"])?;
     let tracer_draw_slots_per_oscillator =
         bounded_u32_at(tracer, "draw_slots_per_oscillator", 7, 0, 1024)?;
@@ -607,15 +643,43 @@ pub(crate) fn parse_private_particle_dynamics_json(
         bounded_number_at(tracer, "lifetime_seconds", 0.5, 0.016, 30.0)? as f32;
     let tracer_copies_per_second =
         bounded_number_at(tracer, "copies_per_second", 14.0, 0.0, 120.0)? as f32;
+    let transparency = private_particles
+        .get("transparency")
+        .filter(|value| value.is_object())
+        .unwrap_or(private_particles);
+    let transparency_opacity = bounded_number_at(transparency, "opacity", 1.0, 0.0, 4.0)? as f32;
+    let transparency_output_alpha_scale =
+        bounded_number_at(transparency, "output_alpha_scale", 1.0, 0.0, 4.0)? as f32;
+    let transparency_depth_suppression_strength =
+        bounded_number_at(transparency, "depth_suppression_strength", 0.0, 0.0, 8.0)? as f32;
+    let transparency_rgb_alpha_coupling =
+        bounded_number_at(transparency, "rgb_alpha_coupling", 1.0, 0.0, 1.0)? as f32;
+    let color = private_particles
+        .get("color")
+        .filter(|value| value.is_object())
+        .unwrap_or(private_particles);
+    let color_facing_attenuation_strength =
+        bounded_number_at(color, "facing_attenuation_strength", 0.0, 0.0, 1.0)? as f32;
 
     Ok(PrivateParticleDynamicsPanelCandidate {
         revision,
         visual_scale,
         world_anchor_scale_m,
         driver_values01,
+        driver_control_modes: driver_controls.0,
+        driver_control_source_slots: driver_controls.1,
+        driver_control_curve_codes: driver_controls.2,
+        driver_control_range_mins: driver_controls.3,
+        driver_control_range_maxs: driver_controls.4,
+        driver_control_cycle_multipliers: driver_controls.5,
         tracer_draw_slots_per_oscillator,
         tracer_lifetime_seconds,
         tracer_copies_per_second,
+        transparency_opacity,
+        transparency_output_alpha_scale,
+        transparency_depth_suppression_strength,
+        transparency_rgb_alpha_coupling,
+        color_facing_attenuation_strength,
     })
 }
 
@@ -652,6 +716,217 @@ pub(crate) fn parse_environment_depth_alignment_json(
         effective_offsets_uv: [left, right],
         sample_scale,
     })
+}
+
+type PrivateParticleDriverControls = (
+    [u32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    [u32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    [u32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    [f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    [f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    [f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+);
+
+fn private_particle_driver_controls(
+    private_particles: &Value,
+) -> Result<PrivateParticleDriverControls, String> {
+    let mut modes =
+        [PRIVATE_PARTICLE_DRIVER_CONTROL_DIRECT; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT];
+    let mut source_slots = [0_u32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT];
+    let mut curve_codes = [PRIVATE_PARTICLE_CURVE_LINEAR; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT];
+    let mut range_mins = [0.0_f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT];
+    let mut range_maxs = [1.0_f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT];
+    let mut cycle_multipliers = [0.0_f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT];
+    for index in 0..PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT {
+        source_slots[index] = index as u32;
+        let range = private_particle_canonical_driver_range(index);
+        range_mins[index] = range.0;
+        range_maxs[index] = range.1;
+    }
+
+    let Some(controls_value) = private_particles.get("driver_controls") else {
+        return Ok((
+            modes,
+            source_slots,
+            curve_codes,
+            range_mins,
+            range_maxs,
+            cycle_multipliers,
+        ));
+    };
+    let Some(controls) = controls_value.as_array() else {
+        return Err("driver_controls_must_be_array".to_string());
+    };
+    if controls.len() > PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT {
+        return Err(format!(
+            "driver_controls_too_long:{}>{}",
+            controls.len(),
+            PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT
+        ));
+    }
+    for (fallback_index, control) in controls.iter().enumerate() {
+        let Some(control_object) = control.as_object() else {
+            return Err(format!("driver_controls_{fallback_index}_must_be_object"));
+        };
+        let target_slot = bounded_u32_at(
+            control,
+            "target_slot",
+            fallback_index as u32,
+            0,
+            (PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT - 1) as u32,
+        )? as usize;
+        modes[target_slot] = private_particle_driver_control_mode(control)?;
+        source_slots[target_slot] = bounded_u32_at(
+            control,
+            "source_slot",
+            target_slot as u32,
+            0,
+            (PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT - 1) as u32,
+        )?;
+        curve_codes[target_slot] = private_particle_curve_code(control)?;
+        range_mins[target_slot] = bounded_number_at(
+            control,
+            "range_min",
+            range_mins[target_slot],
+            -1000.0,
+            1000.0,
+        )?;
+        range_maxs[target_slot] = bounded_number_at(
+            control,
+            "range_max",
+            range_maxs[target_slot],
+            -1000.0,
+            1000.0,
+        )?;
+        cycle_multipliers[target_slot] =
+            bounded_number_at(control, "cycle_multiplier", 0.0, 0.0, 10.0)?;
+        if range_maxs[target_slot] < range_mins[target_slot] {
+            return Err(format!("driver_controls_{target_slot}_range_inverted"));
+        }
+        if control_object.contains_key("mode") && control_object.contains_key("mode_code") {
+            let mode_code = private_particle_driver_control_mode_code(control)?;
+            if mode_code != modes[target_slot] {
+                return Err(format!("driver_controls_{target_slot}_mode_mismatch"));
+            }
+        }
+    }
+    Ok((
+        modes,
+        source_slots,
+        curve_codes,
+        range_mins,
+        range_maxs,
+        cycle_multipliers,
+    ))
+}
+
+fn private_particle_driver_control_mode(control: &Value) -> Result<u32, String> {
+    if control.get("mode_code").is_some() {
+        return private_particle_driver_control_mode_code(control);
+    }
+    let mode = control
+        .get("mode")
+        .and_then(Value::as_str)
+        .map(|value| value.trim().to_ascii_lowercase())
+        .unwrap_or_else(|| "direct".to_string());
+    match mode.as_str() {
+        "oscillator" => Ok(PRIVATE_PARTICLE_DRIVER_CONTROL_OSCILLATOR),
+        "manual" => Ok(PRIVATE_PARTICLE_DRIVER_CONTROL_MANUAL),
+        "input-slot" | "input_slot" | "input slot" => {
+            Ok(PRIVATE_PARTICLE_DRIVER_CONTROL_INPUT_SLOT)
+        }
+        "direct" => Ok(PRIVATE_PARTICLE_DRIVER_CONTROL_DIRECT),
+        _ => Err(format!("unsupported_driver_control_mode:{mode}")),
+    }
+}
+
+fn private_particle_driver_control_mode_code(control: &Value) -> Result<u32, String> {
+    bounded_u32_at(
+        control,
+        "mode_code",
+        PRIVATE_PARTICLE_DRIVER_CONTROL_DIRECT,
+        0,
+        3,
+    )
+}
+
+fn private_particle_curve_code(control: &Value) -> Result<u32, String> {
+    if control.get("curve_code").is_some() {
+        return bounded_u32_at(control, "curve_code", PRIVATE_PARTICLE_CURVE_LINEAR, 0, 5);
+    }
+    let curve = control
+        .get("curve")
+        .and_then(Value::as_str)
+        .map(|value| value.trim().to_ascii_lowercase())
+        .unwrap_or_else(|| "linear".to_string());
+    match curve.as_str() {
+        "linear" => Ok(PRIVATE_PARTICLE_CURVE_LINEAR),
+        "akd hump" | "akd-hump" | "hump" => Ok(PRIVATE_PARTICLE_CURVE_AKD_HUMP),
+        "smoothstep" => Ok(PRIVATE_PARTICLE_CURVE_SMOOTHSTEP),
+        "reverse linear" | "reverse-linear" => Ok(PRIVATE_PARTICLE_CURVE_REVERSE_LINEAR),
+        "hold low" | "hold-low" => Ok(PRIVATE_PARTICLE_CURVE_HOLD_LOW),
+        "hold high" | "hold-high" => Ok(PRIVATE_PARTICLE_CURVE_HOLD_HIGH),
+        _ => Err(format!("unsupported_driver_control_curve:{curve}")),
+    }
+}
+
+fn private_particle_canonical_driver_range(index: usize) -> (f32, f32) {
+    match index {
+        2 => (0.04, 0.115),
+        3 => (0.0, 0.1),
+        4 => (0.1, 0.5),
+        5 => (0.2, 1.5),
+        6 => (0.0, std::f32::consts::TAU),
+        7 => (0.0, 1.0),
+        _ => (0.0, 1.0),
+    }
+}
+
+fn private_particle_driver_controls_status_json(
+    modes: [u32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    source_slots: [u32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    curve_codes: [u32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    range_mins: [f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    range_maxs: [f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+    cycle_multipliers: [f32; PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT],
+) -> Value {
+    Value::Array(
+        (0..PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT)
+            .map(|index| {
+                json!({
+                    "target_slot": index,
+                    "mode_code": modes[index],
+                    "mode": private_particle_driver_control_mode_label(modes[index]),
+                    "source_slot": source_slots[index],
+                    "curve_code": curve_codes[index],
+                    "curve": private_particle_curve_label(curve_codes[index]),
+                    "range_min": range_mins[index],
+                    "range_max": range_maxs[index],
+                    "cycle_multiplier": cycle_multipliers[index],
+                })
+            })
+            .collect(),
+    )
+}
+
+fn private_particle_driver_control_mode_label(mode: u32) -> &'static str {
+    match mode {
+        PRIVATE_PARTICLE_DRIVER_CONTROL_OSCILLATOR => "oscillator",
+        PRIVATE_PARTICLE_DRIVER_CONTROL_MANUAL => "manual",
+        PRIVATE_PARTICLE_DRIVER_CONTROL_INPUT_SLOT => "input-slot",
+        _ => "direct",
+    }
+}
+
+fn private_particle_curve_label(curve_code: u32) -> &'static str {
+    match curve_code {
+        PRIVATE_PARTICLE_CURVE_AKD_HUMP => "akd-hump",
+        PRIVATE_PARTICLE_CURVE_SMOOTHSTEP => "smoothstep",
+        PRIVATE_PARTICLE_CURVE_REVERSE_LINEAR => "reverse-linear",
+        PRIVATE_PARTICLE_CURVE_HOLD_LOW => "hold-low",
+        PRIVATE_PARTICLE_CURVE_HOLD_HIGH => "hold-high",
+        _ => "linear",
+    }
 }
 
 pub(crate) fn parse_private_layer_selection_json(
@@ -1164,6 +1439,14 @@ pub(crate) fn write_private_particle_dynamics_status(
                 "world_anchor_scale_m": effective.world_anchor_scale_m,
                 "world_anchor_scale_parameter_source": effective.world_anchor_scale_parameter_source,
                 "driver_values01": effective.settings.driver_values01,
+                "driver_controls": private_particle_driver_controls_status_json(
+                    effective.settings.driver_control_modes,
+                    effective.settings.driver_control_source_slots,
+                    effective.settings.driver_control_curve_codes,
+                    effective.settings.driver_control_range_mins,
+                    effective.settings.driver_control_range_maxs,
+                    effective.settings.driver_control_cycle_multipliers,
+                ),
                 "driver_parameter_source": effective.settings.driver_parameter_source,
                 "tracer": {
                     "draw_slots_per_oscillator": effective.settings.tracer_draw_slots_per_oscillator,
@@ -1171,6 +1454,17 @@ pub(crate) fn write_private_particle_dynamics_status(
                     "lifetime_seconds": effective.settings.tracer_lifetime_seconds,
                     "copies_per_second": effective.settings.tracer_copies_per_second,
                     "parameter_source": effective.settings.tracer_parameter_source
+                },
+                "transparency": {
+                    "opacity": effective.settings.transparency_opacity,
+                    "output_alpha_scale": effective.settings.transparency_output_alpha_scale,
+                    "depth_suppression_strength": effective.settings.transparency_depth_suppression_strength,
+                    "rgb_alpha_coupling": effective.settings.transparency_rgb_alpha_coupling,
+                    "parameter_source": effective.settings.transparency_parameter_source
+                },
+                "color": {
+                    "facing_attenuation_strength": effective.settings.color_facing_attenuation_strength,
+                    "parameter_source": effective.settings.color_parameter_source
                 }
             })
         } else if let Some(candidate) = candidate {
@@ -1180,12 +1474,31 @@ pub(crate) fn write_private_particle_dynamics_status(
                 "world_anchor_scale_m": candidate.world_anchor_scale_m,
                 "world_anchor_scale_parameter_source": "requested",
                 "driver_values01": candidate.driver_values01,
+                "driver_controls": private_particle_driver_controls_status_json(
+                    candidate.driver_control_modes,
+                    candidate.driver_control_source_slots,
+                    candidate.driver_control_curve_codes,
+                    candidate.driver_control_range_mins,
+                    candidate.driver_control_range_maxs,
+                    candidate.driver_control_cycle_multipliers,
+                ),
                 "driver_parameter_source": "requested",
                 "tracer": {
                     "draw_slots_per_oscillator": candidate.tracer_draw_slots_per_oscillator,
                     "draw_slots_capacity": Value::Null,
                     "lifetime_seconds": candidate.tracer_lifetime_seconds,
                     "copies_per_second": candidate.tracer_copies_per_second,
+                    "parameter_source": "requested"
+                },
+                "transparency": {
+                    "opacity": candidate.transparency_opacity,
+                    "output_alpha_scale": candidate.transparency_output_alpha_scale,
+                    "depth_suppression_strength": candidate.transparency_depth_suppression_strength,
+                    "rgb_alpha_coupling": candidate.transparency_rgb_alpha_coupling,
+                    "parameter_source": "requested"
+                },
+                "color": {
+                    "facing_attenuation_strength": candidate.color_facing_attenuation_strength,
                     "parameter_source": "requested"
                 }
             })
@@ -1625,6 +1938,15 @@ mod tests {
                     "draw_slots_per_oscillator": 9,
                     "lifetime_seconds": 1.25,
                     "copies_per_second": 22.5
+                },
+                "transparency": {
+                    "opacity": 0.75,
+                    "output_alpha_scale": 1.5,
+                    "depth_suppression_strength": 2.25,
+                    "rgb_alpha_coupling": 0.35
+                },
+                "color": {
+                    "facing_attenuation_strength": 0.65
                 }
             },
             "apply": {
@@ -1643,6 +1965,99 @@ mod tests {
         assert_eq!(candidate.tracer_draw_slots_per_oscillator, 9);
         assert_close(candidate.tracer_lifetime_seconds, 1.25);
         assert_close(candidate.tracer_copies_per_second, 22.5);
+        assert_close(candidate.transparency_opacity, 0.75);
+        assert_close(candidate.transparency_output_alpha_scale, 1.5);
+        assert_close(candidate.transparency_depth_suppression_strength, 2.25);
+        assert_close(candidate.transparency_rgb_alpha_coupling, 0.35);
+        assert_close(candidate.color_facing_attenuation_strength, 0.65);
+    }
+
+    #[test]
+    fn parses_private_particle_driver_controls() {
+        let value = json!({
+            "schema": PRIVATE_PARTICLE_DYNAMICS_SCHEMA,
+            "revision": 13,
+            "private_particles": {
+                "visual_scale": 0.62,
+                "world_anchor_scale_m": 0.88,
+                "driver_values01": [0.10, 0.20, 0.30, 0.40, 0.50, 0.60, 0.70, 0.80],
+                "driver_controls": [
+                    {
+                        "target_slot": 2,
+                        "mode": "manual",
+                        "mode_code": 1,
+                        "source_slot": 2,
+                        "curve": "akd-hump",
+                        "curve_code": 1,
+                        "range_min": 0.04,
+                        "range_max": 0.115,
+                        "cycle_multiplier": 1.0
+                    },
+                    {
+                        "target_slot": 3,
+                        "mode": "input-slot",
+                        "mode_code": 2,
+                        "source_slot": 0,
+                        "curve": "smoothstep",
+                        "curve_code": 2,
+                        "range_min": 0.0,
+                        "range_max": 0.1,
+                        "cycle_multiplier": 0.0
+                    },
+                    {
+                        "target_slot": 4,
+                        "mode": "oscillator",
+                        "mode_code": 0,
+                        "source_slot": 4,
+                        "curve": "linear",
+                        "curve_code": 0,
+                        "range_min": 0.1,
+                        "range_max": 0.5,
+                        "cycle_multiplier": 2.0
+                    }
+                ],
+                "tracer": {
+                    "draw_slots_per_oscillator": 9,
+                    "lifetime_seconds": 1.25,
+                    "copies_per_second": 22.5
+                }
+            },
+            "apply": {
+                "mode": "apply-on-next-safe-frame"
+            }
+        });
+
+        let candidate =
+            parse_private_particle_dynamics_json(&value.to_string()).expect("dynamics parses");
+
+        assert_eq!(
+            candidate.driver_control_modes[2],
+            PRIVATE_PARTICLE_DRIVER_CONTROL_MANUAL
+        );
+        assert_eq!(
+            candidate.driver_control_modes[3],
+            PRIVATE_PARTICLE_DRIVER_CONTROL_INPUT_SLOT
+        );
+        assert_eq!(candidate.driver_control_source_slots[3], 0);
+        assert_eq!(
+            candidate.driver_control_modes[4],
+            PRIVATE_PARTICLE_DRIVER_CONTROL_OSCILLATOR
+        );
+        assert_eq!(
+            candidate.driver_control_curve_codes[2],
+            PRIVATE_PARTICLE_CURVE_AKD_HUMP
+        );
+        assert_eq!(
+            candidate.driver_control_curve_codes[3],
+            PRIVATE_PARTICLE_CURVE_SMOOTHSTEP
+        );
+        assert_close(candidate.driver_control_range_mins[2], 0.04);
+        assert_close(candidate.driver_control_range_maxs[2], 0.115);
+        assert_close(candidate.driver_control_cycle_multipliers[4], 2.0);
+        assert_eq!(
+            candidate.driver_control_modes[7],
+            PRIVATE_PARTICLE_DRIVER_CONTROL_DIRECT
+        );
     }
 
     #[test]

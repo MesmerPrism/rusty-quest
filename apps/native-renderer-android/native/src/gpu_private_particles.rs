@@ -38,7 +38,11 @@ const PARTICLE_OUTPUT_ROWS_PER_INSTANCE: usize = 4;
 const PARTICLE_MAIN_STATE_ROWS_PER_INSTANCE: usize = 2;
 const PARTICLE_TRACER_STATE_ROWS_PER_SLOT: usize = 4;
 const PARTICLE_DESCRIPTOR_SET_COUNT: usize = 2;
-const PRIVATE_PARTICLE_DRIVER_BANK_VEC4_ROWS: usize = PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT / 4;
+const PRIVATE_PARTICLE_DRIVER_BANK_VALUE_VEC4_ROWS: usize =
+    PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT / 4;
+const PRIVATE_PARTICLE_DRIVER_CONTROL_ROWS_PER_SLOT: usize = 3;
+const PRIVATE_PARTICLE_DRIVER_BANK_VEC4_ROWS: usize = PRIVATE_PARTICLE_DRIVER_BANK_VALUE_VEC4_ROWS
+    + PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT * PRIVATE_PARTICLE_DRIVER_CONTROL_ROWS_PER_SLOT;
 const PRIVATE_PARTICLE_DIAGNOSTIC_WORDS: usize = 24;
 const PRIVATE_PARTICLE_DIAGNOSTIC_BYTES: vk::DeviceSize =
     (PRIVATE_PARTICLE_DIAGNOSTIC_WORDS * mem::size_of::<i32>()) as vk::DeviceSize;
@@ -48,6 +52,16 @@ const PRIVATE_PARTICLE_ORDERING_BACK_TO_FRONT: u32 = 0;
 const PRIVATE_PARTICLE_ORDERING_SOURCE_ORDER: u32 = 1;
 pub(crate) const GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT: usize =
     PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT;
+const PANEL_DRIVER_MODE_OSCILLATOR: u32 = 0;
+const PANEL_DRIVER_MODE_MANUAL: u32 = 1;
+const PANEL_DRIVER_MODE_INPUT_SLOT: u32 = 2;
+const PANEL_DRIVER_MODE_DIRECT: u32 = 3;
+const PANEL_CURVE_LINEAR: u32 = 0;
+const PANEL_CURVE_AKD_HUMP: u32 = 1;
+const PANEL_CURVE_SMOOTHSTEP: u32 = 2;
+const PANEL_CURVE_REVERSE_LINEAR: u32 = 3;
+const PANEL_CURVE_HOLD_LOW: u32 = 4;
+const PANEL_CURVE_HOLD_HIGH: u32 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct PrivateParticleRuntimeSettings {
@@ -56,6 +70,13 @@ struct PrivateParticleRuntimeSettings {
     driver0_value01: f32,
     driver1_value01: f32,
     driver_values01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
+    driver_bank_values01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
+    driver_control_modes: [u32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
+    driver_control_source_slots: [u32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
+    driver_control_curve_codes: [u32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
+    driver_control_range_mins: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
+    driver_control_range_maxs: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
+    driver_control_cycle_multipliers: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
     driver_parameter_source: &'static str,
     tracer_draw_slots_per_oscillator: u32,
     tracer_lifetime_seconds: f32,
@@ -74,21 +95,45 @@ struct PrivateParticleRuntimeSettings {
 pub(crate) struct GpuPrivateParticlePanelSettings {
     pub(crate) visual_scale: f32,
     pub(crate) driver_values01: [f32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+    pub(crate) driver_control_modes: [u32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+    pub(crate) driver_control_source_slots: [u32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+    pub(crate) driver_control_curve_codes: [u32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+    pub(crate) driver_control_range_mins: [f32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+    pub(crate) driver_control_range_maxs: [f32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+    pub(crate) driver_control_cycle_multipliers: [f32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
     pub(crate) tracer_draw_slots_per_oscillator: u32,
     pub(crate) tracer_lifetime_seconds: f32,
     pub(crate) tracer_copies_per_second: f32,
+    pub(crate) transparency_opacity: f32,
+    pub(crate) transparency_output_alpha_scale: f32,
+    pub(crate) transparency_depth_suppression_strength: f32,
+    pub(crate) transparency_rgb_alpha_coupling: f32,
+    pub(crate) color_facing_attenuation_strength: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct GpuPrivateParticlePanelEffectiveSettings {
     pub(crate) visual_scale: f32,
     pub(crate) driver_values01: [f32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+    pub(crate) driver_control_modes: [u32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+    pub(crate) driver_control_source_slots: [u32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+    pub(crate) driver_control_curve_codes: [u32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+    pub(crate) driver_control_range_mins: [f32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+    pub(crate) driver_control_range_maxs: [f32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
+    pub(crate) driver_control_cycle_multipliers: [f32; GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT],
     pub(crate) driver_parameter_source: &'static str,
     pub(crate) tracer_draw_slots_per_oscillator: u32,
     pub(crate) tracer_draw_slots_capacity: u32,
     pub(crate) tracer_lifetime_seconds: f32,
     pub(crate) tracer_copies_per_second: f32,
     pub(crate) tracer_parameter_source: &'static str,
+    pub(crate) transparency_opacity: f32,
+    pub(crate) transparency_output_alpha_scale: f32,
+    pub(crate) transparency_depth_suppression_strength: f32,
+    pub(crate) transparency_rgb_alpha_coupling: f32,
+    pub(crate) transparency_parameter_source: &'static str,
+    pub(crate) color_facing_attenuation_strength: f32,
+    pub(crate) color_parameter_source: &'static str,
 }
 
 impl GpuPrivateParticlePanelSettings {
@@ -97,24 +142,122 @@ impl GpuPrivateParticlePanelSettings {
         for value in &mut driver_values01 {
             *value = value.clamp(0.0, 1.0);
         }
+        let mut driver_control_modes = self.driver_control_modes;
+        for mode in &mut driver_control_modes {
+            if *mode != PANEL_DRIVER_MODE_OSCILLATOR
+                && *mode != PANEL_DRIVER_MODE_MANUAL
+                && *mode != PANEL_DRIVER_MODE_INPUT_SLOT
+                && *mode != PANEL_DRIVER_MODE_DIRECT
+            {
+                *mode = PANEL_DRIVER_MODE_DIRECT;
+            }
+        }
+        let mut driver_control_source_slots = self.driver_control_source_slots;
+        for source_slot in &mut driver_control_source_slots {
+            *source_slot = (*source_slot).min((GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT - 1) as u32);
+        }
+        let mut driver_control_curve_codes = self.driver_control_curve_codes;
+        for curve_code in &mut driver_control_curve_codes {
+            if *curve_code > PANEL_CURVE_HOLD_HIGH {
+                *curve_code = PANEL_CURVE_LINEAR;
+            }
+        }
+        let mut driver_control_range_mins = self.driver_control_range_mins;
+        let mut driver_control_range_maxs = self.driver_control_range_maxs;
+        for index in 0..GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT {
+            let canonical = canonical_driver_value_range(index);
+            driver_control_range_mins[index] =
+                driver_control_range_mins[index].clamp(canonical.0, canonical.1);
+            driver_control_range_maxs[index] =
+                driver_control_range_maxs[index].clamp(canonical.0, canonical.1);
+            if driver_control_range_maxs[index] < driver_control_range_mins[index] {
+                std::mem::swap(
+                    &mut driver_control_range_mins[index],
+                    &mut driver_control_range_maxs[index],
+                );
+            }
+        }
+        let mut driver_control_cycle_multipliers = self.driver_control_cycle_multipliers;
+        for multiplier in &mut driver_control_cycle_multipliers {
+            *multiplier = multiplier.clamp(0.0, 10.0);
+        }
         Self {
             visual_scale: self.visual_scale.clamp(0.05, 1.0),
             driver_values01,
+            driver_control_modes,
+            driver_control_source_slots,
+            driver_control_curve_codes,
+            driver_control_range_mins,
+            driver_control_range_maxs,
+            driver_control_cycle_multipliers,
             tracer_draw_slots_per_oscillator: self.tracer_draw_slots_per_oscillator.min(1024),
             tracer_lifetime_seconds: self.tracer_lifetime_seconds.clamp(0.016, 30.0),
             tracer_copies_per_second: self.tracer_copies_per_second.clamp(0.0, 120.0),
+            transparency_opacity: self.transparency_opacity.clamp(0.0, 4.0),
+            transparency_output_alpha_scale: self.transparency_output_alpha_scale.clamp(0.0, 4.0),
+            transparency_depth_suppression_strength: self
+                .transparency_depth_suppression_strength
+                .clamp(0.0, 8.0),
+            transparency_rgb_alpha_coupling: self.transparency_rgb_alpha_coupling.clamp(0.0, 1.0),
+            color_facing_attenuation_strength: self
+                .color_facing_attenuation_strength
+                .clamp(0.0, 1.0),
         }
     }
 }
 
+fn private_particle_panel_direct_modes() -> [u32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT] {
+    [PANEL_DRIVER_MODE_DIRECT; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT]
+}
+
+fn private_particle_panel_source_slots() -> [u32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT] {
+    let mut slots = [0u32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT];
+    for (index, slot) in slots.iter_mut().enumerate() {
+        *slot = index as u32;
+    }
+    slots
+}
+
+fn private_particle_panel_linear_curves() -> [u32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT] {
+    [PANEL_CURVE_LINEAR; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT]
+}
+
+fn private_particle_panel_range_mins() -> [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT] {
+    let mut values = [0.0; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT];
+    for (index, value) in values.iter_mut().enumerate() {
+        *value = canonical_driver_value_range(index).0;
+    }
+    values
+}
+
+fn private_particle_panel_range_maxs() -> [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT] {
+    let mut values = [1.0; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT];
+    for (index, value) in values.iter_mut().enumerate() {
+        *value = canonical_driver_value_range(index).1;
+    }
+    values
+}
+
+fn private_particle_panel_cycle_multipliers() -> [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT] {
+    [1.0; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT]
+}
+
 impl PrivateParticleRuntimeSettings {
     fn from_generated_defaults() -> Self {
+        let driver_values01 = private_particle_driver_values01_from_generated();
         Self {
             visual_scale: PRIVATE_PARTICLE_VISUAL_SCALE.clamp(0.05, 1.0),
             visual_parameter_source: PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE,
             driver0_value01: PRIVATE_PARTICLE_DRIVER_VALUES01[0].clamp(0.0, 1.0),
             driver1_value01: PRIVATE_PARTICLE_DRIVER_VALUES01[1].clamp(0.0, 1.0),
-            driver_values01: private_particle_driver_values01_from_generated(),
+            driver_values01,
+            driver_bank_values01: driver_values01,
+            driver_control_modes: private_particle_panel_direct_modes(),
+            driver_control_source_slots: private_particle_panel_source_slots(),
+            driver_control_curve_codes: private_particle_panel_linear_curves(),
+            driver_control_range_mins: private_particle_panel_range_mins(),
+            driver_control_range_maxs: private_particle_panel_range_maxs(),
+            driver_control_cycle_multipliers: private_particle_panel_cycle_multipliers(),
             driver_parameter_source: PRIVATE_PARTICLE_DRIVER_PARAMETER_SOURCE,
             tracer_draw_slots_per_oscillator: PRIVATE_PARTICLE_TRACER_DRAW_SLOTS_PER_OSCILLATOR
                 .min(u32::MAX as usize) as u32,
@@ -221,6 +364,13 @@ impl PrivateParticleRuntimeSettings {
             driver0_value01,
             driver1_value01,
             driver_values01,
+            driver_bank_values01: driver_values01,
+            driver_control_modes: private_particle_panel_direct_modes(),
+            driver_control_source_slots: private_particle_panel_source_slots(),
+            driver_control_curve_codes: private_particle_panel_linear_curves(),
+            driver_control_range_mins: private_particle_panel_range_mins(),
+            driver_control_range_maxs: private_particle_panel_range_maxs(),
+            driver_control_cycle_multipliers: private_particle_panel_cycle_multipliers(),
             driver_parameter_source: if driver_overridden {
                 "runtime-hotload-android-property"
             } else {
@@ -252,18 +402,37 @@ impl PrivateParticleRuntimeSettings {
         }
     }
 
-    fn apply_panel_override(&mut self, panel: GpuPrivateParticlePanelSettings) {
+    fn apply_panel_override(
+        &mut self,
+        panel: GpuPrivateParticlePanelSettings,
+        source_values01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
+    ) {
         let panel = panel.clamped();
         self.visual_scale = panel.visual_scale;
         self.visual_parameter_source = "same-apk-panel-live";
         self.driver_values01 = panel.driver_values01;
-        self.driver0_value01 = self.driver_values01[0];
-        self.driver1_value01 = self.driver_values01[1];
+        self.driver_bank_values01 = source_values01;
+        self.driver_control_modes = panel.driver_control_modes;
+        self.driver_control_source_slots = panel.driver_control_source_slots;
+        self.driver_control_curve_codes = panel.driver_control_curve_codes;
+        self.driver_control_range_mins = panel.driver_control_range_mins;
+        self.driver_control_range_maxs = panel.driver_control_range_maxs;
+        self.driver_control_cycle_multipliers = panel.driver_control_cycle_multipliers;
+        self.driver0_value01 = self.driver_bank_values01[0];
+        self.driver1_value01 = self.driver_bank_values01[1];
         self.driver_parameter_source = "same-apk-panel-live";
         self.tracer_draw_slots_per_oscillator = panel.tracer_draw_slots_per_oscillator;
         self.tracer_lifetime_seconds = panel.tracer_lifetime_seconds;
         self.tracer_copies_per_second = panel.tracer_copies_per_second;
         self.tracer_parameter_source = "same-apk-panel-live";
+        self.transparency_opacity = panel.transparency_opacity;
+        self.transparency_output_alpha_scale = panel.transparency_output_alpha_scale;
+        self.transparency_depth_suppression_strength =
+            panel.transparency_depth_suppression_strength;
+        self.transparency_rgb_alpha_coupling = panel.transparency_rgb_alpha_coupling;
+        self.transparency_parameter_source = "same-apk-panel-live";
+        self.color_facing_attenuation_strength = panel.color_facing_attenuation_strength;
+        self.color_parameter_source = "same-apk-panel-live";
     }
 
     #[cfg(target_os = "android")]
@@ -275,6 +444,25 @@ impl PrivateParticleRuntimeSettings {
     fn load_from_android_properties() -> Self {
         Self::from_generated_defaults()
     }
+}
+
+fn canonical_driver_value_range(target_slot: usize) -> (f32, f32) {
+    match target_slot {
+        2 => (0.04, 0.115),
+        3 => (0.0, 0.1),
+        4 => (0.1, 0.5),
+        5 => (0.2, 1.5),
+        6 => (0.0, std::f32::consts::TAU),
+        7 => (0.0, 1.0),
+        _ => (0.0, 1.0),
+    }
+}
+
+fn panel_requires_input_driver_update(panel: &GpuPrivateParticlePanelSettings) -> bool {
+    panel
+        .driver_control_modes
+        .iter()
+        .any(|mode| *mode == PANEL_DRIVER_MODE_INPUT_SLOT)
 }
 
 fn f32_hotload_value(
@@ -538,32 +726,42 @@ fn private_particle_driver_bank_marker_fields(
     format!(
         "privateParticleDriverBankSlotCount={} privateParticleDriverBankStorageBinding=8 privateParticleDriver2Value01={:.3} privateParticleDriver3Value01={:.3} privateParticleDriver4Value01={:.3} privateParticleDriver5Value01={:.3} privateParticleDriver6Value01={:.3} privateParticleDriver7Value01={:.3}",
         PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT,
-        runtime_settings.driver_values01[2],
-        runtime_settings.driver_values01[3],
-        runtime_settings.driver_values01[4],
-        runtime_settings.driver_values01[5],
-        runtime_settings.driver_values01[6],
-        runtime_settings.driver_values01[7],
+        runtime_settings.driver_bank_values01[2],
+        runtime_settings.driver_bank_values01[3],
+        runtime_settings.driver_bank_values01[4],
+        runtime_settings.driver_bank_values01[5],
+        runtime_settings.driver_bank_values01[6],
+        runtime_settings.driver_bank_values01[7],
     )
 }
 
 fn private_particle_driver_bank_rows(
     runtime_settings: PrivateParticleRuntimeSettings,
 ) -> [[f32; 4]; PRIVATE_PARTICLE_DRIVER_BANK_VEC4_ROWS] {
-    [
-        [
-            runtime_settings.driver_values01[0],
-            runtime_settings.driver_values01[1],
-            runtime_settings.driver_values01[2],
-            runtime_settings.driver_values01[3],
-        ],
-        [
-            runtime_settings.driver_values01[4],
-            runtime_settings.driver_values01[5],
-            runtime_settings.driver_values01[6],
-            runtime_settings.driver_values01[7],
-        ],
-    ]
+    let mut rows = [[0.0; 4]; PRIVATE_PARTICLE_DRIVER_BANK_VEC4_ROWS];
+    for slot in 0..PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT {
+        rows[slot >> 2][slot & 3] = runtime_settings.driver_bank_values01[slot];
+        let control_row = PRIVATE_PARTICLE_DRIVER_BANK_VALUE_VEC4_ROWS
+            + slot * PRIVATE_PARTICLE_DRIVER_CONTROL_ROWS_PER_SLOT;
+        let mode = runtime_settings.driver_control_modes[slot];
+        rows[control_row] = [
+            mode as f32,
+            runtime_settings.driver_control_source_slots[slot] as f32,
+            runtime_settings.driver_control_curve_codes[slot] as f32,
+            runtime_settings.driver_control_cycle_multipliers[slot],
+        ];
+        rows[control_row + 1] = [
+            runtime_settings.driver_control_range_mins[slot],
+            runtime_settings.driver_control_range_maxs[slot],
+            runtime_settings.driver_values01[slot],
+            if mode == PANEL_DRIVER_MODE_DIRECT {
+                0.0
+            } else {
+                1.0
+            },
+        ];
+    }
+    rows
 }
 
 impl Default for GpuPrivateParticleFrameStats {
@@ -607,7 +805,7 @@ pub(crate) struct GpuPrivateParticleRenderer {
     effect_state_buffers: [OwnedBuffer; PARTICLE_DESCRIPTOR_SET_COUNT],
     aux0_buffer: OwnedBuffer,
     driver_bank_buffer: OwnedBuffer,
-    driver_bank_uploaded_values01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
+    driver_bank_uploaded_rows: [[f32; 4]; PRIVATE_PARTICLE_DRIVER_BANK_VEC4_ROWS],
     diagnostic_buffers: [OwnedBuffer; PARTICLE_DESCRIPTOR_SET_COUNT],
     diagnostic_dispatched: [bool; PARTICLE_DESCRIPTOR_SET_COUNT],
     last_diagnostic_snapshot: PrivateParticleDiagnosticSnapshot,
@@ -619,6 +817,7 @@ pub(crate) struct GpuPrivateParticleRenderer {
     sort_input_count: u32,
     sort_capacity: u32,
     runtime_settings: PrivateParticleRuntimeSettings,
+    driver_source_values01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
     runtime_settings_last_poll_frame: u64,
     panel_settings_override: Option<GpuPrivateParticlePanelSettings>,
     manifold_driver_bridge: Option<ManifoldScalarDriverBridge>,
@@ -1242,7 +1441,7 @@ impl GpuPrivateParticleRenderer {
             effect_state_buffers: [effect_state_buffer_a, effect_state_buffer_b],
             aux0_buffer,
             driver_bank_buffer,
-            driver_bank_uploaded_values01: runtime_settings.driver_values01,
+            driver_bank_uploaded_rows: driver_bank_rows,
             diagnostic_buffers,
             diagnostic_dispatched: [false; PARTICLE_DESCRIPTOR_SET_COUNT],
             last_diagnostic_snapshot: PrivateParticleDiagnosticSnapshot::pending(),
@@ -1254,6 +1453,7 @@ impl GpuPrivateParticleRenderer {
             sort_input_count,
             sort_capacity,
             runtime_settings,
+            driver_source_values01: runtime_settings.driver_bank_values01,
             runtime_settings_last_poll_frame: u64::MAX,
             panel_settings_override: None,
             manifold_driver_bridge,
@@ -1329,15 +1529,15 @@ impl GpuPrivateParticleRenderer {
         frame_count: u64,
     ) -> GpuPrivateParticleFrameStats {
         let runtime_settings = self.runtime_settings(frame_count);
-        if runtime_settings.driver_values01 != self.driver_bank_uploaded_values01 {
-            let driver_bank_rows = private_particle_driver_bank_rows(runtime_settings);
+        let driver_bank_rows = private_particle_driver_bank_rows(runtime_settings);
+        if driver_bank_rows != self.driver_bank_uploaded_rows {
             match self.driver_bank_buffer.write_data(
                 device,
                 "generic private particle driver bank",
                 &driver_bank_rows,
             ) {
                 Ok(()) => {
-                    self.driver_bank_uploaded_values01 = runtime_settings.driver_values01;
+                    self.driver_bank_uploaded_rows = driver_bank_rows;
                 }
                 Err(error) => {
                     crate::marker(
@@ -1538,9 +1738,16 @@ impl GpuPrivateParticleRenderer {
         self.panel_settings_override = Some(settings.clamped());
         self.runtime_settings_last_poll_frame = u64::MAX;
         let runtime_settings = self.runtime_settings(frame_count);
+        let settings = settings.clamped();
         GpuPrivateParticlePanelEffectiveSettings {
             visual_scale: runtime_settings.visual_scale,
             driver_values01: runtime_settings.driver_values01,
+            driver_control_modes: settings.driver_control_modes,
+            driver_control_source_slots: settings.driver_control_source_slots,
+            driver_control_curve_codes: settings.driver_control_curve_codes,
+            driver_control_range_mins: settings.driver_control_range_mins,
+            driver_control_range_maxs: settings.driver_control_range_maxs,
+            driver_control_cycle_multipliers: settings.driver_control_cycle_multipliers,
             driver_parameter_source: runtime_settings.driver_parameter_source,
             tracer_draw_slots_per_oscillator: runtime_settings
                 .tracer_draw_slots_per_oscillator
@@ -1549,18 +1756,27 @@ impl GpuPrivateParticleRenderer {
             tracer_lifetime_seconds: runtime_settings.tracer_lifetime_seconds,
             tracer_copies_per_second: runtime_settings.tracer_copies_per_second,
             tracer_parameter_source: runtime_settings.tracer_parameter_source,
+            transparency_opacity: runtime_settings.transparency_opacity,
+            transparency_output_alpha_scale: runtime_settings.transparency_output_alpha_scale,
+            transparency_depth_suppression_strength: runtime_settings
+                .transparency_depth_suppression_strength,
+            transparency_rgb_alpha_coupling: runtime_settings.transparency_rgb_alpha_coupling,
+            transparency_parameter_source: runtime_settings.transparency_parameter_source,
+            color_facing_attenuation_strength: runtime_settings.color_facing_attenuation_strength,
+            color_parameter_source: runtime_settings.color_parameter_source,
         }
     }
 
     fn runtime_settings(&mut self, frame_count: u64) -> PrivateParticleRuntimeSettings {
+        let has_input_driver = self
+            .panel_settings_override
+            .as_ref()
+            .is_some_and(panel_requires_input_driver_update);
         let should_poll = self.runtime_settings_last_poll_frame == u64::MAX
             || frame_count.saturating_sub(self.runtime_settings_last_poll_frame)
                 >= PRIVATE_PARTICLE_SETTINGS_POLL_INTERVAL_FRAMES;
         if should_poll {
             let mut next = PrivateParticleRuntimeSettings::load_from_android_properties();
-            if let Some(panel_override) = self.panel_settings_override {
-                next.apply_panel_override(panel_override);
-            }
             let manifold_driver_active_count =
                 self.manifold_driver_bridge.as_ref().map_or(0, |bridge| {
                     bridge.apply_to_driver_values(&mut next.driver_values01)
@@ -1580,6 +1796,11 @@ impl GpuPrivateParticleRenderer {
                     );
                     self.manifold_driver_connected_marker_emitted = true;
                 }
+            }
+            next.driver_bank_values01 = next.driver_values01;
+            self.driver_source_values01 = next.driver_bank_values01;
+            if let Some(panel_override) = self.panel_settings_override {
+                next.apply_panel_override(panel_override, self.driver_source_values01);
             }
             if next != self.runtime_settings {
                 crate::marker(
@@ -1611,6 +1832,15 @@ impl GpuPrivateParticleRenderer {
             }
             self.runtime_settings = next;
             self.runtime_settings_last_poll_frame = frame_count;
+        } else if has_input_driver {
+            let mut next = self.runtime_settings;
+            if let Some(bridge) = self.manifold_driver_bridge.as_ref() {
+                bridge.apply_to_driver_values(&mut self.driver_source_values01);
+            }
+            if let Some(panel_override) = self.panel_settings_override {
+                next.apply_panel_override(panel_override, self.driver_source_values01);
+            }
+            self.runtime_settings = next;
         }
         self.runtime_settings
     }

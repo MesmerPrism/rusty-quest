@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rusty Quest Private Particle Panel Preview</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="panel" aria-label="AKD config panel preview">
+    <header class="panel-header">
+      <h1>AKD Config Panel</h1>
+      <button id="export-json" type="button">Export JSON</button>
+    </header>
+
+    <div class="preview-band">private particle config</div>
+
+    <nav class="page-tabs" aria-label="Panel pages">
+      <button type="button" class="selected" data-page="dynamics">Dynamics</button>
+      <button type="button" data-page="visuals">Visuals</button>
+      <button type="button" data-page="tracers">Tracers</button>
+      <button type="button" data-page="backend">Backend</button>
+    </nav>
+
+    <section id="page-dynamics" class="page selected" aria-label="Dynamics page">
+      <details open>
+        <summary>Particle And Oscillators</summary>
+        <div class="section-body">
+          <div class="scalar-grid">
+            <label>Particle visual scale<input type="number" value="0.700" min="0.05" max="1" step="0.001"></label>
+            <label>Sphere radius meters<input type="number" value="2.000" min="1" max="2" step="0.001"></label>
+            <label>Sphere deformation driver0<input type="number" value="1.000" min="0" max="1" step="0.001"></label>
+            <label>Tier coupling driver1<input type="number" value="1.000" min="0" max="1" step="0.001"></label>
+          </div>
+        </div>
+      </details>
+      <details>
+        <summary>Dimension Routing</summary>
+        <div class="section-body compact-lines">
+          <p>color 0, size 1, rotation 2</p>
+          <p>orbit radius 3, orbit angle 3</p>
+          <p>wave 4, animation 5</p>
+          <p>alpha/saturation/brightness 0</p>
+        </div>
+      </details>
+    </section>
+
+    <section id="page-visuals" class="page" aria-label="Visuals page"></section>
+
+    <section id="page-tracers" class="page" aria-label="Tracers page">
+      <details open>
+        <summary>Integrated Tracers</summary>
+        <div class="section-body scalar-grid">
+          <label>Tracer draw slots<input type="number" value="7" min="0" max="7" step="1"></label>
+          <label>Tracer lifetime<input type="number" value="0.500" min="0.016" max="0.5" step="0.001"></label>
+          <label>Tracer copies/sec<input type="number" value="14.000" min="0" max="14" step="0.001"></label>
+        </div>
+      </details>
+      <details open>
+        <summary>Overdraw And Transparency</summary>
+        <div class="section-body scalar-grid">
+          <label>Transparency opacity<input type="number" value="1.000" min="0" max="4" step="0.001"></label>
+          <label>Output alpha scale<input type="number" value="1.000" min="0" max="4" step="0.001"></label>
+          <label>Depth suppression<input type="number" value="0.000" min="0" max="8" step="0.001"></label>
+          <label>RGB alpha coupling<input type="number" value="0.000" min="0" max="1" step="0.001"></label>
+          <label>Facing attenuation<input type="number" value="0.000" min="0" max="1" step="0.001"></label>
+        </div>
+      </details>
+    </section>
+
+    <section id="page-backend" class="page" aria-label="Backend page">
+      <details open>
+        <summary>Profile Rebuild Boundaries</summary>
+        <div class="section-body compact-lines">
+          <p>Particle count, topology, gradients, texture arrays, and payload curve tables are rebuild-owned.</p>
+          <p>Current live lanes are driver0-driver7, visual scale, sphere radius, tracer, transparency, and facing scalars.</p>
+        </div>
+      </details>
+    </section>
+
+    <pre id="json-output" class="json-output" aria-label="Candidate JSON"></pre>
+  </main>
+  <script src="./panel-preview.js"></script>
+</body>
+</html>

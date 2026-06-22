@@ -68,6 +68,16 @@ public final class ControlPanelActivity extends Activity {
         "debug.rustyquest.native_renderer.private_particles.tracer.lifetime_seconds";
     private static final String PROP_PRIVATE_PARTICLE_TRACER_COPIES =
         "debug.rustyquest.native_renderer.private_particles.tracer.copies_per_second";
+    private static final String PROP_PRIVATE_PARTICLE_TRANSPARENCY_OPACITY =
+        "debug.rustyquest.native_renderer.private_particles.transparency.opacity";
+    private static final String PROP_PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE =
+        "debug.rustyquest.native_renderer.private_particles.transparency.output_alpha_scale";
+    private static final String PROP_PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION =
+        "debug.rustyquest.native_renderer.private_particles.transparency.depth_suppression_strength";
+    private static final String PROP_PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING =
+        "debug.rustyquest.native_renderer.private_particles.transparency.rgb_alpha_coupling";
+    private static final String PROP_PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION =
+        "debug.rustyquest.native_renderer.private_particles.color.facing_attenuation_strength";
     private static final String[] PROP_PRIVATE_PARTICLE_DRIVERS = new String[] {
         "debug.rustyquest.native_renderer.private_particles.driver0.value01",
         "debug.rustyquest.native_renderer.private_particles.driver1.value01",
@@ -129,9 +139,63 @@ public final class ControlPanelActivity extends Activity {
         "Driver 6 orbit angle",
         "Driver 7 animation frame"
     };
+    private static final String[] PRIVATE_PARTICLE_CONFIG_PAGE_LABELS = new String[] {
+        "Dynamics",
+        "Visuals",
+        "Tracers",
+        "Backend"
+    };
+    private static final String[] PRIVATE_PARTICLE_CURVE_CHOICES = new String[] {
+        "Linear",
+        "AKD hump",
+        "Smoothstep",
+        "Reverse linear",
+        "Hold low",
+        "Hold high"
+    };
+    private static final String PRIVATE_PARTICLE_DRIVER_MODE_MANUAL = "Manual";
+    private static final String[] PRIVATE_PARTICLE_DRIVER_MODE_CHOICES = new String[] {
+        "Oscillator",
+        PRIVATE_PARTICLE_DRIVER_MODE_MANUAL,
+        "Input slot 0: deformation",
+        "Input slot 1: coupling",
+        "Input slot 2: particle size",
+        "Input slot 3: depth wave",
+        "Input slot 4: spin speed",
+        "Input slot 5: orbit radius",
+        "Input slot 6: orbit angle",
+        "Input slot 7: animation"
+    };
+    private static final int PRIVATE_PARTICLE_DRIVER_CONTROL_OSCILLATOR = 0;
+    private static final int PRIVATE_PARTICLE_DRIVER_CONTROL_MANUAL = 1;
+    private static final int PRIVATE_PARTICLE_DRIVER_CONTROL_INPUT_SLOT = 2;
+    private static final int PRIVATE_PARTICLE_DRIVER_CONTROL_DIRECT = 3;
+    private static final int PRIVATE_PARTICLE_CURVE_LINEAR = 0;
+    private static final int PRIVATE_PARTICLE_CURVE_AKD_HUMP = 1;
+    private static final int PRIVATE_PARTICLE_CURVE_SMOOTHSTEP = 2;
+    private static final int PRIVATE_PARTICLE_CURVE_REVERSE_LINEAR = 3;
+    private static final int PRIVATE_PARTICLE_CURVE_HOLD_LOW = 4;
+    private static final int PRIVATE_PARTICLE_CURVE_HOLD_HIGH = 5;
+    private static final int SPHERE_DEFORMATION_DRIVER_INDEX = 0;
+    private static final int COUPLING_DRIVER_INDEX = 1;
+    private static final int PARTICLE_SIZE_DRIVER_INDEX = 2;
     private static final int DEPTH_WAVE_DRIVER_INDEX = 3;
+    private static final int SPIN_SPEED_DRIVER_INDEX = 4;
+    private static final int ORBIT_RADIUS_DRIVER_INDEX = 5;
+    private static final int ORBIT_ANGLE_DRIVER_INDEX = 6;
+    private static final int ANIMATION_FRAME_DRIVER_INDEX = 7;
+    private static final double AKD_PARTICLE_SIZE_MIN = 0.04;
+    private static final double AKD_PARTICLE_SIZE_MAX = 0.115;
     private static final double DEPTH_WAVE_MIN_PERCENT = 0.0;
     private static final double DEPTH_WAVE_MAX_PERCENT = 0.1;
+    private static final double AKD_SPIN_SPEED_MIN = 0.1;
+    private static final double AKD_SPIN_SPEED_MAX = 0.5;
+    private static final double AKD_ORBIT_RADIUS_MIN = 0.2;
+    private static final double AKD_ORBIT_RADIUS_MAX = 1.5;
+    private static final double AKD_ORBIT_ANGLE_MIN = 0.0;
+    private static final double AKD_ORBIT_ANGLE_MAX = Math.PI * 2.0;
+    private static final double AKD_SPHERE_RADIUS_MIN_M = 1.0;
+    private static final double AKD_SPHERE_RADIUS_MAX_M = 2.0;
     private static final int DEPTH_WAVE_DIMENSION_INDEX = 4;
     private static final int DEPTH_WAVE_CYCLE_MULTIPLIER = 0;
     private static final String[] DEPTH_WAVE_DRIVER_POLICIES = new String[] {
@@ -225,6 +289,32 @@ public final class ControlPanelActivity extends Activity {
     private SliderControl privateParticleTracerLifetime;
     private SliderControl privateParticleTracerCopies;
     private Runnable pendingPrivateParticleDepthWaveApply;
+    private Runnable pendingPrivateParticleConfigApply;
+    private Button[] privateParticleConfigPageButtons = new Button[0];
+    private LinearLayout[] privateParticleConfigPageViews = new LinearLayout[0];
+    private int privateParticleConfigPageIndex;
+    private SliderControl privateParticleConfigVisualScale;
+    private SliderControl privateParticleConfigWorldAnchorScale;
+    private SliderControl privateParticleConfigDeformationDriver;
+    private SliderControl privateParticleConfigCouplingDriver;
+    private SliderControl privateParticleConfigParticleSize;
+    private SliderControl privateParticleConfigDepthWavePercent;
+    private SliderControl privateParticleConfigSpinSpeed;
+    private SliderControl privateParticleConfigOrbitRadius;
+    private SliderControl privateParticleConfigOrbitAngle;
+    private SliderControl privateParticleConfigAnimationFrame;
+    private SliderControl privateParticleConfigTracerDrawSlots;
+    private SliderControl privateParticleConfigTracerLifetime;
+    private SliderControl privateParticleConfigTracerCopies;
+    private SliderControl privateParticleTransparencyOpacity;
+    private SliderControl privateParticleTransparencyOutputAlphaScale;
+    private SliderControl privateParticleTransparencyDepthSuppression;
+    private SliderControl privateParticleTransparencyRgbAlphaCoupling;
+    private SliderControl privateParticleColorFacingAttenuation;
+    private TextView privateParticleConfigResolvedLabel;
+    private ArrayList<ParameterEnvelopeControl> privateParticleConfigParameterControls =
+        new ArrayList<ParameterEnvelopeControl>();
+    private boolean privateParticleConfigViewBuilding;
     private Spinner depthWaveDriverPolicy;
     private SliderControl depthWavePercent;
     private SliderControl depthWaveDriverValue01;
@@ -242,6 +332,8 @@ public final class ControlPanelActivity extends Activity {
             updateStatus("Particle dynamics panel ready.");
         } else if ("private-particle-depth-wave".equals(panelMode)) {
             updateStatus("Depth wave panel ready.");
+        } else if ("private-particle-config".equals(panelMode)) {
+            updateStatus("AKD config panel ready.");
         } else {
             updateStatus("Panel ready. Candidate path: " + new File(getFilesDir(), CANDIDATE_FILE));
         }
@@ -325,6 +417,9 @@ public final class ControlPanelActivity extends Activity {
         }
         if ("private-particle-depth-wave".equals(panelMode)) {
             return buildPrivateParticleDepthWaveView();
+        }
+        if ("private-particle-config".equals(panelMode)) {
+            return buildPrivateParticleConfigView();
         }
         return buildStimulusPanelView();
     }
@@ -764,6 +859,139 @@ public final class ControlPanelActivity extends Activity {
         );
     }
 
+    private SliderControl privateParticleConfigSlider(
+        String title,
+        double min,
+        double max,
+        double initial,
+        int steps,
+        String suffix,
+        boolean integer
+    ) {
+        return slider(
+            title,
+            min,
+            max,
+            initial,
+            steps,
+            suffix,
+            integer,
+            new Runnable() {
+                @Override
+                public void run() {
+                    updatePrivateParticleConfigResolvedLabel();
+                    schedulePrivateParticleConfigApplyFromControl();
+                }
+            }
+        );
+    }
+
+    private ParameterEnvelopeControl parameterEnvelope(
+        String id,
+        String title,
+        String rangeLabel,
+        double minValue,
+        double maxValue,
+        double controlMin,
+        double controlMax,
+        double liveValue,
+        int liveSteps,
+        String suffix,
+        int cycleMultiplier,
+        String curveChoice,
+        String optionLabel,
+        boolean optionDefault
+    ) {
+        return parameterEnvelope(
+            id,
+            title,
+            rangeLabel,
+            minValue,
+            maxValue,
+            controlMin,
+            controlMax,
+            liveValue,
+            liveSteps,
+            suffix,
+            cycleMultiplier,
+            curveChoice,
+            "Oscillator",
+            optionLabel,
+            optionDefault
+        );
+    }
+
+    private ParameterEnvelopeControl parameterEnvelope(
+        String id,
+        String title,
+        String rangeLabel,
+        double minValue,
+        double maxValue,
+        double controlMin,
+        double controlMax,
+        double liveValue,
+        int liveSteps,
+        String suffix,
+        int cycleMultiplier,
+        String curveChoice,
+        String driverModeChoice,
+        String optionLabel,
+        boolean optionDefault
+    ) {
+        ParameterEnvelopeControl control = new ParameterEnvelopeControl(
+            id,
+            title,
+            rangeLabel,
+            minValue,
+            maxValue,
+            controlMin,
+            controlMax,
+            liveValue,
+            liveSteps,
+            suffix,
+            cycleMultiplier,
+            curveChoice,
+            driverModeChoice,
+            optionLabel,
+            optionDefault
+        );
+        privateParticleConfigParameterControls.add(control);
+        return control;
+    }
+
+    private Spinner configSpinner(String[] values, String selectedValue) {
+        int selectedIndex = indexOf(values, selectedValue, 0);
+        Spinner spinner = spinner(values, selectedIndex);
+        spinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (privateParticleConfigViewBuilding) {
+                    return;
+                }
+                updatePrivateParticleConfigResolvedLabel();
+                schedulePrivateParticleConfigApplyFromControl();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+        return spinner;
+    }
+
+    private String spinnerValue(Spinner spinner, String fallback) {
+        if (spinner == null || spinner.getSelectedItem() == null) {
+            return fallback;
+        }
+        return String.valueOf(spinner.getSelectedItem());
+    }
+
+    private void addReadOnlyLines(LinearLayout parent, String[] lines) {
+        for (int i = 0; i < lines.length; i++) {
+            parent.addView(text(lines[i], 13, PANEL_MUTED));
+        }
+    }
+
     private View buildPrivateParticleDynamicsActionRow() {
         LinearLayout actionBlock = new LinearLayout(this);
         actionBlock.setOrientation(LinearLayout.VERTICAL);
@@ -983,6 +1211,655 @@ public final class ControlPanelActivity extends Activity {
             @Override
             public void onClick(View view) {
                 submitLivePrivateParticleDepthWave(true);
+            }
+        });
+        Button close = button("Close");
+        close.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                closePanelAndReturnToImmersive();
+            }
+        });
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.addView(refresh, rowButtonParams());
+        row.addView(applyLive, rowButtonParams());
+        row.addView(close, rowButtonParams());
+        actionBlock.addView(row);
+        return actionBlock;
+    }
+
+    private View buildPrivateParticleConfigView() {
+        privateParticleConfigViewBuilding = true;
+        privateParticleConfigParameterControls.clear();
+        ScrollView scroll = new ScrollView(this);
+        scroll.setBackgroundColor(PANEL_BG);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(18);
+        root.setPadding(pad, pad, pad, pad);
+        scroll.addView(root);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = text("AKD Config Panel", 22, PANEL_FG);
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button headerClose = button("Close");
+        headerClose.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                closePanelAndReturnToImmersive();
+            }
+        });
+        header.addView(headerClose);
+        root.addView(header);
+        root.addView(text("Runtime controls organized from the AKD ViscerealityRenderProfile inspector.", 13, PANEL_MUTED));
+        root.addView(privateParticlePreviewBand());
+
+        liveAutoApply = checkBox("Live auto update", true);
+        liveAutoApply.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                if (liveAutoApply.isChecked()) {
+                    schedulePrivateParticleConfigApplyFromControl();
+                } else {
+                    cancelPendingPrivateParticleConfigApply();
+                    setStatusText("Live auto update off. Use Apply Live for explicit AKD config changes.");
+                }
+            }
+        });
+        root.addView(liveAutoApply);
+
+        JSONObject statusJson = readPrivateParticleDynamicsStatusJson();
+        JSONObject privateParticles = privateParticleStatusBody(statusJson);
+        JSONObject tracerStatus = privateParticles == null
+            ? null
+            : privateParticles.optJSONObject("tracer");
+        JSONObject transparencyStatus = privateParticles == null
+            ? null
+            : privateParticles.optJSONObject("transparency");
+        JSONObject colorStatus = privateParticles == null
+            ? null
+            : privateParticles.optJSONObject("color");
+        double[] drivers = privateParticleDriverValuesFromStatusOrProperties(privateParticles);
+        JSONArray driverControls = privateParticles == null
+            ? null
+            : privateParticles.optJSONArray("driver_controls");
+        double visualScale = readPrivateParticleStatusDouble(
+            privateParticles,
+            "visual_scale",
+            readDoubleProperty(PROP_PRIVATE_PARTICLE_VISUAL_SCALE, 1.0)
+        );
+        double worldAnchorScale = readPrivateParticleStatusDouble(
+            privateParticles,
+            "world_anchor_scale_m",
+            readDoubleProperty(PROP_PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE, AKD_SPHERE_RADIUS_MAX_M)
+        );
+
+        privateParticleConfigPageButtons = new Button[PRIVATE_PARTICLE_CONFIG_PAGE_LABELS.length];
+        privateParticleConfigPageViews = new LinearLayout[PRIVATE_PARTICLE_CONFIG_PAGE_LABELS.length];
+        root.addView(buildPrivateParticleConfigPageRow());
+
+        LinearLayout pageStack = new LinearLayout(this);
+        pageStack.setOrientation(LinearLayout.VERTICAL);
+        root.addView(pageStack);
+        for (int i = 0; i < privateParticleConfigPageViews.length; i++) {
+            LinearLayout page = new LinearLayout(this);
+            page.setOrientation(LinearLayout.VERTICAL);
+            privateParticleConfigPageViews[i] = page;
+            pageStack.addView(page);
+        }
+
+        buildPrivateParticleConfigDynamicsPage(
+            privateParticleConfigPageViews[0],
+            drivers,
+            visualScale,
+            worldAnchorScale
+        );
+        buildPrivateParticleConfigVisualsPage(privateParticleConfigPageViews[1], drivers, driverControls);
+        buildPrivateParticleConfigTracersPage(
+            privateParticleConfigPageViews[2],
+            tracerStatus,
+            transparencyStatus,
+            colorStatus
+        );
+        buildPrivateParticleConfigBackendPage(privateParticleConfigPageViews[3]);
+
+        privateParticleConfigResolvedLabel = text("", 13, PANEL_FG);
+        privateParticleConfigResolvedLabel.setPadding(0, dp(8), 0, dp(6));
+        root.addView(privateParticleConfigResolvedLabel);
+        updatePrivateParticleConfigResolvedLabel();
+
+        root.addView(buildPrivateParticleConfigActionRow());
+
+        status = text("", 13, PANEL_MUTED);
+        status.setPadding(0, dp(10), 0, dp(8));
+        root.addView(status);
+        selectPrivateParticleConfigPage(0);
+        privateParticleConfigViewBuilding = false;
+        schedulePrivateParticleConfigApplyFromControl();
+        return scroll;
+    }
+
+    private View buildPrivateParticleConfigPageRow() {
+        GridLayout grid = new GridLayout(this);
+        grid.setColumnCount(2);
+        grid.setPadding(0, dp(10), 0, dp(8));
+        for (int i = 0; i < PRIVATE_PARTICLE_CONFIG_PAGE_LABELS.length; i++) {
+            final int pageIndex = i;
+            Button pageButton = button(PRIVATE_PARTICLE_CONFIG_PAGE_LABELS[i]);
+            pageButton.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    selectPrivateParticleConfigPage(pageIndex);
+                }
+            });
+            privateParticleConfigPageButtons[i] = pageButton;
+            GridLayout.LayoutParams params = new GridLayout.LayoutParams();
+            params.width = 0;
+            params.height = LinearLayout.LayoutParams.WRAP_CONTENT;
+            params.columnSpec = GridLayout.spec(GridLayout.UNDEFINED, 1f);
+            params.setMargins(dp(2), dp(2), dp(2), dp(2));
+            grid.addView(pageButton, params);
+        }
+        return grid;
+    }
+
+    private void selectPrivateParticleConfigPage(int pageIndex) {
+        privateParticleConfigPageIndex = Math.max(
+            0,
+            Math.min(PRIVATE_PARTICLE_CONFIG_PAGE_LABELS.length - 1, pageIndex)
+        );
+        for (int i = 0; i < privateParticleConfigPageViews.length; i++) {
+            if (privateParticleConfigPageViews[i] != null) {
+                privateParticleConfigPageViews[i].setVisibility(
+                    i == privateParticleConfigPageIndex ? View.VISIBLE : View.GONE
+                );
+            }
+            if (i < privateParticleConfigPageButtons.length && privateParticleConfigPageButtons[i] != null) {
+                styleButton(privateParticleConfigPageButtons[i], i == privateParticleConfigPageIndex);
+            }
+        }
+    }
+
+    private void buildPrivateParticleConfigDynamicsPage(
+        LinearLayout page,
+        double[] drivers,
+        double visualScale,
+        double worldAnchorScale
+    ) {
+        FoldoutControl particle = foldout("Particle And Oscillators", true);
+        page.addView(particle.view);
+        privateParticleConfigVisualScale = privateParticleConfigSlider(
+            "Particle visual scale",
+            0.05,
+            1.0,
+            visualScale,
+            1000,
+            "",
+            false
+        );
+        privateParticleConfigWorldAnchorScale = privateParticleConfigSlider(
+            "Sphere radius meters",
+            AKD_SPHERE_RADIUS_MIN_M,
+            AKD_SPHERE_RADIUS_MAX_M,
+            clamp(worldAnchorScale, AKD_SPHERE_RADIUS_MIN_M, AKD_SPHERE_RADIUS_MAX_M),
+            1000,
+            " m",
+            false
+        );
+        privateParticleConfigDeformationDriver = privateParticleConfigSlider(
+            "Sphere deformation progress (driver0)",
+            0.0,
+            1.0,
+            drivers[SPHERE_DEFORMATION_DRIVER_INDEX],
+            1000,
+            "",
+            false
+        );
+        privateParticleConfigCouplingDriver = privateParticleConfigSlider(
+            "Tier coupling / coherence (driver1)",
+            0.0,
+            1.0,
+            drivers[COUPLING_DRIVER_INDEX],
+            1000,
+            "",
+            false
+        );
+        particle.body.addView(privateParticleConfigVisualScale.view);
+        particle.body.addView(privateParticleConfigWorldAnchorScale.view);
+        particle.body.addView(privateParticleConfigDeformationDriver.view);
+        particle.body.addView(privateParticleConfigCouplingDriver.view);
+        addReadOnlyLines(particle.body, new String[] {
+            "Particle count: 2562 (payload allocation)",
+            "Oscillator dimensions: 6",
+            "Natural frequency: 0.4 to 0.6 Hz with AKD noise seed 1",
+            "Base coupling: 1.0; cross coupling matrix strength: 0.16",
+            "Neighbor tiers: tier1 -1 to 1, tier2 -0.5 to 0.5, tier3 -1 to 0"
+        });
+
+        FoldoutControl routing = foldout("Dimension Routing", false);
+        page.addView(routing.view);
+        addReadOnlyLines(routing.body, new String[] {
+            "color 0, size 1, rotation 2",
+            "orbit radius 3, orbit angle 3",
+            "wave 4, animation 5",
+            "alpha/saturation/brightness 0"
+        });
+
+        FoldoutControl radius = foldout("Radius And Pacer Surface", false);
+        page.addView(radius.view);
+        addReadOnlyLines(radius.body, new String[] {
+            "Sphere radius channel: enabled, drive mode Volume01",
+            "Smoothing: 0.03 s; inhale/exhale defaults: 4 s / 4 s",
+            "Pacer radius channel: disabled",
+            "Ring overlay: BaseOnly, pacer particle count 0"
+        });
+        FoldoutControl deformation = foldout("Sphere Deformation Curves", false);
+        radius.body.addView(deformation.view);
+        addReadOnlyLines(deformation.body, new String[] {
+            "Oblateness range: 0.25 to 0.5, linear payload curve",
+            "Axis profile range: 2.0 to 1.0, linear payload curve",
+            "Forward axis comes from the Rusty Quest world anchor"
+        });
+
+        FoldoutControl streams = foldout("Default Streams", false);
+        page.addView(streams.view);
+        addReadOnlyLines(streams.body, new String[] {
+            "heartbeat_lsl maps to orbit radius in AKD, currently driver5 when all-visual profile is active",
+            "coherence_lsl maps to tier coupling and alpha/saturation/brightness through driver1",
+            "breathing_controller maps sphere radius through the world-anchor scale lane",
+            "manual1 default 1.000, manual2 default 0.000, manual3 default 0.327"
+        });
+    }
+
+    private void buildPrivateParticleConfigVisualsPage(
+        LinearLayout page,
+        double[] drivers,
+        JSONArray driverControls
+    ) {
+        FoldoutControl color = foldout("Color And Alpha", false);
+        page.addView(color.view);
+        ParameterEnvelopeControl colorDriver = parameterEnvelope(
+            "color_driver",
+            "Color Driver",
+            "Gradient weight",
+            driverControlRangeMin(driverControls, 0, 0.0),
+            driverControlRangeMax(driverControls, 0, 1.0),
+            0.0,
+            1.0,
+            drivers[0],
+            1000,
+            "",
+            driverControlCycleMultiplier(driverControls, 0, 2),
+            driverControlCurveChoice(driverControls, 0, "Linear"),
+            driverControlModeChoice(driverControls, 0, "Oscillator"),
+            null,
+            false
+        );
+        color.body.addView(colorDriver.view);
+        ParameterEnvelopeControl transparency = parameterEnvelope(
+            "transparency",
+            "Transparency",
+            "Transparency limits",
+            driverControlRangeMin(driverControls, COUPLING_DRIVER_INDEX, 1.0),
+            driverControlRangeMax(driverControls, COUPLING_DRIVER_INDEX, 1.0),
+            0.0,
+            1.0,
+            drivers[COUPLING_DRIVER_INDEX],
+            1000,
+            "",
+            driverControlCycleMultiplier(driverControls, COUPLING_DRIVER_INDEX, 1),
+            driverControlCurveChoice(driverControls, COUPLING_DRIVER_INDEX, "Linear"),
+            driverControlModeChoice(driverControls, COUPLING_DRIVER_INDEX, "Oscillator"),
+            null,
+            false
+        );
+        ParameterEnvelopeControl saturation = parameterEnvelope(
+            "saturation",
+            "Saturation",
+            "Saturation limits",
+            driverControlRangeMin(driverControls, COUPLING_DRIVER_INDEX, 0.3),
+            driverControlRangeMax(driverControls, COUPLING_DRIVER_INDEX, 1.0),
+            0.0,
+            1.0,
+            drivers[COUPLING_DRIVER_INDEX],
+            1000,
+            "",
+            driverControlCycleMultiplier(driverControls, COUPLING_DRIVER_INDEX, 1),
+            driverControlCurveChoice(driverControls, COUPLING_DRIVER_INDEX, "Linear"),
+            driverControlModeChoice(driverControls, COUPLING_DRIVER_INDEX, "Oscillator"),
+            null,
+            false
+        );
+        ParameterEnvelopeControl brightness = parameterEnvelope(
+            "brightness",
+            "Brightness",
+            "Brightness limits",
+            driverControlRangeMin(driverControls, COUPLING_DRIVER_INDEX, 0.3),
+            driverControlRangeMax(driverControls, COUPLING_DRIVER_INDEX, 1.0),
+            0.0,
+            1.0,
+            drivers[COUPLING_DRIVER_INDEX],
+            1000,
+            "",
+            driverControlCycleMultiplier(driverControls, COUPLING_DRIVER_INDEX, 1),
+            driverControlCurveChoice(driverControls, COUPLING_DRIVER_INDEX, "Linear"),
+            driverControlModeChoice(driverControls, COUPLING_DRIVER_INDEX, "Oscillator"),
+            null,
+            false
+        );
+        color.body.addView(transparency.view);
+        color.body.addView(saturation.view);
+        color.body.addView(brightness.view);
+
+        FoldoutControl sizeWave = foldout("Size And Depth Wave", false);
+        page.addView(sizeWave.view);
+        ParameterEnvelopeControl size = parameterEnvelope(
+            "particle_size",
+            "Particle Size",
+            "Particle size envelope limits",
+            driverControlRangeMin(driverControls, PARTICLE_SIZE_DRIVER_INDEX, AKD_PARTICLE_SIZE_MIN),
+            driverControlRangeMax(driverControls, PARTICLE_SIZE_DRIVER_INDEX, AKD_PARTICLE_SIZE_MAX),
+            0.0,
+            0.2,
+            drivers[PARTICLE_SIZE_DRIVER_INDEX],
+            1000,
+            "",
+            driverControlCycleMultiplier(driverControls, PARTICLE_SIZE_DRIVER_INDEX, 1),
+            driverControlCurveChoice(driverControls, PARTICLE_SIZE_DRIVER_INDEX, "AKD hump"),
+            driverControlModeChoice(driverControls, PARTICLE_SIZE_DRIVER_INDEX, "Oscillator"),
+            "Use percent size",
+            true
+        );
+        privateParticleConfigParticleSize = size.liveValueSlider;
+        ParameterEnvelopeControl depthWave = parameterEnvelope(
+            "depth_wave",
+            "Depth Wave",
+            "Depth wave percent limits",
+            driverControlRangeMin(driverControls, DEPTH_WAVE_DRIVER_INDEX, DEPTH_WAVE_MIN_PERCENT),
+            driverControlRangeMax(driverControls, DEPTH_WAVE_DRIVER_INDEX, DEPTH_WAVE_MAX_PERCENT),
+            0.0,
+            0.5,
+            drivers[DEPTH_WAVE_DRIVER_INDEX],
+            1000,
+            "",
+            driverControlCycleMultiplier(driverControls, DEPTH_WAVE_DRIVER_INDEX, DEPTH_WAVE_CYCLE_MULTIPLIER),
+            driverControlCurveChoice(driverControls, DEPTH_WAVE_DRIVER_INDEX, "AKD hump"),
+            driverControlModeChoice(driverControls, DEPTH_WAVE_DRIVER_INDEX, "Oscillator"),
+            null,
+            false
+        );
+        privateParticleConfigDepthWavePercent = depthWave.liveValueSlider;
+        sizeWave.body.addView(size.view);
+        sizeWave.body.addView(depthWave.view);
+
+        FoldoutControl spinOrbit = foldout("Spin And Orbit", false);
+        page.addView(spinOrbit.view);
+        ParameterEnvelopeControl spin = parameterEnvelope(
+            "spin_speed",
+            "Spin Speed",
+            "Spin speed limits",
+            driverControlRangeMin(driverControls, SPIN_SPEED_DRIVER_INDEX, AKD_SPIN_SPEED_MIN),
+            driverControlRangeMax(driverControls, SPIN_SPEED_DRIVER_INDEX, AKD_SPIN_SPEED_MAX),
+            0.0,
+            1.0,
+            drivers[SPIN_SPEED_DRIVER_INDEX],
+            1000,
+            "",
+            driverControlCycleMultiplier(driverControls, SPIN_SPEED_DRIVER_INDEX, 0),
+            driverControlCurveChoice(driverControls, SPIN_SPEED_DRIVER_INDEX, "AKD hump"),
+            driverControlModeChoice(driverControls, SPIN_SPEED_DRIVER_INDEX, "Oscillator"),
+            "Dual spin animation",
+            true
+        );
+        privateParticleConfigSpinSpeed = spin.liveValueSlider;
+        ParameterEnvelopeControl orbitRadius = parameterEnvelope(
+            "orbit_radius",
+            "Orbit Radius",
+            "Orbit radius multiplier limits",
+            driverControlRangeMin(driverControls, ORBIT_RADIUS_DRIVER_INDEX, AKD_ORBIT_RADIUS_MIN),
+            driverControlRangeMax(driverControls, ORBIT_RADIUS_DRIVER_INDEX, AKD_ORBIT_RADIUS_MAX),
+            0.0,
+            2.0,
+            drivers[ORBIT_RADIUS_DRIVER_INDEX],
+            1000,
+            "",
+            driverControlCycleMultiplier(driverControls, ORBIT_RADIUS_DRIVER_INDEX, 1),
+            driverControlCurveChoice(driverControls, ORBIT_RADIUS_DRIVER_INDEX, "AKD hump"),
+            driverControlModeChoice(driverControls, ORBIT_RADIUS_DRIVER_INDEX, "Oscillator"),
+            null,
+            false
+        );
+        privateParticleConfigOrbitRadius = orbitRadius.liveValueSlider;
+        ParameterEnvelopeControl orbitAngle = parameterEnvelope(
+            "orbit_angle",
+            "Orbit Angle",
+            "Orbit angle limits",
+            driverControlRangeMin(driverControls, ORBIT_ANGLE_DRIVER_INDEX, AKD_ORBIT_ANGLE_MIN),
+            driverControlRangeMax(driverControls, ORBIT_ANGLE_DRIVER_INDEX, AKD_ORBIT_ANGLE_MAX),
+            0.0,
+            AKD_ORBIT_ANGLE_MAX,
+            drivers[ORBIT_ANGLE_DRIVER_INDEX],
+            1000,
+            " rad",
+            driverControlCycleMultiplier(driverControls, ORBIT_ANGLE_DRIVER_INDEX, 1),
+            driverControlCurveChoice(driverControls, ORBIT_ANGLE_DRIVER_INDEX, "Linear"),
+            driverControlModeChoice(driverControls, ORBIT_ANGLE_DRIVER_INDEX, "Oscillator"),
+            null,
+            false
+        );
+        privateParticleConfigOrbitAngle = orbitAngle.liveValueSlider;
+        ParameterEnvelopeControl animation = parameterEnvelope(
+            "animation_phase",
+            "Animation Phase",
+            "Animation phase limits",
+            driverControlRangeMin(driverControls, ANIMATION_FRAME_DRIVER_INDEX, 0.0),
+            driverControlRangeMax(driverControls, ANIMATION_FRAME_DRIVER_INDEX, 1.0),
+            0.0,
+            1.0,
+            drivers[ANIMATION_FRAME_DRIVER_INDEX],
+            1000,
+            "",
+            driverControlCycleMultiplier(driverControls, ANIMATION_FRAME_DRIVER_INDEX, 1),
+            driverControlCurveChoice(driverControls, ANIMATION_FRAME_DRIVER_INDEX, "AKD hump"),
+            driverControlModeChoice(driverControls, ANIMATION_FRAME_DRIVER_INDEX, "Oscillator"),
+            null,
+            false
+        );
+        privateParticleConfigAnimationFrame = animation.liveValueSlider;
+        spinOrbit.body.addView(spin.view);
+        spinOrbit.body.addView(orbitRadius.view);
+        spinOrbit.body.addView(orbitAngle.view);
+        spinOrbit.body.addView(animation.view);
+    }
+
+    private void buildPrivateParticleConfigTracersPage(
+        LinearLayout page,
+        JSONObject tracerStatus,
+        JSONObject transparencyStatus,
+        JSONObject colorStatus
+    ) {
+        FoldoutControl tracers = foldout("Integrated Tracers", true);
+        page.addView(tracers.view);
+        privateParticleConfigTracerDrawSlots = privateParticleConfigSlider(
+            "Tracer draw slots",
+            0.0,
+            7.0,
+            readPrivateParticleStatusTracerDouble(
+                tracerStatus,
+                "draw_slots_per_oscillator",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRACER_DRAW_SLOTS, 7.0)
+            ),
+            7,
+            "",
+            true
+        );
+        privateParticleConfigTracerLifetime = privateParticleConfigSlider(
+            "Tracer lifetime",
+            0.016,
+            0.5,
+            readPrivateParticleStatusTracerDouble(
+                tracerStatus,
+                "lifetime_seconds",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRACER_LIFETIME, 0.5)
+            ),
+            1000,
+            " s",
+            false
+        );
+        privateParticleConfigTracerCopies = privateParticleConfigSlider(
+            "Tracer copies/sec",
+            0.0,
+            14.0,
+            readPrivateParticleStatusTracerDouble(
+                tracerStatus,
+                "copies_per_second",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRACER_COPIES, 14.0)
+            ),
+            1000,
+            "",
+            false
+        );
+        tracers.body.addView(privateParticleConfigTracerDrawSlots.view);
+        tracers.body.addView(privateParticleConfigTracerLifetime.view);
+        tracers.body.addView(privateParticleConfigTracerCopies.view);
+        addReadOnlyLines(tracers.body, new String[] {
+            "Tracers are GPU-resident; draw slots gate the rendered live slots, not buffer capacity",
+            "Capacity remains 7 slots per oscillator in the AKD payload"
+        });
+
+        FoldoutControl transparency = foldout("Overdraw And Transparency", true);
+        page.addView(transparency.view);
+        privateParticleTransparencyOpacity = privateParticleConfigSlider(
+            "Transparency opacity",
+            0.0,
+            4.0,
+            readNestedPrivateParticleStatusDouble(
+                transparencyStatus,
+                "opacity",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRANSPARENCY_OPACITY, 1.0)
+            ),
+            1000,
+            "",
+            false
+        );
+        privateParticleTransparencyOutputAlphaScale = privateParticleConfigSlider(
+            "Output alpha scale",
+            0.0,
+            4.0,
+            readNestedPrivateParticleStatusDouble(
+                transparencyStatus,
+                "output_alpha_scale",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE, 1.0)
+            ),
+            1000,
+            "",
+            false
+        );
+        privateParticleTransparencyDepthSuppression = privateParticleConfigSlider(
+            "Depth suppression",
+            0.0,
+            8.0,
+            readNestedPrivateParticleStatusDouble(
+                transparencyStatus,
+                "depth_suppression_strength",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION, 0.0)
+            ),
+            1000,
+            "",
+            false
+        );
+        privateParticleTransparencyRgbAlphaCoupling = privateParticleConfigSlider(
+            "RGB alpha coupling",
+            0.0,
+            1.0,
+            readNestedPrivateParticleStatusDouble(
+                transparencyStatus,
+                "rgb_alpha_coupling",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING, 1.0)
+            ),
+            1000,
+            "",
+            false
+        );
+        privateParticleColorFacingAttenuation = privateParticleConfigSlider(
+            "Facing attenuation",
+            0.0,
+            1.0,
+            readNestedPrivateParticleStatusDouble(
+                colorStatus,
+                "facing_attenuation_strength",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION, 0.0)
+            ),
+            1000,
+            "",
+            false
+        );
+        transparency.body.addView(privateParticleTransparencyOpacity.view);
+        transparency.body.addView(privateParticleTransparencyOutputAlphaScale.view);
+        transparency.body.addView(privateParticleTransparencyDepthSuppression.view);
+        transparency.body.addView(privateParticleTransparencyRgbAlphaCoupling.view);
+        transparency.body.addView(privateParticleColorFacingAttenuation.view);
+        addReadOnlyLines(transparency.body, new String[] {
+            "Billboard footprint: DiscPolygonNoClip, 12 segments",
+            "Blend mode: LegacyAdditiveMultiply",
+            "Composition: parametric RGB/alpha coupling",
+            "Sort mode: MainAndCpuTracersBackToFront; implementation: GPU/private renderer path"
+        });
+    }
+
+    private void buildPrivateParticleConfigBackendPage(LinearLayout page) {
+        FoldoutControl shader = foldout("Pure Shader Geometry", false);
+        page.addView(shader.view);
+        addReadOnlyLines(shader.body, new String[] {
+            "Payload mode: BakedTextureArrayPhase01 in AKD Sussex defaults",
+            "Main geometry: MorphedRing; pacer geometry: TriangleFlip",
+            "Edge width 0.015, outer feather 0.06, peak gain 1.4",
+            "Ring radius 0.32, thickness 0.03, dual offset 180 degrees",
+            "These fields require payload/shader profile rebuilds"
+        });
+
+        FoldoutControl baked = foldout("Baked Animation", false);
+        page.addView(baked.view);
+        addReadOnlyLines(baked.body, new String[] {
+            "Auto bake on start: true",
+            "Frame count 64, resolution 128, frames per update 4",
+            "Premultiply alpha: true; persisted array: true",
+            "Pacer baked texture source: DedicatedPacerArray",
+            "Texture arrays are binary payload data, not panel hotload scalars"
+        });
+
+        FoldoutControl rebuild = foldout("Profile Rebuild Boundaries", true);
+        page.addView(rebuild.view);
+        addReadOnlyLines(rebuild.body, new String[] {
+            "Particle count, dimensions, topology, small-world allocation, curve tables, gradients, and texture arrays need a private payload rebuild",
+            "Driver policy selection needs a visual-driver activation profile rebuild",
+            "Current live lanes: sphere radius, visual scale, driver0-driver7, tracers, transparency, and facing attenuation",
+            "Best headset profile for this panel: all visual drivers activated"
+        });
+    }
+
+    private View buildPrivateParticleConfigActionRow() {
+        LinearLayout actionBlock = new LinearLayout(this);
+        actionBlock.setOrientation(LinearLayout.VERTICAL);
+        actionBlock.setPadding(0, dp(14), 0, dp(10));
+
+        Button refresh = button("Refresh");
+        refresh.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                refreshPrivateParticleConfigFromStatus(true);
+            }
+        });
+        Button applyLive = button("Apply Live");
+        applyLive.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                submitLivePrivateParticleConfig(true);
             }
         });
         Button close = button("Close");
@@ -1409,6 +2286,29 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
+    private void schedulePrivateParticleConfigApplyFromControl() {
+        if (liveAutoApply == null || !liveAutoApply.isChecked()) {
+            return;
+        }
+        cancelPendingPrivateParticleConfigApply();
+        pendingPrivateParticleConfigApply = new Runnable() {
+            @Override
+            public void run() {
+                pendingPrivateParticleConfigApply = null;
+                submitLivePrivateParticleConfig(false);
+            }
+        };
+        liveApplyHandler.postDelayed(pendingPrivateParticleConfigApply, 180);
+        setStatusText("AKD config update pending.");
+    }
+
+    private void cancelPendingPrivateParticleConfigApply() {
+        if (liveApplyHandler != null && pendingPrivateParticleConfigApply != null) {
+            liveApplyHandler.removeCallbacks(pendingPrivateParticleConfigApply);
+            pendingPrivateParticleConfigApply = null;
+        }
+    }
+
     private void submitLivePrivateParticleDynamics(boolean userVisible) {
         try {
             if (!nativeBridgeLoaded) {
@@ -1468,6 +2368,36 @@ public final class ControlPanelActivity extends Activity {
                 updateStatus("Depth wave failed: " + error.getMessage());
             } else {
                 setStatusText("Depth wave update failed: " + error.getMessage());
+            }
+        }
+    }
+
+    private void submitLivePrivateParticleConfig(boolean userVisible) {
+        try {
+            if (!nativeBridgeLoaded) {
+                throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
+            }
+            JSONObject candidate = buildPrivateParticleConfigJson();
+            String responseText = nativeSubmitLivePrivateParticleDynamics(candidate.toString());
+            JSONObject response = new JSONObject(responseText);
+            String responseStatus = response.optString("status", "unknown");
+            if (!"queued".equals(responseStatus)) {
+                throw new IllegalStateException(responseText);
+            }
+            String message = "AKD config queued: " + privateParticleConfigSummary() + ".";
+            if (response.optBoolean("overwrote_pending", false)) {
+                message = "AKD config queued; older pending edit was replaced.";
+            }
+            if (userVisible) {
+                updateStatus(message);
+            } else {
+                setStatusText(message);
+            }
+        } catch (Exception error) {
+            if (userVisible) {
+                updateStatus("AKD config failed: " + error.getMessage());
+            } else {
+                setStatusText("AKD config update failed: " + error.getMessage());
             }
         }
     }
@@ -1534,6 +2464,110 @@ public final class ControlPanelActivity extends Activity {
         );
     }
 
+    private JSONObject buildPrivateParticleConfigJson() throws Exception {
+        JSONObject statusJson = readPrivateParticleDynamicsStatusJson();
+        JSONObject privateParticles = privateParticleStatusBody(statusJson);
+        double[] drivers = privateParticleDriverValuesFromStatusOrProperties(privateParticles);
+        drivers[SPHERE_DEFORMATION_DRIVER_INDEX] = privateParticleConfigDeformationDriver.value();
+        drivers[COUPLING_DRIVER_INDEX] = privateParticleConfigCouplingDriver.value();
+        drivers[PARTICLE_SIZE_DRIVER_INDEX] = privateParticleConfigParticleSize.value();
+        drivers[DEPTH_WAVE_DRIVER_INDEX] = privateParticleConfigDepthWavePercent.value();
+        drivers[SPIN_SPEED_DRIVER_INDEX] = privateParticleConfigSpinSpeed.value();
+        drivers[ORBIT_RADIUS_DRIVER_INDEX] = privateParticleConfigOrbitRadius.value();
+        drivers[ORBIT_ANGLE_DRIVER_INDEX] = privateParticleConfigOrbitAngle.value();
+        drivers[ANIMATION_FRAME_DRIVER_INDEX] = privateParticleConfigAnimationFrame.value();
+        JSONObject candidate = buildPrivateParticleDynamicsJsonFromValues(
+            "same-apk-private-particle-akd-config",
+            "akd_config_panel",
+            privateParticleConfigVisualScale.value(),
+            privateParticleConfigWorldAnchorScale.value(),
+            drivers,
+            privateParticleConfigTracerDrawSlots.intValue(),
+            privateParticleConfigTracerLifetime.value(),
+            privateParticleConfigTracerCopies.value(),
+            privateParticleTransparencyOpacity.value(),
+            privateParticleTransparencyOutputAlphaScale.value(),
+            privateParticleTransparencyDepthSuppression.value(),
+            privateParticleTransparencyRgbAlphaCoupling.value(),
+            privateParticleColorFacingAttenuation.value()
+        );
+        JSONObject privateParticlesJson = candidate.optJSONObject("private_particles");
+        if (privateParticlesJson != null) {
+            privateParticlesJson.put("driver_controls", buildPrivateParticleDriverControlsJson());
+            privateParticlesJson.put("akd_config", buildPrivateParticleConfigMetadataJson());
+        }
+        return candidate;
+    }
+
+    private JSONArray buildPrivateParticleDriverControlsJson() throws Exception {
+        JSONArray controls = new JSONArray();
+        controls.put(driverControlDirect(
+            SPHERE_DEFORMATION_DRIVER_INDEX,
+            privateParticleConfigDeformationDriver.value()
+        ));
+        controls.put(driverControlDirect(
+            COUPLING_DRIVER_INDEX,
+            privateParticleConfigCouplingDriver.value()
+        ));
+        controls.put(driverControlForParameter(PARTICLE_SIZE_DRIVER_INDEX, "particle_size"));
+        controls.put(driverControlForParameter(DEPTH_WAVE_DRIVER_INDEX, "depth_wave"));
+        controls.put(driverControlForParameter(SPIN_SPEED_DRIVER_INDEX, "spin_speed"));
+        controls.put(driverControlForParameter(ORBIT_RADIUS_DRIVER_INDEX, "orbit_radius"));
+        controls.put(driverControlForParameter(ORBIT_ANGLE_DRIVER_INDEX, "orbit_angle"));
+        controls.put(driverControlForParameter(ANIMATION_FRAME_DRIVER_INDEX, "animation_phase"));
+        return controls;
+    }
+
+    private JSONObject driverControlDirect(int targetSlot, double value01) throws Exception {
+        return new JSONObject()
+            .put("target_slot", targetSlot)
+            .put("mode", "direct")
+            .put("mode_code", PRIVATE_PARTICLE_DRIVER_CONTROL_DIRECT)
+            .put("source_slot", targetSlot)
+            .put("curve", "linear")
+            .put("curve_code", PRIVATE_PARTICLE_CURVE_LINEAR)
+            .put("range_min", 0.0)
+            .put("range_max", 1.0)
+            .put("cycle_multiplier", 0.0)
+            .put("value01", clamp(value01, 0.0, 1.0));
+    }
+
+    private JSONObject driverControlForParameter(int targetSlot, String parameterId) throws Exception {
+        ParameterEnvelopeControl control = privateParticleConfigParameter(parameterId);
+        if (control == null) {
+            return driverControlDirect(targetSlot, 0.0);
+        }
+        int sourceSlot = control.driverSourceSlotIndex();
+        if (sourceSlot < 0) {
+            sourceSlot = targetSlot;
+        }
+        return new JSONObject()
+            .put("target_slot", targetSlot)
+            .put("mode", control.driverControlModeLabel())
+            .put("mode_code", control.driverControlModeCode())
+            .put("source_slot", sourceSlot)
+            .put("curve", control.curveControlLabel())
+            .put("curve_code", control.curveCode())
+            .put("range_min", control.minValue())
+            .put("range_max", control.maxValue())
+            .put("cycle_multiplier", control.cycleMultiplier())
+            .put("value01", clamp(control.liveValue(), 0.0, 1.0));
+    }
+
+    private JSONObject buildPrivateParticleConfigMetadataJson() throws Exception {
+        JSONArray parameters = new JSONArray();
+        for (int i = 0; i < privateParticleConfigParameterControls.size(); i++) {
+            parameters.put(privateParticleConfigParameterControls.get(i).toJson());
+        }
+        return new JSONObject()
+            .put("schema", "rusty.quest.native_renderer.private_particle_akd_config_panel.v1")
+            .put("parameter_defaults_source", "akd-pe-oscillator-config")
+            .put("driver_mode_default", "Oscillator")
+            .put("curve_choices", new JSONArray(PRIVATE_PARTICLE_CURVE_CHOICES))
+            .put("driver_mode_choices", new JSONArray(PRIVATE_PARTICLE_DRIVER_MODE_CHOICES))
+            .put("parameters", parameters);
+    }
+
     private JSONObject buildPrivateParticleDynamicsJsonFromValues(
         String profileId,
         String surface,
@@ -1543,6 +2577,66 @@ public final class ControlPanelActivity extends Activity {
         int tracerDrawSlotsPerOscillator,
         double tracerLifetimeSeconds,
         double tracerCopiesPerSecond
+    ) throws Exception {
+        JSONObject statusJson = readPrivateParticleDynamicsStatusJson();
+        JSONObject privateParticles = privateParticleStatusBody(statusJson);
+        JSONObject transparencyStatus = privateParticles == null
+            ? null
+            : privateParticles.optJSONObject("transparency");
+        JSONObject colorStatus = privateParticles == null
+            ? null
+            : privateParticles.optJSONObject("color");
+        return buildPrivateParticleDynamicsJsonFromValues(
+            profileId,
+            surface,
+            visualScale,
+            worldAnchorScale,
+            driverValues01,
+            tracerDrawSlotsPerOscillator,
+            tracerLifetimeSeconds,
+            tracerCopiesPerSecond,
+            readNestedPrivateParticleStatusDouble(
+                transparencyStatus,
+                "opacity",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRANSPARENCY_OPACITY, 1.0)
+            ),
+            readNestedPrivateParticleStatusDouble(
+                transparencyStatus,
+                "output_alpha_scale",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE, 1.0)
+            ),
+            readNestedPrivateParticleStatusDouble(
+                transparencyStatus,
+                "depth_suppression_strength",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION, 0.0)
+            ),
+            readNestedPrivateParticleStatusDouble(
+                transparencyStatus,
+                "rgb_alpha_coupling",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING, 1.0)
+            ),
+            readNestedPrivateParticleStatusDouble(
+                colorStatus,
+                "facing_attenuation_strength",
+                readDoubleProperty(PROP_PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION, 0.0)
+            )
+        );
+    }
+
+    private JSONObject buildPrivateParticleDynamicsJsonFromValues(
+        String profileId,
+        String surface,
+        double visualScale,
+        double worldAnchorScale,
+        double[] driverValues01,
+        int tracerDrawSlotsPerOscillator,
+        double tracerLifetimeSeconds,
+        double tracerCopiesPerSecond,
+        double transparencyOpacity,
+        double transparencyOutputAlphaScale,
+        double transparencyDepthSuppressionStrength,
+        double transparencyRgbAlphaCoupling,
+        double colorFacingAttenuationStrength
     ) throws Exception {
         JSONObject source = new JSONObject()
             .put("surface", surface)
@@ -1555,11 +2649,20 @@ public final class ControlPanelActivity extends Activity {
             .put("draw_slots_per_oscillator", tracerDrawSlotsPerOscillator)
             .put("lifetime_seconds", tracerLifetimeSeconds)
             .put("copies_per_second", tracerCopiesPerSecond);
+        JSONObject transparency = new JSONObject()
+            .put("opacity", transparencyOpacity)
+            .put("output_alpha_scale", transparencyOutputAlphaScale)
+            .put("depth_suppression_strength", transparencyDepthSuppressionStrength)
+            .put("rgb_alpha_coupling", transparencyRgbAlphaCoupling);
+        JSONObject color = new JSONObject()
+            .put("facing_attenuation_strength", colorFacingAttenuationStrength);
         JSONObject privateParticles = new JSONObject()
             .put("visual_scale", visualScale)
             .put("world_anchor_scale_m", worldAnchorScale)
             .put("driver_values01", drivers)
-            .put("tracer", tracer);
+            .put("tracer", tracer)
+            .put("transparency", transparency)
+            .put("color", color);
         JSONObject apply = new JSONObject()
             .put("mode", "apply-on-next-safe-frame")
             .put("expected_effective_revision", -1);
@@ -1663,6 +2766,142 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
+    private void refreshPrivateParticleConfigFromStatus(boolean userVisible) {
+        JSONObject statusJson = readPrivateParticleDynamicsStatusJson();
+        JSONObject privateParticles = privateParticleStatusBody(statusJson);
+        if (privateParticles == null) {
+            if (userVisible) {
+                updateStatus("AKD config status is not available yet.");
+            } else {
+                setStatusText("AKD config status is not available yet.");
+            }
+            return;
+        }
+        setSliderValue(
+            privateParticleConfigVisualScale,
+            readPrivateParticleStatusDouble(privateParticles, "visual_scale", privateParticleConfigVisualScale.value())
+        );
+        setSliderValue(
+            privateParticleConfigWorldAnchorScale,
+            clamp(
+                readPrivateParticleStatusDouble(
+                    privateParticles,
+                    "world_anchor_scale_m",
+                    privateParticleConfigWorldAnchorScale.value()
+                ),
+                AKD_SPHERE_RADIUS_MIN_M,
+                AKD_SPHERE_RADIUS_MAX_M
+            )
+        );
+        double[] drivers = privateParticleDriverValuesFromStatusOrProperties(privateParticles);
+        setSliderValue(privateParticleConfigDeformationDriver, drivers[SPHERE_DEFORMATION_DRIVER_INDEX]);
+        setSliderValue(privateParticleConfigCouplingDriver, drivers[COUPLING_DRIVER_INDEX]);
+        setSliderValue(
+            privateParticleConfigParticleSize,
+            drivers[PARTICLE_SIZE_DRIVER_INDEX]
+        );
+        setSliderValue(
+            privateParticleConfigDepthWavePercent,
+            drivers[DEPTH_WAVE_DRIVER_INDEX]
+        );
+        setSliderValue(
+            privateParticleConfigSpinSpeed,
+            drivers[SPIN_SPEED_DRIVER_INDEX]
+        );
+        setSliderValue(
+            privateParticleConfigOrbitRadius,
+            drivers[ORBIT_RADIUS_DRIVER_INDEX]
+        );
+        setSliderValue(
+            privateParticleConfigOrbitAngle,
+            drivers[ORBIT_ANGLE_DRIVER_INDEX]
+        );
+        setSliderValue(
+            privateParticleConfigAnimationFrame,
+            drivers[ANIMATION_FRAME_DRIVER_INDEX]
+        );
+        JSONObject tracerStatus = privateParticles.optJSONObject("tracer");
+        if (tracerStatus != null) {
+            setSliderValue(
+                privateParticleConfigTracerDrawSlots,
+                readPrivateParticleStatusTracerDouble(
+                    tracerStatus,
+                    "draw_slots_per_oscillator",
+                    privateParticleConfigTracerDrawSlots.value()
+                )
+            );
+            setSliderValue(
+                privateParticleConfigTracerLifetime,
+                readPrivateParticleStatusTracerDouble(
+                    tracerStatus,
+                    "lifetime_seconds",
+                    privateParticleConfigTracerLifetime.value()
+                )
+            );
+            setSliderValue(
+                privateParticleConfigTracerCopies,
+                readPrivateParticleStatusTracerDouble(
+                    tracerStatus,
+                    "copies_per_second",
+                    privateParticleConfigTracerCopies.value()
+                )
+            );
+        }
+        JSONObject transparencyStatus = privateParticles.optJSONObject("transparency");
+        if (transparencyStatus != null) {
+            setSliderValue(
+                privateParticleTransparencyOpacity,
+                readNestedPrivateParticleStatusDouble(
+                    transparencyStatus,
+                    "opacity",
+                    privateParticleTransparencyOpacity.value()
+                )
+            );
+            setSliderValue(
+                privateParticleTransparencyOutputAlphaScale,
+                readNestedPrivateParticleStatusDouble(
+                    transparencyStatus,
+                    "output_alpha_scale",
+                    privateParticleTransparencyOutputAlphaScale.value()
+                )
+            );
+            setSliderValue(
+                privateParticleTransparencyDepthSuppression,
+                readNestedPrivateParticleStatusDouble(
+                    transparencyStatus,
+                    "depth_suppression_strength",
+                    privateParticleTransparencyDepthSuppression.value()
+                )
+            );
+            setSliderValue(
+                privateParticleTransparencyRgbAlphaCoupling,
+                readNestedPrivateParticleStatusDouble(
+                    transparencyStatus,
+                    "rgb_alpha_coupling",
+                    privateParticleTransparencyRgbAlphaCoupling.value()
+                )
+            );
+        }
+        JSONObject colorStatus = privateParticles.optJSONObject("color");
+        if (colorStatus != null) {
+            setSliderValue(
+                privateParticleColorFacingAttenuation,
+                readNestedPrivateParticleStatusDouble(
+                    colorStatus,
+                    "facing_attenuation_strength",
+                    privateParticleColorFacingAttenuation.value()
+                )
+            );
+        }
+        updatePrivateParticleConfigResolvedLabel();
+        String message = "AKD config refreshed: " + privateParticleConfigSummary() + ".";
+        if (userVisible) {
+            updateStatus(message);
+        } else {
+            setStatusText(message);
+        }
+    }
+
     private JSONObject readPrivateParticleDynamicsStatusJson() {
         try {
             String text = readFile(PRIVATE_PARTICLE_DYNAMICS_STATUS_FILE);
@@ -1706,6 +2945,17 @@ public final class ControlPanelActivity extends Activity {
             return fallback;
         }
         return tracerStatus.optDouble(key, fallback);
+    }
+
+    private double readNestedPrivateParticleStatusDouble(
+        JSONObject nestedStatus,
+        String key,
+        double fallback
+    ) {
+        if (nestedStatus == null) {
+            return fallback;
+        }
+        return nestedStatus.optDouble(key, fallback);
     }
 
     private double privateParticleDriverValueFromStatusOrProperty(
@@ -1758,6 +3008,30 @@ public final class ControlPanelActivity extends Activity {
         return DEPTH_WAVE_MIN_PERCENT + curveOutput * (DEPTH_WAVE_MAX_PERCENT - DEPTH_WAVE_MIN_PERCENT);
     }
 
+    private double driverValue01ForHumpMappedValue(double value, double min, double max) {
+        if (Math.abs(max - min) <= 0.000001) {
+            return 0.0;
+        }
+        double target01 = (clamp(value, min, max) - min) / (max - min);
+        return firstRisingBranchInputForAkdHump(target01);
+    }
+
+    private double humpMappedValueForDriver(double value01, double min, double max) {
+        double curveOutput = sampleAkdHump(clamp(value01, 0.0, 1.0));
+        return min + curveOutput * (max - min);
+    }
+
+    private double driverValue01ForLinearMappedValue(double value, double min, double max) {
+        if (Math.abs(max - min) <= 0.000001) {
+            return 0.0;
+        }
+        return (clamp(value, min, max) - min) / (max - min);
+    }
+
+    private double linearMappedValueForDriver(double value01, double min, double max) {
+        return min + clamp(value01, 0.0, 1.0) * (max - min);
+    }
+
     private double firstRisingBranchInputForAkdHump(double requestedOutput01) {
         double target = clamp(requestedOutput01, 0.0, 1.0);
         int peakIndex = 0;
@@ -1793,6 +3067,208 @@ public final class ControlPanelActivity extends Activity {
         return Math.max(min, Math.min(max, value));
     }
 
+    private ParameterEnvelopeControl privateParticleConfigParameter(String id) {
+        for (int i = 0; i < privateParticleConfigParameterControls.size(); i++) {
+            ParameterEnvelopeControl control = privateParticleConfigParameterControls.get(i);
+            if (control.id.equals(id)) {
+                return control;
+            }
+        }
+        return null;
+    }
+
+    private JSONObject driverControlForSlot(JSONArray driverControls, int targetSlot) {
+        if (driverControls == null) {
+            return null;
+        }
+        for (int i = 0; i < driverControls.length(); i++) {
+            JSONObject control = driverControls.optJSONObject(i);
+            if (control == null) {
+                continue;
+            }
+            if (control.optInt("target_slot", i) == targetSlot) {
+                return control;
+            }
+        }
+        return null;
+    }
+
+    private double driverControlRangeMin(JSONArray driverControls, int targetSlot, double fallback) {
+        JSONObject control = driverControlForSlot(driverControls, targetSlot);
+        return control == null || driverControlIsDirect(control)
+            ? fallback
+            : control.optDouble("range_min", fallback);
+    }
+
+    private double driverControlRangeMax(JSONArray driverControls, int targetSlot, double fallback) {
+        JSONObject control = driverControlForSlot(driverControls, targetSlot);
+        return control == null || driverControlIsDirect(control)
+            ? fallback
+            : control.optDouble("range_max", fallback);
+    }
+
+    private int driverControlCycleMultiplier(JSONArray driverControls, int targetSlot, int fallback) {
+        JSONObject control = driverControlForSlot(driverControls, targetSlot);
+        if (control == null || driverControlIsDirect(control)) {
+            return fallback;
+        }
+        return (int) Math.round(clamp(control.optDouble("cycle_multiplier", fallback), 0.0, 10.0));
+    }
+
+    private String driverControlCurveChoice(JSONArray driverControls, int targetSlot, String fallback) {
+        JSONObject control = driverControlForSlot(driverControls, targetSlot);
+        if (control == null || driverControlIsDirect(control)) {
+            return fallback;
+        }
+        int curveCode = control.optInt("curve_code", -1);
+        if (curveCode >= 0) {
+            return curveChoiceForCode(curveCode, fallback);
+        }
+        String curve = control.optString("curve", "").trim().toLowerCase(Locale.US);
+        if ("akd hump".equals(curve) || "akd-hump".equals(curve) || "hump".equals(curve)) {
+            return "AKD hump";
+        }
+        if ("smoothstep".equals(curve)) {
+            return "Smoothstep";
+        }
+        if ("reverse linear".equals(curve) || "reverse-linear".equals(curve)) {
+            return "Reverse linear";
+        }
+        if ("hold low".equals(curve) || "hold-low".equals(curve)) {
+            return "Hold low";
+        }
+        if ("hold high".equals(curve) || "hold-high".equals(curve)) {
+            return "Hold high";
+        }
+        if ("linear".equals(curve)) {
+            return "Linear";
+        }
+        return fallback;
+    }
+
+    private String curveChoiceForCode(int curveCode, String fallback) {
+        switch (curveCode) {
+            case PRIVATE_PARTICLE_CURVE_LINEAR:
+                return "Linear";
+            case PRIVATE_PARTICLE_CURVE_AKD_HUMP:
+                return "AKD hump";
+            case PRIVATE_PARTICLE_CURVE_SMOOTHSTEP:
+                return "Smoothstep";
+            case PRIVATE_PARTICLE_CURVE_REVERSE_LINEAR:
+                return "Reverse linear";
+            case PRIVATE_PARTICLE_CURVE_HOLD_LOW:
+                return "Hold low";
+            case PRIVATE_PARTICLE_CURVE_HOLD_HIGH:
+                return "Hold high";
+            default:
+                return fallback;
+        }
+    }
+
+    private String driverControlModeChoice(JSONArray driverControls, int targetSlot, String fallback) {
+        JSONObject control = driverControlForSlot(driverControls, targetSlot);
+        if (control == null) {
+            return fallback;
+        }
+        int modeCode = control.optInt("mode_code", -1);
+        if (modeCode == PRIVATE_PARTICLE_DRIVER_CONTROL_MANUAL) {
+            return PRIVATE_PARTICLE_DRIVER_MODE_MANUAL;
+        }
+        if (modeCode == PRIVATE_PARTICLE_DRIVER_CONTROL_INPUT_SLOT) {
+            return driverModeChoiceForInputSlot(control.optInt("source_slot", targetSlot));
+        }
+        if (modeCode == PRIVATE_PARTICLE_DRIVER_CONTROL_OSCILLATOR) {
+            return "Oscillator";
+        }
+        String mode = control.optString("mode", "").trim().toLowerCase(Locale.US);
+        if ("manual".equals(mode)) {
+            return PRIVATE_PARTICLE_DRIVER_MODE_MANUAL;
+        }
+        if ("input-slot".equals(mode) || "input_slot".equals(mode) || "input slot".equals(mode)) {
+            return driverModeChoiceForInputSlot(control.optInt("source_slot", targetSlot));
+        }
+        if ("oscillator".equals(mode)) {
+            return "Oscillator";
+        }
+        return fallback;
+    }
+
+    private boolean driverControlIsDirect(JSONObject control) {
+        int modeCode = control.optInt("mode_code", -1);
+        if (modeCode == PRIVATE_PARTICLE_DRIVER_CONTROL_DIRECT) {
+            return true;
+        }
+        return "direct".equals(control.optString("mode", "").trim().toLowerCase(Locale.US));
+    }
+
+    private String driverModeChoiceForInputSlot(int sourceSlot) {
+        switch (sourceSlot) {
+            case 0:
+                return "Input slot 0: deformation";
+            case 1:
+                return "Input slot 1: coupling";
+            case 2:
+                return "Input slot 2: particle size";
+            case 3:
+                return "Input slot 3: depth wave";
+            case 4:
+                return "Input slot 4: spin speed";
+            case 5:
+                return "Input slot 5: orbit radius";
+            case 6:
+                return "Input slot 6: orbit angle";
+            case 7:
+                return "Input slot 7: animation";
+            default:
+                return "Oscillator";
+        }
+    }
+
+    private double configParameterMin(String id, double fallback) {
+        ParameterEnvelopeControl control = privateParticleConfigParameter(id);
+        return control == null ? fallback : control.minValue();
+    }
+
+    private double configParameterMax(String id, double fallback) {
+        ParameterEnvelopeControl control = privateParticleConfigParameter(id);
+        return control == null ? fallback : control.maxValue();
+    }
+
+    private double configParameterResolvedValue(
+        String id,
+        double sourceValue01,
+        double fallbackMin,
+        double fallbackMax
+    ) {
+        ParameterEnvelopeControl control = privateParticleConfigParameter(id);
+        double min = control == null ? fallbackMin : control.minValue();
+        double max = control == null ? fallbackMax : control.maxValue();
+        double curveOutput = control == null
+            ? clamp(sourceValue01, 0.0, 1.0)
+            : sampleConfigCurve(control.curveChoice(), sourceValue01);
+        return min + curveOutput * (max - min);
+    }
+
+    private double sampleConfigCurve(String curveChoice, double sourceValue01) {
+        double value = clamp(sourceValue01, 0.0, 1.0);
+        if ("AKD hump".equals(curveChoice)) {
+            return Math.sin(Math.PI * value);
+        }
+        if ("Smoothstep".equals(curveChoice)) {
+            return value * value * (3.0 - 2.0 * value);
+        }
+        if ("Reverse linear".equals(curveChoice)) {
+            return 1.0 - value;
+        }
+        if ("Hold low".equals(curveChoice)) {
+            return 0.0;
+        }
+        if ("Hold high".equals(curveChoice)) {
+            return 1.0;
+        }
+        return value;
+    }
+
     private void updateDepthWaveResolvedLabel() {
         if (depthWaveResolvedLabel == null || depthWaveDriverValue01 == null || depthWavePercent == null) {
             return;
@@ -1815,6 +3291,107 @@ public final class ControlPanelActivity extends Activity {
             "%.4f percent via driver3 %.3f",
             depthWavePercent.value(),
             depthWaveDriverValue01.value()
+        );
+    }
+
+    private void updatePrivateParticleConfigResolvedLabel() {
+        if (privateParticleConfigResolvedLabel == null ||
+            privateParticleConfigParticleSize == null ||
+            privateParticleConfigDepthWavePercent == null ||
+            privateParticleConfigTracerDrawSlots == null) {
+            return;
+        }
+        double resolvedSize = configParameterResolvedValue(
+            "particle_size",
+            privateParticleConfigParticleSize.value(),
+            AKD_PARTICLE_SIZE_MIN,
+            AKD_PARTICLE_SIZE_MAX
+        );
+        double resolvedDepthWave = configParameterResolvedValue(
+            "depth_wave",
+            privateParticleConfigDepthWavePercent.value(),
+            DEPTH_WAVE_MIN_PERCENT,
+            DEPTH_WAVE_MAX_PERCENT
+        );
+        double resolvedSpin = configParameterResolvedValue(
+            "spin_speed",
+            privateParticleConfigSpinSpeed.value(),
+            AKD_SPIN_SPEED_MIN,
+            AKD_SPIN_SPEED_MAX
+        );
+        double resolvedOrbitRadius = configParameterResolvedValue(
+            "orbit_radius",
+            privateParticleConfigOrbitRadius.value(),
+            AKD_ORBIT_RADIUS_MIN,
+            AKD_ORBIT_RADIUS_MAX
+        );
+        double resolvedOrbitAngle = configParameterResolvedValue(
+            "orbit_angle",
+            privateParticleConfigOrbitAngle.value(),
+            AKD_ORBIT_ANGLE_MIN,
+            AKD_ORBIT_ANGLE_MAX
+        );
+        double resolvedAnimation = configParameterResolvedValue(
+            "animation_phase",
+            privateParticleConfigAnimationFrame.value(),
+            0.0,
+            1.0
+        );
+        privateParticleConfigResolvedLabel.setText(String.format(
+            Locale.US,
+            "Resolved GPU drivers: d0 %.3f, d1 %.3f, size d2 %.3f, depth d3 %.3f, spin d4 %.3f, orbit d5 %.3f, angle d6 %.3f, anim d7 %.3f; tracers %d",
+            privateParticleConfigDeformationDriver.value(),
+            privateParticleConfigCouplingDriver.value(),
+            driverValue01ForHumpMappedValue(
+                resolvedSize,
+                AKD_PARTICLE_SIZE_MIN,
+                AKD_PARTICLE_SIZE_MAX
+            ),
+            driverValue01ForDepthWavePercent(resolvedDepthWave),
+            driverValue01ForHumpMappedValue(
+                resolvedSpin,
+                AKD_SPIN_SPEED_MIN,
+                AKD_SPIN_SPEED_MAX
+            ),
+            driverValue01ForHumpMappedValue(
+                resolvedOrbitRadius,
+                AKD_ORBIT_RADIUS_MIN,
+                AKD_ORBIT_RADIUS_MAX
+            ),
+            driverValue01ForLinearMappedValue(
+                resolvedOrbitAngle,
+                AKD_ORBIT_ANGLE_MIN,
+                AKD_ORBIT_ANGLE_MAX
+            ),
+            driverValue01ForHumpMappedValue(resolvedAnimation, 0.0, 1.0),
+            privateParticleConfigTracerDrawSlots.intValue()
+        ));
+    }
+
+    private String privateParticleConfigSummary() {
+        return String.format(
+            Locale.US,
+            "sphere %.2fm, size %.3fm, depth %.4f, orbit %.2f, alpha %.2f",
+            privateParticleConfigWorldAnchorScale.value(),
+            configParameterResolvedValue(
+                "particle_size",
+                privateParticleConfigParticleSize.value(),
+                AKD_PARTICLE_SIZE_MIN,
+                AKD_PARTICLE_SIZE_MAX
+            ),
+            configParameterResolvedValue(
+                "depth_wave",
+                privateParticleConfigDepthWavePercent.value(),
+                DEPTH_WAVE_MIN_PERCENT,
+                DEPTH_WAVE_MAX_PERCENT
+            ),
+            configParameterResolvedValue(
+                "orbit_radius",
+                privateParticleConfigOrbitRadius.value(),
+                AKD_ORBIT_RADIUS_MIN,
+                AKD_ORBIT_RADIUS_MAX
+            ),
+            privateParticleTransparencyOutputAlphaScale.value()
         );
     }
 
@@ -2336,6 +3913,10 @@ public final class ControlPanelActivity extends Activity {
         return spinner;
     }
 
+    private FoldoutControl foldout(String title, boolean expanded) {
+        return new FoldoutControl(title, expanded);
+    }
+
     private SliderControl slider(
         String title,
         double min,
@@ -2461,11 +4042,310 @@ public final class ControlPanelActivity extends Activity {
         if ("private-particle-depth-wave".equals(requested)) {
             return requested;
         }
+        if ("private-particle-config".equals(requested)) {
+            return requested;
+        }
         return "stimulus-volume";
     }
 
     private int dp(int value) {
         return (int) (value * getResources().getDisplayMetrics().density + 0.5f);
+    }
+
+    private final class FoldoutControl {
+        final LinearLayout view;
+        final LinearLayout body;
+        final Button header;
+        final String title;
+        boolean expanded;
+
+        FoldoutControl(String title, boolean expanded) {
+            this.title = title;
+            this.expanded = expanded;
+            this.view = new LinearLayout(ControlPanelActivity.this);
+            this.view.setOrientation(LinearLayout.VERTICAL);
+            this.view.setPadding(0, dp(8), 0, dp(4));
+            this.header = button("");
+            this.body = new LinearLayout(ControlPanelActivity.this);
+            this.body.setOrientation(LinearLayout.VERTICAL);
+            this.body.setPadding(dp(12), dp(4), 0, dp(4));
+            this.header.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View view) {
+                    FoldoutControl.this.expanded = !FoldoutControl.this.expanded;
+                    refresh();
+                }
+            });
+            this.view.addView(this.header);
+            this.view.addView(this.body);
+            refresh();
+        }
+
+        void refresh() {
+            header.setText((expanded ? "- " : "+ ") + title);
+            body.setVisibility(expanded ? View.VISIBLE : View.GONE);
+        }
+    }
+
+    private final class ParameterEnvelopeControl {
+        final String id;
+        final String title;
+        final String rangeLabel;
+        final FoldoutControl foldout;
+        final LinearLayout view;
+        final CheckBox option;
+        final SliderControl minSlider;
+        final SliderControl maxSlider;
+        final Spinner curveSpinner;
+        final Spinner driverModeSpinner;
+        final SliderControl cycleSlider;
+        final SliderControl liveValueSlider;
+
+        ParameterEnvelopeControl(
+            String id,
+            String title,
+            String rangeLabel,
+            double minValue,
+            double maxValue,
+            double controlMin,
+            double controlMax,
+            double liveValue,
+            int liveSteps,
+            String suffix,
+            int cycleMultiplier,
+            String curveChoice,
+            String driverModeChoice,
+            String optionLabel,
+            boolean optionDefault
+        ) {
+            this.id = id;
+            this.title = title;
+            this.rangeLabel = rangeLabel;
+            this.foldout = foldout(title, false);
+            this.view = this.foldout.view;
+            LinearLayout body = this.foldout.body;
+
+            if (optionLabel != null && optionLabel.length() > 0) {
+                this.option = checkBox(optionLabel, optionDefault);
+                this.option.setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View view) {
+                        updatePrivateParticleConfigResolvedLabel();
+                        schedulePrivateParticleConfigApplyFromControl();
+                    }
+                });
+                body.addView(this.option);
+            } else {
+                this.option = null;
+            }
+
+            double lower = Math.min(controlMin, controlMax);
+            double upper = Math.max(controlMin, controlMax);
+            double initialLower = Math.min(minValue, maxValue);
+            double initialUpper = Math.max(minValue, maxValue);
+            this.minSlider = privateParticleConfigSlider(
+                rangeLabel + " min",
+                lower,
+                upper,
+                initialLower,
+                1000,
+                suffix,
+                false
+            );
+            this.maxSlider = privateParticleConfigSlider(
+                rangeLabel + " max",
+                lower,
+                upper,
+                initialUpper,
+                1000,
+                suffix,
+                false
+            );
+            body.addView(this.minSlider.view);
+            body.addView(this.maxSlider.view);
+
+            body.addView(label("Envelope curve"));
+            this.curveSpinner = configSpinner(PRIVATE_PARTICLE_CURVE_CHOICES, curveChoice);
+            body.addView(this.curveSpinner);
+
+            body.addView(label("Driver mode"));
+            this.driverModeSpinner = spinner(
+                PRIVATE_PARTICLE_DRIVER_MODE_CHOICES,
+                indexOf(PRIVATE_PARTICLE_DRIVER_MODE_CHOICES, driverModeChoice, 0)
+            );
+            body.addView(this.driverModeSpinner);
+
+            this.cycleSlider = privateParticleConfigSlider(
+                "Cycle multiplier",
+                0.0,
+                10.0,
+                cycleMultiplier,
+                10,
+                "",
+                true
+            );
+            this.liveValueSlider = privateParticleConfigSlider(
+                "Driver value",
+                0.0,
+                1.0,
+                clamp(liveValue, 0.0, 1.0),
+                Math.max(liveSteps, 1000),
+                "",
+                false
+            );
+            body.addView(this.cycleSlider.view);
+            body.addView(this.liveValueSlider.view);
+            this.driverModeSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+                @Override
+                public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                    refreshDriverValueEditableState();
+                    if (privateParticleConfigViewBuilding) {
+                        return;
+                    }
+                    updatePrivateParticleConfigResolvedLabel();
+                    schedulePrivateParticleConfigApplyFromControl();
+                }
+
+                @Override
+                public void onNothingSelected(AdapterView<?> parent) {
+                }
+            });
+            refreshDriverValueEditableState();
+        }
+
+        double minValue() {
+            return Math.min(minSlider.value(), maxSlider.value());
+        }
+
+        double maxValue() {
+            return Math.max(minSlider.value(), maxSlider.value());
+        }
+
+        double liveValue() {
+            return liveValueSlider.value();
+        }
+
+        int cycleMultiplier() {
+            return cycleSlider.intValue();
+        }
+
+        String curveChoice() {
+            return spinnerValue(curveSpinner, "Linear");
+        }
+
+        String driverMode() {
+            return spinnerValue(driverModeSpinner, "Oscillator");
+        }
+
+        boolean driverValueEditable() {
+            return PRIVATE_PARTICLE_DRIVER_MODE_MANUAL.equals(driverMode());
+        }
+
+        int driverControlModeCode() {
+            if (PRIVATE_PARTICLE_DRIVER_MODE_MANUAL.equals(driverMode())) {
+                return PRIVATE_PARTICLE_DRIVER_CONTROL_MANUAL;
+            }
+            if (driverSourceSlotIndex() >= 0) {
+                return PRIVATE_PARTICLE_DRIVER_CONTROL_INPUT_SLOT;
+            }
+            return PRIVATE_PARTICLE_DRIVER_CONTROL_OSCILLATOR;
+        }
+
+        String driverControlModeLabel() {
+            int modeCode = driverControlModeCode();
+            if (modeCode == PRIVATE_PARTICLE_DRIVER_CONTROL_MANUAL) {
+                return "manual";
+            }
+            if (modeCode == PRIVATE_PARTICLE_DRIVER_CONTROL_INPUT_SLOT) {
+                return "input-slot";
+            }
+            return "oscillator";
+        }
+
+        int driverSourceSlotIndex() {
+            String mode = driverMode();
+            for (int i = 0; i < 8; i++) {
+                if (mode.startsWith("Input slot " + i + ":")) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        void refreshDriverValueEditableState() {
+            if (liveValueSlider != null) {
+                liveValueSlider.setInteractive(driverValueEditable());
+            }
+        }
+
+        int curveCode() {
+            String curve = curveChoice();
+            if ("AKD hump".equals(curve)) {
+                return PRIVATE_PARTICLE_CURVE_AKD_HUMP;
+            }
+            if ("Smoothstep".equals(curve)) {
+                return PRIVATE_PARTICLE_CURVE_SMOOTHSTEP;
+            }
+            if ("Reverse linear".equals(curve)) {
+                return PRIVATE_PARTICLE_CURVE_REVERSE_LINEAR;
+            }
+            if ("Hold low".equals(curve)) {
+                return PRIVATE_PARTICLE_CURVE_HOLD_LOW;
+            }
+            if ("Hold high".equals(curve)) {
+                return PRIVATE_PARTICLE_CURVE_HOLD_HIGH;
+            }
+            return PRIVATE_PARTICLE_CURVE_LINEAR;
+        }
+
+        String curveControlLabel() {
+            int curveCode = curveCode();
+            if (curveCode == PRIVATE_PARTICLE_CURVE_AKD_HUMP) {
+                return "akd-hump";
+            }
+            if (curveCode == PRIVATE_PARTICLE_CURVE_SMOOTHSTEP) {
+                return "smoothstep";
+            }
+            if (curveCode == PRIVATE_PARTICLE_CURVE_REVERSE_LINEAR) {
+                return "reverse-linear";
+            }
+            if (curveCode == PRIVATE_PARTICLE_CURVE_HOLD_LOW) {
+                return "hold-low";
+            }
+            if (curveCode == PRIVATE_PARTICLE_CURVE_HOLD_HIGH) {
+                return "hold-high";
+            }
+            return "linear";
+        }
+
+        boolean optionValue() {
+            return option != null && option.isChecked();
+        }
+
+        JSONObject toJson() throws Exception {
+            JSONObject object = new JSONObject()
+                .put("id", id)
+                .put("title", title)
+                .put("range_label", rangeLabel)
+                .put("min", minValue())
+                .put("max", maxValue())
+                .put("curve", curveChoice())
+                .put("curve_code", curveCode())
+                .put("driver_mode", driverMode())
+                .put("driver_mode_code", driverControlModeCode())
+                .put("cycle_multiplier", cycleMultiplier())
+                .put("driver_value", liveValue())
+                .put("driver_value_editable", driverValueEditable())
+                .put("live_driver_value", liveValue());
+            int sourceSlot = driverSourceSlotIndex();
+            if (sourceSlot >= 0) {
+                object.put("driver_source_slot", sourceSlot);
+            }
+            if (option != null) {
+                object.put("option_enabled", optionValue());
+            }
+            return object;
+        }
     }
 
     private final class SliderControl {
@@ -2527,6 +4407,9 @@ public final class ControlPanelActivity extends Activity {
         }
 
         double value() {
+            if (Math.abs(max - min) <= 0.000001) {
+                return min;
+            }
             return min + (max - min) * ((double) seekBar.getProgress() / (double) steps);
         }
 
@@ -2539,7 +4422,16 @@ public final class ControlPanelActivity extends Activity {
             refresh();
         }
 
+        void setInteractive(boolean enabled) {
+            seekBar.setEnabled(enabled);
+            valueLabel.setTextColor(enabled ? PANEL_FG : PANEL_MUTED);
+            view.setAlpha(enabled ? 1.0f : 0.55f);
+        }
+
         private int progressFor(double requested) {
+            if (Math.abs(max - min) <= 0.000001) {
+                return 0;
+            }
             double clamped = Math.max(min, Math.min(max, requested));
             return (int) Math.round(((clamped - min) / (max - min)) * steps);
         }
