@@ -7,9 +7,10 @@
     "apps/native-renderer-android/native/src/native_renderer_display_composite_options.rs",
     "apps/native-renderer-android/native/src/native_renderer_passthrough_style_options.rs",
     "apps/native-renderer-android/native/src/native_renderer_video_projection_options.rs",
+    "apps/native-renderer-android/native/src/environment_depth_alignment_state.rs",
     "apps/native-renderer-android/native/src/projection_target_state.rs"
   ],
-  "property_count": 166,
+  "property_count": 175,
   "properties": [
     {
       "name": "debug.rustyquest.native_renderer.camera.direct_border.opacity",
@@ -376,6 +377,169 @@
       "range": {
         "min": 320,
         "max": 4096
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.alignment.controls",
+      "family": "environment_depth",
+      "runtime_owner": "environment_depth_alignment_state",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.alignment.joystick.controls",
+      "family": "environment_depth",
+      "runtime_owner": "environment_depth_alignment_state",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.alignment.joystick.rate_uv_per_second",
+      "family": "environment_depth",
+      "runtime_owner": "environment_depth_alignment_state",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.alignment.left.offset.x.uv",
+      "family": "environment_depth",
+      "runtime_owner": "environment_depth_alignment_state",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": -1.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.alignment.left.offset.y.uv",
+      "family": "environment_depth",
+      "runtime_owner": "environment_depth_alignment_state",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": -1.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.alignment.max_offset_uv",
+      "family": "environment_depth",
+      "runtime_owner": "environment_depth_alignment_state",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.alignment.right.offset.x.uv",
+      "family": "environment_depth",
+      "runtime_owner": "environment_depth_alignment_state",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": -1.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.alignment.right.offset.y.uv",
+      "family": "environment_depth",
+      "runtime_owner": "environment_depth_alignment_state",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": -1.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.environment_depth.alignment.scale",
+      "family": "environment_depth",
+      "runtime_owner": "environment_depth_alignment_state",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.25,
+        "max": 4.0
       },
       "validators": [
         "runtime-parser",

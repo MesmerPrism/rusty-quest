@@ -6,6 +6,8 @@ param(
     [string[]]$Permissions = @(),
     [switch]$GrantMediaProjectionAppOp,
     [switch]$ResetMediaProjectionAppOp,
+    [switch]$GrantUseSceneDataAppOp,
+    [switch]$ResetUseSceneDataAppOp,
     [string]$Out = ""
 )
 
@@ -122,7 +124,13 @@ $defaultPermissions = @(
     "org.khronos.openxr.permission.OPENXR_SYSTEM"
 )
 $permissions = if ($Permissions.Count -gt 0) {
-    @($Permissions | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Sort-Object -Unique)
+    @(
+        $Permissions |
+            ForEach-Object { ([string]$_).Split(",") } |
+            ForEach-Object { ([string]$_).Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+            Sort-Object -Unique
+    )
 } else {
     $defaultPermissions
 }
@@ -138,7 +146,8 @@ $summary = [ordered]@{
     permissions = $permissions
     grant_results = @()
     media_projection_appop_results = @()
-    note = "pm grant can legitimately fail for normal or signature permissions; runtime-dangerous grants are the acceptance-critical path. PROJECT_MEDIA app-op is an ADB lab pregrant that still requires the app to call createScreenCaptureIntent and receive fresh resultData."
+    scene_data_appop_results = @()
+    note = "pm grant can legitimately fail for normal or signature permissions; runtime-dangerous grants and required app-ops are the acceptance-critical path. PROJECT_MEDIA app-op is an ADB lab pregrant that still requires the app to call createScreenCaptureIntent and receive fresh resultData. USE_SCENE_DATA is prepared for manifest-declared Meta environment-depth routes."
 }
 
 try {
@@ -170,6 +179,18 @@ try {
         $summary.media_projection_appop_results += Invoke-AdbCommand `
             -Name "appops PROJECT_MEDIA default" `
             -Arguments @("shell", "cmd", "appops", "set", $PackageName, "PROJECT_MEDIA", "default")
+    }
+
+    if ($GrantUseSceneDataAppOp) {
+        $summary.scene_data_appop_results += Invoke-AdbCommand `
+            -Name "appops USE_SCENE_DATA allow" `
+            -Arguments @("shell", "cmd", "appops", "set", $PackageName, "USE_SCENE_DATA", "allow")
+    }
+
+    if ($ResetUseSceneDataAppOp) {
+        $summary.scene_data_appop_results += Invoke-AdbCommand `
+            -Name "appops USE_SCENE_DATA default" `
+            -Arguments @("shell", "cmd", "appops", "set", $PackageName, "USE_SCENE_DATA", "default")
     }
 
     $summary.dumpsys_permission_excerpt = (Invoke-AdbCommand `

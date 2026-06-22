@@ -35,6 +35,10 @@ const PARTICLE_OUTPUT_ROWS_PER_INSTANCE: usize = 4;
 const PARTICLE_STATE_ROWS_PER_INSTANCE: usize = 2;
 const PARTICLE_DESCRIPTOR_SET_COUNT: usize = 2;
 const PRIVATE_PARTICLE_DRIVER_BANK_VEC4_ROWS: usize = PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT / 4;
+const PRIVATE_PARTICLE_DIAGNOSTIC_WORDS: usize = 16;
+const PRIVATE_PARTICLE_DIAGNOSTIC_BYTES: vk::DeviceSize =
+    (PRIVATE_PARTICLE_DIAGNOSTIC_WORDS * mem::size_of::<i32>()) as vk::DeviceSize;
+const PRIVATE_PARTICLE_DIAGNOSTIC_FIXED_POINT_SCALE: f64 = 100_000.0;
 const PRIVATE_PARTICLE_SETTINGS_POLL_INTERVAL_FRAMES: u64 = 30;
 const PRIVATE_PARTICLE_ORDERING_BACK_TO_FRONT: u32 = 0;
 const PRIVATE_PARTICLE_ORDERING_SOURCE_ORDER: u32 = 1;
@@ -292,6 +296,82 @@ fn android_property(name: &str) -> Option<String> {
 }
 
 #[derive(Clone, Copy, Debug)]
+struct PrivateParticleDiagnosticSnapshot {
+    status: &'static str,
+    particle_count: u32,
+    order: [f32; 6],
+    tracer_active_count: u32,
+    saturation_count: u32,
+    raw: [i32; PRIVATE_PARTICLE_DIAGNOSTIC_WORDS],
+}
+
+impl PrivateParticleDiagnosticSnapshot {
+    const fn unavailable() -> Self {
+        Self {
+            status: "unavailable",
+            particle_count: 0,
+            order: [0.0; 6],
+            tracer_active_count: 0,
+            saturation_count: 0,
+            raw: [0; PRIVATE_PARTICLE_DIAGNOSTIC_WORDS],
+        }
+    }
+
+    const fn pending() -> Self {
+        Self {
+            status: "pending",
+            particle_count: 0,
+            order: [0.0; 6],
+            tracer_active_count: 0,
+            saturation_count: 0,
+            raw: [0; PRIVATE_PARTICLE_DIAGNOSTIC_WORDS],
+        }
+    }
+
+    fn from_raw(raw: [i32; PRIVATE_PARTICLE_DIAGNOSTIC_WORDS]) -> Self {
+        let particle_count = raw[0].max(0) as u32;
+        let denominator =
+            (particle_count.max(1) as f64) * PRIVATE_PARTICLE_DIAGNOSTIC_FIXED_POINT_SCALE;
+        let mut order = [0.0_f32; 6];
+        for dim in 0..6 {
+            let cos_sum = raw[1 + dim * 2] as f64;
+            let sin_sum = raw[2 + dim * 2] as f64;
+            order[dim] = ((cos_sum * cos_sum + sin_sum * sin_sum).sqrt() / denominator)
+                .clamp(0.0, 1.0) as f32;
+        }
+        Self {
+            status: "readback",
+            particle_count,
+            order,
+            tracer_active_count: raw[13].max(0) as u32,
+            saturation_count: raw[14].max(0) as u32,
+            raw,
+        }
+    }
+
+    fn marker_fields(self) -> String {
+        format!(
+            "privateParticleDiagnosticReadbackStatus={} privateParticleDiagnosticStorageBinding=9 privateParticleDiagnosticWords={} privateParticleDiagnosticFixedPointScale={} privateParticleDiagnosticCpuFullBufferReadback=false privateParticleDiagnosticParticleCount={} privateParticleDiagnosticOrderDim0={:.4} privateParticleDiagnosticOrderDim1={:.4} privateParticleDiagnosticOrderDim2={:.4} privateParticleDiagnosticOrderDim3={:.4} privateParticleDiagnosticOrderDim4={:.4} privateParticleDiagnosticOrderDim5={:.4} privateParticleDiagnosticTracerActiveCount={} privateParticleDiagnosticSaturationCount={} privateParticleDiagnosticRawParticleCount={} privateParticleDiagnosticRawOrderDim0Cos={} privateParticleDiagnosticRawOrderDim0Sin={}",
+            self.status,
+            PRIVATE_PARTICLE_DIAGNOSTIC_WORDS,
+            PRIVATE_PARTICLE_DIAGNOSTIC_FIXED_POINT_SCALE as u32,
+            self.particle_count,
+            self.order[0],
+            self.order[1],
+            self.order[2],
+            self.order[3],
+            self.order[4],
+            self.order[5],
+            self.tracer_active_count,
+            self.saturation_count,
+            self.raw[0],
+            self.raw[1],
+            self.raw[2],
+        )
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
 pub(crate) struct GpuPrivateParticleFrameStats {
     pub(crate) ready: bool,
     pub(crate) visible: bool,
@@ -309,6 +389,7 @@ pub(crate) struct GpuPrivateParticleFrameStats {
     pub(crate) sort_capacity: u32,
     runtime_settings: PrivateParticleRuntimeSettings,
     tracer_draw_slots_capacity: u32,
+    diagnostic_snapshot: PrivateParticleDiagnosticSnapshot,
 }
 
 impl GpuPrivateParticleFrameStats {
@@ -318,7 +399,7 @@ impl GpuPrivateParticleFrameStats {
 
     fn marker_fields(self) -> String {
         format!(
-            "privateParticleReady={} privateParticleVisible={} privateParticlePayloadLinked={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleOutputAbi=four-vec4-billboard-rows privateParticleStatePingPong={} privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} {} privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident={} privateParticleMaskTextureGpuResident={}",
+            "privateParticleReady={} privateParticleVisible={} privateParticlePayloadLinked={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleOutputAbi=four-vec4-billboard-rows privateParticleStatePingPong={} privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} {} privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident={} privateParticleMaskTextureGpuResident={}",
             self.ready,
             self.visible,
             PRIVATE_PARTICLE_PAYLOAD_LINKED,
@@ -352,6 +433,7 @@ impl GpuPrivateParticleFrameStats {
             self.sort_input_count,
             self.sort_count,
             self.sort_capacity,
+            self.diagnostic_snapshot.marker_fields(),
             PRIVATE_PARTICLE_MASK_TEXTURE_LINKED,
             crate::sanitize(PRIVATE_PARTICLE_MASK_TEXTURE_MODE),
             PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH,
@@ -418,6 +500,7 @@ impl Default for GpuPrivateParticleFrameStats {
             sort_capacity: 0,
             runtime_settings: PrivateParticleRuntimeSettings::from_generated_defaults(),
             tracer_draw_slots_capacity: 0,
+            diagnostic_snapshot: PrivateParticleDiagnosticSnapshot::unavailable(),
         }
     }
 }
@@ -438,6 +521,9 @@ pub(crate) struct GpuPrivateParticleRenderer {
     aux0_buffer: OwnedBuffer,
     driver_bank_buffer: OwnedBuffer,
     driver_bank_uploaded_values01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT],
+    diagnostic_buffers: [OwnedBuffer; PARTICLE_DESCRIPTOR_SET_COUNT],
+    diagnostic_dispatched: [bool; PARTICLE_DESCRIPTOR_SET_COUNT],
+    last_diagnostic_snapshot: PrivateParticleDiagnosticSnapshot,
     mask_texture: OwnedMaskTexture,
     particle_count: u32,
     tracer_max_count: u32,
@@ -650,6 +736,58 @@ impl GpuPrivateParticleRenderer {
                 return Err(error);
             }
         };
+        let diagnostic_buffer_a = match OwnedBuffer::new(
+            device,
+            memory_properties,
+            PRIVATE_PARTICLE_DIAGNOSTIC_BYTES,
+            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            "generic private particle diagnostic readback ping",
+        ) {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                destroy_buffers_mask_and_sort(
+                    device,
+                    &position_buffer,
+                    &normal_buffer,
+                    &particle_output_buffer,
+                    &effect_state_buffer_a,
+                    &effect_state_buffer_b,
+                    &aux0_buffer,
+                    &driver_bank_buffer,
+                    &mask_texture,
+                    &particle_sort_buffer,
+                );
+                return Err(error);
+            }
+        };
+        let diagnostic_buffer_b = match OwnedBuffer::new(
+            device,
+            memory_properties,
+            PRIVATE_PARTICLE_DIAGNOSTIC_BYTES,
+            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+            "generic private particle diagnostic readback pong",
+        ) {
+            Ok(buffer) => buffer,
+            Err(error) => {
+                diagnostic_buffer_a.destroy(device);
+                destroy_buffers_mask_and_sort(
+                    device,
+                    &position_buffer,
+                    &normal_buffer,
+                    &particle_output_buffer,
+                    &effect_state_buffer_a,
+                    &effect_state_buffer_b,
+                    &aux0_buffer,
+                    &driver_bank_buffer,
+                    &mask_texture,
+                    &particle_sort_buffer,
+                );
+                return Err(error);
+            }
+        };
+        let diagnostic_buffers = [diagnostic_buffer_a, diagnostic_buffer_b];
 
         let bindings = [
             storage_binding(0, vk::ShaderStageFlags::COMPUTE),
@@ -667,6 +805,7 @@ impl GpuPrivateParticleRenderer {
                 vk::ShaderStageFlags::COMPUTE | vk::ShaderStageFlags::VERTEX,
             ),
             storage_binding(8, vk::ShaderStageFlags::COMPUTE),
+            storage_binding(9, vk::ShaderStageFlags::COMPUTE),
         ];
         let descriptor_set_layout = match device.create_descriptor_set_layout(
             &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
@@ -674,7 +813,7 @@ impl GpuPrivateParticleRenderer {
         ) {
             Ok(layout) => layout,
             Err(error) => {
-                destroy_buffers_mask_and_sort(
+                destroy_buffers_mask_sort_and_diagnostics(
                     device,
                     &position_buffer,
                     &normal_buffer,
@@ -685,6 +824,7 @@ impl GpuPrivateParticleRenderer {
                     &driver_bank_buffer,
                     &mask_texture,
                     &particle_sort_buffer,
+                    &diagnostic_buffers,
                 );
                 return Err(format!(
                     "create generic private particle descriptor layout: {error}"
@@ -694,7 +834,7 @@ impl GpuPrivateParticleRenderer {
         let pool_sizes = [
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::STORAGE_BUFFER)
-                .descriptor_count((8 * PARTICLE_DESCRIPTOR_SET_COUNT) as u32),
+                .descriptor_count((9 * PARTICLE_DESCRIPTOR_SET_COUNT) as u32),
             vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .descriptor_count(PARTICLE_DESCRIPTOR_SET_COUNT as u32),
@@ -708,7 +848,7 @@ impl GpuPrivateParticleRenderer {
             Ok(pool) => pool,
             Err(error) => {
                 device.destroy_descriptor_set_layout(descriptor_set_layout, None);
-                destroy_buffers_mask_and_sort(
+                destroy_buffers_mask_sort_and_diagnostics(
                     device,
                     &position_buffer,
                     &normal_buffer,
@@ -719,6 +859,7 @@ impl GpuPrivateParticleRenderer {
                     &driver_bank_buffer,
                     &mask_texture,
                     &particle_sort_buffer,
+                    &diagnostic_buffers,
                 );
                 return Err(format!(
                     "create generic private particle descriptor pool: {error}"
@@ -735,7 +876,7 @@ impl GpuPrivateParticleRenderer {
             Ok(sets) => {
                 device.destroy_descriptor_pool(descriptor_pool, None);
                 device.destroy_descriptor_set_layout(descriptor_set_layout, None);
-                destroy_buffers_mask_and_sort(
+                destroy_buffers_mask_sort_and_diagnostics(
                     device,
                     &position_buffer,
                     &normal_buffer,
@@ -746,6 +887,7 @@ impl GpuPrivateParticleRenderer {
                     &driver_bank_buffer,
                     &mask_texture,
                     &particle_sort_buffer,
+                    &diagnostic_buffers,
                 );
                 return Err(format!(
                     "allocate generic private particle descriptor sets: expected {}, got {}",
@@ -756,7 +898,7 @@ impl GpuPrivateParticleRenderer {
             Err(error) => {
                 device.destroy_descriptor_pool(descriptor_pool, None);
                 device.destroy_descriptor_set_layout(descriptor_set_layout, None);
-                destroy_buffers_mask_and_sort(
+                destroy_buffers_mask_sort_and_diagnostics(
                     device,
                     &position_buffer,
                     &normal_buffer,
@@ -767,6 +909,7 @@ impl GpuPrivateParticleRenderer {
                     &driver_bank_buffer,
                     &mask_texture,
                     &particle_sort_buffer,
+                    &diagnostic_buffers,
                 );
                 return Err(format!(
                     "allocate generic private particle descriptor sets: {error}"
@@ -785,6 +928,7 @@ impl GpuPrivateParticleRenderer {
             mask_texture.descriptor(),
             particle_sort_buffer.descriptor(),
             driver_bank_buffer.descriptor(),
+            diagnostic_buffers[0].descriptor(),
         );
         update_descriptors(
             device,
@@ -798,6 +942,7 @@ impl GpuPrivateParticleRenderer {
             mask_texture.descriptor(),
             particle_sort_buffer.descriptor(),
             driver_bank_buffer.descriptor(),
+            diagnostic_buffers[1].descriptor(),
         );
 
         let push_ranges = [vk::PushConstantRange::default()
@@ -819,7 +964,7 @@ impl GpuPrivateParticleRenderer {
             Err(error) => {
                 device.destroy_descriptor_pool(descriptor_pool, None);
                 device.destroy_descriptor_set_layout(descriptor_set_layout, None);
-                destroy_buffers_mask_and_sort(
+                destroy_buffers_mask_sort_and_diagnostics(
                     device,
                     &position_buffer,
                     &normal_buffer,
@@ -830,6 +975,7 @@ impl GpuPrivateParticleRenderer {
                     &driver_bank_buffer,
                     &mask_texture,
                     &particle_sort_buffer,
+                    &diagnostic_buffers,
                 );
                 return Err(format!(
                     "create generic private particle pipeline layout: {error}"
@@ -846,7 +992,7 @@ impl GpuPrivateParticleRenderer {
                 device.destroy_pipeline_layout(pipeline_layout, None);
                 device.destroy_descriptor_pool(descriptor_pool, None);
                 device.destroy_descriptor_set_layout(descriptor_set_layout, None);
-                destroy_buffers_mask_and_sort(
+                destroy_buffers_mask_sort_and_diagnostics(
                     device,
                     &position_buffer,
                     &normal_buffer,
@@ -857,6 +1003,7 @@ impl GpuPrivateParticleRenderer {
                     &driver_bank_buffer,
                     &mask_texture,
                     &particle_sort_buffer,
+                    &diagnostic_buffers,
                 );
                 return Err(error);
             }
@@ -872,7 +1019,7 @@ impl GpuPrivateParticleRenderer {
                 device.destroy_pipeline_layout(pipeline_layout, None);
                 device.destroy_descriptor_pool(descriptor_pool, None);
                 device.destroy_descriptor_set_layout(descriptor_set_layout, None);
-                destroy_buffers_mask_and_sort(
+                destroy_buffers_mask_sort_and_diagnostics(
                     device,
                     &position_buffer,
                     &normal_buffer,
@@ -883,6 +1030,7 @@ impl GpuPrivateParticleRenderer {
                     &driver_bank_buffer,
                     &mask_texture,
                     &particle_sort_buffer,
+                    &diagnostic_buffers,
                 );
                 return Err(error);
             }
@@ -896,7 +1044,7 @@ impl GpuPrivateParticleRenderer {
                 device.destroy_pipeline_layout(pipeline_layout, None);
                 device.destroy_descriptor_pool(descriptor_pool, None);
                 device.destroy_descriptor_set_layout(descriptor_set_layout, None);
-                destroy_buffers_mask_and_sort(
+                destroy_buffers_mask_sort_and_diagnostics(
                     device,
                     &position_buffer,
                     &normal_buffer,
@@ -907,6 +1055,7 @@ impl GpuPrivateParticleRenderer {
                     &driver_bank_buffer,
                     &mask_texture,
                     &particle_sort_buffer,
+                    &diagnostic_buffers,
                 );
                 return Err(error);
             }
@@ -919,7 +1068,7 @@ impl GpuPrivateParticleRenderer {
         crate::marker(
             "private-particle-slot",
             format!(
-                "status=linked privateParticlePayloadLinked=true privateParticleKind={} privateParticleImplementationPath={} privateParticleDataPath={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleStaticPositionBytes={} privateParticleStaticNormalBytes={} privateParticleAux0Bytes={} privateParticleAux0Rows={} privateParticleStateBufferBytes={} privateParticleStatePingPong=true privateParticleOutputBufferBytes={} privateParticleOutputAbi=four-vec4-billboard-rows privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleSortBufferBytes={} privateParticleOrderingCpuExpandedUploadPerFrame=false privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskTexturePath={} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} privateParticleMaskTextureGpuResident=true privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident=true privateParticleVisualAcceptance=pending-headset-screenshot",
+                "status=linked privateParticlePayloadLinked=true privateParticleKind={} privateParticleImplementationPath={} privateParticleDataPath={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleStaticPositionBytes={} privateParticleStaticNormalBytes={} privateParticleAux0Bytes={} privateParticleAux0Rows={} privateParticleStateBufferBytes={} privateParticleStatePingPong=true privateParticleOutputBufferBytes={} privateParticleOutputAbi=four-vec4-billboard-rows privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleSortBufferBytes={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskTexturePath={} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} privateParticleMaskTextureGpuResident=true privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident=true privateParticleVisualAcceptance=pending-headset-screenshot",
                 crate::sanitize(PRIVATE_PARTICLE_KIND),
                 crate::sanitize(PRIVATE_PARTICLE_IMPLEMENTATION_PATH),
                 crate::sanitize(PRIVATE_PARTICLE_DATA_PATH),
@@ -955,6 +1104,7 @@ impl GpuPrivateParticleRenderer {
                 marker_sort_count,
                 sort_capacity,
                 particle_sort_buffer.bytes,
+                PrivateParticleDiagnosticSnapshot::pending().marker_fields(),
                 PRIVATE_PARTICLE_MASK_TEXTURE_LINKED,
                 crate::sanitize(PRIVATE_PARTICLE_MASK_TEXTURE_MODE),
                 crate::sanitize(PRIVATE_PARTICLE_MASK_TEXTURE_PATH),
@@ -978,6 +1128,7 @@ impl GpuPrivateParticleRenderer {
             sort_capacity,
             tracer_draw_slots_per_oscillator,
             runtime_settings,
+            PrivateParticleDiagnosticSnapshot::pending(),
         );
 
         Ok(Some(Self {
@@ -996,6 +1147,9 @@ impl GpuPrivateParticleRenderer {
             aux0_buffer,
             driver_bank_buffer,
             driver_bank_uploaded_values01: runtime_settings.driver_values01,
+            diagnostic_buffers,
+            diagnostic_dispatched: [false; PARTICLE_DESCRIPTOR_SET_COUNT],
+            last_diagnostic_snapshot: PrivateParticleDiagnosticSnapshot::pending(),
             mask_texture,
             particle_count,
             tracer_max_count,
@@ -1009,6 +1163,9 @@ impl GpuPrivateParticleRenderer {
     }
 
     pub(crate) unsafe fn destroy(&mut self, device: &ash::Device) {
+        for buffer in &self.diagnostic_buffers {
+            buffer.destroy(device);
+        }
         self.mask_texture.destroy(device);
         self.driver_bank_buffer.destroy(device);
         self.aux0_buffer.destroy(device);
@@ -1025,6 +1182,39 @@ impl GpuPrivateParticleRenderer {
         device.destroy_pipeline_layout(self.pipeline_layout, None);
         device.destroy_descriptor_pool(self.descriptor_pool, None);
         device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+    }
+
+    pub(crate) unsafe fn collect_completed_diagnostics(
+        &mut self,
+        device: &ash::Device,
+        frame_slot: usize,
+    ) {
+        let diagnostic_slot = frame_slot % PARTICLE_DESCRIPTOR_SET_COUNT;
+        if !self.diagnostic_dispatched[diagnostic_slot] {
+            self.last_diagnostic_snapshot = PrivateParticleDiagnosticSnapshot::pending();
+            return;
+        }
+        match self.diagnostic_buffers[diagnostic_slot]
+            .read_i32_words::<PRIVATE_PARTICLE_DIAGNOSTIC_WORDS>(
+                device,
+                "generic private particle diagnostic readback",
+            ) {
+            Ok(raw) => {
+                self.last_diagnostic_snapshot = PrivateParticleDiagnosticSnapshot::from_raw(raw);
+            }
+            Err(error) => {
+                crate::marker(
+                    "private-particle-slot",
+                    format!(
+                        "status=diagnostic-readback-failed frameSlot={} error={}",
+                        frame_slot,
+                        crate::sanitize(&error)
+                    ),
+                );
+                self.last_diagnostic_snapshot = PrivateParticleDiagnosticSnapshot::pending();
+            }
+        }
+        self.diagnostic_dispatched[diagnostic_slot] = false;
     }
 
     pub(crate) unsafe fn record_compute_frame(
@@ -1069,6 +1259,7 @@ impl GpuPrivateParticleRenderer {
         let draw_count = self.particle_count.saturating_add(tracer_draw_count);
         let descriptor_index = frame_count as usize & 1;
         let next_descriptor_index = (descriptor_index + 1) & 1;
+        let diagnostic_buffer = &self.diagnostic_buffers[descriptor_index];
         let push = private_particle_push(
             self.particle_count,
             draw_count,
@@ -1078,7 +1269,15 @@ impl GpuPrivateParticleRenderer {
             world_center_scale,
             frame_count,
         );
+        device.cmd_fill_buffer(
+            cmd,
+            diagnostic_buffer.buffer,
+            0,
+            PRIVATE_PARTICLE_DIAGNOSTIC_BYTES,
+            0,
+        );
         let compute_write_barrier = [
+            transfer_write_to_shader_write_barrier(diagnostic_buffer),
             storage_to_compute_read_barrier(&self.position_buffer),
             storage_to_compute_read_barrier(&self.normal_buffer),
             storage_to_compute_read_barrier(&self.aux0_buffer),
@@ -1090,6 +1289,7 @@ impl GpuPrivateParticleRenderer {
         device.cmd_pipeline_barrier(
             cmd,
             vk::PipelineStageFlags::HOST
+                | vk::PipelineStageFlags::TRANSFER
                 | vk::PipelineStageFlags::VERTEX_SHADER
                 | vk::PipelineStageFlags::COMPUTE_SHADER,
             vk::PipelineStageFlags::COMPUTE_SHADER,
@@ -1138,6 +1338,17 @@ impl GpuPrivateParticleRenderer {
             &compute_to_sort,
             &[],
         );
+        let diagnostic_to_host = [compute_write_to_host_read_barrier(diagnostic_buffer)];
+        device.cmd_pipeline_barrier(
+            cmd,
+            vk::PipelineStageFlags::COMPUTE_SHADER,
+            vk::PipelineStageFlags::HOST,
+            vk::DependencyFlags::empty(),
+            &[],
+            &diagnostic_to_host,
+            &[],
+        );
+        self.diagnostic_dispatched[descriptor_index] = true;
         gpu_timestamp_tracker.write_stage_end(
             device,
             cmd,
@@ -1180,6 +1391,7 @@ impl GpuPrivateParticleRenderer {
             sort_capacity: self.sort_capacity,
             runtime_settings,
             tracer_draw_slots_capacity: self.tracer_draw_slots_per_oscillator,
+            diagnostic_snapshot: self.last_diagnostic_snapshot,
         };
 
         if frame_count == 0 || frame_count % 120 == 0 {
@@ -1205,6 +1417,7 @@ impl GpuPrivateParticleRenderer {
                 self.sort_capacity,
                 self.tracer_draw_slots_per_oscillator,
                 runtime_settings,
+                self.last_diagnostic_snapshot,
             );
         }
         stats
@@ -1506,10 +1719,11 @@ fn log_private_marker(
     sort_capacity: u32,
     tracer_draw_slots_capacity: u32,
     runtime_settings: PrivateParticleRuntimeSettings,
+    diagnostic_snapshot: PrivateParticleDiagnosticSnapshot,
 ) {
     let sort_active = private_particle_sort_enabled();
     crate::android_log(format!(
-        "{} channel=frame status={} frame={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleOutputAbi=four-vec4-billboard-rows privateParticleStatePingPong=true privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} privateParticleMaskTextureGpuResident=true {} {}",
+        "{} channel=frame status={} frame={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleOutputAbi=four-vec4-billboard-rows privateParticleStatePingPong=true privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} privateParticleMaskTextureGpuResident=true {} {}",
         PRIVATE_PARTICLE_MARKER_PREFIX,
         status,
         frame_count,
@@ -1542,6 +1756,7 @@ fn log_private_marker(
         sort_input_count,
         sort_count,
         sort_capacity,
+        diagnostic_snapshot.marker_fields(),
         PRIVATE_PARTICLE_MASK_TEXTURE_LINKED,
         crate::sanitize(PRIVATE_PARTICLE_MASK_TEXTURE_MODE),
         PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH,
@@ -1901,6 +2116,7 @@ unsafe fn update_descriptors(
     mask_texture: vk::DescriptorImageInfo,
     particle_sort_buffer: vk::DescriptorBufferInfo,
     driver_bank_buffer: vk::DescriptorBufferInfo,
+    diagnostic_buffer: vk::DescriptorBufferInfo,
 ) {
     let position_info = [position_buffer];
     let normal_info = [normal_buffer];
@@ -1911,6 +2127,7 @@ unsafe fn update_descriptors(
     let mask_texture_info = [mask_texture];
     let sort_info = [particle_sort_buffer];
     let driver_bank_info = [driver_bank_buffer];
+    let diagnostic_info = [diagnostic_buffer];
     let writes = [
         write_storage_descriptor(descriptor_set, 0, &position_info),
         write_storage_descriptor(descriptor_set, 1, &normal_info),
@@ -1921,6 +2138,7 @@ unsafe fn update_descriptors(
         write_sampled_image_descriptor(descriptor_set, 6, &mask_texture_info),
         write_storage_descriptor(descriptor_set, 7, &sort_info),
         write_storage_descriptor(descriptor_set, 8, &driver_bank_info),
+        write_storage_descriptor(descriptor_set, 9, &diagnostic_info),
     ];
     device.update_descriptor_sets(&writes, &[]);
 }
@@ -1978,6 +2196,26 @@ fn compute_write_to_shader_read_barrier(buffer: &OwnedBuffer) -> vk::BufferMemor
     vk::BufferMemoryBarrier::default()
         .src_access_mask(vk::AccessFlags::SHADER_WRITE)
         .dst_access_mask(vk::AccessFlags::SHADER_READ)
+        .buffer(buffer.buffer)
+        .offset(0)
+        .size(buffer.bytes)
+}
+
+fn compute_write_to_host_read_barrier(buffer: &OwnedBuffer) -> vk::BufferMemoryBarrier<'static> {
+    vk::BufferMemoryBarrier::default()
+        .src_access_mask(vk::AccessFlags::SHADER_WRITE)
+        .dst_access_mask(vk::AccessFlags::HOST_READ)
+        .buffer(buffer.buffer)
+        .offset(0)
+        .size(buffer.bytes)
+}
+
+fn transfer_write_to_shader_write_barrier(
+    buffer: &OwnedBuffer,
+) -> vk::BufferMemoryBarrier<'static> {
+    vk::BufferMemoryBarrier::default()
+        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+        .dst_access_mask(vk::AccessFlags::SHADER_READ | vk::AccessFlags::SHADER_WRITE)
         .buffer(buffer.buffer)
         .offset(0)
         .size(buffer.bytes)
@@ -2139,6 +2377,28 @@ impl OwnedBuffer {
         mapped.copy_from_nonoverlapping(data.as_ptr(), data.len());
         device.unmap_memory(self.memory);
         Ok(())
+    }
+
+    unsafe fn read_i32_words<const N: usize>(
+        &self,
+        device: &ash::Device,
+        label: &str,
+    ) -> Result<[i32; N], String> {
+        let bytes = (N * mem::size_of::<i32>()) as vk::DeviceSize;
+        if bytes > self.bytes {
+            return Err(format!(
+                "{label} read needs {bytes} bytes, buffer only has {} bytes",
+                self.bytes
+            ));
+        }
+        let mapped = device
+            .map_memory(self.memory, 0, bytes, vk::MemoryMapFlags::empty())
+            .map_err(|error| format!("map {label} buffer for read: {error}"))?
+            .cast::<i32>();
+        let mut values = [0_i32; N];
+        values.copy_from_slice(std::slice::from_raw_parts(mapped, N));
+        device.unmap_memory(self.memory);
+        Ok(values)
     }
 
     unsafe fn destroy(&self, device: &ash::Device) {
@@ -2483,6 +2743,36 @@ unsafe fn destroy_buffers_mask_and_sort(
         effect_state_buffer_b,
         aux0_buffer,
         mask_texture,
+    );
+}
+
+unsafe fn destroy_buffers_mask_sort_and_diagnostics(
+    device: &ash::Device,
+    position_buffer: &OwnedBuffer,
+    normal_buffer: &OwnedBuffer,
+    particle_output_buffer: &OwnedBuffer,
+    effect_state_buffer_a: &OwnedBuffer,
+    effect_state_buffer_b: &OwnedBuffer,
+    aux0_buffer: &OwnedBuffer,
+    driver_bank_buffer: &OwnedBuffer,
+    mask_texture: &OwnedMaskTexture,
+    particle_sort_buffer: &OwnedBuffer,
+    diagnostic_buffers: &[OwnedBuffer; PARTICLE_DESCRIPTOR_SET_COUNT],
+) {
+    for buffer in diagnostic_buffers {
+        buffer.destroy(device);
+    }
+    destroy_buffers_mask_and_sort(
+        device,
+        position_buffer,
+        normal_buffer,
+        particle_output_buffer,
+        effect_state_buffer_a,
+        effect_state_buffer_b,
+        aux0_buffer,
+        driver_bank_buffer,
+        mask_texture,
+        particle_sort_buffer,
     );
 }
 

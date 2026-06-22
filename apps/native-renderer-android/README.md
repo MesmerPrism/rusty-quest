@@ -54,10 +54,11 @@ The Rust code opens NDK `ACameraManager` camera ids `50` and `51`, creates
 Runtime permissions are requested by a tiny Rust/JNI call into Android's
 framework `Activity.requestPermissions`; the panel Activity does not own runtime
 permission policy.
-Quest live hand tracking also requires the APK manifest to declare
+Quest live hand tracking also requires the selected APK manifest to declare
 `com.oculus.permission.HAND_TRACKING` and optional
-`oculus.software.handtracking`; OS-level hand tracking must be enabled before
-OpenXR reports active joints.
+`oculus.software.handtracking`; in source-only native app builds those
+declarations come from the hand-specific feature, not the OpenXR/Vulkan base.
+OS-level hand tracking must be enabled before OpenXR reports active joints.
 Display-composite feedback uses the same APK identity and a non-exported
 foreground `mediaProjection` service. The panel action
 `io.github.mesmerprism.rustyquest.native_renderer.action.REQUEST_DISPLAY_COMPOSITE_CAPTURE`

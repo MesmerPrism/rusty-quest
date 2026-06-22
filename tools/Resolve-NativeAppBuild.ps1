@@ -17,6 +17,12 @@ $NativeRendererPropertyManifestSchema = "rusty.quest.native_renderer_property_ma
 $NativeRendererPropertyManifestRelativePath = "fixtures\native-renderer\native-renderer-property-manifest.json"
 $NativeRendererPropertyPrefix = "debug.rustyquest.native_renderer."
 $RenderModeProperty = "debug.rustyquest.native_renderer.render.mode"
+$EnvironmentDepthModeProperty = "debug.rustyquest.native_renderer.environment_depth.mode"
+$EnvironmentDepthSourceProperty = "debug.rustyquest.native_renderer.environment_depth.source"
+$EnvironmentDepthNativePassthroughRequiredProperty = "debug.rustyquest.native_renderer.environment_depth.native_passthrough.required"
+$UseScenePermission = "horizonos.permission.USE_SCENE"
+$PassthroughFeature = "com.oculus.feature.PASSTHROUGH"
+$UseSceneDataAppOp = "USE_SCENE_DATA"
 $RuntimeDangerousPermissionNames = @(
     "android.permission.CAMERA",
     "com.oculus.permission.HAND_TRACKING",
@@ -664,6 +670,43 @@ Assert-SetEquals -Label "Android uses-feature surface" -Expected (Get-StringArra
 Assert-SetEquals -Label "Android activity surface" -Expected (Get-StringArray $app.declared_manifest.activities) -Actual $activities
 Assert-SetEquals -Label "Android service surface" -Expected (Get-StringArray $app.declared_manifest.services) -Actual $services
 
+$environmentDepthMode = if ($runtimeSet.Contains($EnvironmentDepthModeProperty)) { [string]$runtimeSet[$EnvironmentDepthModeProperty] } else { "" }
+$environmentDepthSource = if ($runtimeSet.Contains($EnvironmentDepthSourceProperty)) { [string]$runtimeSet[$EnvironmentDepthSourceProperty] } else { "" }
+$environmentDepthNativePassthroughRequired =
+    $runtimeSet.Contains($EnvironmentDepthNativePassthroughRequiredProperty) -and
+    [string]$runtimeSet[$EnvironmentDepthNativePassthroughRequiredProperty] -eq "true"
+$environmentDepthEnabled =
+    -not [string]::IsNullOrWhiteSpace($environmentDepthMode) -and
+    $environmentDepthMode -ne "disabled"
+$environmentDepthUsesRuntimeProvider =
+    $environmentDepthEnabled -and
+    $environmentDepthSource -ne "synthetic-gpu-proof"
+$environmentDepthProviderMarkers = @(
+    "environmentDepthProviderState=provider-running",
+    "environmentDepthRealProviderBound=true",
+    "environmentDepthAcquireStatus=acquired",
+    "privateLayerEnvironmentDepthBound=true",
+    "privateLayerEnvironmentDepthFallbackActive=false"
+)
+$expectsUsableEnvironmentDepth = $false
+foreach ($marker in $environmentDepthProviderMarkers) {
+    if ($requiredMarkers -contains $marker) {
+        $expectsUsableEnvironmentDepth = $true
+    }
+}
+if ($environmentDepthUsesRuntimeProvider -and -not ($permissions -contains $UseScenePermission)) {
+    throw "Runtime-provider environment depth requires $UseScenePermission in the resolved Android manifest."
+}
+if ($expectsUsableEnvironmentDepth -and -not ($usesFeatures -contains $PassthroughFeature)) {
+    throw "Usable runtime-provider environment depth requires $PassthroughFeature in the resolved Android uses-feature surface."
+}
+if ($expectsUsableEnvironmentDepth -and -not ($environmentDepthNativePassthroughRequired -or ($requiredMarkers -contains "nativePassthroughRequested=true"))) {
+    throw "Usable runtime-provider environment depth must require native passthrough through $EnvironmentDepthNativePassthroughRequiredProperty=true or a nativePassthroughRequested=true marker."
+}
+if ($expectsUsableEnvironmentDepth -and ($forbiddenMarkers -contains "nativePassthroughRequested=true")) {
+    throw "App spec expects usable runtime-provider environment depth but forbids nativePassthroughRequested=true."
+}
+
 if (-not $runtimeSet.Contains($RenderModeProperty)) {
     throw "Resolved app build did not set native renderer render mode: $RenderModeProperty"
 }
@@ -826,12 +869,18 @@ $mediaProjectionAppOps = @()
 if ($permissions -contains $MediaProjectionForegroundServicePermission -or $services -contains "DisplayCompositeProjectionService") {
     $mediaProjectionAppOps += "PROJECT_MEDIA"
 }
-$permissionPregrantRequired = ($runtimeDangerousPermissions.Count -gt 0 -or $mediaProjectionAppOps.Count -gt 0)
+$sceneDataAppOps = @()
+if ($permissions -contains $UseScenePermission) {
+    $sceneDataAppOps += $UseSceneDataAppOp
+}
+$appOps = @($mediaProjectionAppOps + $sceneDataAppOps)
+$permissionPregrantRequired = ($runtimeDangerousPermissions.Count -gt 0 -or $appOps.Count -gt 0)
 $permissionPregrantSummaryPath = Get-RepoRelativePath -RepoRoot $repoRootText -Path $permissionPregrantPath
 $permissionArgumentText = if ($permissions.Count -gt 0) { " -Permissions $($permissions -join ',')" } else { "" }
 $mediaProjectionArgumentText = if ($mediaProjectionAppOps -contains "PROJECT_MEDIA") { " -GrantMediaProjectionAppOp" } else { "" }
+$sceneDataArgumentText = if ($sceneDataAppOps -contains $UseSceneDataAppOp) { " -GrantUseSceneDataAppOp" } else { "" }
 $permissionPregrantCommand = if ($permissionPregrantRequired) {
-    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Grant-NativeRendererPermissions.ps1 -PackageName $([string]$app.package_name) -Serial <quest-serial>$permissionArgumentText$mediaProjectionArgumentText -Out $permissionPregrantSummaryPath"
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Grant-NativeRendererPermissions.ps1 -PackageName $([string]$app.package_name) -Serial <quest-serial>$permissionArgumentText$mediaProjectionArgumentText$sceneDataArgumentText -Out $permissionPregrantSummaryPath"
 } else {
     ""
 }
@@ -840,7 +889,7 @@ $permissionPregrant = [ordered]@{
     package_name = [string]$app.package_name
     declared_permissions = $permissions
     runtime_dangerous_permissions = $runtimeDangerousPermissions
-    app_ops = $mediaProjectionAppOps
+    app_ops = $appOps
     required_before_first_launch = $permissionPregrantRequired
     tool = "tools/Grant-NativeRendererPermissions.ps1"
     command = $permissionPregrantCommand
@@ -848,6 +897,7 @@ $permissionPregrant = [ordered]@{
     notes = @(
         "Only permissions declared by the resolved app manifest should be requested for this app.",
         "pm grant can fail for normal or signature permissions; dangerous permission and app-op evidence is acceptance-critical.",
+        "USE_SCENE_DATA app-op is prepared when the manifest declares horizonos.permission.USE_SCENE for Meta environment-depth routes.",
         "PROJECT_MEDIA app-op reduces lab prompt friction but does not replace fresh MediaProjection resultData from createScreenCaptureIntent."
     )
 }

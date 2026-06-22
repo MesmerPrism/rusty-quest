@@ -24,6 +24,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -42,13 +43,26 @@ public final class ControlPanelActivity extends Activity {
     private static final int REQUEST_DISPLAY_COMPOSITE_CAPTURE = 7401;
     private static final String CANDIDATE_FILE = "stimulus_volume_candidate.json";
     private static final String STATUS_FILE = "stimulus_volume_status.json";
+    private static final String DEPTH_ALIGNMENT_STATUS_FILE = "depth_alignment_status.json";
     private static final String PROFILE_SCHEMA = "rusty.quest.stimulus_volume.profile.v1";
     private static final String PRIVATE_LAYER_SELECTION_SCHEMA =
         "rusty.quest.native_renderer.private_layer_selection.v1";
+    private static final String ENVIRONMENT_DEPTH_ALIGNMENT_SCHEMA =
+        "rusty.quest.native_renderer.environment_depth_alignment.v1";
     private static final String PROP_CONTROL_PANEL_MODE =
         "debug.rustyquest.native_renderer.control_panel.mode";
     private static final String PROP_PRIVATE_LAYER_OVERRIDE =
         "debug.rustyquest.native_renderer.private_layer.layer_override";
+    private static final String PROP_ENVIRONMENT_DEPTH_ALIGNMENT_LEFT_OFFSET_X =
+        "debug.rustyquest.native_renderer.environment_depth.alignment.left.offset.x.uv";
+    private static final String PROP_ENVIRONMENT_DEPTH_ALIGNMENT_LEFT_OFFSET_Y =
+        "debug.rustyquest.native_renderer.environment_depth.alignment.left.offset.y.uv";
+    private static final String PROP_ENVIRONMENT_DEPTH_ALIGNMENT_RIGHT_OFFSET_X =
+        "debug.rustyquest.native_renderer.environment_depth.alignment.right.offset.x.uv";
+    private static final String PROP_ENVIRONMENT_DEPTH_ALIGNMENT_RIGHT_OFFSET_Y =
+        "debug.rustyquest.native_renderer.environment_depth.alignment.right.offset.y.uv";
+    private static final String PROP_ENVIRONMENT_DEPTH_ALIGNMENT_SCALE =
+        "debug.rustyquest.native_renderer.environment_depth.alignment.scale";
     private static final String PROP_STIMULUS_ENABLED =
         "debug.rustyquest.native_renderer.stimulus_volume.enabled";
     private static final String PROP_STIMULUS_SAFETY_ACK =
@@ -102,6 +116,7 @@ public final class ControlPanelActivity extends Activity {
     private TextView status;
     private Handler liveApplyHandler;
     private Runnable pendingLiveApply;
+    private Runnable pendingDepthAlignmentApply;
     private String handledDiagnosticIntentToken = "";
     private String handledDisplayCompositeIntentToken = "";
     private boolean displayCompositeRequestInFlight;
@@ -134,6 +149,11 @@ public final class ControlPanelActivity extends Activity {
     private SliderControl phaseA;
     private SliderControl phaseB;
     private SliderControl phaseC;
+    private SliderControl depthLeftOffsetX;
+    private SliderControl depthLeftOffsetY;
+    private SliderControl depthRightOffsetX;
+    private SliderControl depthRightOffsetY;
+    private SliderControl depthSampleScale;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -438,6 +458,8 @@ public final class ControlPanelActivity extends Activity {
 
         root.addView(sectionTitle("Active Rendering"));
         root.addView(buildPrivateLayerChoiceGrid());
+        root.addView(sectionTitle("Depth Alignment"));
+        addDepthAlignmentControls(root);
 
         Button close = button("Close");
         close.setOnClickListener(new View.OnClickListener() {
@@ -557,6 +579,266 @@ public final class ControlPanelActivity extends Activity {
                 setStatusText("Layer selection failed: " + error.getMessage());
             }
         }
+    }
+
+    private void addDepthAlignmentControls(LinearLayout root) {
+        JSONObject statusJson = readDepthAlignmentStatusJson();
+        double leftX = readDepthAlignmentStatusOffset(
+            statusJson,
+            "left_offset_uv",
+            0,
+            readDoubleProperty(PROP_ENVIRONMENT_DEPTH_ALIGNMENT_LEFT_OFFSET_X, 0.0)
+        );
+        double leftY = readDepthAlignmentStatusOffset(
+            statusJson,
+            "left_offset_uv",
+            1,
+            readDoubleProperty(PROP_ENVIRONMENT_DEPTH_ALIGNMENT_LEFT_OFFSET_Y, 0.0)
+        );
+        double rightX = readDepthAlignmentStatusOffset(
+            statusJson,
+            "right_offset_uv",
+            0,
+            readDoubleProperty(PROP_ENVIRONMENT_DEPTH_ALIGNMENT_RIGHT_OFFSET_X, 0.0)
+        );
+        double rightY = readDepthAlignmentStatusOffset(
+            statusJson,
+            "right_offset_uv",
+            1,
+            readDoubleProperty(PROP_ENVIRONMENT_DEPTH_ALIGNMENT_RIGHT_OFFSET_Y, 0.0)
+        );
+        double sampleScale = readDepthAlignmentStatusScale(
+            statusJson,
+            readDoubleProperty(PROP_ENVIRONMENT_DEPTH_ALIGNMENT_SCALE, 1.0)
+        );
+        depthLeftOffsetX = depthSlider("Left depth X", -0.25, 0.25, leftX);
+        depthLeftOffsetY = depthSlider("Left depth Y", -0.25, 0.25, leftY);
+        depthRightOffsetX = depthSlider("Right depth X", -0.25, 0.25, rightX);
+        depthRightOffsetY = depthSlider("Right depth Y", -0.25, 0.25, rightY);
+        depthSampleScale = depthSlider("Depth sample scale", 0.25, 3.0, sampleScale);
+        root.addView(depthLeftOffsetX.view);
+        root.addView(depthLeftOffsetY.view);
+        root.addView(depthRightOffsetX.view);
+        root.addView(depthRightOffsetY.view);
+        root.addView(depthSampleScale.view);
+
+        Button refresh = button("Refresh Depth");
+        refresh.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                refreshDepthAlignmentFromStatus(true);
+            }
+        });
+        Button apply = button("Apply Depth");
+        apply.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                submitLiveDepthAlignment(true);
+            }
+        });
+        LinearLayout depthRow = new LinearLayout(this);
+        depthRow.setOrientation(LinearLayout.HORIZONTAL);
+        depthRow.setPadding(0, dp(8), 0, dp(2));
+        depthRow.addView(refresh, rowButtonParams());
+        depthRow.addView(apply, rowButtonParams());
+        root.addView(depthRow);
+    }
+
+    private SliderControl depthSlider(String title, double min, double max, double initial) {
+        return slider(
+            title,
+            min,
+            max,
+            initial,
+            1000,
+            "",
+            false,
+            new Runnable() {
+                @Override
+                public void run() {
+                    scheduleLiveDepthAlignmentApplyFromControl();
+                }
+            }
+        );
+    }
+
+    private void scheduleLiveDepthAlignmentApplyFromControl() {
+        cancelPendingDepthAlignmentApply();
+        pendingDepthAlignmentApply = new Runnable() {
+            @Override
+            public void run() {
+                pendingDepthAlignmentApply = null;
+                submitLiveDepthAlignment(false);
+            }
+        };
+        liveApplyHandler.postDelayed(pendingDepthAlignmentApply, 180);
+        setStatusText("Depth alignment update pending.");
+    }
+
+    private void cancelPendingDepthAlignmentApply() {
+        if (liveApplyHandler != null && pendingDepthAlignmentApply != null) {
+            liveApplyHandler.removeCallbacks(pendingDepthAlignmentApply);
+            pendingDepthAlignmentApply = null;
+        }
+    }
+
+    private void submitLiveDepthAlignment(boolean userVisible) {
+        try {
+            if (!nativeBridgeLoaded) {
+                throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
+            }
+            JSONObject candidate = buildDepthAlignmentJson();
+            String responseText = nativeSubmitLiveDepthAlignment(candidate.toString());
+            JSONObject response = new JSONObject(responseText);
+            String responseStatus = response.optString("status", "unknown");
+            if (!"queued".equals(responseStatus)) {
+                throw new IllegalStateException(responseText);
+            }
+            String message = "Depth alignment queued: " + depthAlignmentSummary() + ".";
+            if (response.optBoolean("overwrote_pending", false)) {
+                message = "Depth alignment queued; older pending edit was replaced: "
+                    + depthAlignmentSummary() + ".";
+            }
+            if (userVisible) {
+                updateStatus(message);
+            } else {
+                setStatusText(message);
+            }
+        } catch (Exception error) {
+            if (userVisible) {
+                updateStatus("Depth alignment failed: " + error.getMessage());
+            } else {
+                setStatusText("Depth alignment failed: " + error.getMessage());
+            }
+        }
+    }
+
+    private JSONObject buildDepthAlignmentJson() throws Exception {
+        JSONObject source = new JSONObject()
+            .put("surface", "same_apk_panel")
+            .put("transport", "jni_live_queue");
+        JSONObject depthAlignment = new JSONObject()
+            .put("left_offset_uv", new JSONArray()
+                .put(depthLeftOffsetX.value())
+                .put(depthLeftOffsetY.value()))
+            .put("right_offset_uv", new JSONArray()
+                .put(depthRightOffsetX.value())
+                .put(depthRightOffsetY.value()))
+            .put("sample_scale", depthSampleScale.value());
+        JSONObject apply = new JSONObject()
+            .put("mode", "apply-on-next-safe-frame")
+            .put("expected_effective_revision", -1);
+        return new JSONObject()
+            .put("schema", ENVIRONMENT_DEPTH_ALIGNMENT_SCHEMA)
+            .put("profile_id", "same-apk-depth-alignment")
+            .put("revision", System.currentTimeMillis())
+            .put("source", source)
+            .put("depth_alignment", depthAlignment)
+            .put("apply", apply);
+    }
+
+    private void refreshDepthAlignmentFromStatus(boolean userVisible) {
+        JSONObject statusJson = readDepthAlignmentStatusJson();
+        if (statusJson == null) {
+            if (userVisible) {
+                updateStatus("Depth alignment status is not available yet.");
+            } else {
+                setStatusText("Depth alignment status is not available yet.");
+            }
+            return;
+        }
+        setDepthSliderValue(
+            depthLeftOffsetX,
+            readDepthAlignmentStatusOffset(statusJson, "left_offset_uv", 0, depthLeftOffsetX.value())
+        );
+        setDepthSliderValue(
+            depthLeftOffsetY,
+            readDepthAlignmentStatusOffset(statusJson, "left_offset_uv", 1, depthLeftOffsetY.value())
+        );
+        setDepthSliderValue(
+            depthRightOffsetX,
+            readDepthAlignmentStatusOffset(statusJson, "right_offset_uv", 0, depthRightOffsetX.value())
+        );
+        setDepthSliderValue(
+            depthRightOffsetY,
+            readDepthAlignmentStatusOffset(statusJson, "right_offset_uv", 1, depthRightOffsetY.value())
+        );
+        setDepthSliderValue(
+            depthSampleScale,
+            readDepthAlignmentStatusScale(statusJson, depthSampleScale.value())
+        );
+        String message = "Depth alignment refreshed: " + depthAlignmentSummary() + ".";
+        if (userVisible) {
+            updateStatus(message);
+        } else {
+            setStatusText(message);
+        }
+    }
+
+    private void setDepthSliderValue(SliderControl slider, double value) {
+        if (slider != null) {
+            slider.setValue(value);
+        }
+    }
+
+    private JSONObject readDepthAlignmentStatusJson() {
+        try {
+            String text = readFile(DEPTH_ALIGNMENT_STATUS_FILE);
+            if (text.length() == 0) {
+                return null;
+            }
+            JSONObject statusJson = new JSONObject(text);
+            JSONObject depthAlignment = statusJson.optJSONObject("depth_alignment");
+            if (depthAlignment == null) {
+                return null;
+            }
+            return statusJson;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private double readDepthAlignmentStatusOffset(
+        JSONObject statusJson,
+        String key,
+        int component,
+        double fallback
+    ) {
+        if (statusJson == null) {
+            return fallback;
+        }
+        JSONObject depthAlignment = statusJson.optJSONObject("depth_alignment");
+        if (depthAlignment == null) {
+            return fallback;
+        }
+        JSONArray offset = depthAlignment.optJSONArray(key);
+        if (offset == null || component < 0 || component >= offset.length()) {
+            return fallback;
+        }
+        return offset.optDouble(component, fallback);
+    }
+
+    private double readDepthAlignmentStatusScale(JSONObject statusJson, double fallback) {
+        if (statusJson == null) {
+            return fallback;
+        }
+        JSONObject depthAlignment = statusJson.optJSONObject("depth_alignment");
+        if (depthAlignment == null) {
+            return fallback;
+        }
+        return depthAlignment.optDouble("sample_scale", fallback);
+    }
+
+    private String depthAlignmentSummary() {
+        return String.format(
+            Locale.US,
+            "L %.3f,%.3f R %.3f,%.3f S %.2f",
+            depthLeftOffsetX.value(),
+            depthLeftOffsetY.value(),
+            depthRightOffsetX.value(),
+            depthRightOffsetY.value(),
+            depthSampleScale.value()
+        );
     }
 
     private JSONObject buildPrivateLayerSelectionJson(int layerIndex) throws Exception {
@@ -980,6 +1262,23 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
+    private String readFile(String name) throws Exception {
+        FileInputStream in = openFileInput(name);
+        try {
+            BufferedReader reader = new BufferedReader(
+                new InputStreamReader(in, StandardCharsets.UTF_8)
+            );
+            StringBuilder builder = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                builder.append(line);
+            }
+            return builder.toString();
+        } finally {
+            in.close();
+        }
+    }
+
     private void updateStatus(String message) {
         setStatusText(message);
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show();
@@ -1058,7 +1357,34 @@ public final class ControlPanelActivity extends Activity {
         String suffix,
         boolean integer
     ) {
-        return new SliderControl(title, min, max, initial, steps, suffix, integer);
+        return slider(
+            title,
+            min,
+            max,
+            initial,
+            steps,
+            suffix,
+            integer,
+            new Runnable() {
+                @Override
+                public void run() {
+                    scheduleLiveApplyFromControl();
+                }
+            }
+        );
+    }
+
+    private SliderControl slider(
+        String title,
+        double min,
+        double max,
+        double initial,
+        int steps,
+        String suffix,
+        boolean integer,
+        Runnable onUserChange
+    ) {
+        return new SliderControl(title, min, max, initial, steps, suffix, integer, onUserChange);
     }
 
     private String selected(Spinner spinner) {
@@ -1158,6 +1484,7 @@ public final class ControlPanelActivity extends Activity {
         final int steps;
         final String suffix;
         final boolean integer;
+        final Runnable onUserChange;
 
         SliderControl(
             String title,
@@ -1166,7 +1493,8 @@ public final class ControlPanelActivity extends Activity {
             double initial,
             int steps,
             String suffix,
-            boolean integer
+            boolean integer,
+            Runnable onUserChange
         ) {
             this.title = title;
             this.min = min;
@@ -1174,6 +1502,7 @@ public final class ControlPanelActivity extends Activity {
             this.steps = Math.max(1, steps);
             this.suffix = suffix;
             this.integer = integer;
+            this.onUserChange = onUserChange;
             this.view = new LinearLayout(ControlPanelActivity.this);
             this.view.setOrientation(LinearLayout.VERTICAL);
             this.view.setPadding(0, dp(6), 0, dp(4));
@@ -1185,8 +1514,8 @@ public final class ControlPanelActivity extends Activity {
                 @Override
                 public void onProgressChanged(SeekBar bar, int progress, boolean fromUser) {
                     refresh();
-                    if (fromUser) {
-                        scheduleLiveApplyFromControl();
+                    if (fromUser && SliderControl.this.onUserChange != null) {
+                        SliderControl.this.onUserChange.run();
                     }
                 }
 
@@ -1211,6 +1540,11 @@ public final class ControlPanelActivity extends Activity {
             return (int) Math.round(value());
         }
 
+        void setValue(double requested) {
+            seekBar.setProgress(progressFor(requested));
+            refresh();
+        }
+
         private int progressFor(double requested) {
             double clamped = Math.max(min, Math.min(max, requested));
             return (int) Math.round(((clamped - min) / (max - min)) * steps);
@@ -1226,4 +1560,5 @@ public final class ControlPanelActivity extends Activity {
 
     private static native String nativeSubmitLiveStimulusCandidate(String candidateJson);
     private static native String nativeSubmitLivePrivateLayerSelection(String selectionJson);
+    private static native String nativeSubmitLiveDepthAlignment(String alignmentJson);
 }

@@ -1,0 +1,79 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "environment_depth.projection_sampler",
+  "module_path": "environment/depth/projection-sampler",
+  "module_kind": "environment-depth-sampler",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-app-feature",
+  "description": "Meta environment-depth provider sampled by a projection/composite shader without owning a particle visual route.",
+  "provides": [
+    "environment_depth.projection_sampler"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [
+    "renderer.private_particles"
+  ],
+  "exclusive_groups": {
+    "depth_source": "xr-meta-environment-depth"
+  },
+  "android_manifest": {
+    "permissions": [
+      "horizonos.permission.USE_SCENE"
+    ],
+    "uses_features": [
+      "com.oculus.feature.PASSTHROUGH"
+    ],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.environment_depth.debug_view": "normal",
+      "debug.rustyquest.native_renderer.environment_depth.depth_units_policy": "projected-depth-from-near-far",
+      "debug.rustyquest.native_renderer.environment_depth.hand_removal.enabled": "false",
+      "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload": "false",
+      "debug.rustyquest.native_renderer.environment_depth.layer_policy": "mono-layer0",
+      "debug.rustyquest.native_renderer.environment_depth.mode": "projection-sampler",
+      "debug.rustyquest.native_renderer.environment_depth.native_passthrough.required": "true",
+      "debug.rustyquest.native_renderer.environment_depth.reference_space": "openxr-local",
+      "debug.rustyquest.native_renderer.environment_depth.source": "xr-meta-environment-depth"
+    },
+    "clear_families": [
+      "environment_depth"
+    ],
+    "expected_render_modes": [
+      "custom-stereo-projection"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "environmentDepthMode=projection-sampler",
+      "environmentDepthSource=xr-meta-environment-depth",
+      "environmentDepthNativePassthroughRequired=true",
+      "nativePassthroughRequested=true"
+    ],
+    "forbidden": [
+      "environmentDepthMode=scene-particle-map"
+    ]
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-NativeRendererEnvironmentDepthStatic.ps1 -RepoRoot ."
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "The provider/sampler contract is public and generic; downstream shaders own their own visual interpretation."
+}

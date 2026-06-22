@@ -361,9 +361,14 @@ build-time discovery, placeholder behavior, static payload staging, the
 four-vec4 billboard row ABI, sampled R8 texture-array mask upload/sampling,
 resident GPU index-remap sorting, parameterized transparency/coverage controls,
 generic tracer budget/draw-capacity plumbing, generic draw/compute
-orchestration, and public slot markers. Public markers distinguish main
-particle count, tracer budget, and merged draw count so downstream shaders can
-append effect-owned tracer rows without introducing CPU-expanded particle lists.
+orchestration, a 16-word host-visible diagnostic storage buffer at descriptor
+binding `9`, and public slot markers. The diagnostic buffer is generic: private
+compute shaders may write compact integer counters or fixed-point reductions,
+while Rusty Quest only clears it, reads it after the frame-slot fence, and emits
+`privateParticleDiagnostic*` markers. Public markers distinguish main particle
+count, tracer budget, merged draw count, and compact diagnostic status so
+downstream shaders can append effect-owned tracer rows without introducing
+CPU-expanded particle lists or full particle-buffer readback.
 The slot owns only generic runtime-polled scalar adoption for
 `debug.rustyquest.native_renderer.private_particles.*`: visual scale, tracer
 draw slots/lifetime/cadence, transparency opacity/alpha/depth/RGB coupling, and

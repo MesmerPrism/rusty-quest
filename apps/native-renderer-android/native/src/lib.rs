@@ -29,7 +29,9 @@ mod display_composite_feedback;
 #[cfg(target_os = "android")]
 mod display_composite_native_stream;
 mod display_composite_projection_metadata;
+mod environment_depth_alignment_state;
 mod environment_depth_geometry;
+mod environment_depth_projection_alignment;
 #[cfg(any(test, not(target_os = "android")))]
 mod environment_depth_scene_map;
 #[cfg(any(test, not(target_os = "android")))]
@@ -167,11 +169,7 @@ fn runtime_permissions_for_route(
     if runtime_options.render_mode.uses_custom_stereo_projection()
         && runtime_options.camera_output_mode.camera_import_enabled()
     {
-        permissions.extend([
-            "android.permission.CAMERA",
-            "horizonos.permission.HEADSET_CAMERA",
-            "horizonos.permission.SPATIAL_CAMERA",
-        ]);
+        permissions.push("android.permission.CAMERA");
     }
     if runtime_options
         .compact_hand_input_source_mode
@@ -186,12 +184,6 @@ fn runtime_permissions_for_route(
         || runtime_options.hand_anchor_particle_settings.enabled
     {
         permissions.push("com.oculus.permission.HAND_TRACKING");
-    }
-    if runtime_options
-        .environment_depth_settings
-        .requires_scene_permission()
-    {
-        permissions.push("horizonos.permission.USE_SCENE");
     }
     permissions.sort_unstable();
     permissions.dedup();

@@ -21,6 +21,9 @@ use crate::{
         PreparedDisplayCompositeFeedback,
     },
     display_composite_projection_metadata::DisplayCompositeProjectionMetadata,
+    environment_depth_alignment_state::{
+        EnvironmentDepthAlignmentSettings, EnvironmentDepthAlignmentState,
+    },
     gpu_environment_depth_particle_stats::GpuEnvironmentDepthParticleFrameStats,
     gpu_environment_depth_particles::GpuEnvironmentDepthParticleRenderer,
     gpu_hand_anchor_particles::{
@@ -299,6 +302,7 @@ unsafe fn run_projection_loop_inner(
         &xr_instance,
         runtime_options.stimulus_volume_settings,
         runtime_options.projection_target_settings.clone(),
+        runtime_options.environment_depth_alignment_settings,
         runtime_options
             .render_mode
             .requests_private_particle_recenter_input(),
@@ -565,6 +569,7 @@ unsafe fn run_projection_loop_inner(
     let hand_mesh_real_hands_visible = runtime_options.hand_mesh_real_hands_visible;
     let hand_anchor_particle_settings = runtime_options.hand_anchor_particle_settings;
     let environment_depth_settings = runtime_options.environment_depth_settings;
+    let environment_depth_alignment_settings = runtime_options.environment_depth_alignment_settings;
     let display_composite_settings = runtime_options.display_composite_settings;
     let video_projection_settings = runtime_options.video_projection_settings.clone();
     let stimulus_volume_settings = runtime_options.stimulus_volume_settings;
@@ -653,6 +658,13 @@ unsafe fn run_projection_loop_inner(
             render_mode.marker_value(),
             render_mode.uses_custom_stereo_projection(),
             projection_target_settings.marker_fields(),
+        ),
+    );
+    crate::marker(
+        "environment-depth-alignment",
+        format!(
+            "status=config {} finalStateAuthority=native-renderer publicControlSurface=left-controller-thumbstick+same-apk-panel appliesTo=environment-depth-sampler-only",
+            environment_depth_alignment_settings.marker_fields(),
         ),
     );
     crate::marker(
@@ -1156,6 +1168,7 @@ unsafe fn run_projection_loop_inner(
         hand_mesh_real_hands_visible,
         hand_anchor_particle_settings,
         environment_depth_settings,
+        environment_depth_alignment_settings,
         environment_depth_properties,
         display_composite_settings,
         video_projection_settings,
@@ -1643,6 +1656,7 @@ unsafe fn run_projection_frames(
     hand_mesh_real_hands_visible: bool,
     hand_anchor_particle_settings: NativeHandAnchorParticleSettings,
     environment_depth_settings: NativeEnvironmentDepthSettings,
+    environment_depth_alignment_settings: EnvironmentDepthAlignmentSettings,
     environment_depth_properties: OpenXrEnvironmentDepthProperties,
     display_composite_settings: NativeDisplayCompositeSettings,
     video_projection_settings: crate::native_renderer_options::NativeVideoProjectionSettings,
@@ -1682,6 +1696,8 @@ unsafe fn run_projection_frames(
     let mut previous_frame_instant = Instant::now();
     let mut private_particle_world_anchor = PrivateParticleWorldAnchor::new();
     let mut environment_depth_provider_attempts = 0_u32;
+    let mut environment_depth_alignment_state =
+        EnvironmentDepthAlignmentState::new(environment_depth_alignment_settings);
     crate::marker(
         "projection-target",
         format!(
@@ -1696,6 +1712,20 @@ unsafe fn run_projection_frames(
             format!("status=bridge-config {}", bridge.marker_fields()),
         );
     }
+    crate::marker(
+        "environment-depth-alignment",
+        format!(
+            "status=runtime-initialized {}",
+            environment_depth_alignment_state.marker_fields()
+        ),
+    );
+    crate::native_renderer_stimulus_panel::write_environment_depth_alignment_status(
+        app,
+        "applied",
+        0,
+        "none",
+        &environment_depth_alignment_state,
+    );
 
     loop {
         crate::android_events::pump_activity_events(
@@ -1897,6 +1927,16 @@ unsafe fn run_projection_frames(
                 frame_count,
             );
         }
+        if let Some(candidate) =
+            crate::native_renderer_stimulus_panel::take_live_environment_depth_alignment()
+        {
+            apply_live_environment_depth_alignment(
+                app,
+                &mut environment_depth_alignment_state,
+                candidate,
+                frame_count,
+            );
+        }
 
         if let Some(actions) = stimulus_actions.as_deref_mut() {
             let controller_events = actions.sync_and_poll(
@@ -1909,6 +1949,9 @@ unsafe fn run_projection_frames(
             );
             for input in controller_events.projection_target_inputs {
                 projection_target_state.apply_input(input);
+            }
+            for input in controller_events.environment_depth_alignment_inputs {
+                environment_depth_alignment_state.apply_input(input);
             }
             if controller_events.stimulus_randomize_triggered {
                 if let Some(renderer) = gpu_stimulus_volume_renderer.as_deref_mut() {
@@ -1945,6 +1988,21 @@ unsafe fn run_projection_frames(
                     projection_target_state.marker_fields(),
                 ),
             );
+            crate::marker(
+                "environment-depth-alignment",
+                format!(
+                    "status=effective frame={} {}",
+                    frame_count,
+                    environment_depth_alignment_state.marker_fields(),
+                ),
+            );
+            crate::native_renderer_stimulus_panel::write_environment_depth_alignment_status(
+                app,
+                "applied",
+                0,
+                "none",
+                &environment_depth_alignment_state,
+            );
         }
 
         trace_startup_frame(frame_count, "before-swapchain-acquire-image");
@@ -1967,6 +2025,9 @@ unsafe fn run_projection_frames(
         video_projection_renderer.retire_completed_frame_handles(frame_slot);
         let _completed_luma_diagnostic = camera_projection_renderer
             .collect_completed_luma_diagnostic(frame_slot, camera_luma_diagnostic_enabled);
+        if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
+            renderer.collect_completed_diagnostics(vk_device, frame_slot);
+        }
         if retired_image_leases > 0 {
             crate::marker(
                 "camera-sync",
@@ -2817,6 +2878,7 @@ unsafe fn run_projection_frames(
             &environment_depth_particle_stats,
             openxr_environment_depth_frame.as_ref(),
             environment_depth_settings,
+            &environment_depth_alignment_state,
             gpu_private_particle_renderer.as_deref(),
             &private_particle_stats,
             private_particle_world_anchor.world_center_scale(),
@@ -3103,6 +3165,69 @@ fn apply_live_private_layer_selection(
         revision,
         "none",
         Some(&selection),
+    );
+}
+
+fn apply_live_environment_depth_alignment(
+    app: &android_activity::AndroidApp,
+    environment_depth_alignment_state: &mut EnvironmentDepthAlignmentState,
+    candidate: crate::native_renderer_stimulus_panel::EnvironmentDepthAlignmentPanelCandidate,
+    frame_count: u64,
+) {
+    let revision = candidate.revision;
+    if !environment_depth_alignment_state.controls_enabled() {
+        reject_live_environment_depth_alignment(
+            app,
+            environment_depth_alignment_state,
+            frame_count,
+            revision,
+            "environment_depth_alignment_controls_disabled",
+        );
+        return;
+    }
+    environment_depth_alignment_state
+        .set_effective_alignment(candidate.effective_offsets_uv, candidate.sample_scale);
+    crate::marker(
+        "environment-depth-alignment-panel",
+        format!(
+            "status=live-applied transport=jni-live-queue frame={} candidateRevision={} {}",
+            frame_count,
+            revision,
+            environment_depth_alignment_state.marker_fields()
+        ),
+    );
+    crate::native_renderer_stimulus_panel::write_environment_depth_alignment_status(
+        app,
+        "applied",
+        revision,
+        "none",
+        environment_depth_alignment_state,
+    );
+}
+
+fn reject_live_environment_depth_alignment(
+    app: &android_activity::AndroidApp,
+    environment_depth_alignment_state: &EnvironmentDepthAlignmentState,
+    frame_count: u64,
+    revision: i64,
+    reason: &str,
+) {
+    crate::marker(
+        "environment-depth-alignment-panel",
+        format!(
+            "status=live-rejected transport=jni-live-queue frame={} candidateRevision={} reason={} {}",
+            frame_count,
+            revision,
+            crate::sanitize(reason),
+            environment_depth_alignment_state.marker_fields()
+        ),
+    );
+    crate::native_renderer_stimulus_panel::write_environment_depth_alignment_status(
+        app,
+        "rejected",
+        revision,
+        reason,
+        environment_depth_alignment_state,
     );
 }
 
@@ -3446,6 +3571,7 @@ unsafe fn record_projection_diagnostic(
     environment_depth_particle_stats: &GpuEnvironmentDepthParticleFrameStats,
     openxr_environment_depth_frame: Option<&OpenXrEnvironmentDepthFrame>,
     environment_depth_settings: NativeEnvironmentDepthSettings,
+    environment_depth_alignment_state: &EnvironmentDepthAlignmentState,
     gpu_private_particle_renderer: Option<&GpuPrivateParticleRenderer>,
     private_particle_stats: &GpuPrivateParticleFrameStats,
     private_particle_world_center_scale: [f32; 4],
@@ -3582,6 +3708,7 @@ unsafe fn record_projection_diagnostic(
                     projection_settings,
                     environment_depth_settings,
                     openxr_environment_depth_frame,
+                    environment_depth_alignment_state.eye_offsets(eye_index),
                 );
             }
         } else if custom_stereo_projection

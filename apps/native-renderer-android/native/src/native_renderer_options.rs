@@ -3,6 +3,7 @@
 //! This module keeps Android property parsing separate from the OpenXR/Vulkan
 //! frame loop so replay-proof, live-hand, and SDF visual modes stay testable.
 
+pub(crate) use crate::environment_depth_alignment_state::EnvironmentDepthAlignmentSettings;
 use crate::native_renderer_property_values::{
     bool_value, f32_clamped_value, f32_pair_value, f32_value, u32_value, u64_value,
 };
@@ -95,6 +96,7 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) hand_mesh_real_hands_visible: bool,
     pub(crate) hand_anchor_particle_settings: NativeHandAnchorParticleSettings,
     pub(crate) environment_depth_settings: NativeEnvironmentDepthSettings,
+    pub(crate) environment_depth_alignment_settings: EnvironmentDepthAlignmentSettings,
     pub(crate) passthrough_style_settings: NativePassthroughStyleSettings,
     pub(crate) display_composite_settings: NativeDisplayCompositeSettings,
     pub(crate) video_projection_settings: NativeVideoProjectionSettings,
@@ -155,6 +157,8 @@ impl NativeRendererRuntimeOptions {
             NativeHandAnchorParticleSettings::from_property_lookup(&mut lookup);
         let environment_depth_settings =
             NativeEnvironmentDepthSettings::from_property_lookup(&mut lookup);
+        let environment_depth_alignment_settings =
+            EnvironmentDepthAlignmentSettings::from_property_lookup(&mut lookup);
         let passthrough_style_settings =
             NativePassthroughStyleSettings::from_property_lookup(&mut lookup);
         let display_composite_settings =
@@ -200,6 +204,7 @@ impl NativeRendererRuntimeOptions {
             hand_mesh_real_hands_visible,
             hand_anchor_particle_settings,
             environment_depth_settings,
+            environment_depth_alignment_settings,
             passthrough_style_settings,
             display_composite_settings,
             video_projection_settings,

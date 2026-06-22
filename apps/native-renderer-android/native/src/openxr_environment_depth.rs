@@ -41,9 +41,19 @@ pub(crate) struct OpenXrEnvironmentDepthFrame {
     pub(crate) frame_age_ms: f64,
     pub(crate) render_view_state_flags_marker: &'static str,
     pub(crate) acquire_completed_at: Instant,
+    pub(crate) source_view_index: usize,
     pub(crate) depth_eye_position: [f32; 4],
     pub(crate) depth_eye_orientation_xyzw: [f32; 4],
     pub(crate) depth_fov_tangents: [f32; 4],
+    pub(crate) depth_fov_angles_deg: [f32; 4],
+    pub(crate) depth_fov_span_deg: [f32; 4],
+    pub(crate) render_eye_position: [f32; 4],
+    pub(crate) render_eye_orientation_xyzw: [f32; 4],
+    pub(crate) render_fov_tangents: [f32; 4],
+    pub(crate) render_fov_angles_deg: [f32; 4],
+    pub(crate) render_fov_span_deg: [f32; 4],
+    pub(crate) depth_to_render_position_delta_m: f32,
+    pub(crate) depth_to_render_yaw_delta_deg: f32,
     pub(crate) head_motion: OpenXrEnvironmentDepthHeadMotionStats,
 }
 
@@ -163,6 +173,19 @@ pub(crate) struct OpenXrEnvironmentDepthRuntime {
     last_swapchain_index: Option<u32>,
     last_near_z: f32,
     last_far_z: f32,
+    last_source_view_index: Option<usize>,
+    last_depth_eye_position: Option<[f32; 4]>,
+    last_depth_eye_orientation_xyzw: Option<[f32; 4]>,
+    last_depth_fov_tangents: Option<[f32; 4]>,
+    last_depth_fov_angles_deg: Option<[f32; 4]>,
+    last_depth_fov_span_deg: Option<[f32; 4]>,
+    last_render_eye_position: Option<[f32; 4]>,
+    last_render_eye_orientation_xyzw: Option<[f32; 4]>,
+    last_render_fov_tangents: Option<[f32; 4]>,
+    last_render_fov_angles_deg: Option<[f32; 4]>,
+    last_render_fov_span_deg: Option<[f32; 4]>,
+    last_depth_to_render_position_delta_m: Option<f32>,
+    last_depth_to_render_yaw_delta_deg: Option<f32>,
     head_motion_tracker: EnvironmentDepthHeadMotionTracker,
 }
 
@@ -396,6 +419,19 @@ impl OpenXrEnvironmentDepthRuntime {
             last_swapchain_index: None,
             last_near_z: 0.0,
             last_far_z: 0.0,
+            last_source_view_index: None,
+            last_depth_eye_position: None,
+            last_depth_eye_orientation_xyzw: None,
+            last_depth_fov_tangents: None,
+            last_depth_fov_angles_deg: None,
+            last_depth_fov_span_deg: None,
+            last_render_eye_position: None,
+            last_render_eye_orientation_xyzw: None,
+            last_render_fov_tangents: None,
+            last_render_fov_angles_deg: None,
+            last_render_fov_span_deg: None,
+            last_depth_to_render_position_delta_m: None,
+            last_depth_to_render_yaw_delta_deg: None,
             head_motion_tracker: EnvironmentDepthHeadMotionTracker::default(),
         })
     }
@@ -505,16 +541,49 @@ impl OpenXrEnvironmentDepthRuntime {
         self.last_near_z = image.near_z;
         self.last_far_z = image.far_z;
 
+        let source_view_index = self.settings.source_view_index();
+        let depth_view = image.views[source_view_index];
+        let render_view = current_views.first().copied();
+        let render_fov = render_view.map(|view| view.fov).unwrap_or(depth_view.fov);
+        let render_pose = render_view.map(|view| view.pose).unwrap_or(depth_view.pose);
+        let depth_eye_position = pose_position(depth_view.pose);
+        let depth_eye_orientation_xyzw = pose_orientation(depth_view.pose);
+        let depth_fov_tangents = fov_tangents(depth_view.fov);
+        let depth_fov_angles_deg = fov_angles_deg(depth_view.fov);
+        let depth_fov_span_deg = fov_span_deg(depth_view.fov);
+        let render_eye_position = pose_position(render_pose);
+        let render_eye_orientation_xyzw = pose_orientation(render_pose);
+        let render_fov_tangents = fov_tangents(render_fov);
+        let render_fov_angles_deg = fov_angles_deg(render_fov);
+        let render_fov_span_deg = fov_span_deg(render_fov);
+        let depth_to_render_position_delta_m = pose_position_delta_m(depth_view.pose, render_pose);
+        let depth_to_render_yaw_delta_deg =
+            pose_yaw_delta_deg(depth_view.pose, render_pose).unwrap_or(0.0);
+        self.last_source_view_index = Some(source_view_index);
+        self.last_depth_eye_position = Some(depth_eye_position);
+        self.last_depth_eye_orientation_xyzw = Some(depth_eye_orientation_xyzw);
+        self.last_depth_fov_tangents = Some(depth_fov_tangents);
+        self.last_depth_fov_angles_deg = Some(depth_fov_angles_deg);
+        self.last_depth_fov_span_deg = Some(depth_fov_span_deg);
+        self.last_render_eye_position = Some(render_eye_position);
+        self.last_render_eye_orientation_xyzw = Some(render_eye_orientation_xyzw);
+        self.last_render_fov_tangents = Some(render_fov_tangents);
+        self.last_render_fov_angles_deg = Some(render_fov_angles_deg);
+        self.last_render_fov_span_deg = Some(render_fov_span_deg);
+        self.last_depth_to_render_position_delta_m = Some(depth_to_render_position_delta_m);
+        self.last_depth_to_render_yaw_delta_deg = Some(depth_to_render_yaw_delta_deg);
+
         if self.total_acquired == 1 {
             crate::marker(
                 "environment-depth",
                 format!(
-                    "status=first-frame environmentDepthSource=xr-meta-environment-depth environmentDepthAcquireStatus=acquired environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthRenderViewStateFlags={} environmentDepthSwapchainIndex={} environmentDepthPoseValid=true environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCaptureTimeNs={} environmentDepthDisplayTimeNs={} environmentDepthCaptureToDisplayMs={:.3} environmentDepthFrameAgeMs={:.3} environmentDepthRepeatedCaptureTimeCount={} environmentDepthUnavailableStreak={} environmentDepthTextureTransform={} environmentDepthTextureTransformLabel={} environmentDepthRayUvPolicy={} environmentDepthSampleUvPolicy={} confidenceSource=depth-discontinuity-or-none confidencePayload=false",
+                    "status=first-frame environmentDepthSource=xr-meta-environment-depth environmentDepthAcquireStatus=acquired environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSourceViewIndex={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthDepthViewFovTangents={} environmentDepthDepthViewFovAnglesDeg={} environmentDepthDepthViewFovSpanDeg={} environmentDepthDepthViewPosePositionM={} environmentDepthDepthViewPoseOrientationXyzw={} environmentDepthRenderViewStateFlags={} environmentDepthRenderViewFovTangents={} environmentDepthRenderViewFovAnglesDeg={} environmentDepthRenderViewFovSpanDeg={} environmentDepthRenderViewPosePositionM={} environmentDepthRenderViewPoseOrientationXyzw={} environmentDepthDepthToRenderPositionDeltaM={:.5} environmentDepthDepthToRenderYawDeltaDeg={:.3} environmentDepthSwapchainIndex={} environmentDepthPoseValid=true environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCaptureTimeNs={} environmentDepthDisplayTimeNs={} environmentDepthCaptureToDisplayMs={:.3} environmentDepthFrameAgeMs={:.3} environmentDepthRepeatedCaptureTimeCount={} environmentDepthUnavailableStreak={} environmentDepthTextureTransform={} environmentDepthTextureTransformLabel={} environmentDepthRayUvPolicy={} environmentDepthSampleUvPolicy={} confidenceSource=depth-discontinuity-or-none confidencePayload=false",
                     self.width,
                     self.height,
                     DEPTH_FORMAT_LABEL,
                     VIEW_COUNT,
                     self.settings.source_view_count(),
+                    source_view_index,
                     self.settings.sampled_layer_mask(),
                     self.settings.layer_policy_marker_value(),
                     self.settings.depth_units_policy_marker_value(),
@@ -522,7 +591,19 @@ impl OpenXrEnvironmentDepthRuntime {
                     self.settings.debug_view_marker_value(),
                     self.settings.sampled_layer_mask(),
                     self.settings.sampled_layer_mask(),
+                    marker_vec4(depth_fov_tangents),
+                    marker_vec4(depth_fov_angles_deg),
+                    marker_vec2(depth_fov_span_deg),
+                    marker_vec3(depth_eye_position),
+                    marker_vec4(depth_eye_orientation_xyzw),
                     render_view_state_flags_marker,
+                    marker_vec4(render_fov_tangents),
+                    marker_vec4(render_fov_angles_deg),
+                    marker_vec2(render_fov_span_deg),
+                    marker_vec3(render_eye_position),
+                    marker_vec4(render_eye_orientation_xyzw),
+                    depth_to_render_position_delta_m,
+                    depth_to_render_yaw_delta_deg,
                     image.swapchain_index,
                     image.near_z,
                     image.far_z,
@@ -541,10 +622,6 @@ impl OpenXrEnvironmentDepthRuntime {
         }
         self.report_status_if_due(frame_count, acquire_ms, true);
 
-        let depth_view = image.views[self.settings.source_view_index()];
-        let render_view = current_views.first().copied();
-        let render_fov = render_view.map(|view| view.fov).unwrap_or(depth_view.fov);
-        let render_pose = render_view.map(|view| view.pose).unwrap_or(depth_view.pose);
         let head_motion = self
             .head_motion_tracker
             .record(render_view_state_flags, render_pose);
@@ -560,9 +637,19 @@ impl OpenXrEnvironmentDepthRuntime {
             frame_age_ms,
             render_view_state_flags_marker,
             acquire_completed_at: Instant::now(),
-            depth_eye_position: pose_position(depth_view.pose),
-            depth_eye_orientation_xyzw: pose_orientation(depth_view.pose),
-            depth_fov_tangents: fov_tangents(depth_view.fov),
+            source_view_index,
+            depth_eye_position,
+            depth_eye_orientation_xyzw,
+            depth_fov_tangents,
+            depth_fov_angles_deg,
+            depth_fov_span_deg,
+            render_eye_position,
+            render_eye_orientation_xyzw,
+            render_fov_tangents,
+            render_fov_angles_deg,
+            render_fov_span_deg,
+            depth_to_render_position_delta_m,
+            depth_to_render_yaw_delta_deg,
             head_motion,
         })
         .filter(|_| {
@@ -594,7 +681,7 @@ impl OpenXrEnvironmentDepthRuntime {
         crate::marker(
             "environment-depth",
             format!(
-                "status=runtime frame={} environmentDepthSource=xr-meta-environment-depth environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthRenderViewStateFlags={} environmentDepthSwapchainIndex={} environmentDepthPoseValid={} openXrFrameCount={} observedOpenXrFps={:.1} acquireAttempts={} acquiredFrames={} unavailableFrames={} acquireErrors={} uniqueCaptureTimes={} repeatedCaptureTimes={} environmentDepthRepeatedCaptureTimeCount={} environmentDepthUnavailableStreak={} observedAcquireHz={:.1} observedDepthHz={:.1} lastAcquireCpuMs={:.3} avgAcquireCpuMs={:.3} captureTimeNs={} environmentDepthCaptureTimeNs={} environmentDepthDisplayTimeNs={} environmentDepthCaptureToDisplayMs={:.3} environmentDepthFrameAgeMs={:.3} nearZ={:.3} farZ={:.3} environmentDepthHandRemovalRequested={} handRemovalSupported={} handRemovalEnabled={} confidenceSource=depth-discontinuity-or-none confidencePayload=false textureTransform={} environmentDepthTextureTransformLabel={} environmentDepthRayUvPolicy={} environmentDepthSampleUvPolicy={}",
+                "status=runtime frame={} environmentDepthSource=xr-meta-environment-depth environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthAcquireStatus={} environmentDepthImageSize={}x{} environmentDepthFormat={} environmentDepthLayerCount={} environmentDepthSourceViewCount={} environmentDepthSourceViewIndex={} environmentDepthSampledLayerMask={} environmentDepthShaderLayerPolicy={} environmentDepthDepthUnitsPolicy={} environmentDepthRawToMetersPolicy={} environmentDepthDebugView={} environmentDepthDepthViewPoseValidMask={} environmentDepthDepthViewFovValidMask={} environmentDepthDepthViewFovTangents={} environmentDepthDepthViewFovAnglesDeg={} environmentDepthDepthViewFovSpanDeg={} environmentDepthDepthViewPosePositionM={} environmentDepthDepthViewPoseOrientationXyzw={} environmentDepthRenderViewStateFlags={} environmentDepthRenderViewFovTangents={} environmentDepthRenderViewFovAnglesDeg={} environmentDepthRenderViewFovSpanDeg={} environmentDepthRenderViewPosePositionM={} environmentDepthRenderViewPoseOrientationXyzw={} environmentDepthDepthToRenderPositionDeltaM={} environmentDepthDepthToRenderYawDeltaDeg={} environmentDepthSwapchainIndex={} environmentDepthPoseValid={} openXrFrameCount={} observedOpenXrFps={:.1} acquireAttempts={} acquiredFrames={} unavailableFrames={} acquireErrors={} uniqueCaptureTimes={} repeatedCaptureTimes={} environmentDepthRepeatedCaptureTimeCount={} environmentDepthUnavailableStreak={} observedAcquireHz={:.1} observedDepthHz={:.1} lastAcquireCpuMs={:.3} avgAcquireCpuMs={:.3} captureTimeNs={} environmentDepthCaptureTimeNs={} environmentDepthDisplayTimeNs={} environmentDepthCaptureToDisplayMs={:.3} environmentDepthFrameAgeMs={:.3} nearZ={:.3} farZ={:.3} environmentDepthHandRemovalRequested={} handRemovalSupported={} handRemovalEnabled={} confidenceSource=depth-discontinuity-or-none confidencePayload=false textureTransform={} environmentDepthTextureTransformLabel={} environmentDepthRayUvPolicy={} environmentDepthSampleUvPolicy={}",
                 frame_count,
                 if acquired { "acquired" } else { "not-available" },
                 self.width,
@@ -602,6 +689,9 @@ impl OpenXrEnvironmentDepthRuntime {
                 DEPTH_FORMAT_LABEL,
                 VIEW_COUNT,
                 self.settings.source_view_count(),
+                self.last_source_view_index
+                    .map(|value| value.to_string())
+                    .unwrap_or_else(|| "none".to_string()),
                 self.settings.sampled_layer_mask(),
                 self.settings.layer_policy_marker_value(),
                 self.settings.depth_units_policy_marker_value(),
@@ -617,7 +707,19 @@ impl OpenXrEnvironmentDepthRuntime {
                 } else {
                     "0x0"
                 },
+                marker_option_vec4(self.last_depth_fov_tangents),
+                marker_option_vec4(self.last_depth_fov_angles_deg),
+                marker_option_vec2(self.last_depth_fov_span_deg),
+                marker_option_vec3(self.last_depth_eye_position),
+                marker_option_vec4(self.last_depth_eye_orientation_xyzw),
                 self.last_render_view_state_flags_marker,
+                marker_option_vec4(self.last_render_fov_tangents),
+                marker_option_vec4(self.last_render_fov_angles_deg),
+                marker_option_vec2(self.last_render_fov_span_deg),
+                marker_option_vec3(self.last_render_eye_position),
+                marker_option_vec4(self.last_render_eye_orientation_xyzw),
+                marker_option_f32(self.last_depth_to_render_position_delta_m, 5),
+                marker_option_f32(self.last_depth_to_render_yaw_delta_deg, 3),
                 self.last_swapchain_index
                     .map(|value| value.to_string())
                     .unwrap_or_else(|| "none".to_string()),
@@ -809,6 +911,24 @@ fn fov_tangents(fov: xr::sys::Fovf) -> [f32; 4] {
     ]
 }
 
+fn fov_angles_deg(fov: xr::sys::Fovf) -> [f32; 4] {
+    [
+        fov.angle_left.to_degrees(),
+        fov.angle_right.to_degrees(),
+        fov.angle_down.to_degrees(),
+        fov.angle_up.to_degrees(),
+    ]
+}
+
+fn fov_span_deg(fov: xr::sys::Fovf) -> [f32; 4] {
+    [
+        (fov.angle_right - fov.angle_left).to_degrees(),
+        (fov.angle_up - fov.angle_down).to_degrees(),
+        0.0,
+        0.0,
+    ]
+}
+
 fn pose_position(pose: xr::sys::Posef) -> [f32; 4] {
     [pose.position.x, pose.position.y, pose.position.z, 0.0]
 }
@@ -820,6 +940,59 @@ fn pose_orientation(pose: xr::sys::Posef) -> [f32; 4] {
         pose.orientation.z,
         pose.orientation.w,
     ]
+}
+
+fn pose_position_delta_m(from: xr::sys::Posef, to: xr::sys::Posef) -> f32 {
+    let dx = to.position.x - from.position.x;
+    let dy = to.position.y - from.position.y;
+    let dz = to.position.z - from.position.z;
+    (dx * dx + dy * dy + dz * dz).sqrt()
+}
+
+fn pose_yaw_delta_deg(from: xr::sys::Posef, to: xr::sys::Posef) -> Option<f32> {
+    reference_pose_yaw_delta_degrees(
+        reference_pose_from_openxr_pose(from),
+        reference_pose_from_openxr_pose(to),
+    )
+}
+
+fn marker_vec4(values: [f32; 4]) -> String {
+    format!(
+        "{:.6},{:.6},{:.6},{:.6}",
+        values[0], values[1], values[2], values[3]
+    )
+}
+
+fn marker_vec3(values: [f32; 4]) -> String {
+    format!("{:.6},{:.6},{:.6}", values[0], values[1], values[2])
+}
+
+fn marker_vec2(values: [f32; 4]) -> String {
+    format!("{:.6},{:.6}", values[0], values[1])
+}
+
+fn marker_option_vec4(values: Option<[f32; 4]>) -> String {
+    values
+        .map(marker_vec4)
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn marker_option_vec3(values: Option<[f32; 4]>) -> String {
+    values
+        .map(marker_vec3)
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn marker_option_vec2(values: Option<[f32; 4]>) -> String {
+    values
+        .map(marker_vec2)
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn marker_option_f32(value: Option<f32>, precision: usize) -> String {
+    value
+        .map(|value| format!("{value:.precision$}", precision = precision))
+        .unwrap_or_else(|| "none".to_string())
 }
 
 fn reference_pose_from_openxr_pose(pose: xr::sys::Posef) -> ReferencePose {

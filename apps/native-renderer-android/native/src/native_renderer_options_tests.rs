@@ -1103,7 +1103,6 @@ mod tests {
         assert_eq!(settings.mode, NativeEnvironmentDepthMode::ProjectionSampler);
         assert!(settings.runtime_provider_requested());
         assert!(!settings.mode_draws_particles());
-        assert!(settings.requires_scene_permission());
 
         let fields = settings.marker_fields();
         assert!(fields.contains("environmentDepthMode=projection-sampler"));

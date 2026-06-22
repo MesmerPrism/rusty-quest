@@ -38,6 +38,24 @@ const ENVIRONMENT_DEPTH_NEAR_M: &str = "debug.rustyquest.native_renderer.environ
 const ENVIRONMENT_DEPTH_FAR_M: &str = "debug.rustyquest.native_renderer.environment_depth.far_m";
 const ENVIRONMENT_DEPTH_HIGH_RATE_JSON_PAYLOAD: &str =
     "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload";
+const ENVIRONMENT_DEPTH_ALIGNMENT_CONTROLS: &str =
+    "debug.rustyquest.native_renderer.environment_depth.alignment.controls";
+const ENVIRONMENT_DEPTH_ALIGNMENT_JOYSTICK_CONTROLS: &str =
+    "debug.rustyquest.native_renderer.environment_depth.alignment.joystick.controls";
+const ENVIRONMENT_DEPTH_ALIGNMENT_JOYSTICK_RATE_UV_PER_SECOND: &str =
+    "debug.rustyquest.native_renderer.environment_depth.alignment.joystick.rate_uv_per_second";
+const ENVIRONMENT_DEPTH_ALIGNMENT_MAX_OFFSET_UV: &str =
+    "debug.rustyquest.native_renderer.environment_depth.alignment.max_offset_uv";
+const ENVIRONMENT_DEPTH_ALIGNMENT_SCALE: &str =
+    "debug.rustyquest.native_renderer.environment_depth.alignment.scale";
+const ENVIRONMENT_DEPTH_ALIGNMENT_LEFT_OFFSET_X_UV: &str =
+    "debug.rustyquest.native_renderer.environment_depth.alignment.left.offset.x.uv";
+const ENVIRONMENT_DEPTH_ALIGNMENT_LEFT_OFFSET_Y_UV: &str =
+    "debug.rustyquest.native_renderer.environment_depth.alignment.left.offset.y.uv";
+const ENVIRONMENT_DEPTH_ALIGNMENT_RIGHT_OFFSET_X_UV: &str =
+    "debug.rustyquest.native_renderer.environment_depth.alignment.right.offset.x.uv";
+const ENVIRONMENT_DEPTH_ALIGNMENT_RIGHT_OFFSET_Y_UV: &str =
+    "debug.rustyquest.native_renderer.environment_depth.alignment.right.offset.y.uv";
 const ENVIRONMENT_DEPTH_SURFACE_MODEL: &str =
     "debug.rustyquest.native_renderer.environment_depth.surface_model";
 const ENVIRONMENT_DEPTH_SURFACE_SUPPORT_RADIUS_CELLS: &str =
@@ -1205,6 +1223,22 @@ fn validate_environment_depth_property(
                 ));
             }
         }
+        ENVIRONMENT_DEPTH_ALIGNMENT_CONTROLS | ENVIRONMENT_DEPTH_ALIGNMENT_JOYSTICK_CONTROLS => {
+            validate_environment_depth_bool(property, errors);
+        }
+        ENVIRONMENT_DEPTH_ALIGNMENT_JOYSTICK_RATE_UV_PER_SECOND
+        | ENVIRONMENT_DEPTH_ALIGNMENT_MAX_OFFSET_UV => {
+            validate_environment_depth_f32_range(property, 0.0, 1.0, errors);
+        }
+        ENVIRONMENT_DEPTH_ALIGNMENT_SCALE => {
+            validate_environment_depth_f32_range(property, 0.25, 4.0, errors);
+        }
+        ENVIRONMENT_DEPTH_ALIGNMENT_LEFT_OFFSET_X_UV
+        | ENVIRONMENT_DEPTH_ALIGNMENT_LEFT_OFFSET_Y_UV
+        | ENVIRONMENT_DEPTH_ALIGNMENT_RIGHT_OFFSET_X_UV
+        | ENVIRONMENT_DEPTH_ALIGNMENT_RIGHT_OFFSET_Y_UV => {
+            validate_environment_depth_f32_range(property, -1.0, 1.0, errors);
+        }
         ENVIRONMENT_DEPTH_SURFACE_MODEL => {
             let normalized = normalized_value(&property.value);
             let valid = matches!(
@@ -1363,6 +1397,25 @@ fn validate_environment_depth_bool(property: &PropertyValue, errors: &mut Vec<Va
 fn validate_environment_depth_f32(property: &PropertyValue, errors: &mut Vec<ValidationError>) {
     match property.value.trim().parse::<f32>() {
         Ok(value) if value.is_finite() => {}
+        _ => errors.push(ValidationError::new(format!(
+            "{} value {} must be a finite number",
+            property.name, property.value
+        ))),
+    }
+}
+
+fn validate_environment_depth_f32_range(
+    property: &PropertyValue,
+    min_value: f32,
+    max_value: f32,
+    errors: &mut Vec<ValidationError>,
+) {
+    match property.value.trim().parse::<f32>() {
+        Ok(value) if value.is_finite() && value >= min_value && value <= max_value => {}
+        Ok(value) if value.is_finite() => errors.push(ValidationError::new(format!(
+            "{} value {value} must be between {min_value} and {max_value}",
+            property.name
+        ))),
         _ => errors.push(ValidationError::new(format!(
             "{} value {} must be a finite number",
             property.name, property.value

@@ -318,6 +318,7 @@ Assert-ContainsTokens "$runtimeSmokeToolPath`n$permissionPregrantToolPath`n$runt
     'horizonos.permission.USE_SCENE',
     'org.khronos.openxr.permission.OPENXR',
     'org.khronos.openxr.permission.OPENXR_SYSTEM',
+    'USE_SCENE_DATA',
     'pm',
     'grant',
     '-s'

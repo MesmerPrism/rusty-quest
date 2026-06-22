@@ -69,6 +69,24 @@ function Get-FileSha256 {
     return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
 }
 
+function Assert-HashMatches {
+    param(
+        [Parameter(Mandatory=$true)][string]$Label,
+        [Parameter(Mandatory=$true)][string]$ExpectedSha256,
+        [Parameter(Mandatory=$true)][string]$Path
+    )
+    if ([string]::IsNullOrWhiteSpace($ExpectedSha256)) {
+        throw "$Label has no expected SHA-256 in the native app-build feature lock."
+    }
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "$Label is missing: $Path"
+    }
+    $actualSha256 = Get-FileSha256 -Path $Path
+    if ($ExpectedSha256.ToLowerInvariant() -ne $actualSha256) {
+        throw "$Label hash does not match the native app-build feature lock. Expected $ExpectedSha256 but found $actualSha256 at $Path. Re-run tools/Resolve-NativeAppBuild.ps1 for the app spec before building."
+    }
+}
+
 function Get-EffectiveBuildEnvValue {
     param(
         [Parameter(Mandatory=$true)][string]$Name,
@@ -171,12 +189,35 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
             throw "Native app-build feature lock is missing required field for APK build: $field"
         }
     }
+    foreach ($field in @("app_spec_path", "app_spec_sha256", "feature_descriptors")) {
+        if ($null -eq $appBuildLockObject.PSObject.Properties[$field]) {
+            throw "Native app-build feature lock is missing freshness field for APK build: $field"
+        }
+    }
+    $appSpecPath = Resolve-RepoPath -Path ([string]$appBuildLockObject.app_spec_path) -RepoRoot ([string]$repoRoot)
+    Assert-HashMatches `
+        -Label "Native app-build app spec" `
+        -ExpectedSha256 ([string]$appBuildLockObject.app_spec_sha256) `
+        -Path $appSpecPath
+    foreach ($descriptor in @($appBuildLockObject.feature_descriptors)) {
+        foreach ($field in @("feature_id", "path", "sha256")) {
+            if ($null -eq $descriptor.PSObject.Properties[$field]) {
+                throw "Native app-build feature descriptor record is missing freshness field: $field"
+            }
+        }
+        $descriptorPath = Resolve-RepoPath -Path ([string]$descriptor.path) -RepoRoot ([string]$repoRoot)
+        Assert-HashMatches `
+            -Label "Native app-build feature descriptor $($descriptor.feature_id)" `
+            -ExpectedSha256 ([string]$descriptor.sha256) `
+            -Path $descriptorPath
+    }
     $packageName = [string]$appBuildLockObject.android_manifest.package_name
     $activityName = "$packageName/android.app.NativeActivity"
     $generatedManifestPath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.android_manifest) -RepoRoot ([string]$repoRoot)
     $nativeAppSettingsPath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.native_app_settings) -RepoRoot ([string]$repoRoot)
     $appBuildEnvPath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.build_env) -RepoRoot ([string]$repoRoot)
-    foreach ($path in @($generatedManifestPath, $nativeAppSettingsPath, $appBuildEnvPath)) {
+    $generatedBuildManifestPath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.build_manifest) -RepoRoot ([string]$repoRoot)
+    foreach ($path in @($generatedManifestPath, $nativeAppSettingsPath, $appBuildEnvPath, $generatedBuildManifestPath)) {
         if (-not (Test-Path -LiteralPath $path)) {
             throw "Native app-build generated artifact is missing: $path"
         }
@@ -184,6 +225,28 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
     if ([string]$appBuildLockObject.app_settings.sha256 -ne (Get-FileSha256 -Path $nativeAppSettingsPath)) {
         throw "Native app-build settings hash does not match feature lock app_settings.sha256"
     }
+    $generatedBuildManifest = Read-JsonFile -Path $generatedBuildManifestPath
+    foreach ($field in @("feature_lock_sha256", "native_app_settings_sha256", "android_manifest_sha256", "build_env_sha256")) {
+        if ($null -eq $generatedBuildManifest.PSObject.Properties[$field]) {
+            throw "Native app-build generated build manifest is missing hash field: $field"
+        }
+    }
+    Assert-HashMatches `
+        -Label "Native app-build feature lock" `
+        -ExpectedSha256 ([string]$generatedBuildManifest.feature_lock_sha256) `
+        -Path $appBuildLockPath
+    Assert-HashMatches `
+        -Label "Native app-build generated settings" `
+        -ExpectedSha256 ([string]$generatedBuildManifest.native_app_settings_sha256) `
+        -Path $nativeAppSettingsPath
+    Assert-HashMatches `
+        -Label "Native app-build generated Android manifest" `
+        -ExpectedSha256 ([string]$generatedBuildManifest.android_manifest_sha256) `
+        -Path $generatedManifestPath
+    Assert-HashMatches `
+        -Label "Native app-build generated build-env" `
+        -ExpectedSha256 ([string]$generatedBuildManifest.build_env_sha256) `
+        -Path $appBuildEnvPath
     $manifestInputPath = $generatedManifestPath
     $appBuildEnv = Read-JsonFile -Path $appBuildEnvPath
     $appBuildEnvEntries = @($appBuildEnv.env)

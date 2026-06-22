@@ -89,7 +89,7 @@ if (-not (@($settingsSchema.required | ForEach-Object { [string]$_ }) -contains 
     throw "Native app settings schema must require settings_hotload"
 }
 $featureLockSchema = Read-Json -Path (Join-Path $schemaDir "rusty.quest.native_app_feature_lock.v1.schema.json")
-foreach ($requiredLockField in @("settings_hotload", "permission_pregrant")) {
+foreach ($requiredLockField in @("app_spec_path", "settings_hotload", "permission_pregrant")) {
     if (-not (@($featureLockSchema.required | ForEach-Object { [string]$_ }) -contains $requiredLockField)) {
         throw "Native app feature lock schema must require $requiredLockField"
     }
@@ -100,7 +100,11 @@ foreach ($requiredResolverNeedle in @(
     "pregrant-declared-permissions-before-first-launch",
     "same-process-jni-live-queue",
     "app-private-revision-sidecar",
+    "app_spec_sha256",
+    "feature_descriptors",
     "PROJECT_MEDIA",
+    "USE_SCENE_DATA",
+    "environmentDepthProviderState=provider-running",
     "com.oculus.vr.focusaware",
     'android:resizeableActivity="false"',
     "ControlPanelActivity",
@@ -116,6 +120,11 @@ foreach ($requiredResolverNeedle in @(
 $permissionToolText = Get-Content -Raw -LiteralPath $permissionTool
 if ($permissionToolText -notmatch '\[string\[\]\]\$Permissions') {
     throw "Permission pregrant helper must accept an explicit permission list"
+}
+foreach ($requiredPermissionToolNeedle in @("GrantUseSceneDataAppOp", "USE_SCENE_DATA")) {
+    if ($permissionToolText -notmatch [regex]::Escape($requiredPermissionToolNeedle)) {
+        throw "Permission pregrant helper is missing scene-data app-op guardrail: $requiredPermissionToolNeedle"
+    }
 }
 
 $featureFiles = @(Get-ChildItem -LiteralPath $featureDir -Filter "*.feature.json" -File -Recurse |
@@ -152,6 +161,7 @@ foreach ($requiredFeature in @(
     "video_projection",
     "renderer.stimulus_volume",
     "environment_depth",
+    "environment_depth.projection_sampler",
     "hand_mesh_visual",
     "hand_anchor_particles",
     "particles.hand_anchor.ordering.gpu_index_remap",
@@ -162,6 +172,17 @@ foreach ($requiredFeature in @(
 )) {
     if (-not $featureIds.ContainsKey($requiredFeature)) {
         throw "Native app-build feature library is missing required seed feature: $requiredFeature"
+    }
+}
+
+$privateParticleFeature = Read-Json -Path (Join-Path $featureDir "particles\private\renderer\renderer.private_particles.feature.json")
+foreach ($marker in @(
+    "privateParticleDiagnosticStorageBinding=9",
+    "privateParticleDiagnosticWords=16",
+    "privateParticleDiagnosticCpuFullBufferReadback=false"
+)) {
+    if (@($privateParticleFeature.markers.required) -notcontains $marker) {
+        throw "Private particle feature must require generic diagnostic marker: $marker"
     }
 }
 

@@ -8,6 +8,7 @@
     "schema",
     "app_id",
     "resolver_version",
+    "app_spec_path",
     "app_spec_sha256",
     "selected_feature_ids",
     "denied_feature_ids",
@@ -32,6 +33,9 @@
       "type": "string"
     },
     "resolver_version": {
+      "type": "string"
+    },
+    "app_spec_path": {
       "type": "string"
     },
     "app_spec_sha256": {

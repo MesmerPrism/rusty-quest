@@ -20,7 +20,7 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-$expectedPropertyCount = 166
+$expectedPropertyCount = 175
 if ($manifest.property_count -ne $expectedPropertyCount -or $manifest.properties.Count -ne $expectedPropertyCount) {
     throw "Native renderer property manifest must cover the current $expectedPropertyCount-property runtime surface."
 }
@@ -40,6 +40,15 @@ foreach ($token in @(
     'debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction',
     'debug.rustyquest.native_renderer.environment_depth.surface_support.component_mode',
     'debug.rustyquest.native_renderer.environment_depth.native_passthrough.required',
+    'debug.rustyquest.native_renderer.environment_depth.alignment.controls',
+    'debug.rustyquest.native_renderer.environment_depth.alignment.joystick.controls',
+    'debug.rustyquest.native_renderer.environment_depth.alignment.joystick.rate_uv_per_second',
+    'debug.rustyquest.native_renderer.environment_depth.alignment.max_offset_uv',
+    'debug.rustyquest.native_renderer.environment_depth.alignment.scale',
+    'debug.rustyquest.native_renderer.environment_depth.alignment.left.offset.x.uv',
+    'debug.rustyquest.native_renderer.environment_depth.alignment.left.offset.y.uv',
+    'debug.rustyquest.native_renderer.environment_depth.alignment.right.offset.x.uv',
+    'debug.rustyquest.native_renderer.environment_depth.alignment.right.offset.y.uv',
     'debug.rustyquest.native_renderer.environment_depth.surface_support.normal_source',
     'debug.rustyquest.native_renderer.environment_depth.surface_support.small_component_policy',
     'debug.rustyquest.native_renderer.environment_depth.surface_support.min_neighbors',

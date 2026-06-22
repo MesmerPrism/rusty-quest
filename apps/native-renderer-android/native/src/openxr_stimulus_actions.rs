@@ -3,6 +3,9 @@
 use openxr as xr;
 
 use crate::{
+    environment_depth_alignment_state::{
+        EnvironmentDepthAlignmentInput, EnvironmentDepthAlignmentSettings,
+    },
     manifold_pose_publisher::{
         ManifoldPosePublisher, ManifoldPosePublisherConfig, ManifoldPoseSample,
         DEFAULT_MANIFOLD_POSE_CONTROLLER, DEFAULT_MANIFOLD_POSE_KIND,
@@ -28,6 +31,8 @@ pub(crate) struct StimulusVolumeActions {
     right_primary_reset: xr::Action<bool>,
     right_secondary_scale_driver_toggle: xr::Action<bool>,
     right_thumbstick_y: xr::Action<f32>,
+    left_thumbstick_x: xr::Action<f32>,
+    left_thumbstick_y: xr::Action<f32>,
     right_grip_pose: xr::Action<xr::Posef>,
     right_breath_haptic: xr::Action<xr::Haptic>,
     right_hand_subaction_path: xr::Path,
@@ -49,6 +54,7 @@ pub(crate) struct StimulusVolumeActions {
     suggested_binding_count: usize,
     stimulus_settings: NativeStimulusVolumeSettings,
     projection_target_settings: ProjectionTargetSettings,
+    environment_depth_alignment_settings: EnvironmentDepthAlignmentSettings,
     private_particle_recenter_enabled: bool,
 }
 
@@ -58,6 +64,7 @@ pub(crate) struct NativeRendererControllerEvents {
     pub(crate) panel_toggle_triggered: bool,
     pub(crate) private_particle_recenter_triggered: bool,
     pub(crate) projection_target_inputs: Vec<ProjectionTargetInput>,
+    pub(crate) environment_depth_alignment_inputs: Vec<EnvironmentDepthAlignmentInput>,
     pub(crate) right_grip_pose_active: bool,
     pub(crate) right_grip_pose_tracked: bool,
 }
@@ -96,10 +103,12 @@ impl StimulusVolumeActions {
         instance: &xr::Instance,
         stimulus_settings: NativeStimulusVolumeSettings,
         projection_target_settings: ProjectionTargetSettings,
+        environment_depth_alignment_settings: EnvironmentDepthAlignmentSettings,
         private_particle_recenter_enabled: bool,
     ) -> Result<Option<Self>, String> {
         if !stimulus_settings.enabled
             && !projection_target_settings.controls_enabled
+            && !environment_depth_alignment_settings.controls_enabled
             && !private_particle_recenter_enabled
         {
             crate::marker(
@@ -152,6 +161,12 @@ impl StimulusVolumeActions {
         let right_thumbstick_y = action_set
             .create_action::<f32>("right_thumbstick_y", "Right Thumbstick Y", &[])
             .map_err(|error| format!("create projection target thumbstick action: {error}"))?;
+        let left_thumbstick_x = action_set
+            .create_action::<f32>("left_thumbstick_x", "Left Thumbstick X", &[])
+            .map_err(|error| format!("create depth alignment thumbstick X action: {error}"))?;
+        let left_thumbstick_y = action_set
+            .create_action::<f32>("left_thumbstick_y", "Left Thumbstick Y", &[])
+            .map_err(|error| format!("create depth alignment thumbstick Y action: {error}"))?;
         let right_grip_pose = action_set
             .create_action::<xr::Posef>("right_grip_pose", "Right Grip Pose", &[])
             .map_err(|error| format!("create right grip pose action: {error}"))?;
@@ -170,6 +185,9 @@ impl StimulusVolumeActions {
             projection_controls_enabled || private_particle_recenter_enabled;
         let projection_joystick_binding_enabled =
             projection_controls_enabled && projection_target_settings.joystick_controls_enabled;
+        let depth_alignment_joystick_binding_enabled = environment_depth_alignment_settings
+            .controls_enabled
+            && environment_depth_alignment_settings.joystick_controls_enabled;
         let breath_haptics_configured = projection_controls_enabled
             && projection_target_settings
                 .breath_bridge_mode
@@ -233,6 +251,22 @@ impl StimulusVolumeActions {
                     bindings.push(xr::Binding::new(&right_thumbstick_y, input));
                 }
             }
+            if let Some(input_path) = profile.left_thumbstick_x_path {
+                let input = instance.string_to_path(input_path).map_err(|error| {
+                    format!("create OpenXR path for left thumbstick X input {input_path}: {error}")
+                })?;
+                if depth_alignment_joystick_binding_enabled {
+                    bindings.push(xr::Binding::new(&left_thumbstick_x, input));
+                }
+            }
+            if let Some(input_path) = profile.left_thumbstick_y_path {
+                let input = instance.string_to_path(input_path).map_err(|error| {
+                    format!("create OpenXR path for left thumbstick Y input {input_path}: {error}")
+                })?;
+                if depth_alignment_joystick_binding_enabled {
+                    bindings.push(xr::Binding::new(&left_thumbstick_y, input));
+                }
+            }
             if let Some(input_path) = profile.right_grip_pose_path {
                 let input = instance.string_to_path(input_path).map_err(|error| {
                     format!("create OpenXR path for right grip pose input {input_path}: {error}")
@@ -255,19 +289,25 @@ impl StimulusVolumeActions {
                     crate::marker(
                         "projection-target-input",
                         format!(
-                        "status=binding-suggested interactionProfile={} rightPrimaryInputPath={} rightTriggerValueInputPath={} rightSelectFallbackInputPath={} rightSecondaryInputPath={} rightThumbstickYInputPath={} rightGripPoseInputPath={} rightHapticOutputPath={} rightTriggerPanelToggleBinding={} rightSelectPanelToggleFallbackBinding={} rightControllerThumbstickYBinding={} rightControllerPrimaryResetBinding={} rightControllerSecondaryScaleDriverToggleBinding={} rightGripPoseBinding={} rightBreathHapticBinding={}",
+                        "status=binding-suggested interactionProfile={} rightPrimaryInputPath={} rightTriggerValueInputPath={} rightSelectFallbackInputPath={} rightSecondaryInputPath={} rightThumbstickYInputPath={} leftThumbstickXInputPath={} leftThumbstickYInputPath={} rightGripPoseInputPath={} rightHapticOutputPath={} rightTriggerPanelToggleBinding={} rightSelectPanelToggleFallbackBinding={} rightControllerThumbstickYBinding={} leftControllerThumbstickXBinding={} leftControllerThumbstickYBinding={} rightControllerPrimaryResetBinding={} rightControllerSecondaryScaleDriverToggleBinding={} rightGripPoseBinding={} rightBreathHapticBinding={}",
                             profile.profile_path,
                             profile.right_primary_path.unwrap_or("none"),
                             profile.right_trigger_value_path.unwrap_or("none"),
                             profile.right_select_fallback_path.unwrap_or("none"),
                             profile.right_secondary_path.unwrap_or("none"),
                             profile.right_thumbstick_y_path.unwrap_or("none"),
+                            profile.left_thumbstick_x_path.unwrap_or("none"),
+                            profile.left_thumbstick_y_path.unwrap_or("none"),
                             profile.right_grip_pose_path.unwrap_or("none"),
                             profile.right_haptic_output_path.unwrap_or("none"),
                             profile.right_trigger_value_path.is_some(),
                             profile.right_select_fallback_path.is_some(),
                             profile.right_thumbstick_y_path.is_some()
                                 && projection_joystick_binding_enabled,
+                            profile.left_thumbstick_x_path.is_some()
+                                && depth_alignment_joystick_binding_enabled,
+                            profile.left_thumbstick_y_path.is_some()
+                                && depth_alignment_joystick_binding_enabled,
                             profile.right_primary_path.is_some() && primary_recenter_binding_enabled,
                             profile.right_secondary_path.is_some() && projection_controls_enabled,
                             profile.right_grip_pose_path.is_some() && right_grip_pose_binding_enabled,
@@ -278,7 +318,7 @@ impl StimulusVolumeActions {
                 Err(error) => crate::marker(
                     "projection-target-input",
                     format!(
-                        "status=binding-warning interactionProfile={} reason={} rightTriggerPanelToggleBinding=false rightSelectPanelToggleFallbackBinding=false rightControllerThumbstickYBinding=false rightControllerPrimaryResetBinding=false rightControllerSecondaryScaleDriverToggleBinding=false rightGripPoseBinding=false rightBreathHapticBinding=false",
+                        "status=binding-warning interactionProfile={} reason={} rightTriggerPanelToggleBinding=false rightSelectPanelToggleFallbackBinding=false rightControllerThumbstickYBinding=false leftControllerThumbstickXBinding=false leftControllerThumbstickYBinding=false rightControllerPrimaryResetBinding=false rightControllerSecondaryScaleDriverToggleBinding=false rightGripPoseBinding=false rightBreathHapticBinding=false",
                         profile.profile_path,
                         crate::sanitize(&error.to_string())
                     ),
@@ -311,6 +351,15 @@ impl StimulusVolumeActions {
                 breath_haptic_pulse_hz(),
                 BREATH_HAPTIC_AMPLITUDE,
                 BREATH_HAPTIC_PULSE_DURATION_MS,
+            ),
+        );
+        crate::marker(
+            "environment-depth-alignment-input",
+            format!(
+                "status=config actionSet=stimulus_volume environmentDepthAlignmentControlsEnabled={} leftThumbstickXAction={} leftThumbstickYAction={} leftControllerThumbstickX=/user/hand/left/input/thumbstick/x leftControllerThumbstickY=/user/hand/left/input/thumbstick/y actionSetAttached=false",
+                environment_depth_alignment_settings.controls_enabled,
+                depth_alignment_joystick_binding_enabled,
+                depth_alignment_joystick_binding_enabled,
             ),
         );
         crate::marker(
@@ -347,6 +396,8 @@ impl StimulusVolumeActions {
             right_primary_reset,
             right_secondary_scale_driver_toggle,
             right_thumbstick_y,
+            left_thumbstick_x,
+            left_thumbstick_y,
             right_grip_pose,
             right_breath_haptic,
             right_hand_subaction_path,
@@ -368,6 +419,7 @@ impl StimulusVolumeActions {
             suggested_binding_count,
             stimulus_settings,
             projection_target_settings,
+            environment_depth_alignment_settings,
             private_particle_recenter_enabled,
         }))
     }
@@ -425,6 +477,17 @@ impl StimulusVolumeActions {
                         .projection_target_settings
                         .breath_bridge_mode
                         .uses_breath_stream(),
+            ),
+        );
+        crate::marker(
+            "environment-depth-alignment-input",
+            format!(
+                "status=attached actionSet=stimulus_volume actionSetAttached=true suggestedBindingCount={} leftThumbstickXAction={} leftThumbstickYAction={}",
+                self.suggested_binding_count,
+                self.environment_depth_alignment_settings.controls_enabled
+                    && self.environment_depth_alignment_settings.joystick_controls_enabled,
+                self.environment_depth_alignment_settings.controls_enabled
+                    && self.environment_depth_alignment_settings.joystick_controls_enabled,
             ),
         );
         Ok(())
@@ -496,6 +559,10 @@ impl StimulusVolumeActions {
         if let Some(input) = self.poll_thumbstick_y(session, frame_count, dt_seconds) {
             events.projection_target_inputs.push(input);
         }
+        if let Some(input) = self.poll_depth_alignment_thumbstick(session, frame_count, dt_seconds)
+        {
+            events.environment_depth_alignment_inputs.push(input);
+        }
         events.right_grip_pose_active = match self
             .right_grip_pose
             .is_active(session, xr::Path::NULL)
@@ -548,7 +615,7 @@ impl StimulusVolumeActions {
             crate::marker(
                 "projection-target-input",
                 format!(
-                    "status=polled frame={} rightGripPoseActive={} rightGripPoseTracked={} nativeControllerPosePublisherEnabled={} nativeControllerPosePublishedCount={} nativeControllerPoseDroppedCount={} rightControllerThumbstickYAction={} rightPrimaryResetAction={} rightControllerPrimaryPrivateParticleRecenterAction={} rightSecondaryScaleDriverToggleAction={} rightBreathHapticAction={} breathHapticsEnabled={} highRatePoseViaManifold={} highRatePoseViaAndroidProperties=false",
+                    "status=polled frame={} rightGripPoseActive={} rightGripPoseTracked={} nativeControllerPosePublisherEnabled={} nativeControllerPosePublishedCount={} nativeControllerPoseDroppedCount={} rightControllerThumbstickYAction={} leftControllerThumbstickXAction={} leftControllerThumbstickYAction={} rightPrimaryResetAction={} rightControllerPrimaryPrivateParticleRecenterAction={} rightSecondaryScaleDriverToggleAction={} rightBreathHapticAction={} breathHapticsEnabled={} highRatePoseViaManifold={} highRatePoseViaAndroidProperties=false",
                     frame_count,
                     events.right_grip_pose_active,
                     events.right_grip_pose_tracked,
@@ -557,6 +624,14 @@ impl StimulusVolumeActions {
                     self.manifold_pose_dropped_count,
                     self.projection_target_settings.controls_enabled
                         && self.projection_target_settings.joystick_controls_enabled,
+                    self.environment_depth_alignment_settings.controls_enabled
+                        && self
+                            .environment_depth_alignment_settings
+                            .joystick_controls_enabled,
+                    self.environment_depth_alignment_settings.controls_enabled
+                        && self
+                            .environment_depth_alignment_settings
+                            .joystick_controls_enabled,
                     self.projection_target_settings.controls_enabled,
                     self.private_particle_recenter_enabled,
                     self.projection_target_settings.controls_enabled,
@@ -1128,6 +1203,82 @@ impl StimulusVolumeActions {
         }
         None
     }
+
+    fn poll_depth_alignment_thumbstick<G>(
+        &self,
+        session: &xr::Session<G>,
+        frame_count: u64,
+        dt_seconds: f32,
+    ) -> Option<EnvironmentDepthAlignmentInput> {
+        if !self.environment_depth_alignment_settings.controls_enabled
+            || !self
+                .environment_depth_alignment_settings
+                .joystick_controls_enabled
+        {
+            return None;
+        }
+        let x_state = match self.left_thumbstick_x.state(session, xr::Path::NULL) {
+            Ok(state) => state,
+            Err(error) => {
+                if frame_count == 0 || frame_count % 120 == 0 {
+                    crate::marker(
+                        "environment-depth-alignment-input",
+                        format!(
+                            "status=left-thumbstick-x-state-error frame={} reason={} leftControllerThumbstickXActive=false",
+                            frame_count,
+                            crate::sanitize(&error.to_string())
+                        ),
+                    );
+                }
+                return None;
+            }
+        };
+        let y_state = match self.left_thumbstick_y.state(session, xr::Path::NULL) {
+            Ok(state) => state,
+            Err(error) => {
+                if frame_count == 0 || frame_count % 120 == 0 {
+                    crate::marker(
+                        "environment-depth-alignment-input",
+                        format!(
+                            "status=left-thumbstick-y-state-error frame={} reason={} leftControllerThumbstickYActive=false",
+                            frame_count,
+                            crate::sanitize(&error.to_string())
+                        ),
+                    );
+                }
+                return None;
+            }
+        };
+        if frame_count == 0 || frame_count % 120 == 0 {
+            crate::marker(
+                "environment-depth-alignment-input",
+                format!(
+                    "status=polled frame={} leftControllerThumbstickXActive={} leftControllerThumbstickX={:.3} leftControllerThumbstickYActive={} leftControllerThumbstickY={:.3}",
+                    frame_count,
+                    x_state.is_active,
+                    x_state.current_state,
+                    y_state.is_active,
+                    y_state.current_state,
+                ),
+            );
+        }
+        if x_state.is_active || y_state.is_active {
+            return Some(EnvironmentDepthAlignmentInput::JoystickOffsetDelta {
+                left_thumbstick_x: if x_state.is_active {
+                    x_state.current_state
+                } else {
+                    0.0
+                },
+                left_thumbstick_y: if y_state.is_active {
+                    y_state.current_state
+                } else {
+                    0.0
+                },
+                dt_seconds,
+            });
+        }
+        None
+    }
 }
 
 fn manifold_pose_config_from_projection_settings(
@@ -1170,6 +1321,8 @@ struct InteractionProfileBindings {
     right_select_fallback_path: Option<&'static str>,
     right_secondary_path: Option<&'static str>,
     right_thumbstick_y_path: Option<&'static str>,
+    left_thumbstick_x_path: Option<&'static str>,
+    left_thumbstick_y_path: Option<&'static str>,
     right_grip_pose_path: Option<&'static str>,
     right_haptic_output_path: Option<&'static str>,
 }
@@ -1182,6 +1335,8 @@ const INTERACTION_PROFILES: &[InteractionProfileBindings] = &[
         right_select_fallback_path: None,
         right_secondary_path: Some("/user/hand/right/input/b/click"),
         right_thumbstick_y_path: Some("/user/hand/right/input/thumbstick/y"),
+        left_thumbstick_x_path: Some("/user/hand/left/input/thumbstick/x"),
+        left_thumbstick_y_path: Some("/user/hand/left/input/thumbstick/y"),
         right_grip_pose_path: Some("/user/hand/right/input/grip/pose"),
         right_haptic_output_path: Some(RIGHT_HAND_HAPTIC_OUTPUT_PATH),
     },
@@ -1192,6 +1347,8 @@ const INTERACTION_PROFILES: &[InteractionProfileBindings] = &[
         right_select_fallback_path: None,
         right_secondary_path: Some("/user/hand/right/input/b/click"),
         right_thumbstick_y_path: Some("/user/hand/right/input/thumbstick/y"),
+        left_thumbstick_x_path: Some("/user/hand/left/input/thumbstick/x"),
+        left_thumbstick_y_path: Some("/user/hand/left/input/thumbstick/y"),
         right_grip_pose_path: Some("/user/hand/right/input/grip/pose"),
         right_haptic_output_path: Some(RIGHT_HAND_HAPTIC_OUTPUT_PATH),
     },
@@ -1202,6 +1359,8 @@ const INTERACTION_PROFILES: &[InteractionProfileBindings] = &[
         right_select_fallback_path: Some("/user/hand/right/input/select/click"),
         right_secondary_path: None,
         right_thumbstick_y_path: None,
+        left_thumbstick_x_path: None,
+        left_thumbstick_y_path: None,
         right_grip_pose_path: Some("/user/hand/right/input/grip/pose"),
         right_haptic_output_path: Some(RIGHT_HAND_HAPTIC_OUTPUT_PATH),
     },

@@ -297,10 +297,12 @@ Runtime permissions are requested from Rust through the framework Activity's
 `requestPermissions` method, keeping the app-owned code path native while still
 supporting normal Android permission flow.
 The native renderer manifest declares `com.oculus.permission.HAND_TRACKING`
-and optional `oculus.software.handtracking` for the `XR_EXT_hand_tracking`
-compact-input path. Those declarations only make the app eligible; the headset
-still has to have OS-level hand tracking enabled before active joint frames are
-reported.
+and optional `oculus.software.handtracking` only for builds that select the
+hand-tracking feature path. Those declarations make the app eligible; the
+headset still has to have OS-level hand tracking enabled before active joint
+frames are reported. Source-only native app builds that select only
+OpenXR/Vulkan plus private particles should not inherit hand-tracking
+permissions from the base feature.
 
 The runtime scaffold:
 

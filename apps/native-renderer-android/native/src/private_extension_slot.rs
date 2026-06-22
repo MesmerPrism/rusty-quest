@@ -7,6 +7,10 @@ use ash::vk::{self, Handle};
 use crate::{
     camera_projection::PreparedCameraProjection,
     camera_projection_metadata::{CameraProjectionMetadata, TargetRect},
+    environment_depth_alignment_state::EnvironmentDepthAlignmentEyeOffsets,
+    environment_depth_projection_alignment::{
+        aligned_depth_uv_transform, IDENTITY_DEPTH_UV_TRANSFORM,
+    },
     gpu_environment_depth_particle_stats::{
         DEPTH_FLAG_INFINITE_FAR, META_ENVIRONMENT_DEPTH_FORMAT, META_ENVIRONMENT_DEPTH_LAYER_COUNT,
         META_ENVIRONMENT_DEPTH_TEXTURE_TRANSFORM_FLAGS,
@@ -31,6 +35,79 @@ const PRIVATE_GUIDE_TARGET_COUNT: usize = 5;
 const PRIVATE_GUIDE_PASS_COUNT: usize = 6;
 const PRIVATE_LAYER_COUNT: u32 = 7;
 const ASSUMED_DISPLAY_HZ: f32 = 90.0;
+
+fn marker_vec4(values: [f32; 4]) -> String {
+    format!(
+        "{:.6},{:.6},{:.6},{:.6}",
+        values[0], values[1], values[2], values[3]
+    )
+}
+
+fn marker_vec3(values: [f32; 4]) -> String {
+    format!("{:.6},{:.6},{:.6}", values[0], values[1], values[2])
+}
+
+fn marker_vec2(values: [f32; 4]) -> String {
+    format!("{:.6},{:.6}", values[0], values[1])
+}
+
+fn marker_uv2(values: [f32; 2]) -> String {
+    format!("{:.6},{:.6}", values[0], values[1])
+}
+
+fn marker_option_vec4(values: Option<[f32; 4]>) -> String {
+    values
+        .map(marker_vec4)
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn marker_option_vec3(values: Option<[f32; 4]>) -> String {
+    values
+        .map(marker_vec3)
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn marker_option_vec2(values: Option<[f32; 4]>) -> String {
+    values
+        .map(marker_vec2)
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn marker_option_f32(value: Option<f32>, precision: usize) -> String {
+    value
+        .map(|value| format!("{value:.precision$}", precision = precision))
+        .unwrap_or_else(|| "none".to_string())
+}
+
+fn depth_uv_transform_for_frame(frame: Option<&OpenXrEnvironmentDepthFrame>) -> [f32; 4] {
+    frame
+        .map(|frame| fov_uv_transform(frame.render_fov_tangents, frame.depth_fov_tangents))
+        .unwrap_or(IDENTITY_DEPTH_UV_TRANSFORM)
+}
+
+fn fov_uv_transform(render_fov: [f32; 4], depth_fov: [f32; 4]) -> [f32; 4] {
+    let render_width = render_fov[1] - render_fov[0];
+    let render_height = render_fov[3] - render_fov[2];
+    let depth_width = depth_fov[1] - depth_fov[0];
+    let depth_height = depth_fov[3] - depth_fov[2];
+    if !render_fov
+        .iter()
+        .chain(depth_fov.iter())
+        .all(|value| value.is_finite())
+        || render_width <= 0.000_001
+        || render_height <= 0.000_001
+        || depth_width <= 0.000_001
+        || depth_height <= 0.000_001
+    {
+        return IDENTITY_DEPTH_UV_TRANSFORM;
+    }
+    [
+        render_width / depth_width,
+        (render_fov[0] - depth_fov[0]) / depth_width,
+        render_height / depth_height,
+        (render_fov[2] - depth_fov[2]) / depth_height,
+    ]
+}
 
 pub(crate) struct PrivateExtensionSlotRuntime {
     invocation_sequence: u64,
@@ -174,6 +251,7 @@ impl PrivateExtensionSlotRuntime {
         projection_settings: NativeProjectionBorderStretchSettings,
         environment_depth_settings: NativeEnvironmentDepthSettings,
         environment_depth_frame: Option<&OpenXrEnvironmentDepthFrame>,
+        depth_alignment_offsets: EnvironmentDepthAlignmentEyeOffsets,
     ) {
         if !PRIVATE_LAYER_PAYLOAD_LINKED || !settings.enabled {
             return;
@@ -191,6 +269,7 @@ impl PrivateExtensionSlotRuntime {
             projection_settings,
             environment_depth_settings,
             environment_depth_frame,
+            depth_alignment_offsets,
         );
     }
 }
@@ -464,6 +543,7 @@ impl PrivateLayerGraphRenderer {
         projection_settings: NativeProjectionBorderStretchSettings,
         environment_depth_settings: NativeEnvironmentDepthSettings,
         environment_depth_frame: Option<&OpenXrEnvironmentDepthFrame>,
+        depth_alignment_offsets: EnvironmentDepthAlignmentEyeOffsets,
     ) {
         let Some(resources) = self.resources.as_mut() else {
             return;
@@ -479,8 +559,22 @@ impl PrivateLayerGraphRenderer {
                 .depth_resources
                 .transition_fallback_for_sampling(device, cmd);
         }
-        let depth_source_layer =
-            eye_index.min((META_ENVIRONMENT_DEPTH_LAYER_COUNT - 1) as usize) as f32;
+        let depth_source_layer = environment_depth_settings
+            .source_view_index()
+            .min((META_ENVIRONMENT_DEPTH_LAYER_COUNT - 1) as usize)
+            as f32;
+        let depth_uv_transform_base = depth_uv_transform_for_frame(
+            environment_depth_frame.filter(|_| depth_binding.real_depth_bound),
+        );
+        let reference_target_rect = projection_metadata.rect_for_eye(eye_index);
+        let depth_sample_scale = depth_alignment_offsets.sample_scale;
+        let aligned_depth_transform = aligned_depth_uv_transform(
+            depth_uv_transform_base,
+            reference_target_rect,
+            target_rect,
+            depth_alignment_offsets,
+        );
+        let depth_uv_transform = aligned_depth_transform.depth_uv_transform;
         let viewport = [vk::Viewport {
             x: 0.0,
             y: 0.0,
@@ -534,7 +628,7 @@ impl PrivateLayerGraphRenderer {
         } else {
             0
         };
-        if eye_index == 0 && (frame_count == 0 || frame_count % 120 == 0) {
+        if frame_count == 0 || frame_count % 120 == 0 {
             let (swapchain_index, depth_width, depth_height) = environment_depth_frame
                 .filter(|_| depth_binding.real_depth_bound)
                 .map(|frame| {
@@ -545,16 +639,83 @@ impl PrivateLayerGraphRenderer {
                     )
                 })
                 .unwrap_or((-1, 0, 0));
+            let source_view_index = environment_depth_frame
+                .filter(|_| depth_binding.real_depth_bound)
+                .map(|frame| frame.source_view_index.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            let depth_fov_tangents = marker_option_vec4(
+                environment_depth_frame
+                    .filter(|_| depth_binding.real_depth_bound)
+                    .map(|frame| frame.depth_fov_tangents),
+            );
+            let render_fov_tangents = marker_option_vec4(
+                environment_depth_frame
+                    .filter(|_| depth_binding.real_depth_bound)
+                    .map(|frame| frame.render_fov_tangents),
+            );
+            let depth_fov_span_deg = marker_option_vec2(
+                environment_depth_frame
+                    .filter(|_| depth_binding.real_depth_bound)
+                    .map(|frame| frame.depth_fov_span_deg),
+            );
+            let render_fov_span_deg = marker_option_vec2(
+                environment_depth_frame
+                    .filter(|_| depth_binding.real_depth_bound)
+                    .map(|frame| frame.render_fov_span_deg),
+            );
+            let depth_pose_position = marker_option_vec3(
+                environment_depth_frame
+                    .filter(|_| depth_binding.real_depth_bound)
+                    .map(|frame| frame.depth_eye_position),
+            );
+            let render_pose_position = marker_option_vec3(
+                environment_depth_frame
+                    .filter(|_| depth_binding.real_depth_bound)
+                    .map(|frame| frame.render_eye_position),
+            );
+            let depth_to_render_position_delta_m = marker_option_f32(
+                environment_depth_frame
+                    .filter(|_| depth_binding.real_depth_bound)
+                    .map(|frame| frame.depth_to_render_position_delta_m),
+                5,
+            );
+            let depth_to_render_yaw_delta_deg = marker_option_f32(
+                environment_depth_frame
+                    .filter(|_| depth_binding.real_depth_bound)
+                    .map(|frame| frame.depth_to_render_yaw_delta_deg),
+                3,
+            );
             crate::marker(
                 "private-extension-slot",
                 format!(
-                    "status=projection-depth frame={} privateLayerEnvironmentDepthBound={} privateLayerEnvironmentDepthFallbackActive={} privateLayerEnvironmentDepthSourceLayer={} privateLayerEnvironmentDepthLayerPolicy={} privateLayerEnvironmentDepthProjectionLayerPolicy=per-eye-current-eye privateLayerEnvironmentDepthSampledLayerMask={} privateLayerEnvironmentDepthSwapchainIndex={} privateLayerEnvironmentDepthImageSize={}x{} privateLayerEnvironmentDepthNearZ={:.3} privateLayerEnvironmentDepthFarZ={:.3} privateLayerEnvironmentDepthInfiniteFar={} privateLayerEnvironmentDepthTextureTransform=rotate0+flipY",
+                    "status=projection-depth frame={} privateLayerEyeIndex={} privateLayerEnvironmentDepthBound={} privateLayerEnvironmentDepthFallbackActive={} privateLayerEnvironmentDepthSourceLayer={} privateLayerEnvironmentDepthSourceViewIndex={} privateLayerEnvironmentDepthLayerPolicy={} privateLayerEnvironmentDepthProjectionLayerPolicy=runtime-layer-policy privateLayerEnvironmentDepthSampledLayerMask={} privateLayerEnvironmentDepthUvMapping=render-view-uv-target-reference-fov-affine-texture-transform+manual-offset+centered-scale privateLayerEnvironmentDepthPoseFovShaderInput=fov-affine privateLayerEnvironmentDepthPoseDeltaShaderInput=false privateLayerEnvironmentDepthRenderUvSource=full-eye-fragment-uv privateLayerEnvironmentDepthTargetUvSource=camera-target-content-uv privateLayerEnvironmentDepthReferenceTargetRect={} privateLayerEnvironmentDepthEffectiveTargetRect={} privateLayerEnvironmentDepthTargetReferenceUvTransform={} privateLayerEnvironmentDepthProjectionScaleCompensation={:.6},{:.6} privateLayerEnvironmentDepthAlignmentMode=manual-uv-offset+sample-scale privateLayerEnvironmentDepthBaseOffsetUv={} privateLayerEnvironmentDepthManualOffsetUv={} privateLayerEnvironmentDepthEffectiveOffsetUv={} privateLayerEnvironmentDepthSampleScale={:.4} privateLayerEnvironmentDepthScaleAppliesTo=environment-depth-sampler-only privateLayerEnvironmentDepthUvTransformBase={} privateLayerEnvironmentDepthUvTransform={} privateLayerEnvironmentDepthViewFovTangents={} privateLayerRenderViewFovTangents={} privateLayerEnvironmentDepthViewFovSpanDeg={} privateLayerEnvironmentDepthViewPosePositionM={} privateLayerRenderViewFovSpanDeg={} privateLayerRenderViewPosePositionM={} privateLayerDepthToRenderPositionDeltaM={} privateLayerDepthToRenderYawDeltaDeg={} privateLayerEnvironmentDepthSwapchainIndex={} privateLayerEnvironmentDepthImageSize={}x{} privateLayerEnvironmentDepthNearZ={:.3} privateLayerEnvironmentDepthFarZ={:.3} privateLayerEnvironmentDepthInfiniteFar={} privateLayerEnvironmentDepthTextureTransform=rotate0+flipY",
                     frame_count,
+                    eye_index,
                     depth_binding.real_depth_bound,
                     !depth_binding.real_depth_bound,
                     depth_source_layer as u32,
+                    source_view_index,
                     environment_depth_settings.layer_policy_marker_value(),
                     environment_depth_settings.sampled_layer_mask(),
+                    reference_target_rect.as_xywh_token(),
+                    target_rect.as_xywh_token(),
+                    marker_vec4(aligned_depth_transform.target_reference_uv_transform),
+                    aligned_depth_transform.target_reference_uv_transform[0],
+                    aligned_depth_transform.target_reference_uv_transform[2],
+                    marker_uv2(depth_alignment_offsets.base_offset_uv),
+                    marker_uv2(depth_alignment_offsets.manual_offset_uv),
+                    marker_uv2(depth_alignment_offsets.effective_offset_uv),
+                    depth_sample_scale,
+                    marker_vec4(depth_uv_transform_base),
+                    marker_vec4(depth_uv_transform),
+                    depth_fov_tangents,
+                    render_fov_tangents,
+                    depth_fov_span_deg,
+                    depth_pose_position,
+                    render_fov_span_deg,
+                    render_pose_position,
+                    depth_to_render_position_delta_m,
+                    depth_to_render_yaw_delta_deg,
                     swapchain_index,
                     depth_width,
                     depth_height,
@@ -606,6 +767,7 @@ impl PrivateLayerGraphRenderer {
                 environment_depth_settings.near_m,
                 environment_depth_settings.far_m,
             ],
+            depth_uv_transform,
         };
         push_fragment_constants(device, cmd, resources.projection_pipeline_layout, &push);
         device.cmd_draw(cmd, 3, 1, 0, 0);
@@ -1423,6 +1585,7 @@ struct PrivateLayerProjectionPush {
     border_blend: [f32; 4],
     depth: [f32; 4],
     depth_aux: [f32; 4],
+    depth_uv_transform: [f32; 4],
 }
 
 unsafe fn begin_private_pass(

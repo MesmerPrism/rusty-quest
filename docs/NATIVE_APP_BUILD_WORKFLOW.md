@@ -22,6 +22,10 @@ Use this workflow when creating a new Rusty Quest native APK profile.
      transports are allowed, and which changes require restart or rebuild.
    - `permission_pregrant`: the exact declared permission/app-op surface that
      must be prepared before first launch.
+   - source hashes for the app spec, selected feature descriptors, and
+     generated build artifacts. The APK build refuses stale locks; re-run the
+     resolver after changing a spec, copied downstream feature descriptor,
+     generated manifest, generated settings file, or build-env file.
 5. Build from the lock:
 
    ```powershell
@@ -85,6 +89,15 @@ when they need usable sampled depth, then verify
 `nativePassthroughRequested=true`, `nativePassthroughLayerActive=true`,
 `environmentDepthAcquireStatus=acquired`, and a non-fallback depth consumer
 marker in the same run.
+
+When an app samples depth in a projection/composite shader rather than drawing
+the public particle map, request the public
+`environment_depth.projection_sampler` feature instead of relying on private
+feature side effects. That feature owns the public manifest contract:
+`horizonos.permission.USE_SCENE`, `com.oculus.feature.PASSTHROUGH`, and
+`USE_SCENE_DATA` pregrant/app-op evidence. `HEADSET_CAMERA`, `SPATIAL_CAMERA`,
+and `USE_SCENE` remain manifest/pregrant surfaces; the native activity should
+not request them through `Activity.requestPermissions`.
 
 ## Iteration Speed
 

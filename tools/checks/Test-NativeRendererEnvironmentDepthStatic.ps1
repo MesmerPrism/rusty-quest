@@ -78,15 +78,19 @@ function Assert-PowerShellParses {
 $nativeLib = Read-RequiredText (Join-Path $srcRoot "lib.rs") "native lib"
 $nativeBuildRs = Read-RequiredText (Join-Path $nativeRoot "build.rs") "native build script"
 $environmentDepthGeometry = Read-RequiredText (Join-Path $srcRoot "environment_depth_geometry.rs") "environment depth geometry"
+$environmentDepthProjectionAlignment = Read-RequiredText (Join-Path $srcRoot "environment_depth_projection_alignment.rs") "environment depth projection alignment"
 $environmentDepthSceneMap = Read-RequiredText (Join-Path $srcRoot "environment_depth_scene_map.rs") "environment depth scene-map mirror"
 $environmentDepthSurfaceSupport = Read-RequiredText (Join-Path $srcRoot "environment_depth_surface_support.rs") "environment depth surface support mirror"
+$environmentDepthAlignmentState = Read-RequiredText (Join-Path $srcRoot "environment_depth_alignment_state.rs") "environment depth alignment state"
 $environmentDepthParticleStats = Read-RequiredText (Join-Path $srcRoot "gpu_environment_depth_particle_stats.rs") "environment depth particle stats"
 $environmentDepthParticles = Read-RequiredText (Join-Path $srcRoot "gpu_environment_depth_particles.rs") "environment depth particle renderer"
 $openxrEnvironmentDepth = Read-RequiredText (Join-Path $srcRoot "openxr_environment_depth.rs") "OpenXR environment depth"
+$privateExtensionSlot = Read-RequiredText (Join-Path $srcRoot "private_extension_slot.rs") "private extension slot"
 $nativeRendererOptionSurface = @(
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_properties.rs") "native renderer properties"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_property_values.rs") "native renderer property values"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_environment_depth_options.rs") "environment depth options"),
+    $environmentDepthAlignmentState,
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_options.rs") "native renderer options facade"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_options_tests.rs") "native renderer options tests")
 ) -join "`n"
@@ -139,6 +143,42 @@ Assert-ContainsTokens $environmentDepthGeometry @(
     'pub(crate) fn reference_pose_translation_delta_m',
     'pub(crate) fn reference_pose_yaw_delta_degrees'
 ) "geometry runtime pose and host projection boundary"
+Assert-ContainsTokens $environmentDepthProjectionAlignment @(
+    'Host-testable affine alignment for environment-depth projection sampling',
+    'target_reference_uv_transform',
+    'aligned_depth_uv_transform',
+    'reference_target_rect.width / effective_target_rect.width',
+    'reference_target_rect.height / effective_target_rect.height',
+    'depth_transform_maps_scaled_target_rect_back_to_reference_content',
+    'depth_transform_preserves_default_target_scale_calibration'
+) "environment depth target-reference projection alignment"
+Assert-ContainsTokens $privateExtensionSlot @(
+    '.source_view_index()',
+    'depth_uv_transform_for_frame',
+    'fov_uv_transform',
+    'aligned_depth_uv_transform',
+    'depth_uv_transform: [f32; 4]',
+    'privateLayerEnvironmentDepthProjectionLayerPolicy=runtime-layer-policy',
+    'privateLayerEnvironmentDepthUvMapping=render-view-uv-target-reference-fov-affine-texture-transform+manual-offset+centered-scale',
+    'privateLayerEnvironmentDepthPoseFovShaderInput=fov-affine',
+    'privateLayerEnvironmentDepthRenderUvSource=full-eye-fragment-uv',
+    'privateLayerEnvironmentDepthTargetUvSource=camera-target-content-uv',
+    'privateLayerEnvironmentDepthReferenceTargetRect=',
+    'privateLayerEnvironmentDepthEffectiveTargetRect=',
+    'privateLayerEnvironmentDepthTargetReferenceUvTransform=',
+    'privateLayerEnvironmentDepthProjectionScaleCompensation=',
+    'privateLayerEnvironmentDepthAlignmentMode=manual-uv-offset+sample-scale',
+    'privateLayerEnvironmentDepthBaseOffsetUv=',
+    'privateLayerEnvironmentDepthManualOffsetUv=',
+    'privateLayerEnvironmentDepthEffectiveOffsetUv=',
+    'privateLayerEnvironmentDepthSampleScale=',
+    'privateLayerEnvironmentDepthScaleAppliesTo=environment-depth-sampler-only'
+) "private extension depth projection alignment"
+Assert-DoesNotContainTokens $privateExtensionSlot @(
+    'privateLayerEnvironmentDepthProjectionLayerPolicy=per-eye-current-eye',
+    'privateLayerEnvironmentDepthUvMapping=target-content-uv-texture-transform-only',
+    'privateLayerEnvironmentDepthPoseFovShaderInput=false'
+) "private extension depth projection alignment"
 Assert-ContainsTokens $environmentDepthSceneMap @(
     'Source-only scene-map oracle',
     'The Android runtime owns the real Vulkan buffers and atomics'
@@ -290,6 +330,7 @@ Assert-ContainsTokens $environmentDepthSurfaceSupportEvidenceFixtureText @(
 
 Assert-ContainsTokens "$nativeLib`n$environmentDepthGeometry`n$environmentDepthSceneMap`n$environmentDepthSurfaceSupport`n$environmentDepthParticleSourceSurface`n$openxrEnvironmentDepth`n$nativeRendererOptionSurface" @(
     'mod environment_depth_geometry',
+    'mod environment_depth_alignment_state',
     'mod environment_depth_scene_map',
     'mod environment_depth_surface_support',
     'mod gpu_environment_depth_particle_stats',
@@ -830,5 +871,20 @@ foreach ($damagedCase in @(
     $damagedText = Read-RequiredText (Join-Path $damagedRoot $damagedCase.File) "damaged environment-depth $($damagedCase.Label) profile"
     Assert-ContainsTokens $damagedText $damagedCase.Tokens "damaged environment-depth $($damagedCase.Label) profile"
 }
+
+Assert-ContainsTokens "$environmentDepthAlignmentState`n$xrVulkanSurface`n$privateExtensionSlot" @(
+    'PROP_ENVIRONMENT_DEPTH_ALIGNMENT_CONTROLS',
+    'PROP_ENVIRONMENT_DEPTH_ALIGNMENT_JOYSTICK_CONTROLS',
+    'PROP_ENVIRONMENT_DEPTH_ALIGNMENT_LEFT_OFFSET_X_UV',
+    'PROP_ENVIRONMENT_DEPTH_ALIGNMENT_SCALE',
+    'EnvironmentDepthAlignmentState',
+    'EnvironmentDepthAlignmentInput::JoystickOffsetDelta',
+    'environmentDepthAlignmentAppliesTo=environment-depth-sampler-only',
+    'environmentDepthAlignmentScaleAppliesTo=environment-depth-sampler-only',
+    'take_live_environment_depth_alignment',
+    'write_environment_depth_alignment_status',
+    'environment_depth_alignment_inputs',
+    'privateLayerEnvironmentDepthAlignmentMode=manual-uv-offset+sample-scale'
+) "environment depth alignment public control surface"
 
 Write-Host "Rusty Quest native renderer environment-depth static validation passed"

@@ -31,6 +31,15 @@ $EnvironmentDepthSampleStridePixelsProperty = "debug.rustyquest.native_renderer.
 $EnvironmentDepthNearMProperty = "debug.rustyquest.native_renderer.environment_depth.near_m"
 $EnvironmentDepthFarMProperty = "debug.rustyquest.native_renderer.environment_depth.far_m"
 $EnvironmentDepthHighRateJsonPayloadProperty = "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload"
+$EnvironmentDepthAlignmentControlsProperty = "debug.rustyquest.native_renderer.environment_depth.alignment.controls"
+$EnvironmentDepthAlignmentJoystickControlsProperty = "debug.rustyquest.native_renderer.environment_depth.alignment.joystick.controls"
+$EnvironmentDepthAlignmentJoystickRateUvPerSecondProperty = "debug.rustyquest.native_renderer.environment_depth.alignment.joystick.rate_uv_per_second"
+$EnvironmentDepthAlignmentMaxOffsetUvProperty = "debug.rustyquest.native_renderer.environment_depth.alignment.max_offset_uv"
+$EnvironmentDepthAlignmentLeftOffsetXUvProperty = "debug.rustyquest.native_renderer.environment_depth.alignment.left.offset.x.uv"
+$EnvironmentDepthAlignmentLeftOffsetYUvProperty = "debug.rustyquest.native_renderer.environment_depth.alignment.left.offset.y.uv"
+$EnvironmentDepthAlignmentRightOffsetXUvProperty = "debug.rustyquest.native_renderer.environment_depth.alignment.right.offset.x.uv"
+$EnvironmentDepthAlignmentRightOffsetYUvProperty = "debug.rustyquest.native_renderer.environment_depth.alignment.right.offset.y.uv"
+$EnvironmentDepthAlignmentScaleProperty = "debug.rustyquest.native_renderer.environment_depth.alignment.scale"
 $EnvironmentDepthSurfaceModelProperty = "debug.rustyquest.native_renderer.environment_depth.surface_model"
 $EnvironmentDepthSurfaceSupportRadiusCellsProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.radius_cells"
 $EnvironmentDepthSurfaceSupportMinNeighborsProperty = "debug.rustyquest.native_renderer.environment_depth.surface_support.min_neighbors"
@@ -591,6 +600,63 @@ function Assert-EnvironmentDepthProperty {
         $EnvironmentDepthHighRateJsonPayloadProperty {
             if (@("0", "false", "no", "off") -notcontains $normalized) {
                 throw "Environment depth high_rate_json_payload must be false"
+            }
+            return
+        }
+        $EnvironmentDepthAlignmentControlsProperty {
+            Assert-EnvironmentDepthBool -Name $Name -Value $Value
+            return
+        }
+        $EnvironmentDepthAlignmentJoystickControlsProperty {
+            Assert-EnvironmentDepthBool -Name $Name -Value $Value
+            return
+        }
+        $EnvironmentDepthAlignmentJoystickRateUvPerSecondProperty {
+            $parsed = Get-EnvironmentDepthFloat -Name $Name -Value $Value
+            if ($parsed -lt 0.0 -or $parsed -gt 1.0) {
+                throw "$Name value $Value must be from 0.0 to 1.0"
+            }
+            return
+        }
+        $EnvironmentDepthAlignmentMaxOffsetUvProperty {
+            $parsed = Get-EnvironmentDepthFloat -Name $Name -Value $Value
+            if ($parsed -lt 0.0 -or $parsed -gt 1.0) {
+                throw "$Name value $Value must be from 0.0 to 1.0"
+            }
+            return
+        }
+        $EnvironmentDepthAlignmentLeftOffsetXUvProperty {
+            $parsed = Get-EnvironmentDepthFloat -Name $Name -Value $Value
+            if ($parsed -lt -1.0 -or $parsed -gt 1.0) {
+                throw "$Name value $Value must be from -1.0 to 1.0"
+            }
+            return
+        }
+        $EnvironmentDepthAlignmentLeftOffsetYUvProperty {
+            $parsed = Get-EnvironmentDepthFloat -Name $Name -Value $Value
+            if ($parsed -lt -1.0 -or $parsed -gt 1.0) {
+                throw "$Name value $Value must be from -1.0 to 1.0"
+            }
+            return
+        }
+        $EnvironmentDepthAlignmentRightOffsetXUvProperty {
+            $parsed = Get-EnvironmentDepthFloat -Name $Name -Value $Value
+            if ($parsed -lt -1.0 -or $parsed -gt 1.0) {
+                throw "$Name value $Value must be from -1.0 to 1.0"
+            }
+            return
+        }
+        $EnvironmentDepthAlignmentRightOffsetYUvProperty {
+            $parsed = Get-EnvironmentDepthFloat -Name $Name -Value $Value
+            if ($parsed -lt -1.0 -or $parsed -gt 1.0) {
+                throw "$Name value $Value must be from -1.0 to 1.0"
+            }
+            return
+        }
+        $EnvironmentDepthAlignmentScaleProperty {
+            $parsed = Get-EnvironmentDepthFloat -Name $Name -Value $Value
+            if ($parsed -lt 0.25 -or $parsed -gt 4.0) {
+                throw "$Name value $Value must be from 0.25 to 4.0"
             }
             return
         }

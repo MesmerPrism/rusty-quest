@@ -39,6 +39,11 @@ pub(crate) const PRIVATE_LAYER_SELECTION_SCHEMA: &str =
 pub(crate) const PRIVATE_LAYER_SELECTION_STATUS_SCHEMA: &str =
     "rusty.quest.native_renderer.private_layer_selection_status.v1";
 pub(crate) const PRIVATE_LAYER_SELECTION_STATUS_FILE: &str = "private_layer_selection_status.json";
+pub(crate) const ENVIRONMENT_DEPTH_ALIGNMENT_SCHEMA: &str =
+    "rusty.quest.native_renderer.environment_depth_alignment.v1";
+pub(crate) const ENVIRONMENT_DEPTH_ALIGNMENT_STATUS_SCHEMA: &str =
+    "rusty.quest.native_renderer.environment_depth_alignment_status.v1";
+pub(crate) const ENVIRONMENT_DEPTH_ALIGNMENT_STATUS_FILE: &str = "depth_alignment_status.json";
 
 #[derive(Clone, Debug)]
 pub(crate) struct StimulusPanelCandidate {
@@ -54,11 +59,22 @@ pub(crate) struct PrivateLayerPanelSelection {
     pub(crate) layer_label: String,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct EnvironmentDepthAlignmentPanelCandidate {
+    pub(crate) revision: i64,
+    pub(crate) effective_offsets_uv: [[f32; 2]; 2],
+    pub(crate) sample_scale: f32,
+}
+
 #[cfg(target_os = "android")]
 static LIVE_CANDIDATE_QUEUE: OnceLock<Mutex<Option<StimulusPanelCandidate>>> = OnceLock::new();
 #[cfg(target_os = "android")]
 static LIVE_PRIVATE_LAYER_SELECTION_QUEUE: OnceLock<Mutex<Option<PrivateLayerPanelSelection>>> =
     OnceLock::new();
+#[cfg(target_os = "android")]
+static LIVE_ENVIRONMENT_DEPTH_ALIGNMENT_QUEUE: OnceLock<
+    Mutex<Option<EnvironmentDepthAlignmentPanelCandidate>>,
+> = OnceLock::new();
 
 #[cfg(target_os = "android")]
 #[derive(Clone, Copy, Debug)]
@@ -78,6 +94,12 @@ fn live_private_layer_selection_queue() -> &'static Mutex<Option<PrivateLayerPan
 }
 
 #[cfg(target_os = "android")]
+fn live_environment_depth_alignment_queue(
+) -> &'static Mutex<Option<EnvironmentDepthAlignmentPanelCandidate>> {
+    LIVE_ENVIRONMENT_DEPTH_ALIGNMENT_QUEUE.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(target_os = "android")]
 pub(crate) fn take_live_candidate() -> Option<StimulusPanelCandidate> {
     let mut queue = live_candidate_queue().lock().ok()?;
     queue.take()
@@ -86,6 +108,13 @@ pub(crate) fn take_live_candidate() -> Option<StimulusPanelCandidate> {
 #[cfg(target_os = "android")]
 pub(crate) fn take_live_private_layer_selection() -> Option<PrivateLayerPanelSelection> {
     let mut queue = live_private_layer_selection_queue().lock().ok()?;
+    queue.take()
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn take_live_environment_depth_alignment(
+) -> Option<EnvironmentDepthAlignmentPanelCandidate> {
+    let mut queue = live_environment_depth_alignment_queue().lock().ok()?;
     queue.take()
 }
 
@@ -103,6 +132,36 @@ fn queue_live_candidate(text: &str) -> Result<LiveQueueOutcome, String> {
         format!(
             "status=live-queued transport=jni-live-queue schema={} candidateRevision={} activePatternFamily={} overwrotePendingCandidate={}",
             PROFILE_SCHEMA, revision, pattern_family, overwrote_pending
+        ),
+    );
+    Ok(LiveQueueOutcome {
+        revision,
+        overwrote_pending,
+    })
+}
+
+#[cfg(target_os = "android")]
+fn queue_live_environment_depth_alignment(text: &str) -> Result<LiveQueueOutcome, String> {
+    let candidate = parse_environment_depth_alignment_json(text)?;
+    let revision = candidate.revision;
+    let offsets = candidate.effective_offsets_uv;
+    let sample_scale = candidate.sample_scale;
+    let mut queue = live_environment_depth_alignment_queue()
+        .lock()
+        .map_err(|_| "live_queue_poisoned".to_string())?;
+    let overwrote_pending = queue.replace(candidate).is_some();
+    crate::marker(
+        "environment-depth-alignment-panel",
+        format!(
+            "status=live-queued transport=jni-live-queue schema={} candidateRevision={} leftRequestedOffsetUv={:.6},{:.6} rightRequestedOffsetUv={:.6},{:.6} requestedSampleScale={:.4} overwrotePendingAlignment={}",
+            ENVIRONMENT_DEPTH_ALIGNMENT_SCHEMA,
+            revision,
+            offsets[0][0],
+            offsets[0][1],
+            offsets[1][0],
+            offsets[1][1],
+            sample_scale,
+            overwrote_pending
         ),
     );
     Ok(LiveQueueOutcome {
@@ -270,6 +329,72 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
     }
 }
 
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLiveDepthAlignment(
+    mut env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    alignment_json: jni::objects::JString,
+) -> jni::sys::jstring {
+    match env
+        .with_env(|env| -> jni::errors::Result<jni::sys::jstring> {
+            let alignment_json = alignment_json.try_to_string(env)?;
+            let response = match queue_live_environment_depth_alignment(&alignment_json) {
+                Ok(outcome) => json!({
+                    "schema": ENVIRONMENT_DEPTH_ALIGNMENT_STATUS_SCHEMA,
+                    "status": "queued",
+                    "transport": "jni_live_queue",
+                    "candidate_revision": outcome.revision,
+                    "overwrote_pending": outcome.overwrote_pending
+                })
+                .to_string(),
+                Err(reason) => {
+                    crate::marker(
+                        "environment-depth-alignment-panel",
+                        format!(
+                            "status=live-rejected transport=jni-live-queue schema={} reason={}",
+                            ENVIRONMENT_DEPTH_ALIGNMENT_SCHEMA,
+                            crate::sanitize(&reason)
+                        ),
+                    );
+                    json!({
+                        "schema": ENVIRONMENT_DEPTH_ALIGNMENT_STATUS_SCHEMA,
+                        "status": "rejected",
+                        "transport": "jni_live_queue",
+                        "rejection_code": reason
+                    })
+                    .to_string()
+                }
+            };
+            env.new_string(response).map(|value| value.into_raw())
+        })
+        .into_outcome()
+    {
+        jni::Outcome::Ok(value) => value,
+        jni::Outcome::Err(error) => {
+            crate::marker(
+                "environment-depth-alignment-panel",
+                format!(
+                    "status=live-rejected transport=jni-live-queue schema={} reason=jni_error:{}",
+                    ENVIRONMENT_DEPTH_ALIGNMENT_SCHEMA,
+                    crate::sanitize(&error.to_string())
+                ),
+            );
+            std::ptr::null_mut()
+        }
+        jni::Outcome::Panic(_) => {
+            crate::marker(
+                "environment-depth-alignment-panel",
+                format!(
+                    "status=live-rejected transport=jni-live-queue schema={} reason=jni_panic",
+                    ENVIRONMENT_DEPTH_ALIGNMENT_SCHEMA
+                ),
+            );
+            std::ptr::null_mut()
+        }
+    }
+}
+
 impl StimulusPanelCandidate {
     pub(crate) fn apply_to(
         self,
@@ -281,6 +406,41 @@ impl StimulusPanelCandidate {
             ProjectionTargetSettings::disabled_for_volume_only_route();
         options
     }
+}
+
+pub(crate) fn parse_environment_depth_alignment_json(
+    text: &str,
+) -> Result<EnvironmentDepthAlignmentPanelCandidate, String> {
+    let value: Value = serde_json::from_str(text).map_err(|error| format!("json_parse:{error}"))?;
+    let schema = string_at(&value, &["schema"]).unwrap_or_default();
+    if schema != ENVIRONMENT_DEPTH_ALIGNMENT_SCHEMA {
+        return Err(format!("schema_mismatch:{schema}"));
+    }
+
+    let revision = value
+        .get("revision")
+        .and_then(Value::as_i64)
+        .unwrap_or(0)
+        .max(0);
+    let alignment = object_value_at(&value, &["depth_alignment"])?;
+    let apply = value.get("apply").and_then(Value::as_object);
+    if let Some(mode) = apply
+        .and_then(|object| object.get("mode"))
+        .and_then(Value::as_str)
+    {
+        match mode {
+            "apply-on-next-safe-frame" => {}
+            _ => return Err(format!("unsupported_apply_mode:{mode}")),
+        }
+    }
+    let left = bounded_number_pair_at(alignment, "left_offset_uv", [0.0, 0.0], -1.0, 1.0)?;
+    let right = bounded_number_pair_at(alignment, "right_offset_uv", [0.0, 0.0], -1.0, 1.0)?;
+    let sample_scale = bounded_number_at(alignment, "sample_scale", 1.0, 0.25, 4.0)? as f32;
+    Ok(EnvironmentDepthAlignmentPanelCandidate {
+        revision,
+        effective_offsets_uv: [left, right],
+        sample_scale,
+    })
 }
 
 pub(crate) fn parse_private_layer_selection_json(
@@ -718,6 +878,64 @@ pub(crate) fn write_private_layer_selection_status(
 }
 
 #[cfg(target_os = "android")]
+pub(crate) fn write_environment_depth_alignment_status(
+    app: &android_activity::AndroidApp,
+    status: &str,
+    revision: i64,
+    reason: &str,
+    state: &crate::environment_depth_alignment_state::EnvironmentDepthAlignmentState,
+) {
+    let effective_revision = if status == "applied" { revision } else { 0 };
+    let left_effective = state.offset_for_eye(0);
+    let right_effective = state.offset_for_eye(1);
+    let left_base = state.base_offset_for_eye(0);
+    let right_base = state.base_offset_for_eye(1);
+    let manual = state.manual_offset_uv();
+    let sample_scale = state.sample_scale();
+    let external_status_path = app
+        .external_data_path()
+        .map(|path| path.join(ENVIRONMENT_DEPTH_ALIGNMENT_STATUS_FILE));
+    let body = json!({
+        "schema": ENVIRONMENT_DEPTH_ALIGNMENT_STATUS_SCHEMA,
+        "status": status,
+        "candidate_revision": revision,
+        "effective_revision": effective_revision,
+        "rejection_code": if reason == "none" { Value::Null } else { Value::String(reason.to_string()) },
+        "transport": "runtime_state",
+        "host_readback": {
+            "authority": "app-scoped-external-files",
+            "status_file": ENVIRONMENT_DEPTH_ALIGNMENT_STATUS_FILE,
+            "external_status_path": external_status_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unavailable".to_string())
+        },
+        "depth_alignment": {
+            "left_offset_uv": [left_effective[0], left_effective[1]],
+            "right_offset_uv": [right_effective[0], right_effective[1]],
+            "left_base_offset_uv": [left_base[0], left_base[1]],
+            "right_base_offset_uv": [right_base[0], right_base[1]],
+            "manual_offset_uv": [manual[0], manual[1]],
+            "sample_scale": sample_scale
+        },
+        "marker_fields": state.marker_fields()
+    });
+    let body = body.to_string();
+    if let Some(data_path) = app.internal_data_path() {
+        let _ = std::fs::write(
+            data_path.join(ENVIRONMENT_DEPTH_ALIGNMENT_STATUS_FILE),
+            &body,
+        );
+    }
+    if let Some(status_path) = external_status_path {
+        if let Some(parent) = status_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(status_path, body);
+    }
+}
+
+#[cfg(target_os = "android")]
 fn write_status(
     data_path: &Path,
     status: &str,
@@ -1042,5 +1260,35 @@ mod tests {
         value["stimulus"]["dynamics"]["mirror_mode"] = Value::from("kaleidoscope");
         let error = parse_candidate_json(&value.to_string()).unwrap_err();
         assert_eq!(error, "unsupported_mirror_mode:kaleidoscope");
+    }
+
+    #[test]
+    fn parses_environment_depth_alignment_candidate() {
+        let value = json!({
+            "schema": ENVIRONMENT_DEPTH_ALIGNMENT_SCHEMA,
+            "revision": 9,
+            "source": {
+                "surface": "same_apk_panel",
+                "transport": "jni_live_queue"
+            },
+            "depth_alignment": {
+                "left_offset_uv": [0.010, -0.020],
+                "right_offset_uv": [-0.030, 0.040],
+                "sample_scale": 1.35
+            },
+            "apply": {
+                "mode": "apply-on-next-safe-frame"
+            }
+        });
+
+        let candidate =
+            parse_environment_depth_alignment_json(&value.to_string()).expect("alignment parses");
+
+        assert_eq!(candidate.revision, 9);
+        assert_close(candidate.effective_offsets_uv[0][0], 0.010);
+        assert_close(candidate.effective_offsets_uv[0][1], -0.020);
+        assert_close(candidate.effective_offsets_uv[1][0], -0.030);
+        assert_close(candidate.effective_offsets_uv[1][1], 0.040);
+        assert_close(candidate.sample_scale, 1.35);
     }
 }

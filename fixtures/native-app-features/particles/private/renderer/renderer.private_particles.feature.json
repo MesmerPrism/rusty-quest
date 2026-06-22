@@ -99,6 +99,9 @@
       "nativePassthroughRequested=false",
       "solidBlackBackground=true",
       "RUSTY_QUEST_NATIVE_RENDERER channel=private-particle-slot",
+      "privateParticleDiagnosticStorageBinding=9",
+      "privateParticleDiagnosticWords=16",
+      "privateParticleDiagnosticCpuFullBufferReadback=false",
       "privateParticleOrderingCpuExpandedUploadPerFrame=false"
     ],
     "forbidden": [
