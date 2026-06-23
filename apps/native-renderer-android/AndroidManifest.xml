@@ -23,6 +23,7 @@
 
     <application
         android:allowBackup="false"
+        android:debuggable="true"
         android:extractNativeLibs="true"
         android:hasCode="true"
         android:label="Rusty Quest Native Renderer"

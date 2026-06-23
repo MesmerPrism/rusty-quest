@@ -78,6 +78,7 @@ Assert-ContainsTokens $manifest @(
     'ControlPanelActivity',
     'android\.app\.lib_name',
     'rusty_quest_native_renderer',
+    'android:debuggable="true"',
     'android:hasCode="true"',
     'android:resizeableActivity="true"',
     '<layout',

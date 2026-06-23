@@ -514,6 +514,7 @@ function New-GeneratedAndroidManifestText {
     [void]$lines.Add("")
     [void]$lines.Add('    <application')
     [void]$lines.Add('        android:allowBackup="false"')
+    [void]$lines.Add('        android:debuggable="true"')
     [void]$lines.Add('        android:extractNativeLibs="true"')
     [void]$lines.Add('        android:hasCode="true"')
     [void]$lines.Add('        android:label="Rusty Quest Generated Native App"')

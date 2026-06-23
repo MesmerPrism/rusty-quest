@@ -112,6 +112,7 @@ foreach ($requiredResolverNeedle in @(
     "USE_SCENE_DATA",
     "environmentDepthProviderState=provider-running",
     "com.oculus.vr.focusaware",
+    'android:debuggable="true"',
     'android:resizeableActivity="false"',
     "ControlPanelActivity",
     "QuestionnairePanelActivity",
