@@ -40,10 +40,15 @@ $manifest = Read-RequiredText (Join-Path $appRoot "AndroidManifest.xml") "Androi
 $readme = Read-RequiredText (Join-Path $appRoot "README.md") "app README"
 $nativeCargo = Read-RequiredText (Join-Path $nativeRoot "Cargo.toml") "native Cargo manifest"
 $nativeLib = Read-RequiredText (Join-Path $srcRoot "lib.rs") "native lib"
+$nativeAppSettings = Read-RequiredText (Join-Path $srcRoot "native_app_settings.rs") "native app settings loader"
 $androidEvents = Read-RequiredText (Join-Path $srcRoot "android_events.rs") "Android event pump"
 $panelBridge = Read-RequiredText (Join-Path $srcRoot "native_renderer_panel_bridge.rs") "stimulus panel JNI bridge"
+$embeddedManifoldBridge = Read-RequiredText (Join-Path $srcRoot "embedded_manifold_broker_bridge.rs") "embedded Manifold broker JNI bridge"
 $stimulusPanel = Read-RequiredText (Join-Path $srcRoot "native_renderer_stimulus_panel.rs") "stimulus panel candidate adapter"
 $controlPanel = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\ControlPanelActivity.java") "control panel Activity"
+$questionnairePanel = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\QuestionnairePanelActivity.java") "questionnaire panel Activity"
+$embeddedManifoldBroker = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\EmbeddedManifoldBrokerServer.java") "embedded Manifold broker server"
+$nativeAppSettingsReader = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\NativeAppSettingsReader.java") "native app settings reader"
 $xrVulkan = Read-RequiredText (Join-Path $srcRoot "xr_vulkan.rs") "xr_vulkan facade"
 $buildScriptText = Read-RequiredText (Join-Path $repoRootPath "tools\Build-NativeRendererAndroid.ps1") "native Android build script"
 
@@ -142,9 +147,30 @@ Assert-ContainsTokens $controlPanel @(
     'handleDiagnosticIntent',
     'Diagnostic Apply Live self-test pending'
 ) "same-APK 2D control panel"
+Assert-ContainsTokens $questionnairePanel @(
+    'final class QuestionnairePanelActivity extends Activity',
+    'ACTION_OPEN_BLOCK',
+    'ACTION_APPLY_COMMAND',
+    'maia2-spatial-frame-questionnaire-v1',
+    'block_1_setup_maia2',
+    'block_2_spatial_frame_reference',
+    'block_3_spatial_frame_reference',
+    'maia_all',
+    'maia_set',
+    'spatial_choice',
+    'questionnaire_results.jsonl',
+    'rusty.telemetry.questionnaire_result.v1',
+    'nativeSubmitQuestionnaireResult',
+    'maia_spatial_questionnaire',
+    'spatial-frame-reference-continuum.png',
+    'System\.loadLibrary\("rusty_quest_native_renderer"\)'
+) "same-APK questionnaire panel"
 foreach ($token in @('WebView', 'addJavascriptInterface', 'androidx', 'AppSystemActivity', 'VrActivity', 'GLXF', 'Spatial SDK')) {
     if ($controlPanel -match $token) {
         throw "Native renderer control panel first slice should not carry WebView/Spatial SDK token: $token"
+    }
+    if ($questionnairePanel -match $token) {
+        throw "Native renderer questionnaire panel first slice should not carry WebView/Spatial SDK token: $token"
     }
 }
 
@@ -158,6 +184,7 @@ Assert-ContainsTokens $nativeLib @(
     'javaPackaged=true',
     'panelActivity=ControlPanelActivity',
     'mod native_renderer_panel_bridge',
+    'mod embedded_manifold_broker_bridge',
     'mod native_renderer_stimulus_panel',
     'apply_app_private_candidate',
     'requestPermissions',
@@ -172,6 +199,51 @@ Assert-ContainsTokens $nativeLib @(
     'openxrSubmitReady=false',
     'vulkanExternalImportReady=false'
 ) "Rust NativeActivity scaffold"
+
+Assert-ContainsTokens $nativeAppSettings @(
+    'load_from_apk_asset',
+    'read_asset_via_java',
+    'NativeAppSettingsReader',
+    'readAsset',
+    'reader=',
+    'java-asset',
+    'native-app-settings.json'
+) "Rust native app settings Java asset reader bridge"
+
+Assert-ContainsTokens $embeddedManifoldBridge @(
+    'EmbeddedManifoldBrokerSettings',
+    'load_from_android_properties_with_defaults',
+    'PROP_MANIFOLD_EMBEDDED_BROKER_ENABLED',
+    'EmbeddedManifoldBrokerServer',
+    'startFromNative',
+    'manifold-embedded-broker',
+    'embeddedManifoldBrokerEnabled',
+    'session_token_required'
+) "Rust embedded Manifold broker JNI bridge"
+
+Assert-ContainsTokens $embeddedManifoldBroker @(
+    'final class EmbeddedManifoldBrokerServer',
+    'startFromNative',
+    'ServerSocket',
+    '127.0.0.1',
+    '/manifold/v1/events',
+    'hello_ack',
+    'subscribe',
+    'publish_stream_event',
+    'stream_event',
+    'embeddedManifoldBrokerStarted=true',
+    'maxFrameBytes',
+    'sessionTokenRequired',
+    'RUSTY_QUEST_NATIVE_RENDERER'
+) "Java embedded Manifold broker"
+
+Assert-ContainsTokens $nativeAppSettingsReader @(
+    'final class NativeAppSettingsReader',
+    'readAsset',
+    'getAssets\(\)\.open',
+    'MAX_ASSET_BYTES',
+    'StandardCharsets\.UTF_8'
+) "Java native app settings asset reader"
 
 Assert-ContainsTokens $panelBridge @(
     'toggle_control_panel',
@@ -205,6 +277,12 @@ Assert-ContainsTokens $stimulusPanel @(
     'Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLiveStimulusCandidate',
     'Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLivePrivateLayerSelection',
     'Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLivePrivateParticleDynamics',
+    'Java_io_github_mesmerprism_rustyquest_native_1renderer_QuestionnairePanelActivity_nativeSubmitQuestionnaireResult',
+    'QUESTIONNAIRE_RESULT_SCHEMA',
+    'questionnaire_results.jsonl',
+    'files/sessions',
+    'session_schema.json',
+    'artifact_manifest.json',
     'NativeRendererRenderMode::SolidBlackStimulusVolume',
     'NativeRendererRenderMode::NativePassthroughStimulusVolume',
     'ProjectionTargetSettings::disabled_for_volume_only_route',
@@ -274,6 +352,9 @@ Assert-ContainsTokens $buildScriptText @(
     'app_build_lock_sha256',
     'native_app_settings_sha256',
     'app_build_selected_feature_ids',
+    'RUSTY_QUEST_NATIVE_RENDERER_QUESTIONNAIRE_ASSET_DIR',
+    'questionnaire_assets_packaged',
+    'maia_spatial_questionnaire',
     'settings_authority',
     'RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR',
     'gpu-mesh-boundary',

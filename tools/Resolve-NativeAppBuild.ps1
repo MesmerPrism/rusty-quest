@@ -166,7 +166,7 @@ function Get-NativeRendererPropertyManifest {
 function Assert-NativeRendererPropertyValue {
     param(
         [Parameter(Mandatory=$true)][string]$Name,
-        [Parameter(Mandatory=$true)][string]$Value,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string]$Value,
         [Parameter(Mandatory=$true)]$ManifestByName
     )
     if (-not $Name.StartsWith($NativeRendererPropertyPrefix)) {
@@ -563,6 +563,31 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('            </intent-filter>')
         [void]$lines.Add('        </activity>')
     }
+    if ($Activities -contains "QuestionnairePanelActivity") {
+        [void]$lines.Add('        <activity')
+        [void]$lines.Add('            android:name=".QuestionnairePanelActivity"')
+        [void]$lines.Add('            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode"')
+        [void]$lines.Add('            android:exported="true"')
+        [void]$lines.Add('            android:hardwareAccelerated="true"')
+        [void]$lines.Add('            android:label="Rusty Quest Questionnaire"')
+        [void]$lines.Add('            android:launchMode="singleTask"')
+        [void]$lines.Add('            android:resizeableActivity="true"')
+        [void]$lines.Add('            android:screenOrientation="landscape"')
+        [void]$lines.Add('            android:windowSoftInputMode="adjustResize">')
+        [void]$lines.Add('            <layout')
+        [void]$lines.Add('                android:defaultHeight="720dp"')
+        [void]$lines.Add('                android:defaultWidth="1040dp"')
+        [void]$lines.Add('                android:minHeight="480dp"')
+        [void]$lines.Add('                android:minWidth="720dp" />')
+        [void]$lines.Add('            <intent-filter>')
+        [void]$lines.Add('                <action android:name="android.intent.action.MAIN" />')
+        [void]$lines.Add('                <action android:name="io.github.mesmerprism.rustyquest.native_renderer.action.OPEN_QUESTIONNAIRE_BLOCK" />')
+        [void]$lines.Add('                <action android:name="io.github.mesmerprism.rustyquest.native_renderer.action.APPLY_QUESTIONNAIRE_COMMAND" />')
+        [void]$lines.Add('                <category android:name="com.oculus.intent.category.2D" />')
+        [void]$lines.Add('                <category android:name="android.intent.category.LAUNCHER" />')
+        [void]$lines.Add('            </intent-filter>')
+        [void]$lines.Add('        </activity>')
+    }
     if ($Services -contains "DisplayCompositeProjectionService") {
         [void]$lines.Add('        <service android:name=".DisplayCompositeProjectionService" android:exported="false" android:foregroundServiceType="mediaProjection" />')
     }
@@ -840,7 +865,8 @@ if ($selectedFeatureIds -contains "renderer.private_particles") {
         "debug.rustyquest.native_renderer.private_particles.transparency.output_alpha_scale",
         "debug.rustyquest.native_renderer.private_particles.transparency.depth_suppression_strength",
         "debug.rustyquest.native_renderer.private_particles.transparency.rgb_alpha_coupling",
-        "debug.rustyquest.native_renderer.private_particles.color.facing_attenuation_strength"
+        "debug.rustyquest.native_renderer.private_particles.color.facing_attenuation_strength",
+        "debug.rustyquest.native_renderer.private_particles.offscreen.half_res"
     )
     $settingsHotloadPollingContract = @(
         "private-particle scalar properties are polled by the runtime owner",

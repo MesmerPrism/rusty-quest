@@ -36,10 +36,27 @@ function Assert-ContainsTokens {
     }
 }
 
+function Assert-ContainsLiteralTokens {
+    param(
+        [string]$Text,
+        [string[]]$Tokens,
+        [string]$Label
+    )
+    foreach ($token in $Tokens) {
+        if (-not $Text.Contains($token)) {
+            throw "Native renderer OpenXR/Vulkan static check failed for ${Label}: missing token: $token"
+        }
+    }
+}
+
 $nativeLib = Read-RequiredText (Join-Path $srcRoot "lib.rs") "native lib"
 $nativeCamera = Read-RequiredText (Join-Path $srcRoot "native_camera.rs") "native camera"
 $nativeRendererTiming = Read-RequiredText (Join-Path $srcRoot "native_renderer_timing.rs") "native renderer timing"
 $privateExtensionSlot = Read-RequiredText (Join-Path $srcRoot "private_extension_slot.rs") "private extension slot"
+$gpuPrivateParticles = Read-RequiredText (Join-Path $srcRoot "gpu_private_particles.rs") "private particle renderer"
+$nativeBuildScript = Read-RequiredText (Join-Path $nativeRoot "build.rs") "native build script"
+$privateParticlesOffscreenCompositeVertex = Read-RequiredText (Join-Path $nativeRoot "shaders\private_particles_offscreen_composite.vert.glsl") "private particle offscreen composite vertex shader"
+$privateParticlesOffscreenCompositeFragment = Read-RequiredText (Join-Path $nativeRoot "shaders\private_particles_offscreen_composite.frag.glsl") "private particle offscreen composite fragment shader"
 $nativeRendererOptionSurface = @(
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_camera_options.rs") "native renderer camera options"),
     (Read-RequiredText (Join-Path $srcRoot "native_renderer_properties.rs") "native renderer properties"),
@@ -215,6 +232,54 @@ Assert-ContainsTokens "$xrVulkanSurface`n$nativeRendererOptionSurface`n$nativeRe
     'xr-vulkan-probe',
     'vulkan-probe'
 ) "OpenXR/Vulkan runtime route"
+
+Assert-ContainsLiteralTokens "$gpuPrivateParticles`n$xrVulkanSurface`n$nativeRendererTiming`n$nativeBuildScript`n$privateParticlesOffscreenCompositeVertex`n$privateParticlesOffscreenCompositeFragment" @(
+    'private_particles_offscreen_composite.vert.glsl',
+    'private_particles_offscreen_composite.frag.glsl',
+    'private_particles_offscreen_composite.vert.spv',
+    'private_particles_offscreen_composite.frag.spv',
+    'record_half_res_offscreen_eye',
+    'record_half_res_composite_eye',
+    'record_overlay_eye_main_particles',
+    'half_res_offscreen_tracers_only_active',
+    'stats.tracer_draw_count, stats.particle_count',
+    'first_instance',
+    'PrivateParticleOffscreenResources',
+    'create_offscreen_render_pass',
+    'create_offscreen_composite_pipeline',
+    'resources.particle_pipeline',
+    'resources.composite_pipeline',
+    'projection_render_pass',
+    '.usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED)',
+    '.final_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)',
+    '.dst_stage_mask(vk::PipelineStageFlags::FRAGMENT_SHADER)',
+    '.dst_access_mask(vk::AccessFlags::SHADER_READ)',
+    'vk::DescriptorType::COMBINED_IMAGE_SAMPLER',
+    '.image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)',
+    'vk::Filter::LINEAR',
+    'width: full_extent.width.div_ceil(2).max(1)',
+    'height: full_extent.height.div_ceil(2).max(1)',
+    'privateParticleOffscreenMode={}',
+    '"half-resolution"',
+    'privateParticleRenderPath={}',
+    '"half-resolution-offscreen-accumulation"',
+    'privateParticleOffscreenResourceKind=half-resolution-color-targets',
+    'privateParticleOffscreenHalfResTracersOnly=',
+    'privateParticleOffscreenBillboardPolicy=',
+    'tracers-half-res-main-full-res',
+    'half-resolution-tracer-accumulation-main-full-resolution',
+    'privateParticleOffscreenTargetExtent={}x{}',
+    'PrivateParticleHalfResDrawLeftEye',
+    'PrivateParticleHalfResDrawRightEye',
+    'PrivateParticleHalfResCompositeLeftEye',
+    'PrivateParticleHalfResCompositeRightEye',
+    'privateParticleHalfResDrawGpuMs',
+    'privateParticleHalfResCompositeGpuMs',
+    'privateParticleHalfResTimingScope=offscreen-render-pass-and-projection-composite',
+    'layout(set = 0, binding = 0) uniform sampler2D u_private_particles_offscreen',
+    'out_color = texture(u_private_particles_offscreen, v_uv)',
+    'cmd_draw(cmd, 3, 1, 0, 0)'
+) "private particle half-resolution offscreen accumulation"
 
 foreach ($counter in @(
     'camera_frames_acquired',

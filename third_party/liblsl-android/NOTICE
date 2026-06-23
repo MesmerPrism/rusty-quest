@@ -1,0 +1,10 @@
+liblsl Android staging notice
+
+Rusty Quest stages liblsl from an external upstream source checkout at build
+time. The staged binary is generated under local-artifacts and is not committed
+to this repository.
+
+liblsl is distributed under the MIT license by the Lab Streaming Layer project.
+The upstream project may include or fetch third-party components such as
+pugixml, Boost, and loguru according to the upstream build configuration and
+license notices.

@@ -1,0 +1,53 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "ui.same_apk_questionnaire_panel",
+  "module_path": "ui/questionnaire-panel",
+  "module_kind": "same-apk-panel",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Same-APK Android questionnaire panel activity for low-rate session evidence capture.",
+  "provides": [
+    "ui.same_apk_questionnaire_panel"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [
+      "QuestionnairePanelActivity"
+    ],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [],
+    "standard": [],
+    "device": [
+      "adb shell am start -n <package>/.QuestionnairePanelActivity -a io.github.mesmerprism.rustyquest.native_renderer.action.OPEN_QUESTIONNAIRE_BLOCK --ei block 1 --es session_id <session>",
+      "adb shell am start -n <package>/.QuestionnairePanelActivity -a io.github.mesmerprism.rustyquest.native_renderer.action.APPLY_QUESTIONNAIRE_COMMAND --es command defaults --es session_id <session>"
+    ]
+  },
+  "public_private_boundary": "The Android panel shell, command surface, and app-private JSONL append bridge are public substrate. Questionnaire content, study labels, and private validation assets must be staged by the owning app repo."
+}

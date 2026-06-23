@@ -51,13 +51,17 @@ pub(crate) enum GpuTimestampStage {
     PrivateParticleDrawLeftEye,
     PrivateParticleDrawRightEye,
     PrivateParticleTileComposite,
+    PrivateParticleHalfResDrawLeftEye,
+    PrivateParticleHalfResDrawRightEye,
+    PrivateParticleHalfResCompositeLeftEye,
+    PrivateParticleHalfResCompositeRightEye,
     StimulusVolumeCompute,
     StimulusVolumeProjection,
     ProjectionComposite,
 }
 
 impl GpuTimestampStage {
-    const COUNT: u32 = 12;
+    const COUNT: u32 = 16;
 
     const fn index(self) -> u32 {
         match self {
@@ -70,9 +74,13 @@ impl GpuTimestampStage {
             Self::PrivateParticleDrawLeftEye => 6,
             Self::PrivateParticleDrawRightEye => 7,
             Self::PrivateParticleTileComposite => 8,
-            Self::StimulusVolumeCompute => 9,
-            Self::StimulusVolumeProjection => 10,
-            Self::ProjectionComposite => 11,
+            Self::PrivateParticleHalfResDrawLeftEye => 9,
+            Self::PrivateParticleHalfResDrawRightEye => 10,
+            Self::PrivateParticleHalfResCompositeLeftEye => 11,
+            Self::PrivateParticleHalfResCompositeRightEye => 12,
+            Self::StimulusVolumeCompute => 13,
+            Self::StimulusVolumeProjection => 14,
+            Self::ProjectionComposite => 15,
         }
     }
 }
@@ -95,6 +103,12 @@ pub(crate) struct GpuStageTimings {
     private_particle_draw_left_eye_ms: f64,
     private_particle_draw_right_eye_ms: f64,
     private_particle_tile_composite_ms: f64,
+    private_particle_half_res_draw_ms: f64,
+    private_particle_half_res_draw_left_eye_ms: f64,
+    private_particle_half_res_draw_right_eye_ms: f64,
+    private_particle_half_res_composite_ms: f64,
+    private_particle_half_res_composite_left_eye_ms: f64,
+    private_particle_half_res_composite_right_eye_ms: f64,
     stimulus_volume_compute_ms: f64,
     stimulus_volume_projection_ms: f64,
     projection_composite_ms: f64,
@@ -117,6 +131,12 @@ impl GpuStageTimings {
             private_particle_draw_left_eye_ms: -1.0,
             private_particle_draw_right_eye_ms: -1.0,
             private_particle_tile_composite_ms: -1.0,
+            private_particle_half_res_draw_ms: -1.0,
+            private_particle_half_res_draw_left_eye_ms: -1.0,
+            private_particle_half_res_draw_right_eye_ms: -1.0,
+            private_particle_half_res_composite_ms: -1.0,
+            private_particle_half_res_composite_left_eye_ms: -1.0,
+            private_particle_half_res_composite_right_eye_ms: -1.0,
             stimulus_volume_compute_ms: -1.0,
             stimulus_volume_projection_ms: -1.0,
             projection_composite_ms: -1.0,
@@ -154,6 +174,28 @@ impl GpuStageTimings {
             private_particle_tile_composite_ms: stage_ms(
                 GpuTimestampStage::PrivateParticleTileComposite,
             ),
+            private_particle_half_res_draw_ms: stage_ms(
+                GpuTimestampStage::PrivateParticleHalfResDrawLeftEye,
+            ) + stage_ms(
+                GpuTimestampStage::PrivateParticleHalfResDrawRightEye,
+            ),
+            private_particle_half_res_draw_left_eye_ms: stage_ms(
+                GpuTimestampStage::PrivateParticleHalfResDrawLeftEye,
+            ),
+            private_particle_half_res_draw_right_eye_ms: stage_ms(
+                GpuTimestampStage::PrivateParticleHalfResDrawRightEye,
+            ),
+            private_particle_half_res_composite_ms: stage_ms(
+                GpuTimestampStage::PrivateParticleHalfResCompositeLeftEye,
+            ) + stage_ms(
+                GpuTimestampStage::PrivateParticleHalfResCompositeRightEye,
+            ),
+            private_particle_half_res_composite_left_eye_ms: stage_ms(
+                GpuTimestampStage::PrivateParticleHalfResCompositeLeftEye,
+            ),
+            private_particle_half_res_composite_right_eye_ms: stage_ms(
+                GpuTimestampStage::PrivateParticleHalfResCompositeRightEye,
+            ),
             stimulus_volume_compute_ms: stage_ms(GpuTimestampStage::StimulusVolumeCompute),
             stimulus_volume_projection_ms: stage_ms(GpuTimestampStage::StimulusVolumeProjection),
             projection_composite_ms: stage_ms(GpuTimestampStage::ProjectionComposite),
@@ -175,6 +217,18 @@ impl GpuStageTimings {
             GpuTimestampStage::PrivateParticleTileComposite => {
                 self.private_particle_tile_composite_ms
             }
+            GpuTimestampStage::PrivateParticleHalfResDrawLeftEye => {
+                self.private_particle_half_res_draw_left_eye_ms
+            }
+            GpuTimestampStage::PrivateParticleHalfResDrawRightEye => {
+                self.private_particle_half_res_draw_right_eye_ms
+            }
+            GpuTimestampStage::PrivateParticleHalfResCompositeLeftEye => {
+                self.private_particle_half_res_composite_left_eye_ms
+            }
+            GpuTimestampStage::PrivateParticleHalfResCompositeRightEye => {
+                self.private_particle_half_res_composite_right_eye_ms
+            }
             GpuTimestampStage::StimulusVolumeCompute => self.stimulus_volume_compute_ms,
             GpuTimestampStage::StimulusVolumeProjection => self.stimulus_volume_projection_ms,
             GpuTimestampStage::ProjectionComposite => self.projection_composite_ms,
@@ -183,7 +237,7 @@ impl GpuStageTimings {
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "gpuTimestampQuerySupported={} gpuTimestampQueryReady={} gpuTimestampValidBits={} gpuTimestampPeriodNs={:.3} gpuTimestampFrameLag={} cameraProjectionGpuMs={:.3} guideGraphGpuMs={:.3} handSdfGpuMs={:.3} handMeshVisualGpuMs={:.3} privateParticleComputeGpuMs={:.3} privateParticleSortGpuMs={:.3} privateParticleDrawGpuMs={:.3} privateParticleDrawLeftEyeGpuMs={:.3} privateParticleDrawRightEyeGpuMs={:.3} privateParticleTileCompositeGpuMs={:.3} privateParticleTileCompositeScope=projection-render-pass-window stimulusVolumeComputeGpuMs={:.3} stimulusVolumeProjectionGpuMs={:.3} projectionCompositeGpuMs={:.3} gpuTimingScope=vulkan-timestamp-query",
+            "gpuTimestampQuerySupported={} gpuTimestampQueryReady={} gpuTimestampValidBits={} gpuTimestampPeriodNs={:.3} gpuTimestampFrameLag={} cameraProjectionGpuMs={:.3} guideGraphGpuMs={:.3} handSdfGpuMs={:.3} handMeshVisualGpuMs={:.3} privateParticleComputeGpuMs={:.3} privateParticleSortGpuMs={:.3} privateParticleDrawGpuMs={:.3} privateParticleDrawLeftEyeGpuMs={:.3} privateParticleDrawRightEyeGpuMs={:.3} privateParticleTileCompositeGpuMs={:.3} privateParticleTileCompositeScope=private-particle-render-window privateParticleHalfResDrawGpuMs={:.3} privateParticleHalfResDrawLeftEyeGpuMs={:.3} privateParticleHalfResDrawRightEyeGpuMs={:.3} privateParticleHalfResCompositeGpuMs={:.3} privateParticleHalfResCompositeLeftEyeGpuMs={:.3} privateParticleHalfResCompositeRightEyeGpuMs={:.3} privateParticleHalfResTimingScope=offscreen-render-pass-and-projection-composite stimulusVolumeComputeGpuMs={:.3} stimulusVolumeProjectionGpuMs={:.3} projectionCompositeGpuMs={:.3} gpuTimingScope=vulkan-timestamp-query",
             self.supported,
             self.ready,
             self.timestamp_valid_bits,
@@ -199,6 +253,12 @@ impl GpuStageTimings {
             self.private_particle_draw_left_eye_ms,
             self.private_particle_draw_right_eye_ms,
             self.private_particle_tile_composite_ms,
+            self.private_particle_half_res_draw_ms,
+            self.private_particle_half_res_draw_left_eye_ms,
+            self.private_particle_half_res_draw_right_eye_ms,
+            self.private_particle_half_res_composite_ms,
+            self.private_particle_half_res_composite_left_eye_ms,
+            self.private_particle_half_res_composite_right_eye_ms,
             self.stimulus_volume_compute_ms,
             self.stimulus_volume_projection_ms,
             self.projection_composite_ms

@@ -9,13 +9,14 @@ FORBIDDEN = (
 )
 
 SCAN_SUFFIXES = {".java", ".json", ".md", ".ps1", ".rs", ".toml", ".xml"}
+SKIP_DIRS = {".git", "local-artifacts", "target"}
 
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
     failures: list[str] = []
     for path in root.rglob("*"):
-        if "target" in path.parts or ".git" in path.parts:
+        if any(part in SKIP_DIRS for part in path.parts):
             continue
         if path.name == "legacy-property.profile.json":
             continue

@@ -15,6 +15,8 @@ use crate::native_renderer_properties::{
     PROP_PRIVATE_PARTICLES_DRIVER2_VALUE01, PROP_PRIVATE_PARTICLES_DRIVER3_VALUE01,
     PROP_PRIVATE_PARTICLES_DRIVER4_VALUE01, PROP_PRIVATE_PARTICLES_DRIVER5_VALUE01,
     PROP_PRIVATE_PARTICLES_DRIVER6_VALUE01, PROP_PRIVATE_PARTICLES_DRIVER7_VALUE01,
+    PROP_PRIVATE_PARTICLES_OFFSCREEN_HALF_RES,
+    PROP_PRIVATE_PARTICLES_OFFSCREEN_HALF_RES_TRACERS_ONLY,
     PROP_PRIVATE_PARTICLES_TRACER_COPIES_PER_SECOND,
     PROP_PRIVATE_PARTICLES_TRACER_DRAW_SLOTS_PER_OSCILLATOR,
     PROP_PRIVATE_PARTICLES_TRACER_LIFETIME_SECONDS,
@@ -23,7 +25,7 @@ use crate::native_renderer_properties::{
     PROP_PRIVATE_PARTICLES_TRANSPARENCY_OUTPUT_ALPHA_SCALE,
     PROP_PRIVATE_PARTICLES_TRANSPARENCY_RGB_ALPHA_COUPLING, PROP_PRIVATE_PARTICLES_VISUAL_SCALE,
 };
-use crate::native_renderer_property_values::{f32_clamped_value, u32_value};
+use crate::native_renderer_property_values::{bool_value, f32_clamped_value, u32_value};
 use crate::native_renderer_timing::{GpuTimestampStage, GpuTimestampTracker};
 use crate::private_particle_breath_state_driver::{
     PrivateParticleBreathStateDriver, PrivateParticleBreathStateDriverSettings,
@@ -54,6 +56,8 @@ const PRIVATE_PARTICLE_DIAGNOSTIC_FIXED_POINT_SCALE: f64 = 100_000.0;
 const PRIVATE_PARTICLE_SETTINGS_POLL_INTERVAL_FRAMES: u64 = 30;
 const PRIVATE_PARTICLE_ORDERING_BACK_TO_FRONT: u32 = 0;
 const PRIVATE_PARTICLE_ORDERING_SOURCE_ORDER: u32 = 1;
+const PRIVATE_PARTICLE_OFFSCREEN_RESOLUTION_SCALE: f32 = 0.5;
+const PRIVATE_PARTICLE_OFFSCREEN_EYE_COUNT: usize = 2;
 pub(crate) const GPU_PRIVATE_PARTICLE_PANEL_DRIVER_COUNT: usize =
     PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT;
 const PANEL_DRIVER_MODE_OSCILLATOR: u32 = 0;
@@ -93,6 +97,9 @@ struct PrivateParticleRuntimeSettings {
     transparency_parameter_source: &'static str,
     color_facing_attenuation_strength: f32,
     color_parameter_source: &'static str,
+    offscreen_half_res: bool,
+    offscreen_half_res_tracers_only: bool,
+    offscreen_parameter_source: &'static str,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -279,6 +286,9 @@ impl PrivateParticleRuntimeSettings {
             color_facing_attenuation_strength: PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH
                 .clamp(0.0, 1.0),
             color_parameter_source: PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE,
+            offscreen_half_res: false,
+            offscreen_half_res_tracers_only: false,
+            offscreen_parameter_source: "renderer-default-direct-projection-pass",
         }
     }
 
@@ -352,6 +362,17 @@ impl PrivateParticleRuntimeSettings {
             0.0,
             1.0,
         );
+        let (offscreen_half_res, offscreen_overridden) = bool_hotload_value(
+            &mut lookup,
+            PROP_PRIVATE_PARTICLES_OFFSCREEN_HALF_RES,
+            false,
+        );
+        let (offscreen_half_res_tracers_only, offscreen_tracers_only_overridden) =
+            bool_hotload_value(
+                &mut lookup,
+                PROP_PRIVATE_PARTICLES_OFFSCREEN_HALF_RES_TRACERS_ONLY,
+                false,
+            );
         let tracer_overridden =
             tracer_draw_overridden || tracer_lifetime_overridden || tracer_copies_overridden;
         let transparency_overridden = transparency_opacity_overridden
@@ -402,6 +423,14 @@ impl PrivateParticleRuntimeSettings {
                 "runtime-hotload-android-property"
             } else {
                 PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE
+            },
+            offscreen_half_res,
+            offscreen_half_res_tracers_only: offscreen_half_res && offscreen_half_res_tracers_only,
+            offscreen_parameter_source: if offscreen_overridden || offscreen_tracers_only_overridden
+            {
+                "runtime-hotload-android-property"
+            } else {
+                "renderer-default-direct-projection-pass"
             },
         }
     }
@@ -494,6 +523,16 @@ fn f32_hotload_value(
         f32_clamped_value(value, default_value, min_value, max_value),
         overridden,
     )
+}
+
+fn bool_hotload_value(
+    lookup: &mut impl FnMut(&str) -> Option<String>,
+    property_name: &str,
+    default_value: bool,
+) -> (bool, bool) {
+    let value = lookup(property_name);
+    let overridden = value.is_some();
+    (bool_value(value, default_value), overridden)
 }
 
 fn private_particle_driver_values01_from_generated(
@@ -684,9 +723,26 @@ impl GpuPrivateParticleFrameStats {
         Self::default()
     }
 
+    pub(crate) fn half_res_offscreen_requested(self) -> bool {
+        if !self.ready || !self.visible || !self.runtime_settings.offscreen_half_res {
+            return false;
+        }
+        if self.half_res_offscreen_tracers_only_requested() {
+            return self.tracer_draw_count > 0;
+        }
+        self.draw_count > 0
+    }
+
+    pub(crate) fn half_res_offscreen_tracers_only_requested(self) -> bool {
+        self.runtime_settings.offscreen_half_res
+            && self.runtime_settings.offscreen_half_res_tracers_only
+            && !private_particle_sort_enabled()
+            && self.tracer_draw_count > 0
+    }
+
     fn marker_fields(self) -> String {
         format!(
-            "privateParticleReady={} privateParticleVisible={} privateParticlePayloadLinked={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleOutputAbi=four-vec4-billboard-rows privateParticleStatePingPong={} privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} {} privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident={} privateParticleMaskTextureGpuResident={}",
+            "privateParticleReady={} privateParticleVisible={} privateParticlePayloadLinked={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleOutputAbi=four-vec4-billboard-rows privateParticleBillboardKindAux=aux.z-main-1-tracer-2 privateParticleStatePingPong={} privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} {} {} privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident={} privateParticleMaskTextureGpuResident={}",
             self.ready,
             self.visible,
             PRIVATE_PARTICLE_PAYLOAD_LINKED,
@@ -732,6 +788,7 @@ impl GpuPrivateParticleFrameStats {
             PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS,
             PRIVATE_PARTICLE_MASK_TEXTURE_BYTES,
             private_particle_transparency_marker_fields(self.runtime_settings),
+            private_particle_offscreen_marker_fields(self.runtime_settings),
             self.ready,
             self.ready
         )
@@ -816,6 +873,8 @@ pub(crate) struct GpuPrivateParticleRenderer {
     compute_pipeline: vk::Pipeline,
     sort_pipeline: vk::Pipeline,
     graphics_pipeline: vk::Pipeline,
+    projection_render_pass: vk::RenderPass,
+    offscreen: Option<PrivateParticleOffscreenResources>,
     position_buffer: OwnedBuffer,
     normal_buffer: OwnedBuffer,
     particle_output_buffer: OwnedBuffer,
@@ -852,6 +911,7 @@ impl GpuPrivateParticleRenderer {
         queue: vk::Queue,
         command_pool: vk::CommandPool,
         breath_state_driver_settings: PrivateParticleBreathStateDriverSettings,
+        manifold_scalar_driver_settings: ManifoldScalarDriverBridgeSettings,
     ) -> Result<Option<Self>, String> {
         if !PRIVATE_PARTICLE_PAYLOAD_LINKED {
             crate::marker(
@@ -1375,9 +1435,8 @@ impl GpuPrivateParticleRenderer {
             }
         };
 
-        let manifold_driver_bridge = ManifoldScalarDriverBridge::start(
-            ManifoldScalarDriverBridgeSettings::load_from_android_properties(),
-        );
+        let manifold_driver_bridge =
+            ManifoldScalarDriverBridge::start(manifold_scalar_driver_settings);
         let sort_active = private_particle_sort_enabled();
         let marker_sort_input_count = if sort_active { sort_input_count } else { 0 };
         let marker_sort_count = if sort_active { sort_capacity } else { 0 };
@@ -1385,7 +1444,7 @@ impl GpuPrivateParticleRenderer {
         crate::marker(
             "private-particle-slot",
             format!(
-                "status=linked privateParticlePayloadLinked=true privateParticleKind={} privateParticleImplementationPath={} privateParticleDataPath={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleStaticPositionBytes={} privateParticleStaticNormalBytes={} privateParticleAux0Bytes={} privateParticleAux0Rows={} privateParticleStateBufferBytes={} privateParticleStatePingPong=true privateParticleOutputBufferBytes={} privateParticleOutputAbi=four-vec4-billboard-rows privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleSortBufferBytes={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTexturePath={} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} privateParticleMaskTextureGpuResident=true privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident=true privateParticleVisualAcceptance=pending-headset-screenshot",
+                "status=linked privateParticlePayloadLinked=true privateParticleKind={} privateParticleImplementationPath={} privateParticleDataPath={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleStaticPositionBytes={} privateParticleStaticNormalBytes={} privateParticleAux0Bytes={} privateParticleAux0Rows={} privateParticleStateBufferBytes={} privateParticleStatePingPong=true privateParticleOutputBufferBytes={} privateParticleOutputAbi=four-vec4-billboard-rows privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleSortBufferBytes={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTexturePath={} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} privateParticleMaskTextureGpuResident=true {} privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident=true privateParticleVisualAcceptance=pending-headset-screenshot",
                 crate::sanitize(PRIVATE_PARTICLE_KIND),
                 crate::sanitize(PRIVATE_PARTICLE_IMPLEMENTATION_PATH),
                 crate::sanitize(PRIVATE_PARTICLE_DATA_PATH),
@@ -1431,6 +1490,7 @@ impl GpuPrivateParticleRenderer {
                 PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT,
                 PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS,
                 PRIVATE_PARTICLE_MASK_TEXTURE_BYTES,
+                private_particle_offscreen_marker_fields(runtime_settings),
             ),
         );
         crate::marker(
@@ -1465,6 +1525,8 @@ impl GpuPrivateParticleRenderer {
             compute_pipeline,
             sort_pipeline,
             graphics_pipeline,
+            projection_render_pass: render_pass,
+            offscreen: None,
             position_buffer,
             normal_buffer,
             particle_output_buffer,
@@ -1495,6 +1557,9 @@ impl GpuPrivateParticleRenderer {
     }
 
     pub(crate) unsafe fn destroy(&mut self, device: &ash::Device) {
+        if let Some(offscreen) = self.offscreen.take() {
+            offscreen.destroy(device);
+        }
         for buffer in &self.diagnostic_buffers {
             buffer.destroy(device);
         }
@@ -1892,7 +1957,7 @@ impl GpuPrivateParticleRenderer {
                 crate::marker(
                     "private-particle-slot",
                     format!(
-                        "status=hotload-applied frame={} privateParticleSettingsHotload=true privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleManifoldDriverActiveSamples={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTransparencyOpacity={:.3} privateParticleTransparencyOutputAlphaScale={:.3} privateParticleTransparencyDepthSuppressionStrength={:.3} privateParticleTransparencyRgbAlphaCoupling={:.3} privateParticleTransparencyParameterSource={} privateParticleColorFacingAttenuationStrength={:.3} privateParticleColorParameterSource={}",
+                        "status=hotload-applied frame={} privateParticleSettingsHotload=true privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleManifoldDriverActiveSamples={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTransparencyOpacity={:.3} privateParticleTransparencyOutputAlphaScale={:.3} privateParticleTransparencyDepthSuppressionStrength={:.3} privateParticleTransparencyRgbAlphaCoupling={:.3} privateParticleTransparencyParameterSource={} privateParticleColorFacingAttenuationStrength={:.3} privateParticleColorParameterSource={} {}",
                         frame_count,
                         next.visual_scale,
                         crate::sanitize(next.visual_parameter_source),
@@ -1912,7 +1977,8 @@ impl GpuPrivateParticleRenderer {
                         next.transparency_rgb_alpha_coupling,
                         crate::sanitize(next.transparency_parameter_source),
                         next.color_facing_attenuation_strength,
-                        crate::sanitize(next.color_parameter_source)
+                        crate::sanitize(next.color_parameter_source),
+                        private_particle_offscreen_marker_fields(next)
                     ),
                 );
             }
@@ -2046,6 +2112,159 @@ impl GpuPrivateParticleRenderer {
         );
     }
 
+    pub(crate) fn half_res_offscreen_active(&self, stats: &GpuPrivateParticleFrameStats) -> bool {
+        stats.half_res_offscreen_requested() && self.offscreen.is_some()
+    }
+
+    pub(crate) fn half_res_offscreen_tracers_only_active(
+        &self,
+        stats: &GpuPrivateParticleFrameStats,
+    ) -> bool {
+        stats.half_res_offscreen_tracers_only_requested() && self.offscreen.is_some()
+    }
+
+    pub(crate) unsafe fn ensure_half_res_offscreen_resources(
+        &mut self,
+        device: &ash::Device,
+        memory_properties: &vk::PhysicalDeviceMemoryProperties,
+        color_format: vk::Format,
+        full_extent: vk::Extent2D,
+        swapchain_image_count: usize,
+    ) -> Result<(), String> {
+        if self.offscreen.as_ref().is_some_and(|resources| {
+            resources.matches(color_format, full_extent, swapchain_image_count)
+        }) {
+            return Ok(());
+        }
+        if let Some(resources) = self.offscreen.take() {
+            resources.destroy(device);
+        }
+        let resources = PrivateParticleOffscreenResources::new(
+            device,
+            memory_properties,
+            color_format,
+            full_extent,
+            swapchain_image_count,
+            self.pipeline_layout,
+            self.projection_render_pass,
+        )?;
+        crate::marker(
+            "private-particle-slot",
+            format!(
+                "status=offscreen-half-res-created {}",
+                resources.marker_fields()
+            ),
+        );
+        self.offscreen = Some(resources);
+        Ok(())
+    }
+
+    pub(crate) unsafe fn record_half_res_offscreen_eye(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        image_index: usize,
+        eye_index: usize,
+        eye_projection: HandMeshVisualEyeProjection,
+        world_center_scale: [f32; 4],
+        stats: &GpuPrivateParticleFrameStats,
+    ) -> bool {
+        if !self.half_res_offscreen_active(stats) {
+            return false;
+        }
+        let Some(offscreen) = self.offscreen.as_ref() else {
+            return false;
+        };
+        let Some(target) = offscreen.target(image_index, eye_index) else {
+            return false;
+        };
+        let clear_values = [vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 0.0],
+            },
+        }];
+        device.cmd_begin_render_pass(
+            cmd,
+            &vk::RenderPassBeginInfo::default()
+                .render_pass(offscreen.render_pass)
+                .framebuffer(target.framebuffer)
+                .render_area(vk::Rect2D {
+                    offset: vk::Offset2D::default(),
+                    extent: offscreen.extent,
+                })
+                .clear_values(&clear_values),
+            vk::SubpassContents::INLINE,
+        );
+        let (instance_count, first_instance) = if stats.half_res_offscreen_tracers_only_requested()
+        {
+            (stats.tracer_draw_count, stats.particle_count)
+        } else {
+            (stats.draw_count, 0)
+        };
+        self.record_particle_eye_with_pipeline(
+            device,
+            cmd,
+            offscreen.extent,
+            eye_projection,
+            world_center_scale,
+            stats,
+            offscreen.particle_pipeline,
+            instance_count,
+            first_instance,
+        );
+        device.cmd_end_render_pass(cmd);
+        true
+    }
+
+    pub(crate) unsafe fn record_half_res_composite_eye(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        image_index: usize,
+        eye_index: usize,
+        full_extent: vk::Extent2D,
+        stats: &GpuPrivateParticleFrameStats,
+    ) -> bool {
+        if !self.half_res_offscreen_active(stats) {
+            return false;
+        }
+        let Some(offscreen) = self.offscreen.as_ref() else {
+            return false;
+        };
+        let Some(target) = offscreen.target(image_index, eye_index) else {
+            return false;
+        };
+        let viewport = [vk::Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: full_extent.width as f32,
+            height: full_extent.height as f32,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        }];
+        let scissor = [vk::Rect2D {
+            offset: vk::Offset2D::default(),
+            extent: full_extent,
+        }];
+        device.cmd_bind_pipeline(
+            cmd,
+            vk::PipelineBindPoint::GRAPHICS,
+            offscreen.composite_pipeline,
+        );
+        device.cmd_bind_descriptor_sets(
+            cmd,
+            vk::PipelineBindPoint::GRAPHICS,
+            offscreen.composite_pipeline_layout,
+            0,
+            &[target.descriptor_set],
+            &[],
+        );
+        device.cmd_set_viewport(cmd, 0, &viewport);
+        device.cmd_set_scissor(cmd, 0, &scissor);
+        device.cmd_draw(cmd, 3, 1, 0, 0);
+        true
+    }
+
     pub(crate) unsafe fn record_overlay_eye(
         &self,
         device: &ash::Device,
@@ -2055,7 +2274,54 @@ impl GpuPrivateParticleRenderer {
         world_center_scale: [f32; 4],
         stats: &GpuPrivateParticleFrameStats,
     ) {
-        if !stats.visible || stats.draw_count == 0 {
+        self.record_particle_eye_with_pipeline(
+            device,
+            cmd,
+            extent,
+            eye_projection,
+            world_center_scale,
+            stats,
+            self.graphics_pipeline,
+            stats.draw_count,
+            0,
+        );
+    }
+
+    pub(crate) unsafe fn record_overlay_eye_main_particles(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        extent: vk::Extent2D,
+        eye_projection: HandMeshVisualEyeProjection,
+        world_center_scale: [f32; 4],
+        stats: &GpuPrivateParticleFrameStats,
+    ) {
+        self.record_particle_eye_with_pipeline(
+            device,
+            cmd,
+            extent,
+            eye_projection,
+            world_center_scale,
+            stats,
+            self.graphics_pipeline,
+            stats.particle_count,
+            0,
+        );
+    }
+
+    unsafe fn record_particle_eye_with_pipeline(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        extent: vk::Extent2D,
+        eye_projection: HandMeshVisualEyeProjection,
+        world_center_scale: [f32; 4],
+        stats: &GpuPrivateParticleFrameStats,
+        pipeline: vk::Pipeline,
+        instance_count: u32,
+        first_instance: u32,
+    ) {
+        if !stats.visible || stats.draw_count == 0 || instance_count == 0 {
             return;
         }
         let push = private_particle_push(
@@ -2080,7 +2346,7 @@ impl GpuPrivateParticleRenderer {
             offset: vk::Offset2D::default(),
             extent,
         }];
-        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, self.graphics_pipeline);
+        device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::GRAPHICS, pipeline);
         device.cmd_bind_descriptor_sets(
             cmd,
             vk::PipelineBindPoint::GRAPHICS,
@@ -2098,7 +2364,13 @@ impl GpuPrivateParticleRenderer {
         );
         device.cmd_set_viewport(cmd, 0, &viewport);
         device.cmd_set_scissor(cmd, 0, &scissor);
-        device.cmd_draw(cmd, PARTICLE_VERTICES_PER_INSTANCE, stats.draw_count, 0, 0);
+        device.cmd_draw(
+            cmd,
+            PARTICLE_VERTICES_PER_INSTANCE,
+            instance_count,
+            0,
+            first_instance,
+        );
     }
 }
 
@@ -2161,6 +2433,51 @@ fn private_particle_transparency_marker_fields(
     )
 }
 
+fn private_particle_offscreen_marker_fields(
+    runtime_settings: PrivateParticleRuntimeSettings,
+) -> String {
+    let tracers_only = runtime_settings.offscreen_half_res
+        && runtime_settings.offscreen_half_res_tracers_only
+        && !private_particle_sort_enabled();
+    let render_path = if tracers_only {
+        "half-resolution-tracer-accumulation-main-full-resolution"
+    } else if runtime_settings.offscreen_half_res {
+        "half-resolution-offscreen-accumulation"
+    } else {
+        "projection-pass-direct"
+    };
+    let mode = if runtime_settings.offscreen_half_res {
+        "half-resolution"
+    } else {
+        "direct"
+    };
+    let billboard_policy = if tracers_only {
+        "tracers-half-res-main-full-res"
+    } else if runtime_settings.offscreen_half_res {
+        "all-billboards-half-res"
+    } else {
+        "all-billboards-direct"
+    };
+    format!(
+        "privateParticleRenderPath={} privateParticleOffscreenHalfRes={} privateParticleOffscreenHalfResTracersOnly={} privateParticleOffscreenMode={} privateParticleOffscreenBillboardPolicy={} privateParticleOffscreenResolutionScale={:.3} privateParticleOffscreenParameterSource={} privateParticleOffscreenCompositeMode={} privateParticleOffscreenCompositeFilter=linear-upsample",
+        render_path,
+        runtime_settings.offscreen_half_res,
+        tracers_only,
+        mode,
+        billboard_policy,
+        PRIVATE_PARTICLE_OFFSCREEN_RESOLUTION_SCALE,
+        crate::sanitize(runtime_settings.offscreen_parameter_source),
+        private_particle_offscreen_composite_mode(),
+    )
+}
+
+fn private_particle_offscreen_composite_mode() -> &'static str {
+    match PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE {
+        "src-alpha-one-additive" => "additive-resolved-color",
+        _ => "alpha-over-resolved-color",
+    }
+}
+
 fn private_particle_ordering_implementation() -> &'static str {
     if !private_particle_sort_enabled() {
         "resident-gpu-direct-output-order-no-depth-sort"
@@ -2208,7 +2525,7 @@ fn log_private_marker(
 ) {
     let sort_active = private_particle_sort_enabled();
     crate::android_log(format!(
-        "{} channel=frame status={} frame={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleOutputAbi=four-vec4-billboard-rows privateParticleStatePingPong=true privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} privateParticleMaskTextureGpuResident=true {} {}",
+        "{} channel=frame status={} frame={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleOutputAbi=four-vec4-billboard-rows privateParticleStatePingPong=true privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} privateParticleMaskTextureGpuResident=true {} {} {}",
         PRIVATE_PARTICLE_MARKER_PREFIX,
         status,
         frame_count,
@@ -2253,6 +2570,7 @@ fn log_private_marker(
         PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS,
         PRIVATE_PARTICLE_MASK_TEXTURE_BYTES,
         private_particle_transparency_marker_fields(runtime_settings),
+        private_particle_offscreen_marker_fields(runtime_settings),
         PRIVATE_PARTICLE_MARKER_FIELDS,
     ));
     log_private_render_config_marker(status, frame_count, runtime_settings);
@@ -2265,7 +2583,7 @@ fn log_private_render_config_marker(
     runtime_settings: PrivateParticleRuntimeSettings,
 ) {
     crate::android_log(format!(
-        "{} channel=render-config status={} frame={} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} {}",
+        "{} channel=render-config status={} frame={} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} {} {}",
         PRIVATE_PARTICLE_MARKER_PREFIX,
         status,
         frame_count,
@@ -2277,6 +2595,7 @@ fn log_private_render_config_marker(
         PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT,
         PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS,
         private_particle_transparency_marker_fields(runtime_settings),
+        private_particle_offscreen_marker_fields(runtime_settings),
     ));
 }
 
@@ -2556,6 +2875,158 @@ unsafe fn create_graphics_pipeline(
         .map_err(|(_, error)| format!("create generic private particle graphics pipeline: {error}"))
 }
 
+unsafe fn create_offscreen_render_pass(
+    device: &ash::Device,
+    format: vk::Format,
+) -> Result<vk::RenderPass, String> {
+    let attachments = [vk::AttachmentDescription::default()
+        .format(format)
+        .samples(vk::SampleCountFlags::TYPE_1)
+        .load_op(vk::AttachmentLoadOp::CLEAR)
+        .store_op(vk::AttachmentStoreOp::STORE)
+        .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+        .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+    let color_refs = [vk::AttachmentReference::default()
+        .attachment(0)
+        .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)];
+    let subpasses = [vk::SubpassDescription::default()
+        .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+        .color_attachments(&color_refs)];
+    let dependencies = [
+        vk::SubpassDependency::default()
+            .src_subpass(vk::SUBPASS_EXTERNAL)
+            .dst_subpass(0)
+            .src_stage_mask(vk::PipelineStageFlags::TOP_OF_PIPE)
+            .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .src_access_mask(vk::AccessFlags::empty())
+            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE),
+        vk::SubpassDependency::default()
+            .src_subpass(0)
+            .dst_subpass(vk::SUBPASS_EXTERNAL)
+            .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .dst_stage_mask(vk::PipelineStageFlags::FRAGMENT_SHADER)
+            .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+            .dst_access_mask(vk::AccessFlags::SHADER_READ),
+    ];
+    device
+        .create_render_pass(
+            &vk::RenderPassCreateInfo::default()
+                .attachments(&attachments)
+                .subpasses(&subpasses)
+                .dependencies(&dependencies),
+            None,
+        )
+        .map_err(|error| format!("create generic private particle offscreen render pass: {error}"))
+}
+
+unsafe fn create_offscreen_composite_descriptor_set_layout(
+    device: &ash::Device,
+) -> Result<vk::DescriptorSetLayout, String> {
+    let bindings = [sampled_image_binding(0, vk::ShaderStageFlags::FRAGMENT)];
+    device
+        .create_descriptor_set_layout(
+            &vk::DescriptorSetLayoutCreateInfo::default().bindings(&bindings),
+            None,
+        )
+        .map_err(|error| {
+            format!("create generic private particle offscreen descriptor layout: {error}")
+        })
+}
+
+unsafe fn create_offscreen_composite_pipeline(
+    device: &ash::Device,
+    render_pass: vk::RenderPass,
+    pipeline_layout: vk::PipelineLayout,
+) -> Result<vk::Pipeline, String> {
+    let vertex_words = spirv_words(include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/private_particles_offscreen_composite.vert.spv"
+    )))?;
+    let fragment_words = spirv_words(include_bytes!(concat!(
+        env!("OUT_DIR"),
+        "/private_particles_offscreen_composite.frag.spv"
+    )))?;
+    let vertex_module = device
+        .create_shader_module(
+            &vk::ShaderModuleCreateInfo::default().code(&vertex_words),
+            None,
+        )
+        .map_err(|error| {
+            format!("create generic private particle offscreen composite vertex shader: {error}")
+        })?;
+    let fragment_module = match device.create_shader_module(
+        &vk::ShaderModuleCreateInfo::default().code(&fragment_words),
+        None,
+    ) {
+        Ok(module) => module,
+        Err(error) => {
+            device.destroy_shader_module(vertex_module, None);
+            return Err(format!(
+                "create generic private particle offscreen composite fragment shader: {error}"
+            ));
+        }
+    };
+    let entry = CString::new("main").expect("static shader entry point is valid");
+    let stages = [
+        vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::VERTEX)
+            .module(vertex_module)
+            .name(&entry),
+        vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::FRAGMENT)
+            .module(fragment_module)
+            .name(&entry),
+    ];
+    let vertex_input = vk::PipelineVertexInputStateCreateInfo::default();
+    let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
+        .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+    let viewport_state = vk::PipelineViewportStateCreateInfo::default()
+        .viewport_count(1)
+        .scissor_count(1);
+    let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
+        .polygon_mode(vk::PolygonMode::FILL)
+        .cull_mode(vk::CullModeFlags::NONE)
+        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+        .line_width(1.0);
+    let multisample = vk::PipelineMultisampleStateCreateInfo::default()
+        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+    let color_blend_attachment = [offscreen_composite_color_blend_attachment()];
+    let color_blend =
+        vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_blend_attachment);
+    let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
+        .depth_test_enable(false)
+        .depth_write_enable(false)
+        .depth_compare_op(vk::CompareOp::ALWAYS)
+        .stencil_test_enable(false);
+    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+    let dynamic = vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
+    let create_info = [vk::GraphicsPipelineCreateInfo::default()
+        .stages(&stages)
+        .vertex_input_state(&vertex_input)
+        .input_assembly_state(&input_assembly)
+        .viewport_state(&viewport_state)
+        .rasterization_state(&rasterization)
+        .multisample_state(&multisample)
+        .color_blend_state(&color_blend)
+        .depth_stencil_state(&depth_stencil)
+        .dynamic_state(&dynamic)
+        .layout(pipeline_layout)
+        .render_pass(render_pass)
+        .subpass(0)];
+    let result = device.create_graphics_pipelines(vk::PipelineCache::null(), &create_info, None);
+    device.destroy_shader_module(fragment_module, None);
+    device.destroy_shader_module(vertex_module, None);
+    result
+        .map(|mut pipelines| pipelines.remove(0))
+        .map_err(|(_, error)| {
+            format!(
+                "create generic private particle offscreen composite graphics pipeline: {error}"
+            )
+        })
+}
+
 fn particle_color_blend_attachment() -> vk::PipelineColorBlendAttachmentState {
     let (
         src_color_blend_factor,
@@ -2574,6 +3045,37 @@ fn particle_color_blend_attachment() -> vk::PipelineColorBlendAttachmentState {
             vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
             vk::BlendFactor::ONE,
             vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+        ),
+        _ => (
+            vk::BlendFactor::ONE,
+            vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+            vk::BlendFactor::ONE,
+            vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+        ),
+    };
+    vk::PipelineColorBlendAttachmentState::default()
+        .blend_enable(true)
+        .src_color_blend_factor(src_color_blend_factor)
+        .dst_color_blend_factor(dst_color_blend_factor)
+        .color_blend_op(vk::BlendOp::ADD)
+        .src_alpha_blend_factor(src_alpha_blend_factor)
+        .dst_alpha_blend_factor(dst_alpha_blend_factor)
+        .alpha_blend_op(vk::BlendOp::ADD)
+        .color_write_mask(vk::ColorComponentFlags::RGBA)
+}
+
+fn offscreen_composite_color_blend_attachment() -> vk::PipelineColorBlendAttachmentState {
+    let (
+        src_color_blend_factor,
+        dst_color_blend_factor,
+        src_alpha_blend_factor,
+        dst_alpha_blend_factor,
+    ) = match PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE {
+        "src-alpha-one-additive" => (
+            vk::BlendFactor::ONE,
+            vk::BlendFactor::ONE,
+            vk::BlendFactor::ONE,
+            vk::BlendFactor::ONE,
         ),
         _ => (
             vk::BlendFactor::ONE,
@@ -2730,6 +3232,412 @@ fn transfer_write_to_shader_write_barrier(
         .buffer(buffer.buffer)
         .offset(0)
         .size(buffer.bytes)
+}
+
+struct PrivateParticleOffscreenResources {
+    format: vk::Format,
+    full_extent: vk::Extent2D,
+    extent: vk::Extent2D,
+    swapchain_image_count: usize,
+    render_pass: vk::RenderPass,
+    particle_pipeline: vk::Pipeline,
+    composite_descriptor_pool: vk::DescriptorPool,
+    composite_descriptor_set_layout: vk::DescriptorSetLayout,
+    composite_pipeline_layout: vk::PipelineLayout,
+    composite_pipeline: vk::Pipeline,
+    sampler: vk::Sampler,
+    allocation_bytes: vk::DeviceSize,
+    targets: Vec<PrivateParticleOffscreenTarget>,
+}
+
+impl PrivateParticleOffscreenResources {
+    unsafe fn new(
+        device: &ash::Device,
+        memory_properties: &vk::PhysicalDeviceMemoryProperties,
+        format: vk::Format,
+        full_extent: vk::Extent2D,
+        swapchain_image_count: usize,
+        particle_pipeline_layout: vk::PipelineLayout,
+        projection_render_pass: vk::RenderPass,
+    ) -> Result<Self, String> {
+        if full_extent.width == 0 || full_extent.height == 0 {
+            return Err("generic private particle offscreen target requires nonzero extent".into());
+        }
+        let target_count = swapchain_image_count
+            .checked_mul(PRIVATE_PARTICLE_OFFSCREEN_EYE_COUNT)
+            .ok_or_else(|| {
+                "generic private particle offscreen target count overflowed usize".to_string()
+            })?;
+        if target_count == 0 {
+            return Err("generic private particle offscreen target count must be nonzero".into());
+        }
+        let extent = vk::Extent2D {
+            width: full_extent.width.div_ceil(2).max(1),
+            height: full_extent.height.div_ceil(2).max(1),
+        };
+        let mut resources = Self {
+            format,
+            full_extent,
+            extent,
+            swapchain_image_count,
+            render_pass: vk::RenderPass::null(),
+            particle_pipeline: vk::Pipeline::null(),
+            composite_descriptor_pool: vk::DescriptorPool::null(),
+            composite_descriptor_set_layout: vk::DescriptorSetLayout::null(),
+            composite_pipeline_layout: vk::PipelineLayout::null(),
+            composite_pipeline: vk::Pipeline::null(),
+            sampler: vk::Sampler::null(),
+            allocation_bytes: 0,
+            targets: Vec::with_capacity(target_count),
+        };
+
+        resources.render_pass = match create_offscreen_render_pass(device, format) {
+            Ok(render_pass) => render_pass,
+            Err(error) => {
+                resources.destroy(device);
+                return Err(error);
+            }
+        };
+        resources.particle_pipeline =
+            match create_graphics_pipeline(device, resources.render_pass, particle_pipeline_layout)
+            {
+                Ok(pipeline) => pipeline,
+                Err(error) => {
+                    resources.destroy(device);
+                    return Err(error);
+                }
+            };
+        resources.composite_descriptor_set_layout =
+            match create_offscreen_composite_descriptor_set_layout(device) {
+                Ok(layout) => layout,
+                Err(error) => {
+                    resources.destroy(device);
+                    return Err(error);
+                }
+            };
+        let composite_set_layouts = [resources.composite_descriptor_set_layout];
+        resources.composite_pipeline_layout = match device.create_pipeline_layout(
+            &vk::PipelineLayoutCreateInfo::default().set_layouts(&composite_set_layouts),
+            None,
+        ) {
+            Ok(layout) => layout,
+            Err(error) => {
+                resources.destroy(device);
+                return Err(format!(
+                    "create generic private particle offscreen composite pipeline layout: {error}"
+                ));
+            }
+        };
+        resources.composite_pipeline = match create_offscreen_composite_pipeline(
+            device,
+            projection_render_pass,
+            resources.composite_pipeline_layout,
+        ) {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                resources.destroy(device);
+                return Err(error);
+            }
+        };
+        resources.sampler = match device.create_sampler(
+            &vk::SamplerCreateInfo::default()
+                .mag_filter(vk::Filter::LINEAR)
+                .min_filter(vk::Filter::LINEAR)
+                .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
+                .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .min_lod(0.0)
+                .max_lod(0.0),
+            None,
+        ) {
+            Ok(sampler) => sampler,
+            Err(error) => {
+                resources.destroy(device);
+                return Err(format!(
+                    "create generic private particle offscreen sampler: {error}"
+                ));
+            }
+        };
+        let pool_sizes = [vk::DescriptorPoolSize::default()
+            .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_count(target_count as u32)];
+        resources.composite_descriptor_pool = match device.create_descriptor_pool(
+            &vk::DescriptorPoolCreateInfo::default()
+                .pool_sizes(&pool_sizes)
+                .max_sets(target_count as u32),
+            None,
+        ) {
+            Ok(pool) => pool,
+            Err(error) => {
+                resources.destroy(device);
+                return Err(format!(
+                    "create generic private particle offscreen descriptor pool: {error}"
+                ));
+            }
+        };
+        let descriptor_layouts = vec![resources.composite_descriptor_set_layout; target_count];
+        let descriptor_sets = match device.allocate_descriptor_sets(
+            &vk::DescriptorSetAllocateInfo::default()
+                .descriptor_pool(resources.composite_descriptor_pool)
+                .set_layouts(&descriptor_layouts),
+        ) {
+            Ok(sets) if sets.len() == target_count => sets,
+            Ok(sets) => {
+                resources.destroy(device);
+                return Err(format!(
+                    "allocate generic private particle offscreen descriptor sets: expected {}, got {}",
+                    target_count,
+                    sets.len()
+                ));
+            }
+            Err(error) => {
+                resources.destroy(device);
+                return Err(format!(
+                    "allocate generic private particle offscreen descriptor sets: {error}"
+                ));
+            }
+        };
+        for descriptor_set in descriptor_sets {
+            let target = match PrivateParticleOffscreenTarget::new(
+                device,
+                memory_properties,
+                resources.render_pass,
+                format,
+                extent,
+                resources.sampler,
+                descriptor_set,
+            ) {
+                Ok(target) => target,
+                Err(error) => {
+                    resources.destroy(device);
+                    return Err(error);
+                }
+            };
+            resources.allocation_bytes = resources
+                .allocation_bytes
+                .saturating_add(target.allocation_bytes);
+            resources.targets.push(target);
+        }
+        Ok(resources)
+    }
+
+    fn matches(
+        &self,
+        format: vk::Format,
+        full_extent: vk::Extent2D,
+        swapchain_image_count: usize,
+    ) -> bool {
+        self.format == format
+            && self.full_extent == full_extent
+            && self.swapchain_image_count == swapchain_image_count
+    }
+
+    fn marker_fields(&self) -> String {
+        format!(
+            "privateParticleOffscreenHalfRes=true privateParticleOffscreenResourceKind=half-resolution-color-targets privateParticleOffscreenResolutionScale={:.3} privateParticleOffscreenFullExtent={}x{} privateParticleOffscreenTargetExtent={}x{} privateParticleOffscreenColorFormat={:?} privateParticleOffscreenSwapchainImageCount={} privateParticleOffscreenTargetCount={} privateParticleOffscreenAllocationBytes={} privateParticleOffscreenCompositeMode={} privateParticleOffscreenCompositeFilter=linear-upsample",
+            PRIVATE_PARTICLE_OFFSCREEN_RESOLUTION_SCALE,
+            self.full_extent.width,
+            self.full_extent.height,
+            self.extent.width,
+            self.extent.height,
+            self.format,
+            self.swapchain_image_count,
+            self.targets.len(),
+            self.allocation_bytes,
+            private_particle_offscreen_composite_mode(),
+        )
+    }
+
+    fn target(
+        &self,
+        swapchain_image_index: usize,
+        eye_index: usize,
+    ) -> Option<&PrivateParticleOffscreenTarget> {
+        if eye_index >= PRIVATE_PARTICLE_OFFSCREEN_EYE_COUNT {
+            return None;
+        }
+        let target_index = swapchain_image_index
+            .checked_mul(PRIVATE_PARTICLE_OFFSCREEN_EYE_COUNT)?
+            .checked_add(eye_index)?;
+        self.targets.get(target_index)
+    }
+
+    unsafe fn destroy(self, device: &ash::Device) {
+        for target in &self.targets {
+            target.destroy(device);
+        }
+        if self.composite_pipeline != vk::Pipeline::null() {
+            device.destroy_pipeline(self.composite_pipeline, None);
+        }
+        if self.particle_pipeline != vk::Pipeline::null() {
+            device.destroy_pipeline(self.particle_pipeline, None);
+        }
+        if self.composite_pipeline_layout != vk::PipelineLayout::null() {
+            device.destroy_pipeline_layout(self.composite_pipeline_layout, None);
+        }
+        if self.composite_descriptor_pool != vk::DescriptorPool::null() {
+            device.destroy_descriptor_pool(self.composite_descriptor_pool, None);
+        }
+        if self.composite_descriptor_set_layout != vk::DescriptorSetLayout::null() {
+            device.destroy_descriptor_set_layout(self.composite_descriptor_set_layout, None);
+        }
+        if self.sampler != vk::Sampler::null() {
+            device.destroy_sampler(self.sampler, None);
+        }
+        if self.render_pass != vk::RenderPass::null() {
+            device.destroy_render_pass(self.render_pass, None);
+        }
+    }
+}
+
+struct PrivateParticleOffscreenTarget {
+    image: vk::Image,
+    memory: vk::DeviceMemory,
+    view: vk::ImageView,
+    framebuffer: vk::Framebuffer,
+    descriptor_set: vk::DescriptorSet,
+    allocation_bytes: vk::DeviceSize,
+}
+
+impl PrivateParticleOffscreenTarget {
+    unsafe fn new(
+        device: &ash::Device,
+        memory_properties: &vk::PhysicalDeviceMemoryProperties,
+        render_pass: vk::RenderPass,
+        format: vk::Format,
+        extent: vk::Extent2D,
+        sampler: vk::Sampler,
+        descriptor_set: vk::DescriptorSet,
+    ) -> Result<Self, String> {
+        let mut target = Self {
+            image: vk::Image::null(),
+            memory: vk::DeviceMemory::null(),
+            view: vk::ImageView::null(),
+            framebuffer: vk::Framebuffer::null(),
+            descriptor_set,
+            allocation_bytes: 0,
+        };
+        target.image = match device.create_image(
+            &vk::ImageCreateInfo::default()
+                .image_type(vk::ImageType::TYPE_2D)
+                .format(format)
+                .extent(vk::Extent3D {
+                    width: extent.width,
+                    height: extent.height,
+                    depth: 1,
+                })
+                .mip_levels(1)
+                .array_layers(1)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                .initial_layout(vk::ImageLayout::UNDEFINED),
+            None,
+        ) {
+            Ok(image) => image,
+            Err(error) => {
+                target.destroy(device);
+                return Err(format!(
+                    "create generic private particle offscreen image: {error}"
+                ));
+            }
+        };
+        let requirements = device.get_image_memory_requirements(target.image);
+        target.allocation_bytes = requirements.size;
+        let memory_type_index = match find_memory_type(
+            memory_properties,
+            requirements.memory_type_bits,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        ) {
+            Ok(index) => index,
+            Err(error) => {
+                target.destroy(device);
+                return Err(error);
+            }
+        };
+        target.memory = match device.allocate_memory(
+            &vk::MemoryAllocateInfo::default()
+                .allocation_size(requirements.size)
+                .memory_type_index(memory_type_index),
+            None,
+        ) {
+            Ok(memory) => memory,
+            Err(error) => {
+                target.destroy(device);
+                return Err(format!(
+                    "allocate generic private particle offscreen image memory: {error}"
+                ));
+            }
+        };
+        if let Err(error) = device.bind_image_memory(target.image, target.memory, 0) {
+            target.destroy(device);
+            return Err(format!(
+                "bind generic private particle offscreen image memory: {error}"
+            ));
+        }
+        target.view = match device.create_image_view(
+            &vk::ImageViewCreateInfo::default()
+                .image(target.image)
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(format)
+                .subresource_range(single_color_subresource_range()),
+            None,
+        ) {
+            Ok(view) => view,
+            Err(error) => {
+                target.destroy(device);
+                return Err(format!(
+                    "create generic private particle offscreen image view: {error}"
+                ));
+            }
+        };
+        let attachments = [target.view];
+        target.framebuffer = match device.create_framebuffer(
+            &vk::FramebufferCreateInfo::default()
+                .render_pass(render_pass)
+                .attachments(&attachments)
+                .width(extent.width)
+                .height(extent.height)
+                .layers(1),
+            None,
+        ) {
+            Ok(framebuffer) => framebuffer,
+            Err(error) => {
+                target.destroy(device);
+                return Err(format!(
+                    "create generic private particle offscreen framebuffer: {error}"
+                ));
+            }
+        };
+        let image_info = [vk::DescriptorImageInfo::default()
+            .sampler(sampler)
+            .image_view(target.view)
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
+        let writes = [vk::WriteDescriptorSet::default()
+            .dst_set(descriptor_set)
+            .dst_binding(0)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(&image_info)];
+        device.update_descriptor_sets(&writes, &[]);
+        Ok(target)
+    }
+
+    unsafe fn destroy(&self, device: &ash::Device) {
+        if self.framebuffer != vk::Framebuffer::null() {
+            device.destroy_framebuffer(self.framebuffer, None);
+        }
+        if self.view != vk::ImageView::null() {
+            device.destroy_image_view(self.view, None);
+        }
+        if self.image != vk::Image::null() {
+            device.destroy_image(self.image, None);
+        }
+        if self.memory != vk::DeviceMemory::null() {
+            device.free_memory(self.memory, None);
+        }
+    }
 }
 
 struct OwnedBuffer {
@@ -3206,6 +4114,16 @@ fn mask_texture_subresource_range(layers: u32) -> vk::ImageSubresourceRange {
         level_count: 1,
         base_array_layer: 0,
         layer_count: layers,
+    }
+}
+
+fn single_color_subresource_range() -> vk::ImageSubresourceRange {
+    vk::ImageSubresourceRange {
+        aspect_mask: vk::ImageAspectFlags::COLOR,
+        base_mip_level: 0,
+        level_count: 1,
+        base_array_layer: 0,
+        layer_count: 1,
     }
 }
 

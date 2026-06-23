@@ -20,7 +20,7 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-$expectedPropertyCount = 209
+$expectedPropertyCount = 241
 if ($manifest.property_count -ne $expectedPropertyCount -or $manifest.properties.Count -ne $expectedPropertyCount) {
     throw "Native renderer property manifest must cover the current $expectedPropertyCount-property runtime surface."
 }
@@ -68,6 +68,34 @@ foreach ($token in @(
     'two-band',
     'temporal-stabilized',
     'debug.rustyquest.native_renderer.video_projection.high_rate_json_payload',
+    'debug.rustyquest.native_renderer.foveation.mode',
+    'debug.rustyquest.native_renderer.foveation.level',
+    'debug.rustyquest.native_renderer.foveation.dynamic',
+    'debug.rustyquest.native_renderer.foveation.vertical_offset',
+    'debug.rustyquest.native_renderer.foveation.vulkan_fdm',
+    'native_renderer_foveation_options',
+    'debug.rustyquest.native_renderer.projection.swapchain.resolution_scale',
+    'native_renderer_projection_swapchain_options',
+    'debug.rustyquest.native_renderer.manifold.embedded_broker.enabled',
+    'debug.rustyquest.native_renderer.manifold.embedded_broker.bind_host',
+    'debug.rustyquest.native_renderer.manifold.embedded_broker.port',
+    'debug.rustyquest.native_renderer.manifold.embedded_broker.path',
+    'debug.rustyquest.native_renderer.manifold.embedded_broker.max_frame_bytes',
+    'debug.rustyquest.native_renderer.manifold.embedded_broker.lan_enabled',
+    'debug.rustyquest.native_renderer.manifold.embedded_broker.session_token_required',
+    'debug.rustyquest.native_renderer.manifold.embedded_broker.session_token',
+    'embedded_manifold_broker_bridge',
+    'debug.rustyquest.native_renderer.lsl.enabled',
+    'debug.rustyquest.native_renderer.lsl.outlet.enabled',
+    'debug.rustyquest.native_renderer.lsl.inlet.enabled',
+    'debug.rustyquest.native_renderer.lsl.multicast_lock.enabled',
+    'debug.rustyquest.native_renderer.lsl.stream_prefix',
+    'debug.rustyquest.native_renderer.lsl.inlet.routes',
+    'debug.rustyquest.native_renderer.lsl.inlet.sample_hold_seconds',
+    'debug.rustyquest.native_renderer.lsl.inlet.recover_lost_streams',
+    'debug.rustyquest.native_renderer.lsl.inlet.test_source.enabled',
+    'debug.rustyquest.native_renderer.lsl.inlet.test_source.value01',
+    'lsl_transport_bridge',
     'debug.rustyquest.native_renderer.passthrough.style.mode',
     'debug.rustyquest.native_renderer.passthrough.style.audio_reactive.enabled',
     'debug.rustyquest.native_renderer.passthrough.style.audio_reactive.source',
@@ -94,6 +122,8 @@ foreach ($token in @(
     'debug.rustyquest.native_renderer.private_particles.manifold_driver.routes',
     'debug.rustyquest.native_renderer.private_particles.manifold_driver.sample_hold_seconds',
     'debug.rustyquest.native_renderer.private_particles.manifold_driver.high_rate_json_payload',
+    'debug.rustyquest.native_renderer.private_particles.offscreen.half_res',
+    'debug.rustyquest.native_renderer.private_particles.offscreen.half_res.tracers_only',
     'debug.rustyquest.native_renderer.private_particles.tracer.draw_slots_per_oscillator',
     'debug.rustyquest.native_renderer.private_particles.transparency.opacity',
     'debug.rustyquest.native_renderer.private_particles.color.facing_attenuation_strength',

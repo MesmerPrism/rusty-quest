@@ -71,6 +71,61 @@ pub(crate) const PROP_VIDEO_PROJECTION_HIGH_RATE_JSON_PAYLOAD: &str =
     "debug.rustyquest.native_renderer.video_projection.high_rate_json_payload";
 pub(crate) const PROP_SWAPCHAIN_COLOR_FORMAT_MODE: &str =
     "debug.rustyquest.native_renderer.swapchain.color_format";
+pub(crate) const PROP_PROJECTION_SWAPCHAIN_RESOLUTION_SCALE: &str =
+    "debug.rustyquest.native_renderer.projection.swapchain.resolution_scale";
+pub(crate) const PROP_FOVEATION_MODE: &str = "debug.rustyquest.native_renderer.foveation.mode";
+pub(crate) const PROP_FOVEATION_LEVEL: &str = "debug.rustyquest.native_renderer.foveation.level";
+pub(crate) const PROP_FOVEATION_DYNAMIC: &str =
+    "debug.rustyquest.native_renderer.foveation.dynamic";
+pub(crate) const PROP_FOVEATION_VERTICAL_OFFSET: &str =
+    "debug.rustyquest.native_renderer.foveation.vertical_offset";
+pub(crate) const PROP_FOVEATION_VULKAN_FDM: &str =
+    "debug.rustyquest.native_renderer.foveation.vulkan_fdm";
+pub(crate) const PROP_LSL_ENABLED: &str = "debug.rustyquest.native_renderer.lsl.enabled";
+pub(crate) const PROP_LSL_OUTLET_ENABLED: &str =
+    "debug.rustyquest.native_renderer.lsl.outlet.enabled";
+pub(crate) const PROP_LSL_INLET_ENABLED: &str =
+    "debug.rustyquest.native_renderer.lsl.inlet.enabled";
+pub(crate) const PROP_LSL_MULTICAST_LOCK_ENABLED: &str =
+    "debug.rustyquest.native_renderer.lsl.multicast_lock.enabled";
+pub(crate) const PROP_LSL_STREAM_PREFIX: &str =
+    "debug.rustyquest.native_renderer.lsl.stream_prefix";
+pub(crate) const PROP_LSL_PARTICIPANT_ID: &str =
+    "debug.rustyquest.native_renderer.lsl.participant_id";
+pub(crate) const PROP_LSL_SESSION_ID: &str = "debug.rustyquest.native_renderer.lsl.session_id";
+pub(crate) const PROP_LSL_SOURCE_ID_PREFIX: &str =
+    "debug.rustyquest.native_renderer.lsl.source_id_prefix";
+pub(crate) const PROP_LSL_INLET_STREAM_NAME: &str =
+    "debug.rustyquest.native_renderer.lsl.inlet.stream_name";
+pub(crate) const PROP_LSL_INLET_STREAM_TYPE: &str =
+    "debug.rustyquest.native_renderer.lsl.inlet.stream_type";
+pub(crate) const PROP_LSL_INLET_SOURCE_ID: &str =
+    "debug.rustyquest.native_renderer.lsl.inlet.source_id";
+pub(crate) const PROP_LSL_INLET_ROUTES: &str = "debug.rustyquest.native_renderer.lsl.inlet.routes";
+pub(crate) const PROP_LSL_INLET_SAMPLE_HOLD_SECONDS: &str =
+    "debug.rustyquest.native_renderer.lsl.inlet.sample_hold_seconds";
+pub(crate) const PROP_LSL_INLET_RECOVER_LOST_STREAMS: &str =
+    "debug.rustyquest.native_renderer.lsl.inlet.recover_lost_streams";
+pub(crate) const PROP_LSL_INLET_TEST_SOURCE_ENABLED: &str =
+    "debug.rustyquest.native_renderer.lsl.inlet.test_source.enabled";
+pub(crate) const PROP_LSL_INLET_TEST_SOURCE_VALUE01: &str =
+    "debug.rustyquest.native_renderer.lsl.inlet.test_source.value01";
+pub(crate) const PROP_MANIFOLD_EMBEDDED_BROKER_ENABLED: &str =
+    "debug.rustyquest.native_renderer.manifold.embedded_broker.enabled";
+pub(crate) const PROP_MANIFOLD_EMBEDDED_BROKER_BIND_HOST: &str =
+    "debug.rustyquest.native_renderer.manifold.embedded_broker.bind_host";
+pub(crate) const PROP_MANIFOLD_EMBEDDED_BROKER_PORT: &str =
+    "debug.rustyquest.native_renderer.manifold.embedded_broker.port";
+pub(crate) const PROP_MANIFOLD_EMBEDDED_BROKER_PATH: &str =
+    "debug.rustyquest.native_renderer.manifold.embedded_broker.path";
+pub(crate) const PROP_MANIFOLD_EMBEDDED_BROKER_MAX_FRAME_BYTES: &str =
+    "debug.rustyquest.native_renderer.manifold.embedded_broker.max_frame_bytes";
+pub(crate) const PROP_MANIFOLD_EMBEDDED_BROKER_LAN_ENABLED: &str =
+    "debug.rustyquest.native_renderer.manifold.embedded_broker.lan_enabled";
+pub(crate) const PROP_MANIFOLD_EMBEDDED_BROKER_SESSION_TOKEN_REQUIRED: &str =
+    "debug.rustyquest.native_renderer.manifold.embedded_broker.session_token_required";
+pub(crate) const PROP_MANIFOLD_EMBEDDED_BROKER_SESSION_TOKEN: &str =
+    "debug.rustyquest.native_renderer.manifold.embedded_broker.session_token";
 pub(crate) const PROP_SDF_UPDATE_PERIOD_FRAMES: &str =
     "debug.rustyquest.native_renderer.sdf.update_period_frames";
 pub(crate) const PROP_REPLAY_VISUAL_PROOF_ENABLED: &str =
@@ -173,6 +228,10 @@ pub(crate) const PROP_PRIVATE_PARTICLES_MANIFOLD_DRIVER_ROUTES: &str =
     "debug.rustyquest.native_renderer.private_particles.manifold_driver.routes";
 pub(crate) const PROP_PRIVATE_PARTICLES_MANIFOLD_DRIVER_SAMPLE_HOLD_SECONDS: &str =
     "debug.rustyquest.native_renderer.private_particles.manifold_driver.sample_hold_seconds";
+pub(crate) const PROP_PRIVATE_PARTICLES_OFFSCREEN_HALF_RES: &str =
+    "debug.rustyquest.native_renderer.private_particles.offscreen.half_res";
+pub(crate) const PROP_PRIVATE_PARTICLES_OFFSCREEN_HALF_RES_TRACERS_ONLY: &str =
+    "debug.rustyquest.native_renderer.private_particles.offscreen.half_res.tracers_only";
 pub(crate) const PROP_PRIVATE_PARTICLES_TRACER_DRAW_SLOTS_PER_OSCILLATOR: &str =
     "debug.rustyquest.native_renderer.private_particles.tracer.draw_slots_per_oscillator";
 pub(crate) const PROP_PRIVATE_PARTICLES_TRACER_LIFETIME_SECONDS: &str =

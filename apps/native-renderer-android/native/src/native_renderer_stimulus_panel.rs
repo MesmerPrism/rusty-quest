@@ -5,9 +5,12 @@
 
 use std::collections::BTreeMap;
 #[cfg(target_os = "android")]
-use std::path::Path;
-#[cfg(target_os = "android")]
-use std::sync::{Mutex, OnceLock};
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+    path::{Component, Path},
+    sync::{Mutex, OnceLock},
+};
 
 use serde_json::{json, Value};
 
@@ -53,6 +56,11 @@ pub(crate) const PRIVATE_PARTICLE_DYNAMICS_STATUS_SCHEMA: &str =
     "rusty.quest.native_renderer.private_particle_dynamics_status.v1";
 pub(crate) const PRIVATE_PARTICLE_DYNAMICS_STATUS_FILE: &str =
     "private_particle_dynamics_status.json";
+pub(crate) const QUESTIONNAIRE_RESULT_SCHEMA: &str = "rusty.telemetry.questionnaire_result.v1";
+pub(crate) const QUESTIONNAIRE_RESULT_STATUS_SCHEMA: &str =
+    "rusty.quest.native_renderer.questionnaire_result_status.v1";
+pub(crate) const QUESTIONNAIRE_SESSION_ROOT: &str = "files/sessions";
+pub(crate) const QUESTIONNAIRE_RESULT_FILE: &str = "questionnaire_results.jsonl";
 pub(crate) const PRIVATE_PARTICLE_DYNAMICS_DRIVER_COUNT: usize = 8;
 const PRIVATE_PARTICLE_DRIVER_CONTROL_OSCILLATOR: u32 = 0;
 const PRIVATE_PARTICLE_DRIVER_CONTROL_MANUAL: u32 = 1;
@@ -324,6 +332,462 @@ fn queue_live_private_particle_dynamics(text: &str) -> Result<LiveQueueOutcome, 
 }
 
 #[cfg(target_os = "android")]
+fn append_questionnaire_result(
+    session_dir_path: &str,
+    result_json: &str,
+) -> Result<String, String> {
+    let row: Value =
+        serde_json::from_str(result_json).map_err(|_| "malformed_result_json".to_string())?;
+    let schema_id = row
+        .get("schema_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "missing_schema_id".to_string())?;
+    if schema_id != QUESTIONNAIRE_RESULT_SCHEMA {
+        return Err("unsupported_schema_id".to_string());
+    }
+    let session_id = row
+        .get("session_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "missing_session_id".to_string())?;
+    assert_safe_session_id(session_id)?;
+    if row
+        .get("result_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .is_none()
+    {
+        return Err("missing_result_id".to_string());
+    }
+    let session_dir = validate_questionnaire_session_dir(session_dir_path, session_id)?;
+    ensure_questionnaire_bundle_skeleton(&session_dir, session_id)?;
+
+    let result_path = session_dir.join(QUESTIONNAIRE_RESULT_FILE);
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&result_path)
+        .map_err(|_| "open_questionnaire_results_failed".to_string())?;
+    file.write_all(result_json.as_bytes())
+        .map_err(|_| "write_questionnaire_result_failed".to_string())?;
+    file.write_all(b"\n")
+        .map_err(|_| "write_questionnaire_result_newline_failed".to_string())?;
+    refresh_questionnaire_artifact_manifest(&session_dir, session_id)?;
+    crate::marker(
+        "questionnaire-panel",
+        format!(
+            "status=result-written transport=jni-file schema={} sessionId={} resultFile={}",
+            QUESTIONNAIRE_RESULT_SCHEMA,
+            crate::sanitize(session_id),
+            QUESTIONNAIRE_RESULT_FILE
+        ),
+    );
+    Ok(result_path.to_string_lossy().to_string())
+}
+
+#[cfg(target_os = "android")]
+fn validate_questionnaire_session_dir(
+    session_dir_path: &str,
+    session_id: &str,
+) -> Result<std::path::PathBuf, String> {
+    if session_dir_path.trim().is_empty() {
+        return Err("missing_session_dir".to_string());
+    }
+    let path = Path::new(session_dir_path);
+    if !path.is_absolute() {
+        return Err("session_dir_not_absolute".to_string());
+    }
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err("session_dir_contains_parent_component".to_string());
+    }
+    let leaf = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "invalid_session_dir_leaf".to_string())?;
+    if leaf != session_id {
+        return Err("session_dir_session_id_mismatch".to_string());
+    }
+    let expected_parent_leaf = QUESTIONNAIRE_SESSION_ROOT
+        .rsplit('/')
+        .next()
+        .ok_or_else(|| "invalid_questionnaire_session_root".to_string())?;
+    let parent_leaf = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| "invalid_session_dir_parent".to_string())?;
+    if parent_leaf != expected_parent_leaf {
+        return Err("session_dir_not_under_sessions".to_string());
+    }
+    Ok(path.to_path_buf())
+}
+
+#[cfg(target_os = "android")]
+fn assert_safe_session_id(value: &str) -> Result<(), String> {
+    let mut chars = value.chars();
+    let first = chars.next().ok_or_else(|| "empty_session_id".to_string())?;
+    if !first.is_ascii_alphanumeric() {
+        return Err("invalid_session_id_start".to_string());
+    }
+    if value.len() > 160 || value.contains("..") {
+        return Err("invalid_session_id".to_string());
+    }
+    if !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '_' || ch == '-') {
+        return Err("invalid_session_id_character".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "android")]
+fn ensure_questionnaire_bundle_skeleton(
+    session_dir: &Path,
+    session_id: &str,
+) -> Result<(), String> {
+    fs::create_dir_all(session_dir).map_err(|_| "create_session_dir_failed".to_string())?;
+    let now_ns = wall_time_unix_ns_now();
+    write_json_if_missing(
+        &session_dir.join("session_metadata.json"),
+        &json!({
+            "schema_id": "rusty.telemetry.session.v1",
+            "schema_version": 1,
+            "session_id": session_id,
+            "participant_id": "unknown",
+            "app_id": "rusty-quest-native-renderer",
+            "runtime_id": "native-renderer-android",
+            "started_at_unix_ns": now_ns,
+            "timebase_id": "runtime_monotonic_ns",
+            "operator_id": Value::Null,
+            "notes": "questionnaire-panel-created-skeleton"
+        }),
+    )?;
+    write_json_if_missing(
+        &session_dir.join("session_settings.json"),
+        &json!({
+            "schema_id": "rusty.telemetry.session_settings.v1",
+            "schema_version": 1,
+            "session_id": session_id,
+            "settings": []
+        }),
+    )?;
+    write_json_if_missing(
+        &session_dir.join("session_snapshot.json"),
+        &json!({
+            "schema_id": "rusty.telemetry.session_snapshot.v1",
+            "schema_version": 1,
+            "session_id": session_id,
+            "created_at_unix_ns": now_ns,
+            "runtime_state": Value::Null,
+            "artifact_count": 0,
+            "validation_status": "questionnaire-panel-created"
+        }),
+    )?;
+    write_json_if_missing(
+        &session_dir.join("session_schema.json"),
+        &questionnaire_session_schema_json(),
+    )?;
+    write_json_if_missing(
+        &session_dir.join("validation_receipt.json"),
+        &json!({
+            "schema_id": "rusty.telemetry.validation_receipt.v1",
+            "schema_version": 1,
+            "session_id": session_id,
+            "status": "pending",
+            "checks": []
+        }),
+    )?;
+    write_text_if_missing(
+        &session_dir.join("session_events.csv"),
+        csv_header(&[
+            "schema_id",
+            "schema_version",
+            "session_id",
+            "event_id",
+            "event_kind",
+            "source",
+            "runtime_time_ns",
+            "wall_time_unix_ns",
+            "label",
+            "value",
+            "status",
+        ]),
+    )?;
+    write_text_if_missing(
+        &session_dir.join("signals_long.csv"),
+        csv_header(&[
+            "schema_id",
+            "schema_version",
+            "session_id",
+            "stream_id",
+            "signal_id",
+            "source",
+            "runtime_time_ns",
+            "wall_time_unix_ns",
+            "value_f32",
+            "unit",
+            "quality",
+            "route",
+        ]),
+    )?;
+    write_text_if_missing(
+        &session_dir.join("timing_markers.csv"),
+        csv_header(&[
+            "schema_id",
+            "schema_version",
+            "session_id",
+            "marker_id",
+            "source",
+            "frame_index",
+            "start_runtime_time_ns",
+            "end_runtime_time_ns",
+            "duration_ms",
+            "status",
+        ]),
+    )?;
+    write_text_if_missing(
+        &session_dir.join("runtime_state_samples.csv"),
+        csv_header(&[
+            "schema_id",
+            "schema_version",
+            "session_id",
+            "sample_index",
+            "frame_index",
+            "app_time_ns",
+            "runtime_time_ns",
+            "fps",
+            "health_status",
+            "source",
+            "extension_schema_id",
+            "extension_ref",
+        ]),
+    )?;
+    write_text_if_missing(
+        &session_dir.join("clock_alignment_samples.csv"),
+        csv_header(&[
+            "schema_id",
+            "schema_version",
+            "session_id",
+            "sequence_id",
+            "source_id",
+            "source_time_ns",
+            "receive_runtime_time_ns",
+            "echo_runtime_time_ns",
+            "local_clock_ns",
+            "round_trip_hint_ns",
+            "status",
+        ]),
+    )?;
+    write_text_if_missing(&session_dir.join(QUESTIONNAIRE_RESULT_FILE), String::new())?;
+    refresh_questionnaire_artifact_manifest(session_dir, session_id)
+}
+
+#[cfg(target_os = "android")]
+fn questionnaire_session_schema_json() -> Value {
+    json!({
+        "schema_id": "rusty.telemetry.session_schema.v1",
+        "schema_version": 1,
+        "bundle_schema_id": "rusty.telemetry.session_bundle.v1",
+        "files": [
+            json_file_schema("session_metadata.json", "rusty.telemetry.session.v1"),
+            json_file_schema("session_settings.json", "rusty.telemetry.session_settings.v1"),
+            json_file_schema("session_snapshot.json", "rusty.telemetry.session_snapshot.v1"),
+            csv_file_schema("session_events.csv", "rusty.telemetry.event_row.v1"),
+            csv_file_schema("signals_long.csv", "rusty.telemetry.signal_row.v1"),
+            csv_file_schema("timing_markers.csv", "rusty.telemetry.timing_marker_row.v1"),
+            csv_file_schema("runtime_state_samples.csv", "rusty.telemetry.runtime_state.v1"),
+            csv_file_schema("clock_alignment_samples.csv", "rusty.telemetry.clock_alignment_sample.v1"),
+            jsonl_file_schema(QUESTIONNAIRE_RESULT_FILE, QUESTIONNAIRE_RESULT_SCHEMA),
+            json_file_schema("artifact_manifest.json", "rusty.telemetry.artifact_manifest.v1"),
+            json_file_schema("validation_receipt.json", "rusty.telemetry.validation_receipt.v1")
+        ]
+    })
+}
+
+#[cfg(target_os = "android")]
+fn json_file_schema(file_name: &str, schema_id: &str) -> Value {
+    json!({
+        "file_name": file_name,
+        "schema_id": schema_id,
+        "format": "json",
+        "description": "Questionnaire panel session bundle file.",
+        "columns": []
+    })
+}
+
+#[cfg(target_os = "android")]
+fn jsonl_file_schema(file_name: &str, schema_id: &str) -> Value {
+    json!({
+        "file_name": file_name,
+        "schema_id": schema_id,
+        "format": "jsonl",
+        "description": "Questionnaire panel JSON Lines evidence.",
+        "columns": []
+    })
+}
+
+#[cfg(target_os = "android")]
+fn csv_file_schema(file_name: &str, schema_id: &str) -> Value {
+    json!({
+        "file_name": file_name,
+        "schema_id": schema_id,
+        "format": "csv",
+        "description": "Questionnaire panel CSV evidence file.",
+        "columns": []
+    })
+}
+
+#[cfg(target_os = "android")]
+fn refresh_questionnaire_artifact_manifest(
+    session_dir: &Path,
+    session_id: &str,
+) -> Result<(), String> {
+    let files = [
+        (
+            "session_metadata.json",
+            "rusty.telemetry.session.v1",
+            "application/json",
+        ),
+        (
+            "session_settings.json",
+            "rusty.telemetry.session_settings.v1",
+            "application/json",
+        ),
+        (
+            "session_snapshot.json",
+            "rusty.telemetry.session_snapshot.v1",
+            "application/json",
+        ),
+        (
+            "session_schema.json",
+            "rusty.telemetry.session_schema.v1",
+            "application/json",
+        ),
+        (
+            "session_events.csv",
+            "rusty.telemetry.event_row.v1",
+            "text/csv",
+        ),
+        (
+            "signals_long.csv",
+            "rusty.telemetry.signal_row.v1",
+            "text/csv",
+        ),
+        (
+            "timing_markers.csv",
+            "rusty.telemetry.timing_marker_row.v1",
+            "text/csv",
+        ),
+        (
+            "runtime_state_samples.csv",
+            "rusty.telemetry.runtime_state.v1",
+            "text/csv",
+        ),
+        (
+            "clock_alignment_samples.csv",
+            "rusty.telemetry.clock_alignment_sample.v1",
+            "text/csv",
+        ),
+        (
+            QUESTIONNAIRE_RESULT_FILE,
+            QUESTIONNAIRE_RESULT_SCHEMA,
+            "application/x-ndjson",
+        ),
+        (
+            "artifact_manifest.json",
+            "rusty.telemetry.artifact_manifest.v1",
+            "application/json",
+        ),
+        (
+            "validation_receipt.json",
+            "rusty.telemetry.validation_receipt.v1",
+            "application/json",
+        ),
+    ];
+    let artifacts: Vec<Value> = files
+        .iter()
+        .map(|(relative_path, schema_id, media_type)| {
+            let byte_count = fs::metadata(session_dir.join(relative_path))
+                .ok()
+                .map(|metadata| metadata.len());
+            json!({
+                "relative_path": relative_path,
+                "schema_id": schema_id,
+                "media_type": media_type,
+                "sha256": Value::Null,
+                "byte_count": byte_count,
+                "sensitivity": "public-safe"
+            })
+        })
+        .collect();
+    write_json(
+        &session_dir.join("artifact_manifest.json"),
+        &json!({
+            "schema_id": "rusty.telemetry.artifact_manifest.v1",
+            "schema_version": 1,
+            "session_id": session_id,
+            "artifacts": artifacts
+        }),
+    )
+}
+
+#[cfg(target_os = "android")]
+fn write_json_if_missing(path: &Path, value: &Value) -> Result<(), String> {
+    if path.exists() {
+        return Ok(());
+    }
+    write_json(path, value)
+}
+
+#[cfg(target_os = "android")]
+fn write_json(path: &Path, value: &Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|_| "create_json_parent_failed".to_string())?;
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(path)
+        .map_err(|_| "open_json_file_failed".to_string())?;
+    serde_json::to_writer_pretty(&mut file, value)
+        .map_err(|_| "write_json_file_failed".to_string())?;
+    file.write_all(b"\n")
+        .map_err(|_| "write_json_newline_failed".to_string())
+}
+
+#[cfg(target_os = "android")]
+fn write_text_if_missing(path: &Path, text: String) -> Result<(), String> {
+    if path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|_| "create_text_parent_failed".to_string())?;
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(path)
+        .map_err(|_| "open_text_file_failed".to_string())?;
+    file.write_all(text.as_bytes())
+        .map_err(|_| "write_text_file_failed".to_string())
+}
+
+#[cfg(target_os = "android")]
+fn csv_header(fields: &[&str]) -> String {
+    format!("{}\n", fields.join(","))
+}
+
+#[cfg(target_os = "android")]
+fn wall_time_unix_ns_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLiveStimulusCandidate(
     mut env: jni::EnvUnowned,
@@ -382,6 +846,73 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
                 format!(
                     "status=live-rejected transport=jni-live-queue schema={} reason=jni_panic",
                     PROFILE_SCHEMA
+                ),
+            );
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_QuestionnairePanelActivity_nativeSubmitQuestionnaireResult(
+    mut env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    session_dir_path: jni::objects::JString,
+    result_json: jni::objects::JString,
+) -> jni::sys::jstring {
+    match env
+        .with_env(|env| -> jni::errors::Result<jni::sys::jstring> {
+            let session_dir_path = session_dir_path.try_to_string(env)?;
+            let result_json = result_json.try_to_string(env)?;
+            let response = match append_questionnaire_result(&session_dir_path, &result_json) {
+                Ok(path) => json!({
+                    "schema": QUESTIONNAIRE_RESULT_STATUS_SCHEMA,
+                    "status": "written",
+                    "transport": "jni_file_append",
+                    "path": path
+                })
+                .to_string(),
+                Err(reason) => {
+                    crate::marker(
+                        "questionnaire-panel",
+                        format!(
+                            "status=result-rejected transport=jni-file schema={} reason={}",
+                            QUESTIONNAIRE_RESULT_SCHEMA,
+                            crate::sanitize(&reason)
+                        ),
+                    );
+                    json!({
+                        "schema": QUESTIONNAIRE_RESULT_STATUS_SCHEMA,
+                        "status": "rejected",
+                        "transport": "jni_file_append",
+                        "rejection_code": reason
+                    })
+                    .to_string()
+                }
+            };
+            env.new_string(response).map(|value| value.into_raw())
+        })
+        .into_outcome()
+    {
+        jni::Outcome::Ok(value) => value,
+        jni::Outcome::Err(error) => {
+            crate::marker(
+                "questionnaire-panel",
+                format!(
+                    "status=result-rejected transport=jni-file schema={} reason=jni_error:{}",
+                    QUESTIONNAIRE_RESULT_SCHEMA,
+                    crate::sanitize(&error.to_string())
+                ),
+            );
+            std::ptr::null_mut()
+        }
+        jni::Outcome::Panic(_) => {
+            crate::marker(
+                "questionnaire-panel",
+                format!(
+                    "status=result-rejected transport=jni-file schema={} reason=jni_panic",
+                    QUESTIONNAIRE_RESULT_SCHEMA
                 ),
             );
             std::ptr::null_mut()

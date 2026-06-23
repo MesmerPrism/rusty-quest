@@ -48,9 +48,10 @@ use crate::{
     native_renderer_options::{
         CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings, NativeCameraOutputMode,
         NativeCameraQualityProfile, NativeCameraSyncMode, NativeEnvironmentDepthSettings,
-        NativeGuideGraphResolution, NativeHandAnchorParticleOrderingMode,
-        NativeHandAnchorParticleSettings, NativePassthroughStyleSettings,
-        NativePrivateLayerSettings, NativeProjectionBorderStretchSettings,
+        NativeFoveationLevel, NativeFoveationSettings, NativeGuideGraphResolution,
+        NativeHandAnchorParticleOrderingMode, NativeHandAnchorParticleSettings,
+        NativePassthroughStyleSettings, NativePrivateLayerSettings,
+        NativeProjectionBorderStretchSettings, NativeProjectionSwapchainSettings,
         NativeRendererRenderMode, NativeRendererRuntimeOptions, NativeStimulusVolumeSettings,
         NativeSwapchainColorFormatMode, PROP_CAMERA_DIRECT_BORDER_OPACITY,
         PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED, PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE,
@@ -114,6 +115,10 @@ pub(crate) struct XrVulkanReadiness {
     pub(crate) external_hwb_extension_ready: bool,
     pub(crate) sampler_ycbcr_extension_ready: bool,
     pub(crate) sampler_ycbcr_feature_ready: bool,
+    pub(crate) fragment_density_map_extension_ready: bool,
+    pub(crate) fragment_density_map2_extension_ready: bool,
+    pub(crate) fragment_density_map_feature_ready: bool,
+    pub(crate) fragment_density_map_format_ready: bool,
     pub(crate) vulkan_external_import_prereqs_ready: bool,
     pub(crate) live_hand_tracking_extension_available: bool,
     pub(crate) live_hand_tracking_extension_enabled: bool,
@@ -123,13 +128,17 @@ pub(crate) struct XrVulkanReadiness {
 impl XrVulkanReadiness {
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "androidOpenxrLoaderReady={} openxrInstanceReady={} vulkanInstanceReady={} externalHwbExtensionReady={} samplerYcbcrExtensionReady={} samplerYcbcrFeatureReady={} vulkanExternalImportPrereqsReady={} liveMetaHandTrackingExtensionAvailable={} liveMetaHandTrackingExtensionEnabled={} liveMetaHandTrackingSystemSupported={} openxrSubmitReady=false vulkanExternalImportReady=false",
+            "androidOpenxrLoaderReady={} openxrInstanceReady={} vulkanInstanceReady={} externalHwbExtensionReady={} samplerYcbcrExtensionReady={} samplerYcbcrFeatureReady={} fragmentDensityMapExtensionReady={} fragmentDensityMap2ExtensionReady={} fragmentDensityMapFeatureReady={} fragmentDensityMapFormatReady={} vulkanExternalImportPrereqsReady={} liveMetaHandTrackingExtensionAvailable={} liveMetaHandTrackingExtensionEnabled={} liveMetaHandTrackingSystemSupported={} openxrSubmitReady=false vulkanExternalImportReady=false",
             self.android_loader_ready,
             self.openxr_instance_ready,
             self.vulkan_instance_ready,
             self.external_hwb_extension_ready,
             self.sampler_ycbcr_extension_ready,
             self.sampler_ycbcr_feature_ready,
+            self.fragment_density_map_extension_ready,
+            self.fragment_density_map2_extension_ready,
+            self.fragment_density_map_feature_ready,
+            self.fragment_density_map_format_ready,
             self.vulkan_external_import_prereqs_ready,
             self.live_hand_tracking_extension_available,
             self.live_hand_tracking_extension_enabled,
@@ -145,6 +154,45 @@ struct VulkanProbe {
     external_hwb_extension_ready: bool,
     sampler_ycbcr_extension_ready: bool,
     sampler_ycbcr_feature_ready: bool,
+    fragment_density_map_extension_ready: bool,
+    fragment_density_map2_extension_ready: bool,
+    fragment_density_map_feature_ready: bool,
+    fragment_density_map_format_ready: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ProjectionFoveationVulkanSupport {
+    extension_ready: bool,
+    extension2_ready: bool,
+    feature_ready: bool,
+    deferred_feature_ready: bool,
+    format_ready: bool,
+    subsampled_swapchain_ready: bool,
+    enabled: bool,
+}
+
+impl ProjectionFoveationVulkanSupport {
+    fn fdm_ready(self) -> bool {
+        self.extension_ready
+            && self.extension2_ready
+            && self.feature_ready
+            && self.format_ready
+            && self.subsampled_swapchain_ready
+            && self.enabled
+    }
+
+    fn marker_fields(self) -> String {
+        format!(
+            "vulkanFragmentDensityMapExtensionReady={} vulkanFragmentDensityMap2ExtensionReady={} vulkanFragmentDensityMapFeatureReady={} vulkanFragmentDensityMapDeferredFeatureReady={} vulkanFragmentDensityMapFormatReady={} vulkanFragmentDensityMapSubsampledSwapchainReady={} vulkanFragmentDensityMapEnabled={}",
+            self.extension_ready,
+            self.extension2_ready,
+            self.feature_ready,
+            self.deferred_feature_ready,
+            self.format_ready,
+            self.subsampled_swapchain_ready,
+            self.enabled
+        )
+    }
 }
 
 pub(crate) fn probe(app: &android_activity::AndroidApp) -> XrVulkanReadiness {
@@ -280,6 +328,19 @@ unsafe fn run_projection_loop_inner(
         .environment_depth_settings
         .runtime_provider_requested()
         && available_extensions.meta_environment_depth;
+    let foveation_requested = runtime_options.foveation_settings.requested();
+    let foveation_vulkan_fdm_requested = runtime_options.foveation_settings.vulkan_fdm_requested();
+    enabled_extensions.fb_foveation = foveation_requested && available_extensions.fb_foveation;
+    enabled_extensions.fb_foveation_configuration =
+        foveation_requested && available_extensions.fb_foveation_configuration;
+    enabled_extensions.fb_foveation_vulkan =
+        foveation_vulkan_fdm_requested && available_extensions.fb_foveation_vulkan;
+    enabled_extensions.fb_swapchain_update_state =
+        foveation_requested && available_extensions.fb_swapchain_update_state;
+    enabled_extensions.fb_swapchain_update_state_vulkan =
+        foveation_vulkan_fdm_requested && available_extensions.fb_swapchain_update_state_vulkan;
+    enabled_extensions.meta_vulkan_swapchain_create_info =
+        foveation_vulkan_fdm_requested && available_extensions.meta_vulkan_swapchain_create_info;
     if runtime_options
         .environment_depth_settings
         .runtime_provider_requested()
@@ -437,14 +498,58 @@ unsafe fn run_projection_loop_inner(
         vk_physical_device,
         ash::khr::sampler_ycbcr_conversion::NAME,
     )?;
+    let fragment_density_map_extension_ready = physical_device_supports_extension(
+        &vk_instance,
+        vk_physical_device,
+        ash::ext::fragment_density_map::NAME,
+    )?;
+    let fragment_density_map2_extension_ready = physical_device_supports_extension(
+        &vk_instance,
+        vk_physical_device,
+        ash::ext::fragment_density_map2::NAME,
+    )?;
     let mut sampler_ycbcr_features = vk::PhysicalDeviceSamplerYcbcrConversionFeatures::default();
-    let mut feature_query =
-        vk::PhysicalDeviceFeatures2::default().push_next(&mut sampler_ycbcr_features);
+    let mut fragment_density_map_features =
+        vk::PhysicalDeviceFragmentDensityMapFeaturesEXT::default();
+    let mut fragment_density_map2_features =
+        vk::PhysicalDeviceFragmentDensityMap2FeaturesEXT::default();
+    let mut feature_query = vk::PhysicalDeviceFeatures2::default()
+        .push_next(&mut sampler_ycbcr_features)
+        .push_next(&mut fragment_density_map_features)
+        .push_next(&mut fragment_density_map2_features);
     vk_instance.get_physical_device_features2(vk_physical_device, &mut feature_query);
     let sampler_ycbcr_feature_ready = sampler_ycbcr_features.sampler_ycbcr_conversion == vk::TRUE;
+    let fragment_density_map_feature_ready =
+        fragment_density_map_features.fragment_density_map == vk::TRUE;
+    let fragment_density_map_deferred_feature_ready =
+        fragment_density_map2_features.fragment_density_map_deferred == vk::TRUE;
+    let fragment_density_map_format_ready = if fragment_density_map_extension_ready {
+        vk_instance
+            .get_physical_device_format_properties(vk_physical_device, vk::Format::R8G8_UNORM)
+            .optimal_tiling_features
+            .contains(vk::FormatFeatureFlags::FRAGMENT_DENSITY_MAP_EXT)
+    } else {
+        false
+    };
     let vulkan_external_import_prereqs_ready = external_hwb_extension_ready
         && sampler_ycbcr_extension_ready
         && sampler_ycbcr_feature_ready;
+    let fragment_density_map_enabled = foveation_vulkan_fdm_requested
+        && enabled_extensions.fb_foveation_vulkan
+        && enabled_extensions.meta_vulkan_swapchain_create_info
+        && fragment_density_map_extension_ready
+        && fragment_density_map2_extension_ready
+        && fragment_density_map_feature_ready
+        && fragment_density_map_format_ready;
+    let projection_foveation_vulkan_support = ProjectionFoveationVulkanSupport {
+        extension_ready: fragment_density_map_extension_ready,
+        extension2_ready: fragment_density_map2_extension_ready,
+        feature_ready: fragment_density_map_feature_ready,
+        deferred_feature_ready: fragment_density_map_deferred_feature_ready,
+        format_ready: fragment_density_map_format_ready,
+        subsampled_swapchain_ready: enabled_extensions.meta_vulkan_swapchain_create_info,
+        enabled: fragment_density_map_enabled,
+    };
 
     let mut device_extension_ptrs = Vec::new();
     if external_hwb_extension_ready {
@@ -454,16 +559,33 @@ unsafe fn run_projection_loop_inner(
     if sampler_ycbcr_extension_ready {
         device_extension_ptrs.push(ash::khr::sampler_ycbcr_conversion::NAME.as_ptr());
     }
+    if fragment_density_map_enabled {
+        device_extension_ptrs.push(ash::ext::fragment_density_map::NAME.as_ptr());
+        device_extension_ptrs.push(ash::ext::fragment_density_map2::NAME.as_ptr());
+    }
     let queue_priorities = [1.0_f32];
     let queue_infos = [vk::DeviceQueueCreateInfo::default()
         .queue_family_index(queue_family_index)
         .queue_priorities(&queue_priorities)];
     let mut sampler_ycbcr_enable = vk::PhysicalDeviceSamplerYcbcrConversionFeatures::default()
         .sampler_ycbcr_conversion(sampler_ycbcr_feature_ready);
-    let device_info = vk::DeviceCreateInfo::default()
+    let mut fragment_density_map_enable =
+        vk::PhysicalDeviceFragmentDensityMapFeaturesEXT::default()
+            .fragment_density_map(fragment_density_map_enabled);
+    let mut fragment_density_map2_enable =
+        vk::PhysicalDeviceFragmentDensityMap2FeaturesEXT::default().fragment_density_map_deferred(
+            fragment_density_map_enabled && fragment_density_map_deferred_feature_ready,
+        );
+    let mut device_info = vk::DeviceCreateInfo::default()
         .queue_create_infos(&queue_infos)
         .enabled_extension_names(&device_extension_ptrs)
         .push_next(&mut sampler_ycbcr_enable);
+    if fragment_density_map_enabled {
+        device_info = device_info.push_next(&mut fragment_density_map_enable);
+        if fragment_density_map_deferred_feature_ready {
+            device_info = device_info.push_next(&mut fragment_density_map2_enable);
+        }
+    }
     let vk_device = {
         let raw = xr_instance
             .create_vulkan_device(
@@ -522,7 +644,11 @@ unsafe fn run_projection_loop_inner(
         create_projection_reference_space(&session, runtime_options.environment_depth_settings)?;
     let color_format =
         choose_swapchain_format(&session, runtime_options.swapchain_color_format_mode)?;
-    let render_pass = create_projection_render_pass(&vk_device, color_format)?;
+    let render_pass = create_projection_render_pass(
+        &vk_device,
+        color_format,
+        projection_foveation_vulkan_support.fdm_ready(),
+    )?;
     let mut camera_projection_renderer = CameraProjectionRenderer::new(
         &vk_instance,
         &vk_device,
@@ -565,6 +691,7 @@ unsafe fn run_projection_loop_inner(
     let camera_stereo_pairing_policy = runtime_options.camera_stereo_pairing_policy;
     let camera_direct_border_opacity = runtime_options.camera_direct_border_opacity;
     let swapchain_color_format_mode = runtime_options.swapchain_color_format_mode;
+    let projection_swapchain_settings = runtime_options.projection_swapchain_settings;
     let replay_visual_proof_enabled = runtime_options.replay_visual_proof_enabled;
     let compact_hand_input_source_mode = runtime_options.compact_hand_input_source_mode;
     let sdf_visual_enabled = runtime_options.sdf_visual_enabled;
@@ -1086,6 +1213,7 @@ unsafe fn run_projection_loop_inner(
         queue,
         cmd_pool,
         runtime_options.private_particle_breath_state_driver_settings,
+        runtime_options.manifold_scalar_driver_settings.clone(),
     ) {
         Ok(renderer) => renderer,
         Err(error) => {
@@ -1195,6 +1323,11 @@ unsafe fn run_projection_loop_inner(
         camera_luma_diagnostic_enabled,
         swapchain_color_format_mode,
         camera_direct_border_opacity,
+        &available_extensions,
+        &enabled_extensions,
+        runtime_options.foveation_settings,
+        projection_swapchain_settings,
+        projection_foveation_vulkan_support,
         projection_border_stretch_settings,
         private_layer_settings,
         &projection_metadata,
@@ -1337,18 +1470,27 @@ unsafe fn probe_inner(
     readiness.external_hwb_extension_ready = vk_probe.external_hwb_extension_ready;
     readiness.sampler_ycbcr_extension_ready = vk_probe.sampler_ycbcr_extension_ready;
     readiness.sampler_ycbcr_feature_ready = vk_probe.sampler_ycbcr_feature_ready;
+    readiness.fragment_density_map_extension_ready = vk_probe.fragment_density_map_extension_ready;
+    readiness.fragment_density_map2_extension_ready =
+        vk_probe.fragment_density_map2_extension_ready;
+    readiness.fragment_density_map_feature_ready = vk_probe.fragment_density_map_feature_ready;
+    readiness.fragment_density_map_format_ready = vk_probe.fragment_density_map_format_ready;
     readiness.vulkan_external_import_prereqs_ready = vk_probe.external_hwb_extension_ready
         && vk_probe.sampler_ycbcr_extension_ready
         && vk_probe.sampler_ycbcr_feature_ready;
     crate::marker(
         "vulkan-probe",
         format!(
-            "status=ok deviceName={} apiVersion={} externalMemoryAndroidHardwareBuffer={} samplerYcbcrExtension={} samplerYcbcrFeature={} descriptorShape=combined-immutable-sampler-ycbcr-conversion vulkanExternalImportPrereqsReady={} openxrSubmitReady=false vulkanExternalImportReady=false",
+            "status=ok deviceName={} apiVersion={} externalMemoryAndroidHardwareBuffer={} samplerYcbcrExtension={} samplerYcbcrFeature={} fragmentDensityMapExtensionReady={} fragmentDensityMap2ExtensionReady={} fragmentDensityMapFeatureReady={} fragmentDensityMapFormatReady={} descriptorShape=combined-immutable-sampler-ycbcr-conversion vulkanExternalImportPrereqsReady={} openxrSubmitReady=false vulkanExternalImportReady=false",
             crate::sanitize(&vk_probe.device_name),
             vk_probe.api_version,
             vk_probe.external_hwb_extension_ready,
             vk_probe.sampler_ycbcr_extension_ready,
             vk_probe.sampler_ycbcr_feature_ready,
+            vk_probe.fragment_density_map_extension_ready,
+            vk_probe.fragment_density_map2_extension_ready,
+            vk_probe.fragment_density_map_feature_ready,
+            vk_probe.fragment_density_map_format_ready,
             readiness.vulkan_external_import_prereqs_ready
         ),
     );
@@ -1492,13 +1634,36 @@ unsafe fn probe_vulkan(
             vk_physical_device,
             ash::khr::sampler_ycbcr_conversion::NAME,
         )?;
+        let fragment_density_map_extension_ready = physical_device_supports_extension(
+            &vk_instance,
+            vk_physical_device,
+            ash::ext::fragment_density_map::NAME,
+        )?;
+        let fragment_density_map2_extension_ready = physical_device_supports_extension(
+            &vk_instance,
+            vk_physical_device,
+            ash::ext::fragment_density_map2::NAME,
+        )?;
         let mut sampler_ycbcr_features =
             vk::PhysicalDeviceSamplerYcbcrConversionFeatures::default();
-        let mut feature_query =
-            vk::PhysicalDeviceFeatures2::default().push_next(&mut sampler_ycbcr_features);
+        let mut fragment_density_map_features =
+            vk::PhysicalDeviceFragmentDensityMapFeaturesEXT::default();
+        let mut feature_query = vk::PhysicalDeviceFeatures2::default()
+            .push_next(&mut sampler_ycbcr_features)
+            .push_next(&mut fragment_density_map_features);
         vk_instance.get_physical_device_features2(vk_physical_device, &mut feature_query);
         let sampler_ycbcr_feature_ready =
             sampler_ycbcr_features.sampler_ycbcr_conversion == vk::TRUE;
+        let fragment_density_map_feature_ready =
+            fragment_density_map_features.fragment_density_map == vk::TRUE;
+        let fragment_density_map_format_ready = if fragment_density_map_extension_ready {
+            vk_instance
+                .get_physical_device_format_properties(vk_physical_device, vk::Format::R8G8_UNORM)
+                .optimal_tiling_features
+                .contains(vk::FormatFeatureFlags::FRAGMENT_DENSITY_MAP_EXT)
+        } else {
+            false
+        };
         let device_name = CStr::from_ptr(properties.device_name.as_ptr())
             .to_string_lossy()
             .into_owned();
@@ -1508,6 +1673,10 @@ unsafe fn probe_vulkan(
             external_hwb_extension_ready,
             sampler_ycbcr_extension_ready,
             sampler_ycbcr_feature_ready,
+            fragment_density_map_extension_ready,
+            fragment_density_map2_extension_ready,
+            fragment_density_map_feature_ready,
+            fragment_density_map_format_ready,
         })
     })();
 
@@ -1683,6 +1852,11 @@ unsafe fn run_projection_frames(
     camera_luma_diagnostic_enabled: bool,
     swapchain_color_format_mode: NativeSwapchainColorFormatMode,
     camera_direct_border_opacity: f32,
+    available_extensions: &xr::ExtensionSet,
+    enabled_extensions: &xr::ExtensionSet,
+    foveation_settings: NativeFoveationSettings,
+    projection_swapchain_settings: NativeProjectionSwapchainSettings,
+    projection_foveation_vulkan_support: ProjectionFoveationVulkanSupport,
     projection_border_stretch_settings: NativeProjectionBorderStretchSettings,
     mut private_layer_settings: NativePrivateLayerSettings,
     projection_metadata: &CameraProjectionMetadata,
@@ -1862,6 +2036,11 @@ unsafe fn run_projection_frames(
             session,
             render_pass,
             color_format,
+            available_extensions,
+            enabled_extensions,
+            foveation_settings,
+            projection_swapchain_settings,
+            projection_foveation_vulkan_support,
             &mut swapchain,
         )?;
         trace_startup_frame(frame_count, "after-ensure-swapchain");
@@ -2643,6 +2822,17 @@ unsafe fn run_projection_frames(
             } else {
                 GpuPrivateParticleFrameStats::unavailable()
             };
+        if private_particle_stats.half_res_offscreen_requested() {
+            if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
+                renderer.ensure_half_res_offscreen_resources(
+                    vk_device,
+                    memory_properties,
+                    color_format,
+                    swapchain.extent,
+                    swapchain.buffers.len(),
+                )?;
+            }
+        }
         gpu_timestamp_tracker.write_stage_end(
             vk_device,
             cmd,
@@ -3488,6 +3678,7 @@ fn choose_swapchain_format(
 unsafe fn create_projection_render_pass(
     device: &ash::Device,
     color_format: vk::Format,
+    fragment_density_map_enabled: bool,
 ) -> Result<vk::RenderPass, String> {
     let color_attachment = vk::AttachmentDescription {
         format: color_format,
@@ -3498,29 +3689,65 @@ unsafe fn create_projection_render_pass(
         final_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         ..Default::default()
     };
+    let fragment_density_map_attachment = vk::AttachmentDescription {
+        format: vk::Format::R8G8_UNORM,
+        samples: vk::SampleCountFlags::TYPE_1,
+        load_op: vk::AttachmentLoadOp::LOAD,
+        store_op: vk::AttachmentStoreOp::DONT_CARE,
+        initial_layout: vk::ImageLayout::FRAGMENT_DENSITY_MAP_OPTIMAL_EXT,
+        final_layout: vk::ImageLayout::FRAGMENT_DENSITY_MAP_OPTIMAL_EXT,
+        ..Default::default()
+    };
     let color_refs = [vk::AttachmentReference {
         attachment: 0,
         layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
     }];
+    let fragment_density_ref = vk::AttachmentReference {
+        attachment: 1,
+        layout: vk::ImageLayout::FRAGMENT_DENSITY_MAP_OPTIMAL_EXT,
+    };
     let subpasses = [vk::SubpassDescription::default()
         .color_attachments(&color_refs)
         .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)];
-    let dependencies = [vk::SubpassDependency {
+    let color_dependency = vk::SubpassDependency {
         src_subpass: vk::SUBPASS_EXTERNAL,
         dst_subpass: 0,
         src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
         dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
         dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
         ..Default::default()
-    }];
+    };
+    let fragment_density_dependency = vk::SubpassDependency {
+        src_subpass: vk::SUBPASS_EXTERNAL,
+        dst_subpass: 0,
+        src_stage_mask: vk::PipelineStageFlags::TOP_OF_PIPE,
+        dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_DENSITY_PROCESS_EXT,
+        dst_access_mask: vk::AccessFlags::FRAGMENT_DENSITY_MAP_READ_EXT,
+        ..Default::default()
+    };
+    let color_dependencies = [color_dependency];
+    let fdm_dependencies = [fragment_density_dependency, color_dependency];
+    let color_only_attachments = [color_attachment];
+    let fdm_attachments = [color_attachment, fragment_density_map_attachment];
+    let mut fragment_density_map_info = vk::RenderPassFragmentDensityMapCreateInfoEXT::default()
+        .fragment_density_map_attachment(fragment_density_ref);
+    let mut render_pass_info = vk::RenderPassCreateInfo::default()
+        .attachments(if fragment_density_map_enabled {
+            &fdm_attachments
+        } else {
+            &color_only_attachments
+        })
+        .subpasses(&subpasses)
+        .dependencies(if fragment_density_map_enabled {
+            &fdm_dependencies
+        } else {
+            &color_dependencies
+        });
+    if fragment_density_map_enabled {
+        render_pass_info = render_pass_info.push_next(&mut fragment_density_map_info);
+    }
     device
-        .create_render_pass(
-            &vk::RenderPassCreateInfo::default()
-                .attachments(&[color_attachment])
-                .subpasses(&subpasses)
-                .dependencies(&dependencies),
-            None,
-        )
+        .create_render_pass(&render_pass_info, None)
         .map_err(|error| format!("create Vulkan render pass: {error}"))
 }
 
@@ -3531,6 +3758,11 @@ unsafe fn ensure_projection_swapchain<'a>(
     session: &xr::Session<xr::Vulkan>,
     render_pass: vk::RenderPass,
     color_format: vk::Format,
+    available_extensions: &xr::ExtensionSet,
+    enabled_extensions: &xr::ExtensionSet,
+    foveation_settings: NativeFoveationSettings,
+    projection_swapchain_settings: NativeProjectionSwapchainSettings,
+    projection_foveation_vulkan_support: ProjectionFoveationVulkanSupport,
     swapchain: &'a mut Option<ProjectionSwapchain>,
 ) -> Result<&'a mut ProjectionSwapchain, String> {
     if swapchain.is_none() {
@@ -3548,46 +3780,59 @@ unsafe fn ensure_projection_swapchain<'a>(
         {
             return Err("native diagnostic swapchain expects matching eye dimensions".to_string());
         }
-        let extent = vk::Extent2D {
+        let recommended_extent = vk::Extent2D {
             width: views[0].recommended_image_rect_width,
             height: views[0].recommended_image_rect_height,
         };
-        let handle = session
-            .create_swapchain(&xr::SwapchainCreateInfo {
-                create_flags: xr::SwapchainCreateFlags::EMPTY,
-                usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT
-                    | xr::SwapchainUsageFlags::SAMPLED,
-                format: color_format.as_raw() as u32,
-                sample_count: 1,
-                width: extent.width,
-                height: extent.height,
-                face_count: 1,
-                array_size: VIEW_COUNT,
-                mip_count: 1,
-            })
-            .map_err(|error| format!("create OpenXR swapchain: {error}"))?;
-        let color_images = handle
-            .enumerate_images()
-            .map_err(|error| format!("enumerate OpenXR swapchain images: {error}"))?;
-        let mut buffers = Vec::with_capacity(color_images.len());
-        for color_image in color_images {
+        let extent = vk::Extent2D {
+            width: projection_swapchain_settings.scaled_dimension(recommended_extent.width),
+            height: projection_swapchain_settings.scaled_dimension(recommended_extent.height),
+        };
+        let fdm_requested = foveation_settings.requested()
+            && enabled_extensions.fb_foveation
+            && enabled_extensions.fb_foveation_vulkan
+            && projection_foveation_vulkan_support.fdm_ready();
+        let handle =
+            create_projection_swapchain_handle(session, color_format, extent, fdm_requested)?;
+        let foveation = apply_projection_swapchain_foveation(
+            xr_instance,
+            session,
+            &handle,
+            foveation_settings,
+            available_extensions,
+            enabled_extensions,
+            projection_foveation_vulkan_support,
+            fdm_requested,
+        );
+        let projection_images = enumerate_projection_swapchain_images(&handle, fdm_requested)?;
+        let mut buffers = Vec::with_capacity(projection_images.len());
+        for projection_image in projection_images {
             buffers.push(create_projection_swapchain_buffer(
                 device,
                 render_pass,
                 color_format,
-                vk::Image::from_raw(color_image),
+                projection_image.color_image,
+                projection_image.foveation_image,
                 extent,
+                projection_foveation_vulkan_support,
             )?);
         }
         crate::marker(
             "openxr-swapchain",
             format!(
-                "status=created width={} height={} views={} images={} colorFormat={:?} renderPath=per-eye-array-layer-clear openxrSubmitReady=pending",
+                "status=created width={} height={} recommendedWidth={} recommendedHeight={} projectionSwapchainResolutionScale={:.3} projectionSwapchainScaleApplied={} views={} images={} colorFormat={:?} renderPath=per-eye-array-layer-clear foveationSwapchainCreateFdmRequested={} foveationSwapchainCreateMetaSubsampledRequested={} {} openxrSubmitReady=pending",
                 extent.width,
                 extent.height,
+                recommended_extent.width,
+                recommended_extent.height,
+                projection_swapchain_settings.resolution_scale,
+                projection_swapchain_settings.scale_applied(),
                 VIEW_COUNT,
                 buffers.len(),
-                color_format
+                color_format,
+                fdm_requested,
+                fdm_requested,
+                foveation.marker_fields,
             ),
         );
         *swapchain = Some(ProjectionSwapchain {
@@ -3595,6 +3840,7 @@ unsafe fn ensure_projection_swapchain<'a>(
             buffers,
             extent,
             render_pass,
+            _foveation_profile: foveation.profile,
         });
     }
 
@@ -3603,14 +3849,326 @@ unsafe fn ensure_projection_swapchain<'a>(
         .ok_or_else(|| "projection swapchain was not initialized".to_string())
 }
 
+unsafe fn create_projection_swapchain_handle(
+    session: &xr::Session<xr::Vulkan>,
+    color_format: vk::Format,
+    extent: vk::Extent2D,
+    fragment_density_map_requested: bool,
+) -> Result<xr::Swapchain<xr::Vulkan>, String> {
+    let mut meta_vulkan_create_info = xr::sys::VulkanSwapchainCreateInfoMETA {
+        ty: xr::sys::VulkanSwapchainCreateInfoMETA::TYPE,
+        next: ptr::null(),
+        additional_create_flags: vk::ImageCreateFlags::SUBSAMPLED_EXT.as_raw() as _,
+        additional_usage_flags: 0,
+    };
+    let mut foveation_create_info = xr::sys::SwapchainCreateInfoFoveationFB {
+        ty: xr::sys::SwapchainCreateInfoFoveationFB::TYPE,
+        next: if fragment_density_map_requested {
+            &mut meta_vulkan_create_info as *mut _ as *mut _
+        } else {
+            ptr::null_mut()
+        },
+        flags: xr::sys::SwapchainCreateFoveationFlagsFB::FRAGMENT_DENSITY_MAP,
+    };
+    let next = if fragment_density_map_requested {
+        &mut foveation_create_info as *mut _ as *const _
+    } else {
+        ptr::null()
+    };
+    let create_info = xr::sys::SwapchainCreateInfo {
+        ty: xr::sys::SwapchainCreateInfo::TYPE,
+        next,
+        create_flags: xr::SwapchainCreateFlags::EMPTY,
+        usage_flags: xr::SwapchainUsageFlags::COLOR_ATTACHMENT | xr::SwapchainUsageFlags::SAMPLED,
+        format: color_format.as_raw() as i64,
+        sample_count: 1,
+        width: extent.width,
+        height: extent.height,
+        face_count: 1,
+        array_size: VIEW_COUNT,
+        mip_count: 1,
+    };
+    let mut raw_swapchain = xr::sys::Swapchain::NULL;
+    let result = (session.instance().fp().create_swapchain)(
+        session.as_raw(),
+        &create_info,
+        &mut raw_swapchain,
+    );
+    ensure_xr_success(result, "xrCreateSwapchain")?;
+    Ok(xr::Swapchain::from_raw(session.clone(), raw_swapchain))
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ProjectionSwapchainImage {
+    color_image: vk::Image,
+    foveation_image: Option<ProjectionFoveationImage>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ProjectionFoveationImage {
+    image: vk::Image,
+    extent: vk::Extent2D,
+}
+
+fn enumerate_projection_swapchain_images(
+    handle: &xr::Swapchain<xr::Vulkan>,
+    fragment_density_map_requested: bool,
+) -> Result<Vec<ProjectionSwapchainImage>, String> {
+    if !fragment_density_map_requested {
+        return handle
+            .enumerate_images()
+            .map(|images| {
+                images
+                    .into_iter()
+                    .map(|image| ProjectionSwapchainImage {
+                        color_image: vk::Image::from_raw(image),
+                        foveation_image: None,
+                    })
+                    .collect()
+            })
+            .map_err(|error| format!("enumerate OpenXR swapchain images: {error}"));
+    }
+
+    let mut image_count = 0;
+    let first_result = unsafe {
+        (handle.instance().fp().enumerate_swapchain_images)(
+            handle.as_raw(),
+            0,
+            &mut image_count,
+            ptr::null_mut(),
+        )
+    };
+    ensure_xr_success(first_result, "xrEnumerateSwapchainImages(count)")?;
+    let mut foveation_images = vec![
+        xr::sys::SwapchainImageFoveationVulkanFB {
+            ty: xr::sys::SwapchainImageFoveationVulkanFB::TYPE,
+            next: ptr::null_mut(),
+            image: 0,
+            width: 0,
+            height: 0,
+        };
+        image_count as usize
+    ];
+    let mut color_images = Vec::with_capacity(image_count as usize);
+    for foveation_image in foveation_images.iter_mut() {
+        color_images.push(xr::sys::SwapchainImageVulkanKHR {
+            ty: xr::sys::SwapchainImageVulkanKHR::TYPE,
+            next: foveation_image as *mut _ as *mut _,
+            image: 0,
+        });
+    }
+    let mut returned_count = image_count;
+    let second_result = unsafe {
+        (handle.instance().fp().enumerate_swapchain_images)(
+            handle.as_raw(),
+            image_count,
+            &mut returned_count,
+            color_images.as_mut_ptr() as *mut xr::sys::SwapchainImageBaseHeader,
+        )
+    };
+    ensure_xr_success(second_result, "xrEnumerateSwapchainImages(images)")?;
+    if returned_count != image_count {
+        return Err(format!(
+            "OpenXR returned {returned_count} swapchain images after reporting {image_count}"
+        ));
+    }
+    Ok(color_images
+        .into_iter()
+        .zip(foveation_images)
+        .map(|(color, foveation)| ProjectionSwapchainImage {
+            color_image: vk::Image::from_raw(color.image as _),
+            foveation_image: Some(ProjectionFoveationImage {
+                image: vk::Image::from_raw(foveation.image as _),
+                extent: vk::Extent2D {
+                    width: foveation.width,
+                    height: foveation.height,
+                },
+            }),
+        })
+        .collect())
+}
+
+struct ProjectionSwapchainFoveation {
+    profile: Option<xr::FoveationProfileFB>,
+    marker_fields: String,
+}
+
+fn apply_projection_swapchain_foveation(
+    xr_instance: &xr::Instance,
+    session: &xr::Session<xr::Vulkan>,
+    handle: &xr::Swapchain<xr::Vulkan>,
+    settings: NativeFoveationSettings,
+    available_extensions: &xr::ExtensionSet,
+    enabled_extensions: &xr::ExtensionSet,
+    projection_foveation_vulkan_support: ProjectionFoveationVulkanSupport,
+    fragment_density_map_requested: bool,
+) -> ProjectionSwapchainFoveation {
+    let extension_fields =
+        projection_foveation_extension_fields(available_extensions, enabled_extensions);
+    let base_fields = format!(
+        "{} {} {} foveationVulkanFdmAttachment={} foveationSubsampledLayout={}",
+        settings.marker_fields(),
+        extension_fields,
+        projection_foveation_vulkan_support.marker_fields(),
+        fragment_density_map_requested,
+        fragment_density_map_requested
+    );
+    if !settings.requested() {
+        let marker_fields = format!(
+            "foveationStatus=disabled foveationProfileApplied=false {}",
+            base_fields
+        );
+        crate::marker("openxr-foveation", marker_fields.clone());
+        return ProjectionSwapchainFoveation {
+            profile: None,
+            marker_fields,
+        };
+    }
+
+    let mut missing = Vec::new();
+    if !enabled_extensions.fb_foveation {
+        missing.push("XR_FB_foveation");
+    }
+    if !enabled_extensions.fb_swapchain_update_state {
+        missing.push("XR_FB_swapchain_update_state");
+    }
+    if !missing.is_empty() {
+        let marker_fields = format!(
+            "foveationStatus=unavailable foveationProfileApplied=false reason=missing-{} {}",
+            missing.join("+"),
+            base_fields
+        );
+        crate::marker("openxr-foveation", marker_fields.clone());
+        return ProjectionSwapchainFoveation {
+            profile: None,
+            marker_fields,
+        };
+    }
+
+    let profile = match session.create_foveation_profile(Some(xr::FoveationLevelProfile {
+        level: xr_foveation_level(settings.level),
+        vertical_offset: settings.vertical_offset,
+        dynamic: if settings.dynamic {
+            xr::FoveationDynamicFB::LEVEL_ENABLED
+        } else {
+            xr::FoveationDynamicFB::DISABLED
+        },
+    })) {
+        Ok(profile) => profile,
+        Err(error) => {
+            let marker_fields = format!(
+                "foveationStatus=profile-create-failed foveationProfileApplied=false reason={} {}",
+                crate::sanitize(&format!("{error}")),
+                base_fields
+            );
+            crate::marker("openxr-foveation", marker_fields.clone());
+            return ProjectionSwapchainFoveation {
+                profile: None,
+                marker_fields,
+            };
+        }
+    };
+
+    let Some(update_swapchain) = xr_instance.exts().fb_swapchain_update_state.as_ref() else {
+        let marker_fields = format!(
+            "foveationStatus=update-extension-missing foveationProfileApplied=false {}",
+            base_fields
+        );
+        crate::marker("openxr-foveation", marker_fields.clone());
+        return ProjectionSwapchainFoveation {
+            profile: None,
+            marker_fields,
+        };
+    };
+
+    let state = xr::sys::SwapchainStateFoveationFB {
+        ty: xr::sys::StructureType::SWAPCHAIN_STATE_FOVEATION_FB,
+        next: ptr::null_mut(),
+        flags: xr::SwapchainStateFoveationFlagsFB::EMPTY,
+        profile: profile.as_raw(),
+    };
+    let state_header = &state as *const xr::sys::SwapchainStateFoveationFB
+        as *const xr::sys::SwapchainStateBaseHeaderFB;
+    let update_result =
+        unsafe { (update_swapchain.update_swapchain)(handle.as_raw(), state_header) };
+    if update_result.into_raw() < 0 {
+        let marker_fields = format!(
+            "foveationStatus=swapchain-update-failed foveationProfileApplied=false xrResult={:?} {}",
+            update_result,
+            base_fields
+        );
+        crate::marker("openxr-foveation", marker_fields.clone());
+        return ProjectionSwapchainFoveation {
+            profile: None,
+            marker_fields,
+        };
+    }
+
+    let marker_fields = format!(
+        "foveationStatus=applied foveationProfileApplied=true xrResult={:?} {}",
+        update_result, base_fields
+    );
+    crate::marker("openxr-foveation", marker_fields.clone());
+    ProjectionSwapchainFoveation {
+        profile: Some(profile),
+        marker_fields,
+    }
+}
+
+fn projection_foveation_extension_fields(
+    available_extensions: &xr::ExtensionSet,
+    enabled_extensions: &xr::ExtensionSet,
+) -> String {
+    format!(
+        "xrFbFoveationAvailable={} xrFbFoveationEnabled={} xrFbFoveationConfigurationAvailable={} xrFbFoveationConfigurationEnabled={} xrFbFoveationVulkanAvailable={} xrFbFoveationVulkanEnabled={} xrFbSwapchainUpdateStateAvailable={} xrFbSwapchainUpdateStateEnabled={} xrFbSwapchainUpdateStateVulkanAvailable={} xrFbSwapchainUpdateStateVulkanEnabled={} xrMetaVulkanSwapchainCreateInfoAvailable={} xrMetaVulkanSwapchainCreateInfoEnabled={}",
+        available_extensions.fb_foveation,
+        enabled_extensions.fb_foveation,
+        available_extensions.fb_foveation_configuration,
+        enabled_extensions.fb_foveation_configuration,
+        available_extensions.fb_foveation_vulkan,
+        enabled_extensions.fb_foveation_vulkan,
+        available_extensions.fb_swapchain_update_state,
+        enabled_extensions.fb_swapchain_update_state,
+        available_extensions.fb_swapchain_update_state_vulkan,
+        enabled_extensions.fb_swapchain_update_state_vulkan,
+        available_extensions.meta_vulkan_swapchain_create_info,
+        enabled_extensions.meta_vulkan_swapchain_create_info,
+    )
+}
+
+fn xr_foveation_level(level: NativeFoveationLevel) -> xr::FoveationLevelFB {
+    match level {
+        NativeFoveationLevel::Low => xr::FoveationLevelFB::LOW,
+        NativeFoveationLevel::Medium => xr::FoveationLevelFB::MEDIUM,
+        NativeFoveationLevel::High => xr::FoveationLevelFB::HIGH,
+    }
+}
+
 unsafe fn create_projection_swapchain_buffer(
     device: &ash::Device,
     render_pass: vk::RenderPass,
     color_format: vk::Format,
     image: vk::Image,
+    foveation_image: Option<ProjectionFoveationImage>,
     extent: vk::Extent2D,
+    projection_foveation_vulkan_support: ProjectionFoveationVulkanSupport,
 ) -> Result<ProjectionSwapchainBuffer, String> {
     let mut eyes = Vec::with_capacity(VIEW_COUNT_USIZE);
+    let fragment_density_map_enabled = projection_foveation_vulkan_support.fdm_ready();
+    let foveation_view_flags = if fragment_density_map_enabled
+        && projection_foveation_vulkan_support.deferred_feature_ready
+    {
+        vk::ImageViewCreateFlags::FRAGMENT_DENSITY_MAP_DEFERRED_EXT
+    } else {
+        vk::ImageViewCreateFlags::empty()
+    };
+    let foveation_view_flag_label = if foveation_view_flags
+        .contains(vk::ImageViewCreateFlags::FRAGMENT_DENSITY_MAP_DEFERRED_EXT)
+    {
+        "deferred"
+    } else {
+        "none"
+    };
     for eye_index in 0..VIEW_COUNT {
         let view = device
             .create_image_view(
@@ -3628,18 +4186,95 @@ unsafe fn create_projection_swapchain_buffer(
                 None,
             )
             .map_err(|error| format!("create Vulkan swapchain image view: {error}"))?;
-        let framebuffer = device
-            .create_framebuffer(
+        let foveation_view = if fragment_density_map_enabled {
+            let Some(foveation_image) = foveation_image else {
+                device.destroy_image_view(view, None);
+                return Err(
+                    "FDM render pass requested but OpenXR did not return a foveation image"
+                        .to_string(),
+                );
+            };
+            match device.create_image_view(
+                &vk::ImageViewCreateInfo::default()
+                    .flags(foveation_view_flags)
+                    .image(foveation_image.image)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(vk::Format::R8G8_UNORM)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    }),
+                None,
+            ) {
+                Ok(foveation_view) => Some(foveation_view),
+                Err(error) => {
+                    device.destroy_image_view(view, None);
+                    return Err(format!(
+                        "create Vulkan foveation image view {}x{}: {error}",
+                        foveation_image.extent.width, foveation_image.extent.height
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+        if foveation_view.is_some() {
+            crate::marker(
+                "openxr-foveation-framebuffer",
+                format!(
+                    "stage=create eye={} colorViewType=2D colorBaseArrayLayer={} foveationImageWidth={} foveationImageHeight={} foveationViewType=2D foveationBaseArrayLayer=0 foveationViewFlags={} framebufferWidth={} framebufferHeight={} framebufferLayers=1",
+                    eye_index,
+                    eye_index,
+                    foveation_image
+                        .map(|image| image.extent.width)
+                        .unwrap_or_default(),
+                    foveation_image
+                        .map(|image| image.extent.height)
+                        .unwrap_or_default(),
+                    foveation_view_flag_label,
+                    extent.width,
+                    extent.height,
+                ),
+            );
+        }
+        let framebuffer = if let Some(foveation_view) = foveation_view {
+            let attachments = [view, foveation_view];
+            device.create_framebuffer(
                 &vk::FramebufferCreateInfo::default()
                     .render_pass(render_pass)
-                    .attachments(&[view])
+                    .attachments(&attachments)
                     .width(extent.width)
                     .height(extent.height)
                     .layers(1),
                 None,
             )
-            .map_err(|error| format!("create Vulkan framebuffer: {error}"))?;
-        eyes.push(ProjectionEyeTarget { view, framebuffer });
+        } else {
+            let attachments = [view];
+            device.create_framebuffer(
+                &vk::FramebufferCreateInfo::default()
+                    .render_pass(render_pass)
+                    .attachments(&attachments)
+                    .width(extent.width)
+                    .height(extent.height)
+                    .layers(1),
+                None,
+            )
+        }
+        .map_err(|error| {
+            if let Some(foveation_view) = foveation_view {
+                device.destroy_image_view(foveation_view, None);
+            }
+            device.destroy_image_view(view, None);
+            format!("create Vulkan framebuffer: {error}")
+        })?;
+        eyes.push(ProjectionEyeTarget {
+            view,
+            foveation_view,
+            framebuffer,
+        });
     }
     Ok(ProjectionSwapchainBuffer { eyes })
 }
@@ -3712,16 +4347,56 @@ unsafe fn record_projection_diagnostic(
         draw_recorded_replay_overlay,
         diagnostic_settings,
     );
-    let private_particle_tile_stage = gpu_private_particle_renderer.is_some()
+    let private_particle_ready = gpu_private_particle_renderer.is_some()
         && private_particle_stats.visible
         && private_particle_stats.draw_count > 0;
-    if private_particle_tile_stage {
+    let private_particle_half_res = gpu_private_particle_renderer
+        .is_some_and(|renderer| renderer.half_res_offscreen_active(private_particle_stats));
+    let private_particle_half_res_tracers_only =
+        gpu_private_particle_renderer.is_some_and(|renderer| {
+            renderer.half_res_offscreen_tracers_only_active(private_particle_stats)
+        });
+    if private_particle_ready {
         gpu_timestamp_tracker.write_stage_start(
             device,
             cmd,
             frame_slot,
             GpuTimestampStage::PrivateParticleTileComposite,
         );
+    } else {
+        gpu_timestamp_tracker.write_disabled_stage(
+            device,
+            cmd,
+            frame_slot,
+            GpuTimestampStage::PrivateParticleTileComposite,
+        );
+    }
+    if private_particle_half_res {
+        if !private_particle_half_res_tracers_only {
+            for stage in [
+                GpuTimestampStage::PrivateParticleDrawLeftEye,
+                GpuTimestampStage::PrivateParticleDrawRightEye,
+            ] {
+                gpu_timestamp_tracker.write_disabled_stage(device, cmd, frame_slot, stage);
+            }
+        }
+    } else {
+        for stage in [
+            GpuTimestampStage::PrivateParticleHalfResDrawLeftEye,
+            GpuTimestampStage::PrivateParticleHalfResDrawRightEye,
+            GpuTimestampStage::PrivateParticleHalfResCompositeLeftEye,
+            GpuTimestampStage::PrivateParticleHalfResCompositeRightEye,
+        ] {
+            gpu_timestamp_tracker.write_disabled_stage(device, cmd, frame_slot, stage);
+        }
+        if !private_particle_ready {
+            for stage in [
+                GpuTimestampStage::PrivateParticleDrawLeftEye,
+                GpuTimestampStage::PrivateParticleDrawRightEye,
+            ] {
+                gpu_timestamp_tracker.write_disabled_stage(device, cmd, frame_slot, stage);
+            }
+        }
     }
     for (eye_index, eye) in buffer.eyes.iter().enumerate() {
         let target_rect =
@@ -3730,6 +4405,30 @@ unsafe fn record_projection_diagnostic(
             .get(eye_index)
             .map(hand_mesh_visual_eye_projection)
             .unwrap_or_default();
+        if private_particle_half_res {
+            let half_res_draw_stage = match eye_index {
+                0 => Some(GpuTimestampStage::PrivateParticleHalfResDrawLeftEye),
+                1 => Some(GpuTimestampStage::PrivateParticleHalfResDrawRightEye),
+                _ => None,
+            };
+            if let Some(stage) = half_res_draw_stage {
+                gpu_timestamp_tracker.write_stage_start(device, cmd, frame_slot, stage);
+            }
+            if let Some(renderer) = gpu_private_particle_renderer {
+                renderer.record_half_res_offscreen_eye(
+                    device,
+                    cmd,
+                    image_index,
+                    eye_index,
+                    eye_projection,
+                    private_particle_world_center_scale,
+                    private_particle_stats,
+                );
+            }
+            if let Some(stage) = half_res_draw_stage {
+                gpu_timestamp_tracker.write_stage_end(device, cmd, frame_slot, stage);
+            }
+        }
         let background = if stimulus_volume_route || render_mode.uses_solid_black_background() {
             [0.0, 0.0, 0.0, 1.0]
         } else if passthrough_alpha_clear {
@@ -3984,31 +4683,70 @@ unsafe fn record_projection_diagnostic(
                 environment_depth_settings,
             );
         }
-        let private_particle_draw_stage = if gpu_private_particle_renderer.is_some()
-            && private_particle_stats.visible
-            && private_particle_stats.draw_count > 0
-        {
-            match eye_index {
-                0 => Some(GpuTimestampStage::PrivateParticleDrawLeftEye),
-                1 => Some(GpuTimestampStage::PrivateParticleDrawRightEye),
-                _ => None,
-            }
-        } else {
-            None
-        };
-        if let Some(renderer) = gpu_private_particle_renderer {
-            if private_particle_stats.visible && private_particle_stats.draw_count > 0 {
-                if let Some(stage) = private_particle_draw_stage {
-                    gpu_timestamp_tracker.write_stage_start(device, cmd, frame_slot, stage);
+        if private_particle_ready {
+            if let Some(renderer) = gpu_private_particle_renderer {
+                if private_particle_half_res {
+                    if private_particle_half_res_tracers_only {
+                        let direct_draw_stage = match eye_index {
+                            0 => Some(GpuTimestampStage::PrivateParticleDrawLeftEye),
+                            1 => Some(GpuTimestampStage::PrivateParticleDrawRightEye),
+                            _ => None,
+                        };
+                        if let Some(stage) = direct_draw_stage {
+                            gpu_timestamp_tracker.write_stage_start(device, cmd, frame_slot, stage);
+                        }
+                        renderer.record_overlay_eye_main_particles(
+                            device,
+                            cmd,
+                            swapchain.extent,
+                            eye_projection,
+                            private_particle_world_center_scale,
+                            private_particle_stats,
+                        );
+                        if let Some(stage) = direct_draw_stage {
+                            gpu_timestamp_tracker.write_stage_end(device, cmd, frame_slot, stage);
+                        }
+                    }
+                    let composite_stage = match eye_index {
+                        0 => Some(GpuTimestampStage::PrivateParticleHalfResCompositeLeftEye),
+                        1 => Some(GpuTimestampStage::PrivateParticleHalfResCompositeRightEye),
+                        _ => None,
+                    };
+                    if let Some(stage) = composite_stage {
+                        gpu_timestamp_tracker.write_stage_start(device, cmd, frame_slot, stage);
+                    }
+                    renderer.record_half_res_composite_eye(
+                        device,
+                        cmd,
+                        image_index,
+                        eye_index,
+                        swapchain.extent,
+                        private_particle_stats,
+                    );
+                    if let Some(stage) = composite_stage {
+                        gpu_timestamp_tracker.write_stage_end(device, cmd, frame_slot, stage);
+                    }
+                } else {
+                    let direct_draw_stage = match eye_index {
+                        0 => Some(GpuTimestampStage::PrivateParticleDrawLeftEye),
+                        1 => Some(GpuTimestampStage::PrivateParticleDrawRightEye),
+                        _ => None,
+                    };
+                    if let Some(stage) = direct_draw_stage {
+                        gpu_timestamp_tracker.write_stage_start(device, cmd, frame_slot, stage);
+                    }
+                    renderer.record_overlay_eye(
+                        device,
+                        cmd,
+                        swapchain.extent,
+                        eye_projection,
+                        private_particle_world_center_scale,
+                        private_particle_stats,
+                    );
+                    if let Some(stage) = direct_draw_stage {
+                        gpu_timestamp_tracker.write_stage_end(device, cmd, frame_slot, stage);
+                    }
                 }
-                renderer.record_overlay_eye(
-                    device,
-                    cmd,
-                    swapchain.extent,
-                    eye_projection,
-                    private_particle_world_center_scale,
-                    private_particle_stats,
-                );
             }
         }
         if let Some(renderer) = gpu_hand_mesh_visual_renderer {
@@ -4073,11 +4811,8 @@ unsafe fn record_projection_diagnostic(
             }
         }
         device.cmd_end_render_pass(cmd);
-        if let Some(stage) = private_particle_draw_stage {
-            gpu_timestamp_tracker.write_stage_end(device, cmd, frame_slot, stage);
-        }
     }
-    if private_particle_tile_stage {
+    if private_particle_ready {
         gpu_timestamp_tracker.write_stage_end(
             device,
             cmd,
@@ -4895,6 +5630,7 @@ struct ProjectionSwapchain {
     buffers: Vec<ProjectionSwapchainBuffer>,
     extent: vk::Extent2D,
     render_pass: vk::RenderPass,
+    _foveation_profile: Option<xr::FoveationProfileFB>,
 }
 
 impl ProjectionSwapchain {
@@ -4902,6 +5638,9 @@ impl ProjectionSwapchain {
         for buffer in self.buffers {
             for eye in buffer.eyes {
                 device.destroy_framebuffer(eye.framebuffer, None);
+                if let Some(foveation_view) = eye.foveation_view {
+                    device.destroy_image_view(foveation_view, None);
+                }
                 device.destroy_image_view(eye.view, None);
             }
         }
@@ -5133,6 +5872,7 @@ struct ProjectionSwapchainBuffer {
 
 struct ProjectionEyeTarget {
     view: vk::ImageView,
+    foveation_view: Option<vk::ImageView>,
     framebuffer: vk::Framebuffer,
 }
 

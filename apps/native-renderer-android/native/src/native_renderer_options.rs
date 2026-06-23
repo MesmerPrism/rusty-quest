@@ -4,6 +4,7 @@
 //! frame loop so replay-proof, live-hand, and SDF visual modes stay testable.
 
 pub(crate) use crate::environment_depth_alignment_state::EnvironmentDepthAlignmentSettings;
+use crate::manifold_scalar_driver_bridge::ManifoldScalarDriverBridgeSettings;
 use crate::native_renderer_property_values::{
     bool_value, f32_clamped_value, f32_pair_value, f32_value, u32_value, u64_value,
 };
@@ -33,6 +34,12 @@ pub(crate) use crate::native_renderer_environment_depth_options::{
     NativeEnvironmentDepthSurfaceModel, NativeEnvironmentDepthSurfaceNormalCoherence,
     NativeEnvironmentDepthSurfaceNormalSource, NativeEnvironmentDepthSurfaceSmallComponentPolicy,
 };
+#[cfg(any(target_os = "android", test))]
+#[allow(unused_imports)]
+pub(crate) use crate::native_renderer_foveation_options::NativeFoveationLevel;
+#[cfg(test)]
+pub(crate) use crate::native_renderer_foveation_options::NativeFoveationMode;
+pub(crate) use crate::native_renderer_foveation_options::NativeFoveationSettings;
 pub(crate) use crate::native_renderer_hand_anchor_particle_options::NativeHandAnchorParticleSettings;
 #[cfg(any(target_os = "android", test))]
 #[allow(unused_imports)]
@@ -52,6 +59,7 @@ pub(crate) use crate::native_renderer_projection_border_stretch_options::{
     NativePeripheralStretchBlendMode, NativePeripheralStretchDebug, NativeProjectionBorderPolicy,
     NativeProjectionBorderStretchPush, NativeProjectionProcessingLayer, NativeVideoBorderBlendMode,
 };
+pub(crate) use crate::native_renderer_projection_swapchain_options::NativeProjectionSwapchainSettings;
 pub(crate) use crate::native_renderer_properties::*;
 pub(crate) use crate::native_renderer_stimulus_volume_options::NativeStimulusVolumeSettings;
 #[cfg(any(target_os = "android", test))]
@@ -87,6 +95,8 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) camera_stereo_pairing_policy: NativeCameraStereoPairingPolicy,
     pub(crate) camera_direct_border_opacity: f32,
     pub(crate) swapchain_color_format_mode: NativeSwapchainColorFormatMode,
+    pub(crate) projection_swapchain_settings: NativeProjectionSwapchainSettings,
+    pub(crate) foveation_settings: NativeFoveationSettings,
     pub(crate) replay_visual_proof_enabled: bool,
     pub(crate) compact_hand_input_source_mode: CompactHandInputSourceMode,
     pub(crate) sdf_visual_enabled: bool,
@@ -105,6 +115,7 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) projection_target_settings: ProjectionTargetSettings,
     pub(crate) private_particle_breath_state_driver_settings:
         PrivateParticleBreathStateDriverSettings,
+    pub(crate) manifold_scalar_driver_settings: ManifoldScalarDriverBridgeSettings,
     pub(crate) projection_border_stretch_settings: NativeProjectionBorderStretchSettings,
     pub(crate) private_layer_settings: NativePrivateLayerSettings,
 }
@@ -133,6 +144,9 @@ impl NativeRendererRuntimeOptions {
             f32_clamped_value(lookup(PROP_CAMERA_DIRECT_BORDER_OPACITY), 0.72, 0.0, 1.0);
         let swapchain_color_format_mode =
             NativeSwapchainColorFormatMode::from_property(lookup(PROP_SWAPCHAIN_COLOR_FORMAT_MODE));
+        let projection_swapchain_settings =
+            NativeProjectionSwapchainSettings::from_property_lookup(&mut lookup);
+        let foveation_settings = NativeFoveationSettings::from_property_lookup(&mut lookup);
         let replay_visual_proof_enabled =
             bool_value(lookup(PROP_REPLAY_VISUAL_PROOF_ENABLED), false);
         let compact_hand_input_source_mode = CompactHandInputSourceMode::from_property(
@@ -177,6 +191,8 @@ impl NativeRendererRuntimeOptions {
         };
         let private_particle_breath_state_driver_settings =
             PrivateParticleBreathStateDriverSettings::from_property_lookup(&mut lookup);
+        let manifold_scalar_driver_settings =
+            ManifoldScalarDriverBridgeSettings::from_property_lookup(&mut lookup);
         let projection_border_stretch_settings =
             NativeProjectionBorderStretchSettings::from_property_lookup(&mut lookup);
         let private_layer_settings = NativePrivateLayerSettings::from_property_lookup(&mut lookup);
@@ -195,6 +211,8 @@ impl NativeRendererRuntimeOptions {
             camera_stereo_pairing_policy,
             camera_direct_border_opacity,
             swapchain_color_format_mode,
+            projection_swapchain_settings,
+            foveation_settings,
             replay_visual_proof_enabled,
             compact_hand_input_source_mode,
             sdf_visual_enabled,
@@ -216,6 +234,7 @@ impl NativeRendererRuntimeOptions {
             stimulus_volume_settings,
             projection_target_settings,
             private_particle_breath_state_driver_settings,
+            manifold_scalar_driver_settings,
             projection_border_stretch_settings,
             private_layer_settings,
         }

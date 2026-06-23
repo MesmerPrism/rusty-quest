@@ -66,7 +66,13 @@ function Read-JsonFile {
 
 function Get-FileSha256 {
     param([Parameter(Mandatory=$true)][string]$Path)
-    return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $Path))
+        return ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
 }
 
 function Assert-HashMatches {
@@ -96,6 +102,47 @@ function Get-EffectiveBuildEnvValue {
         return [string]$AppBuildEnvByName[$Name]
     }
     return [Environment]::GetEnvironmentVariable($Name)
+}
+
+function Test-TruthyBuildEnvValue {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $false
+    }
+    return @("1", "true", "yes", "on") -contains $Value.Trim().ToLowerInvariant()
+}
+
+function Copy-AssetInput {
+    param(
+        [Parameter(Mandatory=$true)][string]$Source,
+        [Parameter(Mandatory=$true)][string]$DestinationRoot,
+        [Parameter(Mandatory=$true)][string]$RepoRoot,
+        [string]$DestinationName = ""
+    )
+
+    $sourcePath = Resolve-RepoPath -Path $Source -RepoRoot $RepoRoot
+    if (-not (Test-Path -LiteralPath $sourcePath)) {
+        throw "Declared APK asset input is missing: $sourcePath"
+    }
+    $leaf = if ([string]::IsNullOrWhiteSpace($DestinationName)) {
+        Split-Path -Leaf $sourcePath
+    } else {
+        $DestinationName
+    }
+    if ($leaf -match '[\\/]' -or [string]::IsNullOrWhiteSpace($leaf)) {
+        throw "APK asset destination name must be a single path component: $leaf"
+    }
+    $destinationPath = Join-Path $DestinationRoot $leaf
+    if ((Get-Item -LiteralPath $sourcePath).PSIsContainer) {
+        New-Item -ItemType Directory -Force -Path $destinationPath | Out-Null
+        Get-ChildItem -LiteralPath $sourcePath -Force | ForEach-Object {
+            Copy-Item -LiteralPath $_.FullName -Destination $destinationPath -Recurse -Force
+        }
+    } else {
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destinationPath) | Out-Null
+        Copy-Item -LiteralPath $sourcePath -Destination $destinationPath -Force
+    }
+    return $destinationPath
 }
 
 if ([string]::IsNullOrWhiteSpace($AndroidHome)) {
@@ -274,6 +321,32 @@ if (-not [string]::IsNullOrWhiteSpace($nativeAppSettingsPath)) {
     Copy-Item -LiteralPath $appBuildLockPath -Destination (Join-Path $assetsDir "feature-lock.json") -Force
 }
 
+$declaredAssetInputsPackaged = @()
+if ($null -ne $appBuildLockObject -and $null -ne $appBuildLockObject.build_inputs -and $null -ne $appBuildLockObject.build_inputs.assets) {
+    foreach ($assetInput in @($appBuildLockObject.build_inputs.assets)) {
+        $assetInputText = [string]$assetInput
+        if ([string]::IsNullOrWhiteSpace($assetInputText)) {
+            continue
+        }
+        $declaredAssetInputsPackaged += Copy-AssetInput -Source $assetInputText -DestinationRoot $assetsDir -RepoRoot ([string]$repoRoot)
+    }
+}
+
+$questionnaireAssetDir = [Environment]::GetEnvironmentVariable("RUSTY_QUEST_NATIVE_RENDERER_QUESTIONNAIRE_ASSET_DIR")
+$questionnaireAssetsPackaged = $false
+$questionnaireAssetSource = ""
+if (-not [string]::IsNullOrWhiteSpace($questionnaireAssetDir)) {
+    $questionnaireAssetSource = Resolve-RepoPath -Path $questionnaireAssetDir -RepoRoot ([string]$repoRoot)
+    if (-not (Test-Path -LiteralPath $questionnaireAssetSource)) {
+        throw "RUSTY_QUEST_NATIVE_RENDERER_QUESTIONNAIRE_ASSET_DIR does not exist: $questionnaireAssetSource"
+    }
+    if (-not (Get-Item -LiteralPath $questionnaireAssetSource).PSIsContainer) {
+        throw "RUSTY_QUEST_NATIVE_RENDERER_QUESTIONNAIRE_ASSET_DIR must be a directory: $questionnaireAssetSource"
+    }
+    [void](Copy-AssetInput -Source $questionnaireAssetSource -DestinationRoot $assetsDir -RepoRoot ([string]$repoRoot) -DestinationName "maia_spatial_questionnaire")
+    $questionnaireAssetsPackaged = $true
+}
+
 if ($RequireRecordedHandCapture -and [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
     throw "-RequireRecordedHandCapture needs -RecordedHandCaptureDir so the APK cannot silently fall back to the public metadata-only replay shape."
 }
@@ -358,6 +431,39 @@ if (-not (Test-Path $builtNativeLib)) {
 }
 Copy-Item -LiteralPath $builtNativeLib -Destination $nativeLib -Force
 
+$lslNativeLibraryPackaged = $false
+$lslNativeLibraryPath = ""
+$lslNativeLibrarySha256 = ""
+if (Test-TruthyBuildEnvValue -Value (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_LSL_ANDROID" -AppBuildEnvByName $appBuildEnvByName)) {
+    $configuredLslLibDir = Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_LSL_LIB_DIR" -AppBuildEnvByName $appBuildEnvByName
+    $lslLibCandidates = @()
+    if (-not [string]::IsNullOrWhiteSpace($configuredLslLibDir)) {
+        $lslLibCandidates += $configuredLslLibDir
+    }
+    $lslLibCandidates += (Join-Path $repoRoot "local-artifacts\liblsl-android\arm64-v8a")
+    $lslLibCandidates += (Join-Path $repoRoot "third_party\liblsl-android\staged\arm64-v8a")
+    $resolvedLslLibDir = ""
+    foreach ($candidate in $lslLibCandidates) {
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            continue
+        }
+        $candidatePath = [System.IO.Path]::GetFullPath($candidate)
+        if (Test-Path -LiteralPath (Join-Path $candidatePath "liblsl.so")) {
+            $resolvedLslLibDir = $candidatePath
+            break
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($resolvedLslLibDir)) {
+        throw "RUSTY_QUEST_NATIVE_RENDERER_LSL_ANDROID is enabled, but liblsl.so was not found. Run tools/Stage-LibLslAndroid.ps1 or set RUSTY_QUEST_NATIVE_RENDERER_LSL_LIB_DIR."
+    }
+    $lslSource = Join-Path $resolvedLslLibDir "liblsl.so"
+    $lslDestination = Join-Path $nativeLibDir "liblsl.so"
+    Copy-Item -LiteralPath $lslSource -Destination $lslDestination -Force
+    $lslNativeLibraryPackaged = $true
+    $lslNativeLibraryPath = $lslSource
+    $lslNativeLibrarySha256 = Get-FileSha256 -Path $lslSource
+}
+
 $privateLayerPayloadLinked =
     (-not [string]::IsNullOrWhiteSpace((Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER" -AppBuildEnvByName $appBuildEnvByName))) -and
     (-not [string]::IsNullOrWhiteSpace((Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_PROJECTION_SHADER" -AppBuildEnvByName $appBuildEnvByName))) -and
@@ -418,7 +524,7 @@ Invoke-Checked "apksigner" $apksigner @(
     $apkAligned
 )
 
-$sha256 = (Get-FileHash -Algorithm SHA256 -Path $apkSigned).Hash.ToLowerInvariant()
+$sha256 = Get-FileSha256 -Path $apkSigned
 $manifest = [ordered]@{
     '$schema' = "rusty.quest.native_renderer_android.build_manifest.v1"
     package_name = $packageName
@@ -453,6 +559,13 @@ $manifest = [ordered]@{
     openxr_vulkan_prereq_probe = "rust-native-openxr-loader-vulkan-instance-device-extension-check"
     vulkan_external_import_prereqs_reported = $true
     native_library = "lib/arm64-v8a/librusty_quest_native_renderer.so"
+    lsl_native_library_packaged = $lslNativeLibraryPackaged
+    lsl_native_library = $lslNativeLibraryPath
+    lsl_native_library_sha256 = $lslNativeLibrarySha256
+    declared_asset_inputs_packaged = $declaredAssetInputsPackaged
+    questionnaire_assets_packaged = $questionnaireAssetsPackaged
+    questionnaire_asset_source = $questionnaireAssetSource
+    questionnaire_asset_root = if ($questionnaireAssetsPackaged) { "assets/maia_spatial_questionnaire" } else { "" }
     openxr_loader_packaged = $openXrLoaderPackaged
     apk_path = $apkSigned
     apk_sha256 = $sha256

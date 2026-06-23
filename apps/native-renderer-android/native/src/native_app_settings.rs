@@ -8,6 +8,7 @@ const NATIVE_APP_SETTINGS_ASSET: &str = "native-app-settings.json";
 #[derive(Clone, Debug, Default)]
 pub(crate) struct NativeAppSettingsDefaults {
     status: &'static str,
+    reader: &'static str,
     reason: String,
     app_id: String,
     values_by_android_property: BTreeMap<String, String>,
@@ -30,8 +31,9 @@ impl NativeAppSettingsDefaults {
 
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "status={} source=apk-asset asset={} schema={} appId={} settingCount={} androidPropertiesOverride=true reason={}",
+            "status={} source=apk-asset reader={} asset={} schema={} appId={} settingCount={} androidPropertiesOverride=true reason={}",
             self.status,
+            marker_token(self.reader),
             marker_token(NATIVE_APP_SETTINGS_ASSET),
             marker_token(NATIVE_APP_SETTINGS_SCHEMA),
             marker_token(&self.app_id),
@@ -41,6 +43,7 @@ impl NativeAppSettingsDefaults {
     }
 
     fn from_json_str(json: &str) -> Result<Self, String> {
+        let json = json.trim_start_matches('\u{feff}');
         let value: serde_json::Value = serde_json::from_str(json)
             .map_err(|error| format!("parse native app settings JSON: {error}"))?;
         let schema = value
@@ -76,43 +79,92 @@ impl NativeAppSettingsDefaults {
         }
         Ok(Self {
             status: "loaded",
+            reader: "json-string",
             reason: "ok".to_string(),
             app_id,
             values_by_android_property,
         })
+    }
+
+    fn with_reader(mut self, reader: &'static str) -> Self {
+        self.reader = reader;
+        self
     }
 }
 
 #[cfg(target_os = "android")]
 impl NativeAppSettingsDefaults {
     pub(crate) fn load_from_apk_asset(app: &android_activity::AndroidApp) -> Self {
-        use std::{ffi::CString, io::Read};
-
-        let asset_name = match CString::new(NATIVE_APP_SETTINGS_ASSET) {
-            Ok(value) => value,
-            Err(error) => return Self::missing(format!("asset-name-error-{error}")),
+        let json = match read_asset_via_java(app, NATIVE_APP_SETTINGS_ASSET) {
+            Ok(json) => json,
+            Err(error) => return Self::missing(format!("java-asset-read-error-{error}")),
         };
-        let asset_manager = app.asset_manager();
-        let Some(mut asset) = asset_manager.open(&asset_name) else {
-            return Self::missing("asset-not-packaged");
-        };
-        let mut json = String::new();
-        if let Err(error) = asset.read_to_string(&mut json) {
+        if json.trim().is_empty() {
             return Self {
                 status: "error",
-                reason: format!("asset-read-error-{error}"),
+                reader: "java-asset",
+                reason: "asset-empty-json".to_string(),
                 ..Self::default()
             };
-        }
+        };
         match Self::from_json_str(&json) {
-            Ok(settings) => settings,
+            Ok(settings) => settings.with_reader("java-asset"),
             Err(error) => Self {
                 status: "error",
+                reader: "java-asset",
                 reason: error,
                 ..Self::default()
             },
         }
     }
+}
+
+#[cfg(target_os = "android")]
+fn read_asset_via_java(
+    app: &android_activity::AndroidApp,
+    asset_name: &str,
+) -> Result<String, String> {
+    use jni::{
+        jni_sig, jni_str,
+        objects::{JClass, JClassLoader, JObject, JString, JValue},
+        JavaVM,
+    };
+
+    const READER_CLASS_NAME: &str =
+        "io.github.mesmerprism.rustyquest.native_renderer.NativeAppSettingsReader";
+
+    let vm = unsafe { JavaVM::from_raw(app.vm_as_ptr().cast()) };
+    let activity = app.activity_as_ptr() as jni::sys::jobject;
+    vm.attach_current_thread(|env| -> jni::errors::Result<String> {
+        let activity = unsafe { env.as_cast_raw::<JObject>(&activity)? };
+        let class_loader = env
+            .call_method(
+                &activity,
+                jni_str!("getClassLoader"),
+                jni_sig!("()Ljava/lang/ClassLoader;"),
+                &[],
+            )?
+            .l()?;
+        let class_loader: JClassLoader = env.cast_local::<JClassLoader>(class_loader)?;
+        let reader_class_name = env.new_string(READER_CLASS_NAME)?;
+        let reader_class =
+            JClass::for_name_with_loader(env, reader_class_name, true, class_loader)?;
+        let asset_name = env.new_string(asset_name)?;
+        let json = env
+            .call_static_method(
+                reader_class,
+                jni_str!("readAsset"),
+                jni_sig!("(Landroid/app/Activity;Ljava/lang/String;)Ljava/lang/String;"),
+                &[
+                    JValue::Object(&activity),
+                    JValue::Object(&JObject::from(asset_name)),
+                ],
+            )?
+            .l()?;
+        let json: JString = env.cast_local::<JString>(json)?;
+        Ok(json.to_string())
+    })
+    .map_err(|error| format!("read native app settings asset failed: {error}"))
 }
 
 fn setting_value_to_string(value: &serde_json::Value) -> Option<String> {
@@ -179,5 +231,14 @@ mod tests {
         )
         .expect_err("schema should be rejected");
         assert!(error.contains("unsupported native app settings schema"));
+    }
+
+    #[test]
+    fn accepts_utf8_bom() {
+        let settings = NativeAppSettingsDefaults::from_json_str(
+            "\u{feff}{\"schema\":\"rusty.quest.native_app_settings.v1\",\"app_id\":\"bom\",\"values\":{}}",
+        )
+        .expect("settings with UTF-8 BOM should parse");
+        assert!(settings.marker_fields().contains("appId=bom"));
     }
 }

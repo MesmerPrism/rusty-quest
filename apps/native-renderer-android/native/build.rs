@@ -6,6 +6,7 @@ use std::{
 };
 
 fn main() {
+    println!("cargo:rustc-check-cfg=cfg(rusty_quest_native_renderer_lsl_android)");
     println!("cargo:rerun-if-changed=shaders/camera_projection.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/camera_projection.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/display_composite_feedback.vert.glsl");
@@ -35,6 +36,8 @@ fn main() {
     println!("cargo:rerun-if-changed=shaders/private_particles_sort.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/private_particles.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/private_particles.frag.glsl");
+    println!("cargo:rerun-if-changed=shaders/private_particles_offscreen_composite.vert.glsl");
+    println!("cargo:rerun-if-changed=shaders/private_particles_offscreen_composite.frag.glsl");
     println!("cargo:rerun-if-changed=shaders/stimulus_volume_raymarch.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/stimulus_volume_projection.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/stimulus_volume_projection.frag.glsl");
@@ -138,6 +141,8 @@ fn main() {
     println!(
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_PROJECTION_SHADER"
     );
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_LSL_ANDROID");
+    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_LSL_LIB_DIR");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by Cargo"));
     write_recorded_hand_replay_source(&out_dir);
@@ -153,6 +158,8 @@ fn main() {
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("android") {
         return;
     }
+
+    configure_optional_lsl_android_link();
 
     let glslc = find_glslc().unwrap_or_else(|| {
         panic!(
@@ -324,6 +331,18 @@ fn main() {
             "PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF",
             &private_particle_mask_alpha_cutoff().to_string(),
         )],
+    );
+    compile_shader(
+        &glslc,
+        "vertex",
+        Path::new("shaders/private_particles_offscreen_composite.vert.glsl"),
+        &out_dir.join("private_particles_offscreen_composite.vert.spv"),
+    );
+    compile_shader(
+        &glslc,
+        "fragment",
+        Path::new("shaders/private_particles_offscreen_composite.frag.glsl"),
+        &out_dir.join("private_particles_offscreen_composite.frag.spv"),
     );
     compile_shader(
         &glslc,
@@ -1403,6 +1422,60 @@ fn json_escape(value: &str) -> String {
 
 fn rust_string_literal(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn configure_optional_lsl_android_link() {
+    if !env_flag("RUSTY_QUEST_NATIVE_RENDERER_LSL_ANDROID") {
+        return;
+    }
+    let Some(lib_dir) = find_lsl_lib_dir() else {
+        panic!(
+            "RUSTY_QUEST_NATIVE_RENDERER_LSL_ANDROID is enabled, but liblsl.so was not found. Set RUSTY_QUEST_NATIVE_RENDERER_LSL_LIB_DIR or run tools/Stage-LibLslAndroid.ps1."
+        );
+    };
+    let lib_path = lib_dir.join("liblsl.so");
+    if !lib_path.exists() {
+        panic!(
+            "RUSTY_QUEST_NATIVE_RENDERER_LSL_ANDROID is enabled, but liblsl.so is missing at {}",
+            lib_path.display()
+        );
+    }
+    println!("cargo:rustc-cfg=rusty_quest_native_renderer_lsl_android");
+    println!("cargo:rustc-link-search=native={}", lib_dir.display());
+    println!("cargo:rustc-link-lib=dylib=lsl");
+}
+
+fn find_lsl_lib_dir() -> Option<PathBuf> {
+    if let Ok(value) = env::var("RUSTY_QUEST_NATIVE_RENDERER_LSL_LIB_DIR") {
+        let path = PathBuf::from(value);
+        if path.join("liblsl.so").exists() {
+            return Some(canonical_lsl_lib_dir(&path));
+        }
+    }
+    for candidate in [
+        PathBuf::from("../../../local-artifacts/liblsl-android/arm64-v8a"),
+        PathBuf::from("../../../third_party/liblsl-android/staged/arm64-v8a"),
+    ] {
+        if candidate.join("liblsl.so").exists() {
+            return Some(canonical_lsl_lib_dir(&candidate));
+        }
+    }
+    None
+}
+
+fn canonical_lsl_lib_dir(path: &Path) -> PathBuf {
+    fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn env_flag(name: &str) -> bool {
+    env::var(name)
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
 }
 
 fn find_glslc() -> Option<PathBuf> {

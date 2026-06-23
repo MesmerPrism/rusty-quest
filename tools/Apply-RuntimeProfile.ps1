@@ -96,6 +96,14 @@ $NativeManifoldBrokerPropertyPrefix = "debug.rustyquest.native_renderer.manifold
 $NativeManifoldBrokerHostProperty = "debug.rustyquest.native_renderer.manifold.broker.host"
 $NativeManifoldBrokerPortProperty = "debug.rustyquest.native_renderer.manifold.broker.port"
 $NativeManifoldBrokerPathProperty = "debug.rustyquest.native_renderer.manifold.broker.path"
+$NativeManifoldEmbeddedBrokerEnabledProperty = "debug.rustyquest.native_renderer.manifold.embedded_broker.enabled"
+$NativeManifoldEmbeddedBrokerBindHostProperty = "debug.rustyquest.native_renderer.manifold.embedded_broker.bind_host"
+$NativeManifoldEmbeddedBrokerPortProperty = "debug.rustyquest.native_renderer.manifold.embedded_broker.port"
+$NativeManifoldEmbeddedBrokerPathProperty = "debug.rustyquest.native_renderer.manifold.embedded_broker.path"
+$NativeManifoldEmbeddedBrokerMaxFrameBytesProperty = "debug.rustyquest.native_renderer.manifold.embedded_broker.max_frame_bytes"
+$NativeManifoldEmbeddedBrokerLanEnabledProperty = "debug.rustyquest.native_renderer.manifold.embedded_broker.lan_enabled"
+$NativeManifoldEmbeddedBrokerSessionTokenRequiredProperty = "debug.rustyquest.native_renderer.manifold.embedded_broker.session_token_required"
+$NativeManifoldEmbeddedBrokerSessionTokenProperty = "debug.rustyquest.native_renderer.manifold.embedded_broker.session_token"
 $MakepadPropertyPrefix = "debug.rustyquest.makepad."
 
 function ConvertTo-AndroidShellSingleQuoted {
@@ -427,6 +435,18 @@ function Assert-NativeProjectionTargetProperty {
             }
             return
         }
+        $NativeManifoldEmbeddedBrokerEnabledProperty {
+            Assert-StimulusVolumeBool -Name $Name -Value $Value
+            return
+        }
+        $NativeManifoldEmbeddedBrokerLanEnabledProperty {
+            Assert-StimulusVolumeBool -Name $Name -Value $Value
+            return
+        }
+        $NativeManifoldEmbeddedBrokerSessionTokenRequiredProperty {
+            Assert-StimulusVolumeBool -Name $Name -Value $Value
+            return
+        }
         $NativeProjectionTargetScaleProperty {
             $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
             return
@@ -539,11 +559,36 @@ function Assert-NativeProjectionTargetProperty {
             if ([string]::IsNullOrWhiteSpace($Value)) { throw "$Name value must not be empty" }
             return
         }
+        $NativeManifoldEmbeddedBrokerBindHostProperty {
+            if ([string]::IsNullOrWhiteSpace($Value)) { throw "$Name value must not be empty" }
+            return
+        }
+        $NativeManifoldEmbeddedBrokerPathProperty {
+            if ([string]::IsNullOrWhiteSpace($Value)) { throw "$Name value must not be empty" }
+            return
+        }
         $NativeManifoldBrokerPortProperty {
             $parsed = 0
             if (-not [int]::TryParse($Value.Trim(), [ref]$parsed) -or $parsed -lt 1 -or $parsed -gt 65535) {
                 throw "$Name value $Value must be a TCP port"
             }
+            return
+        }
+        $NativeManifoldEmbeddedBrokerPortProperty {
+            $parsed = 0
+            if (-not [int]::TryParse($Value.Trim(), [ref]$parsed) -or $parsed -lt 1 -or $parsed -gt 65535) {
+                throw "$Name value $Value must be a TCP port"
+            }
+            return
+        }
+        $NativeManifoldEmbeddedBrokerMaxFrameBytesProperty {
+            $parsed = 0
+            if (-not [int]::TryParse($Value.Trim(), [ref]$parsed) -or $parsed -lt 1024 -or $parsed -gt 1048576) {
+                throw "$Name value $Value must be between 1024 and 1048576 bytes"
+            }
+            return
+        }
+        $NativeManifoldEmbeddedBrokerSessionTokenProperty {
             return
         }
         default {

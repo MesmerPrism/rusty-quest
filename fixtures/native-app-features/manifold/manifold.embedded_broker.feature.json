@@ -1,0 +1,72 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "manifold.embedded_broker",
+  "module_path": "manifold/embedded-broker",
+  "module_kind": "manifold-websocket-server",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Opt-in same-APK loopback Manifold WebSocket broker for low-rate command and stream event envelopes.",
+  "provides": [
+    "manifold.embedded_websocket_broker"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {
+    "manifold_broker_provider": "embedded-websocket-loopback"
+  },
+  "android_manifest": {
+    "permissions": [
+      "android.permission.INTERNET"
+    ],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.manifold.embedded_broker.enabled": "true",
+      "debug.rustyquest.native_renderer.manifold.embedded_broker.bind_host": "127.0.0.1",
+      "debug.rustyquest.native_renderer.manifold.embedded_broker.port": "8765",
+      "debug.rustyquest.native_renderer.manifold.embedded_broker.path": "/manifold/v1/events",
+      "debug.rustyquest.native_renderer.manifold.embedded_broker.max_frame_bytes": "65536",
+      "debug.rustyquest.native_renderer.manifold.embedded_broker.lan_enabled": "false",
+      "debug.rustyquest.native_renderer.manifold.embedded_broker.session_token_required": "false"
+    },
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "RUSTY_QUEST_NATIVE_RENDERER channel=manifold-embedded-broker",
+      "embeddedManifoldBrokerEnabled=true",
+      "embeddedManifoldBrokerStarted=true"
+    ],
+    "forbidden": [
+      "status=error reason=lan-session-token-required",
+      "status=error reason=lan-disabled-non-loopback-bind"
+    ]
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath <generated-profile> -DryRun -Out <generated-property-plan>"
+    ],
+    "standard": [],
+    "device": [
+      "adb forward tcp:<host_port> tcp:8765",
+      "send hello, subscribe, publish_stream_event over the loopback WebSocket endpoint /manifold/v1/events"
+    ]
+  },
+  "public_private_boundary": "The embedded broker is a low-rate loopback transport adapter. It must not carry particle rows, phase buffers, topology, tracer buffers, mask textures, or high-rate diagnostics."
+}

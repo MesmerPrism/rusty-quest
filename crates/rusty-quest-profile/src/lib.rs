@@ -161,6 +161,22 @@ const NATIVE_MANIFOLD_BROKER_PROP_PREFIX: &str = "debug.rustyquest.native_render
 const NATIVE_MANIFOLD_BROKER_HOST: &str = "debug.rustyquest.native_renderer.manifold.broker.host";
 const NATIVE_MANIFOLD_BROKER_PORT: &str = "debug.rustyquest.native_renderer.manifold.broker.port";
 const NATIVE_MANIFOLD_BROKER_PATH: &str = "debug.rustyquest.native_renderer.manifold.broker.path";
+const NATIVE_MANIFOLD_EMBEDDED_BROKER_ENABLED: &str =
+    "debug.rustyquest.native_renderer.manifold.embedded_broker.enabled";
+const NATIVE_MANIFOLD_EMBEDDED_BROKER_BIND_HOST: &str =
+    "debug.rustyquest.native_renderer.manifold.embedded_broker.bind_host";
+const NATIVE_MANIFOLD_EMBEDDED_BROKER_PORT: &str =
+    "debug.rustyquest.native_renderer.manifold.embedded_broker.port";
+const NATIVE_MANIFOLD_EMBEDDED_BROKER_PATH: &str =
+    "debug.rustyquest.native_renderer.manifold.embedded_broker.path";
+const NATIVE_MANIFOLD_EMBEDDED_BROKER_MAX_FRAME_BYTES: &str =
+    "debug.rustyquest.native_renderer.manifold.embedded_broker.max_frame_bytes";
+const NATIVE_MANIFOLD_EMBEDDED_BROKER_LAN_ENABLED: &str =
+    "debug.rustyquest.native_renderer.manifold.embedded_broker.lan_enabled";
+const NATIVE_MANIFOLD_EMBEDDED_BROKER_SESSION_TOKEN_REQUIRED: &str =
+    "debug.rustyquest.native_renderer.manifold.embedded_broker.session_token_required";
+const NATIVE_MANIFOLD_EMBEDDED_BROKER_SESSION_TOKEN: &str =
+    "debug.rustyquest.native_renderer.manifold.embedded_broker.session_token";
 const MAKEPAD_PROP_PREFIX: &str = "debug.rustyquest.makepad.";
 
 /// Quest runtime profile.
@@ -666,9 +682,15 @@ fn validate_native_projection_target_profile(
         || owned_properties
             .iter()
             .any(|property| property.starts_with(NATIVE_PROJECTION_TARGET_PROP_PREFIX))
+        || owned_properties
+            .iter()
+            .any(|property| property.starts_with(NATIVE_MANIFOLD_BROKER_PROP_PREFIX))
         || set_properties
             .keys()
-            .any(|property| property.starts_with(NATIVE_PROJECTION_TARGET_PROP_PREFIX));
+            .any(|property| property.starts_with(NATIVE_PROJECTION_TARGET_PROP_PREFIX))
+        || set_properties
+            .keys()
+            .any(|property| property.starts_with(NATIVE_MANIFOLD_BROKER_PROP_PREFIX));
     if !native_projection_target_profile {
         return;
     }
@@ -707,7 +729,10 @@ fn validate_native_projection_target_property(
     match property.name.as_str() {
         NATIVE_PROJECTION_TARGET_CONTROLS
         | NATIVE_PROJECTION_TARGET_JOYSTICK_CONTROLS
-        | NATIVE_PROJECTION_TARGET_BREATH_HIGH_RATE_JSON_PAYLOAD => {
+        | NATIVE_PROJECTION_TARGET_BREATH_HIGH_RATE_JSON_PAYLOAD
+        | NATIVE_MANIFOLD_EMBEDDED_BROKER_ENABLED
+        | NATIVE_MANIFOLD_EMBEDDED_BROKER_LAN_ENABLED
+        | NATIVE_MANIFOLD_EMBEDDED_BROKER_SESSION_TOKEN_REQUIRED => {
             validate_bool(property, errors);
             if property.name == NATIVE_PROJECTION_TARGET_BREATH_HIGH_RATE_JSON_PAYLOAD
                 && normalized_bool_true(&property.value)
@@ -774,7 +799,9 @@ fn validate_native_projection_target_property(
         NATIVE_PROJECTION_TARGET_BREATH_STATE_STREAM
         | NATIVE_PROJECTION_TARGET_BREATH_VALUE_STREAM
         | NATIVE_MANIFOLD_BROKER_HOST
-        | NATIVE_MANIFOLD_BROKER_PATH => {
+        | NATIVE_MANIFOLD_BROKER_PATH
+        | NATIVE_MANIFOLD_EMBEDDED_BROKER_BIND_HOST
+        | NATIVE_MANIFOLD_EMBEDDED_BROKER_PATH => {
             if property.value.trim().is_empty() {
                 errors.push(ValidationError::new(format!(
                     "{} value must not be empty",
@@ -782,13 +809,25 @@ fn validate_native_projection_target_property(
                 )));
             }
         }
-        NATIVE_MANIFOLD_BROKER_PORT => match property.value.trim().parse::<u16>() {
-            Ok(value) if value > 0 => {}
-            _ => errors.push(ValidationError::new(format!(
-                "{} value {} must be a TCP port",
-                property.name, property.value
-            ))),
-        },
+        NATIVE_MANIFOLD_BROKER_PORT | NATIVE_MANIFOLD_EMBEDDED_BROKER_PORT => {
+            match property.value.trim().parse::<u16>() {
+                Ok(value) if value > 0 => {}
+                _ => errors.push(ValidationError::new(format!(
+                    "{} value {} must be a TCP port",
+                    property.name, property.value
+                ))),
+            }
+        }
+        NATIVE_MANIFOLD_EMBEDDED_BROKER_MAX_FRAME_BYTES => {
+            match property.value.trim().parse::<u32>() {
+                Ok(value) if (1024..=1_048_576).contains(&value) => {}
+                _ => errors.push(ValidationError::new(format!(
+                    "{} value {} must be between 1024 and 1048576 bytes",
+                    property.name, property.value
+                ))),
+            }
+        }
+        NATIVE_MANIFOLD_EMBEDDED_BROKER_SESSION_TOKEN => {}
         _ => errors.push(ValidationError::new(format!(
             "unknown native projection target property {}",
             property.name

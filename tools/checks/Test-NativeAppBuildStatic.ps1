@@ -114,9 +114,11 @@ foreach ($requiredResolverNeedle in @(
     "com.oculus.vr.focusaware",
     'android:resizeableActivity="false"',
     "ControlPanelActivity",
+    "QuestionnairePanelActivity",
     'android:hardwareAccelerated="true"',
     'android:defaultHeight="720dp"',
     'android:defaultWidth="960dp"',
+    'android:defaultWidth="1040dp"',
     "com.oculus.intent.category.2D"
 )) {
     if ($resolverText -notmatch [regex]::Escape($requiredResolverNeedle)) {
@@ -176,6 +178,10 @@ foreach ($requiredFeature in @(
     "sdf_visual",
     "projection_target.breathing_room",
     "manifold.bridge",
+    "manifold.embedded_broker",
+    "ui.same_apk_questionnaire_panel",
+    "lsl.outlet",
+    "lsl.inlet",
     "makepad_runtime"
 )) {
     if (-not $featureIds.ContainsKey($requiredFeature)) {

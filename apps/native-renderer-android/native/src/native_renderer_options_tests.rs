@@ -12,9 +12,10 @@ mod tests {
         NativeEnvironmentDepthSource, NativeEnvironmentDepthSurfaceComponentMode,
         NativeEnvironmentDepthSurfaceFreeSpaceDecay, NativeEnvironmentDepthSurfaceModel,
         NativeEnvironmentDepthSurfaceNormalCoherence, NativeEnvironmentDepthSurfaceNormalSource,
-        NativeEnvironmentDepthSurfaceSmallComponentPolicy, NativeGuideGraphResolution,
-        NativePassthroughStyleMode, NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode,
-        NativeVideoBorderBlendMode, NativeVideoProjectionSource, NativeVideoProjectionStereoLayout,
+        NativeEnvironmentDepthSurfaceSmallComponentPolicy, NativeFoveationLevel,
+        NativeFoveationMode, NativeGuideGraphResolution, NativePassthroughStyleMode,
+        NativeRendererRuntimeOptions, NativeSwapchainColorFormatMode, NativeVideoBorderBlendMode,
+        NativeVideoProjectionSource, NativeVideoProjectionStereoLayout,
         NativeVideoProjectionTarget, PROP_CAMERA_DIRECT_BORDER_OPACITY,
         PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED, PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE,
         PROP_CAMERA_READER_MAX_IMAGES, PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING,
@@ -40,9 +41,11 @@ mod tests {
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_COHERENCE,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_NORMAL_SOURCE,
         PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_RADIUS_CELLS,
-        PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_SMALL_COMPONENT_POLICY, PROP_GUIDE_BLUR_ENABLED,
-        PROP_GUIDE_RESOLUTION, PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
-        PROP_HAND_ANCHOR_PARTICLES_ENABLED, PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
+        PROP_ENVIRONMENT_DEPTH_SURFACE_SUPPORT_SMALL_COMPONENT_POLICY, PROP_FOVEATION_DYNAMIC,
+        PROP_FOVEATION_LEVEL, PROP_FOVEATION_MODE, PROP_FOVEATION_VERTICAL_OFFSET,
+        PROP_FOVEATION_VULKAN_FDM, PROP_GUIDE_BLUR_ENABLED, PROP_GUIDE_RESOLUTION,
+        PROP_HAND_ANCHOR_PARTICLES_DYNAMICS, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
+        PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
         PROP_HAND_ANCHOR_PARTICLES_RADIUS_M, PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_BLEND_MODE,
@@ -60,7 +63,8 @@ mod tests {
         PROP_PERIPHERAL_STRETCH_BLEND_MODE, PROP_PERIPHERAL_STRETCH_CORE_SCALE,
         PROP_PERIPHERAL_STRETCH_EDGE_INSET_UV, PROP_PERIPHERAL_STRETCH_MAX_INSET_UV,
         PROP_PROCESSING_LAYER, PROP_PROJECTION_BORDER_OPACITY, PROP_PROJECTION_BORDER_POLICY,
-        PROP_RENDER_MODE, PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SDF_UPDATE_PERIOD_FRAMES,
+        PROP_PROJECTION_SWAPCHAIN_RESOLUTION_SCALE, PROP_RENDER_MODE,
+        PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SDF_UPDATE_PERIOD_FRAMES,
         PROP_STIMULUS_VOLUME_CENTRAL_FOV_FRACTION, PROP_STIMULUS_VOLUME_COMPOSITION,
         PROP_STIMULUS_VOLUME_ENABLED, PROP_STIMULUS_VOLUME_GRADIENT_SMOOTHING,
         PROP_STIMULUS_VOLUME_PATTERN_FAMILY, PROP_STIMULUS_VOLUME_RANDOMIZE_ENABLED,
@@ -169,6 +173,71 @@ mod tests {
             .projection_target_settings
             .breath_bridge_mode
             .uses_manifold_transport());
+    }
+
+    #[test]
+    fn foveation_settings_default_disabled_and_parse_fixed_profile() {
+        let default_options = options_from(&[]);
+        assert_eq!(
+            default_options.foveation_settings.mode,
+            NativeFoveationMode::Disabled
+        );
+        assert!(!default_options.foveation_settings.requested());
+        assert_eq!(
+            default_options.foveation_settings.level,
+            NativeFoveationLevel::Medium
+        );
+        assert!(!default_options.foveation_settings.dynamic);
+        assert_eq!(default_options.foveation_settings.vertical_offset, 0.0);
+        assert!(!default_options.foveation_settings.vulkan_fdm);
+        assert!(!default_options.foveation_settings.vulkan_fdm_requested());
+
+        let fixed = options_from(&[
+            (PROP_FOVEATION_MODE, "fixed"),
+            (PROP_FOVEATION_LEVEL, "high-top"),
+            (PROP_FOVEATION_DYNAMIC, "true"),
+            (PROP_FOVEATION_VERTICAL_OFFSET, "1.25"),
+            (PROP_FOVEATION_VULKAN_FDM, "true"),
+        ]);
+        assert_eq!(fixed.foveation_settings.mode, NativeFoveationMode::Fixed);
+        assert!(fixed.foveation_settings.requested());
+        assert!(fixed.foveation_settings.vulkan_fdm_requested());
+        assert_eq!(fixed.foveation_settings.level, NativeFoveationLevel::High);
+        assert!(fixed.foveation_settings.dynamic);
+        assert_eq!(fixed.foveation_settings.vertical_offset, 1.0);
+        assert!(fixed
+            .foveation_settings
+            .marker_fields()
+            .contains("foveationScope=openxr-projection-swapchain-startup"));
+    }
+
+    #[test]
+    fn projection_swapchain_resolution_scale_defaults_and_clamps() {
+        let default_options = options_from(&[]);
+        assert_eq!(
+            default_options
+                .projection_swapchain_settings
+                .resolution_scale,
+            1.0
+        );
+        assert!(!default_options
+            .projection_swapchain_settings
+            .scale_applied());
+
+        let scaled = options_from(&[(PROP_PROJECTION_SWAPCHAIN_RESOLUTION_SCALE, "0.72")]);
+        assert!((scaled.projection_swapchain_settings.resolution_scale - 0.72).abs() < 0.001);
+        assert!(scaled.projection_swapchain_settings.scale_applied());
+        assert_eq!(
+            scaled.projection_swapchain_settings.scaled_dimension(1680),
+            1210
+        );
+
+        let clamped = options_from(&[(PROP_PROJECTION_SWAPCHAIN_RESOLUTION_SCALE, "0.25")]);
+        assert_eq!(clamped.projection_swapchain_settings.resolution_scale, 0.50);
+        assert_eq!(
+            clamped.projection_swapchain_settings.scaled_dimension(1760),
+            880
+        );
     }
 
     #[test]

@@ -29,6 +29,7 @@ mod display_composite_feedback;
 #[cfg(target_os = "android")]
 mod display_composite_native_stream;
 mod display_composite_projection_metadata;
+mod embedded_manifold_broker_bridge;
 mod environment_depth_alignment_state;
 mod environment_depth_geometry;
 mod environment_depth_projection_alignment;
@@ -57,6 +58,8 @@ mod guide_blur_graph;
 mod hand_mesh_graft;
 #[cfg(target_os = "android")]
 mod live_hand_compact;
+mod lsl_android;
+mod lsl_transport_bridge;
 mod manifold_breath_bridge;
 mod manifold_pose_publisher;
 mod manifold_scalar_driver_bridge;
@@ -73,6 +76,7 @@ mod native_controller_breath_state;
 mod native_renderer_camera_options;
 mod native_renderer_display_composite_options;
 mod native_renderer_environment_depth_options;
+mod native_renderer_foveation_options;
 mod native_renderer_hand_anchor_particle_options;
 mod native_renderer_options;
 #[cfg(test)]
@@ -81,6 +85,7 @@ mod native_renderer_options_tests;
 mod native_renderer_panel_bridge;
 mod native_renderer_passthrough_style_options;
 mod native_renderer_projection_border_stretch_options;
+mod native_renderer_projection_swapchain_options;
 mod native_renderer_properties;
 mod native_renderer_property_values;
 mod native_renderer_stimulus_panel;
@@ -275,6 +280,20 @@ fn android_main(app: android_activity::AndroidApp) {
     let native_app_settings =
         native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
     marker("native-app-settings", native_app_settings.marker_fields());
+    let embedded_manifold_broker_settings =
+        embedded_manifold_broker_bridge::EmbeddedManifoldBrokerSettings::load_from_android_properties_with_defaults(
+            &native_app_settings,
+        );
+    embedded_manifold_broker_bridge::start_if_enabled(&app, &embedded_manifold_broker_settings);
+    let lsl_transport_settings =
+        lsl_transport_bridge::LslTransportSettings::load_from_android_properties_with_defaults(
+            &native_app_settings,
+        );
+    lsl_transport_bridge::start_if_enabled(
+        &app,
+        &lsl_transport_settings,
+        &embedded_manifold_broker_settings,
+    );
     let runtime_options =
         native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties_with_defaults(
             |name| native_app_settings.lookup(name),

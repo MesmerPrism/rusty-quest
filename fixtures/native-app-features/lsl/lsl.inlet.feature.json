@@ -1,0 +1,86 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "lsl.inlet",
+  "module_path": "lsl/inlet",
+  "module_kind": "lsl-native-inlet",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Opt-in same-APK LSL inlet for bounded external scalar samples that republish through the native Manifold command envelope.",
+  "provides": [
+    "lsl.scalar_inlet",
+    "manifold.embedded_stream_event_publisher"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base",
+    "manifold.embedded_broker"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.ACCESS_WIFI_STATE",
+      "android.permission.CHANGE_WIFI_MULTICAST_STATE",
+      "android.permission.INTERNET"
+    ],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.lsl.enabled": "true",
+      "debug.rustyquest.native_renderer.lsl.inlet.enabled": "true",
+      "debug.rustyquest.native_renderer.lsl.multicast_lock.enabled": "true",
+      "debug.rustyquest.native_renderer.lsl.stream_prefix": "quest_pps",
+      "debug.rustyquest.native_renderer.lsl.participant_id": "P001",
+      "debug.rustyquest.native_renderer.lsl.session_id": "S001",
+      "debug.rustyquest.native_renderer.lsl.source_id_prefix": "io.github.mesmerprism.rustyquest.native_renderer",
+      "debug.rustyquest.native_renderer.lsl.inlet.stream_name": "quest_pps_test_scalar",
+      "debug.rustyquest.native_renderer.lsl.inlet.stream_type": "quest.test.scalar",
+      "debug.rustyquest.native_renderer.lsl.inlet.routes": "stream.synthetic_wave:driver1.value01",
+      "debug.rustyquest.native_renderer.lsl.inlet.sample_hold_seconds": "1.0",
+      "debug.rustyquest.native_renderer.lsl.inlet.recover_lost_streams": "true"
+    },
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_LSL_ANDROID",
+        "value": "1"
+      }
+    ],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "RUSTY_QUEST_NATIVE_RENDERER channel=lsl",
+      "lslInletEnabled=true",
+      "lslMulticastLockAcquired=true"
+    ],
+    "forbidden": [
+      "status=lsl-error reason=missing-liblsl",
+      "highRateSamplesViaAndroidProperties=true"
+    ]
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath <generated-profile> -DryRun -Out <generated-property-plan>"
+    ],
+    "standard": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Stage-LibLslAndroid.ps1 -SourceRoot <liblsl-source-root>"
+    ],
+    "device": [
+      "start a bounded float32 LSL outlet and verify the native inlet republishes compact scalar samples through embedded Manifold"
+    ]
+  },
+  "public_private_boundary": "LSL inlets may publish bounded scalar stream events through Manifold command envelopes. They must not carry particle rows, phase buffers, topology, tracer buffers, mask textures, or high-rate GPU diagnostics."
+}

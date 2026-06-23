@@ -1,0 +1,83 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "lsl.outlet",
+  "module_path": "lsl/outlet",
+  "module_kind": "lsl-native-outlet",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Opt-in same-APK LSL marker, clock, and compact telemetry outlets for low-rate native renderer events.",
+  "provides": [
+    "lsl.marker_outlet",
+    "lsl.clock_outlet",
+    "lsl.compact_telemetry_outlet"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [
+      "android.permission.ACCESS_NETWORK_STATE",
+      "android.permission.ACCESS_WIFI_STATE",
+      "android.permission.CHANGE_WIFI_MULTICAST_STATE",
+      "android.permission.INTERNET"
+    ],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.lsl.enabled": "true",
+      "debug.rustyquest.native_renderer.lsl.outlet.enabled": "true",
+      "debug.rustyquest.native_renderer.lsl.multicast_lock.enabled": "true",
+      "debug.rustyquest.native_renderer.lsl.stream_prefix": "quest_pps",
+      "debug.rustyquest.native_renderer.lsl.participant_id": "P001",
+      "debug.rustyquest.native_renderer.lsl.session_id": "S001",
+      "debug.rustyquest.native_renderer.lsl.source_id_prefix": "io.github.mesmerprism.rustyquest.native_renderer"
+    },
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [
+      {
+        "name": "RUSTY_QUEST_NATIVE_RENDERER_LSL_ANDROID",
+        "value": "1"
+      }
+    ],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "RUSTY_QUEST_NATIVE_RENDERER channel=lsl",
+      "lslOutletEnabled=true",
+      "lslMarkerOutletCreated=true",
+      "lslClockOutletCreated=true",
+      "lslMulticastLockAcquired=true"
+    ],
+    "forbidden": [
+      "status=lsl-error reason=missing-liblsl",
+      "highRateSamplesViaAndroidProperties=true"
+    ]
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath <generated-profile> -DryRun -Out <generated-property-plan>"
+    ],
+    "standard": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Stage-LibLslAndroid.ps1 -SourceRoot <liblsl-source-root>"
+    ],
+    "device": [
+      "launch the native renderer APK and resolve the marker or clock stream from an LSL receiver on the same network"
+    ]
+  },
+  "public_private_boundary": "LSL outlets carry only low-rate markers, clock alignment samples, and compact telemetry. They must not carry particle rows, phase buffers, topology, tracer buffers, mask textures, or high-rate GPU diagnostics."
+}
