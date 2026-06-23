@@ -4,7 +4,21 @@
 //! samples adapt into this model. The renderer reads the final effective
 //! target rect and marker fields from here.
 
-use crate::camera_projection_metadata::TargetRect;
+use crate::{
+    camera_projection_metadata::TargetRect,
+    native_controller_breath_state::NativeControllerBreathSettings,
+    native_renderer_properties::{
+        PROP_CONTROLLER_BREATH_STATE_AXIS_X, PROP_CONTROLLER_BREATH_STATE_AXIS_Y,
+        PROP_CONTROLLER_BREATH_STATE_AXIS_Z, PROP_CONTROLLER_BREATH_STATE_EXHALE_THRESHOLD,
+        PROP_CONTROLLER_BREATH_STATE_INHALE_THRESHOLD,
+        PROP_CONTROLLER_BREATH_STATE_LONG_WINDOW_SAMPLES,
+        PROP_CONTROLLER_BREATH_STATE_LONG_WINDOW_SECONDS,
+        PROP_CONTROLLER_BREATH_STATE_MOVING_AVERAGE_GUARD,
+        PROP_CONTROLLER_BREATH_STATE_ROTATION_GUARD_DEGREES,
+        PROP_CONTROLLER_BREATH_STATE_SHORT_WINDOW_SAMPLES,
+        PROP_CONTROLLER_BREATH_STATE_SHORT_WINDOW_SECONDS,
+    },
+};
 
 pub(crate) const PROP_PROJECTION_TARGET_CONTROLS: &str =
     "debug.rustyquest.native_renderer.projection.target.controls";
@@ -26,6 +40,28 @@ pub(crate) const PROP_PROJECTION_TARGET_JOYSTICK_RATE: &str =
     "debug.rustyquest.native_renderer.projection.target.joystick.scale.rate_per_second";
 pub(crate) const PROP_PROJECTION_TARGET_BREATH_BRIDGE_MODE: &str =
     "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode";
+pub(crate) const PROP_PROJECTION_TARGET_BREATH_CONTROLLER_AXIS_X: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.orientation_axis.x";
+pub(crate) const PROP_PROJECTION_TARGET_BREATH_CONTROLLER_AXIS_Y: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.orientation_axis.y";
+pub(crate) const PROP_PROJECTION_TARGET_BREATH_CONTROLLER_AXIS_Z: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.orientation_axis.z";
+pub(crate) const PROP_PROJECTION_TARGET_BREATH_CONTROLLER_INHALE_THRESHOLD: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.inhale_threshold";
+pub(crate) const PROP_PROJECTION_TARGET_BREATH_CONTROLLER_EXHALE_THRESHOLD: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.exhale_threshold";
+pub(crate) const PROP_PROJECTION_TARGET_BREATH_CONTROLLER_ROTATION_GUARD_DEGREES: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.rotation_guard_degrees";
+pub(crate) const PROP_PROJECTION_TARGET_BREATH_CONTROLLER_MOVING_AVERAGE_GUARD: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.moving_average_guard";
+pub(crate) const PROP_PROJECTION_TARGET_BREATH_CONTROLLER_SHORT_WINDOW_SAMPLES: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.short_window.samples";
+pub(crate) const PROP_PROJECTION_TARGET_BREATH_CONTROLLER_LONG_WINDOW_SAMPLES: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.long_window.samples";
+pub(crate) const PROP_PROJECTION_TARGET_BREATH_CONTROLLER_SHORT_WINDOW_SECONDS: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.short_window.seconds";
+pub(crate) const PROP_PROJECTION_TARGET_BREATH_CONTROLLER_LONG_WINDOW_SECONDS: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.long_window.seconds";
 pub(crate) const PROP_PROJECTION_TARGET_BREATH_STATE_STREAM: &str =
     "debug.rustyquest.native_renderer.projection.target.breath.state.stream";
 pub(crate) const PROP_PROJECTION_TARGET_BREATH_VALUE_STREAM: &str =
@@ -63,6 +99,7 @@ pub(crate) enum BreathBridgeMode {
     Disabled,
     ManifoldState,
     ManifoldValue,
+    DirectControllerState,
     Synthetic,
 }
 
@@ -82,6 +119,16 @@ impl BreathBridgeMode {
                 | "pmb_state_value"
                 | "value",
             ) => Self::ManifoldValue,
+            Some(
+                "direct-controller-state"
+                | "direct_controller_state"
+                | "native-controller-state"
+                | "native_controller_state"
+                | "local-controller-state"
+                | "local_controller_state"
+                | "fixed-controller-state"
+                | "fixed_controller_state",
+            ) => Self::DirectControllerState,
             Some("synthetic" | "synthetic-state" | "synthetic_state") => Self::Synthetic,
             _ => Self::Disabled,
         }
@@ -92,6 +139,7 @@ impl BreathBridgeMode {
             Self::Disabled => "disabled",
             Self::ManifoldState => "manifold-state",
             Self::ManifoldValue => "manifold-state-value",
+            Self::DirectControllerState => "direct-controller-state",
             Self::Synthetic => "synthetic",
         }
     }
@@ -99,8 +147,28 @@ impl BreathBridgeMode {
     pub(crate) fn uses_breath_stream(self) -> bool {
         matches!(
             self,
-            Self::ManifoldState | Self::ManifoldValue | Self::Synthetic
+            Self::ManifoldState
+                | Self::ManifoldValue
+                | Self::DirectControllerState
+                | Self::Synthetic
         )
+    }
+
+    pub(crate) fn uses_manifold_transport(self) -> bool {
+        matches!(self, Self::ManifoldState | Self::ManifoldValue)
+    }
+
+    pub(crate) fn uses_native_controller_state(self) -> bool {
+        matches!(self, Self::DirectControllerState)
+    }
+
+    pub(crate) fn source_authority_marker(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::ManifoldState | Self::ManifoldValue => "hostess-manifold",
+            Self::DirectControllerState => "native-controller",
+            Self::Synthetic => "native-synthetic",
+        }
     }
 }
 
@@ -121,6 +189,7 @@ pub(crate) struct ProjectionTargetSettings {
     pub(crate) breath_exhale_seconds_max_to_min: f32,
     pub(crate) breath_synthetic_period_seconds: f32,
     pub(crate) high_rate_json_payload_enabled: bool,
+    pub(crate) native_controller_breath_settings: NativeControllerBreathSettings,
     pub(crate) manifold_broker_host: String,
     pub(crate) manifold_broker_port: u16,
     pub(crate) manifold_broker_path: String,
@@ -157,6 +226,121 @@ impl ProjectionTargetSettings {
             DEFAULT_MANIFOLD_PORT,
             1,
             u16::MAX,
+        );
+        let native_controller_breath_defaults = NativeControllerBreathSettings::default();
+        let native_controller_breath_settings = NativeControllerBreathSettings::new(
+            [
+                f32_clamped_value(
+                    lookup_with_fallback(
+                        &mut lookup,
+                        PROP_CONTROLLER_BREATH_STATE_AXIS_X,
+                        PROP_PROJECTION_TARGET_BREATH_CONTROLLER_AXIS_X,
+                    ),
+                    native_controller_breath_defaults.orientation_axis[0],
+                    -1.0,
+                    1.0,
+                ),
+                f32_clamped_value(
+                    lookup_with_fallback(
+                        &mut lookup,
+                        PROP_CONTROLLER_BREATH_STATE_AXIS_Y,
+                        PROP_PROJECTION_TARGET_BREATH_CONTROLLER_AXIS_Y,
+                    ),
+                    native_controller_breath_defaults.orientation_axis[1],
+                    -1.0,
+                    1.0,
+                ),
+                f32_clamped_value(
+                    lookup_with_fallback(
+                        &mut lookup,
+                        PROP_CONTROLLER_BREATH_STATE_AXIS_Z,
+                        PROP_PROJECTION_TARGET_BREATH_CONTROLLER_AXIS_Z,
+                    ),
+                    native_controller_breath_defaults.orientation_axis[2],
+                    -1.0,
+                    1.0,
+                ),
+            ],
+            f32_clamped_value(
+                lookup_with_fallback(
+                    &mut lookup,
+                    PROP_CONTROLLER_BREATH_STATE_INHALE_THRESHOLD,
+                    PROP_PROJECTION_TARGET_BREATH_CONTROLLER_INHALE_THRESHOLD,
+                ),
+                native_controller_breath_defaults.inhale_threshold,
+                -1.0,
+                1.0,
+            ),
+            f32_clamped_value(
+                lookup_with_fallback(
+                    &mut lookup,
+                    PROP_CONTROLLER_BREATH_STATE_EXHALE_THRESHOLD,
+                    PROP_PROJECTION_TARGET_BREATH_CONTROLLER_EXHALE_THRESHOLD,
+                ),
+                native_controller_breath_defaults.exhale_threshold,
+                -1.0,
+                1.0,
+            ),
+            f32_clamped_value(
+                lookup_with_fallback(
+                    &mut lookup,
+                    PROP_CONTROLLER_BREATH_STATE_ROTATION_GUARD_DEGREES,
+                    PROP_PROJECTION_TARGET_BREATH_CONTROLLER_ROTATION_GUARD_DEGREES,
+                ),
+                native_controller_breath_defaults.rotation_guard_degrees,
+                0.001,
+                180.0,
+            ),
+            f32_clamped_value(
+                lookup_with_fallback(
+                    &mut lookup,
+                    PROP_CONTROLLER_BREATH_STATE_MOVING_AVERAGE_GUARD,
+                    PROP_PROJECTION_TARGET_BREATH_CONTROLLER_MOVING_AVERAGE_GUARD,
+                ),
+                native_controller_breath_defaults.moving_average_guard,
+                0.000_001,
+                10.0,
+            ),
+            u32_value(
+                lookup_with_fallback(
+                    &mut lookup,
+                    PROP_CONTROLLER_BREATH_STATE_SHORT_WINDOW_SAMPLES,
+                    PROP_PROJECTION_TARGET_BREATH_CONTROLLER_SHORT_WINDOW_SAMPLES,
+                ),
+                native_controller_breath_defaults.short_window_samples,
+                1,
+                10_000,
+            ),
+            u32_value(
+                lookup_with_fallback(
+                    &mut lookup,
+                    PROP_CONTROLLER_BREATH_STATE_LONG_WINDOW_SAMPLES,
+                    PROP_PROJECTION_TARGET_BREATH_CONTROLLER_LONG_WINDOW_SAMPLES,
+                ),
+                native_controller_breath_defaults.long_window_samples,
+                1,
+                10_000,
+            ),
+            f32_clamped_value(
+                lookup_with_fallback(
+                    &mut lookup,
+                    PROP_CONTROLLER_BREATH_STATE_SHORT_WINDOW_SECONDS,
+                    PROP_PROJECTION_TARGET_BREATH_CONTROLLER_SHORT_WINDOW_SECONDS,
+                ),
+                native_controller_breath_defaults.short_window_seconds,
+                0.001,
+                120.0,
+            ),
+            f32_clamped_value(
+                lookup_with_fallback(
+                    &mut lookup,
+                    PROP_CONTROLLER_BREATH_STATE_LONG_WINDOW_SECONDS,
+                    PROP_PROJECTION_TARGET_BREATH_CONTROLLER_LONG_WINDOW_SECONDS,
+                ),
+                native_controller_breath_defaults.long_window_seconds,
+                0.001,
+                120.0,
+            ),
         );
         Self {
             controls_enabled: bool_value(lookup(PROP_PROJECTION_TARGET_CONTROLS), false),
@@ -211,6 +395,7 @@ impl ProjectionTargetSettings {
                 lookup(PROP_PROJECTION_TARGET_BREATH_HIGH_RATE_JSON_PAYLOAD),
                 false,
             ),
+            native_controller_breath_settings,
             manifold_broker_host: non_empty_value(
                 lookup(PROP_PROJECTION_TARGET_MANIFOLD_HOST),
                 DEFAULT_MANIFOLD_HOST,
@@ -229,7 +414,7 @@ impl ProjectionTargetSettings {
 
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "projectionTargetControlsEnabled={} projectionTargetBaseScale={:.4} projectionTargetTunedMaxScale={:.4} projectionTargetMinScale={:.4} projectionTargetMaxScale={:.4} projectionTargetOffsetUv={:.6},{:.6} projectionTargetJoystickControlsEnabled={} projectionTargetJoystickRatePerSecond={:.4} breathBridgeMode={} breathStateStream={} breathValueStream={} breathRampInhaleSeconds={:.4} breathRampExhaleSeconds={:.4} breathSyntheticPeriodSeconds={:.4} breathHighRateJsonPayload={} manifoldBrokerHost={} manifoldBrokerPort={} manifoldBrokerPath={}",
+            "projectionTargetControlsEnabled={} projectionTargetBaseScale={:.4} projectionTargetTunedMaxScale={:.4} projectionTargetMinScale={:.4} projectionTargetMaxScale={:.4} projectionTargetOffsetUv={:.6},{:.6} projectionTargetJoystickControlsEnabled={} projectionTargetJoystickRatePerSecond={:.4} breathBridgeMode={} breathSourceAuthority={} breathStateStream={} breathValueStream={} breathRampInhaleSeconds={:.4} breathRampExhaleSeconds={:.4} breathSyntheticPeriodSeconds={:.4} breathHighRateJsonPayload={} {} manifoldBrokerHost={} manifoldBrokerPort={} manifoldBrokerPath={}",
             self.controls_enabled,
             self.base_scale,
             self.tuned_max_scale,
@@ -240,12 +425,14 @@ impl ProjectionTargetSettings {
             self.joystick_controls_enabled,
             self.joystick_rate_per_second,
             self.breath_bridge_mode.marker_value(),
+            self.breath_bridge_mode.source_authority_marker(),
             marker_token(&self.breath_state_stream),
             marker_token(&self.breath_value_stream),
             self.breath_inhale_seconds_min_to_max,
             self.breath_exhale_seconds_max_to_min,
             self.breath_synthetic_period_seconds,
             self.high_rate_json_payload_enabled,
+            self.native_controller_breath_settings.marker_fields(),
             marker_token(&self.manifold_broker_host),
             self.manifold_broker_port,
             marker_token(&self.manifold_broker_path),
@@ -339,6 +526,7 @@ pub(crate) enum ProjectionTargetScaleSource {
     Controller,
     ControllerReset,
     BreathStateRamp,
+    NativeControllerBreathStateRamp,
     BreathValue,
 }
 
@@ -349,6 +537,7 @@ impl ProjectionTargetScaleSource {
             Self::Controller => "right-controller-thumbstick",
             Self::ControllerReset => "right-controller-primary-reset",
             Self::BreathStateRamp => "hostess-manifold-breath-state-ramp",
+            Self::NativeControllerBreathStateRamp => "native-controller-breath-state-ramp",
             Self::BreathValue => "hostess-manifold-breath-state-value",
         }
     }
@@ -424,7 +613,7 @@ impl ProjectionTargetState {
                     self.last_breath_sequence_id = sequence_id;
                     self.received_breath_samples = self.received_breath_samples.saturating_add(1);
                     if self.scale_driver == ProjectionTargetScaleDriver::Pmb {
-                        self.source = ProjectionTargetScaleSource::BreathStateRamp;
+                        self.source = self.breath_state_scale_source();
                     }
                 }
             }
@@ -472,7 +661,7 @@ impl ProjectionTargetState {
                     self.scale_delta_per_second(self.settings.breath_inhale_seconds_min_to_max)
                         * dt_seconds,
                 );
-                self.source = ProjectionTargetScaleSource::BreathStateRamp;
+                self.source = self.breath_state_scale_source();
             }
             ProjectionTargetBreathState::Exhale => {
                 self.live_scale = step_toward(
@@ -481,7 +670,7 @@ impl ProjectionTargetState {
                     self.scale_delta_per_second(self.settings.breath_exhale_seconds_max_to_min)
                         * dt_seconds,
                 );
-                self.source = ProjectionTargetScaleSource::BreathStateRamp;
+                self.source = self.breath_state_scale_source();
             }
             ProjectionTargetBreathState::Pause
             | ProjectionTargetBreathState::BadTracking
@@ -582,10 +771,25 @@ impl ProjectionTargetState {
                 BreathBridgeMode::ManifoldState | BreathBridgeMode::Synthetic => {
                     self.source = ProjectionTargetScaleSource::BreathStateRamp;
                 }
+                BreathBridgeMode::DirectControllerState => {
+                    self.source = ProjectionTargetScaleSource::NativeControllerBreathStateRamp;
+                }
                 BreathBridgeMode::Disabled => {}
             }
         } else {
             self.last_scale_driver_switch = "right-controller-secondary-pmb-unavailable-no-samples";
+        }
+    }
+
+    fn breath_state_scale_source(&self) -> ProjectionTargetScaleSource {
+        if self
+            .settings
+            .breath_bridge_mode
+            .uses_native_controller_state()
+        {
+            ProjectionTargetScaleSource::NativeControllerBreathStateRamp
+        } else {
+            ProjectionTargetScaleSource::BreathStateRamp
         }
     }
 
@@ -667,6 +871,14 @@ fn u16_value(value: Option<String>, default_value: u16, min_value: u16, max_valu
         .min(max_value)
 }
 
+fn u32_value(value: Option<String>, default_value: u32, min_value: u32, max_value: u32) -> u32 {
+    value
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        .filter(|value| *value >= min_value)
+        .unwrap_or(default_value)
+        .min(max_value)
+}
+
 fn f32_clamped_value(
     value: Option<String>,
     default_value: f32,
@@ -687,6 +899,14 @@ fn non_empty_value(value: Option<String>, default_value: &str) -> String {
         .unwrap_or_else(|| default_value.to_string())
 }
 
+fn lookup_with_fallback(
+    lookup: &mut impl FnMut(&str) -> Option<String>,
+    primary_property: &str,
+    fallback_property: &str,
+) -> Option<String> {
+    lookup(primary_property).or_else(|| lookup(fallback_property))
+}
+
 fn normalized(value: Option<String>) -> Option<String> {
     value
         .map(|value| value.trim().to_ascii_lowercase())
@@ -698,8 +918,10 @@ mod tests {
     use super::{
         BreathBridgeMode, ProjectionTargetBreathState, ProjectionTargetInput,
         ProjectionTargetSettings, ProjectionTargetState, PROP_PROJECTION_TARGET_BREATH_BRIDGE_MODE,
-        PROP_PROJECTION_TARGET_CONTROLS, PROP_PROJECTION_TARGET_JOYSTICK_CONTROLS,
-        PROP_PROJECTION_TARGET_SCALE, PROP_PROJECTION_TARGET_TUNED_MAX_SCALE,
+        PROP_PROJECTION_TARGET_BREATH_CONTROLLER_AXIS_Y,
+        PROP_PROJECTION_TARGET_BREATH_CONTROLLER_AXIS_Z, PROP_PROJECTION_TARGET_CONTROLS,
+        PROP_PROJECTION_TARGET_JOYSTICK_CONTROLS, PROP_PROJECTION_TARGET_SCALE,
+        PROP_PROJECTION_TARGET_TUNED_MAX_SCALE,
     };
     use crate::camera_projection_metadata::TargetRect;
     use std::collections::BTreeMap;
@@ -734,6 +956,32 @@ mod tests {
         assert!(settings
             .marker_fields()
             .contains("breathBridgeMode=manifold-state-value"));
+    }
+
+    #[test]
+    fn parses_direct_controller_state_breath_settings() {
+        let settings = settings_from(&[
+            (PROP_PROJECTION_TARGET_CONTROLS, "true"),
+            (
+                PROP_PROJECTION_TARGET_BREATH_BRIDGE_MODE,
+                "direct-controller-state",
+            ),
+            (PROP_PROJECTION_TARGET_BREATH_CONTROLLER_AXIS_Y, "1.0"),
+            (PROP_PROJECTION_TARGET_BREATH_CONTROLLER_AXIS_Z, "0.0"),
+        ]);
+        assert_eq!(
+            settings.breath_bridge_mode,
+            BreathBridgeMode::DirectControllerState
+        );
+        assert!(settings.breath_bridge_mode.uses_breath_stream());
+        assert!(!settings.breath_bridge_mode.uses_manifold_transport());
+        assert!(settings.breath_bridge_mode.uses_native_controller_state());
+        assert!(settings
+            .marker_fields()
+            .contains("breathSourceAuthority=native-controller"));
+        assert!(settings
+            .marker_fields()
+            .contains("nativeControllerBreathAxis=0.0000,1.0000,0.0000"));
     }
 
     #[test]
@@ -848,6 +1096,24 @@ mod tests {
         assert!(state
             .marker_fields()
             .contains("projectionTargetScaleSource=hostess-manifold-breath-state-ramp"));
+    }
+
+    #[test]
+    fn direct_controller_state_uses_native_scale_source_marker() {
+        let mut settings = enabled_settings();
+        settings.breath_bridge_mode = BreathBridgeMode::DirectControllerState;
+        let mut state = ProjectionTargetState::new(settings);
+
+        state.apply_input(ProjectionTargetInput::BreathState {
+            state: ProjectionTargetBreathState::Inhale,
+            sequence_id: Some(1),
+        });
+        state.update_frame(1.0);
+
+        assert!(state.live_scale() > 1.0);
+        assert!(state
+            .marker_fields()
+            .contains("projectionTargetScaleSource=native-controller-breath-state-ramp"));
     }
 
     #[test]

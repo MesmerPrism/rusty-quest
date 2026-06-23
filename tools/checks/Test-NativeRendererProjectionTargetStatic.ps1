@@ -38,6 +38,7 @@ function Assert-ContainsTokens {
 
 $nativeLib = Read-RequiredText (Join-Path $srcRoot "lib.rs") "native lib"
 $projectionTargetState = Read-RequiredText (Join-Path $srcRoot "projection_target_state.rs") "projection target state"
+$nativeControllerBreathState = Read-RequiredText (Join-Path $srcRoot "native_controller_breath_state.rs") "native controller breath state"
 $manifoldBreathBridge = Read-RequiredText (Join-Path $srcRoot "manifold_breath_bridge.rs") "Manifold breath bridge"
 $manifoldPosePublisher = Read-RequiredText (Join-Path $srcRoot "manifold_pose_publisher.rs") "Manifold pose publisher"
 $openxrStimulusActions = Read-RequiredText (Join-Path $srcRoot "openxr_stimulus_actions.rs") "OpenXR stimulus actions"
@@ -59,8 +60,9 @@ $xrVulkanSurface = @(
     (Read-RequiredText (Join-Path $srcRoot "xr_vulkan\scorecard.rs") "xr_vulkan scorecard")
 ) -join "`n"
 
-Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$projectionTargetState`n$manifoldBreathBridge`n$manifoldPosePublisher`n$openxrStimulusActions`n$xrVulkanSurface" @(
+Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$projectionTargetState`n$nativeControllerBreathState`n$manifoldBreathBridge`n$manifoldPosePublisher`n$openxrStimulusActions`n$xrVulkanSurface" @(
     'mod projection_target_state',
+    'mod native_controller_breath_state',
     'mod manifold_breath_bridge',
     'mod manifold_pose_publisher',
     'ProjectionTargetState',
@@ -69,6 +71,10 @@ Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$projectionTarg
     'ProjectionTargetScaleDriver',
     'ToggleScaleDriver',
     'BreathBridgeMode',
+    'NativeControllerBreathStateEstimator',
+    'NativeControllerBreathPoseSample',
+    'fixed-controller-orientation',
+    'direct-controller-state',
     'ManifoldBreathBridge',
     'ManifoldPosePublisher',
     'ManifoldPosePublisherConfig',
@@ -101,6 +107,9 @@ Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$projectionTarg
     'projectionTargetPmbAvailable',
     'rightControllerSecondaryScaleDriverToggle',
     'rightGripPoseTracked',
+    'nativeControllerBreathStateConfigured',
+    'nativeControllerBreathStateEnabled',
+    'native-controller-breath-state-ramp',
     'rightBreathHapticAction={}',
     'rightBreathHapticSubaction',
     'breathHapticsEnabled',
@@ -114,7 +123,9 @@ Assert-ContainsTokens "$nativeLib`n$nativeRendererOptionSurface`n$projectionTarg
     'highRatePoseViaManifold=true',
     'projectionTargetRuntimeAuthority=native-renderer',
     'startupDefaultsAuthority=runtime-profile',
-    'pmbSourceAuthority=hostess-manifold',
+    'pmbSourceAuthority={}',
+    'hostess-manifold',
+    'native-controller',
     'highRateBreathViaAndroidProperties=false',
     'highRatePoseViaAndroidProperties=false',
     'debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload'

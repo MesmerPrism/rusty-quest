@@ -19,14 +19,16 @@ layout(push_constant) uniform PrivateParticlePush {
     vec4 fov_tangents;
 } pc;
 
+#ifndef PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF
+#define PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF 0.001
+#endif
+
 const float TAU = 6.28318530717958647692;
 const float AKD_RING_EDGE_WIDTH = 0.015;
 const float AKD_RING_OUTER_FEATHER = 0.06;
 const float AKD_RING_RADIUS = 0.32;
 const float AKD_RING_THICKNESS = 0.03;
 const float AKD_RING_DUAL_OFFSET_RADIANS = 3.14159265358979323846;
-const float NEAR_M = 0.05;
-const float FAR_DEPTH_SPAN_M = 12.0;
 
 float seg_dist(vec2 p, vec2 a, vec2 b) {
     vec2 pa = p - a;
@@ -126,29 +128,27 @@ void main() {
     float frame01 = clamp(v_render_params.y, 0.0, 0.99902344);
     uint packed_mode = uint(pc.params0.z + 0.5);
     int mask_mode = int(packed_mode % 10u);
-    float facing_attenuation_strength = clamp(float(packed_mode / 100u) / 1000.0, 0.0, 1.0);
+    uint mask_discard_mode = (packed_mode / 1000000u) % 10u;
     float mask = mask_mode == 1
         ? texture_array_alpha_nearest(v_mask_uv, frame01)
         : (mask_mode == 2
             ? texture_array_alpha_blend(v_mask_uv, frame01)
             : procedural_morphed_ring_alpha(v_mask_uv, frame01));
-    if (mask < 0.001) {
+    bool visible_mask_pixel = mask >= PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF;
+    if (!visible_mask_pixel && mask_discard_mode == 0u) {
         discard;
+    }
+    if (!visible_mask_pixel) {
+        out_color = vec4(0.0);
+        return;
     }
     float opacity = clamp(pc.transparency_params.x, 0.0, 4.0);
     float output_alpha_scale = clamp(pc.transparency_params.y, 0.0, 4.0);
-    float depth_suppression_strength = clamp(pc.transparency_params.z, 0.0, 8.0);
     float rgb_alpha_coupling = clamp(pc.transparency_params.w, 0.0, 1.0);
 
     float coverage_alpha = clamp(mask * v_color.a * opacity, 0.0, 1.0);
-    float depth01 = clamp((v_render_params.x - NEAR_M) / FAR_DEPTH_SPAN_M, 0.0, 1.0);
-    float depth_atten = pow(2.0, -depth_suppression_strength * depth01);
-    // Optional surface-normal RGB attenuation. Strength 0.0 leaves color
-    // unchanged; strength 0.20 reproduces the old 0.80 + 0.20 * facing look;
-    // strength 1.0 makes side/back sphere-surface particles darkest.
-    float facing = clamp(v_color_params.x, 0.0, 1.0);
-    float facing_atten = 1.0 - facing_attenuation_strength * (1.0 - facing);
-    vec3 base_rgb = clamp(v_color.rgb, vec3(0.0), vec3(1.0)) * depth_atten * facing_atten;
+    vec3 base_rgb = clamp(v_color.rgb, vec3(0.0), vec3(1.0))
+        * clamp(v_color_params.x, 0.0, 1.0);
     vec3 rgb = base_rgb * mix(1.0, coverage_alpha, rgb_alpha_coupling);
     out_color = vec4(rgb, clamp(coverage_alpha * output_alpha_scale, 0.0, 1.0));
 }

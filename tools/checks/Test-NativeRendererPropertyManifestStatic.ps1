@@ -20,7 +20,7 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-$expectedPropertyCount = 183
+$expectedPropertyCount = 209
 if ($manifest.property_count -ne $expectedPropertyCount -or $manifest.properties.Count -ne $expectedPropertyCount) {
     throw "Native renderer property manifest must cover the current $expectedPropertyCount-property runtime surface."
 }
@@ -74,6 +74,10 @@ foreach ($token in @(
     'debug.rustyquest.native_renderer.passthrough.style.audio_reactive.update_hz',
     'debug.rustyquest.native_renderer.passthrough.style.color.phase',
     'debug.rustyquest.native_renderer.passthrough.style.edge_color.a',
+    'debug.rustyquest.native_renderer.controller_breath_state.orientation_axis.z',
+    'native_controller_breath_state',
+    'debug.rustyquest.native_renderer.projection.target.breath.controller_state.orientation_axis.z',
+    'direct-controller-state',
     'debug.rustyquest.native_renderer.projection.target.breath.high_rate_json_payload',
     'debug.rustyquest.native_renderer.private_particles.visual.scale',
     'debug.rustyquest.native_renderer.private_particles.world_anchor.scale_m',
@@ -81,6 +85,9 @@ foreach ($token in @(
     'debug.rustyquest.native_renderer.private_particles.driver1.value01',
     'debug.rustyquest.native_renderer.private_particles.driver2.value01',
     'debug.rustyquest.native_renderer.private_particles.driver7.value01',
+    'debug.rustyquest.native_renderer.private_particles.breath_state_driver.mode',
+    'debug.rustyquest.native_renderer.private_particles.breath_state_driver.target_slot',
+    'private_particle_breath_state_driver',
     'debug.rustyquest.native_renderer.private_particles.manifold_driver.enabled',
     'debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.host',
     'debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.port',

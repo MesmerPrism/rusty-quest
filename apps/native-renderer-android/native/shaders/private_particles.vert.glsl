@@ -24,6 +24,9 @@ layout(location = 1) out vec4 v_color;
 layout(location = 2) out vec4 v_render_params;
 layout(location = 3) out vec4 v_color_params;
 
+const float NEAR_M = 0.05;
+const float FAR_DEPTH_SPAN_M = 12.0;
+
 const vec2 QUAD_POSITIONS[6] = vec2[](
     vec2(-1.0, -1.0),
     vec2( 1.0, -1.0),
@@ -81,6 +84,8 @@ void main() {
     uint draw_count = max(uint(pc.tracer_params.x), 1u);
     uint packed_mode = uint(pc.params0.z + 0.5);
     uint ordering_mode = (packed_mode / 10u) % 10u;
+    float facing_attenuation_strength =
+        clamp(float((packed_mode / 100u) % 10000u) / 1000.0, 0.0, 1.0);
     uint index;
     if (ordering_mode == 1u) {
         index = min(draw_index, draw_count - 1u);
@@ -120,6 +125,13 @@ void main() {
     float normal_len_sq = max(dot(normal_flags.xyz, normal_flags.xyz), 0.000001);
     vec3 safe_normal = normal_flags.xyz * inversesqrt(normal_len_sq);
     float facing = valid ? clamp(dot(safe_normal, view_dir), 0.0, 1.0) : 1.0;
-    v_color_params = vec4(facing, 0.0, 0.0, 0.0);
+    float depth_suppression_strength = clamp(pc.transparency_params.z, 0.0, 8.0);
+    float depth01 = clamp((center_forward_m - NEAR_M) / FAR_DEPTH_SPAN_M, 0.0, 1.0);
+    float depth_atten = exp2(-depth_suppression_strength * depth01);
+    // Optional surface-normal RGB attenuation. Strength 0.0 leaves color
+    // unchanged; strength 0.20 reproduces the old 0.80 + 0.20 * facing look;
+    // strength 1.0 makes side/back sphere-surface particles darkest.
+    float facing_atten = 1.0 - facing_attenuation_strength * (1.0 - facing);
+    v_color_params = vec4(depth_atten * facing_atten, facing, depth_atten, facing_atten);
     gl_Position = valid ? world_to_eye_clip(world) : vec4(4.0, 4.0, 0.0, 1.0);
 }

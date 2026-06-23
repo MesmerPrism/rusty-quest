@@ -75,6 +75,17 @@ $NativeProjectionTargetOffsetYUvProperty = "debug.rustyquest.native_renderer.pro
 $NativeProjectionTargetJoystickControlsProperty = "debug.rustyquest.native_renderer.projection.target.joystick.controls"
 $NativeProjectionTargetJoystickRateProperty = "debug.rustyquest.native_renderer.projection.target.joystick.scale.rate_per_second"
 $NativeProjectionTargetBreathModeProperty = "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode"
+$NativeProjectionTargetBreathControllerAxisXProperty = "debug.rustyquest.native_renderer.projection.target.breath.controller_state.orientation_axis.x"
+$NativeProjectionTargetBreathControllerAxisYProperty = "debug.rustyquest.native_renderer.projection.target.breath.controller_state.orientation_axis.y"
+$NativeProjectionTargetBreathControllerAxisZProperty = "debug.rustyquest.native_renderer.projection.target.breath.controller_state.orientation_axis.z"
+$NativeProjectionTargetBreathControllerInhaleThresholdProperty = "debug.rustyquest.native_renderer.projection.target.breath.controller_state.inhale_threshold"
+$NativeProjectionTargetBreathControllerExhaleThresholdProperty = "debug.rustyquest.native_renderer.projection.target.breath.controller_state.exhale_threshold"
+$NativeProjectionTargetBreathControllerRotationGuardDegreesProperty = "debug.rustyquest.native_renderer.projection.target.breath.controller_state.rotation_guard_degrees"
+$NativeProjectionTargetBreathControllerMovingAverageGuardProperty = "debug.rustyquest.native_renderer.projection.target.breath.controller_state.moving_average_guard"
+$NativeProjectionTargetBreathControllerShortWindowSamplesProperty = "debug.rustyquest.native_renderer.projection.target.breath.controller_state.short_window.samples"
+$NativeProjectionTargetBreathControllerLongWindowSamplesProperty = "debug.rustyquest.native_renderer.projection.target.breath.controller_state.long_window.samples"
+$NativeProjectionTargetBreathControllerShortWindowSecondsProperty = "debug.rustyquest.native_renderer.projection.target.breath.controller_state.short_window.seconds"
+$NativeProjectionTargetBreathControllerLongWindowSecondsProperty = "debug.rustyquest.native_renderer.projection.target.breath.controller_state.long_window.seconds"
 $NativeProjectionTargetBreathStateStreamProperty = "debug.rustyquest.native_renderer.projection.target.breath.state.stream"
 $NativeProjectionTargetBreathValueStreamProperty = "debug.rustyquest.native_renderer.projection.target.breath.value.stream"
 $NativeProjectionTargetBreathInhaleSecondsProperty = "debug.rustyquest.native_renderer.projection.target.breath.inhale.seconds.min_to_max"
@@ -456,8 +467,58 @@ function Assert-NativeProjectionTargetProperty {
             $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
             return
         }
+        $NativeProjectionTargetBreathControllerAxisXProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetBreathControllerAxisYProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetBreathControllerAxisZProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetBreathControllerInhaleThresholdProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetBreathControllerExhaleThresholdProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetBreathControllerRotationGuardDegreesProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetBreathControllerMovingAverageGuardProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetBreathControllerShortWindowSamplesProperty {
+            $parsed = 0
+            if (-not [int]::TryParse($Value.Trim(), [ref]$parsed) -or $parsed -lt 1) {
+                throw "$Name value $Value must be a positive sample count"
+            }
+            return
+        }
+        $NativeProjectionTargetBreathControllerLongWindowSamplesProperty {
+            $parsed = 0
+            if (-not [int]::TryParse($Value.Trim(), [ref]$parsed) -or $parsed -lt 1) {
+                throw "$Name value $Value must be a positive sample count"
+            }
+            return
+        }
+        $NativeProjectionTargetBreathControllerShortWindowSecondsProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
+        $NativeProjectionTargetBreathControllerLongWindowSecondsProperty {
+            $null = Get-NativeProjectionTargetFloat -Name $Name -Value $Value
+            return
+        }
         $NativeProjectionTargetBreathModeProperty {
-            if (@("disabled", "off", "manifold-state", "pmb-state", "manifold-state-value", "pmb-state-value", "synthetic") -notcontains $normalized) {
+            if (@("disabled", "off", "manifold-state", "pmb-state", "manifold-state-value", "pmb-state-value", "direct-controller-state", "native-controller-state", "local-controller-state", "fixed-controller-state", "synthetic") -notcontains $normalized) {
                 throw "Native projection target breath bridge mode is not supported: $Value"
             }
             return

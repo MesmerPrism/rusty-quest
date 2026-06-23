@@ -153,6 +153,25 @@ mod tests {
     }
 
     #[test]
+    fn projection_target_direct_controller_state_mode_loads_without_manifold() {
+        let options = options_from(&[
+            (PROP_PROJECTION_TARGET_CONTROLS, "true"),
+            (
+                PROP_PROJECTION_TARGET_BREATH_BRIDGE_MODE,
+                "direct-controller-state",
+            ),
+        ]);
+        assert_eq!(
+            options.projection_target_settings.breath_bridge_mode,
+            BreathBridgeMode::DirectControllerState
+        );
+        assert!(!options
+            .projection_target_settings
+            .breath_bridge_mode
+            .uses_manifold_transport());
+    }
+
+    #[test]
     fn stimulus_volume_render_mode_suppresses_stale_projection_target_controls() {
         let options = options_from(&[
             (PROP_RENDER_MODE, "solid-black-stimulus-volume"),

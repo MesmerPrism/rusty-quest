@@ -28,7 +28,7 @@ pub(crate) struct ManifoldBreathBridge {
 impl ManifoldBreathBridge {
     pub(crate) fn start(settings: ProjectionTargetSettings) -> Option<Self> {
         match settings.breath_bridge_mode {
-            BreathBridgeMode::Disabled => None,
+            BreathBridgeMode::Disabled | BreathBridgeMode::DirectControllerState => None,
             BreathBridgeMode::Synthetic => Some(Self {
                 settings: settings.clone(),
                 latest_input: Arc::new(Mutex::new(None)),
@@ -186,14 +186,18 @@ fn streams_for_mode(settings: &ProjectionTargetSettings) -> Vec<&str> {
     match settings.breath_bridge_mode {
         BreathBridgeMode::ManifoldState => vec![settings.breath_state_stream.as_str()],
         BreathBridgeMode::ManifoldValue => vec![settings.breath_value_stream.as_str()],
-        BreathBridgeMode::Synthetic | BreathBridgeMode::Disabled => Vec::new(),
+        BreathBridgeMode::Synthetic
+        | BreathBridgeMode::Disabled
+        | BreathBridgeMode::DirectControllerState => Vec::new(),
     }
 }
 
 fn subscription_count(mode: BreathBridgeMode) -> usize {
     match mode {
         BreathBridgeMode::ManifoldState | BreathBridgeMode::ManifoldValue => 1,
-        BreathBridgeMode::Disabled | BreathBridgeMode::Synthetic => 0,
+        BreathBridgeMode::Disabled
+        | BreathBridgeMode::DirectControllerState
+        | BreathBridgeMode::Synthetic => 0,
     }
 }
 

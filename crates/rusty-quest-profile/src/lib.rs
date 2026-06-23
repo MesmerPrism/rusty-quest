@@ -123,6 +123,28 @@ const NATIVE_PROJECTION_TARGET_JOYSTICK_RATE: &str =
     "debug.rustyquest.native_renderer.projection.target.joystick.scale.rate_per_second";
 const NATIVE_PROJECTION_TARGET_BREATH_MODE: &str =
     "debug.rustyquest.native_renderer.projection.target.breath.bridge.mode";
+const NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_AXIS_X: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.orientation_axis.x";
+const NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_AXIS_Y: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.orientation_axis.y";
+const NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_AXIS_Z: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.orientation_axis.z";
+const NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_INHALE_THRESHOLD: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.inhale_threshold";
+const NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_EXHALE_THRESHOLD: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.exhale_threshold";
+const NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_ROTATION_GUARD_DEGREES: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.rotation_guard_degrees";
+const NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_MOVING_AVERAGE_GUARD: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.moving_average_guard";
+const NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_SHORT_WINDOW_SAMPLES: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.short_window.samples";
+const NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_LONG_WINDOW_SAMPLES: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.long_window.samples";
+const NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_SHORT_WINDOW_SECONDS: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.short_window.seconds";
+const NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_LONG_WINDOW_SECONDS: &str =
+    "debug.rustyquest.native_renderer.projection.target.breath.controller_state.long_window.seconds";
 const NATIVE_PROJECTION_TARGET_BREATH_STATE_STREAM: &str =
     "debug.rustyquest.native_renderer.projection.target.breath.state.stream";
 const NATIVE_PROJECTION_TARGET_BREATH_VALUE_STREAM: &str =
@@ -704,8 +726,27 @@ fn validate_native_projection_target_property(
         | NATIVE_PROJECTION_TARGET_JOYSTICK_RATE
         | NATIVE_PROJECTION_TARGET_BREATH_INHALE_SECONDS
         | NATIVE_PROJECTION_TARGET_BREATH_EXHALE_SECONDS
-        | NATIVE_PROJECTION_TARGET_BREATH_SYNTHETIC_PERIOD_SECONDS => {
+        | NATIVE_PROJECTION_TARGET_BREATH_SYNTHETIC_PERIOD_SECONDS
+        | NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_AXIS_X
+        | NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_AXIS_Y
+        | NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_AXIS_Z
+        | NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_INHALE_THRESHOLD
+        | NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_EXHALE_THRESHOLD
+        | NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_ROTATION_GUARD_DEGREES
+        | NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_MOVING_AVERAGE_GUARD
+        | NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_SHORT_WINDOW_SECONDS
+        | NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_LONG_WINDOW_SECONDS => {
             validate_native_projection_target_f32(property, errors);
+        }
+        NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_SHORT_WINDOW_SAMPLES
+        | NATIVE_PROJECTION_TARGET_BREATH_CONTROLLER_LONG_WINDOW_SAMPLES => {
+            match property.value.trim().parse::<u32>() {
+                Ok(value) if value > 0 => {}
+                _ => errors.push(ValidationError::new(format!(
+                    "{} value {} must be a positive sample count",
+                    property.name, property.value
+                ))),
+            }
         }
         NATIVE_PROJECTION_TARGET_BREATH_MODE => {
             let normalized = normalized_value(&property.value);
@@ -717,6 +758,10 @@ fn validate_native_projection_target_property(
                     | "pmb-state"
                     | "manifold-state-value"
                     | "pmb-state-value"
+                    | "direct-controller-state"
+                    | "native-controller-state"
+                    | "local-controller-state"
+                    | "fixed-controller-state"
                     | "synthetic"
             );
             if !valid {

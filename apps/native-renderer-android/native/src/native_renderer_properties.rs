@@ -109,6 +109,28 @@ pub(crate) const PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION: &str =
     "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.implementation";
 pub(crate) const PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES: &str =
     "debug.rustyquest.native_renderer.hand_anchor_particles.ordering.interval_frames";
+pub(crate) const PROP_CONTROLLER_BREATH_STATE_AXIS_X: &str =
+    "debug.rustyquest.native_renderer.controller_breath_state.orientation_axis.x";
+pub(crate) const PROP_CONTROLLER_BREATH_STATE_AXIS_Y: &str =
+    "debug.rustyquest.native_renderer.controller_breath_state.orientation_axis.y";
+pub(crate) const PROP_CONTROLLER_BREATH_STATE_AXIS_Z: &str =
+    "debug.rustyquest.native_renderer.controller_breath_state.orientation_axis.z";
+pub(crate) const PROP_CONTROLLER_BREATH_STATE_INHALE_THRESHOLD: &str =
+    "debug.rustyquest.native_renderer.controller_breath_state.inhale_threshold";
+pub(crate) const PROP_CONTROLLER_BREATH_STATE_EXHALE_THRESHOLD: &str =
+    "debug.rustyquest.native_renderer.controller_breath_state.exhale_threshold";
+pub(crate) const PROP_CONTROLLER_BREATH_STATE_ROTATION_GUARD_DEGREES: &str =
+    "debug.rustyquest.native_renderer.controller_breath_state.rotation_guard_degrees";
+pub(crate) const PROP_CONTROLLER_BREATH_STATE_MOVING_AVERAGE_GUARD: &str =
+    "debug.rustyquest.native_renderer.controller_breath_state.moving_average_guard";
+pub(crate) const PROP_CONTROLLER_BREATH_STATE_SHORT_WINDOW_SAMPLES: &str =
+    "debug.rustyquest.native_renderer.controller_breath_state.short_window.samples";
+pub(crate) const PROP_CONTROLLER_BREATH_STATE_LONG_WINDOW_SAMPLES: &str =
+    "debug.rustyquest.native_renderer.controller_breath_state.long_window.samples";
+pub(crate) const PROP_CONTROLLER_BREATH_STATE_SHORT_WINDOW_SECONDS: &str =
+    "debug.rustyquest.native_renderer.controller_breath_state.short_window.seconds";
+pub(crate) const PROP_CONTROLLER_BREATH_STATE_LONG_WINDOW_SECONDS: &str =
+    "debug.rustyquest.native_renderer.controller_breath_state.long_window.seconds";
 pub(crate) const PROP_PRIVATE_PARTICLES_VISUAL_SCALE: &str =
     "debug.rustyquest.native_renderer.private_particles.visual.scale";
 pub(crate) const PROP_PRIVATE_PARTICLES_WORLD_ANCHOR_SCALE_M: &str =
@@ -129,6 +151,14 @@ pub(crate) const PROP_PRIVATE_PARTICLES_DRIVER6_VALUE01: &str =
     "debug.rustyquest.native_renderer.private_particles.driver6.value01";
 pub(crate) const PROP_PRIVATE_PARTICLES_DRIVER7_VALUE01: &str =
     "debug.rustyquest.native_renderer.private_particles.driver7.value01";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_MODE: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_state_driver.mode";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_TARGET_SLOT: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_state_driver.target_slot";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_INHALE_SECONDS: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_state_driver.inhale.seconds.min_to_max";
+pub(crate) const PROP_PRIVATE_PARTICLES_BREATH_STATE_DRIVER_EXHALE_SECONDS: &str =
+    "debug.rustyquest.native_renderer.private_particles.breath_state_driver.exhale.seconds.max_to_min";
 pub(crate) const PROP_PRIVATE_PARTICLES_MANIFOLD_DRIVER_BROKER_HOST: &str =
     "debug.rustyquest.native_renderer.private_particles.manifold_driver.broker.host";
 pub(crate) const PROP_PRIVATE_PARTICLES_MANIFOLD_DRIVER_BROKER_PATH: &str =

@@ -54,6 +54,11 @@ Runtime markers must report the accepted effective values; raw
 `getprop` readback is only transport evidence. Shader payloads, texture
 dimensions, buffer capacities, render mode, and fixed-function graphics
 pipeline blend factors remain rebuild/relaunch scope.
+The private-particle slot also exposes a generic within-app right-controller
+breath-state adapter that can write a normalized value into a selected
+driver-bank slot. Rusty Quest owns only the controller classifier,
+driver-slot transport, and effective markers; downstream private payloads own
+the meaning of the selected slot.
 
 New native APK variants must start from the source-only native app-build
 workflow instead of hand-editing runtime profiles, Android manifest

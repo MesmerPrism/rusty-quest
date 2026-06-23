@@ -62,6 +62,12 @@ fn main() {
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_MODE"
     );
     println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_DISCARD_MODE"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF"
+    );
+    println!(
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE"
     );
     println!(
@@ -309,11 +315,15 @@ fn main() {
         Path::new("shaders/private_particles.vert.glsl"),
         &out_dir.join("private_particles.vert.spv"),
     );
-    compile_shader(
+    compile_shader_with_defines(
         &glslc,
         "fragment",
         Path::new("shaders/private_particles.frag.glsl"),
         &out_dir.join("private_particles.frag.spv"),
+        &[(
+            "PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF",
+            &private_particle_mask_alpha_cutoff().to_string(),
+        )],
     );
     compile_shader(
         &glslc,
@@ -681,6 +691,29 @@ fn private_particle_mask_texture_mode() -> (u32, &'static str) {
     }
 }
 
+fn private_particle_mask_discard_mode() -> (u32, &'static str) {
+    let raw = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_DISCARD_MODE")
+        .unwrap_or_else(|_| "discard-near-zero-mask".to_string());
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "discard" | "discard-near-zero" | "discard-near-zero-mask" => (0, "discard-near-zero-mask"),
+        "no-discard"
+        | "zero-output"
+        | "zero-alpha"
+        | "zero-alpha-no-discard"
+        | "zero-output-no-discard" => (1, "zero-output-no-discard"),
+        other => panic!("unsupported generic private particle mask discard mode: {other}"),
+    }
+}
+
+fn private_particle_mask_alpha_cutoff() -> f32 {
+    optional_env_f32(
+        "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF",
+        0.001,
+        0.0,
+        1.0,
+    )
+}
+
 fn optional_env_f32(name: &str, default: f32, min: f32, max: f32) -> f32 {
     let Some(raw) = env::var(name)
         .ok()
@@ -906,6 +939,8 @@ fn write_private_particle_payload_config(
         transparency_blend_mode,
         transparency_parameter_source,
     ) = private_particle_transparency_config();
+    let (mask_discard_mode_code, mask_discard_mode) = private_particle_mask_discard_mode();
+    let mask_alpha_cutoff = private_particle_mask_alpha_cutoff();
     let (ordering_mode_code, ordering_mode, ordering_parameter_source) =
         private_particle_ordering_config();
     let (color_facing_attenuation_strength, color_parameter_source) =
@@ -1011,7 +1046,7 @@ fn write_private_particle_payload_config(
         tracer_parameter_source,
     ) = private_particle_tracer_config(particle_count);
     let source = format!(
-        "pub(crate) const PRIVATE_PARTICLE_PAYLOAD_LINKED: bool = {payload_linked};\npub(crate) const PRIVATE_PARTICLE_IMPLEMENTATION_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DATA_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_KIND: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_PREFIX: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_FIELDS: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COUNT: usize = {particle_count};\npub(crate) const PRIVATE_PARTICLE_VISUAL_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT: usize = 8;\npub(crate) const PRIVATE_PARTICLE_DRIVER_VALUES01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT] = [{:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}];\npub(crate) const PRIVATE_PARTICLE_DRIVER0_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[0];\npub(crate) const PRIVATE_PARTICLE_DRIVER1_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[1];\npub(crate) const PRIVATE_PARTICLE_DRIVER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRACER_MAX_COUNT: usize = {tracer_max_count};\npub(crate) const PRIVATE_PARTICLE_TRACER_DRAW_SLOTS_PER_OSCILLATOR: usize = {tracer_draw_slots_per_oscillator};\npub(crate) const PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_AUX0_VEC4_ROWS: usize = {aux0_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LINKED: bool = {mask_linked};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH: u32 = {mask_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT: u32 = {mask_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS: u32 = {mask_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_BYTES: usize = {mask_bytes};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE: u32 = {mask_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OPACITY: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE_CODE: u32 = {ordering_mode_code};\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE: &str = \"{}\";\n",
+        "pub(crate) const PRIVATE_PARTICLE_PAYLOAD_LINKED: bool = {payload_linked};\npub(crate) const PRIVATE_PARTICLE_IMPLEMENTATION_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DATA_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_KIND: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_PREFIX: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_FIELDS: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COUNT: usize = {particle_count};\npub(crate) const PRIVATE_PARTICLE_VISUAL_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT: usize = 8;\npub(crate) const PRIVATE_PARTICLE_DRIVER_VALUES01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT] = [{:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}];\npub(crate) const PRIVATE_PARTICLE_DRIVER0_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[0];\npub(crate) const PRIVATE_PARTICLE_DRIVER1_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[1];\npub(crate) const PRIVATE_PARTICLE_DRIVER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRACER_MAX_COUNT: usize = {tracer_max_count};\npub(crate) const PRIVATE_PARTICLE_TRACER_DRAW_SLOTS_PER_OSCILLATOR: usize = {tracer_draw_slots_per_oscillator};\npub(crate) const PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_AUX0_VEC4_ROWS: usize = {aux0_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LINKED: bool = {mask_linked};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH: u32 = {mask_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT: u32 = {mask_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS: u32 = {mask_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_BYTES: usize = {mask_bytes};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE: u32 = {mask_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE_CODE: u32 = {mask_discard_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OPACITY: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE_CODE: u32 = {ordering_mode_code};\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE: &str = \"{}\";\n",
         rust_string_literal(&shader_path),
         rust_string_literal(&data_path),
         rust_string_literal(&kind),
@@ -1033,6 +1068,8 @@ fn write_private_particle_payload_config(
         rust_string_literal(tracer_parameter_source),
         rust_string_literal(&mask_path),
         rust_string_literal(mask_mode_marker),
+        rust_string_literal(mask_discard_mode),
+        mask_alpha_cutoff,
         transparency_opacity,
         transparency_output_alpha_scale,
         transparency_depth_suppression_strength,

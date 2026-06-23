@@ -374,6 +374,31 @@ impl GpuTimestampTracker {
         );
     }
 
+    pub(crate) unsafe fn write_disabled_stage(
+        &self,
+        device: &ash::Device,
+        cmd: vk::CommandBuffer,
+        frame_slot: usize,
+        stage: GpuTimestampStage,
+    ) {
+        self.write_timestamp(
+            device,
+            cmd,
+            frame_slot,
+            stage,
+            0,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+        );
+        self.write_timestamp(
+            device,
+            cmd,
+            frame_slot,
+            stage,
+            1,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+        );
+    }
+
     fn first_query(&self, frame_slot: usize) -> u32 {
         frame_slot as u32 * self.queries_per_frame
     }

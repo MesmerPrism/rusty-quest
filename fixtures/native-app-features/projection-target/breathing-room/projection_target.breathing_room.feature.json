@@ -9,14 +9,13 @@
   },
   "owner_lane": "rusty-quest",
   "status": "public-app-feature",
-  "description": "Breathing Room projection-target controls and PMB-compatible low-rate bridge settings.",
+  "description": "Breathing Room projection-target controls with PMB-compatible Manifold, synthetic, or direct native controller-state breath sources.",
   "provides": [
     "projection_target.breathing_room"
   ],
   "depends_on": [
     "quest.native.openxr_vulkan_base",
-    "camera.hwb",
-    "manifold.bridge"
+    "camera.hwb"
   ],
   "incompatible_with": [
     "input.right_primary_private_particle_recenter",
@@ -68,5 +67,5 @@
     "standard": [],
     "device": []
   },
-  "public_private_boundary": "Breathing Room projection-target control belongs to Rusty Quest; PMB profile semantics stay in the package lane."
+  "public_private_boundary": "Breathing Room projection-target control belongs to Rusty Quest; PMB profile semantics stay in the package lane, while direct-controller-state is a Rusty Quest-native comparison source that must not require Manifold transport."
 }

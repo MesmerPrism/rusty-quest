@@ -7,6 +7,7 @@ pub(crate) use crate::environment_depth_alignment_state::EnvironmentDepthAlignme
 use crate::native_renderer_property_values::{
     bool_value, f32_clamped_value, f32_pair_value, f32_value, u32_value, u64_value,
 };
+use crate::private_particle_breath_state_driver::PrivateParticleBreathStateDriverSettings;
 use crate::projection_target_state::ProjectionTargetSettings;
 
 pub(crate) use crate::native_renderer_camera_options::{
@@ -102,6 +103,8 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) video_projection_settings: NativeVideoProjectionSettings,
     pub(crate) stimulus_volume_settings: NativeStimulusVolumeSettings,
     pub(crate) projection_target_settings: ProjectionTargetSettings,
+    pub(crate) private_particle_breath_state_driver_settings:
+        PrivateParticleBreathStateDriverSettings,
     pub(crate) projection_border_stretch_settings: NativeProjectionBorderStretchSettings,
     pub(crate) private_layer_settings: NativePrivateLayerSettings,
 }
@@ -172,6 +175,8 @@ impl NativeRendererRuntimeOptions {
         } else {
             ProjectionTargetSettings::from_property_lookup(&mut lookup)
         };
+        let private_particle_breath_state_driver_settings =
+            PrivateParticleBreathStateDriverSettings::from_property_lookup(&mut lookup);
         let projection_border_stretch_settings =
             NativeProjectionBorderStretchSettings::from_property_lookup(&mut lookup);
         let private_layer_settings = NativePrivateLayerSettings::from_property_lookup(&mut lookup);
@@ -210,6 +215,7 @@ impl NativeRendererRuntimeOptions {
             video_projection_settings,
             stimulus_volume_settings,
             projection_target_settings,
+            private_particle_breath_state_driver_settings,
             projection_border_stretch_settings,
             private_layer_settings,
         }

@@ -162,6 +162,7 @@ foreach ($requiredFeature in @(
     "particles.private.mask.r8_texture",
     "particles.tracers.snapshot_rows",
     "particles.private.manifold_scalar_driver",
+    "particles.private.breath_state_driver",
     "input.right_primary_private_particle_recenter",
     "camera.hwb",
     "display_composite",

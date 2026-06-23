@@ -307,6 +307,7 @@ unsafe fn run_projection_loop_inner(
         &xr_instance,
         runtime_options.stimulus_volume_settings,
         runtime_options.projection_target_settings.clone(),
+        runtime_options.private_particle_breath_state_driver_settings,
         runtime_options.environment_depth_alignment_settings,
         runtime_options
             .render_mode
@@ -659,10 +660,13 @@ unsafe fn run_projection_loop_inner(
     crate::marker(
         "projection-target",
         format!(
-            "status=config renderMode={} customStereoProjectionEnabled={} {} startupDefaultsAuthority=runtime-profile finalStateAuthority=native-renderer pmbSourceAuthority=hostess-manifold",
+            "status=config renderMode={} customStereoProjectionEnabled={} {} startupDefaultsAuthority=runtime-profile finalStateAuthority=native-renderer pmbSourceAuthority={}",
             render_mode.marker_value(),
             render_mode.uses_custom_stereo_projection(),
             projection_target_settings.marker_fields(),
+            projection_target_settings
+                .breath_bridge_mode
+                .source_authority_marker(),
         ),
     );
     crate::marker(
@@ -1081,6 +1085,7 @@ unsafe fn run_projection_loop_inner(
         render_pass,
         queue,
         cmd_pool,
+        runtime_options.private_particle_breath_state_driver_settings,
     ) {
         Ok(renderer) => renderer,
         Err(error) => {
@@ -1969,6 +1974,13 @@ unsafe fn run_projection_frames(
             }
             for input in controller_events.environment_depth_alignment_inputs {
                 environment_depth_alignment_state.apply_input(input);
+            }
+            if let Some(renderer) = gpu_private_particle_renderer.as_deref_mut() {
+                renderer.update_breath_state_driver(
+                    controller_events.native_controller_breath_sample,
+                    dt_seconds,
+                    frame_count,
+                );
             }
             if controller_events.stimulus_randomize_triggered {
                 if let Some(renderer) = gpu_stimulus_volume_renderer.as_deref_mut() {

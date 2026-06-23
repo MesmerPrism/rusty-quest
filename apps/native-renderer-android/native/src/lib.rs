@@ -69,6 +69,7 @@ mod native_camera_metadata;
 mod native_camera_profiles;
 #[cfg(target_os = "android")]
 mod native_camera_reader_selection;
+mod native_controller_breath_state;
 mod native_renderer_camera_options;
 mod native_renderer_display_composite_options;
 mod native_renderer_environment_depth_options;
@@ -96,6 +97,7 @@ mod openxr_passthrough_style;
 mod openxr_stimulus_actions;
 #[cfg(target_os = "android")]
 mod private_extension_slot;
+mod private_particle_breath_state_driver;
 mod projection_rect;
 mod projection_target_state;
 mod recorded_hand_replay;

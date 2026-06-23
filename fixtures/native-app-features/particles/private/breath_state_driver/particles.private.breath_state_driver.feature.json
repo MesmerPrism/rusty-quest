@@ -1,0 +1,69 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "particles.private.breath_state_driver",
+  "module_path": "particles/private/breath_state_driver",
+  "module_kind": "native-controller-driver-adapter",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Generic within-app controller breath-state adapter for private-particle driver slots.",
+  "provides": [
+    "input.private_particle_driver.native_controller_breath_state"
+  ],
+  "depends_on": [
+    "renderer.private_particles"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {
+    "private_particle_driver_input": "native-controller-breath-state"
+  },
+  "android_manifest": {
+    "permissions": [],
+    "uses_features": [],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.private_particles.breath_state_driver.mode": "direct-controller-state",
+      "debug.rustyquest.native_renderer.private_particles.breath_state_driver.target_slot": "0",
+      "debug.rustyquest.native_renderer.private_particles.breath_state_driver.inhale.seconds.min_to_max": "4.0",
+      "debug.rustyquest.native_renderer.private_particles.breath_state_driver.exhale.seconds.max_to_min": "4.0",
+      "debug.rustyquest.native_renderer.controller_breath_state.orientation_axis.x": "0.0",
+      "debug.rustyquest.native_renderer.controller_breath_state.orientation_axis.y": "0.0",
+      "debug.rustyquest.native_renderer.controller_breath_state.orientation_axis.z": "-1.0"
+    },
+    "clear_families": [],
+    "expected_render_modes": [
+      "solid-black-private-particles"
+    ]
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "privateParticleBreathStateDriverMode=direct-controller-state",
+      "privateParticleBreathStateDriverTargetSlot=0",
+      "nativeControllerBreathStateEnabled=true",
+      "privateParticleDriverParameterSource=native-controller-breath-state-driver"
+    ],
+    "forbidden": [
+      "privateParticleDriverParameterSource=manifold-scalar-stream"
+    ]
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath <generated-profile> -DryRun -Out <generated-property-plan>"
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Rusty Quest owns only the generic controller-state-to-driver-slot adapter; downstream private effects own the selected slot semantics."
+}
