@@ -164,6 +164,7 @@ foreach ($requiredFeature in @(
     "particles.private.ordering.gpu_index_remap",
     "particles.private.mask.r8_texture",
     "particles.tracers.snapshot_rows",
+    "particles.anchor_echo.rows",
     "particles.private.manifold_scalar_driver",
     "particles.private.breath_state_driver",
     "input.right_primary_private_particle_recenter",
@@ -199,6 +200,9 @@ foreach ($marker in @(
     "privateParticleDiagnosticWords=24",
     "privateParticleDiagnosticTracerSpawnedCount=",
     "privateParticleDiagnosticTracerDiscardedCount=",
+    "privateParticleDiagnosticAnchorEchoActiveCount=",
+    "privateParticleDiagnosticAnchorEchoSpawnedCount=",
+    "privateParticleDiagnosticAnchorEchoDiscardedCount=",
     "privateParticleDiagnosticActiveEdgeCount=",
     "privateParticleDiagnosticPassHealthFlags=",
     "privateParticleDiagnosticCpuFullBufferReadback=false"

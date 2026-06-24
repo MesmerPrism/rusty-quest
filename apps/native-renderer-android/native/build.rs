@@ -65,6 +65,9 @@ fn main() {
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_MODE"
     );
     println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_MIP_MODE"
+    );
+    println!(
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_DISCARD_MODE"
     );
     println!(
@@ -102,6 +105,27 @@ fn main() {
     );
     println!(
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_DRAW_ECHO_COUNT"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_LIFETIME_SECONDS"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_COPIES_PER_SECOND"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_RADIUS_M"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_ALPHA"
+    );
+    println!(
+        "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_ROTATION_RADIANS"
     );
     println!(
         "cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_VISUAL_SCALE"
@@ -322,15 +346,49 @@ fn main() {
         Path::new("shaders/private_particles.vert.glsl"),
         &out_dir.join("private_particles.vert.spv"),
     );
+    let (
+        mask_shader_mode_code,
+        mask_shader_layers,
+        mask_shader_atlas_columns,
+        mask_shader_atlas_rows,
+    ) = private_particle_payload
+        .as_ref()
+        .and_then(|payload| payload.mask_texture.as_ref())
+        .map(|mask| {
+            (
+                mask.mode_code,
+                mask.layers as u32,
+                mask.atlas_columns as u32,
+                mask.atlas_rows as u32,
+            )
+        })
+        .unwrap_or((0, 1, 1, 1));
+    let mask_shader_mode_code = mask_shader_mode_code.to_string();
+    let mask_shader_layers = mask_shader_layers.to_string();
+    let mask_shader_atlas_columns = mask_shader_atlas_columns.to_string();
+    let mask_shader_atlas_rows = mask_shader_atlas_rows.to_string();
+    let mask_alpha_cutoff = private_particle_mask_alpha_cutoff().to_string();
     compile_shader_with_defines(
         &glslc,
         "fragment",
         Path::new("shaders/private_particles.frag.glsl"),
         &out_dir.join("private_particles.frag.spv"),
-        &[(
-            "PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF",
-            &private_particle_mask_alpha_cutoff().to_string(),
-        )],
+        &[
+            (
+                "PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE",
+                &mask_shader_mode_code,
+            ),
+            ("PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS", &mask_shader_layers),
+            (
+                "PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_COLUMNS",
+                &mask_shader_atlas_columns,
+            ),
+            (
+                "PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_ROWS",
+                &mask_shader_atlas_rows,
+            ),
+            ("PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF", &mask_alpha_cutoff),
+        ],
     );
     compile_shader(
         &glslc,
@@ -386,11 +444,58 @@ fn main() {
     }
     if let Some(payload) = private_particle_payload.as_ref() {
         println!("cargo:rerun-if-changed={}", payload.shader.display());
-        compile_shader(
+        let (
+            anchor_echo_max_count,
+            anchor_echo_draw_echo_count,
+            anchor_echo_lifetime_seconds,
+            anchor_echo_copies_per_second,
+            anchor_echo_radius_m,
+            anchor_echo_alpha,
+            anchor_echo_rotation_radians,
+            _anchor_echo_parameter_source,
+        ) = private_particle_anchor_echo_config(payload.particle_count);
+        let anchor_echo_max_count_define = anchor_echo_max_count.to_string();
+        let anchor_echo_draw_echo_count_define = anchor_echo_draw_echo_count.to_string();
+        let anchor_echo_lifetime_seconds_define = anchor_echo_lifetime_seconds.to_string();
+        let anchor_echo_copies_per_second_define = anchor_echo_copies_per_second.to_string();
+        let anchor_echo_radius_m_define = anchor_echo_radius_m.to_string();
+        let anchor_echo_alpha_define = anchor_echo_alpha.to_string();
+        let anchor_echo_rotation_radians_define = anchor_echo_rotation_radians.to_string();
+        compile_shader_with_defines(
             &glslc,
             "compute",
             &payload.shader,
             &out_dir.join("private_particles.comp.spv"),
+            &[
+                (
+                    "PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT",
+                    &anchor_echo_max_count_define,
+                ),
+                (
+                    "PRIVATE_PARTICLE_ANCHOR_ECHO_DRAW_ECHO_COUNT",
+                    &anchor_echo_draw_echo_count_define,
+                ),
+                (
+                    "PRIVATE_PARTICLE_ANCHOR_ECHO_LIFETIME_SECONDS",
+                    &anchor_echo_lifetime_seconds_define,
+                ),
+                (
+                    "PRIVATE_PARTICLE_ANCHOR_ECHO_COPIES_PER_SECOND",
+                    &anchor_echo_copies_per_second_define,
+                ),
+                (
+                    "PRIVATE_PARTICLE_ANCHOR_ECHO_RADIUS_M",
+                    &anchor_echo_radius_m_define,
+                ),
+                (
+                    "PRIVATE_PARTICLE_ANCHOR_ECHO_ALPHA",
+                    &anchor_echo_alpha_define,
+                ),
+                (
+                    "PRIVATE_PARTICLE_ANCHOR_ECHO_ROTATION_RADIANS",
+                    &anchor_echo_rotation_radians_define,
+                ),
+            ],
         );
     } else {
         compile_shader(
@@ -432,6 +537,14 @@ struct PrivateParticleMaskTextureSource {
     bytes: usize,
     mode_code: u32,
     mode_marker: &'static str,
+    mip_mode_marker: &'static str,
+    mip_levels: usize,
+    view_type_marker: &'static str,
+    atlas_columns: usize,
+    atlas_rows: usize,
+    image_width: usize,
+    image_height: usize,
+    image_layers: usize,
 }
 
 const PRIVATE_LAYER_GUIDE_OUTPUTS: [(&str, &str); 6] = [
@@ -674,6 +787,34 @@ fn private_particle_mask_texture_source(
         );
     }
     let (mode_code, mode_marker) = private_particle_mask_texture_mode();
+    let mip_mode_marker = private_particle_mask_texture_mip_mode();
+    let mip_levels = private_particle_mask_texture_mip_levels(width, height, mip_mode_marker);
+    let (view_type_marker, atlas_columns, atlas_rows, image_width, image_height, image_layers) =
+        if private_particle_mask_texture_mode_uses_atlas(mode_code) {
+            if mip_mode_marker == "generated"
+                && (!width.is_power_of_two() || !height.is_power_of_two())
+            {
+                panic!(
+                    "generic private particle atlas mask mip generation requires power-of-two frame dimensions, got {}x{}",
+                    width, height
+                );
+            }
+            let (atlas_columns, atlas_rows) = private_particle_mask_texture_atlas_grid(layers);
+            (
+                "2d-atlas",
+                atlas_columns,
+                atlas_rows,
+                width
+                    .checked_mul(atlas_columns)
+                    .expect("generic private particle mask atlas width overflows usize"),
+                height
+                    .checked_mul(atlas_rows)
+                    .expect("generic private particle mask atlas height overflows usize"),
+                1,
+            )
+        } else {
+            ("2d-array", 1, 1, width, height, layers)
+        };
     println!("cargo:rerun-if-changed={}", path.display());
     Some(PrivateParticleMaskTextureSource {
         path,
@@ -683,6 +824,14 @@ fn private_particle_mask_texture_source(
         bytes,
         mode_code,
         mode_marker,
+        mip_mode_marker,
+        mip_levels,
+        view_type_marker,
+        atlas_columns,
+        atlas_rows,
+        image_width,
+        image_height,
+        image_layers,
     })
 }
 
@@ -706,8 +855,58 @@ fn private_particle_mask_texture_mode() -> (u32, &'static str) {
         "procedural" | "procedural-fallback" | "debug-procedural" => (0, "procedural-fallback"),
         "texture-array" | "texture-array-nearest" | "nearest" => (1, "texture-array-nearest"),
         "texture-array-blend" | "blend" | "two-layer-blend" => (2, "texture-array-blend"),
+        "texture-atlas"
+        | "texture-atlas-nearest"
+        | "atlas"
+        | "atlas-nearest"
+        | "atlas-nearest-layer" => (3, "texture-atlas-nearest"),
+        "texture-atlas-blend" | "atlas-blend" | "atlas-two-layer-blend" => {
+            (4, "texture-atlas-blend")
+        }
         other => panic!("unsupported generic private particle mask texture mode: {other}"),
     }
+}
+
+fn private_particle_mask_texture_mode_uses_atlas(mode_code: u32) -> bool {
+    matches!(mode_code, 3 | 4)
+}
+
+fn private_particle_mask_texture_mip_mode() -> &'static str {
+    let raw = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_MIP_MODE")
+        .unwrap_or_else(|_| "base-only".to_string());
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "base-only" | "base" | "none" | "off" | "disabled" => "base-only",
+        "generated" | "mipmapped" | "mipmap" | "mipmaps" | "linear-mipmaps" => "generated",
+        other => panic!("unsupported generic private particle mask mip mode: {other}"),
+    }
+}
+
+fn private_particle_mask_texture_mip_levels(width: usize, height: usize, mip_mode: &str) -> usize {
+    if mip_mode != "generated" {
+        return 1;
+    }
+    let mut levels = 1;
+    let mut mip_width = width;
+    let mut mip_height = height;
+    while mip_width > 1 || mip_height > 1 {
+        mip_width = (mip_width / 2).max(1);
+        mip_height = (mip_height / 2).max(1);
+        levels += 1;
+    }
+    levels
+}
+
+fn private_particle_mask_texture_atlas_grid(layers: usize) -> (usize, usize) {
+    let mut columns = 1_usize;
+    while columns
+        .checked_mul(columns)
+        .expect("generic private particle mask atlas column count overflow")
+        < layers
+    {
+        columns += 1;
+    }
+    let rows = layers.div_ceil(columns);
+    (columns, rows)
 }
 
 fn private_particle_mask_discard_mode() -> (u32, &'static str) {
@@ -944,6 +1143,61 @@ fn private_particle_tracer_config(particle_count: usize) -> (usize, usize, f32, 
     )
 }
 
+fn private_particle_anchor_echo_config(
+    _particle_count: usize,
+) -> (usize, usize, f32, f32, f32, f32, f32, &'static str) {
+    let max_count_name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT";
+    let draw_echo_count_name =
+        "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_DRAW_ECHO_COUNT";
+    let lifetime_name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_LIFETIME_SECONDS";
+    let copies_per_second_name =
+        "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_COPIES_PER_SECOND";
+    let radius_m_name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_RADIUS_M";
+    let alpha_name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_ALPHA";
+    let rotation_radians_name =
+        "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_ANCHOR_ECHO_ROTATION_RADIANS";
+    let source = if [
+        max_count_name,
+        draw_echo_count_name,
+        lifetime_name,
+        copies_per_second_name,
+        radius_m_name,
+        alpha_name,
+        rotation_radians_name,
+    ]
+    .iter()
+    .any(|name| {
+        env::var(name)
+            .ok()
+            .is_some_and(|value| !value.trim().is_empty())
+    }) {
+        "particle-payload-build-env"
+    } else {
+        "default-generated-config"
+    };
+    let max_count = optional_env_usize(max_count_name, 0, 0, 1_000_000);
+    let lifetime_seconds = optional_env_f32(lifetime_name, 0.05, 0.001, 60.0);
+    let copies_per_second = optional_env_f32(copies_per_second_name, 20.0, 0.0, 240.0);
+    let live_draw_estimate =
+        ((lifetime_seconds.max(0.0) * copies_per_second.max(0.0)).ceil() as usize).min(max_count);
+    (
+        max_count,
+        optional_env_usize(
+            draw_echo_count_name,
+            live_draw_estimate,
+            0,
+            max_count.max(1024),
+        )
+        .min(max_count),
+        lifetime_seconds,
+        copies_per_second,
+        optional_env_f32(radius_m_name, 0.08, 0.0005, 2.0),
+        optional_env_f32(alpha_name, 0.09803922, 0.0, 1.0),
+        optional_env_f32(rotation_radians_name, std::f32::consts::PI, -1000.0, 1000.0),
+        source,
+    )
+}
+
 fn write_private_particle_payload_config(
     out_dir: &Path,
     payload: Option<&PrivateParticlePayloadSources>,
@@ -980,6 +1234,14 @@ fn write_private_particle_payload_config(
         mask_bytes,
         mask_mode_code,
         mask_mode_marker,
+        mask_mip_mode_marker,
+        mask_mip_levels,
+        mask_view_type_marker,
+        mask_atlas_columns,
+        mask_atlas_rows,
+        mask_image_width,
+        mask_image_height,
+        mask_image_layers,
     ) = payload
         .map(|payload| {
             let (
@@ -991,6 +1253,14 @@ fn write_private_particle_payload_config(
                 mask_bytes,
                 mask_mode_code,
                 mask_mode_marker,
+                mask_mip_mode_marker,
+                mask_mip_levels,
+                mask_view_type_marker,
+                mask_atlas_columns,
+                mask_atlas_rows,
+                mask_image_width,
+                mask_image_height,
+                mask_image_layers,
             ) = payload
                 .mask_texture
                 .as_ref()
@@ -1004,6 +1274,14 @@ fn write_private_particle_payload_config(
                         mask.bytes,
                         mask.mode_code,
                         mask.mode_marker,
+                        mask.mip_mode_marker,
+                        mask.mip_levels,
+                        mask.view_type_marker,
+                        mask.atlas_columns,
+                        mask.atlas_rows,
+                        mask.image_width,
+                        mask.image_height,
+                        mask.image_layers,
                     )
                 })
                 .unwrap_or((
@@ -1015,6 +1293,14 @@ fn write_private_particle_payload_config(
                     1,
                     0,
                     "procedural-fallback",
+                    "base-only",
+                    1,
+                    "2d-array",
+                    1,
+                    1,
+                    1,
+                    1,
+                    1,
                 ));
             (
                 payload.data_dir.display().to_string(),
@@ -1032,6 +1318,14 @@ fn write_private_particle_payload_config(
                 mask_bytes,
                 mask_mode_code,
                 mask_mode_marker,
+                mask_mip_mode_marker,
+                mask_mip_levels,
+                mask_view_type_marker,
+                mask_atlas_columns,
+                mask_atlas_rows,
+                mask_image_width,
+                mask_image_height,
+                mask_image_layers,
             )
         })
         .unwrap_or_else(|| {
@@ -1051,6 +1345,14 @@ fn write_private_particle_payload_config(
                 1,
                 0,
                 "procedural-fallback",
+                "base-only",
+                1,
+                "2d-array",
+                1,
+                1,
+                1,
+                1,
+                1,
             )
         });
     let (particle_visual_scale, particle_visual_parameter_source) =
@@ -1064,8 +1366,18 @@ fn write_private_particle_payload_config(
         tracer_copies_per_second,
         tracer_parameter_source,
     ) = private_particle_tracer_config(particle_count);
+    let (
+        anchor_echo_max_count,
+        anchor_echo_draw_echo_count,
+        anchor_echo_lifetime_seconds,
+        anchor_echo_copies_per_second,
+        anchor_echo_radius_m,
+        anchor_echo_alpha,
+        anchor_echo_rotation_radians,
+        anchor_echo_parameter_source,
+    ) = private_particle_anchor_echo_config(particle_count);
     let source = format!(
-        "pub(crate) const PRIVATE_PARTICLE_PAYLOAD_LINKED: bool = {payload_linked};\npub(crate) const PRIVATE_PARTICLE_IMPLEMENTATION_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DATA_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_KIND: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_PREFIX: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_FIELDS: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COUNT: usize = {particle_count};\npub(crate) const PRIVATE_PARTICLE_VISUAL_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT: usize = 8;\npub(crate) const PRIVATE_PARTICLE_DRIVER_VALUES01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT] = [{:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}];\npub(crate) const PRIVATE_PARTICLE_DRIVER0_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[0];\npub(crate) const PRIVATE_PARTICLE_DRIVER1_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[1];\npub(crate) const PRIVATE_PARTICLE_DRIVER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRACER_MAX_COUNT: usize = {tracer_max_count};\npub(crate) const PRIVATE_PARTICLE_TRACER_DRAW_SLOTS_PER_OSCILLATOR: usize = {tracer_draw_slots_per_oscillator};\npub(crate) const PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_AUX0_VEC4_ROWS: usize = {aux0_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LINKED: bool = {mask_linked};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH: u32 = {mask_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT: u32 = {mask_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS: u32 = {mask_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_BYTES: usize = {mask_bytes};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE: u32 = {mask_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE_CODE: u32 = {mask_discard_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OPACITY: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE_CODE: u32 = {ordering_mode_code};\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE: &str = \"{}\";\n",
+        "pub(crate) const PRIVATE_PARTICLE_PAYLOAD_LINKED: bool = {payload_linked};\npub(crate) const PRIVATE_PARTICLE_IMPLEMENTATION_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DATA_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_KIND: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_PREFIX: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MARKER_FIELDS: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COUNT: usize = {particle_count};\npub(crate) const PRIVATE_PARTICLE_VISUAL_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_VISUAL_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT: usize = 8;\npub(crate) const PRIVATE_PARTICLE_DRIVER_VALUES01: [f32; PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT] = [{:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}, {:.8}];\npub(crate) const PRIVATE_PARTICLE_DRIVER0_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[0];\npub(crate) const PRIVATE_PARTICLE_DRIVER1_VALUE01: f32 = PRIVATE_PARTICLE_DRIVER_VALUES01[1];\npub(crate) const PRIVATE_PARTICLE_DRIVER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRACER_MAX_COUNT: usize = {tracer_max_count};\npub(crate) const PRIVATE_PARTICLE_TRACER_DRAW_SLOTS_PER_OSCILLATOR: usize = {tracer_draw_slots_per_oscillator};\npub(crate) const PRIVATE_PARTICLE_TRACER_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRACER_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT: usize = {anchor_echo_max_count};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_DRAW_ECHO_COUNT: usize = {anchor_echo_draw_echo_count};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_LIFETIME_SECONDS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_COPIES_PER_SECOND: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_RADIUS_M: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_ALPHA: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_ROTATION_RADIANS: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_ANCHOR_ECHO_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_AUX0_VEC4_ROWS: usize = {aux0_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LINKED: bool = {mask_linked};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_PATH: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH: u32 = {mask_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT: u32 = {mask_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS: u32 = {mask_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_BYTES: usize = {mask_bytes};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE: u32 = {mask_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_VIEW_TYPE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MIP_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_MIP_LEVELS: u32 = {mask_mip_levels};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_COLUMNS: u32 = {mask_atlas_columns};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_ROWS: u32 = {mask_atlas_rows};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_WIDTH: u32 = {mask_image_width};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_HEIGHT: u32 = {mask_image_height};\npub(crate) const PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_LAYERS: u32 = {mask_image_layers};\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE_CODE: u32 = {mask_discard_mode_code};\npub(crate) const PRIVATE_PARTICLE_MASK_DISCARD_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OPACITY: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_OUTPUT_ALPHA_SCALE: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_DEPTH_SUPPRESSION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_RGB_ALPHA_COUPLING: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_BLEND_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_TRANSPARENCY_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE_CODE: u32 = {ordering_mode_code};\npub(crate) const PRIVATE_PARTICLE_ORDERING_MODE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_ORDERING_PARAMETER_SOURCE: &str = \"{}\";\npub(crate) const PRIVATE_PARTICLE_COLOR_FACING_ATTENUATION_STRENGTH: f32 = {:.8};\npub(crate) const PRIVATE_PARTICLE_COLOR_PARAMETER_SOURCE: &str = \"{}\";\n",
         rust_string_literal(&shader_path),
         rust_string_literal(&data_path),
         rust_string_literal(&kind),
@@ -1085,8 +1397,16 @@ fn write_private_particle_payload_config(
         tracer_lifetime_seconds,
         tracer_copies_per_second,
         rust_string_literal(tracer_parameter_source),
+        anchor_echo_lifetime_seconds,
+        anchor_echo_copies_per_second,
+        anchor_echo_radius_m,
+        anchor_echo_alpha,
+        anchor_echo_rotation_radians,
+        rust_string_literal(anchor_echo_parameter_source),
         rust_string_literal(&mask_path),
         rust_string_literal(mask_mode_marker),
+        rust_string_literal(mask_view_type_marker),
+        rust_string_literal(mask_mip_mode_marker),
         rust_string_literal(mask_discard_mode),
         mask_alpha_cutoff,
         transparency_opacity,

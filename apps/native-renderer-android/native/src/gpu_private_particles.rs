@@ -43,6 +43,7 @@ const PARTICLE_SORT_ROW_BYTES: vk::DeviceSize = 16;
 const PARTICLE_OUTPUT_ROWS_PER_INSTANCE: usize = 4;
 const PARTICLE_MAIN_STATE_ROWS_PER_INSTANCE: usize = 2;
 const PARTICLE_TRACER_STATE_ROWS_PER_SLOT: usize = 4;
+const PARTICLE_ANCHOR_ECHO_STATE_ROWS_PER_SLOT: usize = 4;
 const PARTICLE_DESCRIPTOR_SET_COUNT: usize = 2;
 const PRIVATE_PARTICLE_DRIVER_BANK_VALUE_VEC4_ROWS: usize =
     PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT / 4;
@@ -603,6 +604,9 @@ struct PrivateParticleDiagnosticSnapshot {
     tracer_active_count: u32,
     tracer_spawned_count: u32,
     tracer_discarded_count: u32,
+    anchor_echo_active_count: u32,
+    anchor_echo_spawned_count: u32,
+    anchor_echo_discarded_count: u32,
     saturation_count: u32,
     active_edge_count: u32,
     pass_health_flags: u32,
@@ -618,6 +622,9 @@ impl PrivateParticleDiagnosticSnapshot {
             tracer_active_count: 0,
             tracer_spawned_count: 0,
             tracer_discarded_count: 0,
+            anchor_echo_active_count: 0,
+            anchor_echo_spawned_count: 0,
+            anchor_echo_discarded_count: 0,
             saturation_count: 0,
             active_edge_count: 0,
             pass_health_flags: 0,
@@ -633,6 +640,9 @@ impl PrivateParticleDiagnosticSnapshot {
             tracer_active_count: 0,
             tracer_spawned_count: 0,
             tracer_discarded_count: 0,
+            anchor_echo_active_count: 0,
+            anchor_echo_spawned_count: 0,
+            anchor_echo_discarded_count: 0,
             saturation_count: 0,
             active_edge_count: 0,
             pass_health_flags: 0,
@@ -652,6 +662,7 @@ impl PrivateParticleDiagnosticSnapshot {
                 .clamp(0.0, 1.0) as f32;
         }
         let tracer_events = raw[15].max(0) as u32;
+        let anchor_echo_events = raw[19].max(0) as u32;
         Self {
             status: "readback",
             particle_count,
@@ -659,6 +670,9 @@ impl PrivateParticleDiagnosticSnapshot {
             tracer_active_count: raw[13].max(0) as u32,
             tracer_spawned_count: tracer_events & 0x0000_ffff,
             tracer_discarded_count: (tracer_events >> 16) & 0x0000_ffff,
+            anchor_echo_active_count: raw[18].max(0) as u32,
+            anchor_echo_spawned_count: anchor_echo_events & 0x0000_ffff,
+            anchor_echo_discarded_count: (anchor_echo_events >> 16) & 0x0000_ffff,
             saturation_count: raw[14].max(0) as u32,
             active_edge_count: raw[16].max(0) as u32,
             pass_health_flags: raw[17].max(0) as u32,
@@ -668,7 +682,7 @@ impl PrivateParticleDiagnosticSnapshot {
 
     fn marker_fields(self) -> String {
         format!(
-            "privateParticleDiagnosticReadbackStatus={} privateParticleDiagnosticStorageBinding=9 privateParticleDiagnosticWords={} privateParticleDiagnosticFixedPointScale={} privateParticleDiagnosticCpuFullBufferReadback=false privateParticleDiagnosticParticleCount={} privateParticleDiagnosticOrderDim0={:.4} privateParticleDiagnosticOrderDim1={:.4} privateParticleDiagnosticOrderDim2={:.4} privateParticleDiagnosticOrderDim3={:.4} privateParticleDiagnosticOrderDim4={:.4} privateParticleDiagnosticOrderDim5={:.4} privateParticleDiagnosticTracerActiveCount={} privateParticleDiagnosticTracerSpawnedCount={} privateParticleDiagnosticTracerDiscardedCount={} privateParticleDiagnosticSaturationCount={} privateParticleDiagnosticActiveEdgeCount={} privateParticleDiagnosticPassHealthFlags={} privateParticleDiagnosticRawParticleCount={} privateParticleDiagnosticRawOrderDim0Cos={} privateParticleDiagnosticRawOrderDim0Sin={} privateParticleDiagnosticRawTracerEvents={} privateParticleDiagnosticRawActiveEdgeCount={} privateParticleDiagnosticRawPassHealthFlags={}",
+            "privateParticleDiagnosticReadbackStatus={} privateParticleDiagnosticStorageBinding=9 privateParticleDiagnosticWords={} privateParticleDiagnosticFixedPointScale={} privateParticleDiagnosticCpuFullBufferReadback=false privateParticleDiagnosticParticleCount={} privateParticleDiagnosticOrderDim0={:.4} privateParticleDiagnosticOrderDim1={:.4} privateParticleDiagnosticOrderDim2={:.4} privateParticleDiagnosticOrderDim3={:.4} privateParticleDiagnosticOrderDim4={:.4} privateParticleDiagnosticOrderDim5={:.4} privateParticleDiagnosticTracerActiveCount={} privateParticleDiagnosticTracerSpawnedCount={} privateParticleDiagnosticTracerDiscardedCount={} privateParticleDiagnosticAnchorEchoActiveCount={} privateParticleDiagnosticAnchorEchoSpawnedCount={} privateParticleDiagnosticAnchorEchoDiscardedCount={} privateParticleDiagnosticSaturationCount={} privateParticleDiagnosticActiveEdgeCount={} privateParticleDiagnosticPassHealthFlags={} privateParticleDiagnosticRawParticleCount={} privateParticleDiagnosticRawOrderDim0Cos={} privateParticleDiagnosticRawOrderDim0Sin={} privateParticleDiagnosticRawTracerEvents={} privateParticleDiagnosticRawAnchorEchoEvents={} privateParticleDiagnosticRawActiveEdgeCount={} privateParticleDiagnosticRawPassHealthFlags={}",
             self.status,
             PRIVATE_PARTICLE_DIAGNOSTIC_WORDS,
             PRIVATE_PARTICLE_DIAGNOSTIC_FIXED_POINT_SCALE as u32,
@@ -682,6 +696,9 @@ impl PrivateParticleDiagnosticSnapshot {
             self.tracer_active_count,
             self.tracer_spawned_count,
             self.tracer_discarded_count,
+            self.anchor_echo_active_count,
+            self.anchor_echo_spawned_count,
+            self.anchor_echo_discarded_count,
             self.saturation_count,
             self.active_edge_count,
             self.pass_health_flags,
@@ -689,6 +706,7 @@ impl PrivateParticleDiagnosticSnapshot {
             self.raw[1],
             self.raw[2],
             self.raw[15],
+            self.raw[19],
             self.raw[16],
             self.raw[17],
         )
@@ -704,6 +722,9 @@ pub(crate) struct GpuPrivateParticleFrameStats {
     pub(crate) tracer_max_count: u32,
     pub(crate) tracer_draw_count: u32,
     pub(crate) tracer_draw_slots_per_oscillator: u32,
+    pub(crate) anchor_echo_max_count: u32,
+    pub(crate) anchor_echo_draw_echo_count: u32,
+    pub(crate) anchor_echo_draw_count: u32,
     pub(crate) draw_count: u32,
     pub(crate) state_ping_pong: bool,
     pub(crate) aux0_rows: u32,
@@ -738,11 +759,12 @@ impl GpuPrivateParticleFrameStats {
             && self.runtime_settings.offscreen_half_res_tracers_only
             && !private_particle_sort_enabled()
             && self.tracer_draw_count > 0
+            && self.anchor_echo_draw_count == 0
     }
 
     fn marker_fields(self) -> String {
         format!(
-            "privateParticleReady={} privateParticleVisible={} privateParticlePayloadLinked={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleOutputAbi=four-vec4-billboard-rows privateParticleBillboardKindAux=aux.z-main-1-tracer-2 privateParticleStatePingPong={} privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} {} {} privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident={} privateParticleMaskTextureGpuResident={}",
+            "privateParticleReady={} privateParticleVisible={} privateParticlePayloadLinked={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false {} privateParticleOutputAbi=four-vec4-billboard-rows privateParticleBillboardKindAux=aux.z-main-1-tracer-2-anchor-3-anchor_echo-4 privateParticleStatePingPong={} privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} {} {} {} privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident={} privateParticleMaskTextureGpuResident={}",
             self.ready,
             self.visible,
             PRIVATE_PARTICLE_PAYLOAD_LINKED,
@@ -769,6 +791,11 @@ impl GpuPrivateParticleFrameStats {
             crate::sanitize(self.runtime_settings.tracer_parameter_source),
             self.tracer_max_count * PARTICLE_TRACER_STATE_ROWS_PER_SLOT as u32,
             self.tracer_draw_count > 0,
+            private_particle_anchor_echo_marker_fields(
+                self.anchor_echo_max_count,
+                self.anchor_echo_draw_echo_count,
+                self.anchor_echo_draw_count,
+            ),
             self.state_ping_pong,
             self.aux0_rows,
             crate::sanitize(PRIVATE_PARTICLE_ORDERING_MODE),
@@ -787,6 +814,7 @@ impl GpuPrivateParticleFrameStats {
             PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT,
             PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS,
             PRIVATE_PARTICLE_MASK_TEXTURE_BYTES,
+            private_particle_mask_texture_marker_fields(),
             private_particle_transparency_marker_fields(self.runtime_settings),
             private_particle_offscreen_marker_fields(self.runtime_settings),
             self.ready,
@@ -807,6 +835,56 @@ fn private_particle_driver_bank_marker_fields(
         runtime_settings.driver_bank_values01[5],
         runtime_settings.driver_bank_values01[6],
         runtime_settings.driver_bank_values01[7],
+    )
+}
+
+fn private_particle_mask_texture_marker_fields() -> String {
+    let sampler_mipmap_mode = if PRIVATE_PARTICLE_MASK_TEXTURE_MIP_LEVELS > 1 {
+        "linear"
+    } else {
+        "nearest-base-only"
+    };
+    format!(
+        "privateParticleMaskTextureViewType={} privateParticleMaskTextureMipMode={} privateParticleMaskTextureMipLevels={} privateParticleMaskTextureSamplerMipmapMode={} privateParticleMaskTextureImageSize={}x{}x{} privateParticleMaskTextureAtlasGrid={}x{} privateParticleMaskTextureShaderSpecialization=compile-time-mask-mode",
+        crate::sanitize(PRIVATE_PARTICLE_MASK_TEXTURE_VIEW_TYPE),
+        crate::sanitize(PRIVATE_PARTICLE_MASK_TEXTURE_MIP_MODE),
+        PRIVATE_PARTICLE_MASK_TEXTURE_MIP_LEVELS,
+        sampler_mipmap_mode,
+        PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_WIDTH,
+        PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_HEIGHT,
+        PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_LAYERS,
+        PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_COLUMNS,
+        PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_ROWS,
+    )
+}
+
+fn private_particle_anchor_echo_draw_count(max_count: u32, draw_echo_count: u32) -> u32 {
+    if max_count == 0 {
+        0
+    } else {
+        1 + draw_echo_count.min(max_count)
+    }
+}
+
+fn private_particle_anchor_echo_marker_fields(
+    max_count: u32,
+    draw_echo_count: u32,
+    draw_count: u32,
+) -> String {
+    format!(
+        "privateParticleAnchorEchoMaxCount={} privateParticleAnchorEchoStateCapacity={} privateParticleAnchorEchoDrawEchoCount={} privateParticleAnchorEchoDrawCount={} privateParticleAnchorEchoLifetimeSeconds={:.3} privateParticleAnchorEchoCopiesPerSecond={:.3} privateParticleAnchorEchoRadiusM={:.3} privateParticleAnchorEchoAlpha={:.3} privateParticleAnchorEchoRotationRadians={:.3} privateParticleAnchorEchoParameterSource={} privateParticleAnchorEchoStateRows={} privateParticleAnchorEchoOutputMode=merged-billboard-output-after-tracers privateParticleDrawBudgetIncludesAnchorEcho={} privateParticleAnchorEchoCpuUploadPerFrame=false",
+        max_count,
+        max_count,
+        draw_echo_count,
+        draw_count,
+        PRIVATE_PARTICLE_ANCHOR_ECHO_LIFETIME_SECONDS,
+        PRIVATE_PARTICLE_ANCHOR_ECHO_COPIES_PER_SECOND,
+        PRIVATE_PARTICLE_ANCHOR_ECHO_RADIUS_M,
+        PRIVATE_PARTICLE_ANCHOR_ECHO_ALPHA,
+        PRIVATE_PARTICLE_ANCHOR_ECHO_ROTATION_RADIANS,
+        crate::sanitize(PRIVATE_PARTICLE_ANCHOR_ECHO_PARAMETER_SOURCE),
+        max_count * PARTICLE_ANCHOR_ECHO_STATE_ROWS_PER_SLOT as u32,
+        draw_count > 0,
     )
 }
 
@@ -849,6 +927,9 @@ impl Default for GpuPrivateParticleFrameStats {
             tracer_max_count: 0,
             tracer_draw_count: 0,
             tracer_draw_slots_per_oscillator: 0,
+            anchor_echo_max_count: 0,
+            anchor_echo_draw_echo_count: 0,
+            anchor_echo_draw_count: 0,
             draw_count: 0,
             state_ping_pong: false,
             aux0_rows: 0,
@@ -890,6 +971,9 @@ pub(crate) struct GpuPrivateParticleRenderer {
     particle_count: u32,
     tracer_max_count: u32,
     tracer_draw_slots_per_oscillator: u32,
+    anchor_echo_max_count: u32,
+    anchor_echo_draw_echo_count: u32,
+    anchor_echo_draw_count: u32,
     aux0_rows: u32,
     sort_input_count: u32,
     sort_capacity: u32,
@@ -939,13 +1023,24 @@ impl GpuPrivateParticleRenderer {
             .ok_or_else(|| {
                 "generic private particle tracer draw count overflowed u32".to_string()
             })?;
+        let anchor_echo_max_count =
+            PRIVATE_PARTICLE_ANCHOR_ECHO_MAX_COUNT.min(u32::MAX as usize) as u32;
+        let anchor_echo_draw_echo_count = (PRIVATE_PARTICLE_ANCHOR_ECHO_DRAW_ECHO_COUNT
+            .min(u32::MAX as usize) as u32)
+            .min(anchor_echo_max_count);
+        let anchor_echo_draw_count = private_particle_anchor_echo_draw_count(
+            anchor_echo_max_count,
+            anchor_echo_draw_echo_count,
+        );
         let draw_count = particle_count
             .checked_add(tracer_draw_count)
+            .and_then(|value| value.checked_add(anchor_echo_draw_count))
             .ok_or_else(|| "generic private particle draw count overflowed u32".to_string())?;
         let sort_input_count = draw_count;
         let particle_output_rows = draw_count as usize * PARTICLE_OUTPUT_ROWS_PER_INSTANCE;
         let effect_state_rows = (particle_count as usize * PARTICLE_MAIN_STATE_ROWS_PER_INSTANCE)
-            + (tracer_max_count as usize * PARTICLE_TRACER_STATE_ROWS_PER_SLOT);
+            + (tracer_max_count as usize * PARTICLE_TRACER_STATE_ROWS_PER_SLOT)
+            + (anchor_echo_max_count as usize * PARTICLE_ANCHOR_ECHO_STATE_ROWS_PER_SLOT);
         let zero_particle_rows = vec![[0.0_f32; 4]; particle_output_rows];
         let zero_particle_state_rows = vec![[0.0_f32; 4]; effect_state_rows];
         let aux0_rows = payload.aux0.len().min(u32::MAX as usize) as u32;
@@ -1444,7 +1539,7 @@ impl GpuPrivateParticleRenderer {
         crate::marker(
             "private-particle-slot",
             format!(
-                "status=linked privateParticlePayloadLinked=true privateParticleKind={} privateParticleImplementationPath={} privateParticleDataPath={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleStaticPositionBytes={} privateParticleStaticNormalBytes={} privateParticleAux0Bytes={} privateParticleAux0Rows={} privateParticleStateBufferBytes={} privateParticleStatePingPong=true privateParticleOutputBufferBytes={} privateParticleOutputAbi=four-vec4-billboard-rows privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleSortBufferBytes={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTexturePath={} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} privateParticleMaskTextureGpuResident=true {} privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident=true privateParticleVisualAcceptance=pending-headset-screenshot",
+                "status=linked privateParticlePayloadLinked=true privateParticleKind={} privateParticleImplementationPath={} privateParticleDataPath={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false {} privateParticleStaticPositionBytes={} privateParticleStaticNormalBytes={} privateParticleAux0Bytes={} privateParticleAux0Rows={} privateParticleStateBufferBytes={} privateParticleStatePingPong=true privateParticleOutputBufferBytes={} privateParticleOutputAbi=four-vec4-billboard-rows privateParticleBillboardKindAux=aux.z-main-1-tracer-2-anchor-3-anchor_echo-4 privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleSortBufferBytes={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTexturePath={} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} privateParticleMaskTextureGpuResident=true {} {} privateParticleCpuUploadBytes=0 privateParticleGpuBuffersResident=true privateParticleVisualAcceptance=pending-headset-screenshot",
                 crate::sanitize(PRIVATE_PARTICLE_KIND),
                 crate::sanitize(PRIVATE_PARTICLE_IMPLEMENTATION_PATH),
                 crate::sanitize(PRIVATE_PARTICLE_DATA_PATH),
@@ -1466,6 +1561,11 @@ impl GpuPrivateParticleRenderer {
                 crate::sanitize(PRIVATE_PARTICLE_TRACER_PARAMETER_SOURCE),
                 tracer_max_count * PARTICLE_TRACER_STATE_ROWS_PER_SLOT as u32,
                 tracer_draw_count > 0,
+                private_particle_anchor_echo_marker_fields(
+                    anchor_echo_max_count,
+                    anchor_echo_draw_echo_count,
+                    anchor_echo_draw_count,
+                ),
                 position_buffer.bytes,
                 normal_buffer.bytes,
                 aux0_buffer.bytes,
@@ -1490,6 +1590,7 @@ impl GpuPrivateParticleRenderer {
                 PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT,
                 PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS,
                 PRIVATE_PARTICLE_MASK_TEXTURE_BYTES,
+                private_particle_mask_texture_marker_fields(),
                 private_particle_offscreen_marker_fields(runtime_settings),
             ),
         );
@@ -1505,6 +1606,9 @@ impl GpuPrivateParticleRenderer {
             tracer_max_count,
             tracer_draw_count,
             tracer_draw_slots_per_oscillator,
+            anchor_echo_max_count,
+            anchor_echo_draw_echo_count,
+            anchor_echo_draw_count,
             draw_count,
             aux0_rows,
             marker_sort_input_count,
@@ -1542,6 +1646,9 @@ impl GpuPrivateParticleRenderer {
             particle_count,
             tracer_max_count,
             tracer_draw_slots_per_oscillator,
+            anchor_echo_max_count,
+            anchor_echo_draw_echo_count,
+            anchor_echo_draw_count,
             aux0_rows,
             sort_input_count,
             sort_capacity,
@@ -1680,7 +1787,10 @@ impl GpuPrivateParticleRenderer {
         let tracer_draw_count = self
             .particle_count
             .saturating_mul(tracer_draw_slots_per_oscillator);
-        let draw_count = self.particle_count.saturating_add(tracer_draw_count);
+        let draw_count = self
+            .particle_count
+            .saturating_add(tracer_draw_count)
+            .saturating_add(self.anchor_echo_draw_count);
         let descriptor_index = frame_count as usize & 1;
         let next_descriptor_index = (descriptor_index + 1) & 1;
         let diagnostic_buffer = &self.diagnostic_buffers[descriptor_index];
@@ -1813,6 +1923,9 @@ impl GpuPrivateParticleRenderer {
             tracer_max_count: self.tracer_max_count,
             tracer_draw_count,
             tracer_draw_slots_per_oscillator,
+            anchor_echo_max_count: self.anchor_echo_max_count,
+            anchor_echo_draw_echo_count: self.anchor_echo_draw_echo_count,
+            anchor_echo_draw_count: self.anchor_echo_draw_count,
             draw_count,
             state_ping_pong: true,
             aux0_rows: self.aux0_rows,
@@ -1843,6 +1956,9 @@ impl GpuPrivateParticleRenderer {
                 self.tracer_max_count,
                 tracer_draw_count,
                 tracer_draw_slots_per_oscillator,
+                self.anchor_echo_max_count,
+                self.anchor_echo_draw_echo_count,
+                self.anchor_echo_draw_count,
                 draw_count,
                 self.aux0_rows,
                 draw_count,
@@ -2512,6 +2628,9 @@ fn log_private_marker(
     tracer_max_count: u32,
     tracer_draw_count: u32,
     tracer_draw_slots_per_oscillator: u32,
+    anchor_echo_max_count: u32,
+    anchor_echo_draw_echo_count: u32,
+    anchor_echo_draw_count: u32,
     draw_count: u32,
     aux0_rows: u32,
     sort_input_count: u32,
@@ -2525,7 +2644,7 @@ fn log_private_marker(
 ) {
     let sort_active = private_particle_sort_enabled();
     crate::android_log(format!(
-        "{} channel=frame status={} frame={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false privateParticleOutputAbi=four-vec4-billboard-rows privateParticleStatePingPong=true privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} privateParticleMaskTextureGpuResident=true {} {} {}",
+        "{} channel=frame status={} frame={} privateParticleKind={} privateParticleCount={} privateParticleMainCount={} privateParticleDrawCount={} privateParticleSettingsHotload=true privateParticleHotloadPollIntervalFrames={} privateParticleWorldAnchorScaleM={:.3} privateParticleWorldAnchorScaleParameterSource={} privateParticleVisualScale={:.3} privateParticleVisualParameterSource={} privateParticleDriver0Value01={:.3} privateParticleDriver1Value01={:.3} {} privateParticleDriverParameterSource={} privateParticleTracerMaxCount={} privateParticleTracerStateCapacity={} privateParticleTracerDrawSlotsCapacity={} privateParticleTracerDrawSlotsPerOscillator={} privateParticleTracerDrawCount={} privateParticleTracerLifetimeSeconds={:.3} privateParticleTracerCopiesPerSecond={:.3} privateParticleTracerParameterSource={} privateParticleTracerStateRows={} privateParticleTracerRadiusPolicy=snapshot-source-radius privateParticleTracerOutputMode=merged-billboard-output privateParticleDrawBudgetIncludesTracers={} privateParticleTracerCpuUploadPerFrame=false {} privateParticleOutputAbi=four-vec4-billboard-rows privateParticleBillboardKindAux=aux.z-main-1-tracer-2-anchor-3-anchor_echo-4 privateParticleStatePingPong=true privateParticleAux0Rows={} privateParticleOrderingMode={} privateParticleOrderingImplementation={} privateParticleOrderingParameterSource={} privateParticleOrderingBasis=primary-eye-openxr-reference-space privateParticleSortActive={} privateParticleSortInputCount={} privateParticleSortCount={} privateParticleSortCapacity={} privateParticleOrderingCpuExpandedUploadPerFrame=false {} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} privateParticleMaskTextureBytes={} privateParticleMaskTextureGpuResident=true {} {} {} {}",
         PRIVATE_PARTICLE_MARKER_PREFIX,
         status,
         frame_count,
@@ -2552,6 +2671,11 @@ fn log_private_marker(
         crate::sanitize(runtime_settings.tracer_parameter_source),
         tracer_max_count * PARTICLE_TRACER_STATE_ROWS_PER_SLOT as u32,
         tracer_draw_count > 0,
+        private_particle_anchor_echo_marker_fields(
+            anchor_echo_max_count,
+            anchor_echo_draw_echo_count,
+            anchor_echo_draw_count,
+        ),
         aux0_rows,
         crate::sanitize(PRIVATE_PARTICLE_ORDERING_MODE),
         private_particle_ordering_implementation(),
@@ -2569,6 +2693,7 @@ fn log_private_marker(
         PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT,
         PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS,
         PRIVATE_PARTICLE_MASK_TEXTURE_BYTES,
+        private_particle_mask_texture_marker_fields(),
         private_particle_transparency_marker_fields(runtime_settings),
         private_particle_offscreen_marker_fields(runtime_settings),
         PRIVATE_PARTICLE_MARKER_FIELDS,
@@ -2583,7 +2708,7 @@ fn log_private_render_config_marker(
     runtime_settings: PrivateParticleRuntimeSettings,
 ) {
     crate::android_log(format!(
-        "{} channel=render-config status={} frame={} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} {} {}",
+        "{} channel=render-config status={} frame={} privateParticleMaskTextureLinked={} privateParticleMaskTextureMode={} privateParticleMaskDiscardMode={} privateParticleMaskAlphaCutoff={:.4} privateParticleMaskTextureFormat=R8_UNORM privateParticleMaskTextureSize={}x{}x{} {} {} {}",
         PRIVATE_PARTICLE_MARKER_PREFIX,
         status,
         frame_count,
@@ -2594,6 +2719,7 @@ fn log_private_render_config_marker(
         PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH,
         PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT,
         PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS,
+        private_particle_mask_texture_marker_fields(),
         private_particle_transparency_marker_fields(runtime_settings),
         private_particle_offscreen_marker_fields(runtime_settings),
     ));
@@ -3837,6 +3963,16 @@ struct OwnedMaskTexture {
     sampler: vk::Sampler,
 }
 
+struct MaskTextureUpload {
+    pixels: Vec<u8>,
+    copy_regions: Vec<vk::BufferImageCopy>,
+    width: u32,
+    height: u32,
+    layers: u32,
+    mip_levels: u32,
+    view_type: vk::ImageViewType,
+}
+
 impl OwnedMaskTexture {
     unsafe fn new_with_data(
         device: &ash::Device,
@@ -3845,25 +3981,26 @@ impl OwnedMaskTexture {
         command_pool: vk::CommandPool,
         payload: &PrivateParticleMaskTexturePayload,
     ) -> Result<Self, String> {
+        let upload = build_mask_texture_upload(payload)?;
         let staging = OwnedBuffer::new_with_data(
             device,
             memory_properties,
             vk::BufferUsageFlags::TRANSFER_SRC,
             vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
             "generic private particle mask texture staging",
-            payload.pixels,
+            upload.pixels.as_slice(),
         )?;
         let image = match device.create_image(
             &vk::ImageCreateInfo::default()
                 .image_type(vk::ImageType::TYPE_2D)
                 .format(vk::Format::R8_UNORM)
                 .extent(vk::Extent3D {
-                    width: payload.width,
-                    height: payload.height,
+                    width: upload.width,
+                    height: upload.height,
                     depth: 1,
                 })
-                .mip_levels(1)
-                .array_layers(payload.layers)
+                .mip_levels(upload.mip_levels)
+                .array_layers(upload.layers)
                 .samples(vk::SampleCountFlags::TYPE_1)
                 .tiling(vk::ImageTiling::OPTIMAL)
                 .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
@@ -3921,9 +4058,9 @@ impl OwnedMaskTexture {
             command_pool,
             staging.buffer,
             image,
-            payload.width,
-            payload.height,
-            payload.layers,
+            upload.layers,
+            upload.mip_levels,
+            &upload.copy_regions,
         ) {
             staging.destroy(device);
             device.free_memory(memory, None);
@@ -3935,9 +4072,12 @@ impl OwnedMaskTexture {
         let view = match device.create_image_view(
             &vk::ImageViewCreateInfo::default()
                 .image(image)
-                .view_type(vk::ImageViewType::TYPE_2D_ARRAY)
+                .view_type(upload.view_type)
                 .format(vk::Format::R8_UNORM)
-                .subresource_range(mask_texture_subresource_range(payload.layers)),
+                .subresource_range(mask_texture_subresource_range(
+                    upload.layers,
+                    upload.mip_levels,
+                )),
             None,
         ) {
             Ok(view) => view,
@@ -3953,12 +4093,16 @@ impl OwnedMaskTexture {
             &vk::SamplerCreateInfo::default()
                 .mag_filter(vk::Filter::LINEAR)
                 .min_filter(vk::Filter::LINEAR)
-                .mipmap_mode(vk::SamplerMipmapMode::NEAREST)
+                .mipmap_mode(if upload.mip_levels > 1 {
+                    vk::SamplerMipmapMode::LINEAR
+                } else {
+                    vk::SamplerMipmapMode::NEAREST
+                })
                 .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                 .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                 .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                 .min_lod(0.0)
-                .max_lod(0.0),
+                .max_lod((upload.mip_levels - 1) as f32),
             None,
         ) {
             Ok(sampler) => sampler,
@@ -3994,15 +4138,259 @@ impl OwnedMaskTexture {
     }
 }
 
+fn build_mask_texture_upload(
+    payload: &PrivateParticleMaskTexturePayload,
+) -> Result<MaskTextureUpload, String> {
+    if private_particle_mask_texture_uses_atlas() {
+        build_mask_texture_atlas_upload(payload)
+    } else {
+        build_mask_texture_array_upload(payload)
+    }
+}
+
+fn build_mask_texture_array_upload(
+    payload: &PrivateParticleMaskTexturePayload,
+) -> Result<MaskTextureUpload, String> {
+    let width = payload.width as usize;
+    let height = payload.height as usize;
+    let layers = payload.layers as usize;
+    let mip_levels = PRIVATE_PARTICLE_MASK_TEXTURE_MIP_LEVELS as usize;
+    let mut current_width = width;
+    let mut current_height = height;
+    let mut layer_images = base_mask_layers(payload)?;
+    let mut pixels = Vec::with_capacity(mask_texture_upload_capacity(width, height, layers));
+    let mut copy_regions = Vec::with_capacity(mip_levels);
+
+    for mip_level in 0..mip_levels {
+        let offset = pixels.len() as vk::DeviceSize;
+        for layer in &layer_images {
+            pixels.extend_from_slice(layer);
+        }
+        copy_regions.push(mask_texture_copy_region(
+            offset,
+            mip_level as u32,
+            payload.layers,
+            current_width as u32,
+            current_height as u32,
+        ));
+        if mip_level + 1 < mip_levels {
+            layer_images = layer_images
+                .iter()
+                .map(|layer| downsample_r8_2x(layer, current_width, current_height))
+                .collect::<Result<Vec<_>, _>>()?;
+            current_width = (current_width / 2).max(1);
+            current_height = (current_height / 2).max(1);
+        }
+    }
+
+    Ok(MaskTextureUpload {
+        pixels,
+        copy_regions,
+        width: payload.width,
+        height: payload.height,
+        layers: payload.layers,
+        mip_levels: PRIVATE_PARTICLE_MASK_TEXTURE_MIP_LEVELS,
+        view_type: vk::ImageViewType::TYPE_2D_ARRAY,
+    })
+}
+
+fn build_mask_texture_atlas_upload(
+    payload: &PrivateParticleMaskTexturePayload,
+) -> Result<MaskTextureUpload, String> {
+    let tile_width = payload.width as usize;
+    let tile_height = payload.height as usize;
+    let layers = payload.layers as usize;
+    let columns = PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_COLUMNS as usize;
+    let rows = PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_ROWS as usize;
+    let mip_levels = PRIVATE_PARTICLE_MASK_TEXTURE_MIP_LEVELS as usize;
+    if columns == 0 || rows == 0 || columns.checked_mul(rows).unwrap_or(0) < layers {
+        return Err(format!(
+            "generic private particle mask atlas grid {}x{} cannot hold {} layers",
+            columns, rows, layers
+        ));
+    }
+    let mut current_width = tile_width;
+    let mut current_height = tile_height;
+    let mut layer_images = base_mask_layers(payload)?;
+    let mut pixels = Vec::with_capacity(mask_texture_upload_capacity(
+        PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_WIDTH as usize,
+        PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_HEIGHT as usize,
+        1,
+    ));
+    let mut copy_regions = Vec::with_capacity(mip_levels);
+
+    for mip_level in 0..mip_levels {
+        let atlas_width = current_width
+            .checked_mul(columns)
+            .ok_or_else(|| "generic private particle mask atlas width overflow".to_string())?;
+        let atlas_height = current_height
+            .checked_mul(rows)
+            .ok_or_else(|| "generic private particle mask atlas height overflow".to_string())?;
+        let expected_width = mip_dimension(PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_WIDTH, mip_level);
+        let expected_height = mip_dimension(PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_HEIGHT, mip_level);
+        if atlas_width as u32 != expected_width || atlas_height as u32 != expected_height {
+            return Err(format!(
+                "generic private particle mask atlas mip {} is {}x{}, expected Vulkan image mip {}x{}",
+                mip_level, atlas_width, atlas_height, expected_width, expected_height
+            ));
+        }
+        let mut atlas = vec![0_u8; atlas_width * atlas_height];
+        for (layer_index, layer) in layer_images.iter().enumerate() {
+            let column = layer_index % columns;
+            let row = layer_index / columns;
+            for y in 0..current_height {
+                let src_start = y * current_width;
+                let dst_start = (row * current_height + y) * atlas_width + column * current_width;
+                atlas[dst_start..dst_start + current_width]
+                    .copy_from_slice(&layer[src_start..src_start + current_width]);
+            }
+        }
+        let offset = pixels.len() as vk::DeviceSize;
+        pixels.extend_from_slice(&atlas);
+        copy_regions.push(mask_texture_copy_region(
+            offset,
+            mip_level as u32,
+            1,
+            atlas_width as u32,
+            atlas_height as u32,
+        ));
+        if mip_level + 1 < mip_levels {
+            layer_images = layer_images
+                .iter()
+                .map(|layer| downsample_r8_2x(layer, current_width, current_height))
+                .collect::<Result<Vec<_>, _>>()?;
+            current_width = (current_width / 2).max(1);
+            current_height = (current_height / 2).max(1);
+        }
+    }
+
+    Ok(MaskTextureUpload {
+        pixels,
+        copy_regions,
+        width: PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_WIDTH,
+        height: PRIVATE_PARTICLE_MASK_TEXTURE_IMAGE_HEIGHT,
+        layers: 1,
+        mip_levels: PRIVATE_PARTICLE_MASK_TEXTURE_MIP_LEVELS,
+        view_type: vk::ImageViewType::TYPE_2D,
+    })
+}
+
+fn base_mask_layers(payload: &PrivateParticleMaskTexturePayload) -> Result<Vec<Vec<u8>>, String> {
+    let layer_bytes = payload.width as usize * payload.height as usize;
+    if layer_bytes == 0 {
+        return Err("generic private particle mask texture has an empty layer".to_string());
+    }
+    let layers = payload.layers as usize;
+    if payload.pixels.len() != layer_bytes * layers {
+        return Err(format!(
+            "generic private particle mask texture has {} bytes, expected {}",
+            payload.pixels.len(),
+            layer_bytes * layers
+        ));
+    }
+    Ok(payload
+        .pixels
+        .chunks_exact(layer_bytes)
+        .map(|chunk| chunk.to_vec())
+        .collect())
+}
+
+fn downsample_r8_2x(source: &[u8], width: usize, height: usize) -> Result<Vec<u8>, String> {
+    if source.len() != width * height {
+        return Err(format!(
+            "generic private particle mask mip source has {} bytes, expected {}x{}",
+            source.len(),
+            width,
+            height
+        ));
+    }
+    let next_width = (width / 2).max(1);
+    let next_height = (height / 2).max(1);
+    let mut output = vec![0_u8; next_width * next_height];
+    for y in 0..next_height {
+        for x in 0..next_width {
+            let src_x = x * 2;
+            let src_y = y * 2;
+            let mut sum = 0_u32;
+            let mut count = 0_u32;
+            for dy in 0..2 {
+                let sample_y = src_y + dy;
+                if sample_y >= height {
+                    continue;
+                }
+                for dx in 0..2 {
+                    let sample_x = src_x + dx;
+                    if sample_x >= width {
+                        continue;
+                    }
+                    sum += source[sample_y * width + sample_x] as u32;
+                    count += 1;
+                }
+            }
+            output[y * next_width + x] = ((sum + count / 2) / count) as u8;
+        }
+    }
+    Ok(output)
+}
+
+fn mask_texture_copy_region(
+    offset: vk::DeviceSize,
+    mip_level: u32,
+    layer_count: u32,
+    width: u32,
+    height: u32,
+) -> vk::BufferImageCopy {
+    vk::BufferImageCopy::default()
+        .buffer_offset(offset)
+        .buffer_row_length(0)
+        .buffer_image_height(0)
+        .image_subresource(vk::ImageSubresourceLayers {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            mip_level,
+            base_array_layer: 0,
+            layer_count,
+        })
+        .image_offset(vk::Offset3D::default())
+        .image_extent(vk::Extent3D {
+            width,
+            height,
+            depth: 1,
+        })
+}
+
+fn mask_texture_upload_capacity(width: usize, height: usize, layers: usize) -> usize {
+    let mut capacity = 0_usize;
+    let mut current_width = width;
+    let mut current_height = height;
+    for _ in 0..PRIVATE_PARTICLE_MASK_TEXTURE_MIP_LEVELS {
+        capacity = capacity.saturating_add(
+            current_width
+                .saturating_mul(current_height)
+                .saturating_mul(layers),
+        );
+        current_width = (current_width / 2).max(1);
+        current_height = (current_height / 2).max(1);
+    }
+    capacity
+}
+
+fn mip_dimension(base: u32, mip_level: usize) -> u32 {
+    (base >> mip_level).max(1)
+}
+
+fn private_particle_mask_texture_uses_atlas() -> bool {
+    matches!(PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE, 3 | 4)
+}
+
 unsafe fn upload_mask_texture_image(
     device: &ash::Device,
     queue: vk::Queue,
     command_pool: vk::CommandPool,
     staging_buffer: vk::Buffer,
     image: vk::Image,
-    width: u32,
-    height: u32,
     layers: u32,
+    mip_levels: u32,
+    copy_regions: &[vk::BufferImageCopy],
 ) -> Result<(), String> {
     let command_buffers = device
         .allocate_command_buffers(
@@ -4026,7 +4414,7 @@ unsafe fn upload_mask_texture_image(
 
     let to_transfer = [vk::ImageMemoryBarrier::default()
         .image(image)
-        .subresource_range(mask_texture_subresource_range(layers))
+        .subresource_range(mask_texture_subresource_range(layers, mip_levels))
         .old_layout(vk::ImageLayout::UNDEFINED)
         .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
         .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -4042,32 +4430,16 @@ unsafe fn upload_mask_texture_image(
         &[],
         &to_transfer,
     );
-    let copy_regions = [vk::BufferImageCopy::default()
-        .buffer_offset(0)
-        .buffer_row_length(0)
-        .buffer_image_height(0)
-        .image_subresource(vk::ImageSubresourceLayers {
-            aspect_mask: vk::ImageAspectFlags::COLOR,
-            mip_level: 0,
-            base_array_layer: 0,
-            layer_count: layers,
-        })
-        .image_offset(vk::Offset3D::default())
-        .image_extent(vk::Extent3D {
-            width,
-            height,
-            depth: 1,
-        })];
     device.cmd_copy_buffer_to_image(
         command_buffer,
         staging_buffer,
         image,
         vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-        &copy_regions,
+        copy_regions,
     );
     let to_fragment = [vk::ImageMemoryBarrier::default()
         .image(image)
-        .subresource_range(mask_texture_subresource_range(layers))
+        .subresource_range(mask_texture_subresource_range(layers, mip_levels))
         .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
         .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
         .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
@@ -4107,11 +4479,11 @@ unsafe fn upload_mask_texture_image(
     Ok(())
 }
 
-fn mask_texture_subresource_range(layers: u32) -> vk::ImageSubresourceRange {
+fn mask_texture_subresource_range(layers: u32, mip_levels: u32) -> vk::ImageSubresourceRange {
     vk::ImageSubresourceRange {
         aspect_mask: vk::ImageAspectFlags::COLOR,
         base_mip_level: 0,
-        level_count: 1,
+        level_count: mip_levels,
         base_array_layer: 0,
         layer_count: layers,
     }

@@ -360,7 +360,8 @@ The generic private particle slot is public substrate only: Rusty Quest owns
 build-time discovery, placeholder behavior, static payload staging, the
 four-vec4 billboard row ABI, sampled R8 texture-array mask upload/sampling,
 resident GPU index-remap sorting, parameterized transparency/coverage controls,
-generic tracer budget/draw-capacity plumbing, generic draw/compute
+generic tracer budget/draw-capacity plumbing, generic anchor/echo row
+budget plumbing, generic draw/compute
 orchestration, captured world-anchor center/scale and forward-axis state, a
 24-word host-visible diagnostic storage buffer at descriptor binding `9`, and
 public slot markers. The private-particle compute push keeps the 128-byte ABI:
@@ -370,14 +371,16 @@ need startup/recenter-stable orientation. The diagnostic buffer is generic: priv
 compute shaders may write compact integer counters or fixed-point reductions,
 while Rusty Quest only clears it, reads it after the frame-slot fence, and emits
 `privateParticleDiagnostic*` markers, including optional tracer active,
-spawned, discarded, saturation, active-edge, and pass-health fields when the
-private shader writes them. Public markers distinguish main particle count, tracer budget, merged
-draw count, and compact diagnostic status so downstream shaders can append
-effect-owned tracer rows without introducing CPU-expanded particle lists or
-full particle-buffer readback.
+spawned, discarded, anchor/echo active/spawned/discarded, saturation,
+active-edge, and pass-health fields when the private shader writes them. Public
+markers distinguish main particle count, tracer budget, anchor/echo budget,
+merged draw count, and compact diagnostic status so downstream shaders can
+append effect-owned tracer or anchor/echo rows without introducing CPU-expanded
+particle lists or full particle-buffer readback.
 Main particles keep two generic state rows for phase-like ping-pong use;
 tracer slots allocate four state rows so downstream shaders can preserve a
-frozen billboard snapshot separately from age/fade updates.
+frozen billboard snapshot separately from age/fade updates. Anchor/echo slots
+also allocate four state rows for downstream effect-owned lifetime bookkeeping.
 The slot owns only generic runtime-polled scalar adoption for
 `debug.rustyquest.native_renderer.private_particles.*`: world-anchor scale,
 visual scale, tracer draw slots/lifetime/cadence, transparency

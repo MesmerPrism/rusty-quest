@@ -11,7 +11,10 @@
   "status": "public-substrate",
   "description": "R8_UNORM mask texture adapter for downstream private particle payloads.",
   "provides": [
-    "particles.private.mask.r8_texture"
+    "particles.private.mask.r8_texture",
+    "particles.private.mask.r8_texture_array",
+    "particles.private.mask.r8_texture_atlas",
+    "particles.private.mask.generated_mips"
   ],
   "depends_on": [
     "particles.private.payload_slot"
@@ -40,6 +43,10 @@
   "markers": {
     "required": [
       "privateParticleMaskTextureFormat=R8_UNORM",
+      "privateParticleMaskTextureViewType=",
+      "privateParticleMaskTextureMipMode=",
+      "privateParticleMaskTextureMipLevels=",
+      "privateParticleMaskTextureShaderSpecialization=compile-time-mask-mode",
       "privateParticleMaskTextureGpuResident=true"
     ],
     "forbidden": []

@@ -6,7 +6,35 @@ layout(location = 2) in vec4 v_render_params;
 layout(location = 3) in vec4 v_color_params;
 layout(location = 0) out vec4 out_color;
 
+#ifndef PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE
+#define PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE 0
+#endif
+
+#ifndef PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS
+#define PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS 1
+#endif
+
+#ifndef PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_COLUMNS
+#define PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_COLUMNS 1
+#endif
+
+#ifndef PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_ROWS
+#define PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_ROWS 1
+#endif
+
+#define PRIVATE_PARTICLE_MASK_MODE_PROCEDURAL 0
+#define PRIVATE_PARTICLE_MASK_MODE_ARRAY_NEAREST 1
+#define PRIVATE_PARTICLE_MASK_MODE_ARRAY_BLEND 2
+#define PRIVATE_PARTICLE_MASK_MODE_ATLAS_NEAREST 3
+#define PRIVATE_PARTICLE_MASK_MODE_ATLAS_BLEND 4
+
+#if PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_ARRAY_NEAREST \
+    || PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_ARRAY_BLEND
 layout(set = 0, binding = 6) uniform sampler2DArray u_mask_array;
+#elif PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_ATLAS_NEAREST \
+    || PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_ATLAS_BLEND
+layout(set = 0, binding = 6) uniform sampler2D u_mask_atlas;
+#endif
 
 layout(push_constant) uniform PrivateParticlePush {
     vec4 params0;
@@ -23,6 +51,7 @@ layout(push_constant) uniform PrivateParticlePush {
 #define PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF 0.001
 #endif
 
+#if PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_PROCEDURAL
 const float TAU = 6.28318530717958647692;
 const float AKD_RING_EDGE_WIDTH = 0.015;
 const float AKD_RING_OUTER_FEATHER = 0.06;
@@ -105,7 +134,10 @@ float procedural_morphed_ring_alpha(vec2 uv, float frame01) {
         d);
     return max(core, feather);
 }
+#endif
 
+#if PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_ARRAY_NEAREST \
+    || PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_ARRAY_BLEND
 float texture_array_alpha_nearest(vec2 uv, float frame01) {
     int layers = max(textureSize(u_mask_array, 0).z, 1);
     float frame = clamp(frame01, 0.0, 0.99902344) * float(layers - 1);
@@ -123,17 +155,58 @@ float texture_array_alpha_blend(vec2 uv, float frame01) {
     float alpha1 = texture(u_mask_array, vec3(uv, layer1)).r;
     return mix(alpha0, alpha1, mix01);
 }
+#endif
+
+#if PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_ATLAS_NEAREST \
+    || PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_ATLAS_BLEND
+vec2 texture_atlas_uv(vec2 uv, float layer) {
+    int layers = max(PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS, 1);
+    int columns = max(PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_COLUMNS, 1);
+    int rows = max(PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_ROWS, 1);
+    int layer_index = clamp(int(layer), 0, layers - 1);
+    int column = layer_index % columns;
+    int row = min(layer_index / columns, rows - 1);
+    vec2 atlas_size = vec2(textureSize(u_mask_atlas, 0));
+    vec2 cell_count = vec2(float(columns), float(rows));
+    vec2 texel_guard = (vec2(0.5) / atlas_size) * cell_count;
+    vec2 local_uv = clamp(uv, texel_guard, vec2(1.0) - texel_guard);
+    return (vec2(float(column), float(row)) + local_uv) / cell_count;
+}
+
+float texture_atlas_alpha_nearest(vec2 uv, float frame01) {
+    int layers = max(PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS, 1);
+    float frame = clamp(frame01, 0.0, 0.99902344) * float(layers - 1);
+    float layer = floor(frame + 0.5);
+    return texture(u_mask_atlas, texture_atlas_uv(uv, layer)).r;
+}
+
+float texture_atlas_alpha_blend(vec2 uv, float frame01) {
+    int layers = max(PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS, 1);
+    float frame = clamp(frame01, 0.0, 0.99902344) * float(layers - 1);
+    float layer0 = floor(frame);
+    float layer1 = min(layer0 + 1.0, float(layers - 1));
+    float mix01 = frame - layer0;
+    float alpha0 = texture(u_mask_atlas, texture_atlas_uv(uv, layer0)).r;
+    float alpha1 = texture(u_mask_atlas, texture_atlas_uv(uv, layer1)).r;
+    return mix(alpha0, alpha1, mix01);
+}
+#endif
 
 void main() {
     float frame01 = clamp(v_render_params.y, 0.0, 0.99902344);
     uint packed_mode = uint(pc.params0.z + 0.5);
-    int mask_mode = int(packed_mode % 10u);
     uint mask_discard_mode = (packed_mode / 1000000u) % 10u;
-    float mask = mask_mode == 1
-        ? texture_array_alpha_nearest(v_mask_uv, frame01)
-        : (mask_mode == 2
-            ? texture_array_alpha_blend(v_mask_uv, frame01)
-            : procedural_morphed_ring_alpha(v_mask_uv, frame01));
+#if PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_ARRAY_NEAREST
+    float mask = texture_array_alpha_nearest(v_mask_uv, frame01);
+#elif PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_ARRAY_BLEND
+    float mask = texture_array_alpha_blend(v_mask_uv, frame01);
+#elif PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_ATLAS_NEAREST
+    float mask = texture_atlas_alpha_nearest(v_mask_uv, frame01);
+#elif PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE == PRIVATE_PARTICLE_MASK_MODE_ATLAS_BLEND
+    float mask = texture_atlas_alpha_blend(v_mask_uv, frame01);
+#else
+    float mask = procedural_morphed_ring_alpha(v_mask_uv, frame01);
+#endif
     bool visible_mask_pixel = mask >= PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF;
     if (!visible_mask_pixel && mask_discard_mode == 0u) {
         discard;
