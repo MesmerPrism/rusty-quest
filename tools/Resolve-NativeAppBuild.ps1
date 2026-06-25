@@ -759,6 +759,41 @@ function Add-AppPrivateParticlePayloadBuildEnv {
     Add-BuildEnvValue -EnvByName $EnvByName -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_KIND" -Value ([string]$payload.particle_kind) -Source $source
     Add-BuildEnvValue -EnvByName $EnvByName -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MARKER_PREFIX" -Value ([string]$payload.marker_prefix) -Source $source
     Add-BuildEnvValue -EnvByName $EnvByName -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MARKER_FIELDS" -Value ([string]$payload.marker_fields) -Source $source
+
+    if ($null -ne $payload.PSObject.Properties["mask_texture"]) {
+        $mask = $payload.mask_texture
+        $maskPath = if ($null -ne $mask.PSObject.Properties["path"] -and -not [string]::IsNullOrWhiteSpace([string]$mask.path)) {
+            Resolve-AppPayloadPath -AppSpecPath $AppSpecPath -Path ([string]$mask.path) -Label "$payloadId mask_texture.path"
+        } else {
+            Join-Path $dataDir "private_particle_mask_texture.r8.bin"
+        }
+        if (-not (Test-Path -LiteralPath $maskPath -PathType Leaf)) {
+            throw "App payload $payloadId mask texture does not exist: $maskPath"
+        }
+
+        foreach ($field in @("width", "height", "layers")) {
+            if ($null -eq $mask.PSObject.Properties[$field] -or [string]::IsNullOrWhiteSpace([string]$mask.$field)) {
+                throw "App payload $payloadId mask_texture is missing required $field"
+            }
+        }
+
+        Add-BuildEnvValue -EnvByName $EnvByName -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_R8" -Value $maskPath -Source $source
+        Add-BuildEnvValue -EnvByName $EnvByName -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_WIDTH" -Value ([string]$mask.width) -Source $source
+        Add-BuildEnvValue -EnvByName $EnvByName -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_HEIGHT" -Value ([string]$mask.height) -Source $source
+        Add-BuildEnvValue -EnvByName $EnvByName -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS" -Value ([string]$mask.layers) -Source $source
+
+        foreach ($optional in @(
+            @{ field = "mode"; name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_MODE" },
+            @{ field = "mip_mode"; name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_MIP_MODE" },
+            @{ field = "discard_mode"; name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_DISCARD_MODE" },
+            @{ field = "alpha_cutoff"; name = "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF" }
+        )) {
+            $field = [string]$optional.field
+            if ($null -ne $mask.PSObject.Properties[$field] -and -not [string]::IsNullOrWhiteSpace([string]$mask.$field)) {
+                Add-BuildEnvValue -EnvByName $EnvByName -Name ([string]$optional.name) -Value ([string]$mask.$field) -Source $source
+            }
+        }
+    }
 }
 
 function Add-AppPrivateKuramotoPayloadBuildEnv {

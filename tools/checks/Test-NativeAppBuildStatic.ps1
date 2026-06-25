@@ -106,6 +106,8 @@ foreach ($requiredResolverNeedle in @(
     "pregrant-declared-permissions-before-first-launch",
     "same-process-jni-live-queue",
     "app-private-revision-sidecar",
+    "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MASK_TEXTURE_R8",
+    "mask_texture is missing required",
     "app_spec_sha256",
     "feature_descriptors",
     "PROJECT_MEDIA",
