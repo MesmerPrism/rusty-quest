@@ -34,6 +34,24 @@ The currently documented public routes are:
 These routes are public AGPL examples. Private downstream effects can attach
 later through the public extension-slot boundary, but Colorama, distortion, and
 other private visual layers are not part of this package.
+
+## Kuramoto Spatial SDK Panel Lane
+
+`apps/kuramoto-spatial-sdk-android` is a separate Meta Spatial SDK experiment
+lane for the private Rusty Kuramoto Mesh workflow. It packages a Compose-backed
+Spatial SDK 2D panel under
+`io.github.mesmerprism.rustyquest.kuramoto_spatial` so participant setup,
+surface selection, block timing, and questionnaire capture can be tested with
+Spatial SDK panel placement, sizing, and scaling controls. It does not replace
+`apps/native-renderer-android`, does not carry high-rate hand mesh or particle
+payloads through Java/Kotlin JSON, and currently treats hands as not expected.
+
+The lane records low-rate session, Polar placeholder, ECG placeholder, block,
+and questionnaire JSONL files in app-private storage. Questionnaire rows remain
+joinable by participant, session, block, condition/profile, and surface target.
+The implementation and validation plan is tracked in
+`docs/SPATIAL_SDK_PORT_IMPLEMENTATION_PLAN.md`.
+
 The native renderer also exposes a generic private particle payload slot for
 downstream GPU-resident particle proofs. The public side owns only generic
 build-time env-var discovery, a no-payload placeholder, static position/normal

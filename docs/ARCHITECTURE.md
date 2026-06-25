@@ -20,6 +20,9 @@ apps.
 - profile-owned fullscreen stereo video input settings, stream metadata, and
   validation guards for app-private video projected through the native
   OpenXR/Vulkan path.
+- narrow Meta Spatial SDK Android experiment lanes when they are Quest platform
+  adapters for panel placement, sizing, launch, and headset validation rather
+  than Morphospace geometry, rendering, or session authority.
 
 ## Non-Ownership
 
@@ -33,6 +36,9 @@ apps.
 - high-rate frame payload transport through Rusty Quest core contracts.
 - Matter SDF truth, Optics projection semantics, or private downstream layer
   implementation payloads for native renderer extension slots.
+- Kuramoto oscillator kernels, private movement-coherence tuning, live
+  hand-mesh dynamics, or private study semantics beyond the low-rate panel
+  adapter records needed for headset validation.
 
 ADB writes are generated operations from validated profiles. They are not
 hand-authored settings authority.
@@ -49,6 +55,32 @@ private layer ABI slots, and per-stage timing evidence.
 The crate does not link Android, OpenXR, Vulkan, Makepad, Matter, Optics, or
 Lattice runtime crates. Runtime adapters must consume the public plan and
 report scorecard evidence instead of becoming hidden authority.
+
+## Kuramoto Spatial SDK Android Package
+
+`apps/kuramoto-spatial-sdk-android` owns the first separate Meta Spatial SDK
+package lane for the private Kuramoto experiment workflow:
+
+```text
+io.github.mesmerprism.rustyquest.kuramoto_spatial/.KuramotoSpatialActivity
+```
+
+This package is a Quest platform adapter for Spatial SDK panel behavior. It
+uses `AppSystemActivity`, `VRFeature`, and `ComposeFeature` to register and
+spawn one Compose-backed 2D panel, then exposes low-rate controls for
+participant setup, Polar/ECG placeholder logging, surface target selection,
+block timing, and questionnaire submission. The panel placement controls are
+there to test Spatial SDK position, scale, and resolution options on headset;
+they are not a renderer contract and are not the native Quest XR path.
+
+The lane deliberately stays outside `apps/native-renderer-android`. It does
+not link the Rust native renderer, does not request camera or hand-tracking
+features, and does not move hand mesh frames, particle arrays, field buffers,
+or replay sequences through Java/Kotlin JSON. Questionnaire output remains a
+low-rate app-private JSONL artifact keyed by `participant_id`, `session_id`,
+`block_index`, `block_number`, `condition_id`, `profile_id`, and
+`surface_target_id` so private Kuramoto analysis can join it back to study
+state without making Rusty Quest the oscillator authority.
 
 ## Native Renderer Android Package
 

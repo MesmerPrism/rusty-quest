@@ -12,6 +12,24 @@ headset or ADB server. The native renderer profiles are the public validation
 matrix for the main native Quest XR stack: they select custom Camera2/HWB
 projection, native Meta passthrough, or a solid black projection background
 without changing APK identity or hiding route state in ad hoc launch scripts.
+The Kuramoto Spatial SDK panel lane adds a separate static/build/headset gate
+for `apps/kuramoto-spatial-sdk-android`:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-KuramotoSpatialSdkAndroid.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-KuramotoSpatialSdkAndroid.ps1 -Build
+```
+
+The static gate checks the Spatial SDK package identity, `AppSystemActivity`
+activity, `VRFeature`/`ComposeFeature` registration, panel shape/resolution
+settings, app-private experiment record schemas, joinable questionnaire fields,
+and the high-rate payload ban. The build gate writes
+`target\kuramoto-spatial-sdk-android\rusty-quest-kuramoto-spatial-sdk.apk` plus
+`rusty.quest.kuramoto_spatial_sdk_android.build_manifest.v1`. Live validation
+must install and launch that APK with serial-scoped ADB, then confirm the
+participant setup, surface selection, block start/completion, automatic
+questionnaire, submit path, and `RUSTY_QUEST_KURAMOTO_SPATIAL` log markers.
+Hands are not expected in this first lane.
 The current raw-camera quality hardening backlog is tracked in
 `docs/NATIVE_CAMERA_QUALITY_ITERATION_PLAN.md`; this document lists the
 validation commands and profile fixtures that prove each landed slice.
