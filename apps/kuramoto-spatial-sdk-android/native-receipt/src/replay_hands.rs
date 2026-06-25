@@ -31,6 +31,9 @@ const KURAMOTO_STUDY_MOVEMENT_COUPLING: f32 = 0.0;
 const KURAMOTO_STUDY_FREQUENCY_SPREAD_HZ: f32 = 0.62;
 const KURAMOTO_STUDY_NOISE_AMPLITUDE_METERS: f32 = 0.004;
 const KURAMOTO_STUDY_NOISE_SPEED_HZ: f32 = 0.50;
+const HAND_MESH_COMPONENT_POLICY: &str =
+    "keep_two_largest_components_drop_wrist_bridge_boundaries_v1";
+const HAND_MESH_KEPT_COMPONENT_RANK_COUNT: u32 = 2;
 
 pub(crate) struct ReplayHandsRenderer {
     descriptor_pool: vk::DescriptorPool,
@@ -77,6 +80,8 @@ struct ReplayHandsStats {
     total_resident_vertices: u32,
     vertex_buffer_bytes: u64,
     source_mode: &'static str,
+    left_mesh_components: MeshComponentSummary,
+    right_mesh_components: MeshComponentSummary,
 }
 
 impl ReplayHandsStats {
@@ -93,7 +98,8 @@ impl ReplayHandsStats {
 
     fn stats_marker_fields(&self) -> String {
         format!(
-            "handAnchorParticlePath=resident-recorded-rig-gpu-skinned-mesh-coordinate-anchor-billboards handAnchorParticleCoordinateSpace=spatial-sdk-panel-plane-perspective-projection privateKuramotoPayloadNextStep=link-private-kuramoto-compute-payload studyProfileDynamicsSlice=lche-movement-normal-noise-rgb-driver liveMeshSkinningPolicy=native-compact-frame-gated-full-weight-skinning liveMeshTriangleRetryPolicy=bounded-alternate-triangle-sampling liveMeshTriangleValidationAttempts=6 gpuReplayHandSource={} gpuReplayHandSourceKind={} gpuReplayHandSourceMode={} gpuReplayRightHandDistinct={} gpuReplayHandSetReady=true compactJointSkinningKernel=true compactJointPoseUploadPerFrame=true jointMatrixUploadPerFrame=false replayTargetProjectionSpace=spatial-sdk-panel-plane-perspective-projection replayVirtualIpdMeters={:.3} replayVirtualHeadYMeters={:.2} replayVirtualHeadZMeters={:.2} panelProjectionTargetDistanceMeters={:.2} kuramotoFrequencySpreadHz={:.2} kuramotoNoiseAmplitudeMeters={:.3} kuramotoNoiseSpeedHz={:.2} leftReplayHandFrameCount={} rightReplayHandFrameCount={} leftReplayHandVerticesPerFrame={} rightReplayHandVerticesPerFrame={} leftReplayHandTrianglesPerFrame={} rightReplayHandTrianglesPerFrame={} leftHandAnchorParticlesPerFrame={} rightHandAnchorParticlesPerFrame={} replayHandResidentVertexCount={} replayHandVertexBufferBytes={}",
+            "handAnchorParticlePath=resident-recorded-rig-gpu-skinned-mesh-coordinate-anchor-billboards handAnchorParticleCoordinateSpace=spatial-sdk-panel-plane-perspective-projection privateKuramotoPayloadNextStep=link-private-kuramoto-compute-payload studyProfileDynamicsSlice=lche-movement-normal-noise-rgb-driver liveMeshSkinningPolicy=native-compact-frame-gated-full-weight-skinning liveMeshSurfacePolicy={} liveMeshComponentRank0=hand-inside liveMeshComponentRank1=hand-back liveMeshComponentRank2=wrist-cap liveMeshWristCapPolicy=drop-component-rank-2 liveMeshNormalFallbackPolicy=skinned-bind-normal-for-small-triangle-area liveMeshTriangleRetryPolicy=bounded-alternate-triangle-sampling liveMeshTriangleValidationAttempts=6 gpuReplayHandSource={} gpuReplayHandSourceKind={} gpuReplayHandSourceMode={} gpuReplayRightHandDistinct={} gpuReplayHandSetReady=true compactJointSkinningKernel=true compactJointPoseUploadPerFrame=true jointMatrixUploadPerFrame=false replayTargetProjectionSpace=spatial-sdk-panel-plane-perspective-projection replayVirtualIpdMeters={:.3} replayVirtualHeadYMeters={:.2} replayVirtualHeadZMeters={:.2} panelProjectionTargetDistanceMeters={:.2} kuramotoFrequencySpreadHz={:.2} kuramotoNoiseAmplitudeMeters={:.3} kuramotoNoiseSpeedHz={:.2} leftReplayHandFrameCount={} rightReplayHandFrameCount={} leftReplayHandVerticesPerFrame={} rightReplayHandVerticesPerFrame={} leftReplayHandTrianglesPerFrame={} rightReplayHandTrianglesPerFrame={} leftHandAnchorParticlesPerFrame={} rightHandAnchorParticlesPerFrame={} replayHandResidentVertexCount={} replayHandVertexBufferBytes={} {} {}",
+            marker_token(HAND_MESH_COMPONENT_POLICY),
             marker_token(&self.source_id),
             marker_token(&self.source_kind),
             self.source_mode,
@@ -115,6 +121,62 @@ impl ReplayHandsStats {
             self.right_particles_per_frame,
             self.total_resident_vertices,
             self.vertex_buffer_bytes,
+            self.left_mesh_components.marker_fields("left"),
+            self.right_mesh_components.marker_fields("right"),
+        )
+    }
+
+    fn component_marker_fields(&self) -> String {
+        format!(
+            "liveMeshSurfacePolicy={} liveMeshWristCapPolicy=drop-component-rank-2 liveMeshComponentRank0=hand-inside liveMeshComponentRank1=hand-back liveMeshComponentRank2=wrist-cap {} {}",
+            marker_token(HAND_MESH_COMPONENT_POLICY),
+            self.left_mesh_components.marker_fields("left"),
+            self.right_mesh_components.marker_fields("right"),
+        )
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct MeshComponentSummary {
+    component_count: usize,
+    vertex_counts: Vec<usize>,
+    triangle_counts: Vec<usize>,
+    source_triangle_count: usize,
+    sampling_triangle_count: usize,
+    dropped_triangle_count: usize,
+    component_filter_active: bool,
+}
+
+impl MeshComponentSummary {
+    fn public_shape(triangle_count: usize) -> Self {
+        Self {
+            source_triangle_count: triangle_count,
+            sampling_triangle_count: triangle_count,
+            ..Default::default()
+        }
+    }
+
+    fn marker_fields(&self, prefix: &str) -> String {
+        format!(
+            "{}HandMeshComponentFilterActive={} {}HandMeshComponentPolicy={} {}HandMeshSourceComponentCount={} {}HandMeshComponentVertexCounts={} {}HandMeshComponentTriangleCounts={} {}HandMeshKeptComponentRanks=0;1 {}HandMeshDroppedComponentRanks=2 {}HandMeshSourceTriangleCount={} {}HandMeshSamplingTriangleCount={} {}HandMeshDroppedTriangleCount={}",
+            prefix,
+            bool_token(self.component_filter_active),
+            prefix,
+            marker_token(HAND_MESH_COMPONENT_POLICY),
+            prefix,
+            self.component_count,
+            prefix,
+            join_usize(&self.vertex_counts),
+            prefix,
+            join_usize(&self.triangle_counts),
+            prefix,
+            prefix,
+            prefix,
+            self.source_triangle_count,
+            prefix,
+            self.sampling_triangle_count,
+            prefix,
+            self.dropped_triangle_count,
         )
     }
 }
@@ -143,6 +205,7 @@ struct ReplayHandVertex {
 #[derive(Clone, Copy, Debug, Default)]
 struct ReplayHandSkinningVertex {
     bind_position: [f32; 4],
+    bind_normal: [f32; 4],
     joint_indices: [u32; 4],
     joint_weights: [f32; 4],
 }
@@ -351,6 +414,29 @@ impl ReplayHandsRenderer {
         android_log_info(
             "RQKuramotoSpatialNative",
             &format!(
+                "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=native-surface-particle-layer status=native-kuramoto-study-hand-mesh-components renderPolicy=native-vulkan-wsi-surface-panel {}",
+                stats.component_marker_fields(),
+            ),
+        );
+        android_log_info(
+            "RQKuramotoSpatialNative",
+            &format!(
+                "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=native-surface-particle-layer status=native-kuramoto-study-left-hand-mesh-components renderPolicy=native-vulkan-wsi-surface-panel liveMeshSurfacePolicy={} liveMeshWristCapPolicy=drop-component-rank-2 {}",
+                marker_token(HAND_MESH_COMPONENT_POLICY),
+                stats.left_mesh_components.marker_fields("left"),
+            ),
+        );
+        android_log_info(
+            "RQKuramotoSpatialNative",
+            &format!(
+                "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=native-surface-particle-layer status=native-kuramoto-study-right-hand-mesh-components renderPolicy=native-vulkan-wsi-surface-panel liveMeshSurfacePolicy={} liveMeshWristCapPolicy=drop-component-rank-2 {}",
+                marker_token(HAND_MESH_COMPONENT_POLICY),
+                stats.right_mesh_components.marker_fields("right"),
+            ),
+        );
+        android_log_info(
+            "RQKuramotoSpatialNative",
+            &format!(
                 "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=native-surface-particle-layer status=live-hand-joint-particle-source-ready renderPolicy=native-vulkan-wsi-surface-panel {} {} liveHandJointBufferRows={} liveHandJointBufferBytes={}",
                 openxr_handles.marker_fields(),
                 live_hands.status().marker_fields(),
@@ -466,6 +552,7 @@ impl ReplayHandsRenderer {
         driver1_value01: f32,
         point_scale: f32,
         live_hand_depth_offset_meters: f32,
+        diagnostic_mode: u32,
     ) {
         device.cmd_bind_pipeline(
             command_buffer,
@@ -555,7 +642,7 @@ impl ReplayHandsRenderer {
                 live_adjust: [
                     live_hand_depth_offset_meters.clamp(-1.5, 1.5),
                     0.25,
-                    0.0,
+                    diagnostic_mode.min(4) as f32,
                     0.0,
                 ],
             };
@@ -671,6 +758,8 @@ impl ReplayHandGpuData {
             total_resident_vertices,
             vertex_buffer_bytes: vertices.len() as u64 * mem::size_of::<ReplayHandVertex>() as u64,
             source_mode: source.source_mode,
+            left_mesh_components: source.left.mesh_components.clone(),
+            right_mesh_components: source.right.mesh_components.clone(),
         };
         Ok(Self {
             vertices,
@@ -773,6 +862,7 @@ struct ReplayHand {
     triangles: Vec<[u32; 3]>,
     frames: Vec<ReplayHandFrame>,
     skinning: Option<ReplayHandSkinningData>,
+    mesh_components: MeshComponentSummary,
 }
 
 struct ReplayHandFrame {
@@ -843,11 +933,22 @@ fn parse_validation_mesh_hand(
     let handedness = text_field(&rig, "handedness")
         .or_else(|| text_field(value, "handedness"))
         .unwrap_or_else(|| fallback_handedness.to_string());
-    let triangles = parse_triangles(
+    let source_triangles = parse_triangles(
         rig.get("triangle_indices")
             .ok_or_else(|| "forced replay rig missing triangle_indices".to_string())?,
     )?;
-    let skinning = parse_skinning_data(&rig, &triangles).ok();
+    let bind_vertex_count = rig
+        .get("bind_vertices")
+        .and_then(serde_json::Value::as_array)
+        .map(Vec::len)
+        .ok_or_else(|| "recorded hand rig missing bind_vertices".to_string())?;
+    let (ranked_triangles, mesh_components) =
+        component_filtered_triangles(bind_vertex_count, &source_triangles)?;
+    let triangles = ranked_triangles
+        .iter()
+        .map(|[a, b, c, _]| [*a, *b, *c])
+        .collect::<Vec<_>>();
+    let skinning = parse_skinning_data(&rig, &ranked_triangles).ok();
     let lines = value
         .get("validation_mesh_jsonl")
         .and_then(serde_json::Value::as_array)
@@ -870,6 +971,7 @@ fn parse_validation_mesh_hand(
         triangles,
         frames,
         skinning,
+        mesh_components,
     })
 }
 
@@ -886,11 +988,14 @@ fn parse_public_shape_hand(
         .iter()
         .map(|frame| public_shape_frame(frame, &handedness))
         .collect::<Result<Vec<_>, _>>()?;
+    let triangles = public_shape_triangles(frames.first().map_or(0, |frame| frame.vertices.len()));
+    let mesh_components = MeshComponentSummary::public_shape(triangles.len());
     Ok(ReplayHand {
         handedness,
-        triangles: public_shape_triangles(frames.first().map_or(0, |frame| frame.vertices.len())),
+        triangles,
         frames,
         skinning: None,
+        mesh_components,
     })
 }
 
@@ -943,26 +1048,27 @@ fn public_shape_triangles(vertex_count: usize) -> Vec<[u32; 3]> {
 
 fn parse_skinning_data(
     rig: &serde_json::Value,
-    triangles: &[[u32; 3]],
+    triangles: &[[u32; 4]],
 ) -> Result<ReplayHandSkinningData, String> {
     let bind_vertices = parse_bind_vertices(rig)?;
+    let bind_normals = parse_bind_normals(rig)?;
     let blend_indices = parse_blend_indices(rig)?;
     let blend_weights = parse_blend_weights(rig)?;
-    let vertices = build_skinning_vertices(&bind_vertices, &blend_indices, &blend_weights)?;
+    let vertices = build_skinning_vertices(
+        &bind_vertices,
+        &bind_normals,
+        &blend_indices,
+        &blend_weights,
+    )?;
     let bind_joint_poses = parse_bind_joint_poses(rig)?;
     let runtime_joint_set = rig
         .get("runtime_joint_set")
         .ok_or_else(|| "recorded hand rig missing runtime_joint_set".to_string())?;
     let bind_joint_source_rows =
         parse_bind_joint_source_rows(runtime_joint_set, bind_joint_poses.len())?;
-    let triangles = triangles
-        .iter()
-        .copied()
-        .map(|[a, b, c]| [a, b, c, 0])
-        .collect::<Vec<_>>();
     Ok(ReplayHandSkinningData {
         vertices,
-        triangles,
+        triangles: triangles.to_vec(),
         bind_joint_poses,
         bind_joint_source_rows,
     })
@@ -978,6 +1084,20 @@ fn parse_bind_vertices(rig: &serde_json::Value) -> Result<Vec<[f32; 4]>, String>
         .map(|value| {
             let [x, y, z] = parse_vec3(value).ok_or_else(|| "invalid bind vertex".to_string())?;
             Ok([x, y, z, 1.0])
+        })
+        .collect()
+}
+
+fn parse_bind_normals(rig: &serde_json::Value) -> Result<Vec<[f32; 4]>, String> {
+    let normals = rig
+        .get("bind_normals")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "recorded hand rig missing bind_normals".to_string())?;
+    normals
+        .iter()
+        .map(|value| {
+            let [x, y, z] = parse_vec3(value).ok_or_else(|| "invalid bind normal".to_string())?;
+            Ok([x, y, z, 0.0])
         })
         .collect()
 }
@@ -1067,22 +1187,30 @@ fn parse_blend_weights(rig: &serde_json::Value) -> Result<Vec<[f32; 4]>, String>
 
 fn build_skinning_vertices(
     bind_vertices: &[[f32; 4]],
+    bind_normals: &[[f32; 4]],
     blend_indices: &[[u32; 4]],
     blend_weights: &[[f32; 4]],
 ) -> Result<Vec<ReplayHandSkinningVertex>, String> {
-    if bind_vertices.len() != blend_indices.len() || bind_vertices.len() != blend_weights.len() {
+    if bind_vertices.len() != bind_normals.len()
+        || bind_vertices.len() != blend_indices.len()
+        || bind_vertices.len() != blend_weights.len()
+    {
         return Err("recorded hand skinning metadata must match vertex count".to_string());
     }
     Ok(bind_vertices
         .iter()
         .copied()
+        .zip(bind_normals.iter().copied())
         .zip(blend_indices.iter().copied())
         .zip(blend_weights.iter().copied())
         .map(
-            |((bind_position, joint_indices), joint_weights)| ReplayHandSkinningVertex {
-                bind_position,
-                joint_indices,
-                joint_weights,
+            |(((bind_position, bind_normal), joint_indices), joint_weights)| {
+                ReplayHandSkinningVertex {
+                    bind_position,
+                    bind_normal,
+                    joint_indices,
+                    joint_weights,
+                }
             },
         )
         .collect())
@@ -1104,6 +1232,7 @@ fn mirror_hand(left: &ReplayHand) -> ReplayHand {
             })
             .collect(),
         skinning: None,
+        mesh_components: left.mesh_components.clone(),
     }
 }
 
@@ -1137,6 +1266,161 @@ fn parse_triangles(value: &serde_json::Value) -> Result<Vec<[u32; 3]>, String> {
             ])
         })
         .collect()
+}
+
+fn component_filtered_triangles(
+    vertex_count: usize,
+    triangles: &[[u32; 3]],
+) -> Result<(Vec<[u32; 4]>, MeshComponentSummary), String> {
+    let (triangle_component_ranks, component_count, vertex_counts, triangle_counts) =
+        analyze_mesh_components(vertex_count, triangles)?;
+    let filtered = triangles
+        .iter()
+        .copied()
+        .zip(triangle_component_ranks.iter().copied())
+        .filter_map(|([a, b, c], rank)| {
+            (rank < HAND_MESH_KEPT_COMPONENT_RANK_COUNT).then_some([a, b, c, rank])
+        })
+        .collect::<Vec<_>>();
+    if filtered.is_empty() && !triangles.is_empty() {
+        return Err("component filtering removed every hand mesh triangle".to_string());
+    }
+    let summary = MeshComponentSummary {
+        component_count,
+        vertex_counts,
+        triangle_counts,
+        source_triangle_count: triangles.len(),
+        sampling_triangle_count: filtered.len(),
+        dropped_triangle_count: triangles.len().saturating_sub(filtered.len()),
+        component_filter_active: true,
+    };
+    Ok((filtered, summary))
+}
+
+fn analyze_mesh_components(
+    vertex_count: usize,
+    triangles: &[[u32; 3]],
+) -> Result<(Vec<u32>, usize, Vec<usize>, Vec<usize>), String> {
+    let mut union_find = UnionFind::new(vertex_count);
+    for triangle in triangles {
+        let [a, b, c] = triangle_vertices(*triangle, vertex_count)?;
+        union_find.union(a, b);
+        union_find.union(b, c);
+        union_find.union(c, a);
+    }
+
+    let mut root_ids = Vec::<usize>::new();
+    let mut vertex_component_ids = Vec::with_capacity(vertex_count);
+    let mut component_vertex_counts = Vec::<usize>::new();
+    for vertex_index in 0..vertex_count {
+        let root = union_find.find(vertex_index);
+        let component_id = if let Some(index) = root_ids.iter().position(|value| *value == root) {
+            index
+        } else {
+            let component_id = root_ids.len();
+            root_ids.push(root);
+            component_vertex_counts.push(0);
+            component_id
+        };
+        vertex_component_ids.push(component_id);
+        component_vertex_counts[component_id] += 1;
+    }
+
+    let mut component_triangle_counts = vec![0_usize; component_vertex_counts.len()];
+    let mut triangle_component_ids = Vec::with_capacity(triangles.len());
+    for triangle in triangles {
+        let [a, b, c] = triangle_vertices(*triangle, vertex_count)?;
+        let component_id = vertex_component_ids[a];
+        if vertex_component_ids[b] != component_id || vertex_component_ids[c] != component_id {
+            return Err("recorded hand mesh triangle spans multiple components".to_string());
+        }
+        triangle_component_ids.push(component_id);
+        component_triangle_counts[component_id] += 1;
+    }
+
+    let mut ranked_component_ids = (0..component_vertex_counts.len()).collect::<Vec<_>>();
+    ranked_component_ids.sort_by(|left, right| {
+        component_vertex_counts[*right]
+            .cmp(&component_vertex_counts[*left])
+            .then(component_triangle_counts[*right].cmp(&component_triangle_counts[*left]))
+            .then(left.cmp(right))
+    });
+    let mut component_rank_by_id = vec![0_u32; component_vertex_counts.len()];
+    for (rank, component_id) in ranked_component_ids.iter().copied().enumerate() {
+        component_rank_by_id[component_id] = rank as u32;
+    }
+    let triangle_component_ranks = triangle_component_ids
+        .iter()
+        .map(|component_id| component_rank_by_id[*component_id])
+        .collect::<Vec<_>>();
+    let vertex_counts = ranked_component_ids
+        .iter()
+        .map(|component_id| component_vertex_counts[*component_id])
+        .collect::<Vec<_>>();
+    let triangle_counts = ranked_component_ids
+        .iter()
+        .map(|component_id| component_triangle_counts[*component_id])
+        .collect::<Vec<_>>();
+    Ok((
+        triangle_component_ranks,
+        ranked_component_ids.len(),
+        vertex_counts,
+        triangle_counts,
+    ))
+}
+
+fn triangle_vertices(triangle: [u32; 3], vertex_count: usize) -> Result<[usize; 3], String> {
+    let [a, b, c] = triangle;
+    let indices = [
+        usize::try_from(a).map_err(|_| "triangle vertex index does not fit usize".to_string())?,
+        usize::try_from(b).map_err(|_| "triangle vertex index does not fit usize".to_string())?,
+        usize::try_from(c).map_err(|_| "triangle vertex index does not fit usize".to_string())?,
+    ];
+    if indices.iter().any(|index| *index >= vertex_count) {
+        return Err("triangle vertex index is outside the surface vertex range".to_string());
+    }
+    Ok(indices)
+}
+
+struct UnionFind {
+    parent: Vec<usize>,
+}
+
+impl UnionFind {
+    fn new(len: usize) -> Self {
+        Self {
+            parent: (0..len).collect(),
+        }
+    }
+
+    fn find(&mut self, value: usize) -> usize {
+        let parent = self.parent[value];
+        if parent == value {
+            return value;
+        }
+        let root = self.find(parent);
+        self.parent[value] = root;
+        root
+    }
+
+    fn union(&mut self, a: usize, b: usize) {
+        let root_a = self.find(a);
+        let root_b = self.find(b);
+        if root_a != root_b {
+            self.parent[root_b] = root_a;
+        }
+    }
+}
+
+fn join_usize(values: &[usize]) -> String {
+    if values.is_empty() {
+        return "none".to_string();
+    }
+    values
+        .iter()
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(";")
 }
 
 fn parse_vec3_rows(value: &serde_json::Value) -> Result<Vec<[f32; 3]>, String> {

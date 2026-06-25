@@ -59,6 +59,7 @@ $nativeReceiptReplayHandFragmentShader = Read-RequiredText (Join-Path $appRoot "
 $buildScript = Read-RequiredText (Join-Path $repoRootPath "tools\Build-KuramotoSpatialSdkAndroid.ps1") "build wrapper"
 $depthOffsetTool = Read-RequiredText (Join-Path $repoRootPath "tools\Set-KuramotoSpatialLiveHandDepthOffset.ps1") "live hand depth-offset hotload tool"
 $targetDistanceTool = Read-RequiredText (Join-Path $repoRootPath "tools\Set-KuramotoSpatialParticleLayerTargetDistance.ps1") "particle layer target-distance hotload tool"
+$diagnosticModeTool = Read-RequiredText (Join-Path $repoRootPath "tools\Set-KuramotoSpatialParticleDiagnosticMode.ps1") "particle diagnostic mode hotload tool"
 $liveHandSceneTransformTool = Read-RequiredText (Join-Path $repoRootPath "tools\Set-KuramotoSpatialLiveHandSceneTransform.ps1") "live hand scene-transform hotload tool"
 $readme = Read-RequiredText (Join-Path $appRoot "README.md") "app README"
 $plan = Read-RequiredText (Join-Path $repoRootPath "docs\SPATIAL_SDK_PORT_IMPLEMENTATION_PLAN.md") "implementation plan"
@@ -385,6 +386,13 @@ Assert-ContainsTokens $nativeReceiptSurfaceLayer @(
     '__system_property_get',
     'SURFACE_PARTICLE_LIVE_HAND_DEPTH_OFFSET_PROPERTY',
     'debug\.rustyquest\.kuramoto_spatial\.live_hand_depth_offset_meters',
+    'SURFACE_PARTICLE_DIAGNOSTIC_MODE_PROPERTY',
+    'debug\.rustyquest\.kuramoto_spatial\.particle_layer\.diagnostic_mode',
+    'parse_surface_particle_diagnostic_mode',
+    'surface_particle_diagnostic_mode_name',
+    'triangle-bands',
+    'projection-clamp',
+    'particleDiagnosticModeName=',
     'liveHandDepthOffsetParameterSource=runtime-hotload-android-property',
     'liveHandDepthOffsetMeters',
     'target_distance_meters',
@@ -462,7 +470,27 @@ Assert-ContainsTokens $nativeReceiptReplayHands @(
     'bind_vertices',
     'vertex_blend_indices',
     'vertex_blend_weights',
+    'bind_normals',
+    'bind_normal',
     'bind_joint_sources',
+    'HAND_MESH_COMPONENT_POLICY',
+    'keep_two_largest_components_drop_wrist_bridge_boundaries_v1',
+    'HAND_MESH_KEPT_COMPONENT_RANK_COUNT',
+    'component_filtered_triangles',
+    'analyze_mesh_components',
+    'MeshComponentSummary',
+    'component_marker_fields',
+    'native-kuramoto-study-hand-mesh-components',
+    'native-kuramoto-study-left-hand-mesh-components',
+    'native-kuramoto-study-right-hand-mesh-components',
+    'liveMeshSurfacePolicy=',
+    'liveMeshComponentRank0=hand-inside',
+    'liveMeshComponentRank1=hand-back',
+    'liveMeshComponentRank2=wrist-cap',
+    'liveMeshWristCapPolicy=drop-component-rank-2',
+    'liveMeshNormalFallbackPolicy=skinned-bind-normal-for-small-triangle-area',
+    'HandMeshSamplingTriangleCount=',
+    'HandMeshDroppedTriangleCount=',
     'native-kuramoto-study-particles-ready',
     'surfaceLayerMode=native-kuramoto-study-hand-anchor-particles',
     'forcedReplayHands=true',
@@ -586,6 +614,16 @@ Assert-ContainsTokens $nativeReceiptReplayHandVertexShader @(
     'pc\.profile',
     'pc\.liveAdjust',
     'LIVE_MESH_TRIANGLE_VALIDATION_ATTEMPTS',
+    'bindNormal',
+    'transform_joint_normal',
+    'skin_normal_at',
+    'fallbackNormal',
+    'triangle\.w >= 2u',
+    'diagnosticMode',
+    'degenerateTriangle',
+    'particle\.debug0',
+    'particle\.debug1',
+    'projectionDiagnosticVisible',
     'transform_joint\(joints\.x, vertex\.bindPosition\) \* weights\.x',
     'valid = true',
     'weighted / totalWeight',
@@ -800,6 +838,17 @@ Assert-ContainsTokens $targetDistanceTool @(
     'applied_meters'
 ) "particle layer target-distance hotload tool"
 
+Assert-ContainsTokens $diagnosticModeTool @(
+    'debug\.rustyquest\.kuramoto_spatial\.particle_layer\.diagnostic_mode',
+    'Parameter\(Mandatory = \$true\)',
+    'RUSTY_QUEST_SERIAL',
+    'shell setprop \$propertyName \$value',
+    'shell getprop \$propertyName',
+    'rusty\.quest\.kuramoto_spatial_particle_diagnostic_mode_set\.v1',
+    'requested_mode',
+    'applied_mode'
+) "particle diagnostic mode hotload tool"
+
 Assert-ContainsTokens $readme @(
     'separate Meta Spatial SDK lane',
     'does not replace the native renderer APK',
@@ -840,6 +889,8 @@ Assert-ContainsTokens $readme @(
     'liveMeshTriangleValidationAttempts=6',
     'liveHandJointStatusY=pose-valid',
     'liveHandSkinningValidityPolicy=native-compact-frame-gate-trust-all-weights',
+    'particleDiagnosticModeProperty=debug\.rustyquest\.kuramoto_spatial\.particle_layer\.diagnostic_mode',
+    'Set-KuramotoSpatialParticleDiagnosticMode\.ps1',
     'debug\.rustyquest\.kuramoto_spatial\.live_hand_depth_offset_meters',
     'Set-KuramotoSpatialLiveHandDepthOffset\.ps1',
     'debug\.rustyquest\.kuramoto_spatial\.particle_layer\.target_distance_meters',

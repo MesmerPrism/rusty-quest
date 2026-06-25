@@ -24,6 +24,7 @@ static SURFACE_PARTICLE_DRIVER0_BITS: AtomicU32 = AtomicU32::new(1.0_f32.to_bits
 static SURFACE_PARTICLE_DRIVER1_BITS: AtomicU32 = AtomicU32::new(0.0_f32.to_bits());
 static SURFACE_PARTICLE_POINT_SCALE_BITS: AtomicU32 = AtomicU32::new(1.0_f32.to_bits());
 static SURFACE_PARTICLE_LIVE_HAND_DEPTH_OFFSET_BITS: AtomicU32 = AtomicU32::new(0.0_f32.to_bits());
+static SURFACE_PARTICLE_DIAGNOSTIC_MODE: AtomicU32 = AtomicU32::new(0);
 static SURFACE_PARTICLE_HOTLOAD_LOG_COUNT: AtomicU32 = AtomicU32::new(0);
 static SURFACE_PARTICLE_PANEL_CENTER_X_BITS: AtomicU32 = AtomicU32::new(0.0_f32.to_bits());
 static SURFACE_PARTICLE_PANEL_CENTER_Y_BITS: AtomicU32 = AtomicU32::new(1.22_f32.to_bits());
@@ -43,6 +44,8 @@ static SURFACE_PARTICLE_PANEL_POSE_LOG_COUNT: AtomicU32 = AtomicU32::new(0);
 const SURFACE_PARTICLE_COMPUTE_LOCAL_SIZE: u32 = 64;
 const SURFACE_PARTICLE_LIVE_HAND_DEPTH_OFFSET_PROPERTY: &str =
     "debug.rustyquest.kuramoto_spatial.live_hand_depth_offset_meters";
+const SURFACE_PARTICLE_DIAGNOSTIC_MODE_PROPERTY: &str =
+    "debug.rustyquest.kuramoto_spatial.particle_layer.diagnostic_mode";
 const SURFACE_PARTICLE_PROJECTION_MARKERS: &str =
     "projectionContentMappingMode=world-to-spatial-sdk-panel-plane-left-right targetCoordinateSpace=spatial-sdk-surface-panel-eye-uv targetProjectionSpace=spatial-sdk-panel-plane-perspective-projection targetFovTangents=panel-plane-derived leftTargetSurfaceUvRect=0.0;0.0;1.0;1.0 rightTargetSurfaceUvRect=0.0;0.0;1.0;1.0 targetClipPolicy=clip-to-panel-eye-surface rendererSurfaceUvOrigin=native-vulkan-dynamic-viewport-scissor worldToPanelProjection=spatial-sdk-panel-plane-basis";
 
@@ -197,6 +200,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_K
         live_hand_depth_offset_meters: f32::from_bits(
             SURFACE_PARTICLE_LIVE_HAND_DEPTH_OFFSET_BITS.load(Ordering::Relaxed),
         ),
+        diagnostic_mode: SURFACE_PARTICLE_DIAGNOSTIC_MODE.load(Ordering::Relaxed),
     };
     SURFACE_PARTICLE_DRIVER0_BITS.store(params.driver0_value01.to_bits(), Ordering::Relaxed);
     SURFACE_PARTICLE_DRIVER1_BITS.store(params.driver1_value01.to_bits(), Ordering::Relaxed);
@@ -204,8 +208,11 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_K
     android_log_info(
         "RQKuramotoSpatialNative",
         &format!(
-            "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=native-surface-particle-layer status=parameters-updated renderPolicy=native-vulkan-wsi-surface-panel transport=jni-live-queue computeParameterBridge=true liveHandDepthOffsetParameterSource=runtime-hotload-android-property liveHandDepthOffsetProperty={} driver0Value01={:.3} driver1Value01={:.3} pointScale={:.3} liveHandDepthOffsetMeters={:.3}",
+            "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=native-surface-particle-layer status=parameters-updated renderPolicy=native-vulkan-wsi-surface-panel transport=jni-live-queue computeParameterBridge=true liveHandDepthOffsetParameterSource=runtime-hotload-android-property liveHandDepthOffsetProperty={} particleDiagnosticModeProperty={} particleDiagnosticMode={} particleDiagnosticModeName={} driver0Value01={:.3} driver1Value01={:.3} pointScale={:.3} liveHandDepthOffsetMeters={:.3}",
             SURFACE_PARTICLE_LIVE_HAND_DEPTH_OFFSET_PROPERTY,
+            SURFACE_PARTICLE_DIAGNOSTIC_MODE_PROPERTY,
+            params.diagnostic_mode,
+            surface_particle_diagnostic_mode_name(params.diagnostic_mode),
             params.driver0_value01,
             params.driver1_value01,
             params.point_scale,
@@ -350,6 +357,7 @@ pub(crate) struct SurfaceParticleParameters {
     pub(crate) driver1_value01: f32,
     pub(crate) point_scale: f32,
     pub(crate) live_hand_depth_offset_meters: f32,
+    pub(crate) diagnostic_mode: u32,
 }
 
 fn current_surface_particle_parameters() -> SurfaceParticleParameters {
@@ -361,10 +369,12 @@ fn current_surface_particle_parameters() -> SurfaceParticleParameters {
         live_hand_depth_offset_meters: f32::from_bits(
             SURFACE_PARTICLE_LIVE_HAND_DEPTH_OFFSET_BITS.load(Ordering::Relaxed),
         ),
+        diagnostic_mode: SURFACE_PARTICLE_DIAGNOSTIC_MODE.load(Ordering::Relaxed),
     }
 }
 
 fn poll_surface_particle_hotload_properties() {
+    poll_surface_particle_diagnostic_mode_property();
     let Some(raw_value) = android_system_property(SURFACE_PARTICLE_LIVE_HAND_DEPTH_OFFSET_PROPERTY)
     else {
         return;
@@ -390,6 +400,52 @@ fn poll_surface_particle_hotload_properties() {
                 ),
             );
         }
+    }
+}
+
+fn poll_surface_particle_diagnostic_mode_property() {
+    let Some(raw_value) = android_system_property(SURFACE_PARTICLE_DIAGNOSTIC_MODE_PROPERTY) else {
+        return;
+    };
+    let Some(mode) = parse_surface_particle_diagnostic_mode(&raw_value) else {
+        return;
+    };
+    let old = SURFACE_PARTICLE_DIAGNOSTIC_MODE.swap(mode, Ordering::Relaxed);
+    if old != mode {
+        let log_count = SURFACE_PARTICLE_HOTLOAD_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
+        if log_count < 8 {
+            android_log_info(
+                "RQKuramotoSpatialNative",
+                &format!(
+                    "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=native-surface-particle-layer status=hotload-parameters-updated renderPolicy=native-vulkan-wsi-surface-panel transport=android-system-property particleDiagnosticModeProperty={} particleDiagnosticMode={} particleDiagnosticModeName={}",
+                    SURFACE_PARTICLE_DIAGNOSTIC_MODE_PROPERTY,
+                    mode,
+                    surface_particle_diagnostic_mode_name(mode),
+                ),
+            );
+        }
+    }
+}
+
+fn parse_surface_particle_diagnostic_mode(value: &str) -> Option<u32> {
+    let normalized = value.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "0" | "normal" | "off" => Some(0),
+        "1" | "triangle-bands" | "triangles" | "topology" => Some(1),
+        "2" | "projection-clamp" | "projection" | "clip" => Some(2),
+        "3" | "no-dynamics" | "bright" => Some(3),
+        "4" | "degenerate" | "triangle-reject" => Some(4),
+        _ => normalized.parse::<u32>().ok().map(|mode| mode.min(4)),
+    }
+}
+
+fn surface_particle_diagnostic_mode_name(mode: u32) -> &'static str {
+    match mode {
+        1 => "triangle-bands",
+        2 => "projection-clamp",
+        3 => "no-dynamics-bright",
+        4 => "degenerate-triangle-accept",
+        _ => "normal",
     }
 }
 
@@ -674,11 +730,14 @@ unsafe fn render_surface_particles(
     let stereo_layout = surface_particle_stereo_layout(extent);
     let initial_params = current_surface_particle_parameters();
     android_log_info(
-            "RQKuramotoSpatialNative",
-            &format!(
-            "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=native-surface-particle-layer status=render-loop-ready renderPolicy=native-vulkan-wsi-surface-panel native-surface-compute-stereo-proof=true sideBySideStereoProof=true stereoDebugMarkers=false computeParticleStateBuffer=true computeShaderDispatchReady=true liveHandDepthOffsetParameterSource=runtime-hotload-android-property liveHandDepthOffsetProperty={} liveHandDepthOffsetMeters={:.3} particleStorageBufferBytes={} particleCount={} extent={}x{} stereoMode={} perEyeExtent={}x{} packedExtent={}x{} {} {} swapchainImages={}",
+        "RQKuramotoSpatialNative",
+        &format!(
+            "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=native-surface-particle-layer status=render-loop-ready renderPolicy=native-vulkan-wsi-surface-panel native-surface-compute-stereo-proof=true sideBySideStereoProof=true stereoDebugMarkers=false computeParticleStateBuffer=true computeShaderDispatchReady=true liveHandDepthOffsetParameterSource=runtime-hotload-android-property liveHandDepthOffsetProperty={} liveHandDepthOffsetMeters={:.3} particleDiagnosticModeProperty={} particleDiagnosticMode={} particleDiagnosticModeName={} particleStorageBufferBytes={} particleCount={} extent={}x{} stereoMode={} perEyeExtent={}x{} packedExtent={}x{} {} {} swapchainImages={}",
             SURFACE_PARTICLE_LIVE_HAND_DEPTH_OFFSET_PROPERTY,
             initial_params.live_hand_depth_offset_meters,
+            SURFACE_PARTICLE_DIAGNOSTIC_MODE_PROPERTY,
+            initial_params.diagnostic_mode,
+            surface_particle_diagnostic_mode_name(initial_params.diagnostic_mode),
             particle_buffer_size,
             particle_count,
             extent.width,
@@ -1395,6 +1454,7 @@ unsafe fn record_command_buffer(
             params.driver1_value01,
             params.point_scale,
             params.live_hand_depth_offset_meters,
+            params.diagnostic_mode,
         );
     }
     device.cmd_end_render_pass(command_buffer);

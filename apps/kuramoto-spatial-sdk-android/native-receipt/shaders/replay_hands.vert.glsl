@@ -13,6 +13,7 @@ struct LiveHandJoint {
 
 struct SkinningVertex {
   vec4 bindPosition;
+  vec4 bindNormal;
   uvec4 jointIndices;
   vec4 jointWeights;
 };
@@ -30,6 +31,8 @@ struct SurfaceParticle {
   vec3 driver;
   float radius;
   float anchorPhase;
+  float debug0;
+  float debug1;
   bool valid;
 };
 
@@ -338,6 +341,13 @@ vec3 transform_joint(uint bindJointIndex, vec4 p) {
   return transform_point(currentPose, inverse_transform_point(bindPose, p.xyz));
 }
 
+vec3 transform_joint_normal(uint bindJointIndex, vec3 normal) {
+  GpuPose bindPose = bindJointPoses.poses[pc.handIndex * BIND_JOINT_COUNT_PER_HAND + bindJointIndex];
+  GpuPose currentPose = current_bind_joint_pose(bindJointIndex);
+  vec3 localNormal = rotate_by_quat(inverse_quat(bindPose.rotationXyzw), normal);
+  return rotate_by_quat(currentPose.rotationXyzw, localNormal);
+}
+
 vec3 skin_vertex_at(uint localVertexIndex, out bool valid) {
   SkinningVertex vertex = skinningVertices.vertices[pc.draw.x + localVertexIndex];
   vec4 weights = vertex.jointWeights;
@@ -355,6 +365,26 @@ vec3 skin_vertex_at(uint localVertexIndex, out bool valid) {
       transform_joint(joints.w, vertex.bindPosition) * weights.w;
   valid = true;
   return weighted / totalWeight;
+}
+
+vec3 skin_normal_at(uint localVertexIndex, out bool valid) {
+  SkinningVertex vertex = skinningVertices.vertices[pc.draw.x + localVertexIndex];
+  vec4 weights = vertex.jointWeights;
+  uvec4 joints = vertex.jointIndices;
+  float totalWeight = weights.x + weights.y + weights.z + weights.w;
+  if (totalWeight <= 0.0) {
+    valid = false;
+    return safe_normalize(vertex.bindNormal.xyz, vec3(0.0, 0.0, 1.0));
+  }
+
+  vec3 weighted =
+      transform_joint_normal(joints.x, vertex.bindNormal.xyz) * weights.x +
+      transform_joint_normal(joints.y, vertex.bindNormal.xyz) * weights.y +
+      transform_joint_normal(joints.z, vertex.bindNormal.xyz) * weights.z +
+      transform_joint_normal(joints.w, vertex.bindNormal.xyz) * weights.w;
+  float lenSq = dot(weighted, weighted);
+  valid = lenSq > 0.00000001;
+  return valid ? weighted * inversesqrt(lenSq) : safe_normalize(vertex.bindNormal.xyz, vec3(0.0, 0.0, 1.0));
 }
 
 vec3 initial_phase(uint coordinate) {
@@ -415,17 +445,23 @@ SurfaceParticle default_particle(uint anchorIndex) {
   particle.driver = vec3(0.0);
   particle.radius = pc.projection.w * pc.profile.w;
   particle.anchorPhase = float(anchorIndex) / float(max(pc.draw.w - 1u, 1u));
+  particle.debug0 = 0.0;
+  particle.debug1 = 0.0;
   particle.valid = false;
   return particle;
 }
 
 SurfaceParticle live_mesh_particle(uint anchorIndex, vec3 panelForward) {
   SurfaceParticle particle = default_particle(anchorIndex);
+  uint diagnosticMode = uint(pc.liveAdjust.z + 0.5);
   uint triangleCount = max(pc.draw.z, 1u);
   uint baseTriangleIndex = (anchorIndex * 2654435761u + anchorIndex / 3u) % triangleCount;
   for (uint attempt = 0u; attempt < LIVE_MESH_TRIANGLE_VALIDATION_ATTEMPTS; attempt++) {
     uint triangleIndex = (baseTriangleIndex + attempt * 97u + attempt * attempt * 13u) % triangleCount;
     uvec4 triangle = skinningTriangles.triangles[pc.draw.y + triangleIndex];
+    if (triangle.w >= 2u) {
+      continue;
+    }
 
     bool validA = false;
     bool validB = false;
@@ -433,18 +469,38 @@ SurfaceParticle live_mesh_particle(uint anchorIndex, vec3 panelForward) {
     vec3 a = skin_vertex_at(triangle.x, validA);
     vec3 b = skin_vertex_at(triangle.y, validB);
     vec3 c = skin_vertex_at(triangle.z, validC);
+    vec3 bary = anchor_barycentric(anchorIndex + attempt * 4099u);
+
+    bool normalValidA = false;
+    bool normalValidB = false;
+    bool normalValidC = false;
+    vec3 normalA = skin_normal_at(triangle.x, normalValidA);
+    vec3 normalB = skin_normal_at(triangle.y, normalValidB);
+    vec3 normalC = skin_normal_at(triangle.z, normalValidC);
+    bool fallbackNormalValid = normalValidA || normalValidB || normalValidC;
+    vec3 fallbackNormal = fallbackNormalValid
+        ? safe_normalize(normalA * bary.x + normalB * bary.y + normalC * bary.z, panelForward)
+        : panelForward;
     vec3 normalRaw = cross(b - a, c - a);
     float normalLenSq = dot(normalRaw, normalRaw);
-    if (!validA || !validB || !validC || normalLenSq <= 0.00000001) {
+    bool degenerateTriangle = normalLenSq <= 0.00000001;
+    if (!validA || !validB || !validC) {
       continue;
     }
+    if (degenerateTriangle) {
+      normalRaw = fallbackNormal;
+      normalLenSq = max(dot(normalRaw, normalRaw), 0.00000001);
+      particle.debug1 = 1.0;
+    }
 
-    vec3 bary = anchor_barycentric(anchorIndex + attempt * 4099u);
     particle.center = a * bary.x + b * bary.y + c * bary.z;
     particle.normal = normalRaw * inversesqrt(normalLenSq);
     build_basis(particle.normal, particle.tangent, particle.bitangent);
     particle.valid = true;
-    apply_lche_dynamics(anchorIndex, particle);
+    particle.debug0 = float(triangleIndex) / float(max(triangleCount - 1u, 1u));
+    if (diagnosticMode == 0u) {
+      apply_lche_dynamics(anchorIndex, particle);
+    }
     particle.center -= panelForward * pc.liveAdjust.x;
     return particle;
   }
@@ -454,6 +510,7 @@ SurfaceParticle live_mesh_particle(uint anchorIndex, vec3 panelForward) {
 SurfaceParticle replay_surface_particle(uint anchorIndex) {
   SurfaceParticle particle = default_particle(anchorIndex);
   particle.valid = true;
+  uint diagnosticMode = uint(pc.liveAdjust.z + 0.5);
 
   uint triangleCount = max(pc.draw.z, 1u);
   uint triangleIndex = (anchorIndex * 2654435761u + anchorIndex / 3u) % triangleCount;
@@ -465,7 +522,10 @@ SurfaceParticle replay_surface_particle(uint anchorIndex) {
   particle.center = a * bary.x + b * bary.y + c * bary.z;
   particle.normal = safe_normalize(cross(b - a, c - a), vec3(0.0, 0.0, 1.0));
   build_basis(particle.normal, particle.tangent, particle.bitangent);
-  apply_lche_dynamics(anchorIndex, particle);
+  particle.debug0 = float(triangleIndex) / float(max(triangleCount - 1u, 1u));
+  if (diagnosticMode == 0u) {
+    apply_lche_dynamics(anchorIndex, particle);
+  }
   return particle;
 }
 
@@ -493,6 +553,7 @@ void main() {
   vec3 panelUp = safe_normalize(pc.panelUpHeight.xyz, vec3(0.0, 1.0, 0.0));
   vec3 panelForward = safe_normalize(cross(panelUp, panelRight), vec3(0.0, 0.0, -1.0));
   bool liveFrameReady = pc.dynamics.w > 0.5;
+  uint diagnosticMode = uint(pc.liveAdjust.z + 0.5);
   SurfaceParticle particle = liveFrameReady
       ? live_mesh_particle(anchorIndex, panelForward)
       : replay_surface_particle(anchorIndex);
@@ -510,12 +571,21 @@ void main() {
       projectionValid,
       depth,
       planeDistance);
+  vec2 unclampedCenterPanel = centerPanel;
+  bool centerInsidePanel = abs(centerPanel.x) < 1.22 && abs(centerPanel.y) < 1.22;
+  if (diagnosticMode == 2u && particle.valid) {
+    centerPanel = clamp(centerPanel, vec2(-1.18), vec2(1.18));
+  }
   float projectedRadius = particle.radius * (planeDistance / max(depth, 0.030));
+  if (diagnosticMode >= 1u) {
+    projectedRadius = clamp(projectedRadius * 1.65, 0.0045, 0.028);
+  }
   vec2 radiusPanel = vec2(
       projectedRadius / max(pc.color.w * 0.5, 0.001),
       projectedRadius / max(pc.panelUpHeight.w * 0.5, 0.001));
   vec2 panelNdc = centerPanel + quad * radiusPanel;
-  bool valid = particle.valid && projectionValid && abs(centerPanel.x) < 1.22 && abs(centerPanel.y) < 1.22;
+  bool projectionDiagnosticVisible = diagnosticMode == 2u && particle.valid;
+  bool valid = particle.valid && ((projectionValid && centerInsidePanel) || projectionDiagnosticVisible);
 
   gl_Position = valid ? vec4(panelNdc.x, -panelNdc.y, 0.0, 1.0) : vec4(4.0, 4.0, 0.0, 1.0);
 
@@ -524,6 +594,23 @@ void main() {
   float shimmer = mix(0.86, 1.14, hash01(anchorIndex + pc.handIndex * 4099u + pc.frameIndex * 17u));
   vec3 rgb = clamp((0.5 + 0.5 * particle.driver) * shimmer * mix(0.82, 1.08, facing), vec3(0.0), vec3(1.0));
   float alpha = mix(0.66, 0.94, particle.anchorPhase) * mix(0.72, 1.0, liveFrameReady ? 1.0 : 0.0);
+  if (diagnosticMode == 1u) {
+    float band = fract(particle.debug0 * 9.0);
+    rgb = clamp(vec3(band, 1.0 - abs(band - 0.5) * 1.7, 1.0 - band) * mix(0.78, 1.18, shimmer), vec3(0.0), vec3(1.0));
+    alpha = 1.0;
+  } else if (diagnosticMode == 2u) {
+    bool wasOffPanel = abs(unclampedCenterPanel.x) >= 1.22 || abs(unclampedCenterPanel.y) >= 1.22;
+    rgb = projectionValid
+        ? (wasOffPanel ? vec3(1.0, 0.55, 0.05) : vec3(0.1, 1.0, 0.35))
+        : vec3(1.0, 0.0, 0.85);
+    alpha = 1.0;
+  } else if (diagnosticMode == 3u) {
+    rgb = liveFrameReady ? vec3(0.92, 1.0, 0.25) : vec3(0.15, 0.85, 1.0);
+    alpha = 1.0;
+  } else if (diagnosticMode == 4u) {
+    rgb = particle.debug1 > 0.5 ? vec3(1.0, 0.05, 0.05) : vec3(0.25, 0.55, 1.0);
+    alpha = 1.0;
+  }
 
   outMaskUv = quad * 0.5 + vec2(0.5);
   outColor = vec4(rgb, alpha);

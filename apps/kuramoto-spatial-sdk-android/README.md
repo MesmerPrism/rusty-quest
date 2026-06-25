@@ -141,10 +141,10 @@ Native surface particle/hand layer:
   fallback showed that sign/offset tuning could fix left/right and near/far
   axes but still leave the live hands offset at an angle from the head-locked
   panel basis;
-- treats live joint `status.y` as a pose-valid bit and skips invalid secondary
-  skinning influences instead of dropping an entire mesh-surface particle when
-  one weighted joint is incomplete. If too few pose-valid joints are available
-  for a hand, that hand falls back to the resident recording mesh;
+- treats live joint `status.y` as the compact-frame pose-valid gate and keeps
+  live mesh skinning in the vertex shader. Once a hand has the native-equivalent
+  21 runtime joint rows plus 5 tip-length rows, the shader skins every weighted
+  vertex against the resident bind mesh without CPU-side skinned vertices;
 - retries up to six alternate live mesh triangles before hiding a live particle
   whose initial sampled triangle has an invalid skinned vertex or degenerate
   normal. This keeps live hand particle density closer to the fallback mesh
@@ -161,6 +161,13 @@ Native surface particle/hand layer:
   field appears too far away. The surface width/height scale with that distance
   to preserve the current panel-plane FOV footprint, and native receives the
   same `panelTargetDistanceMeters` for stereo projection;
+- polls the low-rate Android property
+  `debug.rustyquest.kuramoto_spatial.particle_layer.diagnostic_mode` every
+  frame. This is a GPU shader visualization switch, not a CPU skinning path:
+  `normal`, `triangle-bands`, `projection-clamp`, `no-dynamics`, and
+  `degenerate` isolate topology coverage, panel projection clipping, dynamics
+  visibility, and collapsed live triangles while keeping production skinning on
+  the GPU;
 - marks the current projection contract as full panel-plane mapping:
   `projectionContentMappingMode=world-to-spatial-sdk-panel-plane-left-right`,
   `targetProjectionSpace=spatial-sdk-panel-plane-perspective-projection`,
@@ -201,6 +208,8 @@ Native surface particle/hand layer:
   `liveHandDepthOffsetProperty=debug.rustyquest.kuramoto_spatial.live_hand_depth_offset_meters`,
   `particleLayerTargetDistanceParameterSource=runtime-hotload-android-property`,
   `particleLayerTargetDistanceProperty=debug.rustyquest.kuramoto_spatial.particle_layer.target_distance_meters`,
+  `particleDiagnosticModeProperty=debug.rustyquest.kuramoto_spatial.particle_layer.diagnostic_mode`,
+  `particleDiagnosticModeName`,
   `privateKuramotoPayloadActive=false`, `studyProfileDynamicsActive=true`,
   `kuramotoConditionId=lche`,
   `kuramotoStudyProfileId=kuramoto.private.native.profile.high-energy-low-coherence.movement-only.v1`,
@@ -285,6 +294,12 @@ Live particle-surface distance tuning while the APK remains active:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Set-KuramotoSpatialParticleLayerTargetDistance.ps1 -Serial $serial -Meters 0.35
+```
+
+Live GPU particle diagnostic mode while the APK remains active:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Set-KuramotoSpatialParticleDiagnosticMode.ps1 -Serial $serial -Mode triangle-bands
 ```
 
 The validation action drives the same low-rate store path as the panel:

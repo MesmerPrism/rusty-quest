@@ -789,13 +789,15 @@ Community/context, not treated as API contract:
 - 2026-06-25 live skinning robustness and diagnostic depth hotload: headset feedback
   showed the fallback recording had a full particle surface, while live hands
   could drop most particles and appeared at an approximately panel-distance
-  offset. The live joint row contract now keeps `status.x` as position-valid,
-  treats `status.y` as pose-valid, and moves the stricter position-tracked flag
-  to `status.w`; the shader skips invalid weighted influences and accepts a
-  skinned vertex when enough total rig weight is still valid instead of hiding
-  the whole particle for one incomplete secondary joint. Hands with too few
-  pose-valid joints fall back to the resident recording mesh. The live visual
-  path also polls
+  offset. The accepted live joint row contract now keeps `status.x` as
+  position-valid, treats `status.y` as the compact-frame pose-valid gate, and
+  moves the stricter position-tracked flag to `status.w`. The production live
+  particle path stays GPU-skinned like the native app: once the CPU adapter can
+  upload the native-equivalent compact frame (21 runtime joint rows plus 5
+  tip-length rows), the vertex shader skins every weighted bind-mesh vertex
+  against resident bind poses and does not substitute CPU-side skinned mesh
+  vertices. Hands with too few pose-valid joints fall back to the resident
+  recording mesh. The live visual path also polls
   `debug.rustyquest.kuramoto_spatial.live_hand_depth_offset_meters` as a
   low-rate Android-property hotload. This is now only a post-skinning
   diagnostic nudge with default `0.0m`; the raw live joint coordinate-frame
@@ -809,6 +811,11 @@ Community/context, not treated as API contract:
   `liveHandSkinningValidityPolicy=native-compact-frame-gate-trust-all-weights`,
   `liveHandDepthOffsetParameterSource=runtime-hotload-android-property`, and
   `liveHandDepthOffsetProperty=debug.rustyquest.kuramoto_spatial.live_hand_depth_offset_meters`.
+  The follow-up diagnostic slice adds only GPU shader visualization, not CPU
+  skinning: `debug.rustyquest.kuramoto_spatial.particle_layer.diagnostic_mode`
+  accepts `normal`, `triangle-bands`, `projection-clamp`, `no-dynamics`, and
+  `degenerate`, with `tools/Set-KuramotoSpatialParticleDiagnosticMode.ps1`
+  wrapping the serial-scoped `adb setprop`/`getprop` readback.
 - 2026-06-25 live skinning/depth hotload headset run: rebuilt with the full
   two-hand recorded capture at
   `S:\Work\tmp\quest-handmesh-matter-full-20260601-123844\pulled\hand-recordings\quest-handmesh-1780310333778406776`
@@ -963,8 +970,9 @@ Community/context, not treated as API contract:
 - 2026-06-25 native-equivalent live mesh coverage patch: comparison against the
   native real-time app showed that the native GPU skinning path does not filter
   weighted joints in shader. It submits a full compact frame only after the CPU
-  adapter can build 21 runtime joint poses plus 5 tip-length rows, then skins
-  every weighted vertex against the resident bind mesh. The Spatial SDK path now
+  adapter can build 21 runtime joint poses plus 5 tip-length rows, then the GPU
+  vertex shader skins every weighted vertex against the resident bind mesh. The
+  Spatial SDK path now
   mirrors that contract: per-hand live activation requires
   `liveHandCompactFrameGate=native-equivalent-21-runtime-5-tip`, markers expose
   `liveHandRuntimeJointPoseCount` and `liveHandTipLengthCount`, and the vertex
@@ -990,6 +998,129 @@ Community/context, not treated as API contract:
   view (`liveHandRuntimeJointPoseCount=0`, `liveHandTipLengthCount=0`), so this
   run proves launch/presentation and the patched policy markers, while live
   density remains a headset-operator visual check with hands visible.
+- 2026-06-25 GPU-only live coverage diagnostics: following the headset report
+  that live hands are world-aligned but still sparse while fallback replay is
+  dense, the next slice keeps the Spatial path GPU-skinned and adds
+  hotloadable shader diagnostics through
+  `debug.rustyquest.kuramoto_spatial.particle_layer.diagnostic_mode`. Use
+  `triangle-bands` first: broad color coverage means triangle sampling and GPU
+  skinning are reaching the full resident mesh; color appearing only in a few
+  areas points at bind topology, compact joint source rows, or degenerate
+  triangle collapse. `projection-clamp` clamps off-panel particles to the panel
+  border and colors projection failures, so orange/magenta bands indicate
+  projection clipping rather than missing particles. `no-dynamics` disables the
+  LCHE motion/alpha slice and makes live/fallback particles bright, isolating
+  dynamics or facing attenuation. `degenerate` accepts collapsed live triangles
+  and colors them red, which tests whether normal-area rejection is hiding most
+  live particles. These modes do not introduce CPU-skinned particles; they are
+  temporary vertex-shader visualizations over the same GPU skinning path.
+- 2026-06-25 GPU live-coverage diagnostic headset run: rebuilt with the full
+  two-hand recorded capture and installed on Quest 3S serial `3487C10H3M017Q`.
+  APK SHA-256:
+  `74E75EDD2E08793DE207BB9032927A4A65F06968D3FF4EB2C5E317CF049CBFCC`.
+  Evidence directory:
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260625-193417-gpu-live-coverage-diagnostics`.
+  Runtime properties were
+  `debug.rustyquest.kuramoto_spatial.particle_layer.target_distance_meters=0.35`,
+  `debug.rustyquest.kuramoto_spatial.live_hand_depth_offset_meters=0`, and
+  `debug.rustyquest.kuramoto_spatial.particle_layer.diagnostic_mode=triangle-bands`.
+  Markers confirmed `particleDiagnosticMode=1`,
+  `particleDiagnosticModeName=triangle-bands`, `render-loop-ready`,
+  `first-frame-presented`, process `23700`, and a resumed/focused
+  `KuramotoSpatialActivity`. The captured marker window again had no active
+  hands in view (`liveHandRuntimeJointPoseCount=0`,
+  `liveHandTipLengthCount=0`), so the run proves the GPU diagnostic launch and
+  shader-mode transport; live density interpretation remains a headset-operator
+  visual check with hands visible. The app was left foregrounded in
+  `triangle-bands` mode.
+- 2026-06-25 hands-in-view diagnostic capture: a non-disruptive 15-second
+  logcat window from the already-running app emitted no fresh native status
+  lines, so the app was cold-relaunched with the headset operator's hands in
+  view and the same runtime properties. Evidence directory:
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260625-193927-hands-in-view-diagnostics`.
+  Relaunch process `24589` reported `particleDiagnosticModeName=triangle-bands`,
+  `render-loop-ready`, `first-frame-presented`, and then
+  `status=live-hand-joints-frame-ready` with
+  `liveHandRuntimeJointPoseCount=42` and `liveHandTipLengthCount=10`, plus zero
+  fatal/`AndroidRuntime` markers in the captured window. This proves both hands
+  were present in the native-equivalent compact live frame while the GPU
+  diagnostic shader mode was active. The remaining sparse-live-particle issue
+  is therefore not explained by missing live joint rows or missing tip-length
+  rows; next diagnostics should inspect the GPU-skinned triangle coverage,
+  collapsed/degenerate triangles, projection clipping, or dynamics/facing
+  visibility using the shader modes.
+- 2026-06-25 native real-hands diff after headset feedback: the visible wrist
+  particles were the critical clue. The native real-hands path computes
+  connected-component ranks for the recorded hand topology, reports rank 0 as
+  `hand-inside`, rank 1 as `hand-back`, and rank 2 as `wrist-cap`, while the
+  private Kuramoto sample surface uses
+  `keep_two_largest_components_drop_wrist_bridge_boundaries_v1`. Spatial was
+  still uploading every rig triangle as `[a,b,c,0]`, so the shader could not
+  distinguish the wrist cap from the two hand surfaces. The Spatial receipt now
+  mirrors the native union-find component ranking, filters particle source
+  triangles to ranks 0 and 1 for both forced replay fallback and live GPU
+  skinning, preserves the rank in the `uvec4` triangle rows, and also skips
+  rank 2 in the vertex shader as a defensive guard. Runtime markers include
+  `liveMeshSurfacePolicy=keep_two_largest_components_drop_wrist_bridge_boundaries_v1`,
+  `liveMeshWristCapPolicy=drop-component-rank-2`, and per-hand source/sampling
+  triangle counts; the expected full capture counts are 2314 source triangles,
+  2296 sampling triangles, and 18 dropped wrist-cap triangles per hand.
+- 2026-06-25 wrist-component filter headset validation: rebuilt with the full
+  two-hand recorded capture at
+  `S:\Work\tmp\quest-handmesh-matter-full-20260601-123844\pulled\hand-recordings\quest-handmesh-1780310333778406776`
+  and `RecordedHandFrameLimit=24`, installed on Quest 3S serial
+  `3487C10H3M017Q`, and left foregrounded in `triangle-bands` diagnostic mode
+  with target distance `0.35m` and live hand depth offset `0.0m`. Evidence
+  directory:
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260625-200242-wrist-filter-per-hand-marker-launch`.
+  App-private markers reported `render-loop-ready`, `first-frame-presented`,
+  and split per-hand component receipts. Both hands reported
+  `HandMeshComponentTriangleCounts=1220;1076;18`,
+  `HandMeshSourceTriangleCount=2314`, `HandMeshSamplingTriangleCount=2296`,
+  and `HandMeshDroppedTriangleCount=18`, with kept ranks `0;1` and dropped rank
+  `2`. This confirms the Spatial live-skinning triangle table now uses the same
+  wrist-cap exclusion policy as the native real-hands study path.
+- 2026-06-25 hands-visible shader diagnostic sweep: headset feedback after the
+  wrist-cap fix still showed sparse live-hand particles, but the wrist surface
+  was gone. A live hotload sweep changed
+  `debug.rustyquest.kuramoto_spatial.particle_layer.diagnostic_mode` through
+  `projection-clamp`, `degenerate`, and `no-dynamics` while the same APK stayed
+  foregrounded. Evidence directory:
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260625-200718-live-hands-diagnostic-sweep`.
+  Operator observation: green/projection-clamp and yellow/no-dynamics remained
+  patchy, while red/degenerate showed the full hands. A follow-up cold relaunch
+  in `degenerate` mode produced evidence at
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260625-200855-hands-visible-degenerate-relaunch`
+  with `particleDiagnosticModeName=degenerate-triangle-accept` and a live
+  compact frame (`liveHandRuntimeJointPoseCount=21`,
+  `liveHandTipLengthCount=5`). Interpretation: the live source table and wrist
+  filter are now present, projection and dynamics are not the primary cause of
+  sparsity, and the next defect is likely GPU-skinned triangle collapse or a
+  bind/runtime joint mapping mismatch that makes many live triangle normals
+  near-zero before the normal path rejects them.
+- 2026-06-25 live normal fallback patch: headset observation during the
+  diagnostic sweep showed that red/degenerate mode tracked the entire live hand
+  mesh well. This means the live GPU-skinned positions were usable, but the
+  Spatial shader was incorrectly treating small triangle-area normals as a hard
+  particle-visibility failure. The native hand-anchor fallback path keeps
+  particles visible even when the triangle normal cannot be reconstructed, and
+  the private Kuramoto path carries explicit normal data. The Spatial receipt
+  now includes `bind_normals` in the resident skinning vertex buffer, skins
+  those normals with the same weighted joint poses, and uses a
+  `liveMeshNormalFallbackPolicy=skinned-bind-normal-for-small-triangle-area`
+  fallback whenever a live triangle cross product is too small. Normal mode
+  should therefore keep the full coverage proven by red mode while preserving a
+  surface-normal direction for the current LCHE movement slice.
+- 2026-06-25 live normal fallback headset launch: rebuilt with the full
+  two-hand recorded capture and launched on Quest 3S serial `3487C10H3M017Q`
+  in `normal` diagnostic mode. Evidence directory:
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260625-201601-live-normal-bind-normal-fallback-launch`.
+  Runtime markers reported
+  `liveMeshNormalFallbackPolicy=skinned-bind-normal-for-small-triangle-area`,
+  `particleDiagnosticModeName=normal`, `render-loop-ready`,
+  `first-frame-presented`, and a live compact frame with
+  `liveHandRuntimeJointPoseCount=21` and `liveHandTipLengthCount=5`. Process
+  `29602` was foregrounded for headset-operator inspection.
 - 2026-06-25 live hand raw-to-scene transform headset run: rebuilt with the
   full two-hand recorded capture at
   `S:\Work\tmp\quest-handmesh-matter-full-20260601-123844\pulled\hand-recordings\quest-handmesh-1780310333778406776`
@@ -1122,6 +1253,12 @@ Live particle-surface distance tuning while the APK remains foregrounded:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Set-KuramotoSpatialParticleLayerTargetDistance.ps1 -Serial $serial -Meters 0.35
+```
+
+Live GPU particle diagnostic mode while the APK remains foregrounded:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Set-KuramotoSpatialParticleDiagnosticMode.ps1 -Serial $serial -Mode triangle-bands
 ```
 
 Evidence directory:
