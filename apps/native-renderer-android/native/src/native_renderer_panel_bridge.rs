@@ -10,18 +10,51 @@ const ACTION_TOGGLE_PANEL: &str =
 const PROP_CONTROL_PANEL_OPEN_TOKEN: &str =
     "debug.rustyquest.native_renderer.control_panel.open_token";
 #[cfg(target_os = "android")]
+const PROP_CONTROL_PANEL_MODE: &str = "debug.rustyquest.native_renderer.control_panel.mode";
+#[cfg(target_os = "android")]
+const EXTRA_KURAMOTO_EXPERIMENT_STARTUP_RESET: &str = "kuramoto_experiment_startup_reset";
+#[cfg(target_os = "android")]
 const PANEL_COMMAND_POLL_INTERVAL_FRAMES: u64 = 30;
 
 #[cfg(target_os = "android")]
 #[derive(Debug, Default)]
 pub(crate) struct ControlPanelCommandPoller {
     last_open_token: String,
+    startup_open_sent: bool,
 }
 
 #[cfg(target_os = "android")]
 impl ControlPanelCommandPoller {
     pub(crate) fn poll_and_apply(&mut self, app: &android_activity::AndroidApp, frame_count: u64) {
         if frame_count % PANEL_COMMAND_POLL_INTERVAL_FRAMES != 0 {
+            return;
+        }
+        if !self.startup_open_sent && control_panel_mode_is_kuramoto_experiment() {
+            self.startup_open_sent = true;
+            crate::marker(
+                "stimulus-panel",
+                format!(
+                    "event=control-panel-startup-open status=intent-dispatching frame={} panelActivity=ControlPanelActivity action=open source=xr-startup-kuramoto-experiment",
+                    frame_count
+                ),
+            );
+            match open_control_panel_impl_with_startup_reset(app) {
+                Ok(()) => crate::marker(
+                    "stimulus-panel",
+                    format!(
+                        "event=control-panel-startup-open status=intent-returned frame={} panelActivity=ControlPanelActivity action=open source=xr-startup-kuramoto-experiment",
+                        frame_count
+                    ),
+                ),
+                Err(error) => crate::marker(
+                    "stimulus-panel",
+                    format!(
+                        "event=control-panel-startup-open status=intent-error frame={} source=xr-startup-kuramoto-experiment reason={}",
+                        frame_count,
+                        crate::sanitize(&error)
+                    ),
+                ),
+            }
             return;
         }
         let mut property = android_properties::getprop(PROP_CONTROL_PANEL_OPEN_TOKEN);
@@ -76,19 +109,68 @@ pub(crate) fn toggle_control_panel(app: &android_activity::AndroidApp, frame_cou
 }
 
 #[cfg(target_os = "android")]
+pub(crate) fn open_control_panel(
+    app: &android_activity::AndroidApp,
+    frame_count: u64,
+    source: &str,
+) {
+    match open_control_panel_impl(app) {
+        Ok(()) => crate::marker(
+            "stimulus-panel",
+            format!(
+                "event=control-panel-open status=intent-sent frame={} panelActivity=ControlPanelActivity action=open source={}",
+                frame_count,
+                crate::sanitize(source)
+            ),
+        ),
+        Err(error) => crate::marker(
+            "stimulus-panel",
+            format!(
+                "event=control-panel-open status=intent-error frame={} source={} reason={}",
+                frame_count,
+                crate::sanitize(source),
+                crate::sanitize(&error)
+            ),
+        ),
+    }
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn right_primary_opens_control_panel() -> bool {
+    control_panel_mode_is_kuramoto_experiment()
+}
+
+#[cfg(target_os = "android")]
+fn control_panel_mode_is_kuramoto_experiment() -> bool {
+    let mut property = android_properties::getprop(PROP_CONTROL_PANEL_MODE);
+    property
+        .value()
+        .map(|value| value.trim() == "kuramoto-experiment")
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "android")]
 fn toggle_control_panel_impl(app: &android_activity::AndroidApp) -> Result<(), String> {
-    send_control_panel_intent(app, ACTION_TOGGLE_PANEL)
+    send_control_panel_intent(app, ACTION_TOGGLE_PANEL, false)
 }
 
 #[cfg(target_os = "android")]
 fn open_control_panel_impl(app: &android_activity::AndroidApp) -> Result<(), String> {
-    send_control_panel_intent(app, ACTION_OPEN_PANEL)
+    send_control_panel_intent(app, ACTION_OPEN_PANEL, false)
+}
+
+#[cfg(target_os = "android")]
+fn open_control_panel_impl_with_startup_reset(
+    app: &android_activity::AndroidApp,
+) -> Result<(), String> {
+    send_control_panel_intent(app, ACTION_OPEN_PANEL, true)
 }
 
 #[cfg(target_os = "android")]
 fn send_control_panel_intent(
     app: &android_activity::AndroidApp,
     action_name: &str,
+    kuramoto_experiment_startup_reset: bool,
 ) -> Result<(), String> {
     use jni::{
         jni_sig, jni_str,
@@ -151,6 +233,18 @@ fn send_control_panel_intent(
                 FLAG_ACTIVITY_REORDER_TO_FRONT | FLAG_ACTIVITY_SINGLE_TOP,
             )],
         )?;
+        if kuramoto_experiment_startup_reset {
+            let extra_name = env.new_string(EXTRA_KURAMOTO_EXPERIMENT_STARTUP_RESET)?;
+            env.call_method(
+                &intent,
+                jni_str!("putExtra"),
+                jni_sig!("(Ljava/lang/String;Z)Landroid/content/Intent;"),
+                &[
+                    JValue::Object(&JObject::from(extra_name)),
+                    JValue::Bool(true),
+                ],
+            )?;
+        }
         env.call_method(
             &activity,
             jni_str!("startActivity"),

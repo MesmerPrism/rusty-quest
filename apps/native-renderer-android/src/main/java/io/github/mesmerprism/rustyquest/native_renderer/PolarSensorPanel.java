@@ -95,6 +95,7 @@ final class PolarSensorPanel {
 
     interface Host {
         void closePanelAndReturnToImmersive();
+        void onPolarStreamEvent(JSONObject event);
     }
 
     private final Activity activity;
@@ -325,6 +326,35 @@ final class PolarSensorPanel {
         }
         setStatus("Unknown Polar CLI command: " + rawCommand);
         marker("status=cli-command-ignored command=" + markerToken(rawCommand));
+    }
+
+    boolean isEcgReceiving() {
+        synchronized (countersLock) {
+            return pmdRunning && "ecg".equals(activePmdMode) && ecgFrames > 0L && ecgSamples > 0L;
+        }
+    }
+
+    String ecgExperimentStatusLine(boolean experimentReady) {
+        long frameCount;
+        long sampleCount;
+        boolean running;
+        String mode;
+        synchronized (countersLock) {
+            frameCount = ecgFrames;
+            sampleCount = ecgSamples;
+            running = pmdRunning;
+            mode = activePmdMode;
+        }
+        if (!experimentReady) {
+            return "ECG logging: participant file not created yet.";
+        }
+        if (running && "ecg".equals(mode) && frameCount > 0L && sampleCount > 0L) {
+            return "ECG logging: active, " + frameCount + " frames / " + sampleCount + " samples mirrored to participant files.";
+        }
+        if (running && "ecg".equals(mode)) {
+            return "ECG logging: ECG stream active, waiting for decoded samples.";
+        }
+        return "ECG logging: not active. Select ECG 130 Hz and start PMD after connecting.";
     }
 
     private void startScan() {
@@ -1205,6 +1235,10 @@ final class PolarSensorPanel {
         }
         synchronized (countersLock) {
             streamEventsWritten += 1L;
+        }
+        try {
+            host.onPolarStreamEvent(event);
+        } catch (RuntimeException ignored) {
         }
     }
 

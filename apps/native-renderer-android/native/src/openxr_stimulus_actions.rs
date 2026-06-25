@@ -188,8 +188,11 @@ impl StimulusVolumeActions {
             )
             .map_err(|error| format!("create right breath haptic action: {error}"))?;
 
-        let stimulus_randomize_binding_enabled =
-            stimulus_settings.enabled && stimulus_settings.randomize_enabled;
+        let right_primary_control_panel_binding_enabled =
+            crate::native_renderer_panel_bridge::right_primary_opens_control_panel();
+        let stimulus_randomize_binding_enabled = (stimulus_settings.enabled
+            && stimulus_settings.randomize_enabled)
+            || right_primary_control_panel_binding_enabled;
         let projection_controls_enabled = projection_target_settings.controls_enabled;
         let primary_recenter_binding_enabled =
             projection_controls_enabled || private_particle_recenter_enabled;
@@ -352,10 +355,11 @@ impl StimulusVolumeActions {
         crate::marker(
             "stimulus-volume-input",
             format!(
-                "status=config actionSet=stimulus_volume action=right_primary_randomize randomizeEnabled={} suggestedBindingCount={} rightControllerPrimaryButtonRandomize={} inputPath=/user/hand/right/input/a/click fallbackInputPath=/user/hand/right/input/select/click rightTriggerPanelToggleAction=true rightControllerTriggerPanelToggle=true triggerInputPath=/user/hand/right/input/trigger/value selectFallbackInputPath=/user/hand/right/input/select/click actionSetAttached=false",
+                "status=config actionSet=stimulus_volume action=right_primary_randomize randomizeEnabled={} suggestedBindingCount={} rightControllerPrimaryButtonRandomize={} rightPrimaryControlPanelOpen={} inputPath=/user/hand/right/input/a/click fallbackInputPath=/user/hand/right/input/select/click rightTriggerPanelToggleAction=true rightControllerTriggerPanelToggle=true triggerInputPath=/user/hand/right/input/trigger/value selectFallbackInputPath=/user/hand/right/input/select/click actionSetAttached=false",
                 stimulus_settings.randomize_enabled,
                 suggested_binding_count,
-                stimulus_randomize_binding_enabled
+                stimulus_randomize_binding_enabled,
+                right_primary_control_panel_binding_enabled
             ),
         );
         crate::marker(
@@ -1026,7 +1030,9 @@ impl StimulusVolumeActions {
     }
 
     fn poll_primary_randomize<G>(&mut self, session: &xr::Session<G>, frame_count: u64) -> bool {
-        if !self.stimulus_settings.enabled || !self.stimulus_settings.randomize_enabled {
+        if !crate::native_renderer_panel_bridge::right_primary_opens_control_panel()
+            && (!self.stimulus_settings.enabled || !self.stimulus_settings.randomize_enabled)
+        {
             return false;
         }
         let state = match self.right_primary_randomize.state(session, xr::Path::NULL) {

@@ -2092,8 +2092,51 @@ unsafe fn run_projection_frames(
             private_particle_world_anchor.refresh_scale_from_android_properties(frame_count);
             private_particle_world_anchor
                 .capture_startup_if_needed(particle_sort_eye_projection, frame_count);
+            if let Some(recenter) =
+                crate::native_renderer_stimulus_panel::poll_kuramoto_experiment_icosphere_recenter(
+                    frame_count,
+                )
+            {
+                private_particle_world_anchor.recenter_at_headset(
+                    particle_sort_eye_projection,
+                    frame_count,
+                    "kuramoto-experiment-icosphere-block-start",
+                );
+                crate::marker(
+                    "kuramoto-experiment",
+                    format!(
+                        "status=icosphere-recenter-applied frame={} blockIndex={} blockNumber={} conditionId={} surfaceTargetId={} anchor=headset-position",
+                        frame_count,
+                        recenter.block_index,
+                        recenter.block_number,
+                        crate::sanitize(&recenter.condition_id),
+                        crate::sanitize(&recenter.surface_target_id),
+                    ),
+                );
+            }
         }
         control_panel_command_poller.poll_and_apply(app, frame_count);
+        if let Some(open) =
+            crate::native_renderer_stimulus_panel::poll_kuramoto_experiment_panel_open(frame_count)
+        {
+            crate::native_renderer_panel_bridge::open_control_panel(
+                app,
+                frame_count,
+                "kuramoto-experiment-block-complete",
+            );
+            crate::marker(
+                "kuramoto-experiment",
+                format!(
+                    "status=block-panel-open-issued frame={} blockIndex={} blockNumber={} conditionId={} surfaceTargetId={} deadlineUnixMs={}",
+                    frame_count,
+                    open.block_index,
+                    open.block_number,
+                    crate::sanitize(&open.condition_id),
+                    crate::sanitize(&open.surface_target_id),
+                    open.deadline_unix_ms,
+                ),
+            );
+        }
         if let Some(runtime) = native_passthrough.as_deref_mut() {
             runtime.update_audio_reactive_style(session, dt_seconds, frame_count);
         }
@@ -2165,7 +2208,13 @@ unsafe fn run_projection_frames(
                 );
             }
             if controller_events.stimulus_randomize_triggered {
-                if let Some(renderer) = gpu_stimulus_volume_renderer.as_deref_mut() {
+                if crate::native_renderer_panel_bridge::right_primary_opens_control_panel() {
+                    crate::native_renderer_panel_bridge::open_control_panel(
+                        app,
+                        frame_count,
+                        "right-primary-kuramoto-experiment",
+                    );
+                } else if let Some(renderer) = gpu_stimulus_volume_renderer.as_deref_mut() {
                     renderer.randomize(stimulus_volume_settings, frame_count);
                 }
             }
@@ -4983,6 +5032,15 @@ impl PrivateParticleWorldAnchor {
         self.capture(eye_projection, frame_count, "right-controller-primary");
     }
 
+    fn recenter_at_headset(
+        &mut self,
+        eye_projection: HandMeshVisualEyeProjection,
+        frame_count: u64,
+        reason: &'static str,
+    ) {
+        self.capture_at_distance(eye_projection, frame_count, reason, 0.0);
+    }
+
     fn world_center_scale(&self) -> [f32; 4] {
         self.center_scale
     }
@@ -5082,11 +5140,30 @@ impl PrivateParticleWorldAnchor {
         frame_count: u64,
         reason: &'static str,
     ) {
+        self.capture_at_distance(
+            eye_projection,
+            frame_count,
+            reason,
+            PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M,
+        );
+    }
+
+    fn capture_at_distance(
+        &mut self,
+        eye_projection: HandMeshVisualEyeProjection,
+        frame_count: u64,
+        reason: &'static str,
+        distance_m: f32,
+    ) {
         let forward_offset = rotate_by_quat(
             eye_projection.orientation_xyzw,
-            [0.0, 0.0, -PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M],
+            [0.0, 0.0, -distance_m.max(0.0)],
         );
-        let forward_axis = normalize3(forward_offset);
+        let forward_axis = if distance_m.abs() <= f32::EPSILON {
+            rotate_by_quat(eye_projection.orientation_xyzw, [0.0, 0.0, -1.0])
+        } else {
+            normalize3(forward_offset)
+        };
         self.center_scale = [
             eye_projection.position[0] + forward_offset[0],
             eye_projection.position[1] + forward_offset[1],
@@ -5107,7 +5184,7 @@ impl PrivateParticleWorldAnchor {
                 self.center_scale[3],
                 crate::sanitize(self.scale_parameter_source),
                 PRIVATE_PARTICLE_WORLD_ANCHOR_SCALE_POLL_INTERVAL_FRAMES,
-                PRIVATE_PARTICLE_WORLD_ANCHOR_DISTANCE_M,
+                distance_m.max(0.0),
                 self.forward_axis[0],
                 self.forward_axis[1],
                 self.forward_axis[2],

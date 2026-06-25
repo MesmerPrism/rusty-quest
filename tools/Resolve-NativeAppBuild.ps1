@@ -572,7 +572,6 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('            <intent-filter>')
         [void]$lines.Add('                <action android:name="android.intent.action.MAIN" />')
         [void]$lines.Add('                <category android:name="com.oculus.intent.category.2D" />')
-        [void]$lines.Add('                <category android:name="android.intent.category.LAUNCHER" />')
         [void]$lines.Add('            </intent-filter>')
         [void]$lines.Add('        </activity>')
     }
@@ -597,7 +596,6 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('                <action android:name="io.github.mesmerprism.rustyquest.native_renderer.action.OPEN_QUESTIONNAIRE_BLOCK" />')
         [void]$lines.Add('                <action android:name="io.github.mesmerprism.rustyquest.native_renderer.action.APPLY_QUESTIONNAIRE_COMMAND" />')
         [void]$lines.Add('                <category android:name="com.oculus.intent.category.2D" />')
-        [void]$lines.Add('                <category android:name="android.intent.category.LAUNCHER" />')
         [void]$lines.Add('            </intent-filter>')
         [void]$lines.Add('        </activity>')
     }

@@ -6,7 +6,7 @@ param(
     [string]$OutDir = "",
     [string]$Keystore = "",
     [string]$AppBuildLock = "",
-    [string]$RecordedHandCaptureDir = "",
+    [string]$RecordedHandCaptureDir = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR,
     [int]$RecordedHandFrameLimit = 12,
     [switch]$RequireRecordedHandCapture
 )

@@ -10,6 +10,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
@@ -17,6 +19,7 @@ import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.GridLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -60,6 +63,8 @@ public final class ControlPanelActivity extends Activity {
         "kuramoto_return_to_immersive";
     public static final String EXTRA_KURAMOTO_PANEL_COMMAND_TOKEN =
         "kuramoto_panel_command_token";
+    public static final String EXTRA_KURAMOTO_EXPERIMENT_STARTUP_RESET =
+        "kuramoto_experiment_startup_reset";
     private static final int REQUEST_DISPLAY_COMPOSITE_CAPTURE = 7401;
     private static final String CANDIDATE_FILE = "stimulus_volume_candidate.json";
     private static final String STATUS_FILE = "stimulus_volume_status.json";
@@ -424,6 +429,7 @@ public final class ControlPanelActivity extends Activity {
     private Spinner kuramotoCondition;
     private TextView kuramotoSelectionSummary;
     private PolarSensorPanel polarSensorPanel;
+    private KuramotoExperimentSession experimentSession;
     private boolean kuramotoPanelAutoApplyArmed;
     private Runnable pendingKuramotoMeshPanelApply;
     private String lastScheduledKuramotoMeshPanelApplyKey = "";
@@ -432,26 +438,59 @@ public final class ControlPanelActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         liveApplyHandler = new Handler(Looper.getMainLooper());
+        handleKuramotoExperimentStartupResetIntent(getIntent());
         setContentView(buildContentView());
         updateReadyStatusForPanelMode();
         handleDisplayCompositeIntent(getIntent());
         handleDiagnosticIntent(getIntent());
         handlePolarSensorPanelCommandIntent(getIntent());
         handleKuramotoMeshPanelCommandIntent(getIntent());
+        recordKuramotoExperimentPanelEvent(
+            "panel_activity_created",
+            "open",
+            "control_panel_on_create"
+        );
     }
 
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
+        handleKuramotoExperimentStartupResetIntent(intent);
         if (intent != null && ACTION_TOGGLE_PANEL.equals(intent.getAction())) {
-            closePanelAndReturnToImmersive();
+            recordKuramotoExperimentPanelEvent(
+                "panel_toggle_command_received",
+                "toggle_requested",
+                "action_toggle_panel"
+            );
+            if ("kuramoto-experiment".equals(readControlPanelMode())
+                    && ensureExperimentSession().isBlockRunning()) {
+                rebuildContentViewForCurrentMode();
+                recordKuramotoExperimentPanelEvent(
+                    "panel_toggle_kept_open",
+                    "open",
+                    "action_toggle_panel_block_running"
+                );
+                updateStatus("Experiment block running.");
+            } else {
+                closePanelAndReturnToImmersive();
+            }
         } else if (intent != null && ACTION_OPEN_PANEL.equals(intent.getAction())) {
+            recordKuramotoExperimentPanelEvent(
+                "panel_open_command_received",
+                "open_requested",
+                "action_open_panel"
+            );
             rebuildContentViewForCurrentMode();
             handleDisplayCompositeIntent(intent);
             handleDiagnosticIntent(intent);
             handlePolarSensorPanelCommandIntent(intent);
             handleKuramotoMeshPanelCommandIntent(intent);
+            recordKuramotoExperimentPanelEvent(
+                "panel_open_command_applied",
+                "open",
+                "action_open_panel"
+            );
         } else {
             handleDisplayCompositeIntent(intent);
             handleDiagnosticIntent(intent);
@@ -461,7 +500,7 @@ public final class ControlPanelActivity extends Activity {
     }
 
     private void rebuildContentViewForCurrentMode() {
-        if (polarSensorPanel != null) {
+        if (polarSensorPanel != null && !"kuramoto-experiment".equals(readControlPanelMode())) {
             polarSensorPanel.stop();
             polarSensorPanel = null;
         }
@@ -483,6 +522,8 @@ public final class ControlPanelActivity extends Activity {
             updateStatus("Polar sensor panel ready.");
         } else if ("kuramoto-mesh".equals(panelMode)) {
             updateStatus("Kuramoto mesh panel ready.");
+        } else if ("kuramoto-experiment".equals(panelMode)) {
+            updateStatus("Kuramoto experiment panel ready.");
         } else {
             updateStatus("Panel ready. Candidate path: " + new File(getFilesDir(), CANDIDATE_FILE));
         }
@@ -493,15 +534,52 @@ public final class ControlPanelActivity extends Activity {
         super.onResume();
         handleDisplayCompositeIntent(getIntent());
         handleDiagnosticIntent(getIntent());
+        recordKuramotoExperimentPanelEvent(
+            "panel_visible",
+            "open",
+            "control_panel_on_resume"
+        );
+    }
+
+    @Override
+    protected void onPause() {
+        recordKuramotoExperimentPanelEvent(
+            "panel_hidden",
+            "hidden",
+            "control_panel_on_pause"
+        );
+        super.onPause();
     }
 
     @Override
     protected void onDestroy() {
+        recordKuramotoExperimentPanelEvent(
+            "panel_activity_destroyed",
+            "destroyed",
+            "control_panel_on_destroy"
+        );
         if (polarSensorPanel != null) {
             polarSensorPanel.stop();
             polarSensorPanel = null;
         }
         super.onDestroy();
+    }
+
+    private void recordKuramotoExperimentPanelEvent(
+        String eventType,
+        String panelState,
+        String source
+    ) {
+        if (!"kuramoto-experiment".equals(readControlPanelMode())) {
+            return;
+        }
+        try {
+            KuramotoExperimentSession session = ensureExperimentSession();
+            if (session.hasParticipant()) {
+                session.recordPanelEvent(eventType, panelState, source);
+            }
+        } catch (Exception ignored) {
+        }
     }
 
     @Override
@@ -575,6 +653,9 @@ public final class ControlPanelActivity extends Activity {
         }
         if ("kuramoto-mesh".equals(panelMode)) {
             return buildKuramotoMeshPanelView();
+        }
+        if ("kuramoto-experiment".equals(panelMode)) {
+            return buildKuramotoExperimentView();
         }
         if ("polar-sensor".equals(panelMode)) {
             return buildPolarSensorPanelPageView(false);
@@ -949,10 +1030,19 @@ public final class ControlPanelActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setPadding(0, dp(10), 0, dp(10));
+        Button experiment = button("Experiment");
         Button kuramoto = button("Kuramoto");
         Button polar = button("Polar");
+        experiment.setEnabled(!"experiment".equals(activePage));
         kuramoto.setEnabled(!"kuramoto".equals(activePage));
         polar.setEnabled(!"polar".equals(activePage));
+        experiment.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                setContentView(buildKuramotoExperimentView());
+                updateStatus("Experiment workflow.");
+            }
+        });
         kuramoto.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
@@ -967,6 +1057,7 @@ public final class ControlPanelActivity extends Activity {
                 updateStatus("Polar sensor controls.");
             }
         });
+        row.addView(experiment, rowButtonParams());
         row.addView(kuramoto, rowButtonParams());
         row.addView(polar, rowButtonParams());
         return row;
@@ -979,9 +1070,447 @@ public final class ControlPanelActivity extends Activity {
                 public void closePanelAndReturnToImmersive() {
                     ControlPanelActivity.this.closePanelAndReturnToImmersive();
                 }
+
+                @Override
+                public void onPolarStreamEvent(JSONObject event) {
+                    ensureExperimentSession().appendPolarEvent(event);
+                }
             });
         }
         return polarSensorPanel;
+    }
+
+    private KuramotoExperimentSession ensureExperimentSession() {
+        if (experimentSession == null) {
+            experimentSession = KuramotoExperimentSession.load(this, kuramotoExperimentConditions());
+        }
+        return experimentSession;
+    }
+
+    private KuramotoExperimentSession.Condition[] kuramotoExperimentConditions() {
+        KuramotoExperimentSession.Condition[] descriptors =
+            new KuramotoExperimentSession.Condition[KURAMOTO_CONDITION_IDS.length];
+        for (int i = 0; i < KURAMOTO_CONDITION_IDS.length; i++) {
+            descriptors[i] = new KuramotoExperimentSession.Condition(
+                KURAMOTO_CONDITION_IDS[i],
+                KURAMOTO_CONDITION_LABELS[i],
+                KURAMOTO_PROFILE_IDS[i],
+                KURAMOTO_MOVEMENT_BASE_HZ[i],
+                KURAMOTO_MOVEMENT_COUPLING[i]
+            );
+        }
+        return descriptors;
+    }
+
+    private View buildKuramotoExperimentView() {
+        KuramotoExperimentSession session = ensureExperimentSession();
+        session.syncElapsedBlock();
+        if (!session.hasParticipant()) {
+            return buildKuramotoExperimentParticipantView(session);
+        }
+        if (session.isComplete()) {
+            return buildKuramotoExperimentCompleteView(session);
+        }
+        if (session.isAwaitingQuestionnaire()) {
+            return buildKuramotoExperimentQuestionnaireView(session);
+        }
+        if (session.isBlockRunning()) {
+            return buildKuramotoExperimentRunningView(session);
+        }
+        if ("ready_next_block".equals(session.stage())) {
+            return buildKuramotoExperimentReadyNextView(session);
+        }
+        return buildKuramotoExperimentPolarSetupView(session);
+    }
+
+    private LinearLayout buildKuramotoExperimentScrollRoot(String title) {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(18);
+        root.setPadding(pad, pad, pad, pad);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView titleView = text(title, 22, PANEL_FG);
+        titleView.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(titleView, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button headerClose = button("Close");
+        headerClose.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                closePanelAndReturnToImmersive();
+            }
+        });
+        header.addView(headerClose);
+        root.addView(header);
+        root.addView(buildKuramotoSuiteTabs("experiment"));
+        return root;
+    }
+
+    private View wrapKuramotoExperimentScroll(LinearLayout root) {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setBackgroundColor(PANEL_BG);
+        scroll.addView(root);
+        return scroll;
+    }
+
+    private View buildKuramotoExperimentParticipantView(final KuramotoExperimentSession session) {
+        LinearLayout root = buildKuramotoExperimentScrollRoot("Experiment Setup");
+        root.addView(text("Step 1 of 4: enter the participant ID before sensor setup.", 13, PANEL_MUTED));
+        root.addView(sectionTitle("Participant"));
+        final EditText participantId = editText("", "participant_id", false);
+        final Spinner surfaceTarget = spinner(
+            KURAMOTO_SURFACE_LABELS,
+            indexOf(KURAMOTO_SURFACE_IDS, "real-hands", 0)
+        );
+        final Button submit = button("Submit ID");
+        submit.setEnabled(false);
+        participantId.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence text, int start, int count, int after) {}
+
+            @Override
+            public void onTextChanged(CharSequence text, int start, int before, int count) {}
+
+            @Override
+            public void afterTextChanged(Editable editable) {
+                submit.setEnabled(editable.toString().trim().length() > 0);
+            }
+        });
+        submit.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                try {
+                    session.beginParticipant(participantId.getText().toString());
+                    int surfaceIndex = Math.max(
+                        0,
+                        Math.min(KURAMOTO_SURFACE_IDS.length - 1, surfaceTarget.getSelectedItemPosition())
+                    );
+                    session.setSurfaceTarget(
+                        KURAMOTO_SURFACE_IDS[surfaceIndex],
+                        KURAMOTO_SURFACE_LABELS[surfaceIndex],
+                        KURAMOTO_SURFACE_TARGETS[surfaceIndex],
+                        KURAMOTO_SURFACE_RESOURCE_PLAN_IDS[surfaceIndex],
+                        KURAMOTO_SURFACE_RUNTIME_PROFILE_PATHS[surfaceIndex]
+                    );
+                    setContentView(buildKuramotoExperimentPolarSetupView(session));
+                    updateStatus("Participant files created: " + session.sessionId());
+                } catch (Exception error) {
+                    updateStatus("Participant setup failed: " + error.getMessage());
+                }
+            }
+        });
+        root.addView(participantId);
+        root.addView(label("Experiment surface"));
+        root.addView(surfaceTarget);
+        root.addView(text("Condition order is randomized once for this participant: " + session.orderSummary(), 13, PANEL_MUTED));
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.addView(submit, rowButtonParams());
+        root.addView(row);
+        status = text("", 13, PANEL_MUTED);
+        status.setPadding(0, dp(12), 0, dp(8));
+        root.addView(status);
+        return wrapKuramotoExperimentScroll(root);
+    }
+
+    private View buildKuramotoExperimentPolarSetupView(final KuramotoExperimentSession session) {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(PANEL_BG);
+        int pad = dp(14);
+        root.setPadding(pad, pad, pad, pad);
+        LinearLayout header = buildKuramotoExperimentScrollRoot("Polar Setup");
+        header.addView(text("Participant: " + session.participantId() + " | Session: " + session.sessionId(), 13, PANEL_MUTED));
+        header.addView(text("Surface: " + session.surfaceLabel() + " | " + session.surfaceTargetId(), 13, PANEL_MUTED));
+        header.addView(text("Files: " + session.filesSummary(), 13, PANEL_MUTED));
+        final TextView ecgLine = text(ensurePolarSensorPanel().ecgExperimentStatusLine(session.hasParticipant()), 14, PANEL_FG);
+        ecgLine.setPadding(0, dp(10), 0, dp(8));
+        header.addView(ecgLine);
+        LinearLayout actionRow = new LinearLayout(this);
+        actionRow.setOrientation(LinearLayout.HORIZONTAL);
+        Button startEcg = button("Start ECG");
+        startEcg.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                ensurePolarSensorPanel().handleCommand("start_ecg");
+                ecgLine.setText(ensurePolarSensorPanel().ecgExperimentStatusLine(session.hasParticipant()));
+            }
+        });
+        Button refresh = button("Refresh");
+        refresh.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                ecgLine.setText(ensurePolarSensorPanel().ecgExperimentStatusLine(session.hasParticipant()));
+            }
+        });
+        Button participantWindow = button("Start participant window");
+        participantWindow.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                setContentView(buildKuramotoExperimentMetadataView(session));
+                updateStatus("Participant metadata window.");
+            }
+        });
+        actionRow.addView(startEcg, rowButtonParams());
+        actionRow.addView(refresh, rowButtonParams());
+        actionRow.addView(participantWindow, rowButtonParams());
+        header.addView(actionRow);
+        root.addView(header);
+        root.addView(ensurePolarSensorPanel().buildView(), new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            0,
+            1f
+        ));
+        status = text("", 13, PANEL_MUTED);
+        status.setPadding(0, dp(8), 0, dp(4));
+        root.addView(status);
+        return root;
+    }
+
+    private View buildKuramotoExperimentMetadataView(final KuramotoExperimentSession session) {
+        LinearLayout root = buildKuramotoExperimentScrollRoot("Participant Window");
+        root.addView(text("Step 3 of 4: confirm run metadata before starting timed blocks.", 13, PANEL_MUTED));
+        root.addView(sectionTitle("Metadata"));
+        final EditText runLabel = editText("", "run label", false);
+        final EditText operator = editText("", "operator id", false);
+        final EditText notes = editText("", "notes", true);
+        root.addView(label("Run label"));
+        root.addView(runLabel);
+        root.addView(label("Operator"));
+        root.addView(operator);
+        root.addView(label("Notes"));
+        root.addView(notes);
+        root.addView(text("Fixed block duration: "
+            + (KuramotoExperimentSession.DEFAULT_BLOCK_DURATION_MS / 1000L)
+            + " seconds per condition.", 13, PANEL_MUTED));
+        root.addView(text("Surface: " + session.surfaceLabel() + " | " + session.surfaceTargetId(), 13, PANEL_MUTED));
+        root.addView(text("Randomized order: " + session.orderSummary(), 13, PANEL_MUTED));
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        Button back = button("Back to Polar");
+        back.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                setContentView(buildKuramotoExperimentPolarSetupView(session));
+            }
+        });
+        Button start = button("Start experiment");
+        start.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                try {
+                    session.saveRunMetadata(
+                        runLabel.getText().toString(),
+                        operator.getText().toString(),
+                        notes.getText().toString()
+                    );
+                    startKuramotoExperimentBlock(session);
+                } catch (Exception error) {
+                    updateStatus("Experiment start failed: " + error.getMessage());
+                }
+            }
+        });
+        row.addView(back, rowButtonParams());
+        row.addView(start, rowButtonParams());
+        root.addView(row);
+        status = text("", 13, PANEL_MUTED);
+        status.setPadding(0, dp(12), 0, dp(8));
+        root.addView(status);
+        return wrapKuramotoExperimentScroll(root);
+    }
+
+    private View buildKuramotoExperimentRunningView(final KuramotoExperimentSession session) {
+        JSONObject block = session.activeBlock();
+        LinearLayout root = buildKuramotoExperimentScrollRoot("Block Running");
+        if (block != null) {
+            long remainingMs = Math.max(0L, block.optLong("deadline_unix_ms", 0L) - System.currentTimeMillis());
+            root.addView(text("Block " + block.optInt("block_number", 0)
+                + " of " + session.conditionCount()
+                + " | " + block.optString("condition_id"), 16, PANEL_FG));
+            root.addView(text("Remaining: " + (remainingMs / 1000L) + " seconds.", 13, PANEL_MUTED));
+            root.addView(text(ensurePolarSensorPanel().ecgExperimentStatusLine(session.hasParticipant()), 13, PANEL_MUTED));
+        }
+        Button close = button("Return to immersive");
+        close.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                launchImmersiveRenderer();
+            }
+        });
+        root.addView(close);
+        status = text("", 13, PANEL_MUTED);
+        status.setPadding(0, dp(12), 0, dp(8));
+        root.addView(status);
+        return wrapKuramotoExperimentScroll(root);
+    }
+
+    private View buildKuramotoExperimentReadyNextView(final KuramotoExperimentSession session) {
+        LinearLayout root = buildKuramotoExperimentScrollRoot("Next Block Ready");
+        root.addView(text("Questionnaire saved. The next randomized condition is ready to start.", 13, PANEL_MUTED));
+        Button start = button("Start next block");
+        start.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                try {
+                    startKuramotoExperimentBlock(session);
+                } catch (Exception error) {
+                    updateStatus("Next block failed: " + error.getMessage());
+                }
+            }
+        });
+        root.addView(start);
+        status = text("", 13, PANEL_MUTED);
+        status.setPadding(0, dp(12), 0, dp(8));
+        root.addView(status);
+        return wrapKuramotoExperimentScroll(root);
+    }
+
+    private View buildKuramotoExperimentQuestionnaireView(final KuramotoExperimentSession session) {
+        JSONObject block = session.activeBlock();
+        LinearLayout root = buildKuramotoExperimentScrollRoot("Block Questionnaire");
+        if (block != null) {
+            root.addView(text("Block " + block.optInt("block_number", 0)
+                + " of " + session.conditionCount()
+                + " | " + block.optString("condition_label"), 16, PANEL_FG));
+            root.addView(text("Condition: " + block.optString("condition_id")
+                + " | Profile: " + block.optString("profile_id"), 13, PANEL_MUTED));
+        }
+        root.addView(sectionTitle("Ratings"));
+        final Spinner comfort = ratingSpinner();
+        final Spinner intensity = ratingSpinner();
+        final Spinner engagement = ratingSpinner();
+        final EditText notes = editText("", "questionnaire notes", true);
+        root.addView(label("Comfort"));
+        root.addView(comfort);
+        root.addView(label("Intensity"));
+        root.addView(intensity);
+        root.addView(label("Engagement"));
+        root.addView(engagement);
+        root.addView(label("Notes"));
+        root.addView(notes);
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        Button submit = button("Submit questionnaire");
+        submit.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                try {
+                    session.submitQuestionnaire(
+                        ratingValue(comfort),
+                        ratingValue(intensity),
+                        ratingValue(engagement),
+                        notes.getText().toString()
+                    );
+                    if (session.isComplete()) {
+                        setContentView(buildKuramotoExperimentCompleteView(session));
+                        updateStatus("Experiment complete.");
+                    } else {
+                        startKuramotoExperimentBlock(session);
+                    }
+                } catch (Exception error) {
+                    updateStatus("Questionnaire submit failed: " + error.getMessage());
+                }
+            }
+        });
+        row.addView(submit, rowButtonParams());
+        root.addView(row);
+        status = text("", 13, PANEL_MUTED);
+        status.setPadding(0, dp(12), 0, dp(8));
+        root.addView(status);
+        return wrapKuramotoExperimentScroll(root);
+    }
+
+    private View buildKuramotoExperimentCompleteView(final KuramotoExperimentSession session) {
+        LinearLayout root = buildKuramotoExperimentScrollRoot("Experiment Complete");
+        root.addView(text("Participant: " + session.participantId(), 15, PANEL_FG));
+        root.addView(text("Session: " + session.sessionId(), 13, PANEL_MUTED));
+        root.addView(text("Directory: " + session.sessionDirectoryPath(), 13, PANEL_MUTED));
+        root.addView(text("Files: " + session.filesSummary(), 13, PANEL_MUTED));
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        Button newParticipant = button("New participant");
+        newParticipant.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                try {
+                    session.resetForNewParticipant();
+                    experimentSession = null;
+                    setContentView(buildKuramotoExperimentView());
+                } catch (Exception error) {
+                    updateStatus("Reset failed: " + error.getMessage());
+                }
+            }
+        });
+        Button close = button("Close");
+        close.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                closePanelAndReturnToImmersive();
+            }
+        });
+        row.addView(newParticipant, rowButtonParams());
+        row.addView(close, rowButtonParams());
+        root.addView(row);
+        status = text("", 13, PANEL_MUTED);
+        status.setPadding(0, dp(12), 0, dp(8));
+        root.addView(status);
+        return wrapKuramotoExperimentScroll(root);
+    }
+
+    private void startKuramotoExperimentBlock(KuramotoExperimentSession session) throws Exception {
+        JSONObject block = session.startNextBlock();
+        if (block == null) {
+            setContentView(buildKuramotoExperimentCompleteView(session));
+            updateStatus("Experiment complete.");
+            return;
+        }
+        String conditionId = block.optString("condition_id", "lowLow");
+        if (!submitLiveKuramotoMeshPanelSelectionForCondition(
+                conditionId,
+                session.surfaceTargetId(),
+                false
+        )) {
+            throw new IllegalStateException("condition_queue_failed");
+        }
+        if (!nativeBridgeLoaded) {
+            throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
+        }
+        String responseText = nativeStartKuramotoExperimentBlock(block.toString());
+        JSONObject response = new JSONObject(responseText);
+        if (!"queued".equals(response.optString("status", ""))) {
+            throw new IllegalStateException(responseText);
+        }
+        updateStatus("Block " + block.optInt("block_number", 0)
+            + " started: " + conditionId + ".");
+        session.recordPanelEvent(
+            "condition_foreground_requested",
+            "close_requested",
+            "start_block_to_immersive"
+        );
+        launchImmersiveRenderer();
+    }
+
+    private EditText editText(String value, String hint, boolean multiline) {
+        EditText editText = new EditText(this);
+        editText.setText(value == null ? "" : value);
+        editText.setHint(hint == null ? "" : hint);
+        editText.setSingleLine(!multiline);
+        editText.setMinLines(multiline ? 3 : 1);
+        editText.setTextColor(Color.WHITE);
+        editText.setHintTextColor(PANEL_MUTED);
+        editText.setBackgroundColor(PANEL_SURFACE);
+        editText.setPadding(dp(8), dp(6), dp(8), dp(6));
+        return editText;
+    }
+
+    private Spinner ratingSpinner() {
+        return spinner(new String[] {"1", "2", "3", "4", "5", "6", "7"}, 3);
+    }
+
+    private int ratingValue(Spinner spinner) {
+        return Math.max(1, Math.min(7, spinner.getSelectedItemPosition() + 1));
     }
 
     private void updateKuramotoSelectionSummary() {
@@ -1001,13 +1530,60 @@ public final class ControlPanelActivity extends Activity {
         );
     }
 
-    private void submitLiveKuramotoMeshPanelSelection(boolean userVisible) {
+    private boolean submitLiveKuramotoMeshPanelSelection(boolean userVisible) {
         JSONObject selection = null;
         try {
             if (!nativeBridgeLoaded) {
                 throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
             }
             selection = buildKuramotoMeshPanelSelectionJson();
+            return submitLiveKuramotoMeshPanelSelection(selection, userVisible);
+        } catch (Exception error) {
+            try {
+                writeKuramotoMeshPanelStatus("rejected_by_panel", selection, null, error.getMessage());
+            } catch (Exception ignored) {
+            }
+            kuramotoMarker("status=rejected reason=" + markerToken(error.getMessage()));
+            if (userVisible) {
+                updateStatus("Kuramoto selection failed: " + error.getMessage());
+            } else {
+                setStatusText("Kuramoto selection failed: " + error.getMessage());
+            }
+            return false;
+        }
+    }
+
+    private boolean submitLiveKuramotoMeshPanelSelectionForCondition(
+        String conditionId,
+        String surfaceTargetId,
+        boolean userVisible
+    ) {
+        JSONObject selection = null;
+        try {
+            int surfaceIndex = indexOf(KURAMOTO_SURFACE_IDS, surfaceTargetId, 0);
+            int conditionIndex = indexOf(KURAMOTO_CONDITION_IDS, conditionId, 0);
+            selection = buildKuramotoMeshPanelSelectionJson(surfaceIndex, conditionIndex);
+            return submitLiveKuramotoMeshPanelSelection(selection, userVisible);
+        } catch (Exception error) {
+            try {
+                writeKuramotoMeshPanelStatus("rejected_by_experiment", selection, null, error.getMessage());
+            } catch (Exception ignored) {
+            }
+            kuramotoMarker("status=experiment-selection-rejected reason=" + markerToken(error.getMessage()));
+            if (userVisible) {
+                updateStatus("Experiment condition failed: " + error.getMessage());
+            } else {
+                setStatusText("Experiment condition failed: " + error.getMessage());
+            }
+            return false;
+        }
+    }
+
+    private boolean submitLiveKuramotoMeshPanelSelection(JSONObject selection, boolean userVisible) {
+        try {
+            if (!nativeBridgeLoaded) {
+                throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
+            }
             JSONObject candidate = buildKuramotoMeshPanelPrivateParticleCandidate(selection);
             String responseText = nativeSubmitLivePrivateParticleDynamics(candidate.toString());
             JSONObject response = new JSONObject(responseText);
@@ -1034,6 +1610,7 @@ public final class ControlPanelActivity extends Activity {
             } else {
                 setStatusText(message);
             }
+            return true;
         } catch (Exception error) {
             try {
                 writeKuramotoMeshPanelStatus("rejected_by_panel", selection, null, error.getMessage());
@@ -1045,6 +1622,7 @@ public final class ControlPanelActivity extends Activity {
             } else {
                 setStatusText("Kuramoto selection failed: " + error.getMessage());
             }
+            return false;
         }
     }
 
@@ -1105,6 +1683,12 @@ public final class ControlPanelActivity extends Activity {
     private JSONObject buildKuramotoMeshPanelSelectionJson() throws Exception {
         int surfaceIndex = selectedKuramotoSurfaceIndex();
         int conditionIndex = selectedKuramotoConditionIndex();
+        return buildKuramotoMeshPanelSelectionJson(surfaceIndex, conditionIndex);
+    }
+
+    private JSONObject buildKuramotoMeshPanelSelectionJson(int surfaceIndex, int conditionIndex) throws Exception {
+        surfaceIndex = Math.max(0, Math.min(KURAMOTO_SURFACE_IDS.length - 1, surfaceIndex));
+        conditionIndex = Math.max(0, Math.min(KURAMOTO_CONDITION_IDS.length - 1, conditionIndex));
         JSONObject selection = new JSONObject()
             .put("schema_id", KURAMOTO_MESH_PANEL_SELECTION_SCHEMA)
             .put("panel_role", "requester-ui-or-agent-cli")
@@ -4337,12 +4921,16 @@ public final class ControlPanelActivity extends Activity {
         }
         handledPolarSensorPanelCommandToken = token;
         String panelMode = readControlPanelMode();
-        if (!"polar-sensor".equals(panelMode) && !"kuramoto-mesh".equals(panelMode)) {
+        if (!"polar-sensor".equals(panelMode)
+                && !"kuramoto-mesh".equals(panelMode)
+                && !"kuramoto-experiment".equals(panelMode)) {
             setStatusText("Polar command ignored; panel mode does not expose Polar controls.");
             return;
         }
         if ("kuramoto-mesh".equals(panelMode)) {
             setContentView(buildPolarSensorPanelPageView(true));
+        } else if ("kuramoto-experiment".equals(panelMode)) {
+            setContentView(buildKuramotoExperimentPolarSetupView(ensureExperimentSession()));
         } else {
             ensurePolarSensorPanel();
         }
@@ -4363,7 +4951,8 @@ public final class ControlPanelActivity extends Activity {
             return;
         }
         handledKuramotoMeshPanelCommandToken = token;
-        if (!"kuramoto-mesh".equals(readControlPanelMode())) {
+        String panelMode = readControlPanelMode();
+        if (!"kuramoto-mesh".equals(panelMode) && !"kuramoto-experiment".equals(panelMode)) {
             setStatusText("Kuramoto command ignored; panel is not active.");
             kuramotoMarker("status=cli-command-ignored reason=panel-not-active");
             return;
@@ -4407,6 +4996,23 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
+    private void handleKuramotoExperimentStartupResetIntent(Intent intent) {
+        if (intent == null
+                || !intent.getBooleanExtra(EXTRA_KURAMOTO_EXPERIMENT_STARTUP_RESET, false)
+                || !"kuramoto-experiment".equals(readControlPanelMode())) {
+            return;
+        }
+        try {
+            ensureExperimentSession().resetForNewParticipant();
+            kuramotoMarker("status=experiment-startup-reset source=xr-startup-kuramoto-experiment");
+        } catch (Exception error) {
+            kuramotoMarker(
+                "status=experiment-startup-reset-failed source=xr-startup-kuramoto-experiment reason="
+                    + markerToken(error.getMessage())
+            );
+        }
+    }
+
     private JSONObject buildDynamicsJson() throws Exception {
         return new JSONObject()
             .put("mirror_mode", selectedMirrorMode)
@@ -4439,6 +5045,11 @@ public final class ControlPanelActivity extends Activity {
     }
 
     private void closePanelAndReturnToImmersive() {
+        recordKuramotoExperimentPanelEvent(
+            "panel_close_command_requested",
+            "close_requested",
+            "close_panel_and_return_to_immersive"
+        );
         launchImmersiveRenderer();
         if (Build.VERSION.SDK_INT >= 21) {
             finishAndRemoveTask();
@@ -4704,6 +5315,9 @@ public final class ControlPanelActivity extends Activity {
             return requested;
         }
         if ("kuramoto-mesh".equals(requested)) {
+            return requested;
+        }
+        if ("kuramoto-experiment".equals(requested)) {
             return requested;
         }
         if ("polar-sensor".equals(requested)) {
@@ -5112,4 +5726,5 @@ public final class ControlPanelActivity extends Activity {
     private static native String nativeSubmitLivePrivateLayerSelection(String selectionJson);
     private static native String nativeSubmitLiveDepthAlignment(String alignmentJson);
     private static native String nativeSubmitLivePrivateParticleDynamics(String dynamicsJson);
+    private static native String nativeStartKuramotoExperimentBlock(String blockJson);
 }

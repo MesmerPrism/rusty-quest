@@ -165,12 +165,46 @@ static LIVE_PRIVATE_PARTICLE_DYNAMICS_QUEUE: OnceLock<
 static LIVE_PRIVATE_PARTICLE_DYNAMICS_LATEST: OnceLock<
     Mutex<Option<PrivateParticleDynamicsPanelCandidate>>,
 > = OnceLock::new();
+#[cfg(target_os = "android")]
+static KURAMOTO_EXPERIMENT_BLOCK_RUNTIME: OnceLock<Mutex<Option<KuramotoExperimentBlockRuntime>>> =
+    OnceLock::new();
 
 #[cfg(target_os = "android")]
 #[derive(Clone, Copy, Debug)]
 struct LiveQueueOutcome {
     revision: i64,
     overwrote_pending: bool,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Clone, Debug)]
+pub(crate) struct KuramotoExperimentPanelOpen {
+    pub(crate) block_index: i64,
+    pub(crate) block_number: i64,
+    pub(crate) condition_id: String,
+    pub(crate) surface_target_id: String,
+    pub(crate) deadline_unix_ms: u64,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Clone, Debug)]
+pub(crate) struct KuramotoExperimentIcosphereRecenter {
+    pub(crate) block_index: i64,
+    pub(crate) block_number: i64,
+    pub(crate) condition_id: String,
+    pub(crate) surface_target_id: String,
+}
+
+#[cfg(target_os = "android")]
+#[derive(Clone, Debug)]
+struct KuramotoExperimentBlockRuntime {
+    block_index: i64,
+    block_number: i64,
+    condition_id: String,
+    surface_target_id: String,
+    deadline_unix_ms: u64,
+    panel_open_requested: bool,
+    icosphere_recenter_requested: bool,
 }
 
 #[cfg(target_os = "android")]
@@ -199,6 +233,11 @@ fn live_private_particle_dynamics_queue(
 fn live_private_particle_dynamics_latest(
 ) -> &'static Mutex<Option<PrivateParticleDynamicsPanelCandidate>> {
     LIVE_PRIVATE_PARTICLE_DYNAMICS_LATEST.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(target_os = "android")]
+fn kuramoto_experiment_block_runtime() -> &'static Mutex<Option<KuramotoExperimentBlockRuntime>> {
+    KURAMOTO_EXPERIMENT_BLOCK_RUNTIME.get_or_init(|| Mutex::new(None))
 }
 
 #[cfg(target_os = "android")]
@@ -811,6 +850,150 @@ fn wall_time_unix_ns_now() -> u64 {
 }
 
 #[cfg(target_os = "android")]
+fn wall_time_unix_ms_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or(0)
+}
+
+#[cfg(target_os = "android")]
+fn queue_kuramoto_experiment_block(text: &str) -> Result<KuramotoExperimentPanelOpen, String> {
+    let value: Value = serde_json::from_str(text).map_err(|error| format!("json_parse:{error}"))?;
+    let block_index = value
+        .get("block_index")
+        .and_then(Value::as_i64)
+        .ok_or_else(|| "missing_block_index".to_string())?;
+    let block_number = value
+        .get("block_number")
+        .and_then(Value::as_i64)
+        .unwrap_or(block_index.saturating_add(1));
+    let condition_id = value
+        .get("condition_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| "missing_condition_id".to_string())?
+        .to_string();
+    let surface_target_id = value
+        .get("surface_target_id")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("real-hands")
+        .to_string();
+    let should_recenter_icosphere = value
+        .get("recenter_icosphere_on_block_start")
+        .and_then(Value::as_bool)
+        .unwrap_or(surface_target_id == "icosphere");
+    let deadline_unix_ms = value
+        .get("deadline_unix_ms")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            let started = value.get("started_at_unix_ms").and_then(Value::as_u64)?;
+            let duration = value.get("duration_ms").and_then(Value::as_u64)?;
+            Some(started.saturating_add(duration))
+        })
+        .ok_or_else(|| "missing_deadline_unix_ms".to_string())?;
+    let now = wall_time_unix_ms_now();
+    if deadline_unix_ms <= now {
+        return Err("deadline_not_future".to_string());
+    }
+    let runtime = KuramotoExperimentBlockRuntime {
+        block_index,
+        block_number,
+        condition_id: condition_id.clone(),
+        surface_target_id: surface_target_id.clone(),
+        deadline_unix_ms,
+        panel_open_requested: false,
+        icosphere_recenter_requested: !should_recenter_icosphere,
+    };
+    let mut queue = kuramoto_experiment_block_runtime()
+        .lock()
+        .map_err(|_| "kuramoto_experiment_runtime_poisoned".to_string())?;
+    queue.replace(runtime);
+    crate::marker(
+        "kuramoto-experiment",
+        format!(
+            "status=block-timer-queued blockIndex={} blockNumber={} conditionId={} surfaceTargetId={} icosphereRecenterOnStart={} deadlineUnixMs={} durationRemainingMs={}",
+            block_index,
+            block_number,
+            crate::sanitize(&condition_id),
+            crate::sanitize(&surface_target_id),
+            should_recenter_icosphere,
+            deadline_unix_ms,
+            deadline_unix_ms.saturating_sub(now),
+        ),
+    );
+    Ok(KuramotoExperimentPanelOpen {
+        block_index,
+        block_number,
+        condition_id,
+        surface_target_id,
+        deadline_unix_ms,
+    })
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn poll_kuramoto_experiment_icosphere_recenter(
+    frame_count: u64,
+) -> Option<KuramotoExperimentIcosphereRecenter> {
+    let mut runtime = kuramoto_experiment_block_runtime().lock().ok()?;
+    let active = runtime.as_mut()?;
+    if active.icosphere_recenter_requested || active.surface_target_id != "icosphere" {
+        return None;
+    }
+    active.icosphere_recenter_requested = true;
+    crate::marker(
+        "kuramoto-experiment",
+        format!(
+            "event=icosphere-recenter-requested status=pending-headset-anchor-capture frame={} blockIndex={} blockNumber={} conditionId={} surfaceTargetId={}",
+            frame_count,
+            active.block_index,
+            active.block_number,
+            crate::sanitize(&active.condition_id),
+            crate::sanitize(&active.surface_target_id),
+        ),
+    );
+    Some(KuramotoExperimentIcosphereRecenter {
+        block_index: active.block_index,
+        block_number: active.block_number,
+        condition_id: active.condition_id.clone(),
+        surface_target_id: active.surface_target_id.clone(),
+    })
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn poll_kuramoto_experiment_panel_open(
+    frame_count: u64,
+) -> Option<KuramotoExperimentPanelOpen> {
+    let now = wall_time_unix_ms_now();
+    let mut runtime = kuramoto_experiment_block_runtime().lock().ok()?;
+    let active = runtime.as_mut()?;
+    if active.panel_open_requested || now < active.deadline_unix_ms {
+        return None;
+    }
+    active.panel_open_requested = true;
+    crate::marker(
+        "kuramoto-experiment",
+        format!(
+            "event=block-duration-elapsed status=panel-open-requested frame={} blockIndex={} blockNumber={} conditionId={} surfaceTargetId={} deadlineUnixMs={}",
+            frame_count,
+            active.block_index,
+            active.block_number,
+            crate::sanitize(&active.condition_id),
+            crate::sanitize(&active.surface_target_id),
+            active.deadline_unix_ms,
+        ),
+    );
+    Some(KuramotoExperimentPanelOpen {
+        block_index: active.block_index,
+        block_number: active.block_number,
+        condition_id: active.condition_id.clone(),
+        surface_target_id: active.surface_target_id.clone(),
+        deadline_unix_ms: active.deadline_unix_ms,
+    })
+}
+
+#[cfg(target_os = "android")]
 #[no_mangle]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeSubmitLiveStimulusCandidate(
     mut env: jni::EnvUnowned,
@@ -1135,6 +1318,70 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
                     "status=live-rejected transport=jni-live-queue schema={} reason=jni_panic",
                     PRIVATE_PARTICLE_DYNAMICS_SCHEMA
                 ),
+            );
+            std::ptr::null_mut()
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeStartKuramotoExperimentBlock(
+    mut env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    block_json: jni::objects::JString,
+) -> jni::sys::jstring {
+    match env
+        .with_env(|env| -> jni::errors::Result<jni::sys::jstring> {
+            let block_json = block_json.try_to_string(env)?;
+            let response = match queue_kuramoto_experiment_block(&block_json) {
+                Ok(open) => json!({
+                    "schema": "rusty.kuramoto.mesh.experiment_block_timer_status.v1",
+                    "status": "queued",
+                    "transport": "jni_native_timer",
+                    "block_index": open.block_index,
+                    "block_number": open.block_number,
+                    "condition_id": open.condition_id,
+                    "surface_target_id": open.surface_target_id,
+                    "deadline_unix_ms": open.deadline_unix_ms
+                })
+                .to_string(),
+                Err(reason) => {
+                    crate::marker(
+                        "kuramoto-experiment",
+                        format!(
+                            "status=block-timer-rejected transport=jni-native-timer reason={}",
+                            crate::sanitize(&reason)
+                        ),
+                    );
+                    json!({
+                        "schema": "rusty.kuramoto.mesh.experiment_block_timer_status.v1",
+                        "status": "rejected",
+                        "transport": "jni_native_timer",
+                        "rejection_code": reason
+                    })
+                    .to_string()
+                }
+            };
+            env.new_string(response).map(|value| value.into_raw())
+        })
+        .into_outcome()
+    {
+        jni::Outcome::Ok(value) => value,
+        jni::Outcome::Err(error) => {
+            crate::marker(
+                "kuramoto-experiment",
+                format!(
+                    "status=block-timer-rejected transport=jni-native-timer reason=jni_error:{}",
+                    crate::sanitize(&error.to_string())
+                ),
+            );
+            std::ptr::null_mut()
+        }
+        jni::Outcome::Panic(_) => {
+            crate::marker(
+                "kuramoto-experiment",
+                "status=block-timer-rejected transport=jni-native-timer reason=jni_panic",
             );
             std::ptr::null_mut()
         }

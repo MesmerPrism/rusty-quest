@@ -62,8 +62,8 @@ impl GpuHandAnchorParticleFrameStats {
         hand_mesh: &GpuHandMeshVisualFrameStats,
         settings: NativeHandAnchorParticleSettings,
     ) -> Self {
-        let selected_for_private_kuramoto = !settings.private_gpu_payload_requested()
-            || private_kuramoto_realtime_hand_surface_selected();
+        let selected_for_private_kuramoto =
+            !settings.private_gpu_payload_requested() || private_kuramoto_hand_surface_selected();
         let input_source = if hand_mesh.live_compact_input_frame {
             "live-meta-openxr-hand-tracking"
         } else {
@@ -72,7 +72,7 @@ impl GpuHandAnchorParticleFrameStats {
         let readiness_reason = if !settings.enabled {
             "disabled"
         } else if !selected_for_private_kuramoto {
-            "surface-target-not-real-hands"
+            "surface-target-not-hand-mesh"
         } else if !hand_mesh.ready {
             "awaiting-skinned-hand-mesh"
         } else if hand_mesh.triangle_count == 0 {
@@ -226,8 +226,8 @@ fn private_kuramoto_panel_dynamics() -> PrivateKuramotoPanelDynamics {
     PrivateKuramotoPanelDynamics::from_driver_values(private_kuramoto_driver_values01())
 }
 
-fn private_kuramoto_realtime_hand_surface_selected() -> bool {
-    private_kuramoto_panel_dynamics().surface_index == 0
+fn private_kuramoto_hand_surface_selected() -> bool {
+    private_kuramoto_panel_dynamics().surface_index != 2
 }
 
 fn private_kuramoto_driver_values01() -> [f32; 8] {
@@ -2431,5 +2431,32 @@ mod tests {
         assert!(stats.marker_fields().contains(
             "handAnchorParticleSecondaryCoordinatePlacement=current-eye-front-recorded-fallback"
         ));
+    }
+
+    #[test]
+    fn private_kuramoto_gpu_replay_surface_uses_recorded_hand_mesh() {
+        let hand_mesh = GpuHandMeshVisualFrameStats {
+            ready: true,
+            visible: true,
+            handedness: "left",
+            triangle_count: 2048,
+            skinned_position_buffer_bytes: 65_536,
+            live_compact_input_frame: false,
+            ..Default::default()
+        };
+        let settings = NativeHandAnchorParticleSettings {
+            enabled: true,
+            particles_per_hand: 1024,
+            dynamics: NativeHandAnchorParticleDynamics::PrivateGpuPayload,
+            ..Default::default()
+        };
+
+        let stats = GpuHandAnchorParticleFrameStats::from_hand_mesh(&hand_mesh, settings);
+
+        assert!(stats.ready);
+        assert!(stats.visible);
+        assert_eq!(stats.particles_drawn, 1024);
+        assert_eq!(stats.input_source, "recorded-replay-fallback");
+        assert_eq!(stats.readiness_reason, "ready-recorded-replay-fallback");
     }
 }

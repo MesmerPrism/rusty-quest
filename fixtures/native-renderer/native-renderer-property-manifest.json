@@ -207,6 +207,8 @@
         "private-particle-dynamics",
         "private-particle-depth-wave",
         "private-particle-config",
+        "kuramoto-mesh",
+        "kuramoto-experiment",
         "polar-sensor"
       ],
       "validators": [

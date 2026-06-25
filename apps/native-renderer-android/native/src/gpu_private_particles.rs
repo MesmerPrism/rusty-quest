@@ -1786,16 +1786,27 @@ impl GpuPrivateParticleRenderer {
                 }
             }
         }
-        let tracer_draw_slots_per_oscillator = runtime_settings
-            .tracer_draw_slots_per_oscillator
-            .min(self.tracer_draw_slots_per_oscillator);
-        let tracer_draw_count = self
-            .particle_count
-            .saturating_mul(tracer_draw_slots_per_oscillator);
-        let draw_count = self
-            .particle_count
-            .saturating_add(tracer_draw_count)
-            .saturating_add(self.anchor_echo_draw_count);
+        let surface_draw_enabled = private_particle_payload_surface_draw_enabled(runtime_settings);
+        let tracer_draw_slots_per_oscillator = if surface_draw_enabled {
+            runtime_settings
+                .tracer_draw_slots_per_oscillator
+                .min(self.tracer_draw_slots_per_oscillator)
+        } else {
+            0
+        };
+        let tracer_draw_count = if surface_draw_enabled {
+            self.particle_count
+                .saturating_mul(tracer_draw_slots_per_oscillator)
+        } else {
+            0
+        };
+        let draw_count = if surface_draw_enabled {
+            self.particle_count
+                .saturating_add(tracer_draw_count)
+                .saturating_add(self.anchor_echo_draw_count)
+        } else {
+            0
+        };
         let descriptor_index = frame_count as usize & 1;
         let next_descriptor_index = (descriptor_index + 1) & 1;
         let diagnostic_buffer = &self.diagnostic_buffers[descriptor_index];
@@ -1895,7 +1906,7 @@ impl GpuPrivateParticleRenderer {
             frame_slot,
             GpuTimestampStage::PrivateParticleCompute,
         );
-        let sort_active = private_particle_sort_enabled();
+        let sort_active = private_particle_sort_enabled() && draw_count > 0;
         let sort_count = if sort_active {
             gpu_timestamp_tracker.write_stage_start(
                 device,
@@ -1922,7 +1933,7 @@ impl GpuPrivateParticleRenderer {
         };
         let stats = GpuPrivateParticleFrameStats {
             ready: true,
-            visible: true,
+            visible: surface_draw_enabled && draw_count > 0,
             particle_count: self.particle_count,
             main_particle_count: self.particle_count,
             tracer_max_count: self.tracer_max_count,
@@ -2612,6 +2623,16 @@ fn private_particle_sort_enabled() -> bool {
         PRIVATE_PARTICLE_ORDERING_BACK_TO_FRONT => true,
         PRIVATE_PARTICLE_ORDERING_SOURCE_ORDER => false,
         _ => true,
+    }
+}
+
+fn private_particle_payload_surface_draw_enabled(
+    runtime_settings: PrivateParticleRuntimeSettings,
+) -> bool {
+    if PRIVATE_PARTICLE_KIND == "kuramoto-hand-1024-icosphere-l4" {
+        runtime_settings.driver_bank_values01[5] >= 0.75
+    } else {
+        true
     }
 }
 
