@@ -16,9 +16,7 @@
   "depends_on": [
     "quest.native.openxr_vulkan_base"
   ],
-  "incompatible_with": [
-    "renderer.private_particles"
-  ],
+  "incompatible_with": [],
   "exclusive_groups": {
     "hand_visual": "live-hand-mesh"
   },
@@ -47,9 +45,7 @@
   },
   "build_inputs": {
     "env": [],
-    "assets": [
-      "fixtures/native-renderer/synthetic-hand-mesh-sequence.json"
-    ],
+    "assets": [],
     "shaders": [
       "apps/native-renderer-android/native/shaders/hand_mesh_visual.vert.glsl",
       "apps/native-renderer-android/native/shaders/hand_mesh_visual.frag.glsl"

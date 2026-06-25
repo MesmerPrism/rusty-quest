@@ -1,6 +1,60 @@
 //! JNI bridge for launching the same-APK 2D control panel.
 
 #[cfg(target_os = "android")]
+const ACTION_OPEN_PANEL: &str =
+    "io.github.mesmerprism.rustyquest.native_renderer.action.OPEN_PANEL";
+#[cfg(target_os = "android")]
+const ACTION_TOGGLE_PANEL: &str =
+    "io.github.mesmerprism.rustyquest.native_renderer.action.TOGGLE_PANEL";
+#[cfg(target_os = "android")]
+const PROP_CONTROL_PANEL_OPEN_TOKEN: &str =
+    "debug.rustyquest.native_renderer.control_panel.open_token";
+#[cfg(target_os = "android")]
+const PANEL_COMMAND_POLL_INTERVAL_FRAMES: u64 = 30;
+
+#[cfg(target_os = "android")]
+#[derive(Debug, Default)]
+pub(crate) struct ControlPanelCommandPoller {
+    last_open_token: String,
+}
+
+#[cfg(target_os = "android")]
+impl ControlPanelCommandPoller {
+    pub(crate) fn poll_and_apply(&mut self, app: &android_activity::AndroidApp, frame_count: u64) {
+        if frame_count % PANEL_COMMAND_POLL_INTERVAL_FRAMES != 0 {
+            return;
+        }
+        let mut property = android_properties::getprop(PROP_CONTROL_PANEL_OPEN_TOKEN);
+        let token = property
+            .value()
+            .map(|value| value.trim().to_string())
+            .unwrap_or_default();
+        if token.is_empty() || token == self.last_open_token {
+            return;
+        }
+        self.last_open_token = token.clone();
+        match open_control_panel_impl(app) {
+            Ok(()) => crate::marker(
+                "stimulus-panel",
+                format!(
+                    "event=control-panel-open-command status=intent-sent frame={} panelActivity=ControlPanelActivity action=open source=runtime-polled-property openToken={}",
+                    frame_count,
+                    crate::sanitize(&token)
+                ),
+            ),
+            Err(error) => crate::marker(
+                "stimulus-panel",
+                format!(
+                    "event=control-panel-open-command status=intent-error frame={} reason={}",
+                    frame_count,
+                    crate::sanitize(&error)
+                ),
+            ),
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
 pub(crate) fn toggle_control_panel(app: &android_activity::AndroidApp, frame_count: u64) {
     match toggle_control_panel_impl(app) {
         Ok(()) => crate::marker(
@@ -23,14 +77,25 @@ pub(crate) fn toggle_control_panel(app: &android_activity::AndroidApp, frame_cou
 
 #[cfg(target_os = "android")]
 fn toggle_control_panel_impl(app: &android_activity::AndroidApp) -> Result<(), String> {
+    send_control_panel_intent(app, ACTION_TOGGLE_PANEL)
+}
+
+#[cfg(target_os = "android")]
+fn open_control_panel_impl(app: &android_activity::AndroidApp) -> Result<(), String> {
+    send_control_panel_intent(app, ACTION_OPEN_PANEL)
+}
+
+#[cfg(target_os = "android")]
+fn send_control_panel_intent(
+    app: &android_activity::AndroidApp,
+    action_name: &str,
+) -> Result<(), String> {
     use jni::{
         jni_sig, jni_str,
         objects::{JObject, JValue},
         JavaVM,
     };
 
-    const ACTION_TOGGLE_PANEL: &str =
-        "io.github.mesmerprism.rustyquest.native_renderer.action.TOGGLE_PANEL";
     const PANEL_CLASS_NAME: &str =
         "io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity";
     const CATEGORY_2D: &str = "com.oculus.intent.category.2D";
@@ -44,7 +109,7 @@ fn toggle_control_panel_impl(app: &android_activity::AndroidApp) -> Result<(), S
         let intent_class = env.find_class(jni_str!("android/content/Intent"))?;
         let intent = env.new_object(intent_class, jni_sig!("()V"), &[])?;
 
-        let action = env.new_string(ACTION_TOGGLE_PANEL)?;
+        let action = env.new_string(action_name)?;
         env.call_method(
             &intent,
             jni_str!("setAction"),
@@ -94,5 +159,5 @@ fn toggle_control_panel_impl(app: &android_activity::AndroidApp) -> Result<(), S
         )?;
         Ok(())
     })
-    .map_err(|error| format!("toggle control panel failed: {error}"))
+    .map_err(|error| format!("control panel intent failed: {error}"))
 }

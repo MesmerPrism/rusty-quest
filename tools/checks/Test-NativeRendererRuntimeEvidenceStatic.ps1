@@ -172,7 +172,7 @@ Assert-ContainsTokens $runtimeEvidenceFixtureText @(
 Assert-ContainsTokens $liveHandDiagnosticPendingFixtureText @(
     'compactHandInputSourceMode=live-meta-openxr-hand-tracking',
     'compactHandInputSelectsLiveFrame=true',
-    'compactHandInputAllowsRecordedFallback=false',
+    'compactHandInputAllowsRecordedFallback=true',
     'handMeshCompactInputSource=live-meta-openxr-hand-tracking',
     'sdfCompactInputSource=live-meta-openxr-hand-tracking',
     'liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof',

@@ -10,6 +10,7 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.widget.AdapterView;
@@ -35,18 +36,38 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 public final class ControlPanelActivity extends Activity {
+    private static final String TAG = "RQNativeRenderer";
+    private static final String MARKER_PREFIX = "RUSTY_QUEST_NATIVE_RENDERER";
+    private static final String CHANNEL_KURAMOTO_PANEL = "kuramoto-mesh-panel";
     public static final String ACTION_TOGGLE_PANEL =
         "io.github.mesmerprism.rustyquest.native_renderer.action.TOGGLE_PANEL";
+    public static final String ACTION_OPEN_PANEL =
+        "io.github.mesmerprism.rustyquest.native_renderer.action.OPEN_PANEL";
     public static final String ACTION_APPLY_LIVE_SELF_TEST =
         "io.github.mesmerprism.rustyquest.native_renderer.action.APPLY_LIVE_SELF_TEST";
     public static final String ACTION_REQUEST_DISPLAY_COMPOSITE_CAPTURE =
         "io.github.mesmerprism.rustyquest.native_renderer.action.REQUEST_DISPLAY_COMPOSITE_CAPTURE";
+    public static final String ACTION_POLAR_SENSOR_PANEL_COMMAND =
+        "io.github.mesmerprism.rustyquest.native_renderer.action.POLAR_SENSOR_PANEL_COMMAND";
+    public static final String ACTION_KURAMOTO_MESH_PANEL_COMMAND =
+        "io.github.mesmerprism.rustyquest.native_renderer.action.KURAMOTO_MESH_PANEL_COMMAND";
+    public static final String EXTRA_POLAR_SENSOR_PANEL_COMMAND = "polar_sensor_panel_command";
+    public static final String EXTRA_POLAR_SENSOR_PANEL_COMMAND_TOKEN =
+        "polar_sensor_panel_command_token";
+    public static final String EXTRA_KURAMOTO_SURFACE_TARGET = "kuramoto_surface_target";
+    public static final String EXTRA_KURAMOTO_CONDITION = "kuramoto_condition";
+    public static final String EXTRA_KURAMOTO_RETURN_TO_IMMERSIVE =
+        "kuramoto_return_to_immersive";
+    public static final String EXTRA_KURAMOTO_PANEL_COMMAND_TOKEN =
+        "kuramoto_panel_command_token";
     private static final int REQUEST_DISPLAY_COMPOSITE_CAPTURE = 7401;
     private static final String CANDIDATE_FILE = "stimulus_volume_candidate.json";
     private static final String STATUS_FILE = "stimulus_volume_status.json";
     private static final String DEPTH_ALIGNMENT_STATUS_FILE = "depth_alignment_status.json";
     private static final String PRIVATE_PARTICLE_DYNAMICS_STATUS_FILE =
         "private_particle_dynamics_status.json";
+    private static final String KURAMOTO_MESH_PANEL_STATUS_FILE =
+        "kuramoto_mesh_panel_status.json";
     private static final String PROFILE_SCHEMA = "rusty.quest.stimulus_volume.profile.v1";
     private static final String PRIVATE_LAYER_SELECTION_SCHEMA =
         "rusty.quest.native_renderer.private_layer_selection.v1";
@@ -54,6 +75,8 @@ public final class ControlPanelActivity extends Activity {
         "rusty.quest.native_renderer.environment_depth_alignment.v1";
     private static final String PRIVATE_PARTICLE_DYNAMICS_SCHEMA =
         "rusty.quest.native_renderer.private_particle_dynamics.v1";
+    private static final String KURAMOTO_MESH_PANEL_SELECTION_SCHEMA =
+        "rusty.kuramoto.mesh.native_panel_selection.v1";
     private static final String PROP_CONTROL_PANEL_MODE =
         "debug.rustyquest.native_renderer.control_panel.mode";
     private static final String PROP_PRIVATE_LAYER_OVERRIDE =
@@ -139,6 +162,82 @@ public final class ControlPanelActivity extends Activity {
         "Driver 6 orbit angle",
         "Driver 7 animation frame"
     };
+    private static final String[] KURAMOTO_SURFACE_IDS = new String[] {
+        "real-hands",
+        "gpu-replay-hands",
+        "icosphere"
+    };
+    private static final String[] KURAMOTO_SURFACE_LABELS = new String[] {
+        "Real hands",
+        "GPU replay hands",
+        "Icosphere"
+    };
+    private static final String[] KURAMOTO_SURFACE_TARGETS = new String[] {
+        "quest-live-hand-mesh",
+        "quest-recorded-gpu-hand-mesh",
+        "static-icosphere-l4"
+    };
+    private static final String[] KURAMOTO_SOURCE_MODES = new String[] {
+        "live-meta-openxr-hand-tracking",
+        "recorded-replay-compact-joint-frames",
+        "static-resident-surface"
+    };
+    private static final String[] KURAMOTO_SURFACE_RESOURCE_PLAN_IDS = new String[] {
+        "kuramoto.native.quest.live-hands.1024.solid-black.resource-plan.v1",
+        "kuramoto.native.quest.left.1024.solid-black.resource-plan.v1",
+        "kuramoto.native.quest.icosphere-l4.solid-black.resource-plan.v1"
+    };
+    private static final String[] KURAMOTO_SURFACE_RUNTIME_PROFILE_PATHS = new String[] {
+        "",
+        "",
+        "fixtures/native-gpu/quest-native-renderer-kuramoto-icosphere-l4-solid-black.profile.json"
+    };
+    private static final String[] KURAMOTO_CONDITION_IDS = new String[] {
+        "lowLow",
+        "highLow",
+        "lowHigh",
+        "highHigh"
+    };
+    private static final String[] KURAMOTO_CONDITION_LABELS = new String[] {
+        "Low energy / low coherence",
+        "High energy / low coherence",
+        "Low energy / high coherence",
+        "High energy / high coherence"
+    };
+    private static final String[] KURAMOTO_PROFILE_IDS = new String[] {
+        "kuramoto.private.native.profile.low-energy-low-coherence.movement-only.v1",
+        "kuramoto.private.native.profile.high-energy-low-coherence.movement-only.v1",
+        "kuramoto.private.native.profile.low-energy-high-coherence.movement-only.v1",
+        "kuramoto.private.native.profile.high-energy-high-coherence.movement-only.v1"
+    };
+    private static final double[] KURAMOTO_MOVEMENT_BASE_HZ = new double[] {
+        0.44,
+        0.88,
+        0.44,
+        0.88
+    };
+    private static final double[] KURAMOTO_MOVEMENT_SPREAD_HZ = new double[] {
+        0.62,
+        0.62,
+        0.03,
+        0.03
+    };
+    private static final double[] KURAMOTO_MOVEMENT_COUPLING = new double[] {
+        0.0,
+        0.0,
+        1.0,
+        1.0
+    };
+    private static final double[] KURAMOTO_UNIT_DISTANCE_M = new double[] {
+        0.002,
+        0.004,
+        0.002,
+        0.004
+    };
+    private static final String KURAMOTO_PROFILE_SET_ID =
+        "kuramoto.private.native.browser-quadrants.left.1024.recorded-gpu.v1";
+    private static final String KURAMOTO_DEFAULT_PROFILE_ID =
+        "kuramoto.private.native.profile.low-energy-low-coherence.movement-only.v1";
     private static final String[] PRIVATE_PARTICLE_CONFIG_PAGE_LABELS = new String[] {
         "Dynamics",
         "Visuals",
@@ -247,6 +346,8 @@ public final class ControlPanelActivity extends Activity {
     private Runnable pendingPrivateParticleDynamicsApply;
     private String handledDiagnosticIntentToken = "";
     private String handledDisplayCompositeIntentToken = "";
+    private String handledPolarSensorPanelCommandToken = "";
+    private String handledKuramotoMeshPanelCommandToken = "";
     private boolean displayCompositeRequestInFlight;
     private Button[] patternButtons = new Button[0];
     private Button[] mirrorButtons = new Button[0];
@@ -319,12 +420,56 @@ public final class ControlPanelActivity extends Activity {
     private SliderControl depthWavePercent;
     private SliderControl depthWaveDriverValue01;
     private TextView depthWaveResolvedLabel;
+    private Spinner kuramotoSurfaceTarget;
+    private Spinner kuramotoCondition;
+    private TextView kuramotoSelectionSummary;
+    private PolarSensorPanel polarSensorPanel;
+    private boolean kuramotoPanelAutoApplyArmed;
+    private Runnable pendingKuramotoMeshPanelApply;
+    private String lastScheduledKuramotoMeshPanelApplyKey = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         liveApplyHandler = new Handler(Looper.getMainLooper());
         setContentView(buildContentView());
+        updateReadyStatusForPanelMode();
+        handleDisplayCompositeIntent(getIntent());
+        handleDiagnosticIntent(getIntent());
+        handlePolarSensorPanelCommandIntent(getIntent());
+        handleKuramotoMeshPanelCommandIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (intent != null && ACTION_TOGGLE_PANEL.equals(intent.getAction())) {
+            closePanelAndReturnToImmersive();
+        } else if (intent != null && ACTION_OPEN_PANEL.equals(intent.getAction())) {
+            rebuildContentViewForCurrentMode();
+            handleDisplayCompositeIntent(intent);
+            handleDiagnosticIntent(intent);
+            handlePolarSensorPanelCommandIntent(intent);
+            handleKuramotoMeshPanelCommandIntent(intent);
+        } else {
+            handleDisplayCompositeIntent(intent);
+            handleDiagnosticIntent(intent);
+            handlePolarSensorPanelCommandIntent(intent);
+            handleKuramotoMeshPanelCommandIntent(intent);
+        }
+    }
+
+    private void rebuildContentViewForCurrentMode() {
+        if (polarSensorPanel != null) {
+            polarSensorPanel.stop();
+            polarSensorPanel = null;
+        }
+        setContentView(buildContentView());
+        updateReadyStatusForPanelMode();
+    }
+
+    private void updateReadyStatusForPanelMode() {
         String panelMode = readControlPanelMode();
         if ("private-layer-selector".equals(panelMode)) {
             updateStatus("Layer selector ready.");
@@ -334,22 +479,12 @@ public final class ControlPanelActivity extends Activity {
             updateStatus("Depth wave panel ready.");
         } else if ("private-particle-config".equals(panelMode)) {
             updateStatus("AKD config panel ready.");
+        } else if ("polar-sensor".equals(panelMode)) {
+            updateStatus("Polar sensor panel ready.");
+        } else if ("kuramoto-mesh".equals(panelMode)) {
+            updateStatus("Kuramoto mesh panel ready.");
         } else {
             updateStatus("Panel ready. Candidate path: " + new File(getFilesDir(), CANDIDATE_FILE));
-        }
-        handleDisplayCompositeIntent(getIntent());
-        handleDiagnosticIntent(getIntent());
-    }
-
-    @Override
-    protected void onNewIntent(Intent intent) {
-        super.onNewIntent(intent);
-        setIntent(intent);
-        if (intent != null && ACTION_TOGGLE_PANEL.equals(intent.getAction())) {
-            closePanelAndReturnToImmersive();
-        } else {
-            handleDisplayCompositeIntent(intent);
-            handleDiagnosticIntent(intent);
         }
     }
 
@@ -358,6 +493,15 @@ public final class ControlPanelActivity extends Activity {
         super.onResume();
         handleDisplayCompositeIntent(getIntent());
         handleDiagnosticIntent(getIntent());
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (polarSensorPanel != null) {
+            polarSensorPanel.stop();
+            polarSensorPanel = null;
+        }
+        super.onDestroy();
     }
 
     @Override
@@ -407,6 +551,14 @@ public final class ControlPanelActivity extends Activity {
         launchImmersiveRenderer();
     }
 
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (polarSensorPanel != null) {
+            polarSensorPanel.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        }
+    }
+
     private View buildContentView() {
         String panelMode = readControlPanelMode();
         if ("private-layer-selector".equals(panelMode)) {
@@ -420,6 +572,12 @@ public final class ControlPanelActivity extends Activity {
         }
         if ("private-particle-config".equals(panelMode)) {
             return buildPrivateParticleConfigView();
+        }
+        if ("kuramoto-mesh".equals(panelMode)) {
+            return buildKuramotoMeshPanelView();
+        }
+        if ("polar-sensor".equals(panelMode)) {
+            return buildPolarSensorPanelPageView(false);
         }
         return buildStimulusPanelView();
     }
@@ -660,6 +818,405 @@ public final class ControlPanelActivity extends Activity {
         status.setPadding(0, dp(10), 0, dp(8));
         root.addView(status);
         return scroll;
+    }
+
+    private View buildKuramotoMeshPanelView() {
+        ScrollView scroll = new ScrollView(this);
+        scroll.setBackgroundColor(PANEL_BG);
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(18);
+        root.setPadding(pad, pad, pad, pad);
+        scroll.addView(root);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        TextView title = text("Kuramoto Mesh Panel", 22, PANEL_FG);
+        title.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        Button headerClose = button("Close");
+        headerClose.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                closePanelAndReturnToImmersive();
+            }
+        });
+        header.addView(headerClose);
+        root.addView(header);
+        root.addView(buildKuramotoSuiteTabs("kuramoto"));
+
+        String savedSurface = readKuramotoPanelSelectionString("surface_target_id", "gpu-replay-hands");
+        String savedCondition = readKuramotoPanelSelectionString("condition", "lowLow");
+        kuramotoPanelAutoApplyArmed = false;
+        kuramotoSurfaceTarget =
+            spinner(KURAMOTO_SURFACE_LABELS, indexOf(KURAMOTO_SURFACE_IDS, savedSurface, 1));
+        kuramotoCondition =
+            spinner(KURAMOTO_CONDITION_LABELS, indexOf(KURAMOTO_CONDITION_IDS, savedCondition, 0));
+        AdapterView.OnItemSelectedListener updateListener = new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                updateKuramotoSelectionSummary();
+                if (kuramotoPanelAutoApplyArmed) {
+                    scheduleLiveKuramotoMeshPanelSelection();
+                }
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+                updateKuramotoSelectionSummary();
+            }
+        };
+        kuramotoSurfaceTarget.setOnItemSelectedListener(updateListener);
+        kuramotoCondition.setOnItemSelectedListener(updateListener);
+
+        root.addView(label("Surface"));
+        root.addView(kuramotoSurfaceTarget);
+        root.addView(label("Condition"));
+        root.addView(kuramotoCondition);
+
+        kuramotoSelectionSummary = text("", 13, PANEL_MUTED);
+        kuramotoSelectionSummary.setPadding(0, dp(12), 0, dp(8));
+        root.addView(kuramotoSelectionSummary);
+
+        LinearLayout actionBlock = new LinearLayout(this);
+        actionBlock.setOrientation(LinearLayout.VERTICAL);
+        actionBlock.setPadding(0, dp(14), 0, dp(10));
+        Button refresh = button("Refresh");
+        refresh.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                refreshKuramotoMeshPanelFromStatus(true);
+            }
+        });
+        Button apply = button("Apply Live");
+        apply.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                submitLiveKuramotoMeshPanelSelection(true);
+            }
+        });
+        Button close = button("Close");
+        close.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                closePanelAndReturnToImmersive();
+            }
+        });
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.addView(refresh, rowButtonParams());
+        row.addView(apply, rowButtonParams());
+        row.addView(close, rowButtonParams());
+        actionBlock.addView(row);
+        root.addView(actionBlock);
+
+        status = text("", 13, PANEL_MUTED);
+        status.setPadding(0, dp(10), 0, dp(8));
+        root.addView(status);
+        updateKuramotoSelectionSummary();
+        liveApplyHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                kuramotoPanelAutoApplyArmed = true;
+            }
+        });
+        return scroll;
+    }
+
+    private View buildPolarSensorPanelPageView(boolean includeKuramotoTab) {
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(PANEL_BG);
+        int pad = dp(14);
+        root.setPadding(pad, pad, pad, pad);
+        if (includeKuramotoTab) {
+            root.addView(buildKuramotoSuiteTabs("polar"));
+        }
+        View polarView = ensurePolarSensorPanel().buildView();
+        root.addView(
+            polarView,
+            new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+        );
+        return root;
+    }
+
+    private LinearLayout buildKuramotoSuiteTabs(String activePage) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(0, dp(10), 0, dp(10));
+        Button kuramoto = button("Kuramoto");
+        Button polar = button("Polar");
+        kuramoto.setEnabled(!"kuramoto".equals(activePage));
+        polar.setEnabled(!"polar".equals(activePage));
+        kuramoto.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                setContentView(buildKuramotoMeshPanelView());
+                updateStatus("Kuramoto controls.");
+            }
+        });
+        polar.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                setContentView(buildPolarSensorPanelPageView(true));
+                updateStatus("Polar sensor controls.");
+            }
+        });
+        row.addView(kuramoto, rowButtonParams());
+        row.addView(polar, rowButtonParams());
+        return row;
+    }
+
+    private PolarSensorPanel ensurePolarSensorPanel() {
+        if (polarSensorPanel == null) {
+            polarSensorPanel = new PolarSensorPanel(this, new PolarSensorPanel.Host() {
+                @Override
+                public void closePanelAndReturnToImmersive() {
+                    ControlPanelActivity.this.closePanelAndReturnToImmersive();
+                }
+            });
+        }
+        return polarSensorPanel;
+    }
+
+    private void updateKuramotoSelectionSummary() {
+        if (kuramotoSelectionSummary == null || kuramotoSurfaceTarget == null || kuramotoCondition == null) {
+            return;
+        }
+        int surfaceIndex = selectedKuramotoSurfaceIndex();
+        int conditionIndex = selectedKuramotoConditionIndex();
+        kuramotoSelectionSummary.setText(
+            KURAMOTO_SURFACE_TARGETS[surfaceIndex]
+                + " | "
+                + KURAMOTO_PROFILE_IDS[conditionIndex]
+                + " | baseHz="
+                + String.format(Locale.US, "%.2f", KURAMOTO_MOVEMENT_BASE_HZ[conditionIndex])
+                + " coupling="
+                + String.format(Locale.US, "%.2f", KURAMOTO_MOVEMENT_COUPLING[conditionIndex])
+        );
+    }
+
+    private void submitLiveKuramotoMeshPanelSelection(boolean userVisible) {
+        JSONObject selection = null;
+        try {
+            if (!nativeBridgeLoaded) {
+                throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
+            }
+            selection = buildKuramotoMeshPanelSelectionJson();
+            JSONObject candidate = buildKuramotoMeshPanelPrivateParticleCandidate(selection);
+            String responseText = nativeSubmitLivePrivateParticleDynamics(candidate.toString());
+            JSONObject response = new JSONObject(responseText);
+            String responseStatus = response.optString("status", "unknown");
+            if (!"queued".equals(responseStatus)) {
+                throw new IllegalStateException(responseText);
+            }
+            writeKuramotoMeshPanelStatus("queued_by_panel", selection, candidate, responseText);
+            String message = "Kuramoto selection queued: "
+                + selection.optString("surface_target_id")
+                + " / "
+                + selection.optString("condition")
+                + ".";
+            kuramotoMarker(
+                "status=queued surfaceTarget="
+                    + selection.optString("surface_target_id")
+                    + " condition="
+                    + selection.optString("condition")
+                    + " profileId="
+                    + selection.optString("profile_id")
+            );
+            if (userVisible) {
+                updateStatus(message);
+            } else {
+                setStatusText(message);
+            }
+        } catch (Exception error) {
+            try {
+                writeKuramotoMeshPanelStatus("rejected_by_panel", selection, null, error.getMessage());
+            } catch (Exception ignored) {
+            }
+            kuramotoMarker("status=rejected reason=" + markerToken(error.getMessage()));
+            if (userVisible) {
+                updateStatus("Kuramoto selection failed: " + error.getMessage());
+            } else {
+                setStatusText("Kuramoto selection failed: " + error.getMessage());
+            }
+        }
+    }
+
+    private void scheduleLiveKuramotoMeshPanelSelection() {
+        if (kuramotoSurfaceTarget == null || kuramotoCondition == null) {
+            return;
+        }
+        String selectionKey = KURAMOTO_SURFACE_IDS[selectedKuramotoSurfaceIndex()]
+            + ":"
+            + KURAMOTO_CONDITION_IDS[selectedKuramotoConditionIndex()];
+        if (selectionKey.equals(lastScheduledKuramotoMeshPanelApplyKey)) {
+            return;
+        }
+        lastScheduledKuramotoMeshPanelApplyKey = selectionKey;
+        if (pendingKuramotoMeshPanelApply != null) {
+            liveApplyHandler.removeCallbacks(pendingKuramotoMeshPanelApply);
+        }
+        pendingKuramotoMeshPanelApply = new Runnable() {
+            @Override
+            public void run() {
+                pendingKuramotoMeshPanelApply = null;
+                submitLiveKuramotoMeshPanelSelection(false);
+            }
+        };
+        liveApplyHandler.postDelayed(pendingKuramotoMeshPanelApply, 180L);
+    }
+
+    private JSONObject buildKuramotoMeshPanelPrivateParticleCandidate(JSONObject selection) throws Exception {
+        int surfaceIndex = indexOf(
+            KURAMOTO_SURFACE_IDS,
+            selection.optString("surface_target_id", "gpu-replay-hands"),
+            1
+        );
+        int conditionIndex = indexOf(
+            KURAMOTO_CONDITION_IDS,
+            selection.optString("condition", "lowLow"),
+            0
+        );
+        double[] drivers = kuramotoDriverValues(surfaceIndex, conditionIndex);
+        JSONObject candidate = buildPrivateParticleDynamicsJsonFromValues(
+            KURAMOTO_PROFILE_IDS[conditionIndex],
+            "kuramoto_mesh_panel",
+            surfaceIndex == 2 ? 1.0 : 0.70,
+            surfaceIndex == 2 ? 1.0 : 0.46,
+            drivers,
+            7,
+            0.5,
+            14.0
+        );
+        candidate.put("kuramoto_mesh", selection);
+        JSONObject privateParticles = candidate.optJSONObject("private_particles");
+        if (privateParticles != null) {
+            privateParticles.put("kuramoto_mesh_selection", selection);
+        }
+        return candidate;
+    }
+
+    private JSONObject buildKuramotoMeshPanelSelectionJson() throws Exception {
+        int surfaceIndex = selectedKuramotoSurfaceIndex();
+        int conditionIndex = selectedKuramotoConditionIndex();
+        JSONObject selection = new JSONObject()
+            .put("schema_id", KURAMOTO_MESH_PANEL_SELECTION_SCHEMA)
+            .put("panel_role", "requester-ui-or-agent-cli")
+            .put("panel_must_not_be_authority", true)
+            .put("high_rate_payloads_allowed", false)
+            .put("surface_target_id", KURAMOTO_SURFACE_IDS[surfaceIndex])
+            .put("surface_target", KURAMOTO_SURFACE_TARGETS[surfaceIndex])
+            .put("source_mode", KURAMOTO_SOURCE_MODES[surfaceIndex])
+            .put("resource_plan_id", KURAMOTO_SURFACE_RESOURCE_PLAN_IDS[surfaceIndex])
+            .put("runtime_profile_path", KURAMOTO_SURFACE_RUNTIME_PROFILE_PATHS[surfaceIndex])
+            .put("condition", KURAMOTO_CONDITION_IDS[conditionIndex])
+            .put("condition_label", KURAMOTO_CONDITION_LABELS[conditionIndex])
+            .put("profile_set_id", KURAMOTO_PROFILE_SET_ID)
+            .put("profile_id", KURAMOTO_PROFILE_IDS[conditionIndex])
+            .put("default_profile_id", KURAMOTO_DEFAULT_PROFILE_ID)
+            .put("dynamics_mode", "movement-only")
+            .put("movement_base_frequency_hz", KURAMOTO_MOVEMENT_BASE_HZ[conditionIndex])
+            .put("movement_frequency_spread_hz", KURAMOTO_MOVEMENT_SPREAD_HZ[conditionIndex])
+            .put("movement_coupling", KURAMOTO_MOVEMENT_COUPLING[conditionIndex])
+            .put("unit_distance_m", KURAMOTO_UNIT_DISTANCE_M[conditionIndex]);
+        JSONArray expectedMarkers = new JSONArray();
+        expectedMarkers.put("kuramotoSurfaceTarget=" + KURAMOTO_SURFACE_IDS[surfaceIndex]);
+        expectedMarkers.put("kuramotoProfileId=" + KURAMOTO_PROFILE_IDS[conditionIndex]);
+        selection.put("expected_markers", expectedMarkers);
+        return selection;
+    }
+
+    private double[] kuramotoDriverValues(int surfaceIndex, int conditionIndex) {
+        double highEnergy = KURAMOTO_MOVEMENT_BASE_HZ[conditionIndex] > 0.5 ? 1.0 : 0.0;
+        double highCoherence = KURAMOTO_MOVEMENT_COUPLING[conditionIndex] > 0.5 ? 1.0 : 0.0;
+        return new double[] {
+            highEnergy > 0.5 ? 0.85 : 0.25,
+            highCoherence > 0.5 ? 0.85 : 0.15,
+            clamp(KURAMOTO_MOVEMENT_BASE_HZ[conditionIndex] / 0.88, 0.0, 1.0),
+            clamp(1.0 - (KURAMOTO_MOVEMENT_SPREAD_HZ[conditionIndex] / 0.62), 0.0, 1.0),
+            clamp(KURAMOTO_UNIT_DISTANCE_M[conditionIndex] / 0.004, 0.0, 1.0),
+            KURAMOTO_SURFACE_IDS.length <= 1 ? 0.0 : (double) surfaceIndex / (KURAMOTO_SURFACE_IDS.length - 1),
+            KURAMOTO_CONDITION_IDS.length <= 1 ? 0.0 : (double) conditionIndex / (KURAMOTO_CONDITION_IDS.length - 1),
+            0.0
+        };
+    }
+
+    private void refreshKuramotoMeshPanelFromStatus(boolean userVisible) {
+        String surface = readKuramotoPanelSelectionString("surface_target_id", "gpu-replay-hands");
+        String condition = readKuramotoPanelSelectionString("condition", "lowLow");
+        boolean previousAutoApply = kuramotoPanelAutoApplyArmed;
+        kuramotoPanelAutoApplyArmed = false;
+        if (kuramotoSurfaceTarget != null) {
+            kuramotoSurfaceTarget.setSelection(indexOf(KURAMOTO_SURFACE_IDS, surface, 1));
+        }
+        if (kuramotoCondition != null) {
+            kuramotoCondition.setSelection(indexOf(KURAMOTO_CONDITION_IDS, condition, 0));
+        }
+        kuramotoPanelAutoApplyArmed = previousAutoApply;
+        updateKuramotoSelectionSummary();
+        String message = "Kuramoto panel refreshed: " + surface + " / " + condition + ".";
+        if (userVisible) {
+            updateStatus(message);
+        } else {
+            setStatusText(message);
+        }
+    }
+
+    private void writeKuramotoMeshPanelStatus(
+        String panelStatus,
+        JSONObject selection,
+        JSONObject candidate,
+        String resultText
+    ) throws Exception {
+        JSONObject body = new JSONObject()
+            .put("schema", "rusty.kuramoto.mesh.native_panel_status.v1")
+            .put("status", panelStatus)
+            .put("transport", "same-apk-control-panel")
+            .put("updated_at_unix_ms", System.currentTimeMillis())
+            .put("selection", selection == null ? JSONObject.NULL : selection)
+            .put("result", resultText == null ? JSONObject.NULL : resultText);
+        if (candidate != null) {
+            JSONObject privateParticles = candidate.optJSONObject("private_particles");
+            if (privateParticles != null) {
+                body.put("private_particles", privateParticles);
+            }
+            body.put("candidate_revision", candidate.optLong("revision", 0L));
+        }
+        writeFile(KURAMOTO_MESH_PANEL_STATUS_FILE, body.toString(2));
+    }
+
+    private String readKuramotoPanelSelectionString(String key, String fallback) {
+        try {
+            JSONObject body = new JSONObject(readFile(KURAMOTO_MESH_PANEL_STATUS_FILE));
+            JSONObject selection = body.optJSONObject("selection");
+            if (selection == null) {
+                return fallback;
+            }
+            String value = selection.optString(key, fallback);
+            return value == null || value.length() == 0 ? fallback : value;
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    private int selectedKuramotoSurfaceIndex() {
+        if (kuramotoSurfaceTarget == null) {
+            return 1;
+        }
+        return Math.max(0, Math.min(KURAMOTO_SURFACE_IDS.length - 1, kuramotoSurfaceTarget.getSelectedItemPosition()));
+    }
+
+    private int selectedKuramotoConditionIndex() {
+        if (kuramotoCondition == null) {
+            return 0;
+        }
+        return Math.max(0, Math.min(KURAMOTO_CONDITION_IDS.length - 1, kuramotoCondition.getSelectedItemPosition()));
     }
 
     private View buildPrivateParticleDynamicsView() {
@@ -3767,6 +4324,89 @@ public final class ControlPanelActivity extends Activity {
         setStatusText("Display composite capture request launched.");
     }
 
+    private void handlePolarSensorPanelCommandIntent(Intent intent) {
+        if (intent == null || !ACTION_POLAR_SENSOR_PANEL_COMMAND.equals(intent.getAction())) {
+            return;
+        }
+        String token = intent.getStringExtra(EXTRA_POLAR_SENSOR_PANEL_COMMAND_TOKEN);
+        if (token == null || token.length() == 0) {
+            token = intent.toUri(0);
+        }
+        if (token.equals(handledPolarSensorPanelCommandToken)) {
+            return;
+        }
+        handledPolarSensorPanelCommandToken = token;
+        String panelMode = readControlPanelMode();
+        if (!"polar-sensor".equals(panelMode) && !"kuramoto-mesh".equals(panelMode)) {
+            setStatusText("Polar command ignored; panel mode does not expose Polar controls.");
+            return;
+        }
+        if ("kuramoto-mesh".equals(panelMode)) {
+            setContentView(buildPolarSensorPanelPageView(true));
+        } else {
+            ensurePolarSensorPanel();
+        }
+        polarSensorPanel.handleCommand(
+            intent.getStringExtra(EXTRA_POLAR_SENSOR_PANEL_COMMAND)
+        );
+    }
+
+    private void handleKuramotoMeshPanelCommandIntent(Intent intent) {
+        if (intent == null || !ACTION_KURAMOTO_MESH_PANEL_COMMAND.equals(intent.getAction())) {
+            return;
+        }
+        String token = intent.getStringExtra(EXTRA_KURAMOTO_PANEL_COMMAND_TOKEN);
+        if (token == null || token.length() == 0) {
+            token = intent.toUri(0);
+        }
+        if (token.equals(handledKuramotoMeshPanelCommandToken)) {
+            return;
+        }
+        handledKuramotoMeshPanelCommandToken = token;
+        if (!"kuramoto-mesh".equals(readControlPanelMode())) {
+            setStatusText("Kuramoto command ignored; panel is not active.");
+            kuramotoMarker("status=cli-command-ignored reason=panel-not-active");
+            return;
+        }
+        if (kuramotoSurfaceTarget == null || kuramotoCondition == null) {
+            setContentView(buildKuramotoMeshPanelView());
+        }
+        boolean previousAutoApply = kuramotoPanelAutoApplyArmed;
+        kuramotoPanelAutoApplyArmed = false;
+        String requestedSurface = intent.getStringExtra(EXTRA_KURAMOTO_SURFACE_TARGET);
+        if (requestedSurface != null && requestedSurface.length() > 0) {
+            kuramotoSurfaceTarget.setSelection(
+                indexOf(KURAMOTO_SURFACE_IDS, requestedSurface, selectedKuramotoSurfaceIndex())
+            );
+        }
+        String requestedCondition = intent.getStringExtra(EXTRA_KURAMOTO_CONDITION);
+        if (requestedCondition != null && requestedCondition.length() > 0) {
+            kuramotoCondition.setSelection(
+                indexOf(KURAMOTO_CONDITION_IDS, requestedCondition, selectedKuramotoConditionIndex())
+            );
+        }
+        kuramotoPanelAutoApplyArmed = previousAutoApply;
+        updateKuramotoSelectionSummary();
+        kuramotoMarker(
+            "status=cli-command surfaceTarget="
+                + KURAMOTO_SURFACE_IDS[selectedKuramotoSurfaceIndex()]
+                + " condition="
+                + KURAMOTO_CONDITION_IDS[selectedKuramotoConditionIndex()]
+        );
+        submitLiveKuramotoMeshPanelSelection(true);
+        boolean returnToImmersive = intent.getBooleanExtra(
+            EXTRA_KURAMOTO_RETURN_TO_IMMERSIVE,
+            "real-hands".equals(KURAMOTO_SURFACE_IDS[selectedKuramotoSurfaceIndex()])
+        );
+        if (returnToImmersive) {
+            kuramotoMarker(
+                "status=cli-command-return-to-immersive surfaceTarget="
+                    + KURAMOTO_SURFACE_IDS[selectedKuramotoSurfaceIndex()]
+            );
+            closePanelAndReturnToImmersive();
+        }
+    }
+
     private JSONObject buildDynamicsJson() throws Exception {
         return new JSONObject()
             .put("mirror_mode", selectedMirrorMode)
@@ -3853,6 +4493,24 @@ public final class ControlPanelActivity extends Activity {
         if (status != null) {
             status.setText(message);
         }
+    }
+
+    private static void kuramotoMarker(String detail) {
+        Log.i(
+            TAG,
+            MARKER_PREFIX
+                + " channel="
+                + CHANNEL_KURAMOTO_PANEL
+                + " "
+                + String.valueOf(detail).replace('\n', ' ').replace('\r', ' ')
+        );
+    }
+
+    private static String markerToken(String raw) {
+        if (raw == null || raw.length() == 0) {
+            return "none";
+        }
+        return raw.replaceAll("[^A-Za-z0-9._=:/-]+", "_");
     }
 
     private TextView text(String value, int sp, int color) {
@@ -4043,6 +4701,12 @@ public final class ControlPanelActivity extends Activity {
             return requested;
         }
         if ("private-particle-config".equals(requested)) {
+            return requested;
+        }
+        if ("kuramoto-mesh".equals(requested)) {
+            return requested;
+        }
+        if ("polar-sensor".equals(requested)) {
             return requested;
         }
         return "stimulus-volume";

@@ -60,13 +60,15 @@ pub(crate) struct LiveHandCompactStats {
     pub(crate) runtime_joint_pose_count: usize,
     pub(crate) tip_length_count: usize,
     pub(crate) compact_upload_bytes: u64,
+    pub(crate) left_locate_status: String,
+    pub(crate) right_locate_status: String,
     pub(crate) reason: &'static str,
 }
 
 impl LiveHandCompactStats {
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "liveMetaHandCompactInputReady={} liveMetaHandCompactFrameReady={} liveMetaHandTrackingExtensionAvailable={} liveMetaHandTrackingExtensionEnabled={} liveMetaHandTrackingSystemSupported={} liveMetaHandTrackerReady={} liveMetaHandFrameSource=XR_EXT_hand_tracking liveMetaHandCompactUploadEquivalent=true liveMetaHandGpuInputPath=recorded-compatible-compact-joint-pose-tip-length liveMetaHandRuntimeJointPoseCount={} liveMetaHandTipLengthCount={} liveMetaHandCompactFrameUploadBytes={} liveMetaHandLeftActive={} liveMetaHandRightActive={} liveMetaHandUsingLeft={} liveMetaHandUsingRight={} liveMetaHandUsingBoth={} liveMetaHandActiveHandCount={} liveMetaHandVisualizableHandCount={} liveMetaHandFrameIndex={} liveMetaHandTimestampNs={} liveMetaHandFallbackReason={}",
+            "liveMetaHandCompactInputReady={} liveMetaHandCompactFrameReady={} liveMetaHandTrackingExtensionAvailable={} liveMetaHandTrackingExtensionEnabled={} liveMetaHandTrackingSystemSupported={} liveMetaHandTrackerReady={} liveMetaHandFrameSource=XR_EXT_hand_tracking liveMetaHandCompactUploadEquivalent=true liveMetaHandGpuInputPath=recorded-compatible-compact-joint-pose-tip-length liveMetaHandRuntimeJointPoseCount={} liveMetaHandTipLengthCount={} liveMetaHandCompactFrameUploadBytes={} liveMetaHandLeftActive={} liveMetaHandRightActive={} liveMetaHandUsingLeft={} liveMetaHandUsingRight={} liveMetaHandUsingBoth={} liveMetaHandActiveHandCount={} liveMetaHandVisualizableHandCount={} liveMetaHandFrameIndex={} liveMetaHandTimestampNs={} liveMetaHandLeftLocateStatus={} liveMetaHandRightLocateStatus={} liveMetaHandFallbackReason={}",
             self.tracker_ready,
             self.frame_ready,
             self.extension_available,
@@ -85,6 +87,8 @@ impl LiveHandCompactStats {
             self.visualizable_hand_count,
             self.frame_index,
             self.timestamp_ns,
+            crate::sanitize(&self.left_locate_status),
+            crate::sanitize(&self.right_locate_status),
             self.reason,
         )
     }
@@ -109,6 +113,8 @@ impl Default for LiveHandCompactStats {
             runtime_joint_pose_count: 0,
             tip_length_count: 0,
             compact_upload_bytes: 0,
+            left_locate_status: "not-requested".to_string(),
+            right_locate_status: "not-requested".to_string(),
             reason: "unavailable",
         }
     }
@@ -272,16 +278,20 @@ impl LiveHandCompactInput {
             return (LiveHandCompactFrameSet::default(), stats);
         }
 
-        let left = self
-            .left_tracker
-            .as_ref()
-            .and_then(|tracker| locate_hand(reference_space, tracker, predicted_display_time).ok())
-            .flatten();
-        let right = self
-            .right_tracker
-            .as_ref()
-            .and_then(|tracker| locate_hand(reference_space, tracker, predicted_display_time).ok())
-            .flatten();
+        let left_result = locate_hand_result(
+            reference_space,
+            self.left_tracker.as_ref(),
+            predicted_display_time,
+        );
+        let right_result = locate_hand_result(
+            reference_space,
+            self.right_tracker.as_ref(),
+            predicted_display_time,
+        );
+        stats.left_locate_status = left_result.status;
+        stats.right_locate_status = right_result.status;
+        let left = left_result.locations;
+        let right = right_result.locations;
         stats.left_active = left.is_some();
         stats.right_active = right.is_some();
         stats.active_hand_count = stats.left_active as u32 + stats.right_active as u32;
@@ -301,6 +311,12 @@ impl LiveHandCompactInput {
         let right_frame = right.as_ref().and_then(|locations| {
             compact_frame_from_locations(locations, frame_index, timestamp_ns).ok()
         });
+        if left.is_some() && left_frame.is_none() {
+            stats.left_locate_status = "active-invalid-joints".to_string();
+        }
+        if right.is_some() && right_frame.is_none() {
+            stats.right_locate_status = "active-invalid-joints".to_string();
+        }
 
         stats.using_left = left_frame.is_some();
         stats.using_right = right_frame.is_some();
@@ -370,12 +386,36 @@ fn compact_frame_from_locations(
     })
 }
 
-fn locate_hand(
+struct LocateHandResult {
+    locations: Option<xr::HandJointLocations>,
+    status: String,
+}
+
+fn locate_hand_result(
     reference_space: &xr::Space,
-    tracker: &xr::HandTracker,
+    tracker: Option<&xr::HandTracker>,
     time: xr::Time,
-) -> xr::Result<Option<xr::HandJointLocations>> {
-    reference_space.locate_hand_joints(tracker, time)
+) -> LocateHandResult {
+    let Some(tracker) = tracker else {
+        return LocateHandResult {
+            locations: None,
+            status: "tracker-not-created".to_string(),
+        };
+    };
+    match reference_space.locate_hand_joints(tracker, time) {
+        Ok(Some(locations)) => LocateHandResult {
+            locations: Some(locations),
+            status: "active".to_string(),
+        },
+        Ok(None) => LocateHandResult {
+            locations: None,
+            status: "inactive".to_string(),
+        },
+        Err(error) => LocateHandResult {
+            locations: None,
+            status: format!("locate-error-{error:?}"),
+        },
+    }
 }
 
 fn runtime_joint_poses(

@@ -47,10 +47,7 @@
   },
   "build_inputs": {
     "env": [],
-    "assets": [
-      "fixtures/native-renderer/native-hwb-blur-sdf-public.plan.json",
-      "fixtures/native-renderer/recorded-hand-replay-public-shape.json"
-    ],
+    "assets": [],
     "shaders": []
   },
   "markers": {

@@ -25,6 +25,14 @@ const PARTICLE_OUTPUT_ROW_VEC4S: vk::DeviceSize = 4;
 const PARTICLE_OUTPUT_ROW_BYTES: vk::DeviceSize =
     PARTICLE_OUTPUT_ROW_VEC4S * mem::size_of::<[f32; 4]>() as vk::DeviceSize;
 const PARTICLE_SORT_ROW_BYTES: vk::DeviceSize = mem::size_of::<[u32; 4]>() as vk::DeviceSize;
+const KURAMOTO_DEFAULT_DRIVER_VALUES01: [f32; 8] = [0.25, 0.15, 0.5, 0.0, 0.5, 0.5, 0.0, 0.0];
+const KURAMOTO_PROFILE_IDS: [&str; 4] = [
+    "kuramoto.private.native.profile.low-energy-low-coherence.movement-only.v1",
+    "kuramoto.private.native.profile.high-energy-low-coherence.movement-only.v1",
+    "kuramoto.private.native.profile.low-energy-high-coherence.movement-only.v1",
+    "kuramoto.private.native.profile.high-energy-high-coherence.movement-only.v1",
+];
+const KURAMOTO_SURFACE_TARGET_IDS: [&str; 3] = ["real-hands", "gpu-replay-hands", "icosphere"];
 
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct GpuHandAnchorParticleFrameStats {
@@ -35,6 +43,8 @@ pub(crate) struct GpuHandAnchorParticleFrameStats {
     pub(crate) triangle_count: u32,
     pub(crate) skinned_position_buffer_bytes: u64,
     pub(crate) live_compact_input_frame: bool,
+    pub(crate) input_source: &'static str,
+    pub(crate) readiness_reason: &'static str,
     pub(crate) center_position: [f32; 4],
 }
 
@@ -43,10 +53,29 @@ impl GpuHandAnchorParticleFrameStats {
         hand_mesh: &GpuHandMeshVisualFrameStats,
         settings: NativeHandAnchorParticleSettings,
     ) -> Self {
+        let selected_for_private_kuramoto = !settings.private_gpu_payload_requested()
+            || private_kuramoto_realtime_hand_surface_selected();
+        let input_source = if hand_mesh.live_compact_input_frame {
+            "live-meta-openxr-hand-tracking"
+        } else {
+            "recorded-replay-fallback"
+        };
+        let readiness_reason = if !settings.enabled {
+            "disabled"
+        } else if !selected_for_private_kuramoto {
+            "surface-target-not-real-hands"
+        } else if !hand_mesh.ready {
+            "awaiting-skinned-hand-mesh"
+        } else if hand_mesh.triangle_count == 0 {
+            "empty-hand-mesh"
+        } else if hand_mesh.live_compact_input_frame {
+            "ready-live-hand-frame"
+        } else {
+            "ready-recorded-replay-fallback"
+        };
         let ready = settings.enabled
+            && selected_for_private_kuramoto
             && hand_mesh.ready
-            && hand_mesh.visible
-            && hand_mesh.live_compact_input_frame
             && hand_mesh.triangle_count > 0;
         Self {
             ready,
@@ -60,20 +89,24 @@ impl GpuHandAnchorParticleFrameStats {
             triangle_count: hand_mesh.triangle_count,
             skinned_position_buffer_bytes: hand_mesh.skinned_position_buffer_bytes,
             live_compact_input_frame: hand_mesh.live_compact_input_frame,
+            input_source,
+            readiness_reason,
             center_position: hand_mesh.center_position,
         }
     }
 
     fn marker_fields(&self, prefix: &str) -> String {
         format!(
-            "{prefix}Ready={} {prefix}Visible={} {prefix}Hand={} {prefix}ParticleCount={} {prefix}TriangleCount={} {prefix}SkinnedPositionBufferBytes={} {prefix}LiveCompactInputFrame={}",
+            "{prefix}Ready={} {prefix}Visible={} {prefix}Hand={} {prefix}ParticleCount={} {prefix}TriangleCount={} {prefix}SkinnedPositionBufferBytes={} {prefix}LiveCompactInputFrame={} {prefix}InputSource={} {prefix}ReadinessReason={}",
             self.ready,
             self.visible,
             self.handedness,
             self.particles_drawn,
             self.triangle_count,
             self.skinned_position_buffer_bytes,
-            self.live_compact_input_frame
+            self.live_compact_input_frame,
+            self.input_source,
+            self.readiness_reason
         )
     }
 }
@@ -110,15 +143,94 @@ impl GpuHandAnchorParticleFrameSetStats {
     }
 
     pub(crate) fn marker_fields(&self) -> String {
+        let panel_dynamics = private_kuramoto_panel_dynamics();
         format!(
-            "{} handAnchorParticleTotalCount={} handAnchorParticleBothHandsVisible={} {} {}",
+            "{} kuramotoSurfaceTarget={} kuramotoProfileId={} handAnchorParticleTotalCount={} handAnchorParticleBothHandsVisible={} handAnchorParticleReadinessReason={} {} {}",
             self.settings.marker_fields(),
+            panel_dynamics.surface_target_id(),
+            panel_dynamics.profile_id(),
             self.total_particles_drawn(),
             self.primary.visible && self.secondary.visible,
+            self.primary.readiness_reason,
             self.primary.marker_fields("handAnchorParticlePrimary"),
             self.secondary.marker_fields("handAnchorParticleSecondary"),
         )
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PrivateKuramotoPanelDynamics {
+    surface_index: usize,
+    condition_index: usize,
+    base_frequency_hz: f32,
+    frequency_spread_hz: f32,
+    movement_coupling: f32,
+    unit_distance_m: f32,
+    noise_frequency: f32,
+    noise_amplitude_m: f32,
+    noise_speed_hz: f32,
+}
+
+impl PrivateKuramotoPanelDynamics {
+    fn from_driver_values(driver_values01: [f32; 8]) -> Self {
+        let surface_index = if driver_values01[5] < 0.25 {
+            0
+        } else if driver_values01[5] >= 0.75 {
+            2
+        } else {
+            1
+        };
+        let condition_index = (driver_values01[6].clamp(0.0, 1.0) * 3.0).round() as usize;
+        let high_energy01 = smoothstep(0.45, 0.85, driver_values01[0].clamp(0.0, 1.0));
+        let base_frequency_hz = (driver_values01[2].clamp(0.0, 1.0) * 0.88).max(0.0);
+        let frequency_spread_hz = ((1.0 - driver_values01[3].clamp(0.0, 1.0)) * 0.62).max(0.0);
+        let movement_coupling = smoothstep(0.35, 0.85, driver_values01[1].clamp(0.0, 1.0));
+        let unit_distance_m = (driver_values01[4].clamp(0.0, 1.0) * 0.004).max(0.0005);
+        Self {
+            surface_index,
+            condition_index: condition_index.min(KURAMOTO_PROFILE_IDS.len() - 1),
+            base_frequency_hz,
+            frequency_spread_hz,
+            movement_coupling,
+            unit_distance_m,
+            noise_frequency: high_energy01 * 6.7,
+            noise_amplitude_m: high_energy01 * 0.004,
+            noise_speed_hz: high_energy01 * 0.5,
+        }
+    }
+
+    fn profile_id(self) -> &'static str {
+        KURAMOTO_PROFILE_IDS[self.condition_index]
+    }
+
+    fn surface_target_id(self) -> &'static str {
+        KURAMOTO_SURFACE_TARGET_IDS[self.surface_index]
+    }
+}
+
+fn private_kuramoto_panel_dynamics() -> PrivateKuramotoPanelDynamics {
+    PrivateKuramotoPanelDynamics::from_driver_values(private_kuramoto_driver_values01())
+}
+
+fn private_kuramoto_realtime_hand_surface_selected() -> bool {
+    private_kuramoto_panel_dynamics().surface_index == 0
+}
+
+fn private_kuramoto_driver_values01() -> [f32; 8] {
+    #[cfg(target_os = "android")]
+    {
+        if let Some(candidate) =
+            crate::native_renderer_stimulus_panel::latest_live_private_particle_dynamics()
+        {
+            return candidate.driver_values01;
+        }
+    }
+    KURAMOTO_DEFAULT_DRIVER_VALUES01
+}
+
+fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
+    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 pub(crate) struct GpuHandAnchorParticleRenderer {
@@ -146,13 +258,27 @@ impl GpuHandAnchorParticleRenderer {
         if draw_resources.vertex_count == 0 || draw_resources.triangle_count == 0 {
             return Err("resident skinned hand mesh particle draw resources are empty".to_string());
         }
-        let mut private_kuramoto = PrivateKuramotoParticleDynamics::new(
+        let mut private_kuramoto = match PrivateKuramotoParticleDynamics::new(
             device,
             memory_properties,
             draw_resources,
             handedness,
             settings,
-        )?;
+        ) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                crate::marker(
+                    "hand-anchor-particles",
+                    format!(
+                        "status=private-kuramoto-unavailable reason={} handAnchorParticleHand={} privateKuramotoPayloadLinked={} handAnchorParticleFallback=deterministic-gpu-barycentric-triangle-anchors",
+                        crate::sanitize(&error),
+                        handedness,
+                        PRIVATE_KURAMOTO_PAYLOAD_LINKED,
+                    ),
+                );
+                None
+            }
+        };
         let fallback_particle_output_buffer = if private_kuramoto.is_some() {
             None
         } else {
@@ -324,8 +450,14 @@ impl GpuHandAnchorParticleRenderer {
         crate::marker(
             "hand-anchor-particles",
             format!(
-                "status=created handAnchorParticleHand={} handAnchorParticlePath=resident-skinned-mesh-coordinate-anchor-billboards handAnchorParticleCoordinateSource=deterministic-gpu-barycentric-triangle-anchors handAnchorParticleCoordinateSpace=openxr-reference-space handAnchorParticleMask=static-feather-dot-luminance-alpha handAnchorParticleAnimation=false handAnchorParticleTriangleCount={} handAnchorParticleVertexCount={} handAnchorParticleSkinnedPositionBufferBytes={} handAnchorParticleTriangleBufferBytes={} handAnchorParticleCpuExpandedUploadPerFrame=false handAnchorParticleMeshUploadPerFrame=false {}",
+                "status=created handAnchorParticleHand={} handAnchorParticlePath=resident-skinned-mesh-coordinate-anchor-billboards handAnchorParticleCoordinateSource={} handAnchorParticleFallbackActive={} handAnchorParticleCoordinateSpace=openxr-reference-space handAnchorParticleMask=static-feather-dot-luminance-alpha handAnchorParticleAnimation=false handAnchorParticleTriangleCount={} handAnchorParticleVertexCount={} handAnchorParticleSkinnedPositionBufferBytes={} handAnchorParticleTriangleBufferBytes={} handAnchorParticleCpuExpandedUploadPerFrame=false handAnchorParticleMeshUploadPerFrame=false {}",
                 handedness,
+                if private_kuramoto.is_some() {
+                    "private-kuramoto-gpu-payload"
+                } else {
+                    "deterministic-gpu-barycentric-triangle-anchors"
+                },
+                private_kuramoto.is_none(),
                 draw_resources.triangle_count,
                 draw_resources.vertex_count,
                 draw_resources.skinned_position_buffer_bytes,
@@ -1177,10 +1309,12 @@ impl PrivateKuramotoParticleDynamics {
         crate::marker(
             "hand-anchor-particles",
             format!(
-                "status=private-kuramoto-created handAnchorParticleHand={} privateKuramotoPayloadLinked=true privateKuramotoImplementationPath={} privateKuramotoDataPath={} kuramotoRuntimeMode=quest-native-vulkan-gpu kuramotoProfileId=kuramoto.private.profile.low-coherence-high-jerk.movement-jerk.v1 kuramotoParticleCount={} kuramotoNeighborhoodMode=surface-distance-tiered kuramotoMovementNoiseSpace=local-normalized kuramotoColorMode=rgb-driver kuramotoGraphEdgeCount={} kuramotoSmallWorldEdgeCount={} kuramotoGpuBuffersResident=true kuramotoCpuUploadBytes=0 kuramotoValidationMode=live-hand-solid-black-openxr-hands-awaiting-user-evaluation",
+                "status=private-kuramoto-created handAnchorParticleHand={} privateKuramotoPayloadLinked=true privateKuramotoImplementationPath={} privateKuramotoDataPath={} kuramotoRuntimeMode=quest-native-vulkan-gpu kuramotoProfileId={} kuramotoSurfaceTarget={} kuramotoDynamicsMode=movement-only kuramotoParticleCount={} kuramotoNeighborhoodMode=surface-distance-tiered kuramotoMovementNoiseSpace=local-normalized kuramotoColorMode=rgb-driver kuramotoGraphEdgeCount={} kuramotoSmallWorldEdgeCount={} kuramotoGpuBuffersResident=true kuramotoCpuUploadBytes=0 kuramotoValidationMode=live-hand-solid-black-openxr-hands-awaiting-user-evaluation",
                 handedness,
                 crate::sanitize(PRIVATE_KURAMOTO_IMPLEMENTATION_PATH),
                 crate::sanitize(PRIVATE_KURAMOTO_DATA_PATH),
+                private_kuramoto_panel_dynamics().profile_id(),
+                private_kuramoto_panel_dynamics().surface_target_id(),
                 sample_count,
                 graph.surface_edges.len(),
                 graph.small_world_edges.len(),
@@ -1225,6 +1359,8 @@ impl PrivateKuramotoParticleDynamics {
     ) {
         let particle_count = particle_count.min(self.sample_count).max(1);
         let descriptor_index = (frame_count as usize) & 1;
+        let dynamics = private_kuramoto_panel_dynamics();
+        let noise_seconds = frame_count as f32 * (1.0 / 72.0) * dynamics.noise_speed_hz;
         let static_to_compute = [
             storage_to_compute_read_barrier(&self.coordinate_triangle_buffer),
             storage_to_compute_read_barrier(&self.coordinate_barycentric_buffer),
@@ -1245,13 +1381,24 @@ impl PrivateKuramotoParticleDynamics {
         );
 
         let push = PrivateKuramotoComputePush {
-            params0: [
-                particle_count as f32,
-                1.0 / 72.0,
-                radius_m,
-                frame_count as f32 / 72.0,
+            params0: [particle_count as f32, 1.0 / 72.0, radius_m, noise_seconds],
+            params1: [1.0, hand_code as f32, frame_count as f32, 0.0],
+            movement0: [
+                dynamics.base_frequency_hz,
+                dynamics.frequency_spread_hz,
+                1.0,
+                dynamics.movement_coupling,
             ],
-            params1: [hand_code as f32, frame_count as f32, 0.0, 0.0],
+            movement1: [0.0, 0.5, 0.3, 0.1],
+            movement2: [
+                0.0,
+                dynamics.noise_frequency,
+                dynamics.noise_amplitude_m,
+                dynamics.unit_distance_m,
+            ],
+            jerk0: [0.0, 0.0, 0.0, 0.0],
+            jerk1: [0.0, 0.0, 0.0, 0.0],
+            jerk2: [0.0, 0.0, 0.0, 0.0],
         };
         device.cmd_bind_pipeline(cmd, vk::PipelineBindPoint::COMPUTE, self.pipeline);
         device.cmd_bind_descriptor_sets(
@@ -1292,9 +1439,15 @@ impl PrivateKuramotoParticleDynamics {
 
         if frame_count == 0 || frame_count % 120 == 0 {
             crate::android_log(format!(
-                "RUSTY_KURAMOTO_MESH_NATIVE channel=frame status=running kuramotoRuntimeMode=quest-native-vulkan-gpu kuramotoProfileId=kuramoto.private.profile.low-coherence-high-jerk.movement-jerk.v1 kuramotoParticleCount={} kuramotoActiveHands={} kuramotoNeighborhoodMode=surface-distance-tiered kuramotoMovementNoiseSpace=local-normalized kuramotoColorMode=rgb-driver kuramotoGraphEdgeCount={} kuramotoSmallWorldEdgeCount={} kuramotoCoordinateAnchorGpuMs=pending-gpu-timestamp kuramotoPhaseIntegrateGpuMs=pending-gpu-timestamp kuramotoParticleBuildGpuMs=pending-gpu-timestamp kuramotoDrawGpuMs=pending-gpu-timestamp kuramotoReadbackCadenceFrames=0 kuramotoMovementOrder=pending-readback kuramotoJerkOrder=pending-readback kuramotoJerkBoostRms=pending-readback kuramotoSaturationCount=pending-readback kuramotoCpuUploadBytes=0 kuramotoGpuBuffersResident=true kuramotoValidationMode=live-hand-solid-black-openxr-hands-awaiting-user-evaluation kuramotoVisualAcceptance=not-evaluated-user-away",
+                "RUSTY_KURAMOTO_MESH_NATIVE channel=frame status=running kuramotoRuntimeMode=quest-native-vulkan-gpu kuramotoProfileId={} kuramotoSurfaceTarget={} kuramotoDynamicsMode=movement-only kuramotoParticleCount={} kuramotoActiveHands={} kuramotoMovementBaseHz={:.3} kuramotoMovementSpreadHz={:.3} kuramotoMovementCoupling={:.3} kuramotoUnitDistanceM={:.4} kuramotoNeighborhoodMode=surface-distance-tiered kuramotoMovementNoiseSpace=local-normalized kuramotoColorMode=rgb-driver kuramotoGraphEdgeCount={} kuramotoSmallWorldEdgeCount={} kuramotoCoordinateAnchorGpuMs=pending-gpu-timestamp kuramotoPhaseIntegrateGpuMs=pending-gpu-timestamp kuramotoParticleBuildGpuMs=pending-gpu-timestamp kuramotoDrawGpuMs=pending-gpu-timestamp kuramotoReadbackCadenceFrames=0 kuramotoMovementOrder=pending-readback kuramotoJerkOrder=disabled kuramotoJerkBoostRms=0 kuramotoSaturationCount=pending-readback kuramotoCpuUploadBytes=0 kuramotoGpuBuffersResident=true kuramotoValidationMode=live-hand-solid-black-openxr-hands-awaiting-user-evaluation kuramotoVisualAcceptance=not-evaluated-user-away",
+                dynamics.profile_id(),
+                dynamics.surface_target_id(),
                 particle_count,
                 self.handedness,
+                dynamics.base_frequency_hz,
+                dynamics.frequency_spread_hz,
+                dynamics.movement_coupling,
+                dynamics.unit_distance_m,
                 self.surface_edge_count,
                 self.small_world_edge_count,
             ));
@@ -2088,4 +2241,115 @@ struct ParticleSortComputePush {
 struct PrivateKuramotoComputePush {
     params0: [f32; 4],
     params1: [f32; 4],
+    movement0: [f32; 4],
+    movement1: [f32; 4],
+    movement2: [f32; 4],
+    jerk0: [f32; 4],
+    jerk1: [f32; 4],
+    jerk2: [f32; 4],
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::native_renderer_options::NativeHandAnchorParticleDynamics;
+
+    #[test]
+    fn live_hand_anchor_particles_do_not_require_base_mesh_visibility() {
+        let hand_mesh = GpuHandMeshVisualFrameStats {
+            ready: true,
+            visible: false,
+            handedness: "left",
+            triangle_count: 2048,
+            skinned_position_buffer_bytes: 65_536,
+            live_compact_input_frame: true,
+            ..Default::default()
+        };
+        let settings = NativeHandAnchorParticleSettings {
+            enabled: true,
+            particles_per_hand: 1024,
+            dynamics: NativeHandAnchorParticleDynamics::DeterministicAnchors,
+            ..Default::default()
+        };
+
+        let stats = GpuHandAnchorParticleFrameStats::from_hand_mesh(&hand_mesh, settings);
+
+        assert!(stats.ready);
+        assert!(stats.visible);
+        assert_eq!(stats.particles_drawn, 1024);
+        assert_eq!(stats.triangle_count, 2048);
+        assert!(stats.live_compact_input_frame);
+        assert_eq!(stats.input_source, "live-meta-openxr-hand-tracking");
+    }
+
+    #[test]
+    fn real_hand_anchor_particles_use_recorded_fallback_skinning_before_live_joints() {
+        let hand_mesh = GpuHandMeshVisualFrameStats {
+            ready: true,
+            visible: true,
+            handedness: "left",
+            triangle_count: 2048,
+            skinned_position_buffer_bytes: 65_536,
+            live_compact_input_frame: false,
+            ..Default::default()
+        };
+        let settings = NativeHandAnchorParticleSettings {
+            enabled: true,
+            particles_per_hand: 1024,
+            dynamics: NativeHandAnchorParticleDynamics::DeterministicAnchors,
+            ..Default::default()
+        };
+
+        let stats = GpuHandAnchorParticleFrameStats::from_hand_mesh(&hand_mesh, settings);
+
+        assert!(stats.ready);
+        assert!(stats.visible);
+        assert_eq!(stats.particles_drawn, 1024);
+        assert_eq!(stats.triangle_count, 2048);
+        assert!(!stats.live_compact_input_frame);
+        assert_eq!(stats.input_source, "recorded-replay-fallback");
+        assert_eq!(stats.readiness_reason, "ready-recorded-replay-fallback");
+    }
+
+    #[test]
+    fn real_hand_anchor_particles_use_both_fallback_skinned_hands_in_parallel() {
+        let primary = GpuHandMeshVisualFrameStats {
+            ready: true,
+            visible: true,
+            handedness: "left",
+            triangle_count: 2048,
+            skinned_position_buffer_bytes: 65_536,
+            live_compact_input_frame: false,
+            ..Default::default()
+        };
+        let secondary = GpuHandMeshVisualFrameStats {
+            ready: true,
+            visible: true,
+            handedness: "right",
+            triangle_count: 2048,
+            skinned_position_buffer_bytes: 65_536,
+            live_compact_input_frame: false,
+            ..Default::default()
+        };
+        let mesh_stats = GpuHandMeshVisualFrameSetStats::new(primary, secondary, false, 1.0);
+        let settings = NativeHandAnchorParticleSettings {
+            enabled: true,
+            particles_per_hand: 1024,
+            dynamics: NativeHandAnchorParticleDynamics::DeterministicAnchors,
+            ..Default::default()
+        };
+
+        let stats = GpuHandAnchorParticleFrameSetStats::new(&mesh_stats, settings);
+
+        assert!(stats.primary.ready);
+        assert!(stats.secondary.ready);
+        assert!(stats.primary.visible);
+        assert!(stats.secondary.visible);
+        assert_eq!(stats.primary.input_source, "recorded-replay-fallback");
+        assert_eq!(stats.secondary.input_source, "recorded-replay-fallback");
+        assert_eq!(stats.total_particles_drawn(), 2048);
+        assert!(stats
+            .marker_fields()
+            .contains("handAnchorParticleBothHandsVisible=true"));
+    }
 }

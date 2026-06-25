@@ -402,8 +402,8 @@ The runtime scaffold:
   `recordedReplayVisualAcceptance=pending-headset-screenshot`;
 - keeps the later live-hand visual retest in a separate profile,
   `quest-native-renderer-live-hand-visual-diagnostic.profile.json`, which
-  disables replay proof, forces `live-meta-openxr-hand-tracking`, disables
-  recorded fallback, keeps graft copies disabled by default, enables the
+  disables replay proof, forces `live-meta-openxr-hand-tracking`, keeps
+  recorded fallback available until live joint frames arrive, keeps graft copies disabled by default, enables the
   high-contrast mesh diagnostic plus SDF visual, and still reports live
   mesh/SDF acceptance as pending until headset
   screenshots show visible live world-space mesh and SDF overlay color;

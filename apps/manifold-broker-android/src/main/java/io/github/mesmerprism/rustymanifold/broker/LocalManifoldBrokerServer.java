@@ -3,6 +3,7 @@ package io.github.mesmerprism.rustymanifold.broker;
 import android.content.Context;
 import android.util.Base64;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
@@ -30,6 +31,14 @@ public final class LocalManifoldBrokerServer {
     public static final int PORT = 8765;
     public static final String EVENTS_PATH = "/manifold/v1/events";
     private static final String COMMAND_SCHEMA = "rusty.manifold.command.envelope.v1";
+    private static final String BRIDGE_PROBE_SET_MARKER_COMMAND =
+            "hostess.makepad.bridge_probe.set_marker";
+    private static final String BRIDGE_COMMAND_REQUEST_SCHEMA =
+            "rusty.hostess.bridge_command.request.v1";
+    private static final String BRIDGE_COMMAND_REQUEST_STREAM =
+            "stream.hostess.makepad.bridge_command";
+    private static final String BRIDGE_COMMAND_RECEIPT_STREAM =
+            "stream.hostess.makepad.bridge_command.receipt";
     private static final String ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     private static final LocalManifoldBrokerServer INSTANCE = new LocalManifoldBrokerServer();
 
@@ -209,6 +218,26 @@ public final class LocalManifoldBrokerServer {
                 reply.put("stream_event_delivered_count", delivered);
                 return;
             }
+            if (isBridgeProbeSetMarkerCommand(command)) {
+                JSONObject event = buildBridgeCommandRequestEvent(message, params);
+                int delivered = publishStreamEvent(event);
+                reply.put("type", "command_ack");
+                reply.put("schema", "rusty.manifold.command.ack.v1");
+                reply.put("request_id", message.optString("request_id", ""));
+                reply.put("command", command);
+                reply.put("accepted", true);
+                reply.put("status", delivered > 0 ? "dispatched" : "accepted_no_runtime_subscriber");
+                reply.put("authority", "rusty.manifold");
+                reply.put("runtime_dispatch_stream", BRIDGE_COMMAND_REQUEST_STREAM);
+                reply.put("runtime_receipt_stream", BRIDGE_COMMAND_RECEIPT_STREAM);
+                reply.put("runtime_dispatch_delivered_count", delivered);
+                reply.put("runtime_receipt_required", true);
+                reply.put("live_stream_events_synthesized", false);
+                reply.put("high_rate_json_payload", false);
+                reply.put("time_utc", Instant.now().toString());
+                writeText(session, reply);
+                return;
+            }
             JSONObject remoteCameraRuntime = RemoteCameraSessionRuntime.handleCommand(applicationContext, message);
             reply.put("type", "command_ack");
             reply.put("schema", "rusty.manifold.command.ack.v1");
@@ -250,6 +279,10 @@ public final class LocalManifoldBrokerServer {
                 || "manifold.stream.publish".equals(command);
     }
 
+    private static boolean isBridgeProbeSetMarkerCommand(String command) {
+        return BRIDGE_PROBE_SET_MARKER_COMMAND.equals(command);
+    }
+
     private static String firstNonEmpty(String first, String second, String third) {
         if (first != null && !first.trim().isEmpty()) {
             return first.trim();
@@ -286,6 +319,53 @@ public final class LocalManifoldBrokerServer {
         event.put("source_request_id", message.optString("request_id", ""));
         event.put("transport_time_unix_ns", brokerTimeUnixNs);
         event.put("transport_receive_time_unix_ns", brokerTimeUnixNs);
+        event.put("time_utc", Instant.now().toString());
+        return event;
+    }
+
+    private static JSONObject buildBridgeCommandRequestEvent(JSONObject message, JSONObject params) throws Exception {
+        JSONObject requestParams = new JSONObject(params.toString());
+        String requestId = message.optString("request_id", "");
+        if (firstNonEmpty(
+                requestParams.optString("probe_token", ""),
+                requestParams.optString("marker", ""),
+                "").isEmpty() && !requestId.isEmpty()) {
+            requestParams.put("probe_token", requestId);
+        }
+        if (!requestParams.has("source")) {
+            requestParams.put("source", "manifold-broker-stream");
+        }
+        requestParams.put("command_transport", "manifold-broker-stream");
+        requestParams.put("receipt_stream", BRIDGE_COMMAND_RECEIPT_STREAM);
+
+        JSONObject payload = new JSONObject();
+        payload.put("$schema", BRIDGE_COMMAND_REQUEST_SCHEMA);
+        payload.put("request_id", requestId);
+        payload.put("route_id", firstNonEmpty(
+                message.optString("route_id", ""),
+                params.optString("route_id", ""),
+                "bridge_route.command.websocket.applied"));
+        payload.put("command", BRIDGE_PROBE_SET_MARKER_COMMAND);
+        payload.put("params", requestParams);
+        payload.put("required_evidence_stages", new JSONArray()
+                .put("runtime_accepted")
+                .put("applied"));
+        payload.put("runtime_receipt_stream", BRIDGE_COMMAND_RECEIPT_STREAM);
+        payload.put("high_rate_json_payload", false);
+
+        long brokerTimeUnixNs = System.currentTimeMillis() * 1_000_000L;
+        JSONObject event = new JSONObject();
+        event.put("type", "stream_event");
+        event.put("schema", "rusty.manifold.stream.event.v1");
+        event.put("stream", BRIDGE_COMMAND_REQUEST_STREAM);
+        event.put("stream_id", BRIDGE_COMMAND_REQUEST_STREAM);
+        event.put("sequence_id", brokerTimeUnixNs);
+        event.put("payload", payload);
+        event.put("source_request_id", requestId);
+        event.put("runtime_receipt_stream", BRIDGE_COMMAND_RECEIPT_STREAM);
+        event.put("transport_time_unix_ns", brokerTimeUnixNs);
+        event.put("transport_receive_time_unix_ns", brokerTimeUnixNs);
+        event.put("high_rate_json_payload", false);
         event.put("time_utc", Instant.now().toString());
         return event;
     }

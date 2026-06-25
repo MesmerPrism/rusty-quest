@@ -146,6 +146,17 @@ The stimulus route starts from the saved headset dynamics
 `headset-randomize-count-28-2026-06-20` before any new randomize press: a spiral
 family at 3.084 Hz with spatial oscillators 6.041, 35.362, and 37.531 Hz.
 
+Set `debug.rustyquest.native_renderer.control_panel.mode=polar-sensor` to open
+the same activity as a direct Polar BLE panel. A Polar-enabled native app-build
+must request `sensor.polar_h10_ble`; the generated manifest then declares
+Bluetooth scan/connect, legacy Bluetooth, fine-location, and BLE feature
+surface. The panel scans for Polar devices, connects to the selected device,
+subscribes to HR/RR plus Polar PMD control/data characteristics, and writes
+bounded app-private stream events to `files/polar_stream_events.jsonl`. The
+current direct PMD route keeps one PMD stream active at a time, so the page
+defaults to ACC and lets the operator switch the active PMD stream to ECG while
+HR/RR notifications remain subscribed.
+
 The Rust core proves Android package, NativeActivity entry, NDK camera/HWB
 acquisition shape, native timing counters, OpenXR loader packaging, an
 OpenXR/Vulkan prerequisite probe, Vulkan external-HWB import boundary strings,
@@ -188,8 +199,8 @@ capture visual evidence that the mesh and SDF effects are visible over the
 camera projection.
 The staged property bundle for that later retest is
 `fixtures/runtime-profiles/quest-native-renderer-live-hand-visual-diagnostic.profile.json`;
-it forces `live-meta-openxr-hand-tracking`, disables recorded fallback, enables
-the high-contrast mesh diagnostic plus SDF visual, and keeps live mesh/SDF
+it forces `live-meta-openxr-hand-tracking`, keeps recorded fallback available
+until live joint frames arrive, enables the high-contrast mesh diagnostic plus SDF visual, and keeps live mesh/SDF
 acceptance pending until screenshot evidence shows visible overlay color.
 The optional graft-copy experiment is controlled separately by
 `debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled`; the shared

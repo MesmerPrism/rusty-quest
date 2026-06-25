@@ -161,6 +161,10 @@ static LIVE_ENVIRONMENT_DEPTH_ALIGNMENT_QUEUE: OnceLock<
 static LIVE_PRIVATE_PARTICLE_DYNAMICS_QUEUE: OnceLock<
     Mutex<Option<PrivateParticleDynamicsPanelCandidate>>,
 > = OnceLock::new();
+#[cfg(target_os = "android")]
+static LIVE_PRIVATE_PARTICLE_DYNAMICS_LATEST: OnceLock<
+    Mutex<Option<PrivateParticleDynamicsPanelCandidate>>,
+> = OnceLock::new();
 
 #[cfg(target_os = "android")]
 #[derive(Clone, Copy, Debug)]
@@ -192,6 +196,12 @@ fn live_private_particle_dynamics_queue(
 }
 
 #[cfg(target_os = "android")]
+fn live_private_particle_dynamics_latest(
+) -> &'static Mutex<Option<PrivateParticleDynamicsPanelCandidate>> {
+    LIVE_PRIVATE_PARTICLE_DYNAMICS_LATEST.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(target_os = "android")]
 pub(crate) fn take_live_candidate() -> Option<StimulusPanelCandidate> {
     let mut queue = live_candidate_queue().lock().ok()?;
     queue.take()
@@ -215,6 +225,13 @@ pub(crate) fn take_live_private_particle_dynamics() -> Option<PrivateParticleDyn
 {
     let mut queue = live_private_particle_dynamics_queue().lock().ok()?;
     queue.take()
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn latest_live_private_particle_dynamics(
+) -> Option<PrivateParticleDynamicsPanelCandidate> {
+    let latest = live_private_particle_dynamics_latest().lock().ok()?;
+    latest.clone()
 }
 
 #[cfg(target_os = "android")]
@@ -300,6 +317,12 @@ fn queue_live_private_layer_selection(text: &str) -> Result<LiveQueueOutcome, St
 fn queue_live_private_particle_dynamics(text: &str) -> Result<LiveQueueOutcome, String> {
     let candidate = parse_private_particle_dynamics_json(text)?;
     let revision = candidate.revision;
+    {
+        let mut latest = live_private_particle_dynamics_latest()
+            .lock()
+            .map_err(|_| "live_latest_poisoned".to_string())?;
+        latest.replace(candidate.clone());
+    }
     let mut queue = live_private_particle_dynamics_queue()
         .lock()
         .map_err(|_| "live_queue_poisoned".to_string())?;

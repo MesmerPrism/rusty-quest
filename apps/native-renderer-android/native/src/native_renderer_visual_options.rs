@@ -213,7 +213,7 @@ impl CompactHandInputSourceMode {
     }
 
     pub(crate) fn allows_recorded_fallback(self) -> bool {
-        matches!(self, Self::Auto | Self::RecordedReplay)
+        matches!(self, Self::Auto | Self::RecordedReplay | Self::LiveMeta)
     }
 }
 

@@ -420,6 +420,16 @@ platform adapter that exposes `/manifold/v1/events` and acknowledges
 synthesizing live stream events; live Polar, controller, and Makepad streams
 must come from their own providers.
 
+The package also owns the Quest-side broker dispatch for the benign Hostess
+Makepad safe probe command `hostess.makepad.bridge_probe.set_marker`. Accepted
+commands are published as `rusty.hostess.bridge_command.request.v1` payloads on
+`stream.hostess.makepad.bridge_command`, and the command ACK reports
+`runtime_receipt_required=true` plus the expected
+`stream.hostess.makepad.bridge_command.receipt` receipt stream. The broker ACK
+is command authority only; Hostess Makepad must still publish a runtime receipt
+before a Windows companion or other frontend can claim `runtime_accepted` or
+`applied`.
+
 The same package contains the first remote-camera runtime adapter slices. It is
 still an adapter, not Manifold authority: Manifold accepts/rejects commands and
 leases, while the package executes local Quest behavior requested by accepted

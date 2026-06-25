@@ -53,6 +53,27 @@ if ($server -notmatch 'live_stream_events_synthesized') {
 if ($server -notmatch 'remote_camera_runtime') {
     throw "Local broker server does not attach remote_camera_runtime command ack status."
 }
+if ($server -notmatch 'hostess\.makepad\.bridge_probe\.set_marker') {
+    throw "Local broker server does not authorize the Hostess Makepad safe bridge probe command."
+}
+if ($server -notmatch 'rusty\.hostess\.bridge_command\.request\.v1') {
+    throw "Local broker server does not dispatch Hostess bridge command request payloads."
+}
+if ($server -notmatch 'stream\.hostess\.makepad\.bridge_command') {
+    throw "Local broker server does not expose the Hostess bridge command dispatch stream."
+}
+if ($server -notmatch 'stream\.hostess\.makepad\.bridge_command\.receipt') {
+    throw "Local broker server does not expose the Hostess bridge command runtime receipt stream."
+}
+if ($server -notmatch 'runtime_receipt_required') {
+    throw "Local broker server must report that runtime receipts are required for applied command evidence."
+}
+if ($server -notmatch 'command_transport", "manifold-broker-stream"') {
+    throw "Local broker server must mark broker-dispatched Hostess bridge commands as manifold-broker-stream transport."
+}
+if ($server -notmatch 'high_rate_json_payload", false') {
+    throw "Local broker server must prove bridge command JSON is low-rate control, not high-rate payload transport."
+}
 if ($remoteCameraRuntime -notmatch 'command\.remote_camera\.start_receiver') {
     throw "RemoteCameraSessionRuntime does not handle remote camera start_receiver."
 }

@@ -46,6 +46,7 @@ $panelBridge = Read-RequiredText (Join-Path $srcRoot "native_renderer_panel_brid
 $embeddedManifoldBridge = Read-RequiredText (Join-Path $srcRoot "embedded_manifold_broker_bridge.rs") "embedded Manifold broker JNI bridge"
 $stimulusPanel = Read-RequiredText (Join-Path $srcRoot "native_renderer_stimulus_panel.rs") "stimulus panel candidate adapter"
 $controlPanel = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\ControlPanelActivity.java") "control panel Activity"
+$polarPanel = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PolarSensorPanel.java") "Polar sensor panel"
 $questionnairePanel = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\QuestionnairePanelActivity.java") "questionnaire panel Activity"
 $embeddedManifoldBroker = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\EmbeddedManifoldBrokerServer.java") "embedded Manifold broker server"
 $nativeAppSettingsReader = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\NativeAppSettingsReader.java") "native app settings reader"
@@ -57,6 +58,8 @@ if ($manifest -notmatch 'package="io\.github\.mesmerprism\.rustyquest\.native_re
 }
 Assert-ContainsTokens $manifest @(
     'android\.permission\.CAMERA',
+    'android\.permission\.BLUETOOTH_SCAN',
+    'android\.permission\.BLUETOOTH_CONNECT',
     'android\.permission\.INTERNET',
     'com\.oculus\.permission\.HAND_TRACKING',
     'horizonos\.permission\.HEADSET_CAMERA',
@@ -67,6 +70,7 @@ Assert-ContainsTokens $manifest @(
 ) "Android manifest permissions"
 Assert-ContainsTokens $manifest @(
     'android\.hardware\.vr\.headtracking',
+    'android\.hardware\.bluetooth_le',
     'com\.oculus\.feature\.PASSTHROUGH',
     'oculus\.software\.handtracking',
     'android\.hardware\.camera2\.full'
@@ -98,6 +102,8 @@ Assert-ContainsTokens $controlPanel @(
     'private-layer-selector',
     'private-particle-dynamics',
     'private-particle-depth-wave',
+    'polar-sensor',
+    'PolarSensorPanel',
     'Layer Selection Panel',
     'Particle Dynamics Panel',
     'Depth Wave Panel',
@@ -148,6 +154,19 @@ Assert-ContainsTokens $controlPanel @(
     'handleDiagnosticIntent',
     'Diagnostic Apply Live self-test pending'
 ) "same-APK 2D control panel"
+Assert-ContainsTokens $polarPanel @(
+    'final class PolarSensorPanel',
+    'BluetoothLeScanner',
+    'connectGatt',
+    'PMD_CONTROL_POINT',
+    'PMD_DATA',
+    'stream\.polar_h10\.hr_rr',
+    'stream\.polar_h10\.acc',
+    'stream\.polar_h10\.ecg',
+    'polar_stream_events\.jsonl',
+    'rusty\.manifold\.stream\.event\.v1',
+    'polar-sensor-panel'
+) "same-APK Polar sensor panel"
 Assert-ContainsTokens $questionnairePanel @(
     'final class QuestionnairePanelActivity extends Activity',
     'ACTION_OPEN_BLOCK',
@@ -169,6 +188,9 @@ Assert-ContainsTokens $questionnairePanel @(
 foreach ($token in @('WebView', 'addJavascriptInterface', 'androidx', 'AppSystemActivity', 'VrActivity', 'GLXF', 'Spatial SDK')) {
     if ($controlPanel -match $token) {
         throw "Native renderer control panel first slice should not carry WebView/Spatial SDK token: $token"
+    }
+    if ($polarPanel -match $token) {
+        throw "Native renderer Polar panel first slice should not carry WebView/Spatial SDK token: $token"
     }
     if ($questionnairePanel -match $token) {
         throw "Native renderer questionnaire panel first slice should not carry WebView/Spatial SDK token: $token"

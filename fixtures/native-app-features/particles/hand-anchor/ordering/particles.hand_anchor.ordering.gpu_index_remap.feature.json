@@ -16,9 +16,7 @@
   "depends_on": [
     "hand_mesh_visual"
   ],
-  "incompatible_with": [
-    "renderer.private_particles"
-  ],
+  "incompatible_with": [],
   "exclusive_groups": {},
   "android_manifest": {
     "permissions": [],

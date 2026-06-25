@@ -445,13 +445,18 @@ impl PrivateParticleRuntimeSettings {
         self.visual_scale = panel.visual_scale;
         self.visual_parameter_source = "same-apk-panel-live";
         self.driver_values01 = panel.driver_values01;
-        self.driver_bank_values01 = source_values01;
         self.driver_control_modes = panel.driver_control_modes;
         self.driver_control_source_slots = panel.driver_control_source_slots;
         self.driver_control_curve_codes = panel.driver_control_curve_codes;
         self.driver_control_range_mins = panel.driver_control_range_mins;
         self.driver_control_range_maxs = panel.driver_control_range_maxs;
         self.driver_control_cycle_multipliers = panel.driver_control_cycle_multipliers;
+        self.driver_bank_values01 = source_values01;
+        for slot in 0..PRIVATE_PARTICLE_DRIVER_BANK_SLOT_COUNT {
+            if self.driver_control_modes[slot] == PANEL_DRIVER_MODE_DIRECT {
+                self.driver_bank_values01[slot] = self.driver_values01[slot];
+            }
+        }
         self.driver0_value01 = self.driver_bank_values01[0];
         self.driver1_value01 = self.driver_bank_values01[1];
         self.driver_parameter_source = "same-apk-panel-live";

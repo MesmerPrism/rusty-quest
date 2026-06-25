@@ -386,6 +386,13 @@ It exposes `/manifold/v1/events` on local TCP port `8765`, accepts
 `rusty.manifold.command.envelope.v1` WebSocket command envelopes, and returns
 acknowledgements. It does not synthesize live provider stream events, so Polar,
 controller, and Makepad evidence still requires real providers.
+For the Hostess Makepad safe probe, it accepts
+`hostess.makepad.bridge_probe.set_marker`, dispatches
+`rusty.hostess.bridge_command.request.v1` on
+`stream.hostess.makepad.bridge_command`, and reports the expected
+`stream.hostess.makepad.bridge_command.receipt` runtime receipt stream in the
+ACK. Runtime adoption still belongs to the Makepad app receipt, not to the
+broker ACK alone.
 
 For remote-camera commands, the broker package now has the first Quest-owned
 runtime adapter slice. It recognizes `command.remote_camera.start_receiver`,

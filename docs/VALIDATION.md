@@ -623,7 +623,7 @@ The live-hand diagnostic
 bundle is captured in
 `fixtures/runtime-profiles/quest-native-renderer-live-hand-visual-diagnostic.profile.json`;
 it forces `compactHandInputSourceMode=live-meta-openxr-hand-tracking` and
-`allowsRecordedFallback=false`, but it remains pending until screenshot evidence
+`allowsRecordedFallback=true`, but it remains pending until screenshot evidence
 shows visible mesh/SDF color inside the target projection. Host-side unit tests
 cover the parser defaults, replay-proof source selection, explicit live-source
 override, SDF cadence clamp, diagnostic offset/alpha clamps, and graft-copy
@@ -694,9 +694,11 @@ The static test verifies package naming, `/manifold/v1/events`, Manifold
 command-envelope acknowledgement support, remote-camera command lifecycle
 hooks, receiver port and transport route property consumption, sender bridge
 markers, sender-source runtime support for Camera2/MediaCodec and diagnostic
-synthetic MediaCodec sources, the high-rate JSON payload ban, and absence of
-legacy Rusty-XR tokens. The build command requires an Android SDK and JDK in
-the current process and writes a debug APK plus build manifest under `target/`.
+synthetic MediaCodec sources, the Hostess Makepad safe-probe dispatch stream
+and required runtime receipt stream, the high-rate JSON payload ban, and
+absence of legacy Rusty-XR tokens. The build command requires an Android SDK
+and JDK in the current process and writes a debug APK plus build manifest under
+`target/`.
 The camera-source broker APK is expected to declare `android.permission.CAMERA`,
 `horizonos.permission.HEADSET_CAMERA`, and
 `horizonos.permission.SPATIAL_CAMERA`; that expectation is specific to this

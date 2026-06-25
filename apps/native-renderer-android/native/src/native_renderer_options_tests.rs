@@ -118,7 +118,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_live_source_overrides_replay_proof_source_selection() {
+    fn explicit_live_source_overrides_replay_proof_source_selection_with_fallback() {
         let options = options_from(&[
             (PROP_REPLAY_VISUAL_PROOF_ENABLED, "true"),
             (PROP_HAND_MESH_INPUT_SOURCE, "live-meta"),
@@ -128,7 +128,7 @@ mod tests {
             CompactHandInputSourceMode::LiveMeta
         );
         assert!(options.compact_hand_input_source_mode.selects_live_frame());
-        assert!(!options
+        assert!(options
             .compact_hand_input_source_mode
             .allows_recorded_fallback());
         assert!(options.sdf_visual_enabled);
@@ -311,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_live_source_value_selects_live_without_replay_fallback() {
+    fn canonical_live_source_value_selects_live_with_replay_fallback() {
         let options = options_from(&[(
             PROP_HAND_MESH_INPUT_SOURCE,
             "live-meta-openxr-hand-tracking",
@@ -321,7 +321,7 @@ mod tests {
             CompactHandInputSourceMode::LiveMeta
         );
         assert!(options.compact_hand_input_source_mode.selects_live_frame());
-        assert!(!options
+        assert!(options
             .compact_hand_input_source_mode
             .allows_recorded_fallback());
     }

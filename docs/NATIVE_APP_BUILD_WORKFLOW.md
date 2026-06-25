@@ -58,6 +58,43 @@ Use this workflow when creating a new Rusty Quest native APK profile.
 Never accept raw `adb getprop` readback as proof by itself. The runtime must
 emit matching effective markers for the selected app profile.
 
+## Downstream Mesh-Particle Apps
+
+Mesh-attached downstream apps may need two particle routes in one APK. Keep
+those routes explicit in the app-build spec instead of treating every surface
+as a generic private-particle payload:
+
+- Static surfaces such as a level-4 icosphere can use the generic
+  `renderer.private_particles` ABI. The downstream repo supplies the private
+  compute shader, static position/normal buffers, graph/aux buffers, mask
+  texture, marker prefix, and profile meanings. Rusty Quest owns the Vulkan
+  slot, sorting, mask sampler, low-rate scalar transport, and public markers.
+- Live hand surfaces should use `hand_anchor_particles` when the particles are
+  attached to the resident GPU-skinned hand mesh. The downstream private
+  Kuramoto payload supplies coordinate triangle/barycentric bindings and graph
+  edges, while Rusty Quest reuses the already-resident left and right custom
+  hand meshes. The hand path must be ready from the skinned mesh buffers, not
+  from the optional base hand visual being visible.
+- `hand_mesh.input.source=live-meta-openxr-hand-tracking` may still allow the
+  recorded compact-pose fallback until live joints arrive. This keeps particles
+  visible in front of the camera at startup, then switches to live OpenXR joint
+  data when available. Validation markers should distinguish
+  `ready-recorded-replay-fallback` from `ready-live-hand-frame`.
+- Validate both hands independently. A correct real-hand particle run reports
+  `handAnchorParticleTotalCount=2048`,
+  `handAnchorParticlePrimaryHand=left`,
+  `handAnchorParticleSecondaryHand=right`, and
+  `handAnchorParticleBothHandsVisible=true` for 1024 particles per hand.
+
+For same-APK control panels, keep the panel as a low-rate requester. The panel
+can stage app-private candidate JSON or write declared hotload scalar
+properties, but high-rate hand frames, graph rows, phase state, and particle
+rows stay resident in native buffers. A downstream mesh-particle panel can use
+`private_particles.driver5` as a surface selector and `driver6` as a profile
+selector, while the renderer proves adoption through effective
+`privateParticle*`, `handAnchorParticle*`, and downstream-owned marker-prefix
+fields.
+
 ## Runtime Profiles And Launch Overrides
 
 The generated app settings and feature lock are the APK packaging contract.

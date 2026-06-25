@@ -18,12 +18,8 @@
     "hand_mesh_visual",
     "particles.hand_anchor.ordering.gpu_index_remap"
   ],
-  "incompatible_with": [
-    "renderer.private_particles"
-  ],
-  "exclusive_groups": {
-    "primary_visual": "hand-anchor-particles"
-  },
+  "incompatible_with": [],
+  "exclusive_groups": {},
   "android_manifest": {
     "permissions": [],
     "uses_features": [],

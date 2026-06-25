@@ -1,0 +1,64 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "sensor.polar_h10_ble",
+  "module_path": "sensor/polar-h10-ble",
+  "module_kind": "platform-sensor-provider",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Direct Android BLE Polar H10 scan, connect, and stream-intake panel for the native renderer APK.",
+  "provides": [
+    "sensor.polar_h10_ble",
+    "stream.polar_h10.hr_rr",
+    "stream.polar_h10.acc",
+    "stream.polar_h10.ecg",
+    "stream.polar_h10.device_status"
+  ],
+  "depends_on": [
+    "ui.same_apk_control_panel"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [
+      "android.permission.ACCESS_FINE_LOCATION",
+      "android.permission.BLUETOOTH",
+      "android.permission.BLUETOOTH_ADMIN",
+      "android.permission.BLUETOOTH_CONNECT",
+      "android.permission.BLUETOOTH_SCAN"
+    ],
+    "uses_features": [
+      "android.hardware.bluetooth_le"
+    ],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {},
+    "clear_families": [],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": []
+  },
+  "markers": {
+    "required": [
+      "RUSTY_QUEST_NATIVE_RENDERER channel=polar-sensor-panel"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-NativeRendererPolarPanelStatic.ps1 -RepoRoot ."
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Rusty Quest owns the generic Android BLE intake panel and app-private stream-event artifact. Downstream apps own how received Polar streams drive private effects."
+}

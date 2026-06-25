@@ -350,6 +350,13 @@ if (-not [string]::IsNullOrWhiteSpace($questionnaireAssetDir)) {
 if ($RequireRecordedHandCapture -and [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
     throw "-RequireRecordedHandCapture needs -RecordedHandCaptureDir so the APK cannot silently fall back to the public metadata-only replay shape."
 }
+$resolvedRecordedHandCaptureDir = ""
+if (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
+    if (-not (Test-Path -LiteralPath $RecordedHandCaptureDir)) {
+        throw "Recorded hand capture directory not found: $RecordedHandCaptureDir"
+    }
+    $resolvedRecordedHandCaptureDir = (Resolve-Path -LiteralPath $RecordedHandCaptureDir).Path
+}
 
 $sourceFiles = Get-ChildItem -Path (Join-Path $appRoot "src\main\java") -Recurse -Filter *.java |
     ForEach-Object { $_.FullName }
@@ -385,11 +392,8 @@ try {
         $previousAppBuildEnv[$name] = [Environment]::GetEnvironmentVariable($name)
         [Environment]::SetEnvironmentVariable($name, [string]$appBuildEnvByName[$name], "Process")
     }
-    if (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
-        if (-not (Test-Path $RecordedHandCaptureDir)) {
-            throw "Recorded hand capture directory not found: $RecordedHandCaptureDir"
-        }
-        $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR = (Resolve-Path $RecordedHandCaptureDir).Path
+    if (-not [string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) {
+        $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR = $resolvedRecordedHandCaptureDir
         $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT = [Math]::Max(1, [Math]::Min(120, $RecordedHandFrameLimit)).ToString()
     } else {
         Remove-Item Env:\RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR -ErrorAction SilentlyContinue
@@ -476,6 +480,12 @@ $privateParticlePayloadLinked =
     (Test-Path (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DATA_DIR" -AppBuildEnvByName $appBuildEnvByName)) -and
     (Test-Path (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER" -AppBuildEnvByName $appBuildEnvByName))
 
+$privateKuramotoPayloadLinked =
+    (-not [string]::IsNullOrWhiteSpace((Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_DATA_DIR" -AppBuildEnvByName $appBuildEnvByName))) -and
+    (-not [string]::IsNullOrWhiteSpace((Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_SHADER" -AppBuildEnvByName $appBuildEnvByName))) -and
+    (Test-Path (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_DATA_DIR" -AppBuildEnvByName $appBuildEnvByName)) -and
+    (Test-Path (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_SHADER" -AppBuildEnvByName $appBuildEnvByName))
+
 $openXrLoaderPackaged = $false
 if (-not [string]::IsNullOrWhiteSpace($OpenXrLoader) -and (Test-Path $OpenXrLoader)) {
     Copy-Item -LiteralPath $OpenXrLoader -Destination (Join-Path $nativeLibDir "libopenxr_loader.so") -Force
@@ -535,7 +545,8 @@ $manifest = [ordered]@{
     plan_asset = "native-hwb-blur-sdf-public.plan.json"
     recorded_hand_replay_asset = "recorded-hand-replay-public-shape.json"
     source_plan_fixture = "fixtures/native-renderer/native-hwb-blur-sdf-public.plan.json"
-    source_recorded_hand_replay_fixture = "fixtures/native-renderer/recorded-hand-replay-public-shape.json"
+    source_recorded_hand_replay_fixture = if ([string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) { "fixtures/native-renderer/recorded-hand-replay-public-shape.json" } else { $resolvedRecordedHandCaptureDir }
+    recorded_hand_replay_embedded_source = if ([string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) { "public-topology-shape-fixture" } else { "external-recorded-capture-build-env" }
     marker_prefix = "RUSTY_QUEST_NATIVE_RENDERER"
     rust_native_activity = $true
     java_classes_packaged = $true
@@ -550,6 +561,7 @@ $manifest = [ordered]@{
     private_extension_payloads_packaged = [bool]$privateLayerPayloadLinked
     private_particle_payloads_packaged = [bool]$privateParticlePayloadLinked
     private_particle_payload_kind = if ($privateParticlePayloadLinked) { Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_KIND" -AppBuildEnvByName $appBuildEnvByName } else { "none" }
+    private_kuramoto_payloads_packaged = [bool]$privateKuramotoPayloadLinked
     camera_ids = [ordered]@{
         left = "50"
         right = "51"
@@ -571,7 +583,8 @@ $manifest = [ordered]@{
     apk_sha256 = $sha256
     projection_visual_acceptance = $false
     recorded_hand_capture_required = [bool]$RequireRecordedHandCapture
-    recorded_hand_capture_embedded = (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir))
+    recorded_hand_capture_embedded = (-not [string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir))
+    recorded_hand_capture_source_dir = $resolvedRecordedHandCaptureDir
     recorded_hand_frame_limit = $RecordedHandFrameLimit
     app_build_lock_path = if ([string]::IsNullOrWhiteSpace($appBuildLockPath)) { "" } else { $appBuildLockPath }
     app_build_lock_sha256 = if ([string]::IsNullOrWhiteSpace($appBuildLockPath)) { "" } else { Get-FileSha256 -Path $appBuildLockPath }

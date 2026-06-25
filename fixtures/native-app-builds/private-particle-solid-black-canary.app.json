@@ -28,6 +28,15 @@
     "video_projection"
   ],
   "payloads": [],
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.hand_anchor_particles.enabled": "false",
+      "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled": "false",
+      "debug.rustyquest.native_renderer.hand_mesh.input.source": "disabled",
+      "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible": "false",
+      "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled": "false"
+    }
+  },
   "permission_allowlist": [],
   "declared_manifest": {
     "permissions": [

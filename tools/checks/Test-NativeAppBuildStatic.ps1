@@ -172,6 +172,7 @@ foreach ($requiredFeature in @(
     "display_composite",
     "video_projection",
     "renderer.stimulus_volume",
+    "sensor.polar_h10_ble",
     "environment_depth",
     "environment_depth.projection_sampler",
     "hand_mesh_visual",

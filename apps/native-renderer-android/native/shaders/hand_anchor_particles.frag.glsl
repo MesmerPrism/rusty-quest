@@ -8,8 +8,7 @@ layout(location = 0) out vec4 out_color;
 void main() {
     vec2 centered = v_mask_uv * 2.0 - vec2(1.0);
     float radius = length(centered);
-    float white_value = smoothstep(1.0, 0.0, radius);
-    white_value = white_value * white_value * (3.0 - 2.0 * white_value);
+    float white_value = 1.0 - smoothstep(0.72, 1.0, radius);
     float premultiply_rgb = v_render_params.x;
     float composition_mode = v_render_params.y;
     float depth_suppression_strength = max(v_render_params.z, 0.0);

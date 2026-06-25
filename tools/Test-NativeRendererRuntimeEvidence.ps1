@@ -671,7 +671,7 @@ if ($RequireLiveVisualDiagnosticCaveat) {
         "recordedReplayVisualProofEnabled=false",
         "compactHandInputSourceMode=live-meta-openxr-hand-tracking",
         "compactHandInputSelectsLiveFrame=true",
-        "compactHandInputAllowsRecordedFallback=false",
+        "compactHandInputAllowsRecordedFallback=true",
         "handMeshCompactInputSource=live-meta-openxr-hand-tracking",
         "liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof"
     )) {
@@ -681,7 +681,7 @@ if ($RequireLiveVisualDiagnosticCaveat) {
         "recordedReplayVisualProofEnabled=false",
         "compactHandInputSourceMode=live-meta-openxr-hand-tracking",
         "compactHandInputSelectsLiveFrame=true",
-        "compactHandInputAllowsRecordedFallback=false",
+        "compactHandInputAllowsRecordedFallback=true",
         "sdfCompactInputSource=live-meta-openxr-hand-tracking",
         "compactJointPoseUploadPerFrame=true",
         "jointMatrixUploadPerFrame=false",

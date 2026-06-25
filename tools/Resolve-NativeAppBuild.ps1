@@ -24,6 +24,9 @@ $UseScenePermission = "horizonos.permission.USE_SCENE"
 $PassthroughFeature = "com.oculus.feature.PASSTHROUGH"
 $UseSceneDataAppOp = "USE_SCENE_DATA"
 $RuntimeDangerousPermissionNames = @(
+    "android.permission.ACCESS_FINE_LOCATION",
+    "android.permission.BLUETOOTH_CONNECT",
+    "android.permission.BLUETOOTH_SCAN",
     "android.permission.CAMERA",
     "com.oculus.permission.HAND_TRACKING",
     "horizonos.permission.HEADSET_CAMERA",
@@ -417,16 +420,25 @@ function Add-AppRuntimeSet {
     if ($null -eq $AppRuntimeProfile -or $null -eq $AppRuntimeProfile.PSObject.Properties["set"]) {
         return
     }
+    $allowFeatureOverrides =
+        $null -ne $AppRuntimeProfile.PSObject.Properties["allow_feature_overrides"] -and
+        [string]$AppRuntimeProfile.allow_feature_overrides -eq "true"
     foreach ($property in @($AppRuntimeProfile.set.PSObject.Properties | Sort-Object Name)) {
         $name = [string]$property.Name
         $value = [string]$property.Value
         Assert-NativeRendererPropertyValue -Name $name -Value $value -ManifestByName $ManifestByName
         if ($RuntimeSet.Contains($name) -and [string]$RuntimeSet[$name] -ne $value) {
-            throw "Runtime property $name is set to conflicting values by selected features and app spec. Existing=$($RuntimeSet[$name]) app=$AppId value=$value"
+            if (-not $allowFeatureOverrides) {
+                throw "Runtime property $name is set to conflicting values by selected features and app spec. Existing=$($RuntimeSet[$name]) app=$AppId value=$value"
+            }
         }
         $RuntimeSet[$name] = $value
-        if (-not $RuntimeSources.Contains($name)) {
-            $RuntimeSources[$name] = "app-spec:$AppId"
+        $RuntimeSources[$name] = if ($allowFeatureOverrides) {
+            "app-spec:$AppId:override"
+        } elseif (-not $RuntimeSources.Contains($name)) {
+            "app-spec:$AppId"
+        } else {
+            $RuntimeSources[$name]
         }
     }
 }
@@ -667,6 +679,127 @@ $runtimeSources = [ordered]@{}
 $exclusiveGroups = [ordered]@{}
 $envByName = [ordered]@{}
 
+function Add-BuildEnvValue {
+    param(
+        [System.Collections.Specialized.OrderedDictionary]$EnvByName,
+        [string]$Name,
+        [string]$Value,
+        [string]$Source
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        throw "Build env entry is missing name"
+    }
+    $envValue = if ($null -ne $Value) { [string]$Value } else { "" }
+    if ($EnvByName.Contains($Name) -and [string]$EnvByName[$Name].value -ne $envValue) {
+        throw "Build env $Name is set to conflicting values by selected features or app payloads"
+    }
+    $EnvByName[$Name] = [ordered]@{
+        name = $Name
+        value = $envValue
+        source = if ([string]::IsNullOrWhiteSpace($Source)) { "resolver" } else { $Source }
+    }
+}
+
+function Resolve-AppPayloadPath {
+    param(
+        [string]$AppSpecPath,
+        [string]$Path,
+        [string]$Label
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "App payload $Label path is empty"
+    }
+    $resolved = if ([System.IO.Path]::IsPathRooted($Path)) {
+        [System.IO.Path]::GetFullPath($Path)
+    } else {
+        [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $AppSpecPath) $Path))
+    }
+    return $resolved
+}
+
+function Add-AppPrivateParticlePayloadBuildEnv {
+    param(
+        [object]$App,
+        [string]$AppSpecPath,
+        [System.Collections.Specialized.OrderedDictionary]$EnvByName
+    )
+
+    $privateParticlePayloads = @($App.payloads | Where-Object {
+        $null -ne $_.PSObject.Properties["kind"] -and [string]$_.kind -eq "private_particle"
+    })
+    if ($privateParticlePayloads.Count -gt 1) {
+        throw "App $($App.app_id) may declare at most one private_particle payload"
+    }
+    if ($privateParticlePayloads.Count -eq 0) {
+        return
+    }
+
+    $payload = $privateParticlePayloads[0]
+    $payloadId = if ($null -ne $payload.PSObject.Properties["payload_id"]) {
+        [string]$payload.payload_id
+    } elseif ($null -ne $payload.PSObject.Properties["id"]) {
+        [string]$payload.id
+    } else {
+        "private_particle"
+    }
+    $source = "app-payload:$($App.app_id):$payloadId"
+    $dataDir = Resolve-AppPayloadPath -AppSpecPath $AppSpecPath -Path ([string]$payload.data_dir) -Label "$payloadId data_dir"
+    $shaderPath = Resolve-AppPayloadPath -AppSpecPath $AppSpecPath -Path ([string]$payload.shader) -Label "$payloadId shader"
+    if (-not (Test-Path -LiteralPath $dataDir -PathType Container)) {
+        throw "App payload $payloadId data_dir does not exist: $dataDir"
+    }
+    if (-not (Test-Path -LiteralPath $shaderPath -PathType Leaf)) {
+        throw "App payload $payloadId shader does not exist: $shaderPath"
+    }
+
+    Add-BuildEnvValue -EnvByName $EnvByName -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DATA_DIR" -Value $dataDir -Source $source
+    Add-BuildEnvValue -EnvByName $EnvByName -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER" -Value $shaderPath -Source $source
+    Add-BuildEnvValue -EnvByName $EnvByName -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_KIND" -Value ([string]$payload.particle_kind) -Source $source
+    Add-BuildEnvValue -EnvByName $EnvByName -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MARKER_PREFIX" -Value ([string]$payload.marker_prefix) -Source $source
+    Add-BuildEnvValue -EnvByName $EnvByName -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_MARKER_FIELDS" -Value ([string]$payload.marker_fields) -Source $source
+}
+
+function Add-AppPrivateKuramotoPayloadBuildEnv {
+    param(
+        [object]$App,
+        [string]$AppSpecPath,
+        [System.Collections.Specialized.OrderedDictionary]$EnvByName
+    )
+
+    $privateKuramotoPayloads = @($App.payloads | Where-Object {
+        $null -ne $_.PSObject.Properties["kind"] -and [string]$_.kind -eq "private_kuramoto"
+    })
+    if ($privateKuramotoPayloads.Count -gt 1) {
+        throw "App $($App.app_id) may declare at most one private_kuramoto payload"
+    }
+    if ($privateKuramotoPayloads.Count -eq 0) {
+        return
+    }
+
+    $payload = $privateKuramotoPayloads[0]
+    $payloadId = if ($null -ne $payload.PSObject.Properties["payload_id"]) {
+        [string]$payload.payload_id
+    } elseif ($null -ne $payload.PSObject.Properties["id"]) {
+        [string]$payload.id
+    } else {
+        "private_kuramoto"
+    }
+    $source = "app-payload:$($App.app_id):$payloadId"
+    $dataDir = Resolve-AppPayloadPath -AppSpecPath $AppSpecPath -Path ([string]$payload.data_dir) -Label "$payloadId data_dir"
+    $shaderPath = Resolve-AppPayloadPath -AppSpecPath $AppSpecPath -Path ([string]$payload.shader) -Label "$payloadId shader"
+    if (-not (Test-Path -LiteralPath $dataDir -PathType Container)) {
+        throw "App payload $payloadId data_dir does not exist: $dataDir"
+    }
+    if (-not (Test-Path -LiteralPath $shaderPath -PathType Leaf)) {
+        throw "App payload $payloadId shader does not exist: $shaderPath"
+    }
+
+    Add-BuildEnvValue -EnvByName $EnvByName -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_DATA_DIR" -Value $dataDir -Source $source
+    Add-BuildEnvValue -EnvByName $EnvByName -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_SHADER" -Value $shaderPath -Source $source
+}
+
 foreach ($featureId in $selectedFeatureIds) {
     $feature = $features[$featureId].descriptor
     Add-StringsToSet -Set $permissionsSet -Values $feature.android_manifest.permissions
@@ -693,18 +826,25 @@ foreach ($featureId in $selectedFeatureIds) {
         if ($null -eq $envEntry.PSObject.Properties["name"]) {
             throw "Feature $featureId build_inputs.env entry is missing name"
         }
-        $envName = [string]$envEntry.name
-        $envValue = if ($null -ne $envEntry.PSObject.Properties["value"]) { [string]$envEntry.value } else { "" }
-        if ($envByName.Contains($envName) -and [string]$envByName[$envName].value -ne $envValue) {
-            throw "Build env $envName is set to conflicting values by selected features"
+        $envEntryValue = if ($null -ne $envEntry.PSObject.Properties["value"]) {
+            [string]$envEntry.value
+        } else {
+            ""
         }
-        $envByName[$envName] = [ordered]@{
-            name = $envName
-            value = $envValue
-            source = if ($null -ne $envEntry.PSObject.Properties["source"]) { [string]$envEntry.source } else { "feature:$featureId" }
+        $envEntrySource = if ($null -ne $envEntry.PSObject.Properties["source"]) {
+            [string]$envEntry.source
+        } else {
+            "feature:$featureId"
         }
+        Add-BuildEnvValue `
+            -EnvByName $envByName `
+            -Name ([string]$envEntry.name) `
+            -Value $envEntryValue `
+            -Source $envEntrySource
     }
 }
+Add-AppPrivateParticlePayloadBuildEnv -App $app -AppSpecPath $appSpecPath -EnvByName $envByName
+Add-AppPrivateKuramotoPayloadBuildEnv -App $app -AppSpecPath $appSpecPath -EnvByName $envByName
 Add-AppRuntimeSet `
     -RuntimeSet $runtimeSet `
     -RuntimeSources $runtimeSources `

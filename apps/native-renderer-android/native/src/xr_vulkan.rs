@@ -1879,6 +1879,8 @@ unsafe fn run_projection_frames(
     let mut breath_bridge = ManifoldBreathBridge::start(projection_target_settings);
     let mut previous_frame_instant = Instant::now();
     let mut private_particle_world_anchor = PrivateParticleWorldAnchor::new();
+    let mut control_panel_command_poller =
+        crate::native_renderer_panel_bridge::ControlPanelCommandPoller::default();
     let mut environment_depth_provider_attempts = 0_u32;
     let mut environment_depth_alignment_state =
         EnvironmentDepthAlignmentState::new(environment_depth_alignment_settings);
@@ -2091,6 +2093,7 @@ unsafe fn run_projection_frames(
             private_particle_world_anchor
                 .capture_startup_if_needed(particle_sort_eye_projection, frame_count);
         }
+        control_panel_command_poller.poll_and_apply(app, frame_count);
         if let Some(runtime) = native_passthrough.as_deref_mut() {
             runtime.update_audio_reactive_style(session, dt_seconds, frame_count);
         }
@@ -2482,17 +2485,25 @@ unsafe fn run_projection_frames(
             .selects_live_frame()
             .then(|| live_hand_frames.primary_frame())
             .flatten();
-        let selected_primary_live_hand = if compact_hand_input_source_mode.selects_live_frame() {
-            live_hand_frames.primary_handedness().unwrap_or("none")
+        let selected_primary_live_hand = if selected_primary_live_hand_frame.is_some() {
+            live_hand_frames
+                .primary_handedness()
+                .unwrap_or_else(|| handedness_label(&replay.handedness))
+        } else if compact_hand_input_source_mode.allows_recorded_fallback() {
+            handedness_label(&replay.handedness)
         } else {
-            "recorded"
+            "none"
         };
         let selected_secondary_live_hand_frame = compact_hand_input_source_mode
             .selects_live_frame()
             .then(|| live_hand_frames.secondary_frame())
             .flatten();
-        let selected_secondary_live_hand = if compact_hand_input_source_mode.selects_live_frame() {
-            live_hand_frames.secondary_handedness().unwrap_or("none")
+        let selected_secondary_live_hand = if selected_secondary_live_hand_frame.is_some() {
+            live_hand_frames
+                .secondary_handedness()
+                .unwrap_or_else(|| handedness_label(&secondary_replay.handedness))
+        } else if compact_hand_input_source_mode.allows_recorded_fallback() {
+            handedness_label(&secondary_replay.handedness)
         } else {
             "none"
         };
@@ -2538,10 +2549,9 @@ unsafe fn run_projection_frames(
         } else {
             GpuSdfFieldFrameStats::unavailable(replay, frame_count)
         };
-        let secondary_gpu_sdf_stats = if let (Some(renderer), Some(frame)) = (
-            secondary_gpu_sdf_field_renderer.as_mut(),
-            selected_secondary_live_hand_frame,
-        ) {
+        let secondary_gpu_sdf_stats = if let Some(renderer) =
+            secondary_gpu_sdf_field_renderer.as_mut()
+        {
             match renderer.record_compute_frame(
                 vk_device,
                 cmd,
@@ -2549,8 +2559,8 @@ unsafe fn run_projection_frames(
                 frame_count,
                 false,
                 sdf_update_period_frames,
-                Some(frame),
-                false,
+                selected_secondary_live_hand_frame,
+                compact_hand_input_source_mode.allows_recorded_fallback(),
             ) {
                 Ok(stats) => stats,
                 Err(error) => {
@@ -2622,16 +2632,15 @@ unsafe fn run_projection_frames(
                 hand_mesh_visual_diagnostic_settings,
             )
         };
-        let mut secondary_hand_mesh_visual_stats = if let (Some(renderer), Some(_frame)) = (
-            secondary_gpu_hand_mesh_visual_renderer.as_mut(),
-            selected_secondary_live_hand_frame,
-        ) {
+        let mut secondary_hand_mesh_visual_stats = if let Some(renderer) =
+            secondary_gpu_hand_mesh_visual_renderer.as_mut()
+        {
             match renderer.record_frame(
                 secondary_replay,
                 frame_count,
                 secondary_gpu_sdf_stats.skinning_ready,
                 selected_secondary_live_hand_frame,
-                false,
+                compact_hand_input_source_mode.allows_recorded_fallback(),
                 selected_secondary_live_hand,
                 hand_mesh_visual_diagnostic_settings,
             ) {

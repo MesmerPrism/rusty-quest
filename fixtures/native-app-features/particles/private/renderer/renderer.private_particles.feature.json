@@ -26,8 +26,6 @@
     "camera.hwb",
     "display_composite",
     "environment_depth",
-    "hand_anchor_particles",
-    "hand_mesh_visual",
     "renderer.stimulus_volume",
     "sdf_visual",
     "video_projection"
@@ -52,11 +50,6 @@
       "debug.rustyquest.native_renderer.display_composite.high_rate_json_payload": "false",
       "debug.rustyquest.native_renderer.environment_depth.mode": "disabled",
       "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload": "false",
-      "debug.rustyquest.native_renderer.hand_anchor_particles.enabled": "false",
-      "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled": "false",
-      "debug.rustyquest.native_renderer.hand_mesh.input.source": "disabled",
-      "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible": "false",
-      "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled": "false",
       "debug.rustyquest.native_renderer.private_layer.enabled": "false",
       "debug.rustyquest.native_renderer.projection.target.controls": "false",
       "debug.rustyquest.native_renderer.replay.visual_proof.enabled": "false",
@@ -117,7 +110,6 @@
     "forbidden": [
       "displayCompositeEnabled=true",
       "environmentDepthMode=scene-particle-map",
-      "handAnchorParticlesEnabled=true",
       "stimulusVolumeEnabled=true",
       "videoProjectionEnabled=true"
     ]
