@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "apps/kuramoto-spatial-sdk-android/native-receipt",
     "apps/native-renderer-android/native",
     "crates/rusty-quest-native-renderer",
     "crates/rusty-quest-projection-runtime-config",

@@ -191,6 +191,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "kuramoto-spatial-native-receipt"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "libc",
+ "openxr-sys",
+ "serde_json",
+]
+
+[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"

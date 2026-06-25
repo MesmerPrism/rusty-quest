@@ -2,7 +2,10 @@ param(
     [string]$RepoRoot,
     [string]$AndroidHome = $env:ANDROID_HOME,
     [string]$JavaHome = $env:JAVA_HOME,
+    [string]$NdkHome = $env:ANDROID_NDK_HOME,
     [string]$GradleVersion = "9.4.1",
+    [string]$RecordedHandCaptureDir = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR,
+    [int]$RecordedHandFrameLimit = 24,
     [string]$OutDir = ""
 )
 
@@ -28,6 +31,34 @@ function Get-FileSha256 {
         return ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
     } finally {
         $sha.Dispose()
+    }
+}
+
+function Get-LatestDirectory {
+    param(
+        [Parameter(Mandatory=$true)][string]$Parent,
+        [Parameter(Mandatory=$true)][string]$Pattern
+    )
+    $directory = Get-ChildItem -LiteralPath $Parent -Directory -Filter $Pattern |
+        Sort-Object Name -Descending |
+        Select-Object -First 1
+    if ($null -eq $directory) {
+        throw "No directory matching $Pattern under $Parent"
+    }
+    return $directory.FullName
+}
+
+function Test-ZipEntry {
+    param(
+        [Parameter(Mandatory=$true)][string]$ZipPath,
+        [Parameter(Mandatory=$true)][string]$EntryName
+    )
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path -LiteralPath $ZipPath).Path)
+    try {
+        return [bool]($zip.Entries | Where-Object { $_.FullName -eq $EntryName } | Select-Object -First 1)
+    } finally {
+        $zip.Dispose()
     }
 }
 
@@ -94,6 +125,23 @@ if ([string]::IsNullOrWhiteSpace($AndroidHome)) {
 if ([string]::IsNullOrWhiteSpace($JavaHome)) {
     throw "JAVA_HOME or -JavaHome is required. Activate the Quest/Android toolchain first."
 }
+if ([string]::IsNullOrWhiteSpace($NdkHome)) {
+    $ndkRoot = Join-Path $AndroidHome "ndk"
+    if (Test-Path -LiteralPath $ndkRoot) {
+        $NdkHome = Get-LatestDirectory -Parent $ndkRoot -Pattern "*"
+    }
+}
+if ([string]::IsNullOrWhiteSpace($NdkHome)) {
+    throw "ANDROID_NDK_HOME, -NdkHome, or an Android SDK ndk directory is required. Activate the Quest/Android toolchain first."
+}
+$resolvedRecordedHandCaptureDir = ""
+if (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
+    if (-not (Test-Path -LiteralPath $RecordedHandCaptureDir -PathType Container)) {
+        throw "Recorded hand capture directory not found: $RecordedHandCaptureDir"
+    }
+    $resolvedRecordedHandCaptureDir = (Resolve-Path -LiteralPath $RecordedHandCaptureDir).Path
+}
+$resolvedRecordedHandFrameLimit = [Math]::Max(1, [Math]::Min(120, $RecordedHandFrameLimit))
 
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Join-Path $PSScriptRoot ".."
@@ -112,6 +160,95 @@ if (-not $resolvedOutFull.StartsWith($resolvedTargetRoot + "\", [System.StringCo
     throw "OutDir must be under the repo target directory: $resolvedOutFull"
 }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
+
+$nativeReceiptRoot = Join-Path $appRoot "native-receipt"
+$nativeReceiptCargoManifest = Join-Path $nativeReceiptRoot "Cargo.toml"
+$nativeReceiptTargetDir = Join-Path $targetRoot "kuramoto-spatial-sdk-native-receipt-cargo"
+$nativeReceiptJniRoot = Join-Path $appRoot "app\build\generated\rustJniLibs"
+$nativeReceiptJniAbiDir = Join-Path $nativeReceiptJniRoot "arm64-v8a"
+$nativeReceiptJniLib = Join-Path $nativeReceiptJniAbiDir "libkuramoto_spatial_native_receipt.so"
+$nativeReceiptApkEntry = "lib/arm64-v8a/libkuramoto_spatial_native_receipt.so"
+$nativeReceiptLinker = Join-Path $NdkHome "toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android29-clang.cmd"
+$cargoCommand = Get-Command cargo -ErrorAction Stop
+$rustupCommand = Get-Command rustup -ErrorAction SilentlyContinue
+if (-not (Test-Path -LiteralPath $nativeReceiptCargoManifest)) {
+    throw "Missing Kuramoto Spatial native receipt Cargo manifest: $nativeReceiptCargoManifest"
+}
+if (-not (Test-Path -LiteralPath $nativeReceiptLinker)) {
+    throw "Required Android NDK linker not found: $nativeReceiptLinker"
+}
+if ($null -ne $rustupCommand) {
+    Invoke-Checked "rustup target add aarch64-linux-android" $rustupCommand.Source @(
+        "target",
+        "add",
+        "aarch64-linux-android"
+    )
+}
+
+New-Item -ItemType Directory -Force -Path $nativeReceiptJniAbiDir, $nativeReceiptTargetDir | Out-Null
+$previousAndroidHomeForCargo = $env:ANDROID_HOME
+$previousNdkHomeForCargo = $env:ANDROID_NDK_HOME
+$previousLinkerForCargo = $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER
+$previousCcForCargo = $env:CC_aarch64_linux_android
+$previousRecordedHandCaptureDir = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR
+$previousRecordedHandFrameLimit = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT
+try {
+    $env:ANDROID_HOME = $AndroidHome
+    $env:ANDROID_NDK_HOME = $NdkHome
+    $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = $nativeReceiptLinker
+    $env:CC_aarch64_linux_android = $nativeReceiptLinker
+    if ([string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) {
+        Remove-Item Env:\RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR -ErrorAction SilentlyContinue
+        Remove-Item Env:\RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR = $resolvedRecordedHandCaptureDir
+        $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT = $resolvedRecordedHandFrameLimit.ToString()
+    }
+    Invoke-Checked "Kuramoto Spatial native receipt cargo build" $cargoCommand.Source @(
+        "build",
+        "--manifest-path", $nativeReceiptCargoManifest,
+        "--target", "aarch64-linux-android",
+        "--release",
+        "--target-dir", $nativeReceiptTargetDir
+    )
+} finally {
+    if ($null -eq $previousAndroidHomeForCargo) {
+        Remove-Item Env:\ANDROID_HOME -ErrorAction SilentlyContinue
+    } else {
+        $env:ANDROID_HOME = $previousAndroidHomeForCargo
+    }
+    if ($null -eq $previousNdkHomeForCargo) {
+        Remove-Item Env:\ANDROID_NDK_HOME -ErrorAction SilentlyContinue
+    } else {
+        $env:ANDROID_NDK_HOME = $previousNdkHomeForCargo
+    }
+    if ($null -eq $previousLinkerForCargo) {
+        Remove-Item Env:\CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER -ErrorAction SilentlyContinue
+    } else {
+        $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER = $previousLinkerForCargo
+    }
+    if ($null -eq $previousCcForCargo) {
+        Remove-Item Env:\CC_aarch64_linux_android -ErrorAction SilentlyContinue
+    } else {
+        $env:CC_aarch64_linux_android = $previousCcForCargo
+    }
+    if ($null -eq $previousRecordedHandCaptureDir) {
+        Remove-Item Env:\RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR = $previousRecordedHandCaptureDir
+    }
+    if ($null -eq $previousRecordedHandFrameLimit) {
+        Remove-Item Env:\RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT = $previousRecordedHandFrameLimit
+    }
+}
+$nativeReceiptBuiltLib = Join-Path $nativeReceiptTargetDir "aarch64-linux-android\release\libkuramoto_spatial_native_receipt.so"
+if (-not (Test-Path -LiteralPath $nativeReceiptBuiltLib)) {
+    throw "Cargo build did not produce native receipt library: $nativeReceiptBuiltLib"
+}
+Copy-Item -LiteralPath $nativeReceiptBuiltLib -Destination $nativeReceiptJniLib -Force
+$nativeReceiptSha256 = Get-FileSha256 -Path $nativeReceiptJniLib
 
 $gradleBat = Resolve-Gradle -RepoRoot ([string]$repoRoot) -Version $GradleVersion
 $gradleUserHome = Join-Path $repoRoot "local-artifacts\gradle-user-home"
@@ -148,6 +285,10 @@ if (-not (Test-Path -LiteralPath $apkSource)) {
 $apkOut = Join-Path $OutDir "rusty-quest-kuramoto-spatial-sdk.apk"
 Copy-Item -LiteralPath $apkSource -Destination $apkOut -Force
 $sha256 = Get-FileSha256 -Path $apkOut
+$nativeReceiptLibraryPackaged = Test-ZipEntry -ZipPath $apkOut -EntryName $nativeReceiptApkEntry
+if (-not $nativeReceiptLibraryPackaged) {
+    throw "APK is missing native receipt library entry: $nativeReceiptApkEntry"
+}
 
 $manifest = [ordered]@{
     '$schema' = "rusty.quest.kuramoto_spatial_sdk_android.build_manifest.v1"
@@ -162,19 +303,170 @@ $manifest = [ordered]@{
     gradle_version = $GradleVersion
     native_renderer_package_preserved = "io.github.mesmerprism.rustyquest.native_renderer"
     native_renderer_spatial_sdk_packaged = $false
+    native_interop_probe = "spatial-sdk-openxr-handles-and-panelsurface-capability"
+    native_interop_probe_rendering = "no-render"
+    native_interop_probe_runtime_handles = @(
+        "Scene.getOpenXrInstanceHandle",
+        "Scene.getOpenXrSessionHandle",
+        "Scene.getOpenXrGetInstanceProcAddrHandle"
+    )
+    native_interop_probe_surface = "PanelSurface-create-destroy"
+    native_receipt_probe = "rust-jni-openxr-handle-and-panelsurface-receipt"
+    native_receipt_rendering = "no-render"
+    native_receipt_openxr_probe = "xrGetInstanceProperties-vulkan-requirements-and-no-present-vulkan-objects-through-sdk-getInstanceProcAddr"
+    native_receipt_vulkan_object_probe = "no-present-instance-device-queue-create-destroy"
+    native_receipt_jni_bridge = "KuramotoSpatialActivity.nativeRecordNoRenderInteropReceipt"
+    native_receipt_mask_bits = @(
+        "received",
+        "openxr-instance-nonzero",
+        "openxr-session-nonzero",
+        "openxr-getInstanceProcAddr-nonzero",
+        "panel-surface-valid",
+        "openxr-getInstanceProcAddr-callable",
+        "xrGetInstanceProperties-resolved",
+        "xrGetInstanceProperties-succeeded",
+        "xrGetSystem-resolved",
+        "xrGetSystem-succeeded",
+        "xrGetVulkanGraphicsRequirements2KHR-resolved",
+        "xrGetVulkanGraphicsRequirements2KHR-succeeded",
+        "xrCreateVulkanInstanceKHR-resolved",
+        "xrGetVulkanGraphicsDevice2KHR-resolved",
+        "xrCreateVulkanDeviceKHR-resolved",
+        "vk-instance-created",
+        "vk-graphics-device-obtained",
+        "vk-graphics-compute-queue-found",
+        "vk-device-created",
+        "vk-queue-obtained",
+        "vk-objects-destroyed"
+    )
+    native_receipt_library = $nativeReceiptApkEntry
+    native_receipt_library_packaged = $nativeReceiptLibraryPackaged
+    native_receipt_library_sha256 = $nativeReceiptSha256
+    native_receipt_generated_jni_libs = "app/build/generated/rustJniLibs/arm64-v8a"
+    native_surface_particle_layer = "VideoSurfacePanelRegistration-native-vulkan-wsi-surface-panel"
+    native_surface_particle_layer_rendering = "native-vulkan-wsi-surface-panel-live-openxr-gpu-skinned-resident-rig-kuramoto-study-hand-anchor-particles-packed-stereo-left-right"
+    native_surface_particle_layer_jni_bridge = "KuramotoSpatialActivity.nativeStartSurfaceParticleLayer"
+    native_surface_particle_layer_stop_bridge = "KuramotoSpatialActivity.nativeStopSurfaceParticleLayer"
+    native_surface_particle_layer_parameter_bridge = "KuramotoSpatialActivity.nativeUpdateSurfaceParticleParameters"
+    native_surface_particle_layer_parameter_transport = "jni-live-queue"
+    native_surface_particle_layer_hotload_property = "debug.rustyquest.kuramoto_spatial.live_hand_depth_offset_meters"
+    native_surface_particle_layer_live_hand_depth_offset_default_meters = 0.0
+    native_surface_particle_layer_live_hand_scene_transform = "viewer-relative-openxr-to-spatial-sdk-panel-basis"
+    native_surface_particle_layer_live_hand_scene_fallback_transform = "raw-openxr-local-floor-to-spatial-sdk-scene"
+    native_surface_particle_layer_live_hand_scene_transform_source = "runtime-hotload-android-property"
+    native_surface_particle_layer_live_hand_scene_transform_properties = @(
+        "debug.rustyquest.kuramoto_spatial.live_hand_scene.offset_x_m",
+        "debug.rustyquest.kuramoto_spatial.live_hand_scene.offset_y_m",
+        "debug.rustyquest.kuramoto_spatial.live_hand_scene.offset_z_m",
+        "debug.rustyquest.kuramoto_spatial.live_hand_scene.yaw_degrees",
+        "debug.rustyquest.kuramoto_spatial.live_hand_scene.horizontal_sign"
+    )
+    native_surface_particle_layer_live_hand_scene_offset_default_meters = "0.0;0.0;2.0"
+    native_surface_particle_layer_live_hand_scene_yaw_default_degrees = 180.0
+    native_surface_particle_layer_live_hand_scene_horizontal_sign_default = -1.0
+    native_surface_particle_layer_target_distance_hotload_property = "debug.rustyquest.kuramoto_spatial.particle_layer.target_distance_meters"
+    native_surface_particle_layer_target_distance_default_meters = 0.72
+    native_surface_particle_layer_target_distance_range_meters = "0.20..1.50"
+    forced_replay_hand_source_mode = $(if ([string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) { "public-shape-fallback" } else { "external-recorded-capture-build-env" })
+    forced_replay_hand_frame_limit = $resolvedRecordedHandFrameLimit
+    native_surface_particle_layer_markers = @(
+        "panel-entity-spawned",
+        "surface-panel-ready",
+        "started",
+        "render-loop-ready",
+        "surfaceLayerMode=native-kuramoto-study-hand-anchor-particles",
+        "forcedReplayHands=true",
+        "forcedReplayMeshVisible=false",
+        "diagnosticParticlesVisible=false",
+        "nativeStudyParticlesVisible=true",
+        "handAnchorParticlesVisible=true",
+        "gpuReplayHandsResident=true",
+        "handAnchorParticlePath=resident-recorded-rig-gpu-skinned-mesh-coordinate-anchor-billboards",
+        "handAnchorParticleCoordinateSource=live-openxr-world-joints-gpu-skinned-resident-mesh-with-forced-replay-fallback",
+        "liveHandJointFrameSource=XR_EXT_hand_tracking",
+        "liveHandJointGpuInputPath=recorded-compatible-compact-joint-pose-gpu-skinning",
+        "liveHandCompactUploadEquivalent=true",
+        "liveHandCompactFrameGate=native-equivalent-21-runtime-5-tip",
+        "liveHandRuntimeJointPoseCount=",
+        "liveHandTipLengthCount=",
+        "liveHandJointPlacementMode=viewer-relative-openxr-to-spatial-sdk-panel-plane",
+        "liveHandCoordinateTransform=viewer-relative-openxr-to-spatial-sdk-panel-basis",
+        "liveHandViewPoseSource=xrLocateViews",
+        "liveHandPanelBasisSource=Scene.getViewerPose-panel-plane",
+        "liveHandSceneTransformSource=runtime-hotload-android-property",
+        "liveHandSceneOffsetDefaultM=0.000;0.000;2.000",
+        "liveHandSceneYawDefaultDegrees=180.000",
+        "liveHandSceneHorizontalSignDefault=-1.000",
+        "liveMeshSkinningPolicy=native-compact-frame-gated-full-weight-skinning",
+        "liveMeshTriangleValidationAttempts=6",
+        "liveHandCorrectPositionSizeProof=spatial-sdk-panel-plane-projection",
+        "liveHandJointStatusY=pose-valid",
+        "liveHandSkinningValidityPolicy=native-compact-frame-gate-trust-all-weights",
+        "liveHandDepthOffsetParameterSource=runtime-hotload-android-property",
+        "liveHandDepthOffsetProperty=debug.rustyquest.kuramoto_spatial.live_hand_depth_offset_meters",
+        "particleLayerTargetDistanceParameterSource=runtime-hotload-android-property",
+        "particleLayerTargetDistanceProperty=debug.rustyquest.kuramoto_spatial.particle_layer.target_distance_meters",
+        "privateKuramotoPayloadActive=false",
+        "studyProfileDynamicsActive=true",
+        "kuramotoConditionId=lche",
+        "kuramotoStudyProfileId=kuramoto.private.native.profile.high-energy-low-coherence.movement-only.v1",
+        "kuramotoMovementBaseHz=0.88",
+        "kuramotoMovementCoupling=0.0",
+        "properStereoStudyParticles=true",
+        "replayStereoProjection=per-eye-spatial-sdk-panel-plane-ray-intersection",
+        "computeParticleStateBuffer=true",
+        "computeShaderDispatchReady=true",
+        "computeParameterBridge=true",
+        "native-surface-compute-stereo-proof=true",
+        "sideBySideStereoProof=true",
+        "stereoMode=LeftRight",
+        "cameraFacingParticleSurface=true",
+        "projectionLockedParticleSurface=true",
+        "placementMode=viewer-pose-projection-locked-quad",
+        "targetProjectionSpace=spatial-sdk-panel-plane-perspective-projection",
+        "projectionContentMappingMode=world-to-spatial-sdk-panel-plane-left-right",
+        "first-frame-presented"
+    )
+    native_surface_particle_layer_shape = [ordered]@{
+        width_px = 2048
+        per_eye_width_px = 1024
+        height_px = 1024
+        stereo_mode = "StereoMode.LeftRight"
+        packed_stereo_layout = "left-right"
+        particles = 2048
+        width_meters = 1.44
+        height_meters = 1.44
+        target_distance_meters = 0.72
+        x_meters = 0.0
+        y_meters = 1.22
+        z_meters = -0.72
+        placement_mode = "viewer-pose-projection-locked-quad"
+        placement_authority = "spatial-sdk-viewer-pose-scene-tick"
+        target_coordinate_space = "spatial-sdk-surface-panel-eye-uv"
+        target_projection_space = "spatial-sdk-panel-plane-perspective-projection"
+        target_fov_tangents = "panel-plane-derived"
+        projection_content_mapping_mode = "world-to-spatial-sdk-panel-plane-left-right"
+        left_target_surface_uv_rect = "0.0;0.0;1.0;1.0"
+        right_target_surface_uv_rect = "0.0;0.0;1.0;1.0"
+        view_origin_meters = "0.0;0.0;2.0"
+        view_origin_yaw_degrees = 180.0
+    }
     panel_registration_id = "kuramoto_experiment_panel"
+    particle_surface_panel_registration_id = "kuramoto_particle_surface_panel"
     panel_shape_meters = [ordered]@{
-        width = 1.24
-        height = 0.86
+        width = 2.048
+        height = 1.254
     }
     panel_display = [ordered]@{
         option = "DpPerMeterDisplayOptions"
         dp_per_meter = 720
     }
-    panel_transform_runtime_controls = @("Transform(Pose(Vector3))", "Scale(Vector3)")
-    questionnaire_schema = "rusty.kuramoto.mesh.experiment_questionnaire.v1"
+    panel_transform_runtime_controls = @("Transform(Pose(Vector3, Quaternion))", "Scale(Vector3)", "PanelDimensions(Vector2)", "Visible(true)")
+    diagnostic_backdrop = "skybox-and-reference-geometry"
+    panel_content_probe = "sample-quaternion-opaque-yellow-background-teal-banner-orange-button"
+    questionnaire_schema = "rusty.kuramoto.mesh.experiment_questionnaire.v2"
     high_rate_json_payload = $false
-    hand_rendering_expected = $false
+    hand_rendering_expected = $true
     apk_path = $apkOut
     apk_sha256 = $sha256
 }

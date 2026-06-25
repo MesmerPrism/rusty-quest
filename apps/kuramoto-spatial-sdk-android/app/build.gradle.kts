@@ -34,6 +34,12 @@ android {
   }
   composeOptions { kotlinCompilerExtensionVersion = "1.5.15" }
 
+  sourceSets {
+    getByName("main") {
+      jniLibs.srcDir(layout.buildDirectory.dir("generated/rustJniLibs"))
+    }
+  }
+
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17

@@ -120,6 +120,48 @@ internal class KuramotoExperimentStore(private val activity: Activity) {
     marker("status=surface-selected surfaceTargetId=${surface.id}")
   }
 
+  fun prioritizeConditionForValidation(conditionId: String) {
+    requireParticipant()
+    if (state.optString("stage", "") == "block_running") {
+      marker("status=validation-condition-prioritize-skipped reason=block-running")
+      return
+    }
+    val target = conditionId.trim()
+    val order = conditionOrder()
+    var selected: JSONObject? = null
+    for (index in 0 until order.length()) {
+      val condition = order.optJSONObject(index) ?: continue
+      if (condition.optString("condition_id") == target) {
+        selected = JSONObject(condition.toString())
+        break
+      }
+    }
+    if (selected == null) {
+      marker("status=validation-condition-prioritize-skipped reason=missing-condition conditionId=${markerToken(target)}")
+      return
+    }
+
+    val reordered = JSONArray()
+    selected.put("order_index", 0)
+    reordered.put(selected)
+    var nextIndex = 1
+    for (index in 0 until order.length()) {
+      val condition = order.optJSONObject(index) ?: continue
+      if (condition.optString("condition_id") == target) {
+        continue
+      }
+      reordered.put(JSONObject(condition.toString()).put("order_index", nextIndex))
+      nextIndex += 1
+    }
+    state.put("condition_order", reordered)
+    save()
+    appendForegroundEvent("validation_condition_prioritized", "spatial-sdk-self-test")
+    marker(
+        "status=validation-condition-prioritized conditionId=${markerToken(target)} " +
+            "profileId=${markerToken(selected.optString("profile_id"))}"
+    )
+  }
+
   fun startNextBlock() {
     requireParticipant()
     syncElapsedBlock()
@@ -201,6 +243,7 @@ internal class KuramotoExperimentStore(private val activity: Activity) {
       intensityRating: Int,
       engagementRating: Int,
       notes: String,
+      signature: JSONObject,
   ) {
     syncElapsedBlock()
     if (state.optString("stage", "") != "questionnaire") {
@@ -230,7 +273,8 @@ internal class KuramotoExperimentStore(private val activity: Activity) {
                     .put("comfort_rating_1_to_7", comfortRating.coerceIn(1, 7))
                     .put("intensity_rating_1_to_7", intensityRating.coerceIn(1, 7))
                     .put("engagement_rating_1_to_7", engagementRating.coerceIn(1, 7))
-                    .put("notes", notes.trim()),
+                    .put("notes", notes.trim())
+                    .put("signature", JSONObject(signature.toString())),
             )
     appendLine(sessionFile(QUESTIONNAIRE_FILE), row.toString())
     val completed = state.optJSONArray("completed_blocks") ?: JSONArray().also { state.put("completed_blocks", it) }
@@ -497,7 +541,7 @@ internal class KuramotoExperimentStore(private val activity: Activity) {
     const val SESSION_FILE = "kuramoto_experiment_session.json"
     const val SESSION_SCHEMA = "rusty.kuramoto.mesh.experiment_session.v1"
     const val EVENT_SCHEMA = "rusty.kuramoto.mesh.experiment_event.v1"
-    const val QUESTIONNAIRE_SCHEMA = "rusty.kuramoto.mesh.experiment_questionnaire.v1"
+    const val QUESTIONNAIRE_SCHEMA = "rusty.kuramoto.mesh.experiment_questionnaire.v2"
     const val DEFAULT_BLOCK_DURATION_MS = 10_000L
     private const val ROOT_DIR = "kuramoto_experiment"
     private const val MANIFEST_FILE = "session_manifest.json"
@@ -537,28 +581,28 @@ internal class KuramotoExperimentStore(private val activity: Activity) {
     private val CONDITIONS =
         listOf(
             Condition(
-                id = "lowLow",
+                id = "lcle",
                 label = "Low energy / low coherence",
                 profileId = "kuramoto.private.native.profile.low-energy-low-coherence.movement-only.v1",
                 movementBaseHz = 0.44,
                 movementCoupling = 0.0,
             ),
             Condition(
-                id = "highLow",
+                id = "lche",
                 label = "High energy / low coherence",
                 profileId = "kuramoto.private.native.profile.high-energy-low-coherence.movement-only.v1",
                 movementBaseHz = 0.88,
                 movementCoupling = 0.0,
             ),
             Condition(
-                id = "lowHigh",
+                id = "hcle",
                 label = "Low energy / high coherence",
                 profileId = "kuramoto.private.native.profile.low-energy-high-coherence.movement-only.v1",
                 movementBaseHz = 0.44,
                 movementCoupling = 1.0,
             ),
             Condition(
-                id = "highHigh",
+                id = "hche",
                 label = "High energy / high coherence",
                 profileId = "kuramoto.private.native.profile.high-energy-high-coherence.movement-only.v1",
                 movementBaseHz = 0.88,
