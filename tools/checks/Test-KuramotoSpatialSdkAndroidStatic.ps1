@@ -59,6 +59,7 @@ $nativeReceiptReplayHandFragmentShader = Read-RequiredText (Join-Path $appRoot "
 $buildScript = Read-RequiredText (Join-Path $repoRootPath "tools\Build-KuramotoSpatialSdkAndroid.ps1") "build wrapper"
 $depthOffsetTool = Read-RequiredText (Join-Path $repoRootPath "tools\Set-KuramotoSpatialLiveHandDepthOffset.ps1") "live hand depth-offset hotload tool"
 $targetDistanceTool = Read-RequiredText (Join-Path $repoRootPath "tools\Set-KuramotoSpatialParticleLayerTargetDistance.ps1") "particle layer target-distance hotload tool"
+$overscanTool = Read-RequiredText (Join-Path $repoRootPath "tools\Set-KuramotoSpatialParticleLayerOverscan.ps1") "particle layer overscan hotload tool"
 $diagnosticModeTool = Read-RequiredText (Join-Path $repoRootPath "tools\Set-KuramotoSpatialParticleDiagnosticMode.ps1") "particle diagnostic mode hotload tool"
 $liveHandSceneTransformTool = Read-RequiredText (Join-Path $repoRootPath "tools\Set-KuramotoSpatialLiveHandSceneTransform.ps1") "live hand scene-transform hotload tool"
 $readme = Read-RequiredText (Join-Path $appRoot "README.md") "app README"
@@ -238,6 +239,9 @@ Assert-ContainsTokens $activity @(
     'scene\.getViewerPose\(\)',
     'scene\.getEyeOffsets\(\)',
     'Quaternion\.fromDirection\(forward, up\)',
+    'AvatarSystem',
+    'setShowHands\(false\)',
+    'builtInMetaHandVisualPolicy=disabled',
     'status=projection-plane-updated',
     'projectionPlaneFacingMode=viewer-forward-front-face',
     'viewerPoseSource=Scene\.getViewerPose',
@@ -251,10 +255,18 @@ Assert-ContainsTokens $activity @(
     'PARTICLE_LAYER_TARGET_DISTANCE_METERS = 0\.72f',
     'PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY =\s*"debug\.rustyquest\.kuramoto_spatial\.particle_layer\.target_distance_meters"',
     'currentParticleLayerTargetDistanceMeters\(\)',
-    'particleLayerWidthMeters',
-    'target-distance-hotload-updated',
+    'PARTICLE_LAYER_SURFACE_OVERSCAN_SCALE = 1\.35f',
+    'PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY =\s*"debug\.rustyquest\.kuramoto_spatial\.particle_layer\.surface_overscan_scale"',
+    'currentParticleLayerSurfaceOverscanScale\(\)',
+    'particleLayerProjectionWidthMeters',
+    'particleLayerSurfaceWidthMeters',
+    'surface-geometry-hotload-updated',
+    'projectionPlanePoseInvariantWithOverscan=true',
+    'particleWorldScaleInvariantWithOverscan=true',
     'particleLayerTargetDistanceParameterSource=runtime-hotload-android-property',
     'particleLayerTargetDistanceProperty=\$PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY',
+    'particleLayerSurfaceOverscanParameterSource=runtime-hotload-android-property',
+    'particleLayerSurfaceOverscanProperty=\$PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY',
     'PARTICLE_LAYER_WIDTH_METERS = 1\.44f',
     'PARTICLE_LAYER_HEIGHT_METERS = 1\.44f',
     'PARTICLE_LAYER_X_METERS = 0\.0f',
@@ -838,6 +850,17 @@ Assert-ContainsTokens $targetDistanceTool @(
     'applied_meters'
 ) "particle layer target-distance hotload tool"
 
+Assert-ContainsTokens $overscanTool @(
+    'debug\.rustyquest\.kuramoto_spatial\.particle_layer\.surface_overscan_scale',
+    'Parameter\(Mandatory = \$true\)',
+    'RUSTY_QUEST_SERIAL',
+    'shell setprop \$propertyName \$value',
+    'shell getprop \$propertyName',
+    'rusty\.quest\.kuramoto_spatial_particle_layer_overscan_set\.v1',
+    'requested_scale',
+    'applied_scale'
+) "particle layer overscan hotload tool"
+
 Assert-ContainsTokens $diagnosticModeTool @(
     'debug\.rustyquest\.kuramoto_spatial\.particle_layer\.diagnostic_mode',
     'Parameter\(Mandatory = \$true\)',
@@ -981,6 +1004,14 @@ Assert-ContainsTokens $plan @(
     'Set-KuramotoSpatialLiveHandDepthOffset\.ps1',
     'debug\.rustyquest\.kuramoto_spatial\.particle_layer\.target_distance_meters',
     'Set-KuramotoSpatialParticleLayerTargetDistance\.ps1',
+    'debug\.rustyquest\.kuramoto_spatial\.particle_layer\.surface_overscan_scale',
+    'Set-KuramotoSpatialParticleLayerOverscan\.ps1',
+    'projectionWidthMeters',
+    'surfaceWidthMeters',
+    'projectionPlanePoseInvariantWithOverscan=true',
+    'particleWorldScaleInvariantWithOverscan=true',
+    'AvatarSystem\.setShowHands\(false\)',
+    'explicit-only base hand mesh policy',
     'Open Questions For Meta Or SDK Reference Checks'
 ) "implementation plan"
 

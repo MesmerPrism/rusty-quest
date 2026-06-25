@@ -850,8 +850,9 @@ Community/context, not treated as API contract:
   uses the matching virtual eye-to-panel distance. The helper
   `tools/Set-KuramotoSpatialParticleLayerTargetDistance.ps1` wraps the
   serial-scoped `adb setprop`/`getprop` path; start visual checks around
-  `0.35m` after installing this slice. Kotlin emits
-  `status=target-distance-hotload-updated` whenever the active value changes.
+  `0.35m` after installing this slice. Kotlin now emits
+  `status=surface-geometry-hotload-updated` whenever target distance or
+  surface overscan changes.
   Follow-up headset feedback showed this control moved the panel/quad contract
   but still did not change the apparent live-hand offset, so it is not the
   raw live-hand alignment fix.
@@ -1121,6 +1122,48 @@ Community/context, not treated as API contract:
   `first-frame-presented`, and a live compact frame with
   `liveHandRuntimeJointPoseCount=21` and `liveHandTipLengthCount=5`. Process
   `29602` was foregrounded for headset-operator inspection.
+- 2026-06-25 particle-surface overscan and built-in hand visual suppression:
+  the next Spatial SDK slice separates viewer-pose projection distance from the
+  physical carrier quad. Kotlin now polls
+  `debug.rustyquest.kuramoto_spatial.particle_layer.surface_overscan_scale`
+  and computes both `projectionWidthMeters`/`projectionHeightMeters` and
+  `surfaceWidthMeters`/`surfaceHeightMeters`. The enlarged surface dimensions
+  are applied to `PanelDimensions`, `QuadShapeOptions`, and the native
+  panel-pose update so the shader maps NDC back onto the larger physical quad;
+  this preserves particle world positions and point radii while increasing
+  the visible field-of-view coverage. Markers include
+  `projectionPlanePoseInvariantWithOverscan=true` and
+  `particleWorldScaleInvariantWithOverscan=true`. The live helper
+  `tools/Set-KuramotoSpatialParticleLayerOverscan.ps1` wraps the serial-scoped
+  property. The same slice disables the Spatial Toolkit player hand mesh via
+  `AvatarSystem.setShowHands(false)`, matching the native renderer's
+  explicit-only base hand mesh policy while leaving the custom Vulkan particle
+  hands active.
+- 2026-06-25 headset operator confirmation: the first
+  `AvatarSystem.setShowHands(false)` approach did keep the built-in Meta/SDK
+  hand visual off. The follow-up patch moves that same setting into a small
+  Spatial SDK system (`SpatialAvatarHandVisualSuppressionSystem`) so it is
+  applied from the SDK system lifecycle rather than relying on Activity
+  callback timing. This is intended as a robustness improvement, not a change
+  to the accepted visual policy.
+- 2026-06-25 overscan/suppression headset run:
+  `local-artifacts\kuramoto-spatial-sdk-headset\20260625-204606-overscan-system-handvisual-launch`
+  installed APK SHA-256
+  `8F82E19A6473A439C9156C813734F17838569427D946F18D6D097A92A2876ADC` on
+  Quest serial `3487C10H3M017Q` and left process `1399` running for headset
+  inspection. Runtime properties used the validated live-hand alignment
+  transform (`offset=0,0,2`, `yaw=180`, `horizontal_sign=-1`), target distance
+  `0.35m`, surface overscan `1.35`, and particle diagnostic mode `normal`.
+  PID-filtered logcat for this process contains one
+  `channel=spatial-sdk-avatar-visual status=disabled` marker from
+  `SpatialAvatarHandVisualSuppressionSystem`, one
+  `status=surface-geometry-hotload-updated` marker with
+  `projectionWidthMeters=0.7000`, `projectionHeightMeters=0.7000`,
+  `surfaceWidthMeters=0.9450`, `surfaceHeightMeters=0.9450`, and
+  `surfaceOverscanScale=1.3500`, plus `render-loop-ready` and
+  `first-frame-presented`. The collected evidence has zero `AndroidRuntime`,
+  `FATAL`, or `render-failed` matches, and native markers include repeated
+  `live-hand-joints-frame-ready` entries.
 - 2026-06-25 live hand raw-to-scene transform headset run: rebuilt with the
   full two-hand recorded capture at
   `S:\Work\tmp\quest-handmesh-matter-full-20260601-123844\pulled\hand-recordings\quest-handmesh-1780310333778406776`

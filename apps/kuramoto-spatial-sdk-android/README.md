@@ -162,6 +162,20 @@ Native surface particle/hand layer:
   to preserve the current panel-plane FOV footprint, and native receives the
   same `panelTargetDistanceMeters` for stereo projection;
 - polls the low-rate Android property
+  `debug.rustyquest.kuramoto_spatial.particle_layer.surface_overscan_scale` on
+  scene ticks. This grows the Spatial SDK particle carrier quad independently
+  of the viewer-pose projection plane. Kotlin sends the enlarged
+  `surfaceWidthMeters`/`surfaceHeightMeters` to native as the physical panel
+  mapping size so particle positions and point radii stay in the same world
+  locations while the visible quad covers more of the field of view. Markers
+  report `projectionWidthMeters`, `surfaceWidthMeters`,
+  `surfaceOverscanScale`, `projectionPlanePoseInvariantWithOverscan=true`, and
+  `particleWorldScaleInvariantWithOverscan=true`;
+- disables the Spatial Toolkit player hand visual through
+  `AvatarSystem.setShowHands(false)`. This mirrors the native renderer policy:
+  the built-in Meta/SDK hand mesh is hidden unless explicitly requested, while
+  the custom Vulkan particle hands remain visible;
+- polls the low-rate Android property
   `debug.rustyquest.kuramoto_spatial.particle_layer.diagnostic_mode` every
   frame. This is a GPU shader visualization switch, not a CPU skinning path:
   `normal`, `triangle-bands`, `projection-clamp`, `no-dynamics`, and
@@ -294,6 +308,12 @@ Live particle-surface distance tuning while the APK remains active:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Set-KuramotoSpatialParticleLayerTargetDistance.ps1 -Serial $serial -Meters 0.35
+```
+
+Live particle-surface overscan tuning while the APK remains active:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Set-KuramotoSpatialParticleLayerOverscan.ps1 -Serial $serial -Scale 1.35
 ```
 
 Live GPU particle diagnostic mode while the APK remains active:

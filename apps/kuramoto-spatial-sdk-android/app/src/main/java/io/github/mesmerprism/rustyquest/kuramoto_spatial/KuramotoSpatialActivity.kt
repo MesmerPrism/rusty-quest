@@ -62,6 +62,7 @@ import com.meta.spatial.core.Pose
 import com.meta.spatial.core.Quaternion
 import com.meta.spatial.core.SpatialFeature
 import com.meta.spatial.core.SpatialSDKExperimentalAPI
+import com.meta.spatial.core.SystemBase
 import com.meta.spatial.core.Vector2
 import com.meta.spatial.core.Vector3
 import com.meta.spatial.runtime.PanelSurface
@@ -71,6 +72,7 @@ import com.meta.spatial.runtime.SamplerConfig
 import com.meta.spatial.runtime.Scene
 import com.meta.spatial.runtime.StereoMode
 import com.meta.spatial.toolkit.AppSystemActivity
+import com.meta.spatial.toolkit.AvatarSystem
 import com.meta.spatial.toolkit.Box
 import com.meta.spatial.toolkit.DpPerMeterDisplayOptions
 import com.meta.spatial.toolkit.Material
@@ -119,9 +121,14 @@ class KuramotoSpatialActivity : AppSystemActivity() {
   private var particleLayerProjectionMarkerCount = 0
   private var lastParticleLayerProjectionMarkerMs = 0L
   private var lastParticleLayerTargetDistanceMeters: Float? = null
+  private var lastParticleLayerSurfaceOverscanScale: Float? = null
 
   override fun registerFeatures(): List<SpatialFeature> {
-    return listOf(VRFeature(this), ComposeFeature())
+    return listOf(
+        VRFeature(this),
+        SpatialAvatarHandVisualFeature(::marker),
+        ComposeFeature(),
+    )
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -164,7 +171,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
               Entity.createPanelEntity(
                   R.id.kuramoto_particle_surface_panel,
                   Transform(particleLayerPose()),
-                  PanelDimensions(Vector2(PARTICLE_LAYER_WIDTH_METERS, PARTICLE_LAYER_HEIGHT_METERS)),
+                  particleLayerSurfacePanelDimensions(),
                   Visible(true),
               )
             }
@@ -651,26 +658,42 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     val up = viewerPose.up().normalizedOr(Vector3(0.0f, 1.0f, 0.0f))
     val right = cross(forward, up).normalizedOr(Vector3(1.0f, 0.0f, 0.0f))
     val targetDistanceMeters = currentParticleLayerTargetDistanceMeters()
-    val widthMeters = particleLayerWidthMeters(targetDistanceMeters)
-    val heightMeters = particleLayerHeightMeters(targetDistanceMeters)
+    val projectionWidthMeters = particleLayerProjectionWidthMeters(targetDistanceMeters)
+    val projectionHeightMeters = particleLayerProjectionHeightMeters(targetDistanceMeters)
+    val surfaceOverscanScale = currentParticleLayerSurfaceOverscanScale()
+    val surfaceWidthMeters =
+        particleLayerSurfaceWidthMeters(targetDistanceMeters, surfaceOverscanScale)
+    val surfaceHeightMeters =
+        particleLayerSurfaceHeightMeters(targetDistanceMeters, surfaceOverscanScale)
     val previousTargetDistanceMeters = lastParticleLayerTargetDistanceMeters
+    val previousSurfaceOverscanScale = lastParticleLayerSurfaceOverscanScale
     if (
         previousTargetDistanceMeters == null ||
-            abs(previousTargetDistanceMeters - targetDistanceMeters) >= 0.001f
+            abs(previousTargetDistanceMeters - targetDistanceMeters) >= 0.001f ||
+            previousSurfaceOverscanScale == null ||
+            abs(previousSurfaceOverscanScale - surfaceOverscanScale) >= 0.001f
     ) {
       lastParticleLayerTargetDistanceMeters = targetDistanceMeters
+      lastParticleLayerSurfaceOverscanScale = surfaceOverscanScale
       marker(
-          "channel=native-surface-particle-layer status=target-distance-hotload-updated " +
+          "channel=native-surface-particle-layer status=surface-geometry-hotload-updated " +
               "particleLayerTargetDistanceParameterSource=runtime-hotload-android-property " +
               "particleLayerTargetDistanceProperty=$PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY " +
+              "particleLayerSurfaceOverscanParameterSource=runtime-hotload-android-property " +
+              "particleLayerSurfaceOverscanProperty=$PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY " +
               "targetDistanceMeters=${markerFloat(targetDistanceMeters)} " +
-              "widthMeters=${markerFloat(widthMeters)} heightMeters=${markerFloat(heightMeters)}"
+              "projectionPlanePoseInvariantWithOverscan=true " +
+              "projectionWidthMeters=${markerFloat(projectionWidthMeters)} " +
+              "projectionHeightMeters=${markerFloat(projectionHeightMeters)} " +
+              "surfaceOverscanScale=${markerFloat(surfaceOverscanScale)} " +
+              "surfaceWidthMeters=${markerFloat(surfaceWidthMeters)} " +
+              "surfaceHeightMeters=${markerFloat(surfaceHeightMeters)}"
       )
     }
     val center = viewerPose.t + forward * targetDistanceMeters
     val planePose = Pose(center, Quaternion.fromDirection(forward, up))
     entity.setComponent(Transform(planePose))
-    entity.setComponent(PanelDimensions(Vector2(widthMeters, heightMeters)))
+    entity.setComponent(PanelDimensions(Vector2(surfaceWidthMeters, surfaceHeightMeters)))
     entity.setComponent(Visible(true))
     val nativePanelPoseUpdateMask =
         if (nativeReceiptLibraryLoaded) {
@@ -685,8 +708,8 @@ class KuramotoSpatialActivity : AppSystemActivity() {
                     up.x,
                     up.y,
                     up.z,
-                    widthMeters,
-                    heightMeters,
+                    surfaceWidthMeters,
+                    surfaceHeightMeters,
                     targetDistanceMeters,
                 )
               }
@@ -727,6 +750,13 @@ class KuramotoSpatialActivity : AppSystemActivity() {
             "viewerForward=${vectorMarker(forward)} viewerUp=${vectorMarker(up)} " +
             "viewerRight=${vectorMarker(right)} panelPoseNativeUpdateMask=$nativePanelPoseUpdateMask " +
             "worldToPanelProjection=spatial-sdk-panel-plane-basis " +
+            "particleLayerSurfaceOverscanProperty=$PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY " +
+            "projectionWidthMeters=${markerFloat(projectionWidthMeters)} " +
+            "projectionHeightMeters=${markerFloat(projectionHeightMeters)} " +
+            "surfaceOverscanScale=${markerFloat(surfaceOverscanScale)} " +
+            "surfaceWidthMeters=${markerFloat(surfaceWidthMeters)} " +
+            "surfaceHeightMeters=${markerFloat(surfaceHeightMeters)} " +
+            "projectionPlanePoseInvariantWithOverscan=true particleWorldScaleInvariantWithOverscan=true " +
             "planeCenterM=${vectorMarker(center)} planeQuaternion=${quaternionMarker(planePose.q)} " +
             "leftEyeOffsetM=${vectorMarker(eyeOffsets?.first ?: Vector3(0.0f))} " +
             "rightEyeOffsetM=${vectorMarker(eyeOffsets?.second ?: Vector3(0.0f))}"
@@ -744,13 +774,18 @@ class KuramotoSpatialActivity : AppSystemActivity() {
           "targetDistanceMeters=${markerFloat(currentParticleLayerTargetDistanceMeters())} " +
           "targetDistanceDefaultMeters=$PARTICLE_LAYER_TARGET_DISTANCE_METERS " +
           "targetDistanceProperty=$PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY " +
+          "surfaceOverscanScale=${markerFloat(currentParticleLayerSurfaceOverscanScale())} " +
+          "surfaceOverscanDefaultScale=$PARTICLE_LAYER_SURFACE_OVERSCAN_SCALE " +
+          "surfaceOverscanProperty=$PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY " +
           "leftTargetSurfaceUvRect=$PARTICLE_LAYER_TARGET_SURFACE_UV_RECT " +
           "rightTargetSurfaceUvRect=$PARTICLE_LAYER_TARGET_SURFACE_UV_RECT " +
           "viewOriginMeters=$PARTICLE_LAYER_VIEW_ORIGIN_METERS " +
           "viewOriginYawDegrees=$PARTICLE_LAYER_VIEW_ORIGIN_YAW_DEGREES " +
           "x=$PARTICLE_LAYER_X_METERS y=$PARTICLE_LAYER_Y_METERS z=$PARTICLE_LAYER_Z_METERS " +
-          "widthMeters=${markerFloat(particleLayerWidthMeters(currentParticleLayerTargetDistanceMeters()))} " +
-          "heightMeters=${markerFloat(particleLayerHeightMeters(currentParticleLayerTargetDistanceMeters()))}"
+          "projectionWidthMeters=${markerFloat(particleLayerProjectionWidthMeters(currentParticleLayerTargetDistanceMeters()))} " +
+          "projectionHeightMeters=${markerFloat(particleLayerProjectionHeightMeters(currentParticleLayerTargetDistanceMeters()))} " +
+          "surfaceWidthMeters=${markerFloat(particleLayerSurfaceWidthMeters(currentParticleLayerTargetDistanceMeters()))} " +
+          "surfaceHeightMeters=${markerFloat(particleLayerSurfaceHeightMeters(currentParticleLayerTargetDistanceMeters()))}"
 
   private fun currentParticleLayerTargetDistanceMeters(): Float =
       readFloatSystemProperty(
@@ -760,13 +795,46 @@ class KuramotoSpatialActivity : AppSystemActivity() {
           PARTICLE_LAYER_TARGET_DISTANCE_MAX_METERS,
       )
 
-  private fun particleLayerWidthMeters(targetDistanceMeters: Float): Float =
+  private fun currentParticleLayerSurfaceOverscanScale(): Float =
+      readFloatSystemProperty(
+          PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY,
+          PARTICLE_LAYER_SURFACE_OVERSCAN_SCALE,
+          PARTICLE_LAYER_SURFACE_OVERSCAN_MIN_SCALE,
+          PARTICLE_LAYER_SURFACE_OVERSCAN_MAX_SCALE,
+      )
+
+  private fun particleLayerProjectionWidthMeters(targetDistanceMeters: Float): Float =
       (targetDistanceMeters * PARTICLE_LAYER_WIDTH_PER_DISTANCE)
           .coerceIn(PARTICLE_LAYER_DIMENSION_MIN_METERS, PARTICLE_LAYER_DIMENSION_MAX_METERS)
 
-  private fun particleLayerHeightMeters(targetDistanceMeters: Float): Float =
+  private fun particleLayerProjectionHeightMeters(targetDistanceMeters: Float): Float =
       (targetDistanceMeters * PARTICLE_LAYER_HEIGHT_PER_DISTANCE)
           .coerceIn(PARTICLE_LAYER_DIMENSION_MIN_METERS, PARTICLE_LAYER_DIMENSION_MAX_METERS)
+
+  private fun particleLayerSurfaceWidthMeters(
+      targetDistanceMeters: Float,
+      overscanScale: Float = currentParticleLayerSurfaceOverscanScale(),
+  ): Float =
+      (particleLayerProjectionWidthMeters(targetDistanceMeters) * overscanScale)
+          .coerceIn(PARTICLE_LAYER_DIMENSION_MIN_METERS, PARTICLE_LAYER_SURFACE_DIMENSION_MAX_METERS)
+
+  private fun particleLayerSurfaceHeightMeters(
+      targetDistanceMeters: Float,
+      overscanScale: Float = currentParticleLayerSurfaceOverscanScale(),
+  ): Float =
+      (particleLayerProjectionHeightMeters(targetDistanceMeters) * overscanScale)
+          .coerceIn(PARTICLE_LAYER_DIMENSION_MIN_METERS, PARTICLE_LAYER_SURFACE_DIMENSION_MAX_METERS)
+
+  private fun particleLayerSurfacePanelDimensions(
+      targetDistanceMeters: Float = currentParticleLayerTargetDistanceMeters(),
+      overscanScale: Float = currentParticleLayerSurfaceOverscanScale(),
+  ): PanelDimensions =
+      PanelDimensions(
+          Vector2(
+              particleLayerSurfaceWidthMeters(targetDistanceMeters, overscanScale),
+              particleLayerSurfaceHeightMeters(targetDistanceMeters, overscanScale),
+          )
+      )
 
   private fun readFloatSystemProperty(
       propertyName: String,
@@ -818,7 +886,11 @@ class KuramotoSpatialActivity : AppSystemActivity() {
 
   private fun particleLayerMediaSettings(): MediaPanelSettings =
       MediaPanelSettings(
-          shape = QuadShapeOptions(PARTICLE_LAYER_WIDTH_METERS, PARTICLE_LAYER_HEIGHT_METERS),
+          shape =
+              QuadShapeOptions(
+                  particleLayerSurfaceWidthMeters(PARTICLE_LAYER_TARGET_DISTANCE_METERS),
+                  particleLayerSurfaceHeightMeters(PARTICLE_LAYER_TARGET_DISTANCE_METERS),
+              ),
           display =
               FixedMediaPanelDisplayOptions(
                   widthPx = PARTICLE_LAYER_WIDTH_PX,
@@ -1056,6 +1128,12 @@ class KuramotoSpatialActivity : AppSystemActivity() {
         PARTICLE_LAYER_HEIGHT_METERS / PARTICLE_LAYER_TARGET_DISTANCE_METERS
     private const val PARTICLE_LAYER_DIMENSION_MIN_METERS = 0.20f
     private const val PARTICLE_LAYER_DIMENSION_MAX_METERS = 3.00f
+    private const val PARTICLE_LAYER_SURFACE_DIMENSION_MAX_METERS = 4.00f
+    private const val PARTICLE_LAYER_SURFACE_OVERSCAN_SCALE = 1.35f
+    private const val PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.particle_layer.surface_overscan_scale"
+    private const val PARTICLE_LAYER_SURFACE_OVERSCAN_MIN_SCALE = 1.00f
+    private const val PARTICLE_LAYER_SURFACE_OVERSCAN_MAX_SCALE = 2.25f
     private const val PARTICLE_LAYER_X_METERS = 0.0f
     private const val PARTICLE_LAYER_Y_METERS = 1.22f
     private const val PARTICLE_LAYER_Z_METERS = -0.72f
@@ -1096,6 +1174,47 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     private const val NATIVE_RECEIPT_VK_DEVICE_CREATED_BIT = 1L shl 18
     private const val NATIVE_RECEIPT_VK_QUEUE_OBTAINED_BIT = 1L shl 19
     private const val NATIVE_RECEIPT_VK_OBJECTS_DESTROYED_BIT = 1L shl 20
+  }
+}
+
+private class SpatialAvatarHandVisualFeature(
+    private val marker: (String) -> Unit,
+) : SpatialFeature {
+  override fun earlySystemsToRegister(): List<SystemBase> =
+      listOf(SpatialAvatarHandVisualSuppressionSystem(marker))
+}
+
+private class SpatialAvatarHandVisualSuppressionSystem(
+    private val marker: (String) -> Unit,
+) : SystemBase() {
+  private var pendingLogged = false
+  private var disabledLogged = false
+
+  override fun execute() {
+    val avatarSystem =
+        runCatching { systemManager.tryFindSystem(AvatarSystem::class) }.getOrNull()
+    if (avatarSystem == null) {
+      if (!pendingLogged) {
+        pendingLogged = true
+        marker(
+            "channel=spatial-sdk-avatar-visual status=disable-pending " +
+                "system=AvatarSystem systemFound=false suppressionSystem=SpatialAvatarHandVisualSuppressionSystem " +
+                "builtInMetaHandVisualPolicy=pending nativeBaseHandMeshPolicy=explicit-only"
+        )
+      }
+      return
+    }
+
+    avatarSystem.setShowHands(false)
+    if (!disabledLogged) {
+      disabledLogged = true
+      marker(
+          "channel=spatial-sdk-avatar-visual status=disabled " +
+              "system=AvatarSystem systemFound=true suppressionSystem=SpatialAvatarHandVisualSuppressionSystem " +
+              "showHands=false builtInMetaHandVisualPolicy=disabled " +
+              "nativeBaseHandMeshPolicy=explicit-only"
+      )
+    }
   }
 }
 
