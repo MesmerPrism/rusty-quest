@@ -180,6 +180,7 @@ pub(crate) struct SkinnedHandMeshDrawResources {
     pub(crate) triangle_buffer_bytes: vk::DeviceSize,
     pub(crate) vertex_count: u32,
     pub(crate) triangle_count: u32,
+    pub(crate) target_transform: RecordedMeshTargetTransform,
 }
 
 pub(crate) struct GpuSdfFieldRenderer {
@@ -259,6 +260,7 @@ impl GpuSdfFieldRenderer {
             triangle_buffer_bytes: self.resources.triangle_buffer.bytes,
             vertex_count: self.resources.vertex_count,
             triangle_count: self.resources.triangle_count,
+            target_transform: self.target_transform,
         }
     }
 

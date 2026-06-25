@@ -1565,9 +1565,14 @@ fn write_private_kuramoto_payload_files(
     for (source_name, output_name) in files {
         let output = out_dir.join(output_name);
         if let Some(payload) = payload {
-            let source = payload.data_dir.join(source_name);
-            println!("cargo:rerun-if-changed={}", source.display());
-            if source.is_file() {
+            let source_candidates = [
+                payload.data_dir.join(source_name),
+                payload.data_dir.join(output_name),
+            ];
+            for source in &source_candidates {
+                println!("cargo:rerun-if-changed={}", source.display());
+            }
+            if let Some(source) = source_candidates.iter().find(|source| source.is_file()) {
                 fs::copy(&source, &output).unwrap_or_else(|error| {
                     panic!(
                         "failed to copy private Kuramoto payload {} -> {}: {error}",
@@ -1577,6 +1582,12 @@ fn write_private_kuramoto_payload_files(
                 });
                 continue;
             }
+            panic!(
+                "private Kuramoto payload is missing {} or {} under {}",
+                source_name,
+                output_name,
+                payload.data_dir.display()
+            );
         }
         fs::write(&output, [0_u8; 4]).unwrap_or_else(|error| {
             panic!(

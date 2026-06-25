@@ -23,6 +23,8 @@ layout(push_constant) uniform HandAnchorParticlePush {
     vec4 eye_position;
     vec4 eye_orientation_xyzw;
     vec4 fov_tangents;
+    vec4 target0;
+    vec4 target1;
 } pc;
 
 layout(location = 0) out vec2 v_mask_uv;
@@ -80,6 +82,28 @@ vec4 world_to_eye_clip(vec3 world) {
     return vec4(ndc_x, ndc_y, 0.0, 1.0);
 }
 
+vec3 recorded_fallback_to_camera_front(vec3 recorded, float hand_sign) {
+    vec3 source_center = vec3(pc.target0.x, pc.target0.y, pc.target1.x);
+    float source_radius = max(pc.target0.w, 0.0001);
+    vec3 local = (recorded - source_center) / source_radius;
+
+    vec3 eye_right = rotate_by_quat(pc.eye_orientation_xyzw, vec3(1.0, 0.0, 0.0));
+    vec3 eye_up = rotate_by_quat(pc.eye_orientation_xyzw, vec3(0.0, 1.0, 0.0));
+    vec3 eye_forward = rotate_by_quat(pc.eye_orientation_xyzw, vec3(0.0, 0.0, -1.0));
+
+    float placement_distance_m = 0.78;
+    float hand_scale_m = 0.125;
+    vec3 hand_center = pc.eye_position.xyz
+        + eye_forward * placement_distance_m
+        + eye_right * (hand_sign * 0.150)
+        + eye_up * -0.220;
+
+    return hand_center
+        + eye_right * (local.x * hand_scale_m)
+        + eye_up * (local.y * hand_scale_m)
+        + eye_forward * (local.z * hand_scale_m * 0.55);
+}
+
 float hash01(uint seed) {
     seed ^= seed >> 16u;
     seed *= 2246822519u;
@@ -103,6 +127,8 @@ void main() {
     uint hand_code = uint(pc.params0.w);
     bool use_particle_output = pc.params1.x > 0.5;
     bool use_sort_remap = pc.params2.x > 0.5;
+    bool recorded_fallback_placement = pc.params2.y > 0.5;
+    float fallback_hand_sign = pc.params2.z;
 
     uint anchor_index = use_sort_remap
         ? particle_sort.rows[gl_InstanceIndex].x
@@ -132,6 +158,10 @@ void main() {
         vec3 color = mix(left_color, right_color, hand_mix);
         color *= mix(0.86, 1.10, hash01(anchor_index + 17u));
         particle_color = vec4(clamp(color, vec3(0.0), vec3(1.0)), mix(0.74, 1.0, anchor_phase));
+    }
+
+    if (recorded_fallback_placement) {
+        center = recorded_fallback_to_camera_front(center, fallback_hand_sign);
     }
 
     vec2 quad = QUAD_POSITIONS[gl_VertexIndex % 6];

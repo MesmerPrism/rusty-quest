@@ -12,6 +12,15 @@ use crate::{
     native_renderer_options::{
         NativeHandAnchorParticleSettings, NativeHandAnchorParticleTransparencyBlendMode,
     },
+    recorded_hand_replay::RecordedMeshTargetTransform,
+};
+
+#[cfg(target_os = "android")]
+use crate::native_renderer_properties::{
+    PROP_PRIVATE_PARTICLES_DRIVER0_VALUE01, PROP_PRIVATE_PARTICLES_DRIVER1_VALUE01,
+    PROP_PRIVATE_PARTICLES_DRIVER2_VALUE01, PROP_PRIVATE_PARTICLES_DRIVER3_VALUE01,
+    PROP_PRIVATE_PARTICLES_DRIVER4_VALUE01, PROP_PRIVATE_PARTICLES_DRIVER5_VALUE01,
+    PROP_PRIVATE_PARTICLES_DRIVER6_VALUE01, PROP_PRIVATE_PARTICLES_DRIVER7_VALUE01,
 };
 
 include!(concat!(
@@ -97,7 +106,7 @@ impl GpuHandAnchorParticleFrameStats {
 
     fn marker_fields(&self, prefix: &str) -> String {
         format!(
-            "{prefix}Ready={} {prefix}Visible={} {prefix}Hand={} {prefix}ParticleCount={} {prefix}TriangleCount={} {prefix}SkinnedPositionBufferBytes={} {prefix}LiveCompactInputFrame={} {prefix}InputSource={} {prefix}ReadinessReason={}",
+            "{prefix}Ready={} {prefix}Visible={} {prefix}Hand={} {prefix}ParticleCount={} {prefix}TriangleCount={} {prefix}SkinnedPositionBufferBytes={} {prefix}LiveCompactInputFrame={} {prefix}InputSource={} {prefix}ReadinessReason={} {prefix}CoordinatePlacement={}",
             self.ready,
             self.visible,
             self.handedness,
@@ -106,7 +115,12 @@ impl GpuHandAnchorParticleFrameStats {
             self.skinned_position_buffer_bytes,
             self.live_compact_input_frame,
             self.input_source,
-            self.readiness_reason
+            self.readiness_reason,
+            if self.live_compact_input_frame {
+                "openxr-reference-space-live"
+            } else {
+                "current-eye-front-recorded-fallback"
+            }
         )
     }
 }
@@ -224,8 +238,47 @@ fn private_kuramoto_driver_values01() -> [f32; 8] {
         {
             return candidate.driver_values01;
         }
+        if let Some(driver_values01) = private_kuramoto_android_driver_values01() {
+            return driver_values01;
+        }
     }
     KURAMOTO_DEFAULT_DRIVER_VALUES01
+}
+
+#[cfg(target_os = "android")]
+fn private_kuramoto_android_driver_values01() -> Option<[f32; 8]> {
+    let property_names = [
+        PROP_PRIVATE_PARTICLES_DRIVER0_VALUE01,
+        PROP_PRIVATE_PARTICLES_DRIVER1_VALUE01,
+        PROP_PRIVATE_PARTICLES_DRIVER2_VALUE01,
+        PROP_PRIVATE_PARTICLES_DRIVER3_VALUE01,
+        PROP_PRIVATE_PARTICLES_DRIVER4_VALUE01,
+        PROP_PRIVATE_PARTICLES_DRIVER5_VALUE01,
+        PROP_PRIVATE_PARTICLES_DRIVER6_VALUE01,
+        PROP_PRIVATE_PARTICLES_DRIVER7_VALUE01,
+    ];
+    let mut values = KURAMOTO_DEFAULT_DRIVER_VALUES01;
+    let mut overridden = false;
+    for (index, property_name) in property_names.iter().enumerate() {
+        let Some(value) = android_property(property_name) else {
+            continue;
+        };
+        let Ok(parsed) = value.parse::<f32>() else {
+            continue;
+        };
+        values[index] = parsed.clamp(0.0, 1.0);
+        overridden = true;
+    }
+    overridden.then_some(values)
+}
+
+#[cfg(target_os = "android")]
+fn android_property(name: &str) -> Option<String> {
+    let mut property = android_properties::getprop(name);
+    property.value().and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_owned())
+    })
 }
 
 fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
@@ -450,7 +503,7 @@ impl GpuHandAnchorParticleRenderer {
         crate::marker(
             "hand-anchor-particles",
             format!(
-                "status=created handAnchorParticleHand={} handAnchorParticlePath=resident-skinned-mesh-coordinate-anchor-billboards handAnchorParticleCoordinateSource={} handAnchorParticleFallbackActive={} handAnchorParticleCoordinateSpace=openxr-reference-space handAnchorParticleMask=static-feather-dot-luminance-alpha handAnchorParticleAnimation=false handAnchorParticleTriangleCount={} handAnchorParticleVertexCount={} handAnchorParticleSkinnedPositionBufferBytes={} handAnchorParticleTriangleBufferBytes={} handAnchorParticleCpuExpandedUploadPerFrame=false handAnchorParticleMeshUploadPerFrame=false {}",
+                "status=created handAnchorParticleHand={} handAnchorParticlePath=resident-skinned-mesh-coordinate-anchor-billboards handAnchorParticleCoordinateSource={} handAnchorParticleFallbackActive={} handAnchorParticleCoordinateSpace=openxr-reference-space handAnchorParticleFallbackPlacement=current-eye-front-recorded-mesh-bounds handAnchorParticleMask=static-feather-dot-luminance-alpha handAnchorParticleAnimation=false handAnchorParticleTriangleCount={} handAnchorParticleVertexCount={} handAnchorParticleSkinnedPositionBufferBytes={} handAnchorParticleTriangleBufferBytes={} handAnchorParticleCpuExpandedUploadPerFrame=false handAnchorParticleMeshUploadPerFrame=false {}",
                 handedness,
                 if private_kuramoto.is_some() {
                     "private-kuramoto-gpu-payload"
@@ -599,13 +652,19 @@ impl GpuHandAnchorParticleRenderer {
                 } else {
                     0.0
                 },
-                0.0,
-                0.0,
+                if stats.live_compact_input_frame {
+                    0.0
+                } else {
+                    1.0
+                },
+                if self.hand_code == 2 { 1.0 } else { -1.0 },
                 0.0,
             ],
             eye_position: eye_projection.position,
             eye_orientation_xyzw: eye_projection.orientation_xyzw,
             fov_tangents: eye_projection.fov_tangents,
+            target0: recorded_mesh_target0(self.draw_resources.target_transform),
+            target1: recorded_mesh_target1(self.draw_resources.target_transform),
         };
         let viewport = [vk::Viewport {
             x: 0.0,
@@ -1662,6 +1721,19 @@ fn descriptor_info(buffer: vk::Buffer, bytes: vk::DeviceSize) -> vk::DescriptorB
         .range(bytes)
 }
 
+fn recorded_mesh_target0(transform: RecordedMeshTargetTransform) -> [f32; 4] {
+    [
+        transform.center[0],
+        transform.center[1],
+        transform.min_z,
+        transform.radius,
+    ]
+}
+
+fn recorded_mesh_target1(transform: RecordedMeshTargetTransform) -> [f32; 4] {
+    [transform.center[2], transform.depth, 0.0, 0.0]
+}
+
 struct OwnedBuffer {
     buffer: vk::Buffer,
     memory: vk::DeviceMemory,
@@ -2228,6 +2300,8 @@ struct HandAnchorParticlePush {
     eye_position: [f32; 4],
     eye_orientation_xyzw: [f32; 4],
     fov_tangents: [f32; 4],
+    target0: [f32; 4],
+    target1: [f32; 4],
 }
 
 #[repr(C)]
@@ -2351,5 +2425,11 @@ mod tests {
         assert!(stats
             .marker_fields()
             .contains("handAnchorParticleBothHandsVisible=true"));
+        assert!(stats.marker_fields().contains(
+            "handAnchorParticlePrimaryCoordinatePlacement=current-eye-front-recorded-fallback"
+        ));
+        assert!(stats.marker_fields().contains(
+            "handAnchorParticleSecondaryCoordinatePlacement=current-eye-front-recorded-fallback"
+        ));
     }
 }
