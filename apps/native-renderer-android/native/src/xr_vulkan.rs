@@ -885,6 +885,17 @@ unsafe fn run_projection_loop_inner(
             PrivateExtensionSlotRuntime::config_marker_fields(private_layer_settings)
         ),
     );
+    let cmd_pool = vk_device
+        .create_command_pool(
+            &vk::CommandPoolCreateInfo::default()
+                .queue_family_index(queue_family_index)
+                .flags(
+                    vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER
+                        | vk::CommandPoolCreateFlags::TRANSIENT,
+                ),
+            None,
+        )
+        .map_err(|error| format!("create Vulkan command pool: {error}"))?;
     let mut gpu_stimulus_volume_renderer = if stimulus_volume_settings.enabled {
         match GpuStimulusVolumeRenderer::new(
             &vk_device,
@@ -1008,6 +1019,8 @@ unsafe fn run_projection_loop_inner(
                 &vk_device,
                 &memory_properties,
                 render_pass,
+                queue,
+                cmd_pool,
                 draw_resources,
                 handedness_label(&replay.handedness),
                 hand_anchor_particle_settings,
@@ -1095,6 +1108,8 @@ unsafe fn run_projection_loop_inner(
                 &vk_device,
                 &memory_properties,
                 render_pass,
+                queue,
+                cmd_pool,
                 draw_resources,
                 handedness_label(&secondary_replay.handedness),
                 hand_anchor_particle_settings,
@@ -1150,17 +1165,6 @@ unsafe fn run_projection_loop_inner(
             }
         }
     };
-    let cmd_pool = vk_device
-        .create_command_pool(
-            &vk::CommandPoolCreateInfo::default()
-                .queue_family_index(queue_family_index)
-                .flags(
-                    vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER
-                        | vk::CommandPoolCreateFlags::TRANSIENT,
-                ),
-            None,
-        )
-        .map_err(|error| format!("create Vulkan command pool: {error}"))?;
     let cmds = vk_device
         .allocate_command_buffers(
             &vk::CommandBufferAllocateInfo::default()
@@ -2813,26 +2817,6 @@ unsafe fn run_projection_frames(
             } else {
                 None
             };
-        if let Some(renderer) = gpu_hand_anchor_particle_renderer.as_ref() {
-            renderer.record_sort_frame(
-                vk_device,
-                cmd,
-                &hand_anchor_particle_stats.primary,
-                hand_anchor_particle_settings,
-                particle_sort_eye_projection,
-                frame_count,
-            );
-        }
-        if let Some(renderer) = secondary_gpu_hand_anchor_particle_renderer.as_ref() {
-            renderer.record_sort_frame(
-                vk_device,
-                cmd,
-                &hand_anchor_particle_stats.secondary,
-                hand_anchor_particle_settings,
-                particle_sort_eye_projection,
-                frame_count,
-            );
-        }
         let environment_depth_particle_stats =
             if let Some(renderer) = gpu_environment_depth_particle_renderer.as_ref() {
                 if environment_depth_settings.synthetic_gpu_proof_requested() {
@@ -4463,6 +4447,29 @@ unsafe fn record_projection_diagnostic(
             .get(eye_index)
             .map(hand_mesh_visual_eye_projection)
             .unwrap_or_default();
+        if let Some(renderer) = gpu_private_particle_renderer {
+            renderer.record_overlay_eye_sort(device, cmd, eye_projection, private_particle_stats);
+        }
+        if let Some(renderer) = gpu_hand_anchor_particle_renderer {
+            renderer.record_sort_frame(
+                device,
+                cmd,
+                &hand_anchor_particle_stats.primary,
+                hand_anchor_particle_stats.settings,
+                eye_projection,
+                frame_count,
+            );
+        }
+        if let Some(renderer) = secondary_gpu_hand_anchor_particle_renderer {
+            renderer.record_sort_frame(
+                device,
+                cmd,
+                &hand_anchor_particle_stats.secondary,
+                hand_anchor_particle_stats.settings,
+                eye_projection,
+                frame_count,
+            );
+        }
         if private_particle_half_res {
             let half_res_draw_stage = match eye_index {
                 0 => Some(GpuTimestampStage::PrivateParticleHalfResDrawLeftEye),

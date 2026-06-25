@@ -30,6 +30,7 @@ layout(push_constant) uniform HandAnchorParticlePush {
 layout(location = 0) out vec2 v_mask_uv;
 layout(location = 1) out vec4 v_color;
 layout(location = 2) out vec4 v_render_params;
+layout(location = 3) out vec4 v_color_params;
 
 const vec2 QUAD_POSITIONS[6] = vec2[](
     vec2(-1.0, -1.0),
@@ -135,12 +136,14 @@ void main() {
         : gl_InstanceIndex;
     vec3 center;
     vec4 particle_color;
+    vec4 normal_flags = vec4(0.0, 0.0, 1.0, 1.0);
     if (use_particle_output) {
         uint row = anchor_index * 4u;
         vec4 position_radius = particle_output.rows[row];
         center = position_radius.xyz;
         radius = max(position_radius.w, 0.0002);
         particle_color = particle_output.rows[row + 1u];
+        normal_flags = particle_output.rows[row + 2u];
     } else {
         uint triangle_index = (anchor_index * 2654435761u + anchor_index / 3u) % triangle_count;
         uvec4 triangle = skinning_triangles.triangles[triangle_index];
@@ -150,6 +153,11 @@ void main() {
         vec3 b = skinned_positions.positions[triangle.y].xyz;
         vec3 c = skinned_positions.positions[triangle.z].xyz;
         center = a * bary.x + b * bary.y + c * bary.z;
+        vec3 triangle_normal = cross(b - a, c - a);
+        float normal_len_sq = dot(triangle_normal, triangle_normal);
+        if (normal_len_sq > 0.0000001) {
+            normal_flags = vec4(triangle_normal * inversesqrt(normal_len_sq), 1.0);
+        }
 
         float hand_mix = hand_code == 2u ? 1.0 : 0.0;
         vec3 left_color = vec3(0.96, 1.00, 0.78);
@@ -170,9 +178,23 @@ void main() {
     vec3 world = center + (eye_right * quad.x + eye_up * quad.y) * radius;
     vec3 center_eye = world_to_eye(center);
     float center_forward_m = max(-center_eye.z, 0.0);
+    bool valid = particle_color.a > 0.002 && center_eye.z < -0.0001;
+    if (use_particle_output) {
+        valid = valid && normal_flags.w > 0.5;
+    }
+
+    vec3 view_dir = normalize(pc.eye_position.xyz - center);
+    float normal_len_sq = max(dot(normal_flags.xyz, normal_flags.xyz), 0.000001);
+    vec3 safe_normal = normal_flags.xyz * inversesqrt(normal_len_sq);
+    float facing = valid ? clamp(dot(safe_normal, view_dir), 0.0, 1.0) : 1.0;
+    float facing_attenuation_strength = clamp(pc.params2.w, 0.0, 1.0);
+    float facing_atten = 1.0 - facing_attenuation_strength * (1.0 - facing);
 
     v_mask_uv = quad * 0.5 + vec2(0.5);
-    v_color = vec4(clamp(particle_color.rgb, vec3(0.0), vec3(1.0)), clamp(particle_color.a, 0.0, 1.0));
+    v_color = valid
+        ? vec4(clamp(particle_color.rgb, vec3(0.0), vec3(1.0)), clamp(particle_color.a, 0.0, 1.0))
+        : vec4(0.0);
     v_render_params = vec4(pc.params1.y, pc.params1.z, pc.params1.w, center_forward_m);
-    gl_Position = world_to_eye_clip(world);
+    v_color_params = vec4(facing_atten, facing, 1.0, 1.0);
+    gl_Position = valid ? world_to_eye_clip(world) : vec4(4.0, 4.0, 0.0, 1.0);
 }

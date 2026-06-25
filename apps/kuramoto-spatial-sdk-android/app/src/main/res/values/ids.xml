@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item type="id" name="kuramoto_experiment_panel" />
+    <item type="id" name="kuramoto_panel_launcher" />
     <item type="id" name="kuramoto_particle_surface_panel" />
 </resources>

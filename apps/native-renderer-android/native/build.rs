@@ -304,11 +304,49 @@ fn main() {
         Path::new("shaders/hand_anchor_particles.vert.glsl"),
         &out_dir.join("hand_anchor_particles.vert.spv"),
     );
-    compile_shader(
+    let (
+        mask_shader_mode_code,
+        mask_shader_layers,
+        mask_shader_atlas_columns,
+        mask_shader_atlas_rows,
+    ) = private_particle_payload
+        .as_ref()
+        .and_then(|payload| payload.mask_texture.as_ref())
+        .map(|mask| {
+            (
+                mask.mode_code,
+                mask.layers as u32,
+                mask.atlas_columns as u32,
+                mask.atlas_rows as u32,
+            )
+        })
+        .unwrap_or((0, 1, 1, 1));
+    let mask_shader_mode_code = mask_shader_mode_code.to_string();
+    let mask_shader_layers = mask_shader_layers.to_string();
+    let mask_shader_atlas_columns = mask_shader_atlas_columns.to_string();
+    let mask_shader_atlas_rows = mask_shader_atlas_rows.to_string();
+    let mask_alpha_cutoff = private_particle_mask_alpha_cutoff().to_string();
+    compile_shader_with_defines(
         &glslc,
         "fragment",
         Path::new("shaders/hand_anchor_particles.frag.glsl"),
         &out_dir.join("hand_anchor_particles.frag.spv"),
+        &[
+            (
+                "PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE",
+                &mask_shader_mode_code,
+            ),
+            ("PRIVATE_PARTICLE_MASK_TEXTURE_LAYERS", &mask_shader_layers),
+            (
+                "PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_COLUMNS",
+                &mask_shader_atlas_columns,
+            ),
+            (
+                "PRIVATE_PARTICLE_MASK_TEXTURE_ATLAS_ROWS",
+                &mask_shader_atlas_rows,
+            ),
+            ("PRIVATE_PARTICLE_MASK_ALPHA_CUTOFF", &mask_alpha_cutoff),
+        ],
     );
     compile_shader(
         &glslc,
@@ -346,28 +384,6 @@ fn main() {
         Path::new("shaders/private_particles.vert.glsl"),
         &out_dir.join("private_particles.vert.spv"),
     );
-    let (
-        mask_shader_mode_code,
-        mask_shader_layers,
-        mask_shader_atlas_columns,
-        mask_shader_atlas_rows,
-    ) = private_particle_payload
-        .as_ref()
-        .and_then(|payload| payload.mask_texture.as_ref())
-        .map(|mask| {
-            (
-                mask.mode_code,
-                mask.layers as u32,
-                mask.atlas_columns as u32,
-                mask.atlas_rows as u32,
-            )
-        })
-        .unwrap_or((0, 1, 1, 1));
-    let mask_shader_mode_code = mask_shader_mode_code.to_string();
-    let mask_shader_layers = mask_shader_layers.to_string();
-    let mask_shader_atlas_columns = mask_shader_atlas_columns.to_string();
-    let mask_shader_atlas_rows = mask_shader_atlas_rows.to_string();
-    let mask_alpha_cutoff = private_particle_mask_alpha_cutoff().to_string();
     compile_shader_with_defines(
         &glslc,
         "fragment",

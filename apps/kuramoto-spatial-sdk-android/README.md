@@ -28,8 +28,18 @@ Purpose:
 - create a second Spatial SDK surface panel as a native render target and let
   Rust/Vulkan draw the native study-style hand-anchor particle layer into its
   Android `Surface`;
+- open, close, foreground, and resize the Spatial SDK workflow panel without
+  stopping the native Vulkan surface particle layer. Closing the workflow panel
+  leaves a compact launcher panel visible so the user can bring the
+  questionnaire and parameter UI back in front of the view;
 - submit bounded low-rate particle parameters from the world-space Compose
   panel to the native Vulkan particle layer through JNI;
+- map randomized experiment block conditions to the same bounded native
+  parameter bridge, then close the workflow panel back to particle view while
+  the native surface particle layer keeps running;
+- host a direct BLE Polar H10 panel inside the Spatial SDK workflow panel and
+  mirror Polar stream events into the participant `polar_events.jsonl` and
+  ECG rows into `ecg_events.jsonl`;
 - preserve the low-rate participant, surface, block, questionnaire, and JSONL
   logging shape from the native Kuramoto workflow.
 
@@ -40,10 +50,8 @@ Non-scope for the first lane:
   still uses the Spatial SDK surface-panel renderer and a visible LCHE
   movement/noise shader slice;
 - no GPU particle or phase-field data through panel JSON;
-- no BLE Polar stream intake inside this app. The app creates the same
-  participant file skeleton so ECG/Polar files remain part of the session
-  bundle, but live Polar intake stays in the native lane until a low-rate
-  bridge is designed.
+- no Polar samples or ECG payloads are routed to the native renderer or shader
+  path. The Polar panel is a low-rate experiment-record adapter only.
 
 Native interop probe:
 
@@ -246,6 +254,9 @@ the current LCHE movement/noise shader slice. The current placement is driven
 by the Spatial SDK viewer pose,
 but the SDK still owns the final quad composition rather than exposing the
 native OpenXR projection swapchain directly.
+The old skybox/backboard diagnostic scene is no longer part of this lane: the
+Vulkan carrier surface is the user-facing XR visual surface, and the Spatial
+SDK panels are low-rate workflow controls.
 
 Build:
 
@@ -276,15 +287,105 @@ Headset workflow smoke, after taking Agent Board leases and choosing an
 explicit Quest serial:
 
 ```powershell
-$adb = "$env:ANDROID_HOME\platform-tools\adb.exe"
 $serial = "3487C10H3M017Q"
-$pkg = "io.github.mesmerprism.rustyquest.kuramoto_spatial"
-& $adb -s $serial install -r -d -g target\kuramoto-spatial-sdk-android\rusty-quest-kuramoto-spatial-sdk.apk
-& $adb -s $serial shell am start -W -n "$pkg/.KuramotoSpatialActivity" `
-  -a io.github.mesmerprism.rustyquest.kuramoto_spatial.action.RUN_WORKFLOW_SELF_TEST `
-  --es participant_id codex-spatial-sdk-visible-20260625 `
-  --es surface_target_id real-hands
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-KuramotoSpatialSdkAndroidSelfTest.ps1 `
+  -Serial $serial `
+  -ParticipantId codex-spatial-sdk-visible-20260625 `
+  -SurfaceTargetId real-hands
 ```
+
+The wrapper installs the built APK unless `-SkipInstall` is passed, launches the
+`RUN_WORKFLOW_SELF_TEST` action, captures PID-scoped logcat and app-private
+session JSONL files, writes `evidence-summary.json`, and fails if panel mode,
+Polar panel creation, condition handoff, native particle startup, first frame,
+questionnaire, or failure-marker checks do not pass.
+
+Live Polar H10 validation, with the sensor nearby and wearing/wet electrodes
+active:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-KuramotoSpatialSdkAndroidPolarLive.ps1 `
+  -Serial $serial `
+  -ParticipantId codex-spatial-polar-live-20260625 `
+  -SurfaceTargetId real-hands
+```
+
+The live wrapper launches `RUN_POLAR_LIVE_VALIDATION`, pregrants declared BLE
+runtime permissions when possible, drives panel-owned scan, best-device connect,
+and ECG start commands, captures PID-scoped logcat plus
+`polar_sensor_status.json`, `polar_stream_events.jsonl`, `polar_events.jsonl`,
+and `ecg_events.jsonl`, and fails unless a real ECG frame is decoded and
+mirrored into the participant files. Use `-AllowMissingLivePolar` only for an
+exploratory artifact bundle when the H10 is unavailable.
+
+Headlocked workflow panel tuning while the APK remains active:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Set-KuramotoSpatialPanelHeadlock.ps1 `
+  -Serial $serial `
+  -Enabled true `
+  -OffsetX 0 `
+  -OffsetY 0 `
+  -Distance 1.40 `
+  -Width 1.20 `
+  -Scale 0.65 `
+  -JoystickEnabled true
+```
+
+The workflow panel is headlocked by default in this lane. The panel pose is
+recomputed from `Scene.getViewerPose()` while the panel is open, using
+viewer-right `offset_x_m`, viewer-up `offset_y_m`, and viewer-forward
+`distance_meters`. Runtime hotload properties are:
+`debug.rustyquest.kuramoto_spatial.panel.headlocked.enabled`,
+`debug.rustyquest.kuramoto_spatial.panel.headlocked.offset_x_m`,
+`debug.rustyquest.kuramoto_spatial.panel.headlocked.offset_y_m`,
+`debug.rustyquest.kuramoto_spatial.panel.headlocked.distance_meters`,
+`debug.rustyquest.kuramoto_spatial.panel.headlocked.width_meters`,
+`debug.rustyquest.kuramoto_spatial.panel.headlocked.height_meters`,
+`debug.rustyquest.kuramoto_spatial.panel.headlocked.scale`,
+`debug.rustyquest.kuramoto_spatial.panel.headlocked.joystick.enabled`,
+`debug.rustyquest.kuramoto_spatial.panel.headlocked.joystick.translate_rate_mps`,
+`debug.rustyquest.kuramoto_spatial.panel.headlocked.joystick.distance_rate_mps`,
+and
+`debug.rustyquest.kuramoto_spatial.panel.headlocked.joystick.scale_rate_per_second`.
+Android generic-motion controller input maps left stick to panel x/y offset,
+right-stick y to distance, and right-stick x to scale. The app writes the last
+runtime-adjusted values to
+`files/kuramoto_spatial_panel_headlock_tuning.json`; the helper reports that
+file so tuned headset values can become future defaults. If Quest controller
+axes do not arrive through Android generic motion in a later runtime, add a
+native OpenXR action polling fallback rather than moving panel authority into
+the Vulkan particle renderer.
+
+Activate a surface target and leave the app in particle view:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-KuramotoSpatialSdkAndroidUiAction.ps1 `
+  -Serial $serial `
+  -Action surface-target-activate `
+  -ParticipantId codex-spatial-icosphere-live `
+  -SurfaceTargetId icosphere `
+  -ReadMarkers
+```
+
+`RUN_UI_COMMAND` is wrapped by
+`tools/Invoke-KuramotoSpatialSdkAndroidUiAction.ps1` and can remotely exercise:
+`panel-open`, `panel-close`, `panel-reset`, `panel-headlock-on`,
+`panel-headlock-off`, `panel-headlock-toggle`, `panel-adjust`, `panel-resize`,
+`particle-controls`, `participant-reset`, `participant-begin`,
+`polar-setup-save`, `surface-select`, `start-block`,
+`surface-target-activate`, and `questionnaire-submit`. `RUN_SURFACE_TARGET` is
+the direct activation action underneath the `surface-target-activate` command:
+it follows the panel-first block-start path but does not schedule the self-test
+panel reopen or questionnaire submit. It resets a fresh participant session,
+selects `real-hands`, `gpu-replay-hands`, or `icosphere`, closes the Spatial
+SDK workflow panel, starts the validation condition block, and leaves the
+native Vulkan surface visible. For debugging, the right controller primary
+button route polls the Spatial SDK `Controller` component for
+`ButtonBits.ButtonA`, handles Android `KEYCODE_BUTTON_A`/`KEYCODE_BUTTON_1` on
+the down edge, and keeps an Android generic-motion button fallback. Any route
+that fires reopens the workflow panel when it is closed and emits
+`controller-primary-opened-panel` with its `inputSource`.
 
 Live raw-to-scene hand transform tuning while the APK remains active:
 
@@ -323,8 +424,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Set-KuramotoSpatialP
 ```
 
 The validation action drives the same low-rate store path as the panel:
-participant setup, Polar placeholder, surface selection, block timing,
-automatic questionnaire due state, and questionnaire submission. ADB
+participant setup, Polar setup metadata, surface selection, block timing,
+condition-to-parameter handoff, particle-view transition during the running
+block, automatic questionnaire due state, and questionnaire submission. Direct
+BLE Polar scan/connect/ECG streaming is panel-owned and requires a headset run
+with a nearby Polar device. ADB
 `screencap` currently captures the VR compositor/performance overlay but not
 the Spatial SDK panel layer, so headset evidence should include logcat,
 SurfaceFlinger, activity dumpsys, and app-private JSONL artifacts.

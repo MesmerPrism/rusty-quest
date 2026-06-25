@@ -349,6 +349,13 @@ $manifest = [ordered]@{
     native_surface_particle_layer_stop_bridge = "KuramotoSpatialActivity.nativeStopSurfaceParticleLayer"
     native_surface_particle_layer_parameter_bridge = "KuramotoSpatialActivity.nativeUpdateSurfaceParticleParameters"
     native_surface_particle_layer_parameter_transport = "jni-live-queue"
+    experiment_condition_parameter_bridge = "KuramotoSpatialActivity.applyExperimentBlockToParticleControls-to-nativeUpdateSurfaceParticleParameters"
+    experiment_condition_driver_mapping = "movement_base_frequency_hz-to-driver0-energy;movement_coupling-to-driver1-coherence"
+    experiment_mode_flow = "panel-first-workflow-then-explicit-panel-close-starts-particle-block"
+    experiment_condition_panel_transition = "setWorkflowPanelVisible(false,false,source=experiment-block-start)-before-startNextBlock"
+    experiment_questionnaire_next_block_policy = "questionnaire-submit-keeps-panel-open-ready_next_block-explicit-start"
+    experiment_surface_modes = @("real-hands", "gpu-replay-hands", "icosphere")
+    experiment_condition_high_rate_policy = "condition-metadata-and-bounded-scalars-only"
     native_surface_particle_layer_hotload_property = "debug.rustyquest.kuramoto_spatial.live_hand_depth_offset_meters"
     native_surface_particle_layer_live_hand_depth_offset_default_meters = 0.0
     native_surface_particle_layer_live_hand_scene_transform = "viewer-relative-openxr-to-spatial-sdk-panel-basis"
@@ -463,17 +470,101 @@ $manifest = [ordered]@{
         view_origin_yaw_degrees = 180.0
     }
     panel_registration_id = "kuramoto_experiment_panel"
+    panel_launcher_registration_id = "kuramoto_panel_launcher"
     particle_surface_panel_registration_id = "kuramoto_particle_surface_panel"
+    polar_sensor_panel = "spatial-sdk-direct-ble-panel"
+    polar_sensor_permissions = @(
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN"
+    )
+    polar_sensor_streams = @(
+        "stream.polar_h10.hr_rr",
+        "stream.polar_h10.ecg",
+        "stream.polar_h10.acc",
+        "stream.polar_h10.device_status"
+    )
+    polar_sensor_event_mirror = "KuramotoExperimentStore.appendPolarEvent-to-polar_events-jsonl-and-ecg_events-jsonl"
+    polar_sensor_high_rate_policy = "ble-stream-decoded-in-panel-not-renderer-json"
+    polar_live_validation_action = "io.github.mesmerprism.rustyquest.kuramoto_spatial.action.RUN_POLAR_LIVE_VALIDATION"
+    polar_live_validation_wrapper = "tools/Invoke-KuramotoSpatialSdkAndroidPolarLive.ps1"
+    polar_live_validation_required_markers = @(
+        "polar-live-validation status=start",
+        "polar-live-validation status=polar-panel-automation-ready",
+        "polar-live-validation status=scan-command-issued",
+        "polar-sensor-panel status=device-found",
+        "polar-sensor-panel status=connected",
+        "polar-sensor-panel status=pmd-started mode=ecg",
+        "polar-sensor-panel status=ecg-frame",
+        "experiment status=polar-stream-event-recorded streamId=stream.polar_h10.ecg ecgMirrored=true",
+        "polar-live-validation status=complete ecgReceiving=true"
+    )
+    polar_live_validation_app_private_files = @(
+        "polar_sensor_status.json",
+        "polar_stream_events.jsonl",
+        "kuramoto_experiment_session.json",
+        "polar_events.jsonl",
+        "ecg_events.jsonl"
+    )
+    spatial_panel_mode = "workflow-panel-open-or-particle-view-panel-closed"
+    spatial_panel_mode_transition = "Visible(false)-workflow-panel-with-launcher-reopen"
+    spatial_panel_mode_renderer_continuity = "native-vulkan-surface-particle-layer-kept-running"
+    spatial_panel_focus_pose_meters = "0.0;1.1;0.475"
+    spatial_panel_surface_target_activation_action = "io.github.mesmerprism.rustyquest.kuramoto_spatial.action.RUN_SURFACE_TARGET"
+    spatial_panel_ui_action = "io.github.mesmerprism.rustyquest.kuramoto_spatial.action.RUN_UI_COMMAND"
+    spatial_panel_ui_action_wrapper = "tools/Invoke-KuramotoSpatialSdkAndroidUiAction.ps1"
+    spatial_panel_ui_actions = @(
+        "panel-open",
+        "panel-close",
+        "panel-reset",
+        "panel-headlock-on",
+        "panel-headlock-off",
+        "panel-headlock-toggle",
+        "panel-adjust",
+        "panel-resize",
+        "particle-controls",
+        "participant-reset",
+        "participant-begin",
+        "polar-setup-save",
+        "surface-select",
+        "start-block",
+        "surface-target-activate",
+        "questionnaire-submit"
+    )
+    spatial_panel_debug_controller_reopen = "right-controller-primary-button-SpatialSDK-Controller-ButtonA-plus-Android-KeyEvent-and-motion-fallback-opens-workflow-panel-when-closed"
+    spatial_panel_headlock_mode = "enabled-by-default-viewer-relative-while-workflow-panel-open"
+    spatial_panel_headlock_default_pose_meters = "0.0;0.0;1.40"
+    spatial_panel_headlock_default_scale = 0.65
+    spatial_panel_headlock_hotload_tool = "tools/Set-KuramotoSpatialPanelHeadlock.ps1"
+    spatial_panel_headlock_hotload_properties = @(
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.enabled",
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.offset_x_m",
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.offset_y_m",
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.distance_meters",
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.width_meters",
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.height_meters",
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.scale",
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.joystick.enabled",
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.joystick.translate_rate_mps",
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.joystick.distance_rate_mps",
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.joystick.scale_rate_per_second"
+    )
+    spatial_panel_headlock_joystick_controls = "android-generic-motion-left-stick-x-y-offset-right-stick-y-distance-right-stick-x-scale"
+    spatial_panel_headlock_tuning_file = "files/kuramoto_spatial_panel_headlock_tuning.json"
     panel_shape_meters = [ordered]@{
-        width = 2.048
+        width = 1.20
         height = 1.254
     }
     panel_display = [ordered]@{
         option = "DpPerMeterDisplayOptions"
         dp_per_meter = 720
     }
-    panel_transform_runtime_controls = @("Transform(Pose(Vector3, Quaternion))", "Scale(Vector3)", "PanelDimensions(Vector2)", "Visible(true)")
-    diagnostic_backdrop = "skybox-and-reference-geometry"
+    panel_launcher_shape_meters = [ordered]@{
+        width = 0.78
+        height = 0.30
+    }
+    panel_transform_runtime_controls = @("Transform(Pose(Vector3, Quaternion))", "Scale(Vector3)", "PanelDimensions(Vector2)", "Visible(panelPlacement.visible)", "Visible(!panelPlacement.visible)-launcher")
+    diagnostic_backdrop = "disabled-vulkan-carrier-is-user-facing-surface"
     panel_content_probe = "sample-quaternion-opaque-yellow-background-teal-banner-orange-button"
     questionnaire_schema = "rusty.kuramoto.mesh.experiment_questionnaire.v2"
     high_rate_json_payload = $false

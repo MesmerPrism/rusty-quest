@@ -68,8 +68,9 @@ io.github.mesmerprism.rustyquest.kuramoto_spatial/.KuramotoSpatialActivity
 This package is a Quest platform adapter for Spatial SDK panel behavior. It
 uses `AppSystemActivity`, `VRFeature`, and `ComposeFeature` to register and
 spawn one Compose-backed 2D panel, then exposes low-rate controls for
-participant setup, Polar/ECG placeholder logging, surface target selection,
-block timing, and questionnaire submission. The panel placement controls are
+participant setup, direct BLE Polar H10 intake, ECG event mirroring, surface
+target selection, block timing, and questionnaire submission. The panel
+placement controls are
 there to test Spatial SDK position, scale, and resolution options on headset;
 they are not a renderer contract and are not the native Quest XR path.
 
@@ -80,7 +81,19 @@ or replay sequences through Java/Kotlin JSON. Questionnaire output remains a
 low-rate app-private JSONL artifact keyed by `participant_id`, `session_id`,
 `block_index`, `block_number`, `condition_id`, `profile_id`, and
 `surface_target_id` so private Kuramoto analysis can join it back to study
-state without making Rusty Quest the oscillator authority.
+state without making Rusty Quest the oscillator authority. Polar stream rows
+remain low-rate panel records: the Spatial app may scan/connect to Polar H10,
+decode HR/RR, ACC, ECG, and device-status events, and mirror ECG rows to
+`ecg_events.jsonl`, but those samples do not enter the native Vulkan renderer,
+particle buffers, or shader parameter path.
+
+When a Spatial experiment block starts, the panel maps the randomized condition
+metadata to bounded scalar driver values (`movement_base_frequency_hz` to
+energy/`driver0`, `movement_coupling` to coherence/`driver1`) and submits them
+through the existing native surface-particle JNI parameter bridge. That is the
+only block-start runtime handoff: native Vulkan/OpenXR still owns validation,
+resident particle buffers, compute dispatch, and presentation, and the workflow
+panel returns to particle view after the request.
 
 ## Native Renderer Android Package
 

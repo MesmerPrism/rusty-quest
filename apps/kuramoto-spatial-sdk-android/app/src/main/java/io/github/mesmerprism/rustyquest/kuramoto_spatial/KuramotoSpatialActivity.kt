@@ -6,6 +6,9 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import android.view.InputDevice
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
 import android.view.Surface as AndroidSurface
 import androidx.compose.foundation.Canvas
@@ -53,18 +56,19 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
+import androidx.compose.ui.viewinterop.AndroidView
 import com.meta.spatial.compose.ComposeFeature
 import com.meta.spatial.compose.ComposeViewPanelRegistration
-import com.meta.spatial.core.Color4
 import com.meta.spatial.core.Entity
 import com.meta.spatial.core.Pose
 import com.meta.spatial.core.Quaternion
+import com.meta.spatial.core.Query
 import com.meta.spatial.core.SpatialFeature
 import com.meta.spatial.core.SpatialSDKExperimentalAPI
 import com.meta.spatial.core.SystemBase
 import com.meta.spatial.core.Vector2
 import com.meta.spatial.core.Vector3
+import com.meta.spatial.runtime.ButtonBits
 import com.meta.spatial.runtime.PanelSurface
 import com.meta.spatial.runtime.PanelConfigOptions
 import com.meta.spatial.runtime.ReferenceSpace
@@ -73,14 +77,12 @@ import com.meta.spatial.runtime.Scene
 import com.meta.spatial.runtime.StereoMode
 import com.meta.spatial.toolkit.AppSystemActivity
 import com.meta.spatial.toolkit.AvatarSystem
-import com.meta.spatial.toolkit.Box
+import com.meta.spatial.toolkit.Controller
+import com.meta.spatial.toolkit.ControllerType
 import com.meta.spatial.toolkit.DpPerMeterDisplayOptions
-import com.meta.spatial.toolkit.Material
 import com.meta.spatial.toolkit.MediaPanelDisplayOptions
 import com.meta.spatial.toolkit.MediaPanelRenderOptions
 import com.meta.spatial.toolkit.MediaPanelSettings
-import com.meta.spatial.toolkit.Mesh
-import com.meta.spatial.toolkit.MeshCollision
 import com.meta.spatial.toolkit.PanelInputOptions
 import com.meta.spatial.toolkit.PanelDimensions
 import com.meta.spatial.toolkit.PanelRegistration
@@ -108,6 +110,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
   private var nativeReceiptLibraryLoaded = false
   private var nativeReceiptLibraryError = "not-loaded"
   private var panelEntity: Entity? = null
+  private var panelLauncherEntity: Entity? = null
   private var panelPlacement = PanelPlacement()
   private var particleControls = SurfaceParticleControlState()
   private var particleLayerEntity: Entity? = null
@@ -122,6 +125,19 @@ class KuramotoSpatialActivity : AppSystemActivity() {
   private var lastParticleLayerProjectionMarkerMs = 0L
   private var lastParticleLayerTargetDistanceMeters: Float? = null
   private var lastParticleLayerSurfaceOverscanScale: Float? = null
+  private var polarSensorPanel: PolarSensorPanel? = null
+  private var panelHeadlockMarkerCount = 0
+  private var lastPanelHeadlockMarkerMs = 0L
+  private var lastPanelHeadlockHotloadToken = ""
+  private var lastPanelHeadlockJoystickMs = 0L
+  private var lastPanelHeadlockJoystickMarkerMs = 0L
+  private var spatialControllerPrimaryDown = false
+  private var spatialControllerRouteLogged = false
+  private var lastSpatialControllerRouteMarkerMs = 0L
+  private var lastSpatialControllerComponentCount = -1
+  private var lastSpatialControllerActiveCount = -1
+  private var androidControllerPrimaryKeyDown = false
+  private var androidControllerPrimaryMotionDown = false
 
   override fun registerFeatures(): List<SpatialFeature> {
     return listOf(
@@ -134,37 +150,58 @@ class KuramotoSpatialActivity : AppSystemActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     loadNativeReceiptLibrary()
+    if (shouldResetExperimentForPanelFirstLaunch(intent)) {
+      store.resetForNewParticipant()
+      marker(
+          "channel=experiment-panel status=panel-first-launch-reset " +
+              "freshSpatialActivityLaunch=true initialStage=participant " +
+              "validationIntent=false panelFirstExperimentFlow=true"
+      )
+    }
     marker(
         "channel=activity status=created package=io.github.mesmerprism.rustyquest.kuramoto_spatial " +
             "highRateJsonPayload=false hand_rendering_expected=true nativeSurfaceParticleLayerExpected=true"
     )
     scheduleParticleLayerLifecycleDiagnostics("activity-created")
     runValidationWorkflowIfRequested(intent)
+    runPolarLiveValidationIfRequested(intent)
+    runUiCommandIfRequested(intent)
+    runSurfaceTargetActivationIfRequested(intent)
   }
 
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
     runValidationWorkflowIfRequested(intent)
+    runPolarLiveValidationIfRequested(intent)
+    runUiCommandIfRequested(intent)
+    runSurfaceTargetActivationIfRequested(intent)
+  }
+
+  override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    if (handleControllerPrimaryButton(event)) {
+      return true
+    }
+    return super.dispatchKeyEvent(event)
   }
 
   override fun onSceneReady() {
     super.onSceneReady()
     scene.setReferenceSpace(ReferenceSpace.LOCAL_FLOOR)
-    scene.setLightingEnvironment(
-        ambientColor = Vector3(0.18f, 0.18f, 0.18f),
-        sunColor = Vector3(2.0f, 2.0f, 2.0f),
-        sunDirection = -Vector3(0.5f, 2.0f, -1.0f),
-        environmentIntensity = 0.2f,
-    )
     scene.setViewOrigin(0.0f, 0.0f, 2.0f, 180.0f)
-    createDiagnosticBackdrop()
     panelEntity =
         Entity.createPanelEntity(
             R.id.kuramoto_experiment_panel,
             Transform(panelPose()),
             panelDimensions(),
-            Visible(true),
+            Visible(panelPlacement.visible),
+        )
+    panelLauncherEntity =
+        Entity.createPanelEntity(
+            R.id.kuramoto_panel_launcher,
+            Transform(panelLauncherPose()),
+            panelLauncherDimensions(),
+            Visible(!panelPlacement.visible),
         )
     particleLayerEntity =
         runCatching {
@@ -184,13 +221,25 @@ class KuramotoSpatialActivity : AppSystemActivity() {
               null
             }
     applyPanelPlacement()
+    updateWorkflowPanelHeadlockFromViewer(reason = "scene-ready", forceLog = true)
     updateParticleLayerProjectionFromViewer(reason = "scene-ready", forceLog = true)
     logNativeInteropProbe(phase = "scene-ready", probeSurface = false)
     marker(
         "channel=spatial-panel status=spawned panelRegistrationId=kuramoto_experiment_panel " +
+            "launcherPanelRegistrationId=kuramoto_panel_launcher " +
             "panelY=${panelPlacement.yMeters} panelZ=${panelPlacement.zMeters} panelScale=${panelPlacement.scale} " +
-            "panelWidth=$PANEL_WIDTH_METERS panelHeight=$PANEL_HEIGHT_METERS " +
-            "visibleComponent=true panelDimensionsComponent=true diagnosticBackdrop=true"
+            "panelWidth=${panelPlacement.widthMeters} panelHeight=${panelPlacement.heightMeters} " +
+            "workflowPanelVisible=${panelPlacement.visible} launcherPanelVisible=${!panelPlacement.visible} " +
+            "particleLayerVisible=${particleLayerVisibleForPanelMode()} " +
+            "visibleComponent=true panelDimensionsComponent=true diagnosticBackdrop=false contrastEnvironment=false " +
+            "panelMode=${panelStateToken()} rendererAuthority=native-vulkan-wsi-surface-panel"
+    )
+    marker(
+        "channel=experiment-panel status=panel-first-flow-ready " +
+            "panelFirstExperimentFlow=true blockStartRequiresPanelClose=true " +
+            "questionnaireSubmitAutoStartsNextBlock=false questionnaireDueReopensPanel=true " +
+            "particleLayerVisible=${particleLayerVisibleForPanelMode()} " +
+            "icosphereSurfaceAvailable=true rendererAuthority=native-vulkan-wsi-surface-panel"
     )
     marker(
         "channel=native-surface-particle-layer status=panel-entity-spawned " +
@@ -203,18 +252,52 @@ class KuramotoSpatialActivity : AppSystemActivity() {
 
   override fun onVRReady() {
     super.onVRReady()
+    updateWorkflowPanelHeadlockFromViewer(reason = "vr-ready", forceLog = true)
     updateParticleLayerProjectionFromViewer(reason = "vr-ready", forceLog = true)
     logNativeInteropProbe(phase = "vr-ready", probeSurface = true)
   }
 
   override fun onSceneTick() {
     super.onSceneTick()
+    updateWorkflowPanelHeadlockFromViewer(reason = "scene-tick", forceLog = false)
     updateParticleLayerProjectionFromViewer(reason = "scene-tick", forceLog = false)
+    pollSpatialControllerPrimaryButton()
+  }
+
+  override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
+    if (handleControllerPrimaryButton(event)) {
+      return true
+    }
+    if (applyPanelHeadlockJoystickInput(event)) {
+      return true
+    }
+    return super.dispatchGenericMotionEvent(event)
   }
 
   override fun onDestroy() {
+    polarSensorPanel?.stop()
+    polarSensorPanel = null
     stopNativeSurfaceParticleLayer()
     super.onDestroy()
+  }
+
+  override fun onRequestPermissionsResult(
+      requestCode: Int,
+      permissions: Array<out String>,
+      grantResults: IntArray,
+  ) {
+    super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    val permissionArray = Array(permissions.size) { index -> permissions[index] }
+    polarSensorPanel?.onRequestPermissionsResult(
+        requestCode,
+        permissionArray,
+        grantResults,
+    )
+  }
+
+  private fun shouldResetExperimentForPanelFirstLaunch(intent: Intent?): Boolean {
+    val action = intent?.action
+    return action == null || action == Intent.ACTION_MAIN
   }
 
   override fun registerPanels(): List<PanelRegistration> {
@@ -244,12 +327,26 @@ class KuramotoSpatialActivity : AppSystemActivity() {
                         store = store,
                         placement = panelPlacement,
                         particleControls = particleControls,
-                        adjustPlacement = { dy, dz, scaleDelta ->
-                          adjustPanelPlacement(dy, dz, scaleDelta)
+                        setWorkflowPanelVisible = { visible, focus, source ->
+                          setWorkflowPanelVisible(visible, focus, source = source)
                         },
+                        adjustPlacement = { dx, dy, dz, scaleDelta ->
+                          adjustPanelPlacement(dx, dy, dz, scaleDelta)
+                        },
+                        setPanelHeadlocked = { enabled, source ->
+                          setPanelHeadlocked(enabled, source)
+                        },
+                        resizePanel = { deltaWidth, deltaHeight ->
+                          resizeWorkflowPanel(deltaWidth, deltaHeight)
+                        },
+                        resetPlacement = { resetWorkflowPanelPlacement() },
                         updateParticleControls = { driver0, driver1, pointScale ->
                           updateSurfaceParticleControls(driver0, driver1, pointScale)
                         },
+                        applyExperimentBlock = { block, source ->
+                          applyExperimentBlockToParticleControls(block, source)
+                        },
+                        polarPanel = ensurePolarSensorPanel(),
                     )
                   }
                 }
@@ -260,6 +357,45 @@ class KuramotoSpatialActivity : AppSystemActivity() {
                   shape = QuadShapeOptions(width = PANEL_WIDTH_METERS, height = PANEL_HEIGHT_METERS),
                   style = PanelStyleOptions(themeResourceId = R.style.PanelAppThemeOpaqueProbe),
                   display = DpPerMeterDisplayOptions(dpPerMeter = PANEL_DP_PER_METER),
+              )
+            },
+        ),
+        ComposeViewPanelRegistration(
+            R.id.kuramoto_panel_launcher,
+            composeViewCreator = { _, context ->
+              ComposeView(context).apply {
+                setBackgroundColor(android.graphics.Color.rgb(15, 95, 111))
+                alpha = 1.0f
+                setWillNotDraw(false)
+                setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                setContent {
+                  MaterialTheme(
+                      colorScheme =
+                          lightColorScheme(
+                              primary = PanelProbeButton,
+                              onPrimary = Color.White,
+                              background = PanelProbeHeader,
+                              onBackground = Color.White,
+                              surface = PanelProbeHeader,
+                              onSurface = Color.White,
+                          )
+                  ) {
+                    KuramotoPanelLauncher {
+                      setWorkflowPanelVisible(true, focus = true, source = "launcher-panel")
+                    }
+                  }
+                }
+              }
+            },
+            settingsCreator = {
+              UIPanelSettings(
+                  shape =
+                      QuadShapeOptions(
+                          width = PANEL_LAUNCHER_WIDTH_METERS,
+                          height = PANEL_LAUNCHER_HEIGHT_METERS,
+                      ),
+                  style = PanelStyleOptions(themeResourceId = R.style.PanelAppThemeOpaqueProbe),
+                  display = DpPerMeterDisplayOptions(dpPerMeter = PANEL_LAUNCHER_DP_PER_METER),
               )
             },
         ),
@@ -293,10 +429,38 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     marker(
         "channel=native-surface-particle-layer status=panel-registrations-created " +
             "renderPolicy=native-vulkan-wsi-surface-panel panelRegistrationCount=$panelRegistrationCount " +
+            "workflowPanelRegistrationId=kuramoto_experiment_panel " +
+            "launcherPanelRegistrationId=kuramoto_panel_launcher " +
             "particlePanelRegistrationId=kuramoto_particle_surface_panel"
     )
     scheduleParticleLayerLifecycleDiagnostics("register-panels")
     return panels
+  }
+
+  private fun ensurePolarSensorPanel(): PolarSensorPanel {
+    val existing = polarSensorPanel
+    if (existing != null) {
+      return existing
+    }
+    val created =
+        PolarSensorPanel(
+            this,
+            object : PolarSensorPanel.Host {
+              override fun closePanelAndReturnToImmersive() {
+                setWorkflowPanelVisible(false, focus = false, source = "polar-panel-close")
+              }
+
+              override fun onPolarStreamEvent(event: JSONObject) {
+                store.appendPolarEvent(event)
+              }
+            },
+        )
+    polarSensorPanel = created
+    marker(
+        "channel=polar-sensor-panel status=created owner=spatial-sdk-compose-panel " +
+            "streamMirror=kuramoto-experiment-store"
+    )
+    return created
   }
 
   private fun logNativeInteropProbe(phase: String, probeSurface: Boolean) {
@@ -555,6 +719,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
       driver0Value01: Float,
       driver1Value01: Float,
       pointScale: Float,
+      source: String = "panel",
   ): SurfaceParticleControlState {
     particleControls =
         SurfaceParticleControlState(
@@ -562,8 +727,38 @@ class KuramotoSpatialActivity : AppSystemActivity() {
             driver1Value01 = driver1Value01.coerceIn(0.0f, 1.0f),
             pointScale = pointScale.coerceIn(0.35f, 2.25f),
         )
-    submitNativeSurfaceParticleParameters(source = "panel")
+    submitNativeSurfaceParticleParameters(source = source)
     return particleControls
+  }
+
+  private fun applyExperimentBlockToParticleControls(
+      block: ActiveBlockSnapshot,
+      source: String,
+  ): SurfaceParticleControlState {
+    val energyDriver = if (block.movementBaseFrequencyHz > 0.5) 0.85f else 0.25f
+    val coherenceDriver = if (block.movementCoupling > 0.5) 0.85f else 0.15f
+    val updated =
+        updateSurfaceParticleControls(
+            energyDriver,
+            coherenceDriver,
+            particleControls.pointScale,
+            source = source,
+        )
+    marker(
+        "channel=experiment-panel status=experiment-condition-parameter-handoff " +
+            "rendererAuthority=native-vulkan-wsi-surface-panel transport=jni-live-queue " +
+            "panelMustNotBeAuthority=true highRatePayloadsAllowed=false " +
+            "source=${markerToken(source)} conditionId=${markerToken(block.conditionId)} " +
+            "profileId=${markerToken(block.profileId)} " +
+            "workflowPanelVisibleAtHandoff=${panelPlacement.visible} " +
+            "panelClosedBeforeHandoff=${!panelPlacement.visible} " +
+            "movementBaseFrequencyHz=${String.format(Locale.US, "%.3f", block.movementBaseFrequencyHz)} " +
+            "movementCoupling=${String.format(Locale.US, "%.3f", block.movementCoupling)} " +
+            "driver0Value01=${markerFloat(updated.driver0Value01)} " +
+            "driver1Value01=${markerFloat(updated.driver1Value01)} " +
+            "pointScale=${markerFloat(updated.pointScale)}"
+    )
+    return updated
   }
 
   private fun submitNativeSurfaceParticleParameters(source: String) {
@@ -605,17 +800,149 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     }
   }
 
-  private fun adjustPanelPlacement(deltaY: Float, deltaZ: Float, deltaScale: Float): PanelPlacement {
+  private fun adjustPanelPlacement(
+      deltaX: Float,
+      deltaY: Float,
+      deltaZ: Float,
+      deltaScale: Float,
+  ): PanelPlacement {
+    val yRange =
+        if (panelPlacement.headlocked) {
+          PANEL_HEADLOCK_OFFSET_Y_MIN_METERS..PANEL_HEADLOCK_OFFSET_Y_MAX_METERS
+        } else {
+          PANEL_WORLD_Y_MIN_METERS..PANEL_WORLD_Y_MAX_METERS
+        }
+    val zRange =
+        if (panelPlacement.headlocked) {
+          PANEL_HEADLOCK_DISTANCE_MIN_METERS..PANEL_HEADLOCK_DISTANCE_MAX_METERS
+        } else {
+          PANEL_WORLD_Z_MIN_METERS..PANEL_WORLD_Z_MAX_METERS
+        }
     panelPlacement =
         panelPlacement.copy(
-            yMeters = (panelPlacement.yMeters + deltaY).coerceIn(0.8f, 2.2f),
-            zMeters = (panelPlacement.zMeters + deltaZ).coerceIn(-3.2f, -0.8f),
+            xMeters =
+                (panelPlacement.xMeters + deltaX)
+                    .coerceIn(PANEL_HEADLOCK_OFFSET_X_MIN_METERS, PANEL_HEADLOCK_OFFSET_X_MAX_METERS),
+            yMeters = (panelPlacement.yMeters + deltaY).coerceIn(yRange.start, yRange.endInclusive),
+            zMeters = (panelPlacement.zMeters + deltaZ).coerceIn(zRange.start, zRange.endInclusive),
             scale = (panelPlacement.scale + deltaScale).coerceIn(0.65f, 1.6f),
         )
     applyPanelPlacement()
+    persistPanelHeadlockTuning("compose-placement-buttons")
     marker(
-        "channel=spatial-panel status=placement-updated panelY=${panelPlacement.yMeters} " +
-            "panelZ=${panelPlacement.zMeters} panelScale=${panelPlacement.scale}"
+        "channel=spatial-panel status=placement-updated " +
+            panelHeadlockMarkerFields() + " " +
+            "panelMode=${panelStateToken()} particleLayerRenderContinuity=kept-running"
+    )
+    return panelPlacement
+  }
+
+  private fun resizeWorkflowPanel(deltaWidth: Float, deltaHeight: Float): PanelPlacement {
+    panelPlacement =
+        panelPlacement.copy(
+            widthMeters =
+                (panelPlacement.widthMeters + deltaWidth)
+                    .coerceIn(PANEL_WIDTH_MIN_METERS, PANEL_WIDTH_MAX_METERS),
+            heightMeters =
+                (panelPlacement.heightMeters + deltaHeight)
+                    .coerceIn(PANEL_HEIGHT_MIN_METERS, PANEL_HEIGHT_MAX_METERS),
+    )
+    applyPanelPlacement()
+    persistPanelHeadlockTuning("compose-panel-resize")
+    marker(
+        "channel=spatial-panel status=size-updated panelWidth=${markerFloat(panelPlacement.widthMeters)} " +
+            "panelHeight=${markerFloat(panelPlacement.heightMeters)} panelMode=${panelStateToken()} " +
+            "particleLayerRenderContinuity=kept-running"
+    )
+    return panelPlacement
+  }
+
+  private fun resetWorkflowPanelPlacement(): PanelPlacement {
+    panelPlacement =
+        panelPlacement.copy(
+            visible = true,
+            xMeters = PANEL_HEADLOCK_OFFSET_X_METERS,
+            yMeters =
+                if (panelPlacement.headlocked) PANEL_HEADLOCK_OFFSET_Y_METERS else PANEL_FOCUS_Y_METERS,
+            zMeters =
+                if (panelPlacement.headlocked) PANEL_HEADLOCK_DISTANCE_METERS else PANEL_FOCUS_Z_METERS,
+            scale = if (panelPlacement.headlocked) PANEL_HEADLOCK_SCALE else 1.0f,
+            widthMeters = PANEL_WIDTH_METERS,
+            heightMeters = PANEL_HEIGHT_METERS,
+        )
+    applyPanelPlacement()
+    persistPanelHeadlockTuning("compose-panel-reset")
+    recordPanelState("compose-panel-reset")
+    marker(
+        "channel=spatial-panel status=placement-reset panelMode=${panelStateToken()} " +
+            panelHeadlockMarkerFields() + " " +
+            "particleLayerRenderContinuity=kept-running"
+    )
+    return panelPlacement
+  }
+
+  private fun setPanelHeadlocked(enabled: Boolean, source: String): PanelPlacement {
+    panelPlacement =
+        if (enabled) {
+          panelPlacement.copy(
+              headlocked = true,
+              xMeters = panelPlacement.xMeters.coerceIn(PANEL_HEADLOCK_OFFSET_X_MIN_METERS, PANEL_HEADLOCK_OFFSET_X_MAX_METERS),
+              yMeters = panelPlacement.yMeters.coerceIn(PANEL_HEADLOCK_OFFSET_Y_MIN_METERS, PANEL_HEADLOCK_OFFSET_Y_MAX_METERS),
+              zMeters = panelPlacement.zMeters.coerceIn(PANEL_HEADLOCK_DISTANCE_MIN_METERS, PANEL_HEADLOCK_DISTANCE_MAX_METERS),
+          )
+        } else {
+          panelPlacement.copy(
+              headlocked = false,
+              yMeters = PANEL_FOCUS_Y_METERS,
+              zMeters = PANEL_FOCUS_Z_METERS,
+          )
+        }
+    applyPanelPlacement()
+    persistPanelHeadlockTuning(source)
+    marker(
+        "channel=spatial-panel status=headlock-mode-updated source=${markerToken(source)} " +
+            panelHeadlockMarkerFields() + " " +
+            "rendererAuthority=native-vulkan-wsi-surface-panel uiAuthority=spatial-sdk-compose-panel"
+    )
+    return panelPlacement
+  }
+
+  private fun setWorkflowPanelVisible(
+      visible: Boolean,
+      focus: Boolean,
+      source: String,
+  ): PanelPlacement {
+    panelPlacement =
+        if (visible && focus) {
+          if (panelPlacement.headlocked) {
+            panelPlacement.copy(
+                visible = true,
+                xMeters = PANEL_HEADLOCK_OFFSET_X_METERS,
+                yMeters = PANEL_HEADLOCK_OFFSET_Y_METERS,
+                zMeters = PANEL_HEADLOCK_DISTANCE_METERS,
+                scale = PANEL_HEADLOCK_SCALE,
+            )
+          } else {
+            panelPlacement.copy(
+                visible = true,
+                yMeters = PANEL_FOCUS_Y_METERS,
+                zMeters = PANEL_FOCUS_Z_METERS,
+                scale = 1.0f,
+            )
+          }
+        } else {
+          panelPlacement.copy(visible = visible)
+        }
+    applyPanelPlacement()
+    recordPanelState(source)
+    marker(
+        "channel=spatial-panel status=mode-updated source=${markerToken(source)} " +
+            "panelMode=${panelStateToken()} workflowPanelVisible=${panelPlacement.visible} " +
+            "launcherPanelVisible=${!panelPlacement.visible} " +
+            "particleLayerVisible=${particleLayerVisibleForPanelMode()} " +
+            "particleLayerRenderContinuity=kept-running rendererAuthority=native-vulkan-wsi-surface-panel " +
+            "uiAuthority=spatial-sdk-compose-panel " +
+            panelHeadlockMarkerFields()
     )
     return panelPlacement
   }
@@ -625,14 +952,194 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     entity.setComponent(Transform(panelPose()))
     entity.setComponent(Scale(Vector3(panelPlacement.scale, panelPlacement.scale, panelPlacement.scale)))
     entity.setComponent(panelDimensions())
-    entity.setComponent(Visible(true))
+    entity.setComponent(Visible(panelPlacement.visible))
+    panelLauncherEntity?.setComponent(Transform(panelLauncherPose()))
+    panelLauncherEntity?.setComponent(panelLauncherDimensions())
+    panelLauncherEntity?.setComponent(Visible(!panelPlacement.visible))
+    particleLayerEntity?.setComponent(Visible(particleLayerVisibleForPanelMode()))
   }
 
+  private fun particleLayerVisibleForPanelMode(): Boolean = !panelPlacement.visible
+
   private fun panelPose(): Pose =
+      if (panelPlacement.headlocked) {
+        headlockedPanelPoseFromViewer() ?: worldPanelPose()
+      } else {
+        worldPanelPose()
+      }
+
+  private fun worldPanelPose(): Pose =
       Pose(
-          Vector3(0.0f, panelPlacement.yMeters, panelPlacement.zMeters),
+          Vector3(panelPlacement.xMeters, panelPlacement.yMeters, panelPlacement.zMeters),
           Quaternion(6.12323426e-17f, 6.12323426e-17f, 1.0f, -3.74939976e-33f),
       )
+
+  private fun panelLauncherPose(): Pose =
+      Pose(
+          Vector3(PANEL_LAUNCHER_X_METERS, PANEL_LAUNCHER_Y_METERS, PANEL_LAUNCHER_Z_METERS),
+          Quaternion(6.12323426e-17f, 6.12323426e-17f, 1.0f, -3.74939976e-33f),
+      )
+
+  @OptIn(SpatialSDKExperimentalAPI::class)
+  private fun headlockedPanelPoseFromViewer(): Pose? {
+    val viewerPose = runCatching { scene.getViewerPose() }.getOrNull() ?: return null
+    val forward = viewerPose.forward().normalizedOr(Vector3(0.0f, 0.0f, -1.0f))
+    val up = viewerPose.up().normalizedOr(Vector3(0.0f, 1.0f, 0.0f))
+    val right = cross(forward, up).normalizedOr(Vector3(1.0f, 0.0f, 0.0f))
+    val center =
+        viewerPose.t +
+            right * panelPlacement.xMeters +
+            up * panelPlacement.yMeters +
+            forward * panelPlacement.zMeters
+    return Pose(center, Quaternion.fromDirection(forward, up))
+  }
+
+  private fun updateWorkflowPanelHeadlockFromViewer(reason: String, forceLog: Boolean) {
+    pollPanelHeadlockHotload(reason)
+    val entity = panelEntity ?: return
+    if (!panelPlacement.headlocked) {
+      return
+    }
+    val pose =
+        headlockedPanelPoseFromViewer()
+            ?: run {
+              if (forceLog) {
+                marker(
+                    "channel=spatial-panel status=headlocked-pose-update-skipped " +
+                        "reason=${markerToken(reason)} headlockedPanelEnabled=true " +
+                        "viewerPoseSource=Scene.getViewerPose error=unavailable"
+                )
+              }
+              return
+            }
+    entity.setComponent(Transform(pose))
+    entity.setComponent(Scale(Vector3(panelPlacement.scale, panelPlacement.scale, panelPlacement.scale)))
+    entity.setComponent(panelDimensions())
+    entity.setComponent(Visible(panelPlacement.visible))
+
+    val now = SystemClock.elapsedRealtime()
+    val shouldLog =
+        forceLog ||
+            (panelPlacement.visible &&
+                panelHeadlockMarkerCount < 4 &&
+                now - lastPanelHeadlockMarkerMs >= PANEL_HEADLOCK_MARKER_INTERVAL_MS)
+    if (!shouldLog) {
+      return
+    }
+    panelHeadlockMarkerCount += 1
+    lastPanelHeadlockMarkerMs = now
+    marker(
+        "channel=spatial-panel status=headlocked-pose-updated " +
+            "reason=${markerToken(reason)} viewerPoseSource=Scene.getViewerPose " +
+            "panelPoseSource=headlocked-viewer-relative " +
+            panelHeadlockMarkerFields() + " " +
+            "panelPositionM=${vectorMarker(pose.t)} panelQuaternion=${quaternionMarker(pose.q)}"
+    )
+  }
+
+  private fun pollPanelHeadlockHotload(reason: String) {
+    val requestedHeadlocked =
+        readOptionalBooleanSystemProperty(PANEL_HEADLOCK_ENABLED_PROPERTY)
+            ?: panelPlacement.headlocked
+    val updated =
+        panelPlacement.copy(
+            headlocked = requestedHeadlocked,
+            xMeters =
+                (readOptionalFloatSystemProperty(
+                        PANEL_HEADLOCK_OFFSET_X_PROPERTY,
+                        PANEL_HEADLOCK_OFFSET_X_MIN_METERS,
+                        PANEL_HEADLOCK_OFFSET_X_MAX_METERS,
+                    )
+                    ?: panelPlacement.xMeters)
+                    .coerceIn(PANEL_HEADLOCK_OFFSET_X_MIN_METERS, PANEL_HEADLOCK_OFFSET_X_MAX_METERS),
+            yMeters =
+                (readOptionalFloatSystemProperty(
+                        PANEL_HEADLOCK_OFFSET_Y_PROPERTY,
+                        PANEL_HEADLOCK_OFFSET_Y_MIN_METERS,
+                        PANEL_HEADLOCK_OFFSET_Y_MAX_METERS,
+                    )
+                    ?: panelPlacement.yMeters)
+                    .coerceIn(
+                        if (requestedHeadlocked) PANEL_HEADLOCK_OFFSET_Y_MIN_METERS else PANEL_WORLD_Y_MIN_METERS,
+                        if (requestedHeadlocked) PANEL_HEADLOCK_OFFSET_Y_MAX_METERS else PANEL_WORLD_Y_MAX_METERS,
+                    ),
+            zMeters =
+                (readOptionalFloatSystemProperty(
+                        PANEL_HEADLOCK_DISTANCE_PROPERTY,
+                        PANEL_HEADLOCK_DISTANCE_MIN_METERS,
+                        PANEL_HEADLOCK_DISTANCE_MAX_METERS,
+                    )
+                    ?: panelPlacement.zMeters)
+                    .coerceIn(
+                        if (requestedHeadlocked) PANEL_HEADLOCK_DISTANCE_MIN_METERS else PANEL_WORLD_Z_MIN_METERS,
+                        if (requestedHeadlocked) PANEL_HEADLOCK_DISTANCE_MAX_METERS else PANEL_WORLD_Z_MAX_METERS,
+                    ),
+            widthMeters =
+                (readOptionalFloatSystemProperty(
+                        PANEL_HEADLOCK_WIDTH_PROPERTY,
+                        PANEL_WIDTH_MIN_METERS,
+                        PANEL_WIDTH_MAX_METERS,
+                    )
+                    ?: panelPlacement.widthMeters)
+                    .coerceIn(PANEL_WIDTH_MIN_METERS, PANEL_WIDTH_MAX_METERS),
+            heightMeters =
+                (readOptionalFloatSystemProperty(
+                        PANEL_HEADLOCK_HEIGHT_PROPERTY,
+                        PANEL_HEIGHT_MIN_METERS,
+                        PANEL_HEIGHT_MAX_METERS,
+                    )
+                    ?: panelPlacement.heightMeters)
+                    .coerceIn(PANEL_HEIGHT_MIN_METERS, PANEL_HEIGHT_MAX_METERS),
+            scale =
+                (readOptionalFloatSystemProperty(
+                        PANEL_HEADLOCK_SCALE_PROPERTY,
+                        PANEL_HEADLOCK_SCALE_MIN,
+                        PANEL_HEADLOCK_SCALE_MAX,
+                    )
+                    ?: panelPlacement.scale)
+                    .coerceIn(PANEL_HEADLOCK_SCALE_MIN, PANEL_HEADLOCK_SCALE_MAX),
+        )
+    if (!panelPlacement.headlockEquivalent(updated)) {
+      panelPlacement = updated
+      applyPanelPlacement()
+      persistPanelHeadlockTuning("runtime-hotload-android-property")
+    }
+    val token = panelHeadlockMarkerFields()
+    if (token != lastPanelHeadlockHotloadToken) {
+      lastPanelHeadlockHotloadToken = token
+      marker(
+          "channel=spatial-panel status=headlock-hotload-updated " +
+              "reason=${markerToken(reason)} " +
+              "headlockedPanelHotloadSource=runtime-hotload-android-property " +
+              panelHeadlockPropertyMarkerFields() + " " +
+              token
+      )
+    }
+  }
+
+  private fun persistPanelHeadlockTuning(source: String) {
+    runCatching {
+          val row =
+              JSONObject()
+                  .put("schema_id", "rusty.quest.kuramoto_spatial.panel_headlock_tuning.v1")
+                  .put("source", source)
+                  .put("updated_at_unix_ms", System.currentTimeMillis())
+                  .put("headlocked", panelPlacement.headlocked)
+                  .put("offset_x_m", panelPlacement.xMeters.toDouble())
+                  .put("offset_y_m", panelPlacement.yMeters.toDouble())
+                  .put("distance_m", panelPlacement.zMeters.toDouble())
+                  .put("scale", panelPlacement.scale.toDouble())
+                  .put("width_m", panelPlacement.widthMeters.toDouble())
+                  .put("height_m", panelPlacement.heightMeters.toDouble())
+          File(filesDir, PANEL_HEADLOCK_TUNING_FILE).writeText(row.toString(2), Charsets.UTF_8)
+        }
+        .getOrElse { throwable ->
+          marker(
+              "channel=spatial-panel status=headlock-tuning-persist-failed " +
+                  "source=${markerToken(source)} error=${markerToken(throwable.javaClass.simpleName)}"
+          )
+        }
+  }
 
   private fun particleLayerPose(): Pose =
       Pose(
@@ -694,7 +1201,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     val planePose = Pose(center, Quaternion.fromDirection(forward, up))
     entity.setComponent(Transform(planePose))
     entity.setComponent(PanelDimensions(Vector2(surfaceWidthMeters, surfaceHeightMeters)))
-    entity.setComponent(Visible(true))
+    entity.setComponent(Visible(particleLayerVisibleForPanelMode()))
     val nativePanelPoseUpdateMask =
         if (nativeReceiptLibraryLoaded) {
           runCatching {
@@ -836,23 +1343,332 @@ class KuramotoSpatialActivity : AppSystemActivity() {
           )
       )
 
+  private fun panelHeadlockMarkerFields(): String =
+      "headlockedPanelEnabled=${panelPlacement.headlocked} " +
+          "headlockedPanelDefaultEnabled=true " +
+          "headlockedPanelOffsetXMeters=${markerFloat(panelPlacement.xMeters)} " +
+          "headlockedPanelOffsetYMeters=${markerFloat(panelPlacement.yMeters)} " +
+          "headlockedPanelDistanceMeters=${markerFloat(panelPlacement.zMeters)} " +
+          "panelScale=${markerFloat(panelPlacement.scale)} " +
+          "panelWidth=${markerFloat(panelPlacement.widthMeters)} " +
+          "panelHeight=${markerFloat(panelPlacement.heightMeters)}"
+
+  private fun panelHeadlockPropertyMarkerFields(): String =
+      "headlockedPanelEnabledProperty=$PANEL_HEADLOCK_ENABLED_PROPERTY " +
+          "headlockedPanelOffsetXProperty=$PANEL_HEADLOCK_OFFSET_X_PROPERTY " +
+          "headlockedPanelOffsetYProperty=$PANEL_HEADLOCK_OFFSET_Y_PROPERTY " +
+          "headlockedPanelDistanceProperty=$PANEL_HEADLOCK_DISTANCE_PROPERTY " +
+          "headlockedPanelWidthProperty=$PANEL_HEADLOCK_WIDTH_PROPERTY " +
+          "headlockedPanelHeightProperty=$PANEL_HEADLOCK_HEIGHT_PROPERTY " +
+          "headlockedPanelScaleProperty=$PANEL_HEADLOCK_SCALE_PROPERTY " +
+          "headlockedPanelJoystickEnabledProperty=$PANEL_HEADLOCK_JOYSTICK_ENABLED_PROPERTY " +
+          "headlockedPanelJoystickTranslateRateProperty=$PANEL_HEADLOCK_JOYSTICK_TRANSLATE_RATE_PROPERTY " +
+          "headlockedPanelJoystickDistanceRateProperty=$PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_PROPERTY " +
+          "headlockedPanelJoystickScaleRateProperty=$PANEL_HEADLOCK_JOYSTICK_SCALE_RATE_PROPERTY"
+
+  private fun applyPanelHeadlockJoystickInput(event: MotionEvent): Boolean {
+    if (event.action != MotionEvent.ACTION_MOVE || !isJoystickEvent(event)) {
+      return false
+    }
+    if (!panelPlacement.visible || !panelPlacement.headlocked || !currentPanelHeadlockJoystickEnabled()) {
+      return false
+    }
+
+    val leftX = joystickAxis(event, MotionEvent.AXIS_X)
+    val leftY = joystickAxis(event, MotionEvent.AXIS_Y)
+    val rightX = joystickAxis(event, MotionEvent.AXIS_RX, MotionEvent.AXIS_Z)
+    val rightY = joystickAxis(event, MotionEvent.AXIS_RY, MotionEvent.AXIS_RZ)
+    if (
+        abs(leftX) < PANEL_HEADLOCK_JOYSTICK_DEADZONE &&
+            abs(leftY) < PANEL_HEADLOCK_JOYSTICK_DEADZONE &&
+            abs(rightX) < PANEL_HEADLOCK_JOYSTICK_DEADZONE &&
+            abs(rightY) < PANEL_HEADLOCK_JOYSTICK_DEADZONE
+    ) {
+      return false
+    }
+
+    val now = SystemClock.elapsedRealtime()
+    val dtSeconds =
+        if (lastPanelHeadlockJoystickMs <= 0L) {
+          1.0f / 60.0f
+        } else {
+          ((now - lastPanelHeadlockJoystickMs).toFloat() / 1000.0f).coerceIn(0.0f, 0.08f)
+        }
+    lastPanelHeadlockJoystickMs = now
+    val translateRate =
+        readFloatSystemProperty(
+            PANEL_HEADLOCK_JOYSTICK_TRANSLATE_RATE_PROPERTY,
+            PANEL_HEADLOCK_JOYSTICK_TRANSLATE_RATE_METERS_PER_SECOND,
+            0.02f,
+            0.80f,
+        )
+    val distanceRate =
+        readFloatSystemProperty(
+            PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_PROPERTY,
+            PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_METERS_PER_SECOND,
+            0.02f,
+            0.80f,
+        )
+    val scaleRate =
+        readFloatSystemProperty(
+            PANEL_HEADLOCK_JOYSTICK_SCALE_RATE_PROPERTY,
+            PANEL_HEADLOCK_JOYSTICK_SCALE_RATE_PER_SECOND,
+            0.02f,
+            1.25f,
+        )
+    panelPlacement =
+        panelPlacement.copy(
+            xMeters =
+                (panelPlacement.xMeters + leftX * translateRate * dtSeconds)
+                    .coerceIn(PANEL_HEADLOCK_OFFSET_X_MIN_METERS, PANEL_HEADLOCK_OFFSET_X_MAX_METERS),
+            yMeters =
+                (panelPlacement.yMeters - leftY * translateRate * dtSeconds)
+                    .coerceIn(PANEL_HEADLOCK_OFFSET_Y_MIN_METERS, PANEL_HEADLOCK_OFFSET_Y_MAX_METERS),
+            zMeters =
+                (panelPlacement.zMeters - rightY * distanceRate * dtSeconds)
+                    .coerceIn(PANEL_HEADLOCK_DISTANCE_MIN_METERS, PANEL_HEADLOCK_DISTANCE_MAX_METERS),
+            scale =
+                (panelPlacement.scale + rightX * scaleRate * dtSeconds)
+                    .coerceIn(PANEL_HEADLOCK_SCALE_MIN, PANEL_HEADLOCK_SCALE_MAX),
+        )
+    applyPanelPlacement()
+    persistPanelHeadlockTuning("controller-joystick")
+    if (now - lastPanelHeadlockJoystickMarkerMs >= PANEL_HEADLOCK_JOYSTICK_MARKER_INTERVAL_MS) {
+      lastPanelHeadlockJoystickMarkerMs = now
+      marker(
+          "channel=spatial-panel status=headlock-joystick-adjusted " +
+              "inputSource=android-generic-motion-joystick " +
+              "controllerJoystickMapping=left-stick-x-y-offset-right-stick-y-distance-right-stick-x-scale " +
+              "leftStick=${markerFloat(leftX)};${markerFloat(leftY)} " +
+              "rightStick=${markerFloat(rightX)};${markerFloat(rightY)} " +
+              "dtSeconds=${markerFloat(dtSeconds)} " +
+              "translateRateMps=${markerFloat(translateRate)} " +
+              "distanceRateMps=${markerFloat(distanceRate)} " +
+              "scaleRatePerSecond=${markerFloat(scaleRate)} " +
+              panelHeadlockMarkerFields()
+      )
+    }
+    return true
+  }
+
+  private fun pollSpatialControllerPrimaryButton() {
+    val now = SystemClock.elapsedRealtime()
+    val snapshot =
+        runCatching {
+              val buttonABit = ButtonBits.ButtonA
+              var componentCount = 0
+              var activeCount = 0
+              var down = false
+              var pressed = false
+              var changedButtons = 0
+              var buttonState = 0
+              Query.where { has(Controller.id) }
+                  .eval(scene.spatialInterface.dataModel)
+                  .forEach { entity ->
+                    val controller = entity.getComponent<Controller>()
+                    componentCount += 1
+                    val activeController =
+                        controller.isActive && controller.type == ControllerType.CONTROLLER
+                    if (activeController) {
+                      activeCount += 1
+                      buttonState = buttonState or controller.buttonState
+                      changedButtons = changedButtons or controller.changedButtons
+                      down = down || controller.isDown(buttonABit)
+                      pressed = pressed || controller.isPressed(buttonABit)
+                    }
+                  }
+              SpatialControllerPrimarySnapshot(
+                  componentCount = componentCount,
+                  activeCount = activeCount,
+                  buttonState = buttonState,
+                  changedButtons = changedButtons,
+                  down = down,
+                  pressed = pressed,
+              )
+            }
+            .getOrElse { throwable ->
+              spatialControllerPrimaryDown = false
+              if (
+                  !spatialControllerRouteLogged ||
+                      now - lastSpatialControllerRouteMarkerMs >= SPATIAL_CONTROLLER_ROUTE_MARKER_INTERVAL_MS
+              ) {
+                spatialControllerRouteLogged = true
+                lastSpatialControllerRouteMarkerMs = now
+                marker(
+                    "channel=spatial-panel status=controller-input-route-error " +
+                        "inputSource=spatial-sdk-controller-component " +
+                        "controllerInput=right-primary-button error=${markerToken(throwable.javaClass.simpleName)} " +
+                        "message=${markerToken(throwable.message ?: "none")} debugOnly=true"
+                )
+              }
+              return
+            }
+
+    val shouldLogRoute =
+        !spatialControllerRouteLogged ||
+            snapshot.componentCount != lastSpatialControllerComponentCount ||
+            snapshot.activeCount != lastSpatialControllerActiveCount ||
+            now - lastSpatialControllerRouteMarkerMs >= SPATIAL_CONTROLLER_ROUTE_MARKER_INTERVAL_MS
+    if (shouldLogRoute) {
+      spatialControllerRouteLogged = true
+      lastSpatialControllerRouteMarkerMs = now
+      lastSpatialControllerComponentCount = snapshot.componentCount
+      lastSpatialControllerActiveCount = snapshot.activeCount
+      marker(
+          "channel=spatial-panel status=controller-input-route-ready " +
+              "inputSource=spatial-sdk-controller-component controllerInput=right-primary-button " +
+              "controllerComponentCount=${snapshot.componentCount} " +
+              "activeControllerComponentCount=${snapshot.activeCount} " +
+              "buttonABit=${ButtonBits.ButtonA} buttonADown=${snapshot.down} " +
+              "buttonState=${snapshot.buttonState} changedButtons=${snapshot.changedButtons} " +
+              "debugOnly=true"
+      )
+    }
+
+    val pressedEdge = snapshot.pressed || (snapshot.down && !spatialControllerPrimaryDown)
+    spatialControllerPrimaryDown = snapshot.down
+    if (!pressedEdge || panelPlacement.visible) {
+      return
+    }
+    openWorkflowPanelFromController(
+        inputSource = "spatial-sdk-controller-component",
+        detail =
+            "buttonABit=${ButtonBits.ButtonA} buttonState=${snapshot.buttonState} " +
+                "changedButtons=${snapshot.changedButtons} " +
+                "controllerComponentCount=${snapshot.componentCount} " +
+                "activeControllerComponentCount=${snapshot.activeCount}",
+    )
+  }
+
+  private fun handleControllerPrimaryButton(event: KeyEvent): Boolean {
+    val rightPrimary =
+        event.keyCode == KeyEvent.KEYCODE_BUTTON_A ||
+            event.keyCode == KeyEvent.KEYCODE_BUTTON_1
+    if (!rightPrimary) {
+      return false
+    }
+    val pressedEdge =
+        when (event.action) {
+          KeyEvent.ACTION_DOWN -> {
+            val firstDown = !androidControllerPrimaryKeyDown && event.repeatCount == 0
+            androidControllerPrimaryKeyDown = true
+            firstDown
+          }
+          KeyEvent.ACTION_UP -> {
+            val releaseWithoutSeenDown = !androidControllerPrimaryKeyDown
+            androidControllerPrimaryKeyDown = false
+            releaseWithoutSeenDown
+          }
+          else -> false
+        }
+    if (!pressedEdge || panelPlacement.visible) {
+      return false
+    }
+    return openWorkflowPanelFromController(
+        inputSource = "android-key-event",
+        detail = "keyCode=${event.keyCode} keyAction=${event.action} repeatCount=${event.repeatCount}",
+    )
+  }
+
+  private fun handleControllerPrimaryButton(event: MotionEvent): Boolean {
+    if (!isJoystickEvent(event)) {
+      return false
+    }
+    val action = event.actionMasked
+    if (
+        action != MotionEvent.ACTION_BUTTON_PRESS &&
+            action != MotionEvent.ACTION_BUTTON_RELEASE &&
+            action != MotionEvent.ACTION_MOVE
+    ) {
+      return false
+    }
+    val primaryDown = (event.buttonState and MotionEvent.BUTTON_PRIMARY) != 0
+    val pressedEdge = primaryDown && !androidControllerPrimaryMotionDown
+    androidControllerPrimaryMotionDown = primaryDown
+    if (!pressedEdge || panelPlacement.visible) {
+      return false
+    }
+    return openWorkflowPanelFromController(
+        inputSource = "android-generic-motion-button",
+        detail =
+            "motionAction=$action motionButtonState=${event.buttonState} " +
+                "motionButtonBit=${MotionEvent.BUTTON_PRIMARY}",
+    )
+  }
+
+  private fun openWorkflowPanelFromController(inputSource: String, detail: String): Boolean {
+    if (panelPlacement.visible) {
+      return false
+    }
+    val rightPrimary =
+        inputSource == "spatial-sdk-controller-component" ||
+            inputSource == "android-key-event" ||
+            inputSource == "android-generic-motion-button"
+    if (!rightPrimary) return false
+    setWorkflowPanelVisible(true, focus = true, source = "right-controller-primary-button")
+    marker(
+        "channel=spatial-panel status=controller-primary-opened-panel " +
+            "controllerInput=right-primary-button inputSource=${markerToken(inputSource)} " +
+            "${detail.trim()} " +
+            "panelMode=${panelStateToken()} workflowPanelVisible=${panelPlacement.visible} " +
+            "debugOnly=true"
+    )
+    return true
+  }
+
+  private fun isJoystickEvent(event: MotionEvent): Boolean =
+      event.isFromSource(InputDevice.SOURCE_JOYSTICK) || event.isFromSource(InputDevice.SOURCE_GAMEPAD)
+
+  private fun currentPanelHeadlockJoystickEnabled(): Boolean =
+      readOptionalBooleanSystemProperty(PANEL_HEADLOCK_JOYSTICK_ENABLED_PROPERTY) ?: true
+
+  private fun joystickAxis(event: MotionEvent, primaryAxis: Int, fallbackAxis: Int? = null): Float {
+    val primary = event.getAxisValue(primaryAxis)
+    val value =
+        if (abs(primary) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE || fallbackAxis == null) {
+          primary
+        } else {
+          event.getAxisValue(fallbackAxis)
+        }
+    return if (abs(value) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE) value.coerceIn(-1.0f, 1.0f) else 0.0f
+  }
+
   private fun readFloatSystemProperty(
       propertyName: String,
       fallback: Float,
       min: Float,
       max: Float,
   ): Float {
-    val text =
-        runCatching {
-              Class.forName("android.os.SystemProperties")
-                  .getMethod("get", String::class.java, String::class.java)
-                  .invoke(null, propertyName, "") as String
-            }
-            .getOrDefault("")
-            .trim()
+    val text = readSystemProperty(propertyName)
     val parsed = text.toFloatOrNull()
     return if (parsed != null && parsed.isFinite()) parsed.coerceIn(min, max) else fallback
   }
+
+  private fun readOptionalFloatSystemProperty(
+      propertyName: String,
+      min: Float,
+      max: Float,
+  ): Float? {
+    val parsed = readSystemProperty(propertyName).toFloatOrNull()
+    return if (parsed != null && parsed.isFinite()) parsed.coerceIn(min, max) else null
+  }
+
+  private fun readOptionalBooleanSystemProperty(propertyName: String): Boolean? {
+    return when (readSystemProperty(propertyName).lowercase(Locale.US)) {
+      "1", "true", "yes", "on", "enabled" -> true
+      "0", "false", "no", "off", "disabled" -> false
+      else -> null
+    }
+  }
+
+  private fun readSystemProperty(propertyName: String): String =
+      runCatching {
+            Class.forName("android.os.SystemProperties")
+                .getMethod("get", String::class.java, String::class.java)
+                .invoke(null, propertyName, "") as String
+          }
+          .getOrDefault("")
+          .trim()
 
   private fun particleLayerStereoMarkerFields(): String =
       "stereoMode=$PARTICLE_LAYER_STEREO_MODE " +
@@ -909,46 +1725,22 @@ class KuramotoSpatialActivity : AppSystemActivity() {
       )
 
   private fun panelDimensions(): PanelDimensions =
-      PanelDimensions(Vector2(PANEL_WIDTH_METERS, PANEL_HEIGHT_METERS))
+      PanelDimensions(Vector2(panelPlacement.widthMeters, panelPlacement.heightMeters))
 
-  private fun createDiagnosticBackdrop() {
-    Entity.create(
-        listOf(
-            Mesh("mesh://skybox".toUri(), hittable = MeshCollision.NoCollision),
-            Material().apply {
-              baseColor = Color4(0.10f, 0.13f, 0.18f, 1.0f)
-              unlit = true
-            },
-            Transform(Pose(Vector3(0.0f, 0.0f, 0.0f))),
-            Visible(true),
-        )
-    )
-    Entity.create(
-        listOf(
-            Box(),
-            Mesh("mesh://box".toUri(), hittable = MeshCollision.NoCollision),
-            Material().apply {
-              baseColor = Color4(0.19f, 0.42f, 0.57f, 1.0f)
-              unlit = true
-            },
-            Transform(Pose(Vector3(0.0f, panelPlacement.yMeters, panelPlacement.zMeters - 0.10f))),
-            Scale(Vector3(2.35f, 1.45f, 0.04f)),
-            Visible(true),
-        )
-    )
-    Entity.create(
-        listOf(
-            Box(),
-            Mesh("mesh://box".toUri(), hittable = MeshCollision.NoCollision),
-            Material().apply {
-              baseColor = Color4(0.72f, 0.78f, 0.84f, 1.0f)
-              unlit = true
-            },
-            Transform(Pose(Vector3(0.0f, 0.02f, panelPlacement.zMeters))),
-            Scale(Vector3(3.2f, 0.04f, 2.4f)),
-            Visible(true),
-        )
-    )
+  private fun panelLauncherDimensions(): PanelDimensions =
+      PanelDimensions(Vector2(PANEL_LAUNCHER_WIDTH_METERS, PANEL_LAUNCHER_HEIGHT_METERS))
+
+  private fun panelStateToken(): String =
+      if (panelPlacement.visible) "spatial-sdk-workflow-panel-open" else "spatial-sdk-particle-view-panel-closed"
+
+  private fun recordPanelState(source: String) {
+    runCatching { store.recordPanelForegroundState(panelStateToken(), source) }
+        .getOrElse { throwable ->
+          marker(
+              "channel=spatial-panel status=panel-state-record-failed source=${markerToken(source)} " +
+                  "error=${markerToken(throwable.javaClass.simpleName)}"
+          )
+        }
   }
 
   private fun marker(detail: String) {
@@ -1026,7 +1818,16 @@ class KuramotoSpatialActivity : AppSystemActivity() {
       )
       store.selectSurface(surfaceTargetId)
       store.prioritizeConditionForValidation(VALIDATION_STUDY_CONDITION_ID)
-      store.startNextBlock()
+      setWorkflowPanelVisible(false, focus = false, source = "self-test-particle-view")
+      val block = store.startNextBlock()
+      if (block != null) {
+        applyExperimentBlockToParticleControls(block, "self-test-experiment-block-start")
+      }
+      Handler(Looper.getMainLooper())
+          .postDelayed(
+              { setWorkflowPanelVisible(true, focus = true, source = "self-test-workflow-panel") },
+              1500L,
+          )
       marker(
           "channel=validation status=self-test-block-started participantId=${markerToken(participantId)} " +
               "surfaceTargetId=${markerToken(surfaceTargetId)} validationStudyConditionId=$VALIDATION_STUDY_CONDITION_ID"
@@ -1061,6 +1862,263 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     }
   }
 
+  private fun runUiCommandIfRequested(intent: Intent?) {
+    if (intent?.action != ACTION_RUN_UI_COMMAND) {
+      return
+    }
+    val uiAction =
+        intent.getStringExtra(EXTRA_UI_ACTION)?.trim()?.takeIf { it.isNotBlank() }
+            ?: "panel-open"
+    val source = "remote-ui-command-$uiAction"
+    marker(
+        "channel=validation status=ui-command-start uiAction=${markerToken(uiAction)} " +
+            "rendererAuthority=native-vulkan-wsi-surface-panel uiAuthority=spatial-sdk-compose-panel"
+    )
+    try {
+      when (uiAction) {
+        "panel-open" -> setWorkflowPanelVisible(true, focus = true, source = source)
+        "panel-close" -> setWorkflowPanelVisible(false, focus = false, source = source)
+        "panel-reset" -> resetWorkflowPanelPlacement()
+        "panel-headlock-on" -> setPanelHeadlocked(true, source)
+        "panel-headlock-off" -> setPanelHeadlocked(false, source)
+        "panel-headlock-toggle" -> setPanelHeadlocked(!panelPlacement.headlocked, source)
+        "panel-adjust" ->
+            adjustPanelPlacement(
+                intent.getFloatExtra(EXTRA_DELTA_X, 0.0f),
+                intent.getFloatExtra(EXTRA_DELTA_Y, 0.0f),
+                intent.getFloatExtra(EXTRA_DELTA_Z, 0.0f),
+                intent.getFloatExtra(EXTRA_DELTA_SCALE, 0.0f),
+            )
+        "panel-resize" ->
+            resizeWorkflowPanel(
+                intent.getFloatExtra(EXTRA_DELTA_WIDTH, 0.0f),
+                intent.getFloatExtra(EXTRA_DELTA_HEIGHT, 0.0f),
+            )
+        "particle-controls" ->
+            updateSurfaceParticleControls(
+                intent.getFloatExtra(EXTRA_DRIVER0, particleControls.driver0Value01),
+                intent.getFloatExtra(EXTRA_DRIVER1, particleControls.driver1Value01),
+                intent.getFloatExtra(EXTRA_POINT_SCALE, particleControls.pointScale),
+            )
+        "participant-reset" -> {
+          store.resetForNewParticipant()
+          setWorkflowPanelVisible(true, focus = true, source = source)
+        }
+        "participant-begin" -> {
+          store.beginParticipant(remoteParticipantId(intent))
+          setWorkflowPanelVisible(true, focus = true, source = source)
+        }
+        "polar-setup-save" -> {
+          ensureRemoteParticipant(intent, source)
+          store.savePolarSetup(
+              runLabel = intent.getStringExtra(EXTRA_RUN_LABEL) ?: "remote-ui-command",
+              operatorId = intent.getStringExtra(EXTRA_OPERATOR_ID) ?: "codex",
+              notes = intent.getStringExtra(EXTRA_NOTES) ?: "Remote UI command",
+          )
+          setWorkflowPanelVisible(true, focus = true, source = source)
+        }
+        "surface-select" -> {
+          ensureRemoteParticipantAndPolarSetup(intent, source)
+          store.selectSurface(remoteSurfaceTargetId(intent))
+          setWorkflowPanelVisible(true, focus = true, source = source)
+        }
+        "start-block" -> startRemoteSurfaceBlock(intent, source, resetSession = false)
+        "surface-target-activate" -> startRemoteSurfaceBlock(intent, source, resetSession = true)
+        "questionnaire-submit" -> {
+          store.submitQuestionnaire(
+              comfortRating = intent.getIntExtra(EXTRA_COMFORT_RATING, 4),
+              intensityRating = intent.getIntExtra(EXTRA_INTENSITY_RATING, 4),
+              engagementRating = intent.getIntExtra(EXTRA_ENGAGEMENT_RATING, 4),
+              notes = intent.getStringExtra(EXTRA_NOTES) ?: "Remote UI command questionnaire",
+              signature = emptySignatureJson(),
+          )
+          setWorkflowPanelVisible(true, focus = true, source = source)
+        }
+        else -> error("unknown_ui_action_$uiAction")
+      }
+      marker(
+          "channel=validation status=ui-command-complete uiAction=${markerToken(uiAction)} " +
+              "panelMode=${panelStateToken()} workflowPanelVisible=${panelPlacement.visible} " +
+              "surfaceTargetId=${markerToken(store.snapshot().surfaceTargetId)}"
+      )
+    } catch (throwable: Throwable) {
+      marker(
+          "channel=validation status=ui-command-failed uiAction=${markerToken(uiAction)} " +
+              "error=${markerToken(throwable.message ?: throwable.javaClass.simpleName)}"
+      )
+      Log.e(TAG, "Kuramoto Spatial SDK UI command failed", throwable)
+    }
+  }
+
+  private fun runSurfaceTargetActivationIfRequested(intent: Intent?) {
+    if (intent?.action != ACTION_RUN_SURFACE_TARGET) {
+      return
+    }
+    val participantId =
+        intent.getStringExtra(EXTRA_PARTICIPANT_ID)?.trim()?.takeIf { it.isNotBlank() }
+            ?: "codex-spatial-surface-target"
+    val surfaceTargetId =
+        intent.getStringExtra(EXTRA_SURFACE_TARGET_ID)?.trim()?.takeIf { it.isNotBlank() }
+            ?: "real-hands"
+
+    try {
+      startRemoteSurfaceBlock(intent, "surface-target-activation", resetSession = true)
+      marker(
+          "channel=validation status=surface-target-activated " +
+              "participantId=${markerToken(participantId)} surfaceTargetId=${markerToken(surfaceTargetId)} " +
+              "validationStudyConditionId=$VALIDATION_STUDY_CONDITION_ID panelMode=${panelStateToken()} " +
+              "leftInParticleView=true"
+      )
+    } catch (throwable: Throwable) {
+      marker(
+          "channel=validation status=surface-target-activation-failed " +
+              "surfaceTargetId=${markerToken(surfaceTargetId)} error=${markerToken(throwable.message ?: throwable.javaClass.simpleName)}"
+      )
+      Log.e(TAG, "Kuramoto Spatial SDK surface target activation failed", throwable)
+    }
+  }
+
+  private fun startRemoteSurfaceBlock(
+      intent: Intent,
+      source: String,
+      resetSession: Boolean,
+  ): ActiveBlockSnapshot? {
+    marker(
+        "channel=validation status=surface-target-activation-start " +
+            "participantId=${markerToken(remoteParticipantId(intent))} " +
+            "surfaceTargetId=${markerToken(remoteSurfaceTargetId(intent))} source=${markerToken(source)} " +
+            "rendererAuthority=native-vulkan-wsi-surface-panel uiAuthority=spatial-sdk-compose-panel"
+    )
+    scheduleParticleLayerLifecycleDiagnostics(source)
+    if (resetSession) {
+      store.resetForNewParticipant()
+    }
+    ensureRemoteParticipantAndPolarSetup(intent, source)
+    store.selectSurface(remoteSurfaceTargetId(intent))
+    store.prioritizeConditionForValidation(VALIDATION_STUDY_CONDITION_ID)
+    setWorkflowPanelVisible(false, focus = false, source = "$source-particle-view")
+    val block = store.startNextBlock()
+    if (block != null) {
+      applyExperimentBlockToParticleControls(block, "$source-block-start")
+    }
+    return block
+  }
+
+  private fun ensureRemoteParticipantAndPolarSetup(intent: Intent, source: String) {
+    ensureRemoteParticipant(intent, source)
+    val snapshot = store.snapshot()
+    if (snapshot.stage == "polar_setup") {
+      store.savePolarSetup(
+          runLabel = intent.getStringExtra(EXTRA_RUN_LABEL) ?: source,
+          operatorId = intent.getStringExtra(EXTRA_OPERATOR_ID) ?: "codex",
+          notes = intent.getStringExtra(EXTRA_NOTES) ?: "Remote UI command",
+      )
+    }
+  }
+
+  private fun ensureRemoteParticipant(intent: Intent, source: String) {
+    val snapshot = store.snapshot()
+    if (snapshot.sessionId.isBlank() || snapshot.stage == "participant") {
+      store.beginParticipant(remoteParticipantId(intent))
+      marker(
+          "channel=validation status=remote-participant-created " +
+              "source=${markerToken(source)} participantId=${markerToken(remoteParticipantId(intent))}"
+      )
+    }
+  }
+
+  private fun remoteParticipantId(intent: Intent): String =
+      intent.getStringExtra(EXTRA_PARTICIPANT_ID)?.trim()?.takeIf { it.isNotBlank() }
+          ?: "codex-spatial-ui-command"
+
+  private fun remoteSurfaceTargetId(intent: Intent): String =
+      intent.getStringExtra(EXTRA_SURFACE_TARGET_ID)?.trim()?.takeIf { it.isNotBlank() }
+          ?: "real-hands"
+
+  private fun runPolarLiveValidationIfRequested(intent: Intent?) {
+    if (intent?.action != ACTION_RUN_POLAR_LIVE_VALIDATION) {
+      return
+    }
+    val participantId =
+        intent.getStringExtra(EXTRA_PARTICIPANT_ID)?.trim()?.takeIf { it.isNotBlank() }
+            ?: "codex-spatial-polar-live-validation"
+    val surfaceTargetId =
+        intent.getStringExtra(EXTRA_SURFACE_TARGET_ID)?.trim()?.takeIf { it.isNotBlank() }
+            ?: "real-hands"
+    val scanDelayMs =
+        intent.getIntExtra(EXTRA_POLAR_SCAN_SECONDS, 16).coerceIn(3, 60) * 1000L
+    val connectDelayMs =
+        intent.getIntExtra(EXTRA_POLAR_CONNECT_DELAY_SECONDS, 10).coerceIn(3, 60) * 1000L
+    val ecgRunMs =
+        intent.getIntExtra(EXTRA_POLAR_ECG_SECONDS, 14).coerceIn(3, 180) * 1000L
+    val mainHandler = Handler(Looper.getMainLooper())
+
+    marker(
+        "channel=polar-live-validation status=start participantId=${markerToken(participantId)} " +
+            "surfaceTargetId=${markerToken(surfaceTargetId)} scanSeconds=${scanDelayMs / 1000L} " +
+            "connectDelaySeconds=${connectDelayMs / 1000L} ecgSeconds=${ecgRunMs / 1000L} " +
+            "rendererAuthority=native-vulkan-wsi-surface-panel uiAuthority=spatial-sdk-compose-panel"
+    )
+    scheduleParticleLayerLifecycleDiagnostics("polar-live-validation-start")
+    try {
+      store.resetForNewParticipant()
+      store.beginParticipant(participantId)
+      store.savePolarSetup(
+          runLabel = "polar-live-validation",
+          operatorId = "codex",
+          notes = "Meta Spatial SDK Polar H10 live validation intent",
+      )
+      store.selectSurface(surfaceTargetId)
+      setWorkflowPanelVisible(true, focus = true, source = "polar-live-validation")
+      val panel = ensurePolarSensorPanel()
+      panel.buildView()
+      marker(
+          "channel=polar-live-validation status=polar-panel-automation-ready " +
+              "participantId=${markerToken(participantId)}"
+      )
+      panel.handleCommand("select_ecg")
+      panel.handleCommand("scan")
+      marker(
+          "channel=polar-live-validation status=scan-command-issued " +
+              "participantId=${markerToken(participantId)}"
+      )
+      mainHandler.postDelayed(
+          {
+            marker(
+                "channel=polar-live-validation status=connect-requested " +
+                    "discoveredDeviceCount=${panel.discoveredDeviceCount()}"
+            )
+            panel.connectBestDiscovered("ecg")
+          },
+          scanDelayMs,
+      )
+      mainHandler.postDelayed(
+          {
+            marker(
+                "channel=polar-live-validation status=start-ecg-requested " +
+                    "discoveredDeviceCount=${panel.discoveredDeviceCount()}"
+            )
+            panel.handleCommand("start_ecg")
+          },
+          scanDelayMs + connectDelayMs,
+      )
+      mainHandler.postDelayed(
+          {
+            val ecgReceiving = panel.isEcgReceiving()
+            marker(
+                "channel=polar-live-validation status=complete ecgReceiving=$ecgReceiving " +
+                    "discoveredDeviceCount=${panel.discoveredDeviceCount()} " +
+                    "ecgStatus=${markerToken(panel.ecgExperimentStatusLine(true))}"
+            )
+          },
+          scanDelayMs + connectDelayMs + ecgRunMs,
+      )
+    } catch (throwable: Throwable) {
+      marker("channel=polar-live-validation status=failed error=${markerToken(throwable.message ?: throwable.javaClass.simpleName)}")
+      Log.e(TAG, "Kuramoto Spatial SDK Polar live validation failed", throwable)
+    }
+  }
+
   private fun markerToken(value: String): String =
       value
           .trim()
@@ -1084,6 +2142,8 @@ class KuramotoSpatialActivity : AppSystemActivity() {
         "channel=native-surface-particle-layer status=lifecycle-check phase=${markerToken(phase)} " +
             "renderPolicy=native-vulkan-wsi-surface-panel " +
             "activityMarkerFile=$ACTIVITY_MARKERS_FILE panelRegistrationCount=$panelRegistrationCount " +
+            "panelMode=${panelStateToken()} workflowPanelVisible=${panelPlacement.visible} " +
+            "launcherPanelVisible=${!panelPlacement.visible} " +
             "particleLayerEntityCreated=${particleLayerEntity != null} particleSurfacePanelReady=$particleSurfacePanelReady " +
             "particleSurfaceConsumerCalled=$particleSurfaceConsumerCalled " +
             "particleSurfaceConsumerSurfaceValid=$particleSurfaceConsumerSurfaceValid " +
@@ -1107,11 +2167,94 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     private const val VALIDATION_STUDY_CONDITION_ID = "lche"
     private const val ACTION_RUN_WORKFLOW_SELF_TEST =
         "io.github.mesmerprism.rustyquest.kuramoto_spatial.action.RUN_WORKFLOW_SELF_TEST"
+    private const val ACTION_RUN_POLAR_LIVE_VALIDATION =
+        "io.github.mesmerprism.rustyquest.kuramoto_spatial.action.RUN_POLAR_LIVE_VALIDATION"
+    private const val ACTION_RUN_UI_COMMAND =
+        "io.github.mesmerprism.rustyquest.kuramoto_spatial.action.RUN_UI_COMMAND"
+    private const val ACTION_RUN_SURFACE_TARGET =
+        "io.github.mesmerprism.rustyquest.kuramoto_spatial.action.RUN_SURFACE_TARGET"
     private const val EXTRA_PARTICIPANT_ID = "participant_id"
     private const val EXTRA_SURFACE_TARGET_ID = "surface_target_id"
-    private const val PANEL_WIDTH_METERS = 2.048f
+    private const val EXTRA_UI_ACTION = "ui_action"
+    private const val EXTRA_DELTA_X = "delta_x"
+    private const val EXTRA_DELTA_Y = "delta_y"
+    private const val EXTRA_DELTA_Z = "delta_z"
+    private const val EXTRA_DELTA_SCALE = "delta_scale"
+    private const val EXTRA_DELTA_WIDTH = "delta_width"
+    private const val EXTRA_DELTA_HEIGHT = "delta_height"
+    private const val EXTRA_DRIVER0 = "driver0"
+    private const val EXTRA_DRIVER1 = "driver1"
+    private const val EXTRA_POINT_SCALE = "point_scale"
+    private const val EXTRA_RUN_LABEL = "run_label"
+    private const val EXTRA_OPERATOR_ID = "operator_id"
+    private const val EXTRA_NOTES = "notes"
+    private const val EXTRA_COMFORT_RATING = "comfort_rating"
+    private const val EXTRA_INTENSITY_RATING = "intensity_rating"
+    private const val EXTRA_ENGAGEMENT_RATING = "engagement_rating"
+    private const val EXTRA_POLAR_SCAN_SECONDS = "polar_scan_seconds"
+    private const val EXTRA_POLAR_CONNECT_DELAY_SECONDS = "polar_connect_delay_seconds"
+    private const val EXTRA_POLAR_ECG_SECONDS = "polar_ecg_seconds"
+    private const val PANEL_WIDTH_METERS = 1.20f
     private const val PANEL_HEIGHT_METERS = 1.254f
     private const val PANEL_DP_PER_METER = 720f
+    private const val PANEL_FOCUS_Y_METERS = 1.1f
+    private const val PANEL_FOCUS_Z_METERS = 0.475f
+    private const val PANEL_WORLD_Y_MIN_METERS = 0.8f
+    private const val PANEL_WORLD_Y_MAX_METERS = 2.2f
+    private const val PANEL_WORLD_Z_MIN_METERS = -3.2f
+    private const val PANEL_WORLD_Z_MAX_METERS = 0.8f
+    private const val PANEL_HEADLOCK_TUNING_FILE = "kuramoto_spatial_panel_headlock_tuning.json"
+    private const val PANEL_HEADLOCK_OFFSET_X_METERS = 0.0f
+    private const val PANEL_HEADLOCK_OFFSET_Y_METERS = 0.0f
+    private const val PANEL_HEADLOCK_DISTANCE_METERS = 1.40f
+    private const val PANEL_HEADLOCK_SCALE = 0.65f
+    private const val PANEL_HEADLOCK_OFFSET_X_MIN_METERS = -0.85f
+    private const val PANEL_HEADLOCK_OFFSET_X_MAX_METERS = 0.85f
+    private const val PANEL_HEADLOCK_OFFSET_Y_MIN_METERS = -0.65f
+    private const val PANEL_HEADLOCK_OFFSET_Y_MAX_METERS = 0.65f
+    private const val PANEL_HEADLOCK_DISTANCE_MIN_METERS = 0.35f
+    private const val PANEL_HEADLOCK_DISTANCE_MAX_METERS = 1.50f
+    private const val PANEL_HEADLOCK_SCALE_MIN = 0.65f
+    private const val PANEL_HEADLOCK_SCALE_MAX = 1.60f
+    private const val PANEL_HEADLOCK_ENABLED_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.enabled"
+    private const val PANEL_HEADLOCK_OFFSET_X_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.offset_x_m"
+    private const val PANEL_HEADLOCK_OFFSET_Y_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.offset_y_m"
+    private const val PANEL_HEADLOCK_DISTANCE_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.distance_meters"
+    private const val PANEL_HEADLOCK_WIDTH_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.width_meters"
+    private const val PANEL_HEADLOCK_HEIGHT_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.height_meters"
+    private const val PANEL_HEADLOCK_SCALE_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.scale"
+    private const val PANEL_HEADLOCK_JOYSTICK_ENABLED_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.joystick.enabled"
+    private const val PANEL_HEADLOCK_JOYSTICK_TRANSLATE_RATE_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.joystick.translate_rate_mps"
+    private const val PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.joystick.distance_rate_mps"
+    private const val PANEL_HEADLOCK_JOYSTICK_SCALE_RATE_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.panel.headlocked.joystick.scale_rate_per_second"
+    private const val PANEL_HEADLOCK_JOYSTICK_TRANSLATE_RATE_METERS_PER_SECOND = 0.18f
+    private const val PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_METERS_PER_SECOND = 0.16f
+    private const val PANEL_HEADLOCK_JOYSTICK_SCALE_RATE_PER_SECOND = 0.30f
+    private const val PANEL_HEADLOCK_JOYSTICK_DEADZONE = 0.14f
+    private const val PANEL_HEADLOCK_JOYSTICK_MARKER_INTERVAL_MS = 450L
+    private const val PANEL_HEADLOCK_MARKER_INTERVAL_MS = 900L
+    private const val SPATIAL_CONTROLLER_ROUTE_MARKER_INTERVAL_MS = 2500L
+    private const val PANEL_WIDTH_MIN_METERS = 1.20f
+    private const val PANEL_WIDTH_MAX_METERS = 2.60f
+    private const val PANEL_HEIGHT_MIN_METERS = 0.75f
+    private const val PANEL_HEIGHT_MAX_METERS = 1.65f
+    private const val PANEL_LAUNCHER_WIDTH_METERS = 0.78f
+    private const val PANEL_LAUNCHER_HEIGHT_METERS = 0.30f
+    private const val PANEL_LAUNCHER_DP_PER_METER = 680f
+    private const val PANEL_LAUNCHER_X_METERS = -0.62f
+    private const val PANEL_LAUNCHER_Y_METERS = 0.92f
+    private const val PANEL_LAUNCHER_Z_METERS = 0.525f
     private const val PARTICLE_LAYER_PER_EYE_WIDTH_PX = 1024
     private const val PARTICLE_LAYER_WIDTH_PX = PARTICLE_LAYER_PER_EYE_WIDTH_PX * 2
     private const val PARTICLE_LAYER_HEIGHT_PX = 1024
@@ -1220,6 +2363,16 @@ private class SpatialAvatarHandVisualSuppressionSystem(
 
 private fun Long.hasReceiptBit(bit: Long): Boolean = (this and bit) != 0L
 
+private fun PanelPlacement.headlockEquivalent(other: PanelPlacement): Boolean =
+    visible == other.visible &&
+        headlocked == other.headlocked &&
+        abs(xMeters - other.xMeters) < 0.0005f &&
+        abs(yMeters - other.yMeters) < 0.0005f &&
+        abs(zMeters - other.zMeters) < 0.0005f &&
+        abs(scale - other.scale) < 0.0005f &&
+        abs(widthMeters - other.widthMeters) < 0.0005f &&
+        abs(heightMeters - other.heightMeters) < 0.0005f
+
 private class FixedMediaPanelDisplayOptions(
     private val widthPx: Int,
     private val heightPx: Int,
@@ -1232,9 +2385,23 @@ private class FixedMediaPanelDisplayOptions(
 }
 
 data class PanelPlacement(
-    val yMeters: Float = 1.1f,
-    val zMeters: Float = -1.7f,
-    val scale: Float = 1.0f,
+    val visible: Boolean = true,
+    val headlocked: Boolean = true,
+    val xMeters: Float = 0.0f,
+    val yMeters: Float = 0.0f,
+    val zMeters: Float = 1.40f,
+    val scale: Float = 0.65f,
+    val widthMeters: Float = 1.20f,
+    val heightMeters: Float = 1.254f,
+)
+
+private data class SpatialControllerPrimarySnapshot(
+    val componentCount: Int,
+    val activeCount: Int,
+    val buttonState: Int,
+    val changedButtons: Int,
+    val down: Boolean,
+    val pressed: Boolean,
 )
 
 data class SurfaceParticleControlState(
@@ -1308,24 +2475,54 @@ private val PanelProbeHeader = Color(0xFF0F5F6F)
 private val PanelProbeButton = Color(0xFFFF5A1F)
 private val PanelProbeInk = Color(0xFF111827)
 private val PanelProbeBorder = Color(0xFF0B1720)
+private const val PANEL_RESIZE_STEP_METERS = 0.12f
 
 @Composable
 private fun KuramotoExperimentPanel(
     store: KuramotoExperimentStore,
     placement: PanelPlacement,
     particleControls: SurfaceParticleControlState,
-    adjustPlacement: (Float, Float, Float) -> PanelPlacement,
+    polarPanel: PolarSensorPanel,
+    setWorkflowPanelVisible: (Boolean, Boolean, String) -> PanelPlacement,
+    adjustPlacement: (Float, Float, Float, Float) -> PanelPlacement,
+    setPanelHeadlocked: (Boolean, String) -> PanelPlacement,
+    resizePanel: (Float, Float) -> PanelPlacement,
+    resetPlacement: () -> PanelPlacement,
     updateParticleControls: (Float, Float, Float) -> SurfaceParticleControlState,
+    applyExperimentBlock: (ActiveBlockSnapshot, String) -> SurfaceParticleControlState,
 ) {
   var snapshot by remember { mutableStateOf(store.snapshot()) }
   var localPlacement by remember { mutableStateOf(placement) }
   var localParticleControls by remember { mutableStateOf(particleControls) }
 
+  fun refreshSnapshot(source: String) {
+    val updated = store.snapshot()
+    if (updated.stage == "questionnaire") {
+      localPlacement = setWorkflowPanelVisible(true, true, source)
+    }
+    snapshot = updated
+  }
+
+  fun startBlockFromPanel(surfaceId: String?, source: String) {
+    if (surfaceId != null) {
+      store.selectSurface(surfaceId)
+    }
+    localPlacement = setWorkflowPanelVisible(false, false, source)
+    val block = store.startNextBlock()
+    if (block == null) {
+      localPlacement = setWorkflowPanelVisible(true, true, "$source-complete")
+      refreshSnapshot("$source-complete")
+      return
+    }
+    localParticleControls = applyExperimentBlock(block, source)
+    snapshot = store.snapshot()
+  }
+
   LaunchedEffect(snapshot.stage, snapshot.activeBlock?.deadlineUnixMs) {
     while (snapshot.stage == "block_running") {
       delay(500L)
       store.syncElapsedBlock()
-      snapshot = store.snapshot()
+      refreshSnapshot("experiment-block-elapsed-questionnaire")
     }
   }
 
@@ -1345,9 +2542,18 @@ private fun KuramotoExperimentPanel(
     ) {
       PanelColorProbe(snapshot)
       Header(snapshot)
-      PanelPlacementControls(localPlacement) { dy, dz, ds ->
-        localPlacement = adjustPlacement(dy, dz, ds)
-      }
+      PanelModeControls(
+          placement = localPlacement,
+          setWorkflowPanelVisible = setWorkflowPanelVisible,
+          setPanelHeadlocked = setPanelHeadlocked,
+          resetPlacement = resetPlacement,
+          onPlacementChanged = { localPlacement = it },
+      )
+      PanelPlacementControls(
+          placement = localPlacement,
+          onAdjust = { dx, dy, dz, ds -> localPlacement = adjustPlacement(dx, dy, dz, ds) },
+          onResize = { dw, dh -> localPlacement = resizePanel(dw, dh) },
+      )
       SurfaceParticleControls(localParticleControls) { driver0, driver1, pointScale ->
         localParticleControls = updateParticleControls(driver0, driver1, pointScale)
       }
@@ -1358,62 +2564,83 @@ private fun KuramotoExperimentPanel(
                 snapshot = snapshot,
                 onBegin = { participantId ->
                   store.beginParticipant(participantId)
-                  snapshot = store.snapshot()
+                  refreshSnapshot("experiment-participant-created")
                 },
                 onReset = {
                   store.resetForNewParticipant()
-                  snapshot = store.snapshot()
+                  refreshSnapshot("experiment-reset")
                 },
             )
         "polar_setup" ->
             PolarSetupStep(
                 snapshot = snapshot,
+                polarPanel = polarPanel,
                 onContinue = { runLabel, operatorId, notes ->
                   store.savePolarSetup(runLabel, operatorId, notes)
-                  snapshot = store.snapshot()
+                  refreshSnapshot("experiment-polar-setup-recorded")
                 },
             )
         "surface_setup" ->
             SurfaceStep(
                 snapshot = snapshot,
-                onStart = { surfaceId ->
-                  store.selectSurface(surfaceId)
-                  store.startNextBlock()
-                  snapshot = store.snapshot()
-                },
+                onStart = { surfaceId -> startBlockFromPanel(surfaceId, "experiment-block-start") },
             )
         "block_running" ->
             RunningStep(snapshot) {
               store.syncElapsedBlock()
-              snapshot = store.snapshot()
+              refreshSnapshot("experiment-block-running-refresh")
             }
         "questionnaire" ->
             QuestionnaireStep(snapshot) { comfort, intensity, engagement, notes, signature ->
               store.submitQuestionnaire(comfort, intensity, engagement, notes, signature)
-              snapshot = store.snapshot()
+              refreshSnapshot("experiment-questionnaire-submitted")
             }
         "ready_next_block" ->
-            ReadyNextStep(snapshot) {
-              store.startNextBlock()
-              snapshot = store.snapshot()
-            }
+            ReadyNextStep(snapshot) { startBlockFromPanel(null, "experiment-ready-next-block") }
         "complete" ->
             CompleteStep(snapshot) {
               store.resetForNewParticipant()
-              snapshot = store.snapshot()
+              refreshSnapshot("experiment-reset")
             }
         else ->
             ParticipantStep(
                 snapshot = snapshot,
                 onBegin = { participantId ->
                   store.beginParticipant(participantId)
-                  snapshot = store.snapshot()
+                  refreshSnapshot("experiment-participant-created")
                 },
                 onReset = {
                   store.resetForNewParticipant()
-                  snapshot = store.snapshot()
+                  refreshSnapshot("experiment-reset")
                 },
             )
+      }
+    }
+  }
+}
+
+@Composable
+private fun KuramotoPanelLauncher(openPanel: () -> Unit) {
+  Surface(
+      modifier = Modifier.fillMaxSize(),
+      color = PanelProbeHeader,
+      contentColor = Color.White,
+  ) {
+    Row(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+      Text("Particles running", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+      Button(
+          onClick = openPanel,
+          colors =
+              ButtonDefaults.buttonColors(
+                  containerColor = PanelProbeButton,
+                  contentColor = Color.White,
+              ),
+      ) {
+        Text("Open Panel")
       }
     }
   }
@@ -1520,22 +2747,76 @@ private fun Header(snapshot: ExperimentSnapshot) {
 }
 
 @Composable
-private fun PanelPlacementControls(
+private fun PanelModeControls(
     placement: PanelPlacement,
-    onAdjust: (Float, Float, Float) -> Unit,
+    setWorkflowPanelVisible: (Boolean, Boolean, String) -> PanelPlacement,
+    setPanelHeadlocked: (Boolean, String) -> PanelPlacement,
+    resetPlacement: () -> PanelPlacement,
+    onPlacementChanged: (PanelPlacement) -> Unit,
 ) {
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
     Text(
-        "Panel pose y=${"%.2f".format(placement.yMeters)}m z=${"%.2f".format(placement.zMeters)}m scale=${"%.2f".format(placement.scale)}",
+        "Panel mode: ${if (placement.visible) "workflow panel" else "particle view"}; ${if (placement.headlocked) "headlocked" else "world-locked"}",
         style = MaterialTheme.typography.bodySmall,
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-      Button(onClick = { onAdjust(0.0f, 0.12f, 0.0f) }) { Text("Near") }
-      Button(onClick = { onAdjust(0.0f, -0.12f, 0.0f) }) { Text("Far") }
-      Button(onClick = { onAdjust(0.08f, 0.0f, 0.0f) }) { Text("Up") }
-      Button(onClick = { onAdjust(-0.08f, 0.0f, 0.0f) }) { Text("Down") }
-      Button(onClick = { onAdjust(0.0f, 0.0f, -0.08f) }) { Text("Scale -") }
-      Button(onClick = { onAdjust(0.0f, 0.0f, 0.08f) }) { Text("Scale +") }
+      Button(onClick = { onPlacementChanged(setWorkflowPanelVisible(true, true, "panel-view-button")) }) {
+        Text("Panel View")
+      }
+      Button(onClick = { onPlacementChanged(setWorkflowPanelVisible(false, false, "particle-view-button")) }) {
+        Text("Particle View")
+      }
+      Button(onClick = { onPlacementChanged(resetPlacement()) }) {
+        Text("Reset Panel")
+      }
+      Button(
+          onClick = {
+            onPlacementChanged(
+                setPanelHeadlocked(!placement.headlocked, "panel-headlock-toggle")
+            )
+          }
+      ) {
+        Text(if (placement.headlocked) "World Lock" else "Head Lock")
+      }
+    }
+  }
+}
+
+@Composable
+private fun PanelPlacementControls(
+    placement: PanelPlacement,
+    onAdjust: (Float, Float, Float, Float) -> Unit,
+    onResize: (Float, Float) -> Unit,
+) {
+  val nearDelta = if (placement.headlocked) -0.08f else 0.12f
+  val farDelta = if (placement.headlocked) 0.08f else -0.12f
+  Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    if (placement.headlocked) {
+      Text(
+          "Headlocked pose x=${"%.2f".format(placement.xMeters)}m y=${"%.2f".format(placement.yMeters)}m distance=${"%.2f".format(placement.zMeters)}m scale=${"%.2f".format(placement.scale)} size=${"%.2f".format(placement.widthMeters)}m x ${"%.2f".format(placement.heightMeters)}m",
+          style = MaterialTheme.typography.bodySmall,
+      )
+    } else {
+      Text(
+          "World pose x=${"%.2f".format(placement.xMeters)}m y=${"%.2f".format(placement.yMeters)}m z=${"%.2f".format(placement.zMeters)}m scale=${"%.2f".format(placement.scale)} size=${"%.2f".format(placement.widthMeters)}m x ${"%.2f".format(placement.heightMeters)}m",
+          style = MaterialTheme.typography.bodySmall,
+      )
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      Button(onClick = { onAdjust(0.0f, 0.0f, nearDelta, 0.0f) }) { Text("Near") }
+      Button(onClick = { onAdjust(0.0f, 0.0f, farDelta, 0.0f) }) { Text("Far") }
+      Button(onClick = { onAdjust(0.0f, 0.08f, 0.0f, 0.0f) }) { Text("Up") }
+      Button(onClick = { onAdjust(0.0f, -0.08f, 0.0f, 0.0f) }) { Text("Down") }
+      Button(onClick = { onAdjust(-0.08f, 0.0f, 0.0f, 0.0f) }) { Text("Left") }
+      Button(onClick = { onAdjust(0.08f, 0.0f, 0.0f, 0.0f) }) { Text("Right") }
+      Button(onClick = { onAdjust(0.0f, 0.0f, 0.0f, -0.08f) }) { Text("Scale -") }
+      Button(onClick = { onAdjust(0.0f, 0.0f, 0.0f, 0.08f) }) { Text("Scale +") }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      Button(onClick = { onResize(-PANEL_RESIZE_STEP_METERS, 0.0f) }) { Text("Narrower") }
+      Button(onClick = { onResize(PANEL_RESIZE_STEP_METERS, 0.0f) }) { Text("Wider") }
+      Button(onClick = { onResize(0.0f, -PANEL_RESIZE_STEP_METERS) }) { Text("Shorter") }
+      Button(onClick = { onResize(0.0f, PANEL_RESIZE_STEP_METERS) }) { Text("Taller") }
     }
   }
 }
@@ -1569,15 +2850,34 @@ private fun ParticipantStep(
 @Composable
 private fun PolarSetupStep(
     snapshot: ExperimentSnapshot,
+    polarPanel: PolarSensorPanel,
     onContinue: (String, String, String) -> Unit,
 ) {
   var runLabel by remember { mutableStateOf("") }
   var operatorId by remember { mutableStateOf("") }
   var notes by remember { mutableStateOf("") }
+  var ecgStatus by remember { mutableStateOf(polarPanel.ecgExperimentStatusLine(snapshot.sessionId.isNotBlank())) }
   Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
     Text("Polar Setup", style = MaterialTheme.typography.titleLarge)
     Text("Participant: ${snapshot.participantId}", style = MaterialTheme.typography.bodyMedium)
-    Text("Live Polar intake remains in the native APK for this first Spatial SDK lane.", style = MaterialTheme.typography.bodySmall)
+    Text("ECG: $ecgStatus", style = MaterialTheme.typography.bodySmall)
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+      Button(
+          onClick = {
+            polarPanel.handleCommand("start_ecg")
+            ecgStatus = polarPanel.ecgExperimentStatusLine(snapshot.sessionId.isNotBlank())
+          }
+      ) {
+        Text("Start ECG")
+      }
+      Button(onClick = { ecgStatus = polarPanel.ecgExperimentStatusLine(snapshot.sessionId.isNotBlank()) }) {
+        Text("Refresh")
+      }
+    }
+    AndroidView(
+        factory = { polarPanel.buildView() },
+        modifier = Modifier.fillMaxWidth().height(420.dp),
+    )
     OutlinedTextField(
         value = runLabel,
         onValueChange = { runLabel = it },

@@ -21,7 +21,7 @@ final class KuramotoExperimentSession {
     static final String SESSION_FILE = "kuramoto_experiment_session.json";
     static final String SESSION_SCHEMA = "rusty.kuramoto.mesh.experiment_session.v1";
     static final String EVENT_SCHEMA = "rusty.kuramoto.mesh.experiment_event.v1";
-    static final String QUESTIONNAIRE_SCHEMA = "rusty.kuramoto.mesh.experiment_questionnaire.v1";
+    static final String QUESTIONNAIRE_SCHEMA = "rusty.kuramoto.mesh.experiment_questionnaire.v2";
     static final long DEFAULT_BLOCK_DURATION_MS = 10000L;
 
     private static final String ROOT_DIR = "kuramoto_experiment";
@@ -346,7 +346,13 @@ final class KuramotoExperimentSession {
         }
     }
 
-    JSONObject submitQuestionnaire(int comfortRating, int intensityRating, int engagementRating, String notes)
+    JSONObject submitQuestionnaire(
+        int comfortRating,
+        int intensityRating,
+        int engagementRating,
+        String notes,
+        JSONObject signature
+    )
         throws Exception {
         syncElapsedBlock();
         if (!"questionnaire".equals(stage())) {
@@ -375,7 +381,8 @@ final class KuramotoExperimentSession {
                 .put("comfort_rating_1_to_7", comfortRating)
                 .put("intensity_rating_1_to_7", intensityRating)
                 .put("engagement_rating_1_to_7", engagementRating)
-                .put("notes", cleanString(notes)));
+                .put("notes", cleanString(notes))
+                .put("signature", signature == null ? emptySignature() : new JSONObject(signature.toString())));
         appendLine(sessionFile(QUESTIONNAIRE_FILE), row.toString());
         JSONArray completed = state.optJSONArray("completed_blocks");
         if (completed == null) {
@@ -396,6 +403,17 @@ final class KuramotoExperimentSession {
             appendBlockEvent("experiment_complete", null);
         }
         return row;
+    }
+
+    private static JSONObject emptySignature() throws Exception {
+        return new JSONObject()
+            .put("format", "stroke-json-v1")
+            .put("width_px", 0)
+            .put("height_px", 0)
+            .put("stroke_count", 0)
+            .put("point_count", 0)
+            .put("is_empty", true)
+            .put("strokes", new JSONArray());
     }
 
     void appendPolarEvent(JSONObject event) {

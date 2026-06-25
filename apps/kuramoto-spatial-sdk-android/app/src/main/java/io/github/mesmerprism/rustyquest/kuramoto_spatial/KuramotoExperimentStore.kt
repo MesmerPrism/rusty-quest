@@ -42,6 +42,19 @@ internal class KuramotoExperimentStore(private val activity: Activity) {
     marker("status=session-reset")
   }
 
+  fun recordPanelForegroundState(panelState: String, source: String) {
+    val cleanState = safeToken(panelState)
+    val cleanSource = safeToken(source)
+    state
+        .put("panel_state", cleanState)
+        .put("panel_state_source", cleanSource)
+        .put("panel_state_updated_at_unix_ms", System.currentTimeMillis())
+        .put("panel_state_updated_time_utc", Instant.now().toString())
+    save()
+    appendForegroundEvent("spatial_panel_state_changed", cleanSource)
+    marker("status=panel-state-recorded panelState=$cleanState source=$cleanSource")
+  }
+
   fun beginParticipant(participantId: String) {
     val clean = participantId.trim()
     require(clean.isNotEmpty()) { "participant_id_required" }
@@ -89,14 +102,32 @@ internal class KuramotoExperimentStore(private val activity: Activity) {
         .put("run_label", runLabel.trim())
         .put("operator_id", operatorId.trim())
         .put("notes", notes.trim())
-        .put("polar_intake_lane", "not-connected-in-spatial-sdk-first-slice")
+        .put("polar_intake_lane", "spatial-sdk-direct-ble-panel")
+        .put("live_polar_intake", true)
         .put("updated_at_unix_ms", System.currentTimeMillis())
         .put("updated_time_utc", Instant.now().toString())
     state.put("stage", "surface_setup")
     save()
-    appendPolarPlaceholder("polar_setup_recorded")
+    appendPolarSetupEvent("polar_setup_recorded")
     appendForegroundEvent("spatial_panel_surface_setup", "polar_setup_continue")
-    marker("status=polar-setup-recorded livePolarIntake=false")
+    marker("status=polar-setup-recorded livePolarIntake=true polarIntakeLane=spatial-sdk-direct-ble-panel")
+  }
+
+  fun appendPolarEvent(event: JSONObject) {
+    if (state.optString("session_id", "").isBlank()) {
+      return
+    }
+    syncElapsedBlock()
+    val row = JSONObject(event.toString()).put("kuramoto_experiment", experimentEnvelope())
+    appendLine(sessionFile(POLAR_EVENTS_FILE), row.toString())
+    val stream = row.optString("stream_id", row.optString("stream", ""))
+    if (stream == "stream.polar_h10.ecg") {
+      appendLine(sessionFile(ECG_EVENTS_FILE), row.toString())
+    }
+    marker(
+        "status=polar-stream-event-recorded streamId=${markerToken(stream)} " +
+            "ecgMirrored=${stream == "stream.polar_h10.ecg"}"
+    )
   }
 
   fun selectSurface(surfaceId: String) {
@@ -162,11 +193,11 @@ internal class KuramotoExperimentStore(private val activity: Activity) {
     )
   }
 
-  fun startNextBlock() {
+  fun startNextBlock(): ActiveBlockSnapshot? {
     requireParticipant()
     syncElapsedBlock()
     if (state.optString("stage", "") == "block_running") {
-      return
+      return state.optJSONObject("active_block")?.toActiveBlock()
     }
     val blockIndex = state.optInt("next_block_index", 0)
     val order = conditionOrder()
@@ -174,7 +205,7 @@ internal class KuramotoExperimentStore(private val activity: Activity) {
       state.put("stage", "complete")
       save()
       appendBlockEvent("experiment_complete", null)
-      return
+      return null
     }
     val condition = order.getJSONObject(blockIndex)
     val surface = surfaceSnapshot()
@@ -212,6 +243,7 @@ internal class KuramotoExperimentStore(private val activity: Activity) {
         "status=block-started blockIndex=$blockIndex blockNumber=${blockIndex + 1} " +
             "conditionId=${condition.optString("condition_id")} surfaceTargetId=${surface.optString("surface_target_id")}"
     )
+    return block.toActiveBlock()
   }
 
   fun syncElapsedBlock() {
@@ -339,6 +371,8 @@ internal class KuramotoExperimentStore(private val activity: Activity) {
         .put("stage", "participant")
         .put("participant_id", "")
         .put("session_id", "")
+        .put("panel_state", "spatial-sdk-workflow-panel-open")
+        .put("panel_state_source", "spatial-sdk-default")
         .put("randomization_seed", seed)
         .put("randomized_at_unix_ms", seed)
         .put("randomized_time_utc", Instant.now().toString())
@@ -412,7 +446,7 @@ internal class KuramotoExperimentStore(private val activity: Activity) {
     appendLine(sessionFile(FOREGROUND_EVENTS_FILE), row.toString())
   }
 
-  private fun appendPolarPlaceholder(eventType: String) {
+  private fun appendPolarSetupEvent(eventType: String) {
     val row =
         JSONObject()
             .put("schema_id", EVENT_SCHEMA)
@@ -422,10 +456,37 @@ internal class KuramotoExperimentStore(private val activity: Activity) {
             .put("stage", state.optString("stage"))
             .put("time_unix_ms", System.currentTimeMillis())
             .put("time_utc", Instant.now().toString())
-            .put("stream_id", "stream.polar_h10.placeholder")
-            .put("live_polar_intake", false)
-            .put("lane", "spatial-sdk-panel")
+            .put("stream_id", "stream.polar_h10.device_status")
+            .put("event_kind", "spatial_polar_setup")
+            .put("live_polar_intake", true)
+            .put("lane", "spatial-sdk-direct-ble-panel")
     appendLine(sessionFile(POLAR_EVENTS_FILE), row.toString())
+  }
+
+  private fun experimentEnvelope(): JSONObject {
+    val envelope =
+        JSONObject()
+            .put("schema_id", SESSION_SCHEMA)
+            .put("participant_id", state.optString("participant_id"))
+            .put("session_id", state.optString("session_id"))
+            .put("stage", state.optString("stage"))
+            .put("next_block_index", state.optInt("next_block_index", 0))
+            .put("surface", surfaceSnapshot())
+            .put("surface_target_id", surfaceSnapshot().optString("surface_target_id"))
+            .put("surface_label", surfaceSnapshot().optString("surface_label"))
+            .put("foreground", foregroundEnvelope())
+    val block = state.optJSONObject("active_block")
+    if (block != null) {
+      envelope
+          .put("block_index", block.optInt("block_index", -1))
+          .put("block_number", block.optInt("block_number", 0))
+          .put("condition_id", block.optString("condition_id"))
+          .put("condition_label", block.optString("condition_label"))
+          .put("profile_id", block.optString("profile_id"))
+    } else {
+      envelope.put("condition_id", "none").put("condition_label", "none").put("profile_id", "none")
+    }
+    return envelope
   }
 
   private fun foregroundEnvelope(): JSONObject {
@@ -435,8 +496,8 @@ internal class KuramotoExperimentStore(private val activity: Activity) {
             .put("stage", state.optString("stage"))
             .put("surface_target_id", surfaceSnapshot().optString("surface_target_id"))
             .put("surface_label", surfaceSnapshot().optString("surface_label"))
-            .put("panel_state", "spatial-sdk-panel-visible")
-            .put("panel_state_source", "spatial-sdk")
+            .put("panel_state", state.optString("panel_state", "spatial-sdk-workflow-panel-open"))
+            .put("panel_state_source", state.optString("panel_state_source", "spatial-sdk"))
     if (block != null) {
       foreground
           .put("block_index", block.optInt("block_index", -1))
@@ -524,12 +585,15 @@ internal class KuramotoExperimentStore(private val activity: Activity) {
   private fun JSONObject.toActiveBlock(): ActiveBlockSnapshot {
     val now = System.currentTimeMillis()
     val remaining = max(0L, optLong("deadline_unix_ms", now) - now)
+    val condition = optJSONObject("condition")
     return ActiveBlockSnapshot(
         blockIndex = optInt("block_index", 0),
         blockNumber = optInt("block_number", optInt("block_index", 0) + 1),
         conditionId = optString("condition_id", "none"),
         conditionLabel = optString("condition_label", "none"),
         profileId = optString("profile_id", "none"),
+        movementBaseFrequencyHz = condition?.optDouble("movement_base_frequency_hz", 0.0) ?: 0.0,
+        movementCoupling = condition?.optDouble("movement_coupling", 0.0) ?: 0.0,
         surfaceTargetId = optString("surface_target_id", SURFACES[0].id),
         surfaceLabel = optString("surface_label", SURFACES[0].label),
         deadlineUnixMs = optLong("deadline_unix_ms", 0L),
@@ -655,6 +719,8 @@ internal data class ActiveBlockSnapshot(
     val conditionId: String,
     val conditionLabel: String,
     val profileId: String,
+    val movementBaseFrequencyHz: Double,
+    val movementCoupling: Double,
     val surfaceTargetId: String,
     val surfaceLabel: String,
     val deadlineUnixMs: Long,

@@ -3,17 +3,21 @@ package io.github.mesmerprism.rustyquest.native_renderer;
 import android.app.Activity;
 import android.content.ComponentName;
 import android.content.Intent;
+import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Paint;
 import android.graphics.drawable.GradientDrawable;
 import android.media.projection.MediaProjectionManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.text.Editable;
 import android.text.TextWatcher;
 import android.util.Log;
 import android.view.Gravity;
+import android.view.MotionEvent;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
@@ -198,10 +202,10 @@ public final class ControlPanelActivity extends Activity {
         "fixtures/native-gpu/quest-native-renderer-kuramoto-icosphere-l4-solid-black.profile.json"
     };
     private static final String[] KURAMOTO_CONDITION_IDS = new String[] {
-        "lowLow",
-        "highLow",
-        "lowHigh",
-        "highHigh"
+        "lcle",
+        "lche",
+        "hcle",
+        "hche"
     };
     private static final String[] KURAMOTO_CONDITION_LABELS = new String[] {
         "Low energy / low coherence",
@@ -928,7 +932,7 @@ public final class ControlPanelActivity extends Activity {
         root.addView(buildKuramotoSuiteTabs("kuramoto"));
 
         String savedSurface = readKuramotoPanelSelectionString("surface_target_id", "gpu-replay-hands");
-        String savedCondition = readKuramotoPanelSelectionString("condition", "lowLow");
+        String savedCondition = readKuramotoPanelSelectionString("condition", "lcle");
         kuramotoPanelAutoApplyArmed = false;
         kuramotoSurfaceTarget =
             spinner(KURAMOTO_SURFACE_LABELS, indexOf(KURAMOTO_SURFACE_IDS, savedSurface, 1));
@@ -1382,6 +1386,7 @@ public final class ControlPanelActivity extends Activity {
         final Spinner intensity = ratingSpinner();
         final Spinner engagement = ratingSpinner();
         final EditText notes = editText("", "questionnaire notes", true);
+        final SignaturePadView signature = new SignaturePadView(this);
         root.addView(label("Comfort"));
         root.addView(comfort);
         root.addView(label("Intensity"));
@@ -1390,8 +1395,20 @@ public final class ControlPanelActivity extends Activity {
         root.addView(engagement);
         root.addView(label("Notes"));
         root.addView(notes);
+        root.addView(label("Signature"));
+        root.addView(signature, new LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            dp(180)
+        ));
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
+        Button clearSignature = button("Clear signature");
+        clearSignature.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                signature.clear();
+            }
+        });
         Button submit = button("Submit questionnaire");
         submit.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -1401,7 +1418,8 @@ public final class ControlPanelActivity extends Activity {
                         ratingValue(comfort),
                         ratingValue(intensity),
                         ratingValue(engagement),
-                        notes.getText().toString()
+                        notes.getText().toString(),
+                        signature.toJson()
                     );
                     if (session.isComplete()) {
                         setContentView(buildKuramotoExperimentCompleteView(session));
@@ -1414,6 +1432,7 @@ public final class ControlPanelActivity extends Activity {
                 }
             }
         });
+        row.addView(clearSignature, rowButtonParams());
         row.addView(submit, rowButtonParams());
         root.addView(row);
         status = text("", 13, PANEL_MUTED);
@@ -1466,7 +1485,7 @@ public final class ControlPanelActivity extends Activity {
             updateStatus("Experiment complete.");
             return;
         }
-        String conditionId = block.optString("condition_id", "lowLow");
+        String conditionId = block.optString("condition_id", "lcle");
         if (!submitLiveKuramotoMeshPanelSelectionForCondition(
                 conditionId,
                 session.surfaceTargetId(),
@@ -1511,6 +1530,173 @@ public final class ControlPanelActivity extends Activity {
 
     private int ratingValue(Spinner spinner) {
         return Math.max(1, Math.min(7, spinner.getSelectedItemPosition() + 1));
+    }
+
+    private static final class SignaturePoint {
+        final float x;
+        final float y;
+        final long tMs;
+
+        SignaturePoint(float x, float y, long tMs) {
+            this.x = x;
+            this.y = y;
+            this.tMs = tMs;
+        }
+    }
+
+    private final class SignaturePadView extends View {
+        private final Paint strokePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint backgroundPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint borderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final ArrayList<ArrayList<SignaturePoint>> strokes =
+            new ArrayList<ArrayList<SignaturePoint>>();
+        private ArrayList<SignaturePoint> activeStroke;
+        private long strokeStartMs;
+
+        SignaturePadView(Activity activity) {
+            super(activity);
+            setMinimumHeight(dp(160));
+            setBackgroundColor(Color.TRANSPARENT);
+            strokePaint.setColor(Color.rgb(26, 28, 34));
+            strokePaint.setStrokeWidth(dp(3));
+            strokePaint.setStrokeCap(Paint.Cap.ROUND);
+            strokePaint.setStrokeJoin(Paint.Join.ROUND);
+            strokePaint.setStyle(Paint.Style.STROKE);
+            backgroundPaint.setColor(Color.rgb(246, 247, 250));
+            backgroundPaint.setStyle(Paint.Style.FILL);
+            borderPaint.setColor(Color.rgb(80, 86, 98));
+            borderPaint.setStrokeWidth(dp(1));
+            borderPaint.setStyle(Paint.Style.STROKE);
+        }
+
+        void clear() {
+            strokes.clear();
+            activeStroke = null;
+            invalidate();
+        }
+
+        JSONObject toJson() throws Exception {
+            int width = Math.max(1, getWidth());
+            int height = Math.max(1, getHeight());
+            JSONArray strokeRows = new JSONArray();
+            int pointCount = 0;
+            for (int i = 0; i < strokes.size(); i++) {
+                ArrayList<SignaturePoint> stroke = strokes.get(i);
+                JSONArray points = new JSONArray();
+                for (int j = 0; j < stroke.size(); j++) {
+                    SignaturePoint point = stroke.get(j);
+                    points.put(new JSONObject()
+                        .put("x", clamp01(point.x))
+                        .put("y", clamp01(point.y))
+                        .put("t_ms", Math.max(0L, point.tMs)));
+                    pointCount++;
+                }
+                if (points.length() > 0) {
+                    strokeRows.put(points);
+                }
+            }
+            return new JSONObject()
+                .put("format", "stroke-json-v1")
+                .put("width_px", width)
+                .put("height_px", height)
+                .put("stroke_count", strokeRows.length())
+                .put("point_count", pointCount)
+                .put("is_empty", pointCount == 0)
+                .put("strokes", strokeRows);
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float right = Math.max(1, getWidth() - 1);
+            float bottom = Math.max(1, getHeight() - 1);
+            canvas.drawRect(0, 0, right, bottom, backgroundPaint);
+            for (int i = 0; i < strokes.size(); i++) {
+                drawStroke(canvas, strokes.get(i));
+            }
+            if (activeStroke != null) {
+                drawStroke(canvas, activeStroke);
+            }
+            canvas.drawRect(0, 0, right, bottom, borderPaint);
+        }
+
+        @Override
+        public boolean onTouchEvent(MotionEvent event) {
+            int action = event.getActionMasked();
+            if (action == MotionEvent.ACTION_DOWN) {
+                getParent().requestDisallowInterceptTouchEvent(true);
+                strokeStartMs = SystemClock.uptimeMillis();
+                activeStroke = new ArrayList<SignaturePoint>();
+                addPoint(event);
+                invalidate();
+                return true;
+            }
+            if (action == MotionEvent.ACTION_MOVE) {
+                if (activeStroke == null) {
+                    activeStroke = new ArrayList<SignaturePoint>();
+                    strokeStartMs = SystemClock.uptimeMillis();
+                }
+                for (int i = 0; i < event.getHistorySize(); i++) {
+                    addPoint(event.getHistoricalX(i), event.getHistoricalY(i), event.getHistoricalEventTime(i));
+                }
+                addPoint(event);
+                invalidate();
+                return true;
+            }
+            if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                if (activeStroke != null && activeStroke.size() > 0 && action == MotionEvent.ACTION_UP) {
+                    addPoint(event);
+                    strokes.add(activeStroke);
+                }
+                activeStroke = null;
+                getParent().requestDisallowInterceptTouchEvent(false);
+                invalidate();
+                return true;
+            }
+            return true;
+        }
+
+        private void addPoint(MotionEvent event) {
+            addPoint(event.getX(), event.getY(), event.getEventTime());
+        }
+
+        private void addPoint(float xPx, float yPx, long eventTimeMs) {
+            if (activeStroke == null) {
+                return;
+            }
+            float width = Math.max(1.0f, (float)getWidth());
+            float height = Math.max(1.0f, (float)getHeight());
+            long tMs = Math.max(0L, eventTimeMs - strokeStartMs);
+            activeStroke.add(new SignaturePoint(xPx / width, yPx / height, tMs));
+        }
+
+        private void drawStroke(Canvas canvas, ArrayList<SignaturePoint> stroke) {
+            if (stroke == null || stroke.size() == 0) {
+                return;
+            }
+            float width = Math.max(1.0f, (float)getWidth());
+            float height = Math.max(1.0f, (float)getHeight());
+            SignaturePoint previous = stroke.get(0);
+            if (stroke.size() == 1) {
+                canvas.drawPoint(previous.x * width, previous.y * height, strokePaint);
+                return;
+            }
+            for (int i = 1; i < stroke.size(); i++) {
+                SignaturePoint point = stroke.get(i);
+                canvas.drawLine(
+                    previous.x * width,
+                    previous.y * height,
+                    point.x * width,
+                    point.y * height,
+                    strokePaint
+                );
+                previous = point;
+            }
+        }
+    }
+
+    private static double clamp01(float value) {
+        return Math.max(0.0, Math.min(1.0, (double)value));
     }
 
     private void updateKuramotoSelectionSummary() {
@@ -1658,7 +1844,7 @@ public final class ControlPanelActivity extends Activity {
         );
         int conditionIndex = indexOf(
             KURAMOTO_CONDITION_IDS,
-            selection.optString("condition", "lowLow"),
+            selection.optString("condition", "lcle"),
             0
         );
         double[] drivers = kuramotoDriverValues(surfaceIndex, conditionIndex);
@@ -1733,7 +1919,7 @@ public final class ControlPanelActivity extends Activity {
 
     private void refreshKuramotoMeshPanelFromStatus(boolean userVisible) {
         String surface = readKuramotoPanelSelectionString("surface_target_id", "gpu-replay-hands");
-        String condition = readKuramotoPanelSelectionString("condition", "lowLow");
+        String condition = readKuramotoPanelSelectionString("condition", "lcle");
         boolean previousAutoApply = kuramotoPanelAutoApplyArmed;
         kuramotoPanelAutoApplyArmed = false;
         if (kuramotoSurfaceTarget != null) {

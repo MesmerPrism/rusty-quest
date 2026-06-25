@@ -15,9 +15,10 @@ Expected requirements:
 - Use panel shape, transform, scale, and display options as the experiment
   surface for panel placement/size/DPI testing.
 - Reuse or mirror only the low-rate Kuramoto experiment workflow:
-  participant setup, Polar setup/status placeholder, surface choice, randomized
-  condition order, short timed blocks, questionnaire capture, and JSONL files
-  joinable by participant/session/block/condition/profile/surface IDs.
+  participant setup, direct BLE Polar setup/status, ECG event mirroring,
+  surface choice, randomized condition order, short timed blocks,
+  questionnaire capture, and JSONL files joinable by
+  participant/session/block/condition/profile/surface IDs.
 - Keep native OpenXR/Vulkan hand mesh, particle buffers, and high-rate frames
   out of the Spatial SDK panel command/data path.
 - Treat hand rendering in this first Spatial SDK lane as not expected unless a
@@ -327,6 +328,12 @@ Community/context, not treated as API contract:
   render thread. This mirrors the existing same-APK native panel pattern:
   Android UI requests bounded values, native code owns validation/application,
   and no high-rate particle buffers move through panel JSON.
+- Experiment block condition handoff: block start now maps the randomized
+  condition metadata to the same bounded parameter bridge
+  (`movement_base_frequency_hz` to energy/`driver0`, `movement_coupling` to
+  coherence/`driver1`) and returns the workflow panel to particle view. This
+  preserves native renderer authority: the Spatial panel submits low-rate
+  condition intent and scalar controls only.
 - Foreground coexistence boundary: headset testing shows a separate Spatial
   SDK `AppSystemActivity` can foreground over the native renderer without
   killing the native process, and the native `NativeActivity` can be brought
@@ -1164,6 +1171,192 @@ Community/context, not treated as API contract:
   `first-frame-presented`. The collected evidence has zero `AndroidRuntime`,
   `FATAL`, or `render-failed` matches, and native markers include repeated
   `live-hand-joints-frame-ready` entries.
+- 2026-06-25 workflow panel mode slice: the active path no longer relies on
+  the older skybox/backboard/floor diagnostic scene. `KuramotoSpatialActivity`
+  now treats the native Vulkan surface as the user-facing XR visual surface and
+  adds an explicit Spatial SDK panel mode: the workflow panel can be opened,
+  focused to `0.0;1.1;0.475m`, closed into particle-view mode, and resized by
+  updating `PanelDimensions(Vector2(...))`. Closing the workflow panel toggles
+  `Visible(false)` on `kuramoto_experiment_panel`, leaves
+  `kuramoto_particle_surface_panel` visible/running, and shows the compact
+  `kuramoto_panel_launcher` panel so the user can reopen the questionnaire and
+  parameter UI in-app. Markers report `panelMode`,
+  `workflowPanelVisible`, `launcherPanelVisible`, and
+  `particleLayerRenderContinuity=kept-running`; the validation self-test now
+  exercises the close/reopen transition while the block is running.
+- 2026-06-25 workflow panel mode headset validation:
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260625-212715-panel-mode-native-selftest`
+  installed APK SHA-256
+  `AAF24BAEC90547F8ED47160EA52B8B470E3FBD5793D53BB2CD9273190C50A918`
+  on Quest serial `3487C10H3M017Q`. The self-test closed the workflow panel
+  into particle-view mode (`workflowPanelVisible=false`,
+  `launcherPanelVisible=true`), reopened/focused it
+  (`workflowPanelVisible=true`, `launcherPanelVisible=false`), and kept the
+  particle layer running (`particleLayerRenderContinuity=kept-running`).
+  The same cold launch reported `panelRegistrationCount=3`,
+  `surface-panel-ready`, `particleLayerStarted=true`, native
+  `render-loop-ready`, native `first-frame-presented`, live-hand markers,
+  self-test completion, and zero `AndroidRuntime`, `FATAL`, or
+  `render-failed` matches.
+- 2026-06-25 closer workflow panel plus recorded hand fallback run: after
+  headset feedback that the panel still appeared too far away, the workflow
+  panel distance was reduced by 50% relative to the current Spatial SDK view
+  origin (`z=2.0`). The default visible workflow panel now starts at
+  `z=0.15m` instead of `z=-1.7m`; the focused/open pose uses
+  `0.0;1.1;0.475m` instead of `0.0;1.1;-1.05m`; and the compact launcher uses
+  `z=0.525m` instead of `z=-0.95m`. The APK was rebuilt with the previously
+  validated recorded Quest hand capture at
+  `S:\Work\tmp\quest-handmesh-matter-full-20260601-123844\pulled\hand-recordings\quest-handmesh-1780310333778406776`
+  and `RecordedHandFrameLimit=24`, then installed and launched normally on
+  Quest serial `3487C10H3M017Q`. Evidence directory:
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260625-224134-closer-panel-recorded-hands-launch`.
+  APK SHA-256:
+  `C5D9E0E29760B8B6EA7487B3BE4955489BE7D540079023F07BC31F558DA03851`.
+  Build manifest reports
+  `forced_replay_hand_source_mode=external-recorded-capture-build-env`,
+  `forced_replay_hand_frame_limit=24`, and
+  `spatial_panel_focus_pose_meters=0.0;1.1;0.475`. Runtime markers report
+  `panelZ=0.15`, `panelRegistrationCount=3`, `surfaceOverscanScale=1.3500`,
+  `render-loop-ready`, `first-frame-presented`, and native
+  `gpuReplayHandSourceKind=external-recorded-capture-build-env` with
+  `leftReplayHandFrameCount=24`, `rightReplayHandFrameCount=24`,
+  `leftReplayHandVerticesPerFrame=6888`, and
+  `rightReplayHandVerticesPerFrame=6888`. Failure marker counts were zero for
+  `AndroidRuntime`, `FATAL`, and `render-failed`. Process `18454` was left
+  running for headset inspection.
+- 2026-06-25 Spatial Polar panel slice: the Spatial SDK workflow panel now
+  embeds a direct BLE Polar H10 panel adapted from the native 2D control-panel
+  route. `KuramotoSpatialActivity` owns the `PolarSensorPanel` lifetime,
+  forwards BLE permission results, and mirrors decoded Polar stream events
+  into `KuramotoExperimentStore.appendPolarEvent(...)`. The store records the
+  `spatial-sdk-direct-ble-panel` lane in run metadata, appends all Polar stream
+  rows to `polar_events.jsonl`, mirrors `stream.polar_h10.ecg` rows to
+  `ecg_events.jsonl`, and attaches the current Kuramoto experiment envelope to
+  every mirrored event. The Android manifest now declares Bluetooth scan/connect
+  and legacy location/Bluetooth permissions. This is still a low-rate
+  experiment-record adapter: Polar HR/RR, ACC, ECG, and device-status rows do
+  not feed the native Vulkan particle renderer or shader parameter queue.
+- 2026-06-25 live Polar validation route: added
+  `RUN_POLAR_LIVE_VALIDATION` and
+  `tools/Invoke-KuramotoSpatialSdkAndroidPolarLive.ps1` as the real H10
+  scan/connect/start-ECG evidence lane. The action creates a participant
+  session, keeps the Spatial workflow panel as UI authority, selects ECG mode,
+  scans, auto-connects the best discovered Polar device, requests ECG, and
+  logs `polar-live-validation` completion with `ecgReceiving=true` only after
+  decoded frames arrive. The wrapper installs/pregrants, launches the action,
+  captures PID-scoped logcat, root `polar_sensor_status.json` and
+  `polar_stream_events.jsonl`, participant `polar_events.jsonl` and
+  `ecg_events.jsonl`, and fails unless real ECG frame markers and mirrored ECG
+  rows are present. First strict live H10 headset evidence is recorded below.
+- 2026-06-25 strict live Polar H10 validation:
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260625-221738-polar-live`
+  installed APK SHA
+  `BC3529DBBAE3EF40508C8F68831F82C5B06E80B1C5C3EDDCC01E500ADE107D1D`
+  on Quest 3S serial `3487C10H3M017Q` with
+  `allow_missing_live_polar=false`. The wrapper summary passed after clearing
+  stale app-private live Polar marker files (`exit=0` for
+  `polar_sensor_status.json`, `polar_stream_events.jsonl`, and
+  `kuramoto_spatial_activity_markers.log`). The run scanned one Polar device,
+  auto-selected Polar H10 `A0:9E:1A:C7:74:56`, connected, reached
+  `pmd-ready`, started ECG, and captured durable `ecg-frame` markers. The
+  validation completion marker reported `ecgReceiving=true`,
+  `discoveredDeviceCount=1`, and
+  `ECG_logging_active_38_frames_2774_samples_mirrored_to_participant_files`;
+  PID/tag logcat continued to 52 frames and 3796 samples before stop. The
+  wrapper also captured root Polar stream rows, participant `polar_events.jsonl`
+  and `ecg_events.jsonl` ECG rows, a non-empty app-private ECG event file, and
+  zero `AndroidRuntime`, `FATAL`, or `render-failed` matches.
+- 2026-06-25 panel-first experiment flow alignment: the Spatial SDK lane now
+  mirrors the native app's operator flow. Cold launch keeps the workflow panel
+  visible, resets normal launcher starts to participant setup, and hides the
+  Vulkan particle surface entity; validation intents still create their own
+  sessions. The explicit panel `Start Block` action selects one of the
+  available surface modes (`real-hands`, `gpu-replay-hands`, or `icosphere`),
+  closes the panel, starts the next randomized block, and then hands bounded
+  condition scalars to the native Vulkan particle queue. When a block duration
+  elapses, the panel is focused again for the questionnaire. Questionnaire
+  submission writes the row and advances to `ready_next_block` or `complete`;
+  it no longer starts the next block automatically. The native surface can
+  remain registered for renderer continuity, but visual ownership now switches
+  like the native panel-first workflow.
+- 2026-06-26 headlocked workflow panel mode: the workflow panel is now a
+  viewer-relative Spatial SDK UI surface by default while the native Vulkan
+  surface remains the particle/projection authority. `KuramotoSpatialActivity`
+  recomputes the panel pose from `Scene.getViewerPose()` on scene ticks when
+  the panel is open, using viewer-right `offset_x_m`, viewer-up `offset_y_m`,
+  and viewer-forward `distance_meters`. The default app pose is
+  `0.0;0.0;1.40m`, with default panel width `1.20m` and headlocked scale
+  `0.65`, plus a panel-side toggle to return to the older world-locked pose
+  when needed. Runtime tuning uses
+  `tools/Set-KuramotoSpatialPanelHeadlock.ps1` and the properties
+  `debug.rustyquest.kuramoto_spatial.panel.headlocked.enabled`,
+  `.offset_x_m`, `.offset_y_m`, `.distance_meters`, `.width_meters`,
+  `.height_meters`, `.scale`, `.joystick.enabled`,
+  `.joystick.translate_rate_mps`, `.joystick.distance_rate_mps`, and
+  `.joystick.scale_rate_per_second`. Android generic-motion controller input
+  maps left stick to panel x/y offset, right-stick y to distance, and
+  right-stick x to scale. Every hotload or joystick adjustment persists
+  `files/kuramoto_spatial_panel_headlock_tuning.json`, so a headset-tuned
+  offset can be read back and promoted to defaults. If Quest controller axes do
+  not route through Android generic motion on a target runtime, the next
+  fallback should be a native OpenXR action-polling bridge, not moving workflow
+  panel authority into the Vulkan renderer.
+- 2026-06-26 remote UI action surface and debug controller reopen: added
+  `io.github.mesmerprism.rustyquest.kuramoto_spatial.action.RUN_UI_COMMAND`
+  plus `tools/Invoke-KuramotoSpatialSdkAndroidUiAction.ps1` so CLI validation
+  can exercise panel-open, panel-close, panel-reset, headlock toggles, placement
+  adjustment, panel resize, particle-control sliders, participant reset/begin,
+  Polar setup save, surface select, start-block, surface-target activation, and
+  questionnaire submit through the same handlers as the Compose panel. A
+  dedicated
+  `io.github.mesmerprism.rustyquest.kuramoto_spatial.action.RUN_SURFACE_TARGET`
+  path starts a selected surface target and leaves the app in particle view
+  instead of running the self-test panel reopen. For debugging, right-controller
+  primary input now has three reopen routes: Spatial SDK `Controller` component
+  polling with `ButtonBits.ButtonA`, Android `KEYCODE_BUTTON_A`/`KEYCODE_BUTTON_1`
+  on the down edge, and an Android generic-motion button fallback. ADB keyevent
+  tests can prove only the Android key route; physical Quest controller proof
+  should be checked with the `inputSource=spatial-sdk-controller-component`
+  marker while the headset is running.
+- 2026-06-25 Spatial experiment condition handoff slice: the panel-controlled
+  block start now returns an active block snapshot with
+  `movement_base_frequency_hz` and `movement_coupling`, applies those values to
+  native surface-particle `driver0`/`driver1` through
+  `nativeUpdateSurfaceParticleParameters(...)` after the workflow panel has
+  closed to particle view with source `experiment-block-start`. The validation
+  self-test also emits
+  `self-test-experiment-block-start` handoff markers.
+- 2026-06-25 condition handoff headset validation:
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260625-214448-condition-handoff-selftest`
+  installed APK SHA
+  `22ED9E2A10D07279B9983129EB4EAAA61187FAC8DA2C3DC2672D38543DE51E3F`
+  on Quest 3S serial `3487C10H3M017Q`. The self-test logged
+  `status=experiment-condition-parameter-handoff`,
+  `source=self-test-experiment-block-start`, `conditionId=lche`,
+  `driver0Value01=0.8500`, `driver1Value01=0.1500`,
+  `panelMustNotBeAuthority=true`, and
+  `rendererAuthority=native-vulkan-wsi-surface-panel`. The summary also reports
+  panel close/reopen, `panelRegistrationCount=3`, surface start/ready,
+  `render-loop-ready`, `first-frame-presented`, live-hand markers,
+  `self-test-complete`, and zero `AndroidRuntime`, `FATAL`, or `render-failed`
+  matches.
+- 2026-06-25 Spatial SDK headset self-test wrapper: added
+  `tools/Invoke-KuramotoSpatialSdkAndroidSelfTest.ps1` as the durable
+  serial-scoped validation route for this lane. It installs the built APK unless
+  `-SkipInstall` is set, launches `RUN_WORKFLOW_SELF_TEST`, captures
+  PID-scoped logcat, app-private `kuramoto_experiment_session.json` and session
+  JSONL files, writes `evidence-summary.json`, and rejects missing
+  panel/particle/condition/Polar-panel evidence markers.
+- 2026-06-25 wrapper headset validation:
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260625-215438-wrapper-selftest`
+  installed APK SHA
+  `22ED9E2A10D07279B9983129EB4EAAA61187FAC8DA2C3DC2672D38543DE51E3F`
+  on Quest 3S serial `3487C10H3M017Q`. The wrapper summary passed with all
+  required panel, condition handoff, Polar setup/panel creation, particle
+  startup, `render-loop-ready`, `first-frame-presented`, live-hand,
+  questionnaire, and app-private session JSON/JSONL evidence present, including
+  the empty ECG event file captured as a file-presence artifact. Failure marker
+  counts were zero for `AndroidRuntime`, `FATAL`, and `render-failed`.
 - 2026-06-25 live hand raw-to-scene transform headset run: rebuilt with the
   full two-hand recorded capture at
   `S:\Work\tmp\quest-handmesh-matter-full-20260601-123844\pulled\hand-recordings\quest-handmesh-1780310333778406776`
@@ -1270,14 +1463,20 @@ dc9d645643b19308088ba54e503580b52b272eb72b18159fba9e42465379f83d
 Headset validation command shape:
 
 ```powershell
-$adb = "$env:ANDROID_HOME\platform-tools\adb.exe"
 $serial = "3487C10H3M017Q"
-$pkg = "io.github.mesmerprism.rustyquest.kuramoto_spatial"
-& $adb -s $serial install -r -d -g target\kuramoto-spatial-sdk-android\rusty-quest-kuramoto-spatial-sdk.apk
-& $adb -s $serial shell am start -W -n "$pkg/.KuramotoSpatialActivity" `
-  -a io.github.mesmerprism.rustyquest.kuramoto_spatial.action.RUN_WORKFLOW_SELF_TEST `
-  --es participant_id codex-spatial-native-probe-20260625 `
-  --es surface_target_id real-hands
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-KuramotoSpatialSdkAndroidSelfTest.ps1 `
+  -Serial $serial `
+  -ParticipantId codex-spatial-native-probe-20260625 `
+  -SurfaceTargetId real-hands
+```
+
+Live Polar H10 validation command shape:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-KuramotoSpatialSdkAndroidPolarLive.ps1 `
+  -Serial $serial `
+  -ParticipantId codex-spatial-polar-live-20260625 `
+  -SurfaceTargetId real-hands
 ```
 
 Live raw-to-scene hand transform tuning while the APK remains foregrounded:
