@@ -258,6 +258,30 @@ The old skybox/backboard diagnostic scene is no longer part of this lane: the
 Vulkan carrier surface is the user-facing XR visual surface, and the Spatial
 SDK panels are low-rate workflow controls.
 
+External OpenXR swapchain wrapper probe:
+
+- gated by `debug.rustyquest.spatial.external_swapchain_probe`, off by
+  default, with optional
+  `debug.rustyquest.spatial.external_swapchain_probe.cycles` and
+  `debug.rustyquest.spatial.external_swapchain_probe.cycle_ms` lifecycle
+  controls;
+- creates a known-good SDK `SceneSwapchain`, records `handle`,
+  `nativeHandle()`, `platformHandle()`, and `getSurface()` validity, then tries
+  `SceneSwapchain(...)` wrapping for each handle class;
+- creates a tiny native mono `XrSwapchain` against the SDK-owned OpenXR
+  instance/session without calling `xrWaitFrame`, `xrBeginFrame`, or
+  `xrEndFrame`, enumerates/acquires/waits/releases one image, and returns the
+  raw handle for a guarded Kotlin wrapper/layer attempt;
+- 2026-06-26 Quest 3S result: the SDK-created `handle` and `nativeHandle`
+  rewrap, `platformHandle()` is `0`, native `xrCreateSwapchain` succeeds and
+  enumerates three images, and the raw external wrapper exposes matching
+  `handle`/`nativeHandle`; however `getSurface()` on the raw wrapper crashes
+  inside the SDK, `SceneQuadLayer` rejects the wrapper with a native assert,
+  and `SceneSwapchain.destroy()` is skipped for raw wrappers while native
+  `xrDestroySwapchain` owns cleanup. Treat raw external `XrSwapchain` display
+  through `SceneQuadLayer` as blocked unless Meta documents a supported
+  external-swapchain contract.
+
 Build:
 
 ```powershell

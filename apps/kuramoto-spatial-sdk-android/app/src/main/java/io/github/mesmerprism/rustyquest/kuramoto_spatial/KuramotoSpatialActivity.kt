@@ -74,6 +74,9 @@ import com.meta.spatial.runtime.PanelConfigOptions
 import com.meta.spatial.runtime.ReferenceSpace
 import com.meta.spatial.runtime.SamplerConfig
 import com.meta.spatial.runtime.Scene
+import com.meta.spatial.runtime.SceneObject
+import com.meta.spatial.runtime.SceneQuadLayer
+import com.meta.spatial.runtime.SceneSwapchain
 import com.meta.spatial.runtime.StereoMode
 import com.meta.spatial.toolkit.AppSystemActivity
 import com.meta.spatial.toolkit.AvatarSystem
@@ -138,6 +141,13 @@ class KuramotoSpatialActivity : AppSystemActivity() {
   private var lastSpatialControllerActiveCount = -1
   private var androidControllerPrimaryKeyDown = false
   private var androidControllerPrimaryMotionDown = false
+  private var externalSwapchainProbeStarted = false
+  private var externalSwapchainProbeLayer: SceneQuadLayer? = null
+  private var externalSwapchainProbeSceneObject: SceneObject? = null
+  private var externalSwapchainProbeWrappedSwapchain: SceneSwapchain? = null
+  private var externalSwapchainProbeExternalHandle = 0L
+  private val externalSwapchainProbeSdkWrapRetainers = mutableListOf<SceneSwapchain>()
+  private val externalSwapchainProbeExternalWrapRetainers = mutableListOf<SceneSwapchain>()
 
   override fun registerFeatures(): List<SpatialFeature> {
     return listOf(
@@ -255,6 +265,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     updateWorkflowPanelHeadlockFromViewer(reason = "vr-ready", forceLog = true)
     updateParticleLayerProjectionFromViewer(reason = "vr-ready", forceLog = true)
     logNativeInteropProbe(phase = "vr-ready", probeSurface = true)
+    runExternalSwapchainProbeIfRequested("vr-ready")
   }
 
   override fun onSceneTick() {
@@ -275,6 +286,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
   }
 
   override fun onDestroy() {
+    cleanupExternalSwapchainProbe("activity-destroy")
     polarSensorPanel?.stop()
     polarSensorPanel = null
     stopNativeSurfaceParticleLayer()
@@ -650,6 +662,406 @@ class KuramotoSpatialActivity : AppSystemActivity() {
         .also {
           panelSurface?.destroy()
         }
+  }
+
+  private fun runExternalSwapchainProbeIfRequested(reason: String) {
+    if (externalSwapchainProbeStarted) {
+      return
+    }
+    if (readOptionalBooleanSystemProperty(EXTERNAL_SWAPCHAIN_PROBE_PROPERTY) != true) {
+      return
+    }
+    externalSwapchainProbeStarted = true
+    val cycles =
+        readIntSystemProperty(
+            EXTERNAL_SWAPCHAIN_PROBE_CYCLES_PROPERTY,
+            EXTERNAL_SWAPCHAIN_PROBE_DEFAULT_CYCLES,
+            1,
+            EXTERNAL_SWAPCHAIN_PROBE_MAX_CYCLES,
+        )
+    val cycleMs =
+        readLongSystemProperty(
+            EXTERNAL_SWAPCHAIN_PROBE_CYCLE_MS_PROPERTY,
+            EXTERNAL_SWAPCHAIN_PROBE_DEFAULT_CYCLE_MS,
+            EXTERNAL_SWAPCHAIN_PROBE_MIN_CYCLE_MS,
+            EXTERNAL_SWAPCHAIN_PROBE_MAX_CYCLE_MS,
+        )
+    marker(
+        "channel=external-xr-swapchain-wrap-probe status=start externalSwapchainProbe=true " +
+            "reason=${markerToken(reason)} cycles=$cycles cycleMs=$cycleMs " +
+            "debugProperty=$EXTERNAL_SWAPCHAIN_PROBE_PROPERTY rendererAuthority=spatial-sdk-openxr-session " +
+            "nativeFrameLoop=false morphovisionStack=false camera2Stack=false privateShaderStack=false"
+    )
+    Handler(Looper.getMainLooper()).post { runExternalSwapchainProbeCycle(1, cycles, cycleMs) }
+  }
+
+  private fun runExternalSwapchainProbeCycle(
+      cycleIndex: Int,
+      cycleCount: Int,
+      cycleMs: Long,
+  ) {
+    cleanupExternalSwapchainProbe("cycle-$cycleIndex-pre-cleanup")
+    if (!nativeReceiptLibraryLoaded) {
+      marker(
+          "channel=external-xr-swapchain-wrap-probe status=complete externalSwapchainProbe=true " +
+              "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=none " +
+              "xrCreateSwapchainResult=library-unavailable wrappedExternalSwapchain=false " +
+              "sceneQuadLayerCreated=false swapchainImagesEnumerated=0 nativeCanRenderIntoImages=false " +
+              "visiblePatternConfirmed=false destroyOwnership=unknown deviceLost=false runtimeCrash=false " +
+              "error=${markerToken(nativeReceiptLibraryError)}"
+      )
+      return
+    }
+
+    val probe = SpatialNativeInteropProbe.capture(scene)
+    if (!probe.openXrInstanceHandleNonZero ||
+        !probe.openXrSessionHandleNonZero ||
+        !probe.openXrGetInstanceProcAddrHandleNonZero) {
+      marker(
+          "channel=external-xr-swapchain-wrap-probe status=complete externalSwapchainProbe=true " +
+              "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=none " +
+              "xrCreateSwapchainResult=missing-openxr-handles wrappedExternalSwapchain=false " +
+              "sceneQuadLayerCreated=false swapchainImagesEnumerated=0 nativeCanRenderIntoImages=false " +
+              "visiblePatternConfirmed=false destroyOwnership=unknown deviceLost=false runtimeCrash=false " +
+              "openXrInstanceHandleNonZero=${probe.openXrInstanceHandleNonZero} " +
+              "openXrSessionHandleNonZero=${probe.openXrSessionHandleNonZero} " +
+              "openXrGetInstanceProcAddrHandleNonZero=${probe.openXrGetInstanceProcAddrHandleNonZero}"
+      )
+      return
+    }
+
+    val sdkHandleWrapMode = probeSdkSceneSwapchainHandleWrapping(cycleIndex)
+    val externalHandle =
+        runCatching {
+              nativeCreateExternalOpenXrSwapchain(
+                  probe.openXrInstanceHandle,
+                  probe.openXrSessionHandle,
+                  probe.openXrGetInstanceProcAddrHandle,
+                  EXTERNAL_SWAPCHAIN_PROBE_WIDTH_PX,
+                  EXTERNAL_SWAPCHAIN_PROBE_HEIGHT_PX,
+              )
+            }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=external-xr-swapchain-wrap-probe status=native-create-call-failed " +
+                      "externalSwapchainProbe=true cycleIndex=$cycleIndex " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              0L
+            }
+    externalSwapchainProbeExternalHandle = externalHandle
+    if (externalHandle == 0L) {
+      marker(
+          "channel=external-xr-swapchain-wrap-probe status=complete externalSwapchainProbe=true " +
+              "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=$sdkHandleWrapMode " +
+              "xrCreateSwapchainResult=failed-or-zero-handle wrappedExternalSwapchain=false " +
+              "sceneQuadLayerCreated=false swapchainImagesEnumerated=0 nativeCanRenderIntoImages=false " +
+              "visiblePatternConfirmed=false destroyOwnership=unknown deviceLost=false runtimeCrash=false"
+      )
+      return
+    }
+
+    val wrapped =
+        runCatching { SceneSwapchain(externalHandle) }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=external-xr-swapchain-wrap-probe status=external-wrap-failed " +
+                      "externalSwapchainProbe=true cycleIndex=$cycleIndex externalHandle=$externalHandle " +
+                      "sdkHandleWrapMode=$sdkHandleWrapMode wrappedExternalSwapchain=false " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              val ownership = cleanupExternalSwapchainProbe("cycle-$cycleIndex-wrap-failed")
+              marker(
+                  "channel=external-xr-swapchain-wrap-probe status=complete externalSwapchainProbe=true " +
+                      "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=$sdkHandleWrapMode " +
+                      "xrCreateSwapchainResult=success wrappedExternalSwapchain=false " +
+                      "sceneQuadLayerCreated=false swapchainImagesEnumerated=see-native-marker " +
+                      "nativeCanRenderIntoImages=false visiblePatternConfirmed=false " +
+                      "destroyOwnership=$ownership deviceLost=false runtimeCrash=false"
+              )
+              return
+            }
+    externalSwapchainProbeWrappedSwapchain = wrapped
+    marker(
+        "channel=external-xr-swapchain-wrap-probe status=external-wrap-result " +
+            "externalSwapchainProbe=true cycleIndex=$cycleIndex externalHandle=$externalHandle " +
+            "wrappedExternalSwapchain=true wrapperHandle=${wrapped.handle} " +
+            "wrapperNativeHandle=${wrapped.nativeHandle()} wrapperPlatformHandle=${wrapped.platformHandle()} " +
+            "wrapperSurfaceValid=false wrapperSurfaceProbe=skipped-raw-external-getSurface-crashes " +
+            "platformHandleMatchesExternal=${wrapped.platformHandle() == externalHandle} " +
+            "nativeHandleMatchesExternal=${wrapped.nativeHandle() == externalHandle} " +
+            "handleMatchesExternal=${wrapped.handle == externalHandle}"
+    )
+
+    val layerCreated =
+        runCatching {
+              val pose = externalSwapchainProbePoseFromViewer()
+              val entity = Entity.create(Transform(pose), Scale(Vector3(1.0f, 1.0f, 1.0f)), Visible(true))
+              val sceneObject = SceneObject(scene, entity)
+              scene.addObject(sceneObject)
+              externalSwapchainProbeSceneObject = sceneObject
+              val layer =
+                  SceneQuadLayer(
+                      scene,
+                      wrapped,
+                      EXTERNAL_SWAPCHAIN_PROBE_WIDTH_METERS,
+                      EXTERNAL_SWAPCHAIN_PROBE_HEIGHT_METERS,
+                      0.5f,
+                      0.5f,
+                      StereoMode.None,
+                      sceneObject,
+                  )
+              layer.setZIndex(EXTERNAL_SWAPCHAIN_PROBE_Z_INDEX)
+              externalSwapchainProbeLayer = layer
+              marker(
+                  "channel=external-xr-swapchain-wrap-probe status=layer-created " +
+                      "externalSwapchainProbe=true cycleIndex=$cycleIndex sceneQuadLayerCreated=true " +
+                      "widthMeters=$EXTERNAL_SWAPCHAIN_PROBE_WIDTH_METERS " +
+                      "heightMeters=$EXTERNAL_SWAPCHAIN_PROBE_HEIGHT_METERS " +
+                      "stereoMode=None poseSource=Scene.getViewerPose " +
+                      "layerPositionM=${vectorMarker(pose.t)} layerQuaternion=${quaternionMarker(pose.q)}"
+              )
+              true
+            }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=external-xr-swapchain-wrap-probe status=layer-create-failed " +
+                      "externalSwapchainProbe=true cycleIndex=$cycleIndex sceneQuadLayerCreated=false " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              false
+            }
+
+    marker(
+        "channel=external-xr-swapchain-wrap-probe status=cycle-visible externalSwapchainProbe=true " +
+            "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=$sdkHandleWrapMode " +
+            "xrCreateSwapchainResult=success wrappedExternalSwapchain=true " +
+            "sceneQuadLayerCreated=$layerCreated swapchainImagesEnumerated=see-native-marker " +
+            "nativeCanRenderIntoImages=false visiblePatternConfirmed=false " +
+            "renderBlockReason=missing-spatial-sdk-vulkan-device-queue " +
+            "destroyOwnership=pending deviceLost=false runtimeCrash=false"
+    )
+    if (!layerCreated) {
+      val ownership = cleanupExternalSwapchainProbe("cycle-$cycleIndex-layer-create-failed")
+      marker(
+          "channel=external-xr-swapchain-wrap-probe status=complete externalSwapchainProbe=true " +
+              "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=$sdkHandleWrapMode " +
+              "xrCreateSwapchainResult=success wrappedExternalSwapchain=true sceneQuadLayerCreated=false " +
+              "swapchainImagesEnumerated=see-native-marker nativeCanRenderIntoImages=false " +
+              "visiblePatternConfirmed=false destroyOwnership=$ownership deviceLost=false " +
+              "runtimeCrash=false lifecycleTortureSkipped=scene-quad-layer-create-failed"
+      )
+      return
+    }
+    Handler(Looper.getMainLooper())
+        .postDelayed(
+            {
+              val ownership = cleanupExternalSwapchainProbe("cycle-$cycleIndex-destroy")
+              marker(
+                  "channel=external-xr-swapchain-wrap-probe status=cycle-complete " +
+                      "externalSwapchainProbe=true cycleIndex=$cycleIndex cycleCount=$cycleCount " +
+                      "sdkHandleWrapMode=$sdkHandleWrapMode xrCreateSwapchainResult=success " +
+                      "wrappedExternalSwapchain=true sceneQuadLayerCreated=$layerCreated " +
+                      "swapchainImagesEnumerated=see-native-marker nativeCanRenderIntoImages=false " +
+                      "visiblePatternConfirmed=false destroyOwnership=$ownership " +
+                      "deviceLost=false runtimeCrash=false"
+              )
+              if (cycleIndex < cycleCount) {
+                Handler(Looper.getMainLooper())
+                    .postDelayed(
+                        { runExternalSwapchainProbeCycle(cycleIndex + 1, cycleCount, cycleMs) },
+                        EXTERNAL_SWAPCHAIN_PROBE_INTER_CYCLE_MS,
+                    )
+              } else {
+                marker(
+                    "channel=external-xr-swapchain-wrap-probe status=complete " +
+                        "externalSwapchainProbe=true cycleCount=$cycleCount sdkHandleWrapMode=$sdkHandleWrapMode " +
+                        "xrCreateSwapchainResult=success wrappedExternalSwapchain=true " +
+                        "sceneQuadLayerCreated=$layerCreated swapchainImagesEnumerated=see-native-marker " +
+                        "nativeCanRenderIntoImages=false visiblePatternConfirmed=false " +
+                        "destroyOwnership=$ownership deviceLost=false runtimeCrash=false"
+                )
+              }
+            },
+            cycleMs,
+        )
+  }
+
+  private fun probeSdkSceneSwapchainHandleWrapping(cycleIndex: Int): String {
+    val sdkSwap =
+        runCatching { SceneSwapchain.create(EXTERNAL_SWAPCHAIN_PROBE_WIDTH_PX, EXTERNAL_SWAPCHAIN_PROBE_HEIGHT_PX, 1) }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=external-xr-swapchain-wrap-probe status=sdk-swapchain-create-failed " +
+                      "externalSwapchainProbe=true cycleIndex=$cycleIndex sdkHandleWrapMode=none " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")}"
+              )
+              return "none"
+            }
+    val sdkSurfaceValid = runCatching { sdkSwap.getSurface()?.isValid == true }.getOrDefault(false)
+    marker(
+        "channel=external-xr-swapchain-wrap-probe status=sdk-swapchain-created " +
+            "externalSwapchainProbe=true cycleIndex=$cycleIndex handle=${sdkSwap.handle} " +
+            "nativeHandle=${sdkSwap.nativeHandle()} platformHandle=${sdkSwap.platformHandle()} " +
+            "surfaceValid=$sdkSurfaceValid"
+    )
+    var firstSuccess = "none"
+    listOf(
+            "handle" to sdkSwap.handle,
+            "nativeHandle" to sdkSwap.nativeHandle(),
+            "platformHandle" to sdkSwap.platformHandle(),
+        )
+        .forEach { (label, handle) ->
+          if (handle == 0L) {
+            marker(
+                "channel=external-xr-swapchain-wrap-probe status=sdk-handle-wrap-result " +
+                    "externalSwapchainProbe=true cycleIndex=$cycleIndex handleLabel=$label " +
+                    "sourceHandle=$handle wrapped=false error=zero-handle sdkWrapDestroySkipped=true"
+            )
+            return@forEach
+          }
+          runCatching { SceneSwapchain(handle) }
+              .onSuccess { wrapper ->
+                externalSwapchainProbeSdkWrapRetainers.add(wrapper)
+                if (firstSuccess == "none") {
+                  firstSuccess = label
+                }
+                val wrapperSurfaceValid =
+                    runCatching { wrapper.getSurface()?.isValid == true }.getOrDefault(false)
+                marker(
+                    "channel=external-xr-swapchain-wrap-probe status=sdk-handle-wrap-result " +
+                        "externalSwapchainProbe=true cycleIndex=$cycleIndex handleLabel=$label " +
+                        "sourceHandle=$handle wrapped=true wrapperHandle=${wrapper.handle} " +
+                        "wrapperNativeHandle=${wrapper.nativeHandle()} " +
+                        "wrapperPlatformHandle=${wrapper.platformHandle()} " +
+                        "wrapperSurfaceValid=$wrapperSurfaceValid sdkWrapDestroySkipped=true"
+                )
+              }
+              .onFailure { throwable ->
+                marker(
+                    "channel=external-xr-swapchain-wrap-probe status=sdk-handle-wrap-result " +
+                        "externalSwapchainProbe=true cycleIndex=$cycleIndex handleLabel=$label " +
+                        "sourceHandle=$handle wrapped=false " +
+                        "error=${markerToken(throwable.javaClass.simpleName)} " +
+                        "message=${markerToken(throwable.message ?: "none")} sdkWrapDestroySkipped=true"
+                )
+              }
+        }
+    runCatching { sdkSwap.destroy() }
+        .onFailure { throwable ->
+          marker(
+              "channel=external-xr-swapchain-wrap-probe status=sdk-swapchain-destroy-failed " +
+                  "externalSwapchainProbe=true cycleIndex=$cycleIndex " +
+                  "error=${markerToken(throwable.javaClass.simpleName)}"
+          )
+        }
+    marker(
+        "channel=external-xr-swapchain-wrap-probe status=sdk-handle-wrap-summary " +
+            "externalSwapchainProbe=true cycleIndex=$cycleIndex sdkHandleWrapMode=$firstSuccess"
+    )
+    return firstSuccess
+  }
+
+  private fun cleanupExternalSwapchainProbe(reason: String): String {
+    var layerDestroyed = externalSwapchainProbeLayer == null
+    var sceneObjectDestroyed = externalSwapchainProbeSceneObject == null
+    var wrapperDestroyed = externalSwapchainProbeWrappedSwapchain == null
+    var wrapperDestroySkipped = false
+    var nativeDestroyResult = "not-run"
+    var destroyOwnership = "unknown"
+
+    externalSwapchainProbeLayer?.let { layer ->
+      layerDestroyed =
+          runCatching {
+                layer.destroy()
+                true
+              }
+              .getOrDefault(false)
+    }
+    externalSwapchainProbeLayer = null
+
+    externalSwapchainProbeSceneObject?.let { sceneObject ->
+      sceneObjectDestroyed =
+          runCatching {
+                scene.destroyObject(sceneObject)
+                true
+              }
+              .recoverCatching {
+                sceneObject.destroy()
+                true
+              }
+              .getOrDefault(false)
+    }
+    externalSwapchainProbeSceneObject = null
+
+    externalSwapchainProbeWrappedSwapchain?.let { wrapped ->
+      externalSwapchainProbeExternalWrapRetainers.add(wrapped)
+      wrapperDestroyed = false
+      wrapperDestroySkipped = true
+    }
+    externalSwapchainProbeWrappedSwapchain = null
+
+    val externalHandle = externalSwapchainProbeExternalHandle
+    if (externalHandle != 0L && nativeReceiptLibraryLoaded) {
+      val probe = SpatialNativeInteropProbe.capture(scene)
+      val destroyCode =
+          runCatching {
+                nativeDestroyExternalOpenXrSwapchain(
+                    probe.openXrInstanceHandle,
+                    probe.openXrGetInstanceProcAddrHandle,
+                    externalHandle,
+                )
+              }
+              .getOrElse { throwable ->
+                marker(
+                    "channel=external-xr-swapchain-wrap-probe status=native-destroy-call-failed " +
+                        "externalSwapchainProbe=true reason=${markerToken(reason)} " +
+                        "externalHandle=$externalHandle error=${markerToken(throwable.javaClass.simpleName)}"
+                )
+                Int.MIN_VALUE
+              }
+      nativeDestroyResult = destroyCode.toString()
+      destroyOwnership =
+          when (destroyCode) {
+            0 -> "native"
+            OPENXR_ERROR_HANDLE_INVALID -> "sdk"
+            else -> "unknown"
+          }
+    }
+    externalSwapchainProbeExternalHandle = 0L
+    if (!layerDestroyed ||
+        !sceneObjectDestroyed ||
+        !wrapperDestroyed ||
+        nativeDestroyResult != "not-run") {
+      marker(
+          "channel=external-xr-swapchain-wrap-probe status=destroyed externalSwapchainProbe=true " +
+              "reason=${markerToken(reason)} layerDestroyed=$layerDestroyed " +
+              "sceneObjectDestroyed=$sceneObjectDestroyed wrapperDestroyed=$wrapperDestroyed " +
+              "wrapperDestroySkipped=$wrapperDestroySkipped " +
+              "nativeDestroyResult=$nativeDestroyResult destroyOwnership=$destroyOwnership " +
+              "deviceLost=false runtimeCrash=false"
+      )
+    }
+    return destroyOwnership
+  }
+
+  @OptIn(SpatialSDKExperimentalAPI::class)
+  private fun externalSwapchainProbePoseFromViewer(): Pose {
+    val viewerPose = runCatching { scene.getViewerPose() }.getOrNull()
+    if (viewerPose == null) {
+      return Pose(
+          Vector3(0.0f, 1.20f, -EXTERNAL_SWAPCHAIN_PROBE_DISTANCE_METERS),
+          Quaternion.fromDirection(Vector3(0.0f, 0.0f, -1.0f), Vector3(0.0f, 1.0f, 0.0f)),
+      )
+    }
+    val forward = viewerPose.forward().normalizedOr(Vector3(0.0f, 0.0f, -1.0f))
+    val up = viewerPose.up().normalizedOr(Vector3(0.0f, 1.0f, 0.0f))
+    val center = viewerPose.t + forward * EXTERNAL_SWAPCHAIN_PROBE_DISTANCE_METERS
+    return Pose(center, Quaternion.fromDirection(forward, up))
   }
 
   private fun startNativeSurfaceParticleLayer(surface: AndroidSurface) {
@@ -1644,6 +2056,26 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     return if (parsed != null && parsed.isFinite()) parsed.coerceIn(min, max) else fallback
   }
 
+  private fun readIntSystemProperty(
+      propertyName: String,
+      fallback: Int,
+      min: Int,
+      max: Int,
+  ): Int {
+    val parsed = readSystemProperty(propertyName).toIntOrNull()
+    return parsed?.coerceIn(min, max) ?: fallback
+  }
+
+  private fun readLongSystemProperty(
+      propertyName: String,
+      fallback: Long,
+      min: Long,
+      max: Long,
+  ): Long {
+    val parsed = readSystemProperty(propertyName).toLongOrNull()
+    return parsed?.coerceIn(min, max) ?: fallback
+  }
+
   private fun readOptionalFloatSystemProperty(
       propertyName: String,
       min: Float,
@@ -1791,6 +2223,20 @@ class KuramotoSpatialActivity : AppSystemActivity() {
       heightMeters: Float,
       targetDistanceMeters: Float,
   ): Long
+
+  private external fun nativeCreateExternalOpenXrSwapchain(
+      openXrInstanceHandle: Long,
+      openXrSessionHandle: Long,
+      openXrGetInstanceProcAddrHandle: Long,
+      width: Int,
+      height: Int,
+  ): Long
+
+  private external fun nativeDestroyExternalOpenXrSwapchain(
+      openXrInstanceHandle: Long,
+      openXrGetInstanceProcAddrHandle: Long,
+      swapchainHandle: Long,
+  ): Int
 
   private fun runValidationWorkflowIfRequested(intent: Intent?) {
     if (intent?.action != ACTION_RUN_WORKFLOW_SELF_TEST) {
@@ -2296,6 +2742,25 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     private const val PARTICLE_LAYER_VIEW_ORIGIN_METERS = "0.0;0.0;2.0"
     private const val PARTICLE_LAYER_VIEW_ORIGIN_YAW_DEGREES = "180.0"
     private const val PARTICLE_LAYER_PROJECTION_MARKER_INTERVAL_MS = 900L
+    private const val EXTERNAL_SWAPCHAIN_PROBE_PROPERTY =
+        "debug.rustyquest.spatial.external_swapchain_probe"
+    private const val EXTERNAL_SWAPCHAIN_PROBE_CYCLES_PROPERTY =
+        "debug.rustyquest.spatial.external_swapchain_probe.cycles"
+    private const val EXTERNAL_SWAPCHAIN_PROBE_CYCLE_MS_PROPERTY =
+        "debug.rustyquest.spatial.external_swapchain_probe.cycle_ms"
+    private const val EXTERNAL_SWAPCHAIN_PROBE_WIDTH_PX = 256
+    private const val EXTERNAL_SWAPCHAIN_PROBE_HEIGHT_PX = 256
+    private const val EXTERNAL_SWAPCHAIN_PROBE_WIDTH_METERS = 0.35f
+    private const val EXTERNAL_SWAPCHAIN_PROBE_HEIGHT_METERS = 0.35f
+    private const val EXTERNAL_SWAPCHAIN_PROBE_DISTANCE_METERS = 0.85f
+    private const val EXTERNAL_SWAPCHAIN_PROBE_Z_INDEX = 18
+    private const val EXTERNAL_SWAPCHAIN_PROBE_DEFAULT_CYCLES = 1
+    private const val EXTERNAL_SWAPCHAIN_PROBE_MAX_CYCLES = 10
+    private const val EXTERNAL_SWAPCHAIN_PROBE_DEFAULT_CYCLE_MS = 60_000L
+    private const val EXTERNAL_SWAPCHAIN_PROBE_MIN_CYCLE_MS = 1_000L
+    private const val EXTERNAL_SWAPCHAIN_PROBE_MAX_CYCLE_MS = 60_000L
+    private const val EXTERNAL_SWAPCHAIN_PROBE_INTER_CYCLE_MS = 750L
+    private const val OPENXR_ERROR_HANDLE_INVALID = -12
     private const val NATIVE_RECEIPT_LIBRARY = "kuramoto_spatial_native_receipt"
     private const val NATIVE_RECEIPT_OPENXR_INSTANCE_BIT = 1L shl 1
     private const val NATIVE_RECEIPT_OPENXR_SESSION_BIT = 1L shl 2

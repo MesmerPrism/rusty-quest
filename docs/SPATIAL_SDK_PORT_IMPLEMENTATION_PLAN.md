@@ -1318,6 +1318,28 @@ Community/context, not treated as API contract:
   tests can prove only the Android key route; physical Quest controller proof
   should be checked with the `inputSource=spatial-sdk-controller-component`
   marker while the headset is running.
+- 2026-06-26 external OpenXR swapchain wrapper probe: added a debug-only
+  `debug.rustyquest.spatial.external_swapchain_probe` path to
+  `KuramotoSpatialActivity` and `native-receipt/src/surface_particle_layer.rs`
+  to test whether `SceneSwapchain(handle: Long)` can wrap a raw native
+  `XrSwapchain` created against the Spatial SDK-owned OpenXR session. The
+  native side resolves only `xrEnumerateSwapchainFormats`,
+  `xrCreateSwapchain`, `xrEnumerateSwapchainImages`,
+  `xrAcquireSwapchainImage`, `xrWaitSwapchainImage`,
+  `xrReleaseSwapchainImage`, and `xrDestroySwapchain`; it deliberately does
+  not call `xrWaitFrame`, `xrBeginFrame`, or `xrEndFrame`. Headset evidence in
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260626-014223-external-swapchain-probe-guarded`
+  showed the SDK-created `handle` and `nativeHandle()` rewrap, while
+  `platformHandle()` is `0`. Native `xrCreateSwapchain` succeeded for a
+  256x256 mono color swapchain, enumerated three images, and
+  acquire/wait/release completed. A raw external `SceneSwapchain` wrapper could
+  report matching `handle`/`nativeHandle`, but `getSurface()` on that wrapper
+  crashes inside the SDK, `SceneQuadLayer` rejects it with a native assert, and
+  `SceneSwapchain.destroy()` on the raw wrapper is avoided so native
+  `xrDestroySwapchain` owns cleanup. This fails the probe decision rule for a
+  visible/renderable external projection-swapchain path. The current viable
+  route remains the Android surface/WSI panel carrier unless Meta exposes a
+  supported external-swapchain or shared Vulkan device/queue/sync contract.
 - 2026-06-25 Spatial experiment condition handoff slice: the panel-controlled
   block start now returns an active block snapshot with
   `movement_base_frequency_hz` and `movement_coupling`, applies those values to
@@ -1653,12 +1675,19 @@ Important files in that directory:
 
 ## Open Questions For Meta Or SDK Reference Checks
 
-- Is `SceneSwapchain.platformHandle()` a raw `XrSwapchain`, and is the
-  `SceneSwapchain(handle: Long)` constructor intended for wrapping externally
-  created swapchains?
-- Is native Vulkan rendering directly into `SceneSwapchain.create(...)` images
-  supported, and if so how are the `VkDevice`, `VkQueue`, image handles,
-  image formats, and synchronization objects obtained or shared?
+- 2026-06-26 probe answer: `SceneSwapchain.platformHandle()` was `0` for both
+  SDK-created and raw-wrapped swapchains on Quest 3S in Spatial SDK 0.13.1.
+  `SceneSwapchain(handle: Long)` can rewrap SDK `handle`/`nativeHandle` values
+  and can hold a raw native `XrSwapchain` handle far enough to report matching
+  `handle`/`nativeHandle`, but the raw wrapper is not usable as a
+  `SceneQuadLayer` source: `getSurface()` crashes inside the SDK and
+  `SceneQuadLayer` creation throws a native assert. Treat externally-created
+  raw `XrSwapchain` wrapping as blocked unless Meta documents a different
+  supported contract.
+- Is native Vulkan rendering directly into `SceneSwapchain.create(...)` or
+  other SDK-owned swapchain images supported, and if so how are the `VkDevice`,
+  `VkQueue`, image handles, image formats, and synchronization objects obtained
+  or shared?
 - Is `SceneSwapchain.createAsAndroid(...).getSurface()` officially supported
   as a Vulkan producer surface through `VK_KHR_android_surface`, or should the
   supported route remain media/surface panel registration callbacks?

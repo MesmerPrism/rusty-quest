@@ -3,12 +3,14 @@ use std::mem;
 #[cfg(target_os = "android")]
 use std::os::raw::c_char;
 use std::os::raw::{c_float, c_int};
+use std::ptr;
 use std::slice;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread;
 use std::time::Instant;
 
 use ash::vk;
+use openxr_sys::Handle as OpenXrHandle;
 
 use crate::live_hand_joints::{store_live_hand_panel_basis, LiveHandOpenXrHandles};
 use crate::replay_hands::{ReplayHandPanelProjection, ReplayHandsRenderer};
@@ -58,6 +60,83 @@ extern "C" {
 #[cfg(target_os = "android")]
 extern "C" {
     fn __system_property_get(name: *const c_char, value: *mut c_char) -> c_int;
+}
+
+struct ExternalSwapchainOpenXrFunction {
+    resolved: bool,
+    result: String,
+    function: Option<openxr_sys::pfn::VoidFunction>,
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_KuramotoSpatialActivity_nativeCreateExternalOpenXrSwapchain(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+    openxr_instance_handle: i64,
+    openxr_session_handle: i64,
+    openxr_get_instance_proc_addr_handle: i64,
+    width: c_int,
+    height: c_int,
+) -> i64 {
+    let result = unsafe {
+        create_external_openxr_swapchain(
+            openxr_instance_handle,
+            openxr_session_handle,
+            openxr_get_instance_proc_addr_handle,
+            width.max(1) as u32,
+            height.max(1) as u32,
+        )
+    };
+    match result {
+        Ok(swapchain_handle) => swapchain_handle as i64,
+        Err(error) => {
+            android_log_info(
+                "RQKuramotoSpatialNative",
+                &format!(
+                    "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=external-xr-swapchain-wrap-probe status=native-create-failed externalSwapchainProbe=true xrCreateSwapchainResult={} wrappedExternalSwapchain=false sceneQuadLayerCreated=false swapchainImagesEnumerated=0 nativeCanRenderIntoImages=false visiblePatternConfirmed=false deviceLost=false runtimeCrash=false error={}",
+                    marker_token(&error),
+                    marker_token(&error),
+                ),
+            );
+            0
+        }
+    }
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_KuramotoSpatialActivity_nativeDestroyExternalOpenXrSwapchain(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+    openxr_instance_handle: i64,
+    openxr_get_instance_proc_addr_handle: i64,
+    swapchain_handle: i64,
+) -> c_int {
+    let result = unsafe {
+        destroy_external_openxr_swapchain(
+            openxr_instance_handle,
+            openxr_get_instance_proc_addr_handle,
+            swapchain_handle,
+        )
+    };
+    android_log_info(
+        "RQKuramotoSpatialNative",
+        &format!(
+            "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=external-xr-swapchain-wrap-probe status=native-destroy-result externalSwapchainProbe=true swapchainHandle={} xrDestroySwapchainResult={} xrDestroySwapchainCode={} destroyOwnershipHint={} deviceLost=false runtimeCrash=false",
+            swapchain_handle,
+            external_swapchain_xr_result_token(openxr_sys::Result::from_raw(result)),
+            result,
+            if result == openxr_sys::Result::SUCCESS.into_raw() {
+                "native"
+            } else if result == openxr_sys::Result::ERROR_HANDLE_INVALID.into_raw() {
+                "sdk"
+            } else {
+                "unknown"
+            },
+        ),
+    );
+    result
 }
 
 #[no_mangle]
@@ -312,6 +391,308 @@ fn log_start_receipt(mask: i64, status: &str) {
             bool_token((mask & START_RENDER_THREAD_SPAWNED) != 0),
         ),
     );
+}
+
+unsafe fn create_external_openxr_swapchain(
+    openxr_instance_handle: i64,
+    openxr_session_handle: i64,
+    openxr_get_instance_proc_addr_handle: i64,
+    width: u32,
+    height: u32,
+) -> Result<u64, String> {
+    if openxr_instance_handle == 0
+        || openxr_session_handle == 0
+        || openxr_get_instance_proc_addr_handle == 0
+    {
+        return Err("missing-openxr-handles".to_string());
+    }
+
+    let instance = openxr_sys::Instance::from_raw(openxr_instance_handle as u64);
+    let session = openxr_sys::Session::from_raw(openxr_session_handle as u64);
+    let get_instance_proc_addr: openxr_sys::pfn::GetInstanceProcAddr =
+        mem::transmute(openxr_get_instance_proc_addr_handle as usize);
+
+    let enumerate_formats_resolution = resolve_external_swapchain_openxr_function(
+        instance,
+        get_instance_proc_addr,
+        "xrEnumerateSwapchainFormats",
+    );
+    let create_swapchain_resolution = resolve_external_swapchain_openxr_function(
+        instance,
+        get_instance_proc_addr,
+        "xrCreateSwapchain",
+    );
+    let enumerate_images_resolution = resolve_external_swapchain_openxr_function(
+        instance,
+        get_instance_proc_addr,
+        "xrEnumerateSwapchainImages",
+    );
+    let acquire_image_resolution = resolve_external_swapchain_openxr_function(
+        instance,
+        get_instance_proc_addr,
+        "xrAcquireSwapchainImage",
+    );
+    let wait_image_resolution = resolve_external_swapchain_openxr_function(
+        instance,
+        get_instance_proc_addr,
+        "xrWaitSwapchainImage",
+    );
+    let release_image_resolution = resolve_external_swapchain_openxr_function(
+        instance,
+        get_instance_proc_addr,
+        "xrReleaseSwapchainImage",
+    );
+
+    let all_required_resolved = enumerate_formats_resolution.resolved
+        && create_swapchain_resolution.resolved
+        && enumerate_images_resolution.resolved
+        && acquire_image_resolution.resolved
+        && wait_image_resolution.resolved
+        && release_image_resolution.resolved;
+    if !all_required_resolved {
+        android_log_info(
+            "RQKuramotoSpatialNative",
+            &format!(
+                "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=external-xr-swapchain-wrap-probe status=native-functions-unavailable externalSwapchainProbe=true xrEnumerateSwapchainFormatsResolved={} xrCreateSwapchainResolved={} xrEnumerateSwapchainImagesResolved={} xrAcquireSwapchainImageResolved={} xrWaitSwapchainImageResolved={} xrReleaseSwapchainImageResolved={} xrEnumerateSwapchainFormatsResult={} xrCreateSwapchainResult={} xrEnumerateSwapchainImagesResult={} xrAcquireSwapchainImageResult={} xrWaitSwapchainImageResult={} xrReleaseSwapchainImageResult={} nativeFrameLoop=false runtimeCrash=false",
+                bool_token(enumerate_formats_resolution.resolved),
+                bool_token(create_swapchain_resolution.resolved),
+                bool_token(enumerate_images_resolution.resolved),
+                bool_token(acquire_image_resolution.resolved),
+                bool_token(wait_image_resolution.resolved),
+                bool_token(release_image_resolution.resolved),
+                enumerate_formats_resolution.result,
+                create_swapchain_resolution.result,
+                enumerate_images_resolution.result,
+                acquire_image_resolution.result,
+                wait_image_resolution.result,
+                release_image_resolution.result,
+            ),
+        );
+        return Err("required-openxr-functions-unavailable".to_string());
+    }
+
+    let enumerate_swapchain_formats: openxr_sys::pfn::EnumerateSwapchainFormats =
+        external_swapchain_typed_function(enumerate_formats_resolution.function)
+            .expect("resolved xrEnumerateSwapchainFormats");
+    let create_swapchain: openxr_sys::pfn::CreateSwapchain =
+        external_swapchain_typed_function(create_swapchain_resolution.function)
+            .expect("resolved xrCreateSwapchain");
+    let enumerate_swapchain_images: openxr_sys::pfn::EnumerateSwapchainImages =
+        external_swapchain_typed_function(enumerate_images_resolution.function)
+            .expect("resolved xrEnumerateSwapchainImages");
+    let acquire_swapchain_image: openxr_sys::pfn::AcquireSwapchainImage =
+        external_swapchain_typed_function(acquire_image_resolution.function)
+            .expect("resolved xrAcquireSwapchainImage");
+    let wait_swapchain_image: openxr_sys::pfn::WaitSwapchainImage =
+        external_swapchain_typed_function(wait_image_resolution.function)
+            .expect("resolved xrWaitSwapchainImage");
+    let release_swapchain_image: openxr_sys::pfn::ReleaseSwapchainImage =
+        external_swapchain_typed_function(release_image_resolution.function)
+            .expect("resolved xrReleaseSwapchainImage");
+
+    let mut format_count = 0u32;
+    let enumerate_count_result =
+        enumerate_swapchain_formats(session, 0, &mut format_count, ptr::null_mut());
+    if enumerate_count_result != openxr_sys::Result::SUCCESS || format_count == 0 {
+        return Err(format!(
+            "format-enumerate-{}-count-{}",
+            external_swapchain_xr_result_token(enumerate_count_result),
+            format_count
+        ));
+    }
+
+    let mut formats = vec![0i64; format_count as usize];
+    let enumerate_formats_result = enumerate_swapchain_formats(
+        session,
+        format_count,
+        &mut format_count,
+        formats.as_mut_ptr(),
+    );
+    if enumerate_formats_result != openxr_sys::Result::SUCCESS {
+        return Err(format!(
+            "format-list-{}",
+            external_swapchain_xr_result_token(enumerate_formats_result)
+        ));
+    }
+    formats.truncate(format_count as usize);
+    let preferred_formats = [
+        vk::Format::R8G8B8A8_UNORM.as_raw() as i64,
+        vk::Format::R8G8B8A8_SRGB.as_raw() as i64,
+        vk::Format::B8G8R8A8_UNORM.as_raw() as i64,
+        vk::Format::B8G8R8A8_SRGB.as_raw() as i64,
+    ];
+    let selected_format = preferred_formats
+        .iter()
+        .copied()
+        .find(|preferred| formats.contains(preferred))
+        .unwrap_or(formats[0]);
+
+    let usage_with_sampled = openxr_sys::SwapchainUsageFlags::COLOR_ATTACHMENT
+        | openxr_sys::SwapchainUsageFlags::SAMPLED;
+    let mut usage_flags = usage_with_sampled;
+    let mut swapchain = openxr_sys::Swapchain::NULL;
+    let mut create_info = openxr_sys::SwapchainCreateInfo {
+        ty: openxr_sys::SwapchainCreateInfo::TYPE,
+        next: ptr::null(),
+        create_flags: openxr_sys::SwapchainCreateFlags::EMPTY,
+        usage_flags,
+        format: selected_format,
+        sample_count: 1,
+        width,
+        height,
+        face_count: 1,
+        array_size: 1,
+        mip_count: 1,
+    };
+    let mut create_result = create_swapchain(session, &create_info, &mut swapchain);
+    let mut usage_label = "color_attachment_sampled";
+    if create_result != openxr_sys::Result::SUCCESS {
+        usage_flags = openxr_sys::SwapchainUsageFlags::COLOR_ATTACHMENT;
+        usage_label = "color_attachment";
+        create_info.usage_flags = usage_flags;
+        swapchain = openxr_sys::Swapchain::NULL;
+        create_result = create_swapchain(session, &create_info, &mut swapchain);
+    }
+    if create_result != openxr_sys::Result::SUCCESS || swapchain == openxr_sys::Swapchain::NULL {
+        return Err(format!(
+            "xrCreateSwapchain-{}-usage-{}",
+            external_swapchain_xr_result_token(create_result),
+            usage_label
+        ));
+    }
+
+    let mut image_count = 0u32;
+    let enumerate_image_count_result =
+        enumerate_swapchain_images(swapchain, 0, &mut image_count, ptr::null_mut());
+    let mut enumerate_image_result = enumerate_image_count_result;
+    let mut first_image_handle = 0u64;
+    if enumerate_image_count_result == openxr_sys::Result::SUCCESS && image_count > 0 {
+        let mut images = vec![
+            openxr_sys::SwapchainImageVulkanKHR {
+                ty: openxr_sys::SwapchainImageVulkanKHR::TYPE,
+                next: ptr::null_mut(),
+                image: 0,
+            };
+            image_count as usize
+        ];
+        enumerate_image_result = enumerate_swapchain_images(
+            swapchain,
+            image_count,
+            &mut image_count,
+            images
+                .as_mut_ptr()
+                .cast::<openxr_sys::SwapchainImageBaseHeader>(),
+        );
+        if enumerate_image_result == openxr_sys::Result::SUCCESS {
+            first_image_handle = images.first().map(|image| image.image).unwrap_or(0);
+        }
+    }
+
+    let acquire_info = openxr_sys::SwapchainImageAcquireInfo {
+        ty: openxr_sys::SwapchainImageAcquireInfo::TYPE,
+        next: ptr::null(),
+    };
+    let mut acquired_index = 0u32;
+    let acquire_result = acquire_swapchain_image(swapchain, &acquire_info, &mut acquired_index);
+    let mut wait_result_token = "not-run".to_string();
+    let mut release_result_token = "not-run".to_string();
+    if acquire_result == openxr_sys::Result::SUCCESS {
+        let wait_info = openxr_sys::SwapchainImageWaitInfo {
+            ty: openxr_sys::SwapchainImageWaitInfo::TYPE,
+            next: ptr::null(),
+            timeout: openxr_sys::Duration::from_nanos(100_000_000),
+        };
+        let wait_result = wait_swapchain_image(swapchain, &wait_info);
+        wait_result_token = external_swapchain_xr_result_token(wait_result);
+        let release_info = openxr_sys::SwapchainImageReleaseInfo {
+            ty: openxr_sys::SwapchainImageReleaseInfo::TYPE,
+            next: ptr::null(),
+        };
+        let release_result = release_swapchain_image(swapchain, &release_info);
+        release_result_token = external_swapchain_xr_result_token(release_result);
+    }
+
+    android_log_info(
+        "RQKuramotoSpatialNative",
+        &format!(
+            "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=external-xr-swapchain-wrap-probe status=native-create-result externalSwapchainProbe=true xrCreateSwapchainResult={} swapchainHandle={} widthPx={} heightPx={} arraySize=1 mipCount=1 selectedFormat={} enumeratedFormatCount={} usageFlags={} usageFlagsRaw={} xrEnumerateSwapchainImagesResult={} swapchainImagesEnumerated={} firstVkImageHandle={} xrAcquireSwapchainImageResult={} acquiredImageIndex={} xrWaitSwapchainImageResult={} xrReleaseSwapchainImageResult={} nativeCanRenderIntoImages=false renderBlockReason=missing-spatial-sdk-vulkan-device-queue visiblePatternConfirmed=false nativeFrameLoop=false deviceLost=false runtimeCrash=false",
+            external_swapchain_xr_result_token(create_result),
+            swapchain.into_raw(),
+            width,
+            height,
+            selected_format,
+            formats.len(),
+            usage_label,
+            usage_flags.into_raw(),
+            external_swapchain_xr_result_token(enumerate_image_result),
+            image_count,
+            first_image_handle,
+            external_swapchain_xr_result_token(acquire_result),
+            acquired_index,
+            wait_result_token,
+            release_result_token,
+        ),
+    );
+
+    Ok(swapchain.into_raw())
+}
+
+unsafe fn destroy_external_openxr_swapchain(
+    openxr_instance_handle: i64,
+    openxr_get_instance_proc_addr_handle: i64,
+    swapchain_handle: i64,
+) -> c_int {
+    if openxr_instance_handle == 0
+        || openxr_get_instance_proc_addr_handle == 0
+        || swapchain_handle == 0
+    {
+        return openxr_sys::Result::ERROR_HANDLE_INVALID.into_raw();
+    }
+    let instance = openxr_sys::Instance::from_raw(openxr_instance_handle as u64);
+    let get_instance_proc_addr: openxr_sys::pfn::GetInstanceProcAddr =
+        mem::transmute(openxr_get_instance_proc_addr_handle as usize);
+    let destroy_resolution = resolve_external_swapchain_openxr_function(
+        instance,
+        get_instance_proc_addr,
+        "xrDestroySwapchain",
+    );
+    if !destroy_resolution.resolved {
+        return openxr_sys::Result::ERROR_FUNCTION_UNSUPPORTED.into_raw();
+    }
+    let destroy_swapchain: openxr_sys::pfn::DestroySwapchain =
+        external_swapchain_typed_function(destroy_resolution.function)
+            .expect("resolved xrDestroySwapchain");
+    let result = destroy_swapchain(openxr_sys::Swapchain::from_raw(swapchain_handle as u64));
+    result.into_raw()
+}
+
+fn resolve_external_swapchain_openxr_function(
+    instance: openxr_sys::Instance,
+    get_instance_proc_addr: openxr_sys::pfn::GetInstanceProcAddr,
+    name: &str,
+) -> ExternalSwapchainOpenXrFunction {
+    let function_name = CString::new(name).expect("static OpenXR symbol must not contain NUL");
+    let mut function: Option<openxr_sys::pfn::VoidFunction> = None;
+    let result = unsafe { get_instance_proc_addr(instance, function_name.as_ptr(), &mut function) };
+    ExternalSwapchainOpenXrFunction {
+        resolved: result == openxr_sys::Result::SUCCESS && function.is_some(),
+        result: external_swapchain_xr_result_token(result),
+        function,
+    }
+}
+
+fn external_swapchain_typed_function<T>(
+    function: Option<openxr_sys::pfn::VoidFunction>,
+) -> Option<T> {
+    function.map(|function| unsafe { mem::transmute_copy(&function) })
+}
+
+fn external_swapchain_xr_result_token(result: openxr_sys::Result) -> String {
+    if result == openxr_sys::Result::SUCCESS {
+        "success".to_string()
+    } else {
+        format!("code_{}", result.into_raw())
+    }
 }
 
 struct SurfaceParticleStats {
