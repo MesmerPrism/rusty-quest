@@ -44,9 +44,200 @@ const CAMERA_HWB_PROBE_CHANNEL: &str = "camera-hwb-spatial-probe";
 const CAMERA_HWB_PROBE_READER_DEFAULT_WIDTH: i32 = 1280;
 const CAMERA_HWB_PROBE_READER_DEFAULT_HEIGHT: i32 = 1280;
 const CAMERA_HWB_PROBE_WAIT_FRAME_MS: u64 = 5000;
-const CAMERA_HWB_PROBE_MAX_FRAMES: u32 = 900;
+const CAMERA_HWB_PROBE_MAX_FRAMES: u32 = 1800;
+const CAMERA_HWB_PROBE_LATEST_FRAME_WAIT_MS: u64 = 2;
+const CAMERA_HWB_LEFT_CAMERA_ID: &str = "50";
+const CAMERA_HWB_RIGHT_CAMERA_ID: &str = "51";
+const CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE: f32 = 1.0;
+const CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE: f32 = 0.25;
+const CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE: f32 = 1.80;
+const CAMERA_HWB_PROJECTION_TARGET_OFFSET_X: f32 = 0.0;
+const CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y: f32 = 0.0;
+const CAMERA_HWB_PROJECTION_BORDER_OPACITY: f32 = 0.0;
+const CAMERA_HWB_LEFT_TARGET_RECT: CameraTargetRect = CameraTargetRect {
+    x: 0.171875,
+    y: 0.21875,
+    width: 0.75,
+    height: 0.65625,
+};
+const CAMERA_HWB_RIGHT_TARGET_RECT: CameraTargetRect = CameraTargetRect {
+    x: 0.078125,
+    y: 0.21875,
+    width: 0.75,
+    height: 0.671875,
+};
 
 static STOP_CAMERA_HWB_PROBE: AtomicBool = AtomicBool::new(false);
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CameraTargetRect {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+impl CameraTargetRect {
+    fn marker_token(self) -> String {
+        format!(
+            "{:.6};{:.6};{:.6};{:.6}",
+            self.x, self.y, self.width, self.height
+        )
+    }
+
+    fn as_push(self) -> [f32; 4] {
+        [self.x, self.y, self.width, self.height]
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CameraHwbProjectionPush {
+    left_rect: [f32; 4],
+    right_rect: [f32; 4],
+    params: [f32; 4],
+}
+
+#[derive(Clone, Copy)]
+enum CameraHwbProbeMode {
+    LumaChecker,
+    RawColorProjection,
+}
+
+impl CameraHwbProbeMode {
+    fn output_mode(self) -> &'static str {
+        match self {
+            Self::LumaChecker => "luma-checker",
+            Self::RawColorProjection => "raw-color-target-rect",
+        }
+    }
+
+    fn raw_projection_token(self) -> &'static str {
+        match self {
+            Self::LumaChecker => "false",
+            Self::RawColorProjection => "true",
+        }
+    }
+
+    fn requested_frames_marker(self, max_frames: u32) -> String {
+        if matches!(self, Self::RawColorProjection) && max_frames == 0 {
+            "unbounded".to_string()
+        } else {
+            max_frames.to_string()
+        }
+    }
+
+    fn should_stream_latest_frame(self) -> bool {
+        matches!(self, Self::RawColorProjection)
+    }
+
+    fn descriptor_binding_count(self) -> u32 {
+        if matches!(self, Self::RawColorProjection) {
+            2
+        } else {
+            1
+        }
+    }
+
+    fn stereo_source(self) -> &'static str {
+        match self {
+            Self::LumaChecker => "mono-selected-camera",
+            Self::RawColorProjection => "camera50-51",
+        }
+    }
+}
+
+fn effective_rect(
+    base: CameraTargetRect,
+    scale: f32,
+    offset_x: f32,
+    offset_y: f32,
+) -> CameraTargetRect {
+    let scale = scale.max(0.0001);
+    let width = (base.width * scale).clamp(0.0001, 1.0);
+    let height = (base.height * scale).clamp(0.0001, 1.0);
+    let center_x = base.x + base.width * 0.5 + offset_x;
+    let center_y = base.y + base.height * 0.5 + offset_y;
+    let x = (center_x - width * 0.5).clamp(0.0, 1.0 - width);
+    let y = (center_y - height * 0.5).clamp(0.0, 1.0 - height);
+    CameraTargetRect {
+        x,
+        y,
+        width,
+        height,
+    }
+}
+
+fn packed_left_rect(rect: CameraTargetRect) -> CameraTargetRect {
+    CameraTargetRect {
+        x: 0.5 * rect.x,
+        y: rect.y,
+        width: 0.5 * rect.width,
+        height: rect.height,
+    }
+}
+
+fn packed_right_rect(rect: CameraTargetRect) -> CameraTargetRect {
+    CameraTargetRect {
+        x: 0.5 + 0.5 * rect.x,
+        y: rect.y,
+        width: 0.5 * rect.width,
+        height: rect.height,
+    }
+}
+
+fn camera_hwb_projection_push() -> CameraHwbProjectionPush {
+    let left_effective = effective_rect(
+        CAMERA_HWB_LEFT_TARGET_RECT,
+        CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE,
+        CAMERA_HWB_PROJECTION_TARGET_OFFSET_X,
+        CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
+    );
+    let right_effective = effective_rect(
+        CAMERA_HWB_RIGHT_TARGET_RECT,
+        CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE,
+        CAMERA_HWB_PROJECTION_TARGET_OFFSET_X,
+        CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
+    );
+    CameraHwbProjectionPush {
+        left_rect: packed_left_rect(left_effective).as_push(),
+        right_rect: packed_right_rect(right_effective).as_push(),
+        params: [CAMERA_HWB_PROJECTION_BORDER_OPACITY, 0.0, 0.0, 0.0],
+    }
+}
+
+fn camera_hwb_projection_marker_fields() -> String {
+    let left_effective = effective_rect(
+        CAMERA_HWB_LEFT_TARGET_RECT,
+        CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE,
+        CAMERA_HWB_PROJECTION_TARGET_OFFSET_X,
+        CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
+    );
+    let right_effective = effective_rect(
+        CAMERA_HWB_RIGHT_TARGET_RECT,
+        CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE,
+        CAMERA_HWB_PROJECTION_TARGET_OFFSET_X,
+        CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
+    );
+    format!(
+        "stereoSource=camera50-51 leftCameraId={} rightCameraId={} leftTargetScreenUvRect={} rightTargetScreenUvRect={} leftEffectiveTargetScreenUvRect={} rightEffectiveTargetScreenUvRect={} leftPackedEffectiveTargetScreenUvRect={} rightPackedEffectiveTargetScreenUvRect={} projectionTargetControlsEnabled=true projectionTargetLiveScale={:.4} projectionTargetTunedMaxScale={:.4} projectionTargetMinScale={:.4} projectionTargetMaxScale={:.4} projectionTargetOffsetUv={:.6},{:.6} borderOpacity={:.1} targetClipPolicy=clip-to-visible-eye projectionContentMappingMode=target-local-raster monoDuplicated=false",
+        CAMERA_HWB_LEFT_CAMERA_ID,
+        CAMERA_HWB_RIGHT_CAMERA_ID,
+        CAMERA_HWB_LEFT_TARGET_RECT.marker_token(),
+        CAMERA_HWB_RIGHT_TARGET_RECT.marker_token(),
+        left_effective.marker_token(),
+        right_effective.marker_token(),
+        packed_left_rect(left_effective).marker_token(),
+        packed_right_rect(right_effective).marker_token(),
+        CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE,
+        CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE,
+        CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE,
+        CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE,
+        CAMERA_HWB_PROJECTION_TARGET_OFFSET_X,
+        CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
+        CAMERA_HWB_PROJECTION_BORDER_OPACITY,
+    )
+}
 
 #[link(name = "android")]
 extern "C" {
@@ -64,15 +255,59 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_K
     frame_count: c_int,
     reader_max_images: c_int,
 ) -> i64 {
+    start_camera_hwb_probe(
+        env,
+        surface,
+        width,
+        height,
+        frame_count,
+        reader_max_images,
+        CameraHwbProbeMode::LumaChecker,
+    )
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_KuramotoSpatialActivity_nativeStartCameraHwbProjectionProbe(
+    env: *mut c_void,
+    _thiz: *mut c_void,
+    surface: *mut c_void,
+    width: c_int,
+    height: c_int,
+    frame_count: c_int,
+    reader_max_images: c_int,
+) -> i64 {
+    start_camera_hwb_probe(
+        env,
+        surface,
+        width,
+        height,
+        frame_count,
+        reader_max_images,
+        CameraHwbProbeMode::RawColorProjection,
+    )
+}
+
+fn start_camera_hwb_probe(
+    env: *mut c_void,
+    surface: *mut c_void,
+    width: c_int,
+    height: c_int,
+    frame_count: c_int,
+    reader_max_images: c_int,
+    mode: CameraHwbProbeMode,
+) -> i64 {
     let mut mask = 1_i64;
     if !surface.is_null() {
         mask |= 1 << 1;
     }
     if surface.is_null() || env.is_null() {
         log_marker(format!(
-            "status=start-receipt startStatus=missing-env-or-surface startMask={} surfaceNonNull={} nativeWindowObtained=false renderThreadSpawned=false carrier=scenequadlayer-createAsAndroid-vulkan-wsi runtimeCrash=false",
+            "status=start-receipt startStatus=missing-env-or-surface startMask={} surfaceNonNull={} nativeWindowObtained=false renderThreadSpawned=false carrier=scenequadlayer-createAsAndroid-vulkan-wsi rawCameraProjectionProbe={} outputMode={} runtimeCrash=false",
             mask,
             bool_token(!surface.is_null()),
+            mode.raw_projection_token(),
+            mode.output_mode(),
         ));
         return mask;
     }
@@ -80,8 +315,10 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_K
     let window = unsafe { ANativeWindow_fromSurface(env, surface) };
     if window.is_null() {
         log_marker(format!(
-            "status=start-receipt startStatus=native-window-null startMask={} surfaceNonNull=true nativeWindowObtained=false renderThreadSpawned=false carrier=scenequadlayer-createAsAndroid-vulkan-wsi runtimeCrash=false",
+            "status=start-receipt startStatus=native-window-null startMask={} surfaceNonNull=true nativeWindowObtained=false renderThreadSpawned=false carrier=scenequadlayer-createAsAndroid-vulkan-wsi rawCameraProjectionProbe={} outputMode={} runtimeCrash=false",
             mask,
+            mode.raw_projection_token(),
+            mode.output_mode(),
         ));
         return mask;
     }
@@ -91,7 +328,12 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_K
     let window_addr = window as usize;
     let width = width.max(64) as u32;
     let height = height.max(64) as u32;
-    let max_frames = (frame_count.max(1) as u32).min(CAMERA_HWB_PROBE_MAX_FRAMES);
+    let max_frames = if matches!(mode, CameraHwbProbeMode::RawColorProjection) && frame_count <= 0 {
+        0
+    } else {
+        (frame_count.max(1) as u32).min(CAMERA_HWB_PROBE_MAX_FRAMES)
+    };
+    let requested_frames_marker = mode.requested_frames_marker(max_frames);
     let reader_max_images = reader_max_images.clamp(3, 12);
     let spawn_result = thread::Builder::new()
         .name("kuramoto-spatial-camera-hwb-probe".to_string())
@@ -99,7 +341,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_K
             let window = window_addr as *mut vk::ANativeWindow;
             let started = Instant::now();
             let result = std::panic::catch_unwind(|| unsafe {
-                render_camera_hwb_probe(window, width, height, max_frames, reader_max_images)
+                render_camera_hwb_probe(window, width, height, max_frames, reader_max_images, mode)
             })
             .unwrap_or_else(|_| Err("panic".to_string()));
             unsafe {
@@ -108,23 +350,40 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_K
             match result {
                 Ok(stats) => {
                     log_marker(format!(
-                        "status=complete framesPresented={} requestedFrames={} extent={}x{} cameraId={} frameIndex={} hardwareBufferId={} hwbImportSequence={} carrier=scenequadlayer-createAsAndroid-vulkan-wsi vkGetAhbPropertiesResult=success sampledCameraTexture=true samplerMode={} outputMode=luma-checker privateShaderStack=false morphovisionStack=false elapsedMs={} runtimeCrash=false",
+                        "status=complete framesPresented={} requestedFrames={} frameLimit={} extent={}x{} leftCameraId={} rightCameraId={} leftFrameIndex={} rightFrameIndex={} leftHardwareBufferId={} rightHardwareBufferId={} leftHwbImportSequence={} rightHwbImportSequence={} pairDeltaNs={} carrier=scenequadlayer-createAsAndroid-vulkan-wsi vkGetAhbPropertiesResult=success sampledCameraTexture=true sampledLeftCameraTexture=true sampledRightCameraTexture={} samplerMode={} outputMode={} rawCameraProjectionProbe={} stereoSource={} monoDuplicated=false privateShaderStack=false morphovisionStack=false elapsedMs={} runtimeCrash=false {}",
                         stats.frames_presented,
-                        max_frames,
+                        requested_frames_marker,
+                        if max_frames == 0 { "none" } else { "bounded" },
                         stats.extent.width,
                         stats.extent.height,
-                        marker_token(&stats.camera_id),
-                        stats.frame_index,
-                        stats.hardware_buffer_id,
-                        stats.hwb_import_sequence,
+                        marker_token(&stats.left_camera_id),
+                        marker_token(&stats.right_camera_id),
+                        stats.left_frame_index,
+                        stats.right_frame_index,
+                        stats.left_hardware_buffer_id,
+                        stats.right_hardware_buffer_id,
+                        stats.left_hwb_import_sequence,
+                        stats.right_hwb_import_sequence,
+                        stats.pair_delta_ns,
+                        bool_token(matches!(mode, CameraHwbProbeMode::RawColorProjection)),
                         stats.sampler_mode,
+                        mode.output_mode(),
+                        mode.raw_projection_token(),
+                        mode.stereo_source(),
                         started.elapsed().as_millis(),
+                        if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
+                            camera_hwb_projection_marker_fields()
+                        } else {
+                            "monoDuplicated=false".to_string()
+                        },
                     ));
                 }
                 Err(error) => {
                     log_marker(format!(
-                        "status=render-failed carrier=scenequadlayer-createAsAndroid-vulkan-wsi error={} sampledCameraTexture=false privateShaderStack=false morphovisionStack=false runtimeCrash=false",
+                        "status=render-failed carrier=scenequadlayer-createAsAndroid-vulkan-wsi error={} sampledCameraTexture=false outputMode={} rawCameraProjectionProbe={} privateShaderStack=false morphovisionStack=false runtimeCrash=false",
                         marker_token(&error),
+                        mode.output_mode(),
+                        mode.raw_projection_token(),
                     ));
                 }
             }
@@ -134,8 +393,16 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_K
         Ok(_) => {
             mask |= 1 << 3;
             log_marker(format!(
-                "status=start-receipt startStatus=started startMask={} surfaceNonNull=true nativeWindowObtained=true renderThreadSpawned=true requestedWidthPx={} requestedHeightPx={} requestedFrames={} readerMaxImages={} carrier=scenequadlayer-createAsAndroid-vulkan-wsi privateShaderStack=false morphovisionStack=false runtimeCrash=false",
-                mask, width, height, max_frames, reader_max_images,
+                "status=start-receipt startStatus=started startMask={} surfaceNonNull=true nativeWindowObtained=true renderThreadSpawned=true requestedWidthPx={} requestedHeightPx={} requestedFrames={} frameLimit={} readerMaxImages={} carrier=scenequadlayer-createAsAndroid-vulkan-wsi outputMode={} rawCameraProjectionProbe={} stereoSource={} privateShaderStack=false morphovisionStack=false runtimeCrash=false",
+                mask,
+                width,
+                height,
+                mode.requested_frames_marker(max_frames),
+                if max_frames == 0 { "none" } else { "bounded" },
+                reader_max_images,
+                mode.output_mode(),
+                mode.raw_projection_token(),
+                mode.stereo_source(),
             ));
         }
         Err(error) => {
@@ -143,9 +410,11 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_K
                 ACameraNativeWindow_release(window.cast::<ANativeWindow>());
             }
             log_marker(format!(
-                "status=start-receipt startStatus=thread-spawn-{} startMask={} surfaceNonNull=true nativeWindowObtained=true renderThreadSpawned=false carrier=scenequadlayer-createAsAndroid-vulkan-wsi runtimeCrash=false",
+                "status=start-receipt startStatus=thread-spawn-{} startMask={} surfaceNonNull=true nativeWindowObtained=true renderThreadSpawned=false carrier=scenequadlayer-createAsAndroid-vulkan-wsi outputMode={} rawCameraProjectionProbe={} runtimeCrash=false",
                 error.kind(),
                 mask,
+                mode.output_mode(),
+                mode.raw_projection_token(),
             ));
         }
     }
@@ -168,14 +437,21 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_K
 struct CameraHwbProbeStats {
     frames_presented: u32,
     extent: vk::Extent2D,
-    camera_id: String,
-    frame_index: u64,
-    hardware_buffer_id: u64,
-    hwb_import_sequence: u64,
+    left_camera_id: String,
+    right_camera_id: String,
+    left_frame_index: u64,
+    right_frame_index: u64,
+    left_hardware_buffer_id: u64,
+    right_hardware_buffer_id: u64,
+    left_hwb_import_sequence: u64,
+    right_hwb_import_sequence: u64,
+    pair_delta_ns: u64,
     sampler_mode: &'static str,
 }
 
+#[derive(Clone)]
 struct CameraProbeFrame {
+    side_label: &'static str,
     camera_id: String,
     frame_index: u64,
     hwb_import_sequence: u64,
@@ -184,18 +460,31 @@ struct CameraProbeFrame {
     timestamp_ns: i64,
 }
 
+struct CameraProbeFrameSet {
+    left: CameraProbeFrame,
+    right: CameraProbeFrame,
+}
+
+impl CameraProbeFrameSet {
+    fn pair_delta_ns(&self) -> u64 {
+        self.left.timestamp_ns.abs_diff(self.right.timestamp_ns)
+    }
+}
+
 struct CameraProbeContext {
     alive: AtomicBool,
+    side_label: &'static str,
     camera_id: String,
     frame_counter: AtomicU64,
     import_counter: AtomicU64,
-    first_frame: Mutex<Option<CameraProbeFrame>>,
-    first_frame_available: Condvar,
+    latest_frame: Mutex<Option<CameraProbeFrame>>,
+    frame_available: Condvar,
 }
 
 struct CameraProbeRuntime {
     manager: *mut ACameraManager,
-    stream: Option<CameraProbeStream>,
+    left: Option<CameraProbeStream>,
+    right: Option<CameraProbeStream>,
     available_ids: Vec<String>,
 }
 
@@ -215,7 +504,7 @@ struct CameraProbeStream {
 }
 
 impl CameraProbeRuntime {
-    unsafe fn start(reader_max_images: c_int) -> Result<Self, String> {
+    unsafe fn start(reader_max_images: c_int, mode: CameraHwbProbeMode) -> Result<Self, String> {
         let manager = ACameraManager_create();
         if manager.is_null() {
             return Err("ACameraManager_create-null".to_string());
@@ -227,19 +516,84 @@ impl CameraProbeRuntime {
                 return Err(error);
             }
         };
-        let selected_id = select_probe_camera_id(&available_ids).ok_or_else(|| {
-            format!(
-                "camera-50-51-unavailable-available-{}",
-                available_ids.join(",")
-            )
-        })?;
-        let stream = match CameraProbeStream::start(manager, &selected_id, reader_max_images) {
-            Ok(stream) => stream,
-            Err(error) => {
+
+        if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
+            if !available_ids
+                .iter()
+                .any(|id| id == CAMERA_HWB_LEFT_CAMERA_ID)
+                || !available_ids
+                    .iter()
+                    .any(|id| id == CAMERA_HWB_RIGHT_CAMERA_ID)
+            {
                 ACameraManager_delete(manager);
-                return Err(error);
+                return Err(format!(
+                    "stereo-camera-50-51-unavailable-available-{}",
+                    available_ids.join(",")
+                ));
+            }
+            let left = match CameraProbeStream::start(
+                manager,
+                CAMERA_HWB_LEFT_CAMERA_ID,
+                "left",
+                reader_max_images,
+            ) {
+                Ok(stream) => stream,
+                Err(error) => {
+                    ACameraManager_delete(manager);
+                    return Err(format!("left-camera-start-{error}"));
+                }
+            };
+            let right = match CameraProbeStream::start(
+                manager,
+                CAMERA_HWB_RIGHT_CAMERA_ID,
+                "right",
+                reader_max_images,
+            ) {
+                Ok(stream) => stream,
+                Err(error) => {
+                    drop(left);
+                    ACameraManager_delete(manager);
+                    return Err(format!("right-camera-start-{error}"));
+                }
+            };
+            log_marker(format!(
+                "status=camera-runtime-started availableIds={} leftCameraId={} rightCameraId={} leftSelectedPrivateSize={}x{} rightSelectedPrivateSize={}x{} readerMaxImages={} stereoSource=camera50-51 imageFormat=PRIVATE usage=GPU_SAMPLED_IMAGE {}",
+                marker_token(&available_ids.join(",")),
+                CAMERA_HWB_LEFT_CAMERA_ID,
+                CAMERA_HWB_RIGHT_CAMERA_ID,
+                left.selected_width(),
+                left.selected_height(),
+                right.selected_width(),
+                right.selected_height(),
+                reader_max_images,
+                camera_hwb_projection_marker_fields(),
+            ));
+            return Ok(Self {
+                manager,
+                left: Some(left),
+                right: Some(right),
+                available_ids,
+            });
+        }
+
+        let selected_id = match select_probe_camera_id(&available_ids) {
+            Some(id) => id,
+            None => {
+                ACameraManager_delete(manager);
+                return Err(format!(
+                    "camera-50-51-unavailable-available-{}",
+                    available_ids.join(",")
+                ));
             }
         };
+        let stream =
+            match CameraProbeStream::start(manager, &selected_id, "mono", reader_max_images) {
+                Ok(stream) => stream,
+                Err(error) => {
+                    ACameraManager_delete(manager);
+                    return Err(error);
+                }
+            };
         log_marker(format!(
             "status=camera-runtime-started availableIds={} selectedCameraId={} selectedPrivateSize={}x{} readerMaxImages={} cameraPreference=50-then-51 imageFormat=PRIVATE usage=GPU_SAMPLED_IMAGE",
             marker_token(&available_ids.join(",")),
@@ -250,21 +604,53 @@ impl CameraProbeRuntime {
         ));
         Ok(Self {
             manager,
-            stream: Some(stream),
+            left: Some(stream),
+            right: None,
             available_ids,
         })
     }
 
     fn wait_for_first_frame(&self, timeout: Duration) -> Option<CameraProbeFrame> {
-        self.stream
+        self.left
             .as_ref()
             .and_then(|stream| stream.wait_for_first_frame(timeout))
+    }
+
+    fn wait_for_left_frame_after(
+        &self,
+        last_hwb_import_sequence: u64,
+        timeout: Duration,
+    ) -> Option<CameraProbeFrame> {
+        self.left
+            .as_ref()
+            .and_then(|stream| stream.wait_for_frame_after(last_hwb_import_sequence, timeout))
+    }
+
+    fn wait_for_right_frame_after(
+        &self,
+        last_hwb_import_sequence: u64,
+        timeout: Duration,
+    ) -> Option<CameraProbeFrame> {
+        self.right
+            .as_ref()
+            .and_then(|stream| stream.wait_for_frame_after(last_hwb_import_sequence, timeout))
+    }
+
+    fn wait_for_first_stereo_frame(&self, timeout: Duration) -> Option<CameraProbeFrameSet> {
+        let started = Instant::now();
+        let left = self.wait_for_left_frame_after(0, timeout)?;
+        let remaining = timeout
+            .checked_sub(started.elapsed())
+            .unwrap_or_else(|| Duration::from_millis(1));
+        let right = self.wait_for_right_frame_after(0, remaining)?;
+        Some(CameraProbeFrameSet { left, right })
     }
 }
 
 impl Drop for CameraProbeRuntime {
     fn drop(&mut self) {
-        self.stream.take();
+        self.right.take();
+        self.left.take();
         if !self.manager.is_null() {
             unsafe {
                 ACameraManager_delete(self.manager);
@@ -282,6 +668,7 @@ impl CameraProbeStream {
     unsafe fn start(
         manager: *mut ACameraManager,
         camera_id: &str,
+        side_label: &'static str,
         reader_max_images: c_int,
     ) -> Result<Self, String> {
         let camera_id_c = CString::new(camera_id).map_err(|_| "camera-id-nul".to_string())?;
@@ -333,11 +720,12 @@ impl CameraProbeStream {
 
         let context = Arc::new(CameraProbeContext {
             alive: AtomicBool::new(true),
+            side_label,
             camera_id: camera_id.to_string(),
             frame_counter: AtomicU64::new(0),
             import_counter: AtomicU64::new(0),
-            first_frame: Mutex::new(None),
-            first_frame_available: Condvar::new(),
+            latest_frame: Mutex::new(None),
+            frame_available: Condvar::new(),
         });
         let context_raw = Arc::into_raw(context);
         let mut listener = AImageReader_ImageListener {
@@ -459,7 +847,8 @@ impl CameraProbeStream {
         }
 
         log_marker(format!(
-            "status=camera-stream-started cameraId={} selectedPrivateSize={}x{} readerMaxImages={} repeatingSequenceId={} privateOutputSizes={}",
+            "status=camera-stream-started side={} cameraId={} selectedPrivateSize={}x{} readerMaxImages={} repeatingSequenceId={} privateOutputSizes={}",
+            side_label,
             marker_token(camera_id),
             selected_size[0],
             selected_size[1],
@@ -493,11 +882,22 @@ impl CameraProbeStream {
     }
 
     fn wait_for_first_frame(&self, timeout: Duration) -> Option<CameraProbeFrame> {
+        self.wait_for_frame_after(0, timeout)
+    }
+
+    fn wait_for_frame_after(
+        &self,
+        last_hwb_import_sequence: u64,
+        timeout: Duration,
+    ) -> Option<CameraProbeFrame> {
         let context = unsafe { &*self.context_raw };
-        let mut guard = context.first_frame.lock().ok()?;
+        let mut guard = context.latest_frame.lock().ok()?;
         let deadline = Instant::now() + timeout;
         loop {
-            if guard.is_some() {
+            if guard
+                .as_ref()
+                .is_some_and(|frame| frame.hwb_import_sequence > last_hwb_import_sequence)
+            {
                 return guard.take();
             }
             let now = Instant::now();
@@ -505,12 +905,13 @@ impl CameraProbeStream {
                 return None;
             }
             let wait = deadline.saturating_duration_since(now);
-            let wait_result = context
-                .first_frame_available
-                .wait_timeout(guard, wait)
-                .ok()?;
+            let wait_result = context.frame_available.wait_timeout(guard, wait).ok()?;
             guard = wait_result.0;
-            if wait_result.1.timed_out() && guard.is_none() {
+            if wait_result.1.timed_out()
+                && !guard
+                    .as_ref()
+                    .is_some_and(|frame| frame.hwb_import_sequence > last_hwb_import_sequence)
+            {
                 return None;
             }
         }
@@ -641,7 +1042,8 @@ unsafe extern "C" fn camera_probe_image_available(context: *mut c_void, reader: 
     let frame_index = context.frame_counter.fetch_add(1, Ordering::Relaxed) + 1;
     let hwb_import_sequence = context.import_counter.fetch_add(1, Ordering::Relaxed) + 1;
     log_marker(format!(
-        "status=camera-frame-acquired cameraId={} frameIndex={} hardwareBufferId={} timestampNs={} width={} height={} format={} usage=0x{:x} stride={} hwbImportSequence={} imageFormat=PRIVATE usageFlag=GPU_SAMPLED_IMAGE",
+        "status=camera-frame-acquired side={} cameraId={} frameIndex={} hardwareBufferId={} timestampNs={} width={} height={} format={} usage=0x{:x} stride={} hwbImportSequence={} imageFormat=PRIVATE usageFlag=GPU_SAMPLED_IMAGE",
+        context.side_label,
         marker_token(&context.camera_id),
         frame_index,
         descriptor.hardware_buffer_id,
@@ -654,24 +1056,23 @@ unsafe extern "C" fn camera_probe_image_available(context: *mut c_void, reader: 
         hwb_import_sequence,
     ));
 
-    let mut guard = match context.first_frame.lock() {
+    let mut guard = match context.latest_frame.lock() {
         Ok(guard) => guard,
         Err(_) => {
             AImage_delete(image);
             return;
         }
     };
-    if guard.is_none() {
-        *guard = Some(CameraProbeFrame {
-            camera_id: context.camera_id.clone(),
-            frame_index,
-            hwb_import_sequence,
-            hardware_buffer,
-            descriptor,
-            timestamp_ns,
-        });
-        context.first_frame_available.notify_all();
-    }
+    *guard = Some(CameraProbeFrame {
+        side_label: context.side_label,
+        camera_id: context.camera_id.clone(),
+        frame_index,
+        hwb_import_sequence,
+        hardware_buffer,
+        descriptor,
+        timestamp_ns,
+    });
+    context.frame_available.notify_all();
     AImage_delete(image);
 }
 
@@ -681,6 +1082,7 @@ unsafe fn render_camera_hwb_probe(
     requested_height: u32,
     max_frames: u32,
     reader_max_images: c_int,
+    mode: CameraHwbProbeMode,
 ) -> Result<CameraHwbProbeStats, String> {
     let entry = ash::Entry::load().map_err(|error| format!("vulkan-loader-{error}"))?;
     let app_name = CString::new("rusty-quest-kuramoto-spatial").expect("static app name");
@@ -851,7 +1253,7 @@ unsafe fn render_camera_hwb_probe(
         .map_err(|error| format!("create-frame-fence-{error:?}"))?;
 
     log_marker(format!(
-        "status=render-loop-ready carrier=scenequadlayer-createAsAndroid-vulkan-wsi producerPath=Camera2-AImageReader-AHardwareBuffer-Vulkan-WSI swapchainImages={} extent={}x{} surfaceFormat={:?} presentMode={:?} compositeAlpha={:?} externalHwbExtensionReady={} samplerYcbcrExtensionReady={} samplerYcbcrFeatureReady={} outputMode=luma-checker privateShaderStack=false morphovisionStack=false runtimeCrash=false",
+        "status=render-loop-ready carrier=scenequadlayer-createAsAndroid-vulkan-wsi producerPath=Camera2-AImageReader-AHardwareBuffer-Vulkan-WSI swapchainImages={} extent={}x{} surfaceFormat={:?} presentMode={:?} compositeAlpha={:?} externalHwbExtensionReady={} samplerYcbcrExtensionReady={} samplerYcbcrFeatureReady={} outputMode={} rawCameraProjectionProbe={} stereoSource={} privateShaderStack=false morphovisionStack=false runtimeCrash=false {}",
         images.len(),
         extent.width,
         extent.height,
@@ -861,52 +1263,115 @@ unsafe fn render_camera_hwb_probe(
         extension_status.external_hwb_extension_ready,
         extension_status.sampler_ycbcr_extension_ready,
         extension_status.sampler_ycbcr_feature_ready,
+        mode.output_mode(),
+        mode.raw_projection_token(),
+        mode.stereo_source(),
+        if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
+            camera_hwb_projection_marker_fields()
+        } else {
+            "monoDuplicated=false".to_string()
+        },
     ));
 
-    let camera_runtime = CameraProbeRuntime::start(reader_max_images)?;
-    let frame = camera_runtime
-        .wait_for_first_frame(Duration::from_millis(CAMERA_HWB_PROBE_WAIT_FRAME_MS))
-        .ok_or_else(|| "first-camera-frame-timeout".to_string())?;
+    let camera_runtime = CameraProbeRuntime::start(reader_max_images, mode)?;
+    let initial_frames = if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
+        camera_runtime
+            .wait_for_first_stereo_frame(Duration::from_millis(CAMERA_HWB_PROBE_WAIT_FRAME_MS))
+            .ok_or_else(|| "first-stereo-camera-frame-timeout".to_string())?
+    } else {
+        let frame = camera_runtime
+            .wait_for_first_frame(Duration::from_millis(CAMERA_HWB_PROBE_WAIT_FRAME_MS))
+            .ok_or_else(|| "first-camera-frame-timeout".to_string())?;
+        CameraProbeFrameSet {
+            left: frame.clone(),
+            right: frame,
+        }
+    };
 
     let memory_properties = instance.get_physical_device_memory_properties(physical_device);
     let ahb_device =
         ash::android::external_memory_android_hardware_buffer::Device::new(&instance, &device);
-    let (import_properties, format_props) =
-        query_ahb_vulkan_import_properties(&ahb_device, &frame.hardware_buffer)?;
-    let format_key = import_properties.format_key;
+    let (left_import_properties, format_props) =
+        query_ahb_vulkan_import_properties(&ahb_device, &initial_frames.left.hardware_buffer)?;
+    let (right_import_properties, _right_format_props) =
+        query_ahb_vulkan_import_properties(&ahb_device, &initial_frames.right.hardware_buffer)?;
+    let format_key = left_import_properties.format_key;
+    if right_import_properties.format_key != format_key {
+        return Err(format!(
+            "right-format-key-mismatch-left-external-{}-vk-{:?}-right-external-{}-vk-{:?}",
+            format_key.external_format,
+            format_key.format,
+            right_import_properties.format_key.external_format,
+            right_import_properties.format_key.format,
+        ));
+    }
     log_marker(format!(
-        "status=ahb-properties cameraId={} frameIndex={} hardwareBufferId={} hwbImportSequence={} vkGetAhbPropertiesResult=success externalFormat={} vkFormat={:?} allocationSize={} memoryTypeBits=0x{:x} formatFeaturesRaw=0x{:x}",
-        marker_token(&frame.camera_id),
-        frame.frame_index,
-        frame.descriptor.hardware_buffer_id,
-        frame.hwb_import_sequence,
+        "status=ahb-properties leftCameraId={} rightCameraId={} leftFrameIndex={} rightFrameIndex={} leftHardwareBufferId={} rightHardwareBufferId={} leftHwbImportSequence={} rightHwbImportSequence={} stereoSource={} pairDeltaNs={} vkGetAhbPropertiesResult=success externalFormat={} vkFormat={:?} leftAllocationSize={} rightAllocationSize={} leftMemoryTypeBits=0x{:x} rightMemoryTypeBits=0x{:x} formatFeaturesRaw=0x{:x} outputMode={} {}",
+        marker_token(&initial_frames.left.camera_id),
+        marker_token(&initial_frames.right.camera_id),
+        initial_frames.left.frame_index,
+        initial_frames.right.frame_index,
+        initial_frames.left.descriptor.hardware_buffer_id,
+        initial_frames.right.descriptor.hardware_buffer_id,
+        initial_frames.left.hwb_import_sequence,
+        initial_frames.right.hwb_import_sequence,
+        mode.stereo_source(),
+        initial_frames.pair_delta_ns(),
         format_key.external_format,
         format_key.format,
-        import_properties.allocation_size,
-        import_properties.memory_type_bits,
+        left_import_properties.allocation_size,
+        right_import_properties.allocation_size,
+        left_import_properties.memory_type_bits,
+        right_import_properties.memory_type_bits,
         format_props.format_features.as_raw(),
+        mode.output_mode(),
+        if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
+            camera_hwb_projection_marker_fields()
+        } else {
+            "monoDuplicated=false".to_string()
+        },
     ));
 
     let camera_resources =
-        create_camera_hwb_probe_resources(&device, render_pass, format_key, &format_props)?;
-    let sampled_image = import_ahb_sampled_image(
+        create_camera_hwb_probe_resources(&device, render_pass, format_key, &format_props, mode)?;
+    let mut sampled_left_image = import_ahb_sampled_image(
         &device,
         &memory_properties,
-        &frame.hardware_buffer,
+        &initial_frames.left.hardware_buffer,
         AhbVulkanSampledImageCreateInfo {
-            width: frame.descriptor.width.max(1),
-            height: frame.descriptor.height.max(1),
+            width: initial_frames.left.descriptor.width.max(1),
+            height: initial_frames.left.descriptor.height.max(1),
             format_key,
-            allocation_size: import_properties.allocation_size,
-            memory_type_bits: import_properties.memory_type_bits,
+            allocation_size: left_import_properties.allocation_size,
+            memory_type_bits: left_import_properties.memory_type_bits,
             sampler_ycbcr_conversion: camera_resources.sampler_ycbcr_conversion,
-            debug_label: "camera-hwb-spatial-probe",
+            debug_label: "camera-hwb-spatial-probe-left",
         },
     )?;
+    let mut sampled_right_image = if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
+        Some(import_ahb_sampled_image(
+            &device,
+            &memory_properties,
+            &initial_frames.right.hardware_buffer,
+            AhbVulkanSampledImageCreateInfo {
+                width: initial_frames.right.descriptor.width.max(1),
+                height: initial_frames.right.descriptor.height.max(1),
+                format_key,
+                allocation_size: right_import_properties.allocation_size,
+                memory_type_bits: right_import_properties.memory_type_bits,
+                sampler_ycbcr_conversion: camera_resources.sampler_ycbcr_conversion,
+                debug_label: "camera-hwb-spatial-probe-right",
+            },
+        )?)
+    } else {
+        None
+    };
     let descriptor_set = allocate_camera_hwb_probe_descriptor_set(
         &device,
         &camera_resources,
-        sampled_image.image_view,
+        sampled_left_image.image_view,
+        sampled_right_image.as_ref().map(|image| image.image_view),
+        mode,
     )?;
     let sampler_mode = if format_key.external_format != 0 {
         "external-format-ycbcr"
@@ -914,23 +1379,126 @@ unsafe fn render_camera_hwb_probe(
         "concrete-vk-format"
     };
     log_marker(format!(
-        "status=ahb-imported cameraId={} frameIndex={} hardwareBufferId={} hwbImportSequence={} sampledCameraTexture=true samplerMode={} descriptorShape={} outputMode=luma-checker privateShaderStack=false morphovisionStack=false",
-        marker_token(&frame.camera_id),
-        frame.frame_index,
-        frame.descriptor.hardware_buffer_id,
-        frame.hwb_import_sequence,
+        "status=ahb-imported leftCameraId={} rightCameraId={} leftFrameIndex={} rightFrameIndex={} leftHardwareBufferId={} rightHardwareBufferId={} leftHwbImportSequence={} rightHwbImportSequence={} sampledCameraTexture=true sampledLeftCameraTexture=true sampledRightCameraTexture={} samplerMode={} descriptorShape={} outputMode={} rawCameraProjectionProbe={} stereoSource={} privateShaderStack=false morphovisionStack=false {}",
+        marker_token(&initial_frames.left.camera_id),
+        marker_token(&initial_frames.right.camera_id),
+        initial_frames.left.frame_index,
+        initial_frames.right.frame_index,
+        initial_frames.left.descriptor.hardware_buffer_id,
+        initial_frames.right.descriptor.hardware_buffer_id,
+        initial_frames.left.hwb_import_sequence,
+        initial_frames.right.hwb_import_sequence,
+        bool_token(matches!(mode, CameraHwbProbeMode::RawColorProjection)),
         sampler_mode,
         camera_resources.descriptor_shape,
+        mode.output_mode(),
+        mode.raw_projection_token(),
+        mode.stereo_source(),
+        if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
+            camera_hwb_projection_marker_fields()
+        } else {
+            "monoDuplicated=false".to_string()
+        },
     ));
 
+    let mut current_left_frame = initial_frames.left;
+    let mut current_right_frame = initial_frames.right;
+    let mut current_left_hwb_import_sequence = current_left_frame.hwb_import_sequence;
+    let mut current_right_hwb_import_sequence = current_right_frame.hwb_import_sequence;
+    let mut transition_left_camera_image = true;
+    let mut transition_right_camera_image = matches!(mode, CameraHwbProbeMode::RawColorProjection);
     let mut frames_presented = 0_u32;
-    while frames_presented < max_frames && !STOP_CAMERA_HWB_PROBE.load(Ordering::Acquire) {
+    while (max_frames == 0 || frames_presented < max_frames)
+        && !STOP_CAMERA_HWB_PROBE.load(Ordering::Acquire)
+    {
         device
             .wait_for_fences(&[frame_fence], true, u64::MAX)
             .map_err(|error| format!("wait-fence-{error:?}"))?;
         device
             .reset_fences(&[frame_fence])
             .map_err(|error| format!("reset-fence-{error:?}"))?;
+        if mode.should_stream_latest_frame() {
+            if let Some(next_frame) = camera_runtime.wait_for_left_frame_after(
+                current_left_hwb_import_sequence,
+                Duration::from_millis(CAMERA_HWB_PROBE_LATEST_FRAME_WAIT_MS),
+            ) {
+                match import_replacement_camera_frame(
+                    &device,
+                    &memory_properties,
+                    &ahb_device,
+                    &camera_resources,
+                    format_key,
+                    &next_frame,
+                ) {
+                    Ok(next_sampled_image) => {
+                        update_camera_hwb_probe_descriptor_set(
+                            &device,
+                            &camera_resources,
+                            descriptor_set,
+                            next_sampled_image.image_view,
+                            sampled_right_image.as_ref().map(|image| image.image_view),
+                            mode,
+                        );
+                        sampled_left_image.destroy(&device);
+                        sampled_left_image = next_sampled_image;
+                        current_left_hwb_import_sequence = next_frame.hwb_import_sequence;
+                        current_left_frame = next_frame;
+                        transition_left_camera_image = true;
+                    }
+                    Err(error) => {
+                        log_marker(format!(
+                            "status=stream-frame-import-skipped side=left cameraId={} frameIndex={} hwbImportSequence={} error={} sampledLeftCameraTexture=true outputMode={} rawCameraProjectionProbe=true runtimeCrash=false",
+                            marker_token(&next_frame.camera_id),
+                            next_frame.frame_index,
+                            next_frame.hwb_import_sequence,
+                            marker_token(&error),
+                            mode.output_mode(),
+                        ));
+                    }
+                }
+            }
+            if let Some(next_frame) = camera_runtime.wait_for_right_frame_after(
+                current_right_hwb_import_sequence,
+                Duration::from_millis(CAMERA_HWB_PROBE_LATEST_FRAME_WAIT_MS),
+            ) {
+                match import_replacement_camera_frame(
+                    &device,
+                    &memory_properties,
+                    &ahb_device,
+                    &camera_resources,
+                    format_key,
+                    &next_frame,
+                ) {
+                    Ok(next_sampled_image) => {
+                        update_camera_hwb_probe_descriptor_set(
+                            &device,
+                            &camera_resources,
+                            descriptor_set,
+                            sampled_left_image.image_view,
+                            Some(next_sampled_image.image_view),
+                            mode,
+                        );
+                        if let Some(previous) = sampled_right_image.take() {
+                            previous.destroy(&device);
+                        }
+                        sampled_right_image = Some(next_sampled_image);
+                        current_right_hwb_import_sequence = next_frame.hwb_import_sequence;
+                        current_right_frame = next_frame;
+                        transition_right_camera_image = true;
+                    }
+                    Err(error) => {
+                        log_marker(format!(
+                            "status=stream-frame-import-skipped side=right cameraId={} frameIndex={} hwbImportSequence={} error={} sampledRightCameraTexture=true outputMode={} rawCameraProjectionProbe=true runtimeCrash=false",
+                            marker_token(&next_frame.camera_id),
+                            next_frame.frame_index,
+                            next_frame.hwb_import_sequence,
+                            marker_token(&error),
+                            mode.output_mode(),
+                        ));
+                    }
+                }
+            }
+        }
         let image_index = match swapchain_loader.acquire_next_image(
             swapchain,
             u64::MAX,
@@ -950,9 +1518,13 @@ unsafe fn render_camera_hwb_probe(
             extent,
             &camera_resources,
             descriptor_set,
-            &sampled_image,
-            frames_presented == 0,
+            &sampled_left_image,
+            sampled_right_image.as_ref(),
+            transition_left_camera_image,
+            transition_right_camera_image,
         )?;
+        transition_left_camera_image = false;
+        transition_right_camera_image = false;
         let wait_semaphores = [image_available];
         let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
         let signal_semaphores = [render_finished];
@@ -979,18 +1551,53 @@ unsafe fn render_camera_hwb_probe(
         frames_presented = frames_presented.saturating_add(1);
         if frames_presented == 1 {
             log_marker(format!(
-                "status=first-camera-frame-presented cameraId={} frameIndex={} hardwareBufferId={} hwbImportSequence={} carrier=scenequadlayer-createAsAndroid-vulkan-wsi vkGetAhbPropertiesResult=success sampledCameraTexture=true samplerMode={} outputMode=luma-checker privateShaderStack=false morphovisionStack=false timestampNs={} width={} height={} format={} usage=0x{:x} stride={} noRepeatedRawHwbSampling=true runtimeCrash=false",
-                marker_token(&frame.camera_id),
-                frame.frame_index,
-                frame.descriptor.hardware_buffer_id,
-                frame.hwb_import_sequence,
+                "status=first-camera-frame-presented leftCameraId={} rightCameraId={} leftFrameIndex={} rightFrameIndex={} leftHardwareBufferId={} rightHardwareBufferId={} leftHwbImportSequence={} rightHwbImportSequence={} pairDeltaNs={} carrier=scenequadlayer-createAsAndroid-vulkan-wsi vkGetAhbPropertiesResult=success sampledCameraTexture=true sampledLeftCameraTexture=true sampledRightCameraTexture={} samplerMode={} outputMode={} rawCameraProjectionProbe={} privateShaderStack=false morphovisionStack=false leftTimestampNs={} rightTimestampNs={} leftWidth={} leftHeight={} rightWidth={} rightHeight={} leftFormat={} rightFormat={} leftUsage=0x{:x} rightUsage=0x{:x} leftStride={} rightStride={} noRepeatedRawHwbSampling={} stereoSource={} runtimeCrash=false {}",
+                marker_token(&current_left_frame.camera_id),
+                marker_token(&current_right_frame.camera_id),
+                current_left_frame.frame_index,
+                current_right_frame.frame_index,
+                current_left_frame.descriptor.hardware_buffer_id,
+                current_right_frame.descriptor.hardware_buffer_id,
+                current_left_frame.hwb_import_sequence,
+                current_right_frame.hwb_import_sequence,
+                current_left_frame.timestamp_ns.abs_diff(current_right_frame.timestamp_ns),
+                bool_token(matches!(mode, CameraHwbProbeMode::RawColorProjection)),
                 sampler_mode,
-                frame.timestamp_ns,
-                frame.descriptor.width,
-                frame.descriptor.height,
-                frame.descriptor.format,
-                frame.descriptor.usage,
-                frame.descriptor.stride,
+                mode.output_mode(),
+                mode.raw_projection_token(),
+                current_left_frame.timestamp_ns,
+                current_right_frame.timestamp_ns,
+                current_left_frame.descriptor.width,
+                current_left_frame.descriptor.height,
+                current_right_frame.descriptor.width,
+                current_right_frame.descriptor.height,
+                current_left_frame.descriptor.format,
+                current_right_frame.descriptor.format,
+                current_left_frame.descriptor.usage,
+                current_right_frame.descriptor.usage,
+                current_left_frame.descriptor.stride,
+                current_right_frame.descriptor.stride,
+                bool_token(!mode.should_stream_latest_frame()),
+                mode.stereo_source(),
+                if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
+                    camera_hwb_projection_marker_fields()
+                } else {
+                    "monoDuplicated=false".to_string()
+                },
+            ));
+        } else if mode.should_stream_latest_frame() && frames_presented <= 4 {
+            log_marker(format!(
+                "status=raw-camera-frame-presented framesPresented={} leftCameraId={} rightCameraId={} leftFrameIndex={} rightFrameIndex={} leftHardwareBufferId={} rightHardwareBufferId={} leftHwbImportSequence={} rightHwbImportSequence={} pairDeltaNs={} sampledCameraTexture=true sampledLeftCameraTexture=true sampledRightCameraTexture=true outputMode=raw-color-target-rect stereoSource=camera50-51 monoDuplicated=false runtimeCrash=false",
+                frames_presented,
+                marker_token(&current_left_frame.camera_id),
+                marker_token(&current_right_frame.camera_id),
+                current_left_frame.frame_index,
+                current_right_frame.frame_index,
+                current_left_frame.descriptor.hardware_buffer_id,
+                current_right_frame.descriptor.hardware_buffer_id,
+                current_left_frame.hwb_import_sequence,
+                current_right_frame.hwb_import_sequence,
+                current_left_frame.timestamp_ns.abs_diff(current_right_frame.timestamp_ns),
             ));
         }
     }
@@ -998,7 +1605,10 @@ unsafe fn render_camera_hwb_probe(
     device
         .device_wait_idle()
         .map_err(|error| format!("device-wait-idle-{error:?}"))?;
-    sampled_image.destroy(&device);
+    if let Some(sampled_right_image) = sampled_right_image {
+        sampled_right_image.destroy(&device);
+    }
+    sampled_left_image.destroy(&device);
     camera_resources.destroy(&device);
     device.destroy_fence(frame_fence, None);
     device.destroy_semaphore(render_finished, None);
@@ -1020,10 +1630,17 @@ unsafe fn render_camera_hwb_probe(
     Ok(CameraHwbProbeStats {
         frames_presented,
         extent,
-        camera_id: frame.camera_id,
-        frame_index: frame.frame_index,
-        hardware_buffer_id: frame.descriptor.hardware_buffer_id,
-        hwb_import_sequence: frame.hwb_import_sequence,
+        left_camera_id: current_left_frame.camera_id,
+        right_camera_id: current_right_frame.camera_id,
+        left_frame_index: current_left_frame.frame_index,
+        right_frame_index: current_right_frame.frame_index,
+        left_hardware_buffer_id: current_left_frame.descriptor.hardware_buffer_id,
+        right_hardware_buffer_id: current_right_frame.descriptor.hardware_buffer_id,
+        left_hwb_import_sequence: current_left_frame.hwb_import_sequence,
+        right_hwb_import_sequence: current_right_frame.hwb_import_sequence,
+        pair_delta_ns: current_left_frame
+            .timestamp_ns
+            .abs_diff(current_right_frame.timestamp_ns),
         sampler_mode,
     })
 }
@@ -1056,6 +1673,7 @@ unsafe fn create_camera_hwb_probe_resources(
     render_pass: vk::RenderPass,
     format_key: AhbVulkanFormatKey,
     format_props: &vk::AndroidHardwareBufferFormatPropertiesANDROID<'_>,
+    mode: CameraHwbProbeMode,
 ) -> Result<CameraHwbProbeResources, String> {
     let sampler_ycbcr = create_ahb_sampler_ycbcr_conversion(
         device,
@@ -1106,16 +1724,22 @@ unsafe fn create_camera_hwb_probe_resources(
     };
 
     let descriptor_uses_immutable_sampler = sampler_ycbcr_handle.is_some();
-    let immutable_samplers = [sampler];
-    let mut descriptor_binding = vk::DescriptorSetLayoutBinding::default()
-        .binding(0)
-        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .descriptor_count(1)
-        .stage_flags(vk::ShaderStageFlags::FRAGMENT);
-    if descriptor_uses_immutable_sampler {
-        descriptor_binding = descriptor_binding.immutable_samplers(&immutable_samplers);
+    let descriptor_binding_count = mode.descriptor_binding_count();
+    let immutable_samplers = [sampler, sampler];
+    let mut descriptor_bindings = Vec::with_capacity(descriptor_binding_count as usize);
+    for binding_index in 0..descriptor_binding_count {
+        let mut descriptor_binding = vk::DescriptorSetLayoutBinding::default()
+            .binding(binding_index)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .descriptor_count(1)
+            .stage_flags(vk::ShaderStageFlags::FRAGMENT);
+        if descriptor_uses_immutable_sampler {
+            let sampler_index = binding_index as usize;
+            descriptor_binding = descriptor_binding
+                .immutable_samplers(&immutable_samplers[sampler_index..sampler_index + 1]);
+        }
+        descriptor_bindings.push(descriptor_binding);
     }
-    let descriptor_bindings = [descriptor_binding];
     let descriptor_set_layout = match device.create_descriptor_set_layout(
         &vk::DescriptorSetLayoutCreateInfo::default().bindings(&descriptor_bindings),
         None,
@@ -1133,7 +1757,7 @@ unsafe fn create_camera_hwb_probe_resources(
         &vk::DescriptorPoolCreateInfo::default()
             .pool_sizes(&[vk::DescriptorPoolSize::default()
                 .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .descriptor_count(1)])
+                .descriptor_count(descriptor_binding_count)])
             .max_sets(1),
         None,
     ) {
@@ -1148,8 +1772,14 @@ unsafe fn create_camera_hwb_probe_resources(
         }
     };
     let set_layouts = [descriptor_set_layout];
+    let push_constant_ranges = [vk::PushConstantRange::default()
+        .stage_flags(vk::ShaderStageFlags::FRAGMENT)
+        .offset(0)
+        .size(mem::size_of::<CameraHwbProjectionPush>() as u32)];
     let pipeline_layout = match device.create_pipeline_layout(
-        &vk::PipelineLayoutCreateInfo::default().set_layouts(&set_layouts),
+        &vk::PipelineLayoutCreateInfo::default()
+            .set_layouts(&set_layouts)
+            .push_constant_ranges(&push_constant_ranges),
         None,
     ) {
         Ok(layout) => layout,
@@ -1163,38 +1793,53 @@ unsafe fn create_camera_hwb_probe_resources(
             return Err(format!("create-camera-pipeline-layout-{error:?}"));
         }
     };
-    let pipeline = match create_camera_hwb_probe_pipeline(device, render_pass, pipeline_layout) {
-        Ok(pipeline) => pipeline,
-        Err(error) => {
-            device.destroy_pipeline_layout(pipeline_layout, None);
-            device.destroy_descriptor_pool(descriptor_pool, None);
-            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
-            device.destroy_sampler(sampler, None);
-            if let Some(conversion) = sampler_ycbcr_handle {
-                device.destroy_sampler_ycbcr_conversion(conversion, None);
+    let pipeline =
+        match create_camera_hwb_probe_pipeline(device, render_pass, pipeline_layout, mode) {
+            Ok(pipeline) => pipeline,
+            Err(error) => {
+                device.destroy_pipeline_layout(pipeline_layout, None);
+                device.destroy_descriptor_pool(descriptor_pool, None);
+                device.destroy_descriptor_set_layout(descriptor_set_layout, None);
+                device.destroy_sampler(sampler, None);
+                if let Some(conversion) = sampler_ycbcr_handle {
+                    device.destroy_sampler_ycbcr_conversion(conversion, None);
+                }
+                return Err(error);
             }
-            return Err(error);
-        }
-    };
+        };
 
-    let descriptor_shape = if descriptor_uses_immutable_sampler {
-        "combined-immutable-sampler-ycbcr-conversion"
+    let descriptor_shape = if descriptor_uses_immutable_sampler && descriptor_binding_count == 2 {
+        "dual-combined-immutable-sampler-ycbcr-conversion"
+    } else if descriptor_uses_immutable_sampler {
+        "single-combined-immutable-sampler-ycbcr-conversion"
+    } else if descriptor_binding_count == 2 {
+        "dual-combined-rgba-sampler"
     } else {
-        "combined-rgba-sampler"
+        "single-combined-rgba-sampler"
     };
     let ycbcr_fields = sampler_ycbcr_metadata
         .as_ref()
         .map(|metadata| metadata.marker_fields())
         .unwrap_or_else(|| "ahbSamplerYcbcrConversion=false".to_string());
     log_marker(format!(
-        "status=probe-resources-created externalFormat={} vkFormat={:?} descriptorShape={} samplerMode={} samplerFilter={:?} samplerLinearFilterSupported={} {} sampledCameraTexture=true outputMode=luma-checker",
+        "status=probe-resources-created externalFormat={} vkFormat={:?} descriptorShape={} descriptorBindingCount={} samplerMode={} samplerFilter={:?} samplerLinearFilterSupported={} {} sampledCameraTexture=true sampledLeftCameraTexture=true sampledRightCameraTexture={} outputMode={} rawCameraProjectionProbe={} stereoSource={} {}",
         format_key.external_format,
         format_key.format,
         descriptor_shape,
+        descriptor_binding_count,
         if format_key.external_format != 0 { "external-format-ycbcr" } else { "concrete-vk-format" },
         sampler_filter,
         linear_supported,
         ycbcr_fields,
+        bool_token(matches!(mode, CameraHwbProbeMode::RawColorProjection)),
+        mode.output_mode(),
+        mode.raw_projection_token(),
+        mode.stereo_source(),
+        if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
+            camera_hwb_projection_marker_fields()
+        } else {
+            "monoDuplicated=false".to_string()
+        },
     ));
     Ok(CameraHwbProbeResources {
         sampler_ycbcr_conversion: sampler_ycbcr_handle,
@@ -1210,7 +1855,9 @@ unsafe fn create_camera_hwb_probe_resources(
 unsafe fn allocate_camera_hwb_probe_descriptor_set(
     device: &ash::Device,
     resources: &CameraHwbProbeResources,
-    image_view: vk::ImageView,
+    left_image_view: vk::ImageView,
+    right_image_view: Option<vk::ImageView>,
+    mode: CameraHwbProbeMode,
 ) -> Result<vk::DescriptorSet, String> {
     let set_layouts = [resources.descriptor_set_layout];
     let descriptor_set = device
@@ -1222,32 +1869,116 @@ unsafe fn allocate_camera_hwb_probe_descriptor_set(
         .map_err(|error| format!("allocate-camera-descriptor-set-{error:?}"))?
         .pop()
         .ok_or_else(|| "allocate-camera-descriptor-set-empty".to_string())?;
-    let image_info = [vk::DescriptorImageInfo::default()
-        .sampler(resources.sampler)
-        .image_view(image_view)
-        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)];
-    let writes = [vk::WriteDescriptorSet::default()
-        .dst_set(descriptor_set)
-        .dst_binding(0)
-        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .image_info(&image_info)];
-    device.update_descriptor_sets(&writes, &[]);
+    update_camera_hwb_probe_descriptor_set(
+        device,
+        resources,
+        descriptor_set,
+        left_image_view,
+        right_image_view,
+        mode,
+    );
     Ok(descriptor_set)
+}
+
+unsafe fn update_camera_hwb_probe_descriptor_set(
+    device: &ash::Device,
+    resources: &CameraHwbProbeResources,
+    descriptor_set: vk::DescriptorSet,
+    left_image_view: vk::ImageView,
+    right_image_view: Option<vk::ImageView>,
+    mode: CameraHwbProbeMode,
+) {
+    let right_image_view = right_image_view.unwrap_or(left_image_view);
+    let image_infos = [
+        vk::DescriptorImageInfo::default()
+            .sampler(resources.sampler)
+            .image_view(left_image_view)
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
+        vk::DescriptorImageInfo::default()
+            .sampler(resources.sampler)
+            .image_view(right_image_view)
+            .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL),
+    ];
+    let mut writes = Vec::with_capacity(mode.descriptor_binding_count() as usize);
+    writes.push(
+        vk::WriteDescriptorSet::default()
+            .dst_set(descriptor_set)
+            .dst_binding(0)
+            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .image_info(&image_infos[0..1]),
+    );
+    if mode.descriptor_binding_count() > 1 {
+        writes.push(
+            vk::WriteDescriptorSet::default()
+                .dst_set(descriptor_set)
+                .dst_binding(1)
+                .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                .image_info(&image_infos[1..2]),
+        );
+    }
+    device.update_descriptor_sets(&writes, &[]);
+}
+
+unsafe fn import_replacement_camera_frame(
+    device: &ash::Device,
+    memory_properties: &vk::PhysicalDeviceMemoryProperties,
+    ahb_device: &ash::android::external_memory_android_hardware_buffer::Device,
+    resources: &CameraHwbProbeResources,
+    expected_format_key: AhbVulkanFormatKey,
+    frame: &CameraProbeFrame,
+) -> Result<AhbVulkanSampledImage, String> {
+    let (import_properties, _format_props) =
+        query_ahb_vulkan_import_properties(ahb_device, &frame.hardware_buffer)?;
+    if import_properties.format_key != expected_format_key {
+        return Err(format!(
+            "format-key-changed-expected-external-{}-vk-{:?}-actual-external-{}-vk-{:?}",
+            expected_format_key.external_format,
+            expected_format_key.format,
+            import_properties.format_key.external_format,
+            import_properties.format_key.format,
+        ));
+    }
+    let sampled_image = import_ahb_sampled_image(
+        device,
+        memory_properties,
+        &frame.hardware_buffer,
+        AhbVulkanSampledImageCreateInfo {
+            width: frame.descriptor.width.max(1),
+            height: frame.descriptor.height.max(1),
+            format_key: expected_format_key,
+            allocation_size: import_properties.allocation_size,
+            memory_type_bits: import_properties.memory_type_bits,
+            sampler_ycbcr_conversion: resources.sampler_ycbcr_conversion,
+            debug_label: if frame.side_label == "right" {
+                "camera-hwb-raw-projection-right-frame"
+            } else {
+                "camera-hwb-raw-projection-left-frame"
+            },
+        },
+    )?;
+    Ok(sampled_image)
 }
 
 unsafe fn create_camera_hwb_probe_pipeline(
     device: &ash::Device,
     render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
+    mode: CameraHwbProbeMode,
 ) -> Result<vk::Pipeline, String> {
     let vert_module = create_shader_module(
         device,
         include_bytes!(concat!(env!("OUT_DIR"), "/camera_hwb_probe.vert.spv")),
     )?;
-    let frag_module = create_shader_module(
-        device,
-        include_bytes!(concat!(env!("OUT_DIR"), "/camera_hwb_probe.frag.spv")),
-    )?;
+    let frag_module = match mode {
+        CameraHwbProbeMode::LumaChecker => create_shader_module(
+            device,
+            include_bytes!(concat!(env!("OUT_DIR"), "/camera_hwb_probe.frag.spv")),
+        )?,
+        CameraHwbProbeMode::RawColorProjection => create_shader_module(
+            device,
+            include_bytes!(concat!(env!("OUT_DIR"), "/camera_hwb_raw_color.frag.spv")),
+        )?,
+    };
     let entry_point = CString::new("main").expect("static shader entry");
     let stages = [
         vk::PipelineShaderStageCreateInfo::default()
@@ -1314,8 +2045,10 @@ unsafe fn record_camera_hwb_probe_command_buffer(
     extent: vk::Extent2D,
     resources: &CameraHwbProbeResources,
     descriptor_set: vk::DescriptorSet,
-    sampled_image: &AhbVulkanSampledImage,
-    transition_camera_image: bool,
+    sampled_left_image: &AhbVulkanSampledImage,
+    sampled_right_image: Option<&AhbVulkanSampledImage>,
+    transition_left_camera_image: bool,
+    transition_right_camera_image: bool,
 ) -> Result<(), String> {
     device
         .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
@@ -1323,12 +2056,25 @@ unsafe fn record_camera_hwb_probe_command_buffer(
     device
         .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default())
         .map_err(|error| format!("begin-command-buffer-{error:?}"))?;
-    if transition_camera_image {
-        transition_ahb_sampled_image_to_shader_read(device, command_buffer, sampled_image.image);
+    if transition_left_camera_image {
+        transition_ahb_sampled_image_to_shader_read(
+            device,
+            command_buffer,
+            sampled_left_image.image,
+        );
+    }
+    if transition_right_camera_image {
+        if let Some(sampled_right_image) = sampled_right_image {
+            transition_ahb_sampled_image_to_shader_read(
+                device,
+                command_buffer,
+                sampled_right_image.image,
+            );
+        }
     }
     let clear_values = [vk::ClearValue {
         color: vk::ClearColorValue {
-            float32: [0.0, 0.0, 0.0, 1.0],
+            float32: [0.0, 0.0, 0.0, 0.0],
         },
     }];
     let render_area = vk::Rect2D {
@@ -1371,6 +2117,18 @@ unsafe fn record_camera_hwb_probe_command_buffer(
         0,
         &[descriptor_set],
         &[],
+    );
+    let projection_push = camera_hwb_projection_push();
+    let projection_push_bytes = std::slice::from_raw_parts(
+        (&projection_push as *const CameraHwbProjectionPush).cast::<u8>(),
+        mem::size_of::<CameraHwbProjectionPush>(),
+    );
+    device.cmd_push_constants(
+        command_buffer,
+        resources.pipeline_layout,
+        vk::ShaderStageFlags::FRAGMENT,
+        0,
+        projection_push_bytes,
     );
     device.cmd_draw(command_buffer, 3, 1, 0, 0);
     device.cmd_end_render_pass(command_buffer);

@@ -355,12 +355,45 @@ SDK-owned manual `SceneQuadLayer` probes:
   `pm grant` for `horizonos.permission.SPATIAL_CAMERA` was role-managed and
   failed, but the probe still opened camera `50` and presented camera-derived
   pixels through `scenequadlayer-createAsAndroid-vulkan-wsi`.
+- Raw camera projection probe is gated by
+  `debug.rustyquest.spatial.camera_hwb_projection_probe`. It keeps the
+  SDK-owned `SceneSwapchain.createAsAndroid(...).getSurface()` carrier,
+  uses a `2048x1024` `StereoMode.LeftRight` surface, opens camera `50` for
+  the left eye and camera `51` for the right eye, binds them as Vulkan sampled
+  AHB descriptor bindings `0` and `1`, and switches the native shader to
+  `outputMode=raw-color-target-rect`. The large borderless `1.44m x 1.44m`
+  quad stays continuously locked at `0.72m` in front of `scene.getViewerPose()`,
+  but the camera image is clipped to the native Morphovision target-local
+  effective rects rather than filling the whole carrier.
+- 2026-06-26 Quest 3S result:
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260626-104001-raw-camera-projection-probe`
+  installed APK SHA-256
+  `7a9a70ef879800aff9e407b5c5a852fc0348d6a4d24bde46e5cd8705b351b9b3`,
+  logged `status=raw-camera-projection-layer-created`,
+  `placementMode=viewer-pose-projection-locked-quad`,
+  `targetDistanceMeters=0.72`, `targetFovTangents=-1.0;1.0;-1.0;1.0`,
+  `projectionWidthMeters=1.44`, `projectionHeightMeters=1.44`,
+  `surfaceOverscanScale=1.0`, `projectionTarget=full-eye`,
+  `borderOpacity=0.0`, `stereoSource=mono-duplicated-camera50`,
+  `outputMode=raw-color`, `first-camera-frame-presented`,
+  `sampledCameraTexture=true`, and `runtimeCrash=false`.
+- Current source state for the next headset run changes that probe to
+  `stereoSource=camera50-51`, `leftCameraId=50`, `rightCameraId=51`,
+  `leftTargetScreenUvRect=0.171875;0.218750;0.750000;0.656250`,
+  `rightTargetScreenUvRect=0.078125;0.218750;0.750000;0.671875`,
+  `projectionTargetLiveScale=1.0000`, `projectionTargetMinScale=0.2500`,
+  `projectionTargetMaxScale=1.8000`, `targetClipPolicy=clip-to-visible-eye`,
+  `projectionContentMappingMode=target-local-raster`,
+  `sampledLeftCameraTexture=true`, `sampledRightCameraTexture=true`, and
+  `monoDuplicated=false`. The prior artifact remains the mono/full-surface
+  baseline, not evidence for this source state.
 - Decision: the high-control manual layer route is alive when the swapchain is
   SDK-owned and exposed as an Android `Surface`. It now covers Canvas,
   native Vulkan WSI, programmatic stereo/alpha checks, PanelSurface surface
-  variants, and the first Camera2/HWB-to-Vulkan sampled diagnostic. Raw
-  external `XrSwapchain` wrapping should remain blocked unless Meta documents
-  a different contract.
+  variants, a Camera2/HWB-to-Vulkan sampled diagnostic, and a raw-color
+  Morphovision-sized viewer-locked projection carrier whose visible pixels are
+  target-rect clipped in source. Raw external `XrSwapchain` wrapping should
+  remain blocked unless Meta documents a different contract.
 
 Build:
 

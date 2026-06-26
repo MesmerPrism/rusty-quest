@@ -44,6 +44,11 @@ fn main() {
             "camera_hwb_probe.frag.spv",
             "fragment",
         ),
+        (
+            "shaders/camera_hwb_raw_color.frag.glsl",
+            "camera_hwb_raw_color.frag.spv",
+            "fragment",
+        ),
     ];
     let glslc = find_glslc();
     for (source, output_name, stage) in shaders {

@@ -1406,6 +1406,42 @@ Community/context, not treated as API contract:
   requestedFrames=300`. This proves the Spatial SDK-owned carrier can host the
   native Camera2/HWB-to-Vulkan path for a diagnostic sampled pass without the
   private Morphovision shader stack.
+- 2026-06-26 raw Camera2/HWB projection probe: added
+  `debug.rustyquest.spatial.camera_hwb_projection_probe` as the next slice on
+  the proven carrier. The probe keeps
+  `SceneSwapchain.createAsAndroid(...).getSurface() -> ANativeWindow ->
+  Vulkan WSI -> SceneQuadLayer`, uses `2048x1024` `StereoMode.LeftRight`, and
+  continuously updates a borderless `1.44m x 1.44m` quad at `0.72m` from
+  `scene.getViewerPose()`. The first headset proof used
+  `outputMode=raw-color` with camera `50` duplicated into both eye halves.
+  Quest 3S evidence in
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260626-104001-raw-camera-projection-probe`
+  installed APK SHA-256
+  `7a9a70ef879800aff9e407b5c5a852fc0348d6a4d24bde46e5cd8705b351b9b3`
+  and logged `status=raw-camera-projection-layer-created`,
+  `carrier=scenequadlayer-createAsAndroid-vulkan-wsi`,
+  `placementMode=viewer-pose-projection-locked-quad`,
+  `targetDistanceMeters=0.72`, `targetFovTangents=-1.0;1.0;-1.0;1.0`,
+  `projectionWidthMeters=1.44`, `projectionHeightMeters=1.44`,
+  `surfaceOverscanScale=1.0`, `projectionTarget=full-eye`,
+  `borderOpacity=0.0`, `outputMode=raw-color`,
+  `sampledCameraTexture=true`, `privateShaderStack=false`,
+  `morphovisionStack=false`, and `runtimeCrash=false`.
+- Current source state changes that probe from the mono/full-surface baseline
+  to native target-local raster semantics: camera `50` is bound as the left
+  sampled AHB texture, camera `51` as the right sampled AHB texture, descriptor
+  bindings `0` and `1` match the native camera shader shape, and
+  `outputMode=raw-color-target-rect`. The shader draws a full-screen triangle
+  over the large SDK carrier, but samples only inside packed effective rects
+  derived from the native defaults:
+  left `0.171875;0.218750;0.750000;0.656250`, right
+  `0.078125;0.218750;0.750000;0.671875`, scale `1.0000`, offsets
+  `0.000000,0.000000`, min scale `0.2500`, max scale `1.8000`, and
+  `borderOpacity=0.0`. Required source markers include
+  `stereoSource=camera50-51`, `projectionContentMappingMode=target-local-raster`,
+  `targetClipPolicy=clip-to-visible-eye`, `sampledLeftCameraTexture=true`,
+  `sampledRightCameraTexture=true`, and `monoDuplicated=false`; this source
+  state still needs its own headset artifact.
 - 2026-06-25 Spatial experiment condition handoff slice: the panel-controlled
   block start now returns an active block snapshot with
   `movement_base_frequency_hz` and `movement_coupling`, applies those values to
@@ -1779,6 +1815,14 @@ Important files in that directory:
   `channel=camera-hwb-spatial-probe status=first-camera-frame-presented`
   with `sampledCameraTexture=true`, `samplerMode=external-format-ycbcr`, and
   `privateShaderStack=false morphovisionStack=false`.
+- 2026-06-26 follow-up answer: the same SDK-owned carrier also supports an
+  unbounded raw-color projection loop on a Morphovision-sized, viewer-locked
+  `SceneQuadLayer`: `2048x1024` packed surface, `StereoMode.LeftRight`, target
+  distance `0.72m`, target tangents `-1.0;1.0;-1.0;1.0`, footprint
+  `1.44m x 1.44m`, overscan `1.0`, border opacity `0.0`, and
+  `projectionTarget=full-eye`. The first headset artifact was mono camera `50`
+  duplicated across both eye halves; current source binds camera `50`/`51`
+  separately and clips visible pixels to the packed native target rects.
 - Is native Vulkan rendering directly into `SceneSwapchain.create(...)` image
   handles, without the Android `Surface`/WSI path, supported, and if so how are
   the `VkDevice`, `VkQueue`, image handles, image formats, and synchronization
@@ -1786,6 +1830,7 @@ Important files in that directory:
 - Are there cadence or presentation restrictions for a native producer render
   loop that presents into an SDK surface-backed panel while Spatial SDK owns
   the immersive session?
-- Can the camera probe be extended from one camera to stereo Camera2 50/51 with
-  the native Morphovision projection/correction shaders while preserving the
-  SDK-owned surface carrier and avoiding repeated raw HWB sampling?
+- Does the current source-level stereo target-rect probe pass headset visual
+  acceptance: camera `50` visible only in the left native effective target
+  rect, camera `51` visible only in the right native effective target rect, and
+  no camera pixels outside those rects on the large SDK carrier?

@@ -114,6 +114,17 @@ import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
 
+private data class CameraHwbProjectionPlane(
+    val viewerPosition: Vector3,
+    val forward: Vector3,
+    val up: Vector3,
+    val right: Vector3,
+    val center: Vector3,
+    val pose: Pose,
+    val leftEyeOffset: Vector3,
+    val rightEyeOffset: Vector3,
+)
+
 class KuramotoSpatialActivity : AppSystemActivity() {
   private val store: KuramotoExperimentStore by lazy(LazyThreadSafetyMode.NONE) {
     KuramotoExperimentStore(this)
@@ -162,6 +173,10 @@ class KuramotoSpatialActivity : AppSystemActivity() {
   private var sdkQuadStereoAlphaProbeZIndexChanged = false
   private var panelSurfaceMatrixProbeStarted = false
   private var cameraHwbProbeStarted = false
+  private var cameraHwbProjectionProbeStarted = false
+  private var cameraHwbProjectionEntity: Entity? = null
+  private var cameraHwbProjectionMarkerCount = 0
+  private var lastCameraHwbProjectionMarkerMs = 0L
   private var sdkQuadSurfaceProbeLayer: SceneQuadLayer? = null
   private var sdkQuadSurfaceProbeSceneObject: SceneObject? = null
   private var sdkQuadSurfaceProbeSwapchain: SceneSwapchain? = null
@@ -290,6 +305,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     runSdkQuadVulkanProbeIfRequested("vr-ready")
     runSdkQuadStereoAlphaProbeIfRequested("vr-ready")
     runPanelSurfaceMatrixProbeIfRequested("vr-ready")
+    runCameraHwbProjectionProbeIfRequested("vr-ready")
     runCameraHwbProbeIfRequested("vr-ready")
   }
 
@@ -297,6 +313,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     super.onSceneTick()
     updateWorkflowPanelHeadlockFromViewer(reason = "scene-tick", forceLog = false)
     updateParticleLayerProjectionFromViewer(reason = "scene-tick", forceLog = false)
+    updateCameraHwbProjectionFromViewer(reason = "scene-tick", forceLog = false)
     pollSpatialControllerPrimaryButton()
   }
 
@@ -1088,6 +1105,9 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     if (cameraHwbProbeStarted) {
       return
     }
+    if (readOptionalBooleanSystemProperty(CAMERA_HWB_PROJECTION_PROBE_PROPERTY) == true) {
+      return
+    }
     if (readOptionalBooleanSystemProperty(CAMERA_HWB_PROBE_PROPERTY) != true) {
       return
     }
@@ -1240,6 +1260,155 @@ class KuramotoSpatialActivity : AppSystemActivity() {
             },
             holdMs,
         )
+  }
+
+  private fun runCameraHwbProjectionProbeIfRequested(reason: String) {
+    if (cameraHwbProjectionProbeStarted) {
+      return
+    }
+    if (readOptionalBooleanSystemProperty(CAMERA_HWB_PROJECTION_PROBE_PROPERTY) != true) {
+      return
+    }
+    cameraHwbProjectionProbeStarted = true
+    val readerMaxImages =
+        readIntSystemProperty(
+            CAMERA_HWB_PROJECTION_READER_MAX_IMAGES_PROPERTY,
+            CAMERA_HWB_PROJECTION_DEFAULT_READER_MAX_IMAGES,
+            CAMERA_HWB_PROJECTION_MIN_READER_MAX_IMAGES,
+            CAMERA_HWB_PROJECTION_MAX_READER_MAX_IMAGES,
+        )
+    marker(
+        "channel=camera-hwb-spatial-probe status=start rawCameraProjectionProbe=true " +
+            "reason=${markerToken(reason)} debugProperty=$CAMERA_HWB_PROJECTION_PROBE_PROPERTY " +
+            "widthPx=$CAMERA_HWB_PROJECTION_WIDTH_PX heightPx=$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
+            "requestedFrames=0 frameLimit=none holdMs=none readerMaxImages=$readerMaxImages " +
+            "cameraPreference=50-then-51 carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+            cameraHwbProjectionMarkerFields() + " " +
+            cameraHwbProjectionStereoMarkerFields() + " " +
+            "outputMode=raw-color-target-rect sampledCameraTexture=true " +
+            "sampledLeftCameraTexture=true sampledRightCameraTexture=true monoDuplicated=false " +
+            "sampledCameraTextureSource=native-camera-hwb-pending-first-frame " +
+            "privateShaderStack=false " +
+            "morphovisionStack=false"
+    )
+    Handler(Looper.getMainLooper()).post { runCameraHwbProjectionProbe(readerMaxImages) }
+  }
+
+  private fun runCameraHwbProjectionProbe(readerMaxImages: Int) {
+    cleanupSdkQuadSurfaceProbe("camera-hwb-projection-pre-run")
+    cameraHwbProjectionEntity = null
+    cameraHwbProjectionMarkerCount = 0
+    lastCameraHwbProjectionMarkerMs = 0L
+    setWorkflowPanelVisible(false, focus = false, source = "camera-hwb-projection-probe")
+    if (!nativeReceiptLibraryLoaded) {
+      marker(
+          "channel=camera-hwb-spatial-probe status=complete rawCameraProjectionProbe=true " +
+              "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
+              "nativeStartRequested=false sampledCameraTexture=false " +
+              "error=${markerToken(nativeReceiptLibraryError)} runtimeCrash=false"
+      )
+      return
+    }
+    val sdkSwapchain =
+        runCatching {
+              SceneSwapchain.createAsAndroid(
+                  CAMERA_HWB_PROJECTION_WIDTH_PX,
+                  CAMERA_HWB_PROJECTION_HEIGHT_PX,
+                  false,
+              )
+            }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=camera-hwb-spatial-probe status=complete rawCameraProjectionProbe=true " +
+                      "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
+                      "nativeStartRequested=false sampledCameraTexture=false " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              return
+            }
+    sdkQuadSurfaceProbeSwapchain = sdkSwapchain
+    val surface =
+        runCatching { sdkSwapchain.getSurface() }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=camera-hwb-spatial-probe status=get-surface-failed " +
+                      "rawCameraProjectionProbe=true handle=${sdkSwapchain.handle} " +
+                      "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              null
+            }
+    sdkQuadSurfaceProbeSurface = surface
+    val surfaceValid = surface?.isValid == true
+    marker(
+        "channel=camera-hwb-spatial-probe status=sdk-swapchain-created rawCameraProjectionProbe=true " +
+            "sdkSwapchainCreated=true handle=${sdkSwapchain.handle} " +
+            "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
+            "surfaceValid=$surfaceValid widthPx=$CAMERA_HWB_PROJECTION_WIDTH_PX " +
+            "heightPx=$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
+            "carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+            cameraHwbProjectionStereoMarkerFields()
+    )
+    val renderSurface = surface
+    if (!surfaceValid) {
+      val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-projection-surface-invalid")
+      marker(
+          "channel=camera-hwb-spatial-probe status=complete rawCameraProjectionProbe=true " +
+              "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=false " +
+              "nativeStartRequested=false sampledCameraTexture=false cleanupStatus=$cleanupStatus " +
+              "runtimeCrash=false"
+      )
+      return
+    }
+
+    val layerCreated = createCameraHwbProjectionLayer(sdkSwapchain)
+    if (!layerCreated) {
+      val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-projection-layer-create-failed")
+      marker(
+          "channel=camera-hwb-spatial-probe status=complete rawCameraProjectionProbe=true " +
+              "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=false " +
+              "nativeStartRequested=false sampledCameraTexture=false cleanupStatus=$cleanupStatus " +
+              "runtimeCrash=false"
+      )
+      return
+    }
+
+    val startMask =
+        runCatching {
+              nativeStartCameraHwbProjectionProbe(
+                  renderSurface,
+                  CAMERA_HWB_PROJECTION_WIDTH_PX,
+                  CAMERA_HWB_PROJECTION_HEIGHT_PX,
+                  CAMERA_HWB_PROJECTION_FRAME_COUNT_UNBOUNDED,
+                  readerMaxImages,
+              )
+            }
+            .getOrElse { throwable ->
+              val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-projection-start-failed")
+              marker(
+                  "channel=camera-hwb-spatial-probe status=complete rawCameraProjectionProbe=true " +
+                      "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
+                      "nativeStartRequested=false sampledCameraTexture=false cleanupStatus=$cleanupStatus " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              return
+            }
+    marker(
+        "channel=camera-hwb-spatial-probe status=native-start-requested rawCameraProjectionProbe=true " +
+            "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
+            "nativeStartRequested=true startMask=$startMask requestedFrames=0 frameLimit=none " +
+            "readerMaxImages=$readerMaxImages carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+            cameraHwbProjectionMarkerFields() + " " +
+            cameraHwbProjectionStereoMarkerFields() + " " +
+            "outputMode=raw-color-target-rect sampledCameraTexture=see-native-logcat " +
+            "sampledLeftCameraTexture=see-native-logcat sampledRightCameraTexture=see-native-logcat " +
+            "monoDuplicated=false " +
+            "privateShaderStack=false morphovisionStack=false runtimeCrash=false"
+    )
+    updateCameraHwbProjectionFromViewer(reason = "raw-projection-start", forceLog = true)
   }
 
   private fun runSdkQuadStereoAlphaProbe(holdMs: Long) {
@@ -1832,6 +2001,77 @@ class KuramotoSpatialActivity : AppSystemActivity() {
             false
           }
 
+  private fun createCameraHwbProjectionLayer(sdkSwapchain: SceneSwapchain): Boolean =
+      runCatching {
+            val plane = cameraHwbProjectionPlaneFromViewer()
+            val entity =
+                Entity.create(
+                    Transform(plane.pose),
+                    Scale(Vector3(1.0f, 1.0f, 1.0f)),
+                    Visible(true),
+                )
+            cameraHwbProjectionEntity = entity
+            val material = SceneMaterial.passthrough()
+            val mesh =
+                SceneMesh.singleSidedQuad(
+                    CAMERA_HWB_PROJECTION_WIDTH_METERS,
+                    CAMERA_HWB_PROJECTION_HEIGHT_METERS,
+                    material,
+                )
+            sdkQuadSurfaceProbeAnchorMaterial = material
+            sdkQuadSurfaceProbeAnchorMesh = mesh
+            val sceneObject = SceneObject(scene, mesh, "camera_hwb_projection_anchor", entity)
+            scene.addObject(sceneObject)
+            sdkQuadSurfaceProbeSceneObject = sceneObject
+            val layer =
+                SceneQuadLayer(
+                    scene,
+                    sdkSwapchain,
+                    CAMERA_HWB_PROJECTION_WIDTH_METERS,
+                    CAMERA_HWB_PROJECTION_HEIGHT_METERS,
+                    0.5f,
+                    0.5f,
+                    StereoMode.LeftRight,
+                    sceneObject,
+                )
+            layer.setZIndex(CAMERA_HWB_PROJECTION_Z_INDEX)
+            sdkQuadSurfaceProbeLayer = layer
+            marker(
+                "channel=camera-hwb-spatial-probe status=raw-camera-projection-layer-created " +
+                    "rawCameraProjectionProbe=true sceneQuadLayerCreated=true " +
+                    "anchorMode=generated-single-sided-quad sceneObjectHandle=${sceneObject.handle} " +
+                    "widthMeters=$CAMERA_HWB_PROJECTION_WIDTH_MARKER " +
+                    "heightMeters=$CAMERA_HWB_PROJECTION_HEIGHT_MARKER " +
+                    "zIndex=$CAMERA_HWB_PROJECTION_Z_INDEX " +
+                    "carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+                    cameraHwbProjectionMarkerFields() + " " +
+                    cameraHwbProjectionStereoMarkerFields() + " " +
+                    "poseSource=Scene.getViewerPose viewerPositionM=${vectorMarker(plane.viewerPosition)} " +
+                    "viewerForward=${vectorMarker(plane.forward)} viewerUp=${vectorMarker(plane.up)} " +
+                    "viewerRight=${vectorMarker(plane.right)} planeCenterM=${vectorMarker(plane.center)} " +
+                    "planeQuaternion=${quaternionMarker(plane.pose.q)} " +
+                    "leftEyeOffsetM=${vectorMarker(plane.leftEyeOffset)} " +
+                    "rightEyeOffsetM=${vectorMarker(plane.rightEyeOffset)} " +
+                    "outputMode=raw-color-target-rect sampledCameraTexture=true " +
+                    "sampledLeftCameraTexture=true sampledRightCameraTexture=true monoDuplicated=false " +
+                    "sampledCameraTextureSource=native-camera-hwb-pending-first-frame " +
+                    "privateShaderStack=false " +
+                    "morphovisionStack=false runtimeCrash=false"
+            )
+            true
+          }
+          .getOrElse { throwable ->
+            cameraHwbProjectionEntity = null
+            marker(
+                "channel=camera-hwb-spatial-probe status=layer-create-failed " +
+                    "rawCameraProjectionProbe=true sceneQuadLayerCreated=false " +
+                    "anchorMode=generated-single-sided-quad " +
+                    "error=${markerToken(throwable.javaClass.simpleName)} " +
+                    "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+            )
+            false
+          }
+
   private fun drawSdkQuadSurfaceCheckerboard(surface: AndroidSurface): Boolean {
     if (!surface.isValid) {
       marker(
@@ -1922,6 +2162,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
               .getOrDefault(false)
     }
     sdkQuadSurfaceProbeSceneObject = null
+    cameraHwbProjectionEntity = null
 
     sdkQuadSurfaceProbeAnchorMesh?.let { mesh ->
       meshDestroyed =
@@ -3100,6 +3341,104 @@ class KuramotoSpatialActivity : AppSystemActivity() {
           )
       )
 
+  @OptIn(SpatialSDKExperimentalAPI::class)
+  private fun updateCameraHwbProjectionFromViewer(reason: String, forceLog: Boolean) {
+    val entity = cameraHwbProjectionEntity ?: return
+    val plane = cameraHwbProjectionPlaneFromViewer()
+    entity.setComponent(Transform(plane.pose))
+    entity.setComponent(Visible(true))
+    val now = SystemClock.elapsedRealtime()
+    val shouldLog =
+        forceLog ||
+            (cameraHwbProjectionMarkerCount < 4 &&
+                now - lastCameraHwbProjectionMarkerMs >=
+                    CAMERA_HWB_PROJECTION_MARKER_INTERVAL_MS)
+    if (!shouldLog) {
+      return
+    }
+    cameraHwbProjectionMarkerCount += 1
+    lastCameraHwbProjectionMarkerMs = now
+    marker(
+        "channel=camera-hwb-spatial-probe status=raw-camera-projection-plane-updated " +
+            "reason=${markerToken(reason)} rawCameraProjectionProbe=true " +
+            "viewerPoseSource=Scene.getViewerPose eyeOffsetsSource=Scene.getEyeOffsets " +
+            cameraHwbProjectionMarkerFields() + " " +
+            cameraHwbProjectionStereoMarkerFields() + " " +
+            "viewerPositionM=${vectorMarker(plane.viewerPosition)} " +
+            "viewerForward=${vectorMarker(plane.forward)} viewerUp=${vectorMarker(plane.up)} " +
+            "viewerRight=${vectorMarker(plane.right)} planeCenterM=${vectorMarker(plane.center)} " +
+            "planeQuaternion=${quaternionMarker(plane.pose.q)} " +
+            "leftEyeOffsetM=${vectorMarker(plane.leftEyeOffset)} " +
+            "rightEyeOffsetM=${vectorMarker(plane.rightEyeOffset)} " +
+            "outputMode=raw-color-target-rect sampledCameraTexture=see-native-logcat " +
+            "sampledLeftCameraTexture=see-native-logcat sampledRightCameraTexture=see-native-logcat " +
+            "monoDuplicated=false " +
+            "privateShaderStack=false morphovisionStack=false runtimeCrash=false"
+    )
+  }
+
+  @OptIn(SpatialSDKExperimentalAPI::class)
+  private fun cameraHwbProjectionPlaneFromViewer(): CameraHwbProjectionPlane {
+    val viewerPose = runCatching { scene.getViewerPose() }.getOrNull()
+    val fallbackViewerPosition = Vector3(0.0f, 1.20f, -2.0f)
+    val fallbackForward = Vector3(0.0f, 0.0f, -1.0f)
+    val fallbackUp = Vector3(0.0f, 1.0f, 0.0f)
+    val viewerPosition = viewerPose?.t ?: fallbackViewerPosition
+    val forward = viewerPose?.forward()?.normalizedOr(fallbackForward) ?: fallbackForward
+    val up = viewerPose?.up()?.normalizedOr(fallbackUp) ?: fallbackUp
+    val right = cross(forward, up).normalizedOr(Vector3(1.0f, 0.0f, 0.0f))
+    val center = viewerPosition + forward * CAMERA_HWB_PROJECTION_TARGET_DISTANCE_METERS
+    val pose = Pose(center, Quaternion.fromDirection(forward, up))
+    val eyeOffsets = runCatching { scene.getEyeOffsets() }.getOrNull()
+    return CameraHwbProjectionPlane(
+        viewerPosition = viewerPosition,
+        forward = forward,
+        up = up,
+        right = right,
+        center = center,
+        pose = pose,
+        leftEyeOffset = eyeOffsets?.first ?: Vector3(0.0f),
+        rightEyeOffset = eyeOffsets?.second ?: Vector3(0.0f),
+    )
+  }
+
+  private fun cameraHwbProjectionMarkerFields(): String =
+      "placementMode=$CAMERA_HWB_PROJECTION_PLACEMENT_MODE " +
+          "placementAuthority=$CAMERA_HWB_PROJECTION_PLACEMENT_AUTHORITY " +
+          "cameraFacingParticleSurface=true projectionLockedParticleSurface=true " +
+          "targetDistanceMeters=$CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER " +
+          "targetFovTangents=$CAMERA_HWB_PROJECTION_TARGET_FOV_TANGENTS " +
+          "projectionWidthMeters=$CAMERA_HWB_PROJECTION_WIDTH_MARKER " +
+          "projectionHeightMeters=$CAMERA_HWB_PROJECTION_HEIGHT_MARKER " +
+          "surfaceOverscanScale=$CAMERA_HWB_PROJECTION_SURFACE_OVERSCAN_MARKER " +
+          "surfaceWidthMeters=$CAMERA_HWB_PROJECTION_WIDTH_MARKER " +
+          "surfaceHeightMeters=$CAMERA_HWB_PROJECTION_HEIGHT_MARKER " +
+          "projectionTarget=$CAMERA_HWB_PROJECTION_TARGET " +
+          "borderOpacity=$CAMERA_HWB_PROJECTION_BORDER_OPACITY_MARKER " +
+          "leftCameraId=50 rightCameraId=51 " +
+          "leftTargetScreenUvRect=$CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_MARKER " +
+          "rightTargetScreenUvRect=$CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_MARKER " +
+          "leftEffectiveTargetScreenUvRect=$CAMERA_HWB_PROJECTION_LEFT_EFFECTIVE_TARGET_RECT_MARKER " +
+          "rightEffectiveTargetScreenUvRect=$CAMERA_HWB_PROJECTION_RIGHT_EFFECTIVE_TARGET_RECT_MARKER " +
+          "leftPackedEffectiveTargetScreenUvRect=$CAMERA_HWB_PROJECTION_LEFT_PACKED_EFFECTIVE_TARGET_RECT_MARKER " +
+          "rightPackedEffectiveTargetScreenUvRect=$CAMERA_HWB_PROJECTION_RIGHT_PACKED_EFFECTIVE_TARGET_RECT_MARKER " +
+          "projectionTargetControlsEnabled=true " +
+          "projectionTargetLiveScale=1.0000 " +
+          "projectionTargetTunedMaxScale=1.0000 " +
+          "projectionTargetMinScale=0.2500 " +
+          "projectionTargetMaxScale=1.8000 " +
+          "projectionTargetOffsetUv=0.000000,0.000000 " +
+          "targetClipPolicy=clip-to-visible-eye " +
+          "targetCoordinateSpace=$PARTICLE_LAYER_TARGET_COORDINATE_SPACE " +
+          "targetProjectionSpace=$PARTICLE_LAYER_TARGET_PROJECTION_SPACE " +
+          "projectionContentMappingMode=target-local-raster"
+
+  private fun cameraHwbProjectionStereoMarkerFields(): String =
+      "stereoMode=LeftRight stereoSource=camera50-51 leftCameraId=50 rightCameraId=51 " +
+          "monoDuplicated=false " +
+          "perEyeExtent=${CAMERA_HWB_PROJECTION_PER_EYE_WIDTH_PX}x$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
+          "packedExtent=${CAMERA_HWB_PROJECTION_WIDTH_PX}x$CAMERA_HWB_PROJECTION_HEIGHT_PX"
+
   private fun panelHeadlockMarkerFields(): String =
       "headlockedPanelEnabled=${panelPlacement.headlocked} " +
           "headlockedPanelDefaultEnabled=true " +
@@ -3558,6 +3897,14 @@ class KuramotoSpatialActivity : AppSystemActivity() {
   private external fun nativeStopSdkQuadVulkanProbe()
 
   private external fun nativeStartCameraHwbProbe(
+      surface: AndroidSurface,
+      width: Int,
+      height: Int,
+      frameCount: Int,
+      readerMaxImages: Int,
+  ): Long
+
+  private external fun nativeStartCameraHwbProjectionProbe(
       surface: AndroidSurface,
       width: Int,
       height: Int,
@@ -4196,6 +4543,47 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     private const val CAMERA_HWB_PROBE_DEFAULT_READER_MAX_IMAGES = 4
     private const val CAMERA_HWB_PROBE_MIN_READER_MAX_IMAGES = 3
     private const val CAMERA_HWB_PROBE_MAX_READER_MAX_IMAGES = 12
+    private const val CAMERA_HWB_PROJECTION_PROBE_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_projection_probe"
+    private const val CAMERA_HWB_PROJECTION_READER_MAX_IMAGES_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.reader_max_images"
+    private const val CAMERA_HWB_PROJECTION_WIDTH_PX = 2048
+    private const val CAMERA_HWB_PROJECTION_HEIGHT_PX = 1024
+    private const val CAMERA_HWB_PROJECTION_PER_EYE_WIDTH_PX = 1024
+    private const val CAMERA_HWB_PROJECTION_WIDTH_METERS = PARTICLE_LAYER_WIDTH_METERS
+    private const val CAMERA_HWB_PROJECTION_HEIGHT_METERS = PARTICLE_LAYER_HEIGHT_METERS
+    private const val CAMERA_HWB_PROJECTION_WIDTH_MARKER = "1.44"
+    private const val CAMERA_HWB_PROJECTION_HEIGHT_MARKER = "1.44"
+    private const val CAMERA_HWB_PROJECTION_TARGET_DISTANCE_METERS =
+        PARTICLE_LAYER_TARGET_DISTANCE_METERS
+    private const val CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER = "0.72"
+    private const val CAMERA_HWB_PROJECTION_TARGET_FOV_TANGENTS = "-1.0;1.0;-1.0;1.0"
+    private const val CAMERA_HWB_PROJECTION_SURFACE_OVERSCAN_SCALE = 1.0f
+    private const val CAMERA_HWB_PROJECTION_SURFACE_OVERSCAN_MARKER = "1.0"
+    private const val CAMERA_HWB_PROJECTION_BORDER_OPACITY_MARKER = "0.0"
+    private const val CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_MARKER =
+        "0.171875;0.218750;0.750000;0.656250"
+    private const val CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_MARKER =
+        "0.078125;0.218750;0.750000;0.671875"
+    private const val CAMERA_HWB_PROJECTION_LEFT_EFFECTIVE_TARGET_RECT_MARKER =
+        CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_MARKER
+    private const val CAMERA_HWB_PROJECTION_RIGHT_EFFECTIVE_TARGET_RECT_MARKER =
+        CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_MARKER
+    private const val CAMERA_HWB_PROJECTION_LEFT_PACKED_EFFECTIVE_TARGET_RECT_MARKER =
+        "0.085938;0.218750;0.375000;0.656250"
+    private const val CAMERA_HWB_PROJECTION_RIGHT_PACKED_EFFECTIVE_TARGET_RECT_MARKER =
+        "0.539063;0.218750;0.375000;0.671875"
+    private const val CAMERA_HWB_PROJECTION_TARGET = "full-eye"
+    private const val CAMERA_HWB_PROJECTION_PLACEMENT_MODE =
+        "viewer-pose-projection-locked-quad"
+    private const val CAMERA_HWB_PROJECTION_PLACEMENT_AUTHORITY =
+        "spatial-sdk-viewer-pose-scene-tick"
+    private const val CAMERA_HWB_PROJECTION_Z_INDEX = 40
+    private const val CAMERA_HWB_PROJECTION_FRAME_COUNT_UNBOUNDED = 0
+    private const val CAMERA_HWB_PROJECTION_DEFAULT_READER_MAX_IMAGES = 4
+    private const val CAMERA_HWB_PROJECTION_MIN_READER_MAX_IMAGES = 3
+    private const val CAMERA_HWB_PROJECTION_MAX_READER_MAX_IMAGES = 12
+    private const val CAMERA_HWB_PROJECTION_MARKER_INTERVAL_MS = 900L
     private const val OPENXR_ERROR_HANDLE_INVALID = -12
     private const val NATIVE_RECEIPT_LIBRARY = "kuramoto_spatial_native_receipt"
     private const val NATIVE_RECEIPT_OPENXR_INSTANCE_BIT = 1L shl 1
