@@ -140,7 +140,11 @@ starts `ControlPanelActivity` with the panel toggle action; if the panel is
 already alive, its `onNewIntent` handler closes the panel. This is best-effort
 cooperative panel behavior and includes an on-panel Close button as a fallback
 for platform modes that move input focus fully to the 2D panel. The A/right
-primary button remains reserved for stimulus randomization.
+primary button remains reserved for stimulus randomization in the default
+stimulus path. In `private-layer-selector` and `kuramoto-experiment` panel
+modes, A/right-primary opens the panel instead and is not also bound to the
+projection reset action, so right-thumbstick projection scale control remains
+independent.
 
 The stimulus route starts from the saved headset dynamics
 `headset-randomize-count-28-2026-06-20` before any new randomize press: a spiral

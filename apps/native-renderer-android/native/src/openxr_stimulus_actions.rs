@@ -63,6 +63,8 @@ pub(crate) struct StimulusVolumeActions {
     private_particle_breath_state_driver_settings: PrivateParticleBreathStateDriverSettings,
     environment_depth_alignment_settings: EnvironmentDepthAlignmentSettings,
     private_particle_recenter_enabled: bool,
+    right_primary_control_panel_enabled: bool,
+    right_primary_reset_enabled: bool,
 }
 
 #[derive(Debug, Default)]
@@ -194,8 +196,9 @@ impl StimulusVolumeActions {
             && stimulus_settings.randomize_enabled)
             || right_primary_control_panel_binding_enabled;
         let projection_controls_enabled = projection_target_settings.controls_enabled;
-        let primary_recenter_binding_enabled =
-            projection_controls_enabled || private_particle_recenter_enabled;
+        let primary_recenter_binding_enabled = (projection_controls_enabled
+            || private_particle_recenter_enabled)
+            && !right_primary_control_panel_binding_enabled;
         let projection_joystick_binding_enabled =
             projection_controls_enabled && projection_target_settings.joystick_controls_enabled;
         let depth_alignment_joystick_binding_enabled = environment_depth_alignment_settings
@@ -368,7 +371,7 @@ impl StimulusVolumeActions {
                 "status=config actionSet=stimulus_volume projectionTargetControlsEnabled={} rightThumbstickYAction={} rightControllerThumbstickY=/user/hand/right/input/thumbstick/y rightPrimaryResetAction={} rightControllerPrimaryReset=/user/hand/right/input/a/click rightSecondaryScaleDriverToggleAction={} rightControllerSecondaryScaleDriverToggle=/user/hand/right/input/b/click rightGripPoseAction={} optionalRightGripPose=/user/hand/right/input/grip/pose nativeControllerBreathStateConfigured={} nativeControllerBreathStateSource=right-grip-pose privateParticleBreathStateDriverConfigured={} rightBreathHapticAction={} rightBreathHaptic={} rightBreathHapticSubaction={} breathHapticsConfigured={} breathHapticRequiresScaleDriver=pmb breathHapticRequiresRightGripTracked=true breathHapticPulseHz={:.3} breathHapticAmplitude={:.3} breathHapticDurationMs={} breathHapticFrequencyHz=runtime-default actionSetAttached=false highRatePoseViaAndroidProperties=false highRateBreathViaAndroidProperties=false",
                 projection_target_settings.controls_enabled,
                 projection_joystick_binding_enabled,
-                projection_controls_enabled,
+                primary_recenter_binding_enabled,
                 projection_controls_enabled,
                 right_grip_pose_binding_enabled,
                 native_controller_breath_configured,
@@ -452,6 +455,8 @@ impl StimulusVolumeActions {
             private_particle_breath_state_driver_settings,
             environment_depth_alignment_settings,
             private_particle_recenter_enabled,
+            right_primary_control_panel_enabled: right_primary_control_panel_binding_enabled,
+            right_primary_reset_enabled: primary_recenter_binding_enabled,
         }))
     }
 
@@ -484,9 +489,11 @@ impl StimulusVolumeActions {
         crate::marker(
             "stimulus-volume-input",
             format!(
-                "status=attached actionSet=stimulus_volume actionSetAttached=true suggestedBindingCount={} rightControllerPrimaryButtonRandomize={} rightControllerTriggerPanelToggle=true",
+                "status=attached actionSet=stimulus_volume actionSetAttached=true suggestedBindingCount={} rightControllerPrimaryButtonRandomize={} rightPrimaryControlPanelOpen={} rightControllerTriggerPanelToggle=true",
                 self.suggested_binding_count,
                 self.stimulus_settings.enabled && self.stimulus_settings.randomize_enabled
+                    || self.right_primary_control_panel_enabled,
+                self.right_primary_control_panel_enabled
             ),
         );
         crate::marker(
@@ -496,7 +503,7 @@ impl StimulusVolumeActions {
                 self.suggested_binding_count,
                 self.projection_target_settings.controls_enabled
                     && self.projection_target_settings.joystick_controls_enabled,
-                self.projection_target_settings.controls_enabled,
+                self.right_primary_reset_enabled,
                 self.projection_target_settings.controls_enabled,
                 self.projection_target_settings.controls_enabled
                     && self
@@ -705,8 +712,8 @@ impl StimulusVolumeActions {
                         && self
                             .environment_depth_alignment_settings
                             .joystick_controls_enabled,
-                    self.projection_target_settings.controls_enabled,
-                    self.private_particle_recenter_enabled,
+                    self.right_primary_reset_enabled,
+                    self.private_particle_recenter_enabled && self.right_primary_reset_enabled,
                     self.projection_target_settings.controls_enabled,
                     breath_haptic_action,
                     breath_haptics_enabled,
@@ -1173,9 +1180,7 @@ impl StimulusVolumeActions {
     }
 
     fn poll_primary_reset<G>(&mut self, session: &xr::Session<G>, frame_count: u64) -> bool {
-        if !self.projection_target_settings.controls_enabled
-            && !self.private_particle_recenter_enabled
-        {
+        if !self.right_primary_reset_enabled {
             return false;
         }
         let state = match self.right_primary_reset.state(session, xr::Path::NULL) {

@@ -137,16 +137,35 @@ pub(crate) fn open_control_panel(
 
 #[cfg(target_os = "android")]
 pub(crate) fn right_primary_opens_control_panel() -> bool {
-    control_panel_mode_is_kuramoto_experiment()
+    matches!(
+        control_panel_mode().as_deref(),
+        Some("kuramoto-experiment" | "private-layer-selector")
+    )
+}
+
+#[cfg(target_os = "android")]
+pub(crate) fn right_primary_control_panel_source() -> &'static str {
+    match control_panel_mode().as_deref() {
+        Some("private-layer-selector") => "right-primary-private-layer-selector",
+        Some("kuramoto-experiment") => "right-primary-kuramoto-experiment",
+        _ => "right-primary-control-panel",
+    }
 }
 
 #[cfg(target_os = "android")]
 fn control_panel_mode_is_kuramoto_experiment() -> bool {
+    control_panel_mode()
+        .as_deref()
+        .is_some_and(|value| value == "kuramoto-experiment")
+}
+
+#[cfg(target_os = "android")]
+fn control_panel_mode() -> Option<String> {
     let mut property = android_properties::getprop(PROP_CONTROL_PANEL_MODE);
     property
         .value()
-        .map(|value| value.trim() == "kuramoto-experiment")
-        .unwrap_or(false)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 #[cfg(target_os = "android")]

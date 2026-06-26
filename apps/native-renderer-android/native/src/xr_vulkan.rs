@@ -2216,7 +2216,7 @@ unsafe fn run_projection_frames(
                     crate::native_renderer_panel_bridge::open_control_panel(
                         app,
                         frame_count,
-                        "right-primary-kuramoto-experiment",
+                        crate::native_renderer_panel_bridge::right_primary_control_panel_source(),
                     );
                 } else if let Some(renderer) = gpu_stimulus_volume_renderer.as_deref_mut() {
                     renderer.randomize(stimulus_volume_settings, frame_count);
