@@ -34,6 +34,16 @@ fn main() {
             "replay_hands.frag.spv",
             "fragment",
         ),
+        (
+            "shaders/camera_hwb_probe.vert.glsl",
+            "camera_hwb_probe.vert.spv",
+            "vertex",
+        ),
+        (
+            "shaders/camera_hwb_probe.frag.glsl",
+            "camera_hwb_probe.frag.spv",
+            "fragment",
+        ),
     ];
     let glslc = find_glslc();
     for (source, output_name, stage) in shaders {

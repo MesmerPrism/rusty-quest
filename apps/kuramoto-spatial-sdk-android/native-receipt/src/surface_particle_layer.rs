@@ -12,6 +12,10 @@ use std::time::Instant;
 use ash::vk;
 use openxr_sys::Handle as OpenXrHandle;
 
+#[cfg(target_os = "android")]
+use crate::acamera_sys::{
+    ANativeWindow as CameraNativeWindow, ANativeWindow_release as release_camera_native_window,
+};
 use crate::live_hand_joints::{store_live_hand_panel_basis, LiveHandOpenXrHandles};
 use crate::replay_hands::{ReplayHandPanelProjection, ReplayHandsRenderer};
 use crate::{android_log_info, bool_token, marker_token};
@@ -22,6 +26,7 @@ const START_NATIVE_WINDOW_OBTAINED: i64 = 1 << 2;
 const START_RENDER_THREAD_SPAWNED: i64 = 1 << 3;
 
 static STOP_SURFACE_PARTICLES: AtomicBool = AtomicBool::new(false);
+static STOP_SDK_QUAD_VULKAN_PROBE: AtomicBool = AtomicBool::new(false);
 static SURFACE_PARTICLE_DRIVER0_BITS: AtomicU32 = AtomicU32::new(1.0_f32.to_bits());
 static SURFACE_PARTICLE_DRIVER1_BITS: AtomicU32 = AtomicU32::new(0.0_f32.to_bits());
 static SURFACE_PARTICLE_POINT_SCALE_BITS: AtomicU32 = AtomicU32::new(1.0_f32.to_bits());
@@ -54,12 +59,28 @@ const SURFACE_PARTICLE_PROJECTION_MARKERS: &str =
 #[link(name = "android")]
 extern "C" {
     fn ANativeWindow_fromSurface(env: *mut c_void, surface: *mut c_void) -> *mut vk::ANativeWindow;
+}
+
+#[cfg(not(target_os = "android"))]
+#[link(name = "android")]
+extern "C" {
     fn ANativeWindow_release(window: *mut vk::ANativeWindow);
 }
 
 #[cfg(target_os = "android")]
 extern "C" {
     fn __system_property_get(name: *const c_char, value: *mut c_char) -> c_int;
+}
+
+unsafe fn release_anative_window(window: *mut vk::ANativeWindow) {
+    #[cfg(target_os = "android")]
+    {
+        release_camera_native_window(window.cast::<CameraNativeWindow>());
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        ANativeWindow_release(window);
+    }
 }
 
 struct ExternalSwapchainOpenXrFunction {
@@ -141,6 +162,136 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_K
 
 #[no_mangle]
 #[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_KuramotoSpatialActivity_nativeStartSdkQuadVulkanProbe(
+    env: *mut c_void,
+    _thiz: *mut c_void,
+    surface: *mut c_void,
+    width: c_int,
+    height: c_int,
+    frame_count: c_int,
+) -> i64 {
+    let mut mask = START_RECEIVED;
+    if !surface.is_null() {
+        mask |= START_SURFACE_NON_NULL;
+    }
+    if surface.is_null() || env.is_null() {
+        android_log_info(
+            "RQKuramotoSpatialNative",
+            &format!(
+                "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=sdk-owned-quad-vulkan-probe status=start-receipt nativeVulkanProducer=true startMask={} startStatus=missing-env-or-surface surfaceNonNull={} nativeWindowObtained=false renderThreadSpawned=false runtimeCrash=false",
+                mask,
+                bool_token(!surface.is_null()),
+            ),
+        );
+        return mask;
+    }
+
+    let window = unsafe { ANativeWindow_fromSurface(env, surface) };
+    if window.is_null() {
+        android_log_info(
+            "RQKuramotoSpatialNative",
+            &format!(
+                "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=sdk-owned-quad-vulkan-probe status=start-receipt nativeVulkanProducer=true startMask={} startStatus=native-window-null surfaceNonNull=true nativeWindowObtained=false renderThreadSpawned=false runtimeCrash=false",
+                mask,
+            ),
+        );
+        return mask;
+    }
+    mask |= START_NATIVE_WINDOW_OBTAINED;
+    STOP_SDK_QUAD_VULKAN_PROBE.store(false, Ordering::Relaxed);
+
+    let window_addr = window as usize;
+    let width = width.max(64) as u32;
+    let height = height.max(64) as u32;
+    let max_frames = frame_count.clamp(1, 1800) as u32;
+    let spawn_result = thread::Builder::new()
+        .name("kuramoto-spatial-sdk-quad-vulkan-probe".to_string())
+        .spawn(move || {
+            let window = window_addr as *mut vk::ANativeWindow;
+            let started = Instant::now();
+            let render_result = std::panic::catch_unwind(|| unsafe {
+                render_sdk_quad_vulkan_probe(window, width, height, max_frames)
+            });
+            let result = match render_result {
+                Ok(result) => result,
+                Err(_) => Err("panic".to_string()),
+            };
+            unsafe {
+                release_anative_window(window);
+            }
+            match result {
+                Ok(stats) => {
+                    android_log_info(
+                        "RQKuramotoSpatialNative",
+                        &format!(
+                            "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=sdk-owned-quad-vulkan-probe status=render-complete nativeVulkanProducer=true renderPolicy=sdk-owned-scenequadlayer-android-surface-wsi framesPresented={} requestedFrames={} extent={}x{} swapchainImages={} presentResult=success recreateDestroyResult=destroyed elapsedMs={} runtimeCrash=false",
+                            stats.frames_presented,
+                            max_frames,
+                            stats.extent.width,
+                            stats.extent.height,
+                            stats.swapchain_image_count,
+                            started.elapsed().as_millis(),
+                        ),
+                    );
+                }
+                Err(error) => {
+                    android_log_info(
+                        "RQKuramotoSpatialNative",
+                        &format!(
+                            "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=sdk-owned-quad-vulkan-probe status=render-failed nativeVulkanProducer=true renderPolicy=sdk-owned-scenequadlayer-android-surface-wsi error={} runtimeCrash=false",
+                            marker_token(&error),
+                        ),
+                    );
+                }
+            }
+        });
+
+    match spawn_result {
+        Ok(_) => {
+            mask |= START_RENDER_THREAD_SPAWNED;
+            android_log_info(
+                "RQKuramotoSpatialNative",
+                &format!(
+                    "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=sdk-owned-quad-vulkan-probe status=start-receipt nativeVulkanProducer=true startMask={} startStatus=started surfaceNonNull=true nativeWindowObtained=true renderThreadSpawned=true requestedWidthPx={} requestedHeightPx={} requestedFrames={} runtimeCrash=false",
+                    mask,
+                    width,
+                    height,
+                    max_frames,
+                ),
+            );
+        }
+        Err(error) => {
+            unsafe {
+                release_anative_window(window);
+            }
+            android_log_info(
+                "RQKuramotoSpatialNative",
+                &format!(
+                    "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=sdk-owned-quad-vulkan-probe status=start-receipt nativeVulkanProducer=true startMask={} startStatus=thread-spawn-{} surfaceNonNull=true nativeWindowObtained=true renderThreadSpawned=false runtimeCrash=false",
+                    mask,
+                    error.kind(),
+                ),
+            );
+        }
+    }
+    mask
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_KuramotoSpatialActivity_nativeStopSdkQuadVulkanProbe(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+) {
+    STOP_SDK_QUAD_VULKAN_PROBE.store(true, Ordering::Relaxed);
+    android_log_info(
+        "RQKuramotoSpatialNative",
+        "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=sdk-owned-quad-vulkan-probe status=stop-requested nativeVulkanProducer=true renderPolicy=sdk-owned-scenequadlayer-android-surface-wsi runtimeCrash=false",
+    );
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_KuramotoSpatialActivity_nativeStartSurfaceParticleLayer(
     env: *mut c_void,
     _thiz: *mut c_void,
@@ -200,7 +351,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_K
                 Err(_) => Err("panic".to_string()),
             };
             unsafe {
-                ANativeWindow_release(window);
+                release_anative_window(window);
             }
             match result {
                 Ok(stats) => {
@@ -242,7 +393,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_kuramoto_1spatial_K
         }
         Err(error) => {
             unsafe {
-                ANativeWindow_release(window);
+                release_anative_window(window);
             }
             log_start_receipt(mask, &format!("thread-spawn-{}", error.kind()));
         }
@@ -709,6 +860,12 @@ struct SurfaceParticleStereoLayout {
     packed_extent: vk::Extent2D,
 }
 
+struct SdkQuadVulkanProbeStats {
+    frames_presented: u32,
+    extent: vk::Extent2D,
+    swapchain_image_count: usize,
+}
+
 fn surface_particle_stereo_layout(extent: vk::Extent2D) -> SurfaceParticleStereoLayout {
     let packed_left_right = extent.width >= extent.height.saturating_mul(2);
     let eye_count = if packed_left_right { 2 } else { 1 };
@@ -926,6 +1083,309 @@ fn normalize_or(value: [f32; 3], fallback: [f32; 3]) -> [f32; 3] {
     } else {
         fallback
     }
+}
+
+unsafe fn render_sdk_quad_vulkan_probe(
+    window: *mut vk::ANativeWindow,
+    requested_width: u32,
+    requested_height: u32,
+    max_frames: u32,
+) -> Result<SdkQuadVulkanProbeStats, String> {
+    let entry = ash::Entry::load().map_err(|error| format!("vulkan-loader-{error}"))?;
+    let app_name = CString::new("rusty-quest-kuramoto-spatial").expect("static app name");
+    let engine_name = CString::new("sdk-quad-vulkan-probe").expect("static engine name");
+    let app_info = vk::ApplicationInfo::default()
+        .application_name(&app_name)
+        .application_version(1)
+        .engine_name(&engine_name)
+        .engine_version(1)
+        .api_version(vk::make_api_version(0, 1, 1, 0));
+    let instance_extensions = [
+        ash::khr::surface::NAME.as_ptr(),
+        ash::khr::android_surface::NAME.as_ptr(),
+    ];
+    let instance_info = vk::InstanceCreateInfo::default()
+        .application_info(&app_info)
+        .enabled_extension_names(&instance_extensions);
+    let instance = entry
+        .create_instance(&instance_info, None)
+        .map_err(|error| format!("create-instance-{error:?}"))?;
+
+    let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
+    let android_surface_loader = ash::khr::android_surface::Instance::new(&entry, &instance);
+    let surface_info = vk::AndroidSurfaceCreateInfoKHR::default().window(window);
+    let surface = android_surface_loader
+        .create_android_surface(&surface_info, None)
+        .map_err(|error| {
+            instance.destroy_instance(None);
+            format!("create-android-surface-{error:?}")
+        })?;
+
+    let physical_devices = instance.enumerate_physical_devices().map_err(|error| {
+        surface_loader.destroy_surface(surface, None);
+        instance.destroy_instance(None);
+        format!("enumerate-physical-devices-{error:?}")
+    })?;
+    let (physical_device, queue_family_index) =
+        select_surface_device(&instance, &surface_loader, surface, &physical_devices).ok_or_else(
+            || {
+                surface_loader.destroy_surface(surface, None);
+                instance.destroy_instance(None);
+                "no-graphics-present-queue".to_string()
+            },
+        )?;
+
+    let queue_priorities = [1.0_f32];
+    let queue_info = [vk::DeviceQueueCreateInfo::default()
+        .queue_family_index(queue_family_index)
+        .queue_priorities(&queue_priorities)];
+    let device_extensions = [ash::khr::swapchain::NAME.as_ptr()];
+    let device_info = vk::DeviceCreateInfo::default()
+        .queue_create_infos(&queue_info)
+        .enabled_extension_names(&device_extensions);
+    let device = instance
+        .create_device(physical_device, &device_info, None)
+        .map_err(|error| {
+            surface_loader.destroy_surface(surface, None);
+            instance.destroy_instance(None);
+            format!("create-device-{error:?}")
+        })?;
+    let queue = device.get_device_queue(queue_family_index, 0);
+    let swapchain_loader = ash::khr::swapchain::Device::new(&instance, &device);
+
+    let surface_format = choose_surface_format(
+        &surface_loader
+            .get_physical_device_surface_formats(physical_device, surface)
+            .map_err(|error| {
+                device.destroy_device(None);
+                surface_loader.destroy_surface(surface, None);
+                instance.destroy_instance(None);
+                format!("surface-formats-{error:?}")
+            })?,
+    );
+    let capabilities = surface_loader
+        .get_physical_device_surface_capabilities(physical_device, surface)
+        .map_err(|error| {
+            device.destroy_device(None);
+            surface_loader.destroy_surface(surface, None);
+            instance.destroy_instance(None);
+            format!("surface-capabilities-{error:?}")
+        })?;
+    let present_modes = surface_loader
+        .get_physical_device_surface_present_modes(physical_device, surface)
+        .unwrap_or_default();
+    let present_mode = choose_present_mode(&present_modes);
+    let extent = choose_extent(&capabilities, requested_width, requested_height);
+    let image_count = choose_image_count(&capabilities);
+    let composite_alpha = choose_composite_alpha(capabilities.supported_composite_alpha);
+    let swapchain_info = vk::SwapchainCreateInfoKHR::default()
+        .surface(surface)
+        .min_image_count(image_count)
+        .image_format(surface_format.format)
+        .image_color_space(surface_format.color_space)
+        .image_extent(extent)
+        .image_array_layers(1)
+        .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+        .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
+        .pre_transform(capabilities.current_transform)
+        .composite_alpha(composite_alpha)
+        .present_mode(present_mode)
+        .clipped(true);
+    let swapchain = swapchain_loader
+        .create_swapchain(&swapchain_info, None)
+        .map_err(|error| {
+            device.destroy_device(None);
+            surface_loader.destroy_surface(surface, None);
+            instance.destroy_instance(None);
+            format!("create-swapchain-{error:?}")
+        })?;
+    let images = swapchain_loader
+        .get_swapchain_images(swapchain)
+        .map_err(|error| {
+            swapchain_loader.destroy_swapchain(swapchain, None);
+            device.destroy_device(None);
+            surface_loader.destroy_surface(surface, None);
+            instance.destroy_instance(None);
+            format!("swapchain-images-{error:?}")
+        })?;
+    let image_views = create_image_views(&device, surface_format.format, &images)?;
+    let render_pass = create_render_pass(&device, surface_format.format)?;
+    let framebuffers = create_framebuffers(&device, render_pass, extent, &image_views)?;
+    let command_pool_info = vk::CommandPoolCreateInfo::default()
+        .queue_family_index(queue_family_index)
+        .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER);
+    let command_pool = device
+        .create_command_pool(&command_pool_info, None)
+        .map_err(|error| format!("create-command-pool-{error:?}"))?;
+    let command_allocate_info = vk::CommandBufferAllocateInfo::default()
+        .command_pool(command_pool)
+        .level(vk::CommandBufferLevel::PRIMARY)
+        .command_buffer_count(images.len() as u32);
+    let command_buffers = device
+        .allocate_command_buffers(&command_allocate_info)
+        .map_err(|error| format!("allocate-command-buffers-{error:?}"))?;
+    let semaphore_info = vk::SemaphoreCreateInfo::default();
+    let image_available = device
+        .create_semaphore(&semaphore_info, None)
+        .map_err(|error| format!("create-image-semaphore-{error:?}"))?;
+    let render_finished = device
+        .create_semaphore(&semaphore_info, None)
+        .map_err(|error| format!("create-render-semaphore-{error:?}"))?;
+    let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
+    let frame_fence = device
+        .create_fence(&fence_info, None)
+        .map_err(|error| format!("create-frame-fence-{error:?}"))?;
+
+    android_log_info(
+        "RQKuramotoSpatialNative",
+        &format!(
+            "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=sdk-owned-quad-vulkan-probe status=render-loop-ready nativeVulkanProducer=true renderPolicy=sdk-owned-scenequadlayer-android-surface-wsi producerPath=ANativeWindow-VkSurfaceKHR-Vulkan-WSI swapchainImages={} extent={}x{} surfaceFormat={:?} presentMode={:?} compositeAlpha={:?} renderPattern=animated-clear-color trianglePattern=false computeShader=false particleShader=false privateShaderStack=false runtimeCrash=false",
+            images.len(),
+            extent.width,
+            extent.height,
+            surface_format.format,
+            present_mode,
+            composite_alpha,
+        ),
+    );
+
+    let mut frames_presented = 0_u32;
+    loop {
+        if STOP_SDK_QUAD_VULKAN_PROBE.load(Ordering::Relaxed) {
+            break;
+        }
+        if frames_presented >= max_frames {
+            break;
+        }
+        device
+            .wait_for_fences(&[frame_fence], true, u64::MAX)
+            .map_err(|error| format!("wait-fence-{error:?}"))?;
+        device
+            .reset_fences(&[frame_fence])
+            .map_err(|error| format!("reset-fence-{error:?}"))?;
+        let image_index = match swapchain_loader.acquire_next_image(
+            swapchain,
+            u64::MAX,
+            image_available,
+            vk::Fence::null(),
+        ) {
+            Ok((image_index, _suboptimal)) => image_index,
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => break,
+            Err(error) => return Err(format!("acquire-next-image-{error:?}")),
+        };
+        let command_buffer = command_buffers[image_index as usize];
+        record_sdk_quad_vulkan_probe_command_buffer(
+            &device,
+            command_buffer,
+            render_pass,
+            framebuffers[image_index as usize],
+            extent,
+            frames_presented,
+        )?;
+        let wait_semaphores = [image_available];
+        let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+        let signal_semaphores = [render_finished];
+        let submit_command_buffers = [command_buffer];
+        let submit_info = [vk::SubmitInfo::default()
+            .wait_semaphores(&wait_semaphores)
+            .wait_dst_stage_mask(&wait_stages)
+            .command_buffers(&submit_command_buffers)
+            .signal_semaphores(&signal_semaphores)];
+        device
+            .queue_submit(queue, &submit_info, frame_fence)
+            .map_err(|error| format!("queue-submit-{error:?}"))?;
+        let swapchains = [swapchain];
+        let image_indices = [image_index];
+        let present_info = vk::PresentInfoKHR::default()
+            .wait_semaphores(&signal_semaphores)
+            .swapchains(&swapchains)
+            .image_indices(&image_indices);
+        match swapchain_loader.queue_present(queue, &present_info) {
+            Ok(_suboptimal) => {}
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => break,
+            Err(error) => return Err(format!("queue-present-{error:?}")),
+        }
+        frames_presented = frames_presented.saturating_add(1);
+        if frames_presented == 1 {
+            android_log_info(
+                "RQKuramotoSpatialNative",
+                &format!(
+                    "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=sdk-owned-quad-vulkan-probe status=first-frame-presented nativeVulkanProducer=true renderPolicy=sdk-owned-scenequadlayer-android-surface-wsi framesPresented={} extent={}x{} swapchainImages={} presentResult=success renderPattern=animated-clear-color runtimeCrash=false",
+                    frames_presented,
+                    extent.width,
+                    extent.height,
+                    images.len(),
+                ),
+            );
+        }
+    }
+
+    device
+        .device_wait_idle()
+        .map_err(|error| format!("device-wait-idle-{error:?}"))?;
+    device.destroy_fence(frame_fence, None);
+    device.destroy_semaphore(render_finished, None);
+    device.destroy_semaphore(image_available, None);
+    device.destroy_command_pool(command_pool, None);
+    for framebuffer in framebuffers {
+        device.destroy_framebuffer(framebuffer, None);
+    }
+    device.destroy_render_pass(render_pass, None);
+    for image_view in image_views {
+        device.destroy_image_view(image_view, None);
+    }
+    swapchain_loader.destroy_swapchain(swapchain, None);
+    device.destroy_device(None);
+    surface_loader.destroy_surface(surface, None);
+    instance.destroy_instance(None);
+
+    Ok(SdkQuadVulkanProbeStats {
+        frames_presented,
+        extent,
+        swapchain_image_count: images.len(),
+    })
+}
+
+unsafe fn record_sdk_quad_vulkan_probe_command_buffer(
+    device: &ash::Device,
+    command_buffer: vk::CommandBuffer,
+    render_pass: vk::RenderPass,
+    framebuffer: vk::Framebuffer,
+    extent: vk::Extent2D,
+    frame_index: u32,
+) -> Result<(), String> {
+    device
+        .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
+        .map_err(|error| format!("reset-command-buffer-{error:?}"))?;
+    let begin_info = vk::CommandBufferBeginInfo::default();
+    device
+        .begin_command_buffer(command_buffer, &begin_info)
+        .map_err(|error| format!("begin-command-buffer-{error:?}"))?;
+    let phase = (frame_index % 180) as f32 / 180.0;
+    let clear_values = [vk::ClearValue {
+        color: vk::ClearColorValue {
+            float32: [phase, 1.0 - phase, 0.25 + 0.5 * phase, 1.0],
+        },
+    }];
+    let render_area = vk::Rect2D {
+        offset: vk::Offset2D { x: 0, y: 0 },
+        extent,
+    };
+    let render_pass_info = vk::RenderPassBeginInfo::default()
+        .render_pass(render_pass)
+        .framebuffer(framebuffer)
+        .render_area(render_area)
+        .clear_values(&clear_values);
+    device.cmd_begin_render_pass(
+        command_buffer,
+        &render_pass_info,
+        vk::SubpassContents::INLINE,
+    );
+    device.cmd_end_render_pass(command_buffer);
+    device
+        .end_command_buffer(command_buffer)
+        .map_err(|error| format!("end-command-buffer-{error:?}"))?;
+    Ok(())
 }
 
 unsafe fn render_surface_particles(

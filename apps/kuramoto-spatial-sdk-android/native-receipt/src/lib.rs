@@ -10,6 +10,17 @@ use ash::vk;
 use ash::vk::Handle as VulkanHandle;
 use openxr_sys::Handle;
 
+#[cfg(target_os = "android")]
+#[path = "../../../native-renderer-android/native/src/acamera_sys.rs"]
+mod acamera_sys;
+#[cfg(target_os = "android")]
+#[path = "../../../native-renderer-android/native/src/ahardware_buffer_vulkan.rs"]
+mod ahardware_buffer_vulkan;
+#[cfg(target_os = "android")]
+#[path = "../../../native-renderer-android/native/src/android_hardware_buffer.rs"]
+mod android_hardware_buffer;
+#[cfg(target_os = "android")]
+mod camera_hwb_probe;
 mod live_hand_joints;
 mod replay_hands;
 mod surface_particle_layer;

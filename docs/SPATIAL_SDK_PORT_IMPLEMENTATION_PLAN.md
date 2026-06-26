@@ -252,14 +252,17 @@ Community/context, not treated as API contract:
   This is not "particles on the questionnaire UI panel", not one Spatial SDK
   entity per particle, and not a native OpenXR projection layer owned by the
   existing `NativeActivity` renderer.
-- Surface primitive decision: the headset-proven route remains
+- Surface primitive decision: the first headset-proven route was
   `VideoSurfacePanelRegistration` plus its `Surface` callback because it gives
-  a supported direct-to-surface media-panel path with SDK world placement and
-  stereo render options. `SceneSwapchain.createAsAndroid(...)` paired with
-  `Scene.createQuadLayer(...)`/`SceneQuadLayer` remains a useful documented
-  manual-layer reference and future proof target, but the earlier runtime
-  `SceneQuadLayer`/`SceneMesh("mesh://box")` attempt was unstable enough that
-  it should not replace the working media/surface panel lane yet.
+  a documented direct-to-surface media-panel path with SDK world placement and
+  stereo render options. The later SDK-owned
+  `SceneSwapchain.createAsAndroid(...).getSurface()` plus generated
+  mesh-backed `Scene.createQuadLayer`/`SceneQuadLayer` probes now prove a
+  higher-control manual layer route for Canvas, native Vulkan WSI, and
+  Camera2/HWB sampling. Keep
+  `VideoSurfacePanelRegistration` as the conservative fallback/documented
+  carrier, and keep raw external `XrSwapchain` wrapping blocked unless Meta
+  documents a supported adoption contract.
 - Embedded Vulkan producer boundary: the native surface renderer behaves like
   an Android Vulkan WSI producer. It receives one Java/Kotlin `Surface`,
   obtains an `ANativeWindow`, creates one `VkSurfaceKHR`/swapchain for that
@@ -1340,6 +1343,69 @@ Community/context, not treated as API contract:
   visible/renderable external projection-swapchain path. The current viable
   route remains the Android surface/WSI panel carrier unless Meta exposes a
   supported external-swapchain or shared Vulkan device/queue/sync contract.
+- 2026-06-26 SDK-owned `SceneQuadLayer` Canvas probe: added
+  `debug.rustyquest.spatial.sdk_quad_surface_probe` to create
+  `SceneSwapchain.createAsAndroid(512, 512, false)`, draw a red/green Android
+  `Canvas` checkerboard into `getSurface()`, and attach it to a manual
+  `SceneQuadLayer`. Headset evidence showed a plain
+  `SceneObject(scene, Entity(...))` anchor fails with
+  `SceneObjectInstance handle is null`, while a generated mesh-backed anchor
+  using `SceneMesh.singleSidedQuad(...)`, `SceneMaterial.passthrough()`, and
+  `SceneObject(scene, mesh, ..., entity)` succeeds. This proves manual SDK
+  quad layers are viable for SDK-owned swapchains if the scene object has a
+  real SDK mesh/object handle.
+- 2026-06-26 SDK-owned Android `Surface` native Vulkan WSI probe: added
+  `debug.rustyquest.spatial.sdk_quad_vulkan_probe` with `hold_ms` and
+  `frame_count` properties. The Kotlin side creates the SDK-owned Android
+  `SceneSwapchain`, attaches it to the generated mesh-backed
+  `SceneQuadLayer`, and passes its `Surface` to native Rust. The native receipt
+  library creates `ANativeWindow -> VkSurfaceKHR -> Vulkan WSI swapchain` and
+  renders an animated clear-color pattern. Quest 3S evidence in
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260626-092257-sdk-owned-quad-vulkan-probe`
+  logged `surfaceValid=true`, `manualSceneQuadLayerViable=true`,
+  `startMask=15`, `swapchainImages=3`, `extent=512x512`,
+  `surfaceFormat=R8G8B8A8_UNORM`, `presentMode=FIFO`,
+  `compositeAlpha=INHERIT`, `first-frame-presented`, and
+  `render-complete framesPresented=360 requestedFrames=360`, with no narrowed
+  fatal/ANR matches. This keeps the high-control manual layer route alive:
+  Spatial SDK owns composition and the SDK-created surface/layer, while native
+  Vulkan owns pixels through WSI.
+- 2026-06-26 SDK-owned `SceneQuadLayer` stereo/alpha probe: added
+  `debug.rustyquest.spatial.sdk_quad_stereo_alpha_probe` using
+  `SceneSwapchain.createAsAndroid(2048, 1024, false)`,
+  `StereoMode.LeftRight`, packed per-eye grids, clip variants, alpha fades,
+  overscan, and z-index changes. Quest 3S evidence in
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260626-093745-sdk-owned-quad-stereo-alpha-probe-zindex-fix`
+  completed the programmatic contract with native Vulkan WSI presentation
+  through the SDK-owned quad, corrected z-index ordering, and no narrowed
+  fatal/ANR matches. Eye leakage, UV orientation, and final alpha convention
+  remain headset-operator checks before using this for the camera projection
+  layer.
+- 2026-06-26 `PanelSurface` matrix probe: added
+  `debug.rustyquest.spatial.panel_surface_matrix_probe` to compare
+  `PanelSurface(useSwapchain=true/useTexture=false)` and
+  `PanelSurface(useSwapchain=false/useTexture=true)`. Quest 3S evidence in
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260626-094428-panel-surface-matrix-probe`
+  showed both modes expose a valid Android `Surface` suitable for native
+  Vulkan WSI presentation. Only `useSwapchain=true/useTexture=false` exposes a
+  non-null SDK `swapchain` that can back a manual `SceneQuadLayer`; texture
+  mode remains a surface-only producer target.
+- 2026-06-26 Camera2/HWB Spatial SDK carrier probe: added
+  `debug.rustyquest.spatial.camera_hwb_probe` and a trimmed Android-only
+  Camera2/`AImageReader` path inside `kuramoto-spatial-sdk-android`'s native
+  receipt library. The probe starts camera `50` with fallback to `51`, creates
+  a PRIVATE/GPU-sampled reader, acquires an `AHardwareBuffer`, queries Vulkan
+  AHB properties, imports it as a sampled image with external-format YCbCr
+  conversion, and presents a luma/checker diagnostic into the SDK-owned
+  `SceneQuadLayer` Android surface through Vulkan WSI. Quest 3S evidence in
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260626-100813-camera-hwb-spatial-probe`
+  logged `selectedCameraId=50`, `selectedPrivateSize=1280x1280`,
+  `vkGetAhbPropertiesResult=success`, `externalFormat=647`,
+  `samplerMode=external-format-ycbcr`, `sampledCameraTexture=true`,
+  `first-camera-frame-presented`, and `complete framesPresented=300
+  requestedFrames=300`. This proves the Spatial SDK-owned carrier can host the
+  native Camera2/HWB-to-Vulkan path for a diagnostic sampled pass without the
+  private Morphovision shader stack.
 - 2026-06-25 Spatial experiment condition handoff slice: the panel-controlled
   block start now returns an active block snapshot with
   `movement_base_frequency_hz` and `movement_coupling`, applies those values to
@@ -1684,16 +1750,42 @@ Important files in that directory:
   `SceneQuadLayer` creation throws a native assert. Treat externally-created
   raw `XrSwapchain` wrapping as blocked unless Meta documents a different
   supported contract.
-- Is native Vulkan rendering directly into `SceneSwapchain.create(...)` or
-  other SDK-owned swapchain images supported, and if so how are the `VkDevice`,
-  `VkQueue`, image handles, image formats, and synchronization objects obtained
-  or shared?
-- Is `SceneSwapchain.createAsAndroid(...).getSurface()` officially supported
-  as a Vulkan producer surface through `VK_KHR_android_surface`, or should the
-  supported route remain media/surface panel registration callbacks?
-- What alpha format and blend convention should be used for
-  `SceneQuadLayer`/surface-backed layers, especially for direct-to-surface
-  paths?
+- 2026-06-26 probe answer: native Vulkan rendering into
+  `SceneSwapchain.createAsAndroid(...).getSurface()` works through
+  `ANativeWindow -> VkSurfaceKHR -> Vulkan WSI swapchain` when the
+  `SceneQuadLayer` uses a generated mesh-backed `SceneObject` anchor. This is
+  now a viable engineering route. Still confirm whether Meta treats this as an
+  officially supported Vulkan producer surface or whether
+  `VideoSurfacePanelRegistration` callbacks remain the only documented carrier.
+- 2026-06-26 probe answer: `StereoMode.LeftRight` on an SDK-owned
+  `SceneQuadLayer` can present a packed 2048x1024 native Vulkan WSI diagnostic
+  with clip, alpha, overscan, and z-index variants. Programmatic markers passed
+  in `20260626-093745-sdk-owned-quad-stereo-alpha-probe-zindex-fix`; visual eye
+  leakage, UV orientation, and alpha convention still need headset operator
+  confirmation before the route is promoted to final camera projection parity.
+- 2026-06-26 probe answer:
+  `PanelSurface(useSwapchain=true/useTexture=false)` and
+  `PanelSurface(useSwapchain=false/useTexture=true)` both expose valid Android
+  `Surface` objects that native Vulkan can present into. Only
+  `useSwapchain=true/useTexture=false` exposes a non-null SDK `swapchain` that
+  can back `SceneQuadLayer`; texture mode is a surface-only native Vulkan WSI
+  target.
+- 2026-06-26 probe answer: the SDK-owned
+  `SceneSwapchain.createAsAndroid(...).getSurface()` carrier preserves the
+  first native Morphovision camera risk path:
+  `Camera2 50 -> AImageReader/AHardwareBuffer -> Vulkan AHB import ->
+  external-format YCbCr sampled image -> luma/checker final SDK surface`. The
+  pass marker is
+  `channel=camera-hwb-spatial-probe status=first-camera-frame-presented`
+  with `sampledCameraTexture=true`, `samplerMode=external-format-ycbcr`, and
+  `privateShaderStack=false morphovisionStack=false`.
+- Is native Vulkan rendering directly into `SceneSwapchain.create(...)` image
+  handles, without the Android `Surface`/WSI path, supported, and if so how are
+  the `VkDevice`, `VkQueue`, image handles, image formats, and synchronization
+  objects obtained or shared?
 - Are there cadence or presentation restrictions for a native producer render
   loop that presents into an SDK surface-backed panel while Spatial SDK owns
   the immersive session?
+- Can the camera probe be extended from one camera to stereo Camera2 50/51 with
+  the native Morphovision projection/correction shaders while preserving the
+  SDK-owned surface carrier and avoiding repeated raw HWB sampling?

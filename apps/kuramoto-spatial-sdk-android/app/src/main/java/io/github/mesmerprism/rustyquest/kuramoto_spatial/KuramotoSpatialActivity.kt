@@ -1,6 +1,9 @@
 package io.github.mesmerprism.rustyquest.kuramoto_spatial
 
 import android.content.Intent
+import android.graphics.Color as AndroidColor
+import android.graphics.Paint as AndroidPaint
+import android.graphics.PorterDuff
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -68,12 +71,17 @@ import com.meta.spatial.core.SpatialSDKExperimentalAPI
 import com.meta.spatial.core.SystemBase
 import com.meta.spatial.core.Vector2
 import com.meta.spatial.core.Vector3
+import com.meta.spatial.core.Vector4
+import com.meta.spatial.runtime.BlendFactor
 import com.meta.spatial.runtime.ButtonBits
+import com.meta.spatial.runtime.LayerAlphaBlend
 import com.meta.spatial.runtime.PanelSurface
 import com.meta.spatial.runtime.PanelConfigOptions
 import com.meta.spatial.runtime.ReferenceSpace
 import com.meta.spatial.runtime.SamplerConfig
 import com.meta.spatial.runtime.Scene
+import com.meta.spatial.runtime.SceneMaterial
+import com.meta.spatial.runtime.SceneMesh
 import com.meta.spatial.runtime.SceneObject
 import com.meta.spatial.runtime.SceneQuadLayer
 import com.meta.spatial.runtime.SceneSwapchain
@@ -148,6 +156,18 @@ class KuramotoSpatialActivity : AppSystemActivity() {
   private var externalSwapchainProbeExternalHandle = 0L
   private val externalSwapchainProbeSdkWrapRetainers = mutableListOf<SceneSwapchain>()
   private val externalSwapchainProbeExternalWrapRetainers = mutableListOf<SceneSwapchain>()
+  private var sdkQuadSurfaceProbeStarted = false
+  private var sdkQuadVulkanProbeStarted = false
+  private var sdkQuadStereoAlphaProbeStarted = false
+  private var sdkQuadStereoAlphaProbeZIndexChanged = false
+  private var panelSurfaceMatrixProbeStarted = false
+  private var cameraHwbProbeStarted = false
+  private var sdkQuadSurfaceProbeLayer: SceneQuadLayer? = null
+  private var sdkQuadSurfaceProbeSceneObject: SceneObject? = null
+  private var sdkQuadSurfaceProbeSwapchain: SceneSwapchain? = null
+  private var sdkQuadSurfaceProbeSurface: AndroidSurface? = null
+  private var sdkQuadSurfaceProbeAnchorMesh: SceneMesh? = null
+  private var sdkQuadSurfaceProbeAnchorMaterial: SceneMaterial? = null
 
   override fun registerFeatures(): List<SpatialFeature> {
     return listOf(
@@ -266,6 +286,11 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     updateParticleLayerProjectionFromViewer(reason = "vr-ready", forceLog = true)
     logNativeInteropProbe(phase = "vr-ready", probeSurface = true)
     runExternalSwapchainProbeIfRequested("vr-ready")
+    runSdkQuadSurfaceProbeIfRequested("vr-ready")
+    runSdkQuadVulkanProbeIfRequested("vr-ready")
+    runSdkQuadStereoAlphaProbeIfRequested("vr-ready")
+    runPanelSurfaceMatrixProbeIfRequested("vr-ready")
+    runCameraHwbProbeIfRequested("vr-ready")
   }
 
   override fun onSceneTick() {
@@ -286,6 +311,11 @@ class KuramotoSpatialActivity : AppSystemActivity() {
   }
 
   override fun onDestroy() {
+    if (nativeReceiptLibraryLoaded) {
+      runCatching { nativeStopSdkQuadVulkanProbe() }
+      runCatching { nativeStopCameraHwbProbe() }
+    }
+    cleanupSdkQuadSurfaceProbe("activity-destroy")
     cleanupExternalSwapchainProbe("activity-destroy")
     polarSensorPanel?.stop()
     polarSensorPanel = null
@@ -662,6 +692,1321 @@ class KuramotoSpatialActivity : AppSystemActivity() {
         .also {
           panelSurface?.destroy()
         }
+  }
+
+  private fun runSdkQuadSurfaceProbeIfRequested(reason: String) {
+    if (sdkQuadSurfaceProbeStarted) {
+      return
+    }
+    if (readOptionalBooleanSystemProperty(SDK_QUAD_SURFACE_PROBE_PROPERTY) != true) {
+      return
+    }
+    sdkQuadSurfaceProbeStarted = true
+    val holdMs =
+        readLongSystemProperty(
+            SDK_QUAD_SURFACE_PROBE_HOLD_MS_PROPERTY,
+            SDK_QUAD_SURFACE_PROBE_DEFAULT_HOLD_MS,
+            SDK_QUAD_SURFACE_PROBE_MIN_HOLD_MS,
+            SDK_QUAD_SURFACE_PROBE_MAX_HOLD_MS,
+        )
+    marker(
+        "channel=sdk-owned-quad-surface-probe status=start sdkQuadSurfaceProbe=true " +
+            "reason=${markerToken(reason)} debugProperty=$SDK_QUAD_SURFACE_PROBE_PROPERTY " +
+            "widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX " +
+            "holdMs=$holdMs producer=android-canvas nativeVulkanProducer=false " +
+            "videoSurfacePanelRegistration=false externalSwapchain=false privateShaderStack=false"
+    )
+    Handler(Looper.getMainLooper()).post { runSdkQuadSurfaceProbe(holdMs) }
+  }
+
+  private fun runSdkQuadVulkanProbeIfRequested(reason: String) {
+    if (sdkQuadVulkanProbeStarted) {
+      return
+    }
+    if (readOptionalBooleanSystemProperty(SDK_QUAD_VULKAN_PROBE_PROPERTY) != true) {
+      return
+    }
+    sdkQuadVulkanProbeStarted = true
+    val holdMs =
+        readLongSystemProperty(
+            SDK_QUAD_VULKAN_PROBE_HOLD_MS_PROPERTY,
+            SDK_QUAD_VULKAN_PROBE_DEFAULT_HOLD_MS,
+            SDK_QUAD_VULKAN_PROBE_MIN_HOLD_MS,
+            SDK_QUAD_VULKAN_PROBE_MAX_HOLD_MS,
+        )
+    val frameCount =
+        readIntSystemProperty(
+            SDK_QUAD_VULKAN_PROBE_FRAME_COUNT_PROPERTY,
+            SDK_QUAD_VULKAN_PROBE_DEFAULT_FRAME_COUNT,
+            1,
+            SDK_QUAD_VULKAN_PROBE_MAX_FRAME_COUNT,
+        )
+    marker(
+        "channel=sdk-owned-quad-vulkan-probe status=start sdkQuadVulkanProbe=true " +
+            "reason=${markerToken(reason)} debugProperty=$SDK_QUAD_VULKAN_PROBE_PROPERTY " +
+            "widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX " +
+            "holdMs=$holdMs requestedFrames=$frameCount producer=native-vulkan-wsi " +
+            "renderPolicy=sdk-owned-scenequadlayer-android-surface-wsi " +
+            "videoSurfacePanelRegistration=false externalSwapchain=false privateShaderStack=false"
+    )
+    Handler(Looper.getMainLooper()).post { runSdkQuadVulkanProbe(holdMs, frameCount) }
+  }
+
+  private fun runSdkQuadVulkanProbe(holdMs: Long, frameCount: Int) {
+    cleanupSdkQuadSurfaceProbe("vulkan-pre-run")
+    if (!nativeReceiptLibraryLoaded) {
+      marker(
+          "channel=sdk-owned-quad-vulkan-probe status=complete sdkQuadVulkanProbe=true " +
+              "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
+              "nativeStartRequested=false nativeVulkanProducer=false firstFramePresented=false " +
+              "manualSceneQuadLayerViable=false error=${markerToken(nativeReceiptLibraryError)} " +
+              "runtimeCrash=false"
+      )
+      return
+    }
+    val sdkSwapchain =
+        runCatching {
+              SceneSwapchain.createAsAndroid(
+                  SDK_QUAD_SURFACE_PROBE_WIDTH_PX,
+                  SDK_QUAD_SURFACE_PROBE_HEIGHT_PX,
+                  false,
+              )
+            }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=sdk-owned-quad-vulkan-probe status=complete sdkQuadVulkanProbe=true " +
+                      "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
+                      "nativeStartRequested=false nativeVulkanProducer=false firstFramePresented=false " +
+                      "manualSceneQuadLayerViable=false error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              return
+            }
+    sdkQuadSurfaceProbeSwapchain = sdkSwapchain
+    val surface =
+        runCatching { sdkSwapchain.getSurface() }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=sdk-owned-quad-vulkan-probe status=get-surface-failed " +
+                      "sdkQuadVulkanProbe=true handle=${sdkSwapchain.handle} " +
+                      "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              null
+            }
+    sdkQuadSurfaceProbeSurface = surface
+    val surfaceValid = surface?.isValid == true
+    marker(
+        "channel=sdk-owned-quad-vulkan-probe status=sdk-swapchain-created " +
+            "sdkQuadVulkanProbe=true sdkSwapchainCreated=true handle=${sdkSwapchain.handle} " +
+            "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
+            "surfaceValid=$surfaceValid widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX " +
+            "heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX"
+    )
+    val renderSurface = surface
+    if (!surfaceValid) {
+      val cleanupStatus = cleanupSdkQuadSurfaceProbe("vulkan-surface-invalid")
+      marker(
+          "channel=sdk-owned-quad-vulkan-probe status=complete sdkQuadVulkanProbe=true " +
+              "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=false " +
+              "nativeStartRequested=false nativeVulkanProducer=false firstFramePresented=false " +
+              "manualSceneQuadLayerViable=false cleanupStatus=$cleanupStatus runtimeCrash=false"
+      )
+      return
+    }
+
+    val layerCreated =
+        createSdkQuadSurfaceProbeLayer(
+            sdkSwapchain = sdkSwapchain,
+            canvasDrawn = false,
+            anchorMode = "generated-single-sided-quad",
+        )
+    marker(
+        "channel=sdk-owned-quad-vulkan-probe status=layer-created " +
+            "sdkQuadVulkanProbe=true sceneQuadLayerCreated=$layerCreated " +
+            "manualSceneQuadLayerViable=$layerCreated anchorMode=generated-single-sided-quad " +
+            "stereoMode=None producer=native-vulkan-wsi"
+    )
+    if (!layerCreated) {
+      val cleanupStatus = cleanupSdkQuadSurfaceProbe("vulkan-layer-create-failed")
+      marker(
+          "channel=sdk-owned-quad-vulkan-probe status=complete sdkQuadVulkanProbe=true " +
+              "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=false " +
+              "nativeStartRequested=false nativeVulkanProducer=false firstFramePresented=false " +
+              "manualSceneQuadLayerViable=false cleanupStatus=$cleanupStatus runtimeCrash=false"
+      )
+      return
+    }
+
+    val startMask =
+        runCatching {
+              nativeStartSdkQuadVulkanProbe(
+                  renderSurface,
+                  SDK_QUAD_SURFACE_PROBE_WIDTH_PX,
+                  SDK_QUAD_SURFACE_PROBE_HEIGHT_PX,
+                  frameCount,
+              )
+            }
+            .getOrElse { throwable ->
+              val cleanupStatus = cleanupSdkQuadSurfaceProbe("vulkan-start-failed")
+              marker(
+                  "channel=sdk-owned-quad-vulkan-probe status=complete sdkQuadVulkanProbe=true " +
+                      "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
+                      "nativeStartRequested=false nativeVulkanProducer=false firstFramePresented=false " +
+                      "manualSceneQuadLayerViable=true cleanupStatus=$cleanupStatus " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              return
+            }
+    marker(
+        "channel=sdk-owned-quad-vulkan-probe status=native-start-requested " +
+            "sdkQuadVulkanProbe=true sdkSwapchainCreated=true surfaceValid=$surfaceValid " +
+            "sceneQuadLayerCreated=true manualSceneQuadLayerViable=true nativeStartRequested=true " +
+            "nativeVulkanProducer=true startMask=$startMask requestedFrames=$frameCount " +
+            "holdMs=$holdMs renderPolicy=sdk-owned-scenequadlayer-android-surface-wsi"
+    )
+    Handler(Looper.getMainLooper())
+        .postDelayed(
+            {
+              if (nativeReceiptLibraryLoaded) {
+                runCatching { nativeStopSdkQuadVulkanProbe() }
+              }
+              val cleanupStatus = cleanupSdkQuadSurfaceProbe("vulkan-hold-complete")
+              marker(
+                  "channel=sdk-owned-quad-vulkan-probe status=complete sdkQuadVulkanProbe=true " +
+                      "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
+                      "manualSceneQuadLayerViable=true nativeStartRequested=true nativeVulkanProducer=true " +
+                      "firstFramePresented=see-native-logcat requestedFrames=$frameCount " +
+                      "cleanupStatus=$cleanupStatus runtimeCrash=false"
+              )
+            },
+            holdMs,
+        )
+  }
+
+  private fun runSdkQuadStereoAlphaProbeIfRequested(reason: String) {
+    if (sdkQuadStereoAlphaProbeStarted) {
+      return
+    }
+    if (readOptionalBooleanSystemProperty(SDK_QUAD_STEREO_ALPHA_PROBE_PROPERTY) != true) {
+      return
+    }
+    sdkQuadStereoAlphaProbeStarted = true
+    val holdMs =
+        readLongSystemProperty(
+            SDK_QUAD_STEREO_ALPHA_PROBE_HOLD_MS_PROPERTY,
+            SDK_QUAD_STEREO_ALPHA_PROBE_DEFAULT_HOLD_MS,
+            SDK_QUAD_STEREO_ALPHA_PROBE_MIN_HOLD_MS,
+            SDK_QUAD_STEREO_ALPHA_PROBE_MAX_HOLD_MS,
+        )
+    marker(
+        "channel=sdk-owned-quad-stereo-alpha-probe status=start " +
+            "sdkQuadStereoAlphaProbe=true reason=${markerToken(reason)} " +
+            "debugProperty=$SDK_QUAD_STEREO_ALPHA_PROBE_PROPERTY " +
+            "widthPx=$SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_PX " +
+            "heightPx=$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX " +
+            "perEyeExtentPx=${SDK_QUAD_STEREO_ALPHA_PROBE_PER_EYE_WIDTH_PX}x$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX " +
+            "stereoMode=LeftRight producer=android-canvas nativeVulkanProducer=false " +
+            "setClipPlanned=true alphaBlendPlanned=true colorScaleAlphaPlanned=true " +
+            "zIndexChangePlanned=true holdMs=$holdMs"
+    )
+    Handler(Looper.getMainLooper()).post { runSdkQuadStereoAlphaProbe(holdMs) }
+  }
+
+  private fun runPanelSurfaceMatrixProbeIfRequested(reason: String) {
+    if (panelSurfaceMatrixProbeStarted) {
+      return
+    }
+    if (readOptionalBooleanSystemProperty(PANEL_SURFACE_MATRIX_PROBE_PROPERTY) != true) {
+      return
+    }
+    panelSurfaceMatrixProbeStarted = true
+    marker(
+        "channel=panel-surface-matrix-probe status=start panelSurfaceMatrixProbe=true " +
+            "reason=${markerToken(reason)} debugProperty=$PANEL_SURFACE_MATRIX_PROBE_PROPERTY " +
+            "widthPx=$PANEL_SURFACE_MATRIX_PROBE_WIDTH_PX heightPx=$PANEL_SURFACE_MATRIX_PROBE_HEIGHT_PX " +
+            "variants=useSwapchain-true-useTexture-false,useSwapchain-false-useTexture-true " +
+            "sceneQuadLayerBackedByPanelSurfaceSwapchainPlanned=true nativeVulkanProducerPlanned=true"
+    )
+    Handler(Looper.getMainLooper()).post {
+      runPanelSurfaceMatrixProbeVariant(
+          variantIndex = 0,
+          useSwapchain = true,
+          useTexture = false,
+      )
+    }
+  }
+
+  private fun runPanelSurfaceMatrixProbeVariant(
+      variantIndex: Int,
+      useSwapchain: Boolean,
+      useTexture: Boolean,
+  ) {
+    cleanupSdkQuadSurfaceProbe("panel-surface-matrix-pre-variant-$variantIndex")
+    if (nativeReceiptLibraryLoaded) {
+      runCatching { nativeStopSdkQuadVulkanProbe() }
+    }
+    val variantName = "useSwapchain-$useSwapchain-useTexture-$useTexture"
+    var panelSurface: PanelSurface? = null
+    val created =
+        runCatching {
+              PanelSurface(
+                  scene,
+                  PANEL_SURFACE_MATRIX_PROBE_WIDTH_PX,
+                  PANEL_SURFACE_MATRIX_PROBE_HEIGHT_PX,
+                  1,
+                  SamplerConfig(),
+                  useSwapchain,
+                  useTexture,
+                  "",
+                  false,
+              )
+            }
+            .onSuccess { panelSurface = it }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=panel-surface-matrix-probe status=variant-complete " +
+                      "panelSurfaceMatrixProbe=true variant=$variantName panelSurfaceCreated=false " +
+                      "surfaceValid=false swapchainNonNull=false textureNonNull=false " +
+                      "swapchainBacksSceneQuadLayer=false nativeVulkanStartRequested=false " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              scheduleNextPanelSurfaceMatrixVariant(variantIndex)
+              return
+            }
+    val surface = runCatching { created.surface }.getOrNull()
+    val swapchain = runCatching { created.swapchain }.getOrNull()
+    val texture = runCatching { created.texture }.getOrNull()
+    val surfaceValid = surface?.isValid == true
+    val swapchainNonNull = swapchain != null
+    val textureNonNull = texture != null
+    marker(
+        "channel=panel-surface-matrix-probe status=variant-created " +
+            "panelSurfaceMatrixProbe=true variant=$variantName panelSurfaceCreated=true " +
+            "surfaceValid=$surfaceValid swapchainNonNull=$swapchainNonNull textureNonNull=$textureNonNull " +
+            "widthPx=${created.widthInPx} heightPx=${created.heightInPx} mips=${created.mips} " +
+            "reportedUseSwapchain=${created.useSwapchain} reportedUseTexture=${created.useTexture}"
+    )
+
+    val layerCreated =
+        if (swapchain != null) {
+          createSdkQuadSurfaceProbeLayer(
+              sdkSwapchain = swapchain,
+              canvasDrawn = false,
+              anchorMode = "generated-single-sided-quad",
+          )
+        } else {
+          false
+        }
+    marker(
+        "channel=panel-surface-matrix-probe status=scenequadlayer-attempted " +
+            "panelSurfaceMatrixProbe=true variant=$variantName swapchainNonNull=$swapchainNonNull " +
+            "swapchainBacksSceneQuadLayer=$layerCreated anchorMode=generated-single-sided-quad"
+    )
+
+    val nativeStartMask =
+        if (surfaceValid && nativeReceiptLibraryLoaded) {
+          runCatching {
+                nativeStartSdkQuadVulkanProbe(
+                    surface,
+                    PANEL_SURFACE_MATRIX_PROBE_WIDTH_PX,
+                    PANEL_SURFACE_MATRIX_PROBE_HEIGHT_PX,
+                    PANEL_SURFACE_MATRIX_PROBE_FRAME_COUNT,
+                )
+              }
+              .getOrElse { throwable ->
+                marker(
+                    "channel=panel-surface-matrix-probe status=native-start-failed " +
+                        "panelSurfaceMatrixProbe=true variant=$variantName nativeVulkanStartRequested=false " +
+                        "error=${markerToken(throwable.javaClass.simpleName)} " +
+                        "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+                )
+                0L
+              }
+        } else {
+          0L
+        }
+    val nativeStartRequested = nativeStartMask != 0L
+    marker(
+        "channel=panel-surface-matrix-probe status=native-start-attempted " +
+            "panelSurfaceMatrixProbe=true variant=$variantName surfaceValid=$surfaceValid " +
+            "nativeReceiptLibraryLoaded=$nativeReceiptLibraryLoaded nativeVulkanStartRequested=$nativeStartRequested " +
+            "nativeStartMask=$nativeStartMask"
+    )
+    Handler(Looper.getMainLooper())
+        .postDelayed(
+            {
+              if (nativeReceiptLibraryLoaded) {
+                runCatching { nativeStopSdkQuadVulkanProbe() }
+              }
+              val sceneCleanupStatus = cleanupSdkQuadSurfaceProbe("panel-surface-matrix-variant-$variantIndex")
+              val panelSurfaceDestroyed =
+                  runCatching {
+                        panelSurface?.destroy()
+                        true
+                      }
+                      .getOrDefault(false)
+              marker(
+                  "channel=panel-surface-matrix-probe status=variant-complete " +
+                      "panelSurfaceMatrixProbe=true variant=$variantName panelSurfaceCreated=true " +
+                      "surfaceValid=$surfaceValid swapchainNonNull=$swapchainNonNull textureNonNull=$textureNonNull " +
+                      "swapchainBacksSceneQuadLayer=$layerCreated nativeVulkanStartRequested=$nativeStartRequested " +
+                      "nativeStartMask=$nativeStartMask sceneCleanupStatus=$sceneCleanupStatus " +
+                      "panelSurfaceDestroyed=$panelSurfaceDestroyed runtimeCrash=false"
+              )
+              scheduleNextPanelSurfaceMatrixVariant(variantIndex)
+            },
+            PANEL_SURFACE_MATRIX_PROBE_VARIANT_HOLD_MS,
+        )
+  }
+
+  private fun scheduleNextPanelSurfaceMatrixVariant(variantIndex: Int) {
+    if (variantIndex == 0) {
+      Handler(Looper.getMainLooper())
+          .postDelayed(
+              {
+                runPanelSurfaceMatrixProbeVariant(
+                    variantIndex = 1,
+                    useSwapchain = false,
+                    useTexture = true,
+                )
+              },
+              PANEL_SURFACE_MATRIX_PROBE_INTER_VARIANT_MS,
+          )
+      return
+    }
+    marker(
+        "channel=panel-surface-matrix-probe status=complete panelSurfaceMatrixProbe=true " +
+        "variantsTested=2 runtimeCrash=false"
+    )
+  }
+
+  private fun runCameraHwbProbeIfRequested(reason: String) {
+    if (cameraHwbProbeStarted) {
+      return
+    }
+    if (readOptionalBooleanSystemProperty(CAMERA_HWB_PROBE_PROPERTY) != true) {
+      return
+    }
+    cameraHwbProbeStarted = true
+    val holdMs =
+        readLongSystemProperty(
+            CAMERA_HWB_PROBE_HOLD_MS_PROPERTY,
+            CAMERA_HWB_PROBE_DEFAULT_HOLD_MS,
+            CAMERA_HWB_PROBE_MIN_HOLD_MS,
+            CAMERA_HWB_PROBE_MAX_HOLD_MS,
+        )
+    val frameCount =
+        readIntSystemProperty(
+            CAMERA_HWB_PROBE_FRAME_COUNT_PROPERTY,
+            CAMERA_HWB_PROBE_DEFAULT_FRAME_COUNT,
+            1,
+            CAMERA_HWB_PROBE_MAX_FRAME_COUNT,
+        )
+    val readerMaxImages =
+        readIntSystemProperty(
+            CAMERA_HWB_PROBE_READER_MAX_IMAGES_PROPERTY,
+            CAMERA_HWB_PROBE_DEFAULT_READER_MAX_IMAGES,
+            CAMERA_HWB_PROBE_MIN_READER_MAX_IMAGES,
+            CAMERA_HWB_PROBE_MAX_READER_MAX_IMAGES,
+        )
+    marker(
+        "channel=camera-hwb-spatial-probe status=start cameraHwbProbe=true " +
+            "reason=${markerToken(reason)} debugProperty=$CAMERA_HWB_PROBE_PROPERTY " +
+            "widthPx=$CAMERA_HWB_PROBE_WIDTH_PX heightPx=$CAMERA_HWB_PROBE_HEIGHT_PX " +
+            "requestedFrames=$frameCount holdMs=$holdMs readerMaxImages=$readerMaxImages " +
+            "cameraPreference=50-then-51 carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+            "outputMode=luma-checker privateShaderStack=false morphovisionStack=false"
+    )
+    Handler(Looper.getMainLooper()).post { runCameraHwbProbe(holdMs, frameCount, readerMaxImages) }
+  }
+
+  private fun runCameraHwbProbe(holdMs: Long, frameCount: Int, readerMaxImages: Int) {
+    cleanupSdkQuadSurfaceProbe("camera-hwb-pre-run")
+    if (!nativeReceiptLibraryLoaded) {
+      marker(
+          "channel=camera-hwb-spatial-probe status=complete cameraHwbProbe=true " +
+              "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
+              "nativeStartRequested=false sampledCameraTexture=false " +
+              "error=${markerToken(nativeReceiptLibraryError)} runtimeCrash=false"
+      )
+      return
+    }
+    val sdkSwapchain =
+        runCatching {
+              SceneSwapchain.createAsAndroid(
+                  CAMERA_HWB_PROBE_WIDTH_PX,
+                  CAMERA_HWB_PROBE_HEIGHT_PX,
+                  false,
+              )
+            }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=camera-hwb-spatial-probe status=complete cameraHwbProbe=true " +
+                      "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
+                      "nativeStartRequested=false sampledCameraTexture=false " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              return
+            }
+    sdkQuadSurfaceProbeSwapchain = sdkSwapchain
+    val surface =
+        runCatching { sdkSwapchain.getSurface() }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=camera-hwb-spatial-probe status=get-surface-failed " +
+                      "cameraHwbProbe=true handle=${sdkSwapchain.handle} " +
+                      "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              null
+            }
+    sdkQuadSurfaceProbeSurface = surface
+    val surfaceValid = surface?.isValid == true
+    marker(
+        "channel=camera-hwb-spatial-probe status=sdk-swapchain-created cameraHwbProbe=true " +
+            "sdkSwapchainCreated=true handle=${sdkSwapchain.handle} " +
+            "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
+            "surfaceValid=$surfaceValid widthPx=$CAMERA_HWB_PROBE_WIDTH_PX heightPx=$CAMERA_HWB_PROBE_HEIGHT_PX"
+    )
+    val renderSurface = surface
+    if (!surfaceValid) {
+      val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-surface-invalid")
+      marker(
+          "channel=camera-hwb-spatial-probe status=complete cameraHwbProbe=true " +
+              "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=false " +
+              "nativeStartRequested=false sampledCameraTexture=false cleanupStatus=$cleanupStatus runtimeCrash=false"
+      )
+      return
+    }
+
+    val layerCreated = createCameraHwbProbeLayer(sdkSwapchain)
+    if (!layerCreated) {
+      val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-layer-create-failed")
+      marker(
+          "channel=camera-hwb-spatial-probe status=complete cameraHwbProbe=true " +
+              "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=false " +
+              "nativeStartRequested=false sampledCameraTexture=false cleanupStatus=$cleanupStatus runtimeCrash=false"
+      )
+      return
+    }
+
+    val startMask =
+        runCatching {
+              nativeStartCameraHwbProbe(
+                  renderSurface,
+                  CAMERA_HWB_PROBE_WIDTH_PX,
+                  CAMERA_HWB_PROBE_HEIGHT_PX,
+                  frameCount,
+                  readerMaxImages,
+              )
+            }
+            .getOrElse { throwable ->
+              val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-start-failed")
+              marker(
+                  "channel=camera-hwb-spatial-probe status=complete cameraHwbProbe=true " +
+                      "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
+                      "nativeStartRequested=false sampledCameraTexture=false cleanupStatus=$cleanupStatus " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              return
+            }
+    marker(
+        "channel=camera-hwb-spatial-probe status=native-start-requested cameraHwbProbe=true " +
+            "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
+            "nativeStartRequested=true startMask=$startMask requestedFrames=$frameCount " +
+            "readerMaxImages=$readerMaxImages holdMs=$holdMs " +
+            "carrier=scenequadlayer-createAsAndroid-vulkan-wsi privateShaderStack=false morphovisionStack=false"
+    )
+    Handler(Looper.getMainLooper())
+        .postDelayed(
+            {
+              if (nativeReceiptLibraryLoaded) {
+                runCatching { nativeStopCameraHwbProbe() }
+              }
+              val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-hold-complete")
+              marker(
+                  "channel=camera-hwb-spatial-probe status=complete cameraHwbProbe=true " +
+                      "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
+                      "nativeStartRequested=true firstCameraFramePresented=see-native-logcat " +
+                      "sampledCameraTexture=see-native-logcat cleanupStatus=$cleanupStatus runtimeCrash=false"
+              )
+            },
+            holdMs,
+        )
+  }
+
+  private fun runSdkQuadStereoAlphaProbe(holdMs: Long) {
+    cleanupSdkQuadSurfaceProbe("stereo-alpha-pre-run")
+    sdkQuadStereoAlphaProbeZIndexChanged = false
+    val sdkSwapchain =
+        runCatching {
+              SceneSwapchain.createAsAndroid(
+                  SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_PX,
+                  SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX,
+                  false,
+              )
+            }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=sdk-owned-quad-stereo-alpha-probe status=complete " +
+                      "sdkQuadStereoAlphaProbe=true sdkSwapchainCreated=false surfaceValid=false " +
+                      "canvasDrawn=false sceneQuadLayerCreated=false stereoMode=LeftRight " +
+                      "setClipApplied=false alphaBlendApplied=false zIndexChanged=false " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              return
+            }
+    sdkQuadSurfaceProbeSwapchain = sdkSwapchain
+    val surface =
+        runCatching { sdkSwapchain.getSurface() }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=sdk-owned-quad-stereo-alpha-probe status=get-surface-failed " +
+                      "sdkQuadStereoAlphaProbe=true handle=${sdkSwapchain.handle} " +
+                      "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              null
+            }
+    sdkQuadSurfaceProbeSurface = surface
+    val surfaceValid = surface?.isValid == true
+    marker(
+        "channel=sdk-owned-quad-stereo-alpha-probe status=sdk-swapchain-created " +
+            "sdkQuadStereoAlphaProbe=true sdkSwapchainCreated=true handle=${sdkSwapchain.handle} " +
+            "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
+            "surfaceValid=$surfaceValid widthPx=$SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_PX " +
+            "heightPx=$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX"
+    )
+    if (!surfaceValid) {
+      val cleanupStatus = cleanupSdkQuadSurfaceProbe("stereo-alpha-surface-invalid")
+      marker(
+          "channel=sdk-owned-quad-stereo-alpha-probe status=complete " +
+              "sdkQuadStereoAlphaProbe=true sdkSwapchainCreated=true surfaceValid=$surfaceValid " +
+              "canvasDrawn=false sceneQuadLayerCreated=false stereoMode=LeftRight " +
+              "setClipApplied=false alphaBlendApplied=false zIndexChanged=false " +
+              "cleanupStatus=$cleanupStatus runtimeCrash=false"
+      )
+      return
+    }
+
+    val canvasDrawn = drawSdkQuadStereoAlphaPattern(surface)
+    val layerCreated =
+        createSdkQuadStereoAlphaProbeLayer(
+            sdkSwapchain = sdkSwapchain,
+            canvasDrawn = canvasDrawn,
+        )
+    val viable = surfaceValid && canvasDrawn && layerCreated
+    marker(
+        "channel=sdk-owned-quad-stereo-alpha-probe status=visible-window " +
+            "sdkQuadStereoAlphaProbe=true sdkSwapchainCreated=true surfaceValid=$surfaceValid " +
+            "canvasDrawn=$canvasDrawn sceneQuadLayerCreated=$layerCreated " +
+            "manualSceneQuadLayerViable=$viable stereoMode=LeftRight " +
+            "leftEyePattern=red-grid rightEyePattern=blue-grid " +
+            "expectedUvOrientation=left-half-to-left-eye-right-half-to-right-eye " +
+            "eyeLeakageCheck=operator-visible-required croppingCheck=operator-visible-required " +
+            "alphaConventionCheck=operator-visible-required holdMs=$holdMs runtimeCrash=false"
+    )
+    if (!layerCreated) {
+      val cleanupStatus = cleanupSdkQuadSurfaceProbe("stereo-alpha-layer-create-failed")
+      marker(
+          "channel=sdk-owned-quad-stereo-alpha-probe status=complete " +
+              "sdkQuadStereoAlphaProbe=true sdkSwapchainCreated=true surfaceValid=$surfaceValid " +
+              "canvasDrawn=$canvasDrawn sceneQuadLayerCreated=false stereoMode=LeftRight " +
+              "setClipApplied=false alphaBlendApplied=false zIndexChanged=false " +
+              "cleanupStatus=$cleanupStatus runtimeCrash=false"
+      )
+      return
+    }
+    Handler(Looper.getMainLooper())
+        .postDelayed(
+            {
+              sdkQuadSurfaceProbeLayer?.let { layer ->
+                runCatching {
+                      layer.setZIndex(SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_HIGH)
+                    }
+                    .onSuccess {
+                      sdkQuadStereoAlphaProbeZIndexChanged = true
+                      marker(
+                          "channel=sdk-owned-quad-stereo-alpha-probe status=z-index-updated " +
+                              "sdkQuadStereoAlphaProbe=true zIndexChanged=true " +
+                              "zIndex=${SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_HIGH} runtimeCrash=false"
+                      )
+                    }
+                    .onFailure { throwable ->
+                      marker(
+                          "channel=sdk-owned-quad-stereo-alpha-probe status=z-index-update-failed " +
+                              "sdkQuadStereoAlphaProbe=true zIndexChanged=false " +
+                              "error=${markerToken(throwable.javaClass.simpleName)} " +
+                              "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+                      )
+                    }
+              }
+            },
+            SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_CHANGE_MS,
+        )
+    Handler(Looper.getMainLooper())
+        .postDelayed(
+            {
+              sdkQuadSurfaceProbeLayer?.let { layer ->
+                runCatching {
+                      layer.setColorScaleBias(
+                          Vector4(1.0f, 1.0f, 1.0f, SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_LOW),
+                          Vector4(0.0f),
+                      )
+                    }
+                    .onSuccess {
+                      marker(
+                          "channel=sdk-owned-quad-stereo-alpha-probe status=alpha-updated " +
+                              "sdkQuadStereoAlphaProbe=true colorScaleAlphaApplied=true " +
+                              "alpha=${markerFloat(SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_LOW)} " +
+                              "alphaConvention=premultiplied-unknown-source-alpha-blend-factors runtimeCrash=false"
+                      )
+                    }
+                    .onFailure { throwable ->
+                      marker(
+                          "channel=sdk-owned-quad-stereo-alpha-probe status=alpha-update-failed " +
+                              "sdkQuadStereoAlphaProbe=true colorScaleAlphaApplied=false " +
+                              "error=${markerToken(throwable.javaClass.simpleName)} runtimeCrash=false"
+                      )
+                    }
+              }
+            },
+            SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_CHANGE_MS,
+        )
+    Handler(Looper.getMainLooper())
+        .postDelayed(
+            {
+              sdkQuadSurfaceProbeLayer?.let { layer ->
+                runCatching {
+                      layer.setColorScaleBias(Vector4(1.0f), Vector4(0.0f))
+                    }
+                    .onSuccess {
+                      marker(
+                          "channel=sdk-owned-quad-stereo-alpha-probe status=alpha-restored " +
+                              "sdkQuadStereoAlphaProbe=true colorScaleAlphaApplied=true " +
+                              "alpha=1.0000 runtimeCrash=false"
+                      )
+                    }
+                    .onFailure { throwable ->
+                      marker(
+                          "channel=sdk-owned-quad-stereo-alpha-probe status=alpha-restore-failed " +
+                              "sdkQuadStereoAlphaProbe=true colorScaleAlphaApplied=false " +
+                              "error=${markerToken(throwable.javaClass.simpleName)} runtimeCrash=false"
+                      )
+                    }
+              }
+            },
+            SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_RESTORE_MS,
+        )
+    Handler(Looper.getMainLooper())
+        .postDelayed(
+            {
+              val cleanupStatus = cleanupSdkQuadSurfaceProbe("stereo-alpha-hold-complete")
+              marker(
+                  "channel=sdk-owned-quad-stereo-alpha-probe status=complete " +
+                      "sdkQuadStereoAlphaProbe=true sdkSwapchainCreated=true surfaceValid=$surfaceValid " +
+                      "canvasDrawn=$canvasDrawn sceneQuadLayerCreated=$layerCreated " +
+                      "manualSceneQuadLayerViable=$viable stereoMode=LeftRight " +
+                      "setClipApplied=true alphaBlendApplied=true colorScaleAlphaApplied=true " +
+                      "zIndexChanged=$sdkQuadStereoAlphaProbeZIndexChanged cleanupStatus=$cleanupStatus " +
+                      "eyeLeakageCheck=operator-visible-required " +
+                      "uvOrientationCheck=operator-visible-required " +
+                      "alphaConventionCheck=operator-visible-required runtimeCrash=false"
+              )
+            },
+            holdMs,
+        )
+  }
+
+  private fun createSdkQuadStereoAlphaProbeLayer(
+      sdkSwapchain: SceneSwapchain,
+      canvasDrawn: Boolean,
+  ): Boolean =
+      runCatching {
+            val pose = sdkQuadSurfaceProbePoseFromViewer()
+            val entity = Entity.create(Transform(pose), Scale(Vector3(1.0f, 1.0f, 1.0f)), Visible(true))
+            val material = SceneMaterial.passthrough()
+            val mesh =
+                SceneMesh.singleSidedQuad(
+                    SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_METERS,
+                    SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_METERS,
+                    material,
+                )
+            sdkQuadSurfaceProbeAnchorMaterial = material
+            sdkQuadSurfaceProbeAnchorMesh = mesh
+            val sceneObject = SceneObject(scene, mesh, "sdk_quad_stereo_alpha_probe_anchor", entity)
+            scene.addObject(sceneObject)
+            sdkQuadSurfaceProbeSceneObject = sceneObject
+            val layer =
+                SceneQuadLayer(
+                    scene,
+                    sdkSwapchain,
+                    SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_METERS,
+                    SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_METERS,
+                    0.5f,
+                    0.5f,
+                    StereoMode.LeftRight,
+                    sceneObject,
+                )
+            layer.setZIndex(SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_LOW)
+            layer.setClip(
+                Vector2(0.04f, 0.04f),
+                Vector2(0.96f, 0.04f),
+                Vector2(0.96f, 0.96f),
+                Vector2(0.04f, 0.96f),
+            )
+            layer.setAlphaBlend(
+                LayerAlphaBlend(
+                    BlendFactor.SOURCE_ALPHA,
+                    BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+                    BlendFactor.ONE,
+                    BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+                )
+            )
+            layer.setColorScaleBias(
+                Vector4(1.0f, 1.0f, 1.0f, SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_HIGH),
+                Vector4(0.0f),
+            )
+            sdkQuadSurfaceProbeLayer = layer
+            marker(
+                "channel=sdk-owned-quad-stereo-alpha-probe status=layer-created " +
+                    "sdkQuadStereoAlphaProbe=true sceneQuadLayerCreated=true canvasDrawn=$canvasDrawn " +
+                    "anchorMode=generated-single-sided-quad sceneObjectHandle=${sceneObject.handle} " +
+                    "widthMeters=$SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_METERS " +
+                    "heightMeters=$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_METERS " +
+                    "zIndex=${SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_LOW} stereoMode=LeftRight " +
+                    "setClipApplied=true clipUv=0.04;0.04;0.96;0.96 " +
+                    "alphaBlendApplied=true sourceFactorColor=SOURCE_ALPHA " +
+                    "destinationFactorColor=ONE_MINUS_SOURCE_ALPHA sourceFactorAlpha=ONE " +
+                    "destinationFactorAlpha=ONE_MINUS_SOURCE_ALPHA " +
+                    "colorScaleAlphaApplied=true alpha=${markerFloat(SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_HIGH)} " +
+                    "poseSource=Scene.getViewerPose layerPositionM=${vectorMarker(pose.t)} " +
+                    "layerQuaternion=${quaternionMarker(pose.q)}"
+            )
+            true
+          }
+          .getOrElse { throwable ->
+            marker(
+                "channel=sdk-owned-quad-stereo-alpha-probe status=layer-create-failed " +
+                    "sdkQuadStereoAlphaProbe=true sceneQuadLayerCreated=false canvasDrawn=$canvasDrawn " +
+                    "stereoMode=LeftRight error=${markerToken(throwable.javaClass.simpleName)} " +
+                    "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+            )
+            false
+          }
+
+  private fun drawSdkQuadStereoAlphaPattern(surface: AndroidSurface): Boolean {
+    if (!surface.isValid) {
+      marker(
+          "channel=sdk-owned-quad-stereo-alpha-probe status=canvas-draw-skipped " +
+              "sdkQuadStereoAlphaProbe=true reason=surface-invalid canvasDrawn=false"
+      )
+      return false
+    }
+    var canvas: android.graphics.Canvas? = null
+    return runCatching {
+          canvas = surface.lockCanvas(null)
+          val lockedCanvas = canvas ?: return@runCatching false
+          lockedCanvas.drawColor(AndroidColor.TRANSPARENT, PorterDuff.Mode.CLEAR)
+          val paint = AndroidPaint().apply { isAntiAlias = true }
+          val left = android.graphics.RectF(0f, 0f, lockedCanvas.width / 2f, lockedCanvas.height.toFloat())
+          val right =
+              android.graphics.RectF(
+                  lockedCanvas.width / 2f,
+                  0f,
+                  lockedCanvas.width.toFloat(),
+                  lockedCanvas.height.toFloat(),
+              )
+          paint.style = AndroidPaint.Style.FILL
+          paint.color = AndroidColor.argb(230, 220, 24, 24)
+          lockedCanvas.drawRect(left, paint)
+          paint.color = AndroidColor.argb(230, 30, 90, 235)
+          lockedCanvas.drawRect(right, paint)
+
+          drawStereoGrid(
+              lockedCanvas,
+              paint,
+              left.left,
+              left.top,
+              left.width(),
+              left.height(),
+              AndroidColor.WHITE,
+              AndroidColor.YELLOW,
+              "LEFT RED",
+          )
+          drawStereoGrid(
+              lockedCanvas,
+              paint,
+              right.left,
+              right.top,
+              right.width(),
+              right.height(),
+              AndroidColor.WHITE,
+              AndroidColor.CYAN,
+              "RIGHT BLUE",
+          )
+          true
+        }
+        .onSuccess { drawn ->
+          canvas?.let { locked -> runCatching { surface.unlockCanvasAndPost(locked) } }
+          marker(
+              "channel=sdk-owned-quad-stereo-alpha-probe status=canvas-draw-complete " +
+                  "sdkQuadStereoAlphaProbe=true canvasDrawn=$drawn widthPx=$SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_PX " +
+                  "heightPx=$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX " +
+                  "leftEyePattern=red-grid rightEyePattern=blue-grid " +
+                  "perEyeExtentPx=${SDK_QUAD_STEREO_ALPHA_PROBE_PER_EYE_WIDTH_PX}x$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX"
+          )
+        }
+        .onFailure { throwable ->
+          canvas?.let { locked ->
+            runCatching { surface.unlockCanvasAndPost(locked) }
+          }
+          marker(
+              "channel=sdk-owned-quad-stereo-alpha-probe status=canvas-draw-failed " +
+                  "sdkQuadStereoAlphaProbe=true canvasDrawn=false " +
+                  "error=${markerToken(throwable.javaClass.simpleName)} " +
+                  "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+          )
+        }
+        .getOrDefault(false)
+  }
+
+  private fun drawStereoGrid(
+      canvas: android.graphics.Canvas,
+      paint: AndroidPaint,
+      x: Float,
+      y: Float,
+      width: Float,
+      height: Float,
+      gridColor: Int,
+      accentColor: Int,
+      label: String,
+  ) {
+    val cells = 8
+    paint.style = AndroidPaint.Style.STROKE
+    paint.strokeWidth = 3.0f
+    paint.color = gridColor
+    for (index in 0..cells) {
+      val px = x + width * index / cells
+      val py = y + height * index / cells
+      canvas.drawLine(px, y, px, y + height, paint)
+      canvas.drawLine(x, py, x + width, py, paint)
+    }
+    paint.strokeWidth = 8.0f
+    paint.color = accentColor
+    canvas.drawRect(x + 36f, y + 36f, x + width - 36f, y + height - 36f, paint)
+    canvas.drawLine(x + width * 0.20f, y + height * 0.50f, x + width * 0.80f, y + height * 0.50f, paint)
+    canvas.drawLine(x + width * 0.80f, y + height * 0.50f, x + width * 0.68f, y + height * 0.38f, paint)
+    canvas.drawLine(x + width * 0.80f, y + height * 0.50f, x + width * 0.68f, y + height * 0.62f, paint)
+    paint.style = AndroidPaint.Style.FILL
+    paint.textSize = height * 0.075f
+    paint.color = AndroidColor.WHITE
+    canvas.drawText(label, x + width * 0.24f, y + height * 0.22f, paint)
+    paint.textSize = height * 0.045f
+    canvas.drawText("UV 0,0 -> top-left", x + width * 0.08f, y + height * 0.91f, paint)
+  }
+
+  private fun runSdkQuadSurfaceProbe(holdMs: Long) {
+    cleanupSdkQuadSurfaceProbe("pre-run")
+    val sdkSwapchain =
+        runCatching {
+              SceneSwapchain.createAsAndroid(
+                  SDK_QUAD_SURFACE_PROBE_WIDTH_PX,
+                  SDK_QUAD_SURFACE_PROBE_HEIGHT_PX,
+                  false,
+              )
+            }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=sdk-owned-quad-surface-probe status=complete sdkQuadSurfaceProbe=true " +
+                      "sdkSwapchainCreated=false surfaceValid=false canvasDrawn=false " +
+                      "sceneQuadLayerCreated=false manualSceneQuadLayerViable=false " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              return
+            }
+    sdkQuadSurfaceProbeSwapchain = sdkSwapchain
+    val surface =
+        runCatching { sdkSwapchain.getSurface() }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=sdk-owned-quad-surface-probe status=get-surface-failed " +
+                      "sdkQuadSurfaceProbe=true handle=${sdkSwapchain.handle} " +
+                      "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              null
+            }
+    sdkQuadSurfaceProbeSurface = surface
+    val surfaceValid = surface?.isValid == true
+    marker(
+        "channel=sdk-owned-quad-surface-probe status=sdk-swapchain-created " +
+            "sdkQuadSurfaceProbe=true sdkSwapchainCreated=true handle=${sdkSwapchain.handle} " +
+            "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
+            "surfaceValid=$surfaceValid widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX " +
+            "heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX"
+    )
+
+    val canvasDrawn = surface?.let { drawSdkQuadSurfaceCheckerboard(it) } ?: false
+    val plainEntityLayerCreated =
+        createSdkQuadSurfaceProbeLayer(
+            sdkSwapchain = sdkSwapchain,
+            canvasDrawn = canvasDrawn,
+            anchorMode = "plain-entity",
+        )
+    val layerCreated =
+        if (plainEntityLayerCreated) {
+          true
+        } else {
+          cleanupSdkQuadSurfaceProbeSceneOnly("plain-entity-retry")
+          createSdkQuadSurfaceProbeLayer(
+              sdkSwapchain = sdkSwapchain,
+              canvasDrawn = canvasDrawn,
+              anchorMode = "generated-single-sided-quad",
+          )
+        }
+    val anchorMode =
+        if (plainEntityLayerCreated) {
+          "plain-entity"
+        } else if (layerCreated) {
+          "generated-single-sided-quad"
+        } else {
+          "none"
+        }
+
+    val viable = surfaceValid && canvasDrawn && layerCreated
+    marker(
+        "channel=sdk-owned-quad-surface-probe status=visible-window sdkQuadSurfaceProbe=true " +
+            "sdkSwapchainCreated=true surfaceValid=$surfaceValid canvasDrawn=$canvasDrawn " +
+            "sceneQuadLayerCreated=$layerCreated manualSceneQuadLayerViable=$viable " +
+            "plainEntitySceneObjectLayerCreated=$plainEntityLayerCreated anchorMode=$anchorMode " +
+            "nativeVulkanProducer=false visiblePatternConfirmed=false " +
+            "humanVisiblePatternCheckRequired=true holdMs=$holdMs runtimeCrash=false"
+    )
+    if (!layerCreated) {
+      val cleanupStatus = cleanupSdkQuadSurfaceProbe("layer-create-failed")
+      marker(
+          "channel=sdk-owned-quad-surface-probe status=complete sdkQuadSurfaceProbe=true " +
+              "sdkSwapchainCreated=true surfaceValid=$surfaceValid canvasDrawn=$canvasDrawn " +
+              "sceneQuadLayerCreated=false manualSceneQuadLayerViable=false cleanupStatus=$cleanupStatus " +
+              "plainEntitySceneObjectLayerCreated=$plainEntityLayerCreated anchorMode=$anchorMode " +
+              "nativeVulkanProducer=false visiblePatternConfirmed=false runtimeCrash=false"
+      )
+      return
+    }
+    Handler(Looper.getMainLooper())
+        .postDelayed(
+            {
+              val cleanupStatus = cleanupSdkQuadSurfaceProbe("hold-complete")
+              marker(
+                  "channel=sdk-owned-quad-surface-probe status=complete sdkQuadSurfaceProbe=true " +
+                      "sdkSwapchainCreated=true surfaceValid=$surfaceValid canvasDrawn=$canvasDrawn " +
+                      "sceneQuadLayerCreated=$layerCreated manualSceneQuadLayerViable=$viable " +
+                      "plainEntitySceneObjectLayerCreated=$plainEntityLayerCreated anchorMode=$anchorMode " +
+                      "cleanupStatus=$cleanupStatus nativeVulkanProducer=false " +
+                      "visiblePatternConfirmed=false humanVisiblePatternCheckRequired=true runtimeCrash=false"
+              )
+            },
+            holdMs,
+        )
+  }
+
+  private fun createSdkQuadSurfaceProbeLayer(
+      sdkSwapchain: SceneSwapchain,
+      canvasDrawn: Boolean,
+      anchorMode: String,
+  ): Boolean =
+      runCatching {
+            val pose = sdkQuadSurfaceProbePoseFromViewer()
+            val entity = Entity.create(Transform(pose), Scale(Vector3(1.0f, 1.0f, 1.0f)), Visible(true))
+            val sceneObject =
+                if (anchorMode == "generated-single-sided-quad") {
+                  val material = SceneMaterial.passthrough()
+                  val mesh =
+                      SceneMesh.singleSidedQuad(
+                          SDK_QUAD_SURFACE_PROBE_WIDTH_METERS,
+                          SDK_QUAD_SURFACE_PROBE_HEIGHT_METERS,
+                          material,
+                      )
+                  sdkQuadSurfaceProbeAnchorMaterial = material
+                  sdkQuadSurfaceProbeAnchorMesh = mesh
+                  SceneObject(scene, mesh, "sdk_quad_surface_probe_anchor", entity)
+                } else {
+                  SceneObject(scene, entity)
+                }
+            scene.addObject(sceneObject)
+            sdkQuadSurfaceProbeSceneObject = sceneObject
+            val layer =
+                SceneQuadLayer(
+                    scene,
+                    sdkSwapchain,
+                    SDK_QUAD_SURFACE_PROBE_WIDTH_METERS,
+                    SDK_QUAD_SURFACE_PROBE_HEIGHT_METERS,
+                    0.5f,
+                    0.5f,
+                    StereoMode.None,
+                    sceneObject,
+                )
+            layer.setZIndex(SDK_QUAD_SURFACE_PROBE_Z_INDEX)
+            sdkQuadSurfaceProbeLayer = layer
+            marker(
+                "channel=sdk-owned-quad-surface-probe status=layer-created " +
+                    "sdkQuadSurfaceProbe=true sceneQuadLayerCreated=true " +
+                    "canvasDrawn=$canvasDrawn anchorMode=$anchorMode " +
+                    "sceneObjectHandle=${sceneObject.handle} " +
+                    "widthMeters=$SDK_QUAD_SURFACE_PROBE_WIDTH_METERS " +
+                    "heightMeters=$SDK_QUAD_SURFACE_PROBE_HEIGHT_METERS zIndex=$SDK_QUAD_SURFACE_PROBE_Z_INDEX " +
+                    "stereoMode=None poseSource=Scene.getViewerPose " +
+                    "layerPositionM=${vectorMarker(pose.t)} layerQuaternion=${quaternionMarker(pose.q)}"
+            )
+            true
+          }
+          .getOrElse { throwable ->
+            marker(
+                "channel=sdk-owned-quad-surface-probe status=layer-create-failed " +
+                    "sdkQuadSurfaceProbe=true sceneQuadLayerCreated=false canvasDrawn=$canvasDrawn " +
+                    "anchorMode=$anchorMode error=${markerToken(throwable.javaClass.simpleName)} " +
+                    "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+            )
+            false
+          }
+
+  private fun createCameraHwbProbeLayer(sdkSwapchain: SceneSwapchain): Boolean =
+      runCatching {
+            val pose = sdkQuadSurfaceProbePoseFromViewer()
+            val entity = Entity.create(Transform(pose), Scale(Vector3(1.0f, 1.0f, 1.0f)), Visible(true))
+            val material = SceneMaterial.passthrough()
+            val mesh =
+                SceneMesh.singleSidedQuad(
+                    CAMERA_HWB_PROBE_WIDTH_METERS,
+                    CAMERA_HWB_PROBE_HEIGHT_METERS,
+                    material,
+                )
+            sdkQuadSurfaceProbeAnchorMaterial = material
+            sdkQuadSurfaceProbeAnchorMesh = mesh
+            val sceneObject = SceneObject(scene, mesh, "camera_hwb_probe_anchor", entity)
+            scene.addObject(sceneObject)
+            sdkQuadSurfaceProbeSceneObject = sceneObject
+            val layer =
+                SceneQuadLayer(
+                    scene,
+                    sdkSwapchain,
+                    CAMERA_HWB_PROBE_WIDTH_METERS,
+                    CAMERA_HWB_PROBE_HEIGHT_METERS,
+                    0.5f,
+                    0.5f,
+                    StereoMode.None,
+                    sceneObject,
+                )
+            layer.setZIndex(CAMERA_HWB_PROBE_Z_INDEX)
+            sdkQuadSurfaceProbeLayer = layer
+            marker(
+                "channel=camera-hwb-spatial-probe status=layer-created cameraHwbProbe=true " +
+                    "sceneQuadLayerCreated=true anchorMode=generated-single-sided-quad " +
+                    "sceneObjectHandle=${sceneObject.handle} widthMeters=$CAMERA_HWB_PROBE_WIDTH_METERS " +
+                    "heightMeters=$CAMERA_HWB_PROBE_HEIGHT_METERS zIndex=$CAMERA_HWB_PROBE_Z_INDEX " +
+                    "stereoMode=None carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+                    "poseSource=Scene.getViewerPose layerPositionM=${vectorMarker(pose.t)} " +
+                    "layerQuaternion=${quaternionMarker(pose.q)}"
+            )
+            true
+          }
+          .getOrElse { throwable ->
+            marker(
+                "channel=camera-hwb-spatial-probe status=layer-create-failed cameraHwbProbe=true " +
+                    "sceneQuadLayerCreated=false anchorMode=generated-single-sided-quad " +
+                    "error=${markerToken(throwable.javaClass.simpleName)} " +
+                    "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+            )
+            false
+          }
+
+  private fun drawSdkQuadSurfaceCheckerboard(surface: AndroidSurface): Boolean {
+    if (!surface.isValid) {
+      marker(
+          "channel=sdk-owned-quad-surface-probe status=canvas-draw-skipped " +
+              "sdkQuadSurfaceProbe=true reason=surface-invalid canvasDrawn=false"
+      )
+      return false
+    }
+    var canvas: android.graphics.Canvas? = null
+    return runCatching {
+          canvas = surface.lockCanvas(null)
+          val lockedCanvas = canvas ?: return@runCatching false
+          val paint = AndroidPaint()
+          val cellWidth = lockedCanvas.width / SDK_QUAD_SURFACE_PROBE_CHECKER_CELLS.toFloat()
+          val cellHeight = lockedCanvas.height / SDK_QUAD_SURFACE_PROBE_CHECKER_CELLS.toFloat()
+          for (y in 0 until SDK_QUAD_SURFACE_PROBE_CHECKER_CELLS) {
+            for (x in 0 until SDK_QUAD_SURFACE_PROBE_CHECKER_CELLS) {
+              paint.color =
+                  if ((x + y) % 2 == 0) {
+                    AndroidColor.rgb(218, 24, 24)
+                  } else {
+                    AndroidColor.rgb(20, 190, 70)
+                  }
+              lockedCanvas.drawRect(
+                  x * cellWidth,
+                  y * cellHeight,
+                  (x + 1) * cellWidth,
+                  (y + 1) * cellHeight,
+                  paint,
+              )
+            }
+          }
+          paint.color = AndroidColor.WHITE
+          paint.textSize = lockedCanvas.height * 0.075f
+          paint.isAntiAlias = true
+          lockedCanvas.drawText("SDK Canvas", lockedCanvas.width * 0.18f, lockedCanvas.height * 0.52f, paint)
+          true
+        }
+        .onSuccess { drawn ->
+          canvas?.let { locked -> runCatching { surface.unlockCanvasAndPost(locked) } }
+          marker(
+              "channel=sdk-owned-quad-surface-probe status=canvas-draw-complete " +
+                  "sdkQuadSurfaceProbe=true canvasDrawn=$drawn checkerCells=$SDK_QUAD_SURFACE_PROBE_CHECKER_CELLS " +
+                  "producer=android-canvas widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX " +
+                  "heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX"
+          )
+        }
+        .onFailure { throwable ->
+          canvas?.let { locked ->
+            runCatching { surface.unlockCanvasAndPost(locked) }
+          }
+          marker(
+              "channel=sdk-owned-quad-surface-probe status=canvas-draw-failed " +
+                  "sdkQuadSurfaceProbe=true canvasDrawn=false " +
+                  "error=${markerToken(throwable.javaClass.simpleName)} " +
+                  "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+          )
+        }
+        .getOrDefault(false)
+  }
+
+  private fun cleanupSdkQuadSurfaceProbeSceneOnly(reason: String): String {
+    var layerDestroyed = sdkQuadSurfaceProbeLayer == null
+    var sceneObjectDestroyed = sdkQuadSurfaceProbeSceneObject == null
+    var meshDestroyed = sdkQuadSurfaceProbeAnchorMesh == null
+    var materialDestroyed = sdkQuadSurfaceProbeAnchorMaterial == null
+
+    sdkQuadSurfaceProbeLayer?.let { layer ->
+      layerDestroyed =
+          runCatching {
+                layer.destroy()
+                true
+              }
+              .getOrDefault(false)
+    }
+    sdkQuadSurfaceProbeLayer = null
+
+    sdkQuadSurfaceProbeSceneObject?.let { sceneObject ->
+      sceneObjectDestroyed =
+          runCatching {
+                scene.destroyObject(sceneObject)
+                true
+              }
+              .recoverCatching {
+                sceneObject.destroy()
+                true
+              }
+              .getOrDefault(false)
+    }
+    sdkQuadSurfaceProbeSceneObject = null
+
+    sdkQuadSurfaceProbeAnchorMesh?.let { mesh ->
+      meshDestroyed =
+          runCatching {
+                mesh.destroy()
+                true
+              }
+              .getOrDefault(false)
+    }
+    sdkQuadSurfaceProbeAnchorMesh = null
+
+    sdkQuadSurfaceProbeAnchorMaterial?.let { material ->
+      materialDestroyed =
+          runCatching {
+                material.destroy()
+                true
+              }
+              .getOrDefault(false)
+    }
+    sdkQuadSurfaceProbeAnchorMaterial = null
+
+    val cleanupStatus =
+        if (layerDestroyed && sceneObjectDestroyed && meshDestroyed && materialDestroyed) {
+          "destroyed"
+        } else {
+          "incomplete"
+        }
+    if (!layerDestroyed || !sceneObjectDestroyed || !meshDestroyed || !materialDestroyed) {
+      marker(
+          "channel=sdk-owned-quad-surface-probe status=scene-anchor-destroyed " +
+              "sdkQuadSurfaceProbe=true reason=${markerToken(reason)} " +
+              "layerDestroyed=$layerDestroyed sceneObjectDestroyed=$sceneObjectDestroyed " +
+              "anchorMeshDestroyed=$meshDestroyed anchorMaterialDestroyed=$materialDestroyed " +
+              "cleanupStatus=$cleanupStatus runtimeCrash=false"
+      )
+    }
+    return cleanupStatus
+  }
+
+  private fun cleanupSdkQuadSurfaceProbe(reason: String): String {
+    val sceneCleanupStatus = cleanupSdkQuadSurfaceProbeSceneOnly(reason)
+    val sceneCleanupDestroyed = sceneCleanupStatus == "destroyed"
+    var swapchainDestroyed = sdkQuadSurfaceProbeSwapchain == null
+
+    sdkQuadSurfaceProbeSwapchain?.let { swapchain ->
+      swapchainDestroyed =
+          runCatching {
+                swapchain.destroy()
+                true
+              }
+              .getOrDefault(false)
+    }
+    sdkQuadSurfaceProbeSwapchain = null
+    sdkQuadSurfaceProbeSurface = null
+
+    val cleanupStatus =
+        if (sceneCleanupDestroyed && swapchainDestroyed) {
+          "destroyed"
+        } else {
+          "incomplete"
+        }
+    if (!sceneCleanupDestroyed || !swapchainDestroyed || reason != "pre-run") {
+      marker(
+          "channel=sdk-owned-quad-surface-probe status=destroyed sdkQuadSurfaceProbe=true " +
+              "reason=${markerToken(reason)} sceneCleanupStatus=$sceneCleanupStatus " +
+              "swapchainDestroyed=$swapchainDestroyed " +
+              "cleanupStatus=$cleanupStatus runtimeCrash=false"
+      )
+    }
+    return cleanupStatus
+  }
+
+  @OptIn(SpatialSDKExperimentalAPI::class)
+  private fun sdkQuadSurfaceProbePoseFromViewer(): Pose {
+    val viewerPose = runCatching { scene.getViewerPose() }.getOrNull()
+    if (viewerPose == null) {
+      return Pose(
+          Vector3(0.0f, 1.20f, -SDK_QUAD_SURFACE_PROBE_DISTANCE_METERS),
+          Quaternion.fromDirection(Vector3(0.0f, 0.0f, -1.0f), Vector3(0.0f, 1.0f, 0.0f)),
+      )
+    }
+    val forward = viewerPose.forward().normalizedOr(Vector3(0.0f, 0.0f, -1.0f))
+    val up = viewerPose.up().normalizedOr(Vector3(0.0f, 1.0f, 0.0f))
+    val center = viewerPose.t + forward * SDK_QUAD_SURFACE_PROBE_DISTANCE_METERS
+    return Pose(center, Quaternion.fromDirection(forward, up))
   }
 
   private fun runExternalSwapchainProbeIfRequested(reason: String) {
@@ -2203,6 +3548,25 @@ class KuramotoSpatialActivity : AppSystemActivity() {
 
   private external fun nativeStopSurfaceParticleLayer()
 
+  private external fun nativeStartSdkQuadVulkanProbe(
+      surface: AndroidSurface,
+      width: Int,
+      height: Int,
+      frameCount: Int,
+  ): Long
+
+  private external fun nativeStopSdkQuadVulkanProbe()
+
+  private external fun nativeStartCameraHwbProbe(
+      surface: AndroidSurface,
+      width: Int,
+      height: Int,
+      frameCount: Int,
+      readerMaxImages: Int,
+  ): Long
+
+  private external fun nativeStopCameraHwbProbe()
+
   private external fun nativeUpdateSurfaceParticleParameters(
       driver0Value01: Float,
       driver1Value01: Float,
@@ -2760,6 +4124,78 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     private const val EXTERNAL_SWAPCHAIN_PROBE_MIN_CYCLE_MS = 1_000L
     private const val EXTERNAL_SWAPCHAIN_PROBE_MAX_CYCLE_MS = 60_000L
     private const val EXTERNAL_SWAPCHAIN_PROBE_INTER_CYCLE_MS = 750L
+    private const val SDK_QUAD_SURFACE_PROBE_PROPERTY =
+        "debug.rustyquest.spatial.sdk_quad_surface_probe"
+    private const val SDK_QUAD_SURFACE_PROBE_HOLD_MS_PROPERTY =
+        "debug.rustyquest.spatial.sdk_quad_surface_probe.hold_ms"
+    private const val SDK_QUAD_SURFACE_PROBE_WIDTH_PX = 512
+    private const val SDK_QUAD_SURFACE_PROBE_HEIGHT_PX = 512
+    private const val SDK_QUAD_SURFACE_PROBE_CHECKER_CELLS = 8
+    private const val SDK_QUAD_SURFACE_PROBE_WIDTH_METERS = 0.55f
+    private const val SDK_QUAD_SURFACE_PROBE_HEIGHT_METERS = 0.55f
+    private const val SDK_QUAD_SURFACE_PROBE_DISTANCE_METERS = 0.85f
+    private const val SDK_QUAD_SURFACE_PROBE_Z_INDEX = 22
+    private const val SDK_QUAD_SURFACE_PROBE_DEFAULT_HOLD_MS = 30_000L
+    private const val SDK_QUAD_SURFACE_PROBE_MIN_HOLD_MS = 1_000L
+    private const val SDK_QUAD_SURFACE_PROBE_MAX_HOLD_MS = 120_000L
+    private const val SDK_QUAD_VULKAN_PROBE_PROPERTY =
+        "debug.rustyquest.spatial.sdk_quad_vulkan_probe"
+    private const val SDK_QUAD_VULKAN_PROBE_HOLD_MS_PROPERTY =
+        "debug.rustyquest.spatial.sdk_quad_vulkan_probe.hold_ms"
+    private const val SDK_QUAD_VULKAN_PROBE_FRAME_COUNT_PROPERTY =
+        "debug.rustyquest.spatial.sdk_quad_vulkan_probe.frame_count"
+    private const val SDK_QUAD_VULKAN_PROBE_DEFAULT_HOLD_MS = 8_000L
+    private const val SDK_QUAD_VULKAN_PROBE_MIN_HOLD_MS = 1_000L
+    private const val SDK_QUAD_VULKAN_PROBE_MAX_HOLD_MS = 120_000L
+    private const val SDK_QUAD_VULKAN_PROBE_DEFAULT_FRAME_COUNT = 240
+    private const val SDK_QUAD_VULKAN_PROBE_MAX_FRAME_COUNT = 1_800
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_PROPERTY =
+        "debug.rustyquest.spatial.sdk_quad_stereo_alpha_probe"
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_HOLD_MS_PROPERTY =
+        "debug.rustyquest.spatial.sdk_quad_stereo_alpha_probe.hold_ms"
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_PX = 2048
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX = 1024
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_PER_EYE_WIDTH_PX = 1024
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_METERS = 1.15f
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_METERS = 1.15f
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_LOW = 24
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_HIGH = 34
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_HIGH = 0.88f
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_LOW = 0.45f
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_CHANGE_MS = 1_500L
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_CHANGE_MS = 3_000L
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_RESTORE_MS = 5_500L
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_DEFAULT_HOLD_MS = 30_000L
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_MIN_HOLD_MS = 3_000L
+    private const val SDK_QUAD_STEREO_ALPHA_PROBE_MAX_HOLD_MS = 120_000L
+    private const val PANEL_SURFACE_MATRIX_PROBE_PROPERTY =
+        "debug.rustyquest.spatial.panel_surface_matrix_probe"
+    private const val PANEL_SURFACE_MATRIX_PROBE_WIDTH_PX = 512
+    private const val PANEL_SURFACE_MATRIX_PROBE_HEIGHT_PX = 512
+    private const val PANEL_SURFACE_MATRIX_PROBE_FRAME_COUNT = 90
+    private const val PANEL_SURFACE_MATRIX_PROBE_VARIANT_HOLD_MS = 2_500L
+    private const val PANEL_SURFACE_MATRIX_PROBE_INTER_VARIANT_MS = 500L
+    private const val CAMERA_HWB_PROBE_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_probe"
+    private const val CAMERA_HWB_PROBE_HOLD_MS_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_probe.hold_ms"
+    private const val CAMERA_HWB_PROBE_FRAME_COUNT_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_probe.frame_count"
+    private const val CAMERA_HWB_PROBE_READER_MAX_IMAGES_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_probe.reader_max_images"
+    private const val CAMERA_HWB_PROBE_WIDTH_PX = 1024
+    private const val CAMERA_HWB_PROBE_HEIGHT_PX = 512
+    private const val CAMERA_HWB_PROBE_WIDTH_METERS = 1.0f
+    private const val CAMERA_HWB_PROBE_HEIGHT_METERS = 0.5f
+    private const val CAMERA_HWB_PROBE_Z_INDEX = 36
+    private const val CAMERA_HWB_PROBE_DEFAULT_HOLD_MS = 10_000L
+    private const val CAMERA_HWB_PROBE_MIN_HOLD_MS = 2_000L
+    private const val CAMERA_HWB_PROBE_MAX_HOLD_MS = 120_000L
+    private const val CAMERA_HWB_PROBE_DEFAULT_FRAME_COUNT = 240
+    private const val CAMERA_HWB_PROBE_MAX_FRAME_COUNT = 1_800
+    private const val CAMERA_HWB_PROBE_DEFAULT_READER_MAX_IMAGES = 4
+    private const val CAMERA_HWB_PROBE_MIN_READER_MAX_IMAGES = 3
+    private const val CAMERA_HWB_PROBE_MAX_READER_MAX_IMAGES = 12
     private const val OPENXR_ERROR_HANDLE_INVALID = -12
     private const val NATIVE_RECEIPT_LIBRARY = "kuramoto_spatial_native_receipt"
     private const val NATIVE_RECEIPT_OPENXR_INSTANCE_BIT = 1L shl 1

@@ -282,6 +282,86 @@ External OpenXR swapchain wrapper probe:
   through `SceneQuadLayer` as blocked unless Meta documents a supported
   external-swapchain contract.
 
+SDK-owned manual `SceneQuadLayer` probes:
+
+- Canvas-only probe is gated by
+  `debug.rustyquest.spatial.sdk_quad_surface_probe`, with optional
+  `debug.rustyquest.spatial.sdk_quad_surface_probe.hold_ms`. It creates
+  `SceneSwapchain.createAsAndroid(512, 512, false)`, draws a red/green
+  checkerboard into `getSurface()` with Android `Canvas`, and attaches it to a
+  manual `SceneQuadLayer`.
+- 2026-06-26 Quest 3S result: a plain `SceneObject(scene, Entity(...))`
+  anchor fails with the SDK native assert `SceneObjectInstance handle is null`,
+  but a generated mesh-backed anchor created with
+  `SceneMesh.singleSidedQuad(...)`, `SceneMaterial.passthrough()`, and
+  `SceneObject(scene, mesh, ..., entity)` succeeds. Treat manual
+  `SceneQuadLayer` as viable for SDK-owned swapchains only when the scene
+  object has a real SDK mesh/object handle.
+- Native Vulkan WSI probe is gated by
+  `debug.rustyquest.spatial.sdk_quad_vulkan_probe`, with optional
+  `debug.rustyquest.spatial.sdk_quad_vulkan_probe.hold_ms` and
+  `debug.rustyquest.spatial.sdk_quad_vulkan_probe.frame_count`. It reuses the
+  SDK-created Android `Surface`, creates
+  `ANativeWindow -> VkSurfaceKHR -> Vulkan WSI swapchain` in the native receipt
+  library, and renders an animated clear-color pattern without the private
+  particle shader stack.
+- 2026-06-26 Quest 3S result:
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260626-092257-sdk-owned-quad-vulkan-probe`
+  logged `surfaceValid=true`, `sceneQuadLayerCreated=true`,
+  `manualSceneQuadLayerViable=true`, native `startMask=15`,
+  `swapchainImages=3`, `extent=512x512`, `surfaceFormat=R8G8B8A8_UNORM`,
+  `presentMode=FIFO`, `compositeAlpha=INHERIT`, `first-frame-presented`, and
+  `render-complete framesPresented=360 requestedFrames=360`. The narrowed
+  fatal check found no `FATAL EXCEPTION`, `Fatal signal`, `SIGSEGV`,
+  `SIGABRT`, `AndroidRuntime`, or `ANR in` lines.
+- Stereo/alpha probe is gated by
+  `debug.rustyquest.spatial.sdk_quad_stereo_alpha_probe`. It uses
+  `SceneSwapchain.createAsAndroid(2048, 1024, false)`,
+  `StereoMode.LeftRight`, per-eye red/blue grids, alpha fade variants, clip
+  variants, overscan, and z-index changes.
+- 2026-06-26 Quest 3S result:
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260626-093745-sdk-owned-quad-stereo-alpha-probe-zindex-fix`
+  completed the programmatic contract: the layer was created from the
+  SDK-owned Android surface, the native Vulkan WSI producer presented the
+  packed 2048x1024 output, z-index ordering was corrected, and no fatal/ANR
+  lines were captured. Visual eye-leakage, UV orientation, and final alpha
+  convention should still be operator-checked on headset before using this for
+  stereo camera projection.
+- `PanelSurface` matrix probe is gated by
+  `debug.rustyquest.spatial.panel_surface_matrix_probe`. It checks
+  `PanelSurface(useSwapchain=true/useTexture=false)` and
+  `PanelSurface(useSwapchain=false/useTexture=true)` for valid `surface`,
+  non-null `swapchain`, `SceneQuadLayer` backing, and native Vulkan WSI
+  presentation.
+- 2026-06-26 Quest 3S result:
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260626-094428-panel-surface-matrix-probe`
+  showed both `PanelSurface` modes expose a valid Android `Surface` that can
+  be used by native Vulkan WSI. Only `useSwapchain=true/useTexture=false`
+  exposes a non-null SDK swapchain that can back a `SceneQuadLayer`; texture
+  mode has no `panelSurface.swapchain`, but its surface still works as a native
+  Vulkan producer target.
+- Camera2/HWB probe is gated by
+  `debug.rustyquest.spatial.camera_hwb_probe`. It starts Camera2 ID `50`
+  first with fallback to `51`, creates an `AImageReader` with
+  `AIMAGE_FORMAT_PRIVATE` and `AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE`,
+  imports one acquired `AHardwareBuffer` as a Vulkan sampled image, and
+  presents a luma/checker diagnostic into the passing SDK-owned quad carrier.
+- 2026-06-26 Quest 3S result:
+  `local-artifacts/kuramoto-spatial-sdk-headset/20260626-100813-camera-hwb-spatial-probe`
+  logged `selectedCameraId=50`, `selectedPrivateSize=1280x1280`,
+  `vkGetAhbPropertiesResult=success`, `externalFormat=647`,
+  `samplerMode=external-format-ycbcr`, `sampledCameraTexture=true`,
+  `first-camera-frame-presented`, and `complete framesPresented=300`. Manual
+  `pm grant` for `horizonos.permission.SPATIAL_CAMERA` was role-managed and
+  failed, but the probe still opened camera `50` and presented camera-derived
+  pixels through `scenequadlayer-createAsAndroid-vulkan-wsi`.
+- Decision: the high-control manual layer route is alive when the swapchain is
+  SDK-owned and exposed as an Android `Surface`. It now covers Canvas,
+  native Vulkan WSI, programmatic stereo/alpha checks, PanelSurface surface
+  variants, and the first Camera2/HWB-to-Vulkan sampled diagnostic. Raw
+  external `XrSwapchain` wrapping should remain blocked unless Meta documents
+  a different contract.
+
 Build:
 
 ```powershell
