@@ -26,6 +26,10 @@ mod camera_hwb_marker;
 mod camera_hwb_probe;
 mod camera_hwb_projection_target;
 #[cfg(target_os = "android")]
+mod camera_hwb_stream;
+#[cfg(target_os = "android")]
+mod camera_hwb_wsi;
+#[cfg(target_os = "android")]
 mod live_hand_joints;
 #[cfg(target_os = "android")]
 mod replay_hands;

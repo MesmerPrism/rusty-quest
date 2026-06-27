@@ -28,8 +28,14 @@ Rusty Quest.
 ## Native Receipt Source Map
 
 - `native-receipt/src/camera_hwb_probe.rs` is the Android JNI facade and
-  Camera2/AHardwareBuffer-to-Vulkan WSI render orchestration for the raw camera
-  probes.
+  raw camera probe orchestration entry point.
+- `native-receipt/src/camera_hwb_stream.rs` owns the Android Camera2 /
+  `AImageReader` stream runtime, stereo camera 50/51 selection, private output
+  size selection, and acquired `AHardwareBuffer` frame handoff.
+- `native-receipt/src/camera_hwb_wsi.rs` owns the Vulkan WSI/resource helpers:
+  surface-device selection, swapchain format/extent policy, sampled-HWB
+  replacement import, descriptors, pipeline creation, command recording, and
+  resource teardown.
 - `native-receipt/src/camera_hwb_marker.rs` owns the raw camera probe marker
   channel and native log formatting helper.
 - `native-receipt/src/camera_hwb_projection_target.rs` owns the public
