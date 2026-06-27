@@ -38,7 +38,7 @@ use crate::ahardware_buffer_vulkan::{
 use crate::android_hardware_buffer::{
     AndroidHardwareBufferDescriptor, AndroidHardwareBufferHandle,
 };
-use crate::camera_hwb_marker::{log_camera_hwb_marker as log_marker, CAMERA_HWB_PROBE_CHANNEL};
+use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 use crate::camera_hwb_projection_target::{
     camera_hwb_projection_marker_fields, camera_hwb_projection_push, CameraHwbProjectionPush,
     CAMERA_HWB_LEFT_CAMERA_ID, CAMERA_HWB_RIGHT_CAMERA_ID,
