@@ -38,65 +38,20 @@ use crate::ahardware_buffer_vulkan::{
 use crate::android_hardware_buffer::{
     AndroidHardwareBufferDescriptor, AndroidHardwareBufferHandle,
 };
-use crate::{android_log_info, bool_token, marker_token};
+use crate::camera_hwb_marker::{log_camera_hwb_marker as log_marker, CAMERA_HWB_PROBE_CHANNEL};
+use crate::camera_hwb_projection_target::{
+    camera_hwb_projection_marker_fields, camera_hwb_projection_push, CameraHwbProjectionPush,
+    CAMERA_HWB_LEFT_CAMERA_ID, CAMERA_HWB_RIGHT_CAMERA_ID,
+};
+use crate::{bool_token, marker_token};
 
-const CAMERA_HWB_PROBE_CHANNEL: &str = "camera-hwb-spatial-probe";
 const CAMERA_HWB_PROBE_READER_DEFAULT_WIDTH: i32 = 1280;
 const CAMERA_HWB_PROBE_READER_DEFAULT_HEIGHT: i32 = 1280;
 const CAMERA_HWB_PROBE_WAIT_FRAME_MS: u64 = 5000;
 const CAMERA_HWB_PROBE_MAX_FRAMES: u32 = 1800;
 const CAMERA_HWB_PROBE_LATEST_FRAME_WAIT_MS: u64 = 2;
-const CAMERA_HWB_LEFT_CAMERA_ID: &str = "50";
-const CAMERA_HWB_RIGHT_CAMERA_ID: &str = "51";
-const CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE: f32 = 1.0;
-const CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE: f32 = 0.25;
-const CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE: f32 = 1.80;
-const CAMERA_HWB_PROJECTION_TARGET_OFFSET_X: f32 = 0.0;
-const CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y: f32 = 0.0;
-const CAMERA_HWB_PROJECTION_BORDER_OPACITY: f32 = 0.0;
-const CAMERA_HWB_LEFT_TARGET_RECT: CameraTargetRect = CameraTargetRect {
-    x: 0.171875,
-    y: 0.21875,
-    width: 0.75,
-    height: 0.65625,
-};
-const CAMERA_HWB_RIGHT_TARGET_RECT: CameraTargetRect = CameraTargetRect {
-    x: 0.078125,
-    y: 0.21875,
-    width: 0.75,
-    height: 0.671875,
-};
 
 static STOP_CAMERA_HWB_PROBE: AtomicBool = AtomicBool::new(false);
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct CameraTargetRect {
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
-}
-
-impl CameraTargetRect {
-    fn marker_token(self) -> String {
-        format!(
-            "{:.6};{:.6};{:.6};{:.6}",
-            self.x, self.y, self.width, self.height
-        )
-    }
-
-    fn as_push(self) -> [f32; 4] {
-        [self.x, self.y, self.width, self.height]
-    }
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct CameraHwbProjectionPush {
-    left_rect: [f32; 4],
-    right_rect: [f32; 4],
-    params: [f32; 4],
-}
 
 #[derive(Clone, Copy)]
 enum CameraHwbProbeMode {
@@ -145,98 +100,6 @@ impl CameraHwbProbeMode {
             Self::RawColorProjection => "camera50-51",
         }
     }
-}
-
-fn effective_rect(
-    base: CameraTargetRect,
-    scale: f32,
-    offset_x: f32,
-    offset_y: f32,
-) -> CameraTargetRect {
-    let scale = scale.max(0.0001);
-    let width = (base.width * scale).clamp(0.0001, 1.0);
-    let height = (base.height * scale).clamp(0.0001, 1.0);
-    let center_x = base.x + base.width * 0.5 + offset_x;
-    let center_y = base.y + base.height * 0.5 + offset_y;
-    let x = (center_x - width * 0.5).clamp(0.0, 1.0 - width);
-    let y = (center_y - height * 0.5).clamp(0.0, 1.0 - height);
-    CameraTargetRect {
-        x,
-        y,
-        width,
-        height,
-    }
-}
-
-fn packed_left_rect(rect: CameraTargetRect) -> CameraTargetRect {
-    CameraTargetRect {
-        x: 0.5 * rect.x,
-        y: rect.y,
-        width: 0.5 * rect.width,
-        height: rect.height,
-    }
-}
-
-fn packed_right_rect(rect: CameraTargetRect) -> CameraTargetRect {
-    CameraTargetRect {
-        x: 0.5 + 0.5 * rect.x,
-        y: rect.y,
-        width: 0.5 * rect.width,
-        height: rect.height,
-    }
-}
-
-fn camera_hwb_projection_push() -> CameraHwbProjectionPush {
-    let left_effective = effective_rect(
-        CAMERA_HWB_LEFT_TARGET_RECT,
-        CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE,
-        CAMERA_HWB_PROJECTION_TARGET_OFFSET_X,
-        CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
-    );
-    let right_effective = effective_rect(
-        CAMERA_HWB_RIGHT_TARGET_RECT,
-        CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE,
-        CAMERA_HWB_PROJECTION_TARGET_OFFSET_X,
-        CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
-    );
-    CameraHwbProjectionPush {
-        left_rect: packed_left_rect(left_effective).as_push(),
-        right_rect: packed_right_rect(right_effective).as_push(),
-        params: [CAMERA_HWB_PROJECTION_BORDER_OPACITY, 0.0, 0.0, 0.0],
-    }
-}
-
-fn camera_hwb_projection_marker_fields() -> String {
-    let left_effective = effective_rect(
-        CAMERA_HWB_LEFT_TARGET_RECT,
-        CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE,
-        CAMERA_HWB_PROJECTION_TARGET_OFFSET_X,
-        CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
-    );
-    let right_effective = effective_rect(
-        CAMERA_HWB_RIGHT_TARGET_RECT,
-        CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE,
-        CAMERA_HWB_PROJECTION_TARGET_OFFSET_X,
-        CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
-    );
-    format!(
-        "stereoSource=camera50-51 leftCameraId={} rightCameraId={} leftTargetScreenUvRect={} rightTargetScreenUvRect={} leftEffectiveTargetScreenUvRect={} rightEffectiveTargetScreenUvRect={} leftPackedEffectiveTargetScreenUvRect={} rightPackedEffectiveTargetScreenUvRect={} projectionTargetControlsEnabled=true projectionTargetLiveScale={:.4} projectionTargetTunedMaxScale={:.4} projectionTargetMinScale={:.4} projectionTargetMaxScale={:.4} projectionTargetOffsetUv={:.6},{:.6} borderOpacity={:.1} targetClipPolicy=clip-to-visible-eye projectionContentMappingMode=target-local-raster monoDuplicated=false",
-        CAMERA_HWB_LEFT_CAMERA_ID,
-        CAMERA_HWB_RIGHT_CAMERA_ID,
-        CAMERA_HWB_LEFT_TARGET_RECT.marker_token(),
-        CAMERA_HWB_RIGHT_TARGET_RECT.marker_token(),
-        left_effective.marker_token(),
-        right_effective.marker_token(),
-        packed_left_rect(left_effective).marker_token(),
-        packed_right_rect(right_effective).marker_token(),
-        CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE,
-        CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE,
-        CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE,
-        CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE,
-        CAMERA_HWB_PROJECTION_TARGET_OFFSET_X,
-        CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
-        CAMERA_HWB_PROJECTION_BORDER_OPACITY,
-    )
 }
 
 #[link(name = "android")]
@@ -2489,14 +2352,4 @@ unsafe fn metadata_entry(
     } else {
         None
     }
-}
-
-fn log_marker(fields: String) {
-    android_log_info(
-        "RQSpatialCameraPanelNative",
-        &format!(
-            "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel={} {}",
-            CAMERA_HWB_PROBE_CHANNEL, fields
-        ),
-    );
 }

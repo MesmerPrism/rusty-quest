@@ -2,7 +2,9 @@ use std::ffi::CStr;
 use std::ffi::CString;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::os::raw::{c_char, c_int, c_void};
+#[cfg(target_os = "android")]
+use std::os::raw::c_int;
+use std::os::raw::{c_char, c_void};
 use std::ptr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -19,12 +21,18 @@ mod ahardware_buffer_vulkan;
 #[cfg(target_os = "android")]
 #[path = "../../../native-renderer-android/native/src/android_hardware_buffer.rs"]
 mod android_hardware_buffer;
+mod camera_hwb_marker;
 #[cfg(target_os = "android")]
 mod camera_hwb_probe;
+mod camera_hwb_projection_target;
+#[cfg(target_os = "android")]
 mod live_hand_joints;
+#[cfg(target_os = "android")]
 mod replay_hands;
+#[cfg(target_os = "android")]
 mod surface_particle_layer;
 
+#[cfg(target_os = "android")]
 const ANDROID_LOG_INFO: c_int = 4;
 const NATIVE_MARKER_FILE: &str =
     "/data/data/io.github.mesmerprism.rustyquest.spatial_camera_panel/files/spatial_camera_panel_native_markers.log";
@@ -50,6 +58,7 @@ const RECEIPT_VK_DEVICE_CREATED: i64 = 1 << 18;
 const RECEIPT_VK_QUEUE_OBTAINED: i64 = 1 << 19;
 const RECEIPT_VK_OBJECTS_DESTROYED: i64 = 1 << 20;
 
+#[cfg(target_os = "android")]
 #[link(name = "log")]
 extern "C" {
     fn __android_log_print(prio: c_int, tag: *const c_char, fmt: *const c_char, ...) -> c_int;
@@ -691,6 +700,7 @@ pub(crate) fn bool_token(value: bool) -> &'static str {
     }
 }
 
+#[cfg(target_os = "android")]
 pub(crate) fn android_log_info(tag: &str, message: &str) {
     let tag = CString::new(tag).expect("static Android log tag must not contain NUL");
     let format = CString::new("%s").expect("static Android log format must not contain NUL");
@@ -704,6 +714,11 @@ pub(crate) fn android_log_info(tag: &str, message: &str) {
         );
     }
     append_native_marker_file(message.to_string_lossy().as_ref());
+}
+
+#[cfg(not(target_os = "android"))]
+pub(crate) fn android_log_info(_tag: &str, message: &str) {
+    append_native_marker_file(message);
 }
 
 fn append_native_marker_file(message: &str) {

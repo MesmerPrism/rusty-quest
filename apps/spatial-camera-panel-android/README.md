@@ -25,6 +25,21 @@ and blur/projection validation only. Private downstream visual semantics,
 effect formulas, coupling kernels, and tuned parameter profiles belong outside
 Rusty Quest.
 
+## Native Receipt Source Map
+
+- `native-receipt/src/camera_hwb_probe.rs` is the Android JNI facade and
+  Camera2/AHardwareBuffer-to-Vulkan WSI render orchestration for the raw camera
+  probes.
+- `native-receipt/src/camera_hwb_marker.rs` owns the raw camera probe marker
+  channel and native log formatting helper.
+- `native-receipt/src/camera_hwb_projection_target.rs` owns the public
+  camera-projection target-rect constants, effective-rect formula,
+  side-by-side packed UV rects, raw-color projection push constants, and marker
+  field construction. Its host unit tests protect the target-rect behavior
+  without requiring Android system libraries.
+- `native-receipt/src/surface_particle_layer.rs`, `replay_hands.rs`, and
+  `live_hand_joints.rs` remain Android-only surface-particle proof modules.
+
 ## Validation
 
 Run the static gate:
