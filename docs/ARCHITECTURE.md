@@ -36,9 +36,9 @@ apps.
 - high-rate frame payload transport through Rusty Quest core contracts.
 - Matter SDF truth, Optics projection semantics, or private downstream layer
   implementation payloads for native renderer extension slots.
-- Kuramoto oscillator kernels, private movement-coherence tuning, live
-  hand-mesh dynamics, or private study semantics beyond the low-rate panel
-  adapter records needed for headset validation.
+- private downstream effect kernels, tuned profiles, study semantics, live
+  hand-mesh dynamics, or coupling parameters beyond the low-rate generic
+  driver-profile panel records needed for headset validation.
 
 ADB writes are generated operations from validated profiles. They are not
 hand-authored settings authority.
@@ -56,23 +56,24 @@ The crate does not link Android, OpenXR, Vulkan, Makepad, Matter, Optics, or
 Lattice runtime crates. Runtime adapters must consume the public plan and
 report scorecard evidence instead of becoming hidden authority.
 
-## Kuramoto Spatial SDK Android Package
+## Spatial Camera Panel Android Package
 
-`apps/kuramoto-spatial-sdk-android` owns the first separate Meta Spatial SDK
-package lane for the private Kuramoto experiment workflow:
+`apps/spatial-camera-panel-android` owns the separate Meta Spatial SDK package
+lane for public Quest panel and camera-stack validation:
 
 ```text
-io.github.mesmerprism.rustyquest.kuramoto_spatial/.KuramotoSpatialActivity
+io.github.mesmerprism.rustyquest.spatial_camera_panel/.SpatialCameraPanelActivity
 ```
 
 This package is a Quest platform adapter for Spatial SDK panel behavior. It
 uses `AppSystemActivity`, `VRFeature`, and `ComposeFeature` to register and
 spawn one Compose-backed 2D panel, then exposes low-rate controls for
 participant setup, direct BLE Polar H10 intake, ECG event mirroring, surface
-target selection, block timing, and questionnaire submission. The panel
-placement controls are
-there to test Spatial SDK position, scale, and resolution options on headset;
-they are not a renderer contract and are not the native Quest XR path.
+target selection, block timing, questionnaire submission, raw Camera2/HWB
+projection probes, and public blur/projection receipts. The panel placement
+controls are there to test Spatial SDK position, scale, and resolution options
+on headset; they are not a renderer contract and are not the native Quest XR
+path.
 
 The lane deliberately stays outside `apps/native-renderer-android`. It does
 not link the Rust native renderer, does not request camera or hand-tracking
@@ -80,20 +81,21 @@ features, and does not move hand mesh frames, particle arrays, field buffers,
 or replay sequences through Java/Kotlin JSON. Questionnaire output remains a
 low-rate app-private JSONL artifact keyed by `participant_id`, `session_id`,
 `block_index`, `block_number`, `condition_id`, `profile_id`, and
-`surface_target_id` so private Kuramoto analysis can join it back to study
-state without making Rusty Quest the oscillator authority. Polar stream rows
-remain low-rate panel records: the Spatial app may scan/connect to Polar H10,
-decode HR/RR, ACC, ECG, and device-status events, and mirror ECG rows to
+`surface_target_id` so downstream analysis can join it back to private study
+state without making Rusty Quest the effect authority. Polar stream rows remain
+low-rate panel records: the Spatial app may scan/connect to Polar H10, decode
+HR/RR, ACC, ECG, and device-status events, and mirror ECG rows to
 `ecg_events.jsonl`, but those samples do not enter the native Vulkan renderer,
 particle buffers, or shader parameter path.
 
-When a Spatial experiment block starts, the panel maps the randomized condition
-metadata to bounded scalar driver values (`movement_base_frequency_hz` to
-energy/`driver0`, `movement_coupling` to coherence/`driver1`) and submits them
-through the existing native surface-particle JNI parameter bridge. That is the
-only block-start runtime handoff: native Vulkan/OpenXR still owns validation,
-resident particle buffers, compute dispatch, and presentation, and the workflow
-panel returns to particle view after the request.
+When a Spatial block starts, the panel maps condition metadata to bounded
+generic driver values (`driver0` and `driver1`) and submits them through the
+existing native surface-particle JNI parameter bridge. That is the only
+block-start runtime handoff: native Vulkan/OpenXR still owns validation,
+resident public particle buffers, compute dispatch, and presentation, and the
+workflow panel returns to particle view after the request. Private downstream
+visual semantics, coupling kernels, and tuned parameters stay out of Rusty
+Quest.
 
 ## Native Renderer Android Package
 
@@ -437,7 +439,7 @@ Manifold stream-to-driver adapter. It subscribes to configured Manifold scalar
 stream ids, parses bounded `value01` samples, clamps them to `0..=1`, and
 overlays them onto selected generic driver slots. Routes use
 `stream_id:driverN.value01` entries separated by semicolons. This adapter owns
-no downstream effect semantics, Kuramoto state, coupling parameters, or private
+no downstream effect semantics, coupling kernels, tuned parameters, or private
 payload content; it only bridges honest Manifold scalar streams into the
 generic driver bank.
 The runtime reports accepted values through `privateParticleSettingsHotload`

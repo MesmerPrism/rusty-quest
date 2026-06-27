@@ -58,7 +58,8 @@
   "markers": {
     "required": [
       "handAnchorParticlesEnabled=true",
-      "handAnchorParticleGpuSortActive=true"
+      "handAnchorParticleDynamics=deterministic-anchors",
+      "handAnchorParticleGpuSortActive=false"
     ],
     "forbidden": []
   },
@@ -69,5 +70,5 @@
     "standard": [],
     "device": []
   },
-  "public_private_boundary": "Anchor particle rendering is public; private payload dynamics require a separate selected feature."
+  "public_private_boundary": "Anchor particle rendering is public deterministic hand-topology diagnostic infrastructure; private particle payloads require a separate selected feature."
 }

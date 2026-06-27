@@ -81,18 +81,18 @@ impl NativeHandAnchorParticleSettings {
         }
     }
 
-    pub(crate) fn private_gpu_payload_requested(self) -> bool {
-        self.dynamics == NativeHandAnchorParticleDynamics::PrivateGpuPayload
+    pub(crate) fn external_payload_requested(self) -> bool {
+        false
     }
 
     pub(crate) fn marker_fields(self) -> String {
         format!(
-            "handAnchorParticlesEnabled={} handAnchorParticlesPerHand={} handAnchorParticleRadiusMeters={:.5} handAnchorParticleDynamics={} handAnchorParticlePrivateGpuPayloadRequested={} handAnchorParticleTransparencyBlendMode={} handAnchorParticleTransparencyCompositionMode={} handAnchorParticleTransparencyDepthSuppressionStrength={:.3} handAnchorParticleOrderingMode={} handAnchorParticleOrderingImplementation={} handAnchorParticleOrderingIntervalFrames={} handAnchorParticleOrderingStatus={} handAnchorParticleOrderingCpuExpandedUploadPerFrame=false handAnchorParticlePath=resident-skinned-mesh-coordinate-anchor-billboards handAnchorParticleCoordinateSpace=openxr-reference-space handAnchorParticleMask=static-feather-dot-r8-texture handAnchorParticleMaskTextureSharedWithPrivateParticles=true handAnchorParticleAnimation=false handAnchorParticleCpuExpandedUploadPerFrame=false handAnchorParticleMeshUploadPerFrame=false",
+            "handAnchorParticlesEnabled={} handAnchorParticlesPerHand={} handAnchorParticleRadiusMeters={:.5} handAnchorParticleDynamics={} handAnchorParticleExternalPayloadRequested={} handAnchorParticleTransparencyBlendMode={} handAnchorParticleTransparencyCompositionMode={} handAnchorParticleTransparencyDepthSuppressionStrength={:.3} handAnchorParticleOrderingMode={} handAnchorParticleOrderingImplementation={} handAnchorParticleOrderingIntervalFrames={} handAnchorParticleOrderingStatus={} handAnchorParticleOrderingCpuExpandedUploadPerFrame=false handAnchorParticlePath=resident-skinned-mesh-coordinate-anchor-billboards handAnchorParticleCoordinateSpace=openxr-reference-space handAnchorParticleMask=static-feather-dot-r8-texture handAnchorParticleMaskTextureSharedWithPrivateParticles=true handAnchorParticleAnimation=false handAnchorParticleCpuExpandedUploadPerFrame=false handAnchorParticleMeshUploadPerFrame=false",
             self.enabled,
             self.particles_per_hand,
             self.radius_m,
             self.dynamics.marker_value(),
-            self.private_gpu_payload_requested(),
+            self.external_payload_requested(),
             self.transparency_blend_mode.marker_value(),
             self.transparency_composition_mode.marker_value(),
             self.transparency_depth_suppression_strength,
@@ -159,15 +159,11 @@ impl Default for NativeHandAnchorParticleSettings {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum NativeHandAnchorParticleDynamics {
     DeterministicAnchors,
-    PrivateGpuPayload,
 }
 
 impl NativeHandAnchorParticleDynamics {
     fn from_property(value: Option<String>) -> Self {
         match normalized_property(value).as_str() {
-            "private" | "private-gpu" | "private-gpu-payload" | "kuramoto" | "kuramoto-gpu" => {
-                Self::PrivateGpuPayload
-            }
             _ => Self::DeterministicAnchors,
         }
     }
@@ -175,7 +171,6 @@ impl NativeHandAnchorParticleDynamics {
     fn marker_value(self) -> &'static str {
         match self {
             Self::DeterministicAnchors => "deterministic-anchors",
-            Self::PrivateGpuPayload => "private-gpu-payload",
         }
     }
 }

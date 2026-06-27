@@ -41,16 +41,12 @@ fn main() {
     println!("cargo:rerun-if-changed=shaders/stimulus_volume_raymarch.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/stimulus_volume_projection.vert.glsl");
     println!("cargo:rerun-if-changed=shaders/stimulus_volume_projection.frag.glsl");
-    println!("cargo:rerun-if-changed=shaders/private_kuramoto_particles_placeholder.comp.glsl");
     println!("cargo:rerun-if-changed=shaders/private_layer_placeholder.frag.glsl");
     println!(
         "cargo:rerun-if-changed=../../../fixtures/native-renderer/recorded-hand-replay-public-shape.json"
     );
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT");
-    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_DATA_DIR");
-    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_SHADER");
-    println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_SHADER_DIR");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DATA_DIR");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER");
     println!("cargo:rerun-if-env-changed=RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER_DIR");
@@ -172,9 +168,6 @@ fn main() {
     write_recorded_hand_replay_source(&out_dir);
     let private_layer_sources = private_layer_shader_sources();
     write_private_layer_payload_config(&out_dir, private_layer_sources.is_some());
-    let private_kuramoto_payload = private_kuramoto_payload_sources();
-    write_private_kuramoto_payload_config(&out_dir, private_kuramoto_payload.as_ref());
-    write_private_kuramoto_payload_files(&out_dir, private_kuramoto_payload.as_ref());
     let private_particle_payload = private_particle_payload_sources();
     write_private_particle_payload_config(&out_dir, private_particle_payload.as_ref());
     write_private_particle_payload_files(&out_dir, private_particle_payload.as_ref());
@@ -442,22 +435,6 @@ fn main() {
         Path::new("shaders/stimulus_volume_projection.frag.glsl"),
         &out_dir.join("stimulus_volume_projection.frag.spv"),
     );
-    if let Some(payload) = private_kuramoto_payload.as_ref() {
-        println!("cargo:rerun-if-changed={}", payload.shader.display());
-        compile_shader(
-            &glslc,
-            "compute",
-            &payload.shader,
-            &out_dir.join("private_kuramoto_particles.comp.spv"),
-        );
-    } else {
-        compile_shader(
-            &glslc,
-            "compute",
-            Path::new("shaders/private_kuramoto_particles_placeholder.comp.glsl"),
-            &out_dir.join("private_kuramoto_particles.comp.spv"),
-        );
-    }
     if let Some(payload) = private_particle_payload.as_ref() {
         println!("cargo:rerun-if-changed={}", payload.shader.display());
         let (
@@ -527,11 +504,6 @@ fn main() {
 struct PrivateLayerShaderSources {
     guide: PathBuf,
     projection: PathBuf,
-}
-
-struct PrivateKuramotoPayloadSources {
-    data_dir: PathBuf,
-    shader: PathBuf,
 }
 
 struct PrivateParticlePayloadSources {
@@ -622,33 +594,6 @@ fn write_private_layer_payload_config(out_dir: &Path, payload_linked: bool) {
     });
 }
 
-fn write_private_kuramoto_payload_config(
-    out_dir: &Path,
-    payload: Option<&PrivateKuramotoPayloadSources>,
-) {
-    let output = out_dir.join("private_kuramoto_payload_config.rs");
-    let payload_linked = payload.is_some();
-    let (data_path, shader_path) = payload
-        .map(|payload| {
-            (
-                payload.data_dir.display().to_string(),
-                payload.shader.display().to_string(),
-            )
-        })
-        .unwrap_or_else(|| ("none".to_string(), "none".to_string()));
-    let source = format!(
-        "pub(crate) const PRIVATE_KURAMOTO_PAYLOAD_LINKED: bool = {payload_linked};\npub(crate) const PRIVATE_KURAMOTO_IMPLEMENTATION_PATH: &str = \"{}\";\npub(crate) const PRIVATE_KURAMOTO_DATA_PATH: &str = \"{}\";\npub(crate) const PRIVATE_KURAMOTO_SAMPLE_COUNT: usize = 1024;\n",
-        rust_string_literal(&shader_path),
-        rust_string_literal(&data_path),
-    );
-    fs::write(&output, source).unwrap_or_else(|error| {
-        panic!(
-            "failed to write generated private Kuramoto payload config {}: {error}",
-            output.display()
-        )
-    });
-}
-
 fn private_layer_shader_sources() -> Option<PrivateLayerShaderSources> {
     let explicit_guide = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_LAYER_GUIDE_SHADER")
         .ok()
@@ -676,23 +621,8 @@ fn private_layer_shader_sources() -> Option<PrivateLayerShaderSources> {
     }
 }
 
-fn private_kuramoto_payload_sources() -> Option<PrivateKuramotoPayloadSources> {
-    let data_dir = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_DATA_DIR")
-        .ok()
-        .map(PathBuf::from)
-        .filter(|path| path.is_dir())?;
-    let explicit_shader = env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_SHADER")
-        .ok()
-        .map(PathBuf::from)
-        .filter(|path| path.is_file());
-    let shader = explicit_shader.or_else(|| {
-        env::var("RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_SHADER_DIR")
-            .ok()
-            .map(PathBuf::from)
-            .map(|path| path.join("kuramoto_particles.comp.glsl"))
-            .filter(|path| path.is_file())
-    })?;
-    Some(PrivateKuramotoPayloadSources { data_dir, shader })
+fn file_len(path: &Path) -> Option<u64> {
+    fs::metadata(path).ok().map(|metadata| metadata.len())
 }
 
 fn private_particle_payload_sources() -> Option<PrivateParticlePayloadSources> {
@@ -882,7 +812,6 @@ fn private_particle_mask_texture_mode() -> (u32, &'static str) {
         other => panic!("unsupported generic private particle mask texture mode: {other}"),
     }
 }
-
 fn private_particle_mask_texture_mode_uses_atlas(mode_code: u32) -> bool {
     matches!(mode_code, 3 | 4)
 }
@@ -1529,93 +1458,6 @@ fn write_private_particle_payload_files(
             )
         });
     }
-}
-
-fn write_private_kuramoto_payload_files(
-    out_dir: &Path,
-    payload: Option<&PrivateKuramotoPayloadSources>,
-) {
-    let files = [
-        (
-            "recorded-meta-quest-hand-samples-1024-coordinate-triangles.u32.bin",
-            "private_kuramoto_left_coordinate_triangles.u32.bin",
-        ),
-        (
-            "recorded-meta-quest-hand-samples-1024-coordinate-barycentric.f32.bin",
-            "private_kuramoto_left_coordinate_barycentric.f32.bin",
-        ),
-        (
-            "recorded-meta-quest-hand-samples-1024-surface-distance-edges.u32.bin",
-            "private_kuramoto_left_surface_distance_edges.u32.bin",
-        ),
-        (
-            "recorded-meta-quest-hand-samples-1024-surface-distance-meters.f32.bin",
-            "private_kuramoto_left_surface_distance_meters.f32.bin",
-        ),
-        (
-            "recorded-meta-quest-hand-samples-1024-small-world-edges.u32.bin",
-            "private_kuramoto_left_small_world_edges.u32.bin",
-        ),
-        (
-            "recorded-meta-quest-right-hand-samples-1024-coordinate-triangles.u32.bin",
-            "private_kuramoto_right_coordinate_triangles.u32.bin",
-        ),
-        (
-            "recorded-meta-quest-right-hand-samples-1024-coordinate-barycentric.f32.bin",
-            "private_kuramoto_right_coordinate_barycentric.f32.bin",
-        ),
-        (
-            "recorded-meta-quest-right-hand-samples-1024-surface-distance-edges.u32.bin",
-            "private_kuramoto_right_surface_distance_edges.u32.bin",
-        ),
-        (
-            "recorded-meta-quest-right-hand-samples-1024-surface-distance-meters.f32.bin",
-            "private_kuramoto_right_surface_distance_meters.f32.bin",
-        ),
-        (
-            "recorded-meta-quest-right-hand-samples-1024-small-world-edges.u32.bin",
-            "private_kuramoto_right_small_world_edges.u32.bin",
-        ),
-    ];
-
-    for (source_name, output_name) in files {
-        let output = out_dir.join(output_name);
-        if let Some(payload) = payload {
-            let source_candidates = [
-                payload.data_dir.join(source_name),
-                payload.data_dir.join(output_name),
-            ];
-            for source in &source_candidates {
-                println!("cargo:rerun-if-changed={}", source.display());
-            }
-            if let Some(source) = source_candidates.iter().find(|source| source.is_file()) {
-                fs::copy(&source, &output).unwrap_or_else(|error| {
-                    panic!(
-                        "failed to copy private Kuramoto payload {} -> {}: {error}",
-                        source.display(),
-                        output.display()
-                    )
-                });
-                continue;
-            }
-            panic!(
-                "private Kuramoto payload is missing {} or {} under {}",
-                source_name,
-                output_name,
-                payload.data_dir.display()
-            );
-        }
-        fs::write(&output, [0_u8; 4]).unwrap_or_else(|error| {
-            panic!(
-                "failed to write placeholder private Kuramoto payload {}: {error}",
-                output.display()
-            )
-        });
-    }
-}
-
-fn file_len(path: &Path) -> Option<u64> {
-    fs::metadata(path).ok().map(|metadata| metadata.len())
 }
 
 fn compile_private_layer_payload(

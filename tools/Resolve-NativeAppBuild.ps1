@@ -794,45 +794,6 @@ function Add-AppPrivateParticlePayloadBuildEnv {
     }
 }
 
-function Add-AppPrivateKuramotoPayloadBuildEnv {
-    param(
-        [object]$App,
-        [string]$AppSpecPath,
-        [System.Collections.Specialized.OrderedDictionary]$EnvByName
-    )
-
-    $privateKuramotoPayloads = @($App.payloads | Where-Object {
-        $null -ne $_.PSObject.Properties["kind"] -and [string]$_.kind -eq "private_kuramoto"
-    })
-    if ($privateKuramotoPayloads.Count -gt 1) {
-        throw "App $($App.app_id) may declare at most one private_kuramoto payload"
-    }
-    if ($privateKuramotoPayloads.Count -eq 0) {
-        return
-    }
-
-    $payload = $privateKuramotoPayloads[0]
-    $payloadId = if ($null -ne $payload.PSObject.Properties["payload_id"]) {
-        [string]$payload.payload_id
-    } elseif ($null -ne $payload.PSObject.Properties["id"]) {
-        [string]$payload.id
-    } else {
-        "private_kuramoto"
-    }
-    $source = "app-payload:$($App.app_id):$payloadId"
-    $dataDir = Resolve-AppPayloadPath -AppSpecPath $AppSpecPath -Path ([string]$payload.data_dir) -Label "$payloadId data_dir"
-    $shaderPath = Resolve-AppPayloadPath -AppSpecPath $AppSpecPath -Path ([string]$payload.shader) -Label "$payloadId shader"
-    if (-not (Test-Path -LiteralPath $dataDir -PathType Container)) {
-        throw "App payload $payloadId data_dir does not exist: $dataDir"
-    }
-    if (-not (Test-Path -LiteralPath $shaderPath -PathType Leaf)) {
-        throw "App payload $payloadId shader does not exist: $shaderPath"
-    }
-
-    Add-BuildEnvValue -EnvByName $EnvByName -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_DATA_DIR" -Value $dataDir -Source $source
-    Add-BuildEnvValue -EnvByName $EnvByName -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_SHADER" -Value $shaderPath -Source $source
-}
-
 foreach ($featureId in $selectedFeatureIds) {
     $feature = $features[$featureId].descriptor
     Add-StringsToSet -Set $permissionsSet -Values $feature.android_manifest.permissions
@@ -877,7 +838,6 @@ foreach ($featureId in $selectedFeatureIds) {
     }
 }
 Add-AppPrivateParticlePayloadBuildEnv -App $app -AppSpecPath $appSpecPath -EnvByName $envByName
-Add-AppPrivateKuramotoPayloadBuildEnv -App $app -AppSpecPath $appSpecPath -EnvByName $envByName
 Add-AppRuntimeSet `
     -RuntimeSet $runtimeSet `
     -RuntimeSources $runtimeSources `

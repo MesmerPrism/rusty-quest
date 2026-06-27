@@ -213,18 +213,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kuramoto-spatial-native-receipt"
-version = "0.1.0"
-dependencies = [
- "ash",
- "jni 0.21.1",
- "libc",
- "ndk-sys",
- "openxr-sys",
- "serde_json",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -508,6 +496,18 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "spatial-camera-panel-native-receipt"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "jni 0.21.1",
+ "libc",
+ "ndk-sys",
+ "openxr-sys",
+ "serde_json",
+]
 
 [[package]]
 name = "syn"

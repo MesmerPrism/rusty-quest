@@ -12,12 +12,12 @@ headset or ADB server. The native renderer profiles are the public validation
 matrix for the main native Quest XR stack: they select custom Camera2/HWB
 projection, native Meta passthrough, or a solid black projection background
 without changing APK identity or hiding route state in ad hoc launch scripts.
-The Kuramoto Spatial SDK panel lane adds a separate static/build/headset gate
-for `apps/kuramoto-spatial-sdk-android`:
+The Spatial Camera Panel panel lane adds a separate static/build/headset gate
+for `apps/spatial-camera-panel-android`:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-KuramotoSpatialSdkAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-KuramotoSpatialSdkAndroid.ps1 -Build
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
 ```
 
 The static gate checks the Spatial SDK package identity, `AppSystemActivity`
@@ -26,14 +26,14 @@ settings, app-private experiment record schemas, joinable questionnaire fields,
 direct BLE Polar panel wiring, ECG event mirroring, the experiment
 condition-to-native-parameter handoff, and the high-rate payload ban. The build
 gate writes
-`target\kuramoto-spatial-sdk-android\rusty-quest-kuramoto-spatial-sdk.apk` plus
-`rusty.quest.kuramoto_spatial_sdk_android.build_manifest.v1`. Live validation
+`target\spatial-camera-panel-android\rusty-quest-spatial-camera-panel.apk` plus
+`rusty.quest.spatial_camera_panel_sdk_android.build_manifest.v1`. Live validation
 must install and launch that APK with serial-scoped ADB, then confirm the
 participant setup, surface selection, block start/completion, workflow-panel
 transition back to particle view, condition parameter handoff markers,
-automatic questionnaire, submit path, and `RUSTY_QUEST_KURAMOTO_SPATIAL` log
+automatic questionnaire, submit path, and `RUSTY_QUEST_SPATIAL_CAMERA_PANEL` log
 markers.
-Use `tools\Invoke-KuramotoSpatialSdkAndroidSelfTest.ps1 -Serial <quest-serial>`
+Use `tools\Invoke-SpatialCameraPanelAndroidSelfTest.ps1 -Serial <quest-serial>`
 for the repeatable headset lane; it captures PID-scoped logcat, app-private
 session JSONL artifacts, and `evidence-summary.json`, and rejects missing
 panel/particle/condition/Polar-panel markers. Reserve `quest:<serial>` before
@@ -42,7 +42,7 @@ Polar live validation additionally requires headset-side BLE permission
 acceptance plus a nearby Polar H10 scan/connect/start-ECG run, with
 `polar-sensor-panel` markers and app-private `polar_events.jsonl` /
 `ecg_events.jsonl` evidence. Use
-`tools\Invoke-KuramotoSpatialSdkAndroidPolarLive.ps1 -Serial <quest-serial>`
+`tools\Invoke-SpatialCameraPanelAndroidPolarLive.ps1 -Serial <quest-serial>`
 for that gate; it launches `RUN_POLAR_LIVE_VALIDATION`, pregrants the declared
 BLE runtime permissions where Android allows it, captures PID-scoped logcat
 plus root Polar status/stream files and participant JSONL files, and fails

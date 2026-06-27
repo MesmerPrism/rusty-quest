@@ -207,8 +207,8 @@
         "private-particle-dynamics",
         "private-particle-depth-wave",
         "private-particle-config",
-        "kuramoto-mesh",
-        "kuramoto-experiment",
+        "driver-profile-panel",
+        "driver-profile-session",
         "polar-sensor"
       ],
       "validators": [
@@ -1367,8 +1367,7 @@
       "default_behavior": "runtime-owner-default-when-unset",
       "value_kind": "token",
       "allowed_values": [
-        "deterministic-anchors",
-        "private-gpu-payload"
+        "deterministic-anchors"
       ],
       "validators": [
         "runtime-parser",

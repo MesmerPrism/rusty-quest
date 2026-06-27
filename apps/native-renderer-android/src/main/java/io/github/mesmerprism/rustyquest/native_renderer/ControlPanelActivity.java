@@ -45,7 +45,7 @@ import org.json.JSONObject;
 public final class ControlPanelActivity extends Activity {
     private static final String TAG = "RQNativeRenderer";
     private static final String MARKER_PREFIX = "RUSTY_QUEST_NATIVE_RENDERER";
-    private static final String CHANNEL_KURAMOTO_PANEL = "kuramoto-mesh-panel";
+    private static final String CHANNEL_DRIVER_PROFILE_PANEL = "driver-profile-panel";
     public static final String ACTION_TOGGLE_PANEL =
         "io.github.mesmerprism.rustyquest.native_renderer.action.TOGGLE_PANEL";
     public static final String ACTION_OPEN_PANEL =
@@ -56,27 +56,27 @@ public final class ControlPanelActivity extends Activity {
         "io.github.mesmerprism.rustyquest.native_renderer.action.REQUEST_DISPLAY_COMPOSITE_CAPTURE";
     public static final String ACTION_POLAR_SENSOR_PANEL_COMMAND =
         "io.github.mesmerprism.rustyquest.native_renderer.action.POLAR_SENSOR_PANEL_COMMAND";
-    public static final String ACTION_KURAMOTO_MESH_PANEL_COMMAND =
-        "io.github.mesmerprism.rustyquest.native_renderer.action.KURAMOTO_MESH_PANEL_COMMAND";
+    public static final String ACTION_DRIVER_PROFILE_PANEL_COMMAND =
+        "io.github.mesmerprism.rustyquest.native_renderer.action.DRIVER_PROFILE_PANEL_COMMAND";
     public static final String EXTRA_POLAR_SENSOR_PANEL_COMMAND = "polar_sensor_panel_command";
     public static final String EXTRA_POLAR_SENSOR_PANEL_COMMAND_TOKEN =
         "polar_sensor_panel_command_token";
-    public static final String EXTRA_KURAMOTO_SURFACE_TARGET = "kuramoto_surface_target";
-    public static final String EXTRA_KURAMOTO_CONDITION = "kuramoto_condition";
-    public static final String EXTRA_KURAMOTO_RETURN_TO_IMMERSIVE =
-        "kuramoto_return_to_immersive";
-    public static final String EXTRA_KURAMOTO_PANEL_COMMAND_TOKEN =
-        "kuramoto_panel_command_token";
-    public static final String EXTRA_KURAMOTO_EXPERIMENT_STARTUP_RESET =
-        "kuramoto_experiment_startup_reset";
+    public static final String EXTRA_DRIVER_PROFILE_SURFACE_TARGET = "driver_profile_surface_target";
+    public static final String EXTRA_DRIVER_PROFILE_ID = "driver_profile_id";
+    public static final String EXTRA_DRIVER_PROFILE_RETURN_TO_IMMERSIVE =
+        "driver_profile_return_to_immersive";
+    public static final String EXTRA_DRIVER_PROFILE_PANEL_COMMAND_TOKEN =
+        "driver_profile_panel_command_token";
+    public static final String EXTRA_DRIVER_PROFILE_SESSION_STARTUP_RESET =
+        "spatial_camera_panel_session_startup_reset";
     private static final int REQUEST_DISPLAY_COMPOSITE_CAPTURE = 7401;
     private static final String CANDIDATE_FILE = "stimulus_volume_candidate.json";
     private static final String STATUS_FILE = "stimulus_volume_status.json";
     private static final String DEPTH_ALIGNMENT_STATUS_FILE = "depth_alignment_status.json";
     private static final String PRIVATE_PARTICLE_DYNAMICS_STATUS_FILE =
         "private_particle_dynamics_status.json";
-    private static final String KURAMOTO_MESH_PANEL_STATUS_FILE =
-        "kuramoto_mesh_panel_status.json";
+    private static final String DRIVER_PROFILE_PANEL_STATUS_FILE =
+        "driver_profile_panel_status.json";
     private static final String PROFILE_SCHEMA = "rusty.quest.stimulus_volume.profile.v1";
     private static final String PRIVATE_LAYER_SELECTION_SCHEMA =
         "rusty.quest.native_renderer.private_layer_selection.v1";
@@ -84,8 +84,8 @@ public final class ControlPanelActivity extends Activity {
         "rusty.quest.native_renderer.environment_depth_alignment.v1";
     private static final String PRIVATE_PARTICLE_DYNAMICS_SCHEMA =
         "rusty.quest.native_renderer.private_particle_dynamics.v1";
-    private static final String KURAMOTO_MESH_PANEL_SELECTION_SCHEMA =
-        "rusty.kuramoto.mesh.native_panel_selection.v1";
+    private static final String DRIVER_PROFILE_PANEL_SELECTION_SCHEMA =
+        "rusty.driver_profile.mesh.native_panel_selection.v1";
     private static final String PROP_CONTROL_PANEL_MODE =
         "debug.rustyquest.native_renderer.control_panel.mode";
     private static final String PROP_PRIVATE_LAYER_OVERRIDE =
@@ -163,7 +163,7 @@ public final class ControlPanelActivity extends Activity {
     private static final int PANEL_ACCENT = Color.rgb(255, 214, 68);
     private static final String[] PRIVATE_PARTICLE_DRIVER_LABELS = new String[] {
         "Driver 0 deformation",
-        "Driver 1 coupling",
+        "Driver 1 blend",
         "Driver 2 particle size",
         "Driver 3 depth wave",
         "Driver 4 spin",
@@ -171,82 +171,82 @@ public final class ControlPanelActivity extends Activity {
         "Driver 6 orbit angle",
         "Driver 7 animation frame"
     };
-    private static final String[] KURAMOTO_SURFACE_IDS = new String[] {
+    private static final String[] DRIVER_PROFILE_SURFACE_IDS = new String[] {
         "real-hands",
         "gpu-replay-hands",
         "icosphere"
     };
-    private static final String[] KURAMOTO_SURFACE_LABELS = new String[] {
+    private static final String[] DRIVER_PROFILE_SURFACE_LABELS = new String[] {
         "Real hands",
         "GPU replay hands",
         "Icosphere"
     };
-    private static final String[] KURAMOTO_SURFACE_TARGETS = new String[] {
+    private static final String[] DRIVER_PROFILE_SURFACE_TARGETS = new String[] {
         "quest-live-hand-mesh",
         "quest-recorded-gpu-hand-mesh",
         "static-icosphere-l4"
     };
-    private static final String[] KURAMOTO_SOURCE_MODES = new String[] {
+    private static final String[] DRIVER_PROFILE_SOURCE_MODES = new String[] {
         "live-meta-openxr-hand-tracking",
         "recorded-replay-compact-joint-frames",
         "static-resident-surface"
     };
-    private static final String[] KURAMOTO_SURFACE_RESOURCE_PLAN_IDS = new String[] {
-        "kuramoto.native.quest.live-hands.1024.solid-black.resource-plan.v1",
-        "kuramoto.native.quest.left.1024.solid-black.resource-plan.v1",
-        "kuramoto.native.quest.icosphere-l4.solid-black.resource-plan.v1"
+    private static final String[] DRIVER_PROFILE_SURFACE_RESOURCE_PLAN_IDS = new String[] {
+        "rusty.quest.spatial_camera_panel.live-hands.1024.solid-black.resource-plan.v1",
+        "rusty.quest.spatial_camera_panel.left.1024.solid-black.resource-plan.v1",
+        "rusty.quest.spatial_camera_panel.icosphere-l4.solid-black.resource-plan.v1"
     };
-    private static final String[] KURAMOTO_SURFACE_RUNTIME_PROFILE_PATHS = new String[] {
+    private static final String[] DRIVER_PROFILE_SURFACE_RUNTIME_PROFILE_PATHS = new String[] {
         "",
         "",
-        "fixtures/native-gpu/quest-native-renderer-kuramoto-icosphere-l4-solid-black.profile.json"
+        "fixtures/native-gpu/quest-native-renderer-spatial-camera-panel-icosphere-l4-solid-black.profile.json"
     };
-    private static final String[] KURAMOTO_CONDITION_IDS = new String[] {
-        "lcle",
-        "lche",
-        "hcle",
-        "hche"
+    private static final String[] DRIVER_PROFILE_IDS = new String[] {
+        "profile-a",
+        "profile-b",
+        "profile-c",
+        "profile-d"
     };
-    private static final String[] KURAMOTO_CONDITION_LABELS = new String[] {
-        "Low energy / low coherence",
-        "High energy / low coherence",
-        "Low energy / high coherence",
-        "High energy / high coherence"
+    private static final String[] DRIVER_PROFILE_LABELS = new String[] {
+        "Driver profile A",
+        "Driver profile B",
+        "Driver profile C",
+        "Driver profile D"
     };
-    private static final String[] KURAMOTO_PROFILE_IDS = new String[] {
-        "rusty.quest.kuramoto_spatial.condition.low-energy-low-coherence.movement-only.v1",
-        "rusty.quest.kuramoto_spatial.condition.high-energy-low-coherence.movement-only.v1",
-        "rusty.quest.kuramoto_spatial.condition.low-energy-high-coherence.movement-only.v1",
-        "rusty.quest.kuramoto_spatial.condition.high-energy-high-coherence.movement-only.v1"
+    private static final String[] DRIVER_PROFILE_SCHEMA_IDS = new String[] {
+        "rusty.quest.spatial_camera_panel.driver_profile.profile-a.v1",
+        "rusty.quest.spatial_camera_panel.driver_profile.profile-b.v1",
+        "rusty.quest.spatial_camera_panel.driver_profile.profile-c.v1",
+        "rusty.quest.spatial_camera_panel.driver_profile.profile-d.v1"
     };
-    private static final double[] KURAMOTO_MOVEMENT_BASE_HZ = new double[] {
+    private static final double[] DRIVER_PROFILE_DRIVER0_VALUE01 = new double[] {
         0.44,
         0.88,
         0.44,
         0.88
     };
-    private static final double[] KURAMOTO_MOVEMENT_SPREAD_HZ = new double[] {
+    private static final double[] DRIVER_PROFILE_DRIVER2_VALUE01 = new double[] {
         0.62,
         0.62,
         0.03,
         0.03
     };
-    private static final double[] KURAMOTO_MOVEMENT_COUPLING = new double[] {
+    private static final double[] DRIVER_PROFILE_DRIVER1_VALUE01 = new double[] {
         0.0,
         0.0,
         1.0,
         1.0
     };
-    private static final double[] KURAMOTO_UNIT_DISTANCE_M = new double[] {
+    private static final double[] DRIVER_PROFILE_DRIVER3_VALUE01 = new double[] {
         0.002,
         0.004,
         0.002,
         0.004
     };
-    private static final String KURAMOTO_PROFILE_SET_ID =
-        "rusty.quest.kuramoto_spatial.condition_set.browser-quadrants-left-1024-recorded-gpu.v1";
-    private static final String KURAMOTO_DEFAULT_PROFILE_ID =
-        "rusty.quest.kuramoto_spatial.condition.low-energy-low-coherence.movement-only.v1";
+    private static final String DRIVER_PROFILE_SCHEMA_SET_ID =
+        "rusty.quest.spatial_camera_panel.driver_profile_set.default.v1";
+    private static final String DRIVER_PROFILE_DEFAULT_PROFILE_ID =
+        "rusty.quest.spatial_camera_panel.driver_profile.profile-a.v1";
     private static final String[] PRIVATE_PARTICLE_CONFIG_PAGE_LABELS = new String[] {
         "Dynamics",
         "Visuals",
@@ -266,7 +266,7 @@ public final class ControlPanelActivity extends Activity {
         "Oscillator",
         PRIVATE_PARTICLE_DRIVER_MODE_MANUAL,
         "Input slot 0: deformation",
-        "Input slot 1: coupling",
+        "Input slot 1: blend",
         "Input slot 2: particle size",
         "Input slot 3: depth wave",
         "Input slot 4: spin speed",
@@ -356,7 +356,7 @@ public final class ControlPanelActivity extends Activity {
     private String handledDiagnosticIntentToken = "";
     private String handledDisplayCompositeIntentToken = "";
     private String handledPolarSensorPanelCommandToken = "";
-    private String handledKuramotoMeshPanelCommandToken = "";
+    private String handledDriverProfileMeshPanelCommandToken = "";
     private boolean displayCompositeRequestInFlight;
     private Button[] patternButtons = new Button[0];
     private Button[] mirrorButtons = new Button[0];
@@ -429,27 +429,27 @@ public final class ControlPanelActivity extends Activity {
     private SliderControl depthWavePercent;
     private SliderControl depthWaveDriverValue01;
     private TextView depthWaveResolvedLabel;
-    private Spinner kuramotoSurfaceTarget;
-    private Spinner kuramotoCondition;
-    private TextView kuramotoSelectionSummary;
+    private Spinner driverProfileSurfaceTarget;
+    private Spinner driver_profileCondition;
+    private TextView driver_profileSelectionSummary;
     private PolarSensorPanel polarSensorPanel;
-    private KuramotoExperimentSession experimentSession;
-    private boolean kuramotoPanelAutoApplyArmed;
-    private Runnable pendingKuramotoMeshPanelApply;
-    private String lastScheduledKuramotoMeshPanelApplyKey = "";
+    private DriverProfileSession experimentSession;
+    private boolean driver_profilePanelAutoApplyArmed;
+    private Runnable pendingDriverProfileMeshPanelApply;
+    private String lastScheduledDriverProfileMeshPanelApplyKey = "";
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         liveApplyHandler = new Handler(Looper.getMainLooper());
-        handleKuramotoExperimentStartupResetIntent(getIntent());
+        handleDriverProfileExperimentStartupResetIntent(getIntent());
         setContentView(buildContentView());
         updateReadyStatusForPanelMode();
         handleDisplayCompositeIntent(getIntent());
         handleDiagnosticIntent(getIntent());
         handlePolarSensorPanelCommandIntent(getIntent());
-        handleKuramotoMeshPanelCommandIntent(getIntent());
-        recordKuramotoExperimentPanelEvent(
+        handleDriverProfileMeshPanelCommandIntent(getIntent());
+        recordSpatialCameraPanelEvent(
             "panel_activity_created",
             "open",
             "control_panel_on_create"
@@ -460,17 +460,17 @@ public final class ControlPanelActivity extends Activity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        handleKuramotoExperimentStartupResetIntent(intent);
+        handleDriverProfileExperimentStartupResetIntent(intent);
         if (intent != null && ACTION_TOGGLE_PANEL.equals(intent.getAction())) {
-            recordKuramotoExperimentPanelEvent(
+            recordSpatialCameraPanelEvent(
                 "panel_toggle_command_received",
                 "toggle_requested",
                 "action_toggle_panel"
             );
-            if ("kuramoto-experiment".equals(readControlPanelMode())
+            if ("driver-profile-session".equals(readControlPanelMode())
                     && ensureExperimentSession().isBlockRunning()) {
                 rebuildContentViewForCurrentMode();
-                recordKuramotoExperimentPanelEvent(
+                recordSpatialCameraPanelEvent(
                     "panel_toggle_kept_open",
                     "open",
                     "action_toggle_panel_block_running"
@@ -480,7 +480,7 @@ public final class ControlPanelActivity extends Activity {
                 closePanelAndReturnToImmersive();
             }
         } else if (intent != null && ACTION_OPEN_PANEL.equals(intent.getAction())) {
-            recordKuramotoExperimentPanelEvent(
+            recordSpatialCameraPanelEvent(
                 "panel_open_command_received",
                 "open_requested",
                 "action_open_panel"
@@ -489,8 +489,8 @@ public final class ControlPanelActivity extends Activity {
             handleDisplayCompositeIntent(intent);
             handleDiagnosticIntent(intent);
             handlePolarSensorPanelCommandIntent(intent);
-            handleKuramotoMeshPanelCommandIntent(intent);
-            recordKuramotoExperimentPanelEvent(
+            handleDriverProfileMeshPanelCommandIntent(intent);
+            recordSpatialCameraPanelEvent(
                 "panel_open_command_applied",
                 "open",
                 "action_open_panel"
@@ -499,12 +499,12 @@ public final class ControlPanelActivity extends Activity {
             handleDisplayCompositeIntent(intent);
             handleDiagnosticIntent(intent);
             handlePolarSensorPanelCommandIntent(intent);
-            handleKuramotoMeshPanelCommandIntent(intent);
+            handleDriverProfileMeshPanelCommandIntent(intent);
         }
     }
 
     private void rebuildContentViewForCurrentMode() {
-        if (polarSensorPanel != null && !"kuramoto-experiment".equals(readControlPanelMode())) {
+        if (polarSensorPanel != null && !"driver-profile-session".equals(readControlPanelMode())) {
             polarSensorPanel.stop();
             polarSensorPanel = null;
         }
@@ -524,10 +524,10 @@ public final class ControlPanelActivity extends Activity {
             updateStatus("AKD config panel ready.");
         } else if ("polar-sensor".equals(panelMode)) {
             updateStatus("Polar sensor panel ready.");
-        } else if ("kuramoto-mesh".equals(panelMode)) {
-            updateStatus("Kuramoto mesh panel ready.");
-        } else if ("kuramoto-experiment".equals(panelMode)) {
-            updateStatus("Kuramoto experiment panel ready.");
+        } else if ("driver-profile-panel".equals(panelMode)) {
+            updateStatus("Driver profile panel ready.");
+        } else if ("driver-profile-session".equals(panelMode)) {
+            updateStatus("Driver profile session panel ready.");
         } else {
             updateStatus("Panel ready. Candidate path: " + new File(getFilesDir(), CANDIDATE_FILE));
         }
@@ -538,7 +538,7 @@ public final class ControlPanelActivity extends Activity {
         super.onResume();
         handleDisplayCompositeIntent(getIntent());
         handleDiagnosticIntent(getIntent());
-        recordKuramotoExperimentPanelEvent(
+        recordSpatialCameraPanelEvent(
             "panel_visible",
             "open",
             "control_panel_on_resume"
@@ -547,7 +547,7 @@ public final class ControlPanelActivity extends Activity {
 
     @Override
     protected void onPause() {
-        recordKuramotoExperimentPanelEvent(
+        recordSpatialCameraPanelEvent(
             "panel_hidden",
             "hidden",
             "control_panel_on_pause"
@@ -557,7 +557,7 @@ public final class ControlPanelActivity extends Activity {
 
     @Override
     protected void onDestroy() {
-        recordKuramotoExperimentPanelEvent(
+        recordSpatialCameraPanelEvent(
             "panel_activity_destroyed",
             "destroyed",
             "control_panel_on_destroy"
@@ -569,16 +569,16 @@ public final class ControlPanelActivity extends Activity {
         super.onDestroy();
     }
 
-    private void recordKuramotoExperimentPanelEvent(
+    private void recordSpatialCameraPanelEvent(
         String eventType,
         String panelState,
         String source
     ) {
-        if (!"kuramoto-experiment".equals(readControlPanelMode())) {
+        if (!"driver-profile-session".equals(readControlPanelMode())) {
             return;
         }
         try {
-            KuramotoExperimentSession session = ensureExperimentSession();
+            DriverProfileSession session = ensureExperimentSession();
             if (session.hasParticipant()) {
                 session.recordPanelEvent(eventType, panelState, source);
             }
@@ -655,11 +655,11 @@ public final class ControlPanelActivity extends Activity {
         if ("private-particle-config".equals(panelMode)) {
             return buildPrivateParticleConfigView();
         }
-        if ("kuramoto-mesh".equals(panelMode)) {
-            return buildKuramotoMeshPanelView();
+        if ("driver-profile-panel".equals(panelMode)) {
+            return buildDriverProfileMeshPanelView();
         }
-        if ("kuramoto-experiment".equals(panelMode)) {
-            return buildKuramotoExperimentView();
+        if ("driver-profile-session".equals(panelMode)) {
+            return buildDriverProfileExperimentView();
         }
         if ("polar-sensor".equals(panelMode)) {
             return buildPolarSensorPanelPageView(false);
@@ -905,7 +905,7 @@ public final class ControlPanelActivity extends Activity {
         return scroll;
     }
 
-    private View buildKuramotoMeshPanelView() {
+    private View buildDriverProfileMeshPanelView() {
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(PANEL_BG);
         LinearLayout root = new LinearLayout(this);
@@ -917,7 +917,7 @@ public final class ControlPanelActivity extends Activity {
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        TextView title = text("Kuramoto Mesh Panel", 22, PANEL_FG);
+        TextView title = text("Driver Profile Panel", 22, PANEL_FG);
         title.setGravity(Gravity.CENTER_VERTICAL);
         header.addView(title, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         Button headerClose = button("Close");
@@ -929,40 +929,40 @@ public final class ControlPanelActivity extends Activity {
         });
         header.addView(headerClose);
         root.addView(header);
-        root.addView(buildKuramotoSuiteTabs("kuramoto"));
+        root.addView(buildDriverProfileSuiteTabs("driver_profile"));
 
-        String savedSurface = readKuramotoPanelSelectionString("surface_target_id", "gpu-replay-hands");
-        String savedCondition = readKuramotoPanelSelectionString("condition", "lcle");
-        kuramotoPanelAutoApplyArmed = false;
-        kuramotoSurfaceTarget =
-            spinner(KURAMOTO_SURFACE_LABELS, indexOf(KURAMOTO_SURFACE_IDS, savedSurface, 1));
-        kuramotoCondition =
-            spinner(KURAMOTO_CONDITION_LABELS, indexOf(KURAMOTO_CONDITION_IDS, savedCondition, 0));
+        String savedSurface = readDriverProfilePanelSelectionString("surface_target_id", "gpu-replay-hands");
+        String savedCondition = readDriverProfilePanelSelectionString("condition", "profile-a");
+        driver_profilePanelAutoApplyArmed = false;
+        driverProfileSurfaceTarget =
+            spinner(DRIVER_PROFILE_SURFACE_LABELS, indexOf(DRIVER_PROFILE_SURFACE_IDS, savedSurface, 1));
+        driver_profileCondition =
+            spinner(DRIVER_PROFILE_LABELS, indexOf(DRIVER_PROFILE_IDS, savedCondition, 0));
         AdapterView.OnItemSelectedListener updateListener = new AdapterView.OnItemSelectedListener() {
             @Override
             public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
-                updateKuramotoSelectionSummary();
-                if (kuramotoPanelAutoApplyArmed) {
-                    scheduleLiveKuramotoMeshPanelSelection();
+                updateDriverProfileSelectionSummary();
+                if (driver_profilePanelAutoApplyArmed) {
+                    scheduleLiveDriverProfileMeshPanelSelection();
                 }
             }
 
             @Override
             public void onNothingSelected(AdapterView<?> parent) {
-                updateKuramotoSelectionSummary();
+                updateDriverProfileSelectionSummary();
             }
         };
-        kuramotoSurfaceTarget.setOnItemSelectedListener(updateListener);
-        kuramotoCondition.setOnItemSelectedListener(updateListener);
+        driverProfileSurfaceTarget.setOnItemSelectedListener(updateListener);
+        driver_profileCondition.setOnItemSelectedListener(updateListener);
 
         root.addView(label("Surface"));
-        root.addView(kuramotoSurfaceTarget);
+        root.addView(driverProfileSurfaceTarget);
         root.addView(label("Condition"));
-        root.addView(kuramotoCondition);
+        root.addView(driver_profileCondition);
 
-        kuramotoSelectionSummary = text("", 13, PANEL_MUTED);
-        kuramotoSelectionSummary.setPadding(0, dp(12), 0, dp(8));
-        root.addView(kuramotoSelectionSummary);
+        driver_profileSelectionSummary = text("", 13, PANEL_MUTED);
+        driver_profileSelectionSummary.setPadding(0, dp(12), 0, dp(8));
+        root.addView(driver_profileSelectionSummary);
 
         LinearLayout actionBlock = new LinearLayout(this);
         actionBlock.setOrientation(LinearLayout.VERTICAL);
@@ -971,14 +971,14 @@ public final class ControlPanelActivity extends Activity {
         refresh.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                refreshKuramotoMeshPanelFromStatus(true);
+                refreshDriverProfileMeshPanelFromStatus(true);
             }
         });
         Button apply = button("Apply Live");
         apply.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                submitLiveKuramotoMeshPanelSelection(true);
+                submitLiveDriverProfileMeshPanelSelection(true);
             }
         });
         Button close = button("Close");
@@ -999,24 +999,24 @@ public final class ControlPanelActivity extends Activity {
         status = text("", 13, PANEL_MUTED);
         status.setPadding(0, dp(10), 0, dp(8));
         root.addView(status);
-        updateKuramotoSelectionSummary();
+        updateDriverProfileSelectionSummary();
         liveApplyHandler.post(new Runnable() {
             @Override
             public void run() {
-                kuramotoPanelAutoApplyArmed = true;
+                driver_profilePanelAutoApplyArmed = true;
             }
         });
         return scroll;
     }
 
-    private View buildPolarSensorPanelPageView(boolean includeKuramotoTab) {
+    private View buildPolarSensorPanelPageView(boolean includeDriverProfileTab) {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(PANEL_BG);
         int pad = dp(14);
         root.setPadding(pad, pad, pad, pad);
-        if (includeKuramotoTab) {
-            root.addView(buildKuramotoSuiteTabs("polar"));
+        if (includeDriverProfileTab) {
+            root.addView(buildDriverProfileSuiteTabs("polar"));
         }
         View polarView = ensurePolarSensorPanel().buildView();
         root.addView(
@@ -1030,28 +1030,28 @@ public final class ControlPanelActivity extends Activity {
         return root;
     }
 
-    private LinearLayout buildKuramotoSuiteTabs(String activePage) {
+    private LinearLayout buildDriverProfileSuiteTabs(String activePage) {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setPadding(0, dp(10), 0, dp(10));
         Button experiment = button("Experiment");
-        Button kuramoto = button("Kuramoto");
+        Button driver_profile = button("DriverProfile");
         Button polar = button("Polar");
         experiment.setEnabled(!"experiment".equals(activePage));
-        kuramoto.setEnabled(!"kuramoto".equals(activePage));
+        driver_profile.setEnabled(!"driver_profile".equals(activePage));
         polar.setEnabled(!"polar".equals(activePage));
         experiment.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                setContentView(buildKuramotoExperimentView());
+                setContentView(buildDriverProfileExperimentView());
                 updateStatus("Experiment workflow.");
             }
         });
-        kuramoto.setOnClickListener(new View.OnClickListener() {
+        driver_profile.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                setContentView(buildKuramotoMeshPanelView());
-                updateStatus("Kuramoto controls.");
+                setContentView(buildDriverProfileMeshPanelView());
+                updateStatus("DriverProfile controls.");
             }
         });
         polar.setOnClickListener(new View.OnClickListener() {
@@ -1062,7 +1062,7 @@ public final class ControlPanelActivity extends Activity {
             }
         });
         row.addView(experiment, rowButtonParams());
-        row.addView(kuramoto, rowButtonParams());
+        row.addView(driver_profile, rowButtonParams());
         row.addView(polar, rowButtonParams());
         return row;
     }
@@ -1084,50 +1084,50 @@ public final class ControlPanelActivity extends Activity {
         return polarSensorPanel;
     }
 
-    private KuramotoExperimentSession ensureExperimentSession() {
+    private DriverProfileSession ensureExperimentSession() {
         if (experimentSession == null) {
-            experimentSession = KuramotoExperimentSession.load(this, kuramotoExperimentConditions());
+            experimentSession = DriverProfileSession.load(this, driver_profileExperimentConditions());
         }
         return experimentSession;
     }
 
-    private KuramotoExperimentSession.Condition[] kuramotoExperimentConditions() {
-        KuramotoExperimentSession.Condition[] descriptors =
-            new KuramotoExperimentSession.Condition[KURAMOTO_CONDITION_IDS.length];
-        for (int i = 0; i < KURAMOTO_CONDITION_IDS.length; i++) {
-            descriptors[i] = new KuramotoExperimentSession.Condition(
-                KURAMOTO_CONDITION_IDS[i],
-                KURAMOTO_CONDITION_LABELS[i],
-                KURAMOTO_PROFILE_IDS[i],
-                KURAMOTO_MOVEMENT_BASE_HZ[i],
-                KURAMOTO_MOVEMENT_COUPLING[i]
+    private DriverProfileSession.Condition[] driver_profileExperimentConditions() {
+        DriverProfileSession.Condition[] descriptors =
+            new DriverProfileSession.Condition[DRIVER_PROFILE_IDS.length];
+        for (int i = 0; i < DRIVER_PROFILE_IDS.length; i++) {
+            descriptors[i] = new DriverProfileSession.Condition(
+                DRIVER_PROFILE_IDS[i],
+                DRIVER_PROFILE_LABELS[i],
+                DRIVER_PROFILE_SCHEMA_IDS[i],
+                DRIVER_PROFILE_DRIVER0_VALUE01[i],
+                DRIVER_PROFILE_DRIVER1_VALUE01[i]
             );
         }
         return descriptors;
     }
 
-    private View buildKuramotoExperimentView() {
-        KuramotoExperimentSession session = ensureExperimentSession();
+    private View buildDriverProfileExperimentView() {
+        DriverProfileSession session = ensureExperimentSession();
         session.syncElapsedBlock();
         if (!session.hasParticipant()) {
-            return buildKuramotoExperimentParticipantView(session);
+            return buildDriverProfileExperimentParticipantView(session);
         }
         if (session.isComplete()) {
-            return buildKuramotoExperimentCompleteView(session);
+            return buildDriverProfileExperimentCompleteView(session);
         }
         if (session.isAwaitingQuestionnaire()) {
-            return buildKuramotoExperimentQuestionnaireView(session);
+            return buildDriverProfileExperimentQuestionnaireView(session);
         }
         if (session.isBlockRunning()) {
-            return buildKuramotoExperimentRunningView(session);
+            return buildDriverProfileExperimentRunningView(session);
         }
         if ("ready_next_block".equals(session.stage())) {
-            return buildKuramotoExperimentReadyNextView(session);
+            return buildDriverProfileExperimentReadyNextView(session);
         }
-        return buildKuramotoExperimentPolarSetupView(session);
+        return buildDriverProfileExperimentPolarSetupView(session);
     }
 
-    private LinearLayout buildKuramotoExperimentScrollRoot(String title) {
+    private LinearLayout buildDriverProfileExperimentScrollRoot(String title) {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         int pad = dp(18);
@@ -1148,25 +1148,25 @@ public final class ControlPanelActivity extends Activity {
         });
         header.addView(headerClose);
         root.addView(header);
-        root.addView(buildKuramotoSuiteTabs("experiment"));
+        root.addView(buildDriverProfileSuiteTabs("experiment"));
         return root;
     }
 
-    private View wrapKuramotoExperimentScroll(LinearLayout root) {
+    private View wrapDriverProfileExperimentScroll(LinearLayout root) {
         ScrollView scroll = new ScrollView(this);
         scroll.setBackgroundColor(PANEL_BG);
         scroll.addView(root);
         return scroll;
     }
 
-    private View buildKuramotoExperimentParticipantView(final KuramotoExperimentSession session) {
-        LinearLayout root = buildKuramotoExperimentScrollRoot("Experiment Setup");
+    private View buildDriverProfileExperimentParticipantView(final DriverProfileSession session) {
+        LinearLayout root = buildDriverProfileExperimentScrollRoot("Experiment Setup");
         root.addView(text("Step 1 of 4: enter the participant ID before sensor setup.", 13, PANEL_MUTED));
         root.addView(sectionTitle("Participant"));
         final EditText participantId = editText("", "participant_id", false);
         final Spinner surfaceTarget = spinner(
-            KURAMOTO_SURFACE_LABELS,
-            indexOf(KURAMOTO_SURFACE_IDS, "real-hands", 0)
+            DRIVER_PROFILE_SURFACE_LABELS,
+            indexOf(DRIVER_PROFILE_SURFACE_IDS, "real-hands", 0)
         );
         final Button submit = button("Submit ID");
         submit.setEnabled(false);
@@ -1189,16 +1189,16 @@ public final class ControlPanelActivity extends Activity {
                     session.beginParticipant(participantId.getText().toString());
                     int surfaceIndex = Math.max(
                         0,
-                        Math.min(KURAMOTO_SURFACE_IDS.length - 1, surfaceTarget.getSelectedItemPosition())
+                        Math.min(DRIVER_PROFILE_SURFACE_IDS.length - 1, surfaceTarget.getSelectedItemPosition())
                     );
                     session.setSurfaceTarget(
-                        KURAMOTO_SURFACE_IDS[surfaceIndex],
-                        KURAMOTO_SURFACE_LABELS[surfaceIndex],
-                        KURAMOTO_SURFACE_TARGETS[surfaceIndex],
-                        KURAMOTO_SURFACE_RESOURCE_PLAN_IDS[surfaceIndex],
-                        KURAMOTO_SURFACE_RUNTIME_PROFILE_PATHS[surfaceIndex]
+                        DRIVER_PROFILE_SURFACE_IDS[surfaceIndex],
+                        DRIVER_PROFILE_SURFACE_LABELS[surfaceIndex],
+                        DRIVER_PROFILE_SURFACE_TARGETS[surfaceIndex],
+                        DRIVER_PROFILE_SURFACE_RESOURCE_PLAN_IDS[surfaceIndex],
+                        DRIVER_PROFILE_SURFACE_RUNTIME_PROFILE_PATHS[surfaceIndex]
                     );
-                    setContentView(buildKuramotoExperimentPolarSetupView(session));
+                    setContentView(buildDriverProfileExperimentPolarSetupView(session));
                     updateStatus("Participant files created: " + session.sessionId());
                 } catch (Exception error) {
                     updateStatus("Participant setup failed: " + error.getMessage());
@@ -1216,16 +1216,16 @@ public final class ControlPanelActivity extends Activity {
         status = text("", 13, PANEL_MUTED);
         status.setPadding(0, dp(12), 0, dp(8));
         root.addView(status);
-        return wrapKuramotoExperimentScroll(root);
+        return wrapDriverProfileExperimentScroll(root);
     }
 
-    private View buildKuramotoExperimentPolarSetupView(final KuramotoExperimentSession session) {
+    private View buildDriverProfileExperimentPolarSetupView(final DriverProfileSession session) {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setBackgroundColor(PANEL_BG);
         int pad = dp(14);
         root.setPadding(pad, pad, pad, pad);
-        LinearLayout header = buildKuramotoExperimentScrollRoot("Polar Setup");
+        LinearLayout header = buildDriverProfileExperimentScrollRoot("Polar Setup");
         header.addView(text("Participant: " + session.participantId() + " | Session: " + session.sessionId(), 13, PANEL_MUTED));
         header.addView(text("Surface: " + session.surfaceLabel() + " | " + session.surfaceTargetId(), 13, PANEL_MUTED));
         header.addView(text("Files: " + session.filesSummary(), 13, PANEL_MUTED));
@@ -1253,7 +1253,7 @@ public final class ControlPanelActivity extends Activity {
         participantWindow.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                setContentView(buildKuramotoExperimentMetadataView(session));
+                setContentView(buildDriverProfileExperimentMetadataView(session));
                 updateStatus("Participant metadata window.");
             }
         });
@@ -1273,8 +1273,8 @@ public final class ControlPanelActivity extends Activity {
         return root;
     }
 
-    private View buildKuramotoExperimentMetadataView(final KuramotoExperimentSession session) {
-        LinearLayout root = buildKuramotoExperimentScrollRoot("Participant Window");
+    private View buildDriverProfileExperimentMetadataView(final DriverProfileSession session) {
+        LinearLayout root = buildDriverProfileExperimentScrollRoot("Participant Window");
         root.addView(text("Step 3 of 4: confirm run metadata before starting timed blocks.", 13, PANEL_MUTED));
         root.addView(sectionTitle("Metadata"));
         final EditText runLabel = editText("", "run label", false);
@@ -1287,7 +1287,7 @@ public final class ControlPanelActivity extends Activity {
         root.addView(label("Notes"));
         root.addView(notes);
         root.addView(text("Fixed block duration: "
-            + (KuramotoExperimentSession.DEFAULT_BLOCK_DURATION_MS / 1000L)
+            + (DriverProfileSession.DEFAULT_BLOCK_DURATION_MS / 1000L)
             + " seconds per condition.", 13, PANEL_MUTED));
         root.addView(text("Surface: " + session.surfaceLabel() + " | " + session.surfaceTargetId(), 13, PANEL_MUTED));
         root.addView(text("Randomized order: " + session.orderSummary(), 13, PANEL_MUTED));
@@ -1297,7 +1297,7 @@ public final class ControlPanelActivity extends Activity {
         back.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                setContentView(buildKuramotoExperimentPolarSetupView(session));
+                setContentView(buildDriverProfileExperimentPolarSetupView(session));
             }
         });
         Button start = button("Start experiment");
@@ -1310,7 +1310,7 @@ public final class ControlPanelActivity extends Activity {
                         operator.getText().toString(),
                         notes.getText().toString()
                     );
-                    startKuramotoExperimentBlock(session);
+                    startDriverProfileExperimentBlock(session);
                 } catch (Exception error) {
                     updateStatus("Experiment start failed: " + error.getMessage());
                 }
@@ -1322,12 +1322,12 @@ public final class ControlPanelActivity extends Activity {
         status = text("", 13, PANEL_MUTED);
         status.setPadding(0, dp(12), 0, dp(8));
         root.addView(status);
-        return wrapKuramotoExperimentScroll(root);
+        return wrapDriverProfileExperimentScroll(root);
     }
 
-    private View buildKuramotoExperimentRunningView(final KuramotoExperimentSession session) {
+    private View buildDriverProfileExperimentRunningView(final DriverProfileSession session) {
         JSONObject block = session.activeBlock();
-        LinearLayout root = buildKuramotoExperimentScrollRoot("Block Running");
+        LinearLayout root = buildDriverProfileExperimentScrollRoot("Block Running");
         if (block != null) {
             long remainingMs = Math.max(0L, block.optLong("deadline_unix_ms", 0L) - System.currentTimeMillis());
             root.addView(text("Block " + block.optInt("block_number", 0)
@@ -1347,18 +1347,18 @@ public final class ControlPanelActivity extends Activity {
         status = text("", 13, PANEL_MUTED);
         status.setPadding(0, dp(12), 0, dp(8));
         root.addView(status);
-        return wrapKuramotoExperimentScroll(root);
+        return wrapDriverProfileExperimentScroll(root);
     }
 
-    private View buildKuramotoExperimentReadyNextView(final KuramotoExperimentSession session) {
-        LinearLayout root = buildKuramotoExperimentScrollRoot("Next Block Ready");
+    private View buildDriverProfileExperimentReadyNextView(final DriverProfileSession session) {
+        LinearLayout root = buildDriverProfileExperimentScrollRoot("Next Block Ready");
         root.addView(text("Questionnaire saved. The next randomized condition is ready to start.", 13, PANEL_MUTED));
         Button start = button("Start next block");
         start.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 try {
-                    startKuramotoExperimentBlock(session);
+                    startDriverProfileExperimentBlock(session);
                 } catch (Exception error) {
                     updateStatus("Next block failed: " + error.getMessage());
                 }
@@ -1368,12 +1368,12 @@ public final class ControlPanelActivity extends Activity {
         status = text("", 13, PANEL_MUTED);
         status.setPadding(0, dp(12), 0, dp(8));
         root.addView(status);
-        return wrapKuramotoExperimentScroll(root);
+        return wrapDriverProfileExperimentScroll(root);
     }
 
-    private View buildKuramotoExperimentQuestionnaireView(final KuramotoExperimentSession session) {
+    private View buildDriverProfileExperimentQuestionnaireView(final DriverProfileSession session) {
         JSONObject block = session.activeBlock();
-        LinearLayout root = buildKuramotoExperimentScrollRoot("Block Questionnaire");
+        LinearLayout root = buildDriverProfileExperimentScrollRoot("Block Questionnaire");
         if (block != null) {
             root.addView(text("Block " + block.optInt("block_number", 0)
                 + " of " + session.conditionCount()
@@ -1422,10 +1422,10 @@ public final class ControlPanelActivity extends Activity {
                         signature.toJson()
                     );
                     if (session.isComplete()) {
-                        setContentView(buildKuramotoExperimentCompleteView(session));
+                        setContentView(buildDriverProfileExperimentCompleteView(session));
                         updateStatus("Experiment complete.");
                     } else {
-                        startKuramotoExperimentBlock(session);
+                        startDriverProfileExperimentBlock(session);
                     }
                 } catch (Exception error) {
                     updateStatus("Questionnaire submit failed: " + error.getMessage());
@@ -1438,11 +1438,11 @@ public final class ControlPanelActivity extends Activity {
         status = text("", 13, PANEL_MUTED);
         status.setPadding(0, dp(12), 0, dp(8));
         root.addView(status);
-        return wrapKuramotoExperimentScroll(root);
+        return wrapDriverProfileExperimentScroll(root);
     }
 
-    private View buildKuramotoExperimentCompleteView(final KuramotoExperimentSession session) {
-        LinearLayout root = buildKuramotoExperimentScrollRoot("Experiment Complete");
+    private View buildDriverProfileExperimentCompleteView(final DriverProfileSession session) {
+        LinearLayout root = buildDriverProfileExperimentScrollRoot("Experiment Complete");
         root.addView(text("Participant: " + session.participantId(), 15, PANEL_FG));
         root.addView(text("Session: " + session.sessionId(), 13, PANEL_MUTED));
         root.addView(text("Directory: " + session.sessionDirectoryPath(), 13, PANEL_MUTED));
@@ -1456,7 +1456,7 @@ public final class ControlPanelActivity extends Activity {
                 try {
                     session.resetForNewParticipant();
                     experimentSession = null;
-                    setContentView(buildKuramotoExperimentView());
+                    setContentView(buildDriverProfileExperimentView());
                 } catch (Exception error) {
                     updateStatus("Reset failed: " + error.getMessage());
                 }
@@ -1475,18 +1475,18 @@ public final class ControlPanelActivity extends Activity {
         status = text("", 13, PANEL_MUTED);
         status.setPadding(0, dp(12), 0, dp(8));
         root.addView(status);
-        return wrapKuramotoExperimentScroll(root);
+        return wrapDriverProfileExperimentScroll(root);
     }
 
-    private void startKuramotoExperimentBlock(KuramotoExperimentSession session) throws Exception {
+    private void startDriverProfileExperimentBlock(DriverProfileSession session) throws Exception {
         JSONObject block = session.startNextBlock();
         if (block == null) {
-            setContentView(buildKuramotoExperimentCompleteView(session));
+            setContentView(buildDriverProfileExperimentCompleteView(session));
             updateStatus("Experiment complete.");
             return;
         }
-        String conditionId = block.optString("condition_id", "lcle");
-        if (!submitLiveKuramotoMeshPanelSelectionForCondition(
+        String conditionId = block.optString("condition_id", "profile-a");
+        if (!submitLiveDriverProfileMeshPanelSelectionForCondition(
                 conditionId,
                 session.surfaceTargetId(),
                 false
@@ -1496,7 +1496,7 @@ public final class ControlPanelActivity extends Activity {
         if (!nativeBridgeLoaded) {
             throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
         }
-        String responseText = nativeStartKuramotoExperimentBlock(block.toString());
+        String responseText = nativeStartDriverProfileSessionBlock(block.toString());
         JSONObject response = new JSONObject(responseText);
         if (!"queued".equals(response.optString("status", ""))) {
             throw new IllegalStateException(responseText);
@@ -1699,63 +1699,63 @@ public final class ControlPanelActivity extends Activity {
         return Math.max(0.0, Math.min(1.0, (double)value));
     }
 
-    private void updateKuramotoSelectionSummary() {
-        if (kuramotoSelectionSummary == null || kuramotoSurfaceTarget == null || kuramotoCondition == null) {
+    private void updateDriverProfileSelectionSummary() {
+        if (driver_profileSelectionSummary == null || driverProfileSurfaceTarget == null || driver_profileCondition == null) {
             return;
         }
-        int surfaceIndex = selectedKuramotoSurfaceIndex();
-        int conditionIndex = selectedKuramotoConditionIndex();
-        kuramotoSelectionSummary.setText(
-            KURAMOTO_SURFACE_TARGETS[surfaceIndex]
+        int surfaceIndex = selectedDriverProfileSurfaceIndex();
+        int conditionIndex = selectedDriverProfileConditionIndex();
+        driver_profileSelectionSummary.setText(
+            DRIVER_PROFILE_SURFACE_TARGETS[surfaceIndex]
                 + " | "
-                + KURAMOTO_PROFILE_IDS[conditionIndex]
-                + " | baseHz="
-                + String.format(Locale.US, "%.2f", KURAMOTO_MOVEMENT_BASE_HZ[conditionIndex])
-                + " coupling="
-                + String.format(Locale.US, "%.2f", KURAMOTO_MOVEMENT_COUPLING[conditionIndex])
+                + DRIVER_PROFILE_SCHEMA_IDS[conditionIndex]
+                + " | driver0="
+                + String.format(Locale.US, "%.2f", DRIVER_PROFILE_DRIVER0_VALUE01[conditionIndex])
+                + " driver1="
+                + String.format(Locale.US, "%.2f", DRIVER_PROFILE_DRIVER1_VALUE01[conditionIndex])
         );
     }
 
-    private boolean submitLiveKuramotoMeshPanelSelection(boolean userVisible) {
+    private boolean submitLiveDriverProfileMeshPanelSelection(boolean userVisible) {
         JSONObject selection = null;
         try {
             if (!nativeBridgeLoaded) {
                 throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
             }
-            selection = buildKuramotoMeshPanelSelectionJson();
-            return submitLiveKuramotoMeshPanelSelection(selection, userVisible);
+            selection = buildDriverProfileMeshPanelSelectionJson();
+            return submitLiveDriverProfileMeshPanelSelection(selection, userVisible);
         } catch (Exception error) {
             try {
-                writeKuramotoMeshPanelStatus("rejected_by_panel", selection, null, error.getMessage());
+                writeDriverProfileMeshPanelStatus("rejected_by_panel", selection, null, error.getMessage());
             } catch (Exception ignored) {
             }
-            kuramotoMarker("status=rejected reason=" + markerToken(error.getMessage()));
+            driverProfileMarker("status=rejected reason=" + markerToken(error.getMessage()));
             if (userVisible) {
-                updateStatus("Kuramoto selection failed: " + error.getMessage());
+                updateStatus("Driver profile selection failed: " + error.getMessage());
             } else {
-                setStatusText("Kuramoto selection failed: " + error.getMessage());
+                setStatusText("Driver profile selection failed: " + error.getMessage());
             }
             return false;
         }
     }
 
-    private boolean submitLiveKuramotoMeshPanelSelectionForCondition(
+    private boolean submitLiveDriverProfileMeshPanelSelectionForCondition(
         String conditionId,
         String surfaceTargetId,
         boolean userVisible
     ) {
         JSONObject selection = null;
         try {
-            int surfaceIndex = indexOf(KURAMOTO_SURFACE_IDS, surfaceTargetId, 0);
-            int conditionIndex = indexOf(KURAMOTO_CONDITION_IDS, conditionId, 0);
-            selection = buildKuramotoMeshPanelSelectionJson(surfaceIndex, conditionIndex);
-            return submitLiveKuramotoMeshPanelSelection(selection, userVisible);
+            int surfaceIndex = indexOf(DRIVER_PROFILE_SURFACE_IDS, surfaceTargetId, 0);
+            int conditionIndex = indexOf(DRIVER_PROFILE_IDS, conditionId, 0);
+            selection = buildDriverProfileMeshPanelSelectionJson(surfaceIndex, conditionIndex);
+            return submitLiveDriverProfileMeshPanelSelection(selection, userVisible);
         } catch (Exception error) {
             try {
-                writeKuramotoMeshPanelStatus("rejected_by_experiment", selection, null, error.getMessage());
+                writeDriverProfileMeshPanelStatus("rejected_by_experiment", selection, null, error.getMessage());
             } catch (Exception ignored) {
             }
-            kuramotoMarker("status=experiment-selection-rejected reason=" + markerToken(error.getMessage()));
+            driverProfileMarker("status=experiment-selection-rejected reason=" + markerToken(error.getMessage()));
             if (userVisible) {
                 updateStatus("Experiment condition failed: " + error.getMessage());
             } else {
@@ -1765,25 +1765,25 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
-    private boolean submitLiveKuramotoMeshPanelSelection(JSONObject selection, boolean userVisible) {
+    private boolean submitLiveDriverProfileMeshPanelSelection(JSONObject selection, boolean userVisible) {
         try {
             if (!nativeBridgeLoaded) {
                 throw new IllegalStateException("native bridge unavailable: " + nativeBridgeLoadError);
             }
-            JSONObject candidate = buildKuramotoMeshPanelPrivateParticleCandidate(selection);
+            JSONObject candidate = buildDriverProfileMeshPanelPrivateParticleCandidate(selection);
             String responseText = nativeSubmitLivePrivateParticleDynamics(candidate.toString());
             JSONObject response = new JSONObject(responseText);
             String responseStatus = response.optString("status", "unknown");
             if (!"queued".equals(responseStatus)) {
                 throw new IllegalStateException(responseText);
             }
-            writeKuramotoMeshPanelStatus("queued_by_panel", selection, candidate, responseText);
-            String message = "Kuramoto selection queued: "
+            writeDriverProfileMeshPanelStatus("queued_by_panel", selection, candidate, responseText);
+            String message = "Driver profile selection queued: "
                 + selection.optString("surface_target_id")
                 + " / "
                 + selection.optString("condition")
                 + ".";
-            kuramotoMarker(
+            driverProfileMarker(
                 "status=queued surfaceTarget="
                     + selection.optString("surface_target_id")
                     + " condition="
@@ -1799,58 +1799,58 @@ public final class ControlPanelActivity extends Activity {
             return true;
         } catch (Exception error) {
             try {
-                writeKuramotoMeshPanelStatus("rejected_by_panel", selection, null, error.getMessage());
+                writeDriverProfileMeshPanelStatus("rejected_by_panel", selection, null, error.getMessage());
             } catch (Exception ignored) {
             }
-            kuramotoMarker("status=rejected reason=" + markerToken(error.getMessage()));
+            driverProfileMarker("status=rejected reason=" + markerToken(error.getMessage()));
             if (userVisible) {
-                updateStatus("Kuramoto selection failed: " + error.getMessage());
+                updateStatus("Driver profile selection failed: " + error.getMessage());
             } else {
-                setStatusText("Kuramoto selection failed: " + error.getMessage());
+                setStatusText("Driver profile selection failed: " + error.getMessage());
             }
             return false;
         }
     }
 
-    private void scheduleLiveKuramotoMeshPanelSelection() {
-        if (kuramotoSurfaceTarget == null || kuramotoCondition == null) {
+    private void scheduleLiveDriverProfileMeshPanelSelection() {
+        if (driverProfileSurfaceTarget == null || driver_profileCondition == null) {
             return;
         }
-        String selectionKey = KURAMOTO_SURFACE_IDS[selectedKuramotoSurfaceIndex()]
+        String selectionKey = DRIVER_PROFILE_SURFACE_IDS[selectedDriverProfileSurfaceIndex()]
             + ":"
-            + KURAMOTO_CONDITION_IDS[selectedKuramotoConditionIndex()];
-        if (selectionKey.equals(lastScheduledKuramotoMeshPanelApplyKey)) {
+            + DRIVER_PROFILE_IDS[selectedDriverProfileConditionIndex()];
+        if (selectionKey.equals(lastScheduledDriverProfileMeshPanelApplyKey)) {
             return;
         }
-        lastScheduledKuramotoMeshPanelApplyKey = selectionKey;
-        if (pendingKuramotoMeshPanelApply != null) {
-            liveApplyHandler.removeCallbacks(pendingKuramotoMeshPanelApply);
+        lastScheduledDriverProfileMeshPanelApplyKey = selectionKey;
+        if (pendingDriverProfileMeshPanelApply != null) {
+            liveApplyHandler.removeCallbacks(pendingDriverProfileMeshPanelApply);
         }
-        pendingKuramotoMeshPanelApply = new Runnable() {
+        pendingDriverProfileMeshPanelApply = new Runnable() {
             @Override
             public void run() {
-                pendingKuramotoMeshPanelApply = null;
-                submitLiveKuramotoMeshPanelSelection(false);
+                pendingDriverProfileMeshPanelApply = null;
+                submitLiveDriverProfileMeshPanelSelection(false);
             }
         };
-        liveApplyHandler.postDelayed(pendingKuramotoMeshPanelApply, 180L);
+        liveApplyHandler.postDelayed(pendingDriverProfileMeshPanelApply, 180L);
     }
 
-    private JSONObject buildKuramotoMeshPanelPrivateParticleCandidate(JSONObject selection) throws Exception {
+    private JSONObject buildDriverProfileMeshPanelPrivateParticleCandidate(JSONObject selection) throws Exception {
         int surfaceIndex = indexOf(
-            KURAMOTO_SURFACE_IDS,
+            DRIVER_PROFILE_SURFACE_IDS,
             selection.optString("surface_target_id", "gpu-replay-hands"),
             1
         );
         int conditionIndex = indexOf(
-            KURAMOTO_CONDITION_IDS,
-            selection.optString("condition", "lcle"),
+            DRIVER_PROFILE_IDS,
+            selection.optString("condition", "profile-a"),
             0
         );
-        double[] drivers = kuramotoDriverValues(surfaceIndex, conditionIndex);
+        double[] drivers = driverProfileValues(surfaceIndex, conditionIndex);
         JSONObject candidate = buildPrivateParticleDynamicsJsonFromValues(
-            KURAMOTO_PROFILE_IDS[conditionIndex],
-            "kuramoto_mesh_panel",
+            DRIVER_PROFILE_SCHEMA_IDS[conditionIndex],
+            "driver_profile_panel",
             surfaceIndex == 2 ? 1.0 : 0.70,
             surfaceIndex == 2 ? 1.0 : 0.46,
             drivers,
@@ -1858,79 +1858,79 @@ public final class ControlPanelActivity extends Activity {
             0.5,
             14.0
         );
-        candidate.put("kuramoto_mesh", selection);
+        candidate.put("driver_profile_panel", selection);
         JSONObject privateParticles = candidate.optJSONObject("private_particles");
         if (privateParticles != null) {
-            privateParticles.put("kuramoto_mesh_selection", selection);
+            privateParticles.put("driver_profile_selection", selection);
         }
         return candidate;
     }
 
-    private JSONObject buildKuramotoMeshPanelSelectionJson() throws Exception {
-        int surfaceIndex = selectedKuramotoSurfaceIndex();
-        int conditionIndex = selectedKuramotoConditionIndex();
-        return buildKuramotoMeshPanelSelectionJson(surfaceIndex, conditionIndex);
+    private JSONObject buildDriverProfileMeshPanelSelectionJson() throws Exception {
+        int surfaceIndex = selectedDriverProfileSurfaceIndex();
+        int conditionIndex = selectedDriverProfileConditionIndex();
+        return buildDriverProfileMeshPanelSelectionJson(surfaceIndex, conditionIndex);
     }
 
-    private JSONObject buildKuramotoMeshPanelSelectionJson(int surfaceIndex, int conditionIndex) throws Exception {
-        surfaceIndex = Math.max(0, Math.min(KURAMOTO_SURFACE_IDS.length - 1, surfaceIndex));
-        conditionIndex = Math.max(0, Math.min(KURAMOTO_CONDITION_IDS.length - 1, conditionIndex));
+    private JSONObject buildDriverProfileMeshPanelSelectionJson(int surfaceIndex, int conditionIndex) throws Exception {
+        surfaceIndex = Math.max(0, Math.min(DRIVER_PROFILE_SURFACE_IDS.length - 1, surfaceIndex));
+        conditionIndex = Math.max(0, Math.min(DRIVER_PROFILE_IDS.length - 1, conditionIndex));
         JSONObject selection = new JSONObject()
-            .put("schema_id", KURAMOTO_MESH_PANEL_SELECTION_SCHEMA)
+            .put("schema_id", DRIVER_PROFILE_PANEL_SELECTION_SCHEMA)
             .put("panel_role", "requester-ui-or-agent-cli")
             .put("panel_must_not_be_authority", true)
             .put("high_rate_payloads_allowed", false)
-            .put("surface_target_id", KURAMOTO_SURFACE_IDS[surfaceIndex])
-            .put("surface_target", KURAMOTO_SURFACE_TARGETS[surfaceIndex])
-            .put("source_mode", KURAMOTO_SOURCE_MODES[surfaceIndex])
-            .put("resource_plan_id", KURAMOTO_SURFACE_RESOURCE_PLAN_IDS[surfaceIndex])
-            .put("runtime_profile_path", KURAMOTO_SURFACE_RUNTIME_PROFILE_PATHS[surfaceIndex])
-            .put("condition", KURAMOTO_CONDITION_IDS[conditionIndex])
-            .put("condition_label", KURAMOTO_CONDITION_LABELS[conditionIndex])
-            .put("profile_set_id", KURAMOTO_PROFILE_SET_ID)
-            .put("profile_id", KURAMOTO_PROFILE_IDS[conditionIndex])
-            .put("default_profile_id", KURAMOTO_DEFAULT_PROFILE_ID)
-            .put("dynamics_mode", "movement-only")
-            .put("movement_base_frequency_hz", KURAMOTO_MOVEMENT_BASE_HZ[conditionIndex])
-            .put("movement_frequency_spread_hz", KURAMOTO_MOVEMENT_SPREAD_HZ[conditionIndex])
-            .put("movement_coupling", KURAMOTO_MOVEMENT_COUPLING[conditionIndex])
-            .put("unit_distance_m", KURAMOTO_UNIT_DISTANCE_M[conditionIndex]);
+            .put("surface_target_id", DRIVER_PROFILE_SURFACE_IDS[surfaceIndex])
+            .put("surface_target", DRIVER_PROFILE_SURFACE_TARGETS[surfaceIndex])
+            .put("source_mode", DRIVER_PROFILE_SOURCE_MODES[surfaceIndex])
+            .put("resource_plan_id", DRIVER_PROFILE_SURFACE_RESOURCE_PLAN_IDS[surfaceIndex])
+            .put("runtime_profile_path", DRIVER_PROFILE_SURFACE_RUNTIME_PROFILE_PATHS[surfaceIndex])
+            .put("condition", DRIVER_PROFILE_IDS[conditionIndex])
+            .put("condition_label", DRIVER_PROFILE_LABELS[conditionIndex])
+            .put("profile_set_id", DRIVER_PROFILE_SCHEMA_SET_ID)
+            .put("profile_id", DRIVER_PROFILE_SCHEMA_IDS[conditionIndex])
+            .put("default_profile_id", DRIVER_PROFILE_DEFAULT_PROFILE_ID)
+            .put("dynamics_mode", "driver-profile")
+            .put("driver0_value01", DRIVER_PROFILE_DRIVER0_VALUE01[conditionIndex])
+            .put("driver2_value01", DRIVER_PROFILE_DRIVER2_VALUE01[conditionIndex])
+            .put("driver1_value01", DRIVER_PROFILE_DRIVER1_VALUE01[conditionIndex])
+            .put("driver3_value01", DRIVER_PROFILE_DRIVER3_VALUE01[conditionIndex]);
         JSONArray expectedMarkers = new JSONArray();
-        expectedMarkers.put("kuramotoSurfaceTarget=" + KURAMOTO_SURFACE_IDS[surfaceIndex]);
-        expectedMarkers.put("kuramotoProfileId=" + KURAMOTO_PROFILE_IDS[conditionIndex]);
+        expectedMarkers.put("driverProfileSurfaceTarget=" + DRIVER_PROFILE_SURFACE_IDS[surfaceIndex]);
+        expectedMarkers.put("driverProfileSchemaId=" + DRIVER_PROFILE_SCHEMA_IDS[conditionIndex]);
         selection.put("expected_markers", expectedMarkers);
         return selection;
     }
 
-    private double[] kuramotoDriverValues(int surfaceIndex, int conditionIndex) {
-        double highEnergy = KURAMOTO_MOVEMENT_BASE_HZ[conditionIndex] > 0.5 ? 1.0 : 0.0;
-        double highCoherence = KURAMOTO_MOVEMENT_COUPLING[conditionIndex] > 0.5 ? 1.0 : 0.0;
+    private double[] driverProfileValues(int surfaceIndex, int conditionIndex) {
+        double driver0High = DRIVER_PROFILE_DRIVER0_VALUE01[conditionIndex] > 0.5 ? 1.0 : 0.0;
+        double driver1High = DRIVER_PROFILE_DRIVER1_VALUE01[conditionIndex] > 0.5 ? 1.0 : 0.0;
         return new double[] {
-            highEnergy > 0.5 ? 0.85 : 0.25,
-            highCoherence > 0.5 ? 0.85 : 0.15,
-            clamp(KURAMOTO_MOVEMENT_BASE_HZ[conditionIndex] / 0.88, 0.0, 1.0),
-            clamp(1.0 - (KURAMOTO_MOVEMENT_SPREAD_HZ[conditionIndex] / 0.62), 0.0, 1.0),
-            clamp(KURAMOTO_UNIT_DISTANCE_M[conditionIndex] / 0.004, 0.0, 1.0),
-            KURAMOTO_SURFACE_IDS.length <= 1 ? 0.0 : (double) surfaceIndex / (KURAMOTO_SURFACE_IDS.length - 1),
-            KURAMOTO_CONDITION_IDS.length <= 1 ? 0.0 : (double) conditionIndex / (KURAMOTO_CONDITION_IDS.length - 1),
+            driver0High > 0.5 ? 0.85 : 0.25,
+            driver1High > 0.5 ? 0.85 : 0.15,
+            clamp(DRIVER_PROFILE_DRIVER0_VALUE01[conditionIndex] / 0.88, 0.0, 1.0),
+            clamp(1.0 - (DRIVER_PROFILE_DRIVER2_VALUE01[conditionIndex] / 0.62), 0.0, 1.0),
+            clamp(DRIVER_PROFILE_DRIVER3_VALUE01[conditionIndex] / 0.004, 0.0, 1.0),
+            DRIVER_PROFILE_SURFACE_IDS.length <= 1 ? 0.0 : (double) surfaceIndex / (DRIVER_PROFILE_SURFACE_IDS.length - 1),
+            DRIVER_PROFILE_IDS.length <= 1 ? 0.0 : (double) conditionIndex / (DRIVER_PROFILE_IDS.length - 1),
             0.0
         };
     }
 
-    private void refreshKuramotoMeshPanelFromStatus(boolean userVisible) {
-        String surface = readKuramotoPanelSelectionString("surface_target_id", "gpu-replay-hands");
-        String condition = readKuramotoPanelSelectionString("condition", "lcle");
-        boolean previousAutoApply = kuramotoPanelAutoApplyArmed;
-        kuramotoPanelAutoApplyArmed = false;
-        if (kuramotoSurfaceTarget != null) {
-            kuramotoSurfaceTarget.setSelection(indexOf(KURAMOTO_SURFACE_IDS, surface, 1));
+    private void refreshDriverProfileMeshPanelFromStatus(boolean userVisible) {
+        String surface = readDriverProfilePanelSelectionString("surface_target_id", "gpu-replay-hands");
+        String condition = readDriverProfilePanelSelectionString("condition", "profile-a");
+        boolean previousAutoApply = driver_profilePanelAutoApplyArmed;
+        driver_profilePanelAutoApplyArmed = false;
+        if (driverProfileSurfaceTarget != null) {
+            driverProfileSurfaceTarget.setSelection(indexOf(DRIVER_PROFILE_SURFACE_IDS, surface, 1));
         }
-        if (kuramotoCondition != null) {
-            kuramotoCondition.setSelection(indexOf(KURAMOTO_CONDITION_IDS, condition, 0));
+        if (driver_profileCondition != null) {
+            driver_profileCondition.setSelection(indexOf(DRIVER_PROFILE_IDS, condition, 0));
         }
-        kuramotoPanelAutoApplyArmed = previousAutoApply;
-        updateKuramotoSelectionSummary();
-        String message = "Kuramoto panel refreshed: " + surface + " / " + condition + ".";
+        driver_profilePanelAutoApplyArmed = previousAutoApply;
+        updateDriverProfileSelectionSummary();
+        String message = "Driver profile panel refreshed: " + surface + " / " + condition + ".";
         if (userVisible) {
             updateStatus(message);
         } else {
@@ -1938,14 +1938,14 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
-    private void writeKuramotoMeshPanelStatus(
+    private void writeDriverProfileMeshPanelStatus(
         String panelStatus,
         JSONObject selection,
         JSONObject candidate,
         String resultText
     ) throws Exception {
         JSONObject body = new JSONObject()
-            .put("schema", "rusty.kuramoto.mesh.native_panel_status.v1")
+            .put("schema", "rusty.driver_profile.mesh.native_panel_status.v1")
             .put("status", panelStatus)
             .put("transport", "same-apk-control-panel")
             .put("updated_at_unix_ms", System.currentTimeMillis())
@@ -1958,12 +1958,12 @@ public final class ControlPanelActivity extends Activity {
             }
             body.put("candidate_revision", candidate.optLong("revision", 0L));
         }
-        writeFile(KURAMOTO_MESH_PANEL_STATUS_FILE, body.toString(2));
+        writeFile(DRIVER_PROFILE_PANEL_STATUS_FILE, body.toString(2));
     }
 
-    private String readKuramotoPanelSelectionString(String key, String fallback) {
+    private String readDriverProfilePanelSelectionString(String key, String fallback) {
         try {
-            JSONObject body = new JSONObject(readFile(KURAMOTO_MESH_PANEL_STATUS_FILE));
+            JSONObject body = new JSONObject(readFile(DRIVER_PROFILE_PANEL_STATUS_FILE));
             JSONObject selection = body.optJSONObject("selection");
             if (selection == null) {
                 return fallback;
@@ -1975,18 +1975,18 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
-    private int selectedKuramotoSurfaceIndex() {
-        if (kuramotoSurfaceTarget == null) {
+    private int selectedDriverProfileSurfaceIndex() {
+        if (driverProfileSurfaceTarget == null) {
             return 1;
         }
-        return Math.max(0, Math.min(KURAMOTO_SURFACE_IDS.length - 1, kuramotoSurfaceTarget.getSelectedItemPosition()));
+        return Math.max(0, Math.min(DRIVER_PROFILE_SURFACE_IDS.length - 1, driverProfileSurfaceTarget.getSelectedItemPosition()));
     }
 
-    private int selectedKuramotoConditionIndex() {
-        if (kuramotoCondition == null) {
+    private int selectedDriverProfileConditionIndex() {
+        if (driver_profileCondition == null) {
             return 0;
         }
-        return Math.max(0, Math.min(KURAMOTO_CONDITION_IDS.length - 1, kuramotoCondition.getSelectedItemPosition()));
+        return Math.max(0, Math.min(DRIVER_PROFILE_IDS.length - 1, driver_profileCondition.getSelectedItemPosition()));
     }
 
     private View buildPrivateParticleDynamicsView() {
@@ -2748,7 +2748,7 @@ public final class ControlPanelActivity extends Activity {
             false
         );
         privateParticleConfigCouplingDriver = privateParticleConfigSlider(
-            "Tier coupling / coherence (driver1)",
+            "Driver 1 blend",
             0.0,
             1.0,
             drivers[COUPLING_DRIVER_INDEX],
@@ -2764,7 +2764,7 @@ public final class ControlPanelActivity extends Activity {
             "Particle count: 2562 (payload allocation)",
             "Oscillator dimensions: 6",
             "Natural frequency: 0.4 to 0.6 Hz with AKD noise seed 1",
-            "Base coupling: 1.0; cross coupling matrix strength: 0.16",
+            "Driver controls are generic scalar inputs in this public panel",
             "Neighbor tiers: tier1 -1 to 1, tier2 -0.5 to 0.5, tier3 -1 to 0"
         });
 
@@ -2797,7 +2797,7 @@ public final class ControlPanelActivity extends Activity {
         page.addView(streams.view);
         addReadOnlyLines(streams.body, new String[] {
             "heartbeat_lsl maps to orbit radius in AKD, currently driver5 when all-visual profile is active",
-            "coherence_lsl maps to tier coupling and alpha/saturation/brightness through driver1",
+            "stream slot 1 maps to driver1",
             "breathing_controller maps sphere radius through the world-anchor scale lane",
             "manual1 default 1.000, manual2 default 0.000, manual3 default 0.327"
         });
@@ -4533,7 +4533,7 @@ public final class ControlPanelActivity extends Activity {
             case 0:
                 return "Input slot 0: deformation";
             case 1:
-                return "Input slot 1: coupling";
+                return "Input slot 1: blend";
             case 2:
                 return "Input slot 2: particle size";
             case 3:
@@ -5108,15 +5108,15 @@ public final class ControlPanelActivity extends Activity {
         handledPolarSensorPanelCommandToken = token;
         String panelMode = readControlPanelMode();
         if (!"polar-sensor".equals(panelMode)
-                && !"kuramoto-mesh".equals(panelMode)
-                && !"kuramoto-experiment".equals(panelMode)) {
+                && !"driver-profile-panel".equals(panelMode)
+                && !"driver-profile-session".equals(panelMode)) {
             setStatusText("Polar command ignored; panel mode does not expose Polar controls.");
             return;
         }
-        if ("kuramoto-mesh".equals(panelMode)) {
+        if ("driver-profile-panel".equals(panelMode)) {
             setContentView(buildPolarSensorPanelPageView(true));
-        } else if ("kuramoto-experiment".equals(panelMode)) {
-            setContentView(buildKuramotoExperimentPolarSetupView(ensureExperimentSession()));
+        } else if ("driver-profile-session".equals(panelMode)) {
+            setContentView(buildDriverProfileExperimentPolarSetupView(ensureExperimentSession()));
         } else {
             ensurePolarSensorPanel();
         }
@@ -5125,75 +5125,75 @@ public final class ControlPanelActivity extends Activity {
         );
     }
 
-    private void handleKuramotoMeshPanelCommandIntent(Intent intent) {
-        if (intent == null || !ACTION_KURAMOTO_MESH_PANEL_COMMAND.equals(intent.getAction())) {
+    private void handleDriverProfileMeshPanelCommandIntent(Intent intent) {
+        if (intent == null || !ACTION_DRIVER_PROFILE_PANEL_COMMAND.equals(intent.getAction())) {
             return;
         }
-        String token = intent.getStringExtra(EXTRA_KURAMOTO_PANEL_COMMAND_TOKEN);
+        String token = intent.getStringExtra(EXTRA_DRIVER_PROFILE_PANEL_COMMAND_TOKEN);
         if (token == null || token.length() == 0) {
             token = intent.toUri(0);
         }
-        if (token.equals(handledKuramotoMeshPanelCommandToken)) {
+        if (token.equals(handledDriverProfileMeshPanelCommandToken)) {
             return;
         }
-        handledKuramotoMeshPanelCommandToken = token;
+        handledDriverProfileMeshPanelCommandToken = token;
         String panelMode = readControlPanelMode();
-        if (!"kuramoto-mesh".equals(panelMode) && !"kuramoto-experiment".equals(panelMode)) {
-            setStatusText("Kuramoto command ignored; panel is not active.");
-            kuramotoMarker("status=cli-command-ignored reason=panel-not-active");
+        if (!"driver-profile-panel".equals(panelMode) && !"driver-profile-session".equals(panelMode)) {
+            setStatusText("Driver profile command ignored; panel is not active.");
+            driverProfileMarker("status=cli-command-ignored reason=panel-not-active");
             return;
         }
-        if (kuramotoSurfaceTarget == null || kuramotoCondition == null) {
-            setContentView(buildKuramotoMeshPanelView());
+        if (driverProfileSurfaceTarget == null || driver_profileCondition == null) {
+            setContentView(buildDriverProfileMeshPanelView());
         }
-        boolean previousAutoApply = kuramotoPanelAutoApplyArmed;
-        kuramotoPanelAutoApplyArmed = false;
-        String requestedSurface = intent.getStringExtra(EXTRA_KURAMOTO_SURFACE_TARGET);
+        boolean previousAutoApply = driver_profilePanelAutoApplyArmed;
+        driver_profilePanelAutoApplyArmed = false;
+        String requestedSurface = intent.getStringExtra(EXTRA_DRIVER_PROFILE_SURFACE_TARGET);
         if (requestedSurface != null && requestedSurface.length() > 0) {
-            kuramotoSurfaceTarget.setSelection(
-                indexOf(KURAMOTO_SURFACE_IDS, requestedSurface, selectedKuramotoSurfaceIndex())
+            driverProfileSurfaceTarget.setSelection(
+                indexOf(DRIVER_PROFILE_SURFACE_IDS, requestedSurface, selectedDriverProfileSurfaceIndex())
             );
         }
-        String requestedCondition = intent.getStringExtra(EXTRA_KURAMOTO_CONDITION);
+        String requestedCondition = intent.getStringExtra(EXTRA_DRIVER_PROFILE_ID);
         if (requestedCondition != null && requestedCondition.length() > 0) {
-            kuramotoCondition.setSelection(
-                indexOf(KURAMOTO_CONDITION_IDS, requestedCondition, selectedKuramotoConditionIndex())
+            driver_profileCondition.setSelection(
+                indexOf(DRIVER_PROFILE_IDS, requestedCondition, selectedDriverProfileConditionIndex())
             );
         }
-        kuramotoPanelAutoApplyArmed = previousAutoApply;
-        updateKuramotoSelectionSummary();
-        kuramotoMarker(
+        driver_profilePanelAutoApplyArmed = previousAutoApply;
+        updateDriverProfileSelectionSummary();
+        driverProfileMarker(
             "status=cli-command surfaceTarget="
-                + KURAMOTO_SURFACE_IDS[selectedKuramotoSurfaceIndex()]
+                + DRIVER_PROFILE_SURFACE_IDS[selectedDriverProfileSurfaceIndex()]
                 + " condition="
-                + KURAMOTO_CONDITION_IDS[selectedKuramotoConditionIndex()]
+                + DRIVER_PROFILE_IDS[selectedDriverProfileConditionIndex()]
         );
-        submitLiveKuramotoMeshPanelSelection(true);
+        submitLiveDriverProfileMeshPanelSelection(true);
         boolean returnToImmersive = intent.getBooleanExtra(
-            EXTRA_KURAMOTO_RETURN_TO_IMMERSIVE,
-            "real-hands".equals(KURAMOTO_SURFACE_IDS[selectedKuramotoSurfaceIndex()])
+            EXTRA_DRIVER_PROFILE_RETURN_TO_IMMERSIVE,
+            "real-hands".equals(DRIVER_PROFILE_SURFACE_IDS[selectedDriverProfileSurfaceIndex()])
         );
         if (returnToImmersive) {
-            kuramotoMarker(
+            driverProfileMarker(
                 "status=cli-command-return-to-immersive surfaceTarget="
-                    + KURAMOTO_SURFACE_IDS[selectedKuramotoSurfaceIndex()]
+                    + DRIVER_PROFILE_SURFACE_IDS[selectedDriverProfileSurfaceIndex()]
             );
             closePanelAndReturnToImmersive();
         }
     }
 
-    private void handleKuramotoExperimentStartupResetIntent(Intent intent) {
+    private void handleDriverProfileExperimentStartupResetIntent(Intent intent) {
         if (intent == null
-                || !intent.getBooleanExtra(EXTRA_KURAMOTO_EXPERIMENT_STARTUP_RESET, false)
-                || !"kuramoto-experiment".equals(readControlPanelMode())) {
+                || !intent.getBooleanExtra(EXTRA_DRIVER_PROFILE_SESSION_STARTUP_RESET, false)
+                || !"driver-profile-session".equals(readControlPanelMode())) {
             return;
         }
         try {
             ensureExperimentSession().resetForNewParticipant();
-            kuramotoMarker("status=experiment-startup-reset source=xr-startup-kuramoto-experiment");
+            driverProfileMarker("status=experiment-startup-reset source=xr-startup-driver-profile-session");
         } catch (Exception error) {
-            kuramotoMarker(
-                "status=experiment-startup-reset-failed source=xr-startup-kuramoto-experiment reason="
+            driverProfileMarker(
+                "status=experiment-startup-reset-failed source=xr-startup-driver-profile-session reason="
                     + markerToken(error.getMessage())
             );
         }
@@ -5231,7 +5231,7 @@ public final class ControlPanelActivity extends Activity {
     }
 
     private void closePanelAndReturnToImmersive() {
-        recordKuramotoExperimentPanelEvent(
+        recordSpatialCameraPanelEvent(
             "panel_close_command_requested",
             "close_requested",
             "close_panel_and_return_to_immersive"
@@ -5292,12 +5292,12 @@ public final class ControlPanelActivity extends Activity {
         }
     }
 
-    private static void kuramotoMarker(String detail) {
+    private static void driverProfileMarker(String detail) {
         Log.i(
             TAG,
             MARKER_PREFIX
                 + " channel="
-                + CHANNEL_KURAMOTO_PANEL
+                + CHANNEL_DRIVER_PROFILE_PANEL
                 + " "
                 + String.valueOf(detail).replace('\n', ' ').replace('\r', ' ')
         );
@@ -5500,10 +5500,10 @@ public final class ControlPanelActivity extends Activity {
         if ("private-particle-config".equals(requested)) {
             return requested;
         }
-        if ("kuramoto-mesh".equals(requested)) {
+        if ("driver-profile-panel".equals(requested)) {
             return requested;
         }
-        if ("kuramoto-experiment".equals(requested)) {
+        if ("driver-profile-session".equals(requested)) {
             return requested;
         }
         if ("polar-sensor".equals(requested)) {
@@ -5912,5 +5912,5 @@ public final class ControlPanelActivity extends Activity {
     private static native String nativeSubmitLivePrivateLayerSelection(String selectionJson);
     private static native String nativeSubmitLiveDepthAlignment(String alignmentJson);
     private static native String nativeSubmitLivePrivateParticleDynamics(String dynamicsJson);
-    private static native String nativeStartKuramotoExperimentBlock(String blockJson);
+    private static native String nativeStartDriverProfileSessionBlock(String blockJson);
 }

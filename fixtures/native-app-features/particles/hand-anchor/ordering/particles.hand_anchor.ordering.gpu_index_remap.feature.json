@@ -41,7 +41,8 @@
   },
   "markers": {
     "required": [
-      "handAnchorParticleGpuSortActive=true"
+      "handAnchorParticleOrderingImplementation=gpu-index-remap",
+      "handAnchorParticleGpuSortActive=false"
     ],
     "forbidden": []
   },

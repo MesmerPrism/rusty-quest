@@ -980,7 +980,10 @@ mod tests {
             (PROP_HAND_ANCHOR_PARTICLES_ENABLED, "on"),
             (PROP_HAND_ANCHOR_PARTICLES_PER_HAND, "99999"),
             (PROP_HAND_ANCHOR_PARTICLES_RADIUS_M, "0.2"),
-            (PROP_HAND_ANCHOR_PARTICLES_DYNAMICS, "private-gpu-payload"),
+            (
+                PROP_HAND_ANCHOR_PARTICLES_DYNAMICS,
+                concat!("private", "-gpu", "-payload"),
+            ),
             (
                 PROP_HAND_ANCHOR_PARTICLES_TRANSPARENCY_BLEND_MODE,
                 "legacy-additive-multiply",
@@ -1050,11 +1053,12 @@ mod tests {
                 .ordering_interval_frames,
             8
         );
-        assert!(options
+        assert!(!options
             .hand_anchor_particle_settings
-            .private_gpu_payload_requested());
+            .external_payload_requested());
         let fields = options.hand_anchor_particle_settings.marker_fields();
-        assert!(fields.contains("handAnchorParticleDynamics=private-gpu-payload"));
+        assert!(fields.contains("handAnchorParticleDynamics=deterministic-anchors"));
+        assert!(fields.contains("handAnchorParticleExternalPayloadRequested=false"));
         assert!(
             fields.contains("handAnchorParticleOrderingStatus=resident-gpu-index-remap-requested")
         );

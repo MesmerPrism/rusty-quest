@@ -71,7 +71,7 @@ as a generic private-particle payload:
   slot, sorting, mask sampler, low-rate scalar transport, and public markers.
 - Live hand surfaces should use `hand_anchor_particles` when the particles are
   attached to the resident GPU-skinned hand mesh. The downstream private
-  Kuramoto payload supplies coordinate triangle/barycentric bindings and graph
+  private anchor payload supplies coordinate triangle/barycentric bindings and graph
   edges, while Rusty Quest reuses the already-resident left and right custom
   hand meshes. The hand path must be ready from the skinned mesh buffers, not
   from the optional base hand visual being visible.

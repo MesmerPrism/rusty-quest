@@ -166,8 +166,9 @@ static LIVE_PRIVATE_PARTICLE_DYNAMICS_LATEST: OnceLock<
     Mutex<Option<PrivateParticleDynamicsPanelCandidate>>,
 > = OnceLock::new();
 #[cfg(target_os = "android")]
-static KURAMOTO_EXPERIMENT_BLOCK_RUNTIME: OnceLock<Mutex<Option<KuramotoExperimentBlockRuntime>>> =
-    OnceLock::new();
+static SPATIAL_CAMERA_PANEL_SESSION_BLOCK_RUNTIME: OnceLock<
+    Mutex<Option<SpatialCameraPanelSessionBlockRuntime>>,
+> = OnceLock::new();
 
 #[cfg(target_os = "android")]
 #[derive(Clone, Copy, Debug)]
@@ -178,7 +179,7 @@ struct LiveQueueOutcome {
 
 #[cfg(target_os = "android")]
 #[derive(Clone, Debug)]
-pub(crate) struct KuramotoExperimentPanelOpen {
+pub(crate) struct SpatialCameraPanelOpen {
     pub(crate) block_index: i64,
     pub(crate) block_number: i64,
     pub(crate) condition_id: String,
@@ -188,7 +189,7 @@ pub(crate) struct KuramotoExperimentPanelOpen {
 
 #[cfg(target_os = "android")]
 #[derive(Clone, Debug)]
-pub(crate) struct KuramotoExperimentIcosphereRecenter {
+pub(crate) struct SpatialCameraPanelSessionIcosphereRecenter {
     pub(crate) block_index: i64,
     pub(crate) block_number: i64,
     pub(crate) condition_id: String,
@@ -197,7 +198,7 @@ pub(crate) struct KuramotoExperimentIcosphereRecenter {
 
 #[cfg(target_os = "android")]
 #[derive(Clone, Debug)]
-struct KuramotoExperimentBlockRuntime {
+struct SpatialCameraPanelSessionBlockRuntime {
     block_index: i64,
     block_number: i64,
     condition_id: String,
@@ -236,8 +237,9 @@ fn live_private_particle_dynamics_latest(
 }
 
 #[cfg(target_os = "android")]
-fn kuramoto_experiment_block_runtime() -> &'static Mutex<Option<KuramotoExperimentBlockRuntime>> {
-    KURAMOTO_EXPERIMENT_BLOCK_RUNTIME.get_or_init(|| Mutex::new(None))
+fn spatial_camera_panel_session_block_runtime(
+) -> &'static Mutex<Option<SpatialCameraPanelSessionBlockRuntime>> {
+    SPATIAL_CAMERA_PANEL_SESSION_BLOCK_RUNTIME.get_or_init(|| Mutex::new(None))
 }
 
 #[cfg(target_os = "android")]
@@ -858,7 +860,7 @@ fn wall_time_unix_ms_now() -> u64 {
 }
 
 #[cfg(target_os = "android")]
-fn queue_kuramoto_experiment_block(text: &str) -> Result<KuramotoExperimentPanelOpen, String> {
+fn queue_spatial_camera_panel_session_block(text: &str) -> Result<SpatialCameraPanelOpen, String> {
     let value: Value = serde_json::from_str(text).map_err(|error| format!("json_parse:{error}"))?;
     let block_index = value
         .get("block_index")
@@ -897,7 +899,7 @@ fn queue_kuramoto_experiment_block(text: &str) -> Result<KuramotoExperimentPanel
     if deadline_unix_ms <= now {
         return Err("deadline_not_future".to_string());
     }
-    let runtime = KuramotoExperimentBlockRuntime {
+    let runtime = SpatialCameraPanelSessionBlockRuntime {
         block_index,
         block_number,
         condition_id: condition_id.clone(),
@@ -906,12 +908,12 @@ fn queue_kuramoto_experiment_block(text: &str) -> Result<KuramotoExperimentPanel
         panel_open_requested: false,
         icosphere_recenter_requested: !should_recenter_icosphere,
     };
-    let mut queue = kuramoto_experiment_block_runtime()
+    let mut queue = spatial_camera_panel_session_block_runtime()
         .lock()
-        .map_err(|_| "kuramoto_experiment_runtime_poisoned".to_string())?;
+        .map_err(|_| "spatial_camera_panel_session_runtime_poisoned".to_string())?;
     queue.replace(runtime);
     crate::marker(
-        "kuramoto-experiment",
+        "driver-profile-session",
         format!(
             "status=block-timer-queued blockIndex={} blockNumber={} conditionId={} surfaceTargetId={} icosphereRecenterOnStart={} deadlineUnixMs={} durationRemainingMs={}",
             block_index,
@@ -923,7 +925,7 @@ fn queue_kuramoto_experiment_block(text: &str) -> Result<KuramotoExperimentPanel
             deadline_unix_ms.saturating_sub(now),
         ),
     );
-    Ok(KuramotoExperimentPanelOpen {
+    Ok(SpatialCameraPanelOpen {
         block_index,
         block_number,
         condition_id,
@@ -933,17 +935,17 @@ fn queue_kuramoto_experiment_block(text: &str) -> Result<KuramotoExperimentPanel
 }
 
 #[cfg(target_os = "android")]
-pub(crate) fn poll_kuramoto_experiment_icosphere_recenter(
+pub(crate) fn poll_spatial_camera_panel_session_icosphere_recenter(
     frame_count: u64,
-) -> Option<KuramotoExperimentIcosphereRecenter> {
-    let mut runtime = kuramoto_experiment_block_runtime().lock().ok()?;
+) -> Option<SpatialCameraPanelSessionIcosphereRecenter> {
+    let mut runtime = spatial_camera_panel_session_block_runtime().lock().ok()?;
     let active = runtime.as_mut()?;
     if active.icosphere_recenter_requested || active.surface_target_id != "icosphere" {
         return None;
     }
     active.icosphere_recenter_requested = true;
     crate::marker(
-        "kuramoto-experiment",
+        "driver-profile-session",
         format!(
             "event=icosphere-recenter-requested status=pending-headset-anchor-capture frame={} blockIndex={} blockNumber={} conditionId={} surfaceTargetId={}",
             frame_count,
@@ -953,7 +955,7 @@ pub(crate) fn poll_kuramoto_experiment_icosphere_recenter(
             crate::sanitize(&active.surface_target_id),
         ),
     );
-    Some(KuramotoExperimentIcosphereRecenter {
+    Some(SpatialCameraPanelSessionIcosphereRecenter {
         block_index: active.block_index,
         block_number: active.block_number,
         condition_id: active.condition_id.clone(),
@@ -962,18 +964,16 @@ pub(crate) fn poll_kuramoto_experiment_icosphere_recenter(
 }
 
 #[cfg(target_os = "android")]
-pub(crate) fn poll_kuramoto_experiment_panel_open(
-    frame_count: u64,
-) -> Option<KuramotoExperimentPanelOpen> {
+pub(crate) fn poll_spatial_camera_panel_open(frame_count: u64) -> Option<SpatialCameraPanelOpen> {
     let now = wall_time_unix_ms_now();
-    let mut runtime = kuramoto_experiment_block_runtime().lock().ok()?;
+    let mut runtime = spatial_camera_panel_session_block_runtime().lock().ok()?;
     let active = runtime.as_mut()?;
     if active.panel_open_requested || now < active.deadline_unix_ms {
         return None;
     }
     active.panel_open_requested = true;
     crate::marker(
-        "kuramoto-experiment",
+        "driver-profile-session",
         format!(
             "event=block-duration-elapsed status=panel-open-requested frame={} blockIndex={} blockNumber={} conditionId={} surfaceTargetId={} deadlineUnixMs={}",
             frame_count,
@@ -984,7 +984,7 @@ pub(crate) fn poll_kuramoto_experiment_panel_open(
             active.deadline_unix_ms,
         ),
     );
-    Some(KuramotoExperimentPanelOpen {
+    Some(SpatialCameraPanelOpen {
         block_index: active.block_index,
         block_number: active.block_number,
         condition_id: active.condition_id.clone(),
@@ -1326,7 +1326,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
 
 #[cfg(target_os = "android")]
 #[no_mangle]
-pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeStartKuramotoExperimentBlock(
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_ControlPanelActivity_nativeStartDriverProfileSessionBlock(
     mut env: jni::EnvUnowned,
     _class: jni::objects::JClass,
     block_json: jni::objects::JString,
@@ -1334,9 +1334,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
     match env
         .with_env(|env| -> jni::errors::Result<jni::sys::jstring> {
             let block_json = block_json.try_to_string(env)?;
-            let response = match queue_kuramoto_experiment_block(&block_json) {
+            let response = match queue_spatial_camera_panel_session_block(&block_json) {
                 Ok(open) => json!({
-                    "schema": "rusty.kuramoto.mesh.experiment_block_timer_status.v1",
+                    "schema": "rusty.quest.spatial_camera_panel.block_timer_status.v1",
                     "status": "queued",
                     "transport": "jni_native_timer",
                     "block_index": open.block_index,
@@ -1348,14 +1348,14 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
                 .to_string(),
                 Err(reason) => {
                     crate::marker(
-                        "kuramoto-experiment",
+                        "driver-profile-session",
                         format!(
                             "status=block-timer-rejected transport=jni-native-timer reason={}",
                             crate::sanitize(&reason)
                         ),
                     );
                     json!({
-                        "schema": "rusty.kuramoto.mesh.experiment_block_timer_status.v1",
+                        "schema": "rusty.quest.spatial_camera_panel.block_timer_status.v1",
                         "status": "rejected",
                         "transport": "jni_native_timer",
                         "rejection_code": reason
@@ -1370,7 +1370,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
         jni::Outcome::Ok(value) => value,
         jni::Outcome::Err(error) => {
             crate::marker(
-                "kuramoto-experiment",
+                "driver-profile-session",
                 format!(
                     "status=block-timer-rejected transport=jni-native-timer reason=jni_error:{}",
                     crate::sanitize(&error.to_string())
@@ -1380,7 +1380,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_Co
         }
         jni::Outcome::Panic(_) => {
             crate::marker(
-                "kuramoto-experiment",
+                "driver-profile-session",
                 "status=block-timer-rejected transport=jni-native-timer reason=jni_panic",
             );
             std::ptr::null_mut()

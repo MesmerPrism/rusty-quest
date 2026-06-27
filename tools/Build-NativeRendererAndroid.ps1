@@ -480,12 +480,6 @@ $privateParticlePayloadLinked =
     (Test-Path (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_DATA_DIR" -AppBuildEnvByName $appBuildEnvByName)) -and
     (Test-Path (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_SHADER" -AppBuildEnvByName $appBuildEnvByName))
 
-$privateKuramotoPayloadLinked =
-    (-not [string]::IsNullOrWhiteSpace((Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_DATA_DIR" -AppBuildEnvByName $appBuildEnvByName))) -and
-    (-not [string]::IsNullOrWhiteSpace((Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_SHADER" -AppBuildEnvByName $appBuildEnvByName))) -and
-    (Test-Path (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_DATA_DIR" -AppBuildEnvByName $appBuildEnvByName)) -and
-    (Test-Path (Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_KURAMOTO_SHADER" -AppBuildEnvByName $appBuildEnvByName))
-
 $openXrLoaderPackaged = $false
 if (-not [string]::IsNullOrWhiteSpace($OpenXrLoader) -and (Test-Path $OpenXrLoader)) {
     Copy-Item -LiteralPath $OpenXrLoader -Destination (Join-Path $nativeLibDir "libopenxr_loader.so") -Force
@@ -561,7 +555,6 @@ $manifest = [ordered]@{
     private_extension_payloads_packaged = [bool]$privateLayerPayloadLinked
     private_particle_payloads_packaged = [bool]$privateParticlePayloadLinked
     private_particle_payload_kind = if ($privateParticlePayloadLinked) { Get-EffectiveBuildEnvValue -Name "RUSTY_QUEST_NATIVE_RENDERER_PRIVATE_PARTICLE_KIND" -AppBuildEnvByName $appBuildEnvByName } else { "none" }
-    private_kuramoto_payloads_packaged = [bool]$privateKuramotoPayloadLinked
     camera_ids = [ordered]@{
         left = "50"
         right = "51"

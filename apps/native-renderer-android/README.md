@@ -141,7 +141,7 @@ already alive, its `onNewIntent` handler closes the panel. This is best-effort
 cooperative panel behavior and includes an on-panel Close button as a fallback
 for platform modes that move input focus fully to the 2D panel. The A/right
 primary button remains reserved for stimulus randomization in the default
-stimulus path. In `private-layer-selector` and `kuramoto-experiment` panel
+stimulus path. In `private-layer-selector` and `driver-profile-session` panel
 modes, A/right-primary opens the panel instead and is not also bound to the
 projection reset action, so right-thumbstick projection scale control remains
 independent.

@@ -2,7 +2,8 @@
 
 This plan turns the public native camera-stack audit into implementation slices
 for `apps/native-renderer-android`. It stays public: private downstream visual
-effects, private tuning, and Morphovision-specific behavior are out of scope.
+effects, private tuning, and downstream effect-specific behavior are out of
+scope.
 
 ## Current Baseline
 
@@ -43,8 +44,8 @@ lifetime safety:
 
 ## Non-Scope
 
-- Private Morphovision effect formulas, tuning, profiles, Colorama, or
-  distortion behavior.
+- Private downstream effect formulas, tuning, profiles, Colorama, or distortion
+  behavior.
 - Replacing the direct-HWB baseline with a private effect path.
 - Importing Rusty Vision or Makepad runtime dependencies.
 - Treating community observations as device truth without headset validation.

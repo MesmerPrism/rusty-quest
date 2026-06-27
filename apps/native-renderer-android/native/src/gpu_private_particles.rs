@@ -2662,11 +2662,8 @@ fn private_particle_sort_enabled() -> bool {
 fn private_particle_payload_surface_draw_enabled(
     runtime_settings: PrivateParticleRuntimeSettings,
 ) -> bool {
-    if PRIVATE_PARTICLE_KIND == "kuramoto-hand-1024-icosphere-l4" {
-        runtime_settings.driver_bank_values01[5] >= 0.75
-    } else {
-        true
-    }
+    let _ = runtime_settings;
+    true
 }
 
 fn private_particle_packed_mode_code(color_facing_attenuation_strength: f32) -> f32 {

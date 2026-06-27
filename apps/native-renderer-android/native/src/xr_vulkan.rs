@@ -2097,17 +2097,17 @@ unsafe fn run_projection_frames(
             private_particle_world_anchor
                 .capture_startup_if_needed(particle_sort_eye_projection, frame_count);
             if let Some(recenter) =
-                crate::native_renderer_stimulus_panel::poll_kuramoto_experiment_icosphere_recenter(
+                crate::native_renderer_stimulus_panel::poll_spatial_camera_panel_session_icosphere_recenter(
                     frame_count,
                 )
             {
                 private_particle_world_anchor.recenter_at_headset(
                     particle_sort_eye_projection,
                     frame_count,
-                    "kuramoto-experiment-icosphere-block-start",
+                    "spatial-camera-panel-session-icosphere-block-start",
                 );
                 crate::marker(
-                    "kuramoto-experiment",
+                    "driver-profile-session",
                     format!(
                         "status=icosphere-recenter-applied frame={} blockIndex={} blockNumber={} conditionId={} surfaceTargetId={} anchor=headset-position",
                         frame_count,
@@ -2121,15 +2121,15 @@ unsafe fn run_projection_frames(
         }
         control_panel_command_poller.poll_and_apply(app, frame_count);
         if let Some(open) =
-            crate::native_renderer_stimulus_panel::poll_kuramoto_experiment_panel_open(frame_count)
+            crate::native_renderer_stimulus_panel::poll_spatial_camera_panel_open(frame_count)
         {
             crate::native_renderer_panel_bridge::open_control_panel(
                 app,
                 frame_count,
-                "kuramoto-experiment-block-complete",
+                "spatial-camera-panel-session-block-complete",
             );
             crate::marker(
-                "kuramoto-experiment",
+                "driver-profile-session",
                 format!(
                     "status=block-panel-open-issued frame={} blockIndex={} blockNumber={} conditionId={} surfaceTargetId={} deadlineUnixMs={}",
                     frame_count,
