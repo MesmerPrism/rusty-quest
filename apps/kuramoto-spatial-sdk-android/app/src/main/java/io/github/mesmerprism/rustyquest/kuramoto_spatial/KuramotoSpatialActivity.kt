@@ -1139,7 +1139,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
             "widthPx=$CAMERA_HWB_PROBE_WIDTH_PX heightPx=$CAMERA_HWB_PROBE_HEIGHT_PX " +
             "requestedFrames=$frameCount holdMs=$holdMs readerMaxImages=$readerMaxImages " +
             "cameraPreference=50-then-51 carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
-            "outputMode=luma-checker privateShaderStack=false morphovisionStack=false"
+            "outputMode=luma-checker privateShaderStack=false customProjectionStack=false"
     )
     Handler(Looper.getMainLooper()).post { runCameraHwbProbe(holdMs, frameCount, readerMaxImages) }
   }
@@ -1242,7 +1242,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
             "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
             "nativeStartRequested=true startMask=$startMask requestedFrames=$frameCount " +
             "readerMaxImages=$readerMaxImages holdMs=$holdMs " +
-            "carrier=scenequadlayer-createAsAndroid-vulkan-wsi privateShaderStack=false morphovisionStack=false"
+            "carrier=scenequadlayer-createAsAndroid-vulkan-wsi privateShaderStack=false customProjectionStack=false"
     )
     Handler(Looper.getMainLooper())
         .postDelayed(
@@ -1289,7 +1289,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
             "sampledLeftCameraTexture=true sampledRightCameraTexture=true monoDuplicated=false " +
             "sampledCameraTextureSource=native-camera-hwb-pending-first-frame " +
             "privateShaderStack=false " +
-            "morphovisionStack=false"
+            "customProjectionStack=false"
     )
     Handler(Looper.getMainLooper()).post { runCameraHwbProjectionProbe(readerMaxImages) }
   }
@@ -1406,7 +1406,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
             "outputMode=raw-color-target-rect sampledCameraTexture=see-native-logcat " +
             "sampledLeftCameraTexture=see-native-logcat sampledRightCameraTexture=see-native-logcat " +
             "monoDuplicated=false " +
-            "privateShaderStack=false morphovisionStack=false runtimeCrash=false"
+            "privateShaderStack=false customProjectionStack=false runtimeCrash=false"
     )
     updateCameraHwbProjectionFromViewer(reason = "raw-projection-start", forceLog = true)
   }
@@ -2056,7 +2056,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
                     "sampledLeftCameraTexture=true sampledRightCameraTexture=true monoDuplicated=false " +
                     "sampledCameraTextureSource=native-camera-hwb-pending-first-frame " +
                     "privateShaderStack=false " +
-                    "morphovisionStack=false runtimeCrash=false"
+                    "customProjectionStack=false runtimeCrash=false"
             )
             true
           }
@@ -2276,7 +2276,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
         "channel=external-xr-swapchain-wrap-probe status=start externalSwapchainProbe=true " +
             "reason=${markerToken(reason)} cycles=$cycles cycleMs=$cycleMs " +
             "debugProperty=$EXTERNAL_SWAPCHAIN_PROBE_PROPERTY rendererAuthority=spatial-sdk-openxr-session " +
-            "nativeFrameLoop=false morphovisionStack=false camera2Stack=false privateShaderStack=false"
+            "nativeFrameLoop=false customProjectionStack=false camera2Stack=false privateShaderStack=false"
     )
     Handler(Looper.getMainLooper()).post { runExternalSwapchainProbeCycle(1, cycles, cycleMs) }
   }
@@ -3373,7 +3373,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
             "outputMode=raw-color-target-rect sampledCameraTexture=see-native-logcat " +
             "sampledLeftCameraTexture=see-native-logcat sampledRightCameraTexture=see-native-logcat " +
             "monoDuplicated=false " +
-            "privateShaderStack=false morphovisionStack=false runtimeCrash=false"
+            "privateShaderStack=false customProjectionStack=false runtimeCrash=false"
     )
   }
 

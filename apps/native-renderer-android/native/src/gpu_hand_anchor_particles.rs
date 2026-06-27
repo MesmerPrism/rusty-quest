@@ -43,10 +43,10 @@ const PARTICLE_OUTPUT_ROW_BYTES: vk::DeviceSize =
 const PARTICLE_SORT_ROW_BYTES: vk::DeviceSize = mem::size_of::<[u32; 4]>() as vk::DeviceSize;
 const KURAMOTO_DEFAULT_DRIVER_VALUES01: [f32; 8] = [0.25, 0.15, 0.5, 0.0, 0.5, 0.5, 0.0, 0.0];
 const KURAMOTO_PROFILE_IDS: [&str; 4] = [
-    "kuramoto.private.native.profile.low-energy-low-coherence.movement-only.v1",
-    "kuramoto.private.native.profile.high-energy-low-coherence.movement-only.v1",
-    "kuramoto.private.native.profile.low-energy-high-coherence.movement-only.v1",
-    "kuramoto.private.native.profile.high-energy-high-coherence.movement-only.v1",
+    "rusty.quest.kuramoto_spatial.condition.low-energy-low-coherence.movement-only.v1",
+    "rusty.quest.kuramoto_spatial.condition.high-energy-low-coherence.movement-only.v1",
+    "rusty.quest.kuramoto_spatial.condition.low-energy-high-coherence.movement-only.v1",
+    "rusty.quest.kuramoto_spatial.condition.high-energy-high-coherence.movement-only.v1",
 ];
 const KURAMOTO_SURFACE_TARGET_IDS: [&str; 3] = ["real-hands", "gpu-replay-hands", "icosphere"];
 

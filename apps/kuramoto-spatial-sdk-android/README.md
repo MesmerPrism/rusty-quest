@@ -104,8 +104,8 @@ Native surface particle/hand layer:
   resident bind mesh, then projects barycentric mesh-surface particle anchors
   onto the Spatial SDK panel plane. This preserves the native study's
   surface-normal movement model instead of clustering particles around joints;
-- applies the `lche` study condition as a visible shader dynamics slice:
-  `kuramoto.private.native.profile.high-energy-low-coherence.movement-only.v1`,
+- applies the `lche` validation condition as a visible shader dynamics slice:
+  `rusty.quest.kuramoto_spatial.condition.high-energy-low-coherence.movement-only.v1`,
   `movementBaseHz=0.88`, `movementCoupling=0.0`, frequency-spread/noise
   modulation, and explicit `studyProfileDynamicsActive=true` markers. The full
   private Kuramoto compute payload is still separate;
@@ -234,7 +234,7 @@ Native surface particle/hand layer:
   `particleDiagnosticModeName`,
   `privateKuramotoPayloadActive=false`, `studyProfileDynamicsActive=true`,
   `kuramotoConditionId=lche`,
-  `kuramotoStudyProfileId=kuramoto.private.native.profile.high-energy-low-coherence.movement-only.v1`,
+  `kuramotoStudyProfileId=rusty.quest.kuramoto_spatial.condition.high-energy-low-coherence.movement-only.v1`,
   `kuramotoMovementBaseHz=0.88`, `kuramotoMovementCoupling=0.0`,
   `properStereoStudyParticles=true`,
   `replayStereoProjection=per-eye-spatial-sdk-panel-plane-ray-intersection`,
@@ -363,7 +363,7 @@ SDK-owned manual `SceneQuadLayer` probes:
   AHB descriptor bindings `0` and `1`, and switches the native shader to
   `outputMode=raw-color-target-rect`. The large borderless `1.44m x 1.44m`
   quad stays continuously locked at `0.72m` in front of `scene.getViewerPose()`,
-  but the camera image is clipped to the native Morphovision target-local
+  but the camera image is clipped to the native target-rect projection
   effective rects rather than filling the whole carrier.
 - 2026-06-26 Quest 3S result:
   `local-artifacts/kuramoto-spatial-sdk-headset/20260626-104001-raw-camera-projection-probe`
@@ -391,14 +391,14 @@ SDK-owned manual `SceneQuadLayer` probes:
   SDK-owned and exposed as an Android `Surface`. It now covers Canvas,
   native Vulkan WSI, programmatic stereo/alpha checks, PanelSurface surface
   variants, a Camera2/HWB-to-Vulkan sampled diagnostic, and a raw-color
-  Morphovision-sized viewer-locked projection carrier whose visible pixels are
+  custom-projection-sized viewer-locked projection carrier whose visible pixels are
   target-rect clipped in source. Raw external `XrSwapchain` wrapping should
   remain blocked unless Meta documents a different contract.
 
 Build:
 
 ```powershell
-& 'S:\Work\tools\Quest\Use-QuestTooling.ps1'
+# Ensure Android SDK, JDK, NDK, and Quest OpenXR loader environment variables are set first.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-KuramotoSpatialSdkAndroid.ps1 -RepoRoot .
 ```
 

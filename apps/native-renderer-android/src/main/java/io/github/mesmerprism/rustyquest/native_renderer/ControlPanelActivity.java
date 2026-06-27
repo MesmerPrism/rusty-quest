@@ -214,10 +214,10 @@ public final class ControlPanelActivity extends Activity {
         "High energy / high coherence"
     };
     private static final String[] KURAMOTO_PROFILE_IDS = new String[] {
-        "kuramoto.private.native.profile.low-energy-low-coherence.movement-only.v1",
-        "kuramoto.private.native.profile.high-energy-low-coherence.movement-only.v1",
-        "kuramoto.private.native.profile.low-energy-high-coherence.movement-only.v1",
-        "kuramoto.private.native.profile.high-energy-high-coherence.movement-only.v1"
+        "rusty.quest.kuramoto_spatial.condition.low-energy-low-coherence.movement-only.v1",
+        "rusty.quest.kuramoto_spatial.condition.high-energy-low-coherence.movement-only.v1",
+        "rusty.quest.kuramoto_spatial.condition.low-energy-high-coherence.movement-only.v1",
+        "rusty.quest.kuramoto_spatial.condition.high-energy-high-coherence.movement-only.v1"
     };
     private static final double[] KURAMOTO_MOVEMENT_BASE_HZ = new double[] {
         0.44,
@@ -244,9 +244,9 @@ public final class ControlPanelActivity extends Activity {
         0.004
     };
     private static final String KURAMOTO_PROFILE_SET_ID =
-        "kuramoto.private.native.browser-quadrants.left.1024.recorded-gpu.v1";
+        "rusty.quest.kuramoto_spatial.condition_set.browser-quadrants-left-1024-recorded-gpu.v1";
     private static final String KURAMOTO_DEFAULT_PROFILE_ID =
-        "kuramoto.private.native.profile.low-energy-low-coherence.movement-only.v1";
+        "rusty.quest.kuramoto_spatial.condition.low-energy-low-coherence.movement-only.v1";
     private static final String[] PRIVATE_PARTICLE_CONFIG_PAGE_LABELS = new String[] {
         "Dynamics",
         "Visuals",

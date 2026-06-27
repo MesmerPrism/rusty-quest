@@ -1014,7 +1014,7 @@ Assert-ContainsTokens $buildScript @(
     'privateKuramotoPayloadActive=false',
     'studyProfileDynamicsActive=true',
     'kuramotoConditionId=lche',
-    'kuramotoStudyProfileId=kuramoto.private.native.profile.high-energy-low-coherence.movement-only.v1',
+    'kuramotoStudyProfileId=rusty.quest.kuramoto_spatial.condition.high-energy-low-coherence.movement-only.v1',
     'kuramotoMovementBaseHz=0.88',
     'kuramotoMovementCoupling=0.0',
     'properStereoStudyParticles=true',

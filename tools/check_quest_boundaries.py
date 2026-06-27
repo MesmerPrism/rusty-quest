@@ -6,6 +6,9 @@ FORBIDDEN = (
     "/rustyxr/v1",
     "rusty-xr/android-libstd-packaging",
     "MesmerPrism/Rusty-XR",
+    "S:\\Work\\tmp\\",
+    "S:/Work/tmp/",
+    "Rusty-Symmetric-Morphovision",
 )
 
 SCAN_SUFFIXES = {".java", ".json", ".md", ".ps1", ".rs", ".toml", ".xml"}

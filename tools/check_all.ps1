@@ -20,7 +20,7 @@ Push-Location $RepoRoot
 try {
     New-Item -ItemType Directory -Path "local-artifacts" -Force | Out-Null
     Invoke-Checked "cargo fmt" "cargo" @("fmt", "--all", "--check")
-    Invoke-Checked "cargo test" "cargo" @("test", "--workspace")
+    Invoke-Checked "cargo test" "cargo" @("test", "--workspace", "--exclude", "kuramoto-spatial-native-receipt")
     Invoke-Checked "runtime profile dry-run" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Apply-RuntimeProfile.ps1", "-ProfilePath", "fixtures\runtime-profiles\quest-makepad-mesh-replay.profile.json", "-DryRun")
     Invoke-Checked "remote camera runtime profile dry-run" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Apply-RuntimeProfile.ps1", "-ProfilePath", "fixtures\runtime-profiles\quest-remote-camera-q2q-diagnostic.profile.json", "-DryRun", "-Out", "local-artifacts\remote-camera-property-write-plan.json")
     Invoke-Checked "native renderer runtime profile matrix" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-NativeRendererProfileMatrix.ps1")

@@ -158,8 +158,8 @@ if ([string]::IsNullOrWhiteSpace($Serial)) {
 }
 
 if ([string]::IsNullOrWhiteSpace($AdbPath)) {
-    if (-not [string]::IsNullOrWhiteSpace($env:RUSTY_XR_ADB)) {
-        $AdbPath = $env:RUSTY_XR_ADB
+    if (-not [string]::IsNullOrWhiteSpace($env:RUSTY_QUEST_ADB)) {
+        $AdbPath = $env:RUSTY_QUEST_ADB
     } elseif (-not [string]::IsNullOrWhiteSpace($env:ANDROID_HOME)) {
         $AdbPath = Join-Path $env:ANDROID_HOME "platform-tools\adb.exe"
     } else {

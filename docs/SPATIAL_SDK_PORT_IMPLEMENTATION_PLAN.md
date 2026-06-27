@@ -826,9 +826,8 @@ Community/context, not treated as API contract:
   accepts `normal`, `triangle-bands`, `projection-clamp`, `no-dynamics`, and
   `degenerate`, with `tools/Set-KuramotoSpatialParticleDiagnosticMode.ps1`
   wrapping the serial-scoped `adb setprop`/`getprop` readback.
-- 2026-06-25 live skinning/depth hotload headset run: rebuilt with the full
-  two-hand recorded capture at
-  `S:\Work\tmp\quest-handmesh-matter-full-20260601-123844\pulled\hand-recordings\quest-handmesh-1780310333778406776`
+- 2026-06-25 live skinning/depth hotload headset run: rebuilt with a local
+  full two-hand recorded capture directory supplied at build time
   and `RecordedHandFrameLimit=24`, installed on Quest 3S serial
   `3487C10H3M017Q`, set
   `debug.rustyquest.kuramoto_spatial.live_hand_depth_offset_meters=0.72`, and
@@ -1076,9 +1075,8 @@ Community/context, not treated as API contract:
   `liveMeshWristCapPolicy=drop-component-rank-2`, and per-hand source/sampling
   triangle counts; the expected full capture counts are 2314 source triangles,
   2296 sampling triangles, and 18 dropped wrist-cap triangles per hand.
-- 2026-06-25 wrist-component filter headset validation: rebuilt with the full
-  two-hand recorded capture at
-  `S:\Work\tmp\quest-handmesh-matter-full-20260601-123844\pulled\hand-recordings\quest-handmesh-1780310333778406776`
+- 2026-06-25 wrist-component filter headset validation: rebuilt with a local
+  full two-hand recorded capture directory supplied at build time
   and `RecordedHandFrameLimit=24`, installed on Quest 3S serial
   `3487C10H3M017Q`, and left foregrounded in `triangle-bands` diagnostic mode
   with target distance `0.35m` and live hand depth offset `0.0m`. Evidence
@@ -1207,9 +1205,8 @@ Community/context, not treated as API contract:
   origin (`z=2.0`). The default visible workflow panel now starts at
   `z=0.15m` instead of `z=-1.7m`; the focused/open pose uses
   `0.0;1.1;0.475m` instead of `0.0;1.1;-1.05m`; and the compact launcher uses
-  `z=0.525m` instead of `z=-0.95m`. The APK was rebuilt with the previously
-  validated recorded Quest hand capture at
-  `S:\Work\tmp\quest-handmesh-matter-full-20260601-123844\pulled\hand-recordings\quest-handmesh-1780310333778406776`
+  `z=0.525m` instead of `z=-0.95m`. The APK was rebuilt with a local recorded
+  Quest hand capture directory supplied at build time
   and `RecordedHandFrameLimit=24`, then installed and launched normally on
   Quest serial `3487C10H3M017Q`. Evidence directory:
   `local-artifacts/kuramoto-spatial-sdk-headset/20260625-224134-closer-panel-recorded-hands-launch`.
@@ -1405,7 +1402,7 @@ Community/context, not treated as API contract:
   `first-camera-frame-presented`, and `complete framesPresented=300
   requestedFrames=300`. This proves the Spatial SDK-owned carrier can host the
   native Camera2/HWB-to-Vulkan path for a diagnostic sampled pass without the
-  private Morphovision shader stack.
+  private downstream shader stack.
 - 2026-06-26 raw Camera2/HWB projection probe: added
   `debug.rustyquest.spatial.camera_hwb_projection_probe` as the next slice on
   the proven carrier. The probe keeps
@@ -1426,7 +1423,7 @@ Community/context, not treated as API contract:
   `surfaceOverscanScale=1.0`, `projectionTarget=full-eye`,
   `borderOpacity=0.0`, `outputMode=raw-color`,
   `sampledCameraTexture=true`, `privateShaderStack=false`,
-  `morphovisionStack=false`, and `runtimeCrash=false`.
+  `customProjectionStack=false`, and `runtimeCrash=false`.
 - Current source state changes that probe from the mono/full-surface baseline
   to native target-local raster semantics: camera `50` is bound as the left
   sampled AHB texture, camera `51` as the right sampled AHB texture, descriptor
@@ -1481,9 +1478,8 @@ Community/context, not treated as API contract:
   questionnaire, and app-private session JSON/JSONL evidence present, including
   the empty ECG event file captured as a file-presence artifact. Failure marker
   counts were zero for `AndroidRuntime`, `FATAL`, and `render-failed`.
-- 2026-06-25 live hand raw-to-scene transform headset run: rebuilt with the
-  full two-hand recorded capture at
-  `S:\Work\tmp\quest-handmesh-matter-full-20260601-123844\pulled\hand-recordings\quest-handmesh-1780310333778406776`
+- 2026-06-25 live hand raw-to-scene transform headset run: rebuilt with a local
+  full two-hand recorded capture directory supplied at build time
   and `RecordedHandFrameLimit=24`, installed on Quest 3S serial
   `3487C10H3M017Q`, set
   `debug.rustyquest.kuramoto_spatial.live_hand_scene.offset_z_m=2`,
@@ -1505,8 +1501,8 @@ Community/context, not treated as API contract:
   and the app-private marker logs had zero `AndroidRuntime`/fatal crash lines.
   The app was left foregrounded for headset visual inspection.
 - 2026-06-25 study-profile dynamics slice: the Spatial surface hand-particle
-  shader now applies the concrete `lche` study condition,
-  `kuramoto.private.native.profile.high-energy-low-coherence.movement-only.v1`,
+  shader now applies the concrete `lche` validation condition,
+  `rusty.quest.kuramoto_spatial.condition.high-energy-low-coherence.movement-only.v1`,
   with `kuramotoMovementBaseHz=0.88`, `kuramotoMovementCoupling=0.0`, high
   frequency spread, and noise/size/phase modulation. Markers report
   `studyProfileDynamicsActive=true` while still keeping
@@ -1537,8 +1533,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-KuramotoSpatial
 Build gate:
 
 ```powershell
-# Activate the repo-family Quest/Android tooling for this machine first.
-& 'S:\Work\tools\Quest\Use-QuestTooling.ps1'
+# Ensure Android SDK, JDK, NDK, and Quest OpenXR loader environment variables are set first.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-KuramotoSpatialSdkAndroid.ps1 -RepoRoot .
 ```
 
@@ -1808,15 +1803,16 @@ Important files in that directory:
   target.
 - 2026-06-26 probe answer: the SDK-owned
   `SceneSwapchain.createAsAndroid(...).getSurface()` carrier preserves the
-  first native Morphovision camera risk path:
+  first native camera-risk path from the custom projection stack:
   `Camera2 50 -> AImageReader/AHardwareBuffer -> Vulkan AHB import ->
   external-format YCbCr sampled image -> luma/checker final SDK surface`. The
   pass marker is
   `channel=camera-hwb-spatial-probe status=first-camera-frame-presented`
   with `sampledCameraTexture=true`, `samplerMode=external-format-ycbcr`, and
-  `privateShaderStack=false morphovisionStack=false`.
+  `privateShaderStack=false customProjectionStack=false`.
 - 2026-06-26 follow-up answer: the same SDK-owned carrier also supports an
-  unbounded raw-color projection loop on a Morphovision-sized, viewer-locked
+  unbounded raw-color projection loop on a custom-projection-sized,
+  viewer-locked
   `SceneQuadLayer`: `2048x1024` packed surface, `StereoMode.LeftRight`, target
   distance `0.72m`, target tangents `-1.0;1.0;-1.0;1.0`, footprint
   `1.44m x 1.44m`, overscan `1.0`, border opacity `0.0`, and

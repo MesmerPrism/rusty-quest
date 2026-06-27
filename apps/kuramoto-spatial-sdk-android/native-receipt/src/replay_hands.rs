@@ -24,7 +24,7 @@ const KURAMOTO_STUDY_PARTICLE_RADIUS_METERS: f32 = 0.0065;
 const PARTICLE_VERTICES_PER_INSTANCE: u32 = 6;
 const KURAMOTO_STUDY_CONDITION_ID: &str = "lche";
 const KURAMOTO_STUDY_PROFILE_ID: &str =
-    "kuramoto.private.native.profile.high-energy-low-coherence.movement-only.v1";
+    "rusty.quest.kuramoto_spatial.condition.high-energy-low-coherence.movement-only.v1";
 const KURAMOTO_STUDY_DYNAMICS_MODE: &str = "movement-only-high-energy-low-coherence";
 const KURAMOTO_STUDY_MOVEMENT_BASE_HZ: f32 = 0.88;
 const KURAMOTO_STUDY_MOVEMENT_COUPLING: f32 = 0.0;
