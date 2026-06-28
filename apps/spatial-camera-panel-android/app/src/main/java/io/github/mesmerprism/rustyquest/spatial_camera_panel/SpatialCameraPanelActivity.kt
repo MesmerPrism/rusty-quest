@@ -87,6 +87,7 @@ import com.meta.spatial.runtime.SceneQuadLayer
 import com.meta.spatial.runtime.SceneSwapchain
 import com.meta.spatial.runtime.StereoMode
 import com.meta.spatial.toolkit.AppSystemActivity
+import com.meta.spatial.toolkit.AvatarBody
 import com.meta.spatial.toolkit.AvatarSystem
 import com.meta.spatial.toolkit.Controller
 import com.meta.spatial.toolkit.ControllerType
@@ -105,7 +106,9 @@ import com.meta.spatial.toolkit.UIPanelSettings
 import com.meta.spatial.toolkit.Visible
 import com.meta.spatial.toolkit.VideoSurfacePanelRegistration
 import com.meta.spatial.toolkit.createPanelEntity
+import com.meta.spatial.vr.LocomotionControls
 import com.meta.spatial.vr.VRFeature
+import com.meta.spatial.vr.VrInputSystemType
 import java.io.File
 import java.util.Locale
 import kotlin.math.abs
@@ -120,6 +123,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
   private var nativeReceiptLibraryLoaded = false
   private var nativeReceiptLibraryError = "not-loaded"
+  private var nativeSpatialControllerActionsStarted = false
+  private var nativeSpatialControllerActionsStartMask = 0L
+  private var spatialMultimodalInputRequested = false
+  private var spatialMultimodalInputRequestMask = 0L
   private var panelEntity: Entity? = null
   private var panelLauncherEntity: Entity? = null
   private var panelPlacement = PanelPlacement()
@@ -130,6 +137,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var particleSurfaceConsumerCalled = false
   private var particleSurfaceConsumerSurfaceValid = false
   private var particleLayerStarted = false
+  private var cameraStackSuppressesParticles = false
   private var nativeSurfaceStartRequested = false
   private var lastNativeSurfaceStartMask = 0L
   private var particleLayerProjectionMarkerCount = 0
@@ -147,6 +155,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var lastSpatialControllerRouteMarkerMs = 0L
   private var lastSpatialControllerComponentCount = -1
   private var lastSpatialControllerActiveCount = -1
+  private var lastSpatialControllerControllerTypeCount = -1
+  private var lastSpatialControllerAllButtonState = -1
+  private val pinnedSpatialGameControllerIds = mutableSetOf<Int>()
+  private var lastSpatialInputRouteMarkerMs = 0L
   private var androidControllerPrimaryKeyDown = false
   private var androidControllerPrimaryMotionDown = false
   private var externalSwapchainProbeStarted = false
@@ -164,8 +176,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var cameraHwbProbeStarted = false
   private var cameraHwbProjectionProbeStarted = false
   private var cameraHwbProjectionEntity: Entity? = null
+  private var cameraHwbProjectionStereoHorizontalOffsetUv =
+      CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV
   private var cameraHwbProjectionMarkerCount = 0
   private var lastCameraHwbProjectionMarkerMs = 0L
+  private var lastCameraHwbProjectionStereoOffsetJoystickMs = 0L
+  private var lastCameraHwbProjectionStereoOffsetJoystickMarkerMs = 0L
   private var sdkQuadSurfaceProbeLayer: SceneQuadLayer? = null
   private var sdkQuadSurfaceProbeSceneObject: SceneObject? = null
   private var sdkQuadSurfaceProbeSwapchain: SceneSwapchain? = null
@@ -173,10 +189,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var sdkQuadSurfaceProbeAnchorMesh: SceneMesh? = null
   private var sdkQuadSurfaceProbeAnchorMaterial: SceneMaterial? = null
 
+  override fun registerRequiredOpenXRExtensions(): List<String> {
+    return (super.registerRequiredOpenXRExtensions() +
+            spatialMultimodalRequiredOpenXrExtensions())
+        .distinct()
+  }
+
   override fun registerFeatures(): List<SpatialFeature> {
     return listOf(
-        VRFeature(this),
+        VRFeature(
+            this,
+            LocomotionControls.Right,
+            currentSpatialShouldConsumeLeftRightInput(),
+            currentSpatialVrInputSystemType(),
+        ),
         SpatialAvatarHandVisualFeature(::marker),
+        SpatialControllerInputLateFeature(::pollSpatialControllerInput),
         ComposeFeature(),
     )
   }
@@ -184,6 +212,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     loadNativeReceiptLibrary()
+    suppressParticleLayerIfCameraProjectionRequested("activity-created")
     if (shouldResetExperimentForPanelFirstLaunch(intent)) {
       store.resetForNewParticipant()
       marker(
@@ -194,7 +223,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     marker(
         "channel=activity status=created package=io.github.mesmerprism.rustyquest.spatial_camera_panel " +
-            "highRateJsonPayload=false hand_rendering_expected=true nativeSurfaceParticleLayerExpected=true " +
+            "highRateJsonPayload=false hand_rendering_expected=false controller_rendering_expected=true " +
+            "spatialPointerInputExpected=true nativeSurfaceParticleLayerExpected=true " +
+            "spatialVrInputSystem=${currentSpatialVrInputSystemToken()} " +
+            "spatialVrInputSystemProperty=$SPATIAL_VR_INPUT_SYSTEM_PROPERTY " +
+            "spatialShouldConsumeLeftRightInput=${currentSpatialShouldConsumeLeftRightInput()} " +
+            "spatialShouldConsumeLeftRightInputProperty=$SPATIAL_SHOULD_CONSUME_LEFT_RIGHT_INPUT_PROPERTY " +
+            "spatialMultimodalInputProperty=$SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY " +
+            "nativeSpatialControllerActionsProperty=$NATIVE_SPATIAL_CONTROLLER_ACTIONS_ENABLED_PROPERTY " +
+            "nativeSpatialControllerActionsDefaultEnabled=$NATIVE_SPATIAL_CONTROLLER_ACTIONS_DEFAULT_ENABLED " +
+            "spatialControllerOnlyMode=false spatialHandsAndControllersManifest=true " +
+            "spatialRequiredOpenXrExtensions=${spatialMultimodalRequiredOpenXrExtensionMarker()} " +
             "spatialSdkLaneBoundaries=${SpatialSdkLaneBoundaries.summaryToken()}"
     )
     scheduleParticleLayerLifecycleDiagnostics("activity-created")
@@ -207,6 +246,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   override fun onNewIntent(intent: Intent) {
     super.onNewIntent(intent)
     setIntent(intent)
+    suppressParticleLayerIfCameraProjectionRequested("new-intent")
     runValidationWorkflowIfRequested(intent)
     runPolarLiveValidationIfRequested(intent)
     runUiCommandIfRequested(intent)
@@ -224,6 +264,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     super.onSceneReady()
     scene.setReferenceSpace(ReferenceSpace.LOCAL_FLOOR)
     scene.setViewOrigin(0.0f, 0.0f, 2.0f, 180.0f)
+    enableSpatialControllerInputRoute("scene-ready", forceLog = true)
     panelEntity =
         Entity.createPanelEntity(
             R.id.spatial_camera_panel,
@@ -244,7 +285,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   R.id.spatial_camera_surface_panel,
                   Transform(particleLayerPose()),
                   particleLayerSurfacePanelDimensions(),
-                  Visible(true),
+                  Visible(particleLayerVisibleForPanelMode()),
               )
             }
             .getOrElse { throwable ->
@@ -287,6 +328,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onVRReady() {
     super.onVRReady()
+    enableSpatialControllerInputRoute("vr-ready", forceLog = true)
     updateWorkflowPanelHeadlockFromViewer(reason = "vr-ready", forceLog = true)
     updateParticleLayerProjectionFromViewer(reason = "vr-ready", forceLog = true)
     logNativeInteropProbe(phase = "vr-ready", probeSurface = true)
@@ -304,11 +346,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     updateWorkflowPanelHeadlockFromViewer(reason = "scene-tick", forceLog = false)
     updateParticleLayerProjectionFromViewer(reason = "scene-tick", forceLog = false)
     updateCameraHwbProjectionFromViewer(reason = "scene-tick", forceLog = false)
-    pollSpatialControllerPrimaryButton()
+    enableSpatialControllerInputRoute("scene-tick", forceLog = false)
+    pollNativeSpatialControllerStereoHorizontalOffsetInput()
   }
 
   override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
     if (handleControllerPrimaryButton(event)) {
+      return true
+    }
+    if (applyCameraHwbProjectionStereoHorizontalOffsetJoystickInput(event)) {
       return true
     }
     if (applyPanelHeadlockJoystickInput(event)) {
@@ -319,6 +365,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onDestroy() {
     if (nativeReceiptLibraryLoaded) {
+      runCatching { nativeStopSpatialControllerActions() }
       runCatching { nativeStopSdkQuadVulkanProbe() }
       runCatching { nativeStopCameraHwbProbe() }
     }
@@ -559,6 +606,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "nativeReceiptVkObjectsDestroyed=${nativeReceipt.vkObjectsDestroyed} " +
             "nativeReceiptSurfaceValid=${nativeReceipt.surfaceValid} error=${markerToken(nativeReceipt.error)}"
     )
+    requestSpatialMultimodalInputIfReady(probe, phase)
+    startNativeSpatialControllerActionsIfReady(probe, phase)
   }
 
   private fun loadNativeReceiptLibrary() {
@@ -648,8 +697,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               error = "none",
           )
         }
-        .getOrElse { throwable ->
-          NativeInteropReceiptResult(
+            .getOrElse { throwable ->
+              NativeInteropReceiptResult(
               status = "call-failed",
               mask = 0L,
               openXrInstanceHandleNonZero = false,
@@ -699,6 +748,68 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         .also {
           panelSurface?.destroy()
         }
+  }
+
+  private fun requestSpatialMultimodalInputIfReady(
+      probe: SpatialNativeInteropProbe,
+      phase: String,
+  ) {
+    if (spatialMultimodalInputRequested || !nativeReceiptLibraryLoaded) {
+      return
+    }
+    val enabled = spatialMultimodalInputEnabled()
+    if (!enabled) {
+      spatialMultimodalInputRequested = true
+      marker(
+          "channel=spatial-multimodal-input status=disabled-by-property phase=$phase " +
+              "spatialMultimodalInputRequest=false " +
+              "spatialRequiredOpenXrExtensions=none " +
+              "property=$SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY"
+      )
+      return
+    }
+    if (
+        !probe.openXrInstanceHandleNonZero ||
+            !probe.openXrSessionHandleNonZero ||
+            !probe.openXrGetInstanceProcAddrHandleNonZero
+    ) {
+      marker(
+          "channel=spatial-multimodal-input status=request-deferred phase=$phase " +
+              "spatialMultimodalInputRequest=true openXrHandlesReady=false " +
+              "spatialRequiredOpenXrExtensions=${spatialMultimodalRequiredOpenXrExtensionMarker()}"
+      )
+      return
+    }
+    val requestMask =
+        runCatching {
+              nativeRequestSpatialMultimodalInput(
+                  probe.openXrInstanceHandle,
+                  probe.openXrSessionHandle,
+                  probe.openXrGetInstanceProcAddrHandle,
+              )
+            }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=spatial-multimodal-input status=request-error phase=$phase " +
+                      "spatialMultimodalInputRequest=true " +
+                      "spatialRequiredOpenXrExtensions=${spatialMultimodalRequiredOpenXrExtensionMarker()} " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")}"
+              )
+              0L
+            }
+    spatialMultimodalInputRequested = true
+    spatialMultimodalInputRequestMask = requestMask
+    marker(
+        "channel=spatial-multimodal-input status=request-result phase=$phase " +
+            "spatialMultimodalInputRequest=true requestMask=$requestMask " +
+            "supportsSimultaneousHandsAndControllers=${requestMask.hasReceiptBit(SPATIAL_MULTIMODAL_INPUT_SUPPORTED_BIT)} " +
+            "resumeFunctionResolved=${requestMask.hasReceiptBit(SPATIAL_MULTIMODAL_INPUT_RESUME_RESOLVED_BIT)} " +
+            "resumeSucceeded=${requestMask.hasReceiptBit(SPATIAL_MULTIMODAL_INPUT_RESUME_SUCCEEDED_BIT)} " +
+            "inputOwnership=spatial-sdk-interaction-sdk " +
+            "spatialRequiredOpenXrExtensions=${spatialMultimodalRequiredOpenXrExtensionMarker()} " +
+            "property=$SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY"
+    )
   }
 
   private fun runSdkQuadSurfaceProbeIfRequested(reason: String) {
@@ -946,6 +1057,61 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
   }
 
+  private fun startNativeSpatialControllerActionsIfReady(
+      probe: SpatialNativeInteropProbe,
+      phase: String,
+  ) {
+    if (!nativeSpatialControllerActionsEnabled()) {
+      marker(
+          "channel=spatial-controller-actions status=disabled-by-property phase=$phase " +
+              "nativeControllerActionBridge=false property=$NATIVE_SPATIAL_CONTROLLER_ACTIONS_ENABLED_PROPERTY " +
+              "reason=spatial-sdk-vrfeature-owns-openxr-action-sets"
+      )
+      return
+    }
+    if (nativeSpatialControllerActionsStarted || !nativeReceiptLibraryLoaded) {
+      return
+    }
+    if (
+        !probe.openXrInstanceHandleNonZero ||
+            !probe.openXrSessionHandleNonZero ||
+            !probe.openXrGetInstanceProcAddrHandleNonZero
+    ) {
+      marker(
+          "channel=spatial-controller-actions status=start-deferred phase=$phase " +
+              "nativeControllerActionBridge=true openXrHandlesReady=false"
+      )
+      return
+    }
+    val startMask =
+        runCatching {
+              nativeStartSpatialControllerActions(
+                  probe.openXrInstanceHandle,
+                  probe.openXrSessionHandle,
+                  probe.openXrGetInstanceProcAddrHandle,
+              )
+            }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=spatial-controller-actions status=start-error phase=$phase " +
+                      "nativeControllerActionBridge=true error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} " +
+                      "actionSetAttached=false"
+              )
+              0L
+            }
+    nativeSpatialControllerActionsStartMask = startMask
+    nativeSpatialControllerActionsStarted =
+        startMask.hasReceiptBit(NATIVE_SPATIAL_CONTROLLER_ACTION_SET_ATTACHED_BIT)
+    marker(
+        "channel=spatial-controller-actions status=start-result phase=$phase " +
+            "nativeControllerActionBridge=true startMask=$startMask " +
+            "actionSetAttached=$nativeSpatialControllerActionsStarted " +
+            "leftThumbstickYAction=$nativeSpatialControllerActionsStarted " +
+            "leftControllerThumbstickY=/user/hand/left/input/thumbstick/y"
+    )
+  }
+
   private fun runPanelSurfaceMatrixProbeVariant(
       variantIndex: Int,
       useSwapchain: Boolean,
@@ -1129,7 +1295,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "widthPx=$CAMERA_HWB_PROBE_WIDTH_PX heightPx=$CAMERA_HWB_PROBE_HEIGHT_PX " +
             "requestedFrames=$frameCount holdMs=$holdMs readerMaxImages=$readerMaxImages " +
             "cameraPreference=50-then-51 carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
-            "outputMode=luma-checker privateShaderStack=false customProjectionStack=false"
+            "outputMode=luma-checker ${SpatialPublicMultiStack.inactiveMarkerFields()} " +
+            "privateShaderStack=false customProjectionStack=false"
     )
     Handler(Looper.getMainLooper()).post { runCameraHwbProbe(holdMs, frameCount, readerMaxImages) }
   }
@@ -1232,7 +1399,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
             "nativeStartRequested=true startMask=$startMask requestedFrames=$frameCount " +
             "readerMaxImages=$readerMaxImages holdMs=$holdMs " +
-            "carrier=scenequadlayer-createAsAndroid-vulkan-wsi privateShaderStack=false customProjectionStack=false"
+            "carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+            "${SpatialPublicMultiStack.inactiveMarkerFields()} " +
+            "privateShaderStack=false customProjectionStack=false"
     )
     Handler(Looper.getMainLooper())
         .postDelayed(
@@ -1275,6 +1444,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "cameraPreference=50-then-51 carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
             cameraHwbProjectionMarkerFields() + " " +
             cameraHwbProjectionStereoMarkerFields() + " " +
+            SpatialPublicMultiStack.markerFields() + " " +
             "outputMode=raw-color-target-rect sampledCameraTexture=true " +
             "sampledLeftCameraTexture=true sampledRightCameraTexture=true monoDuplicated=false " +
             "sampledCameraTextureSource=native-camera-hwb-pending-first-frame " +
@@ -1287,8 +1457,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun runCameraHwbProjectionProbe(readerMaxImages: Int) {
     cleanupSdkQuadSurfaceProbe("camera-hwb-projection-pre-run")
     cameraHwbProjectionEntity = null
+    cameraHwbProjectionStereoHorizontalOffsetUv =
+        CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV
     cameraHwbProjectionMarkerCount = 0
     lastCameraHwbProjectionMarkerMs = 0L
+    lastCameraHwbProjectionStereoOffsetJoystickMs = 0L
+    lastCameraHwbProjectionStereoOffsetJoystickMarkerMs = 0L
+    suppressParticleLayerForCameraStack("camera-hwb-projection-probe")
     setWorkflowPanelVisible(false, focus = false, source = "camera-hwb-projection-probe")
     if (!nativeReceiptLibraryLoaded) {
       marker(
@@ -1339,7 +1514,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "surfaceValid=$surfaceValid widthPx=$CAMERA_HWB_PROJECTION_WIDTH_PX " +
             "heightPx=$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
             "carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
-            cameraHwbProjectionStereoMarkerFields()
+            cameraHwbProjectionStereoMarkerFields() + " " +
+            SpatialPublicMultiStack.markerFields()
     )
     val renderSurface = surface
     if (!surfaceValid) {
@@ -1365,6 +1541,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       return
     }
 
+    updateNativeCameraHwbProjectionStereoOffset(
+        reason = "raw-projection-start",
+        forceLog = true,
+    )
     val startMask =
         runCatching {
               nativeStartCameraHwbProjectionProbe(
@@ -1393,6 +1573,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "readerMaxImages=$readerMaxImages carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
             cameraHwbProjectionMarkerFields() + " " +
             cameraHwbProjectionStereoMarkerFields() + " " +
+            SpatialPublicMultiStack.markerFields() + " " +
             "outputMode=raw-color-target-rect sampledCameraTexture=see-native-logcat " +
             "sampledLeftCameraTexture=see-native-logcat sampledRightCameraTexture=see-native-logcat " +
             "monoDuplicated=false " +
@@ -2004,8 +2185,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             val material = SceneMaterial.passthrough()
             val mesh =
                 SceneMesh.singleSidedQuad(
-                    CAMERA_HWB_PROJECTION_WIDTH_METERS,
-                    CAMERA_HWB_PROJECTION_HEIGHT_METERS,
+                    plane.projectionWidthMeters,
+                    plane.projectionHeightMeters,
                     material,
                 )
             sdkQuadSurfaceProbeAnchorMaterial = material
@@ -2017,8 +2198,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 SceneQuadLayer(
                     scene,
                     sdkSwapchain,
-                    CAMERA_HWB_PROJECTION_WIDTH_METERS,
-                    CAMERA_HWB_PROJECTION_HEIGHT_METERS,
+                    plane.projectionWidthMeters,
+                    plane.projectionHeightMeters,
                     0.5f,
                     0.5f,
                     StereoMode.LeftRight,
@@ -2027,15 +2208,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             layer.setZIndex(CAMERA_HWB_PROJECTION_Z_INDEX)
             sdkQuadSurfaceProbeLayer = layer
             marker(
-                "channel=camera-hwb-spatial-probe status=raw-camera-projection-layer-created " +
+                    "channel=camera-hwb-spatial-probe status=raw-camera-projection-layer-created " +
                     "rawCameraProjectionProbe=true sceneQuadLayerCreated=true " +
                     "anchorMode=generated-single-sided-quad sceneObjectHandle=${sceneObject.handle} " +
-                    "widthMeters=$CAMERA_HWB_PROJECTION_WIDTH_MARKER " +
-                    "heightMeters=$CAMERA_HWB_PROJECTION_HEIGHT_MARKER " +
+                    "widthMeters=${markerFloat(plane.projectionWidthMeters)} " +
+                    "heightMeters=${markerFloat(plane.projectionHeightMeters)} " +
                     "zIndex=$CAMERA_HWB_PROJECTION_Z_INDEX " +
                     "carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
                     cameraHwbProjectionMarkerFields() + " " +
                     cameraHwbProjectionStereoMarkerFields() + " " +
+                    SpatialPublicMultiStack.markerFields() + " " +
                     "poseSource=Scene.getViewerPose viewerPositionM=${vectorMarker(plane.viewerPosition)} " +
                     "viewerForward=${vectorMarker(plane.forward)} viewerUp=${vectorMarker(plane.up)} " +
                     "viewerRight=${vectorMarker(plane.right)} planeCenterM=${vectorMarker(plane.center)} " +
@@ -2641,6 +2823,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun startNativeSurfaceParticleLayer(surface: AndroidSurface) {
+    if (cameraStackSuppressesParticles) {
+      marker(
+          "channel=native-surface-particle-layer status=start-suppressed " +
+              "renderPolicy=native-vulkan-wsi-surface-panel source=camera-stack " +
+              "cameraStackSuppressesParticles=true particleLayerVisible=false " +
+              "particleLayerStarted=$particleLayerStarted nativeSurfaceStartRequested=$nativeSurfaceStartRequested"
+      )
+      return
+    }
     if (particleLayerStarted) {
       marker(
           "channel=native-surface-particle-layer status=start-skipped " +
@@ -2780,9 +2971,82 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         }
   }
 
-  private fun stopNativeSurfaceParticleLayer() {
-    if (nativeReceiptLibraryLoaded) {
+  private fun suppressParticleLayerForCameraStack(source: String) {
+    cameraStackSuppressesParticles = true
+    particleLayerEntity?.setComponent(Visible(false))
+    val wasStarted = particleLayerStarted
+    val stopAttempted = nativeReceiptLibraryLoaded && wasStarted
+    if (stopAttempted) {
       runCatching { nativeStopSurfaceParticleLayer() }
+          .onSuccess {
+            particleLayerStarted = false
+            nativeSurfaceStartRequested = false
+            marker(
+                "channel=camera-hwb-spatial-probe status=particle-layer-suppressed " +
+                    "source=${markerToken(source)} cameraStackSuppressesParticles=true " +
+                    "stopAttempted=true stopSucceeded=true particleLayerVisible=false " +
+                    "particleLayerStarted=$particleLayerStarted " +
+                    "nativeSurfaceStartRequested=$nativeSurfaceStartRequested " +
+                    "particleLayerRenderContinuity=stopped-for-camera-stack"
+            )
+          }
+          .onFailure { throwable ->
+            marker(
+                "channel=camera-hwb-spatial-probe status=particle-layer-suppress-failed " +
+                    "source=${markerToken(source)} cameraStackSuppressesParticles=true " +
+                    "stopAttempted=true stopSucceeded=false particleLayerVisible=false " +
+                    "particleLayerStarted=$particleLayerStarted " +
+                    "nativeSurfaceStartRequested=$nativeSurfaceStartRequested " +
+                    "error=${markerToken(throwable.javaClass.simpleName)} " +
+                    "message=${markerToken(throwable.message ?: "none")}"
+            )
+          }
+      return
+    }
+    if (!wasStarted) {
+      particleLayerStarted = false
+      nativeSurfaceStartRequested = false
+    }
+    marker(
+        "channel=camera-hwb-spatial-probe status=particle-layer-suppressed " +
+            "source=${markerToken(source)} cameraStackSuppressesParticles=true " +
+            "stopAttempted=$stopAttempted stopSucceeded=true particleLayerVisible=false " +
+            "particleLayerStarted=$particleLayerStarted " +
+            "nativeSurfaceStartRequested=$nativeSurfaceStartRequested " +
+            "particleLayerRenderContinuity=stopped-for-camera-stack"
+    )
+  }
+
+  private fun suppressParticleLayerIfCameraProjectionRequested(source: String) {
+    if (readOptionalBooleanSystemProperty(CAMERA_HWB_PROJECTION_PROBE_PROPERTY) == true) {
+      suppressParticleLayerForCameraStack("$source-camera-hwb-projection-property")
+    }
+  }
+
+  private fun stopNativeSurfaceParticleLayer(source: String = "lifecycle") {
+    val wasStarted = particleLayerStarted
+    if (nativeReceiptLibraryLoaded && wasStarted) {
+      runCatching { nativeStopSurfaceParticleLayer() }
+          .onSuccess {
+            particleLayerStarted = false
+            nativeSurfaceStartRequested = false
+            marker(
+                "channel=native-surface-particle-layer status=stopped " +
+                    "renderPolicy=native-vulkan-wsi-surface-panel source=${markerToken(source)} " +
+                    "particleLayerStarted=$particleLayerStarted " +
+                    "nativeSurfaceStartRequested=$nativeSurfaceStartRequested"
+            )
+          }
+          .onFailure { throwable ->
+            marker(
+                "channel=native-surface-particle-layer status=stop-failed " +
+                    "renderPolicy=native-vulkan-wsi-surface-panel source=${markerToken(source)} " +
+                    "error=${markerToken(throwable.javaClass.simpleName)} " +
+                    "message=${markerToken(throwable.message ?: "none")}"
+            )
+          }
+    } else if (!wasStarted) {
+      nativeSurfaceStartRequested = false
     }
   }
 
@@ -2945,7 +3209,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     particleLayerEntity?.setComponent(Visible(particleLayerVisibleForPanelMode()))
   }
 
-  private fun particleLayerVisibleForPanelMode(): Boolean = !panelPlacement.visible
+  private fun particleLayerVisibleForPanelMode(): Boolean =
+      !panelPlacement.visible && !cameraStackSuppressesParticles
 
   private fun panelPose(): Pose =
       if (panelPlacement.headlocked) {
@@ -3136,6 +3401,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   @OptIn(SpatialSDKExperimentalAPI::class)
   private fun updateParticleLayerProjectionFromViewer(reason: String, forceLog: Boolean) {
     val entity = particleLayerEntity ?: return
+    if (cameraStackSuppressesParticles) {
+      entity.setComponent(Visible(false))
+      if (forceLog) {
+        marker(
+            "channel=native-surface-particle-layer status=projection-plane-update-suppressed " +
+                "reason=${markerToken(reason)} cameraStackSuppressesParticles=true " +
+                "particleLayerVisible=false nativePanelPoseAuthority=camera-hwb-projection-plane"
+        )
+      }
+      return
+    }
     val viewerPose =
         runCatching { scene.getViewerPose() }
             .getOrElse { throwable ->
@@ -3335,6 +3611,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val plane = cameraHwbProjectionPlaneFromViewer()
     entity.setComponent(Transform(plane.pose))
     entity.setComponent(Visible(true))
+    val layerUpdateStatus = updateCameraHwbProjectionLayer(plane, reason)
+    val nativePanelPoseUpdateMask = updateNativePanelProjectionFromCameraPlane(plane, reason, forceLog)
     val now = SystemClock.elapsedRealtime()
     val shouldLog =
         forceLog ||
@@ -3352,10 +3630,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "viewerPoseSource=Scene.getViewerPose eyeOffsetsSource=Scene.getEyeOffsets " +
             cameraHwbProjectionMarkerFields() + " " +
             cameraHwbProjectionStereoMarkerFields() + " " +
+            SpatialPublicMultiStack.markerFields() + " " +
             "viewerPositionM=${vectorMarker(plane.viewerPosition)} " +
             "viewerForward=${vectorMarker(plane.forward)} viewerUp=${vectorMarker(plane.up)} " +
             "viewerRight=${vectorMarker(plane.right)} planeCenterM=${vectorMarker(plane.center)} " +
             "planeQuaternion=${quaternionMarker(plane.pose.q)} " +
+            "sceneQuadLayerUpdateStatus=${markerToken(layerUpdateStatus)} " +
+            "nativePanelPoseAuthority=camera-hwb-projection-plane " +
+            "nativePanelPoseUpdateMask=$nativePanelPoseUpdateMask " +
             "leftEyeOffsetM=${vectorMarker(plane.leftEyeOffset)} " +
             "rightEyeOffsetM=${vectorMarker(plane.rightEyeOffset)} " +
             "outputMode=raw-color-target-rect sampledCameraTexture=see-native-logcat " +
@@ -3363,6 +3645,84 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "monoDuplicated=false " +
             "privateShaderStack=false customProjectionStack=false runtimeCrash=false"
     )
+  }
+
+  private fun updateCameraHwbProjectionLayer(
+      plane: CameraHwbProjectionPlane,
+      reason: String,
+  ): String {
+    val layer = sdkQuadSurfaceProbeLayer ?: return "layer-missing"
+    return runCatching {
+          layer.updateLayer(
+              plane.projectionWidthMeters,
+              plane.projectionHeightMeters,
+              0.5f,
+              0.5f,
+              StereoMode.LeftRight.ordinal,
+          )
+          "updated"
+        }
+        .getOrElse { throwable ->
+          marker(
+              "channel=camera-hwb-spatial-probe status=raw-camera-projection-layer-update-failed " +
+                  "reason=${markerToken(reason)} rawCameraProjectionProbe=true " +
+                  "targetDistanceMeters=${markerFloat(plane.targetDistanceMeters)} " +
+                  "projectionWidthMeters=${markerFloat(plane.projectionWidthMeters)} " +
+                  "projectionHeightMeters=${markerFloat(plane.projectionHeightMeters)} " +
+                  "error=${markerToken(throwable.javaClass.simpleName)} " +
+                  "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+          )
+          "failed-${throwable.javaClass.simpleName}"
+        }
+  }
+
+  private fun updateNativePanelProjectionFromCameraPlane(
+      plane: CameraHwbProjectionPlane,
+      reason: String,
+      forceLog: Boolean,
+  ): Long {
+    if (!nativeReceiptLibraryLoaded) {
+      if (forceLog) {
+        marker(
+            "channel=camera-hwb-spatial-probe status=native-panel-pose-update-skipped " +
+                "reason=${markerToken(reason)} rawCameraProjectionProbe=true " +
+                "nativePanelPoseAuthority=camera-hwb-projection-plane " +
+                "error=${markerToken(nativeReceiptLibraryError)}"
+        )
+      }
+      return 0L
+    }
+    return runCatching {
+          nativeUpdateSurfaceParticlePanelPose(
+              plane.center.x,
+              plane.center.y,
+              plane.center.z,
+              plane.right.x,
+              plane.right.y,
+              plane.right.z,
+              plane.up.x,
+              plane.up.y,
+              plane.up.z,
+              plane.projectionWidthMeters,
+              plane.projectionHeightMeters,
+              plane.targetDistanceMeters,
+          )
+        }
+        .getOrElse { throwable ->
+          if (forceLog) {
+            marker(
+                "channel=camera-hwb-spatial-probe status=native-panel-pose-update-failed " +
+                    "reason=${markerToken(reason)} rawCameraProjectionProbe=true " +
+                    "nativePanelPoseAuthority=camera-hwb-projection-plane " +
+                    "targetDistanceMeters=${markerFloat(plane.targetDistanceMeters)} " +
+                    "projectionWidthMeters=${markerFloat(plane.projectionWidthMeters)} " +
+                    "projectionHeightMeters=${markerFloat(plane.projectionHeightMeters)} " +
+                    "error=${markerToken(throwable.javaClass.simpleName)} " +
+                    "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+            )
+          }
+          0L
+        }
   }
 
   @OptIn(SpatialSDKExperimentalAPI::class)
@@ -3375,7 +3735,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val forward = viewerPose?.forward()?.normalizedOr(fallbackForward) ?: fallbackForward
     val up = viewerPose?.up()?.normalizedOr(fallbackUp) ?: fallbackUp
     val right = cross(forward, up).normalizedOr(Vector3(1.0f, 0.0f, 0.0f))
-    val center = viewerPosition + forward * CAMERA_HWB_PROJECTION_TARGET_DISTANCE_METERS
+    val targetDistanceMeters = currentCameraHwbProjectionTargetDistanceMeters()
+    val projectionWidthMeters = cameraHwbProjectionWidthMeters(targetDistanceMeters)
+    val projectionHeightMeters = cameraHwbProjectionHeightMeters(targetDistanceMeters)
+    val center = viewerPosition + forward * targetDistanceMeters
     val pose = Pose(center, Quaternion.fromDirection(forward, up))
     val eyeOffsets = runCatching { scene.getEyeOffsets() }.getOrNull()
     return CameraHwbProjectionPlane(
@@ -3385,47 +3748,176 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         right = right,
         center = center,
         pose = pose,
+        targetDistanceMeters = targetDistanceMeters,
+        projectionWidthMeters = projectionWidthMeters,
+        projectionHeightMeters = projectionHeightMeters,
         leftEyeOffset = eyeOffsets?.first ?: Vector3(0.0f),
         rightEyeOffset = eyeOffsets?.second ?: Vector3(0.0f),
     )
   }
 
-  private fun cameraHwbProjectionMarkerFields(): String =
-      "placementMode=$CAMERA_HWB_PROJECTION_PLACEMENT_MODE " +
-          "placementAuthority=$CAMERA_HWB_PROJECTION_PLACEMENT_AUTHORITY " +
-          "cameraFacingParticleSurface=true projectionLockedParticleSurface=true " +
-          "targetDistanceMeters=$CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER " +
-          "targetFovTangents=$CAMERA_HWB_PROJECTION_TARGET_FOV_TANGENTS " +
-          "projectionWidthMeters=$CAMERA_HWB_PROJECTION_WIDTH_MARKER " +
-          "projectionHeightMeters=$CAMERA_HWB_PROJECTION_HEIGHT_MARKER " +
-          "surfaceOverscanScale=$CAMERA_HWB_PROJECTION_SURFACE_OVERSCAN_MARKER " +
-          "surfaceWidthMeters=$CAMERA_HWB_PROJECTION_WIDTH_MARKER " +
-          "surfaceHeightMeters=$CAMERA_HWB_PROJECTION_HEIGHT_MARKER " +
-          "projectionTarget=$CAMERA_HWB_PROJECTION_TARGET " +
-          "borderOpacity=$CAMERA_HWB_PROJECTION_BORDER_OPACITY_MARKER " +
-          "leftCameraId=50 rightCameraId=51 " +
-          "leftTargetScreenUvRect=$CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_MARKER " +
-          "rightTargetScreenUvRect=$CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_MARKER " +
-          "leftEffectiveTargetScreenUvRect=$CAMERA_HWB_PROJECTION_LEFT_EFFECTIVE_TARGET_RECT_MARKER " +
-          "rightEffectiveTargetScreenUvRect=$CAMERA_HWB_PROJECTION_RIGHT_EFFECTIVE_TARGET_RECT_MARKER " +
-          "leftPackedEffectiveTargetScreenUvRect=$CAMERA_HWB_PROJECTION_LEFT_PACKED_EFFECTIVE_TARGET_RECT_MARKER " +
-          "rightPackedEffectiveTargetScreenUvRect=$CAMERA_HWB_PROJECTION_RIGHT_PACKED_EFFECTIVE_TARGET_RECT_MARKER " +
-          "projectionTargetControlsEnabled=true " +
-          "projectionTargetLiveScale=1.0000 " +
-          "projectionTargetTunedMaxScale=1.0000 " +
-          "projectionTargetMinScale=0.2500 " +
-          "projectionTargetMaxScale=1.8000 " +
-          "projectionTargetOffsetUv=0.000000,0.000000 " +
-          "targetClipPolicy=clip-to-visible-eye " +
-          "targetCoordinateSpace=$PARTICLE_LAYER_TARGET_COORDINATE_SPACE " +
-          "targetProjectionSpace=$PARTICLE_LAYER_TARGET_PROJECTION_SPACE " +
-          "projectionContentMappingMode=target-local-raster"
+  private fun cameraHwbProjectionMarkerFields(): String {
+    val targetDistanceMeters = currentCameraHwbProjectionTargetDistanceMeters()
+    val projectionWidthMeters = cameraHwbProjectionWidthMeters(targetDistanceMeters)
+    val projectionHeightMeters = cameraHwbProjectionHeightMeters(targetDistanceMeters)
+    val stereoHorizontalOffsetUv = currentCameraHwbProjectionStereoHorizontalOffsetUv()
+    return "placementMode=$CAMERA_HWB_PROJECTION_PLACEMENT_MODE " +
+        "placementAuthority=$CAMERA_HWB_PROJECTION_PLACEMENT_AUTHORITY " +
+        "cameraFacingParticleSurface=true projectionLockedParticleSurface=true " +
+        "targetDistanceMeters=${markerFloat(targetDistanceMeters)} " +
+        "targetDistanceDefaultMeters=$CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER " +
+        "targetDistanceProperty=none-fixed-camera-projection-default " +
+        "targetDistanceParameterSource=${cameraHwbProjectionTargetDistanceSource()} " +
+        "targetDistanceJoystickControlsEnabled=false " +
+        "targetDistanceJoystickInput=none-fixed-distance " +
+        "stereoHorizontalOffsetJoystickControlsEnabled=true " +
+        "stereoHorizontalOffsetJoystickInput=spatial-sdk-avatar-body-left-thumb-up-down-or-android-left-stick-y;panel-visibility-independent;native-openxr-diagnostic-opt-in " +
+        "stereoHorizontalOffsetJoystickRateProperty=$CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_JOYSTICK_RATE_PROPERTY " +
+        "stereoHorizontalOffsetJoystickRateUvPerSecond=${markerFloat(currentCameraHwbProjectionStereoHorizontalOffsetJoystickRate())} " +
+        "targetFovTangents=$CAMERA_HWB_PROJECTION_TARGET_FOV_TANGENTS " +
+        "projectionWidthMeters=${markerFloat(projectionWidthMeters)} " +
+        "projectionHeightMeters=${markerFloat(projectionHeightMeters)} " +
+        "surfaceOverscanScale=$CAMERA_HWB_PROJECTION_SURFACE_OVERSCAN_MARKER " +
+        "surfaceWidthMeters=${markerFloat(projectionWidthMeters)} " +
+        "surfaceHeightMeters=${markerFloat(projectionHeightMeters)} " +
+        "projectionPlaneAngularCoveragePreserved=true " +
+        "eyeSpaceTargetRectPreserved=true " +
+        "projectionTarget=$CAMERA_HWB_PROJECTION_TARGET " +
+        "borderOpacity=$CAMERA_HWB_PROJECTION_BORDER_OPACITY_MARKER " +
+        "leftCameraId=50 rightCameraId=51 " +
+        "leftTargetScreenUvRect=$CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_MARKER " +
+        "rightTargetScreenUvRect=$CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_MARKER " +
+        "leftEffectiveTargetScreenUvRect=${cameraHwbProjectionLeftEffectiveTargetRectMarker()} " +
+        "rightEffectiveTargetScreenUvRect=${cameraHwbProjectionRightEffectiveTargetRectMarker()} " +
+        "leftPackedEffectiveTargetScreenUvRect=${cameraHwbProjectionLeftPackedEffectiveTargetRectMarker()} " +
+        "rightPackedEffectiveTargetScreenUvRect=${cameraHwbProjectionRightPackedEffectiveTargetRectMarker()} " +
+        "projectionTargetControlsEnabled=true " +
+        "projectionTargetLiveScale=1.0000 " +
+        "projectionTargetTunedMaxScale=1.0000 " +
+        "projectionTargetMinScale=0.2500 " +
+        "projectionTargetMaxScale=1.8000 " +
+        "projectionTargetOffsetUv=0.000000,0.000000 " +
+        "projectionTargetStereoHorizontalOffsetUv=${markerFloat6(stereoHorizontalOffsetUv)} " +
+        "projectionTargetStereoHorizontalOffsetDefaultUv=${markerFloat6(CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV)} " +
+        "projectionTargetStereoHorizontalOffsetRangeUv=$CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_RANGE_MARKER " +
+        "projectionTargetLeftOffsetUv=${markerFloat6(-stereoHorizontalOffsetUv)},0.000000 " +
+        "projectionTargetRightOffsetUv=${markerFloat6(stereoHorizontalOffsetUv)},0.000000 " +
+        "projectionTargetStereoHorizontalOffsetSign=positive-increases-separation " +
+        "targetClipPolicy=clip-to-visible-eye " +
+        "targetCoordinateSpace=$PARTICLE_LAYER_TARGET_COORDINATE_SPACE " +
+        "targetProjectionSpace=$PARTICLE_LAYER_TARGET_PROJECTION_SPACE " +
+        "projectionContentMappingMode=target-local-raster"
+  }
 
   private fun cameraHwbProjectionStereoMarkerFields(): String =
       "stereoMode=LeftRight stereoSource=camera50-51 leftCameraId=50 rightCameraId=51 " +
           "monoDuplicated=false " +
           "perEyeExtent=${CAMERA_HWB_PROJECTION_PER_EYE_WIDTH_PX}x$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
           "packedExtent=${CAMERA_HWB_PROJECTION_WIDTH_PX}x$CAMERA_HWB_PROJECTION_HEIGHT_PX"
+
+  private fun currentCameraHwbProjectionTargetDistanceMeters(): Float =
+      CAMERA_HWB_PROJECTION_TARGET_DISTANCE_METERS.coerceIn(
+          PARTICLE_LAYER_TARGET_DISTANCE_MIN_METERS,
+          PARTICLE_LAYER_TARGET_DISTANCE_MAX_METERS,
+      )
+
+  private fun cameraHwbProjectionTargetDistanceSource(): String =
+      "fixed-camera-projection-default"
+
+  private fun cameraHwbProjectionWidthMeters(targetDistanceMeters: Float): Float =
+      particleLayerProjectionWidthMeters(targetDistanceMeters)
+
+  private fun cameraHwbProjectionHeightMeters(targetDistanceMeters: Float): Float =
+      particleLayerProjectionHeightMeters(targetDistanceMeters)
+
+  private fun currentCameraHwbProjectionStereoHorizontalOffsetUv(): Float =
+      cameraHwbProjectionStereoHorizontalOffsetUv.coerceIn(
+          CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MIN_UV,
+          CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MAX_UV,
+      )
+
+  private fun currentCameraHwbProjectionStereoHorizontalOffsetJoystickRate(): Float =
+      readFloatSystemProperty(
+          CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_JOYSTICK_RATE_PROPERTY,
+          CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_JOYSTICK_RATE_UV_PER_SECOND,
+          0.005f,
+          0.300f,
+      )
+
+  private fun cameraHwbProjectionEffectiveTargetRect(
+      baseX: Float,
+      baseY: Float,
+      baseWidth: Float,
+      baseHeight: Float,
+      offsetX: Float,
+  ): FloatArray {
+    val width = (baseWidth * CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE).coerceIn(0.0001f, 1.0f)
+    val height = (baseHeight * CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE).coerceIn(0.0001f, 1.0f)
+    val centerX = baseX + baseWidth * 0.5f + offsetX
+    val centerY = baseY + baseHeight * 0.5f
+    val x = (centerX - width * 0.5f).coerceIn(0.0f, 1.0f - width)
+    val y = (centerY - height * 0.5f).coerceIn(0.0f, 1.0f - height)
+    return floatArrayOf(x, y, width, height)
+  }
+
+  private fun cameraHwbProjectionLeftEffectiveTargetRect(): FloatArray =
+      cameraHwbProjectionEffectiveTargetRect(
+          CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_X,
+          CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_Y,
+          CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_WIDTH,
+          CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_HEIGHT,
+          -currentCameraHwbProjectionStereoHorizontalOffsetUv(),
+      )
+
+  private fun cameraHwbProjectionRightEffectiveTargetRect(): FloatArray =
+      cameraHwbProjectionEffectiveTargetRect(
+          CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_X,
+          CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_Y,
+          CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_WIDTH,
+          CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_HEIGHT,
+          currentCameraHwbProjectionStereoHorizontalOffsetUv(),
+      )
+
+  private fun cameraHwbProjectionRectMarker(rect: FloatArray): String =
+      "${markerFloat6(rect[0])};${markerFloat6(rect[1])};${markerFloat6(rect[2])};${markerFloat6(rect[3])}"
+
+  private fun cameraHwbProjectionLeftEffectiveTargetRectMarker(): String =
+      cameraHwbProjectionRectMarker(cameraHwbProjectionLeftEffectiveTargetRect())
+
+  private fun cameraHwbProjectionRightEffectiveTargetRectMarker(): String =
+      cameraHwbProjectionRectMarker(cameraHwbProjectionRightEffectiveTargetRect())
+
+  private fun cameraHwbProjectionLeftPackedEffectiveTargetRectMarker(): String {
+    val rect = cameraHwbProjectionLeftEffectiveTargetRect()
+    return cameraHwbProjectionRectMarker(
+        floatArrayOf(0.5f * rect[0], rect[1], 0.5f * rect[2], rect[3])
+    )
+  }
+
+  private fun cameraHwbProjectionRightPackedEffectiveTargetRectMarker(): String {
+    val rect = cameraHwbProjectionRightEffectiveTargetRect()
+    return cameraHwbProjectionRectMarker(
+        floatArrayOf(0.5f + 0.5f * rect[0], rect[1], 0.5f * rect[2], rect[3])
+    )
+  }
+
+  private fun currentSpatialVrInputSystemToken(): String =
+      when (readSystemProperty(SPATIAL_VR_INPUT_SYSTEM_PROPERTY).trim().lowercase(Locale.US)) {
+        "simple", "simple-controller", "simple_controller" -> "simple_controller"
+        "interaction", "interaction-sdk", "interaction_sdk", "isdk" -> "interaction_sdk"
+        "default", "" -> SPATIAL_VR_INPUT_SYSTEM_DEFAULT_TOKEN
+        else -> SPATIAL_VR_INPUT_SYSTEM_DEFAULT_TOKEN
+      }
+
+  private fun currentSpatialVrInputSystemType(): VrInputSystemType =
+      when (currentSpatialVrInputSystemToken()) {
+        "simple_controller" -> VrInputSystemType.SIMPLE_CONTROLLER
+        else -> VrInputSystemType.INTERACTION_SDK
+      }
+
+  private fun currentSpatialShouldConsumeLeftRightInput(): Boolean =
+      readOptionalBooleanSystemProperty(SPATIAL_SHOULD_CONSUME_LEFT_RIGHT_INPUT_PROPERTY)
+          ?: SPATIAL_SHOULD_CONSUME_LEFT_RIGHT_INPUT_DEFAULT
 
   private fun panelHeadlockMarkerFields(): String =
       "headlockedPanelEnabled=${panelPlacement.headlocked} " +
@@ -3449,6 +3941,123 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           "headlockedPanelJoystickTranslateRateProperty=$PANEL_HEADLOCK_JOYSTICK_TRANSLATE_RATE_PROPERTY " +
           "headlockedPanelJoystickDistanceRateProperty=$PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_PROPERTY " +
           "headlockedPanelJoystickScaleRateProperty=$PANEL_HEADLOCK_JOYSTICK_SCALE_RATE_PROPERTY"
+
+  private fun applyCameraHwbProjectionStereoHorizontalOffsetJoystickInput(event: MotionEvent): Boolean {
+    if (event.action != MotionEvent.ACTION_MOVE || !isJoystickEvent(event)) {
+      return false
+    }
+    if (!cameraHwbProjectionProbeStarted || cameraHwbProjectionEntity == null) {
+      return false
+    }
+
+    val leftY = joystickAxis(event, MotionEvent.AXIS_Y)
+    return applyCameraHwbProjectionStereoHorizontalOffsetInput(
+        leftY = leftY,
+        inputSource = "android-generic-motion-joystick",
+        controllerJoystickMapping = "left-stick-y-stereo-horizontal-offset",
+        detail = "leftStickY=${markerFloat(leftY)}",
+    )
+  }
+
+  private fun applyCameraHwbProjectionStereoHorizontalOffsetInput(
+      leftY: Float,
+      inputSource: String,
+      controllerJoystickMapping: String,
+      detail: String,
+  ): Boolean {
+    if (!cameraHwbProjectionProbeStarted || cameraHwbProjectionEntity == null) {
+      return false
+    }
+    if (abs(leftY) < PANEL_HEADLOCK_JOYSTICK_DEADZONE) {
+      return false
+    }
+
+    val now = SystemClock.elapsedRealtime()
+    val dtSeconds =
+        if (lastCameraHwbProjectionStereoOffsetJoystickMs <= 0L) {
+          1.0f / 60.0f
+        } else {
+          ((now - lastCameraHwbProjectionStereoOffsetJoystickMs).toFloat() / 1000.0f)
+              .coerceIn(0.0f, 0.08f)
+        }
+    lastCameraHwbProjectionStereoOffsetJoystickMs = now
+    val offsetRate = currentCameraHwbProjectionStereoHorizontalOffsetJoystickRate()
+    val previousOffset = currentCameraHwbProjectionStereoHorizontalOffsetUv()
+    val updatedOffset =
+        (previousOffset - leftY * offsetRate * dtSeconds)
+            .coerceIn(
+                CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MIN_UV,
+                CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MAX_UV,
+            )
+    if (abs(updatedOffset - previousOffset) < 0.00001f) {
+      return false
+    }
+    cameraHwbProjectionStereoHorizontalOffsetUv = updatedOffset
+    updateNativeCameraHwbProjectionStereoOffset(
+        reason = "left-stick-stereo-horizontal-offset",
+        forceLog = false,
+    )
+    updateCameraHwbProjectionFromViewer(reason = "left-stick-stereo-horizontal-offset", forceLog = false)
+
+    if (
+        now - lastCameraHwbProjectionStereoOffsetJoystickMarkerMs >=
+            CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_JOYSTICK_MARKER_INTERVAL_MS
+    ) {
+      lastCameraHwbProjectionStereoOffsetJoystickMarkerMs = now
+      marker(
+          "channel=camera-hwb-spatial-probe status=target-stereo-horizontal-offset-joystick-adjusted " +
+              "rawCameraProjectionProbe=true inputSource=${markerToken(inputSource)} " +
+              "controllerJoystickMapping=${markerToken(controllerJoystickMapping)} " +
+              "$detail dtSeconds=${markerFloat(dtSeconds)} " +
+              "stereoHorizontalOffsetRateUvPerSecond=${markerFloat(offsetRate)} " +
+              "panelVisible=${panelPlacement.visible} " +
+              "cameraHwbProjectionStereoHorizontalOffsetIgnoresPanelVisibility=true " +
+              "projectionTargetStereoHorizontalOffsetSign=positive-increases-separation " +
+              "previousProjectionTargetStereoHorizontalOffsetUv=${markerFloat6(previousOffset)} " +
+              "projectionTargetStereoHorizontalOffsetUv=${markerFloat6(updatedOffset)} " +
+              "projectionTargetLeftOffsetUv=${markerFloat6(-updatedOffset)},0.000000 " +
+              "projectionTargetRightOffsetUv=${markerFloat6(updatedOffset)},0.000000 " +
+              "targetDistanceMeters=${markerFloat(currentCameraHwbProjectionTargetDistanceMeters())} " +
+              "projectionPlaneAngularCoveragePreserved=true " +
+              "eyeSpaceTargetRectPreserved=true " +
+              "leftEffectiveTargetScreenUvRect=${cameraHwbProjectionLeftEffectiveTargetRectMarker()} " +
+              "rightEffectiveTargetScreenUvRect=${cameraHwbProjectionRightEffectiveTargetRectMarker()} " +
+              "leftPackedEffectiveTargetScreenUvRect=${cameraHwbProjectionLeftPackedEffectiveTargetRectMarker()} " +
+              "rightPackedEffectiveTargetScreenUvRect=${cameraHwbProjectionRightPackedEffectiveTargetRectMarker()}"
+      )
+    }
+    return true
+  }
+
+  private fun updateNativeCameraHwbProjectionStereoOffset(reason: String, forceLog: Boolean) {
+    val stereoOffsetUv = currentCameraHwbProjectionStereoHorizontalOffsetUv()
+    val updateMask =
+        runCatching { nativeUpdateCameraHwbProjectionStereoOffsetUv(stereoOffsetUv) }
+            .getOrElse { throwable ->
+              if (forceLog) {
+                marker(
+                    "channel=camera-hwb-spatial-probe status=target-stereo-horizontal-offset-update-failed " +
+                        "reason=${markerToken(reason)} rawCameraProjectionProbe=true " +
+                        "projectionTargetStereoHorizontalOffsetUv=${markerFloat6(stereoOffsetUv)} " +
+                        "error=${markerToken(throwable.javaClass.simpleName)} " +
+                        "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+                )
+              }
+              0L
+            }
+    if (forceLog) {
+      marker(
+          "channel=camera-hwb-spatial-probe status=target-stereo-horizontal-offset-native-updated " +
+              "reason=${markerToken(reason)} rawCameraProjectionProbe=true updateMask=$updateMask " +
+              "projectionTargetStereoHorizontalOffsetUv=${markerFloat6(stereoOffsetUv)} " +
+              "projectionTargetLeftOffsetUv=${markerFloat6(-stereoOffsetUv)},0.000000 " +
+              "projectionTargetRightOffsetUv=${markerFloat6(stereoOffsetUv)},0.000000 " +
+              "leftPackedEffectiveTargetScreenUvRect=${cameraHwbProjectionLeftPackedEffectiveTargetRectMarker()} " +
+              "rightPackedEffectiveTargetScreenUvRect=${cameraHwbProjectionRightPackedEffectiveTargetRectMarker()} " +
+              "runtimeCrash=false"
+      )
+    }
+  }
 
   private fun applyPanelHeadlockJoystickInput(event: MotionEvent): Boolean {
     if (event.action != MotionEvent.ACTION_MOVE || !isJoystickEvent(event)) {
@@ -3535,39 +4144,179 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     return true
   }
 
-  private fun pollSpatialControllerPrimaryButton() {
+  private fun enableSpatialControllerInputRoute(reason: String, forceLog: Boolean) {
+    val now = SystemClock.elapsedRealtime()
+    val enableResult =
+        runCatching {
+              scene.spatialInterface.enableInput(true)
+              true
+            }
+            .getOrElse { false }
+    var newlyPinned = 0
+    val gameControllerIds = getGameControllerDeviceIds().toList()
+        gameControllerIds.forEach { deviceId ->
+      if (pinnedSpatialGameControllerIds.add(deviceId)) {
+        pinGameController(deviceId) { motionEvent: MotionEvent?, keyEvent: KeyEvent? ->
+          keyEvent?.let { handleControllerPrimaryButton(it) }
+          motionEvent?.let { event ->
+            if (!handleControllerPrimaryButton(event)) {
+              if (!applyCameraHwbProjectionStereoHorizontalOffsetJoystickInput(event)) {
+                applyPanelHeadlockJoystickInput(event)
+              }
+            }
+          }
+        }
+        newlyPinned += 1
+      }
+    }
+
+    if (
+        forceLog ||
+            newlyPinned > 0 ||
+            now - lastSpatialInputRouteMarkerMs >= SPATIAL_CONTROLLER_ROUTE_MARKER_INTERVAL_MS
+    ) {
+      lastSpatialInputRouteMarkerMs = now
+      marker(
+          "channel=spatial-panel status=spatial-input-enabled " +
+              "reason=${markerToken(reason)} spatialInterfaceEnableInput=$enableResult " +
+              "gameControllerDeviceCount=${gameControllerIds.size} " +
+              "pinnedGameControllerCount=${pinnedSpatialGameControllerIds.size} " +
+              "newlyPinnedGameControllerCount=$newlyPinned " +
+              "controllerInputRoutes=spatial-sdk-avatar-body-controller+interaction-sdk-pointer+pinned-android-game-controller-fallback+native-openxr-diagnostic-opt-in"
+      )
+    }
+  }
+
+  private fun pollNativeSpatialControllerStereoHorizontalOffsetInput() {
+    if (
+        !nativeSpatialControllerActionsEnabled() ||
+            !nativeReceiptLibraryLoaded ||
+            !nativeSpatialControllerActionsStarted
+    ) {
+      return
+    }
+    val leftY =
+        runCatching { nativePollSpatialControllerLeftThumbstickY() }
+            .getOrElse { throwable ->
+              nativeSpatialControllerActionsStarted = false
+              marker(
+                  "channel=spatial-controller-actions status=poll-error " +
+                      "nativeControllerActionBridge=true error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} " +
+                      "actionSetAttached=false"
+              )
+              Float.NaN
+            }
+    if (!leftY.isFinite() || abs(leftY) < PANEL_HEADLOCK_JOYSTICK_DEADZONE) {
+      return
+    }
+    applyCameraHwbProjectionStereoHorizontalOffsetInput(
+        leftY = leftY,
+        inputSource = "native-openxr-action",
+        controllerJoystickMapping = "left-thumbstick-y-stereo-horizontal-offset",
+        detail =
+            "leftThumbstickY=${markerFloat(leftY)} " +
+                "nativeControllerActionStartMask=$nativeSpatialControllerActionsStartMask",
+    )
+  }
+
+  private fun pollSpatialControllerInput() {
     val now = SystemClock.elapsedRealtime()
     val snapshot =
         runCatching {
               val buttonABit = ButtonBits.ButtonA
+              val leftThumbUpBit = ButtonBits.ButtonThumbLU
+              val leftThumbDownBit = ButtonBits.ButtonThumbLD
               var componentCount = 0
-              var activeCount = 0
-              var down = false
-              var pressed = false
-              var changedButtons = 0
-              var buttonState = 0
+              var controllerTypeCount = 0
+              var allControllerChangedButtons = 0
+              var allControllerButtonState = 0
+              var avatarBodyCount = 0
+              var playerAvatarBodyCount = 0
+              var playerAvatarBody: AvatarBody? = null
+              val dataModel = scene.spatialInterface.dataModel
               Query.where { has(Controller.id) }
-                  .eval(scene.spatialInterface.dataModel)
+                  .eval(dataModel)
                   .forEach { entity ->
                     val controller = entity.getComponent<Controller>()
                     componentCount += 1
-                    val activeController =
-                        controller.isActive && controller.type == ControllerType.CONTROLLER
-                    if (activeController) {
-                      activeCount += 1
-                      buttonState = buttonState or controller.buttonState
-                      changedButtons = changedButtons or controller.changedButtons
-                      down = down || controller.isDown(buttonABit)
-                      pressed = pressed || controller.isPressed(buttonABit)
+                    val controllerType = controller.type == ControllerType.CONTROLLER
+                    if (controllerType) {
+                      controllerTypeCount += 1
+                      allControllerButtonState = allControllerButtonState or controller.buttonState
+                      allControllerChangedButtons =
+                          allControllerChangedButtons or controller.changedButtons
                     }
+                  }
+              Query.where { has(AvatarBody.id) }
+                  .eval(dataModel)
+                  .forEach { entity ->
+                    val avatarBody = entity.tryGetComponent<AvatarBody>() ?: return@forEach
+                    avatarBodyCount += 1
+                    if (entity.isLocal() && avatarBody.isPlayerControlled) {
+                      playerAvatarBodyCount += 1
+                      if (playerAvatarBody == null) {
+                        playerAvatarBody = avatarBody
+                      }
+                    }
+                  }
+              val leftAvatarController = playerAvatarBody?.leftHand?.tryGetComponent<Controller>()
+              val rightAvatarController = playerAvatarBody?.rightHand?.tryGetComponent<Controller>()
+              val leftAvatarButtonState = leftAvatarController?.buttonState ?: 0
+              val leftAvatarChangedButtons = leftAvatarController?.changedButtons ?: 0
+              val rightAvatarButtonState = rightAvatarController?.buttonState ?: 0
+              val rightAvatarChangedButtons = rightAvatarController?.changedButtons ?: 0
+              val leftAvatarActive =
+                  leftAvatarController?.let {
+                    it.isActive && it.type == ControllerType.CONTROLLER
+                  } == true
+              val rightAvatarActive =
+                  rightAvatarController?.let {
+                    it.isActive && it.type == ControllerType.CONTROLLER
+                  } == true
+              val activeCount = (if (leftAvatarActive) 1 else 0) + (if (rightAvatarActive) 1 else 0)
+              val buttonState =
+                  (if (leftAvatarActive) leftAvatarButtonState else 0) or
+                      (if (rightAvatarActive) rightAvatarButtonState else 0)
+              val changedButtons =
+                  (if (leftAvatarActive) leftAvatarChangedButtons else 0) or
+                      (if (rightAvatarActive) rightAvatarChangedButtons else 0)
+              val rightAvatarDown =
+                  rightAvatarActive && rightAvatarController?.isDown(buttonABit) == true
+              val rightAvatarPressed =
+                  rightAvatarActive && rightAvatarController?.isPressed(buttonABit) == true
+              val leftAvatarThumbUp = leftAvatarActive && (leftAvatarButtonState and leftThumbUpBit) != 0
+              val leftAvatarThumbDown =
+                  leftAvatarActive && (leftAvatarButtonState and leftThumbDownBit) != 0
+              val leftAvatarThumbY =
+                  when {
+                    leftAvatarThumbUp && !leftAvatarThumbDown -> -1.0f
+                    leftAvatarThumbDown && !leftAvatarThumbUp -> 1.0f
+                    else -> 0.0f
                   }
               SpatialControllerPrimarySnapshot(
                   componentCount = componentCount,
+                  controllerTypeCount = controllerTypeCount,
                   activeCount = activeCount,
+                  avatarBodyCount = avatarBodyCount,
+                  playerAvatarBodyCount = playerAvatarBodyCount,
+                  leftAvatarControllerType = leftAvatarController?.type?.name ?: "none",
+                  rightAvatarControllerType = rightAvatarController?.type?.name ?: "none",
+                  leftAvatarControllerActive = leftAvatarController?.isActive == true,
+                  rightAvatarControllerActive = rightAvatarController?.isActive == true,
+                  leftAvatarButtonState = leftAvatarButtonState,
+                  leftAvatarChangedButtons = leftAvatarChangedButtons,
+                  rightAvatarButtonState = rightAvatarButtonState,
+                  rightAvatarChangedButtons = rightAvatarChangedButtons,
                   buttonState = buttonState,
                   changedButtons = changedButtons,
-                  down = down,
-                  pressed = pressed,
+                  allControllerButtonState = allControllerButtonState,
+                  allControllerChangedButtons = allControllerChangedButtons,
+                  leftThumbUp = leftAvatarThumbUp,
+                  leftThumbDown = leftAvatarThumbDown,
+                  leftThumbY = leftAvatarThumbY,
+                  down = rightAvatarDown,
+                  pressed = rightAvatarPressed,
               )
             }
             .getOrElse { throwable ->
@@ -3580,7 +4329,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 lastSpatialControllerRouteMarkerMs = now
                 marker(
                     "channel=spatial-panel status=controller-input-route-error " +
-                        "inputSource=spatial-sdk-controller-component " +
+                        "inputSource=spatial-sdk-avatar-body-controller " +
                         "controllerInput=right-primary-button error=${markerToken(throwable.javaClass.simpleName)} " +
                         "message=${markerToken(throwable.message ?: "none")} debugOnly=true"
                 )
@@ -3592,20 +4341,58 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         !spatialControllerRouteLogged ||
             snapshot.componentCount != lastSpatialControllerComponentCount ||
             snapshot.activeCount != lastSpatialControllerActiveCount ||
+            snapshot.controllerTypeCount != lastSpatialControllerControllerTypeCount ||
+            snapshot.allControllerButtonState != lastSpatialControllerAllButtonState ||
             now - lastSpatialControllerRouteMarkerMs >= SPATIAL_CONTROLLER_ROUTE_MARKER_INTERVAL_MS
     if (shouldLogRoute) {
       spatialControllerRouteLogged = true
       lastSpatialControllerRouteMarkerMs = now
       lastSpatialControllerComponentCount = snapshot.componentCount
       lastSpatialControllerActiveCount = snapshot.activeCount
+      lastSpatialControllerControllerTypeCount = snapshot.controllerTypeCount
+      lastSpatialControllerAllButtonState = snapshot.allControllerButtonState
       marker(
           "channel=spatial-panel status=controller-input-route-ready " +
-              "inputSource=spatial-sdk-controller-component controllerInput=right-primary-button " +
+              "inputSource=spatial-sdk-avatar-body-controller " +
+              "controllerInput=right-primary-button+left-thumb-up-down " +
+              "spatialVrInputSystem=${currentSpatialVrInputSystemToken()} " +
               "controllerComponentCount=${snapshot.componentCount} " +
+              "controllerTypeComponentCount=${snapshot.controllerTypeCount} " +
               "activeControllerComponentCount=${snapshot.activeCount} " +
+              "avatarBodyCount=${snapshot.avatarBodyCount} " +
+              "playerAvatarBodyCount=${snapshot.playerAvatarBodyCount} " +
+              "leftAvatarControllerType=${markerToken(snapshot.leftAvatarControllerType)} " +
+              "leftAvatarControllerActive=${snapshot.leftAvatarControllerActive} " +
+              "leftAvatarButtonState=${snapshot.leftAvatarButtonState} " +
+              "leftAvatarChangedButtons=${snapshot.leftAvatarChangedButtons} " +
+              "rightAvatarControllerType=${markerToken(snapshot.rightAvatarControllerType)} " +
+              "rightAvatarControllerActive=${snapshot.rightAvatarControllerActive} " +
+              "rightAvatarButtonState=${snapshot.rightAvatarButtonState} " +
+              "rightAvatarChangedButtons=${snapshot.rightAvatarChangedButtons} " +
               "buttonABit=${ButtonBits.ButtonA} buttonADown=${snapshot.down} " +
-              "buttonState=${snapshot.buttonState} changedButtons=${snapshot.changedButtons} " +
+              "leftThumbUpBit=${ButtonBits.ButtonThumbLU} leftThumbDownBit=${ButtonBits.ButtonThumbLD} " +
+              "leftThumbUp=${snapshot.leftThumbUp} leftThumbDown=${snapshot.leftThumbDown} " +
+              "activeButtonState=${snapshot.buttonState} activeChangedButtons=${snapshot.changedButtons} " +
+              "allControllerButtonState=${snapshot.allControllerButtonState} " +
+              "allControllerChangedButtons=${snapshot.allControllerChangedButtons} " +
               "debugOnly=true"
+      )
+    }
+
+    if (snapshot.leftThumbY != 0.0f) {
+      applyCameraHwbProjectionStereoHorizontalOffsetInput(
+          leftY = snapshot.leftThumbY,
+          inputSource = "spatial-sdk-avatar-body-controller",
+          controllerJoystickMapping = "left-thumb-up-down-stereo-horizontal-offset",
+          detail =
+              "leftThumbY=${markerFloat(snapshot.leftThumbY)} " +
+                  "leftThumbUp=${snapshot.leftThumbUp} leftThumbDown=${snapshot.leftThumbDown} " +
+                  "leftThumbUpBit=${ButtonBits.ButtonThumbLU} leftThumbDownBit=${ButtonBits.ButtonThumbLD} " +
+                  "leftAvatarControllerType=${markerToken(snapshot.leftAvatarControllerType)} " +
+                  "leftAvatarControllerActive=${snapshot.leftAvatarControllerActive} " +
+                  "leftAvatarButtonState=${snapshot.leftAvatarButtonState} " +
+                  "leftAvatarChangedButtons=${snapshot.leftAvatarChangedButtons} " +
+                  "allControllerButtonState=${snapshot.allControllerButtonState}",
       )
     }
 
@@ -3615,10 +4402,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       return
     }
     openWorkflowPanelFromController(
-        inputSource = "spatial-sdk-controller-component",
+        inputSource = "spatial-sdk-avatar-body-controller",
         detail =
             "buttonABit=${ButtonBits.ButtonA} buttonState=${snapshot.buttonState} " +
                 "changedButtons=${snapshot.changedButtons} " +
+                "rightAvatarControllerType=${markerToken(snapshot.rightAvatarControllerType)} " +
+                "rightAvatarControllerActive=${snapshot.rightAvatarControllerActive} " +
+                "rightAvatarButtonState=${snapshot.rightAvatarButtonState} " +
+                "rightAvatarChangedButtons=${snapshot.rightAvatarChangedButtons} " +
                 "controllerComponentCount=${snapshot.componentCount} " +
                 "activeControllerComponentCount=${snapshot.activeCount}",
     )
@@ -3685,7 +4476,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       return false
     }
     val rightPrimary =
-        inputSource == "spatial-sdk-controller-component" ||
+        inputSource == "spatial-sdk-avatar-body-controller" ||
+            inputSource == "spatial-sdk-controller-component" ||
             inputSource == "android-key-event" ||
             inputSource == "android-generic-motion-button"
     if (!rightPrimary) return false
@@ -3765,6 +4557,24 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
   }
 
+  private fun spatialMultimodalInputEnabled(): Boolean =
+      readOptionalBooleanSystemProperty(SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY)
+          ?: SPATIAL_MULTIMODAL_INPUT_DEFAULT_ENABLED
+
+  private fun nativeSpatialControllerActionsEnabled(): Boolean =
+      readOptionalBooleanSystemProperty(NATIVE_SPATIAL_CONTROLLER_ACTIONS_ENABLED_PROPERTY)
+          ?: NATIVE_SPATIAL_CONTROLLER_ACTIONS_DEFAULT_ENABLED
+
+  private fun spatialMultimodalRequiredOpenXrExtensions(): List<String> =
+      if (spatialMultimodalInputEnabled()) {
+        SPATIAL_MULTIMODAL_REQUIRED_OPENXR_EXTENSIONS
+      } else {
+        emptyList()
+      }
+
+  private fun spatialMultimodalRequiredOpenXrExtensionMarker(): String =
+      spatialMultimodalRequiredOpenXrExtensions().ifEmpty { listOf("none") }.joinToString(";")
+
   private fun readSystemProperty(propertyName: String): String =
       runCatching {
             Class.forName("android.os.SystemProperties")
@@ -3787,6 +4597,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           "${markerFloat(quaternion.y)};${markerFloat(quaternion.z)}"
 
   private fun markerFloat(value: Float): String = String.format(Locale.US, "%.4f", value)
+
+  private fun markerFloat6(value: Float): String = String.format(Locale.US, "%.6f", value)
 
   private fun cross(left: Vector3, right: Vector3): Vector3 =
       Vector3(
@@ -3862,6 +4674,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       surfaceValid: Boolean,
   ): Long
 
+  private external fun nativeStartSpatialControllerActions(
+      openXrInstanceHandle: Long,
+      openXrSessionHandle: Long,
+      openXrGetInstanceProcAddrHandle: Long,
+  ): Long
+
+  private external fun nativeRequestSpatialMultimodalInput(
+      openXrInstanceHandle: Long,
+      openXrSessionHandle: Long,
+      openXrGetInstanceProcAddrHandle: Long,
+  ): Long
+
+  private external fun nativePollSpatialControllerLeftThumbstickY(): Float
+
+  private external fun nativeStopSpatialControllerActions()
+
   private external fun nativeStartSurfaceParticleLayer(
       surface: AndroidSurface,
       width: Int,
@@ -3901,6 +4729,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ): Long
 
   private external fun nativeStopCameraHwbProbe()
+
+  private external fun nativeUpdateCameraHwbProjectionStereoOffsetUv(stereoOffsetUv: Float): Long
 
   private external fun nativeUpdateSurfaceParticleParameters(
       driver0Value01: Float,
@@ -4390,6 +5220,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val PANEL_HEADLOCK_JOYSTICK_MARKER_INTERVAL_MS = 450L
     private const val PANEL_HEADLOCK_MARKER_INTERVAL_MS = 900L
     private const val SPATIAL_CONTROLLER_ROUTE_MARKER_INTERVAL_MS = 2500L
+    private const val SPATIAL_VR_INPUT_SYSTEM_PROPERTY =
+        "debug.rustyquest.spatial_camera_panel.vr_input_system"
+    private const val SPATIAL_VR_INPUT_SYSTEM_DEFAULT_TOKEN = "interaction_sdk"
+    private const val SPATIAL_SHOULD_CONSUME_LEFT_RIGHT_INPUT_PROPERTY =
+        "debug.rustyquest.spatial_camera_panel.consume_left_right_input"
+    private const val SPATIAL_SHOULD_CONSUME_LEFT_RIGHT_INPUT_DEFAULT = false
     private const val PANEL_WIDTH_MIN_METERS = 1.20f
     private const val PANEL_WIDTH_MAX_METERS = 2.60f
     private const val PANEL_HEIGHT_MIN_METERS = 0.75f
@@ -4538,29 +5374,35 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val CAMERA_HWB_PROJECTION_WIDTH_PX = 2048
     private const val CAMERA_HWB_PROJECTION_HEIGHT_PX = 1024
     private const val CAMERA_HWB_PROJECTION_PER_EYE_WIDTH_PX = 1024
-    private const val CAMERA_HWB_PROJECTION_WIDTH_METERS = PARTICLE_LAYER_WIDTH_METERS
-    private const val CAMERA_HWB_PROJECTION_HEIGHT_METERS = PARTICLE_LAYER_HEIGHT_METERS
-    private const val CAMERA_HWB_PROJECTION_WIDTH_MARKER = "1.44"
-    private const val CAMERA_HWB_PROJECTION_HEIGHT_MARKER = "1.44"
-    private const val CAMERA_HWB_PROJECTION_TARGET_DISTANCE_METERS =
-        PARTICLE_LAYER_TARGET_DISTANCE_METERS
-    private const val CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER = "0.72"
+    private const val CAMERA_HWB_PROJECTION_TARGET_DISTANCE_METERS = 1.0f
+    private const val CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER = "1.00"
+    private const val CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_JOYSTICK_RATE_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.stereo_horizontal_offset.joystick.rate_uvps"
+    private const val CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_JOYSTICK_RATE_UV_PER_SECOND =
+        0.08f
+    private const val CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV = 0.046320f
+    private const val CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MIN_UV = -0.12f
+    private const val CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MAX_UV = 0.12f
+    private const val CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_RANGE_MARKER =
+        "-0.120000..0.120000"
+    private const val CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_JOYSTICK_MARKER_INTERVAL_MS =
+        450L
     private const val CAMERA_HWB_PROJECTION_TARGET_FOV_TANGENTS = "-1.0;1.0;-1.0;1.0"
-    private const val CAMERA_HWB_PROJECTION_SURFACE_OVERSCAN_SCALE = 1.0f
     private const val CAMERA_HWB_PROJECTION_SURFACE_OVERSCAN_MARKER = "1.0"
     private const val CAMERA_HWB_PROJECTION_BORDER_OPACITY_MARKER = "0.0"
+    private const val CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE = 1.0f
+    private const val CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_X = 0.171875f
+    private const val CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_Y = 0.218750f
+    private const val CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_WIDTH = 0.750000f
+    private const val CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_HEIGHT = 0.656250f
+    private const val CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_X = 0.078125f
+    private const val CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_Y = 0.218750f
+    private const val CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_WIDTH = 0.750000f
+    private const val CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_HEIGHT = 0.671875f
     private const val CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_MARKER =
         "0.171875;0.218750;0.750000;0.656250"
     private const val CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_MARKER =
         "0.078125;0.218750;0.750000;0.671875"
-    private const val CAMERA_HWB_PROJECTION_LEFT_EFFECTIVE_TARGET_RECT_MARKER =
-        CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_MARKER
-    private const val CAMERA_HWB_PROJECTION_RIGHT_EFFECTIVE_TARGET_RECT_MARKER =
-        CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_MARKER
-    private const val CAMERA_HWB_PROJECTION_LEFT_PACKED_EFFECTIVE_TARGET_RECT_MARKER =
-        "0.085938;0.218750;0.375000;0.656250"
-    private const val CAMERA_HWB_PROJECTION_RIGHT_PACKED_EFFECTIVE_TARGET_RECT_MARKER =
-        "0.539063;0.218750;0.375000;0.671875"
     private const val CAMERA_HWB_PROJECTION_TARGET = "full-eye"
     private const val CAMERA_HWB_PROJECTION_PLACEMENT_MODE =
         "viewer-pose-projection-locked-quad"
@@ -4574,6 +5416,25 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val CAMERA_HWB_PROJECTION_MARKER_INTERVAL_MS = 900L
     private const val OPENXR_ERROR_HANDLE_INVALID = -12
     private const val NATIVE_RECEIPT_LIBRARY = "spatial_camera_panel_native_receipt"
+    private const val SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY =
+        "debug.rustyquest.spatial.multimodal_input.enabled"
+    private const val SPATIAL_MULTIMODAL_INPUT_DEFAULT_ENABLED = false
+    private const val NATIVE_SPATIAL_CONTROLLER_ACTIONS_ENABLED_PROPERTY =
+        "debug.rustyquest.spatial.native_controller_actions.enabled"
+    private const val NATIVE_SPATIAL_CONTROLLER_ACTIONS_DEFAULT_ENABLED = false
+    private const val XR_META_SIMULTANEOUS_HANDS_AND_CONTROLLERS_EXTENSION =
+        "XR_META_simultaneous_hands_and_controllers"
+    private const val XR_META_DETACHED_CONTROLLERS_EXTENSION =
+        "XR_META_detached_controllers"
+    private val SPATIAL_MULTIMODAL_REQUIRED_OPENXR_EXTENSIONS =
+        listOf(
+            XR_META_SIMULTANEOUS_HANDS_AND_CONTROLLERS_EXTENSION,
+            XR_META_DETACHED_CONTROLLERS_EXTENSION,
+        )
+    private const val SPATIAL_MULTIMODAL_INPUT_SUPPORTED_BIT = 1L shl 8
+    private const val SPATIAL_MULTIMODAL_INPUT_RESUME_RESOLVED_BIT = 1L shl 9
+    private const val SPATIAL_MULTIMODAL_INPUT_RESUME_SUCCEEDED_BIT = 1L shl 10
+    private const val NATIVE_SPATIAL_CONTROLLER_ACTION_SET_ATTACHED_BIT = 1L shl 8
     private const val NATIVE_RECEIPT_OPENXR_INSTANCE_BIT = 1L shl 1
     private const val NATIVE_RECEIPT_OPENXR_SESSION_BIT = 1L shl 2
     private const val NATIVE_RECEIPT_OPENXR_GET_PROC_BIT = 1L shl 3

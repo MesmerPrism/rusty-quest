@@ -15,11 +15,13 @@ use crate::camera_hwb_projection_target::{
     camera_hwb_projection_marker_fields, camera_hwb_projection_push, CameraHwbProjectionPush,
 };
 use crate::camera_hwb_stream::CameraProbeFrame;
+use crate::spatial_public_multistack::public_multistack_marker_fields;
+use crate::spatial_public_multistack_runtime::SpatialPublicGuideTargets;
 
 pub(crate) struct CameraHwbProbeResources {
     pub(crate) sampler_ycbcr_conversion: Option<vk::SamplerYcbcrConversion>,
     sampler: vk::Sampler,
-    descriptor_set_layout: vk::DescriptorSetLayout,
+    pub(crate) descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_pool: vk::DescriptorPool,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
@@ -207,9 +209,13 @@ pub(crate) unsafe fn create_camera_hwb_probe_resources(
         mode.raw_projection_token(),
         mode.stereo_source(),
         if matches!(mode, CameraHwbProbeMode::RawColorProjection) {
-            camera_hwb_projection_marker_fields()
+            format!(
+                "{} {}",
+                camera_hwb_projection_marker_fields(),
+                public_multistack_marker_fields()
+            )
         } else {
-            "monoDuplicated=false".to_string()
+            "monoDuplicated=false publicMultiStackActive=false".to_string()
         },
     ));
     Ok(CameraHwbProbeResources {
@@ -420,7 +426,9 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     sampled_right_image: Option<&AhbVulkanSampledImage>,
     transition_left_camera_image: bool,
     transition_right_camera_image: bool,
-) -> Result<(), String> {
+    public_guide_targets: Option<&mut SpatialPublicGuideTargets>,
+    elapsed_seconds: f32,
+) -> Result<bool, String> {
     device
         .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
         .map_err(|error| format!("reset-command-buffer-{error:?}"))?;
@@ -442,6 +450,31 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
                 sampled_right_image.image,
             );
         }
+    }
+    let projected_by_public_stack = if let Some(public_guide_targets) = public_guide_targets {
+        public_guide_targets.record_spatial_public_guide_passes(
+            device,
+            command_buffer,
+            descriptor_set,
+            elapsed_seconds,
+        )?;
+        public_guide_targets.record_spatial_public_projection(
+            device,
+            command_buffer,
+            render_pass,
+            framebuffer,
+            extent,
+            descriptor_set,
+            elapsed_seconds,
+        )?
+    } else {
+        false
+    };
+    if projected_by_public_stack {
+        device
+            .end_command_buffer(command_buffer)
+            .map_err(|error| format!("end-command-buffer-{error:?}"))?;
+        return Ok(true);
     }
     let clear_values = [vk::ClearValue {
         color: vk::ClearColorValue {
@@ -506,7 +539,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     device
         .end_command_buffer(command_buffer)
         .map_err(|error| format!("end-command-buffer-{error:?}"))?;
-    Ok(())
+    Ok(false)
 }
 
 unsafe fn create_shader_module(

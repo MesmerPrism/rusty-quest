@@ -49,25 +49,240 @@ fn main() {
             "camera_hwb_raw_color.frag.spv",
             "fragment",
         ),
+        (
+            "shaders/public_guide_blur.frag.glsl",
+            "public_guide_blur.frag.spv",
+            "fragment",
+        ),
     ];
     let glslc = find_glslc();
+    let mut public_guide_blur_shader_byte_count = 0_u64;
     for (source, output_name, stage) in shaders {
         println!("cargo:rerun-if-changed={source}");
         let output = out_dir.join(output_name);
-        let status = Command::new(&glslc)
-            .arg("-O")
-            .arg(format!("-fshader-stage={stage}"))
-            .arg("-o")
-            .arg(&output)
-            .arg(source)
-            .status()
-            .unwrap_or_else(|error| panic!("failed to run glslc at {}: {error}", glslc.display()));
-        if !status.success() {
-            panic!(
-                "glslc failed for {source} with status {status}; glslc={}",
-                glslc.display()
-            );
+        let byte_count = compile_shader(&glslc, Path::new(source), &output, stage);
+        if output_name == "public_guide_blur.frag.spv" {
+            public_guide_blur_shader_byte_count = byte_count;
         }
+    }
+    let opaque_guide_shader = compile_optional_guide_shader_env(
+        &glslc,
+        &out_dir,
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER",
+    );
+    let opaque_projection_shader = compile_optional_shader_env(
+        &glslc,
+        &out_dir,
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER",
+        "spatial_opaque_projection.frag.spv",
+        "fragment",
+    );
+    let opaque_projection_effect =
+        opaque_projection_effect_env("RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT");
+    write_spatial_multistack_build_metadata(
+        &out_dir,
+        public_guide_blur_shader_byte_count,
+        opaque_guide_shader,
+        opaque_projection_shader,
+        opaque_projection_effect,
+    );
+}
+
+#[derive(Clone, Copy)]
+struct OptionalShaderBuild {
+    compiled: bool,
+    byte_count: u64,
+}
+
+#[derive(Clone, Copy)]
+struct OptionalGuideShaderBuild {
+    compiled: bool,
+    total_byte_count: u64,
+    pass_byte_counts: [u64; 6],
+}
+
+fn compile_optional_guide_shader_env(
+    glslc: &Path,
+    out_dir: &Path,
+    env_key: &str,
+) -> OptionalGuideShaderBuild {
+    println!("cargo:rerun-if-env-changed={env_key}");
+    let mut pass_byte_counts = [0_u64; 6];
+    let output_names = (0..pass_byte_counts.len())
+        .map(|pass_index| format!("spatial_opaque_guide_pass_{pass_index}.frag.spv"))
+        .collect::<Vec<_>>();
+    let Some(source) = env_path(env_key) else {
+        for output_name in output_names {
+            fs::write(out_dir.join(output_name), []).unwrap_or_else(|error| {
+                panic!("failed to write empty optional guide shader output: {error}")
+            });
+        }
+        return OptionalGuideShaderBuild {
+            compiled: false,
+            total_byte_count: 0,
+            pass_byte_counts,
+        };
+    };
+    println!("cargo:rerun-if-changed={}", source.display());
+    for (pass_index, output_name) in output_names.iter().enumerate() {
+        let define = format!("-DPRIVATE_LAYER_GUIDE_PASS_MODE={pass_index}");
+        pass_byte_counts[pass_index] = compile_shader_with_args(
+            glslc,
+            &source,
+            &out_dir.join(output_name),
+            "fragment",
+            &[define],
+        );
+    }
+    OptionalGuideShaderBuild {
+        compiled: true,
+        total_byte_count: pass_byte_counts.iter().copied().sum(),
+        pass_byte_counts,
+    }
+}
+
+fn compile_optional_shader_env(
+    glslc: &Path,
+    out_dir: &Path,
+    env_key: &str,
+    output_name: &str,
+    stage: &str,
+) -> OptionalShaderBuild {
+    println!("cargo:rerun-if-env-changed={env_key}");
+    let Some(source) = env_path(env_key) else {
+        fs::write(out_dir.join(output_name), []).unwrap_or_else(|error| {
+            panic!("failed to write empty optional shader output {output_name}: {error}")
+        });
+        return OptionalShaderBuild {
+            compiled: false,
+            byte_count: 0,
+        };
+    };
+    println!("cargo:rerun-if-changed={}", source.display());
+    let byte_count = compile_shader(glslc, &source, &out_dir.join(output_name), stage);
+    OptionalShaderBuild {
+        compiled: true,
+        byte_count,
+    }
+}
+
+fn opaque_projection_effect_env(env_key: &str) -> [f32; 4] {
+    println!("cargo:rerun-if-env-changed={env_key}");
+    let Some(value) = env::var_os(env_key) else {
+        return [1.0, 1.0, 0.0, 1.0];
+    };
+    let value = value.to_string_lossy();
+    let parts = value
+        .split([',', ';', ' '])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            part.parse::<f32>()
+                .unwrap_or_else(|error| panic!("{env_key} has invalid float {part}: {error}"))
+        })
+        .collect::<Vec<_>>();
+    if parts.len() != 4 {
+        panic!("{env_key} must contain four floats");
+    }
+    [parts[0], parts[1], parts[2], parts[3]]
+}
+
+fn compile_shader(glslc: &Path, source: &Path, output: &Path, stage: &str) -> u64 {
+    compile_shader_with_args(glslc, source, output, stage, &[])
+}
+
+fn compile_shader_with_args(
+    glslc: &Path,
+    source: &Path,
+    output: &Path,
+    stage: &str,
+    extra_args: &[String],
+) -> u64 {
+    let mut command = Command::new(glslc);
+    command
+        .arg("-O")
+        .arg(format!("-fshader-stage={stage}"))
+        .args(extra_args)
+        .arg("-o")
+        .arg(output)
+        .arg(source);
+    let status = command
+        .status()
+        .unwrap_or_else(|error| panic!("failed to run glslc at {}: {error}", glslc.display()));
+    if !status.success() {
+        panic!(
+            "glslc failed for {} with status {status}; glslc={}",
+            source.display(),
+            glslc.display()
+        );
+    }
+    fs::metadata(output)
+        .unwrap_or_else(|error| {
+            panic!(
+                "failed to stat compiled shader {}: {error}",
+                output.display()
+            )
+        })
+        .len()
+}
+
+fn write_spatial_multistack_build_metadata(
+    out_dir: &Path,
+    public_guide_blur_shader_byte_count: u64,
+    opaque_guide_shader: OptionalGuideShaderBuild,
+    opaque_projection_shader: OptionalShaderBuild,
+    opaque_projection_effect: [f32; 4],
+) {
+    let output = out_dir.join("spatial_public_multistack_build.rs");
+    let guide_pass_byte_counts = opaque_guide_shader
+        .pass_byte_counts
+        .iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    fs::write(
+        &output,
+        format!(
+            "#[allow(dead_code)]\n\
+             pub(crate) const PUBLIC_GUIDE_BLUR_SHADER_COMPILED: bool = true;\n\
+             #[allow(dead_code)]\n\
+             pub(crate) const PUBLIC_GUIDE_BLUR_SHADER_BYTE_COUNT: usize = {public_guide_blur_shader_byte_count};\n\
+             #[allow(dead_code)]\n\
+             pub(crate) const OPAQUE_GUIDE_SHADER_COMPILED: bool = {};\n\
+             #[allow(dead_code)]\n\
+             pub(crate) const OPAQUE_GUIDE_SHADER_BYTE_COUNT: usize = {};\n\
+             #[allow(dead_code)]\n\
+             pub(crate) const OPAQUE_GUIDE_SHADER_PASS_COUNT: usize = 6;\n\
+             #[allow(dead_code)]\n\
+             pub(crate) const OPAQUE_GUIDE_SHADER_PASS_BYTE_COUNTS: [usize; 6] = [{guide_pass_byte_counts}];\n\
+             #[allow(dead_code)]\n\
+             pub(crate) const OPAQUE_PROJECTION_SHADER_COMPILED: bool = {};\n\
+             #[allow(dead_code)]\n\
+             pub(crate) const OPAQUE_PROJECTION_SHADER_BYTE_COUNT: usize = {};\n\
+             #[allow(dead_code)]\n\
+             pub(crate) const OPAQUE_PROJECTION_EFFECT: [f32; 4] = [{:.8}, {:.8}, {:.8}, {:.8}];\n",
+            bool_literal(opaque_guide_shader.compiled),
+            opaque_guide_shader.total_byte_count,
+            bool_literal(opaque_projection_shader.compiled),
+            opaque_projection_shader.byte_count,
+            opaque_projection_effect[0],
+            opaque_projection_effect[1],
+            opaque_projection_effect[2],
+            opaque_projection_effect[3],
+        ),
+    )
+    .unwrap_or_else(|error| {
+        panic!(
+            "failed to write Spatial public multi-stack build metadata {}: {error}",
+            output.display()
+        )
+    });
+}
+
+fn bool_literal(value: bool) -> &'static str {
+    if value {
+        "true"
+    } else {
+        "false"
     }
 }
 

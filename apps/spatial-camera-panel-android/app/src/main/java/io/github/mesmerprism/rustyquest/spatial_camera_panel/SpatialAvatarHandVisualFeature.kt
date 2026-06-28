@@ -11,6 +11,21 @@ internal class SpatialAvatarHandVisualFeature(
       listOf(SpatialAvatarHandVisualSuppressionSystem(marker))
 }
 
+internal class SpatialControllerInputLateFeature(
+    private val pollControllerInput: () -> Unit,
+) : SpatialFeature {
+  override fun lateSystemsToRegister(): List<SystemBase> =
+      listOf(SpatialControllerInputLateSystem(pollControllerInput))
+}
+
+private class SpatialControllerInputLateSystem(
+    private val pollControllerInput: () -> Unit,
+) : SystemBase() {
+  override fun execute() {
+    pollControllerInput()
+  }
+}
+
 private class SpatialAvatarHandVisualSuppressionSystem(
     private val marker: (String) -> Unit,
 ) : SystemBase() {
@@ -33,12 +48,13 @@ private class SpatialAvatarHandVisualSuppressionSystem(
     }
 
     avatarSystem.setShowHands(false)
+    avatarSystem.setShowControllers(true)
     if (!disabledLogged) {
       disabledLogged = true
       marker(
           "channel=spatial-sdk-avatar-visual status=disabled " +
               "system=AvatarSystem systemFound=true suppressionSystem=SpatialAvatarHandVisualSuppressionSystem " +
-              "showHands=false builtInMetaHandVisualPolicy=disabled " +
+              "showHands=false showControllers=true builtInMetaHandVisualPolicy=disabled " +
               "nativeBaseHandMeshPolicy=explicit-only"
       )
     }

@@ -1,5 +1,7 @@
 #![cfg_attr(not(any(target_os = "android", test)), allow(dead_code))]
 
+use std::sync::atomic::{AtomicU32, Ordering};
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct CameraTargetRect {
     pub(crate) x: f32,
@@ -36,6 +38,9 @@ const CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE: f32 = 0.25;
 const CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE: f32 = 1.80;
 const CAMERA_HWB_PROJECTION_TARGET_OFFSET_X: f32 = 0.0;
 const CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y: f32 = 0.0;
+const CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV: f32 = 0.046320;
+const CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MIN_UV: f32 = -0.12;
+const CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MAX_UV: f32 = 0.12;
 const CAMERA_HWB_PROJECTION_BORDER_OPACITY: f32 = 0.0;
 const CAMERA_HWB_LEFT_TARGET_RECT: CameraTargetRect = CameraTargetRect {
     x: 0.171875,
@@ -49,6 +54,34 @@ const CAMERA_HWB_RIGHT_TARGET_RECT: CameraTargetRect = CameraTargetRect {
     width: 0.75,
     height: 0.671875,
 };
+static CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_BITS: AtomicU32 =
+    AtomicU32::new(CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV.to_bits());
+
+#[allow(dead_code)]
+pub(crate) fn update_camera_hwb_projection_stereo_horizontal_offset_uv(offset_uv: f32) -> f32 {
+    let applied = finite_or(offset_uv, 0.0).clamp(
+        CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MIN_UV,
+        CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MAX_UV,
+    );
+    CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_BITS.store(applied.to_bits(), Ordering::Release);
+    applied
+}
+
+fn current_camera_hwb_projection_stereo_horizontal_offset_uv() -> f32 {
+    f32::from_bits(CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_BITS.load(Ordering::Acquire))
+        .clamp(
+            CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MIN_UV,
+            CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MAX_UV,
+        )
+}
+
+fn finite_or(value: f32, fallback: f32) -> f32 {
+    if value.is_finite() {
+        value
+    } else {
+        fallback
+    }
+}
 
 pub(crate) fn effective_rect(
     base: CameraTargetRect,
@@ -90,8 +123,9 @@ pub(crate) fn packed_right_rect(rect: CameraTargetRect) -> CameraTargetRect {
 }
 
 pub(crate) fn camera_hwb_projection_push() -> CameraHwbProjectionPush {
-    let left_effective = left_effective_target_rect();
-    let right_effective = right_effective_target_rect();
+    let stereo_horizontal_offset_uv = current_camera_hwb_projection_stereo_horizontal_offset_uv();
+    let (left_effective, right_effective) =
+        effective_target_rects_for_stereo_offset(stereo_horizontal_offset_uv);
     CameraHwbProjectionPush {
         left_rect: packed_left_rect(left_effective).as_push(),
         right_rect: packed_right_rect(right_effective).as_push(),
@@ -100,10 +134,11 @@ pub(crate) fn camera_hwb_projection_push() -> CameraHwbProjectionPush {
 }
 
 pub(crate) fn camera_hwb_projection_marker_fields() -> String {
-    let left_effective = left_effective_target_rect();
-    let right_effective = right_effective_target_rect();
+    let stereo_horizontal_offset_uv = current_camera_hwb_projection_stereo_horizontal_offset_uv();
+    let (left_effective, right_effective) =
+        effective_target_rects_for_stereo_offset(stereo_horizontal_offset_uv);
     format!(
-        "stereoSource=camera50-51 leftCameraId={} rightCameraId={} leftTargetScreenUvRect={} rightTargetScreenUvRect={} leftEffectiveTargetScreenUvRect={} rightEffectiveTargetScreenUvRect={} leftPackedEffectiveTargetScreenUvRect={} rightPackedEffectiveTargetScreenUvRect={} projectionTargetControlsEnabled=true projectionTargetLiveScale={:.4} projectionTargetTunedMaxScale={:.4} projectionTargetMinScale={:.4} projectionTargetMaxScale={:.4} projectionTargetOffsetUv={:.6},{:.6} borderOpacity={:.1} targetClipPolicy=clip-to-visible-eye projectionContentMappingMode=target-local-raster monoDuplicated=false",
+        "stereoSource=camera50-51 leftCameraId={} rightCameraId={} leftTargetScreenUvRect={} rightTargetScreenUvRect={} leftEffectiveTargetScreenUvRect={} rightEffectiveTargetScreenUvRect={} leftPackedEffectiveTargetScreenUvRect={} rightPackedEffectiveTargetScreenUvRect={} projectionTargetControlsEnabled=true projectionTargetLiveScale={:.4} projectionTargetTunedMaxScale={:.4} projectionTargetMinScale={:.4} projectionTargetMaxScale={:.4} projectionTargetOffsetUv={:.6},{:.6} projectionTargetStereoHorizontalOffsetUv={:.6} projectionTargetStereoHorizontalOffsetDefaultUv={:.6} projectionTargetStereoHorizontalOffsetRangeUv={:.6}..{:.6} projectionTargetLeftOffsetUv={:.6},{:.6} projectionTargetRightOffsetUv={:.6},{:.6} projectionTargetStereoHorizontalOffsetSign=positive-increases-separation borderOpacity={:.1} targetClipPolicy=clip-to-visible-eye projectionContentMappingMode=target-local-raster monoDuplicated=false",
         CAMERA_HWB_LEFT_CAMERA_ID,
         CAMERA_HWB_RIGHT_CAMERA_ID,
         CAMERA_HWB_LEFT_TARGET_RECT.marker_token(),
@@ -118,25 +153,54 @@ pub(crate) fn camera_hwb_projection_marker_fields() -> String {
         CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE,
         CAMERA_HWB_PROJECTION_TARGET_OFFSET_X,
         CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
+        stereo_horizontal_offset_uv,
+        CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV,
+        CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MIN_UV,
+        CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MAX_UV,
+        -stereo_horizontal_offset_uv,
+        CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
+        stereo_horizontal_offset_uv,
+        CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
         CAMERA_HWB_PROJECTION_BORDER_OPACITY,
     )
 }
 
+#[cfg(test)]
 fn left_effective_target_rect() -> CameraTargetRect {
-    effective_rect(
-        CAMERA_HWB_LEFT_TARGET_RECT,
-        CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE,
-        CAMERA_HWB_PROJECTION_TARGET_OFFSET_X,
-        CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
+    effective_target_rects_for_stereo_offset(
+        current_camera_hwb_projection_stereo_horizontal_offset_uv(),
     )
+    .0
 }
 
+#[cfg(test)]
 fn right_effective_target_rect() -> CameraTargetRect {
-    effective_rect(
-        CAMERA_HWB_RIGHT_TARGET_RECT,
-        CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE,
-        CAMERA_HWB_PROJECTION_TARGET_OFFSET_X,
-        CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
+    effective_target_rects_for_stereo_offset(
+        current_camera_hwb_projection_stereo_horizontal_offset_uv(),
+    )
+    .1
+}
+
+fn effective_target_rects_for_stereo_offset(
+    stereo_horizontal_offset_uv: f32,
+) -> (CameraTargetRect, CameraTargetRect) {
+    let stereo_horizontal_offset_uv = finite_or(stereo_horizontal_offset_uv, 0.0).clamp(
+        CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MIN_UV,
+        CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MAX_UV,
+    );
+    (
+        effective_rect(
+            CAMERA_HWB_LEFT_TARGET_RECT,
+            CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE,
+            CAMERA_HWB_PROJECTION_TARGET_OFFSET_X - stereo_horizontal_offset_uv,
+            CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
+        ),
+        effective_rect(
+            CAMERA_HWB_RIGHT_TARGET_RECT,
+            CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE,
+            CAMERA_HWB_PROJECTION_TARGET_OFFSET_X + stereo_horizontal_offset_uv,
+            CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
+        ),
     )
 }
 
@@ -159,11 +223,11 @@ mod tests {
     }
 
     #[test]
-    fn default_effective_rects_match_native_targets() {
+    fn default_effective_rects_match_tuned_stereo_offset_targets() {
         assert_rect_close(
             left_effective_target_rect(),
             CameraTargetRect {
-                x: 0.171875,
+                x: 0.125555,
                 y: 0.21875,
                 width: 0.75,
                 height: 0.65625,
@@ -172,7 +236,7 @@ mod tests {
         assert_rect_close(
             right_effective_target_rect(),
             CameraTargetRect {
-                x: 0.078125,
+                x: 0.124445,
                 y: 0.21875,
                 width: 0.75,
                 height: 0.671875,
@@ -185,7 +249,7 @@ mod tests {
         assert_rect_close(
             packed_left_rect(left_effective_target_rect()),
             CameraTargetRect {
-                x: 0.0859375,
+                x: 0.0627775,
                 y: 0.21875,
                 width: 0.375,
                 height: 0.65625,
@@ -194,7 +258,48 @@ mod tests {
         assert_rect_close(
             packed_right_rect(right_effective_target_rect()),
             CameraTargetRect {
-                x: 0.5390625,
+                x: 0.5622225,
+                y: 0.21875,
+                width: 0.375,
+                height: 0.671875,
+            },
+        );
+    }
+
+    #[test]
+    fn stereo_horizontal_offset_moves_eye_targets_oppositely() {
+        let (left, right) = effective_target_rects_for_stereo_offset(0.05);
+        assert_rect_close(
+            left,
+            CameraTargetRect {
+                x: 0.121875,
+                y: 0.21875,
+                width: 0.75,
+                height: 0.65625,
+            },
+        );
+        assert_rect_close(
+            right,
+            CameraTargetRect {
+                x: 0.128125,
+                y: 0.21875,
+                width: 0.75,
+                height: 0.671875,
+            },
+        );
+        assert_rect_close(
+            packed_left_rect(left),
+            CameraTargetRect {
+                x: 0.0609375,
+                y: 0.21875,
+                width: 0.375,
+                height: 0.65625,
+            },
+        );
+        assert_rect_close(
+            packed_right_rect(right),
+            CameraTargetRect {
+                x: 0.5640625,
                 y: 0.21875,
                 width: 0.375,
                 height: 0.671875,
@@ -240,23 +345,35 @@ mod tests {
     #[test]
     fn marker_fields_keep_acceptance_tokens() {
         let fields = camera_hwb_projection_marker_fields();
+        let (left_effective, right_effective) = effective_target_rects_for_stereo_offset(
+            CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV,
+        );
+        let left_effective_token = left_effective.marker_token();
+        let right_effective_token = right_effective.marker_token();
+        let left_packed_token = packed_left_rect(left_effective).marker_token();
+        let right_packed_token = packed_right_rect(right_effective).marker_token();
         assert!(fields.contains("stereoSource=camera50-51"));
         assert!(fields.contains("leftCameraId=50"));
         assert!(fields.contains("rightCameraId=51"));
-        assert!(
-            fields.contains("leftEffectiveTargetScreenUvRect=0.171875;0.218750;0.750000;0.656250")
-        );
-        assert!(
-            fields.contains("rightEffectiveTargetScreenUvRect=0.078125;0.218750;0.750000;0.671875")
-        );
-        assert!(fields
-            .contains("leftPackedEffectiveTargetScreenUvRect=0.085938;0.218750;0.375000;0.656250"));
-        assert!(fields.contains(
-            "rightPackedEffectiveTargetScreenUvRect=0.539062;0.218750;0.375000;0.671875"
-        ));
+        assert!(fields.contains(&format!(
+            "leftEffectiveTargetScreenUvRect={left_effective_token}"
+        )));
+        assert!(fields.contains(&format!(
+            "rightEffectiveTargetScreenUvRect={right_effective_token}"
+        )));
+        assert!(fields.contains(&format!(
+            "leftPackedEffectiveTargetScreenUvRect={left_packed_token}"
+        )));
+        assert!(fields.contains(&format!(
+            "rightPackedEffectiveTargetScreenUvRect={right_packed_token}"
+        )));
         assert!(fields.contains("projectionTargetLiveScale=1.0000"));
         assert!(fields.contains("projectionTargetMinScale=0.2500"));
         assert!(fields.contains("projectionTargetMaxScale=1.8000"));
+        assert!(fields.contains("projectionTargetStereoHorizontalOffsetUv=0.046320"));
+        assert!(fields.contains("projectionTargetStereoHorizontalOffsetDefaultUv=0.046320"));
+        assert!(fields.contains("projectionTargetLeftOffsetUv=-0.046320,0.000000"));
+        assert!(fields.contains("projectionTargetRightOffsetUv=0.046320,0.000000"));
         assert!(fields.contains("targetClipPolicy=clip-to-visible-eye"));
         assert!(fields.contains("projectionContentMappingMode=target-local-raster"));
         assert!(fields.contains("monoDuplicated=false"));

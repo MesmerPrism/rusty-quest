@@ -34,6 +34,12 @@ mod live_hand_joints;
 #[cfg(target_os = "android")]
 mod replay_hands;
 #[cfg(target_os = "android")]
+mod spatial_controller_actions;
+#[cfg(target_os = "android")]
+mod spatial_multimodal_input;
+mod spatial_public_multistack;
+mod spatial_public_multistack_runtime;
+#[cfg(target_os = "android")]
 mod surface_particle_layer;
 
 #[cfg(target_os = "android")]

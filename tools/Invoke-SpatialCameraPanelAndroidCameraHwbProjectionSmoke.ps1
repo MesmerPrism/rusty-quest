@@ -12,7 +12,8 @@ param(
     [switch]$SkipInstall,
     [switch]$ClearLogcat,
     [switch]$StopAfterRun,
-    [switch]$AllowMissingMarkers
+    [switch]$AllowMissingMarkers,
+    [switch]$RequirePublicMultiStackProjection
 )
 
 $ErrorActionPreference = "Stop"
@@ -201,6 +202,7 @@ $summary = [ordered]@{
     clear_logcat_requested = [bool]$ClearLogcat
     stop_after_run = [bool]$StopAfterRun
     allow_missing_markers = [bool]$AllowMissingMarkers
+    require_public_multistack_projection = [bool]$RequirePublicMultiStackProjection
     reader_max_images = $readerMaxImagesClamped
     carrier = "scenequadlayer-createAsAndroid-vulkan-wsi"
     tag_logcat_stream_path = $tagLogcatStreamPath
@@ -236,6 +238,10 @@ try {
     $setpropResults += Invoke-AdbCommand -Name "disable luma camera HWB probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_probe", "0")
     $setpropResults += Invoke-AdbCommand -Name "enable raw camera projection probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe", "1")
     $setpropResults += Invoke-AdbCommand -Name "set raw camera projection reader max images" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.reader_max_images", $readerMaxImagesClamped.ToString())
+    $setpropResults += Invoke-AdbCommand -Name "select Spatial SDK interaction pointer input" -Arguments @("shell", "setprop", "debug.rustyquest.spatial_camera_panel.vr_input_system", "interaction_sdk")
+    $setpropResults += Invoke-AdbCommand -Name "allow app controller probe to observe left/right input" -Arguments @("shell", "setprop", "debug.rustyquest.spatial_camera_panel.consume_left_right_input", "0")
+    $setpropResults += Invoke-AdbCommand -Name "disable Spatial SDK multimodal input" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.multimodal_input.enabled", "0")
+    $setpropResults += Invoke-AdbCommand -Name "disable native OpenXR controller action diagnostic" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.native_controller_actions.enabled", "0")
     Save-Text -Path (Join-Path $OutDir "setprops.json") -Text ($setpropResults | ConvertTo-Json -Depth 6)
 
     Invoke-AdbCommand -Name "force-stop Spatial SDK app" -Arguments @("shell", "am", "force-stop", $PackageName) -AllowFailure | Out-Null
@@ -315,9 +321,47 @@ try {
     $summary.output_raw_color_target_rect = Test-TextContains $evidenceText "outputMode=raw-color-target-rect"
     $summary.target_clip_policy = Test-TextContains $evidenceText "targetClipPolicy=clip-to-visible-eye"
     $summary.mapping_mode_target_local_raster = Test-TextContains $evidenceText "projectionContentMappingMode=target-local-raster"
+    $summary.native_packed_left_target_rect = Test-TextContains $evidenceText "leftPackedEffectiveTargetScreenUvRect=0.062777;0.218750;0.375000;0.656250"
+    $summary.native_packed_right_target_rect = Test-TextContains $evidenceText "rightPackedEffectiveTargetScreenUvRect=0.562222;0.218750;0.375000;0.671875"
+    $summary.projection_target_default_distance_one_meter = Test-TextContains $evidenceText "targetDistanceDefaultMeters=1.00"
+    $summary.projection_target_stereo_horizontal_offset_readback = Test-TextContains $evidenceText "projectionTargetStereoHorizontalOffsetUv="
+    $summary.projection_target_stereo_horizontal_offset_default = Test-TextContains $evidenceText "projectionTargetStereoHorizontalOffsetDefaultUv=0.046320"
+    $summary.projection_target_left_right_offset_readback = (Test-TextContains $evidenceText "projectionTargetLeftOffsetUv=") -and (Test-TextContains $evidenceText "projectionTargetRightOffsetUv=")
+    $summary.projection_target_stereo_horizontal_offset_control = Test-TextContains $evidenceText "stereoHorizontalOffsetJoystickInput=spatial-sdk-avatar-body-left-thumb-up-down-or-android-left-stick-y;panel-visibility-independent;native-openxr-diagnostic-opt-in"
     $summary.mono_duplicated_false = Test-TextContains $evidenceText "monoDuplicated=false"
     $summary.private_shader_stack_false = Test-TextContains $evidenceText "privateShaderStack=false"
     $summary.custom_projection_stack_false = Test-TextContains $evidenceText "customProjectionStack=false"
+    $summary.spatial_hands_and_controllers_manifest = Test-TextContains $evidenceText "spatialHandsAndControllersManifest=true"
+    $summary.spatial_interaction_sdk_backend = Test-TextContains $evidenceText "spatialVrInputSystem=interaction_sdk"
+    $summary.spatial_pointer_input_expected = Test-TextContains $evidenceText "spatialPointerInputExpected=true"
+    $summary.spatial_controller_actions_disabled = Test-TextContains $evidenceText "nativeControllerActionBridge=false"
+    $summary.spatial_multimodal_disabled = (Test-TextContains $evidenceText "spatialRequiredOpenXrExtensions=none") -and (Test-TextContains $evidenceText "spatialMultimodalInputRequest=false")
+    $summary.camera_stack_particle_layer_suppressed = $evidenceText -match "status=particle-layer-suppressed"
+    $summary.camera_stack_particles_suppression_enabled = $evidenceText -match "status=particle-layer-suppressed[^\r\n]*cameraStackSuppressesParticles=true"
+    $summary.camera_stack_particle_layer_visible_false = $evidenceText -match "status=particle-layer-suppressed[^\r\n]*particleLayerVisible=false"
+    $summary.camera_stack_particle_layer_started_false = $evidenceText -match "status=particle-layer-suppressed[^\r\n]*particleLayerStarted=false"
+    $summary.camera_stack_particle_suppress_failed_false = -not ($evidenceText -match "status=particle-layer-suppress-failed")
+    $summary.camera_stack_particle_renderer_ready_false = -not ($evidenceText -match "status=native-hand-anchor-particles-ready")
+    $summary.camera_stack_surface_layer_mode_absent = -not ($evidenceText -match "surfaceLayerMode=native-hand-anchor-particles")
+    $summary.public_multistack_contract_ready = Test-TextContains $evidenceText "status=public-multistack-contract-ready"
+    $summary.public_multistack_guide_targets_ready = Test-TextContains $evidenceText "status=public-multistack-guide-targets-ready"
+    $summary.public_multistack_guide_targets_allocated = Test-TextContains $evidenceText "publicMultiStackGuideTargetsAllocated=true"
+    $summary.public_multistack_guide_resources_ready = Test-TextContains $evidenceText "publicMultiStackGuidePassResourcesReady=true"
+    $summary.public_multistack_pass_execution_ready = Test-TextContains $evidenceText "publicMultiStackPassExecutionReady=true"
+    $summary.public_guide_blur_runtime_ready = Test-TextContains $evidenceText "publicGuideBlurRuntimeReady=true"
+    $summary.public_multistack_opaque_guide_pipelines_ready = Test-TextContains $evidenceText "publicMultiStackOpaqueGuidePipelinesReady=true"
+    $summary.public_multistack_opaque_projection_pipeline_ready = Test-TextContains $evidenceText "publicMultiStackOpaqueProjectionPipelineReady=true"
+    $summary.public_multistack_opaque_projection_payload_execution_ready = Test-TextContains $evidenceText "publicMultiStackOpaqueProjectionPayloadExecutionReady=true"
+    $summary.public_multistack_opaque_payload_execution_ready = Test-TextContains $evidenceText "publicMultiStackOpaquePayloadExecutionReady=true"
+    $summary.public_multistack_depth_fallback_ready = Test-TextContains $evidenceText "publicMultiStackDepthFallbackReady=true"
+    $summary.public_multistack_frame_projected = Test-TextContains $evidenceText "status=public-multistack-frame-projected"
+    $summary.public_multistack_projection_evidence = Test-TextContains $evidenceText "status=public-multistack-projection-evidence"
+    $summary.public_multistack_projection_applied = Test-TextContains $evidenceText "publicMultiStackProjectionApplied=true"
+    $summary.public_multistack_layer_cycle_enabled = Test-TextContains $evidenceText "publicMultiStackLayerCycleEnabled=true"
+    $summary.public_multistack_layer_cycle_elapsed = Test-TextContains $evidenceText "publicMultiStackLayerCycleElapsedSeconds="
+    $summary.public_multistack_opaque_projection_target_space = Test-TextContains $evidenceText "publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv"
+    $summary.public_multistack_opaque_projection_left_target_rect = Test-TextContains $evidenceText "publicMultiStackOpaqueProjectionLeftTargetRect=0.062777;0.218750;0.375000;0.656250"
+    $summary.public_multistack_opaque_projection_right_target_rect = Test-TextContains $evidenceText "publicMultiStackOpaqueProjectionRightTargetRect=0.562222;0.218750;0.375000;0.671875"
     $summary.runtime_crash_false = (Test-TextContains $evidenceText "runtimeCrash=false") -and -not ($evidenceText -match "AndroidRuntime|FATAL|render-failed")
     $summary.screenshot_captured = Test-Path -LiteralPath $screenshotPath
 
@@ -339,11 +383,48 @@ try {
         "output_raw_color_target_rect",
         "target_clip_policy",
         "mapping_mode_target_local_raster",
+        "native_packed_left_target_rect",
+        "native_packed_right_target_rect",
         "mono_duplicated_false",
         "private_shader_stack_false",
         "custom_projection_stack_false",
+        "spatial_hands_and_controllers_manifest",
+        "spatial_interaction_sdk_backend",
+        "spatial_pointer_input_expected",
+        "spatial_controller_actions_disabled",
+        "spatial_multimodal_disabled",
+        "camera_stack_particle_layer_suppressed",
+        "camera_stack_particles_suppression_enabled",
+        "camera_stack_particle_layer_visible_false",
+        "camera_stack_particle_layer_started_false",
+        "camera_stack_particle_suppress_failed_false",
+        "camera_stack_particle_renderer_ready_false",
+        "camera_stack_surface_layer_mode_absent",
         "runtime_crash_false"
     )
+    if ($RequirePublicMultiStackProjection) {
+        $requiredFlags += @(
+            "public_multistack_contract_ready",
+            "public_multistack_guide_targets_ready",
+            "public_multistack_guide_targets_allocated",
+            "public_multistack_guide_resources_ready",
+            "public_multistack_pass_execution_ready",
+            "public_guide_blur_runtime_ready",
+            "public_multistack_opaque_guide_pipelines_ready",
+            "public_multistack_opaque_projection_pipeline_ready",
+            "public_multistack_opaque_projection_payload_execution_ready",
+            "public_multistack_opaque_payload_execution_ready",
+            "public_multistack_depth_fallback_ready",
+            "public_multistack_frame_projected",
+            "public_multistack_projection_evidence",
+            "public_multistack_projection_applied",
+            "public_multistack_layer_cycle_enabled",
+            "public_multistack_layer_cycle_elapsed",
+            "public_multistack_opaque_projection_target_space",
+            "public_multistack_opaque_projection_left_target_rect",
+            "public_multistack_opaque_projection_right_target_rect"
+        )
+    }
     if (-not $AllowMissingMarkers) {
         foreach ($flag in $requiredFlags) {
             Assert-SummaryFlag -Summary $summary -Name $flag

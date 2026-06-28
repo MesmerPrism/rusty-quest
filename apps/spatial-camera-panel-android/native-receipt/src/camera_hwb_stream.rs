@@ -33,6 +33,7 @@ use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 use crate::camera_hwb_projection_target::{
     camera_hwb_projection_marker_fields, CAMERA_HWB_LEFT_CAMERA_ID, CAMERA_HWB_RIGHT_CAMERA_ID,
 };
+use crate::spatial_public_multistack::public_multistack_marker_fields;
 use crate::{bool_token, marker_token};
 
 const CAMERA_HWB_PROBE_READER_DEFAULT_WIDTH: i32 = 1280;
@@ -161,7 +162,7 @@ impl CameraProbeRuntime {
                 }
             };
             log_marker(format!(
-                "status=camera-runtime-started availableIds={} leftCameraId={} rightCameraId={} leftSelectedPrivateSize={}x{} rightSelectedPrivateSize={}x{} readerMaxImages={} stereoSource=camera50-51 imageFormat=PRIVATE usage=GPU_SAMPLED_IMAGE {}",
+                "status=camera-runtime-started availableIds={} leftCameraId={} rightCameraId={} leftSelectedPrivateSize={}x{} rightSelectedPrivateSize={}x{} readerMaxImages={} stereoSource=camera50-51 imageFormat=PRIVATE usage=GPU_SAMPLED_IMAGE {} {}",
                 marker_token(&available_ids.join(",")),
                 CAMERA_HWB_LEFT_CAMERA_ID,
                 CAMERA_HWB_RIGHT_CAMERA_ID,
@@ -171,6 +172,7 @@ impl CameraProbeRuntime {
                 right.selected_height(),
                 reader_max_images,
                 camera_hwb_projection_marker_fields(),
+                public_multistack_marker_fields(),
             ));
             return Ok(Self {
                 manager,

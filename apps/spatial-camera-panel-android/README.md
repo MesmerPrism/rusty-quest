@@ -11,6 +11,8 @@ low-rate driver-profile control. It packages a Spatial SDK/Compose panel under
   block timing, and questionnaire JSONL artifacts.
 - Raw Camera2/AHardwareBuffer projection probes and public blur/projection
   receipts.
+- Public seven-slot camera guide multi-stack contract, including generic final,
+  guide blur, post-blur guide, and depth diagnostic slots.
 - Generic driver profiles `profile-a` through `profile-d` with bounded
   `driver0_value01` and `driver1_value01` handoff markers.
 - Native hand-anchor particle smoke tests that use public deterministic
@@ -21,19 +23,77 @@ low-rate driver-profile control. It packages a Spatial SDK/Compose panel under
 This app does not own high-rate renderer authority. It does not move hand mesh
 frames, particle arrays, field buffers, private shader payloads, or replay
 sequences through Kotlin/Java JSON. The public camera stack in this lane is raw
-and blur/projection validation only. Private downstream visual semantics,
-effect formulas, coupling kernels, and tuned parameter profiles belong outside
-Rusty Quest.
+and blur/projection validation only. Opaque downstream analysis/projection
+slots, visual semantics, effect formulas, coupling kernels, and tuned parameter
+profiles belong outside Rusty Quest.
 
-## Known Follow-Up
+## Headset Evidence
 
 The 2026-06-28 Quest 3S raw-color camera projection smoke passed the camera
 stack gate: SDK-owned `SceneQuadLayer`, native Vulkan WSI, camera 50/51 streams,
-target-rect clipping, and raw-color stereo output all rendered. A separate
-vergence/focus mismatch remains: when the raw camera projection is brought into
-comfortable focus, Meta system menus can appear doubled or soft. Treat that as a
-future Rusty Lattice / projection-space alignment investigation, not as a
-camera acquisition, HWB import, or WSI carrier failure.
+target-rect clipping, and stereo output all rendered. A stricter private-shader
+build of the public multi-stack route also passed on 2026-06-28 with
+`-RequirePublicMultiStackProjection`: five guide targets allocated, public blur
+runtime ready, opaque guide/projection pipelines ready, fallback depth ready,
+`publicMultiStackProjectionApplied=true`, and
+`publicMultiStackLayerCycleEnabled=true`. The strict run preserves the native
+projection footprint by keeping the Spatial SDK quad as the carrier and clipping
+Vulkan output to the packed native target rects; it also suppresses the surface
+particle renderer while the camera stack is active.
+
+Latest strict evidence:
+`local-artifacts\spatial-camera-panel-headset\20260628-161204-camera-hwb-projection-smoke\evidence-summary.json`;
+APK SHA-256 `66ED720405FA857A0355B91225A563B6FA9043069A8AB08BE67B43C4F7BE0954`.
+
+A separate vergence/focus mismatch remains: when the camera projection is
+brought into comfortable focus, Meta system menus can appear doubled or soft.
+Treat that as a future Rusty Lattice / projection-space alignment
+investigation, not as a camera acquisition, HWB import, WSI carrier, or public
+multi-stack failure.
+
+For that investigation, the raw Camera2/HWB projection probe keeps the Spatial
+SDK quad carrier at a fixed 1.0m default distance and exposes left-controller
+Y-axis control over an opposed per-eye horizontal UV offset. Positive offset
+increases stereo separation: the left-eye target rect moves left and the
+right-eye target rect moves right. The current default offset is `0.046320`,
+captured from a live Quest 3S headset readback on 2026-06-28 where the camera
+projection and Meta performance HUD aligned simultaneously. The normal route
+is Spatial SDK's ECS input model: the local player's `AvatarBody` owns the
+active left/right `Controller` components, and a late SDK system reads
+`ButtonBits.ButtonThumbLU` / `ButtonBits.ButtonThumbLD` after the SDK input
+systems tick. Android
+generic-motion left-stick Y remains a fallback when Horizon delivers it. This
+stereo-offset control is intentionally independent of whether the workflow
+panel is open, because the stereo alignment test must preserve the camera
+projection carrier while the operator panel is available. The previous native
+OpenXR float action bound to `/user/hand/left/input/thumbstick/y` is retained
+only as an opt-in diagnostic because `VRFeature` owns the SDK session's
+action-set attachment. Runtime readback uses
+`projectionTargetStereoHorizontalOffsetUv`, `projectionTargetLeftOffsetUv`,
+`projectionTargetRightOffsetUv`, and the effective packed rect markers. While
+this projection probe is active, the hidden surface-particle panel no longer
+writes the shared native panel-basis state on each scene tick; the camera
+projection plane is the native panel-pose authority.
+
+For controller modality, this APK follows the official Spatial SDK panel sample
+shape: optional hands-and-controllers declarations are present, controller
+render models are requested, and the default VR input backend is Interaction
+SDK pointer mode. The debug property
+`debug.rustyquest.spatial_camera_panel.vr_input_system=simple_controller` can
+still be used for controlled headset A/B tests, but the normal path is
+`interaction_sdk`. If no local `AvatarBody` hand entity reports an active
+`ControllerType.CONTROLLER`, the app should treat that as an app-owned
+readiness issue rather than expecting Horizon to block launch.
+
+The previous multimodal probe remains in source for controlled follow-up tests:
+`debug.rustyquest.spatial.multimodal_input.enabled=true` can make
+`registerRequiredOpenXRExtensions()` declare
+`XR_META_simultaneous_hands_and_controllers` and
+`XR_META_detached_controllers` before Spatial SDK starts OpenXR. The native
+receipt then makes a best-effort resume request and logs support, function
+resolution, and resume status under `channel=spatial-multimodal-input`. That
+path is disabled by default because the normal panel path uses Spatial SDK
+Interaction SDK pointer input without native multimodal extension forcing.
 
 ## Native Receipt Source Map
 
@@ -44,6 +104,10 @@ camera acquisition, HWB import, or WSI carrier failure.
   boundaries. Spatial SDK layer/panel primitives are the carrier substrate;
   experiment panel, camera projection, surface particles, and debug probes are
   separate consumers of that carrier.
+- `app/src/main/.../SpatialPublicMultiStack.kt` mirrors the public seven-slot
+  camera guide multi-stack receipt fields for Kotlin-side start, carrier, and
+  placement markers. It marks opaque downstream slots inactive in this public
+  app.
 - `app/src/main/.../ExperimentPanelController.kt` owns the Compose experiment
   panel UI and launcher UI. It may request panel visibility changes and
   low-rate particle-driver scalar updates, but it must not own camera frames,
@@ -70,6 +134,29 @@ camera acquisition, HWB import, or WSI carrier failure.
   side-by-side packed UV rects, raw-color projection push constants, and marker
   field construction. Its host unit tests protect the target-rect behavior
   without requiring Android system libraries.
+- `native-receipt/src/spatial_public_multistack.rs` owns the native receipt
+  mirror for the public seven-slot camera guide multi-stack contract, including
+  guide-target/pass manifests, public guide blur slots, and opaque downstream
+  slot markers.
+- `native-receipt/src/spatial_public_multistack_runtime.rs` owns the generic
+  Vulkan guide-target and guide-pass resource scaffold for the public
+  multi-stack contract: offscreen targets, render pass, framebuffers, sampler,
+  descriptor layout/pool, sample descriptors, public blur pipeline creation,
+  a generic public blur record function, and the opaque guide descriptor shape
+  plus optional opaque guide pipeline creation used by downstream shader
+  payloads. The guide scheduler packs both stereo eyes into the public five
+  guide targets and keeps the four blur passes on the public blur pipeline. The
+  optional opaque projection path owns only generic descriptor/pipeline plumbing
+  plus a fallback depth descriptor; downstream shader source and effect values
+  come from build environment inputs. Final opaque projection uses full
+  packed-surface viewport state plus per-eye packed target-rect scissors, not a
+  resized Spatial quad. It is intentionally separate from camera stream
+  orchestration and surface-particle proof modules.
+- `native-receipt/shaders/public_guide_blur.frag.glsl` is the public generic
+  separable 5-tap blur shader asset. Downstream opaque shader overrides are
+  optional build inputs watched by the native receipt build script. Native
+  receipts report compiled shader byte counts and whether opaque overrides were
+  present; downstream shader contents remain outside this public app.
 - `native-receipt/src/surface_particle_layer.rs`, `replay_hands.rs`, and
   `live_hand_joints.rs` remain Android-only surface-particle proof modules.
 
@@ -116,3 +203,14 @@ starts tag-filtered logcat before launch, captures the marker summary, window
 state, and screenshot under `local-artifacts\spatial-camera-panel-headset`,
 and leaves the projection running for visual inspection unless `-StopAfterRun`
 is passed.
+
+After building with downstream opaque shader env vars, require the public
+multi-stack projection proof with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -Serial <quest-serial> `
+  -ClearLogcat `
+  -StopAfterRun `
+  -RequirePublicMultiStackProjection
+```
