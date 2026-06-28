@@ -25,6 +25,16 @@ and blur/projection validation only. Private downstream visual semantics,
 effect formulas, coupling kernels, and tuned parameter profiles belong outside
 Rusty Quest.
 
+## Known Follow-Up
+
+The 2026-06-28 Quest 3S raw-color camera projection smoke passed the camera
+stack gate: SDK-owned `SceneQuadLayer`, native Vulkan WSI, camera 50/51 streams,
+target-rect clipping, and raw-color stereo output all rendered. A separate
+vergence/focus mismatch remains: when the raw camera projection is brought into
+comfortable focus, Meta system menus can appear doubled or soft. Treat that as a
+future Rusty Lattice / projection-space alignment investigation, not as a
+camera acquisition, HWB import, or WSI carrier failure.
+
 ## Native Receipt Source Map
 
 - `native-receipt/src/camera_hwb_probe.rs` is the Android JNI facade and
