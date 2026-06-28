@@ -1,0 +1,212 @@
+{
+  "schema": "rusty.quest.device_link.v1",
+  "link_id": "device_link.hostess.usb_broker_stream_probe",
+  "observed_at_ms": 1782647000958,
+  "status": "pass",
+  "device_identity": {
+    "serial": "quest-usb-authorized-1",
+    "transport_kind": "adb_usb",
+    "adb_state": "device",
+    "model": "Quest 3S",
+    "product": "eureka",
+    "manufacturer": "Meta",
+    "android_sdk": 32
+  },
+  "host_tools": [
+    {
+      "tool_id": "tool.adb",
+      "kind": "adb",
+      "status": "pass",
+      "required": true,
+      "path": "adb",
+      "version": "Android Debug Bridge"
+    },
+    {
+      "tool_id": "tool.hostessctl",
+      "kind": "hostessctl",
+      "status": "pass",
+      "required": true,
+      "path": "tools/hostessctl/hostessctl.py"
+    }
+  ],
+  "tunnels": [
+    {
+      "tunnel_id": "tunnel.adb_forward.manifold_broker",
+      "transport_kind": "adb_forward",
+      "status": "pass",
+      "required": true,
+      "host": "127.0.0.1",
+      "local_port": 18765,
+      "device_host": "127.0.0.1",
+      "device_port": 8765,
+      "path": "/manifold/v1/events"
+    }
+  ],
+  "broker_endpoints": [
+    {
+      "endpoint_id": "broker.manifold.quest_forwarded",
+      "status": "pass",
+      "protocol": "websocket",
+      "authority": "rusty.manifold.command",
+      "host": "127.0.0.1",
+      "port": 18765,
+      "path": "/manifold/v1/events",
+      "routed_through_tunnel_id": "tunnel.adb_forward.manifold_broker",
+      "command_envelope_schema": "rusty.manifold.command.envelope.v1",
+      "high_rate_payload_allowed": false
+    }
+  ],
+  "runtime_subscribers": [
+    {
+      "subscriber_id": "runtime.hostess_makepad.bridge_command",
+      "runtime_app_id": "app.hostess.makepad",
+      "request_stream_id": "stream.hostess.makepad.bridge_command",
+      "receipt_stream_id": "stream.hostess.makepad.bridge_command.receipt",
+      "status": "connected",
+      "receipt_required": true,
+      "last_dispatch_delivered_count": 1
+    }
+  ],
+  "command_results": [
+    {
+      "result_id": "command_result.hostess.makepad.safe_probe",
+      "route_id": "bridge_route.command.websocket.applied",
+      "request_id": "request.hostess.bridge_command.broker_stream_probe.session",
+      "command": "hostess.makepad.bridge_probe.set_marker",
+      "transport_kind": "manifold_websocket",
+      "status": "pass",
+      "required_stages": [
+        "sent",
+        "transport_ok",
+        "authority_accepted",
+        "runtime_accepted",
+        "applied"
+      ],
+      "observed_stages": [
+        {
+          "stage": "sent",
+          "status": "pass",
+          "evidence_refs": [
+            "artifact.bridge_command.request"
+          ]
+        },
+        {
+          "stage": "transport_ok",
+          "status": "pass",
+          "evidence_refs": [
+            "artifact.bridge_command.broker_ack"
+          ]
+        },
+        {
+          "stage": "authority_accepted",
+          "status": "pass",
+          "evidence_refs": [
+            "artifact.bridge_command.broker_ack"
+          ]
+        },
+        {
+          "stage": "runtime_accepted",
+          "status": "pass",
+          "evidence_refs": [
+            "artifact.bridge_command.runtime_receipt"
+          ]
+        },
+        {
+          "stage": "applied",
+          "status": "pass",
+          "evidence_refs": [
+            "artifact.bridge_command.runtime_receipt"
+          ]
+        }
+      ],
+      "runtime_receipt_stream": "stream.hostess.makepad.bridge_command.receipt",
+      "runtime_dispatch_delivered_count": 1,
+      "applied": true
+    }
+  ],
+  "stream_capabilities": [
+    {
+      "capability_id": "capability.command.hostess_makepad_bridge",
+      "stream_id": "stream.hostess.makepad.bridge_command",
+      "semantic_family": "command",
+      "transport_kind": "manifold_websocket",
+      "payload_plane": "json_event",
+      "rate_class": "control",
+      "reliability": "ordered_ack_required",
+      "direction": "host_to_quest_runtime",
+      "clock_policy": "host_request_runtime_receipt",
+      "queue_policy": "bounded_command_queue",
+      "max_rate_hz": 5,
+      "high_rate_json_payload": false,
+      "recommended_for": [
+        "operator commands",
+        "runtime receipt probes"
+      ],
+      "not_for": [
+        "camera frames",
+        "biosignal sample streams"
+      ]
+    },
+    {
+      "capability_id": "capability.biosignal.lsl_clocked_samples",
+      "stream_id": "stream.polar_h10.ecg",
+      "semantic_family": "biosignal",
+      "transport_kind": "lsl",
+      "payload_plane": "lsl_sample",
+      "rate_class": "sample_clocked",
+      "reliability": "sample_clocked_best_effort",
+      "direction": "sensor_to_host_or_runtime",
+      "clock_policy": "source_clock_lsl_time_correction",
+      "queue_policy": "bounded_recent_samples",
+      "max_rate_hz": 130,
+      "high_rate_json_payload": false,
+      "recommended_for": [
+        "clocked biosignal samples"
+      ],
+      "not_for": [
+        "command authority"
+      ]
+    },
+    {
+      "capability_id": "capability.telemetry.pose_udp",
+      "stream_id": "stream.motion.object_pose",
+      "semantic_family": "pose",
+      "transport_kind": "udp",
+      "payload_plane": "udp_datagram",
+      "rate_class": "low_rate",
+      "reliability": "latest_value_loss_tolerant",
+      "direction": "runtime_to_broker_or_host",
+      "clock_policy": "runtime_timestamp",
+      "queue_policy": "drop_oldest_latest_value",
+      "max_rate_hz": 90,
+      "high_rate_json_payload": false,
+      "recommended_for": [
+        "low-latency pose telemetry"
+      ],
+      "not_for": [
+        "applied command feedback"
+      ]
+    },
+    {
+      "capability_id": "capability.media.h264_tcp_binary",
+      "stream_id": "stream.remote_camera.h264.left",
+      "semantic_family": "media",
+      "transport_kind": "tcp_binary",
+      "payload_plane": "binary_media",
+      "rate_class": "high_rate",
+      "reliability": "ordered_bytes_backpressure_bounded",
+      "direction": "quest_to_peer_or_host",
+      "clock_policy": "media_frame_timestamp",
+      "queue_policy": "drop_or_close_slow_peer",
+      "max_rate_hz": 90,
+      "high_rate_json_payload": false,
+      "recommended_for": [
+        "H.264 camera frames"
+      ],
+      "not_for": [
+        "operator command acknowledgement"
+      ]
+    }
+  ],
+  "issues": []
+}

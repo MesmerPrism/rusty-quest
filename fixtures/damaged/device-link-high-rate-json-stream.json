@@ -1,0 +1,32 @@
+{
+  "schema": "rusty.quest.device_link.v1",
+  "link_id": "device_link.damaged.high_rate_json",
+  "observed_at_ms": 1782647000958,
+  "status": "pass",
+  "device_identity": {
+    "serial": "quest-usb-authorized-1",
+    "transport_kind": "adb_usb",
+    "adb_state": "device",
+    "model": "Quest 3S"
+  },
+  "stream_capabilities": [
+    {
+      "capability_id": "capability.damaged.media_json",
+      "stream_id": "stream.remote_camera.h264.left",
+      "semantic_family": "media",
+      "transport_kind": "manifold_websocket",
+      "payload_plane": "json_event",
+      "rate_class": "high_rate",
+      "reliability": "ordered_ack_required",
+      "direction": "quest_to_host",
+      "clock_policy": "media_frame_timestamp",
+      "queue_policy": "unbounded_json_events",
+      "max_rate_hz": 90,
+      "high_rate_json_payload": true,
+      "recommended_for": [
+        "damaged fixture"
+      ],
+      "not_for": []
+    }
+  ]
+}

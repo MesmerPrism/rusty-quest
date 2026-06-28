@@ -279,6 +279,12 @@
   single-surface material; component ranks remain metadata. The live-hand
   diagnostic log fixture is a caveat fixture only: it keeps live mesh/SDF
   acceptance pending until a later screenshot proves visible overlay color.
+- `device-link/`: valid `rusty.quest.device_link.v1` reports for host-to-Quest
+  connectivity. The first fixture models the Hostess USB broker-stream session
+  as reusable data: serial-scoped ADB identity, ADB forward state, Manifold
+  WebSocket endpoint readiness, runtime subscriber receipt health, command
+  stage results, and stream capability descriptors for WebSocket command
+  events, LSL samples, UDP telemetry, and binary media.
 - `remote-camera-sessions/`: valid remote camera session plans for
   Quest-to-Quest and Quest-to-Android phone diagnostic streaming, including
   low-rate runtime endpoint bindings for sender source kind, sender media
@@ -294,4 +300,6 @@
   unsupported camera output token and an unsupported display-composite mode,
   plus environment-depth cross-field failures such as impossible local support
   thresholds, proving the apply path consumes the typed native renderer property
-  manifest before ADB writes.
+  manifest before ADB writes. Device-link damaged fixtures also reject
+  high-rate JSON stream claims and applied command reports without runtime
+  receipt stage evidence.

@@ -11,6 +11,9 @@ apps.
 - launch and validation receipts;
 - platform tooling wrappers.
 - Quest-owned Android package adapters for platform-hosted broker surfaces.
+- host-to-Quest device-link report contracts for device identity, ADB
+  forward/tunnel state, broker endpoint readiness, runtime subscriber health,
+  command-result stages, and stream capability descriptors.
 - remote camera session plans, device-kind declarations, media-lane safety
   policy, low-rate runtime endpoint bindings, peer transport routes, and
   platform validation gates for Quest and Android phone endpoints.
@@ -34,6 +37,8 @@ apps.
 - Makepad-side media projection/adoption, app widgets, or H.264 texture
   import.
 - high-rate frame payload transport through Rusty Quest core contracts.
+- host-side UI/session orchestration, WPF page state, or app-private fallback
+  execution.
 - Matter SDF truth, Optics projection semantics, or private downstream layer
   implementation payloads for native renderer extension slots.
 - private downstream effect kernels, tuned profiles, study semantics, live
@@ -42,6 +47,31 @@ apps.
 
 ADB writes are generated operations from validated profiles. They are not
 hand-authored settings authority.
+
+## Device Link Contracts
+
+`crates/rusty-quest-device-link` owns `rusty.quest.device_link.v1`, a
+source-only report contract for host-to-Quest connectivity. The report is the
+shared boundary that WPF, Makepad tooling, Hostess CLI routes, and later
+frontends can inspect without becoming device or command authority.
+
+The contract separates:
+
+- device identity observed through serial-scoped ADB;
+- ADB forward/tunnel state, including host and device ports;
+- Manifold broker endpoint readiness over `/manifold/v1/events`;
+- runtime subscriber health for broker-dispatched request/receipt streams;
+- command-result reports with required stages such as `sent`,
+  `transport_ok`, `authority_accepted`, `runtime_accepted`, and `applied`;
+- stream capability descriptors that distinguish command WebSocket events,
+  LSL sample streams, UDP low-latency telemetry, binary media, and app-private
+  JSON fallback paths.
+
+The crate does not open sockets, launch APKs, parse logcat, or run ADB.
+Adapters such as Hostess may execute those routes and then emit the report.
+Validation rejects high-rate JSON stream claims and rejects applied command
+results that lack runtime receipt stages, keeping transport readiness separate
+from effective runtime state.
 
 ## Native Quest Renderer Contracts
 

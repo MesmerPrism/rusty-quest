@@ -1,0 +1,46 @@
+{
+  "schema": "rusty.quest.device_link.v1",
+  "link_id": "device_link.damaged.applied_without_runtime",
+  "observed_at_ms": 1782647000958,
+  "status": "pass",
+  "device_identity": {
+    "serial": "quest-usb-authorized-1",
+    "transport_kind": "adb_usb",
+    "adb_state": "device",
+    "model": "Quest 3S"
+  },
+  "command_results": [
+    {
+      "result_id": "command_result.damaged.safe_probe",
+      "route_id": "bridge_route.command.websocket.applied",
+      "request_id": "request.damaged.safe_probe",
+      "command": "hostess.makepad.bridge_probe.set_marker",
+      "transport_kind": "manifold_websocket",
+      "status": "pass",
+      "required_stages": [
+        "sent",
+        "transport_ok",
+        "authority_accepted",
+        "runtime_accepted",
+        "applied"
+      ],
+      "observed_stages": [
+        {
+          "stage": "sent",
+          "status": "pass"
+        },
+        {
+          "stage": "transport_ok",
+          "status": "pass"
+        },
+        {
+          "stage": "authority_accepted",
+          "status": "pass"
+        }
+      ],
+      "runtime_receipt_stream": "stream.hostess.makepad.bridge_command.receipt",
+      "runtime_dispatch_delivered_count": 0,
+      "applied": true
+    }
+  ]
+}

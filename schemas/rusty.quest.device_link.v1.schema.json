@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "rusty.quest.device_link.v1",
+  "title": "Rusty Quest device-link report",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "link_id",
+    "observed_at_ms",
+    "status",
+    "device_identity"
+  ],
+  "properties": {
+    "schema": {
+      "const": "rusty.quest.device_link.v1"
+    },
+    "link_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "observed_at_ms": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "status": {
+      "enum": [
+        "pass",
+        "warn",
+        "fail",
+        "skipped"
+      ]
+    },
+    "device_identity": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "serial",
+        "transport_kind",
+        "adb_state",
+        "model"
+      ],
+      "properties": {
+        "serial": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transport_kind": {
+          "enum": [
+            "adb_usb",
+            "adb_wifi"
+          ]
+        },
+        "adb_state": {
+          "type": "string",
+          "minLength": 1
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "host_tools": {
+      "type": "array"
+    },
+    "tunnels": {
+      "type": "array"
+    },
+    "broker_endpoints": {
+      "type": "array"
+    },
+    "runtime_subscribers": {
+      "type": "array"
+    },
+    "command_results": {
+      "type": "array"
+    },
+    "stream_capabilities": {
+      "type": "array"
+    },
+    "issues": {
+      "type": "array"
+    }
+  }
+}

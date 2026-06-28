@@ -418,6 +418,20 @@ Remote camera session plans are also source-only validation:
 cargo test -p rusty-quest-remote-camera
 ```
 
+Device-link reports are source-only validation:
+
+```powershell
+cargo test -p rusty-quest-device-link
+```
+
+The fixture
+`fixtures/device-link/hostess-usb-broker-session.device-link.json` records the
+reusable shape expected from a Hostess USB broker-stream session: authorized
+ADB identity, ADB forward `18765 -> 8765`, Manifold WebSocket broker endpoint,
+runtime subscriber receipt stream, applied command stages, and stream
+capability descriptors. Damaged fixtures reject high-rate JSON stream payloads
+and applied command claims that do not include runtime receipt evidence.
+
 Native Quest renderer plans are source-only validation:
 
 ```powershell

@@ -8,6 +8,20 @@ This repo treats ADB and Android properties as transports. They are generated
 from validated profiles and produce dry-run/readback evidence rather than
 becoming hand-written launch authority.
 
+## Device Link Contracts
+
+`crates/rusty-quest-device-link` defines
+`rusty.quest.device_link.v1`, the reusable report contract for host-to-Quest
+connectivity. A report records device identity, ADB forward/tunnel state,
+Manifold broker endpoint readiness, runtime subscriber health, command-result
+stages, and stream capability descriptors.
+
+This crate is source-only and does not open ADB, WebSocket, UDP, LSL, or
+app-private transports. Hostess, WPF, Makepad tools, CLI routes, or future
+frontends should execute their own adapters and then emit this report shape for
+inspection. Applied command feedback still requires runtime receipt evidence;
+raw ADB state or broker ACKs alone are transport/authority evidence only.
+
 ## Native Quest Rendering
 
 Rusty Quest now treats `apps/native-renderer-android` as the main public
@@ -438,6 +452,7 @@ evidence remain later validation work.
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeAppBuildProfile.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-device-link"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-native-renderer"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-remote-camera"
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
