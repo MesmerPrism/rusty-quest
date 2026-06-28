@@ -40,6 +40,31 @@ function Assert-NotContains {
     }
 }
 
+function Assert-RegistrationUsesSettings {
+    param(
+        [Parameter(Mandatory=$true)][string]$Label,
+        [Parameter(Mandatory=$true)][string]$Text,
+        [Parameter(Mandatory=$true)][string]$RegistrationNeedle,
+        [Parameter(Mandatory=$true)][string]$NextRegistrationNeedle,
+        [Parameter(Mandatory=$true)][string]$SettingsNeedle
+    )
+    $normalizedText = $Text.Replace("`r`n", "`n")
+    $normalizedRegistrationNeedle = $RegistrationNeedle.Replace("`r`n", "`n")
+    $normalizedNextRegistrationNeedle = $NextRegistrationNeedle.Replace("`r`n", "`n")
+    $registrationIndex = $normalizedText.IndexOf($normalizedRegistrationNeedle)
+    if ($registrationIndex -lt 0) {
+        throw "$Label is missing registration token: $RegistrationNeedle"
+    }
+    $nextRegistrationIndex = $normalizedText.IndexOf($normalizedNextRegistrationNeedle, $registrationIndex + $normalizedRegistrationNeedle.Length)
+    if ($nextRegistrationIndex -lt 0) {
+        throw "$Label is missing next registration token: $NextRegistrationNeedle"
+    }
+    $settingsIndex = $normalizedText.IndexOf($SettingsNeedle, $registrationIndex)
+    if ($settingsIndex -lt 0 -or $settingsIndex -gt $nextRegistrationIndex) {
+        throw "$Label registration $RegistrationNeedle is missing settings token before ${NextRegistrationNeedle}: $SettingsNeedle"
+    }
+}
+
 $appGradle = Read-RequiredText "apps\spatial-camera-panel-android\app\build.gradle.kts"
 $manifest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\AndroidManifest.xml"
 $activity = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelActivity.kt"
@@ -47,6 +72,7 @@ $spatialStereoVideoPlayback = Read-RequiredText "apps\spatial-camera-panel-andro
 $laneBoundary = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialSdkLaneBoundary.kt"
 $publicMultiStack = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPublicMultiStack.kt"
 $panelController = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ExperimentPanelController.kt"
+$privateLayerPanel = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\PrivateLayerControlPanel.kt"
 $panelModels = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelModels.kt"
 $avatarFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAvatarHandVisualFeature.kt"
 $store = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelStore.kt"
@@ -73,6 +99,7 @@ $surfaceLayer = Read-RequiredText "apps\spatial-camera-panel-android\native-rece
 $replayHands = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\replay_hands.rs"
 $buildScript = Read-RequiredText "tools\Build-SpatialCameraPanelAndroid.ps1"
 $cameraProjectionSmoke = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1"
+$uiActionWrapper = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidUiAction.ps1"
 $readme = Read-RequiredText "apps\spatial-camera-panel-android\README.md"
 $notes = Read-RequiredText "docs\SPATIAL_SDK_PORT_IMPLEMENTATION_PLAN.md"
 
@@ -100,12 +127,15 @@ Assert-Contains "Activity" $activity "cameraStackSuppressesParticles"
 Assert-Contains "Activity" $activity 'suppressParticleLayerIfCameraProjectionRequested("activity-created")'
 Assert-Contains "Activity" $activity 'suppressParticleLayerIfCameraProjectionRequested("new-intent")'
 Assert-Contains "Activity" $activity 'suppressParticleLayerForCameraStack("camera-hwb-projection-probe")'
-Assert-Contains "Activity" $activity "applyCameraHwbProjectionStereoHorizontalOffsetJoystickInput"
-Assert-Contains "Activity" $activity "applyCameraHwbProjectionStereoHorizontalOffsetInput"
+Assert-Contains "Activity" $activity "applyCameraHwbProjectionScaleJoystickInput"
+Assert-Contains "Activity" $activity "updateCameraHwbProjectionTargetScaleFromPanel"
 Assert-Contains "Activity" $activity 'CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER = "1.00"'
 Assert-Contains "Activity" $activity 'targetDistanceDefaultMeters=$CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER'
 Assert-Contains "Activity" $activity "targetDistanceJoystickControlsEnabled=false"
-Assert-Contains "Activity" $activity "stereoHorizontalOffsetJoystickInput=spatial-sdk-avatar-body-left-thumb-up-down-or-android-left-stick-y;panel-visibility-independent;native-openxr-diagnostic-opt-in"
+Assert-Contains "Activity" $activity "projectionTargetScaleJoystickControlsEnabled=true"
+Assert-Contains "Activity" $activity "projectionTargetScaleJoystickInput=android-right-stick-y;spatial-sdk-avatar-body-right-thumb-up-down;native-openxr-right-thumbstick-y;panel-control"
+Assert-Contains "Activity" $activity "stereoHorizontalOffsetJoystickControlsEnabled=false"
+Assert-Contains "Activity" $activity "stereoHorizontalOffsetJoystickInput=disabled-default-locked-left-stick-y-reserved-for-panel-scroll"
 Assert-Contains "Activity" $activity "cameraHwbProjectionStereoHorizontalOffsetIgnoresPanelVisibility=true"
 Assert-Contains "Activity" $activity "projectionTargetStereoHorizontalOffsetUv="
 Assert-Contains "Activity" $activity "projectionTargetStereoHorizontalOffsetDefaultUv="
@@ -113,20 +143,52 @@ Assert-Contains "Activity" $activity "CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OF
 Assert-Contains "Activity" $activity "projectionTargetLeftOffsetUv="
 Assert-Contains "Activity" $activity "projectionTargetRightOffsetUv="
 Assert-Contains "Activity" $activity "nativeUpdateCameraHwbProjectionStereoOffsetUv"
+Assert-Contains "Activity" $activity "nativeUpdateCameraHwbProjectionTargetScale"
+Assert-Contains "Activity" $activity "nativeUpdatePrivateLayerOverride"
+Assert-Contains "Activity" $activity "nativeUpdatePrivateLayerDepthAlignment"
+Assert-Contains "Activity" $activity "spatial_private_layer_panel"
+Assert-Contains "Activity" $activity "PrivateLayerControlPanel"
+Assert-Contains "Activity" $activity "spatial-sdk-private-layer-panel-open"
+Assert-Contains "Activity" $activity "spatialPrivateLayerControlPanel=true"
+Assert-Contains "Activity" $activity "publicMultiStackOpaqueProjectionLayerOverride"
+Assert-Contains "Activity" $activity "publicMultiStackDepthAlignmentControl=true"
+Assert-Contains "Activity" $activity "publicMultiStackDepthAlignmentLeftOffsetUv="
+Assert-Contains "Activity" $activity "panelRenderOrder=front-of-camera-video"
+Assert-Contains "Activity" $activity "panelOpensInFrontOfCameraVideo="
+Assert-Contains "Activity" $activity "privateLayerPanelRenderMode=spatial-sdk-layer"
+Assert-Contains "Activity" $activity "privateLayerPanelZIndex="
+Assert-Contains "Activity" $activity "PRIVATE_LAYER_PANEL_Z_INDEX"
+Assert-Contains "Activity" $activity "PanelRenderMode.Layer"
+Assert-Contains "Activity" $activity "LayerConfig("
+Assert-RegistrationUsesSettings "Activity" $activity "ComposeViewPanelRegistration(`r`n            R.id.spatial_private_layer_panel" "ComposeViewPanelRegistration(`r`n            R.id.spatial_camera_panel_launcher" "privateLayerPanelSettings()"
+Assert-Contains "Activity" $activity '"private-layer-panel-open" -> setPrivateLayerPanelVisible(true, focus = true, source = source)'
+Assert-Contains "Activity" $activity '"private-layer-panel-close" -> setPrivateLayerPanelVisible(false, focus = false, source = source)'
 Assert-Contains "Activity" $activity "nativePanelPoseAuthority=camera-hwb-projection-plane"
 Assert-Contains "Activity" $activity "projection-plane-update-suppressed"
 Assert-Contains "Activity" $activity "updateNativePanelProjectionFromCameraPlane"
 Assert-Contains "Activity" $activity "ButtonThumbLU"
 Assert-Contains "Activity" $activity "ButtonThumbLD"
-Assert-Contains "Activity" $activity "left-thumb-up-down-stereo-horizontal-offset"
+Assert-Contains "Activity" $activity "ButtonThumbRU"
+Assert-Contains "Activity" $activity "ButtonThumbRD"
+Assert-Contains "Activity" $activity "leftThumbYPanelScrollReserved=true"
+Assert-Contains "Activity" $activity "leftThumbYProjectionHorizontalOffsetDisabled=true"
+Assert-Contains "Activity" $activity "right-thumb-up-down-projection-target-scale"
 Assert-Contains "Activity" $activity "SPATIAL_VR_INPUT_SYSTEM_PROPERTY"
 Assert-Contains "Activity" $activity "SpatialControllerInputLateFeature(::pollSpatialControllerInput)"
 Assert-Contains "Activity" $activity "nativeStartSpatialControllerActions"
 Assert-Contains "Activity" $activity "nativePollSpatialControllerLeftThumbstickY"
+Assert-Contains "Activity" $activity "nativePollSpatialControllerRightThumbstickY"
 Assert-Contains "Activity" $activity "nativeSpatialControllerActionsEnabled()"
 Assert-Contains "Activity" $activity "NATIVE_SPATIAL_CONTROLLER_ACTIONS_DEFAULT_ENABLED = false"
 Assert-Contains "Activity" $activity "native-openxr-action"
-Assert-Contains "Activity" $activity "left-thumbstick-y-stereo-horizontal-offset"
+Assert-Contains "Activity" $activity "right-stick-y-projection-target-scale"
+Assert-Contains "Activity" $activity "status=joystick-input-arbitrated"
+Assert-Contains "Activity" $activity "rightStickXIgnored=true"
+Assert-Contains "Activity" $activity "rightStickXPanelScaleDisabled=true"
+Assert-Contains "Activity" $activity "rightStickSwallowedAsIgnored="
+Assert-Contains "Activity" $activity "leftStickYPanelScrollReserved=true"
+Assert-Contains "Activity" $activity "leftStickYDeliveredToPanelScroll="
+Assert-Contains "Activity" $activity "target-scale-joystick-adjusted"
 Assert-Contains "Activity" $activity "override fun registerRequiredOpenXRExtensions()"
 Assert-Contains "Activity" $activity "XR_META_simultaneous_hands_and_controllers"
 Assert-Contains "Activity" $activity "XR_META_detached_controllers"
@@ -145,7 +207,7 @@ Assert-Contains "Activity" $activity "status=spatial-input-enabled"
 Assert-Contains "Activity" $activity "eyeSpaceTargetRectPreserved=true"
 Assert-Contains "Activity" $activity "projectionPlaneAngularCoveragePreserved=true"
 Assert-Contains "Activity" $activity "layer.updateLayer"
-Assert-Contains "Activity" $activity "!panelPlacement.visible && !cameraStackSuppressesParticles"
+Assert-Contains "Activity" $activity "!panelPlacement.visible && !privateLayerPanelVisible && !cameraStackSuppressesParticles"
 Assert-Contains "Activity" $activity "status=particle-layer-suppressed"
 Assert-Contains "Activity" $activity "status=start-suppressed"
 Assert-Contains "Activity" $activity "cameraHwbProjectionRightPackedEffectiveTargetRectMarker"
@@ -196,6 +258,20 @@ Assert-Contains "Experiment panel controller" $panelController "internal object 
 Assert-Contains "Experiment panel controller" $panelController 'highRatePayloadPolicy: String = "forbidden"'
 Assert-Contains "Experiment panel controller" $panelController "internal fun SpatialCameraPanel("
 Assert-Contains "Experiment panel controller" $panelController "internal fun SpatialCameraPanelLauncher("
+Assert-Contains "Private layer panel" $privateLayerPanel "internal fun PrivateLayerControlPanel("
+Assert-Contains "Private layer panel" $privateLayerPanel "Layer Selection Panel"
+Assert-Contains "Private layer panel" $privateLayerPanel "Active Rendering"
+Assert-Contains "Private layer panel" $privateLayerPanel "Projection Area"
+Assert-Contains "Private layer panel" $privateLayerPanel "Depth Alignment"
+Assert-Contains "Private layer panel" $privateLayerPanel "PrivateLayerControls.layers"
+Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(0, "Final", "final")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(1, "Raw brightness", "raw-brightness")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(2, "Preblur brightness", "preblur-brightness")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(3, "Raw strength", "raw-strength")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(4, "Blurred strength", "blurred-strength")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(5, "Displacement", "displacement")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(6, "Depth gradient", "depth-gradient")'
+Assert-Contains "Private layer panel" $privateLayerPanel "Depth sample scale"
 Assert-Contains "Panel models" $panelModels "data class PanelPlacement"
 Assert-Contains "Panel models" $panelModels "data class SurfaceParticleControlState"
 Assert-Contains "Panel models" $panelModels "data class SpatialNativeInteropProbe"
@@ -234,6 +310,12 @@ Assert-Contains "Camera HWB probe" $cameraProbe "privateShaderStack=false"
 Assert-Contains "Camera HWB probe" $cameraProbe "projection_contract_marker_fields"
 Assert-Contains "Camera HWB probe" $cameraProbe "public_multistack_marker_fields"
 Assert-Contains "Camera HWB probe" $cameraProbe "allocate_spatial_public_guide_targets"
+Assert-Contains "Camera HWB probe" $cameraProbe "nativeUpdatePrivateLayerOverride"
+Assert-Contains "Camera HWB probe" $cameraProbe "nativeUpdatePrivateLayerDepthAlignment"
+Assert-Contains "Camera HWB probe" $cameraProbe "update_spatial_public_depth_alignment"
+Assert-Contains "Camera HWB probe" $cameraProbe "status=private-layer-override-updated"
+Assert-Contains "Camera HWB probe" $cameraProbe "status=private-layer-depth-alignment-updated"
+Assert-Contains "Camera HWB probe" $cameraProbe "spatialPrivateLayerControlPanel=true"
 Assert-Contains "Camera HWB probe" $cameraProbe "status=public-multistack-guide-targets-ready"
 Assert-Contains "Camera HWB probe" $cameraProbe "status=public-multistack-guide-targets-skipped"
 Assert-Contains "Camera HWB probe" $cameraProbe "SpatialVideoProjectionRenderer"
@@ -284,7 +366,9 @@ Assert-Contains "Native receipt lib" $nativeLib "mod spatial_video_projection_pr
 Assert-Contains "Camera raw color shader" $cameraRawColorShader "discard;"
 Assert-Contains "Camera projection target" $cameraProjectionTarget "projectionContentMappingMode=target-local-raster"
 Assert-Contains "Camera projection target" $cameraProjectionTarget "update_camera_hwb_projection_stereo_horizontal_offset_uv"
+Assert-Contains "Camera projection target" $cameraProjectionTarget "update_camera_hwb_projection_target_live_scale"
 Assert-Contains "Camera projection target" $cameraProjectionTarget "projectionTargetStereoHorizontalOffsetUv="
+Assert-Contains "Camera projection target" $cameraProjectionTarget "projectionTargetLiveScale="
 Assert-Contains "Camera projection target" $cameraProjectionTarget "CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV: f32 = 0.046320"
 Assert-Contains "Native public multi-stack" $nativeMultiStack 'rusty.quest.spatial_camera_panel.public_multistack.v1'
 Assert-Contains "Native public multi-stack" $nativeMultiStack "publicMultiStackLayerCount=7"
@@ -354,6 +438,12 @@ Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "cr
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "create_opaque_projection_pipeline_layout"
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "create_opaque_projection_pipeline"
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "record_spatial_public_projection"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "update_spatial_public_opaque_projection_layer_override"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "update_spatial_public_depth_alignment"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "current_spatial_public_depth_alignment"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "depth_uv_transform_for_eye"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "publicMultiStackDepthAlignmentLeftOffsetUv="
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "publicMultiStackDepthAlignmentSampleScale="
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "OPAQUE_PROJECTION_EFFECT"
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "frame_marker_fields"
 Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "compact_projection_evidence_marker_fields"
@@ -370,8 +460,10 @@ Assert-NotContains "Native public multi-stack runtime" $nativeMultiStackRuntime 
 Assert-NotContains "Native public multi-stack runtime" $nativeMultiStackRuntime "surface_particle_layer"
 Assert-Contains "Native controller actions" $nativeControllerActions "nativeStartSpatialControllerActions"
 Assert-Contains "Native controller actions" $nativeControllerActions "nativePollSpatialControllerLeftThumbstickY"
+Assert-Contains "Native controller actions" $nativeControllerActions "nativePollSpatialControllerRightThumbstickY"
 Assert-Contains "Native controller actions" $nativeControllerActions "xrAttachSessionActionSets"
 Assert-Contains "Native controller actions" $nativeControllerActions "/user/hand/left/input/thumbstick/y"
+Assert-Contains "Native controller actions" $nativeControllerActions "/user/hand/right/input/thumbstick/y"
 Assert-Contains "Native controller actions" $nativeControllerActions "spatial-controller-actions"
 Assert-Contains "Native controller actions" $nativeControllerActions "actionSetAttached=true"
 Assert-Contains "Native multimodal input" $nativeMultimodalInput "nativeRequestSpatialMultimodalInput"
@@ -457,7 +549,10 @@ Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "partic
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "status=first-camera-frame-presented"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "stereoSource=camera50-51"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "outputMode=raw-color-target-rect"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "stereoHorizontalOffsetJoystickInput=disabled-default-locked-left-stick-y-reserved-for-panel-scroll"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "adb_serial_required = `$true"
+Assert-Contains "UI action wrapper" $uiActionWrapper "private-layer-panel-open"
+Assert-Contains "UI action wrapper" $uiActionWrapper "private-layer-panel-close"
 Assert-Contains "README" $readme "Raw Camera2/AHardwareBuffer projection probes"
 Assert-Contains "README" $readme "Spatial SDK Lane Source Map"
 Assert-Contains "README" $readme "public seven-slot camera guide multi-stack contract"
@@ -467,9 +562,23 @@ Assert-Contains "README" $readme '`interaction_sdk`'
 Assert-Contains "README" $readme "registerRequiredOpenXRExtensions()"
 Assert-Contains "README" $readme "XR_META_detached_controllers"
 Assert-Contains "README" $readme "Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1"
+Assert-Contains "README" $readme "right-stick-y-projection-target-scale"
+Assert-Contains "README" $readme "Left-stick Y is now reserved for"
+Assert-Contains "README" $readme "Right-stick X is intentionally"
+Assert-Contains "README" $readme "spatial_private_layer_panel"
+Assert-Contains "README" $readme "spatial-sdk-layer"
+Assert-Contains "README" $readme "nativeUpdatePrivateLayerOverride"
+Assert-Contains "README" $readme "nativeUpdatePrivateLayerDepthAlignment"
 Assert-Contains "Implementation notes" $notes "Private effect formulas"
 Assert-Contains "Implementation notes" $notes "Public seven-slot camera guide multi-stack contract"
 Assert-Contains "Implementation notes" $notes "public multi-stack receipts"
+Assert-Contains "Implementation notes" $notes "right-stick-y-projection-target-scale"
+Assert-Contains "Implementation notes" $notes "Left-stick Y is reserved for panel"
+Assert-Contains "Implementation notes" $notes "right-stick X is intentionally"
+Assert-Contains "Implementation notes" $notes "spatial_private_layer_panel"
+Assert-Contains "Implementation notes" $notes "Spatial SDK layer"
+Assert-Contains "Implementation notes" $notes "nativeUpdatePrivateLayerOverride"
+Assert-Contains "Implementation notes" $notes "nativeUpdatePrivateLayerDepthAlignment"
 
 $cameraBoundaryFiles = @{
     "Camera HWB probe" = $cameraProbe

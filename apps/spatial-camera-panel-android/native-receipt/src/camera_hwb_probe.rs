@@ -13,6 +13,7 @@ use crate::ahardware_buffer_vulkan::{
 use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 use crate::camera_hwb_projection_target::{
     camera_hwb_projection_marker_fields, update_camera_hwb_projection_stereo_horizontal_offset_uv,
+    update_camera_hwb_projection_target_live_scale,
 };
 use crate::camera_hwb_stream::{CameraProbeFrameSet, CameraProbeRuntime, CameraProbeStreamMode};
 use crate::camera_hwb_wsi::{
@@ -27,6 +28,7 @@ use crate::spatial_public_multistack::{
 };
 use crate::spatial_public_multistack_runtime::{
     allocate_spatial_public_guide_targets, public_guide_targets_pending_marker_fields,
+    update_spatial_public_depth_alignment, update_spatial_public_opaque_projection_layer_override,
 };
 use crate::spatial_video_projection::SpatialVideoProjectionRenderer;
 use crate::spatial_video_projection_native_stream::latest_spatial_video_projection_frame;
@@ -175,6 +177,76 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         "status=projection-target-stereo-horizontal-offset-updated rawCameraProjectionProbe=true updateMask=1 projectionTargetStereoHorizontalOffsetUv={:.6} requestedProjectionTargetStereoHorizontalOffsetUv={:.6} {} runtimeCrash=false",
         applied_offset_uv,
         stereo_offset_uv as f32,
+        camera_hwb_projection_marker_fields(),
+    ));
+    1
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeUpdateCameraHwbProjectionTargetScale(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+    target_scale: c_float,
+) -> i64 {
+    let applied_scale = update_camera_hwb_projection_target_live_scale(target_scale as f32);
+    log_marker(format!(
+        "status=projection-target-scale-updated rawCameraProjectionProbe=true updateMask=1 projectionTargetLiveScale={:.4} requestedProjectionTargetLiveScale={:.4} {} runtimeCrash=false",
+        applied_scale,
+        target_scale as f32,
+        camera_hwb_projection_marker_fields(),
+    ));
+    1
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeUpdatePrivateLayerOverride(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+    layer_override: c_float,
+) -> i64 {
+    let applied_layer_override =
+        update_spatial_public_opaque_projection_layer_override(layer_override as f32);
+    log_marker(format!(
+        "status=private-layer-override-updated rawCameraProjectionProbe=true updateMask=1 spatialPrivateLayerControlPanel=true publicMultiStackOpaqueProjectionLayerOverride={:.3} requestedPublicMultiStackOpaqueProjectionLayerOverride={:.3} {} runtimeCrash=false",
+        applied_layer_override,
+        layer_override as f32,
+        camera_hwb_projection_marker_fields(),
+    ));
+    1
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeUpdatePrivateLayerDepthAlignment(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+    left_offset_x: c_float,
+    left_offset_y: c_float,
+    right_offset_x: c_float,
+    right_offset_y: c_float,
+    sample_scale: c_float,
+) -> i64 {
+    let applied_alignment = update_spatial_public_depth_alignment(
+        left_offset_x as f32,
+        left_offset_y as f32,
+        right_offset_x as f32,
+        right_offset_y as f32,
+        sample_scale as f32,
+    );
+    log_marker(format!(
+        "status=private-layer-depth-alignment-updated rawCameraProjectionProbe=true updateMask=1 spatialPrivateLayerControlPanel=true publicMultiStackDepthAlignmentControl=true publicMultiStackDepthAlignmentLeftOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentRightOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentSampleScale={:.4} requestedPublicMultiStackDepthAlignmentLeftOffsetUv={:.6},{:.6} requestedPublicMultiStackDepthAlignmentRightOffsetUv={:.6},{:.6} requestedPublicMultiStackDepthAlignmentSampleScale={:.4} {} runtimeCrash=false",
+        applied_alignment.left_offset_uv[0],
+        applied_alignment.left_offset_uv[1],
+        applied_alignment.right_offset_uv[0],
+        applied_alignment.right_offset_uv[1],
+        applied_alignment.sample_scale,
+        left_offset_x as f32,
+        left_offset_y as f32,
+        right_offset_x as f32,
+        right_offset_y as f32,
+        sample_scale as f32,
         camera_hwb_projection_marker_fields(),
     ));
     1

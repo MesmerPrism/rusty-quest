@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item type="id" name="spatial_camera_panel" />
+    <item type="id" name="spatial_private_layer_panel" />
     <item type="id" name="spatial_camera_panel_launcher" />
     <item type="id" name="spatial_camera_surface_panel" />
 </resources>

@@ -39,6 +39,19 @@ OpenXR/Vulkan renderer and from downstream private effect stacks.
   carrier and clips Vulkan output to the packed native effective target rects.
   It must not resize or reposition the Spatial quad into a half-eye full-scale
   projection.
+- Right-controller Y-axis input scales the packed projection target around each
+  eye center. The live control is reported with
+  `projectionTargetScaleJoystickControlsEnabled=true` and
+  `right-stick-y-projection-target-scale`. Left-stick Y is reserved for panel
+  scrolling after the default stereo horizontal offset was locked in, and
+  right-stick X is intentionally ignored/swallowed so it no longer drives
+  panel scale or distance.
+- The right primary button opens a generic `spatial_private_layer_panel` while
+  the camera/video stack is active. The panel renders as a Spatial SDK layer in
+  front of the camera/video projection, exposes the seven generic layer
+  choices, projection area scale, and depth-alignment X/Y/scale controls, and
+  updates native state through `nativeUpdatePrivateLayerOverride` and
+  `nativeUpdatePrivateLayerDepthAlignment`.
 - Strict headset smoke support for public multi-stack projection activation:
   `-RequirePublicMultiStackProjection` requires guide targets, public blur,
   opaque guide/projection pipelines, fallback depth, projection-applied, and
@@ -81,6 +94,10 @@ The same gate protects the optional Spatial video path: it requires explicit
 runtime controls, MediaCodec-to-native Surface decode, native AImageReader/AHB
 handoff, Vulkan AHB import markers, no CPU pixel copy, no Java HardwareBuffer
 bridge, and no packaged or hardcoded video media path.
+It also checks the private-layer panel registration, right-stick projection
+target scale markers, front-of-camera panel ordering, and generic depth
+alignment JNI bridge without allowing private effect vocabulary into this
+public lane.
 
 ## Build
 

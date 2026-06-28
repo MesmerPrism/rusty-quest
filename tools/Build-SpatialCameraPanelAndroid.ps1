@@ -572,8 +572,10 @@ $manifest = [ordered]@{
         "debug.rustyquest.spatial_camera_panel.panel.headlocked.joystick.distance_rate_mps",
         "debug.rustyquest.spatial_camera_panel.panel.headlocked.joystick.scale_rate_per_second"
     )
-    spatial_panel_headlock_joystick_controls = "android-generic-motion-left-stick-x-y-offset-right-stick-y-distance-right-stick-x-scale"
-    spatial_camera_projection_distance_controls = "spatial-sdk-avatar-body-left-thumb-up-down-or-android-left-stick-y; panel-visibility-independent; native-openxr-action-diagnostic-opt-in; vr-input-backend debug property"
+    spatial_panel_headlock_joystick_controls = "android-generic-motion-left-stick-x-horizontal-left-stick-y-panel-scroll-right-stick-y-projection-scale-right-stick-x-ignored"
+    spatial_camera_projection_distance_controls = "fixed-1m-default; no joystick distance control"
+    spatial_camera_projection_scale_controls = "android-right-stick-y; spatial-sdk-avatar-body-right-thumb-up-down; native-openxr-right-thumbstick-y diagnostic; panel-control"
+    spatial_camera_projection_stereo_offset_controls = "disabled-default-locked; left-stick-y-reserved-for-panel-scroll"
     spatial_camera_projection_distance_vr_input_system_property = "debug.rustyquest.spatial_camera_panel.vr_input_system"
     spatial_panel_headlock_tuning_file = "files/spatial_camera_panel_headlock_tuning.json"
     panel_shape_meters = [ordered]@{

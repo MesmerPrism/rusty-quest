@@ -60,28 +60,37 @@ investigation, not as a camera acquisition, HWB import, WSI carrier, or public
 multi-stack failure.
 
 For that investigation, the raw Camera2/HWB projection probe keeps the Spatial
-SDK quad carrier at a fixed 1.0m default distance and exposes left-controller
-Y-axis control over an opposed per-eye horizontal UV offset. Positive offset
-increases stereo separation: the left-eye target rect moves left and the
-right-eye target rect moves right. The current default offset is `0.046320`,
-captured from a live Quest 3S headset readback on 2026-06-28 where the camera
-projection and Meta performance HUD aligned simultaneously. The normal route
-is Spatial SDK's ECS input model: the local player's `AvatarBody` owns the
-active left/right `Controller` components, and a late SDK system reads
-`ButtonBits.ButtonThumbLU` / `ButtonBits.ButtonThumbLD` after the SDK input
-systems tick. Android
-generic-motion left-stick Y remains a fallback when Horizon delivers it. This
-stereo-offset control is intentionally independent of whether the workflow
-panel is open, because the stereo alignment test must preserve the camera
-projection carrier while the operator panel is available. The previous native
-OpenXR float action bound to `/user/hand/left/input/thumbstick/y` is retained
-only as an opt-in diagnostic because `VRFeature` owns the SDK session's
-action-set attachment. Runtime readback uses
+SDK quad carrier at a fixed 1.0m default distance and locks the opposed
+per-eye horizontal UV offset to the current default `0.046320`, captured from
+a live Quest 3S headset readback on 2026-06-28 where the camera projection and
+Meta performance HUD aligned simultaneously. Left-stick Y is now reserved for
+panel scrolling, not projection offset tuning. Runtime readback uses
 `projectionTargetStereoHorizontalOffsetUv`, `projectionTargetLeftOffsetUv`,
 `projectionTargetRightOffsetUv`, and the effective packed rect markers. While
 this projection probe is active, the hidden surface-particle panel no longer
 writes the shared native panel-basis state on each scene tick; the camera
 projection plane is the native panel-pose authority.
+
+The same projection probe also exposes right-controller Y-axis control over
+the packed projection target scale. This adjusts the live target rect around
+each eye center while keeping the Spatial SDK carrier and the packed stereo
+mapping stable. Runtime readback uses `projectionTargetLiveScale`,
+`projectionTargetScaleJoystickControlsEnabled=true`, and
+`right-stick-y-projection-target-scale`. Right-stick X is intentionally
+ignored by the activity and swallowed when it is the only active axis so it no
+longer drives panel scale or distance. Left-stick X remains the panel
+horizontal placement control while a panel is open; left-stick Y is left
+unconsumed so the panel can scroll.
+
+When the camera/video stack is active, the right primary button opens a
+front-of-camera private-layer control panel instead of the participant workflow
+panel. That panel mirrors the native private layer selector: seven generic
+layer choices, live projection-area scale, and live depth-alignment X/Y/scale
+controls. It is registered as `spatial_private_layer_panel`, renders at
+`panelRenderOrder=front-of-camera-video` with the `spatial-sdk-layer` panel
+render path, and updates the public opaque projection route through
+`nativeUpdatePrivateLayerOverride` and
+`nativeUpdatePrivateLayerDepthAlignment`.
 
 For controller modality, this APK follows the official Spatial SDK panel sample
 shape: optional hands-and-controllers declarations are present, controller

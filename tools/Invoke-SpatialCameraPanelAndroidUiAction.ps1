@@ -2,6 +2,8 @@ param(
     [ValidateSet(
         "panel-open",
         "panel-close",
+        "private-layer-panel-open",
+        "private-layer-panel-close",
         "panel-reset",
         "panel-headlock-on",
         "panel-headlock-off",

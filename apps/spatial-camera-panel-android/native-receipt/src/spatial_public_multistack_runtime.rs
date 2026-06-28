@@ -6,6 +6,7 @@ use std::ffi::CString;
 use std::mem;
 #[cfg(target_os = "android")]
 use std::os::raw::{c_char, c_int};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use ash::vk;
 
@@ -17,6 +18,39 @@ const SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_DEFAULT: f32 = -1.0;
 const SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_MAX: f32 = 6.0;
 const SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_PROPERTY: &str =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.projection_layer_override";
+const SPATIAL_PUBLIC_DEPTH_ALIGNMENT_OFFSET_MIN: f32 = -0.25;
+const SPATIAL_PUBLIC_DEPTH_ALIGNMENT_OFFSET_MAX: f32 = 0.25;
+const SPATIAL_PUBLIC_DEPTH_ALIGNMENT_SAMPLE_SCALE_MIN: f32 = 0.25;
+const SPATIAL_PUBLIC_DEPTH_ALIGNMENT_SAMPLE_SCALE_MAX: f32 = 3.0;
+const SPATIAL_PUBLIC_DEPTH_ALIGNMENT_SAMPLE_SCALE_DEFAULT: f32 = 1.0;
+static SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_BITS: AtomicU32 =
+    AtomicU32::new(SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_DEFAULT.to_bits());
+static SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_LIVE_SET: AtomicBool =
+    AtomicBool::new(false);
+static SPATIAL_PUBLIC_DEPTH_ALIGNMENT_LEFT_X_BITS: AtomicU32 = AtomicU32::new(0.0f32.to_bits());
+static SPATIAL_PUBLIC_DEPTH_ALIGNMENT_LEFT_Y_BITS: AtomicU32 = AtomicU32::new(0.0f32.to_bits());
+static SPATIAL_PUBLIC_DEPTH_ALIGNMENT_RIGHT_X_BITS: AtomicU32 = AtomicU32::new(0.0f32.to_bits());
+static SPATIAL_PUBLIC_DEPTH_ALIGNMENT_RIGHT_Y_BITS: AtomicU32 = AtomicU32::new(0.0f32.to_bits());
+static SPATIAL_PUBLIC_DEPTH_ALIGNMENT_SAMPLE_SCALE_BITS: AtomicU32 =
+    AtomicU32::new(SPATIAL_PUBLIC_DEPTH_ALIGNMENT_SAMPLE_SCALE_DEFAULT.to_bits());
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SpatialPublicDepthAlignment {
+    pub(crate) left_offset_uv: [f32; 2],
+    pub(crate) right_offset_uv: [f32; 2],
+    pub(crate) sample_scale: f32,
+}
+
+impl SpatialPublicDepthAlignment {
+    fn depth_uv_transform_for_eye(self, eye_index: usize) -> [f32; 4] {
+        let offset = if eye_index == 0 {
+            self.left_offset_uv
+        } else {
+            self.right_offset_uv
+        };
+        [self.sample_scale, offset[0], self.sample_scale, offset[1]]
+    }
+}
 
 #[cfg(target_os = "android")]
 extern "C" {
@@ -198,8 +232,9 @@ impl SpatialPublicGuideTargets {
         let left_projection_rect = packed_projection_target_rect(0);
         let right_projection_rect = packed_projection_target_rect(1);
         let layer_override = opaque_projection_layer_override();
+        let depth_alignment = current_spatial_public_depth_alignment();
         format!(
-            "publicMultiStackProjectionApplied={} publicMultiStackLayerCycleEnabled=true publicMultiStackLayerCycleElapsedSeconds={:.3} publicMultiStackOpaqueProjectionLayerOverride={:.3} publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv publicMultiStackOpaqueProjectionLeftTargetRect={} publicMultiStackOpaqueProjectionRightTargetRect={} publicMultiStackDepthFallbackReady={} publicMultiStackDepthFallbackFormat={:?}",
+            "publicMultiStackProjectionApplied={} publicMultiStackLayerCycleEnabled=true publicMultiStackLayerCycleElapsedSeconds={:.3} publicMultiStackOpaqueProjectionLayerOverride={:.3} publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv publicMultiStackOpaqueProjectionLeftTargetRect={} publicMultiStackOpaqueProjectionRightTargetRect={} publicMultiStackDepthFallbackReady={} publicMultiStackDepthFallbackFormat={:?} publicMultiStackDepthAlignmentLeftOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentRightOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentSampleScale={:.4}",
             bool_marker(projected_by_public_stack),
             elapsed_seconds.max(0.0),
             layer_override,
@@ -207,6 +242,11 @@ impl SpatialPublicGuideTargets {
             rect_marker(right_projection_rect),
             bool_marker(self.depth_fallback_ready),
             SPATIAL_PUBLIC_DEPTH_FALLBACK_FORMAT,
+            depth_alignment.left_offset_uv[0],
+            depth_alignment.left_offset_uv[1],
+            depth_alignment.right_offset_uv[0],
+            depth_alignment.right_offset_uv[1],
+            depth_alignment.sample_scale,
         )
     }
 
@@ -586,6 +626,7 @@ struct OpaqueProjectionPush {
 impl OpaqueProjectionPush {
     fn for_packed_eye(eye_index: usize, elapsed_seconds: f32) -> Self {
         let layer_override = opaque_projection_layer_override();
+        let depth_alignment = current_spatial_public_depth_alignment();
         Self {
             target_rect: packed_projection_target_rect(eye_index),
             params0: [
@@ -599,12 +640,85 @@ impl OpaqueProjectionPush {
             border_blend: [0.0, 0.0, 0.0, 0.0],
             depth: [0.0, 0.001, 4.0, 0.0],
             depth_aux: [0.0, 0.0, 0.3, 4.0],
-            depth_uv_transform: [1.0, 0.0, 1.0, 0.0],
+            depth_uv_transform: depth_alignment.depth_uv_transform_for_eye(eye_index),
         }
     }
 }
 
+pub(crate) fn update_spatial_public_opaque_projection_layer_override(layer_override: f32) -> f32 {
+    let applied = clamp_projection_layer_override(layer_override);
+    SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_BITS
+        .store(applied.to_bits(), Ordering::Release);
+    SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_LIVE_SET.store(true, Ordering::Release);
+    applied
+}
+
+pub(crate) fn current_spatial_public_opaque_projection_layer_override() -> f32 {
+    clamp_projection_layer_override(f32::from_bits(
+        SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_BITS.load(Ordering::Acquire),
+    ))
+}
+
+pub(crate) fn update_spatial_public_depth_alignment(
+    left_offset_x: f32,
+    left_offset_y: f32,
+    right_offset_x: f32,
+    right_offset_y: f32,
+    sample_scale: f32,
+) -> SpatialPublicDepthAlignment {
+    let alignment = SpatialPublicDepthAlignment {
+        left_offset_uv: [
+            clamp_depth_alignment_offset(left_offset_x),
+            clamp_depth_alignment_offset(left_offset_y),
+        ],
+        right_offset_uv: [
+            clamp_depth_alignment_offset(right_offset_x),
+            clamp_depth_alignment_offset(right_offset_y),
+        ],
+        sample_scale: clamp_depth_alignment_sample_scale(sample_scale),
+    };
+    SPATIAL_PUBLIC_DEPTH_ALIGNMENT_LEFT_X_BITS
+        .store(alignment.left_offset_uv[0].to_bits(), Ordering::Release);
+    SPATIAL_PUBLIC_DEPTH_ALIGNMENT_LEFT_Y_BITS
+        .store(alignment.left_offset_uv[1].to_bits(), Ordering::Release);
+    SPATIAL_PUBLIC_DEPTH_ALIGNMENT_RIGHT_X_BITS
+        .store(alignment.right_offset_uv[0].to_bits(), Ordering::Release);
+    SPATIAL_PUBLIC_DEPTH_ALIGNMENT_RIGHT_Y_BITS
+        .store(alignment.right_offset_uv[1].to_bits(), Ordering::Release);
+    SPATIAL_PUBLIC_DEPTH_ALIGNMENT_SAMPLE_SCALE_BITS
+        .store(alignment.sample_scale.to_bits(), Ordering::Release);
+    alignment
+}
+
+pub(crate) fn current_spatial_public_depth_alignment() -> SpatialPublicDepthAlignment {
+    SpatialPublicDepthAlignment {
+        left_offset_uv: [
+            clamp_depth_alignment_offset(f32::from_bits(
+                SPATIAL_PUBLIC_DEPTH_ALIGNMENT_LEFT_X_BITS.load(Ordering::Acquire),
+            )),
+            clamp_depth_alignment_offset(f32::from_bits(
+                SPATIAL_PUBLIC_DEPTH_ALIGNMENT_LEFT_Y_BITS.load(Ordering::Acquire),
+            )),
+        ],
+        right_offset_uv: [
+            clamp_depth_alignment_offset(f32::from_bits(
+                SPATIAL_PUBLIC_DEPTH_ALIGNMENT_RIGHT_X_BITS.load(Ordering::Acquire),
+            )),
+            clamp_depth_alignment_offset(f32::from_bits(
+                SPATIAL_PUBLIC_DEPTH_ALIGNMENT_RIGHT_Y_BITS.load(Ordering::Acquire),
+            )),
+        ],
+        sample_scale: clamp_depth_alignment_sample_scale(f32::from_bits(
+            SPATIAL_PUBLIC_DEPTH_ALIGNMENT_SAMPLE_SCALE_BITS.load(Ordering::Acquire),
+        )),
+    }
+}
+
 fn opaque_projection_layer_override() -> f32 {
+    let live_override = current_spatial_public_opaque_projection_layer_override();
+    if SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_LIVE_SET.load(Ordering::Acquire) {
+        return live_override;
+    }
     #[cfg(target_os = "android")]
     {
         if let Some(value) =
@@ -622,10 +736,40 @@ fn parse_projection_layer_override(raw_value: &str) -> Option<f32> {
     if !value.is_finite() {
         return None;
     }
-    Some(value.clamp(
-        SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_DEFAULT,
-        SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_MAX,
-    ))
+    Some(clamp_projection_layer_override(value))
+}
+
+fn clamp_projection_layer_override(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(
+            SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_DEFAULT,
+            SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_MAX,
+        )
+    } else {
+        SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_DEFAULT
+    }
+}
+
+fn clamp_depth_alignment_offset(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(
+            SPATIAL_PUBLIC_DEPTH_ALIGNMENT_OFFSET_MIN,
+            SPATIAL_PUBLIC_DEPTH_ALIGNMENT_OFFSET_MAX,
+        )
+    } else {
+        0.0
+    }
+}
+
+fn clamp_depth_alignment_sample_scale(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(
+            SPATIAL_PUBLIC_DEPTH_ALIGNMENT_SAMPLE_SCALE_MIN,
+            SPATIAL_PUBLIC_DEPTH_ALIGNMENT_SAMPLE_SCALE_MAX,
+        )
+    } else {
+        SPATIAL_PUBLIC_DEPTH_ALIGNMENT_SAMPLE_SCALE_DEFAULT
+    }
 }
 
 #[cfg(target_os = "android")]

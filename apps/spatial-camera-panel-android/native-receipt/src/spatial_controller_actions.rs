@@ -22,6 +22,9 @@ const ACTION_SET_LOCALIZED_NAME: &str = "Spatial Camera Controls";
 const LEFT_THUMBSTICK_Y_ACTION: &str = "spatial_left_thumbstick_y";
 const LEFT_THUMBSTICK_Y_LOCALIZED_NAME: &str = "Spatial Left Thumbstick Y";
 const LEFT_THUMBSTICK_Y_PATH: &str = "/user/hand/left/input/thumbstick/y";
+const RIGHT_THUMBSTICK_Y_ACTION: &str = "spatial_right_thumbstick_y";
+const RIGHT_THUMBSTICK_Y_LOCALIZED_NAME: &str = "Spatial Right Thumbstick Y";
+const RIGHT_THUMBSTICK_Y_PATH: &str = "/user/hand/right/input/thumbstick/y";
 const INTERACTION_PROFILES: &[&str] = &[
     "/interaction_profiles/oculus/touch_controller",
     "/interaction_profiles/meta/touch_controller_plus",
@@ -63,18 +66,20 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     match start_result {
         Ok(actions) => {
             marker(format!(
-                "status=started nativeControllerActionBridge=true startMask={} actionSet={} leftThumbstickYAction={} leftThumbstickYInputPath={} actionSetAttached={}",
+                "status=started nativeControllerActionBridge=true startMask={} actionSet={} leftThumbstickYAction={} leftThumbstickYInputPath={} rightThumbstickYAction={} rightThumbstickYInputPath={} actionSetAttached={}",
                 mask,
                 ACTION_SET_NAME,
                 LEFT_THUMBSTICK_Y_ACTION,
                 LEFT_THUMBSTICK_Y_PATH,
+                RIGHT_THUMBSTICK_Y_ACTION,
+                RIGHT_THUMBSTICK_Y_PATH,
                 crate::bool_token((mask & START_ACTION_SET_ATTACHED) != 0),
             ));
             *guard = Some(actions);
         }
         Err(reason) => {
             marker(format!(
-                "status=start-failed nativeControllerActionBridge=true startMask={} reason={} actionSetAttached=false leftThumbstickYAction=false",
+                "status=start-failed nativeControllerActionBridge=true startMask={} reason={} actionSetAttached=false leftThumbstickYAction=false rightThumbstickYAction=false",
                 mask,
                 crate::marker_token(&reason),
             ));
@@ -100,6 +105,21 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
 
 #[no_mangle]
 #[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativePollSpatialControllerRightThumbstickY(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+) -> f32 {
+    let mut guard = CONTROLLER_ACTIONS
+        .lock()
+        .expect("controller action mutex poisoned");
+    let Some(actions) = guard.as_mut() else {
+        return f32::NAN;
+    };
+    actions.poll_right_thumbstick_y()
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeStopSpatialControllerActions(
     _env: *mut c_void,
     _thiz: *mut c_void,
@@ -115,6 +135,7 @@ struct SpatialControllerActions {
     session: xr::Session,
     action_set: xr::ActionSet,
     left_thumbstick_y: xr::Action,
+    right_thumbstick_y: xr::Action,
     sync_actions: xr::pfn::SyncActions,
     get_action_state_float: xr::pfn::GetActionStateFloat,
     destroy_action: xr::pfn::DestroyAction,
@@ -186,7 +207,7 @@ impl SpatialControllerActions {
         }
         *mask |= START_ACTION_SET_CREATED;
 
-        let action_info = xr::ActionCreateInfo {
+        let left_action_info = xr::ActionCreateInfo {
             ty: xr::ActionCreateInfo::TYPE,
             next: ptr::null(),
             action_name: fixed_c_chars(LEFT_THUMBSTICK_Y_ACTION),
@@ -197,7 +218,7 @@ impl SpatialControllerActions {
         };
         let mut left_thumbstick_y = xr::Action::NULL;
         let create_action_result =
-            unsafe { create_action(action_set, &action_info, &mut left_thumbstick_y) };
+            unsafe { create_action(action_set, &left_action_info, &mut left_thumbstick_y) };
         if create_action_result != xr::Result::SUCCESS {
             unsafe {
                 destroy_action_set(action_set);
@@ -207,34 +228,67 @@ impl SpatialControllerActions {
                 xr_result_token(create_action_result)
             ));
         }
+
+        let right_action_info = xr::ActionCreateInfo {
+            ty: xr::ActionCreateInfo::TYPE,
+            next: ptr::null(),
+            action_name: fixed_c_chars(RIGHT_THUMBSTICK_Y_ACTION),
+            action_type: xr::ActionType::FLOAT_INPUT,
+            count_subaction_paths: 0,
+            subaction_paths: ptr::null(),
+            localized_action_name: fixed_c_chars(RIGHT_THUMBSTICK_Y_LOCALIZED_NAME),
+        };
+        let mut right_thumbstick_y = xr::Action::NULL;
+        let create_right_action_result =
+            unsafe { create_action(action_set, &right_action_info, &mut right_thumbstick_y) };
+        if create_right_action_result != xr::Result::SUCCESS {
+            unsafe {
+                destroy_action(left_thumbstick_y);
+                destroy_action_set(action_set);
+            }
+            return Err(format!(
+                "xrCreateRightAction-{}",
+                xr_result_token(create_right_action_result)
+            ));
+        }
         *mask |= START_ACTION_CREATED;
 
-        let binding_path = string_to_openxr_path(instance, string_to_path, LEFT_THUMBSTICK_Y_PATH)?;
+        let left_binding_path =
+            string_to_openxr_path(instance, string_to_path, LEFT_THUMBSTICK_Y_PATH)?;
+        let right_binding_path =
+            string_to_openxr_path(instance, string_to_path, RIGHT_THUMBSTICK_Y_PATH)?;
         let mut suggested_count = 0_u32;
         for profile in INTERACTION_PROFILES {
             let profile_path = string_to_openxr_path(instance, string_to_path, profile)?;
-            let binding = xr::ActionSuggestedBinding {
-                action: left_thumbstick_y,
-                binding: binding_path,
-            };
+            let bindings = [
+                xr::ActionSuggestedBinding {
+                    action: left_thumbstick_y,
+                    binding: left_binding_path,
+                },
+                xr::ActionSuggestedBinding {
+                    action: right_thumbstick_y,
+                    binding: right_binding_path,
+                },
+            ];
             let suggested = xr::InteractionProfileSuggestedBinding {
                 ty: xr::InteractionProfileSuggestedBinding::TYPE,
                 next: ptr::null(),
                 interaction_profile: profile_path,
-                count_suggested_bindings: 1,
-                suggested_bindings: &binding,
+                count_suggested_bindings: bindings.len() as u32,
+                suggested_bindings: bindings.as_ptr(),
             };
             let result = unsafe { suggest_interaction_profile_bindings(instance, &suggested) };
             if result == xr::Result::SUCCESS {
                 suggested_count += 1;
                 marker(format!(
-                    "status=binding-suggested interactionProfile={} leftThumbstickYInputPath={} leftControllerThumbstickYBinding=true",
+                    "status=binding-suggested interactionProfile={} leftThumbstickYInputPath={} rightThumbstickYInputPath={} leftControllerThumbstickYBinding=true rightControllerThumbstickYBinding=true",
                     crate::marker_token(profile),
                     LEFT_THUMBSTICK_Y_PATH,
+                    RIGHT_THUMBSTICK_Y_PATH,
                 ));
             } else {
                 marker(format!(
-                    "status=binding-warning interactionProfile={} reason={} leftControllerThumbstickYBinding=false",
+                    "status=binding-warning interactionProfile={} reason={} leftControllerThumbstickYBinding=false rightControllerThumbstickYBinding=false",
                     crate::marker_token(profile),
                     xr_result_token(result),
                 ));
@@ -255,6 +309,7 @@ impl SpatialControllerActions {
         if attach_result != xr::Result::SUCCESS {
             unsafe {
                 destroy_action(left_thumbstick_y);
+                destroy_action(right_thumbstick_y);
                 destroy_action_set(action_set);
             }
             return Err(format!(
@@ -265,16 +320,18 @@ impl SpatialControllerActions {
         *mask |= START_ACTION_SET_ATTACHED;
 
         marker(format!(
-            "status=attached actionSet={} actionSetAttached=true suggestedBindingCount={} leftThumbstickYAction=true leftControllerThumbstickY={}",
+            "status=attached actionSet={} actionSetAttached=true suggestedBindingCount={} leftThumbstickYAction=true rightThumbstickYAction=true leftControllerThumbstickY={} rightControllerThumbstickY={}",
             ACTION_SET_NAME,
             suggested_count,
             LEFT_THUMBSTICK_Y_PATH,
+            RIGHT_THUMBSTICK_Y_PATH,
         ));
 
         Ok(Self {
             session,
             action_set,
             left_thumbstick_y,
+            right_thumbstick_y,
             sync_actions,
             get_action_state_float,
             destroy_action,
@@ -284,6 +341,14 @@ impl SpatialControllerActions {
     }
 
     fn poll_left_thumbstick_y(&mut self) -> f32 {
+        self.poll_thumbstick_y(self.left_thumbstick_y, "left")
+    }
+
+    fn poll_right_thumbstick_y(&mut self) -> f32 {
+        self.poll_thumbstick_y(self.right_thumbstick_y, "right")
+    }
+
+    fn poll_thumbstick_y(&mut self, action: xr::Action, hand: &str) -> f32 {
         let active_set = xr::ActiveActionSet {
             action_set: self.action_set,
             subaction_path: xr::Path::NULL,
@@ -298,9 +363,10 @@ impl SpatialControllerActions {
         if sync_result != xr::Result::SUCCESS {
             if self.poll_count == 0 || self.poll_count % 120 == 0 {
                 marker(format!(
-                    "status=sync-error pollCount={} reason={} leftControllerThumbstickYActive=false",
+                    "status=sync-error pollCount={} reason={} {}ControllerThumbstickYActive=false",
                     self.poll_count,
                     xr_result_token(sync_result),
+                    hand,
                 ));
             }
             self.poll_count = self.poll_count.saturating_add(1);
@@ -310,7 +376,7 @@ impl SpatialControllerActions {
         let get_info = xr::ActionStateGetInfo {
             ty: xr::ActionStateGetInfo::TYPE,
             next: ptr::null(),
-            action: self.left_thumbstick_y,
+            action,
             subaction_path: xr::Path::NULL,
         };
         let mut state = xr::ActionStateFloat {
@@ -326,9 +392,10 @@ impl SpatialControllerActions {
         if state_result != xr::Result::SUCCESS {
             if self.poll_count == 0 || self.poll_count % 120 == 0 {
                 marker(format!(
-                    "status=state-error pollCount={} reason={} leftControllerThumbstickYActive=false",
+                    "status=state-error pollCount={} reason={} {}ControllerThumbstickYActive=false",
                     self.poll_count,
                     xr_result_token(state_result),
+                    hand,
                 ));
             }
             self.poll_count = self.poll_count.saturating_add(1);
@@ -341,9 +408,11 @@ impl SpatialControllerActions {
             || state.changed_since_last_sync == xr::TRUE
         {
             marker(format!(
-                "status=polled pollCount={} leftControllerThumbstickYActive={} leftControllerThumbstickY={:.3} changedSinceLastSync={}",
+                "status=polled pollCount={} {}ControllerThumbstickYActive={} {}ControllerThumbstickY={:.3} changedSinceLastSync={}",
                 self.poll_count,
+                hand,
                 crate::bool_token(active),
+                hand,
                 state.current_state,
                 crate::bool_token(state.changed_since_last_sync == xr::TRUE),
             ));
@@ -361,6 +430,7 @@ impl Drop for SpatialControllerActions {
     fn drop(&mut self) {
         unsafe {
             (self.destroy_action)(self.left_thumbstick_y);
+            (self.destroy_action)(self.right_thumbstick_y);
             (self.destroy_action_set)(self.action_set);
         }
     }

@@ -77,6 +77,9 @@ internal data class SpatialControllerPrimarySnapshot(
     val leftThumbUp: Boolean,
     val leftThumbDown: Boolean,
     val leftThumbY: Float,
+    val rightThumbUp: Boolean,
+    val rightThumbDown: Boolean,
+    val rightThumbY: Float,
     val down: Boolean,
     val pressed: Boolean,
 )
