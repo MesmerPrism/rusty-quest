@@ -11,6 +11,10 @@ OpenXR/Vulkan renderer and from downstream private effect stacks.
 - Low-rate app-private JSONL records for participant/session setup, Polar H10
   intake, ECG mirroring, block events, foreground events, and questionnaires.
 - Raw Camera2/AHardwareBuffer and public blur/projection validation probes.
+- Optional public stereo-video projection behind the raw camera probe, using an
+  explicitly staged runtime path, Java `MediaCodec`, native
+  `AImageReader`/`AHardwareBuffer`, and the existing Spatial SDK
+  `SceneQuadLayer` carrier. No video asset is packaged in the app.
 - Public seven-slot camera guide multi-stack contract with generic final,
   guide blur, post-blur guide, and depth diagnostic slots.
 - Public guide-target/pass manifests and generic separable 5-tap guide blur
@@ -54,7 +58,7 @@ OpenXR/Vulkan renderer and from downstream private effect stacks.
 - Native renderer presentation authority. Vulkan/OpenXR presentation remains in
   `apps/native-renderer-android`.
 - Opaque camera-stack layers beyond public raw, guide blur, depth diagnostic,
-  and projection-carrier probes.
+  video-composition, and projection-carrier probes.
 
 ## Static Contract
 
@@ -73,6 +77,10 @@ depth fallback resources without requiring downstream shader source. A compact
 projection-evidence native marker keeps target-rect, projection-applied, layer
 cycle, and fallback-depth proof outside Android logcat line-length truncation.
 Static drift checks treat public multi-stack receipts as their own contract.
+The same gate protects the optional Spatial video path: it requires explicit
+runtime controls, MediaCodec-to-native Surface decode, native AImageReader/AHB
+handoff, Vulkan AHB import markers, no CPU pixel copy, no Java HardwareBuffer
+bridge, and no packaged or hardcoded video media path.
 
 ## Build
 

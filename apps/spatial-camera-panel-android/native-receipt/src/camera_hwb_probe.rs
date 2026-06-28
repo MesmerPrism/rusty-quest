@@ -28,6 +28,9 @@ use crate::spatial_public_multistack::{
 use crate::spatial_public_multistack_runtime::{
     allocate_spatial_public_guide_targets, public_guide_targets_pending_marker_fields,
 };
+use crate::spatial_video_projection::SpatialVideoProjectionRenderer;
+use crate::spatial_video_projection_native_stream::latest_spatial_video_projection_frame;
+use crate::spatial_video_projection_settings::spatial_video_projection_settings;
 use crate::{bool_token, marker_token};
 
 const CAMERA_HWB_PROBE_WAIT_FRAME_MS: u64 = 5000;
@@ -631,6 +634,33 @@ unsafe fn render_camera_hwb_probe(
     } else {
         None
     };
+    let video_settings = spatial_video_projection_settings();
+    let mut video_renderer = if matches!(mode, CameraHwbProbeMode::RawColorProjection)
+        && video_settings.active()
+    {
+        log_marker(format!(
+            "status=spatial-video-projection-configured outputMode={} rawCameraProjectionProbe=true stereoSource={} {} runtimeCrash=false",
+            mode.output_mode(),
+            mode.stereo_source(),
+            video_settings.marker_fields(),
+        ));
+        Some(SpatialVideoProjectionRenderer::new(
+            &instance,
+            &device,
+            memory_properties,
+            render_pass,
+            true,
+        ))
+    } else {
+        log_marker(format!(
+            "status=spatial-video-projection-disabled-or-inactive outputMode={} rawCameraProjectionProbe={} stereoSource={} {} runtimeCrash=false",
+            mode.output_mode(),
+            mode.raw_projection_token(),
+            mode.stereo_source(),
+            video_settings.marker_fields(),
+        ));
+        None
+    };
 
     let mut sampled_left_image = import_ahb_sampled_image(
         &device,
@@ -712,6 +742,9 @@ unsafe fn render_camera_hwb_probe(
         device
             .reset_fences(&[frame_fence])
             .map_err(|error| format!("reset-fence-{error:?}"))?;
+        if let Some(renderer) = video_renderer.as_mut() {
+            renderer.retire_completed_frame_handles();
+        }
         if mode.should_stream_latest_frame() {
             if let Some(next_frame) = camera_runtime.wait_for_left_frame_after(
                 current_left_hwb_import_sequence,
@@ -806,7 +839,12 @@ unsafe fn render_camera_hwb_probe(
         };
         let command_buffer = command_buffers[image_index as usize];
         let public_stack_elapsed_seconds = render_started.elapsed().as_secs_f32();
-        let projected_by_public_stack = record_camera_hwb_probe_command_buffer(
+        let latest_video_frame = if video_settings.active() {
+            latest_spatial_video_projection_frame()
+        } else {
+            None
+        };
+        let record_result = record_camera_hwb_probe_command_buffer(
             &device,
             command_buffer,
             render_pass,
@@ -820,7 +858,12 @@ unsafe fn render_camera_hwb_probe(
             transition_right_camera_image,
             public_guide_targets.as_mut(),
             public_stack_elapsed_seconds,
+            video_renderer.as_mut(),
+            latest_video_frame.as_ref(),
+            &video_settings,
+            image_index as usize,
         )?;
+        let projected_by_public_stack = record_result.projected_by_public_stack;
         transition_left_camera_image = false;
         transition_right_camera_image = false;
         let wait_semaphores = [image_available];
@@ -870,6 +913,17 @@ unsafe fn render_camera_hwb_probe(
                         projected_by_public_stack,
                         public_stack_elapsed_seconds,
                     ),
+                ));
+            }
+            if video_settings.enabled {
+                log_marker(format!(
+                    "status=spatial-video-projection-frame-composed framesPresented={} outputMode=raw-color-target-rect stereoSource=camera50-51 videoComposedBeforeCamera=true sameSurfaceComposition=true cameraProjectionAlignmentPreserved=true videoProjectionRendered={} spatialVideoProjectionRendered={} videoProjectionGpuImportReady={} {} {} runtimeCrash=false",
+                    frames_presented,
+                    record_result.video_stats.rendered,
+                    record_result.video_stats.rendered,
+                    record_result.video_stats.ready,
+                    video_settings.marker_fields(),
+                    record_result.video_stats.marker_fields(),
                 ));
             }
         }
@@ -930,6 +984,9 @@ unsafe fn render_camera_hwb_probe(
         sampled_right_image.destroy(&device);
     }
     sampled_left_image.destroy(&device);
+    if let Some(mut video_renderer) = video_renderer {
+        video_renderer.destroy(&device);
+    }
     camera_resources.destroy(&device);
     if let Some(public_guide_targets) = public_guide_targets {
         public_guide_targets.destroy(&device);

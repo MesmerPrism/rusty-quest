@@ -270,8 +270,42 @@ impl SpatialPublicGuideTargets {
         if !self.projection_execution_available() {
             return Ok(false);
         }
-        self.transition_depth_fallback_for_sampling(device, command_buffer);
+        self.prepare_spatial_public_projection_sampling(device, command_buffer);
         begin_projection_pass(device, command_buffer, render_pass, framebuffer, extent);
+        let projected = self.record_spatial_public_projection_in_open_render_pass(
+            device,
+            command_buffer,
+            extent,
+            camera_descriptor_set,
+            elapsed_seconds,
+        )?;
+        device.cmd_end_render_pass(command_buffer);
+        Ok(projected)
+    }
+
+    pub(crate) unsafe fn prepare_spatial_public_projection_sampling(
+        &mut self,
+        device: &ash::Device,
+        command_buffer: vk::CommandBuffer,
+    ) -> bool {
+        if !self.projection_execution_available() {
+            return false;
+        }
+        self.transition_depth_fallback_for_sampling(device, command_buffer);
+        true
+    }
+
+    pub(crate) unsafe fn record_spatial_public_projection_in_open_render_pass(
+        &self,
+        device: &ash::Device,
+        command_buffer: vk::CommandBuffer,
+        extent: vk::Extent2D,
+        camera_descriptor_set: vk::DescriptorSet,
+        elapsed_seconds: f32,
+    ) -> Result<bool, String> {
+        if !self.projection_execution_available() {
+            return Ok(false);
+        }
         for eye_index in 0..SPATIAL_PUBLIC_PACKED_EYE_COUNT {
             let target_rect = packed_projection_target_rect(eye_index);
             set_packed_projection_target_view(device, command_buffer, extent, target_rect);
@@ -300,7 +334,6 @@ impl SpatialPublicGuideTargets {
             );
             device.cmd_draw(command_buffer, 3, 1, 0, 0);
         }
-        device.cmd_end_render_pass(command_buffer);
         Ok(true)
     }
 

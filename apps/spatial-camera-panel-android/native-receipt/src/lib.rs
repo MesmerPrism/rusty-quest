@@ -40,6 +40,14 @@ mod spatial_multimodal_input;
 mod spatial_public_multistack;
 mod spatial_public_multistack_runtime;
 #[cfg(target_os = "android")]
+mod spatial_video_projection;
+mod spatial_video_projection_marker;
+#[cfg(target_os = "android")]
+mod spatial_video_projection_native_stream;
+#[cfg(target_os = "android")]
+mod spatial_video_projection_probe;
+mod spatial_video_projection_settings;
+#[cfg(target_os = "android")]
 mod surface_particle_layer;
 
 #[cfg(target_os = "android")]

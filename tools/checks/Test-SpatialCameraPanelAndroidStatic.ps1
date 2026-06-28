@@ -43,6 +43,7 @@ function Assert-NotContains {
 $appGradle = Read-RequiredText "apps\spatial-camera-panel-android\app\build.gradle.kts"
 $manifest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\AndroidManifest.xml"
 $activity = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelActivity.kt"
+$spatialStereoVideoPlayback = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialStereoVideoPlayback.java"
 $laneBoundary = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialSdkLaneBoundary.kt"
 $publicMultiStack = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPublicMultiStack.kt"
 $panelController = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ExperimentPanelController.kt"
@@ -58,8 +59,16 @@ $nativeMultiStackRuntime = Read-RequiredText "apps\spatial-camera-panel-android\
 $nativeControllerActions = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_controller_actions.rs"
 $nativeMultimodalInput = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_multimodal_input.rs"
 $publicGuideBlurShader = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\shaders\public_guide_blur.frag.glsl"
+$cameraRawColorShader = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\shaders\camera_hwb_raw_color.frag.glsl"
 $cameraStream = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_stream.rs"
 $cameraWsi = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_wsi.rs"
+$spatialVideoSettings = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_video_projection_settings.rs"
+$spatialVideoStream = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_video_projection_native_stream.rs"
+$spatialVideoRenderer = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_video_projection.rs"
+$spatialVideoMarker = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_video_projection_marker.rs"
+$spatialVideoProbe = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_video_projection_probe.rs"
+$spatialVideoVertShader = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\shaders\spatial_video_projection.vert.glsl"
+$spatialVideoFragShader = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\shaders\spatial_video_projection.frag.glsl"
 $surfaceLayer = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\surface_particle_layer.rs"
 $replayHands = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\replay_hands.rs"
 $buildScript = Read-RequiredText "tools\Build-SpatialCameraPanelAndroid.ps1"
@@ -78,7 +87,12 @@ Assert-Contains "Android manifest" $manifest 'com.oculus.permission.RENDER_MODEL
 Assert-Contains "Activity" $activity "class SpatialCameraPanelActivity : AppSystemActivity()"
 Assert-Contains "Activity" $activity "SceneSwapchain.createAsAndroid"
 Assert-Contains "Activity" $activity "debug.rustyquest.spatial.camera_hwb_projection_probe"
+Assert-Contains "Activity" $activity "debug.rustyquest.spatial.video_projection_probe"
 Assert-Contains "Activity" $activity "outputMode=raw-color-target-rect"
+Assert-Contains "Activity" $activity "runSpatialVideoProjectionProbeIfRequested"
+Assert-Contains "Activity" $activity "nativeStartSpatialVideoProjectionProbe"
+Assert-Contains "Activity" $activity "nativeStopSpatialVideoProjectionProbe"
+Assert-Contains "Activity" $activity "videoOnlySpatialProjection=true"
 Assert-Contains "Activity" $activity "SpatialSdkLaneBoundaries.summaryToken()"
 Assert-Contains "Activity" $activity "SpatialPublicMultiStack.markerFields()"
 Assert-Contains "Activity" $activity "SpatialPublicMultiStack.inactiveMarkerFields()"
@@ -136,6 +150,30 @@ Assert-Contains "Activity" $activity "status=particle-layer-suppressed"
 Assert-Contains "Activity" $activity "status=start-suppressed"
 Assert-Contains "Activity" $activity "cameraHwbProjectionRightPackedEffectiveTargetRectMarker"
 Assert-Contains "Activity" $activity 'CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_X = 0.078125f'
+Assert-Contains "Activity" $activity "currentSpatialVideoProjectionSettings"
+Assert-Contains "Activity" $activity "nativeConfigureSpatialVideoProjection"
+Assert-Contains "Activity" $activity "SpatialStereoVideoPlayback.start"
+Assert-Contains "Activity" $activity "SpatialStereoVideoPlayback.stop"
+Assert-Contains "Activity" $activity "debug.rustyquest.spatial.camera_hwb_projection_probe.video.enabled"
+Assert-Contains "Activity" $activity "debug.rustyquest.spatial.camera_hwb_projection_probe.video.path"
+Assert-Contains "Activity" $activity "rustyquest.spatial.camera_hwb_projection_probe.video.enabled"
+Assert-Contains "Activity" $activity "videoProjectionNoPackagedMedia=true"
+Assert-Contains "Activity" $activity "videoProjectionControlPlane=spatial-activity-runtime-property-or-intent-extra"
+Assert-Contains "Activity" $activity "videoProjectionTransport=mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer"
+Assert-Contains "Activity" $activity "spatialVideoProjectionSameSurfaceComposition=true"
+Assert-Contains "Activity" $activity "videoProjectionComposedBeforeCamera=true"
+Assert-Contains "Activity" $activity "cameraProjectionAlignmentPreserved=true"
+Assert-Contains "Activity" $activity "nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false"
+Assert-Contains "Spatial stereo video playback" $spatialStereoVideoPlayback "public final class SpatialStereoVideoPlayback"
+Assert-Contains "Spatial stereo video playback" $spatialStereoVideoPlayback 'System.loadLibrary("spatial_camera_panel_native_receipt")'
+Assert-Contains "Spatial stereo video playback" $spatialStereoVideoPlayback "MediaExtractor"
+Assert-Contains "Spatial stereo video playback" $spatialStereoVideoPlayback "MediaCodec.createDecoderByType"
+Assert-Contains "Spatial stereo video playback" $spatialStereoVideoPlayback "nativeCreateStereoVideoSurface"
+Assert-Contains "Spatial stereo video playback" $spatialStereoVideoPlayback "nativeStopStereoVideoStream"
+Assert-Contains "Spatial stereo video playback" $spatialStereoVideoPlayback "resolvePath"
+Assert-Contains "Spatial stereo video playback" $spatialStereoVideoPlayback 'return "";'
+Assert-NotContains "Spatial stereo video playback" $spatialStereoVideoPlayback "noodletest"
+Assert-NotContains "Spatial stereo video playback" $spatialStereoVideoPlayback ".mp4"
 Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object SpatialSdkLayerCarrier"
 Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object ExperimentPanelControllerBoundary"
 Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object CameraProjectionProbeController"
@@ -173,7 +211,12 @@ Assert-Contains "Native receipt" $nativeLib "Java_io_github_mesmerprism_rustyque
 Assert-Contains "Native receipt" $nativeLib "mod spatial_controller_actions"
 Assert-Contains "Native receipt" $nativeLib "mod spatial_public_multistack"
 Assert-Contains "Native receipt" $nativeLib "mod spatial_public_multistack_runtime"
+Assert-Contains "Native receipt" $nativeLib "mod spatial_video_projection"
+Assert-Contains "Native receipt" $nativeLib "mod spatial_video_projection_native_stream"
+Assert-Contains "Native receipt" $nativeLib "mod spatial_video_projection_settings"
 Assert-Contains "Native receipt build script" $nativeBuildScript "public_guide_blur.frag.glsl"
+Assert-Contains "Native receipt build script" $nativeBuildScript "spatial_video_projection.vert.glsl"
+Assert-Contains "Native receipt build script" $nativeBuildScript "spatial_video_projection.frag.glsl"
 Assert-Contains "Native receipt build script" $nativeBuildScript "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER"
 Assert-Contains "Native receipt build script" $nativeBuildScript "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER"
 Assert-Contains "Native receipt build script" $nativeBuildScript "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT"
@@ -193,6 +236,52 @@ Assert-Contains "Camera HWB probe" $cameraProbe "public_multistack_marker_fields
 Assert-Contains "Camera HWB probe" $cameraProbe "allocate_spatial_public_guide_targets"
 Assert-Contains "Camera HWB probe" $cameraProbe "status=public-multistack-guide-targets-ready"
 Assert-Contains "Camera HWB probe" $cameraProbe "status=public-multistack-guide-targets-skipped"
+Assert-Contains "Camera HWB probe" $cameraProbe "SpatialVideoProjectionRenderer"
+Assert-Contains "Camera HWB probe" $cameraProbe "latest_spatial_video_projection_frame"
+Assert-Contains "Camera HWB probe" $cameraProbe "status=spatial-video-projection-frame-composed"
+Assert-Contains "Camera HWB probe" $cameraProbe "videoComposedBeforeCamera=true"
+Assert-Contains "Camera HWB probe" $cameraProbe "sameSurfaceComposition=true"
+Assert-Contains "Camera HWB probe" $cameraProbe "cameraProjectionAlignmentPreserved=true"
+Assert-Contains "Spatial video settings" $spatialVideoSettings "nativeConfigureSpatialVideoProjection"
+Assert-Contains "Spatial video settings" $spatialVideoSettings "SpatialVideoProjectionSettings"
+Assert-Contains "Spatial video settings" $spatialVideoSettings "videoProjectionEnabled={}"
+Assert-Contains "Spatial video settings" $spatialVideoSettings "videoProjectionPathProvided={}"
+Assert-Contains "Spatial video settings" $spatialVideoSettings "videoProjectionTransport=mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer"
+Assert-Contains "Spatial video settings" $spatialVideoSettings "videoProjectionControlPlane=spatial-activity-runtime-property-or-intent-extra"
+Assert-Contains "Spatial video settings" $spatialVideoSettings "videoProjectionLeftTargetPackedUvRect={}"
+Assert-Contains "Spatial video settings" $spatialVideoSettings "videoProjectionRightTargetPackedUvRect={}"
+Assert-Contains "Spatial video settings" $spatialVideoSettings "nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false"
+Assert-Contains "Spatial video stream" $spatialVideoStream "AImageReader_newWithUsage"
+Assert-Contains "Spatial video stream" $spatialVideoStream "ANativeWindow_toSurface"
+Assert-Contains "Spatial video stream" $spatialVideoStream "AImage_getHardwareBuffer"
+Assert-Contains "Spatial video stream" $spatialVideoStream "nativeCreateStereoVideoSurface"
+Assert-Contains "Spatial video stream" $spatialVideoStream "nativeStereoVideoLifecycleEvent"
+Assert-Contains "Spatial video stream" $spatialVideoStream "mediaCodecStarted={}"
+Assert-Contains "Spatial video stream" $spatialVideoStream "status=decoded-frame-acquired"
+Assert-Contains "Spatial video stream" $spatialVideoStream "nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false"
+Assert-Contains "Spatial video renderer" $spatialVideoRenderer "import_ahb_sampled_image"
+Assert-Contains "Spatial video renderer" $spatialVideoRenderer "transition_ahb_sampled_image_to_shader_read"
+Assert-Contains "Spatial video renderer" $spatialVideoRenderer "record_video_eye"
+Assert-Contains "Spatial video renderer" $spatialVideoRenderer "videoProjectionRendered"
+Assert-Contains "Spatial video renderer" $spatialVideoRenderer "spatialVideoProjectionRendered"
+Assert-Contains "Spatial video renderer" $spatialVideoRenderer "videoProjectionGpuImportReady"
+Assert-Contains "Spatial video renderer" $spatialVideoRenderer "status=ahardware-buffer-import-ready"
+Assert-Contains "Spatial video marker" $spatialVideoMarker "SPATIAL_VIDEO_PROJECTION_CHANNEL"
+Assert-Contains "Spatial video vertex shader" $spatialVideoVertShader "positions[3]"
+Assert-Contains "Spatial video fragment shader" $spatialVideoFragShader "SpatialVideoProjectionPush"
+Assert-Contains "Spatial video fragment shader" $spatialVideoFragShader "u_video_projection"
+Assert-Contains "Spatial video fragment shader" $spatialVideoFragShader "source_uv_rect"
+Assert-Contains "Spatial video probe" $spatialVideoProbe "nativeStartSpatialVideoProjectionProbe"
+Assert-Contains "Spatial video probe" $spatialVideoProbe "nativeStopSpatialVideoProjectionProbe"
+Assert-Contains "Spatial video probe" $spatialVideoProbe "videoOnlySpatialProjection=true"
+Assert-Contains "Spatial video probe" $spatialVideoProbe "cameraRuntimeStarted=false"
+Assert-Contains "Spatial video probe" $spatialVideoProbe "status=render-loop-ready"
+Assert-Contains "Spatial video probe" $spatialVideoProbe "status=video-frame-presented"
+Assert-Contains "Spatial video probe" $spatialVideoProbe "producerPath=MediaCodec-AImageReader-AHardwareBuffer-Vulkan-WSI"
+Assert-Contains "Spatial video probe" $spatialVideoProbe "latest_spatial_video_projection_frame"
+Assert-Contains "Spatial video probe" $spatialVideoProbe "SpatialVideoProjectionRenderer"
+Assert-Contains "Native receipt lib" $nativeLib "mod spatial_video_projection_probe"
+Assert-Contains "Camera raw color shader" $cameraRawColorShader "discard;"
 Assert-Contains "Camera projection target" $cameraProjectionTarget "projectionContentMappingMode=target-local-raster"
 Assert-Contains "Camera projection target" $cameraProjectionTarget "update_camera_hwb_projection_stereo_horizontal_offset_uv"
 Assert-Contains "Camera projection target" $cameraProjectionTarget "projectionTargetStereoHorizontalOffsetUv="
@@ -304,6 +393,12 @@ Assert-Contains "Camera HWB WSI" $cameraWsi "select_camera_surface_device"
 Assert-Contains "Camera HWB WSI" $cameraWsi "public_multistack_marker_fields"
 Assert-Contains "Camera HWB WSI" $cameraWsi "record_spatial_public_guide_passes"
 Assert-Contains "Camera HWB WSI" $cameraWsi "record_spatial_public_projection"
+Assert-Contains "Camera HWB WSI" $cameraWsi "SpatialVideoProjectionRenderer"
+Assert-Contains "Camera HWB WSI" $cameraWsi "CameraHwbRecordResult"
+Assert-Contains "Camera HWB WSI" $cameraWsi "begin_camera_hwb_final_render_pass"
+Assert-Contains "Camera HWB WSI" $cameraWsi "record_video_eye"
+Assert-Contains "Camera HWB WSI" $cameraWsi "record_spatial_public_projection_in_open_render_pass"
+Assert-Contains "Camera HWB WSI" $cameraWsi "video_stats"
 Assert-Contains "Surface particle layer" $surfaceLayer "Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeStartSurfaceParticleLayer"
 Assert-Contains "Surface particle layer" $surfaceLayer "Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeUpdateSurfaceParticleParameters"
 Assert-Contains "Replay hands" $replayHands "surfaceLayerMode=native-hand-anchor-particles"
@@ -329,6 +424,20 @@ Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatia
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "projectionTargetStereoHorizontalOffsetDefaultUv=0.046320"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "RQSpatialCameraPanelNative:D"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "RequirePublicMultiStackProjection"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "RequireSpatialVideoProjection"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "VideoOnly"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "VideoPath"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "debug.rustyquest.spatial.video_projection_probe"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "debug.rustyquest.spatial.camera_hwb_projection_probe.video.enabled"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "debug.rustyquest.spatial.camera_hwb_projection_probe.video.path"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_video_projection_mediacodec_started"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_video_projection_decoded_frame_acquired"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_video_projection_ahb_import_ready"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_video_projection_rendered"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_video_projection_video_only_presented"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera_runtime_absent_when_video_only"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_video_projection_no_cpu_copy"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "public_multistack_projection_applied"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "public_multistack_layer_cycle_enabled"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera_stack_particle_layer_suppressed"
@@ -391,6 +500,43 @@ Assert-NotContains "Experiment panel controller" $panelController "SceneSwapchai
 Assert-NotContains "Experiment panel controller" $panelController "SceneQuadLayer"
 Assert-NotContains "Experiment panel controller" $panelController "nativeStart"
 Assert-NotContains "Experiment panel controller" $panelController "AImageReader"
+
+$spatialAppPath = Join-Path $repoRootPath "apps\spatial-camera-panel-android"
+$forbiddenMediaExtensions = @(".mp4", ".mov", ".mkv", ".webm", ".avi")
+$packagedVideoAssets = Get-ChildItem -LiteralPath $spatialAppPath -Recurse -File |
+    Where-Object { $forbiddenMediaExtensions -contains $_.Extension.ToLowerInvariant() }
+if ($packagedVideoAssets.Count -gt 0) {
+    $paths = ($packagedVideoAssets | ForEach-Object { $_.FullName }) -join "`n"
+    throw "Spatial Camera Panel must not package video assets. Found:`n$paths"
+}
+
+$spatialSourceRoots = @(
+    "apps\spatial-camera-panel-android\app\src\main",
+    "apps\spatial-camera-panel-android\native-receipt\src",
+    "apps\spatial-camera-panel-android\native-receipt\shaders"
+)
+$spatialMediaScanSuffixes = @(".kt", ".java", ".rs", ".glsl", ".kts", ".xml")
+$mediaBoundaryNeedles = @(
+    "noodletest",
+    ".mp4",
+    ".mov",
+    ".mkv",
+    ".webm",
+    "C:\Users\",
+    "S:\Work\"
+)
+foreach ($root in $spatialSourceRoots) {
+    $path = Join-Path $repoRootPath $root
+    $files = Get-ChildItem -LiteralPath $path -Recurse -File |
+        Where-Object { $spatialMediaScanSuffixes -contains $_.Extension }
+    foreach ($file in $files) {
+        $relative = $file.FullName -replace ("^" + [regex]::Escape($repoRootPath) + "[\\/]*"), ""
+        $text = Get-Content -Raw -LiteralPath $file.FullName
+        foreach ($needle in $mediaBoundaryNeedles) {
+            Assert-NotContains $relative $text $needle
+        }
+    }
+}
 
 $scanSuffixes = @(".kt", ".java", ".rs", ".glsl", ".kts", ".xml", ".md", ".ps1", ".toml")
 $skipScanDirs = @(".gradle", ".kotlin", "build")

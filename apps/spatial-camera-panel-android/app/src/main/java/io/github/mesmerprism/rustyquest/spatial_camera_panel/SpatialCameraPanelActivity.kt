@@ -175,6 +175,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var panelSurfaceMatrixProbeStarted = false
   private var cameraHwbProbeStarted = false
   private var cameraHwbProjectionProbeStarted = false
+  private var spatialVideoProjectionProbeStarted = false
+  private var spatialVideoProjectionSettings = SpatialVideoProjectionSettings.disabled()
+  private var spatialVideoProjectionStarted = false
   private var cameraHwbProjectionEntity: Entity? = null
   private var cameraHwbProjectionStereoHorizontalOffsetUv =
       CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV
@@ -337,6 +340,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     runSdkQuadVulkanProbeIfRequested("vr-ready")
     runSdkQuadStereoAlphaProbeIfRequested("vr-ready")
     runPanelSurfaceMatrixProbeIfRequested("vr-ready")
+    runSpatialVideoProjectionProbeIfRequested("vr-ready")
     runCameraHwbProjectionProbeIfRequested("vr-ready")
     runCameraHwbProbeIfRequested("vr-ready")
   }
@@ -368,7 +372,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       runCatching { nativeStopSpatialControllerActions() }
       runCatching { nativeStopSdkQuadVulkanProbe() }
       runCatching { nativeStopCameraHwbProbe() }
+      runCatching { nativeStopSpatialVideoProjectionProbe() }
     }
+    stopSpatialVideoProjection("activity-destroy")
     cleanupSdkQuadSurfaceProbe("activity-destroy")
     cleanupExternalSwapchainProbe("activity-destroy")
     polarSensorPanel?.stop()
@@ -1421,6 +1427,160 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
   }
 
+  private fun runSpatialVideoProjectionProbeIfRequested(reason: String) {
+    if (spatialVideoProjectionProbeStarted) {
+      return
+    }
+    if (readOptionalBooleanSystemProperty(SPATIAL_VIDEO_PROJECTION_PROBE_PROPERTY) != true) {
+      return
+    }
+    spatialVideoProjectionProbeStarted = true
+    val videoSettings = currentSpatialVideoProjectionSettings(intent)
+    marker(
+        "channel=spatial-video-projection status=start videoOnlySpatialProjection=true " +
+            "reason=${markerToken(reason)} debugProperty=$SPATIAL_VIDEO_PROJECTION_PROBE_PROPERTY " +
+            "widthPx=$CAMERA_HWB_PROJECTION_WIDTH_PX heightPx=$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
+            "requestedFrames=0 frameLimit=none carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+            "cameraRuntimeStarted=false rawCameraProjectionProbe=false " +
+            cameraHwbProjectionMarkerFields() + " " +
+            cameraHwbProjectionStereoMarkerFields() + " " +
+            spatialVideoProjectionMarkerFields(videoSettings) + " " +
+            "outputMode=video-only-full-sbs sampledCameraTexture=false " +
+            "privateShaderStack=false customProjectionStack=false"
+    )
+    Handler(Looper.getMainLooper()).post { runSpatialVideoProjectionProbe(videoSettings) }
+  }
+
+  private fun runSpatialVideoProjectionProbe(videoSettings: SpatialVideoProjectionSettings) {
+    cleanupSdkQuadSurfaceProbe("spatial-video-projection-pre-run")
+    spatialVideoProjectionSettings = videoSettings
+    cameraHwbProjectionEntity = null
+    cameraHwbProjectionStereoHorizontalOffsetUv =
+        CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV
+    cameraHwbProjectionMarkerCount = 0
+    lastCameraHwbProjectionMarkerMs = 0L
+    suppressParticleLayerForCameraStack("spatial-video-projection-probe")
+    setWorkflowPanelVisible(false, focus = false, source = "spatial-video-projection-probe")
+    if (!videoSettings.active) {
+      configureNativeSpatialVideoProjection(videoSettings, "video-only-inactive")
+      marker(
+          "channel=spatial-video-projection status=complete videoOnlySpatialProjection=true " +
+              "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
+              "nativeStartRequested=false cameraRuntimeStarted=false " +
+              "error=video-path-missing " +
+              spatialVideoProjectionMarkerFields(videoSettings) + " runtimeCrash=false"
+      )
+      return
+    }
+    if (!nativeReceiptLibraryLoaded) {
+      marker(
+          "channel=spatial-video-projection status=complete videoOnlySpatialProjection=true " +
+              "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
+              "nativeStartRequested=false cameraRuntimeStarted=false " +
+              "error=${markerToken(nativeReceiptLibraryError)} runtimeCrash=false"
+      )
+      return
+    }
+    val sdkSwapchain =
+        runCatching {
+              SceneSwapchain.createAsAndroid(
+                  CAMERA_HWB_PROJECTION_WIDTH_PX,
+                  CAMERA_HWB_PROJECTION_HEIGHT_PX,
+                  false,
+              )
+            }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=spatial-video-projection status=complete videoOnlySpatialProjection=true " +
+                      "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
+                      "nativeStartRequested=false cameraRuntimeStarted=false " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              return
+            }
+    sdkQuadSurfaceProbeSwapchain = sdkSwapchain
+    val surface =
+        runCatching { sdkSwapchain.getSurface() }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=spatial-video-projection status=get-surface-failed " +
+                      "videoOnlySpatialProjection=true handle=${sdkSwapchain.handle} " +
+                      "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              null
+            }
+    sdkQuadSurfaceProbeSurface = surface
+    val surfaceValid = surface?.isValid == true
+    marker(
+        "channel=spatial-video-projection status=sdk-swapchain-created videoOnlySpatialProjection=true " +
+            "sdkSwapchainCreated=true handle=${sdkSwapchain.handle} " +
+            "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
+            "surfaceValid=$surfaceValid widthPx=$CAMERA_HWB_PROJECTION_WIDTH_PX " +
+            "heightPx=$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
+            "carrier=scenequadlayer-createAsAndroid-vulkan-wsi cameraRuntimeStarted=false " +
+            cameraHwbProjectionStereoMarkerFields() + " " +
+            spatialVideoProjectionMarkerFields(videoSettings)
+    )
+    val renderSurface = surface
+    if (!surfaceValid) {
+      val cleanupStatus = cleanupSdkQuadSurfaceProbe("spatial-video-projection-surface-invalid")
+      marker(
+          "channel=spatial-video-projection status=complete videoOnlySpatialProjection=true " +
+              "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=false " +
+              "nativeStartRequested=false cameraRuntimeStarted=false cleanupStatus=$cleanupStatus " +
+              "runtimeCrash=false"
+      )
+      return
+    }
+
+    val layerCreated = createCameraHwbProjectionLayer(sdkSwapchain)
+    if (!layerCreated) {
+      val cleanupStatus = cleanupSdkQuadSurfaceProbe("spatial-video-projection-layer-create-failed")
+      marker(
+          "channel=spatial-video-projection status=complete videoOnlySpatialProjection=true " +
+              "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=false " +
+              "nativeStartRequested=false cameraRuntimeStarted=false cleanupStatus=$cleanupStatus " +
+              "runtimeCrash=false"
+      )
+      return
+    }
+
+    configureNativeSpatialVideoProjection(videoSettings, "video-only-start")
+    startSpatialVideoProjection(videoSettings, "video-only-start")
+    val startMask =
+        runCatching {
+              nativeStartSpatialVideoProjectionProbe(
+                  renderSurface,
+                  CAMERA_HWB_PROJECTION_WIDTH_PX,
+                  CAMERA_HWB_PROJECTION_HEIGHT_PX,
+                  SPATIAL_VIDEO_PROJECTION_FRAME_COUNT_UNBOUNDED,
+              )
+            }
+            .getOrElse { throwable ->
+              val cleanupStatus = cleanupSdkQuadSurfaceProbe("spatial-video-projection-start-failed")
+              marker(
+                  "channel=spatial-video-projection status=complete videoOnlySpatialProjection=true " +
+                      "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
+                      "nativeStartRequested=false cameraRuntimeStarted=false cleanupStatus=$cleanupStatus " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              return
+            }
+    marker(
+        "channel=spatial-video-projection status=native-start-requested videoOnlySpatialProjection=true " +
+            "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
+            "nativeStartRequested=true startMask=$startMask requestedFrames=0 frameLimit=none " +
+            "carrier=scenequadlayer-createAsAndroid-vulkan-wsi cameraRuntimeStarted=false " +
+            "sampledCameraTexture=false outputMode=video-only-full-sbs " +
+            spatialVideoProjectionMarkerFields(videoSettings) + " runtimeCrash=false"
+    )
+    updateCameraHwbProjectionFromViewer(reason = "video-only-start", forceLog = true)
+  }
+
   private fun runCameraHwbProjectionProbeIfRequested(reason: String) {
     if (cameraHwbProjectionProbeStarted) {
       return
@@ -1436,6 +1596,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             CAMERA_HWB_PROJECTION_MIN_READER_MAX_IMAGES,
             CAMERA_HWB_PROJECTION_MAX_READER_MAX_IMAGES,
         )
+    val videoSettings = currentSpatialVideoProjectionSettings(intent)
     marker(
         "channel=camera-hwb-spatial-probe status=start rawCameraProjectionProbe=true " +
             "reason=${markerToken(reason)} debugProperty=$CAMERA_HWB_PROJECTION_PROBE_PROPERTY " +
@@ -1444,6 +1605,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "cameraPreference=50-then-51 carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
             cameraHwbProjectionMarkerFields() + " " +
             cameraHwbProjectionStereoMarkerFields() + " " +
+            spatialVideoProjectionMarkerFields(videoSettings) + " " +
             SpatialPublicMultiStack.markerFields() + " " +
             "outputMode=raw-color-target-rect sampledCameraTexture=true " +
             "sampledLeftCameraTexture=true sampledRightCameraTexture=true monoDuplicated=false " +
@@ -1451,11 +1613,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "privateShaderStack=false " +
             "customProjectionStack=false"
     )
-    Handler(Looper.getMainLooper()).post { runCameraHwbProjectionProbe(readerMaxImages) }
+    Handler(Looper.getMainLooper()).post { runCameraHwbProjectionProbe(readerMaxImages, videoSettings) }
   }
 
-  private fun runCameraHwbProjectionProbe(readerMaxImages: Int) {
+  private fun runCameraHwbProjectionProbe(
+      readerMaxImages: Int,
+      videoSettings: SpatialVideoProjectionSettings,
+  ) {
     cleanupSdkQuadSurfaceProbe("camera-hwb-projection-pre-run")
+    spatialVideoProjectionSettings = videoSettings
     cameraHwbProjectionEntity = null
     cameraHwbProjectionStereoHorizontalOffsetUv =
         CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV
@@ -1545,6 +1711,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         reason = "raw-projection-start",
         forceLog = true,
     )
+    configureNativeSpatialVideoProjection(videoSettings, "raw-projection-start")
+    if (videoSettings.active) {
+      startSpatialVideoProjection(videoSettings, "raw-projection-start")
+    }
     val startMask =
         runCatching {
               nativeStartCameraHwbProjectionProbe(
@@ -1573,6 +1743,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "readerMaxImages=$readerMaxImages carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
             cameraHwbProjectionMarkerFields() + " " +
             cameraHwbProjectionStereoMarkerFields() + " " +
+            spatialVideoProjectionMarkerFields(videoSettings) + " " +
             SpatialPublicMultiStack.markerFields() + " " +
             "outputMode=raw-color-target-rect sampledCameraTexture=see-native-logcat " +
             "sampledLeftCameraTexture=see-native-logcat sampledRightCameraTexture=see-native-logcat " +
@@ -2217,6 +2388,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     "carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
                     cameraHwbProjectionMarkerFields() + " " +
                     cameraHwbProjectionStereoMarkerFields() + " " +
+                    spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings) + " " +
                     SpatialPublicMultiStack.markerFields() + " " +
                     "poseSource=Scene.getViewerPose viewerPositionM=${vectorMarker(plane.viewerPosition)} " +
                     "viewerForward=${vectorMarker(plane.forward)} viewerUp=${vectorMarker(plane.up)} " +
@@ -2375,6 +2547,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun cleanupSdkQuadSurfaceProbe(reason: String): String {
+    stopSpatialVideoProjection("sdk-quad-surface-$reason")
     val sceneCleanupStatus = cleanupSdkQuadSurfaceProbeSceneOnly(reason)
     val sceneCleanupDestroyed = sceneCleanupStatus == "destroyed"
     var swapchainDestroyed = sdkQuadSurfaceProbeSwapchain == null
@@ -3630,6 +3803,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "viewerPoseSource=Scene.getViewerPose eyeOffsetsSource=Scene.getEyeOffsets " +
             cameraHwbProjectionMarkerFields() + " " +
             cameraHwbProjectionStereoMarkerFields() + " " +
+            spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings) + " " +
             SpatialPublicMultiStack.markerFields() + " " +
             "viewerPositionM=${vectorMarker(plane.viewerPosition)} " +
             "viewerForward=${vectorMarker(plane.forward)} viewerUp=${vectorMarker(plane.up)} " +
@@ -3753,6 +3927,282 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         projectionHeightMeters = projectionHeightMeters,
         leftEyeOffset = eyeOffsets?.first ?: Vector3(0.0f),
         rightEyeOffset = eyeOffsets?.second ?: Vector3(0.0f),
+    )
+  }
+
+  private data class SpatialVideoProjectionSettings(
+      val enabled: Boolean,
+      val path: String,
+      val stereoLayout: String,
+      val width: Int,
+      val height: Int,
+      val maxImages: Int,
+      val fpsCap: Int,
+      val looping: Boolean,
+      val opacity: Float,
+      val highRateJsonPayload: Boolean,
+  ) {
+    val active: Boolean
+      get() = enabled && path.isNotBlank()
+
+    companion object {
+      fun disabled(): SpatialVideoProjectionSettings =
+          SpatialVideoProjectionSettings(
+              enabled = false,
+              path = "",
+              stereoLayout = "side-by-side-left-right",
+              width = 3840,
+              height = 1920,
+              maxImages = 3,
+              fpsCap = 30,
+              looping = true,
+              opacity = 1.0f,
+              highRateJsonPayload = false,
+          )
+    }
+  }
+
+  private fun currentSpatialVideoProjectionSettings(intent: Intent?): SpatialVideoProjectionSettings {
+    val enabled =
+        readOptionalBooleanIntentExtra(intent, EXTRA_VIDEO_PROJECTION_ENABLED)
+            ?: readOptionalBooleanSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_ENABLED_PROPERTY)
+            ?: CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_ENABLED
+    val path =
+        readOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_PATH)
+            ?: readSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_PATH_PROPERTY)
+    val stereoLayout =
+        normalizeSpatialVideoProjectionStereoLayout(
+            readOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_STEREO_LAYOUT)
+                ?: readSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_STEREO_LAYOUT_PROPERTY)
+        )
+    val width =
+        readOptionalIntIntentExtra(
+            intent,
+            EXTRA_VIDEO_PROJECTION_WIDTH,
+            CAMERA_HWB_PROJECTION_VIDEO_MIN_WIDTH_PX,
+            CAMERA_HWB_PROJECTION_VIDEO_MAX_WIDTH_PX,
+        )
+            ?: readIntSystemProperty(
+                CAMERA_HWB_PROJECTION_VIDEO_WIDTH_PROPERTY,
+                CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_WIDTH_PX,
+                CAMERA_HWB_PROJECTION_VIDEO_MIN_WIDTH_PX,
+                CAMERA_HWB_PROJECTION_VIDEO_MAX_WIDTH_PX,
+            )
+    val height =
+        readOptionalIntIntentExtra(
+            intent,
+            EXTRA_VIDEO_PROJECTION_HEIGHT,
+            CAMERA_HWB_PROJECTION_VIDEO_MIN_HEIGHT_PX,
+            CAMERA_HWB_PROJECTION_VIDEO_MAX_HEIGHT_PX,
+        )
+            ?: readIntSystemProperty(
+                CAMERA_HWB_PROJECTION_VIDEO_HEIGHT_PROPERTY,
+                CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_HEIGHT_PX,
+                CAMERA_HWB_PROJECTION_VIDEO_MIN_HEIGHT_PX,
+                CAMERA_HWB_PROJECTION_VIDEO_MAX_HEIGHT_PX,
+            )
+    val maxImages =
+        readOptionalIntIntentExtra(
+            intent,
+            EXTRA_VIDEO_PROJECTION_MAX_IMAGES,
+            CAMERA_HWB_PROJECTION_VIDEO_MIN_IMAGES,
+            CAMERA_HWB_PROJECTION_VIDEO_MAX_IMAGES,
+        )
+            ?: readIntSystemProperty(
+                CAMERA_HWB_PROJECTION_VIDEO_MAX_IMAGES_PROPERTY,
+                CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_IMAGES,
+                CAMERA_HWB_PROJECTION_VIDEO_MIN_IMAGES,
+                CAMERA_HWB_PROJECTION_VIDEO_MAX_IMAGES,
+            )
+    val fpsCap =
+        readOptionalIntIntentExtra(
+            intent,
+            EXTRA_VIDEO_PROJECTION_FPS_CAP,
+            CAMERA_HWB_PROJECTION_VIDEO_MIN_FPS,
+            CAMERA_HWB_PROJECTION_VIDEO_MAX_FPS,
+        )
+            ?: readIntSystemProperty(
+                CAMERA_HWB_PROJECTION_VIDEO_FPS_CAP_PROPERTY,
+                CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_FPS,
+                CAMERA_HWB_PROJECTION_VIDEO_MIN_FPS,
+                CAMERA_HWB_PROJECTION_VIDEO_MAX_FPS,
+            )
+    val looping =
+        readOptionalBooleanIntentExtra(intent, EXTRA_VIDEO_PROJECTION_LOOPING)
+            ?: readOptionalBooleanSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_LOOPING_PROPERTY)
+            ?: true
+    val opacity =
+        readOptionalFloatIntentExtra(
+            intent,
+            EXTRA_VIDEO_PROJECTION_OPACITY,
+            0.0f,
+            1.0f,
+        )
+            ?: readOptionalFloatSystemProperty(
+                CAMERA_HWB_PROJECTION_VIDEO_OPACITY_PROPERTY,
+                0.0f,
+                1.0f,
+            )
+            ?: 1.0f
+    val highRateJsonPayload =
+        readOptionalBooleanIntentExtra(intent, EXTRA_VIDEO_PROJECTION_HIGH_RATE_JSON_PAYLOAD)
+            ?: readOptionalBooleanSystemProperty(
+                CAMERA_HWB_PROJECTION_VIDEO_HIGH_RATE_JSON_PAYLOAD_PROPERTY
+            )
+            ?: false
+    return SpatialVideoProjectionSettings(
+        enabled = enabled,
+        path = path.trim(),
+        stereoLayout = stereoLayout,
+        width = width,
+        height = height,
+        maxImages = maxImages,
+        fpsCap = fpsCap,
+        looping = looping,
+        opacity = opacity,
+        highRateJsonPayload = highRateJsonPayload,
+    )
+  }
+
+  private fun normalizeSpatialVideoProjectionStereoLayout(value: String): String =
+      when (value.trim().lowercase(Locale.US).replace("_", "-")) {
+        "top-bottom", "top-bottom-left-right", "tb", "over-under" -> "top-bottom-left-right"
+        "side-by-side", "sbs", "left-right", "side-by-side-left-right" ->
+            "side-by-side-left-right"
+        else -> CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_STEREO_LAYOUT
+      }
+
+  private fun spatialVideoProjectionMarkerFields(settings: SpatialVideoProjectionSettings): String =
+      "videoProjectionEnabled=${settings.enabled} " +
+          "spatialVideoProjectionEnabled=${settings.enabled} " +
+          "spatialVideoProjectionActive=${settings.active} " +
+          "videoProjectionPath=${markerToken(settings.path)} " +
+          "videoProjectionPathProvided=${settings.path.isNotBlank()} " +
+          "videoProjectionNoPackagedMedia=true " +
+          "videoProjectionPathProperty=$CAMERA_HWB_PROJECTION_VIDEO_PATH_PROPERTY " +
+          "videoProjectionEnabledProperty=$CAMERA_HWB_PROJECTION_VIDEO_ENABLED_PROPERTY " +
+          "videoProjectionEnabledIntentExtra=$EXTRA_VIDEO_PROJECTION_ENABLED " +
+          "videoProjectionPathIntentExtra=$EXTRA_VIDEO_PROJECTION_PATH " +
+          "videoProjectionWidth=${settings.width} videoProjectionHeight=${settings.height} " +
+          "videoProjectionMaxImages=${settings.maxImages} videoProjectionFpsCap=${settings.fpsCap} " +
+          "videoProjectionLooping=${settings.looping} " +
+          "videoProjectionStereoLayout=${settings.stereoLayout} " +
+          "videoProjectionTarget=packed-sbs-full-eye " +
+          "videoProjectionOpacity=${markerFloat(settings.opacity)} " +
+          "videoProjectionHighRateJsonPayload=${settings.highRateJsonPayload} " +
+          "videoProjectionStream=stereo_video " +
+          "videoProjectionSource=app-private-or-device-local-file " +
+          "videoProjectionSourceAuthority=android-mediacodec-surface-decoder " +
+          "videoProjectionTransport=mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer " +
+          "videoProjectionControlPlane=spatial-activity-runtime-property-or-intent-extra " +
+          "videoProjectionDecodePath=MediaCodec-to-Surface " +
+          "videoProjectionFormat=private " +
+          "videoProjectionLeftSourceUvRect=0.000000,0.000000,0.500000,1.000000 " +
+          "videoProjectionRightSourceUvRect=0.500000,0.000000,0.500000,1.000000 " +
+          "videoProjectionLeftTargetPackedUvRect=0.000000,0.000000,0.500000,1.000000 " +
+          "videoProjectionRightTargetPackedUvRect=0.500000,0.000000,0.500000,1.000000 " +
+          "spatialVideoProjectionSameSurfaceComposition=true " +
+          "videoProjectionComposedBeforeCamera=true " +
+          "cameraProjectionAlignmentPreserved=true " +
+          "nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false " +
+          "highRateJsonPayload=${settings.highRateJsonPayload} " +
+          "rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false"
+
+  private fun configureNativeSpatialVideoProjection(
+      settings: SpatialVideoProjectionSettings,
+      reason: String,
+  ): Long {
+    if (!nativeReceiptLibraryLoaded) {
+      marker(
+          "channel=spatial-video-projection status=native-configure-skipped " +
+              "reason=${markerToken(reason)} nativeReceiptLibraryLoaded=false " +
+              spatialVideoProjectionMarkerFields(settings) + " runtimeCrash=false"
+      )
+      return 0L
+    }
+    val mask =
+        runCatching {
+              nativeConfigureSpatialVideoProjection(
+                  settings.enabled,
+                  settings.path,
+                  settings.stereoLayout,
+                  settings.width,
+                  settings.height,
+                  settings.maxImages,
+                  settings.fpsCap,
+                  settings.looping,
+                  settings.opacity,
+                  settings.highRateJsonPayload,
+              )
+            }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=spatial-video-projection status=native-configure-failed " +
+                      "reason=${markerToken(reason)} " +
+                      "error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} " +
+                      spatialVideoProjectionMarkerFields(settings) + " runtimeCrash=false"
+              )
+              return 0L
+            }
+    marker(
+        "channel=spatial-video-projection status=native-configured " +
+            "reason=${markerToken(reason)} configureMask=$mask " +
+            spatialVideoProjectionMarkerFields(settings) + " runtimeCrash=false"
+    )
+    return mask
+  }
+
+  private fun startSpatialVideoProjection(
+      settings: SpatialVideoProjectionSettings,
+      reason: String,
+  ) {
+    marker(
+        "channel=spatial-video-projection status=start-requested " +
+            "reason=${markerToken(reason)} " +
+            spatialVideoProjectionMarkerFields(settings) + " runtimeCrash=false"
+    )
+    SpatialStereoVideoPlayback.start(
+        this,
+        settings.path,
+        settings.width,
+        settings.height,
+        settings.maxImages,
+        settings.fpsCap,
+        settings.looping,
+    )
+    spatialVideoProjectionStarted = true
+  }
+
+  private fun stopSpatialVideoProjection(reason: String) {
+    if (!spatialVideoProjectionStarted && !spatialVideoProjectionSettings.enabled) {
+      return
+    }
+    val previousSettings = spatialVideoProjectionSettings
+    runCatching { SpatialStereoVideoPlayback.stop() }
+    if (nativeReceiptLibraryLoaded) {
+      runCatching { nativeStopSpatialVideoProjectionProbe() }
+      runCatching {
+        nativeConfigureSpatialVideoProjection(
+            false,
+            "",
+            previousSettings.stereoLayout,
+            previousSettings.width,
+            previousSettings.height,
+            previousSettings.maxImages,
+            previousSettings.fpsCap,
+            previousSettings.looping,
+            previousSettings.opacity,
+            previousSettings.highRateJsonPayload,
+        )
+      }
+    }
+    spatialVideoProjectionStarted = false
+    spatialVideoProjectionSettings = SpatialVideoProjectionSettings.disabled()
+    marker(
+        "channel=spatial-video-projection status=stopped " +
+            "reason=${markerToken(reason)} videoProjectionStopRequested=true " +
+            spatialVideoProjectionMarkerFields(previousSettings) + " runtimeCrash=false"
     )
   }
 
@@ -4557,6 +5007,45 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
   }
 
+  private fun readOptionalStringIntentExtra(intent: Intent?, extraName: String): String? =
+      if (intent?.hasExtra(extraName) == true) {
+        intent.getStringExtra(extraName)?.trim()
+      } else {
+        null
+      }
+
+  private fun readOptionalBooleanIntentExtra(intent: Intent?, extraName: String): Boolean? =
+      if (intent?.hasExtra(extraName) == true) {
+        intent.getBooleanExtra(extraName, false)
+      } else {
+        null
+      }
+
+  private fun readOptionalIntIntentExtra(
+      intent: Intent?,
+      extraName: String,
+      min: Int,
+      max: Int,
+  ): Int? =
+      if (intent?.hasExtra(extraName) == true) {
+        intent.getIntExtra(extraName, min).coerceIn(min, max)
+      } else {
+        null
+      }
+
+  private fun readOptionalFloatIntentExtra(
+      intent: Intent?,
+      extraName: String,
+      min: Float,
+      max: Float,
+  ): Float? =
+      if (intent?.hasExtra(extraName) == true) {
+        val value = intent.getFloatExtra(extraName, min)
+        if (value.isFinite()) value.coerceIn(min, max) else null
+      } else {
+        null
+      }
+
   private fun spatialMultimodalInputEnabled(): Boolean =
       readOptionalBooleanSystemProperty(SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY)
           ?: SPATIAL_MULTIMODAL_INPUT_DEFAULT_ENABLED
@@ -4731,6 +5220,28 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private external fun nativeStopCameraHwbProbe()
 
   private external fun nativeUpdateCameraHwbProjectionStereoOffsetUv(stereoOffsetUv: Float): Long
+
+  private external fun nativeStartSpatialVideoProjectionProbe(
+      surface: AndroidSurface,
+      width: Int,
+      height: Int,
+      frameCount: Int,
+  ): Long
+
+  private external fun nativeStopSpatialVideoProjectionProbe()
+
+  private external fun nativeConfigureSpatialVideoProjection(
+      enabled: Boolean,
+      path: String,
+      stereoLayout: String,
+      width: Int,
+      height: Int,
+      maxImages: Int,
+      fpsCap: Int,
+      looping: Boolean,
+      opacity: Float,
+      highRateJsonPayload: Boolean,
+  ): Long
 
   private external fun nativeUpdateSurfaceParticleParameters(
       driver0Value01: Float,
@@ -5414,6 +5925,64 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val CAMERA_HWB_PROJECTION_MIN_READER_MAX_IMAGES = 3
     private const val CAMERA_HWB_PROJECTION_MAX_READER_MAX_IMAGES = 12
     private const val CAMERA_HWB_PROJECTION_MARKER_INTERVAL_MS = 900L
+    private const val SPATIAL_VIDEO_PROJECTION_PROBE_PROPERTY =
+        "debug.rustyquest.spatial.video_projection_probe"
+    private const val SPATIAL_VIDEO_PROJECTION_FRAME_COUNT_UNBOUNDED = 0
+    private const val CAMERA_HWB_PROJECTION_VIDEO_ENABLED_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.video.enabled"
+    private const val CAMERA_HWB_PROJECTION_VIDEO_PATH_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.video.path"
+    private const val CAMERA_HWB_PROJECTION_VIDEO_STEREO_LAYOUT_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.video.stereo_layout"
+    private const val CAMERA_HWB_PROJECTION_VIDEO_WIDTH_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.video.width"
+    private const val CAMERA_HWB_PROJECTION_VIDEO_HEIGHT_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.video.height"
+    private const val CAMERA_HWB_PROJECTION_VIDEO_MAX_IMAGES_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.video.max_images"
+    private const val CAMERA_HWB_PROJECTION_VIDEO_FPS_CAP_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.video.fps_cap"
+    private const val CAMERA_HWB_PROJECTION_VIDEO_LOOPING_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.video.looping"
+    private const val CAMERA_HWB_PROJECTION_VIDEO_OPACITY_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.video.opacity"
+    private const val CAMERA_HWB_PROJECTION_VIDEO_HIGH_RATE_JSON_PAYLOAD_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.video.high_rate_json_payload"
+    private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_ENABLED = false
+    private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_STEREO_LAYOUT =
+        "side-by-side-left-right"
+    private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_WIDTH_PX = 3840
+    private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_HEIGHT_PX = 1920
+    private const val CAMERA_HWB_PROJECTION_VIDEO_MIN_WIDTH_PX = 320
+    private const val CAMERA_HWB_PROJECTION_VIDEO_MIN_HEIGHT_PX = 240
+    private const val CAMERA_HWB_PROJECTION_VIDEO_MAX_WIDTH_PX = 4096
+    private const val CAMERA_HWB_PROJECTION_VIDEO_MAX_HEIGHT_PX = 4096
+    private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_IMAGES = 3
+    private const val CAMERA_HWB_PROJECTION_VIDEO_MIN_IMAGES = 2
+    private const val CAMERA_HWB_PROJECTION_VIDEO_MAX_IMAGES = 6
+    private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_FPS = 30
+    private const val CAMERA_HWB_PROJECTION_VIDEO_MIN_FPS = 1
+    private const val CAMERA_HWB_PROJECTION_VIDEO_MAX_FPS = 90
+    private const val EXTRA_VIDEO_PROJECTION_ENABLED =
+        "rustyquest.spatial.camera_hwb_projection_probe.video.enabled"
+    private const val EXTRA_VIDEO_PROJECTION_PATH =
+        "rustyquest.spatial.camera_hwb_projection_probe.video.path"
+    private const val EXTRA_VIDEO_PROJECTION_STEREO_LAYOUT =
+        "rustyquest.spatial.camera_hwb_projection_probe.video.stereo_layout"
+    private const val EXTRA_VIDEO_PROJECTION_WIDTH =
+        "rustyquest.spatial.camera_hwb_projection_probe.video.width"
+    private const val EXTRA_VIDEO_PROJECTION_HEIGHT =
+        "rustyquest.spatial.camera_hwb_projection_probe.video.height"
+    private const val EXTRA_VIDEO_PROJECTION_MAX_IMAGES =
+        "rustyquest.spatial.camera_hwb_projection_probe.video.max_images"
+    private const val EXTRA_VIDEO_PROJECTION_FPS_CAP =
+        "rustyquest.spatial.camera_hwb_projection_probe.video.fps_cap"
+    private const val EXTRA_VIDEO_PROJECTION_LOOPING =
+        "rustyquest.spatial.camera_hwb_projection_probe.video.looping"
+    private const val EXTRA_VIDEO_PROJECTION_OPACITY =
+        "rustyquest.spatial.camera_hwb_projection_probe.video.opacity"
+    private const val EXTRA_VIDEO_PROJECTION_HIGH_RATE_JSON_PAYLOAD =
+        "rustyquest.spatial.camera_hwb_projection_probe.video.high_rate_json_payload"
     private const val OPENXR_ERROR_HANDLE_INVALID = -12
     private const val NATIVE_RECEIPT_LIBRARY = "spatial_camera_panel_native_receipt"
     private const val SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY =

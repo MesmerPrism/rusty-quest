@@ -54,6 +54,16 @@ fn main() {
             "public_guide_blur.frag.spv",
             "fragment",
         ),
+        (
+            "shaders/spatial_video_projection.vert.glsl",
+            "spatial_video_projection.vert.spv",
+            "vertex",
+        ),
+        (
+            "shaders/spatial_video_projection.frag.glsl",
+            "spatial_video_projection.frag.spv",
+            "fragment",
+        ),
     ];
     let glslc = find_glslc();
     let mut public_guide_blur_shader_byte_count = 0_u64;

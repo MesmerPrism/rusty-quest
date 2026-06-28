@@ -17,6 +17,16 @@ use crate::camera_hwb_projection_target::{
 use crate::camera_hwb_stream::CameraProbeFrame;
 use crate::spatial_public_multistack::public_multistack_marker_fields;
 use crate::spatial_public_multistack_runtime::SpatialPublicGuideTargets;
+use crate::spatial_video_projection::{
+    SpatialVideoProjectionFrameStats, SpatialVideoProjectionRenderer,
+};
+use crate::spatial_video_projection_native_stream::SpatialVideoProjectionFrame;
+use crate::spatial_video_projection_settings::SpatialVideoProjectionSettings;
+
+pub(crate) struct CameraHwbRecordResult {
+    pub(crate) projected_by_public_stack: bool,
+    pub(crate) video_stats: SpatialVideoProjectionFrameStats,
+}
 
 pub(crate) struct CameraHwbProbeResources {
     pub(crate) sampler_ycbcr_conversion: Option<vk::SamplerYcbcrConversion>,
@@ -428,7 +438,11 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     transition_right_camera_image: bool,
     public_guide_targets: Option<&mut SpatialPublicGuideTargets>,
     elapsed_seconds: f32,
-) -> Result<bool, String> {
+    video_renderer: Option<&mut SpatialVideoProjectionRenderer>,
+    video_frame: Option<&SpatialVideoProjectionFrame>,
+    video_settings: &SpatialVideoProjectionSettings,
+    frame_slot: usize,
+) -> Result<CameraHwbRecordResult, String> {
     device
         .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
         .map_err(|error| format!("reset-command-buffer-{error:?}"))?;
@@ -451,31 +465,98 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             );
         }
     }
-    let projected_by_public_stack = if let Some(public_guide_targets) = public_guide_targets {
-        public_guide_targets.record_spatial_public_guide_passes(
+    let mut video_stats = SpatialVideoProjectionFrameStats::unavailable(
+        video_settings,
+        if video_settings.active() {
+            "waiting-for-decoded-frame"
+        } else {
+            "disabled"
+        },
+    );
+    let prepared_video = match (video_renderer, video_frame) {
+        (Some(renderer), Some(frame)) if video_settings.active() => {
+            match renderer.prepare_frame(device, command_buffer, frame_slot, frame, video_settings)
+            {
+                Ok(Some(prepared)) => {
+                    video_stats = prepared.stats.clone();
+                    Some((renderer, prepared))
+                }
+                Ok(None) => None,
+                Err(error) => {
+                    log_marker(format!(
+                    "status=spatial-video-projection-prepare-skipped error={} {} runtimeCrash=false",
+                    crate::marker_token(&error),
+                    video_settings.marker_fields(),
+                ));
+                    video_stats = SpatialVideoProjectionFrameStats::unavailable(
+                        video_settings,
+                        "prepare-error",
+                    );
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+
+    let mut public_guide_targets = public_guide_targets;
+    let public_projection_ready = if let Some(targets) = public_guide_targets.as_deref_mut() {
+        targets.record_spatial_public_guide_passes(
             device,
             command_buffer,
             descriptor_set,
             elapsed_seconds,
         )?;
-        public_guide_targets.record_spatial_public_projection(
-            device,
-            command_buffer,
-            render_pass,
-            framebuffer,
-            extent,
-            descriptor_set,
-            elapsed_seconds,
-        )?
+        targets.prepare_spatial_public_projection_sampling(device, command_buffer)
     } else {
         false
     };
-    if projected_by_public_stack {
-        device
-            .end_command_buffer(command_buffer)
-            .map_err(|error| format!("end-command-buffer-{error:?}"))?;
-        return Ok(true);
+
+    begin_camera_hwb_final_render_pass(device, command_buffer, render_pass, framebuffer, extent);
+    if let Some((renderer, prepared)) = prepared_video.as_ref() {
+        renderer.record_video_eye(device, command_buffer, extent, 0, video_settings, prepared);
+        renderer.record_video_eye(device, command_buffer, extent, 1, video_settings, prepared);
     }
+    let projected_by_public_stack = if public_projection_ready {
+        public_guide_targets
+            .as_deref()
+            .ok_or_else(|| "public-guide-targets-missing-after-ready".to_string())?
+            .record_spatial_public_projection_in_open_render_pass(
+                device,
+                command_buffer,
+                extent,
+                descriptor_set,
+                elapsed_seconds,
+            )?
+    } else {
+        false
+    };
+    if !projected_by_public_stack {
+        record_camera_hwb_fallback_projection(
+            device,
+            command_buffer,
+            extent,
+            resources,
+            descriptor_set,
+        );
+    }
+    device.cmd_end_render_pass(command_buffer);
+    device
+        .end_command_buffer(command_buffer)
+        .map_err(|error| format!("end-command-buffer-{error:?}"))?;
+    Ok(CameraHwbRecordResult {
+        projected_by_public_stack,
+        video_stats,
+    })
+}
+
+unsafe fn begin_camera_hwb_final_render_pass(
+    device: &ash::Device,
+    command_buffer: vk::CommandBuffer,
+    render_pass: vk::RenderPass,
+    framebuffer: vk::Framebuffer,
+    extent: vk::Extent2D,
+) {
     let clear_values = [vk::ClearValue {
         color: vk::ClearColorValue {
             float32: [0.0, 0.0, 0.0, 0.0],
@@ -495,6 +576,15 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         &render_pass_info,
         vk::SubpassContents::INLINE,
     );
+}
+
+unsafe fn record_camera_hwb_fallback_projection(
+    device: &ash::Device,
+    command_buffer: vk::CommandBuffer,
+    extent: vk::Extent2D,
+    resources: &CameraHwbProbeResources,
+    descriptor_set: vk::DescriptorSet,
+) {
     let viewport = [vk::Viewport {
         x: 0.0,
         y: 0.0,
@@ -535,11 +625,6 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         projection_push_bytes,
     );
     device.cmd_draw(command_buffer, 3, 1, 0, 0);
-    device.cmd_end_render_pass(command_buffer);
-    device
-        .end_command_buffer(command_buffer)
-        .map_err(|error| format!("end-command-buffer-{error:?}"))?;
-    Ok(false)
 }
 
 unsafe fn create_shader_module(

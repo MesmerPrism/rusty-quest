@@ -11,6 +11,11 @@ low-rate driver-profile control. It packages a Spatial SDK/Compose panel under
   block timing, and questionnaire JSONL artifacts.
 - Raw Camera2/AHardwareBuffer projection probes and public blur/projection
   receipts.
+- Optional public stereo-video projection for the raw camera probe: Java
+  `MediaCodec` decodes an explicitly staged side-by-side or top-bottom source
+  into a native `AImageReader`/`AHardwareBuffer`, and the same Vulkan WSI pass
+  composites it behind the camera projection on the existing Spatial SDK
+  `SceneQuadLayer`.
 - Public seven-slot camera guide multi-stack contract, including generic final,
   guide blur, post-blur guide, and depth diagnostic slots.
 - Generic driver profiles `profile-a` through `profile-d` with bounded
@@ -23,9 +28,12 @@ low-rate driver-profile control. It packages a Spatial SDK/Compose panel under
 This app does not own high-rate renderer authority. It does not move hand mesh
 frames, particle arrays, field buffers, private shader payloads, or replay
 sequences through Kotlin/Java JSON. The public camera stack in this lane is raw
-and blur/projection validation only. Opaque downstream analysis/projection
-slots, visual semantics, effect formulas, coupling kernels, and tuned parameter
-profiles belong outside Rusty Quest.
+and blur/projection/video-composition validation only. The app does not package
+video files and does not own private media sources; video projection is enabled
+only through runtime properties or intent extras that point at an explicitly
+staged app-private or device-local file. Opaque downstream
+analysis/projection slots, visual semantics, effect formulas, coupling kernels,
+and tuned parameter profiles belong outside Rusty Quest.
 
 ## Headset Evidence
 
@@ -152,6 +160,17 @@ Interaction SDK pointer input without native multimodal extension forcing.
   packed-surface viewport state plus per-eye packed target-rect scissors, not a
   resized Spatial quad. It is intentionally separate from camera stream
   orchestration and surface-particle proof modules.
+- `app/src/main/.../SpatialStereoVideoPlayback.java` is the optional Spatial
+  video decode bridge. It resolves only an explicit runtime path, creates no
+  default fixture path, and sends decoded frames to a native-created Surface.
+- `native-receipt/src/spatial_video_projection_settings.rs`,
+  `spatial_video_projection_native_stream.rs`, and
+  `spatial_video_projection.rs` own the public stereo-video projection
+  settings, AImageReader/AHardwareBuffer handoff, Vulkan import cache, and
+  full-surface video draw that runs before the camera projection. Markers prove
+  `nativeImageReader=true`, `javaHardwareBufferBridge=false`,
+  `cpuPixelCopy=false`, same-surface composition, and preserved camera
+  alignment.
 - `native-receipt/shaders/public_guide_blur.frag.glsl` is the public generic
   separable 5-tap blur shader asset. Downstream opaque shader overrides are
   optional build inputs watched by the native receipt build script. Native
@@ -203,6 +222,17 @@ starts tag-filtered logcat before launch, captures the marker summary, window
 state, and screenshot under `local-artifacts\spatial-camera-panel-headset`,
 and leaves the projection running for visual inspection unless `-StopAfterRun`
 is passed.
+
+To include the optional public video background, stage the media on the device
+or under the app-private files directory and pass the path at runtime:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -Serial <quest-serial> `
+  -ClearLogcat `
+  -VideoPath <device-or-app-private-path> `
+  -RequireSpatialVideoProjection
+```
 
 After building with downstream opaque shader env vars, require the public
 multi-stack projection proof with:
