@@ -43,9 +43,14 @@ function Assert-NotContains {
 $appGradle = Read-RequiredText "apps\spatial-camera-panel-android\app\build.gradle.kts"
 $manifest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\AndroidManifest.xml"
 $activity = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelActivity.kt"
+$laneBoundary = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialSdkLaneBoundary.kt"
+$panelController = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ExperimentPanelController.kt"
+$panelModels = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelModels.kt"
+$avatarFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAvatarHandVisualFeature.kt"
 $store = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelStore.kt"
 $nativeLib = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\lib.rs"
 $cameraProbe = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_probe.rs"
+$cameraProjectionTarget = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_projection_target.rs"
 $cameraStream = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_stream.rs"
 $cameraWsi = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_wsi.rs"
 $surfaceLayer = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\surface_particle_layer.rs"
@@ -62,6 +67,21 @@ Assert-Contains "Activity" $activity "class SpatialCameraPanelActivity : AppSyst
 Assert-Contains "Activity" $activity "SceneSwapchain.createAsAndroid"
 Assert-Contains "Activity" $activity "debug.rustyquest.spatial.camera_hwb_projection_probe"
 Assert-Contains "Activity" $activity "outputMode=raw-color-target-rect"
+Assert-Contains "Activity" $activity "SpatialSdkLaneBoundaries.summaryToken()"
+Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object SpatialSdkLayerCarrier"
+Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object ExperimentPanelControllerBoundary"
+Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object CameraProjectionProbeController"
+Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object SurfaceParticleLayerController"
+Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object SpatialDebugProbeController"
+Assert-Contains "Spatial SDK lane boundary" $laneBoundary 'mustNotOwn = setOf("surface particles", "driver-profile dynamics", "questionnaire state")'
+Assert-Contains "Experiment panel controller" $panelController "internal object ExperimentPanelController"
+Assert-Contains "Experiment panel controller" $panelController 'highRatePayloadPolicy: String = "forbidden"'
+Assert-Contains "Experiment panel controller" $panelController "internal fun SpatialCameraPanel("
+Assert-Contains "Experiment panel controller" $panelController "internal fun SpatialCameraPanelLauncher("
+Assert-Contains "Panel models" $panelModels "data class PanelPlacement"
+Assert-Contains "Panel models" $panelModels "data class SurfaceParticleControlState"
+Assert-Contains "Panel models" $panelModels "data class SpatialNativeInteropProbe"
+Assert-Contains "Avatar feature" $avatarFeature "internal class SpatialAvatarHandVisualFeature"
 Assert-Contains "Store" $store 'SESSION_SCHEMA = "rusty.quest.spatial_camera_panel.session.v1"'
 Assert-Contains "Store" $store 'EVENT_SCHEMA = "rusty.quest.spatial_camera_panel.event.v1"'
 Assert-Contains "Store" $store 'QUESTIONNAIRE_SCHEMA = "rusty.quest.spatial_camera_panel.questionnaire.v1"'
@@ -72,6 +92,7 @@ Assert-Contains "Store" $store "rusty.quest.spatial_camera_panel.driver_profile.
 Assert-Contains "Native receipt" $nativeLib "Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeRecordNoRenderInteropReceipt"
 Assert-Contains "Camera HWB probe" $cameraProbe "outputMode=raw-color-target-rect"
 Assert-Contains "Camera HWB probe" $cameraProbe "privateShaderStack=false"
+Assert-Contains "Camera projection target" $cameraProjectionTarget "projectionContentMappingMode=target-local-raster"
 Assert-Contains "Camera HWB stream" $cameraStream "AImageReader_newWithUsage"
 Assert-Contains "Camera HWB stream" $cameraStream "AImage_getHardwareBuffer"
 Assert-Contains "Camera HWB stream" $cameraStream "StereoCamera50_51"
@@ -94,8 +115,38 @@ Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "stereo
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "outputMode=raw-color-target-rect"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "adb_serial_required = `$true"
 Assert-Contains "README" $readme "Raw Camera2/AHardwareBuffer projection probes"
+Assert-Contains "README" $readme "Spatial SDK Lane Source Map"
 Assert-Contains "README" $readme "Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1"
 Assert-Contains "Implementation notes" $notes "Private effect formulas"
+
+$cameraBoundaryFiles = @{
+    "Camera HWB probe" = $cameraProbe
+    "Camera HWB stream" = $cameraStream
+    "Camera HWB WSI" = $cameraWsi
+    "Camera projection target" = $cameraProjectionTarget
+}
+foreach ($entry in $cameraBoundaryFiles.GetEnumerator()) {
+    Assert-NotContains $entry.Key $entry.Value "surface_particle_layer"
+    Assert-NotContains $entry.Key $entry.Value "ReplayHandsRenderer"
+    Assert-NotContains $entry.Key $entry.Value "SurfaceParticleControlState"
+    Assert-NotContains $entry.Key $entry.Value "driverProfileDynamics"
+}
+
+$particleBoundaryFiles = @{
+    "Surface particle layer" = $surfaceLayer
+    "Replay hands" = $replayHands
+}
+foreach ($entry in $particleBoundaryFiles.GetEnumerator()) {
+    Assert-NotContains $entry.Key $entry.Value "camera_hwb_probe"
+    Assert-NotContains $entry.Key $entry.Value "CameraProbeRuntime"
+    Assert-NotContains $entry.Key $entry.Value "AImageReader_newWithUsage"
+    Assert-NotContains $entry.Key $entry.Value "raw-color-target-rect"
+}
+
+Assert-NotContains "Experiment panel controller" $panelController "SceneSwapchain"
+Assert-NotContains "Experiment panel controller" $panelController "SceneQuadLayer"
+Assert-NotContains "Experiment panel controller" $panelController "nativeStart"
+Assert-NotContains "Experiment panel controller" $panelController "AImageReader"
 
 $scanSuffixes = @(".kt", ".java", ".rs", ".glsl", ".kts", ".xml", ".md", ".ps1", ".toml")
 $skipScanDirs = @(".gradle", ".kotlin", "build")

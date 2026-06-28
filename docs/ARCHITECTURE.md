@@ -74,6 +74,11 @@ projection probes, and public blur/projection receipts. The panel placement
 controls are there to test Spatial SDK position, scale, and resolution options
 on headset; they are not a renderer contract and are not the native Quest XR
 path.
+The Spatial SDK dependency is treated as a carrier substrate, not as camera,
+particle, or experiment authority. `SpatialSdkLaneBoundary.kt` records that
+layer/panel placement, camera projection, surface particles, experiment panel,
+and debug probes are separate route owners, while static checks reject direct
+camera/particle cross-ownership in the split native modules.
 
 The lane deliberately stays outside `apps/native-renderer-android`. It does
 not link the Rust native renderer, does not request camera or hand-tracking

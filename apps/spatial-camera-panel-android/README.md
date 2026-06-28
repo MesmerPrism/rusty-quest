@@ -37,6 +37,23 @@ camera acquisition, HWB import, or WSI carrier failure.
 
 ## Native Receipt Source Map
 
+- `app/src/main/.../SpatialCameraPanelActivity.kt` remains the Spatial SDK
+  Activity facade: lifecycle, panel registration, scene tick routing, JNI
+  calls, and route orchestration.
+- `app/src/main/.../SpatialSdkLaneBoundary.kt` records the explicit route
+  boundaries. Spatial SDK layer/panel primitives are the carrier substrate;
+  experiment panel, camera projection, surface particles, and debug probes are
+  separate consumers of that carrier.
+- `app/src/main/.../ExperimentPanelController.kt` owns the Compose experiment
+  panel UI and launcher UI. It may request panel visibility changes and
+  low-rate particle-driver scalar updates, but it must not own camera frames,
+  Vulkan WSI, SDK quad layers, or particle buffers.
+- `app/src/main/.../SpatialCameraPanelModels.kt` owns shared panel placement,
+  native-interop receipt, and low-rate control state models used by the
+  Activity facade and panel UI.
+- `app/src/main/.../SpatialAvatarHandVisualFeature.kt` owns suppression of the
+  built-in Meta avatar hand visual so native/public hand visuals remain
+  explicit.
 - `native-receipt/src/camera_hwb_probe.rs` is the Android JNI facade and
   raw camera probe orchestration entry point.
 - `native-receipt/src/camera_hwb_stream.rs` owns the Android Camera2 /
@@ -55,6 +72,18 @@ camera acquisition, HWB import, or WSI carrier failure.
   without requiring Android system libraries.
 - `native-receipt/src/surface_particle_layer.rs`, `replay_hands.rs`, and
   `live_hand_joints.rs` remain Android-only surface-particle proof modules.
+
+## Spatial SDK Lane Source Map
+
+The Spatial SDK dependency is not a camera, particle, or experiment authority
+by itself. Treat it as the Quest platform carrier for panels, layer placement,
+surface creation, pose locking, sizing, and capability probes. Camera work
+belongs in the Camera2/HWB projection modules, particle work belongs in the
+surface-particle native modules, and panel/session work belongs in the Compose
+panel controller plus store. Static validation checks that camera modules do
+not reference particle internals, particle modules do not reference camera HWB
+internals, and the panel controller does not directly own native start calls or
+SDK quad/swapchain primitives.
 
 ## Validation
 
