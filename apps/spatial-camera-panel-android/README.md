@@ -73,3 +73,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPa
 The build wrapper writes
 `target\spatial-camera-panel-android\rusty-quest-spatial-camera-panel.apk`
 and `target\spatial-camera-panel-android\build-manifest.json`.
+
+Run the raw camera projection headset smoke with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -Serial <quest-serial> `
+  -ClearLogcat
+```
+
+The smoke enables `debug.rustyquest.spatial.camera_hwb_projection_probe`,
+starts tag-filtered logcat before launch, captures the marker summary, window
+state, and screenshot under `local-artifacts\spatial-camera-panel-headset`,
+and leaves the projection running for visual inspection unless `-StopAfterRun`
+is passed.

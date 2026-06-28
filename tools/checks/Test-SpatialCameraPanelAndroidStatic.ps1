@@ -51,6 +51,7 @@ $cameraWsi = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt
 $surfaceLayer = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\surface_particle_layer.rs"
 $replayHands = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\replay_hands.rs"
 $buildScript = Read-RequiredText "tools\Build-SpatialCameraPanelAndroid.ps1"
+$cameraProjectionSmoke = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1"
 $readme = Read-RequiredText "apps\spatial-camera-panel-android\README.md"
 $notes = Read-RequiredText "docs\SPATIAL_SDK_PORT_IMPLEMENTATION_PLAN.md"
 
@@ -85,7 +86,15 @@ Assert-Contains "Replay hands" $replayHands "driverProfileSchemaId={}"
 Assert-Contains "Build script" $buildScript "libspatial_camera_panel_native_receipt.so"
 Assert-Contains "Build script" $buildScript 'driver_profile_mapping = "driver0_value01-to-native-driver0;driver1_value01-to-native-driver1"'
 Assert-Contains "Build script" $buildScript 'questionnaire_schema = "rusty.quest.spatial_camera_panel.questionnaire.v1"'
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera_hwb_projection_smoke"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "debug.rustyquest.spatial.camera_hwb_projection_probe"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "RQSpatialCameraPanelNative:D"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "status=first-camera-frame-presented"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "stereoSource=camera50-51"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "outputMode=raw-color-target-rect"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "adb_serial_required = `$true"
 Assert-Contains "README" $readme "Raw Camera2/AHardwareBuffer projection probes"
+Assert-Contains "README" $readme "Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1"
 Assert-Contains "Implementation notes" $notes "Private effect formulas"
 
 $scanSuffixes = @(".kt", ".java", ".rs", ".glsl", ".kts", ".xml", ".md", ".ps1", ".toml")
@@ -97,6 +106,7 @@ $scanRoots = @(
     "tools\Invoke-SpatialCameraPanelAndroidSelfTest.ps1",
     "tools\Invoke-SpatialCameraPanelAndroidPolarLive.ps1",
     "tools\Invoke-SpatialCameraPanelAndroidUiAction.ps1",
+    "tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1",
     "docs\SPATIAL_SDK_PORT_IMPLEMENTATION_PLAN.md"
 )
 $forbidden = @(
