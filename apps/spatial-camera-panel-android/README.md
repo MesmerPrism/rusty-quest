@@ -16,6 +16,15 @@ low-rate driver-profile control. It packages a Spatial SDK/Compose panel under
   into a native `AImageReader`/`AHardwareBuffer`, and the same Vulkan WSI pass
   composites it behind the camera projection on the existing Spatial SDK
   `SceneQuadLayer`.
+- Spatial SDK staged 3D asset support for explicit GLB/GLTF mesh URIs. This is
+  a generic runtime `Mesh` entity path with transform, scale, and optional
+  `Grabbable` controls.
+- Packaged virtual room support for explicit `assets/scenes/Composition.glxf`
+  scene assets, usually exported from an official Spatial SDK panel sample or
+  another Meta Spatial Editor room. The opt-in property is
+  `debug.rustyquest.spatial.virtual_room.enabled`; the module is generic
+  Spatial SDK room support, not MRUK real-room placement and not passthrough
+  room capture.
 - Public seven-slot camera guide multi-stack contract, including generic final,
   guide blur, post-blur guide, and depth diagnostic slots.
 - Scene-depth permission diagnostics that mirror the native renderer surface:
@@ -39,6 +48,26 @@ only through runtime properties or intent extras that point at an explicitly
 staged app-private or device-local file. Opaque downstream
 analysis/projection slots, visual semantics, effect formulas, coupling kernels,
 and tuned parameter profiles belong outside Rusty Quest.
+
+The staged 3D asset path follows the same boundary: raw source model files are
+local inputs only and must not be packaged or committed. Runtime rendering uses
+an explicit staged GLB/GLTF URI supplied by system property or intent extra.
+Raw FBX is accepted only by host tooling as a source-format marker that requires
+conversion before staging.
+
+The packaged virtual room path follows the same public/private boundary.
+Reusable source owns the `spatial-sdk-packaged-virtual-room` loader, lighting,
+skybox/IBL setup, and markers. Local room exports, screenshots, media, and
+private test models remain local launch inputs unless explicitly approved for
+publication.
+
+Depth and render ordering are still active Spatial lane work. The public lane
+records depth source policy and alignment controls, but it does not yet claim a
+final depth-stack organization for the virtual room, skybox, GLB/GLTF assets,
+video layer, and custom camera projection surface. A previous room iteration
+proved the custom projection quad can be visible in front of the skybox, so the
+next validation goal is to make that foreground path repeatable while keeping
+the staged video and layer-control panel active.
 
 ## Headset Evidence
 
@@ -109,9 +138,22 @@ Spatial-SDK-owned free transform mode. Forced radial placement writes stay
 disabled, but left-stick Y now nudges the panel's current SDK transform nearer
 or farther when it is not actively palm-grabbed.
 
+The right secondary/B button toggles the raw camera projection quad between a
+fixed virtual wall pose inside the packaged room and the full-field
+viewer-locked pose. With the virtual room enabled, the viewer-locked full-field
+pose is still the initial placement so the video plus custom camera projection
+surface starts like the pre-room path; B can then detach it to the fixed room
+wall. Runtime evidence uses
+`cameraProjectionWallToggleInput=right-controller-secondary-button`,
+`virtualRoomWallPlacementMode=virtual-room-wall-fixed-quad`, and
+`virtualRoomWallCenterM` markers plus
+`projectionRoomRenderOrder=projection-layer-over-virtual-room` and
+`legacyLauncherPanelSuppressed=true`.
+
 When the camera/video stack is active, the right primary button opens a
 front-of-camera private-layer control panel instead of the participant workflow
-panel. That panel mirrors the native private layer selector: seven generic
+panel or the legacy launcher panel. That panel mirrors the native private
+layer selector: seven generic
 layer choices, live projection-area scale, live depth source policy
 (`mono-layer0`, `mono-layer1`, `eye-index`, or `compare`), and live
 depth-alignment X/Y/scale controls. It is registered as
@@ -122,7 +164,9 @@ movement authority so it sticks to the grabbed pose, and updates the public
 opaque projection route through
 `nativeUpdatePrivateLayerOverride` and
 `nativeUpdatePrivateLayerDepthLayerPolicy` plus
-`nativeUpdatePrivateLayerDepthAlignment`.
+`nativeUpdatePrivateLayerDepthAlignment`. Layer override markers include
+`layerOverrideAppliesToWallAndFullFov=true`, and the current override is
+reapplied after wall/full-FOV placement toggles.
 The panel explicitly accepts A/trigger select for its Compose controls; the
 inner palm/squeeze action remains the SDK grab path.
 
@@ -155,6 +199,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   boundaries. Spatial SDK layer/panel primitives are the carrier substrate;
   experiment panel, camera projection, surface particles, and debug probes are
   separate consumers of that carrier.
+- `app/src/main/.../SpatialStagedAssetModule.kt` owns the generic Spatial SDK
+  staged 3D asset path. It creates a runtime `Mesh` entity from an explicit
+  GLB/GLTF URI and marks raw FBX URIs as conversion-required.
+- The Activity owns the generic packaged virtual room path. It loads a packaged
+  GLXF composition only when `debug.rustyquest.spatial.virtual_room.enabled`
+  is true, applies sample-style lighting and skybox resources if present, and
+  marks `mrukPlacement=false`.
 - `app/src/main/.../SpatialPublicMultiStack.kt` mirrors the public seven-slot
   camera guide multi-stack receipt fields for Kotlin-side start, carrier, and
   placement markers. It marks opaque downstream slots inactive in this public
@@ -221,6 +272,9 @@ Interaction SDK pointer input without native multimodal extension forcing.
   present; downstream shader contents remain outside this public app.
 - `native-receipt/src/surface_particle_layer.rs`, `replay_hands.rs`, and
   `live_hand_joints.rs` remain Android-only surface-particle proof modules.
+- `tools/Stage-SpatialCameraPanelAsset.ps1` stages a local GLB/GLTF into the
+  package-scoped external files directory and emits the runtime mesh URI. If
+  the source is FBX, the script requires a converted GLB/GLTF path first.
 
 ## Spatial SDK Lane Source Map
 
@@ -298,13 +352,51 @@ storage do not break Android system-property transport:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
   -Serial <quest-serial> `
-  -VideoSourcePath "C:\Users\tillh\Downloads\VR App noodletest.mp4" `
+  -VideoSourcePath <local-stereo-video.mp4> `
   -RequireSpatialVideoProjection
 ```
 
 This stages the file to the package-scoped external path
 `/sdcard/Android/data/io.github.mesmerprism.rustyquest.spatial_camera_panel/files/v.mp4`,
 which is the path used by the successful native-loop Spatial proofs.
+
+To include a generic Spatial SDK staged 3D asset, provide a staged mesh URI or
+let the wrapper stage a local GLB/GLTF source. Raw FBX sources must be converted
+to GLB/GLTF first; the source model remains local and is not packaged:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -Serial <quest-serial> `
+  -AssetSourcePath <local-source-model.fbx> `
+  -AssetConvertedMeshPath <converted-model.glb> `
+  -RequireSpatialAssetModel
+```
+
+The runtime module is controlled by
+`debug.rustyquest.spatial.asset_model.enabled`,
+`debug.rustyquest.spatial.asset_model.mesh_uri`,
+`debug.rustyquest.spatial.asset_model.source_format`,
+`debug.rustyquest.spatial.asset_model.position_m`,
+`debug.rustyquest.spatial.asset_model.rotation_degrees`,
+`debug.rustyquest.spatial.asset_model.scale`, and
+`debug.rustyquest.spatial.asset_model.grabbable`.
+
+To include a packaged virtual room in the same smoke, export a GLXF room into
+the APK assets before building and add the room flags:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -Serial <quest-serial> `
+  -AssetSourcePath <local-source-model.fbx> `
+  -AssetConvertedMeshPath <converted-model.glb> `
+  -EnableVirtualRoom `
+  -RequireSpatialAssetModel `
+  -RequireSpatialVirtualRoom
+```
+
+The required room markers are `channel=spatial-virtual-room status=loaded`,
+`status=scene-configured`, `roomAssetSource=packaged-glxf`,
+`genericModuleSupport=true`, and `mrukPlacement=false`.
 
 After building with downstream opaque shader inputs, require the public
 multi-stack projection proof with:

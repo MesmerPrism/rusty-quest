@@ -68,6 +68,7 @@ function Assert-RegistrationUsesSettings {
 $appGradle = Read-RequiredText "apps\spatial-camera-panel-android\app\build.gradle.kts"
 $manifest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\AndroidManifest.xml"
 $activity = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelActivity.kt"
+$stagedAssetModule = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialStagedAssetModule.kt"
 $spatialStereoVideoPlayback = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialStereoVideoPlayback.java"
 $laneBoundary = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialSdkLaneBoundary.kt"
 $publicMultiStack = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPublicMultiStack.kt"
@@ -101,6 +102,7 @@ $surfaceLayer = Read-RequiredText "apps\spatial-camera-panel-android\native-rece
 $replayHands = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\replay_hands.rs"
 $buildScript = Read-RequiredText "tools\Build-SpatialCameraPanelAndroid.ps1"
 $cameraProjectionSmoke = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1"
+$stageSpatialAsset = Read-RequiredText "tools\Stage-SpatialCameraPanelAsset.ps1"
 $spatialPermissionPregrant = Read-RequiredText "tools\Grant-SpatialCameraPanelAndroidPermissions.ps1"
 $uiActionWrapper = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidUiAction.ps1"
 $readme = Read-RequiredText "apps\spatial-camera-panel-android\README.md"
@@ -123,6 +125,20 @@ Assert-Contains "Activity" $activity "SceneSwapchain.createAsAndroid"
 Assert-Contains "Activity" $activity "debug.rustyquest.spatial.camera_hwb_projection_probe"
 Assert-Contains "Activity" $activity "debug.rustyquest.spatial.camera_hwb_projection_probe.depth.layer_policy"
 Assert-Contains "Activity" $activity "debug.rustyquest.spatial.video_projection_probe"
+Assert-Contains "Activity" $activity "stagedAssetModule = SpatialStagedAssetModule(::marker)"
+Assert-Contains "Activity" $activity "runSpatialStagedAssetIfRequested"
+Assert-Contains "Activity" $activity 'spatialSdk3dAssetModule=${SpatialStagedAssetModule.MODULE_ID}'
+Assert-Contains "Activity" $activity 'spatialVirtualRoomModule=$SPATIAL_VIRTUAL_ROOM_MODULE_ID'
+Assert-Contains "Activity" $activity "debug.rustyquest.spatial.virtual_room.enabled"
+Assert-Contains "Activity" $activity "runSpatialVirtualRoomIfRequested"
+Assert-Contains "Activity" $activity 'SPATIAL_VIRTUAL_ROOM_SCENE_URI = "apk:///scenes/Composition.glxf"'
+Assert-Contains "Activity" $activity "channel=spatial-virtual-room status=loaded"
+Assert-Contains "Activity" $activity "spatialVirtualRoomLoaded"
+Assert-Contains "Activity" $activity "deferredUntil=virtual-room-loaded"
+Assert-Contains "Activity" $activity 'runSpatialStagedAssetIfRequested(intent, "virtual-room-loaded")'
+Assert-Contains "Activity" $activity 'runCameraHwbProjectionProbeIfRequested("virtual-room-loaded")'
+Assert-Contains "Activity" $activity "roomAssetSource=packaged-glxf"
+Assert-Contains "Activity" $activity "sampleRoomAssetPolicy=local-launch-input"
 Assert-Contains "Activity" $activity "outputMode=raw-color-target-rect"
 Assert-Contains "Activity" $activity "runSpatialVideoProjectionProbeIfRequested"
 Assert-Contains "Activity" $activity "nativeStartSpatialVideoProjectionProbe"
@@ -136,6 +152,30 @@ Assert-Contains "Activity" $activity 'suppressParticleLayerIfCameraProjectionReq
 Assert-Contains "Activity" $activity 'suppressParticleLayerIfCameraProjectionRequested("new-intent")'
 Assert-Contains "Activity" $activity 'suppressParticleLayerForCameraStack("camera-hwb-projection-probe")'
 Assert-Contains "Activity" $activity "applyCameraHwbProjectionScaleJoystickInput"
+Assert-Contains "Activity" $activity "toggleCameraHwbProjectionPlacementMode"
+Assert-Contains "Activity" $activity "ButtonBits.ButtonB"
+Assert-Contains "Activity" $activity "controllerInput=right-secondary-button"
+Assert-Contains "Activity" $activity "nativePollSpatialControllerRightButtonB"
+Assert-Contains "Activity" $activity "rightControllerInactiveButtonStateAccepted=true"
+Assert-Contains "Activity" $activity "cameraProjectionWallToggleInput=right-controller-secondary-button"
+Assert-Contains "Activity" $activity "virtualRoomWallPlacementMode"
+Assert-Contains "Activity" $activity "virtualRoomWallCenterM="
+Assert-Contains "Activity" $activity "CAMERA_HWB_PROJECTION_WALL_CENTER_MARKER"
+Assert-Contains "Activity" $activity "launcherPanelVisibleForPanelMode"
+Assert-Contains "Activity" $activity "legacy-workflow-panels-deactivated"
+Assert-Contains "Activity" $activity "onlyRightPrimaryPrivateLayerPanel=true"
+Assert-Contains "Activity" $activity "legacyLauncherPanelSuppressed=true"
+Assert-Contains "Activity" $activity "projectionDefaultPlacementMode="
+Assert-Contains "Activity" $activity "rightSecondaryTogglesFullFov=true"
+Assert-Contains "Activity" $activity "projectionDisplaySurface=video-plus-custom-camera-stack"
+Assert-Contains "Activity" $activity "projectionRoomRenderOrder=projection-layer-over-virtual-room"
+Assert-Contains "Activity" $activity "cameraHwbProjectionZIndexForPlacement"
+Assert-Contains "Activity" $activity "sceneQuadLayerRebuildStatus="
+Assert-Contains "Activity" $activity "sceneQuadLayerRebuildStatus=not-rebuilt-existing-scene-anchor-updated"
+Assert-Contains "Activity" $activity "projection-placement-toggle-ignored"
+Assert-Contains "Activity" $activity "projection-placement-toggle-armed"
+Assert-Contains "Activity" $activity "toggleGuard=wait-for-secondary-release-after-projection-start"
+Assert-Contains "Activity" $activity "CAMERA_HWB_PROJECTION_PLACEMENT_TOGGLE_DEBOUNCE_MS"
 Assert-Contains "Activity" $activity "updateCameraHwbProjectionTargetScaleFromPanel"
 Assert-Contains "Activity" $activity 'CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER = "1.00"'
 Assert-Contains "Activity" $activity 'targetDistanceDefaultMeters=$CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER'
@@ -160,6 +200,9 @@ Assert-Contains "Activity" $activity "PrivateLayerControlPanel"
 Assert-Contains "Activity" $activity "spatial-sdk-private-layer-panel-open"
 Assert-Contains "Activity" $activity "spatialPrivateLayerControlPanel=true"
 Assert-Contains "Activity" $activity "publicMultiStackOpaqueProjectionLayerOverride"
+Assert-Contains "Activity" $activity "layerOverrideAppliesToWallAndFullFov=true"
+Assert-Contains "Activity" $activity "cameraProjectionPlacementIndependentLayerControl=true"
+Assert-Contains "Activity" $activity "layerOverrideReappliedOnPlacementToggle="
 Assert-Contains "Activity" $activity "publicMultiStackDepthLayerPolicy"
 Assert-Contains "Activity" $activity "publicMultiStackDepthLayerCompareMode"
 Assert-Contains "Activity" $activity "publicMultiStackDepthAlignmentControl=true"
@@ -300,8 +343,25 @@ Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object Camer
 Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object PublicMultiStackController"
 Assert-Contains "Spatial SDK lane boundary" $laneBoundary "kind = SpatialSdkLaneKind.PublicMultiStack"
 Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object SurfaceParticleLayerController"
+Assert-Contains "Spatial SDK lane boundary" $laneBoundary "kind = SpatialSdkLaneKind.StagedAsset"
+Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object SpatialStagedAssetBoundary"
+Assert-Contains "Spatial SDK lane boundary" $laneBoundary "source asset provenance"
+Assert-Contains "Spatial SDK lane boundary" $laneBoundary "kind = SpatialSdkLaneKind.VirtualRoom"
+Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object SpatialVirtualRoomBoundary"
+Assert-Contains "Spatial SDK lane boundary" $laneBoundary "spatial-sdk-packaged-virtual-room"
+Assert-Contains "Spatial SDK lane boundary" $laneBoundary "MRUK real-room placement"
 Assert-Contains "Spatial SDK lane boundary" $laneBoundary "internal object SpatialDebugProbeController"
 Assert-Contains "Spatial SDK lane boundary" $laneBoundary 'mustNotOwn = setOf("surface particles", "driver-profile dynamics", "questionnaire state")'
+Assert-Contains "Spatial staged asset module" $stagedAssetModule 'MODULE_ID = "spatial-sdk-staged-3d-asset"'
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "debug.rustyquest.spatial.asset_model.mesh_uri"
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "MeshCollision.NoCollision"
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "SceneMaterial.UNLIT_SHADER"
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "assetVisibilityBias=headset-visible-test-placement"
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "Entity.create("
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "Grabbable(type = GrabbableType.PIVOT_Y)"
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "fbxConversionRequired=true"
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "privateSourceAssetPackaged=false"
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "highRateJsonPayload=false"
 Assert-Contains "Public multi-stack" $publicMultiStack 'rusty.quest.spatial_camera_panel.public_multistack.v1'
 Assert-Contains "Public multi-stack" $publicMultiStack 'publicMultiStackLayerCount=$LAYER_COUNT'
 Assert-Contains "Public multi-stack" $publicMultiStack 'publicMultiStackGuidePasses=$GUIDE_PASS_COUNT'
@@ -540,9 +600,12 @@ Assert-NotContains "Native public multi-stack runtime" $nativeMultiStackRuntime 
 Assert-Contains "Native controller actions" $nativeControllerActions "nativeStartSpatialControllerActions"
 Assert-Contains "Native controller actions" $nativeControllerActions "nativePollSpatialControllerLeftThumbstickY"
 Assert-Contains "Native controller actions" $nativeControllerActions "nativePollSpatialControllerRightThumbstickY"
+Assert-Contains "Native controller actions" $nativeControllerActions "nativePollSpatialControllerRightButtonB"
 Assert-Contains "Native controller actions" $nativeControllerActions "xrAttachSessionActionSets"
 Assert-Contains "Native controller actions" $nativeControllerActions "/user/hand/left/input/thumbstick/y"
 Assert-Contains "Native controller actions" $nativeControllerActions "/user/hand/right/input/thumbstick/y"
+Assert-Contains "Native controller actions" $nativeControllerActions "/user/hand/right/input/b/click"
+Assert-Contains "Native controller actions" $nativeControllerActions "xrGetActionStateBoolean"
 Assert-Contains "Native controller actions" $nativeControllerActions "spatial-controller-actions"
 Assert-Contains "Native controller actions" $nativeControllerActions "actionSetAttached=true"
 Assert-Contains "Native multimodal input" $nativeMultimodalInput "nativeRequestSpatialMultimodalInput"
@@ -691,6 +754,30 @@ Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "stereo
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "outputMode=raw-color-target-rect"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "stereoHorizontalOffsetJoystickInput=disabled-default-locked-left-stick-y-controls-panel-distance-private-free-transform"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "adb_serial_required = `$true"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "RequireSpatialAssetModel"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "EnableVirtualRoom"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "RequireSpatialVirtualRoom"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "Stage-SpatialCameraPanelAsset.ps1"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "debug.rustyquest.spatial.asset_model.mesh_uri"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "debug.rustyquest.spatial.virtual_room.enabled"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_asset_model_entity_created"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_asset_model_private_source_not_packaged"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_virtual_room_loaded"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera_projection_wall_toggle_declared"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "legacy_launcher_panel_suppressed"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera_projection_initial_full_fov_mode"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera_projection_room_render_order"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "private_layer_controls_apply_to_wall_and_full_fov"
+Assert-Contains "Build script" $buildScript 'spatial_sdk_3d_asset_module = "spatial-sdk-staged-3d-asset"'
+Assert-Contains "Build script" $buildScript 'spatial_sdk_3d_asset_module_source_policy = "no-source-model-packaged-or-committed"'
+Assert-Contains "Build script" $buildScript 'spatial_sdk_3d_asset_supported_runtime_mesh_formats = @("glb", "gltf")'
+Assert-Contains "Build script" $buildScript 'spatial_sdk_virtual_room_module = "spatial-sdk-packaged-virtual-room"'
+Assert-Contains "Build script" $buildScript 'spatial_sdk_virtual_room_runtime_property = "debug.rustyquest.spatial.virtual_room.enabled"'
+Assert-Contains "Build script" $buildScript 'spatial_sdk_virtual_room_mruk_policy = "disabled-not-real-room-placement"'
+Assert-Contains "Stage Spatial asset script" $stageSpatialAsset "rusty.quest.spatial_camera_panel.staged_asset.v1"
+Assert-Contains "Stage Spatial asset script" $stageSpatialAsset "Raw FBX is a local source format only"
+Assert-Contains "Stage Spatial asset script" $stageSpatialAsset "ConvertedMeshPath"
+Assert-Contains "Stage Spatial asset script" $stageSpatialAsset "sdk_loadable_mesh_uri"
 Assert-Contains "Spatial permission pregrant" $spatialPermissionPregrant "rusty.quest.spatial_camera_panel_permission_pregrant.v1"
 Assert-Contains "Spatial permission pregrant" $spatialPermissionPregrant "horizonos.permission.USE_SCENE"
 Assert-Contains "Spatial permission pregrant" $spatialPermissionPregrant "USE_SCENE_DATA"
@@ -731,6 +818,13 @@ Assert-Contains "README" $readme "movement authority"
 Assert-Contains "README" $readme "spatial-sdk-mesh"
 Assert-Contains "README" $readme "layer config disabled"
 Assert-Contains "README" $readme "VideoSourcePath"
+Assert-Contains "README" $readme "Spatial SDK staged 3D asset"
+Assert-Contains "README" $readme "packaged virtual room"
+Assert-Contains "README" $readme "debug.rustyquest.spatial.virtual_room.enabled"
+Assert-Contains "README" $readme "right secondary/B button"
+Assert-Contains "README" $readme "not MRUK"
+Assert-Contains "README" $readme "Stage-SpatialCameraPanelAsset.ps1"
+Assert-Contains "README" $readme "RequireSpatialAssetModel"
 Assert-Contains "README" $readme "/sdcard/Android/data/io.github.mesmerprism.rustyquest.spatial_camera_panel/files/v.mp4"
 Assert-Contains "README" $readme "nativeUpdatePrivateLayerOverride"
 Assert-Contains "README" $readme "nativeUpdatePrivateLayerDepthAlignment"
@@ -750,6 +844,10 @@ Assert-Contains "Implementation notes" $notes "direct distance nudge"
 Assert-Contains "Implementation notes" $notes "A/trigger select"
 Assert-Contains "Implementation notes" $notes "nativeUpdatePrivateLayerOverride"
 Assert-Contains "Implementation notes" $notes "nativeUpdatePrivateLayerDepthAlignment"
+Assert-Contains "Implementation notes" $notes "Spatial SDK staged 3D asset"
+Assert-Contains "Implementation notes" $notes "spatial-sdk-staged-3d-asset"
+Assert-Contains "Implementation notes" $notes "spatial-sdk-packaged-virtual-room"
+Assert-Contains "Implementation notes" $notes "RequireSpatialVirtualRoom"
 
 $cameraBoundaryFiles = @{
     "Camera HWB probe" = $cameraProbe
@@ -790,6 +888,14 @@ if ($packagedVideoAssets.Count -gt 0) {
     throw "Spatial Camera Panel must not package video assets. Found:`n$paths"
 }
 
+$forbiddenRawModelExtensions = @(".fbx")
+$packagedRawModelAssets = Get-ChildItem -LiteralPath $spatialAppPath -Recurse -File |
+    Where-Object { $forbiddenRawModelExtensions -contains $_.Extension.ToLowerInvariant() }
+if ($packagedRawModelAssets.Count -gt 0) {
+    $paths = ($packagedRawModelAssets | ForEach-Object { $_.FullName }) -join "`n"
+    throw "Spatial Camera Panel must not package raw source model assets. Found:`n$paths"
+}
+
 $spatialSourceRoots = @(
     "apps\spatial-camera-panel-android\app\src\main",
     "apps\spatial-camera-panel-android\native-receipt\src",
@@ -828,6 +934,7 @@ $scanRoots = @(
     "tools\Invoke-SpatialCameraPanelAndroidPolarLive.ps1",
     "tools\Invoke-SpatialCameraPanelAndroidUiAction.ps1",
     "tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1",
+    "tools\Stage-SpatialCameraPanelAsset.ps1",
     "docs\SPATIAL_SDK_PORT_IMPLEMENTATION_PLAN.md"
 )
 $forbidden = @(

@@ -416,6 +416,26 @@ $manifest = [ordered]@{
     native_spatial_controller_actions_default_enabled = $false
     spatial_controller_launch_policy = "app-owned-readiness-prompt-if-no-active-avatarbody-controller"
     spatial_sdk_version = "0.13.1"
+    spatial_sdk_3d_asset_module = "spatial-sdk-staged-3d-asset"
+    spatial_sdk_3d_asset_module_mesh_uri_transport = "runtime-property-or-intent-extra"
+    spatial_sdk_3d_asset_module_source_policy = "no-source-model-packaged-or-committed"
+    spatial_sdk_3d_asset_supported_runtime_mesh_formats = @("glb", "gltf")
+    spatial_sdk_3d_asset_raw_fbx_policy = "local-source-only-convert-before-staging"
+    spatial_sdk_3d_asset_runtime_properties = @(
+        "debug.rustyquest.spatial.asset_model.enabled",
+        "debug.rustyquest.spatial.asset_model.mesh_uri",
+        "debug.rustyquest.spatial.asset_model.source_format",
+        "debug.rustyquest.spatial.asset_model.label",
+        "debug.rustyquest.spatial.asset_model.position_m",
+        "debug.rustyquest.spatial.asset_model.rotation_degrees",
+        "debug.rustyquest.spatial.asset_model.scale",
+        "debug.rustyquest.spatial.asset_model.grabbable"
+    )
+    spatial_sdk_virtual_room_module = "spatial-sdk-packaged-virtual-room"
+    spatial_sdk_virtual_room_scene_uri = "apk:///scenes/Composition.glxf"
+    spatial_sdk_virtual_room_runtime_property = "debug.rustyquest.spatial.virtual_room.enabled"
+    spatial_sdk_virtual_room_asset_policy = "packaged-glxf-local-launch-input"
+    spatial_sdk_virtual_room_mruk_policy = "disabled-not-real-room-placement"
     android_gradle_plugin_version = "8.11.1"
     kotlin_version = "2.1.0"
     gradle_version = $GradleVersion

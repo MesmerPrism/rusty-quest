@@ -20,6 +20,18 @@ param(
     [double]$VideoOpacity = 1.0,
     [bool]$VideoLooping = $true,
     [string]$DepthLayerPolicy = $env:RUSTY_QUEST_SPATIAL_DEPTH_LAYER_POLICY,
+    [string]$AssetMeshUri = $env:RUSTY_QUEST_SPATIAL_ASSET_MODEL_URI,
+    [string]$AssetSourcePath = $env:RUSTY_QUEST_SPATIAL_ASSET_MODEL_SOURCE_PATH,
+    [string]$AssetConvertedMeshPath = $env:RUSTY_QUEST_SPATIAL_ASSET_MODEL_CONVERTED_MESH_PATH,
+    [string]$AssetDestinationRelativePath = "spatial-assets/model.glb",
+    [string]$AssetSourceFormat = $env:RUSTY_QUEST_SPATIAL_ASSET_MODEL_SOURCE_FORMAT,
+    [string]$AssetLabel = "staged-asset",
+    [string]$AssetPositionM = "-0.55;1.15;-1.35",
+    [string]$AssetRotationDegrees = "0.0;180.0;0.0",
+    [double]$AssetScale = 0.25,
+    [bool]$AssetGrabbable = $true,
+    [switch]$EnableVirtualRoom,
+    [switch]$EnableSkybox,
     [switch]$VideoOnly,
     [switch]$SkipInstall,
     [switch]$SkipPermissionPregrant,
@@ -27,7 +39,9 @@ param(
     [switch]$StopAfterRun,
     [switch]$AllowMissingMarkers,
     [switch]$RequirePublicMultiStackProjection,
-    [switch]$RequireSpatialVideoProjection
+    [switch]$RequireSpatialVideoProjection,
+    [switch]$RequireSpatialAssetModel,
+    [switch]$RequireSpatialVirtualRoom
 )
 
 $ErrorActionPreference = "Stop"
@@ -234,6 +248,23 @@ $depthLayerPolicyToken = switch -Regex ($depthLayerPolicyRaw) {
     "^(eye-index|per-eye|stereo|stereo-indexed|2)?$" { "eye-index"; break }
     default { throw "Unknown -DepthLayerPolicy '$DepthLayerPolicy'. Use mono-layer0, mono-layer1, eye-index, or compare." }
 }
+$assetMeshUriTrimmed = if ($null -eq $AssetMeshUri) { "" } else { $AssetMeshUri.Trim() }
+$assetSourcePathTrimmed = if ($null -eq $AssetSourcePath) { "" } else { $AssetSourcePath.Trim() }
+$assetConvertedMeshPathTrimmed = if ($null -eq $AssetConvertedMeshPath) { "" } else { $AssetConvertedMeshPath.Trim() }
+$assetSourceFormatTrimmed = if ($null -eq $AssetSourceFormat) { "" } else { $AssetSourceFormat.Trim().ToLowerInvariant() }
+$assetLabelTrimmed = if ($null -eq $AssetLabel) { "staged-asset" } else { $AssetLabel.Trim() }
+if ([string]::IsNullOrWhiteSpace($assetLabelTrimmed)) {
+    $assetLabelTrimmed = "staged-asset"
+}
+$assetPositionTrimmed = if ($null -eq $AssetPositionM) { "-0.55;1.15;-1.35" } else { $AssetPositionM.Trim() }
+$assetRotationTrimmed = if ($null -eq $AssetRotationDegrees) { "0.0;180.0;0.0" } else { $AssetRotationDegrees.Trim() }
+$assetScaleClamped = [Math]::Max(0.001, [Math]::Min(10.0, $AssetScale))
+$assetModelRequested =
+    (-not [string]::IsNullOrWhiteSpace($assetMeshUriTrimmed)) -or
+    (-not [string]::IsNullOrWhiteSpace($assetSourcePathTrimmed))
+if ($RequireSpatialAssetModel -and -not $assetModelRequested) {
+    throw "-RequireSpatialAssetModel requires -AssetMeshUri, -AssetSourcePath, RUSTY_QUEST_SPATIAL_ASSET_MODEL_URI, or RUSTY_QUEST_SPATIAL_ASSET_MODEL_SOURCE_PATH."
+}
 $apkSha256 = Get-FileSha256 -Path $resolvedApk
 $summaryPath = Join-Path $OutDir "evidence-summary.json"
 $permissionPregrantPath = Join-Path $OutDir "permission-pregrant.json"
@@ -289,6 +320,33 @@ $summary = [ordered]@{
     spatial_video_projection_looping = [bool]$VideoLooping
     spatial_video_projection_stereo_layout = $videoStereoLayoutToken
     spatial_video_projection_opacity = $videoOpacityClamped
+    require_spatial_asset_model = [bool]$RequireSpatialAssetModel
+    enable_spatial_virtual_room = [bool]$EnableVirtualRoom
+    enable_spatial_skybox = [bool]$EnableSkybox
+    require_spatial_virtual_room = [bool]$RequireSpatialVirtualRoom
+    spatial_virtual_room_module = "spatial-sdk-packaged-virtual-room"
+    spatial_virtual_room_runtime_property_enabled = "debug.rustyquest.spatial.virtual_room.enabled"
+    spatial_skybox_module = "spatial-sdk-skybox-only"
+    spatial_skybox_runtime_property_enabled = "debug.rustyquest.spatial.skybox.enabled"
+    spatial_virtual_room_scene_uri = "apk:///scenes/Composition.glxf"
+    spatial_virtual_room_asset_policy = "packaged-glxf-local-launch-input"
+    spatial_asset_model_requested = $assetModelRequested
+    spatial_asset_model_mesh_uri = $assetMeshUriTrimmed
+    spatial_asset_model_source_path = $assetSourcePathTrimmed
+    spatial_asset_model_converted_mesh_path = $assetConvertedMeshPathTrimmed
+    spatial_asset_model_stage_path = ""
+    spatial_asset_model_path_transport = $(if ([string]::IsNullOrWhiteSpace($assetSourcePathTrimmed)) { "caller-provided-mesh-uri" } else { "app-private-staged-source" })
+    spatial_asset_model_destination_relative_path = $AssetDestinationRelativePath
+    spatial_asset_model_source_format = $assetSourceFormatTrimmed
+    spatial_asset_model_label = $assetLabelTrimmed
+    spatial_asset_model_position_m = $assetPositionTrimmed
+    spatial_asset_model_rotation_degrees = $assetRotationTrimmed
+    spatial_asset_model_scale = $assetScaleClamped
+    spatial_asset_model_grabbable = [bool]$AssetGrabbable
+    spatial_asset_model_module = "spatial-sdk-staged-3d-asset"
+    spatial_asset_model_runtime_property_enabled = "debug.rustyquest.spatial.asset_model.enabled"
+    spatial_asset_model_runtime_property_mesh_uri = "debug.rustyquest.spatial.asset_model.mesh_uri"
+    spatial_asset_model_launch_transport = "none"
     public_multistack_depth_layer_policy = $depthLayerPolicyToken
     carrier = "scenequadlayer-createAsAndroid-vulkan-wsi"
     tag_logcat_stream_path = $tagLogcatStreamPath
@@ -393,6 +451,58 @@ try {
         $summary.spatial_video_projection_path_transport = "app-private-staged-source"
     }
 
+    if (-not [string]::IsNullOrWhiteSpace($assetSourcePathTrimmed)) {
+        if (-not (Test-Path -LiteralPath $assetSourcePathTrimmed)) {
+            throw "AssetSourcePath not found: $assetSourcePathTrimmed"
+        }
+        $assetStageReceiptPath = Join-Path $OutDir "spatial-asset-stage.json"
+        $assetStageOutputPath = Join-Path $OutDir "spatial-asset-stage-output.txt"
+        $assetStageScriptPath = Join-Path $PSScriptRoot "Stage-SpatialCameraPanelAsset.ps1"
+        $assetStageArgs = @(
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            $assetStageScriptPath,
+            "-SourcePath",
+            (Resolve-Path -LiteralPath $assetSourcePathTrimmed).Path,
+            "-Adb",
+            $script:ResolvedAdb,
+            "-Serial",
+            $script:Serial,
+            "-PackageName",
+            $PackageName,
+            "-DestinationRelativePath",
+            $AssetDestinationRelativePath,
+            "-Out",
+            $assetStageReceiptPath
+        )
+        if (-not [string]::IsNullOrWhiteSpace($assetConvertedMeshPathTrimmed)) {
+            $assetStageArgs += @("-ConvertedMeshPath", (Resolve-Path -LiteralPath $assetConvertedMeshPathTrimmed).Path)
+        }
+        if ($null -ne $script:ResolvedAdbServerPort) {
+            $assetStageArgs += @("-AdbServerPort", $script:ResolvedAdbServerPort)
+        }
+        $assetStageOutput = & powershell @assetStageArgs 2>&1
+        $assetStageExitCode = $LASTEXITCODE
+        Save-Text -Path $assetStageOutputPath -Text ($assetStageOutput -join "`n")
+        if ($assetStageExitCode -ne 0) {
+            throw "stage Spatial asset source failed with exit code $assetStageExitCode`n$($assetStageOutput -join "`n")"
+        }
+        $assetStageReceipt = Get-Content -LiteralPath $assetStageReceiptPath -Raw | ConvertFrom-Json
+        $assetMeshUriTrimmed = [string]$assetStageReceipt.mesh_uri
+        $assetSourceFormatTrimmed = [string]$assetStageReceipt.source_format
+        $assetModelRequested = -not [string]::IsNullOrWhiteSpace($assetMeshUriTrimmed)
+        $summary.spatial_asset_model_requested = $assetModelRequested
+        $summary.spatial_asset_model_mesh_uri = $assetMeshUriTrimmed
+        $summary.spatial_asset_model_stage_path = $assetStageReceiptPath
+        $summary.spatial_asset_model_path_transport = "app-private-staged-source"
+        $summary.spatial_asset_model_source_format = $assetSourceFormatTrimmed
+        $summary.spatial_asset_model_staged_format = [string]$assetStageReceipt.staged_format
+        $summary.spatial_asset_model_sdk_loadable_mesh_uri = [bool]$assetStageReceipt.sdk_loadable_mesh_uri
+        $summary.spatial_asset_model_fbx_conversion_required = [bool]$assetStageReceipt.fbx_conversion_required
+    }
+
     $setpropResults = @()
     $setpropResults += Invoke-AdbCommand -Name "disable luma camera HWB probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_probe", "0")
     $setpropResults += Invoke-AdbCommand -Name "configure raw camera projection probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe", $(if ($VideoOnly) { "0" } else { "1" }))
@@ -402,7 +512,9 @@ try {
     $setpropResults += Invoke-AdbCommand -Name "select Spatial SDK interaction pointer input" -Arguments @("shell", "setprop", "debug.rustyquest.spatial_camera_panel.vr_input_system", "interaction_sdk")
     $setpropResults += Invoke-AdbCommand -Name "allow app controller probe to observe left/right input" -Arguments @("shell", "setprop", "debug.rustyquest.spatial_camera_panel.consume_left_right_input", "0")
     $setpropResults += Invoke-AdbCommand -Name "disable Spatial SDK multimodal input" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.multimodal_input.enabled", "0")
-    $setpropResults += Invoke-AdbCommand -Name "disable native OpenXR controller action diagnostic" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.native_controller_actions.enabled", "0")
+    $setpropResults += Invoke-AdbCommand -Name "disable native OpenXR controller action fallback" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.native_controller_actions.enabled", "0")
+    $setpropResults += Invoke-AdbCommand -Name "configure Spatial packaged virtual room" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.virtual_room.enabled", $(if ($EnableVirtualRoom) { "1" } else { "0" }))
+    $setpropResults += Invoke-AdbCommand -Name "configure Spatial skybox" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.skybox.enabled", $(if ($EnableSkybox) { "1" } else { "0" }))
     $setpropResults += Invoke-AdbCommand -Name "configure Spatial video projection enabled" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.video.enabled", $(if ($videoProjectionRequested) { "1" } else { "0" }))
     $setpropResults += Invoke-AdbCommand -Name "disable Spatial video high-rate JSON payload" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.video.high_rate_json_payload", "0")
     if ($videoProjectionRequested) {
@@ -415,6 +527,13 @@ try {
         $setpropResults += Invoke-AdbCommand -Name "set Spatial video FPS cap" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.video.fps_cap", $videoFpsCapClamped.ToString())
         $setpropResults += Invoke-AdbCommand -Name "set Spatial video looping" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.video.looping", $(if ($VideoLooping) { "1" } else { "0" }))
         $setpropResults += Invoke-AdbCommand -Name "set Spatial video opacity" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.video.opacity", $videoOpacityText)
+    }
+    $setpropResults += Invoke-AdbCommand -Name "configure Spatial staged asset model" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.asset_model.enabled", $(if ($assetModelRequested) { "1" } else { "0" }))
+    if ($assetModelRequested) {
+        $assetScaleText = $assetScaleClamped.ToString("0.###", [System.Globalization.CultureInfo]::InvariantCulture)
+        $assetPositionLaunchExtra = $assetPositionTrimmed.Replace(";", ",")
+        $assetRotationLaunchExtra = $assetRotationTrimmed.Replace(";", ",")
+        $summary.spatial_asset_model_launch_transport = "intent-extras"
     }
     Save-Text -Path (Join-Path $OutDir "setprops.json") -Text ($setpropResults | ConvertTo-Json -Depth 6)
 
@@ -440,7 +559,20 @@ try {
         -WindowStyle Hidden
     Start-Sleep -Milliseconds 300
 
-    $launch = Invoke-AdbCommand -Name "launch raw camera projection probe" -Arguments @("shell", "am", "start", "-W", "-n", $Activity)
+    $launchArgs = @("shell", "am", "start", "-W", "-n", $Activity)
+    if ($assetModelRequested) {
+        $launchArgs += @(
+            "--ez", "rusty.quest.spatial.asset_model.enabled", "true",
+            "--es", "rusty.quest.spatial.asset_model.mesh_uri", $assetMeshUriTrimmed,
+            "--es", "rusty.quest.spatial.asset_model.source_format", $assetSourceFormatTrimmed,
+            "--es", "rusty.quest.spatial.asset_model.label", $assetLabelTrimmed,
+            "--es", "rusty.quest.spatial.asset_model.position_m", $assetPositionLaunchExtra,
+            "--es", "rusty.quest.spatial.asset_model.rotation_degrees", $assetRotationLaunchExtra,
+            "--ef", "rusty.quest.spatial.asset_model.scale", $assetScaleText,
+            "--ez", "rusty.quest.spatial.asset_model.grabbable", $(if ($AssetGrabbable) { "true" } else { "false" })
+        )
+    }
+    $launch = Invoke-AdbCommand -Name "launch raw camera projection probe" -Arguments $launchArgs
     Save-Text -Path (Join-Path $OutDir "launch.txt") -Text $launch.output
     Start-Sleep -Seconds ([Math]::Max(1, $RunSeconds))
 
@@ -514,6 +646,8 @@ try {
     $summary.spatial_interaction_sdk_backend = Test-TextContains $evidenceText "spatialVrInputSystem=interaction_sdk"
     $summary.spatial_pointer_input_expected = Test-TextContains $evidenceText "spatialPointerInputExpected=true"
     $summary.spatial_controller_actions_disabled = Test-TextContains $evidenceText "nativeControllerActionBridge=false"
+    $summary.spatial_controller_actions_native_fallback_declared =
+        Test-TextContains $evidenceText "nativeSpatialControllerActionsProperty=debug.rustyquest.spatial.native_controller_actions.enabled"
     $summary.spatial_multimodal_disabled = (Test-TextContains $evidenceText "spatialMultimodalRequiredOpenXrExtensions=none") -and (Test-TextContains $evidenceText "spatialMultimodalInputRequest=false")
     $summary.spatial_required_openxr_includes_passthrough = Test-TextContains $evidenceText "XR_FB_passthrough"
     $summary.spatial_required_openxr_includes_environment_depth = Test-TextContains $evidenceText "XR_META_environment_depth"
@@ -587,6 +721,46 @@ try {
     $summary.spatial_video_projection_video_only_render_loop_ready = (Test-TextContains $evidenceText "videoOnlySpatialProjection=true") -and (Test-TextContains $evidenceText "status=render-loop-ready")
     $summary.spatial_video_projection_video_only_presented = (Test-TextContains $evidenceText "videoOnlySpatialProjection=true") -and (Test-TextContains $evidenceText "status=video-frame-presented")
     $summary.camera_runtime_absent_when_video_only = if ($VideoOnly) { -not (Test-TextContains $evidenceText "status=camera-runtime-started") } else { $true }
+    $summary.spatial_asset_model_module_declared =
+        Test-TextContains $evidenceText "spatialSdk3dAssetModule=spatial-sdk-staged-3d-asset"
+    $summary.spatial_asset_model_entity_created =
+        Test-TextContains $evidenceText "channel=spatial-sdk-asset-model status=entity-created"
+    $summary.spatial_asset_model_sdk_mesh_uri =
+        Test-TextContains $evidenceText "sdkLoadableMeshUri=true"
+    $summary.spatial_asset_model_private_source_not_packaged =
+        Test-TextContains $evidenceText "privateSourceAssetPackaged=false"
+    $summary.spatial_asset_model_raw_fbx_rejected =
+        Test-TextContains $evidenceText "status=rejected reason=raw-fbx-uri"
+    $summary.spatial_virtual_room_module_declared =
+        Test-TextContains $evidenceText "spatialVirtualRoomModule=spatial-sdk-packaged-virtual-room"
+    $summary.spatial_virtual_room_load_requested =
+        Test-TextContains $evidenceText "channel=spatial-virtual-room status=load-requested"
+    $summary.spatial_virtual_room_loaded =
+        Test-TextContains $evidenceText "channel=spatial-virtual-room status=loaded"
+    $summary.spatial_virtual_room_scene_configured =
+        Test-TextContains $evidenceText "channel=spatial-virtual-room status=scene-configured"
+    $summary.spatial_virtual_room_generic_module =
+        Test-TextContains $evidenceText "genericModuleSupport=true"
+    $summary.spatial_virtual_room_not_mruk =
+        Test-TextContains $evidenceText "mrukPlacement=false passthroughRoomPlacement=false"
+    $summary.spatial_skybox_module_declared =
+        Test-TextContains $evidenceText "spatialSkyboxModule=spatial-sdk-skybox-only"
+    $summary.spatial_skybox_scene_configured =
+        Test-TextContains $evidenceText "channel=spatial-skybox status=scene-configured"
+    $summary.spatial_skybox_only =
+        Test-TextContains $evidenceText "skyboxOnly=true"
+    $summary.camera_projection_wall_toggle_declared =
+        Test-TextContains $evidenceText "cameraProjectionWallToggleInput=right-controller-secondary-button"
+    $summary.camera_projection_wall_mode_declared =
+        Test-TextContains $evidenceText "virtualRoomWallPlacementMode=virtual-room-wall-fixed-quad"
+    $summary.legacy_launcher_panel_suppressed =
+        Test-TextContains $evidenceText "legacyLauncherPanelSuppressed=true"
+    $summary.camera_projection_initial_full_fov_mode =
+        Test-TextContains $evidenceText "projectionDefaultPlacementMode=viewer-pose-projection-locked-quad"
+    $summary.camera_projection_room_render_order =
+        Test-TextContains $evidenceText "projectionRoomRenderOrder=projection-layer-over-virtual-room"
+    $summary.private_layer_controls_apply_to_wall_and_full_fov =
+        Test-TextContains $evidenceText "layerOverrideAppliesToWallAndFullFov=true"
     $summary.runtime_crash_false = (Test-TextContains $appScopedEvidenceText "runtimeCrash=false") -and -not ($appScopedEvidenceText -match "AndroidRuntime|FATAL|render-failed")
     $summary.screenshot_captured = Test-Path -LiteralPath $screenshotPath
 
@@ -625,7 +799,6 @@ try {
             "spatial_hands_and_controllers_manifest",
             "spatial_interaction_sdk_backend",
             "spatial_pointer_input_expected",
-            "spatial_controller_actions_disabled",
             "spatial_multimodal_disabled",
             "camera_stack_particle_layer_suppressed",
             "camera_stack_particles_suppression_enabled",
@@ -636,6 +809,9 @@ try {
             "camera_stack_surface_layer_mode_absent",
             "runtime_crash_false"
         )
+    }
+    if (-not $VideoOnly) {
+        $requiredFlags += "spatial_controller_actions_disabled"
     }
     if ($RequirePublicMultiStackProjection -and -not $VideoOnly) {
         $requiredFlags += @(
@@ -708,6 +884,34 @@ try {
             )
         }
     }
+    if ($RequireSpatialAssetModel) {
+        $requiredFlags += @(
+            "spatial_asset_model_module_declared",
+            "spatial_asset_model_entity_created",
+            "spatial_asset_model_sdk_mesh_uri",
+            "spatial_asset_model_private_source_not_packaged"
+        )
+    }
+    if ($RequireSpatialVirtualRoom) {
+        $requiredFlags += @(
+            "spatial_virtual_room_module_declared",
+            "spatial_virtual_room_load_requested",
+            "spatial_virtual_room_loaded",
+            "spatial_virtual_room_scene_configured",
+            "spatial_virtual_room_generic_module",
+            "spatial_virtual_room_not_mruk",
+            "camera_projection_wall_toggle_declared",
+            "camera_projection_wall_mode_declared",
+            "legacy_launcher_panel_suppressed",
+            "camera_projection_initial_full_fov_mode",
+            "camera_projection_room_render_order"
+        )
+        if (-not $VideoOnly) {
+            $requiredFlags += @(
+                "private_layer_controls_apply_to_wall_and_full_fov"
+            )
+        }
+    }
     if (-not $AllowMissingMarkers) {
         foreach ($flag in $requiredFlags) {
             Assert-SummaryFlag -Summary $summary -Name $flag
@@ -723,6 +927,12 @@ try {
         Save-Text -Path (Join-Path $OutDir "disable-video-projection.txt") -Text $disableVideo.output
         $disableVideoOnly = Invoke-AdbCommand -Name "disable Spatial video-only projection probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.video_projection_probe", "0") -AllowFailure
         Save-Text -Path (Join-Path $OutDir "disable-video-only-projection-probe.txt") -Text $disableVideoOnly.output
+        $disableAssetModel = Invoke-AdbCommand -Name "disable Spatial staged asset model" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.asset_model.enabled", "0") -AllowFailure
+        Save-Text -Path (Join-Path $OutDir "disable-spatial-asset-model.txt") -Text $disableAssetModel.output
+        $disableVirtualRoom = Invoke-AdbCommand -Name "disable Spatial packaged virtual room" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.virtual_room.enabled", "0") -AllowFailure
+        Save-Text -Path (Join-Path $OutDir "disable-spatial-virtual-room.txt") -Text $disableVirtualRoom.output
+        $disableSkybox = Invoke-AdbCommand -Name "disable Spatial skybox" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.skybox.enabled", "0") -AllowFailure
+        Save-Text -Path (Join-Path $OutDir "disable-spatial-skybox.txt") -Text $disableSkybox.output
     }
 
     $summary.status = if ($AllowMissingMarkers) { "completed" } else { "passed" }

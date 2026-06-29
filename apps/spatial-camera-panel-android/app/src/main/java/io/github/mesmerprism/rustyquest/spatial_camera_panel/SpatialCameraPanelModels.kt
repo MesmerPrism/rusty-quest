@@ -15,12 +15,18 @@ internal data class CameraHwbProjectionPlane(
     val right: Vector3,
     val center: Vector3,
     val pose: Pose,
+    val placementMode: CameraHwbProjectionPlacementMode,
     val targetDistanceMeters: Float,
     val projectionWidthMeters: Float,
     val projectionHeightMeters: Float,
     val leftEyeOffset: Vector3,
     val rightEyeOffset: Vector3,
 )
+
+internal enum class CameraHwbProjectionPlacementMode(val markerToken: String) {
+  ViewerLocked("viewer-pose-projection-locked-quad"),
+  VirtualRoomWall("virtual-room-wall-fixed-quad"),
+}
 
 internal fun Long.hasReceiptBit(bit: Long): Boolean = (this and bit) != 0L
 
@@ -60,6 +66,14 @@ internal data class SpatialControllerPrimarySnapshot(
     val componentCount: Int,
     val controllerTypeCount: Int,
     val activeCount: Int,
+    val localControllerCount: Int,
+    val localActiveControllerCount: Int,
+    val localRightControllerType: String,
+    val localRightControllerAttachmentType: String,
+    val localRightControllerActive: Boolean,
+    val localRightControllerButtonState: Int,
+    val localRightControllerChangedButtons: Int,
+    val rightInputSource: String,
     val avatarBodyCount: Int,
     val playerAvatarBodyCount: Int,
     val leftAvatarControllerType: String,
@@ -82,6 +96,8 @@ internal data class SpatialControllerPrimarySnapshot(
     val rightThumbY: Float,
     val down: Boolean,
     val pressed: Boolean,
+    val secondaryDown: Boolean,
+    val secondaryPressed: Boolean,
 )
 
 data class SurfaceParticleControlState(

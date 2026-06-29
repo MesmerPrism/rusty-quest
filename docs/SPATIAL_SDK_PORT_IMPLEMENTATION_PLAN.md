@@ -15,6 +15,13 @@ OpenXR/Vulkan renderer and from downstream private effect stacks.
   explicitly staged runtime path, Java `MediaCodec`, native
   `AImageReader`/`AHardwareBuffer`, and the existing Spatial SDK
   `SceneQuadLayer` carrier. No video asset is packaged in the app.
+- Spatial SDK staged 3D asset support for explicit GLB/GLTF mesh URIs. The
+  public app owns runtime `Mesh` entity creation, transform/scale placement,
+  and optional `Grabbable` controls, not source asset provenance.
+- Packaged virtual room support for explicit GLXF scenes under app assets. The
+  public app owns optional scene loading, skybox/IBL setup, and a fixed
+  virtual-wall camera-quad placement mode; local sample room assets are launch
+  inputs, not required public source assets.
 - Public seven-slot camera guide multi-stack contract with generic final,
   guide blur, post-blur guide, and depth diagnostic slots.
 - Public guide-target/pass manifests and generic separable 5-tap guide blur
@@ -93,6 +100,11 @@ OpenXR/Vulkan renderer and from downstream private effect stacks.
   `apps/native-renderer-android`.
 - Opaque camera-stack layers beyond public raw, guide blur, depth diagnostic,
   video-composition, and projection-carrier probes.
+- Raw source model assets, including FBX files. FBX can be used as a local host
+  test input only after conversion to a staged GLB/GLTF runtime mesh.
+- Local sample room exports, screenshots, or media used to package a headset
+  proof build. The reusable source contract is the generic
+  `spatial-sdk-packaged-virtual-room` loader plus marker surface.
 
 ## Static Contract
 
@@ -115,8 +127,21 @@ The same gate protects the optional Spatial video path: it requires explicit
 runtime controls, MediaCodec-to-native Surface decode, native AImageReader/AHB
 handoff, Vulkan AHB import markers, no CPU pixel copy, no Java HardwareBuffer
 bridge, and no packaged or hardcoded video media path.
-It also checks the private-layer panel registration, right-stick projection
-target scale markers, front-of-camera panel ordering, and generic depth
+The staged 3D asset gate is similarly generic: it requires a declared
+`spatial-sdk-staged-3d-asset` module, explicit runtime mesh URI transport,
+GLB/GLTF SDK mesh formats, raw-FBX conversion markers, and no packaged raw
+source model files.
+The packaged virtual room gate requires the declared
+`spatial-sdk-packaged-virtual-room` boundary, runtime opt-in property, packaged
+GLXF scene URI markers, explicit non-MRUK/non-passthrough-room markers, and the
+right secondary/B button camera-projection wall/full-FOV toggle. With the room
+enabled, the projection surface starts in the full-FOV viewer-locked mode and
+reports
+`projectionDefaultPlacementMode=viewer-pose-projection-locked-quad`,
+`projectionRoomRenderOrder=projection-layer-over-virtual-room`, and
+`legacyLauncherPanelSuppressed=true`. It also checks the private-layer panel
+registration, right-stick projection target scale markers, placement-independent
+layer override markers, front-of-camera panel ordering, and generic depth
 alignment JNI bridge without allowing private effect vocabulary into this
 public lane.
 
@@ -140,6 +165,27 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPa
 The profile and shader sources remain outside this public repo. A build without
 those inputs keeps the public raw-camera fallback and can still prove panel
 input plumbing, but it cannot prove visible layer switching.
+
+For generic 3D asset validation, stage a GLB/GLTF or pass a local FBX plus a
+converted GLB/GLTF export into the headset smoke wrapper:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -Serial <quest-serial> `
+  -AssetSourcePath <local-source-model.fbx> `
+  -AssetConvertedMeshPath <converted-model.glb> `
+  -EnableVirtualRoom `
+  -RequireSpatialAssetModel `
+  -RequireSpatialVirtualRoom
+```
+
+This records `channel=spatial-sdk-asset-model status=entity-created` only after
+the app receives an SDK-loadable mesh URI. Raw FBX paths are conversion-required
+source markers and are not SDK-loadable runtime mesh URIs.
+The virtual room flags require `channel=spatial-virtual-room status=loaded` and
+`status=scene-configured`; the actual GLXF room files may come from a local
+Meta Spatial Editor sample export and should be treated separately from the
+generic public module support.
 
 Build output goes to
 `target\spatial-camera-panel-android\rusty-quest-spatial-camera-panel.apk`.

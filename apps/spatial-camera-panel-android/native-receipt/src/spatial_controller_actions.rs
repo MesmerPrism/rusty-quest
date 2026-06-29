@@ -25,6 +25,9 @@ const LEFT_THUMBSTICK_Y_PATH: &str = "/user/hand/left/input/thumbstick/y";
 const RIGHT_THUMBSTICK_Y_ACTION: &str = "spatial_right_thumbstick_y";
 const RIGHT_THUMBSTICK_Y_LOCALIZED_NAME: &str = "Spatial Right Thumbstick Y";
 const RIGHT_THUMBSTICK_Y_PATH: &str = "/user/hand/right/input/thumbstick/y";
+const RIGHT_BUTTON_B_ACTION: &str = "spatial_right_button_b";
+const RIGHT_BUTTON_B_LOCALIZED_NAME: &str = "Spatial Right Button B";
+const RIGHT_BUTTON_B_PATH: &str = "/user/hand/right/input/b/click";
 const INTERACTION_PROFILES: &[&str] = &[
     "/interaction_profiles/oculus/touch_controller",
     "/interaction_profiles/meta/touch_controller_plus",
@@ -66,20 +69,22 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     match start_result {
         Ok(actions) => {
             marker(format!(
-                "status=started nativeControllerActionBridge=true startMask={} actionSet={} leftThumbstickYAction={} leftThumbstickYInputPath={} rightThumbstickYAction={} rightThumbstickYInputPath={} actionSetAttached={}",
+                "status=started nativeControllerActionBridge=true startMask={} actionSet={} leftThumbstickYAction={} leftThumbstickYInputPath={} rightThumbstickYAction={} rightThumbstickYInputPath={} rightButtonBAction={} rightButtonBInputPath={} actionSetAttached={}",
                 mask,
                 ACTION_SET_NAME,
                 LEFT_THUMBSTICK_Y_ACTION,
                 LEFT_THUMBSTICK_Y_PATH,
                 RIGHT_THUMBSTICK_Y_ACTION,
                 RIGHT_THUMBSTICK_Y_PATH,
+                RIGHT_BUTTON_B_ACTION,
+                RIGHT_BUTTON_B_PATH,
                 crate::bool_token((mask & START_ACTION_SET_ATTACHED) != 0),
             ));
             *guard = Some(actions);
         }
         Err(reason) => {
             marker(format!(
-                "status=start-failed nativeControllerActionBridge=true startMask={} reason={} actionSetAttached=false leftThumbstickYAction=false rightThumbstickYAction=false",
+                "status=start-failed nativeControllerActionBridge=true startMask={} reason={} actionSetAttached=false leftThumbstickYAction=false rightThumbstickYAction=false rightButtonBAction=false",
                 mask,
                 crate::marker_token(&reason),
             ));
@@ -120,6 +125,25 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
 
 #[no_mangle]
 #[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativePollSpatialControllerRightButtonB(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+) -> u8 {
+    let mut guard = CONTROLLER_ACTIONS
+        .lock()
+        .expect("controller action mutex poisoned");
+    let Some(actions) = guard.as_mut() else {
+        return 0;
+    };
+    if actions.poll_right_button_b() {
+        1
+    } else {
+        0
+    }
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
 pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeStopSpatialControllerActions(
     _env: *mut c_void,
     _thiz: *mut c_void,
@@ -136,8 +160,10 @@ struct SpatialControllerActions {
     action_set: xr::ActionSet,
     left_thumbstick_y: xr::Action,
     right_thumbstick_y: xr::Action,
+    right_button_b: xr::Action,
     sync_actions: xr::pfn::SyncActions,
     get_action_state_float: xr::pfn::GetActionStateFloat,
+    get_action_state_boolean: xr::pfn::GetActionStateBoolean,
     destroy_action: xr::pfn::DestroyAction,
     destroy_action_set: xr::pfn::DestroyActionSet,
     poll_count: u64,
@@ -187,6 +213,8 @@ impl SpatialControllerActions {
             resolve_openxr_function(instance, get_instance_proc_addr, "xrSyncActions")?;
         let get_action_state_float: xr::pfn::GetActionStateFloat =
             resolve_openxr_function(instance, get_instance_proc_addr, "xrGetActionStateFloat")?;
+        let get_action_state_boolean: xr::pfn::GetActionStateBoolean =
+            resolve_openxr_function(instance, get_instance_proc_addr, "xrGetActionStateBoolean")?;
         *mask |= START_FUNCTIONS_RESOLVED;
 
         let action_set_info = xr::ActionSetCreateInfo {
@@ -251,12 +279,38 @@ impl SpatialControllerActions {
                 xr_result_token(create_right_action_result)
             ));
         }
+
+        let right_button_b_action_info = xr::ActionCreateInfo {
+            ty: xr::ActionCreateInfo::TYPE,
+            next: ptr::null(),
+            action_name: fixed_c_chars(RIGHT_BUTTON_B_ACTION),
+            action_type: xr::ActionType::BOOLEAN_INPUT,
+            count_subaction_paths: 0,
+            subaction_paths: ptr::null(),
+            localized_action_name: fixed_c_chars(RIGHT_BUTTON_B_LOCALIZED_NAME),
+        };
+        let mut right_button_b = xr::Action::NULL;
+        let create_right_button_b_result =
+            unsafe { create_action(action_set, &right_button_b_action_info, &mut right_button_b) };
+        if create_right_button_b_result != xr::Result::SUCCESS {
+            unsafe {
+                destroy_action(left_thumbstick_y);
+                destroy_action(right_thumbstick_y);
+                destroy_action_set(action_set);
+            }
+            return Err(format!(
+                "xrCreateRightButtonBAction-{}",
+                xr_result_token(create_right_button_b_result)
+            ));
+        }
         *mask |= START_ACTION_CREATED;
 
         let left_binding_path =
             string_to_openxr_path(instance, string_to_path, LEFT_THUMBSTICK_Y_PATH)?;
         let right_binding_path =
             string_to_openxr_path(instance, string_to_path, RIGHT_THUMBSTICK_Y_PATH)?;
+        let right_button_b_binding_path =
+            string_to_openxr_path(instance, string_to_path, RIGHT_BUTTON_B_PATH)?;
         let mut suggested_count = 0_u32;
         for profile in INTERACTION_PROFILES {
             let profile_path = string_to_openxr_path(instance, string_to_path, profile)?;
@@ -268,6 +322,10 @@ impl SpatialControllerActions {
                 xr::ActionSuggestedBinding {
                     action: right_thumbstick_y,
                     binding: right_binding_path,
+                },
+                xr::ActionSuggestedBinding {
+                    action: right_button_b,
+                    binding: right_button_b_binding_path,
                 },
             ];
             let suggested = xr::InteractionProfileSuggestedBinding {
@@ -281,14 +339,15 @@ impl SpatialControllerActions {
             if result == xr::Result::SUCCESS {
                 suggested_count += 1;
                 marker(format!(
-                    "status=binding-suggested interactionProfile={} leftThumbstickYInputPath={} rightThumbstickYInputPath={} leftControllerThumbstickYBinding=true rightControllerThumbstickYBinding=true",
+                    "status=binding-suggested interactionProfile={} leftThumbstickYInputPath={} rightThumbstickYInputPath={} rightButtonBInputPath={} leftControllerThumbstickYBinding=true rightControllerThumbstickYBinding=true rightButtonBBinding=true",
                     crate::marker_token(profile),
                     LEFT_THUMBSTICK_Y_PATH,
                     RIGHT_THUMBSTICK_Y_PATH,
+                    RIGHT_BUTTON_B_PATH,
                 ));
             } else {
                 marker(format!(
-                    "status=binding-warning interactionProfile={} reason={} leftControllerThumbstickYBinding=false rightControllerThumbstickYBinding=false",
+                    "status=binding-warning interactionProfile={} reason={} leftControllerThumbstickYBinding=false rightControllerThumbstickYBinding=false rightButtonBBinding=false",
                     crate::marker_token(profile),
                     xr_result_token(result),
                 ));
@@ -310,6 +369,7 @@ impl SpatialControllerActions {
             unsafe {
                 destroy_action(left_thumbstick_y);
                 destroy_action(right_thumbstick_y);
+                destroy_action(right_button_b);
                 destroy_action_set(action_set);
             }
             return Err(format!(
@@ -320,11 +380,12 @@ impl SpatialControllerActions {
         *mask |= START_ACTION_SET_ATTACHED;
 
         marker(format!(
-            "status=attached actionSet={} actionSetAttached=true suggestedBindingCount={} leftThumbstickYAction=true rightThumbstickYAction=true leftControllerThumbstickY={} rightControllerThumbstickY={}",
+            "status=attached actionSet={} actionSetAttached=true suggestedBindingCount={} leftThumbstickYAction=true rightThumbstickYAction=true rightButtonBAction=true leftControllerThumbstickY={} rightControllerThumbstickY={} rightControllerButtonB={}",
             ACTION_SET_NAME,
             suggested_count,
             LEFT_THUMBSTICK_Y_PATH,
             RIGHT_THUMBSTICK_Y_PATH,
+            RIGHT_BUTTON_B_PATH,
         ));
 
         Ok(Self {
@@ -332,8 +393,10 @@ impl SpatialControllerActions {
             action_set,
             left_thumbstick_y,
             right_thumbstick_y,
+            right_button_b,
             sync_actions,
             get_action_state_float,
+            get_action_state_boolean,
             destroy_action,
             destroy_action_set,
             poll_count: 0,
@@ -348,18 +411,12 @@ impl SpatialControllerActions {
         self.poll_thumbstick_y(self.right_thumbstick_y, "right")
     }
 
+    fn poll_right_button_b(&mut self) -> bool {
+        self.poll_boolean(self.right_button_b, "rightButtonB")
+    }
+
     fn poll_thumbstick_y(&mut self, action: xr::Action, hand: &str) -> f32 {
-        let active_set = xr::ActiveActionSet {
-            action_set: self.action_set,
-            subaction_path: xr::Path::NULL,
-        };
-        let sync_info = xr::ActionsSyncInfo {
-            ty: xr::ActionsSyncInfo::TYPE,
-            next: ptr::null(),
-            count_active_action_sets: 1,
-            active_action_sets: &active_set,
-        };
-        let sync_result = unsafe { (self.sync_actions)(self.session, &sync_info) };
+        let sync_result = self.sync_action_set();
         if sync_result != xr::Result::SUCCESS {
             if self.poll_count == 0 || self.poll_count % 120 == 0 {
                 marker(format!(
@@ -424,6 +481,84 @@ impl SpatialControllerActions {
             0.0
         }
     }
+
+    fn poll_boolean(&mut self, action: xr::Action, label: &str) -> bool {
+        let sync_result = self.sync_action_set();
+        if sync_result != xr::Result::SUCCESS {
+            if self.poll_count == 0 || self.poll_count % 120 == 0 {
+                marker(format!(
+                    "status=sync-error pollCount={} reason={} {}Active=false",
+                    self.poll_count,
+                    xr_result_token(sync_result),
+                    label,
+                ));
+            }
+            self.poll_count = self.poll_count.saturating_add(1);
+            return false;
+        }
+
+        let get_info = xr::ActionStateGetInfo {
+            ty: xr::ActionStateGetInfo::TYPE,
+            next: ptr::null(),
+            action,
+            subaction_path: xr::Path::NULL,
+        };
+        let mut state = xr::ActionStateBoolean {
+            ty: xr::ActionStateBoolean::TYPE,
+            next: ptr::null_mut(),
+            current_state: xr::FALSE,
+            changed_since_last_sync: xr::FALSE,
+            last_change_time: xr::Time::from_nanos(0),
+            is_active: xr::FALSE,
+        };
+        let state_result =
+            unsafe { (self.get_action_state_boolean)(self.session, &get_info, &mut state) };
+        if state_result != xr::Result::SUCCESS {
+            if self.poll_count == 0 || self.poll_count % 120 == 0 {
+                marker(format!(
+                    "status=state-error pollCount={} reason={} {}Active=false",
+                    self.poll_count,
+                    xr_result_token(state_result),
+                    label,
+                ));
+            }
+            self.poll_count = self.poll_count.saturating_add(1);
+            return false;
+        }
+
+        let active = state.is_active == xr::TRUE;
+        let down = active && state.current_state == xr::TRUE;
+        if self.poll_count == 0
+            || self.poll_count % 120 == 0
+            || state.changed_since_last_sync == xr::TRUE
+        {
+            marker(format!(
+                "status=polled pollCount={} {}Active={} {}Down={} changedSinceLastSync={}",
+                self.poll_count,
+                label,
+                crate::bool_token(active),
+                label,
+                crate::bool_token(down),
+                crate::bool_token(state.changed_since_last_sync == xr::TRUE),
+            ));
+        }
+        self.poll_count = self.poll_count.saturating_add(1);
+        down
+    }
+
+    fn sync_action_set(&self) -> xr::Result {
+        let active_set = xr::ActiveActionSet {
+            action_set: self.action_set,
+            subaction_path: xr::Path::NULL,
+        };
+        let sync_info = xr::ActionsSyncInfo {
+            ty: xr::ActionsSyncInfo::TYPE,
+            next: ptr::null(),
+            count_active_action_sets: 1,
+            active_action_sets: &active_set,
+        };
+        unsafe { (self.sync_actions)(self.session, &sync_info) }
+    }
 }
 
 impl Drop for SpatialControllerActions {
@@ -431,6 +566,7 @@ impl Drop for SpatialControllerActions {
         unsafe {
             (self.destroy_action)(self.left_thumbstick_y);
             (self.destroy_action)(self.right_thumbstick_y);
+            (self.destroy_action)(self.right_button_b);
             (self.destroy_action_set)(self.action_set);
         }
     }

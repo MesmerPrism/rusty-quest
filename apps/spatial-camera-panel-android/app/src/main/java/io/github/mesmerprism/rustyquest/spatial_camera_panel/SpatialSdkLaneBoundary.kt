@@ -6,6 +6,8 @@ internal enum class SpatialSdkLaneKind {
   CameraProjection,
   PublicMultiStack,
   SurfaceParticle,
+  StagedAsset,
+  VirtualRoom,
   DebugProbe,
 }
 
@@ -35,6 +37,7 @@ internal object SpatialSdkLayerCarrier {
                   "camera-projection",
                   "public-multistack",
                   "surface-particle",
+                  "virtual-room",
                   "debug-probe",
               ),
           mustNotOwn = setOf("Camera2 streams", "Vulkan shader semantics", "particle dynamics", "session truth"),
@@ -97,6 +100,34 @@ internal object SurfaceParticleLayerController {
       )
 }
 
+internal object SpatialStagedAssetBoundary {
+  val boundary =
+      SpatialSdkLaneBoundary(
+          id = SpatialStagedAssetModule.MODULE_ID,
+          kind = SpatialSdkLaneKind.StagedAsset,
+          owner = "Spatial SDK staged 3D asset module",
+          authority = "runtime Mesh entity creation from an explicit staged mesh URI",
+          renderCarrier = "Spatial SDK Entity Mesh component",
+          highRatePayloadPolicy = "staged mesh file only, no Kotlin vertex arrays",
+          mayRequest = setOf("spatial-sdk-layer-carrier"),
+          mustNotOwn = setOf("source asset provenance", "asset conversion", "effect semantics"),
+      )
+}
+
+internal object SpatialVirtualRoomBoundary {
+  val boundary =
+      SpatialSdkLaneBoundary(
+          id = "spatial-sdk-packaged-virtual-room",
+          kind = SpatialSdkLaneKind.VirtualRoom,
+          owner = "Spatial SDK packaged virtual room module",
+          authority = "optional packaged GLXF scene loading and sample-style room lighting",
+          renderCarrier = "Spatial SDK GLXF composition plus skybox mesh",
+          highRatePayloadPolicy = "packaged scene assets only, no Kotlin geometry arrays",
+          mayRequest = setOf("spatial-sdk-layer-carrier"),
+          mustNotOwn = setOf("MRUK real-room placement", "passthrough room capture", "private model provenance"),
+      )
+}
+
 internal object SpatialDebugProbeController {
   val boundary =
       SpatialSdkLaneBoundary(
@@ -119,6 +150,8 @@ internal object SpatialSdkLaneBoundaries {
           CameraProjectionProbeController.boundary,
           PublicMultiStackController.boundary,
           SurfaceParticleLayerController.boundary,
+          SpatialStagedAssetBoundary.boundary,
+          SpatialVirtualRoomBoundary.boundary,
           SpatialDebugProbeController.boundary,
       )
 
