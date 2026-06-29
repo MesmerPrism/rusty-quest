@@ -115,7 +115,8 @@ SDK quad carrier at a fixed 1.0m default distance and locks the opposed
 per-eye horizontal UV offset to the current default `0.046320`, captured from
 a live Quest 3S headset readback on 2026-06-28 where the camera projection and
 Meta performance HUD aligned simultaneously. Left-stick Y controls workflow
-panel distance, not projection offset tuning or private-layer panel distance.
+panel distance, and when the private-layer panel is open it controls that
+panel's stored distance; it does not tune projection stereo offset.
 Runtime readback uses
 `projectionTargetStereoHorizontalOffsetUv`, `projectionTargetLeftOffsetUv`,
 `projectionTargetRightOffsetUv`, and the effective packed rect markers. While
@@ -130,13 +131,17 @@ mapping stable. Runtime readback uses `projectionTargetLiveScale`,
 `projectionTargetScaleJoystickControlsEnabled=true`, and
 `right-stick-y-projection-target-scale`. Right-stick X is intentionally
 ignored by the activity and swallowed when it is the only active axis so it no
-longer drives panel scale or distance. The private layer panel is a Spatial SDK
+longer drives panel scale or distance. While the private layer panel is open,
+thumbstick-driven projection scale is suppressed so controller motion cannot
+resize the camera projection while the UI is under the pointer. Right-stick
+side flick is ignored for private-panel movement. The private layer panel is a
+Spatial SDK
 `Grabbable(type = PIVOT_Y)` entity, matching Meta's floating panel samples,
 with a visual header grab handle but no Compose drag-driven movement.
-When opened, it is seeded once in front of the viewer and then left in
-Spatial-SDK-owned free transform mode. Forced radial placement writes stay
-disabled, but left-stick Y now nudges the panel's current SDK transform nearer
-or farther when it is not actively palm-grabbed.
+When opened, it is seeded in front of the viewer at the last stored distance.
+When it is not actively grabbed, the app reapplies the stored placement so
+right-stick/default SDK nudges do not teleport it; while grabbed, the SDK
+transform is accepted and synced back into the stored placement.
 
 The right secondary/B button toggles the raw camera projection quad between a
 fixed virtual wall pose inside the packaged room and the full-field
@@ -158,15 +163,23 @@ layer choices, live projection-area scale, live depth source policy
 (`mono-layer0`, `mono-layer1`, `eye-index`, or `compare`), and live
 depth-alignment X/Y/scale controls. It is registered as
 `spatial_private_layer_panel`, renders at
-`panelRenderOrder=front-of-camera-video` as a `spatial-sdk-mesh` world-space
-panel with layer config disabled, uses Spatial SDK `Grabbable` as the
-movement authority so it sticks to the grabbed pose, and updates the public
-opaque projection route through
+`panelRenderOrder=front-of-camera-video` as a `spatial-sdk-layer` world-space
+panel with layer config enabled and `privateLayerPanelLayerZIndex` above the
+camera/video projection layer, uses Spatial SDK `Grabbable` as the movement authority
+so it sticks to the grabbed pose, and updates the public opaque
+projection route through
 `nativeUpdatePrivateLayerOverride` and
 `nativeUpdatePrivateLayerDepthLayerPolicy` plus
 `nativeUpdatePrivateLayerDepthAlignment`. Layer override markers include
 `layerOverrideAppliesToWallAndFullFov=true`, and the current override is
 reapplied after wall/full-FOV placement toggles.
+When the packaged room and full-FOV projection are both active, opening this
+control panel keeps the camera/video projection as a compositor layer above the
+room and keeps the projection plane at its full-FOV foreground size. The
+projection panel carrier is explicitly input-transparent
+(`projectionPanelInputPassThrough=true`, `projectionPanelHittable=NoCollision`),
+so controller rays and SDK grab skip the full-FOV render panel and resolve to
+the normal-distance UI panel first.
 The panel explicitly accepts A/trigger select for its Compose controls; the
 inner palm/squeeze action remains the SDK grab path.
 

@@ -829,6 +829,7 @@ unsafe fn render_camera_hwb_probe(
     let mut transition_left_camera_image = true;
     let mut transition_right_camera_image = matches!(mode, CameraHwbProbeMode::RawColorProjection);
     let mut frames_presented = 0_u32;
+    let mut spatial_video_projection_rendered_marker_logged = false;
     while (max_frames == 0 || frames_presented < max_frames)
         && !STOP_CAMERA_HWB_PROBE.load(Ordering::Acquire)
     {
@@ -1011,16 +1012,25 @@ unsafe fn render_camera_hwb_probe(
                     ),
                 ));
             }
-            if video_settings.enabled {
-                log_marker(format!(
-                    "status=spatial-video-projection-frame-composed framesPresented={} outputMode=raw-color-target-rect stereoSource=camera50-51 videoComposedBeforeCamera=true sameSurfaceComposition=true cameraProjectionAlignmentPreserved=true videoProjectionRendered={} spatialVideoProjectionRendered={} videoProjectionGpuImportReady={} {} {} runtimeCrash=false",
-                    frames_presented,
-                    record_result.video_stats.rendered,
-                    record_result.video_stats.rendered,
-                    record_result.video_stats.ready,
-                    video_settings.marker_fields(),
-                    record_result.video_stats.marker_fields(),
-                ));
+        }
+        let should_log_video_projection_frame =
+            mode.should_stream_latest_frame()
+                && video_settings.enabled
+                && (frames_presented <= 4
+                    || (!spatial_video_projection_rendered_marker_logged
+                        && record_result.video_stats.rendered));
+        if should_log_video_projection_frame {
+            log_marker(format!(
+                "status=spatial-video-projection-frame-composed framesPresented={} outputMode=raw-color-target-rect stereoSource=camera50-51 videoComposedBeforeCamera=true sameSurfaceComposition=true cameraProjectionAlignmentPreserved=true videoProjectionRendered={} spatialVideoProjectionRendered={} videoProjectionGpuImportReady={} {} {} runtimeCrash=false",
+                frames_presented,
+                record_result.video_stats.rendered,
+                record_result.video_stats.rendered,
+                record_result.video_stats.ready,
+                video_settings.marker_fields(),
+                record_result.video_stats.marker_fields(),
+            ));
+            if record_result.video_stats.rendered {
+                spatial_video_projection_rendered_marker_logged = true;
             }
         }
         if frames_presented == 1 {

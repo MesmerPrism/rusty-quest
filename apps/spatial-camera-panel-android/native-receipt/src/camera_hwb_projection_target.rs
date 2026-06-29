@@ -2,6 +2,8 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::spatial_public_multistack_runtime::current_spatial_public_opaque_projection_layer_override;
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct CameraTargetRect {
     pub(crate) x: f32,
@@ -149,7 +151,12 @@ pub(crate) fn camera_hwb_projection_push() -> CameraHwbProjectionPush {
     CameraHwbProjectionPush {
         left_rect: packed_left_rect(left_effective).as_push(),
         right_rect: packed_right_rect(right_effective).as_push(),
-        params: [CAMERA_HWB_PROJECTION_BORDER_OPACITY, 0.0, 0.0, 0.0],
+        params: [
+            CAMERA_HWB_PROJECTION_BORDER_OPACITY,
+            current_spatial_public_opaque_projection_layer_override(),
+            1.0,
+            0.0,
+        ],
     }
 }
 
@@ -159,7 +166,7 @@ pub(crate) fn camera_hwb_projection_marker_fields() -> String {
     let (left_effective, right_effective) =
         effective_target_rects_for_scale_and_stereo_offset(live_scale, stereo_horizontal_offset_uv);
     format!(
-        "stereoSource=camera50-51 leftCameraId={} rightCameraId={} leftTargetScreenUvRect={} rightTargetScreenUvRect={} leftEffectiveTargetScreenUvRect={} rightEffectiveTargetScreenUvRect={} leftPackedEffectiveTargetScreenUvRect={} rightPackedEffectiveTargetScreenUvRect={} projectionTargetControlsEnabled=true projectionTargetLiveScale={:.4} projectionTargetTunedMaxScale={:.4} projectionTargetMinScale={:.4} projectionTargetMaxScale={:.4} projectionTargetOffsetUv={:.6},{:.6} projectionTargetStereoHorizontalOffsetUv={:.6} projectionTargetStereoHorizontalOffsetDefaultUv={:.6} projectionTargetStereoHorizontalOffsetRangeUv={:.6}..{:.6} projectionTargetLeftOffsetUv={:.6},{:.6} projectionTargetRightOffsetUv={:.6},{:.6} projectionTargetStereoHorizontalOffsetSign=positive-increases-separation borderOpacity={:.1} targetClipPolicy=clip-to-visible-eye projectionContentMappingMode=target-local-raster monoDuplicated=false",
+        "stereoSource=camera50-51 leftCameraId={} rightCameraId={} leftTargetScreenUvRect={} rightTargetScreenUvRect={} leftEffectiveTargetScreenUvRect={} rightEffectiveTargetScreenUvRect={} leftPackedEffectiveTargetScreenUvRect={} rightPackedEffectiveTargetScreenUvRect={} projectionTargetControlsEnabled=true projectionTargetLiveScale={:.4} projectionTargetTunedMaxScale={:.4} projectionTargetMinScale={:.4} projectionTargetMaxScale={:.4} projectionTargetOffsetUv={:.6},{:.6} projectionTargetStereoHorizontalOffsetUv={:.6} projectionTargetStereoHorizontalOffsetDefaultUv={:.6} projectionTargetStereoHorizontalOffsetRangeUv={:.6}..{:.6} projectionTargetLeftOffsetUv={:.6},{:.6} projectionTargetRightOffsetUv={:.6},{:.6} projectionTargetStereoHorizontalOffsetSign=positive-increases-separation borderOpacity={:.1} fallbackProjectionLayerOverrideDiagnostic=true fallbackProjectionLayerOverride={:.3} targetClipPolicy=clip-to-visible-eye projectionContentMappingMode=target-local-raster monoDuplicated=false",
         CAMERA_HWB_LEFT_CAMERA_ID,
         CAMERA_HWB_RIGHT_CAMERA_ID,
         CAMERA_HWB_LEFT_TARGET_RECT.marker_token(),
@@ -183,6 +190,7 @@ pub(crate) fn camera_hwb_projection_marker_fields() -> String {
         stereo_horizontal_offset_uv,
         CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
         CAMERA_HWB_PROJECTION_BORDER_OPACITY,
+        current_spatial_public_opaque_projection_layer_override(),
     )
 }
 
@@ -417,7 +425,10 @@ mod tests {
     fn push_constant_layout_matches_shader_contract() {
         assert_eq!(std::mem::size_of::<CameraHwbProjectionPush>(), 48);
         let push = camera_hwb_projection_push();
-        assert_eq!(push.params, [0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(push.params[0], 0.0);
+        assert!((-1.0..=6.0).contains(&push.params[1]));
+        assert_eq!(push.params[2], 1.0);
+        assert_eq!(push.params[3], 0.0);
     }
 
     #[test]
@@ -452,6 +463,8 @@ mod tests {
         assert!(fields.contains("projectionTargetStereoHorizontalOffsetDefaultUv=0.046320"));
         assert!(fields.contains("projectionTargetLeftOffsetUv=-0.046320,0.000000"));
         assert!(fields.contains("projectionTargetRightOffsetUv=0.046320,0.000000"));
+        assert!(fields.contains("fallbackProjectionLayerOverrideDiagnostic=true"));
+        assert!(fields.contains("fallbackProjectionLayerOverride="));
         assert!(fields.contains("targetClipPolicy=clip-to-visible-eye"));
         assert!(fields.contains("projectionContentMappingMode=target-local-raster"));
         assert!(fields.contains("monoDuplicated=false"));

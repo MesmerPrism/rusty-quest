@@ -4,6 +4,10 @@
 Spatial SDK panel behavior. It is intentionally separate from the native
 OpenXR/Vulkan renderer and from downstream private effect stacks.
 
+The room/world-space projection iteration history from the pre-room baseline
+through the current video-surface panel carrier and private UI ordering work is
+tracked in `docs/SPATIAL_ROOM_WORLDSPACE_ITERATION_LOG.md`.
+
 ## Owned Here
 
 - Spatial SDK feature registration and one Compose-backed control panel.
@@ -59,27 +63,39 @@ OpenXR/Vulkan renderer and from downstream private effect stacks.
   eye center. The live control is reported with
   `projectionTargetScaleJoystickControlsEnabled=true` and
   `right-stick-y-projection-target-scale`. Left-stick Y controls workflow-panel
-  distance after the default stereo horizontal offset was locked in, and nudges
-  the private layer panel's current free-transform distance when that panel is
-  not actively palm-grabbed. Right-stick X is intentionally ignored/swallowed
-  so it no longer drives panel scale or distance.
+  distance after the default stereo horizontal offset was locked in; while the
+  private-layer panel is open, left-stick Y controls that panel's stored
+  distance and persists across close/open. Right-stick X is intentionally
+  ignored/swallowed so it no longer drives panel scale, distance, or private
+  panel side-flick movement.
 - The right primary button opens a generic `spatial_private_layer_panel` while
-  the camera/video stack is active. The panel renders as a Spatial SDK mesh
-  world-space object in front of the camera/video projection instead of as a
-  compositor layer, exposes the seven generic layer choices, projection area
-  scale, depth source policy (`mono-layer0`, `mono-layer1`, `eye-index`, or
-  `compare`), and depth-alignment X/Y/scale controls, and updates native state
-  through `nativeUpdatePrivateLayerOverride`,
+  the camera/video stack is active. The panel renders as a Spatial SDK layer-backed
+  world-space object with a compositor z-index above the
+  camera/video projection layer, exposes the seven generic layer choices,
+  projection area scale, depth source policy (`mono-layer0`, `mono-layer1`,
+  `eye-index`, or `compare`), and depth-alignment X/Y/scale controls, and
+  updates native state through `nativeUpdatePrivateLayerOverride`,
   `nativeUpdatePrivateLayerDepthLayerPolicy`, and
   `nativeUpdatePrivateLayerDepthAlignment`. Movement is owned by the Spatial
-  SDK entity `Grabbable(type = PIVOT_Y)` component, matching Meta's floating
-  panel samples. Compose drag deltas remain disabled; the header handle is a
-  visual affordance only, so pointer deltas cannot feed back into panel
+  SDK entity `Grabbable(type = PIVOT_Y)` component while actively grabbed;
+  otherwise the app reapplies stored placement so default controller side-flick
+  movement cannot reposition it. Compose drag deltas remain disabled; the
+  header handle is a visual affordance only, so pointer deltas cannot feed back
+  into panel
   transforms. The panel is seeded once in front of the viewer and then left to
   the Spatial SDK as a free world-space grabbable; forced radial placement
-  writes remain disabled while left-stick Y applies a direct distance nudge to
-  the current SDK transform. A/trigger select is explicitly enabled for the
-  Compose layer buttons, while controller squeeze/palm remains the grab path.
+  writes remain disabled. While this panel is open, thumbstick-driven projection
+  scale and panel-distance writes are suppressed so controller motion cannot
+  move the UI out from under the pointer. A/trigger select is explicitly
+  enabled for the Compose layer buttons, while controller squeeze/palm remains
+  the grab path.
+- In packaged-room full-FOV mode, projection visibility and controller
+  hit-testing are intentionally separated: the projection remains a higher
+  compositor layer than the room and keeps its foreground full-FOV size, but
+  the projection panel carrier is marked input-transparent with
+  `projectionPanelInputPassThrough=true` and
+  `projectionPanelHittable=NoCollision`. Controller rays/grab skip the
+  full-FOV render panel and resolve to the normal-distance UI panel first.
 - Strict headset smoke support for public multi-stack projection activation:
   `-RequirePublicMultiStackProjection` requires guide targets, public blur,
   opaque guide/projection pipelines, fallback depth, projection-applied, and

@@ -348,7 +348,7 @@ $summary = [ordered]@{
     spatial_asset_model_runtime_property_mesh_uri = "debug.rustyquest.spatial.asset_model.mesh_uri"
     spatial_asset_model_launch_transport = "none"
     public_multistack_depth_layer_policy = $depthLayerPolicyToken
-    carrier = "scenequadlayer-createAsAndroid-vulkan-wsi"
+    carrier = "runtime-detected"
     tag_logcat_stream_path = $tagLogcatStreamPath
     tag_logcat_error_path = $tagLogcatErrorPath
     pid_logcat_path = $pidLogcatPath
@@ -616,7 +616,30 @@ try {
     } else {
         (Test-TextContains $evidenceText "status=start") -and (Test-TextContains $evidenceText "rawCameraProjectionProbe=true")
     }
-    $summary.layer_created = Test-TextContains $evidenceText "status=raw-camera-projection-layer-created"
+    $summary.scene_quad_layer_carrier = Test-TextContains $evidenceText "carrier=scenequadlayer-createAsAndroid-vulkan-wsi"
+    $summary.scene_quad_layer_created = Test-TextContains $evidenceText "status=raw-camera-projection-layer-created"
+    $summary.scene_panel_carrier = (Test-TextContains $evidenceText "scenePanelCarrier=true") -and (Test-TextContains $evidenceText "carrier=video-surface-panel-scene-object")
+    $summary.scene_panel_carrier_entity_created = $evidenceText -match "status=scene-panel-carrier-entity-spawned[^\r\n]*entityCreated=true"
+    $summary.scene_panel_carrier_ready = $evidenceText -match "status=scene-panel-ready[^\r\n]*surfaceValid=true"
+    $summary.scene_panel_carrier_native_start_requested = $evidenceText -match "status=native-start-requested[^\r\n]*scenePanelCarrier=true"
+    $summary.projection_panel_input_pass_through = Test-TextContains $evidenceText "projectionPanelInputPassThrough=true"
+    $summary.projection_panel_hittable_no_collision = Test-TextContains $evidenceText "projectionPanelHittable=NoCollision"
+    $summary.private_layer_panel_default_reach_distance_preserved = Test-TextContains $evidenceText "privateLayerPanelDefaultReachDistancePreserved=true"
+    $summary.private_layer_panel_left_stick_distance_enabled = Test-TextContains $evidenceText "privateLayerPanelDistanceControl=left-stick-y-private-panel-free-transform-distance"
+    $summary.private_layer_panel_distance_persists_across_toggle = Test-TextContains $evidenceText "privateLayerPanelDistancePersistsAcrossToggle=true"
+    $summary.right_stick_side_flick_panel_move_disabled = Test-TextContains $evidenceText "rightStickSideFlickPanelMoveDisabled=true"
+    $summary.private_layer_panel_button_selected = $evidenceText -match "status=layer-button-selected[^\r\n]*source=private-layer-control-panel"
+    $summary.private_layer_panel_override_submitted = $evidenceText -match "status=layer-override-submitted[^\r\n]*source=private-layer-control-panel"
+    $summary.private_layer_panel_override_native_updated = Test-TextContains $evidenceText "status=private-layer-override-updated"
+    $summary.private_layer_panel_projection_refresh_forced = Test-TextContains $evidenceText "layerOverrideForcedProjectionRefresh=true"
+    $summary.layer_created = [bool]$summary.scene_quad_layer_created -or [bool]$summary.scene_panel_carrier_entity_created
+    $summary.carrier = if ([bool]$summary.scene_panel_carrier) {
+        "video-surface-panel-scene-object"
+    } elseif ([bool]$summary.scene_quad_layer_carrier) {
+        "scenequadlayer-createAsAndroid-vulkan-wsi"
+    } else {
+        "unknown"
+    }
     $summary.native_start_requested = Test-TextContains $evidenceText "status=native-start-requested"
     $summary.render_loop_ready = Test-TextContains $evidenceText "status=render-loop-ready"
     $summary.camera_runtime_started = Test-TextContains $evidenceText "status=camera-runtime-started"
@@ -638,7 +661,7 @@ try {
     $summary.projection_target_stereo_horizontal_offset_readback = Test-TextContains $evidenceText "projectionTargetStereoHorizontalOffsetUv="
     $summary.projection_target_stereo_horizontal_offset_default = Test-TextContains $evidenceText "projectionTargetStereoHorizontalOffsetDefaultUv=0.046320"
     $summary.projection_target_left_right_offset_readback = (Test-TextContains $evidenceText "projectionTargetLeftOffsetUv=") -and (Test-TextContains $evidenceText "projectionTargetRightOffsetUv=")
-    $summary.projection_target_stereo_horizontal_offset_control_disabled = Test-TextContains $evidenceText "stereoHorizontalOffsetJoystickInput=disabled-default-locked-left-stick-y-controls-panel-distance-private-free-transform"
+    $summary.projection_target_stereo_horizontal_offset_control_disabled = Test-TextContains $evidenceText "stereoHorizontalOffsetJoystickInput=disabled-default-locked-left-stick-y-controls-workflow-or-private-panel-distance-only"
     $summary.mono_duplicated_false = Test-TextContains $evidenceText "monoDuplicated=false"
     $summary.private_shader_stack_false = Test-TextContains $evidenceText "privateShaderStack=false"
     $summary.custom_projection_stack_false = Test-TextContains $evidenceText "customProjectionStack=false"
@@ -908,6 +931,10 @@ try {
         )
         if (-not $VideoOnly) {
             $requiredFlags += @(
+                "scene_panel_carrier",
+                "scene_panel_carrier_entity_created",
+                "scene_panel_carrier_ready",
+                "scene_panel_carrier_native_start_requested",
                 "private_layer_controls_apply_to_wall_and_full_fov"
             )
         }
