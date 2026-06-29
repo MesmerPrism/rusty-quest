@@ -154,12 +154,16 @@ right secondary/B button camera-projection wall/full-FOV toggle. With the room
 enabled, the projection surface starts in the full-FOV viewer-locked mode and
 reports
 `projectionDefaultPlacementMode=viewer-pose-projection-locked-quad`,
-`projectionRoomRenderOrder=projection-layer-over-virtual-room`, and
-`legacyLauncherPanelSuppressed=true`. It also checks the private-layer panel
-registration, right-stick projection target scale markers, placement-independent
-layer override markers, front-of-camera panel ordering, and generic depth
-alignment JNI bridge without allowing private effect vocabulary into this
-public lane.
+`projectionCarrier=scenequadlayer-room-object`,
+`projectionRoomRenderOrder=scenequadlayer-room-object-depth-order-under-test`,
+and `legacyLauncherPanelSuppressed=true`. The previous
+`video-surface-panel-scene-object` carrier remains a runtime comparison path
+through `debug.rustyquest.spatial.camera_hwb_projection_probe.carrier`. The
+private-layer panel is currently back on the pre-room `spatial-sdk-mesh` input
+path while this room-object carrier is tested. The gate also checks right-stick
+projection target scale markers, placement-independent layer override markers,
+and the generic depth alignment JNI bridge without allowing private effect
+vocabulary into this public lane.
 
 ## Build
 

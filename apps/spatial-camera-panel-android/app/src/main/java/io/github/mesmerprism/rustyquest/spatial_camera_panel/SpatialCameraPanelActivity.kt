@@ -82,7 +82,6 @@ import com.meta.spatial.runtime.LayerAlphaBlend
 import com.meta.spatial.runtime.LayerFilters
 import com.meta.spatial.runtime.MaterialSidedness
 import com.meta.spatial.runtime.NetworkedAssetLoader
-import com.meta.spatial.runtime.PanelShapeLayerBlendType
 import com.meta.spatial.runtime.PanelSceneObject
 import com.meta.spatial.runtime.PanelSurface
 import com.meta.spatial.runtime.ReferenceSpace
@@ -240,6 +239,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var cameraHwbProjectionStereoHorizontalOffsetUv =
       CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV
   private var cameraHwbProjectionPlacementMode = CameraHwbProjectionPlacementMode.ViewerLocked
+  private var cameraHwbProjectionCarrierMode = CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject
   private var lastCameraHwbProjectionPlacementToggleMs = 0L
   private var cameraHwbProjectionSecondaryToggleArmed = false
   private var cameraHwbProjectionMarkerCount = 0
@@ -632,15 +632,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               val layerUpdateStatus =
                   updatePrivateLayerPanelLayer("panel-setup", forceLog = false)
               marker(
-                  "channel=private-layer-panel status=panel-layer-ready " +
+                      "channel=private-layer-panel status=panel-layer-ready " +
                       "spatialPrivateLayerControlPanel=true " +
-                      "privateLayerPanelRenderMode=spatial-sdk-layer " +
-                      "privateLayerPanelLayerConfig=enabled " +
+                      "privateLayerPanelRenderMode=spatial-sdk-mesh " +
+                      "privateLayerPanelLayerConfig=disabled " +
                       "privateLayerPanelLayerUpdateStatus=${markerToken(layerUpdateStatus)} " +
-                      "privateLayerPanelLayerZIndex=$PRIVATE_LAYER_PANEL_LAYER_Z_INDEX " +
+                      "privateLayerPanelLayerZIndex=none " +
                       "cameraVideoProjectionLayerZIndex=${cameraHwbProjectionZIndexForPlacement(cameraHwbProjectionPlacementMode)} " +
-                      "privateLayerPanelAboveCameraProjectionLayer=${PRIVATE_LAYER_PANEL_LAYER_Z_INDEX > cameraHwbProjectionZIndexForPlacement(cameraHwbProjectionPlacementMode)} " +
-                      "panelRenderOrder=front-of-camera-video runtimeCrash=false"
+                      "privateLayerPanelAboveCameraProjectionLayer=mesh-panel-depth-order " +
+                      "panelRenderOrder=spatial-sdk-mesh-panel-depth-order runtimeCrash=false"
               )
             },
         ),
@@ -796,6 +796,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (spatialVirtualRoomLoadJob != null || spatialVirtualRoomEntity != null) {
       return
     }
+    cameraHwbProjectionCarrierMode = currentCameraHwbProjectionCarrierMode()
     applyPanelPlacement()
     runCatching {
           NetworkedAssetLoader.init(
@@ -821,6 +822,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "roomAssetSource=packaged-glxf virtualRoomSceneAuthoring=meta-spatial-editor " +
             "sampleRoomAssetPolicy=local-launch-input genericModuleSupport=true " +
             "projectionDefaultPlacementMode=${cameraHwbProjectionPlacementMode.markerToken} " +
+            "projectionCarrier=${cameraHwbProjectionCarrierToken()} " +
+            "projectionCarrierProperty=$CAMERA_HWB_PROJECTION_CARRIER_PROPERTY " +
+            "projectionRoomRenderOrder=${cameraHwbProjectionRoomRenderOrderToken()} " +
             "rightSecondaryTogglesFullFov=true projectionDisplaySurface=video-plus-custom-camera-stack " +
             "legacyLauncherPanelSuppressed=true " +
             "mrukPlacement=false passthroughRoomPlacement=false highRateJsonPayload=false"
@@ -878,6 +882,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if ((!virtualRoomEnabled && !skyboxEnabled) || spatialVirtualRoomConfigured) {
       return
     }
+    cameraHwbProjectionCarrierMode = currentCameraHwbProjectionCarrierMode()
     spatialVirtualRoomConfigured = true
     val lightingConfigured =
         runCatching {
@@ -945,7 +950,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "skyboxMaterialSidedness=back-sided skyboxProjectionForegroundPolicy=scene-layer-over-background-skybox " +
             "referenceSpace=LOCAL_FLOOR viewOrigin=0.0;0.0;2.0 yawDegrees=180.0 " +
             "projectionDefaultPlacementMode=${cameraHwbProjectionPlacementMode.markerToken} " +
-            "rightSecondaryTogglesFullFov=true projectionRoomRenderOrder=projection-layer-over-virtual-room " +
+            "projectionCarrier=${cameraHwbProjectionCarrierToken()} " +
+            "projectionCarrierProperty=$CAMERA_HWB_PROJECTION_CARRIER_PROPERTY " +
+            "rightSecondaryTogglesFullFov=true projectionRoomRenderOrder=${cameraHwbProjectionRoomRenderOrderToken()} " +
             "legacyLauncherPanelSuppressed=true " +
             "roomAssetSource=packaged-glxf roomMeshLoaded=$virtualRoomEnabled " +
             "mrukPlacement=false passthroughRoomPlacement=false " +
@@ -2179,6 +2186,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             CAMERA_HWB_PROJECTION_MAX_READER_MAX_IMAGES,
         )
     val videoSettings = currentSpatialVideoProjectionSettings(intent)
+    cameraHwbProjectionCarrierMode = currentCameraHwbProjectionCarrierMode()
     val carrier = cameraHwbProjectionCarrierToken()
     marker(
         "channel=camera-hwb-spatial-probe status=start rawCameraProjectionProbe=true " +
@@ -2207,6 +2215,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     cleanupCameraHwbProjectionPanelCarrier("camera-hwb-projection-pre-run")
     spatialVideoProjectionSettings = videoSettings
     cameraHwbProjectionEntity = null
+    cameraHwbProjectionCarrierMode = currentCameraHwbProjectionCarrierMode()
     cameraHwbProjectionReaderMaxImages = readerMaxImages
     cameraHwbProjectionTargetScale = initialCameraHwbProjectionTargetScale()
     cameraHwbProjectionStereoHorizontalOffsetUv =
@@ -2272,7 +2281,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
             "surfaceValid=$surfaceValid widthPx=$CAMERA_HWB_PROJECTION_WIDTH_PX " +
             "heightPx=$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
-            "carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+            "carrier=${cameraHwbProjectionCarrierToken()} " +
+            "renderSurfaceCarrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
             cameraHwbProjectionStereoMarkerFields() + " " +
             SpatialPublicMultiStack.markerFields()
     )
@@ -2357,7 +2367,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         "channel=camera-hwb-spatial-probe status=native-start-requested rawCameraProjectionProbe=true " +
             "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
             "nativeStartRequested=true startMask=$startMask requestedFrames=0 frameLimit=none " +
-            "readerMaxImages=$readerMaxImages carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+            "readerMaxImages=$readerMaxImages carrier=${cameraHwbProjectionCarrierToken()} " +
+            "renderSurfaceCarrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
             cameraHwbProjectionMarkerFields() + " " +
             cameraHwbProjectionStereoMarkerFields() + " " +
             spatialVideoProjectionMarkerFields(videoSettings) + " " +
@@ -3158,6 +3169,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             false
           }
 
+  @OptIn(SpatialSDKExperimentalAPI::class)
   private fun createCameraHwbProjectionLayer(sdkSwapchain: SceneSwapchain): Boolean =
       runCatching {
             val plane = cameraHwbProjectionPlaneForPlacement()
@@ -3165,10 +3177,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 Entity.create(
                     Transform(plane.pose),
                     Scale(Vector3(1.0f, 1.0f, 1.0f)),
+                    Hittable(MeshCollision.NoCollision),
                     Visible(true),
                 )
             cameraHwbProjectionEntity = entity
-            val material = SceneMaterial.passthrough()
+            val material =
+                SceneMaterial.passthrough().apply {
+                  setRenderOrder(CAMERA_HWB_PROJECTION_SCENE_QUAD_LAYER_RENDER_ORDER)
+                }
             val mesh =
                 SceneMesh.singleSidedQuad(
                     plane.projectionWidthMeters,
@@ -3201,7 +3217,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     "widthMeters=${markerFloat(plane.projectionWidthMeters)} " +
                     "heightMeters=${markerFloat(plane.projectionHeightMeters)} " +
                     "zIndex=$layerZIndex " +
-                    "carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+                    "carrier=${cameraHwbProjectionCarrierToken()} " +
+                    "renderSurfaceCarrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+                    "projectionCarrierRoomObject=${cameraHwbProjectionCarrierMode == CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject} " +
+                    "projectionAnchorHittable=NoCollision " +
+                    "projectionAnchorMaterialRenderOrder=$CAMERA_HWB_PROJECTION_SCENE_QUAD_LAYER_RENDER_ORDER " +
                     cameraHwbProjectionMarkerFields(plane) + " " +
                     cameraHwbProjectionStereoMarkerFields() + " " +
                     spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings) + " " +
@@ -4348,12 +4368,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "particleLayerVisible=${particleLayerVisibleForPanelMode()} " +
             "rendererAuthority=native-vulkan-wsi-surface-panel uiAuthority=spatial-sdk-compose-panel " +
             "spatialPrivateLayerControlPanel=true " +
-            "privateLayerPanelRenderMode=spatial-sdk-layer " +
-            "privateLayerPanelLayerConfig=enabled " +
+            "privateLayerPanelRenderMode=spatial-sdk-mesh " +
+            "privateLayerPanelLayerConfig=disabled " +
             "privateLayerPanelLayerUpdateStatus=${markerToken(privateLayerPanelLayerUpdateStatus)} " +
-            "privateLayerPanelLayerZIndex=$PRIVATE_LAYER_PANEL_LAYER_Z_INDEX " +
+            "privateLayerPanelLayerZIndex=none " +
             "cameraVideoProjectionLayerZIndex=${cameraHwbProjectionZIndexForPlacement(cameraHwbProjectionPlacementMode)} " +
-            "privateLayerPanelAboveCameraProjectionLayer=${PRIVATE_LAYER_PANEL_LAYER_Z_INDEX > cameraHwbProjectionZIndexForPlacement(cameraHwbProjectionPlacementMode)} " +
+            "privateLayerPanelAboveCameraProjectionLayer=mesh-panel-depth-order " +
             "privateLayerPanelWorldSpace=true " +
             "privateLayerPanelGrabbable=true " +
             "privateLayerPanelGrabType=PIVOT_Y " +
@@ -4385,10 +4405,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     return panelPlacement
   }
 
+  private fun privateLayerPanelLayerConfigEnabled(): Boolean = false
+
   private fun updatePrivateLayerPanelLayer(
       reason: String,
       forceLog: Boolean = true,
   ): String {
+    if (!privateLayerPanelLayerConfigEnabled()) {
+      return "disabled-mesh-render-mode"
+    }
     val panel = privateLayerPanelSceneObject ?: return "panel-scene-object-missing"
     return runCatching {
           panel.layer?.setZIndex(PRIVATE_LAYER_PANEL_LAYER_Z_INDEX)
@@ -4400,9 +4425,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             marker(
                 "channel=private-layer-panel status=panel-layer-update-failed " +
                     "reason=${markerToken(reason)} spatialPrivateLayerControlPanel=true " +
-                    "privateLayerPanelRenderMode=spatial-sdk-layer " +
-                    "privateLayerPanelLayerConfig=enabled " +
-                    "privateLayerPanelLayerZIndex=$PRIVATE_LAYER_PANEL_LAYER_Z_INDEX " +
+                    "privateLayerPanelRenderMode=spatial-sdk-mesh " +
+                    "privateLayerPanelLayerConfig=disabled " +
+                    "privateLayerPanelLayerZIndex=none " +
                     "error=${markerToken(throwable.javaClass.simpleName)} " +
                     "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
             )
@@ -4817,9 +4842,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                           .put("offset_y_m", privateLayerPanelPlacement.yMeters.toDouble())
                           .put("distance_m", privateLayerPanelPlacement.zMeters.toDouble())
                           .put("distance_mode", "left-stick-stored-placement")
-                          .put("render_mode", "spatial-sdk-layer")
-                          .put("layer_config", "enabled")
-                          .put("layer_z_index", PRIVATE_LAYER_PANEL_LAYER_Z_INDEX)
+                          .put("render_mode", "spatial-sdk-mesh")
+                          .put("layer_config", "disabled")
+                          .put("layer_z_index", "none")
                           .put("scale", privateLayerPanelPlacement.scale.toDouble())
                           .put("width_m", privateLayerPanelPlacement.widthMeters.toDouble())
                           .put("height_m", privateLayerPanelPlacement.heightMeters.toDouble()),
@@ -5053,6 +5078,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val plane = cameraHwbProjectionPlaneForPlacement()
     entity.setComponent(Transform(plane.pose))
     entity.setComponent(PanelDimensions(Vector2(plane.projectionWidthMeters, plane.projectionHeightMeters)))
+    entity.setComponent(Hittable(MeshCollision.NoCollision))
     entity.setComponent(Visible(true))
     val layerUpdateStatus = updateCameraHwbProjectionLayer(plane, reason)
     val panelCarrierUpdateStatus = updateCameraHwbProjectionPanelCarrierLayer(plane, reason)
@@ -5279,9 +5305,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun cameraHwbProjectionZIndexForPlacement(
       placementMode: CameraHwbProjectionPlacementMode,
   ): Int =
-      when (placementMode) {
-        CameraHwbProjectionPlacementMode.ViewerLocked -> CAMERA_HWB_PROJECTION_VIEWER_LOCKED_Z_INDEX
-        CameraHwbProjectionPlacementMode.VirtualRoomWall -> CAMERA_HWB_PROJECTION_WALL_Z_INDEX
+      when (cameraHwbProjectionCarrierMode) {
+        CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject ->
+            CAMERA_HWB_PROJECTION_SCENE_QUAD_LAYER_Z_INDEX
+        CameraHwbProjectionCarrierMode.VideoSurfacePanelSceneObject ->
+            when (placementMode) {
+              CameraHwbProjectionPlacementMode.ViewerLocked ->
+                  CAMERA_HWB_PROJECTION_PANEL_VIEWER_LOCKED_Z_INDEX
+              CameraHwbProjectionPlacementMode.VirtualRoomWall ->
+                  CAMERA_HWB_PROJECTION_PANEL_WALL_Z_INDEX
+            }
       }
 
   private fun cameraHwbProjectionDisplayRoleForPlacement(
@@ -5293,13 +5326,36 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       }
 
   private fun cameraHwbProjectionScenePanelCarrierEnabled(): Boolean =
-      spatialVirtualRoomEnabled()
+      cameraHwbProjectionCarrierMode == CameraHwbProjectionCarrierMode.VideoSurfacePanelSceneObject
 
   private fun cameraHwbProjectionCarrierToken(): String =
-      if (cameraHwbProjectionScenePanelCarrierEnabled()) {
-        "video-surface-panel-scene-object"
-      } else {
-        "scenequadlayer-createAsAndroid-vulkan-wsi"
+      cameraHwbProjectionCarrierMode.markerToken
+
+  private fun currentCameraHwbProjectionCarrierMode(): CameraHwbProjectionCarrierMode {
+    val token =
+        readSystemProperty(CAMERA_HWB_PROJECTION_CARRIER_PROPERTY)
+            .trim()
+            .lowercase(Locale.US)
+            .replace("_", "-")
+    return when (token) {
+      "video-surface-panel-scene-object", "video-surface-panel", "panel-scene-object" ->
+          CameraHwbProjectionCarrierMode.VideoSurfacePanelSceneObject
+      "scenequadlayer-createasandroid-vulkan-wsi",
+      "scenequadlayer-room-object",
+      "scenequadlayer",
+      "scene-quad-layer",
+      "room-object",
+      "" -> CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject
+      else -> CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject
+    }
+  }
+
+  private fun cameraHwbProjectionRoomRenderOrderToken(): String =
+      when {
+        !spatialVirtualRoomEnabled() -> "no-room-scenequadlayer-baseline"
+        cameraHwbProjectionCarrierMode == CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject ->
+            "scenequadlayer-room-object-depth-order-under-test"
+        else -> "video-surface-panel-over-virtual-room"
       }
 
   private data class SpatialVideoProjectionSettings(
@@ -5598,12 +5654,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val displayRole = cameraHwbProjectionDisplayRoleForPlacement(placementMode)
     return "placementMode=${placementMode.markerToken} " +
         "placementAuthority=$placementAuthority " +
+        "projectionCarrier=${cameraHwbProjectionCarrierToken()} " +
+        "projectionCarrierProperty=$CAMERA_HWB_PROJECTION_CARRIER_PROPERTY " +
+        "projectionCarrierRoomObject=${cameraHwbProjectionCarrierMode == CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject} " +
         "projectionDisplaySurface=$displayRole " +
         "projectionDisplaySurfaceContainsVideo=true " +
         "projectionDisplaySurfaceContainsCustomCameraProjection=true " +
-        "projectionRoomRenderOrder=projection-layer-over-virtual-room " +
+        "projectionRoomRenderOrder=${cameraHwbProjectionRoomRenderOrderToken()} " +
         "projectionPanelInputPassThrough=true " +
         "projectionPanelHittable=NoCollision " +
+        "projectionAnchorHittable=NoCollision " +
         "cameraVideoProjectionLayerZIndex=$layerZIndex " +
         "legacyLauncherPanelSuppressed=${legacyLauncherPanelSuppressedForCameraStack()} " +
         "viewerLockedPlacementMode=$CAMERA_HWB_PROJECTION_PLACEMENT_MODE " +
@@ -5863,23 +5923,23 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           "headlockedPanelDistanceMode=${markerToken(distanceMode)} " +
           "privateLayerPanelWorldSpace=true " +
           "privateLayerPanelPoseSource=initial-headset-facing-world-space-then-stored-placement-unless-grabbed " +
-          "privateLayerPanelLayerConfig=enabled " +
-          "privateLayerPanelLayerZIndex=$PRIVATE_LAYER_PANEL_LAYER_Z_INDEX " +
+          "privateLayerPanelLayerConfig=disabled " +
+          "privateLayerPanelLayerZIndex=none " +
           "privateLayerPanelGrabbable=true " +
           "privateLayerPanelGrabType=PIVOT_Y " +
           "privateLayerPanelTransformAuthority=app-stored-placement-unless-grabbed " +
           "privateLayerPanelForcedDistanceDisabled=false " +
           "composeDragPanelMovement=false " +
-          "panelRenderOrder=front-of-camera-video " +
+          "panelRenderOrder=spatial-sdk-mesh-panel-depth-order " +
           "panelOpensInFrontOfCameraVideo=${placement.zMeters < CAMERA_HWB_PROJECTION_TARGET_DISTANCE_METERS} " +
           "panelDistanceLessThanCameraProjection=${placement.zMeters < currentCameraHwbProjectionTargetDistanceMeters()} " +
           "projectionPanelInputClearanceActive=${cameraHwbProjectionPrivatePanelInputClearanceActive()} " +
           "projectionPanelInputBehindPrivateLayerPanel=${cameraHwbProjectionInputCarrierBehindPrivatePanel()} " +
           "projectionPanelInputClearanceMeters=${markerFloat(CAMERA_HWB_PROJECTION_PRIVATE_PANEL_INPUT_CLEARANCE_METERS)} " +
           "cameraVideoProjectionLayerZIndex=${cameraHwbProjectionZIndexForPlacement(cameraHwbProjectionPlacementMode)} " +
-          "privateLayerPanelAboveCameraProjectionLayer=${PRIVATE_LAYER_PANEL_LAYER_Z_INDEX > cameraHwbProjectionZIndexForPlacement(cameraHwbProjectionPlacementMode)} " +
-          "privateLayerPanelRenderMode=spatial-sdk-layer " +
-          "panelRenderOrderProof=private-layer-compositor-layer-above-camera-video-layer " +
+          "privateLayerPanelAboveCameraProjectionLayer=mesh-panel-depth-order " +
+          "privateLayerPanelRenderMode=spatial-sdk-mesh " +
+          "panelRenderOrderProof=old-mesh-panel-input-path-under-room-object-test " +
           "rightStickSideFlickPanelMoveDisabled=true " +
           "privateLayerPanelDistancePersistsAcrossToggle=true " +
           "panelScale=${markerFloat(placement.scale)} " +
@@ -6078,7 +6138,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "publicMultiStackLayerManifest=0:final,1:raw-brightness,2:preblur-brightness,3:raw-strength,4:blurred-strength,5:displacement,6:depth-gradient " +
             "projectionTargetLiveScale=${markerFloat(currentCameraHwbProjectionTargetScale())} " +
             "layerOverrideForcedProjectionRefresh=true " +
-            "panelRenderOrder=front-of-camera-video runtimeCrash=false"
+            "panelRenderOrder=spatial-sdk-mesh-panel-depth-order runtimeCrash=false"
     )
     updateCameraHwbProjectionFromViewer(reason = "private-layer-override-panel", forceLog = true)
     return updatedOverride
@@ -6129,7 +6189,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "publicMultiStackDepthLayerCompareMode=${markerToken(compareMode)} " +
             "publicMultiStackDepthLayerCompareEvidence=${markerToken(if (compareMode == "visual-shader") "shader-samples-layer0-and-layer1-at-same-depth-uv" else "inactive")} " +
             "publicMultiStackDepthLayerPolicyManifest=0:mono-layer0,1:mono-layer1,2:eye-index,3:compare " +
-            "panelRenderOrder=front-of-camera-video runtimeCrash=false"
+            "panelRenderOrder=spatial-sdk-mesh-panel-depth-order runtimeCrash=false"
     )
     return updatedPolicy
   }
@@ -6180,7 +6240,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "publicMultiStackDepthAlignmentLeftOffsetUv=${markerFloat6(updatedAlignment.leftX)},${markerFloat6(updatedAlignment.leftY)} " +
             "publicMultiStackDepthAlignmentRightOffsetUv=${markerFloat6(updatedAlignment.rightX)},${markerFloat6(updatedAlignment.rightY)} " +
             "publicMultiStackDepthAlignmentSampleScale=${markerFloat(updatedAlignment.sampleScale)} " +
-            "panelRenderOrder=front-of-camera-video runtimeCrash=false"
+            "panelRenderOrder=spatial-sdk-mesh-panel-depth-order runtimeCrash=false"
     )
     return updatedAlignment
   }
@@ -7116,8 +7176,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "virtualRoomWallPlacementActive=${cameraHwbProjectionPlacementMode == CameraHwbProjectionPlacementMode.VirtualRoomWall} " +
             "projectionEntityPresent=${cameraHwbProjectionEntity != null} " +
             "sceneQuadLayerRebuildStatus=not-rebuilt-existing-scene-anchor-updated " +
+            "projectionCarrier=${cameraHwbProjectionCarrierToken()} " +
+            "projectionCarrierProperty=$CAMERA_HWB_PROJECTION_CARRIER_PROPERTY " +
             "projectionDisplaySurface=${cameraHwbProjectionDisplayRoleForPlacement(cameraHwbProjectionPlacementMode)} " +
-            "projectionRoomRenderOrder=projection-layer-over-virtual-room " +
+            "projectionRoomRenderOrder=${cameraHwbProjectionRoomRenderOrderToken()} " +
             "cameraVideoProjectionLayerZIndex=${cameraHwbProjectionZIndexForPlacement(cameraHwbProjectionPlacementMode)} " +
             "cameraProjectionWallToggleInput=right-controller-secondary-button " +
             "cameraProjectionWallToggleEnabled=true virtualRoomWallCenterM=$CAMERA_HWB_PROJECTION_WALL_CENTER_MARKER " +
@@ -7503,10 +7565,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         shape = QuadShapeOptions(width = PANEL_WIDTH_METERS, height = PANEL_HEIGHT_METERS),
         style = PanelStyleOptions(themeResourceId = R.style.PanelAppThemeOpaqueProbe),
         display = DpPerMeterDisplayOptions(dpPerMeter = PANEL_DP_PER_METER),
-        rendering =
-            UIPanelRenderOptions(
-                PanelRenderMode.Layer(PanelShapeLayerBlendType.OPAQUE, false, 0)
-            ),
+        rendering = UIPanelRenderOptions(PanelRenderMode.Mesh()),
         input =
             PanelInputOptions(
                 ButtonBits.ButtonA or ButtonBits.ButtonTriggerL or ButtonBits.ButtonTriggerR
@@ -8407,8 +8466,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val CAMERA_HWB_PROJECTION_WALL_HEIGHT_METERS = 0.90f
     private const val CAMERA_HWB_PROJECTION_WALL_CENTER_MARKER = "0.0;1.45;-2.40"
     private const val CAMERA_HWB_PROJECTION_WALL_SIZE_MARKER = "1.60;0.90"
-    private const val CAMERA_HWB_PROJECTION_VIEWER_LOCKED_Z_INDEX = -20
-    private const val CAMERA_HWB_PROJECTION_WALL_Z_INDEX = -16
+    private const val CAMERA_HWB_PROJECTION_CARRIER_PROPERTY =
+        "debug.rustyquest.spatial.camera_hwb_projection_probe.carrier"
+    private const val CAMERA_HWB_PROJECTION_SCENE_QUAD_LAYER_Z_INDEX = 40
+    private const val CAMERA_HWB_PROJECTION_SCENE_QUAD_LAYER_RENDER_ORDER = 40
+    private const val CAMERA_HWB_PROJECTION_PANEL_VIEWER_LOCKED_Z_INDEX = -20
+    private const val CAMERA_HWB_PROJECTION_PANEL_WALL_Z_INDEX = -16
     private const val CAMERA_HWB_PROJECTION_PLACEMENT_TOGGLE_DEBOUNCE_MS = 650L
     private const val CAMERA_HWB_PROJECTION_FRAME_COUNT_UNBOUNDED = 0
     private const val CAMERA_HWB_PROJECTION_DEFAULT_READER_MAX_IMAGES = 4

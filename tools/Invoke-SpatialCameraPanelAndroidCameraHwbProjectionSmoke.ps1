@@ -20,6 +20,7 @@ param(
     [double]$VideoOpacity = 1.0,
     [bool]$VideoLooping = $true,
     [string]$DepthLayerPolicy = $env:RUSTY_QUEST_SPATIAL_DEPTH_LAYER_POLICY,
+    [string]$ProjectionCarrier = $env:RUSTY_QUEST_SPATIAL_PROJECTION_CARRIER,
     [string]$AssetMeshUri = $env:RUSTY_QUEST_SPATIAL_ASSET_MODEL_URI,
     [string]$AssetSourcePath = $env:RUSTY_QUEST_SPATIAL_ASSET_MODEL_SOURCE_PATH,
     [string]$AssetConvertedMeshPath = $env:RUSTY_QUEST_SPATIAL_ASSET_MODEL_CONVERTED_MESH_PATH,
@@ -248,6 +249,12 @@ $depthLayerPolicyToken = switch -Regex ($depthLayerPolicyRaw) {
     "^(eye-index|per-eye|stereo|stereo-indexed|2)?$" { "eye-index"; break }
     default { throw "Unknown -DepthLayerPolicy '$DepthLayerPolicy'. Use mono-layer0, mono-layer1, eye-index, or compare." }
 }
+$projectionCarrierRaw = if ($null -eq $ProjectionCarrier) { "" } else { $ProjectionCarrier.Trim().ToLowerInvariant().Replace("_", "-") }
+$projectionCarrierToken = switch -Regex ($projectionCarrierRaw) {
+    "^(video-surface-panel-scene-object|video-surface-panel|panel-scene-object)$" { "video-surface-panel-scene-object"; break }
+    "^(scenequadlayer-room-object|scenequadlayer|scene-quad-layer|room-object|)$" { "scenequadlayer-room-object"; break }
+    default { throw "Unknown -ProjectionCarrier '$ProjectionCarrier'. Use scenequadlayer-room-object or video-surface-panel-scene-object." }
+}
 $assetMeshUriTrimmed = if ($null -eq $AssetMeshUri) { "" } else { $AssetMeshUri.Trim() }
 $assetSourcePathTrimmed = if ($null -eq $AssetSourcePath) { "" } else { $AssetSourcePath.Trim() }
 $assetConvertedMeshPathTrimmed = if ($null -eq $AssetConvertedMeshPath) { "" } else { $AssetConvertedMeshPath.Trim() }
@@ -320,6 +327,8 @@ $summary = [ordered]@{
     spatial_video_projection_looping = [bool]$VideoLooping
     spatial_video_projection_stereo_layout = $videoStereoLayoutToken
     spatial_video_projection_opacity = $videoOpacityClamped
+    projection_carrier = $projectionCarrierToken
+    projection_carrier_property = "debug.rustyquest.spatial.camera_hwb_projection_probe.carrier"
     require_spatial_asset_model = [bool]$RequireSpatialAssetModel
     enable_spatial_virtual_room = [bool]$EnableVirtualRoom
     enable_spatial_skybox = [bool]$EnableSkybox
@@ -509,6 +518,7 @@ try {
     $setpropResults += Invoke-AdbCommand -Name "configure Spatial video-only projection probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.video_projection_probe", $(if ($VideoOnly) { "1" } else { "0" }))
     $setpropResults += Invoke-AdbCommand -Name "set raw camera projection reader max images" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.reader_max_images", $readerMaxImagesClamped.ToString())
     $setpropResults += Invoke-AdbCommand -Name "set Spatial depth layer policy" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.depth.layer_policy", $depthLayerPolicyToken)
+    $setpropResults += Invoke-AdbCommand -Name "set Spatial projection carrier" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.carrier", $projectionCarrierToken)
     $setpropResults += Invoke-AdbCommand -Name "select Spatial SDK interaction pointer input" -Arguments @("shell", "setprop", "debug.rustyquest.spatial_camera_panel.vr_input_system", "interaction_sdk")
     $setpropResults += Invoke-AdbCommand -Name "allow app controller probe to observe left/right input" -Arguments @("shell", "setprop", "debug.rustyquest.spatial_camera_panel.consume_left_right_input", "0")
     $setpropResults += Invoke-AdbCommand -Name "disable Spatial SDK multimodal input" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.multimodal_input.enabled", "0")
@@ -617,6 +627,7 @@ try {
         (Test-TextContains $evidenceText "status=start") -and (Test-TextContains $evidenceText "rawCameraProjectionProbe=true")
     }
     $summary.scene_quad_layer_carrier = Test-TextContains $evidenceText "carrier=scenequadlayer-createAsAndroid-vulkan-wsi"
+    $summary.scene_quad_layer_room_object_carrier = Test-TextContains $evidenceText "projectionCarrier=scenequadlayer-room-object"
     $summary.scene_quad_layer_created = Test-TextContains $evidenceText "status=raw-camera-projection-layer-created"
     $summary.scene_panel_carrier = (Test-TextContains $evidenceText "scenePanelCarrier=true") -and (Test-TextContains $evidenceText "carrier=video-surface-panel-scene-object")
     $summary.scene_panel_carrier_entity_created = $evidenceText -match "status=scene-panel-carrier-entity-spawned[^\r\n]*entityCreated=true"
@@ -781,7 +792,7 @@ try {
     $summary.camera_projection_initial_full_fov_mode =
         Test-TextContains $evidenceText "projectionDefaultPlacementMode=viewer-pose-projection-locked-quad"
     $summary.camera_projection_room_render_order =
-        Test-TextContains $evidenceText "projectionRoomRenderOrder=projection-layer-over-virtual-room"
+        Test-TextContains $evidenceText "projectionRoomRenderOrder=scenequadlayer-room-object-depth-order-under-test"
     $summary.private_layer_controls_apply_to_wall_and_full_fov =
         Test-TextContains $evidenceText "layerOverrideAppliesToWallAndFullFov=true"
     $summary.runtime_crash_false = (Test-TextContains $appScopedEvidenceText "runtimeCrash=false") -and -not ($appScopedEvidenceText -match "AndroidRuntime|FATAL|render-failed")
@@ -950,6 +961,8 @@ try {
         Save-Text -Path (Join-Path $OutDir "stop.txt") -Text $stop.output
         $disable = Invoke-AdbCommand -Name "disable raw camera projection probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe", "0") -AllowFailure
         Save-Text -Path (Join-Path $OutDir "disable-projection-probe.txt") -Text $disable.output
+        $clearCarrier = Invoke-AdbCommand -Name "clear Spatial projection carrier" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.carrier", "") -AllowFailure
+        Save-Text -Path (Join-Path $OutDir "clear-projection-carrier.txt") -Text $clearCarrier.output
         $disableVideo = Invoke-AdbCommand -Name "disable Spatial video projection" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.video.enabled", "0") -AllowFailure
         Save-Text -Path (Join-Path $OutDir "disable-video-projection.txt") -Text $disableVideo.output
         $disableVideoOnly = Invoke-AdbCommand -Name "disable Spatial video-only projection probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.video_projection_probe", "0") -AllowFailure

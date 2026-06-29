@@ -701,13 +701,13 @@ $manifest = [ordered]@{
     spatial_panel_headlock_mode = "enabled-by-default-viewer-relative-while-workflow-panel-open"
     spatial_panel_headlock_default_pose_meters = "0.0;0.0;1.40"
     spatial_panel_headlock_default_scale = 0.65
-    spatial_private_layer_panel_render_mode = "spatial-sdk-layer-world-space-layer-config-enabled-z-index-above-projection"
+    spatial_private_layer_panel_render_mode = "spatial-sdk-mesh-world-space-old-input-path-layer-config-disabled"
     spatial_private_layer_panel_pose_mode = "initial-headset-facing-world-space-then-sdk-owned"
     spatial_private_layer_panel_movement_authority = "spatial-sdk-grabbable-free-transform-pivot-y-left-stick-y-distance"
     spatial_private_layer_panel_input_buttons = "button-a+trigger-l+trigger-r-select; controller-squeeze-grab"
     spatial_private_layer_panel_compose_drag_movement = $false
     spatial_private_layer_panel_default_pose_meters = "0.0;0.0;0.72"
-    spatial_private_layer_panel_projection_input_order = "projection-panel-input-transparent-no-collision-private-layer-panel-normal-distance-layer-above-projection"
+    spatial_private_layer_panel_projection_input_order = "scenequadlayer-room-object-no-collision-private-layer-panel-mesh-input"
     spatial_panel_headlock_hotload_tool = "tools/Set-SpatialCameraPanelHeadlock.ps1"
     spatial_panel_headlock_hotload_properties = @(
         "debug.rustyquest.spatial_camera_panel.panel.headlocked.enabled",

@@ -28,6 +28,11 @@ internal enum class CameraHwbProjectionPlacementMode(val markerToken: String) {
   VirtualRoomWall("virtual-room-wall-fixed-quad"),
 }
 
+internal enum class CameraHwbProjectionCarrierMode(val markerToken: String) {
+  SceneQuadLayerRoomObject("scenequadlayer-room-object"),
+  VideoSurfacePanelSceneObject("video-surface-panel-scene-object"),
+}
+
 internal fun Long.hasReceiptBit(bit: Long): Boolean = (this and bit) != 0L
 
 internal fun PanelPlacement.headlockEquivalent(other: PanelPlacement): Boolean =

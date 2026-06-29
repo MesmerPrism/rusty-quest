@@ -542,6 +542,52 @@ Important lesson:
 - UI callback success and visual layer effect are different gates. The active
   render path must consume the selected layer.
 
+### 18. Checkpoint And Room-Object Carrier Retry
+
+Checkpoint:
+
+- `rusty-quest` commit `f06dd50`: `Checkpoint Spatial room world-space projection state`.
+
+Stored in that checkpoint:
+
+- The room-enabled `video-surface-panel-scene-object` projection carrier state.
+- Generic staged GLB/GLTF and app-private staged video launch support.
+- Packaged virtual room/skybox integration.
+- Private layer-control panel ordering/input transparency work from the latest
+  room pass.
+- This public-safe iteration log.
+
+New retry now under test:
+
+- Default the room projection carrier back to the older `SceneQuadLayer`
+  render path, but anchor it to a generated Spatial SDK room object so the
+  surface participates in scene placement more like the staged GLB object.
+- Mark the anchor as `projectionAnchorHittable=NoCollision` so controller rays
+  should not stop on the projection surface before reaching the UI panel.
+- Set the projection anchor material render order explicitly and record
+  `projectionRoomRenderOrder=scenequadlayer-room-object-depth-order-under-test`.
+- Restore the private layer-control panel to the older `PanelRenderMode.Mesh`
+  path that had working input before room integration.
+- Keep the saved panel carrier selectable with
+  `debug.rustyquest.spatial.camera_hwb_projection_probe.carrier=video-surface-panel-scene-object`
+  so headset tests can compare both carriers without code churn.
+
+Expected validation:
+
+- With the room enabled, app-private staged video and staged GLB should still
+  launch from ignored local manifests.
+- The projection should start in full-FOV viewer-locked mode.
+- Right secondary/B should still toggle between full-FOV and wall placement.
+- Right primary should toggle the private mesh UI panel without resizing the
+  projection.
+- Layer buttons should still call the native layer override path and visibly
+  affect the active public fallback/private projection path.
+
+Status:
+
+- Static validation is the next gate. Headset evidence is still required before
+  treating the `scenequadlayer-room-object` carrier as accepted.
+
 ## Current State Before Next Iteration
 
 What is working or strongly evidenced:

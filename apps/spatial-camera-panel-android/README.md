@@ -148,12 +148,17 @@ fixed virtual wall pose inside the packaged room and the full-field
 viewer-locked pose. With the virtual room enabled, the viewer-locked full-field
 pose is still the initial placement so the video plus custom camera projection
 surface starts like the pre-room path; B can then detach it to the fixed room
-wall. Runtime evidence uses
+wall. The current room-order experiment defaults the live surface carrier to
+`scenequadlayer-room-object`: a Spatial SDK `SceneQuadLayer` anchored to a
+generated single-sided room object with `projectionAnchorHittable=NoCollision`.
+Set `debug.rustyquest.spatial.camera_hwb_projection_probe.carrier` to
+`video-surface-panel-scene-object` to compare against the saved panel-carrier
+checkpoint. Runtime evidence uses
 `cameraProjectionWallToggleInput=right-controller-secondary-button`,
 `virtualRoomWallPlacementMode=virtual-room-wall-fixed-quad`, and
 `virtualRoomWallCenterM` markers plus
-`projectionRoomRenderOrder=projection-layer-over-virtual-room` and
-`legacyLauncherPanelSuppressed=true`.
+`projectionRoomRenderOrder=scenequadlayer-room-object-depth-order-under-test`
+and `legacyLauncherPanelSuppressed=true`.
 
 When the camera/video stack is active, the right primary button opens a
 front-of-camera private-layer control panel instead of the participant workflow
@@ -162,11 +167,11 @@ layer selector: seven generic
 layer choices, live projection-area scale, live depth source policy
 (`mono-layer0`, `mono-layer1`, `eye-index`, or `compare`), and live
 depth-alignment X/Y/scale controls. It is registered as
-`spatial_private_layer_panel`, renders at
-`panelRenderOrder=front-of-camera-video` as a `spatial-sdk-layer` world-space
-panel with layer config enabled and `privateLayerPanelLayerZIndex` above the
-camera/video projection layer, uses Spatial SDK `Grabbable` as the movement authority
-so it sticks to the grabbed pose, and updates the public opaque
+`spatial_private_layer_panel`, renders as the old `spatial-sdk-mesh`
+world-space panel with layer config disabled and
+`panelRenderOrder=spatial-sdk-mesh-panel-depth-order`, uses Spatial SDK
+`Grabbable` as the movement authority so it sticks to the grabbed pose, and
+updates the public opaque
 projection route through
 `nativeUpdatePrivateLayerOverride` and
 `nativeUpdatePrivateLayerDepthLayerPolicy` plus
