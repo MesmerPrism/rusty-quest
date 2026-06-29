@@ -4,11 +4,13 @@
 //! not open sockets, start cameras, decode media, or own live Manifold command
 //! authority.
 
+mod media_stream;
 mod model;
 mod packed_stream;
 mod profile;
 mod validation;
 
+pub use media_stream::build_media_stream_session_plan;
 pub use model::*;
 pub use packed_stream::*;
 pub use profile::build_endpoint_runtime_profile;
@@ -17,12 +19,13 @@ pub use validation::validate_remote_camera_session;
 #[cfg(test)]
 mod tests {
     use super::{
-        build_endpoint_runtime_profile, decode_packed_pair_metadata, encode_packed_pair_metadata,
-        validate_packed_pair_metadata, validate_packed_pair_sequence,
-        validate_packed_stream_metadata, validate_remote_camera_session, PackedStereoPairMetadata,
-        PackedStereoStreamMetadata, RemoteCameraPortBinding, RemoteCameraSessionPlan,
-        MEDIA_LAYOUT_SEPARATE_EYE_STREAMS,
+        build_endpoint_runtime_profile, build_media_stream_session_plan,
+        decode_packed_pair_metadata, encode_packed_pair_metadata, validate_packed_pair_metadata,
+        validate_packed_pair_sequence, validate_packed_stream_metadata,
+        validate_remote_camera_session, PackedStereoPairMetadata, PackedStereoStreamMetadata,
+        RemoteCameraPortBinding, RemoteCameraSessionPlan, MEDIA_LAYOUT_SEPARATE_EYE_STREAMS,
     };
+    use rusty_quest_media_stream::validate_media_stream_session;
     use serde::Deserialize;
 
     #[derive(Debug, Deserialize)]
@@ -55,6 +58,23 @@ mod tests {
             .lanes
             .iter()
             .all(|lane| lane.media.frame_layout.is_none()));
+    }
+
+    #[test]
+    fn q2q_fixture_maps_to_generic_media_stream_plan() {
+        let plan = parse_fixture(include_str!(
+            "../../../fixtures/remote-camera-sessions/q2q-two-way-lan.plan.json"
+        ));
+
+        let media_plan =
+            build_media_stream_session_plan(&plan).expect("q2q media stream plan builds");
+        validate_media_stream_session(&media_plan).expect("q2q media stream plan validates");
+        assert_eq!(media_plan.schema, "rusty.quest.media_stream_session.v1");
+        assert_eq!(media_plan.topology_id, "quest_to_quest_two_way");
+        assert!(media_plan
+            .lanes
+            .iter()
+            .all(|lane| lane.media.high_rate_payload_plane == "binary-media"));
     }
 
     #[test]

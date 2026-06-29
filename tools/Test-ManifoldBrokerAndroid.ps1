@@ -16,8 +16,10 @@ $serverPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanif
 $remoteCameraRuntimePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraSessionRuntime.java"
 $remoteCameraDirectP2pSocketAuthorityPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraDirectP2pSocketAuthority.java"
 $remoteCameraSourceRuntimePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraSourceRuntime.java"
+$h264MediaStreamWriterPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\H264MediaStreamWriter.java"
+$mediaCodecSurfaceEncoderPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\MediaCodecSurfaceEncoder.java"
 
-foreach ($path in @($manifestPath, $activityPath, $servicePath, $launchEvidencePath, $serverPath, $remoteCameraRuntimePath, $remoteCameraDirectP2pSocketAuthorityPath, $remoteCameraSourceRuntimePath)) {
+foreach ($path in @($manifestPath, $activityPath, $servicePath, $launchEvidencePath, $serverPath, $remoteCameraRuntimePath, $remoteCameraDirectP2pSocketAuthorityPath, $remoteCameraSourceRuntimePath, $h264MediaStreamWriterPath, $mediaCodecSurfaceEncoderPath)) {
     if (-not (Test-Path $path)) {
         throw "Missing Manifold broker Android file: $path"
     }
@@ -31,6 +33,8 @@ $server = Get-Content -Raw -Path $serverPath
 $remoteCameraRuntime = Get-Content -Raw -Path $remoteCameraRuntimePath
 $remoteCameraDirectP2pSocketAuthority = Get-Content -Raw -Path $remoteCameraDirectP2pSocketAuthorityPath
 $remoteCameraSourceRuntime = Get-Content -Raw -Path $remoteCameraSourceRuntimePath
+$h264MediaStreamWriter = Get-Content -Raw -Path $h264MediaStreamWriterPath
+$mediaCodecSurfaceEncoder = Get-Content -Raw -Path $mediaCodecSurfaceEncoderPath
 
 if ($manifest -notmatch 'package="io\.github\.mesmerprism\.rustymanifold\.broker"') {
     throw "Manifold broker Android manifest has the wrong package."
@@ -149,7 +153,16 @@ if ($remoteCameraRuntime -notmatch 'command\.remote_camera\.get_status') {
 if ($remoteCameraRuntime -notmatch 'command\.remote_camera\.stop') {
     throw "RemoteCameraSessionRuntime does not handle remote camera stop."
 }
-if ($remoteCameraRuntime -notmatch 'RUSTY_QUEST_REMOTE_CAMERA_RECEIVER_ARMED') {
+if ($remoteCameraRuntime -notmatch 'command\.media_stream\.start_source') {
+    throw "RemoteCameraSessionRuntime does not handle media-stream start_source aliases."
+}
+if ($remoteCameraRuntime -notmatch 'command\.media_stream\.get_status') {
+    throw "RemoteCameraSessionRuntime does not handle media-stream get_status aliases."
+}
+if ($remoteCameraRuntime -notmatch 'rusty\.quest\.media_stream\.android_runtime_status\.v1') {
+    throw "RemoteCameraSessionRuntime does not expose the media-stream runtime status schema."
+}
+if ($remoteCameraRuntime -notmatch 'RUSTY_QUEST_REMOTE_CAMERA_' -or $remoteCameraRuntime -notmatch 'RECEIVER_ARMED') {
     throw "RemoteCameraSessionRuntime does not emit the receiver armed marker token."
 }
 if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.receiver_ports') {
@@ -275,10 +288,10 @@ if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.sender_sou
 if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.sender_camera_ids') {
     throw "RemoteCameraSessionRuntime does not read the per-eye sender camera id runtime property."
 }
-if ($remoteCameraRuntime -notmatch 'RUSTY_QUEST_REMOTE_CAMERA_SENDER_TRANSPORT_BRIDGE_STARTED') {
+if ($remoteCameraRuntime -notmatch 'SENDER_TRANSPORT_BRIDGE_STARTED') {
     throw "RemoteCameraSessionRuntime does not emit the sender transport bridge marker token."
 }
-if ($remoteCameraRuntime -notmatch 'RUSTY_QUEST_REMOTE_CAMERA_SENDER_SOURCE_UNAVAILABLE') {
+if ($remoteCameraRuntime -notmatch 'SENDER_SOURCE_UNAVAILABLE') {
     throw "RemoteCameraSessionRuntime does not emit the sender source unavailable marker token."
 }
 if ($remoteCameraSourceRuntime -notmatch 'camera2_mediacodec_surface') {
@@ -287,14 +300,14 @@ if ($remoteCameraSourceRuntime -notmatch 'camera2_mediacodec_surface') {
 if ($remoteCameraSourceRuntime -notmatch 'diagnostic_synthetic_mediacodec_surface') {
     throw "RemoteCameraSourceRuntime does not model the diagnostic synthetic MediaCodec sender source."
 }
-if ($remoteCameraSourceRuntime -notmatch 'STREAM_MAGIC = "RMANVID1"') {
-    throw "RemoteCameraSourceRuntime must emit the Manifold H.264 stream magic RMANVID1."
+if ($h264MediaStreamWriter -notmatch 'STREAM_MAGIC = "RMANVID1"') {
+    throw "H264MediaStreamWriter must emit the Manifold H.264 stream magic RMANVID1."
 }
-if ($remoteCameraSourceRuntime -match 'RMQVID01') {
-    throw "RemoteCameraSourceRuntime still contains the interim Quest stream magic RMQVID01."
+if ($h264MediaStreamWriter -match 'RMQVID01') {
+    throw "H264MediaStreamWriter still contains the interim Quest stream magic RMQVID01."
 }
-if ($remoteCameraSourceRuntime -notmatch 'MediaCodec\.createEncoderByType') {
-    throw "RemoteCameraSourceRuntime does not create a MediaCodec encoder."
+if ($mediaCodecSurfaceEncoder -notmatch 'MediaCodec\.createEncoderByType') {
+    throw "MediaCodecSurfaceEncoder does not create a MediaCodec encoder."
 }
 if ($remoteCameraSourceRuntime -notmatch 'CameraManager') {
     throw "RemoteCameraSourceRuntime does not inspect Camera2 devices."
@@ -330,7 +343,7 @@ if ($remoteCameraSourceRuntime -notmatch 'high_rate_json_payload", false') {
     throw "RemoteCameraSourceRuntime must prove high-rate media is not carried through JSON."
 }
 
-$combined = "$manifest`n$activity`n$service`n$launchEvidence`n$server`n$remoteCameraRuntime`n$remoteCameraSourceRuntime"
+$combined = "$manifest`n$activity`n$service`n$launchEvidence`n$server`n$remoteCameraRuntime`n$remoteCameraSourceRuntime`n$h264MediaStreamWriter`n$mediaCodecSurfaceEncoder"
 $legacyTokens = @(
     ("RUSTY" + "_XR_"),
     ("rusty" + ".xr."),

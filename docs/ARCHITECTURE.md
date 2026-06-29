@@ -94,6 +94,21 @@ BLE adapter may not mutate Wi-Fi Direct state, execute Manifold commands, or
 carry media. Manifold or a platform lifecycle owner decides whether to act on
 an accepted proposal.
 
+## Reusable Media Stream Contracts
+
+`crates/rusty-quest-media-stream` owns
+`rusty.quest.media_stream_session.v1`, a source-only contract for reusable
+H.264 media streaming. It generalizes low-rate source descriptors, capture
+authority, binary media lanes, bounded queues, receiver-first startup, local
+endpoint bindings, peer routes, packet-size expectations, and promotion
+counters without owning Manifold authority, sockets, encoders, decoders, ADB,
+MediaProjection consent, or hidden platform APIs.
+
+Display-derived sources identify their route explicitly. App-consent
+MediaProjection display composite is the production candidate; shell
+hidden-display mirror remains `lab_developer_only` and must declare its shell
+authority and developer-only requirement.
+
 ## Native Quest Renderer Contracts
 
 `crates/rusty-quest-native-renderer` owns
@@ -618,3 +633,8 @@ parser compatibility only; they are not a second authority model.
 The generic route/address/authority invariants are implemented once in
 `rusty-quest-device-link`; the remote-camera crate adapts its unchanged route
 fields into that contract and adds only lane, endpoint, and profile checks.
+
+Remote-camera remains the camera-specific compatibility contract. Generic
+display/camera streaming uses `rusty.quest.media_stream_session.v1` as the
+source-neutral language, and `build_media_stream_session_plan` maps existing
+remote-camera fixtures into that contract without changing their source shape.

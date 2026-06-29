@@ -379,6 +379,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusty-quest-media-stream"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rusty-quest-native-renderer"
 version = "0.1.0"
 dependencies = [
@@ -421,6 +429,7 @@ name = "rusty-quest-remote-camera"
 version = "0.1.0"
 dependencies = [
  "rusty-quest-device-link",
+ "rusty-quest-media-stream",
  "rusty-quest-profile",
  "serde",
  "serde_json",

@@ -304,6 +304,11 @@
   exchange or Wi-Fi authority. `ble-rendezvous-pair.pass.json` covers the
   two-device role swap, authenticated reconnect in each phase, exact device
   correlation, redaction, boundary-state stability, and cleanup contract.
+- `media-stream-sessions/`: valid `rusty.quest.media_stream_session.v1`
+  source-neutral plans for app-consent MediaProjection display-to-PC H.264 and
+  lab-only shell hidden-display H.264. They keep frame bytes on
+  `binary-media` and declare packet bounds, capture authority, consent,
+  protected-content policy, privacy indicators, and receiver-first bindings.
 - `remote-camera-sessions/`: valid remote camera session plans for
   Quest-to-Quest and Quest-to-Android phone diagnostic streaming, including
   low-rate runtime endpoint bindings for sender source kind, sender media
@@ -319,6 +324,9 @@
   `rmanvid-v4-packed-stereo.pass.json` fixture covers the exact 48-byte pair
   extension, packed/per-eye dimensions, eye order, pair sequence, and source
   timestamps. The ordinary two-eye fixtures remain the default/fallback lane.
+  Contract tests also map these fixtures into
+  `rusty.quest.media_stream_session.v1` compatibility plans so generic media
+  modules can reuse the camera descriptions without changing their schema.
 - `damaged/`: invalid runtime profile, remote-camera, and native-renderer
   examples that must be rejected, including runtime evidence logs where replay
   markers exist but the visual mesh was not actually reported visible, and a

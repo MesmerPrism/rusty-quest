@@ -1,0 +1,158 @@
+{
+  "schema": "rusty.quest.media_stream_session.v1",
+  "session_id": "session.media_stream.quest_display_composite_to_pc",
+  "topology_id": "quest_display_to_pc",
+  "privacy_tier": "local_lan_diagnostic",
+  "devices": [
+    {
+      "device_id": "quest-a",
+      "device_kind": "quest",
+      "role": "sender"
+    },
+    {
+      "device_id": "pc-host",
+      "device_kind": "windows_pc",
+      "role": "receiver"
+    }
+  ],
+  "sources": [
+    {
+      "source_id": "quest-a-display-composite",
+      "device_id": "quest-a",
+      "source_family": "quest-display-composite-mediaprojection",
+      "source_kind": "display_composite_mediaprojection_mediacodec_surface",
+      "capture_route": "display-composite",
+      "capture_authority": "android_mediaprojection_consent",
+      "deployment_classification": "production_candidate",
+      "track_role": "display",
+      "developer_shell_required": false,
+      "consent_required": true,
+      "display": {
+        "display_id": "default",
+        "rotation": "runtime-reported",
+        "density_dpi": 320,
+        "content_crop": {
+          "left": 0,
+          "top": 0,
+          "width": 1920,
+          "height": 1080
+        },
+        "protected_content_policy": "omit-protected-content",
+        "consent_state": "android-mediaprojection-consent-required",
+        "privacy_indicator": "system-capture-indicator-required",
+        "foreground_package_reporting": "not-collected"
+      }
+    }
+  ],
+  "lanes": [
+    {
+      "lane_id": "quest-a-display-to-pc-host",
+      "direction": "outgoing",
+      "source_id": "quest-a-display-composite",
+      "source_device_id": "quest-a",
+      "sink_device_id": "pc-host",
+      "media": {
+        "track_id": "quest-a.display.h264",
+        "track_role": "display",
+        "track_kind": "video",
+        "codec": "h264",
+        "stream_framing": "diagnostic-h264-packet-stream",
+        "width": 1920,
+        "height": 1080,
+        "frame_rate_hz": 60,
+        "bitrate_bps": 8000000,
+        "max_packet_bytes": 4194304,
+        "metadata_transport": "stream-header-sidecar-status",
+        "timestamp_domain": "android-display-frame-time",
+        "high_rate_payload_plane": "binary-media"
+      },
+      "transport": {
+        "transport_kind": "lan_tcp",
+        "relay_required": false,
+        "encryption_required": false
+      },
+      "queue": {
+        "max_buffered_packets": 48,
+        "max_buffered_bytes": 16777216,
+        "drop_policy": "drop-oldest-complete-frame",
+        "slow_peer_close": true
+      },
+      "receiver_first_required": true
+    }
+  ],
+  "runtime_endpoints": [
+    {
+      "device_id": "quest-a",
+      "adapter_kind": "quest_manifold_broker_android",
+      "source_bindings": [
+        {
+          "source_id": "quest-a-display-composite",
+          "track_role": "display",
+          "source_host": "127.0.0.1",
+          "source_port": 8879
+        }
+      ],
+      "receiver_bind_host": "127.0.0.1",
+      "receiver_ports": [],
+      "transport_bind_host": "0.0.0.0",
+      "transport_receive_ports": []
+    },
+    {
+      "device_id": "pc-host",
+      "adapter_kind": "windows_hostess",
+      "source_bindings": [],
+      "receiver_bind_host": "127.0.0.1",
+      "receiver_ports": [
+        {
+          "track_role": "display",
+          "port": 8979
+        }
+      ],
+      "transport_bind_host": "0.0.0.0",
+      "transport_receive_ports": [
+        {
+          "track_role": "display",
+          "port": 9079
+        }
+      ]
+    }
+  ],
+  "transport_routes": [
+    {
+      "lane_id": "quest-a-display-to-pc-host",
+      "source_device_id": "quest-a",
+      "sink_device_id": "pc-host",
+      "track_role": "display",
+      "route_kind": "direct_tcp_connect",
+      "connect_host": "pc-host.local",
+      "connect_port": 9079
+    }
+  ],
+  "security": {
+    "visible_streaming_indicator": true,
+    "explicit_pairing_required": true,
+    "immediate_stop_command": "media_stream.stop",
+    "raw_media_logging": false
+  },
+  "observability": {
+    "required_markers": [
+      "media-stream-session-started",
+      "receiver-armed",
+      "display-source-bound",
+      "sender-started",
+      "frame-painted",
+      "lane-closed"
+    ],
+    "required_counters": [
+      "bytes_sent",
+      "bytes_received",
+      "media_packets",
+      "codec_config_packets",
+      "keyframes",
+      "queue_drops",
+      "close_reason",
+      "capture_to_encode_ms",
+      "encode_to_receive_ms"
+    ]
+  }
+}
