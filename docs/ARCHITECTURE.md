@@ -17,6 +17,9 @@ apps.
 - remote camera session plans, device-kind declarations, media-lane safety
   policy, low-rate runtime endpoint bindings, peer transport routes, and
   platform validation gates for Quest and Android phone endpoints.
+- source-neutral media stream session plans for reusable H.264 camera,
+  synthetic, external-source, MediaProjection display, and lab-only shell
+  hidden-display routes.
 - native OpenXR/Vulkan renderer plan contracts, pure-HWB import evidence,
   public/private layer ABI boundaries, and timing scorecards for Quest-native
   rendering examples.
@@ -72,6 +75,24 @@ Adapters such as Hostess may execute those routes and then emit the report.
 Validation rejects high-rate JSON stream claims and rejects applied command
 results that lack runtime receipt stages, keeping transport readiness separate
 from effective runtime state.
+
+## Reusable Media Stream Contracts
+
+`crates/rusty-quest-media-stream` owns
+`rusty.quest.media_stream_session.v1`, a source-only contract for reusable
+H.264 media streaming. It generalizes the low-rate pieces that were first
+proved by remote-camera streaming: source descriptors, capture authority,
+binary media lanes, bounded queues, receiver-first startup, local endpoint
+bindings, peer transport routes, packet-size expectations, and promotion
+counters. It does not own Manifold command/session authority, Makepad or
+Windows decoding, sockets, ADB, Android encoders, MediaProjection consent, or
+hidden API calls.
+
+Display-derived sources must identify the display route explicitly. The
+production-candidate route is app-consent MediaProjection display composite.
+The shell hidden-display mirror route is accepted only as
+`lab_developer_only` with `adb_shell_hidden_api_developer_only` capture
+authority and `developer_shell_required=true`.
 
 ## Native Quest Renderer Contracts
 
@@ -530,6 +551,18 @@ bound by `sender_camera_ids`: outside left eye camera `50` and outside right eye
 camera `51`. It does not implement Android phone adapter execution, relay/TLS
 handshakes, Makepad texture adoption, or Manifold routing authority.
 
+The broker source path is now split at the reusable media boundary:
+`MediaCodecSurfaceEncoder` owns H.264 encoder setup, the input `Surface`,
+sync-frame requests, output buffer draining, and encoder cleanup, while
+`H264MediaStreamWriter` owns `RMANVID1` stream headers and encoded packet
+framing. `RemoteCameraSourceRuntime` remains the source orchestrator for
+synthetic and Camera2 producers. Generic `command.media_stream.*` aliases reuse
+the same runtime state machine, expose `media_stream_runtime` acknowledgements,
+and read `debug.rustyquest.media_stream.*` properties with remote-camera
+property fallback. The MediaProjection display-composite and shell hidden-display
+source kinds are present as explicit adapter surfaces that return consent or
+lab-sidecar gate status; frame capture for those routes is still future work.
+
 ## Remote Camera Session Contracts
 
 `crates/rusty-quest-remote-camera` defines
@@ -547,3 +580,11 @@ outside eye camera map, peer transport routes, privacy tiers, and operator
 safety requirements. Manifold owns live command/session authority, Quest
 Makepad owns the Quest-specific Makepad app adapter and projection surface, and
 settings JSON remains a low-rate control plane.
+
+Remote-camera remains the camera-specific compatibility contract. Future
+generic display/camera streaming runtime slices should use
+`rusty.quest.media_stream_session.v1` as the shared source-neutral language and
+map camera-only plans onto it where possible.
+`crates/rusty-quest-remote-camera` exposes that first mapping as
+`build_media_stream_session_plan`, preserving remote-camera fixture shape while
+validating the generated generic media-stream plan.

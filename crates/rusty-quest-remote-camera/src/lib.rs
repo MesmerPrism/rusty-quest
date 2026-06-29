@@ -4,10 +4,12 @@
 //! not open sockets, start cameras, decode media, or own live Manifold command
 //! authority.
 
+mod media_stream;
 mod model;
 mod profile;
 mod validation;
 
+pub use media_stream::build_media_stream_session_plan;
 pub use model::*;
 pub use profile::build_endpoint_runtime_profile;
 pub use validation::validate_remote_camera_session;
@@ -15,8 +17,10 @@ pub use validation::validate_remote_camera_session;
 #[cfg(test)]
 mod tests {
     use super::{
-        build_endpoint_runtime_profile, validate_remote_camera_session, RemoteCameraSessionPlan,
+        build_endpoint_runtime_profile, build_media_stream_session_plan,
+        validate_remote_camera_session, RemoteCameraSessionPlan,
     };
+    use rusty_quest_media_stream::validate_media_stream_session;
 
     fn parse_fixture(text: &str) -> RemoteCameraSessionPlan {
         serde_json::from_str(text).expect("remote camera fixture parses")
@@ -38,6 +42,53 @@ mod tests {
         ));
 
         validate_remote_camera_session(&plan).expect("quest-phone plan validates");
+    }
+
+    #[test]
+    fn q2q_fixture_maps_to_generic_media_stream_plan() {
+        let plan = parse_fixture(include_str!(
+            "../../../fixtures/remote-camera-sessions/q2q-two-way-lan.plan.json"
+        ));
+
+        let media_plan =
+            build_media_stream_session_plan(&plan).expect("q2q media stream plan builds");
+
+        validate_media_stream_session(&media_plan).expect("q2q media stream plan validates");
+        assert_eq!(media_plan.schema, "rusty.quest.media_stream_session.v1");
+        assert_eq!(media_plan.topology_id, "quest_to_quest_two_way");
+        assert_eq!(media_plan.sources.len(), 4);
+        assert!(media_plan.sources.iter().any(|source| {
+            source.source_id == "quest-a.left.remote_camera_source"
+                && source
+                    .camera
+                    .as_ref()
+                    .is_some_and(|camera| camera.camera_id == "50")
+        }));
+        assert!(media_plan
+            .lanes
+            .iter()
+            .all(|lane| lane.media.high_rate_payload_plane == "binary-media"));
+    }
+
+    #[test]
+    fn quest_phone_fixture_maps_to_generic_media_stream_plan() {
+        let plan = parse_fixture(include_str!(
+            "../../../fixtures/remote-camera-sessions/quest-android-phone-duplex.plan.json"
+        ));
+
+        let media_plan =
+            build_media_stream_session_plan(&plan).expect("quest-phone media stream plan builds");
+
+        validate_media_stream_session(&media_plan).expect("quest-phone media stream validates");
+        assert_eq!(media_plan.topology_id, "quest_android_phone_duplex");
+        assert_eq!(media_plan.sources.len(), 3);
+        assert!(media_plan.sources.iter().any(|source| {
+            source.source_id == "android-phone-a.mono.remote_camera_source"
+                && source
+                    .camera
+                    .as_ref()
+                    .is_some_and(|camera| camera.camera_id == "default")
+        }));
     }
 
     #[test]

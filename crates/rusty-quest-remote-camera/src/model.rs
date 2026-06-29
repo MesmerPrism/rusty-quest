@@ -15,23 +15,26 @@ pub const PRIVACY_TRUSTED_RELAY_ENCRYPTED: &str = "trusted_relay_transport_encry
 pub const PRIVACY_E2EE_CANDIDATE: &str = "untrusted_relay_end_to_end_encrypted_candidate";
 
 /// Binary media payload plane token.
-pub const PAYLOAD_PLANE_BINARY_MEDIA: &str = "binary-media";
+pub const PAYLOAD_PLANE_BINARY_MEDIA: &str = rusty_quest_media_stream::PAYLOAD_PLANE_BINARY_MEDIA;
 
 /// H.264 codec token.
-pub const VIDEO_CODEC_H264: &str = "h264";
+pub const VIDEO_CODEC_H264: &str = rusty_quest_media_stream::VIDEO_CODEC_H264;
 
 /// Diagnostic H.264 stream framing token used by current reference adapters.
-pub const STREAM_FRAMING_DIAGNOSTIC_H264: &str = "diagnostic-h264-packet-stream";
+pub const STREAM_FRAMING_DIAGNOSTIC_H264: &str =
+    rusty_quest_media_stream::STREAM_FRAMING_DIAGNOSTIC_H264;
 
 /// Sender source is already exposed as a local H.264 socket by another adapter.
-pub const SENDER_SOURCE_EXTERNAL_H264_SOCKET: &str = "external_h264_socket";
+pub const SENDER_SOURCE_EXTERNAL_H264_SOCKET: &str =
+    rusty_quest_media_stream::SOURCE_KIND_EXTERNAL_H264_SOCKET;
 
 /// Sender source is captured through Camera2 and encoded by MediaCodec.
-pub const SENDER_SOURCE_CAMERA2_MEDIACODEC_SURFACE: &str = "camera2_mediacodec_surface";
+pub const SENDER_SOURCE_CAMERA2_MEDIACODEC_SURFACE: &str =
+    rusty_quest_media_stream::SOURCE_KIND_CAMERA2_MEDIACODEC_SURFACE;
 
 /// Sender source is a synthetic diagnostic MediaCodec surface.
 pub const SENDER_SOURCE_DIAGNOSTIC_SYNTHETIC_SURFACE: &str =
-    "diagnostic_synthetic_mediacodec_surface";
+    rusty_quest_media_stream::SOURCE_KIND_DIAGNOSTIC_SYNTHETIC_SURFACE;
 
 /// Quest outside stereo left Camera2 id used by the reference Rusty-XR gates.
 pub const QUEST_OUTSIDE_LEFT_CAMERA_ID: &str = "50";
@@ -40,10 +43,11 @@ pub const QUEST_OUTSIDE_LEFT_CAMERA_ID: &str = "50";
 pub const QUEST_OUTSIDE_RIGHT_CAMERA_ID: &str = "51";
 
 /// Sender source does not require camera permissions.
-pub const CAMERA_PERMISSION_NOT_REQUIRED: &str = "no_camera_permission_required";
+pub const CAMERA_PERMISSION_NOT_REQUIRED: &str =
+    rusty_quest_media_stream::CAMERA_PERMISSION_NOT_REQUIRED;
 
 /// Sender source requires manifest and runtime camera permission evidence.
-pub const CAMERA_PERMISSION_REQUIRED: &str = "camera_permission_required";
+pub const CAMERA_PERMISSION_REQUIRED: &str = rusty_quest_media_stream::CAMERA_PERMISSION_REQUIRED;
 
 pub(crate) const PROP_ENABLED: &str = "debug.rustyquest.remote_camera.enabled";
 pub(crate) const PROP_SESSION_ID: &str = "debug.rustyquest.remote_camera.session_id";

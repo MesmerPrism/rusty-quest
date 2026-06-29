@@ -6,6 +6,7 @@ members = [
     "crates/rusty-quest-projection-runtime-config",
     "crates/rusty-quest-profile",
     "crates/rusty-quest-device-link",
+    "crates/rusty-quest-media-stream",
     "crates/rusty-quest-remote-camera",
 ]
 resolver = "2"

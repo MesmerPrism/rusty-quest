@@ -238,6 +238,7 @@ public final class LocalManifoldBrokerServer {
                 writeText(session, reply);
                 return;
             }
+            boolean mediaStreamCommand = RemoteCameraSessionRuntime.isMediaStreamCommand(message);
             JSONObject remoteCameraRuntime = RemoteCameraSessionRuntime.handleCommand(applicationContext, message);
             reply.put("type", "command_ack");
             reply.put("schema", "rusty.manifold.command.ack.v1");
@@ -250,7 +251,11 @@ public final class LocalManifoldBrokerServer {
             reply.put("authority", "rusty.manifold");
             reply.put("live_stream_events_synthesized", false);
             if (remoteCameraRuntime != null) {
-                reply.put("remote_camera_runtime", remoteCameraRuntime);
+                if (mediaStreamCommand) {
+                    reply.put("media_stream_runtime", remoteCameraRuntime);
+                } else {
+                    reply.put("remote_camera_runtime", remoteCameraRuntime);
+                }
                 reply.put(
                         "media_socket_runtime_started",
                         remoteCameraRuntime.optBoolean("media_socket_runtime_started", false));

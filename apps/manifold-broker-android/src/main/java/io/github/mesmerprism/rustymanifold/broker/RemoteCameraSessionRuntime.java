@@ -23,8 +23,26 @@ final class RemoteCameraSessionRuntime {
     private static final String COMMAND_START_SENDER = "command.remote_camera.start_sender";
     private static final String COMMAND_GET_STATUS = "command.remote_camera.get_status";
     private static final String COMMAND_STOP = "command.remote_camera.stop";
+    private static final String COMMAND_MEDIA_STREAM_START_RECEIVER =
+            "command.media_stream.start_receiver";
+    private static final String COMMAND_MEDIA_STREAM_START_SENDER =
+            "command.media_stream.start_sender";
+    private static final String COMMAND_MEDIA_STREAM_START_SOURCE =
+            "command.media_stream.start_source";
+    private static final String COMMAND_MEDIA_STREAM_START_TRANSPORT =
+            "command.media_stream.start_transport";
+    private static final String COMMAND_MEDIA_STREAM_REQUEST_KEYFRAME =
+            "command.media_stream.request_keyframe";
+    private static final String COMMAND_MEDIA_STREAM_SET_BITRATE =
+            "command.media_stream.set_bitrate";
+    private static final String COMMAND_MEDIA_STREAM_GET_STATUS =
+            "command.media_stream.get_status";
+    private static final String COMMAND_MEDIA_STREAM_STOP = "command.media_stream.stop";
     private static final String STATUS_SCHEMA = "rusty.quest.remote_camera.android_runtime_status.v1";
+    private static final String MEDIA_STREAM_STATUS_SCHEMA =
+            "rusty.quest.media_stream.android_runtime_status.v1";
     private static final String LANE_SCHEMA = "rusty.quest.remote_camera.android_runtime_lane.v1";
+    private static final String MEDIA_STREAM_PROP_PREFIX = "debug.rustyquest.media_stream.";
     private static final String PROP_SESSION_ID = "debug.rustyquest.remote_camera.session_id";
     private static final String PROP_RECEIVER_BIND_HOST =
             "debug.rustyquest.remote_camera.receiver_bind_host";
@@ -69,17 +87,27 @@ final class RemoteCameraSessionRuntime {
 
     static JSONObject handleCommand(Context context, JSONObject message) throws Exception {
         String command = commandId(message);
-        if (COMMAND_START_RECEIVER.equals(command)) {
-            return startReceiver(message);
+        if (COMMAND_START_RECEIVER.equals(command)
+                || COMMAND_MEDIA_STREAM_START_RECEIVER.equals(command)
+                || COMMAND_MEDIA_STREAM_START_TRANSPORT.equals(command)) {
+            return startReceiver(message, command);
         }
-        if (COMMAND_START_SENDER.equals(command)) {
-            return startSender(context, message);
+        if (COMMAND_START_SENDER.equals(command)
+                || COMMAND_MEDIA_STREAM_START_SENDER.equals(command)
+                || COMMAND_MEDIA_STREAM_START_SOURCE.equals(command)) {
+            return startSender(context, message, command);
         }
-        if (COMMAND_GET_STATUS.equals(command)) {
-            return status(message);
+        if (COMMAND_GET_STATUS.equals(command)
+                || COMMAND_MEDIA_STREAM_GET_STATUS.equals(command)) {
+            return status(message, command);
         }
-        if (COMMAND_STOP.equals(command)) {
-            return stop(message);
+        if (COMMAND_MEDIA_STREAM_REQUEST_KEYFRAME.equals(command)
+                || COMMAND_MEDIA_STREAM_SET_BITRATE.equals(command)) {
+            return controlUnsupported(message, command);
+        }
+        if (COMMAND_STOP.equals(command)
+                || COMMAND_MEDIA_STREAM_STOP.equals(command)) {
+            return stop(message, command);
         }
         return null;
     }
@@ -92,13 +120,23 @@ final class RemoteCameraSessionRuntime {
                 || COMMAND_STOP.equals(command);
     }
 
-    private static JSONObject startReceiver(JSONObject message) throws Exception {
-        String sessionId = sessionId(message);
-        String bindHost = property(PROP_RECEIVER_BIND_HOST, "127.0.0.1");
-        String transportBindHost = property(PROP_TRANSPORT_BIND_HOST, "0.0.0.0");
-        List<PortBinding> ports = parsePortBindings(property(PROP_RECEIVER_PORTS, "left:8979,right:8980"));
+    static boolean isMediaStreamCommand(JSONObject message) {
+        return isMediaStreamCommandId(commandId(message));
+    }
+
+    private static JSONObject startReceiver(JSONObject message, String command) throws Exception {
+        String sessionId = sessionId(message, command);
+        String bindHost = runtimeProperty(command, "receiver_bind_host", PROP_RECEIVER_BIND_HOST, "127.0.0.1");
+        String transportBindHost =
+                runtimeProperty(command, "transport_bind_host", PROP_TRANSPORT_BIND_HOST, "0.0.0.0");
+        List<PortBinding> ports = parsePortBindings(
+                runtimeProperty(command, "receiver_ports", PROP_RECEIVER_PORTS, "left:8979,right:8980"));
         List<PortBinding> transportPorts =
-                parsePortBindings(property(PROP_TRANSPORT_RECEIVE_PORTS, "left:9079,right:9080"));
+                parsePortBindings(runtimeProperty(
+                        command,
+                        "transport_receive_ports",
+                        PROP_TRANSPORT_RECEIVE_PORTS,
+                        "left:9079,right:9080"));
         JSONArray started = new JSONArray();
         for (PortBinding port : ports) {
             RuntimeLane lane = activeLane(sessionId, "receiver", port.eye);
@@ -115,33 +153,37 @@ final class RemoteCameraSessionRuntime {
             }
             started.put(lane.toJson());
         }
-        JSONObject result = baseResult(COMMAND_START_RECEIVER, sessionId, "receiver_armed");
-        result.put("marker", "RUSTY_QUEST_REMOTE_CAMERA_RECEIVER_ARMED");
+        JSONObject result = baseResult(command, sessionId, "receiver_armed");
+        result.put("marker", markerFor(command, "RECEIVER_ARMED"));
         result.put("media_socket_runtime_started", started.length() > 0);
         result.put("started_lanes", started);
-        result.put("runtime_status", statusForSession(sessionId));
+        result.put("runtime_status", statusForSession(sessionId, command));
         return result;
     }
 
-    private static JSONObject startSender(Context context, JSONObject message) throws Exception {
-        String sessionId = sessionId(message);
-        String sourceKind = property(PROP_SENDER_SOURCE_KIND, "external_h264_socket");
-        String sourceHost = property(PROP_SENDER_SOURCE_HOST, "127.0.0.1");
-        String sourcePorts = property(PROP_SENDER_SOURCE_PORTS, "left:8879,right:8880");
+    private static JSONObject startSender(Context context, JSONObject message, String command) throws Exception {
+        String sessionId = sessionId(message, command);
+        String sourceKind = runtimeProperty(command, "sender_source_kind", PROP_SENDER_SOURCE_KIND, "external_h264_socket");
+        String sourceHost = runtimeProperty(command, "sender_source_host", PROP_SENDER_SOURCE_HOST, "127.0.0.1");
+        String sourcePorts = runtimeProperty(command, "sender_source_ports", PROP_SENDER_SOURCE_PORTS, "left:8879,right:8880");
         List<PortBinding> ports = parsePortBindings(sourcePorts);
-        List<PeerRoute> routes = parsePeerRoutes(routeOverride(message));
+        List<PeerRoute> routes = parsePeerRoutes(routeOverride(message, command));
         JSONObject sourceRuntime = RemoteCameraSourceRuntime.ensureStarted(
                 context,
                 sessionId,
                 sourceKind,
                 sourceHost,
                 sourcePorts,
-                property(PROP_SENDER_MEDIA_PROFILES, "none"),
-                property(PROP_SENDER_CAMERA_ID, "none"),
-                property(PROP_SENDER_CAMERA_IDS, "none"),
-                property(PROP_SENDER_CAMERA_FACING, "none"),
-                property(PROP_SENDER_QUALITY_PROFILE, "none"),
-                property(PROP_CAMERA_PERMISSION_POLICY, "no_camera_permission_required"));
+                runtimeProperty(command, "sender_media_profiles", PROP_SENDER_MEDIA_PROFILES, "none"),
+                runtimeProperty(command, "sender_camera_id", PROP_SENDER_CAMERA_ID, "none"),
+                runtimeProperty(command, "sender_camera_ids", PROP_SENDER_CAMERA_IDS, "none"),
+                runtimeProperty(command, "sender_camera_facing", PROP_SENDER_CAMERA_FACING, "none"),
+                runtimeProperty(command, "sender_quality_profile", PROP_SENDER_QUALITY_PROFILE, "none"),
+                runtimeProperty(
+                        command,
+                        "camera_permission_policy",
+                        PROP_CAMERA_PERMISSION_POLICY,
+                        "no_camera_permission_required"));
         boolean sourceAvailable = sourceRuntime.optBoolean("source_available", true);
         JSONArray lanes = new JSONArray();
         int modeledRoutes = 0;
@@ -171,27 +213,27 @@ final class RemoteCameraSessionRuntime {
                 ? "sender_transport_bridge_started"
                 : (!sourceAvailable ? "sender_source_unavailable" : "sender_transport_pending");
         JSONObject result = baseResult(
-                COMMAND_START_SENDER,
+                command,
                 sessionId,
                 status);
         result.put(
                 "marker",
                 bridgeStarted
-                        ? "RUSTY_QUEST_REMOTE_CAMERA_SENDER_TRANSPORT_BRIDGE_STARTED"
+                        ? markerFor(command, "SENDER_TRANSPORT_BRIDGE_STARTED")
                         : (!sourceAvailable
-                                ? "RUSTY_QUEST_REMOTE_CAMERA_SENDER_SOURCE_UNAVAILABLE"
-                                : "RUSTY_QUEST_REMOTE_CAMERA_SENDER_PENDING_TRANSPORT"));
+                                ? markerFor(command, "SENDER_SOURCE_UNAVAILABLE")
+                                : markerFor(command, "SENDER_PENDING_TRANSPORT")));
         result.put("media_socket_runtime_started", bridgeStarted);
         result.put("transport_peer_modeled", allModeled);
         result.put("sender_source_runtime", sourceRuntime);
         result.put("modeled_route_count", modeledRoutes);
         result.put("started_lanes", lanes);
-        result.put("runtime_status", statusForSession(sessionId));
+        result.put("runtime_status", statusForSession(sessionId, command));
         return result;
     }
 
-    private static JSONObject stop(JSONObject message) throws Exception {
-        String sessionId = sessionId(message);
+    private static JSONObject stop(JSONObject message, String command) throws Exception {
+        String sessionId = sessionId(message, command);
         JSONArray stopped = new JSONArray();
         List<RuntimeLane> matches = new ArrayList<>();
         synchronized (LOCK) {
@@ -206,20 +248,33 @@ final class RemoteCameraSessionRuntime {
             stopped.put(lane.toJson());
         }
         JSONObject sourceStop = RemoteCameraSourceRuntime.stop(sessionId, "stop_command");
-        JSONObject result = baseResult(COMMAND_STOP, sessionId, "stopped");
-        result.put("marker", "RUSTY_QUEST_REMOTE_CAMERA_STOPPED");
+        JSONObject result = baseResult(command, sessionId, "stopped");
+        result.put("marker", markerFor(command, "STOPPED"));
         result.put("stopped_count", stopped.length());
         result.put("stopped_lanes", stopped);
         result.put("stopped_sources", sourceStop);
-        result.put("runtime_status", statusForSession(sessionId));
+        result.put("runtime_status", statusForSession(sessionId, command));
         return result;
     }
 
-    private static JSONObject status(JSONObject message) throws Exception {
-        return statusForSession(sessionId(message));
+    private static JSONObject status(JSONObject message, String command) throws Exception {
+        return statusForSession(sessionId(message, command), command);
+    }
+
+    private static JSONObject controlUnsupported(JSONObject message, String command) throws Exception {
+        String sessionId = sessionId(message, command);
+        JSONObject result = baseResult(command, sessionId, "encoder_control_not_implemented");
+        result.put("marker", markerFor(command, "ENCODER_CONTROL_NOT_IMPLEMENTED"));
+        result.put("media_socket_runtime_started", false);
+        result.put("runtime_status", statusForSession(sessionId, command));
+        return result;
     }
 
     private static JSONObject statusForSession(String sessionId) throws Exception {
+        return statusForSession(sessionId, COMMAND_GET_STATUS);
+    }
+
+    private static JSONObject statusForSession(String sessionId, String command) throws Exception {
         JSONArray lanes = new JSONArray();
         long created;
         long stopped;
@@ -235,7 +290,9 @@ final class RemoteCameraSessionRuntime {
             }
         }
         JSONObject result = new JSONObject();
-        result.put("schema", STATUS_SCHEMA);
+        result.put("schema", statusSchemaFor(command));
+        result.put("runtime_family", isMediaStreamCommandId(command) ? "media_stream" : "remote_camera");
+        result.put("compatibility_runtime", "remote_camera");
         result.put("session_id", sessionId);
         result.put("active_count", activeCount(sessionId));
         result.put("matched_count", lanes.length());
@@ -251,8 +308,10 @@ final class RemoteCameraSessionRuntime {
 
     private static JSONObject baseResult(String command, String sessionId, String status) throws Exception {
         JSONObject result = new JSONObject();
-        result.put("schema", STATUS_SCHEMA);
+        result.put("schema", statusSchemaFor(command));
         result.put("command_id", command);
+        result.put("runtime_family", isMediaStreamCommandId(command) ? "media_stream" : "remote_camera");
+        result.put("compatibility_runtime", "remote_camera");
         result.put("session_id", sessionId);
         result.put("status", status);
         result.put("high_rate_json_payload", false);
@@ -312,10 +371,38 @@ final class RemoteCameraSessionRuntime {
         return command;
     }
 
-    private static String sessionId(JSONObject message) {
+    private static boolean isMediaStreamCommandId(String command) {
+        return COMMAND_MEDIA_STREAM_START_RECEIVER.equals(command)
+                || COMMAND_MEDIA_STREAM_START_SENDER.equals(command)
+                || COMMAND_MEDIA_STREAM_START_SOURCE.equals(command)
+                || COMMAND_MEDIA_STREAM_START_TRANSPORT.equals(command)
+                || COMMAND_MEDIA_STREAM_REQUEST_KEYFRAME.equals(command)
+                || COMMAND_MEDIA_STREAM_SET_BITRATE.equals(command)
+                || COMMAND_MEDIA_STREAM_GET_STATUS.equals(command)
+                || COMMAND_MEDIA_STREAM_STOP.equals(command);
+    }
+
+    private static String statusSchemaFor(String command) {
+        return isMediaStreamCommandId(command) ? MEDIA_STREAM_STATUS_SCHEMA : STATUS_SCHEMA;
+    }
+
+    private static String markerFor(String command, String suffix) {
+        return (isMediaStreamCommandId(command)
+                ? "RUSTY_QUEST_MEDIA_STREAM_"
+                : "RUSTY_QUEST_REMOTE_CAMERA_") + suffix;
+    }
+
+    private static String sessionId(JSONObject message, String command) {
         String target = message.optString("target_id", "");
         if (target.length() > 0) {
             return target;
+        }
+        if (isMediaStreamCommandId(command)) {
+            return runtimeProperty(
+                    command,
+                    "session_id",
+                    PROP_SESSION_ID,
+                    "session.media_stream.unknown");
         }
         return property(PROP_SESSION_ID, "session.remote_camera.unknown");
     }
@@ -387,7 +474,7 @@ final class RemoteCameraSessionRuntime {
         return routes;
     }
 
-    private static String routeOverride(JSONObject message) {
+    private static String routeOverride(JSONObject message, String command) {
         String override = message.optString("transport_routes", "");
         if (override.length() > 0) {
             return override;
@@ -399,7 +486,7 @@ final class RemoteCameraSessionRuntime {
                 return override;
             }
         }
-        return property(PROP_TRANSPORT_ROUTES, "none");
+        return runtimeProperty(command, "transport_routes", PROP_TRANSPORT_ROUTES, "none");
     }
 
     private static PortBinding findPortBinding(List<PortBinding> bindings, String eye) {
@@ -430,6 +517,19 @@ final class RemoteCameraSessionRuntime {
         } catch (Exception ignored) {
             return fallback;
         }
+    }
+
+    private static String runtimeProperty(
+            String command,
+            String mediaStreamLeaf,
+            String remoteCameraProperty,
+            String fallback) {
+        if (!isMediaStreamCommandId(command)) {
+            return property(remoteCameraProperty, fallback);
+        }
+        return property(
+                MEDIA_STREAM_PROP_PREFIX + mediaStreamLeaf,
+                property(remoteCameraProperty, fallback));
     }
 
     private static void noteStopped(RuntimeLane lane, boolean failed) {

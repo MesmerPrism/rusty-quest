@@ -285,11 +285,21 @@
   WebSocket endpoint readiness, runtime subscriber receipt health, command
   stage results, and stream capability descriptors for WebSocket command
   events, LSL samples, UDP telemetry, and binary media.
+- `media-stream-sessions/`: valid `rusty.quest.media_stream_session.v1`
+  source-neutral media stream plans. The first fixtures model app-consent
+  MediaProjection display-to-PC H.264 and lab-only shell hidden-display H.264
+  routes. They keep high-rate frame bytes on `binary-media`, declare packet
+  size expectations, capture authority, consent state, protected-content
+  policy, privacy indicator expectations, and receiver-first transport
+  bindings before any Android runtime adapter is implemented.
 - `remote-camera-sessions/`: valid remote camera session plans for
   Quest-to-Quest and Quest-to-Android phone diagnostic streaming, including
   low-rate runtime endpoint bindings for sender source kind, sender media
   profiles, camera permission policy, local receiver ports, peer transport
-  ingress, and outgoing transport route adapters.
+  ingress, and outgoing transport route adapters. The remote-camera contract
+  tests also map these fixtures into `rusty.quest.media_stream_session.v1`
+  compatibility plans so generic media/display modules can reuse the current
+  camera source descriptions without changing the camera fixture schema.
 - `damaged/`: invalid runtime profile, remote-camera, and native-renderer
   examples that must be rejected, including runtime evidence logs where replay
   markers exist but the visual mesh was not actually reported visible, and a

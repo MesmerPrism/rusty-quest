@@ -764,6 +764,30 @@ property values above the on-device `setprop` byte limit. Remote-camera media
 profile and direct-route properties therefore use compact strings instead of
 full lane ids.
 
+The reusable media-stream contract has a separate source-only test gate:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-media-stream"
+```
+
+That gate validates app-consent MediaProjection display-to-PC and lab-only
+shell hidden-display display-to-PC fixtures, rejects high-rate JSON payload
+plans, rejects shell hidden-display routes marked as production candidates, and
+requires display capture metadata for display-derived sources. These tests do
+not touch a headset, ADB server, Android encoder, MediaProjection service, or
+hidden Android API.
+
+The remote-camera crate also validates the compatibility mapping into the
+generic media-stream contract:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-remote-camera"
+```
+
+Those tests keep the existing remote-camera JSON contract and runtime-profile
+fixture stable while proving the Quest-to-Quest and Quest-to-Android-phone
+camera plans can be expressed as source-neutral media-stream plans.
+
 The Manifold broker Android scaffold has two validation levels:
 
 ```powershell
@@ -774,9 +798,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBroker
 The static test verifies package naming, `/manifold/v1/events`, Manifold
 command-envelope acknowledgement support, remote-camera command lifecycle
 hooks, receiver port and transport route property consumption, sender bridge
-markers, sender-source runtime support for Camera2/MediaCodec and diagnostic
-synthetic MediaCodec sources, the Hostess Makepad safe-probe dispatch stream
-and required runtime receipt stream, the high-rate JSON payload ban, and
+markers, generic `command.media_stream.*` aliases, `media_stream_runtime`
+acknowledgement payloads, generic `debug.rustyquest.media_stream.*` property
+fallbacks, sender-source runtime support for Camera2/MediaCodec and diagnostic
+synthetic MediaCodec sources, shared `MediaCodecSurfaceEncoder` and
+`H264MediaStreamWriter` helper usage, adapter-only MediaProjection and
+lab-only shell display source statuses, the Hostess Makepad safe-probe dispatch
+stream and required runtime receipt stream, the high-rate JSON payload ban, and
 absence of legacy Rusty-XR tokens. The build command requires an Android SDK
 and JDK in the current process and writes a debug APK plus build manifest under
 `target/`.

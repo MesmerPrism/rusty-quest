@@ -15,10 +15,7 @@ import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.MediaCodec;
-import android.media.MediaCodecInfo;
-import android.media.MediaFormat;
 import android.media.MediaRecorder;
-import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.SystemClock;
@@ -30,14 +27,11 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.Closeable;
-import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -52,12 +46,11 @@ final class RemoteCameraSourceRuntime {
     private static final String SOURCE_CAMERA2_MEDIACODEC_SURFACE = "camera2_mediacodec_surface";
     private static final String SOURCE_DIAGNOSTIC_SYNTHETIC_SURFACE =
             "diagnostic_synthetic_mediacodec_surface";
+    private static final String SOURCE_DISPLAY_COMPOSITE_MEDIAPROJECTION_SURFACE =
+            "display_composite_mediaprojection_mediacodec_surface";
+    private static final String SOURCE_SHELL_DISPLAY_MIRROR_SURFACE =
+            "shell_display_mirror_mediacodec_surface";
     private static final String CAMERA_PERMISSION_REQUIRED = "camera_permission_required";
-    private static final String MIME_H264 = "video/avc";
-    private static final String STREAM_MAGIC = "RMANVID1";
-    private static final int STREAM_SCHEMA_VERSION = 1;
-    private static final int CODEC_H264 = 1;
-    private static final int ENCODER_DRAIN_TIMEOUT_US = 10_000;
     private static final long CAMERA_OPEN_TIMEOUT_MS = 5_000L;
     private static final long CAMERA_SESSION_TIMEOUT_MS = 5_000L;
     private static final AtomicLong NEXT_SOURCE_ID = new AtomicLong(1L);
@@ -89,6 +82,26 @@ final class RemoteCameraSourceRuntime {
             result.put("camera_permission_policy", permissionPolicy);
             result.put("camera_permission_status", permissionStatus);
             return result;
+        }
+        if (SOURCE_DISPLAY_COMPOSITE_MEDIAPROJECTION_SURFACE.equals(normalizedKind)) {
+            return displayAdapterUnavailable(
+                    sessionId,
+                    normalizedKind,
+                    "mediaprojection_consent_route_not_implemented_in_broker_apk",
+                    "android_mediaprojection_user_consent",
+                    false,
+                    permissionPolicy,
+                    permissionStatus);
+        }
+        if (SOURCE_SHELL_DISPLAY_MIRROR_SURFACE.equals(normalizedKind)) {
+            return displayAdapterUnavailable(
+                    sessionId,
+                    normalizedKind,
+                    "shell_hidden_display_sidecar_required",
+                    "shell_hidden_display_adapter",
+                    true,
+                    permissionPolicy,
+                    permissionStatus);
         }
         if (SOURCE_CAMERA2_MEDIACODEC_SURFACE.equals(normalizedKind)) {
             if (context == null) {
@@ -299,6 +312,25 @@ final class RemoteCameraSourceRuntime {
         return result;
     }
 
+    private static JSONObject displayAdapterUnavailable(
+            String sessionId,
+            String sourceKind,
+            String reason,
+            String captureAuthority,
+            boolean labOnly,
+            String permissionPolicy,
+            JSONObject permissionStatus) throws Exception {
+        JSONObject result = unavailable(sessionId, sourceKind, reason, permissionPolicy, permissionStatus);
+        result.put("schema", "rusty.quest.media_stream.android_display_source_adapter.v1");
+        result.put("source_family", "display");
+        result.put("display_frame_source", sourceKind);
+        result.put("capture_authority", captureAuthority);
+        result.put("adapter_surface_only", true);
+        result.put("lab_only", labOnly);
+        result.put("production_allowed", !labOnly);
+        return result;
+    }
+
     private static JSONObject baseResult(String sessionId, String sourceKind, String state) throws Exception {
         JSONObject result = new JSONObject();
         result.put("schema", "rusty.quest.remote_camera.android_sender_source.v1");
@@ -343,6 +375,20 @@ final class RemoteCameraSourceRuntime {
         if ("synthetic".equals(normalized) || "synthetic_surface".equals(normalized)
                 || "diagnostic_synthetic".equals(normalized)) {
             return SOURCE_DIAGNOSTIC_SYNTHETIC_SURFACE;
+        }
+        if ("display_composite_mediaprojection".equals(normalized)
+                || "display_composite_mediaprojection_h264".equals(normalized)
+                || "mediaprojection".equals(normalized)
+                || "android_mediaprojection".equals(normalized)
+                || "android_mediaprojection_surface".equals(normalized)) {
+            return SOURCE_DISPLAY_COMPOSITE_MEDIAPROJECTION_SURFACE;
+        }
+        if ("shell_display_mirror".equals(normalized)
+                || "shell_display_mirror_h264".equals(normalized)
+                || "shell_hidden_display".equals(normalized)
+                || "hidden_display_shell".equals(normalized)
+                || "scrcpy_display_manager".equals(normalized)) {
+            return SOURCE_SHELL_DISPLAY_MIRROR_SURFACE;
         }
         if (normalized.length() == 0 || "none".equals(normalized)) {
             return SOURCE_EXTERNAL_H264_SOCKET;
@@ -480,81 +526,6 @@ final class RemoteCameraSourceRuntime {
         } catch (NumberFormatException ignored) {
             return null;
         }
-    }
-
-    private static void configureEncoder(MediaCodec encoder, Size size, int bitrateBps, int frameRateHz) throws IOException {
-        MediaFormat format = MediaFormat.createVideoFormat(MIME_H264, size.getWidth(), size.getHeight());
-        format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
-        format.setInteger(MediaFormat.KEY_BIT_RATE, Math.max(1, bitrateBps));
-        format.setInteger(MediaFormat.KEY_FRAME_RATE, Math.max(1, frameRateHz));
-        format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1);
-        try {
-            format.setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_CBR);
-            format.setInteger(MediaFormat.KEY_PREPEND_HEADER_TO_SYNC_FRAMES, 1);
-        } catch (Exception ignored) {
-            // Some platform encoders reject optional tuning keys; the base H.264 surface profile is enough.
-        }
-        encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
-    }
-
-    private static void requestSyncFrame(MediaCodec encoder) {
-        try {
-            Bundle parameters = new Bundle();
-            parameters.putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME, 0);
-            encoder.setParameters(parameters);
-        } catch (Exception ignored) {
-            // Sync-frame requests are best effort.
-        }
-    }
-
-    private static void writeU32(OutputStream output, int value) throws IOException {
-        output.write((value >>> 24) & 0xFF);
-        output.write((value >>> 16) & 0xFF);
-        output.write((value >>> 8) & 0xFF);
-        output.write(value & 0xFF);
-    }
-
-    private static void writeU64(OutputStream output, long value) throws IOException {
-        output.write((int) ((value >>> 56) & 0xFF));
-        output.write((int) ((value >>> 48) & 0xFF));
-        output.write((int) ((value >>> 40) & 0xFF));
-        output.write((int) ((value >>> 32) & 0xFF));
-        output.write((int) ((value >>> 24) & 0xFF));
-        output.write((int) ((value >>> 16) & 0xFF));
-        output.write((int) ((value >>> 8) & 0xFF));
-        output.write((int) (value & 0xFF));
-    }
-
-    private static long writeStreamHeader(OutputStream output, MediaProfile profile, JSONObject metadata)
-            throws IOException {
-        byte[] metadataBytes = metadata.toString().getBytes(StandardCharsets.UTF_8);
-        output.write(STREAM_MAGIC.getBytes(StandardCharsets.US_ASCII));
-        writeU32(output, STREAM_SCHEMA_VERSION);
-        writeU32(output, CODEC_H264);
-        writeU32(output, profile.width);
-        writeU32(output, profile.height);
-        writeU32(output, 0);
-        writeU32(output, metadataBytes.length);
-        output.write(metadataBytes);
-        output.flush();
-        return 32L + metadataBytes.length;
-    }
-
-    private static long writeEncodedPacket(
-            OutputStream output,
-            long presentationTimeUs,
-            int flags,
-            byte[] payload,
-            long sourceElapsedNs,
-            long sourceUnixNs) throws IOException {
-        writeU64(output, presentationTimeUs);
-        writeU32(output, flags);
-        writeU32(output, payload.length);
-        writeU64(output, sourceElapsedNs);
-        writeU64(output, sourceUnixNs);
-        output.write(payload);
-        output.flush();
-        return 32L + payload.length;
     }
 
     private static void drawSyntheticFrame(Surface surface, int frameIndex, MediaProfile profile) throws Exception {
@@ -861,17 +832,6 @@ final class RemoteCameraSourceRuntime {
         }
     }
 
-    private static void releaseQuietly(Surface surface) {
-        if (surface == null) {
-            return;
-        }
-        try {
-            surface.release();
-        } catch (Exception ignored) {
-            // Surface release during stop is best effort.
-        }
-    }
-
     private static String safeMessage(Throwable throwable) {
         String message = throwable != null ? throwable.getMessage() : "";
         return message != null ? message : "";
@@ -974,14 +934,15 @@ final class RemoteCameraSourceRuntime {
 
         void runSyntheticSource() throws Exception {
             MediaProfile profile = firstProfile();
-            MediaCodec encoder = null;
+            MediaCodecSurfaceEncoder encoder = null;
             Surface surface = null;
             try {
-                encoder = MediaCodec.createEncoderByType(MIME_H264);
-                configureEncoder(encoder, new Size(profile.width, profile.height), profile.bitrateBps, profile.frameRateHz);
-                surface = encoder.createInputSurface();
-                encoder.start();
-                requestSyncFrame(encoder);
+                encoder = MediaCodecSurfaceEncoder.create(
+                        new Size(profile.width, profile.height),
+                        profile.bitrateBps,
+                        profile.frameRateHz);
+                surface = encoder.inputSurface();
+                encoder.requestSyncFrame();
                 state = "source_streaming_synthetic";
                 int frameIndex = 0;
                 while (!stopRequested) {
@@ -999,15 +960,7 @@ final class RemoteCameraSourceRuntime {
                 }
                 markStopped("stop_requested");
             } finally {
-                if (encoder != null) {
-                    try {
-                        encoder.stop();
-                    } catch (Exception ignored) {
-                        // Encoder may already be stopped after EOS.
-                    }
-                    encoder.release();
-                }
-                releaseQuietly(surface);
+                closeQuietly(encoder);
             }
         }
 
@@ -1016,21 +969,18 @@ final class RemoteCameraSourceRuntime {
             CameraSelection selection = cameraSelection != null
                     ? cameraSelection
                     : selectCamera(context, cameraId, cameraFacing, baseProfile, qualityProfile);
-            MediaCodec encoder = null;
+            MediaCodecSurfaceEncoder encoder = null;
             Surface surface = null;
             HandlerThread cameraThread = null;
             CameraDevice cameraDevice = null;
             CameraCaptureSession cameraSession = null;
             try {
-                encoder = MediaCodec.createEncoderByType(MIME_H264);
-                configureEncoder(
-                        encoder,
+                encoder = MediaCodecSurfaceEncoder.create(
                         selection.size,
                         baseProfile.bitrateBps,
                         baseProfile.frameRateHz);
-                surface = encoder.createInputSurface();
-                encoder.start();
-                requestSyncFrame(encoder);
+                surface = encoder.inputSurface();
+                encoder.requestSyncFrame();
 
                 cameraThread = new HandlerThread("rusty-remote-camera-camera2");
                 cameraThread.start();
@@ -1076,46 +1026,26 @@ final class RemoteCameraSourceRuntime {
                 if (cameraThread != null) {
                     cameraThread.quitSafely();
                 }
-                if (encoder != null) {
-                    try {
-                        encoder.stop();
-                    } catch (Exception ignored) {
-                        // Encoder may already be stopped after EOS.
-                    }
-                    encoder.release();
-                }
-                releaseQuietly(surface);
+                closeQuietly(encoder);
             }
         }
 
-        void drainEncoder(MediaCodec encoder, boolean endOfStream) throws Exception {
-            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
-            int emptyPolls = 0;
-            while (!stopRequested || endOfStream) {
-                int status = encoder.dequeueOutputBuffer(info, ENCODER_DRAIN_TIMEOUT_US);
-                if (status == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                    if (!endOfStream || emptyPolls++ > 50) {
-                        break;
-                    }
-                    continue;
-                }
-                if (status == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED || status < 0) {
-                    continue;
-                }
-                ByteBuffer outputBuffer = encoder.getOutputBuffer(status);
-                if (outputBuffer != null && info.size > 0) {
-                    byte[] payload = new byte[info.size];
-                    outputBuffer.position(info.offset);
-                    outputBuffer.limit(info.offset + info.size);
-                    outputBuffer.get(payload);
-                    writePacketToOutputs(info.presentationTimeUs, info.flags, payload);
-                }
-                boolean eos = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
-                encoder.releaseOutputBuffer(status, false);
-                if (eos) {
-                    break;
-                }
-            }
+        void drainEncoder(MediaCodecSurfaceEncoder encoder, boolean endOfStream) throws Exception {
+            encoder.drain(
+                    endOfStream,
+                    new MediaCodecSurfaceEncoder.StopSignal() {
+                        @Override
+                        public boolean stopRequested() {
+                            return stopRequested;
+                        }
+                    },
+                    new MediaCodecSurfaceEncoder.PacketSink() {
+                        @Override
+                        public void writePacket(long presentationTimeUs, int flags, byte[] payload)
+                                throws Exception {
+                            writePacketToOutputs(presentationTimeUs, flags, payload);
+                        }
+                    });
         }
 
         void writePacketToOutputs(long presentationTimeUs, int flags, byte[] payload) {
@@ -1255,7 +1185,11 @@ final class RemoteCameraSourceRuntime {
                 socket = client;
                 output = client.getOutputStream();
                 MediaProfile headerProfile = profileForHeader(group);
-                headerBytes = writeStreamHeader(output, headerProfile, metadata(group, headerProfile));
+                headerBytes = H264MediaStreamWriter.writeStreamHeader(
+                        output,
+                        headerProfile.width,
+                        headerProfile.height,
+                        metadata(group, headerProfile));
                 bytesWritten += headerBytes;
                 state = "source_consumer_connected";
             } catch (Exception ex) {
@@ -1306,7 +1240,13 @@ final class RemoteCameraSourceRuntime {
                 return;
             }
             try {
-                long bytes = writeEncodedPacket(target, presentationTimeUs, flags, payload, elapsedNs, unixNs);
+                long bytes = H264MediaStreamWriter.writeEncodedPacket(
+                        target,
+                        presentationTimeUs,
+                        flags,
+                        payload,
+                        elapsedNs,
+                        unixNs);
                 bytesWritten += bytes;
                 packetCount++;
                 if ((flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
