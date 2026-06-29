@@ -28,7 +28,8 @@ use crate::spatial_public_multistack::{
 };
 use crate::spatial_public_multistack_runtime::{
     allocate_spatial_public_guide_targets, public_guide_targets_pending_marker_fields,
-    update_spatial_public_depth_alignment, update_spatial_public_opaque_projection_layer_override,
+    update_spatial_public_depth_alignment, update_spatial_public_depth_layer_policy,
+    update_spatial_public_opaque_projection_layer_override,
 };
 use crate::spatial_video_projection::SpatialVideoProjectionRenderer;
 use crate::spatial_video_projection_native_stream::latest_spatial_video_projection_frame;
@@ -247,6 +248,29 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         right_offset_x as f32,
         right_offset_y as f32,
         sample_scale as f32,
+        camera_hwb_projection_marker_fields(),
+    ));
+    1
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeUpdatePrivateLayerDepthLayerPolicy(
+    _env: *mut c_void,
+    _thiz: *mut c_void,
+    depth_layer_policy: c_int,
+) -> i64 {
+    let applied_policy = update_spatial_public_depth_layer_policy(depth_layer_policy.max(0) as u32);
+    log_marker(format!(
+        "status=private-layer-depth-layer-policy-updated rawCameraProjectionProbe=true updateMask=1 spatialPrivateLayerControlPanel=true publicMultiStackDepthLayerPolicy={} requestedPublicMultiStackDepthLayerPolicyCode={} publicMultiStackDepthLayerCompareMode={} publicMultiStackDepthLayerCompareEvidence={} {} runtimeCrash=false",
+        applied_policy.marker_token(),
+        depth_layer_policy,
+        applied_policy.compare_mode_token(),
+        if applied_policy.compare_mode_token() == "visual-shader" {
+            "shader-samples-layer0-and-layer1-at-same-depth-uv"
+        } else {
+            "inactive"
+        },
         camera_hwb_projection_marker_fields(),
     ));
     1

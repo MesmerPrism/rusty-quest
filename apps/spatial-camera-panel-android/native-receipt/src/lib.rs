@@ -36,7 +36,11 @@ mod replay_hands;
 #[cfg(target_os = "android")]
 mod spatial_controller_actions;
 #[cfg(target_os = "android")]
+mod spatial_environment_depth;
+#[cfg(target_os = "android")]
 mod spatial_multimodal_input;
+#[cfg(target_os = "android")]
+mod spatial_native_passthrough;
 mod spatial_public_multistack;
 mod spatial_public_multistack_runtime;
 #[cfg(target_os = "android")]

@@ -10,6 +10,8 @@ param(
     [string]$Activity = "io.github.mesmerprism.rustyquest.spatial_camera_panel/.SpatialCameraPanelActivity",
     [int]$ReaderMaxImages = 4,
     [string]$VideoPath = $env:RUSTY_QUEST_SPATIAL_VIDEO_PATH,
+    [string]$VideoSourcePath = $env:RUSTY_QUEST_SPATIAL_VIDEO_SOURCE_PATH,
+    [string]$VideoDestinationRelativePath = "v.mp4",
     [int]$VideoWidth = 3840,
     [int]$VideoHeight = 1920,
     [int]$VideoMaxImages = 3,
@@ -17,8 +19,10 @@ param(
     [string]$VideoStereoLayout = "side-by-side-left-right",
     [double]$VideoOpacity = 1.0,
     [bool]$VideoLooping = $true,
+    [string]$DepthLayerPolicy = $env:RUSTY_QUEST_SPATIAL_DEPTH_LAYER_POLICY,
     [switch]$VideoOnly,
     [switch]$SkipInstall,
+    [switch]$SkipPermissionPregrant,
     [switch]$ClearLogcat,
     [switch]$StopAfterRun,
     [switch]$AllowMissingMarkers,
@@ -105,6 +109,27 @@ function Invoke-AdbCommand {
     return $result
 }
 
+function Invoke-CheckedPowershell {
+    param(
+        [Parameter(Mandatory=$true)][string]$Name,
+        [Parameter(Mandatory=$true)][string[]]$Arguments
+    )
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $output = & powershell @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+    $text = ($output -join "`n")
+    if ($exitCode -ne 0) {
+        throw "$Name failed with exit code $exitCode`n$text"
+    }
+    return $text
+}
+
 function Get-FileSha256 {
     param([Parameter(Mandatory=$true)][string]$Path)
 
@@ -183,9 +208,12 @@ $script:Serial = $Serial
 
 $readerMaxImagesClamped = [Math]::Max(3, [Math]::Min(12, $ReaderMaxImages))
 $videoPathTrimmed = if ($null -eq $VideoPath) { "" } else { $VideoPath.Trim() }
-$videoProjectionRequested = -not [string]::IsNullOrWhiteSpace($videoPathTrimmed)
+$videoSourcePathTrimmed = if ($null -eq $VideoSourcePath) { "" } else { $VideoSourcePath.Trim() }
+$videoProjectionRequested =
+    (-not [string]::IsNullOrWhiteSpace($videoPathTrimmed)) -or
+    (-not [string]::IsNullOrWhiteSpace($videoSourcePathTrimmed))
 if ($RequireSpatialVideoProjection -and -not $videoProjectionRequested) {
-    throw "-RequireSpatialVideoProjection requires -VideoPath or RUSTY_QUEST_SPATIAL_VIDEO_PATH."
+    throw "-RequireSpatialVideoProjection requires -VideoPath, -VideoSourcePath, RUSTY_QUEST_SPATIAL_VIDEO_PATH, or RUSTY_QUEST_SPATIAL_VIDEO_SOURCE_PATH."
 }
 $videoWidthClamped = [Math]::Max(320, [Math]::Min(4096, $VideoWidth))
 $videoHeightClamped = [Math]::Max(240, [Math]::Min(4096, $VideoHeight))
@@ -198,8 +226,17 @@ $videoStereoLayoutToken = if (@("top-bottom", "top-bottom-left-right", "tb", "ov
 } else {
     "side-by-side-left-right"
 }
+$depthLayerPolicyRaw = if ($null -eq $DepthLayerPolicy) { "" } else { $DepthLayerPolicy.Trim().ToLowerInvariant().Replace("_", "-") }
+$depthLayerPolicyToken = switch -Regex ($depthLayerPolicyRaw) {
+    "^(mono-layer0|mono-left|layer0|left|0)$" { "mono-layer0"; break }
+    "^(mono-layer1|mono-right|layer1|right|1)$" { "mono-layer1"; break }
+    "^(compare|layer-compare|compare-layers|depth-compare|l0-l1-compare|3)$" { "compare"; break }
+    "^(eye-index|per-eye|stereo|stereo-indexed|2)?$" { "eye-index"; break }
+    default { throw "Unknown -DepthLayerPolicy '$DepthLayerPolicy'. Use mono-layer0, mono-layer1, eye-index, or compare." }
+}
 $apkSha256 = Get-FileSha256 -Path $resolvedApk
 $summaryPath = Join-Path $OutDir "evidence-summary.json"
+$permissionPregrantPath = Join-Path $OutDir "permission-pregrant.json"
 $tagLogcatStreamPath = Join-Path $OutDir "tag-logcat-stream.txt"
 $tagLogcatErrorPath = Join-Path $OutDir "tag-logcat-stream.stderr.txt"
 $pidLogcatPath = Join-Path $OutDir "pid-logcat.txt"
@@ -225,6 +262,13 @@ $summary = [ordered]@{
     out_dir = (Resolve-Path -LiteralPath $OutDir).Path
     run_seconds = [Math]::Max(1, $RunSeconds)
     skipped_install = [bool]$SkipInstall
+    skip_permission_pregrant = [bool]$SkipPermissionPregrant
+    permission_pregrant_path = $permissionPregrantPath
+    spatial_scene_permission_pregrant_requested = (-not [bool]$SkipPermissionPregrant)
+    spatial_scene_permission_declared = $false
+    spatial_scene_permission_granted = ""
+    spatial_scene_data_appop_requested = (-not [bool]$SkipPermissionPregrant)
+    spatial_scene_data_appop_mode = ""
     clear_logcat_requested = [bool]$ClearLogcat
     stop_after_run = [bool]$StopAfterRun
     allow_missing_markers = [bool]$AllowMissingMarkers
@@ -234,6 +278,10 @@ $summary = [ordered]@{
     reader_max_images = $readerMaxImagesClamped
     spatial_video_projection_requested = $videoProjectionRequested
     spatial_video_projection_path = $videoPathTrimmed
+    spatial_video_projection_source_path = $videoSourcePathTrimmed
+    spatial_video_projection_stage_path = ""
+    spatial_video_projection_path_transport = $(if ([string]::IsNullOrWhiteSpace($videoSourcePathTrimmed)) { "caller-provided-device-path" } else { "app-private-staged-source" })
+    spatial_video_projection_destination_relative_path = $VideoDestinationRelativePath
     spatial_video_projection_width = $videoWidthClamped
     spatial_video_projection_height = $videoHeightClamped
     spatial_video_projection_max_images = $videoMaxImagesClamped
@@ -241,6 +289,7 @@ $summary = [ordered]@{
     spatial_video_projection_looping = [bool]$VideoLooping
     spatial_video_projection_stereo_layout = $videoStereoLayoutToken
     spatial_video_projection_opacity = $videoOpacityClamped
+    public_multistack_depth_layer_policy = $depthLayerPolicyToken
     carrier = "scenequadlayer-createAsAndroid-vulkan-wsi"
     tag_logcat_stream_path = $tagLogcatStreamPath
     tag_logcat_error_path = $tagLogcatErrorPath
@@ -271,11 +320,85 @@ try {
         Save-Text -Path (Join-Path $OutDir "install.txt") -Text $install.output
     }
 
+    if (-not $SkipPermissionPregrant) {
+        $pregrantArgs = @(
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            (Join-Path $PSScriptRoot "Grant-SpatialCameraPanelAndroidPermissions.ps1"),
+            "-Adb",
+            $script:ResolvedAdb,
+            "-Serial",
+            $script:Serial,
+            "-PackageName",
+            $PackageName,
+            "-GrantUseSceneDataAppOp",
+            "-Out",
+            $permissionPregrantPath
+        )
+        if ($null -ne $script:ResolvedAdbServerPort) {
+            $pregrantArgs += @("-AdbServerPort", $script:ResolvedAdbServerPort)
+        }
+        $summary.permission_pregrant_output = Invoke-CheckedPowershell -Name "Spatial Camera Panel permission pregrant" -Arguments $pregrantArgs
+        if (Test-Path -LiteralPath $permissionPregrantPath) {
+            $permissionReceipt = Get-Content -LiteralPath $permissionPregrantPath -Raw | ConvertFrom-Json
+            $summary.spatial_scene_permission_declared = [bool]$permissionReceipt.use_scene_permission_declared
+            $summary.spatial_scene_permission_granted = [string]$permissionReceipt.use_scene_permission_granted
+            $summary.spatial_scene_data_appop_mode = [string]$permissionReceipt.use_scene_data_appop_mode
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($videoSourcePathTrimmed)) {
+        if (-not (Test-Path -LiteralPath $videoSourcePathTrimmed)) {
+            throw "VideoSourcePath not found: $videoSourcePathTrimmed"
+        }
+        $stageReceiptPath = Join-Path $OutDir "spatial-video-stage.json"
+        $stageOutputPath = Join-Path $OutDir "spatial-video-stage-output.txt"
+        $stageScriptPath = Join-Path $PSScriptRoot "Stage-NativeRendererVideo.ps1"
+        $stageArgs = @(
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            $stageScriptPath,
+            "-SourcePath",
+            (Resolve-Path -LiteralPath $videoSourcePathTrimmed).Path,
+            "-Adb",
+            $script:ResolvedAdb,
+            "-Serial",
+            $script:Serial,
+            "-PackageName",
+            $PackageName,
+            "-DestinationRelativePath",
+            $VideoDestinationRelativePath,
+            "-Out",
+            $stageReceiptPath
+        )
+        if ($null -ne $script:ResolvedAdbServerPort) {
+            $stageArgs += @("-AdbServerPort", $script:ResolvedAdbServerPort)
+        }
+        $stageOutput = & powershell @stageArgs 2>&1
+        $stageExitCode = $LASTEXITCODE
+        Save-Text -Path $stageOutputPath -Text ($stageOutput -join "`n")
+        if ($stageExitCode -ne 0) {
+            throw "stage Spatial video source failed with exit code $stageExitCode`n$($stageOutput -join "`n")"
+        }
+        $stageReceipt = Get-Content -LiteralPath $stageReceiptPath -Raw | ConvertFrom-Json
+        $videoPathTrimmed = [string]$stageReceipt.video_projection_path
+        $videoProjectionRequested = -not [string]::IsNullOrWhiteSpace($videoPathTrimmed)
+        $summary.spatial_video_projection_requested = $videoProjectionRequested
+        $summary.spatial_video_projection_path = $videoPathTrimmed
+        $summary.spatial_video_projection_stage_path = $stageReceiptPath
+        $summary.spatial_video_projection_path_transport = "app-private-staged-source"
+    }
+
     $setpropResults = @()
     $setpropResults += Invoke-AdbCommand -Name "disable luma camera HWB probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_probe", "0")
     $setpropResults += Invoke-AdbCommand -Name "configure raw camera projection probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe", $(if ($VideoOnly) { "0" } else { "1" }))
     $setpropResults += Invoke-AdbCommand -Name "configure Spatial video-only projection probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.video_projection_probe", $(if ($VideoOnly) { "1" } else { "0" }))
     $setpropResults += Invoke-AdbCommand -Name "set raw camera projection reader max images" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.reader_max_images", $readerMaxImagesClamped.ToString())
+    $setpropResults += Invoke-AdbCommand -Name "set Spatial depth layer policy" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.depth.layer_policy", $depthLayerPolicyToken)
     $setpropResults += Invoke-AdbCommand -Name "select Spatial SDK interaction pointer input" -Arguments @("shell", "setprop", "debug.rustyquest.spatial_camera_panel.vr_input_system", "interaction_sdk")
     $setpropResults += Invoke-AdbCommand -Name "allow app controller probe to observe left/right input" -Arguments @("shell", "setprop", "debug.rustyquest.spatial_camera_panel.consume_left_right_input", "0")
     $setpropResults += Invoke-AdbCommand -Name "disable Spatial SDK multimodal input" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.multimodal_input.enabled", "0")
@@ -354,6 +477,7 @@ try {
         ""
     }
     $evidenceText = "$tagLogcat`n$pidLogcat`n$allLogcat"
+    $appScopedEvidenceText = "$tagLogcat`n$pidLogcat"
 
     $summary.start = if ($VideoOnly) {
         (Test-TextContains $evidenceText "status=start") -and (Test-TextContains $evidenceText "videoOnlySpatialProjection=true")
@@ -382,7 +506,7 @@ try {
     $summary.projection_target_stereo_horizontal_offset_readback = Test-TextContains $evidenceText "projectionTargetStereoHorizontalOffsetUv="
     $summary.projection_target_stereo_horizontal_offset_default = Test-TextContains $evidenceText "projectionTargetStereoHorizontalOffsetDefaultUv=0.046320"
     $summary.projection_target_left_right_offset_readback = (Test-TextContains $evidenceText "projectionTargetLeftOffsetUv=") -and (Test-TextContains $evidenceText "projectionTargetRightOffsetUv=")
-    $summary.projection_target_stereo_horizontal_offset_control_disabled = Test-TextContains $evidenceText "stereoHorizontalOffsetJoystickInput=disabled-default-locked-left-stick-y-reserved-for-panel-scroll"
+    $summary.projection_target_stereo_horizontal_offset_control_disabled = Test-TextContains $evidenceText "stereoHorizontalOffsetJoystickInput=disabled-default-locked-left-stick-y-controls-panel-distance-private-free-transform"
     $summary.mono_duplicated_false = Test-TextContains $evidenceText "monoDuplicated=false"
     $summary.private_shader_stack_false = Test-TextContains $evidenceText "privateShaderStack=false"
     $summary.custom_projection_stack_false = Test-TextContains $evidenceText "customProjectionStack=false"
@@ -390,7 +514,9 @@ try {
     $summary.spatial_interaction_sdk_backend = Test-TextContains $evidenceText "spatialVrInputSystem=interaction_sdk"
     $summary.spatial_pointer_input_expected = Test-TextContains $evidenceText "spatialPointerInputExpected=true"
     $summary.spatial_controller_actions_disabled = Test-TextContains $evidenceText "nativeControllerActionBridge=false"
-    $summary.spatial_multimodal_disabled = (Test-TextContains $evidenceText "spatialRequiredOpenXrExtensions=none") -and (Test-TextContains $evidenceText "spatialMultimodalInputRequest=false")
+    $summary.spatial_multimodal_disabled = (Test-TextContains $evidenceText "spatialMultimodalRequiredOpenXrExtensions=none") -and (Test-TextContains $evidenceText "spatialMultimodalInputRequest=false")
+    $summary.spatial_required_openxr_includes_passthrough = Test-TextContains $evidenceText "XR_FB_passthrough"
+    $summary.spatial_required_openxr_includes_environment_depth = Test-TextContains $evidenceText "XR_META_environment_depth"
     $summary.camera_stack_particle_layer_suppressed = $evidenceText -match "status=particle-layer-suppressed"
     $summary.camera_stack_particles_suppression_enabled = $evidenceText -match "status=particle-layer-suppressed[^\r\n]*cameraStackSuppressesParticles=true"
     $summary.camera_stack_particle_layer_visible_false = $evidenceText -match "status=particle-layer-suppressed[^\r\n]*particleLayerVisible=false"
@@ -409,11 +535,37 @@ try {
     $summary.public_multistack_opaque_projection_payload_execution_ready = Test-TextContains $evidenceText "publicMultiStackOpaqueProjectionPayloadExecutionReady=true"
     $summary.public_multistack_opaque_payload_execution_ready = Test-TextContains $evidenceText "publicMultiStackOpaquePayloadExecutionReady=true"
     $summary.public_multistack_depth_fallback_ready = Test-TextContains $evidenceText "publicMultiStackDepthFallbackReady=true"
+    $summary.public_multistack_depth_fallback_source = Test-TextContains $evidenceText "publicMultiStackDepthSource=spatial-fallback-depth-descriptor"
+    $summary.public_multistack_depth_real_provider_bound_false = Test-TextContains $evidenceText "publicMultiStackDepthRealProviderBound=false"
+    $summary.public_multistack_depth_descriptor_shape_real = Test-TextContains $evidenceText "publicMultiStackDepthDescriptorShape=single-combined-d16-array-sampler"
+    $summary.public_multistack_depth_real_descriptor_bound = Test-TextContains $evidenceText "publicMultiStackDepthRealDescriptorBound=true"
+    $summary.public_multistack_depth_current_source_real = Test-TextContains $evidenceText "publicMultiStackDepthCurrentDescriptorSource=xr-meta-environment-depth"
+    $summary.public_multistack_depth_descriptor_frame_count_nonzero = $evidenceText -match "publicMultiStackDepthDescriptorAcquiredFrameCount=([1-9][0-9]*)"
+    $summary.spatial_environment_depth_start_requested = Test-TextContains $evidenceText "channel=spatial-environment-depth status=start-requested"
+    $summary.spatial_environment_depth_provider_created = Test-TextContains $evidenceText "channel=spatial-environment-depth status=provider-created"
+    $summary.spatial_environment_depth_provider_bound = Test-TextContains $evidenceText "environmentDepthRealProviderBound=true"
+    $summary.spatial_environment_depth_acquire_thread_started = Test-TextContains $evidenceText "environmentDepthAcquireThreadStarted=true"
+    $summary.spatial_environment_depth_acquire_loop_running = Test-TextContains $evidenceText "channel=spatial-environment-depth status=runtime"
+    $summary.spatial_environment_depth_first_frame = Test-TextContains $evidenceText "channel=spatial-environment-depth status=first-frame"
+    $summary.spatial_environment_depth_acquired = Test-TextContains $evidenceText "environmentDepthAcquireStatus=acquired"
+    $summary.spatial_environment_depth_valid_data = Test-TextContains $evidenceText "environmentDepthValidData=true"
+    $summary.spatial_environment_depth_valid_sample_count_nonzero = $evidenceText -match "environmentDepthDebugValidSampleCount=([1-9][0-9]*)"
+    $summary.spatial_native_passthrough_layer_active = Test-TextContains $evidenceText "nativePassthroughLayerActive=true"
+    $summary.spatial_native_passthrough_layer_inactive = Test-TextContains $evidenceText "nativePassthroughLayerActive=false"
+    $summary.spatial_native_passthrough_prerequisite_active = Test-TextContains $evidenceText "environmentDepthPassthroughPrerequisite=active"
     $summary.public_multistack_frame_projected = Test-TextContains $evidenceText "status=public-multistack-frame-projected"
     $summary.public_multistack_projection_evidence = Test-TextContains $evidenceText "status=public-multistack-projection-evidence"
     $summary.public_multistack_projection_applied = Test-TextContains $evidenceText "publicMultiStackProjectionApplied=true"
     $summary.public_multistack_layer_cycle_enabled = Test-TextContains $evidenceText "publicMultiStackLayerCycleEnabled=true"
     $summary.public_multistack_layer_cycle_elapsed = Test-TextContains $evidenceText "publicMultiStackLayerCycleElapsedSeconds="
+    $summary.public_multistack_depth_layer_policy_marker =
+        Test-TextContains $evidenceText "publicMultiStackDepthLayerPolicy=$depthLayerPolicyToken"
+    $summary.public_multistack_depth_layer_compare_visual_shader =
+        if ($depthLayerPolicyToken -eq "compare") {
+            Test-TextContains $evidenceText "publicMultiStackDepthLayerCompareMode=visual-shader"
+        } else {
+            Test-TextContains $evidenceText "publicMultiStackDepthLayerCompareMode=off"
+        }
     $summary.public_multistack_opaque_projection_target_space = Test-TextContains $evidenceText "publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv"
     $summary.public_multistack_opaque_projection_left_target_rect = Test-TextContains $evidenceText "publicMultiStackOpaqueProjectionLeftTargetRect=0.062777;0.218750;0.375000;0.656250"
     $summary.public_multistack_opaque_projection_right_target_rect = Test-TextContains $evidenceText "publicMultiStackOpaqueProjectionRightTargetRect=0.562222;0.218750;0.375000;0.671875"
@@ -435,7 +587,7 @@ try {
     $summary.spatial_video_projection_video_only_render_loop_ready = (Test-TextContains $evidenceText "videoOnlySpatialProjection=true") -and (Test-TextContains $evidenceText "status=render-loop-ready")
     $summary.spatial_video_projection_video_only_presented = (Test-TextContains $evidenceText "videoOnlySpatialProjection=true") -and (Test-TextContains $evidenceText "status=video-frame-presented")
     $summary.camera_runtime_absent_when_video_only = if ($VideoOnly) { -not (Test-TextContains $evidenceText "status=camera-runtime-started") } else { $true }
-    $summary.runtime_crash_false = (Test-TextContains $evidenceText "runtimeCrash=false") -and -not ($evidenceText -match "AndroidRuntime|FATAL|render-failed")
+    $summary.runtime_crash_false = (Test-TextContains $appScopedEvidenceText "runtimeCrash=false") -and -not ($appScopedEvidenceText -match "AndroidRuntime|FATAL|render-failed")
     $summary.screenshot_captured = Test-Path -LiteralPath $screenshotPath
 
     $requiredFlags = if ($VideoOnly) {
@@ -497,12 +649,28 @@ try {
             "public_multistack_opaque_projection_pipeline_ready",
             "public_multistack_opaque_projection_payload_execution_ready",
             "public_multistack_opaque_payload_execution_ready",
-            "public_multistack_depth_fallback_ready",
+            "spatial_required_openxr_includes_passthrough",
+            "spatial_required_openxr_includes_environment_depth",
+            "spatial_native_passthrough_layer_active",
+            "spatial_native_passthrough_prerequisite_active",
+            "spatial_environment_depth_start_requested",
+            "spatial_environment_depth_provider_created",
+            "spatial_environment_depth_provider_bound",
+            "spatial_environment_depth_acquire_thread_started",
+            "spatial_environment_depth_first_frame",
+            "spatial_environment_depth_valid_data",
+            "spatial_environment_depth_valid_sample_count_nonzero",
+            "public_multistack_depth_descriptor_shape_real",
+            "public_multistack_depth_real_descriptor_bound",
+            "public_multistack_depth_current_source_real",
+            "public_multistack_depth_descriptor_frame_count_nonzero",
             "public_multistack_frame_projected",
             "public_multistack_projection_evidence",
             "public_multistack_projection_applied",
             "public_multistack_layer_cycle_enabled",
             "public_multistack_layer_cycle_elapsed",
+            "public_multistack_depth_layer_policy_marker",
+            "public_multistack_depth_layer_compare_visual_shader",
             "public_multistack_opaque_projection_target_space",
             "public_multistack_opaque_projection_left_target_rect",
             "public_multistack_opaque_projection_right_target_rect"

@@ -8,16 +8,24 @@ use std::mem;
 use std::os::raw::{c_char, c_int};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use ash::vk;
+use ash::vk::{self, Handle};
 
 pub(crate) const SPATIAL_PUBLIC_GUIDE_TARGET_COUNT: usize = 5;
 pub(crate) const SPATIAL_PUBLIC_GUIDE_TARGET_FORMAT: vk::Format = vk::Format::R8G8B8A8_UNORM;
-const SPATIAL_PUBLIC_DEPTH_FALLBACK_FORMAT: vk::Format = vk::Format::R32_SFLOAT;
+const SPATIAL_PUBLIC_DEPTH_FALLBACK_FORMAT: vk::Format = vk::Format::D16_UNORM;
+const SPATIAL_PUBLIC_MAX_DEPTH_DESCRIPTOR_SETS: u32 = 9;
+const SPATIAL_PUBLIC_ENVIRONMENT_DEPTH_CONFIGURED_NEAR_M: f32 = 0.3;
+const SPATIAL_PUBLIC_ENVIRONMENT_DEPTH_CONFIGURED_FAR_M: f32 = 4.0;
+const SPATIAL_PUBLIC_ENVIRONMENT_DEPTH_TEXTURE_TRANSFORM_FLAGS: f32 = 8.0;
+const SPATIAL_PUBLIC_DEPTH_FLAG_INFINITE_FAR: u32 = 1;
 const SPATIAL_PUBLIC_PACKED_EYE_COUNT: usize = 2;
 const SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_DEFAULT: f32 = -1.0;
 const SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_MAX: f32 = 6.0;
 const SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_PROPERTY: &str =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.projection_layer_override";
+const SPATIAL_PUBLIC_DEPTH_LAYER_POLICY_PROPERTY: &str =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.depth.layer_policy";
+const SPATIAL_PUBLIC_DEPTH_LAYER_COMPARE_SENTINEL: f32 = 2.0;
 const SPATIAL_PUBLIC_DEPTH_ALIGNMENT_OFFSET_MIN: f32 = -0.25;
 const SPATIAL_PUBLIC_DEPTH_ALIGNMENT_OFFSET_MAX: f32 = 0.25;
 const SPATIAL_PUBLIC_DEPTH_ALIGNMENT_SAMPLE_SCALE_MIN: f32 = 0.25;
@@ -27,12 +35,61 @@ static SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_BITS: AtomicU32 =
     AtomicU32::new(SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_DEFAULT.to_bits());
 static SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_LIVE_SET: AtomicBool =
     AtomicBool::new(false);
+static SPATIAL_PUBLIC_DEPTH_LAYER_POLICY_BITS: AtomicU32 =
+    AtomicU32::new(SpatialPublicDepthLayerPolicy::EyeIndex as u32);
+static SPATIAL_PUBLIC_DEPTH_LAYER_POLICY_LIVE_SET: AtomicBool = AtomicBool::new(false);
 static SPATIAL_PUBLIC_DEPTH_ALIGNMENT_LEFT_X_BITS: AtomicU32 = AtomicU32::new(0.0f32.to_bits());
 static SPATIAL_PUBLIC_DEPTH_ALIGNMENT_LEFT_Y_BITS: AtomicU32 = AtomicU32::new(0.0f32.to_bits());
 static SPATIAL_PUBLIC_DEPTH_ALIGNMENT_RIGHT_X_BITS: AtomicU32 = AtomicU32::new(0.0f32.to_bits());
 static SPATIAL_PUBLIC_DEPTH_ALIGNMENT_RIGHT_Y_BITS: AtomicU32 = AtomicU32::new(0.0f32.to_bits());
 static SPATIAL_PUBLIC_DEPTH_ALIGNMENT_SAMPLE_SCALE_BITS: AtomicU32 =
     AtomicU32::new(SPATIAL_PUBLIC_DEPTH_ALIGNMENT_SAMPLE_SCALE_DEFAULT.to_bits());
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u32)]
+pub(crate) enum SpatialPublicDepthLayerPolicy {
+    MonoLayer0 = 0,
+    MonoLayer1 = 1,
+    EyeIndex = 2,
+    Compare = 3,
+}
+
+impl SpatialPublicDepthLayerPolicy {
+    fn from_code(value: u32) -> Self {
+        match value {
+            0 => Self::MonoLayer0,
+            1 => Self::MonoLayer1,
+            3 => Self::Compare,
+            _ => Self::EyeIndex,
+        }
+    }
+
+    pub(crate) fn marker_token(self) -> &'static str {
+        match self {
+            Self::MonoLayer0 => "mono-layer0",
+            Self::MonoLayer1 => "mono-layer1",
+            Self::EyeIndex => "eye-index",
+            Self::Compare => "compare",
+        }
+    }
+
+    pub(crate) fn compare_mode_token(self) -> &'static str {
+        if self == Self::Compare {
+            "visual-shader"
+        } else {
+            "off"
+        }
+    }
+
+    fn source_layer_for_eye(self, eye_index: usize) -> f32 {
+        match self {
+            Self::MonoLayer0 => 0.0,
+            Self::MonoLayer1 => 1.0,
+            Self::EyeIndex => eye_index.min((SPATIAL_PUBLIC_PACKED_EYE_COUNT - 1) as usize) as f32,
+            Self::Compare => SPATIAL_PUBLIC_DEPTH_LAYER_COMPARE_SENTINEL,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct SpatialPublicDepthAlignment {
@@ -111,11 +168,7 @@ pub(crate) struct SpatialPublicGuideTargets {
     opaque_guide_pipeline_layout: vk::PipelineLayout,
     opaque_guide_pipelines: Vec<vk::Pipeline>,
     depth_descriptor_set_layout: vk::DescriptorSetLayout,
-    depth_descriptor_pool: vk::DescriptorPool,
-    depth_sampler: vk::Sampler,
-    depth_fallback: SpatialPublicDepthFallback,
-    depth_descriptor_set: vk::DescriptorSet,
-    depth_fallback_ready: bool,
+    depth_resources: SpatialPublicDepthResources,
     opaque_projection_pipeline_layout: vk::PipelineLayout,
     opaque_projection_pipeline: Option<vk::Pipeline>,
     blur_pipeline_layout: vk::PipelineLayout,
@@ -141,10 +194,8 @@ impl SpatialPublicGuideTargets {
         device.destroy_descriptor_set_layout(self.descriptor_set_layout, None);
         device.destroy_descriptor_pool(self.opaque_guide_descriptor_pool, None);
         device.destroy_descriptor_set_layout(self.opaque_guide_descriptor_set_layout, None);
-        device.destroy_descriptor_pool(self.depth_descriptor_pool, None);
+        self.depth_resources.destroy(device);
         device.destroy_descriptor_set_layout(self.depth_descriptor_set_layout, None);
-        self.depth_fallback.destroy(device);
-        device.destroy_sampler(self.depth_sampler, None);
         device.destroy_sampler(self.sampler, None);
         device.destroy_render_pass(self.render_pass, None);
     }
@@ -179,7 +230,7 @@ impl SpatialPublicGuideTargets {
             bool_marker(self.projection_execution_available()),
         )
         + &format!(
-            " publicMultiStackGuidePassResourcesReady=true publicMultiStackGuideFramebuffers={} publicMultiStackGuideSampleDescriptorSets={} publicMultiStackGuideSampleDescriptorShape=single-combined-rgba-sampler publicMultiStackGuidePassSchedule={} publicMultiStackOpaqueGuideDescriptorReady=true publicMultiStackOpaqueGuideDescriptorBindings=4,5,6,7,8 publicMultiStackOpaqueGuideDescriptorSets={} publicMultiStackOpaqueGuidePipelinesReady={} publicMultiStackOpaqueGuidePipelines={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackDepthFallbackReady={} publicMultiStackDepthFallbackFormat={:?}",
+            " publicMultiStackGuidePassResourcesReady=true publicMultiStackGuideFramebuffers={} publicMultiStackGuideSampleDescriptorSets={} publicMultiStackGuideSampleDescriptorShape=single-combined-rgba-sampler publicMultiStackGuidePassSchedule={} publicMultiStackOpaqueGuideDescriptorReady=true publicMultiStackOpaqueGuideDescriptorBindings=4,5,6,7,8 publicMultiStackOpaqueGuideDescriptorSets={} publicMultiStackOpaqueGuidePipelinesReady={} publicMultiStackOpaqueGuidePipelines={} publicMultiStackOpaqueGuideShaderPassCount={} {} {} {} {}",
             self.targets.len(),
             self.sample_descriptor_sets.len(),
             public_guide_pass_schedule_marker(),
@@ -191,8 +242,10 @@ impl SpatialPublicGuideTargets {
             bool_marker(self.opaque_guide_pipelines.len() == OPAQUE_GUIDE_SHADER_PASS_COUNT),
             self.opaque_guide_pipelines.len(),
             OPAQUE_GUIDE_SHADER_PASS_COUNT,
-            bool_marker(self.depth_descriptor_set != vk::DescriptorSet::null()),
-            SPATIAL_PUBLIC_DEPTH_FALLBACK_FORMAT,
+            self.depth_resources.marker_fields(),
+            spatial_environment_depth_marker_fields(),
+            spatial_native_passthrough_marker_fields(),
+            spatial_public_depth_layer_policy_marker_fields(),
         )
     }
 
@@ -204,7 +257,7 @@ impl SpatialPublicGuideTargets {
         let left_projection_rect = packed_projection_target_rect(0);
         let right_projection_rect = packed_projection_target_rect(1);
         format!(
-            "publicMultiStackProjectionApplied={} publicMultiStackLayerCycleEnabled=true publicMultiStackLayerCycleElapsedSeconds={:.3} publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv publicMultiStackOpaqueProjectionLeftTargetRect={} publicMultiStackOpaqueProjectionRightTargetRect={} publicMultiStackGuideTargetsAllocated=true publicMultiStackGuidePassResourcesReady=true publicMultiStackPassExecutionReady={} publicGuideBlurRuntimeReady={} publicGuideBlurPipelineReady=true publicGuideBlurRecordFunctionReady=true publicMultiStackOpaqueGuideDescriptorReady=true publicMultiStackOpaqueGuidePipelinesReady={} publicMultiStackOpaqueGuidePipelines={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackOpaqueProjectionPipelineReady={} publicMultiStackOpaqueProjectionPayloadExecutionReady={} publicMultiStackOpaquePayloadExecutionReady={} publicMultiStackDepthFallbackReady={} publicMultiStackDepthFallbackFormat={:?} publicMultiStackGuideFramebuffers={} publicMultiStackGuideSampleDescriptorSets={}",
+            "publicMultiStackProjectionApplied={} publicMultiStackLayerCycleEnabled=true publicMultiStackLayerCycleElapsedSeconds={:.3} publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv publicMultiStackOpaqueProjectionLeftTargetRect={} publicMultiStackOpaqueProjectionRightTargetRect={} publicMultiStackGuideTargetsAllocated=true publicMultiStackGuidePassResourcesReady=true publicMultiStackPassExecutionReady={} publicGuideBlurRuntimeReady={} publicGuideBlurPipelineReady=true publicGuideBlurRecordFunctionReady=true publicMultiStackOpaqueGuideDescriptorReady=true publicMultiStackOpaqueGuidePipelinesReady={} publicMultiStackOpaqueGuidePipelines={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackOpaqueProjectionPipelineReady={} publicMultiStackOpaqueProjectionPayloadExecutionReady={} publicMultiStackOpaquePayloadExecutionReady={} {} {} {} {} publicMultiStackGuideFramebuffers={} publicMultiStackGuideSampleDescriptorSets={}",
             bool_marker(projected_by_public_stack),
             elapsed_seconds.max(0.0),
             rect_marker(left_projection_rect),
@@ -217,8 +270,10 @@ impl SpatialPublicGuideTargets {
             bool_marker(self.opaque_projection_pipeline.is_some()),
             bool_marker(self.projection_execution_available()),
             bool_marker(self.projection_execution_available()),
-            bool_marker(self.depth_fallback_ready),
-            SPATIAL_PUBLIC_DEPTH_FALLBACK_FORMAT,
+            self.depth_resources.marker_fields(),
+            spatial_environment_depth_marker_fields(),
+            spatial_native_passthrough_marker_fields(),
+            spatial_public_depth_layer_policy_marker_fields(),
             self.targets.len(),
             self.sample_descriptor_sets.len(),
         )
@@ -234,14 +289,16 @@ impl SpatialPublicGuideTargets {
         let layer_override = opaque_projection_layer_override();
         let depth_alignment = current_spatial_public_depth_alignment();
         format!(
-            "publicMultiStackProjectionApplied={} publicMultiStackLayerCycleEnabled=true publicMultiStackLayerCycleElapsedSeconds={:.3} publicMultiStackOpaqueProjectionLayerOverride={:.3} publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv publicMultiStackOpaqueProjectionLeftTargetRect={} publicMultiStackOpaqueProjectionRightTargetRect={} publicMultiStackDepthFallbackReady={} publicMultiStackDepthFallbackFormat={:?} publicMultiStackDepthAlignmentLeftOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentRightOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentSampleScale={:.4}",
+            "publicMultiStackProjectionApplied={} publicMultiStackLayerCycleEnabled=true publicMultiStackLayerCycleElapsedSeconds={:.3} publicMultiStackOpaqueProjectionLayerOverride={:.3} publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv publicMultiStackOpaqueProjectionLeftTargetRect={} publicMultiStackOpaqueProjectionRightTargetRect={} {} {} {} {} publicMultiStackDepthAlignmentLeftOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentRightOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentSampleScale={:.4}",
             bool_marker(projected_by_public_stack),
             elapsed_seconds.max(0.0),
             layer_override,
             rect_marker(left_projection_rect),
             rect_marker(right_projection_rect),
-            bool_marker(self.depth_fallback_ready),
-            SPATIAL_PUBLIC_DEPTH_FALLBACK_FORMAT,
+            self.depth_resources.marker_fields(),
+            spatial_environment_depth_marker_fields(),
+            spatial_native_passthrough_marker_fields(),
+            spatial_public_depth_layer_policy_marker_fields(),
             depth_alignment.left_offset_uv[0],
             depth_alignment.left_offset_uv[1],
             depth_alignment.right_offset_uv[0],
@@ -331,7 +388,12 @@ impl SpatialPublicGuideTargets {
         if !self.projection_execution_available() {
             return false;
         }
-        self.transition_depth_fallback_for_sampling(device, command_buffer);
+        self.depth_resources
+            .try_bind_real_depth_images(device, self.depth_descriptor_set_layout);
+        if !self.depth_resources.current_binding().real_depth_bound {
+            self.depth_resources
+                .transition_fallback_for_sampling(device, command_buffer);
+        }
         true
     }
 
@@ -361,11 +423,13 @@ impl SpatialPublicGuideTargets {
                 &[
                     camera_descriptor_set,
                     self.opaque_guide_descriptor_set,
-                    self.depth_descriptor_set,
+                    self.depth_resources.current_binding().descriptor_set,
                 ],
                 &[],
             );
-            let push = OpaqueProjectionPush::for_packed_eye(eye_index, elapsed_seconds);
+            let depth_binding = self.depth_resources.current_binding();
+            let push =
+                OpaqueProjectionPush::for_packed_eye(eye_index, elapsed_seconds, depth_binding);
             push_fragment_constants(
                 device,
                 command_buffer,
@@ -552,33 +616,6 @@ impl SpatialPublicGuideTargets {
         transition_guide_image_for_sampling(device, command_buffer, destination.image);
         Ok(())
     }
-
-    unsafe fn transition_depth_fallback_for_sampling(
-        &mut self,
-        device: &ash::Device,
-        command_buffer: vk::CommandBuffer,
-    ) {
-        if self.depth_fallback_ready {
-            return;
-        }
-        let barrier = [vk::ImageMemoryBarrier::default()
-            .image(self.depth_fallback.image)
-            .subresource_range(depth_subresource_range())
-            .old_layout(vk::ImageLayout::UNDEFINED)
-            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-            .src_access_mask(vk::AccessFlags::empty())
-            .dst_access_mask(vk::AccessFlags::SHADER_READ)];
-        device.cmd_pipeline_barrier(
-            command_buffer,
-            vk::PipelineStageFlags::TOP_OF_PIPE,
-            vk::PipelineStageFlags::FRAGMENT_SHADER,
-            vk::DependencyFlags::empty(),
-            &[],
-            &[],
-            &barrier,
-        );
-        self.depth_fallback_ready = true;
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -624,9 +661,25 @@ struct OpaqueProjectionPush {
 }
 
 impl OpaqueProjectionPush {
-    fn for_packed_eye(eye_index: usize, elapsed_seconds: f32) -> Self {
+    fn for_packed_eye(
+        eye_index: usize,
+        elapsed_seconds: f32,
+        depth_binding: SpatialPublicDepthBinding,
+    ) -> Self {
         let layer_override = opaque_projection_layer_override();
         let depth_alignment = current_spatial_public_depth_alignment();
+        let depth_layer_policy = current_spatial_public_depth_layer_policy();
+        let depth_near_z = depth_binding.near_z.max(0.001);
+        let depth_far_z = if depth_binding.far_z.is_finite() && depth_binding.far_z > depth_near_z {
+            depth_binding.far_z
+        } else {
+            SPATIAL_PUBLIC_ENVIRONMENT_DEPTH_CONFIGURED_FAR_M.max(depth_near_z + 0.001)
+        };
+        let depth_flags = if depth_binding.far_z.is_finite() && depth_binding.far_z > depth_near_z {
+            0
+        } else {
+            SPATIAL_PUBLIC_DEPTH_FLAG_INFINITE_FAR
+        };
         Self {
             target_rect: packed_projection_target_rect(eye_index),
             params0: [
@@ -638,8 +691,22 @@ impl OpaqueProjectionPush {
             effect: OPAQUE_PROJECTION_EFFECT,
             cycle: [0.0, 5.0, 1.0, 1.0],
             border_blend: [0.0, 0.0, 0.0, 0.0],
-            depth: [0.0, 0.001, 4.0, 0.0],
-            depth_aux: [0.0, 0.0, 0.3, 4.0],
+            depth: [
+                if depth_binding.real_depth_bound {
+                    1.0
+                } else {
+                    0.0
+                },
+                depth_near_z,
+                depth_far_z,
+                depth_layer_policy.source_layer_for_eye(eye_index),
+            ],
+            depth_aux: [
+                depth_flags as f32,
+                SPATIAL_PUBLIC_ENVIRONMENT_DEPTH_TEXTURE_TRANSFORM_FLAGS,
+                SPATIAL_PUBLIC_ENVIRONMENT_DEPTH_CONFIGURED_NEAR_M,
+                SPATIAL_PUBLIC_ENVIRONMENT_DEPTH_CONFIGURED_FAR_M,
+            ],
             depth_uv_transform: depth_alignment.depth_uv_transform_for_eye(eye_index),
         }
     }
@@ -657,6 +724,33 @@ pub(crate) fn current_spatial_public_opaque_projection_layer_override() -> f32 {
     clamp_projection_layer_override(f32::from_bits(
         SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_BITS.load(Ordering::Acquire),
     ))
+}
+
+pub(crate) fn update_spatial_public_depth_layer_policy(
+    policy_code: u32,
+) -> SpatialPublicDepthLayerPolicy {
+    let applied = SpatialPublicDepthLayerPolicy::from_code(policy_code);
+    SPATIAL_PUBLIC_DEPTH_LAYER_POLICY_BITS.store(applied as u32, Ordering::Release);
+    SPATIAL_PUBLIC_DEPTH_LAYER_POLICY_LIVE_SET.store(true, Ordering::Release);
+    applied
+}
+
+pub(crate) fn current_spatial_public_depth_layer_policy() -> SpatialPublicDepthLayerPolicy {
+    let live_policy = SpatialPublicDepthLayerPolicy::from_code(
+        SPATIAL_PUBLIC_DEPTH_LAYER_POLICY_BITS.load(Ordering::Acquire),
+    );
+    if SPATIAL_PUBLIC_DEPTH_LAYER_POLICY_LIVE_SET.load(Ordering::Acquire) {
+        return live_policy;
+    }
+    #[cfg(target_os = "android")]
+    {
+        if let Some(value) = android_system_property(SPATIAL_PUBLIC_DEPTH_LAYER_POLICY_PROPERTY)
+            .and_then(|raw| parse_spatial_public_depth_layer_policy(&raw))
+        {
+            return value;
+        }
+    }
+    live_policy
 }
 
 pub(crate) fn update_spatial_public_depth_alignment(
@@ -714,6 +808,21 @@ pub(crate) fn current_spatial_public_depth_alignment() -> SpatialPublicDepthAlig
     }
 }
 
+fn spatial_public_depth_layer_policy_marker_fields() -> String {
+    let policy = current_spatial_public_depth_layer_policy();
+    format!(
+        "publicMultiStackDepthLayerPolicy={} publicMultiStackDepthLayerPolicyProperty={} publicMultiStackDepthLayerCompareMode={} publicMultiStackDepthLayerCompareEvidence={}",
+        policy.marker_token(),
+        SPATIAL_PUBLIC_DEPTH_LAYER_POLICY_PROPERTY,
+        policy.compare_mode_token(),
+        if policy == SpatialPublicDepthLayerPolicy::Compare {
+            "shader-samples-layer0-and-layer1-at-same-depth-uv"
+        } else {
+            "inactive"
+        }
+    )
+}
+
 fn opaque_projection_layer_override() -> f32 {
     let live_override = current_spatial_public_opaque_projection_layer_override();
     if SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_LIVE_SET.load(Ordering::Acquire) {
@@ -729,6 +838,29 @@ fn opaque_projection_layer_override() -> f32 {
         }
     }
     SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_DEFAULT
+}
+
+fn parse_spatial_public_depth_layer_policy(
+    raw_value: &str,
+) -> Option<SpatialPublicDepthLayerPolicy> {
+    let token = raw_value.trim().to_ascii_lowercase().replace('_', "-");
+    if token.is_empty() {
+        return None;
+    }
+    match token.as_str() {
+        "mono-layer0" | "mono-left" | "layer0" | "left" | "0" => {
+            Some(SpatialPublicDepthLayerPolicy::MonoLayer0)
+        }
+        "mono-layer1" | "mono-right" | "layer1" | "right" | "1" => {
+            Some(SpatialPublicDepthLayerPolicy::MonoLayer1)
+        }
+        "eye-index" | "per-eye" | "stereo" | "stereo-indexed" | "2" => {
+            Some(SpatialPublicDepthLayerPolicy::EyeIndex)
+        }
+        "compare" | "layer-compare" | "compare-layers" | "depth-compare" | "l0-l1-compare"
+        | "3" => Some(SpatialPublicDepthLayerPolicy::Compare),
+        _ => None,
+    }
 }
 
 fn parse_projection_layer_override(raw_value: &str) -> Option<f32> {
@@ -858,6 +990,268 @@ struct SpatialPublicDepthFallback {
     image: vk::Image,
     memory: vk::DeviceMemory,
     image_view: vk::ImageView,
+}
+
+#[derive(Clone, Copy)]
+struct SpatialPublicDepthBinding {
+    descriptor_set: vk::DescriptorSet,
+    real_depth_bound: bool,
+    near_z: f32,
+    far_z: f32,
+}
+
+struct SpatialPublicEnvironmentDepthSnapshot {
+    image_handles: Vec<u64>,
+    swapchain_index: u32,
+    width: u32,
+    height: u32,
+    near_z: f32,
+    far_z: f32,
+    acquired_frame_count: u64,
+}
+
+struct SpatialPublicDepthResources {
+    descriptor_pool: vk::DescriptorPool,
+    sampler: vk::Sampler,
+    fallback: SpatialPublicDepthFallback,
+    fallback_ready: bool,
+    fallback_descriptor_set: vk::DescriptorSet,
+    real_image_views: Vec<vk::ImageView>,
+    real_descriptor_sets: Vec<vk::DescriptorSet>,
+    real_image_handles: Vec<u64>,
+}
+
+impl SpatialPublicDepthResources {
+    unsafe fn create(
+        device: &ash::Device,
+        memory_properties: &vk::PhysicalDeviceMemoryProperties,
+        descriptor_set_layout: vk::DescriptorSetLayout,
+    ) -> Result<Self, String> {
+        let sampler = match create_depth_sampler(device) {
+            Ok(sampler) => sampler,
+            Err(error) => return Err(error),
+        };
+        let fallback = match SpatialPublicDepthFallback::create(device, memory_properties) {
+            Ok(fallback) => fallback,
+            Err(error) => {
+                device.destroy_sampler(sampler, None);
+                return Err(error);
+            }
+        };
+        let descriptor_pool = match create_depth_descriptor_pool(device) {
+            Ok(pool) => pool,
+            Err(error) => {
+                fallback.destroy(device);
+                device.destroy_sampler(sampler, None);
+                return Err(error);
+            }
+        };
+        let fallback_descriptor_set =
+            match allocate_depth_descriptor_set(device, descriptor_pool, descriptor_set_layout) {
+                Ok(descriptor_set) => descriptor_set,
+                Err(error) => {
+                    device.destroy_descriptor_pool(descriptor_pool, None);
+                    fallback.destroy(device);
+                    device.destroy_sampler(sampler, None);
+                    return Err(error);
+                }
+            };
+        write_depth_descriptor_set(
+            device,
+            fallback_descriptor_set,
+            sampler,
+            fallback.image_view,
+        );
+        let mut resources = Self {
+            descriptor_pool,
+            sampler,
+            fallback,
+            fallback_ready: false,
+            fallback_descriptor_set,
+            real_image_views: Vec::new(),
+            real_descriptor_sets: Vec::new(),
+            real_image_handles: Vec::new(),
+        };
+        resources.try_bind_real_depth_images(device, descriptor_set_layout);
+        Ok(resources)
+    }
+
+    unsafe fn try_bind_real_depth_images(
+        &mut self,
+        device: &ash::Device,
+        descriptor_set_layout: vk::DescriptorSetLayout,
+    ) {
+        let Some(snapshot) = current_spatial_environment_depth_frame_snapshot() else {
+            return;
+        };
+        if snapshot.image_handles.is_empty()
+            || self.real_image_handles == snapshot.image_handles
+            || !self.real_image_handles.is_empty()
+        {
+            return;
+        }
+        if snapshot.image_handles.len().saturating_add(1)
+            > SPATIAL_PUBLIC_MAX_DEPTH_DESCRIPTOR_SETS as usize
+        {
+            return;
+        }
+
+        let mut image_views = Vec::with_capacity(snapshot.image_handles.len());
+        for image_handle in snapshot.image_handles.iter().copied() {
+            let image = vk::Image::from_raw(image_handle);
+            match device.create_image_view(
+                &vk::ImageViewCreateInfo::default()
+                    .image(image)
+                    .view_type(vk::ImageViewType::TYPE_2D_ARRAY)
+                    .format(SPATIAL_PUBLIC_DEPTH_FALLBACK_FORMAT)
+                    .subresource_range(depth_subresource_range()),
+                None,
+            ) {
+                Ok(view) => image_views.push(view),
+                Err(_) => {
+                    for view in image_views {
+                        device.destroy_image_view(view, None);
+                    }
+                    return;
+                }
+            }
+        }
+
+        let set_layouts = vec![descriptor_set_layout; image_views.len()];
+        let descriptor_sets = match device.allocate_descriptor_sets(
+            &vk::DescriptorSetAllocateInfo::default()
+                .descriptor_pool(self.descriptor_pool)
+                .set_layouts(&set_layouts),
+        ) {
+            Ok(sets) => sets,
+            Err(_) => {
+                for view in image_views {
+                    device.destroy_image_view(view, None);
+                }
+                return;
+            }
+        };
+
+        for (descriptor_set, image_view) in descriptor_sets.iter().copied().zip(image_views.iter())
+        {
+            write_depth_descriptor_set(device, descriptor_set, self.sampler, *image_view);
+        }
+        self.real_image_views = image_views;
+        self.real_descriptor_sets = descriptor_sets;
+        self.real_image_handles = snapshot.image_handles;
+    }
+
+    fn current_binding(&self) -> SpatialPublicDepthBinding {
+        if let Some(snapshot) = current_spatial_environment_depth_frame_snapshot() {
+            if let Some(descriptor_set) = self
+                .real_descriptor_sets
+                .get(snapshot.swapchain_index as usize)
+                .copied()
+            {
+                return SpatialPublicDepthBinding {
+                    descriptor_set,
+                    real_depth_bound: true,
+                    near_z: snapshot.near_z,
+                    far_z: snapshot.far_z,
+                };
+            }
+        }
+        SpatialPublicDepthBinding {
+            descriptor_set: self.fallback_descriptor_set,
+            real_depth_bound: false,
+            near_z: 0.001,
+            far_z: SPATIAL_PUBLIC_ENVIRONMENT_DEPTH_CONFIGURED_FAR_M,
+        }
+    }
+
+    fn marker_fields(&self) -> String {
+        let current = self.current_binding();
+        let snapshot = current_spatial_environment_depth_frame_snapshot();
+        let (swapchain_index, image_size, acquired_frame_count) = if let Some(snapshot) = snapshot {
+            (
+                snapshot.swapchain_index.to_string(),
+                format!("{}x{}", snapshot.width, snapshot.height),
+                snapshot.acquired_frame_count,
+            )
+        } else {
+            ("none".to_string(), "0x0".to_string(), 0)
+        };
+        format!(
+            "publicMultiStackDepthRealDescriptorBound={} publicMultiStackDepthCurrentDescriptorSource={} publicMultiStackDepthDescriptorAcquiredFrameCount={} publicMultiStackDepthCurrentSwapchainIndex={} publicMultiStackDepthCurrentImageSize={} publicMultiStackDepthDescriptorShape=single-combined-d16-array-sampler publicMultiStackDepthFallbackDescriptorBound={} publicMultiStackDepthFallbackReady={} publicMultiStackDepthFallbackFormat={:?} publicMultiStackDepthRealDescriptorSets={} publicMultiStackDepthRealImageViews={}",
+            bool_marker(current.real_depth_bound),
+            if current.real_depth_bound {
+                "xr-meta-environment-depth"
+            } else {
+                "spatial-fallback-depth-descriptor"
+            },
+            acquired_frame_count,
+            swapchain_index,
+            image_size,
+            bool_marker(self.fallback_descriptor_set != vk::DescriptorSet::null()),
+            bool_marker(self.fallback_ready),
+            SPATIAL_PUBLIC_DEPTH_FALLBACK_FORMAT,
+            self.real_descriptor_sets.len(),
+            self.real_image_views.len(),
+        )
+    }
+
+    unsafe fn transition_fallback_for_sampling(
+        &mut self,
+        device: &ash::Device,
+        command_buffer: vk::CommandBuffer,
+    ) {
+        if self.fallback_ready {
+            return;
+        }
+        let barrier = [vk::ImageMemoryBarrier::default()
+            .image(self.fallback.image)
+            .subresource_range(depth_subresource_range())
+            .old_layout(vk::ImageLayout::UNDEFINED)
+            .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+            .src_access_mask(vk::AccessFlags::empty())
+            .dst_access_mask(vk::AccessFlags::SHADER_READ)];
+        device.cmd_pipeline_barrier(
+            command_buffer,
+            vk::PipelineStageFlags::TOP_OF_PIPE,
+            vk::PipelineStageFlags::FRAGMENT_SHADER,
+            vk::DependencyFlags::empty(),
+            &[],
+            &[],
+            &barrier,
+        );
+        self.fallback_ready = true;
+    }
+
+    unsafe fn destroy(self, device: &ash::Device) {
+        for image_view in self.real_image_views {
+            device.destroy_image_view(image_view, None);
+        }
+        device.destroy_descriptor_pool(self.descriptor_pool, None);
+        self.fallback.destroy(device);
+        device.destroy_sampler(self.sampler, None);
+    }
+}
+
+#[cfg(target_os = "android")]
+fn current_spatial_environment_depth_frame_snapshot(
+) -> Option<SpatialPublicEnvironmentDepthSnapshot> {
+    crate::spatial_environment_depth::spatial_environment_depth_frame_snapshot().map(|snapshot| {
+        SpatialPublicEnvironmentDepthSnapshot {
+            image_handles: snapshot.image_handles,
+            swapchain_index: snapshot.swapchain_index,
+            width: snapshot.width,
+            height: snapshot.height,
+            near_z: snapshot.near_z,
+            far_z: snapshot.far_z,
+            acquired_frame_count: snapshot.acquired_frame_count,
+        }
+    })
+}
+
+#[cfg(not(target_os = "android"))]
+fn current_spatial_environment_depth_frame_snapshot(
+) -> Option<SpatialPublicEnvironmentDepthSnapshot> {
+    None
 }
 
 impl SpatialPublicDepthFallback {
@@ -1282,82 +1676,16 @@ pub(crate) unsafe fn allocate_spatial_public_guide_targets(
             return Err(error);
         }
     };
-    let depth_sampler = match create_depth_sampler(device) {
-        Ok(sampler) => sampler,
-        Err(error) => {
-            for target in targets {
-                target.destroy(device);
-            }
-            device.destroy_descriptor_set_layout(depth_descriptor_set_layout, None);
-            device.destroy_pipeline(blur_pipeline, None);
-            device.destroy_pipeline_layout(blur_pipeline_layout, None);
-            destroy_pipelines(device, opaque_guide_pipelines);
-            device.destroy_pipeline_layout(opaque_guide_pipeline_layout, None);
-            device.destroy_descriptor_pool(opaque_guide_descriptor_pool, None);
-            device.destroy_descriptor_set_layout(opaque_guide_descriptor_set_layout, None);
-            device.destroy_descriptor_pool(descriptor_pool, None);
-            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
-            device.destroy_sampler(sampler, None);
-            device.destroy_render_pass(render_pass, None);
-            return Err(error);
-        }
-    };
-    let depth_fallback = match SpatialPublicDepthFallback::create(device, memory_properties) {
-        Ok(fallback) => fallback,
-        Err(error) => {
-            for target in targets {
-                target.destroy(device);
-            }
-            device.destroy_sampler(depth_sampler, None);
-            device.destroy_descriptor_set_layout(depth_descriptor_set_layout, None);
-            device.destroy_pipeline(blur_pipeline, None);
-            device.destroy_pipeline_layout(blur_pipeline_layout, None);
-            destroy_pipelines(device, opaque_guide_pipelines);
-            device.destroy_pipeline_layout(opaque_guide_pipeline_layout, None);
-            device.destroy_descriptor_pool(opaque_guide_descriptor_pool, None);
-            device.destroy_descriptor_set_layout(opaque_guide_descriptor_set_layout, None);
-            device.destroy_descriptor_pool(descriptor_pool, None);
-            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
-            device.destroy_sampler(sampler, None);
-            device.destroy_render_pass(render_pass, None);
-            return Err(error);
-        }
-    };
-    let depth_descriptor_pool = match create_depth_descriptor_pool(device) {
-        Ok(pool) => pool,
-        Err(error) => {
-            for target in targets {
-                target.destroy(device);
-            }
-            depth_fallback.destroy(device);
-            device.destroy_sampler(depth_sampler, None);
-            device.destroy_descriptor_set_layout(depth_descriptor_set_layout, None);
-            device.destroy_pipeline(blur_pipeline, None);
-            device.destroy_pipeline_layout(blur_pipeline_layout, None);
-            destroy_pipelines(device, opaque_guide_pipelines);
-            device.destroy_pipeline_layout(opaque_guide_pipeline_layout, None);
-            device.destroy_descriptor_pool(opaque_guide_descriptor_pool, None);
-            device.destroy_descriptor_set_layout(opaque_guide_descriptor_set_layout, None);
-            device.destroy_descriptor_pool(descriptor_pool, None);
-            device.destroy_descriptor_set_layout(descriptor_set_layout, None);
-            device.destroy_sampler(sampler, None);
-            device.destroy_render_pass(render_pass, None);
-            return Err(error);
-        }
-    };
-    let depth_descriptor_set = match allocate_depth_descriptor_set(
+    let depth_resources = match SpatialPublicDepthResources::create(
         device,
-        depth_descriptor_pool,
+        memory_properties,
         depth_descriptor_set_layout,
     ) {
-        Ok(descriptor_set) => descriptor_set,
+        Ok(resources) => resources,
         Err(error) => {
             for target in targets {
                 target.destroy(device);
             }
-            device.destroy_descriptor_pool(depth_descriptor_pool, None);
-            depth_fallback.destroy(device);
-            device.destroy_sampler(depth_sampler, None);
             device.destroy_descriptor_set_layout(depth_descriptor_set_layout, None);
             device.destroy_pipeline(blur_pipeline, None);
             device.destroy_pipeline_layout(blur_pipeline_layout, None);
@@ -1372,12 +1700,6 @@ pub(crate) unsafe fn allocate_spatial_public_guide_targets(
             return Err(error);
         }
     };
-    write_depth_descriptor_set(
-        device,
-        depth_descriptor_set,
-        depth_sampler,
-        depth_fallback.image_view,
-    );
     let opaque_projection_pipeline_layout = match create_opaque_projection_pipeline_layout(
         device,
         camera_descriptor_set_layout,
@@ -1389,9 +1711,7 @@ pub(crate) unsafe fn allocate_spatial_public_guide_targets(
             for target in targets {
                 target.destroy(device);
             }
-            device.destroy_descriptor_pool(depth_descriptor_pool, None);
-            depth_fallback.destroy(device);
-            device.destroy_sampler(depth_sampler, None);
+            depth_resources.destroy(device);
             device.destroy_descriptor_set_layout(depth_descriptor_set_layout, None);
             device.destroy_pipeline(blur_pipeline, None);
             device.destroy_pipeline_layout(blur_pipeline_layout, None);
@@ -1417,9 +1737,7 @@ pub(crate) unsafe fn allocate_spatial_public_guide_targets(
                 target.destroy(device);
             }
             device.destroy_pipeline_layout(opaque_projection_pipeline_layout, None);
-            device.destroy_descriptor_pool(depth_descriptor_pool, None);
-            depth_fallback.destroy(device);
-            device.destroy_sampler(depth_sampler, None);
+            depth_resources.destroy(device);
             device.destroy_descriptor_set_layout(depth_descriptor_set_layout, None);
             device.destroy_pipeline(blur_pipeline, None);
             device.destroy_pipeline_layout(blur_pipeline_layout, None);
@@ -1449,11 +1767,7 @@ pub(crate) unsafe fn allocate_spatial_public_guide_targets(
         opaque_guide_pipeline_layout,
         opaque_guide_pipelines,
         depth_descriptor_set_layout,
-        depth_descriptor_pool,
-        depth_sampler,
-        depth_fallback,
-        depth_descriptor_set,
-        depth_fallback_ready: false,
+        depth_resources,
         opaque_projection_pipeline_layout,
         opaque_projection_pipeline,
         blur_pipeline_layout,
@@ -1463,13 +1777,24 @@ pub(crate) unsafe fn allocate_spatial_public_guide_targets(
 
 pub(crate) fn public_guide_targets_pending_marker_fields(reason: &str) -> String {
     format!(
-        "publicMultiStackGuideTargetsAllocated=false publicMultiStackGuidePassResourcesReady=false publicMultiStackGuideTargetCount={} publicMultiStackGuideTargetExtent={}x{} publicMultiStackGuideTargetFormat={:?} publicMultiStackGuideTargetSkipReason={} publicMultiStackProjectionApplied=false publicMultiStackPassExecutionReady=false publicGuideBlurPipelineReady=false publicGuideBlurRecordFunctionReady=false publicGuideBlurRuntimeReady=false publicMultiStackOpaqueGuideDescriptorReady=false publicMultiStackOpaqueGuidePipelinesReady=false publicMultiStackOpaqueProjectionPipelineReady=false publicMultiStackOpaqueProjectionPayloadExecutionReady=false publicMultiStackOpaquePayloadExecutionReady=false publicMultiStackDepthFallbackReady=false",
+        "publicMultiStackGuideTargetsAllocated=false publicMultiStackGuidePassResourcesReady=false publicMultiStackGuideTargetCount={} publicMultiStackGuideTargetExtent={}x{} publicMultiStackGuideTargetFormat={:?} publicMultiStackGuideTargetSkipReason={} publicMultiStackProjectionApplied=false publicMultiStackPassExecutionReady=false publicGuideBlurPipelineReady=false publicGuideBlurRecordFunctionReady=false publicGuideBlurRuntimeReady=false publicMultiStackOpaqueGuideDescriptorReady=false publicMultiStackOpaqueGuidePipelinesReady=false publicMultiStackOpaqueProjectionPipelineReady=false publicMultiStackOpaqueProjectionPayloadExecutionReady=false publicMultiStackOpaquePayloadExecutionReady=false publicMultiStackDepthFallbackDescriptorBound=false publicMultiStackDepthFallbackReady=false {}",
         SPATIAL_PUBLIC_GUIDE_TARGET_COUNT,
         spatial_public_guide_target_extent().width,
         spatial_public_guide_target_extent().height,
         SPATIAL_PUBLIC_GUIDE_TARGET_FORMAT,
         crate::marker_token(reason),
+        spatial_environment_depth_marker_fields(),
     )
+}
+
+#[cfg(target_os = "android")]
+fn spatial_environment_depth_marker_fields() -> String {
+    crate::spatial_environment_depth::spatial_environment_depth_marker_fields()
+}
+
+#[cfg(not(target_os = "android"))]
+fn spatial_environment_depth_marker_fields() -> String {
+    "publicMultiStackDepthSource=spatial-fallback-depth-descriptor publicMultiStackDepthProviderRequested=false publicMultiStackDepthRealProviderBound=false publicMultiStackDepthValidData=false publicMultiStackDepthPermissionSurface=horizonos.permission.USE_SCENE+USE_SCENE_DATA environmentDepthSource=spatial-fallback-depth-descriptor environmentDepthProviderState=not-bound environmentDepthProviderAvailable=false environmentDepthRealProviderBound=false environmentDepthAcquireStatus=not-attempted-provider-not-bound environmentDepthValidData=false environmentDepthDebugValidSampleCount=0 environmentDepthAcquiredFrameCount=0".to_string()
 }
 
 fn public_guide_pass_schedule_marker() -> String {
@@ -1748,12 +2073,12 @@ unsafe fn create_depth_descriptor_set_layout(
 unsafe fn create_depth_descriptor_pool(device: &ash::Device) -> Result<vk::DescriptorPool, String> {
     let pool_sizes = [vk::DescriptorPoolSize::default()
         .ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-        .descriptor_count(1)];
+        .descriptor_count(SPATIAL_PUBLIC_MAX_DEPTH_DESCRIPTOR_SETS)];
     device
         .create_descriptor_pool(
             &vk::DescriptorPoolCreateInfo::default()
                 .pool_sizes(&pool_sizes)
-                .max_sets(1),
+                .max_sets(SPATIAL_PUBLIC_MAX_DEPTH_DESCRIPTOR_SETS),
             None,
         )
         .map_err(|error| format!("create-spatial-public-depth-pool-{error:?}"))
@@ -2185,6 +2510,16 @@ fn bool_marker(value: bool) -> &'static str {
     }
 }
 
+#[cfg(target_os = "android")]
+fn spatial_native_passthrough_marker_fields() -> String {
+    crate::spatial_native_passthrough::spatial_native_passthrough_marker_fields()
+}
+
+#[cfg(not(target_os = "android"))]
+fn spatial_native_passthrough_marker_fields() -> String {
+    "nativePassthroughRequested=true nativePassthroughLayerActive=false nativePassthroughActivationPath=spatial-native-receipt-xr-fb-passthrough nativePassthroughCompositionLayerSubmission=spatial-sdk-owned-end-frame".to_string()
+}
+
 unsafe fn create_shader_module(
     device: &ash::Device,
     bytes: &[u8],
@@ -2214,7 +2549,7 @@ fn color_subresource_range() -> vk::ImageSubresourceRange {
 
 fn depth_subresource_range() -> vk::ImageSubresourceRange {
     vk::ImageSubresourceRange {
-        aspect_mask: vk::ImageAspectFlags::COLOR,
+        aspect_mask: vk::ImageAspectFlags::DEPTH,
         base_mip_level: 0,
         level_count: 1,
         base_array_layer: 0,
@@ -2334,11 +2669,11 @@ mod tests {
         assert_eq!(packed_projection_target_rect(0), push.left_rect);
         assert_eq!(packed_projection_target_rect(1), push.right_rect);
         assert_eq!(
-            OpaqueProjectionPush::for_packed_eye(0, 1.25).target_rect,
+            OpaqueProjectionPush::for_packed_eye(0, 1.25, fallback_depth_binding()).target_rect,
             push.left_rect
         );
         assert_eq!(
-            OpaqueProjectionPush::for_packed_eye(1, 1.25).target_rect,
+            OpaqueProjectionPush::for_packed_eye(1, 1.25, fallback_depth_binding()).target_rect,
             push.right_rect
         );
     }
@@ -2353,11 +2688,61 @@ mod tests {
     }
 
     #[test]
+    fn depth_layer_policy_parser_accepts_panel_and_setprop_tokens() {
+        assert_eq!(
+            parse_spatial_public_depth_layer_policy("mono-layer0"),
+            Some(SpatialPublicDepthLayerPolicy::MonoLayer0)
+        );
+        assert_eq!(
+            parse_spatial_public_depth_layer_policy("layer1"),
+            Some(SpatialPublicDepthLayerPolicy::MonoLayer1)
+        );
+        assert_eq!(
+            parse_spatial_public_depth_layer_policy("per_eye"),
+            Some(SpatialPublicDepthLayerPolicy::EyeIndex)
+        );
+        assert_eq!(
+            parse_spatial_public_depth_layer_policy("compare"),
+            Some(SpatialPublicDepthLayerPolicy::Compare)
+        );
+        assert_eq!(parse_spatial_public_depth_layer_policy("invalid"), None);
+    }
+
+    #[test]
+    fn depth_layer_policy_maps_to_expected_shader_source_layers() {
+        assert_eq!(
+            SpatialPublicDepthLayerPolicy::MonoLayer0.source_layer_for_eye(1),
+            0.0
+        );
+        assert_eq!(
+            SpatialPublicDepthLayerPolicy::MonoLayer1.source_layer_for_eye(0),
+            1.0
+        );
+        assert_eq!(
+            SpatialPublicDepthLayerPolicy::EyeIndex.source_layer_for_eye(1),
+            1.0
+        );
+        assert_eq!(
+            SpatialPublicDepthLayerPolicy::Compare.source_layer_for_eye(0),
+            SPATIAL_PUBLIC_DEPTH_LAYER_COMPARE_SENTINEL
+        );
+    }
+
+    #[test]
     fn opaque_projection_push_defaults_to_layer_cycle_without_android_property() {
         assert_eq!(
-            OpaqueProjectionPush::for_packed_eye(0, 1.25).params0[3],
+            OpaqueProjectionPush::for_packed_eye(0, 1.25, fallback_depth_binding()).params0[3],
             SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_DEFAULT
         );
+    }
+
+    fn fallback_depth_binding() -> SpatialPublicDepthBinding {
+        SpatialPublicDepthBinding {
+            descriptor_set: vk::DescriptorSet::null(),
+            real_depth_bound: false,
+            near_z: 0.001,
+            far_z: SPATIAL_PUBLIC_ENVIRONMENT_DEPTH_CONFIGURED_FAR_M,
+        }
     }
 
     #[test]

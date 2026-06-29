@@ -64,9 +64,13 @@ const PUBLIC_MULTISTACK_STATIC_MARKER_FIELDS: &str = concat!(
 );
 
 pub(crate) fn public_multistack_marker_fields() -> String {
+    let passthrough_fields = spatial_native_passthrough_marker_fields();
+    let depth_fields = spatial_environment_depth_marker_fields();
     format!(
-        "{} publicGuideBlurShaderCompiled={} publicGuideBlurShaderBytes={} publicMultiStackOpaqueGuideShaderCompiled={} publicMultiStackOpaqueGuideShaderBytes={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackOpaqueGuideShaderPassVariantsCompiled={} publicMultiStackOpaqueGuideShaderPassByteCounts={} publicMultiStackOpaqueProjectionShaderCompiled={} publicMultiStackOpaqueProjectionShaderBytes={} publicMultiStackOpaquePayloadExecutionReady=false",
+        "{} {} {} publicGuideBlurShaderCompiled={} publicGuideBlurShaderBytes={} publicMultiStackOpaqueGuideShaderCompiled={} publicMultiStackOpaqueGuideShaderBytes={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackOpaqueGuideShaderPassVariantsCompiled={} publicMultiStackOpaqueGuideShaderPassByteCounts={} publicMultiStackOpaqueProjectionShaderCompiled={} publicMultiStackOpaqueProjectionShaderBytes={} publicMultiStackOpaquePayloadExecutionReady=false",
         PUBLIC_MULTISTACK_STATIC_MARKER_FIELDS,
+        passthrough_fields,
+        depth_fields,
         bool_marker(PUBLIC_GUIDE_BLUR_SHADER_COMPILED),
         PUBLIC_GUIDE_BLUR_SHADER_BYTE_COUNT,
         bool_marker(OPAQUE_GUIDE_SHADER_COMPILED),
@@ -77,6 +81,26 @@ pub(crate) fn public_multistack_marker_fields() -> String {
         bool_marker(OPAQUE_PROJECTION_SHADER_COMPILED),
         OPAQUE_PROJECTION_SHADER_BYTE_COUNT,
     )
+}
+
+#[cfg(target_os = "android")]
+fn spatial_native_passthrough_marker_fields() -> String {
+    crate::spatial_native_passthrough::spatial_native_passthrough_marker_fields()
+}
+
+#[cfg(not(target_os = "android"))]
+fn spatial_native_passthrough_marker_fields() -> String {
+    "nativePassthroughRequested=true nativePassthroughLayerActive=false nativePassthroughActivationPath=spatial-native-receipt-xr-fb-passthrough nativePassthroughCompositionLayerSubmission=spatial-sdk-owned-end-frame".to_string()
+}
+
+#[cfg(target_os = "android")]
+fn spatial_environment_depth_marker_fields() -> String {
+    crate::spatial_environment_depth::spatial_environment_depth_marker_fields()
+}
+
+#[cfg(not(target_os = "android"))]
+fn spatial_environment_depth_marker_fields() -> String {
+    "publicMultiStackDepthSource=spatial-fallback-depth-descriptor publicMultiStackDepthProviderRequested=false publicMultiStackDepthRealProviderBound=false publicMultiStackDepthValidData=false publicMultiStackDepthPermissionSurface=horizonos.permission.USE_SCENE+USE_SCENE_DATA environmentDepthSource=spatial-fallback-depth-descriptor environmentDepthProviderState=not-bound environmentDepthProviderAvailable=false environmentDepthRealProviderBound=false environmentDepthAcquireStatus=not-attempted-provider-not-bound environmentDepthValidData=false environmentDepthDebugValidSampleCount=0 environmentDepthAcquiredFrameCount=0".to_string()
 }
 
 pub(crate) fn public_multistack_inactive_marker_fields() -> &'static str {

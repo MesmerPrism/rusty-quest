@@ -19,6 +19,15 @@ OpenXR/Vulkan renderer and from downstream private effect stacks.
   guide blur, post-blur guide, and depth diagnostic slots.
 - Public guide-target/pass manifests and generic separable 5-tap guide blur
   shader compilation for future multi-pass Spatial camera routes.
+- Spatial scene-depth diagnostics mirror the native renderer permission and
+  evidence vocabulary. The APK declares `horizonos.permission.USE_SCENE` and
+  OpenXR permissions; headset smokes pregrant package-declared permissions and
+  record the `USE_SCENE_DATA` app-op. The public depth layer keeps a fallback
+  descriptor for unbound runs and can now bind real `XR_META_environment_depth`
+  descriptors after the native passthrough prerequisite is active. Current
+  headset evidence must distinguish `publicMultiStackDepthCurrentDescriptorSource`
+  from fallback readiness and must require `environmentDepthValidData=true`
+  plus nonzero valid sample counters before accepting real depth.
 - Generic public guide-target and guide-pass resource scaffold for the
   multi-pass route, including public blur pipeline creation and a generic blur
   record function kept outside camera stream and surface-particle proof
@@ -42,16 +51,28 @@ OpenXR/Vulkan renderer and from downstream private effect stacks.
 - Right-controller Y-axis input scales the packed projection target around each
   eye center. The live control is reported with
   `projectionTargetScaleJoystickControlsEnabled=true` and
-  `right-stick-y-projection-target-scale`. Left-stick Y is reserved for panel
-  scrolling after the default stereo horizontal offset was locked in, and
-  right-stick X is intentionally ignored/swallowed so it no longer drives
-  panel scale or distance.
+  `right-stick-y-projection-target-scale`. Left-stick Y controls workflow-panel
+  distance after the default stereo horizontal offset was locked in, and nudges
+  the private layer panel's current free-transform distance when that panel is
+  not actively palm-grabbed. Right-stick X is intentionally ignored/swallowed
+  so it no longer drives panel scale or distance.
 - The right primary button opens a generic `spatial_private_layer_panel` while
-  the camera/video stack is active. The panel renders as a Spatial SDK layer in
-  front of the camera/video projection, exposes the seven generic layer
-  choices, projection area scale, and depth-alignment X/Y/scale controls, and
-  updates native state through `nativeUpdatePrivateLayerOverride` and
-  `nativeUpdatePrivateLayerDepthAlignment`.
+  the camera/video stack is active. The panel renders as a Spatial SDK mesh
+  world-space object in front of the camera/video projection instead of as a
+  compositor layer, exposes the seven generic layer choices, projection area
+  scale, depth source policy (`mono-layer0`, `mono-layer1`, `eye-index`, or
+  `compare`), and depth-alignment X/Y/scale controls, and updates native state
+  through `nativeUpdatePrivateLayerOverride`,
+  `nativeUpdatePrivateLayerDepthLayerPolicy`, and
+  `nativeUpdatePrivateLayerDepthAlignment`. Movement is owned by the Spatial
+  SDK entity `Grabbable(type = PIVOT_Y)` component, matching Meta's floating
+  panel samples. Compose drag deltas remain disabled; the header handle is a
+  visual affordance only, so pointer deltas cannot feed back into panel
+  transforms. The panel is seeded once in front of the viewer and then left to
+  the Spatial SDK as a free world-space grabbable; forced radial placement
+  writes remain disabled while left-stick Y applies a direct distance nudge to
+  the current SDK transform. A/trigger select is explicitly enabled for the
+  Compose layer buttons, while controller squeeze/palm remains the grab path.
 - Strict headset smoke support for public multi-stack projection activation:
   `-RequirePublicMultiStackProjection` requires guide targets, public blur,
   opaque guide/projection pipelines, fallback depth, projection-applied, and
@@ -106,6 +127,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPa
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
 ```
 
+For a build where the private-layer panel buttons visibly change the active
+camera projection layer, pass the downstream opaque shader profile into the
+build wrapper:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 `
+  -Build `
+  -PrivateLayerProfilePath <path-to-private-layer-profile.json>
+```
+
+The profile and shader sources remain outside this public repo. A build without
+those inputs keeps the public raw-camera fallback and can still prove panel
+input plumbing, but it cannot prove visible layer switching.
+
 Build output goes to
 `target\spatial-camera-panel-android\rusty-quest-spatial-camera-panel.apk`.
 
@@ -123,3 +158,18 @@ multi-stack projection gate. The public summary records
 readiness, fallback depth readiness, packed native target-rect clipping, and
 camera-stack particle suppression without committing downstream shader source
 or private effect formulae.
+
+On 2026-06-29, a strict camera/video run with `-DepthLayerPolicy compare`
+passed with real `XR_META_environment_depth` bound and native passthrough active:
+
+```text
+local-artifacts\spatial-camera-panel-headset\20260629-152338-camera-hwb-projection-smoke\evidence-summary.json
+APK_SHA256=FA45845AE0B239C75D6B0777E73F5E614919C77320208BECFBD0E1EAF19874CC
+```
+
+The compare path samples depth layer 0 and layer 1 at the same shader UV and
+renders their difference. The headset/screenshot evidence showed structured
+per-eye differences, so the layers must not be assumed byte-identical. This is
+visual shader evidence only; literal byte-for-byte confirmation would require a
+future GPU readback/statistics pass. General Spatial depth-stack alignment is
+deferred to manual panel calibration and later alignment work.

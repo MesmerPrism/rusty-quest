@@ -6,6 +6,10 @@ param(
     [string]$GradleVersion = "9.4.1",
     [string]$RecordedHandCaptureDir = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR,
     [int]$RecordedHandFrameLimit = 24,
+    [string]$PrivateLayerProfilePath = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE,
+    [string]$OpaqueGuideShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER,
+    [string]$OpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER,
+    [string]$OpaqueProjectionEffect = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT,
     [string]$OutDir = ""
 )
 
@@ -85,6 +89,38 @@ function Invoke-DownloadText {
     }
 }
 
+function Resolve-OptionalFilePath {
+    param(
+        [string]$Path,
+        [Parameter(Mandatory=$true)][string]$Label
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "$Label not found: $Path"
+    }
+    return (Resolve-Path -LiteralPath $Path).Path
+}
+
+function Test-ProjectionEffectValue {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return $false
+    }
+    $parts = $Value.Split(@(",", ";", " "), [System.StringSplitOptions]::RemoveEmptyEntries)
+    if ($parts.Length -ne 4) {
+        throw "OpaqueProjectionEffect must contain four floats, found $($parts.Length): $Value"
+    }
+    foreach ($part in $parts) {
+        $parsed = 0.0
+        if (-not [double]::TryParse($part, [System.Globalization.NumberStyles]::Float, [System.Globalization.CultureInfo]::InvariantCulture, [ref]$parsed)) {
+            throw "OpaqueProjectionEffect contains an invalid float: $part"
+        }
+    }
+    return $true
+}
+
 function Resolve-Gradle {
     param(
         [Parameter(Mandatory=$true)][string]$RepoRoot,
@@ -142,6 +178,34 @@ if (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
     $resolvedRecordedHandCaptureDir = (Resolve-Path -LiteralPath $RecordedHandCaptureDir).Path
 }
 $resolvedRecordedHandFrameLimit = [Math]::Max(1, [Math]::Min(120, $RecordedHandFrameLimit))
+$resolvedPrivateLayerProfilePath = Resolve-OptionalFilePath -Path $PrivateLayerProfilePath -Label "Private layer profile"
+if (-not [string]::IsNullOrWhiteSpace($resolvedPrivateLayerProfilePath)) {
+    $privateLayerProfile = Get-Content -LiteralPath $resolvedPrivateLayerProfilePath -Raw | ConvertFrom-Json
+    if ([string]::IsNullOrWhiteSpace($OpaqueGuideShader) -and $null -ne $privateLayerProfile.private_shader_sources) {
+        $OpaqueGuideShader = [string]$privateLayerProfile.private_shader_sources.guide_shader
+    }
+    if ([string]::IsNullOrWhiteSpace($OpaqueProjectionShader) -and $null -ne $privateLayerProfile.private_shader_sources) {
+        $OpaqueProjectionShader = [string]$privateLayerProfile.private_shader_sources.projection_shader
+    }
+    if ([string]::IsNullOrWhiteSpace($OpaqueProjectionEffect) -and $null -ne $privateLayerProfile.required_public_bridge) {
+        $OpaqueProjectionEffect = [string]$privateLayerProfile.required_public_bridge.opaque_projection_effect
+    }
+}
+$resolvedOpaqueGuideShader = Resolve-OptionalFilePath -Path $OpaqueGuideShader -Label "Opaque guide shader"
+$resolvedOpaqueProjectionShader = Resolve-OptionalFilePath -Path $OpaqueProjectionShader -Label "Opaque projection shader"
+$privateLayerShaderInputsConfigured =
+    (-not [string]::IsNullOrWhiteSpace($resolvedOpaqueGuideShader)) -or
+    (-not [string]::IsNullOrWhiteSpace($resolvedOpaqueProjectionShader))
+if ($privateLayerShaderInputsConfigured -and (
+        [string]::IsNullOrWhiteSpace($resolvedOpaqueGuideShader) -or
+        [string]::IsNullOrWhiteSpace($resolvedOpaqueProjectionShader))) {
+    throw "Both -OpaqueGuideShader and -OpaqueProjectionShader are required when enabling the private layer shader path."
+}
+$opaqueProjectionEffectConfigured = Test-ProjectionEffectValue -Value $OpaqueProjectionEffect
+if ($privateLayerShaderInputsConfigured -and -not $opaqueProjectionEffectConfigured) {
+    $OpaqueProjectionEffect = "1.0,1.0,0.0,1.0"
+    $opaqueProjectionEffectConfigured = $true
+}
 
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Join-Path $PSScriptRoot ".."
@@ -192,6 +256,10 @@ $previousLinkerForCargo = $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER
 $previousCcForCargo = $env:CC_aarch64_linux_android
 $previousRecordedHandCaptureDir = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR
 $previousRecordedHandFrameLimit = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT
+$previousPrivateLayerProfile = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE
+$previousOpaqueGuideShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER
+$previousOpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER
+$previousOpaqueProjectionEffect = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT
 try {
     $env:ANDROID_HOME = $AndroidHome
     $env:ANDROID_NDK_HOME = $NdkHome
@@ -203,6 +271,20 @@ try {
     } else {
         $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR = $resolvedRecordedHandCaptureDir
         $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT = $resolvedRecordedHandFrameLimit.ToString()
+    }
+    if ([string]::IsNullOrWhiteSpace($resolvedPrivateLayerProfilePath)) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE = $resolvedPrivateLayerProfilePath
+    }
+    if ($privateLayerShaderInputsConfigured) {
+        $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER = $resolvedOpaqueGuideShader
+        $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER = $resolvedOpaqueProjectionShader
+        $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT = $OpaqueProjectionEffect
+    } else {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER -ErrorAction SilentlyContinue
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER -ErrorAction SilentlyContinue
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT -ErrorAction SilentlyContinue
     }
     Invoke-Checked "Spatial Camera Panel native receipt cargo build" $cargoCommand.Source @(
         "build",
@@ -241,6 +323,26 @@ try {
         Remove-Item Env:\RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT -ErrorAction SilentlyContinue
     } else {
         $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT = $previousRecordedHandFrameLimit
+    }
+    if ($null -eq $previousPrivateLayerProfile) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE = $previousPrivateLayerProfile
+    }
+    if ($null -eq $previousOpaqueGuideShader) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER = $previousOpaqueGuideShader
+    }
+    if ($null -eq $previousOpaqueProjectionShader) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER = $previousOpaqueProjectionShader
+    }
+    if ($null -eq $previousOpaqueProjectionEffect) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT = $previousOpaqueProjectionEffect
     }
 }
 $nativeReceiptBuiltLib = Join-Path $nativeReceiptTargetDir "aarch64-linux-android\release\libspatial_camera_panel_native_receipt.so"
@@ -304,6 +406,12 @@ $manifest = [ordered]@{
     spatial_handtracking_permission_declared = $true
     spatial_render_model_manifest_declared = $true
     spatial_render_model_permission_declared = $true
+    spatial_scene_permission_declared = $true
+    spatial_openxr_permission_declared = $true
+    spatial_environment_depth_permission_surface = "horizonos.permission.USE_SCENE+USE_SCENE_DATA"
+    spatial_environment_depth_real_provider_bound = $false
+    spatial_environment_depth_data_source = "spatial-fallback-depth-descriptor"
+    spatial_environment_depth_diagnostic_policy = "distinguish-permission-pregrant-provider-binding-acquire-valid-sample"
     spatial_multimodal_input_default_enabled = $false
     native_spatial_controller_actions_default_enabled = $false
     spatial_controller_launch_policy = "app-owned-readiness-prompt-if-no-active-avatarbody-controller"
@@ -353,6 +461,21 @@ $manifest = [ordered]@{
     native_receipt_library_packaged = $nativeReceiptLibraryPackaged
     native_receipt_library_sha256 = $nativeReceiptSha256
     native_receipt_generated_jni_libs = "app/build/generated/rustJniLibs/arm64-v8a"
+    spatial_public_multistack_private_layer_profile_configured = (-not [string]::IsNullOrWhiteSpace($resolvedPrivateLayerProfilePath))
+    spatial_public_multistack_private_shader_inputs = $(if ($privateLayerShaderInputsConfigured) { "external-build-inputs" } else { "not-configured-raw-camera-fallback" })
+    spatial_public_multistack_opaque_guide_shader_configured = (-not [string]::IsNullOrWhiteSpace($resolvedOpaqueGuideShader))
+    spatial_public_multistack_opaque_projection_shader_configured = (-not [string]::IsNullOrWhiteSpace($resolvedOpaqueProjectionShader))
+    spatial_public_multistack_opaque_projection_effect_configured = $opaqueProjectionEffectConfigured
+    spatial_public_multistack_opaque_projection_effect = $(if ($opaqueProjectionEffectConfigured) { $OpaqueProjectionEffect } else { "" })
+    spatial_public_multistack_private_layer_build_env = @(
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE",
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER",
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER",
+        "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT"
+    )
+    spatial_public_multistack_private_layer_profile_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedPrivateLayerProfilePath)) { "" } else { Get-FileSha256 -Path $resolvedPrivateLayerProfilePath })
+    spatial_public_multistack_opaque_guide_shader_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedOpaqueGuideShader)) { "" } else { Get-FileSha256 -Path $resolvedOpaqueGuideShader })
+    spatial_public_multistack_opaque_projection_shader_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedOpaqueProjectionShader)) { "" } else { Get-FileSha256 -Path $resolvedOpaqueProjectionShader })
     native_surface_particle_layer = "VideoSurfacePanelRegistration-native-vulkan-wsi-surface-panel"
     native_surface_particle_layer_rendering = "native-vulkan-wsi-surface-panel-live-openxr-gpu-skinned-resident-rig-hand-anchor-particles-packed-stereo-left-right"
     native_surface_particle_layer_jni_bridge = "SpatialCameraPanelActivity.nativeStartSurfaceParticleLayer"
@@ -558,6 +681,12 @@ $manifest = [ordered]@{
     spatial_panel_headlock_mode = "enabled-by-default-viewer-relative-while-workflow-panel-open"
     spatial_panel_headlock_default_pose_meters = "0.0;0.0;1.40"
     spatial_panel_headlock_default_scale = 0.65
+    spatial_private_layer_panel_render_mode = "spatial-sdk-mesh-world-space-layer-config-disabled"
+    spatial_private_layer_panel_pose_mode = "initial-headset-facing-world-space-then-sdk-owned"
+    spatial_private_layer_panel_movement_authority = "spatial-sdk-grabbable-free-transform-pivot-y-left-stick-y-distance"
+    spatial_private_layer_panel_input_buttons = "button-a+trigger-l+trigger-r-select; controller-squeeze-grab"
+    spatial_private_layer_panel_compose_drag_movement = $false
+    spatial_private_layer_panel_default_pose_meters = "0.0;0.0;0.72"
     spatial_panel_headlock_hotload_tool = "tools/Set-SpatialCameraPanelHeadlock.ps1"
     spatial_panel_headlock_hotload_properties = @(
         "debug.rustyquest.spatial_camera_panel.panel.headlocked.enabled",
@@ -572,10 +701,10 @@ $manifest = [ordered]@{
         "debug.rustyquest.spatial_camera_panel.panel.headlocked.joystick.distance_rate_mps",
         "debug.rustyquest.spatial_camera_panel.panel.headlocked.joystick.scale_rate_per_second"
     )
-    spatial_panel_headlock_joystick_controls = "android-generic-motion-left-stick-x-horizontal-left-stick-y-panel-scroll-right-stick-y-projection-scale-right-stick-x-ignored"
+    spatial_panel_headlock_joystick_controls = "android-generic-motion-left-stick-y-workflow-panel-distance-private-free-transform-distance-right-stick-y-projection-scale-right-stick-x-ignored"
     spatial_camera_projection_distance_controls = "fixed-1m-default; no joystick distance control"
     spatial_camera_projection_scale_controls = "android-right-stick-y; spatial-sdk-avatar-body-right-thumb-up-down; native-openxr-right-thumbstick-y diagnostic; panel-control"
-    spatial_camera_projection_stereo_offset_controls = "disabled-default-locked; left-stick-y-reserved-for-panel-scroll"
+    spatial_camera_projection_stereo_offset_controls = "disabled-default-locked; left-stick-y-controls-panel-distance-private-free-transform"
     spatial_camera_projection_distance_vr_input_system_property = "debug.rustyquest.spatial_camera_panel.vr_input_system"
     spatial_panel_headlock_tuning_file = "files/spatial_camera_panel_headlock_tuning.json"
     panel_shape_meters = [ordered]@{

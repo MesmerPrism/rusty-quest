@@ -18,6 +18,11 @@ low-rate driver-profile control. It packages a Spatial SDK/Compose panel under
   `SceneQuadLayer`.
 - Public seven-slot camera guide multi-stack contract, including generic final,
   guide blur, post-blur guide, and depth diagnostic slots.
+- Scene-depth permission diagnostics that mirror the native renderer surface:
+  `horizonos.permission.USE_SCENE`, OpenXR permissions, and a smoke-wrapper
+  `USE_SCENE_DATA` app-op receipt. The public multi-stack keeps a fallback
+  depth descriptor for unbound runs, and strict camera/video smokes can now bind
+  real `XR_META_environment_depth` descriptors when native passthrough is active.
 - Generic driver profiles `profile-a` through `profile-d` with bounded
   `driver0_value01` and `driver1_value01` handoff markers.
 - Native hand-anchor particle smoke tests that use public deterministic
@@ -44,14 +49,31 @@ build of the public multi-stack route also passed on 2026-06-28 with
 `-RequirePublicMultiStackProjection`: five guide targets allocated, public blur
 runtime ready, opaque guide/projection pipelines ready, fallback depth ready,
 `publicMultiStackProjectionApplied=true`, and
-`publicMultiStackLayerCycleEnabled=true`. The strict run preserves the native
-projection footprint by keeping the Spatial SDK quad as the carrier and clipping
-Vulkan output to the packed native target rects; it also suppresses the surface
-particle renderer while the camera stack is active.
+`publicMultiStackLayerCycleEnabled=true`. Later 2026-06-29 strict evidence binds
+real `XR_META_environment_depth` descriptors with
+`publicMultiStackDepthCurrentDescriptorSource=xr-meta-environment-depth`,
+`publicMultiStackDepthRealDescriptorBound=true`,
+`environmentDepthValidData=true`, and nonzero valid sample counters after the
+native passthrough prerequisite is active. The fallback descriptor remains
+available and continues to mark unbound/default runs, but it is no longer the
+only Spatial depth source path.
+
+The 2026-06-29 depth-layer compare run used `-DepthLayerPolicy compare`, which
+drives the shader to sample depth layer 0 and layer 1 at the same UV and render
+their difference. That visual proof showed structured per-eye differences, so
+the two Meta-provided depth layers should not be treated as byte-identical by
+default. This is shader visual evidence, not a literal GPU readback byte
+comparison. General Spatial depth-stack alignment is deferred to manual panel
+calibration and future alignment work.
+
+The strict run preserves the native projection footprint by keeping the Spatial
+SDK quad as the carrier and clipping Vulkan output to the packed native target
+rects; it also suppresses the surface particle renderer while the camera stack
+is active.
 
 Latest strict evidence:
-`local-artifacts\spatial-camera-panel-headset\20260628-161204-camera-hwb-projection-smoke\evidence-summary.json`;
-APK SHA-256 `66ED720405FA857A0355B91225A563B6FA9043069A8AB08BE67B43C4F7BE0954`.
+`local-artifacts\spatial-camera-panel-headset\20260629-152338-camera-hwb-projection-smoke\evidence-summary.json`;
+APK SHA-256 `FA45845AE0B239C75D6B0777E73F5E614919C77320208BECFBD0E1EAF19874CC`.
 
 A separate vergence/focus mismatch remains: when the camera projection is
 brought into comfortable focus, Meta system menus can appear doubled or soft.
@@ -63,8 +85,9 @@ For that investigation, the raw Camera2/HWB projection probe keeps the Spatial
 SDK quad carrier at a fixed 1.0m default distance and locks the opposed
 per-eye horizontal UV offset to the current default `0.046320`, captured from
 a live Quest 3S headset readback on 2026-06-28 where the camera projection and
-Meta performance HUD aligned simultaneously. Left-stick Y is now reserved for
-panel scrolling, not projection offset tuning. Runtime readback uses
+Meta performance HUD aligned simultaneously. Left-stick Y controls workflow
+panel distance, not projection offset tuning or private-layer panel distance.
+Runtime readback uses
 `projectionTargetStereoHorizontalOffsetUv`, `projectionTargetLeftOffsetUv`,
 `projectionTargetRightOffsetUv`, and the effective packed rect markers. While
 this projection probe is active, the hidden surface-particle panel no longer
@@ -78,19 +101,30 @@ mapping stable. Runtime readback uses `projectionTargetLiveScale`,
 `projectionTargetScaleJoystickControlsEnabled=true`, and
 `right-stick-y-projection-target-scale`. Right-stick X is intentionally
 ignored by the activity and swallowed when it is the only active axis so it no
-longer drives panel scale or distance. Left-stick X remains the panel
-horizontal placement control while a panel is open; left-stick Y is left
-unconsumed so the panel can scroll.
+longer drives panel scale or distance. The private layer panel is a Spatial SDK
+`Grabbable(type = PIVOT_Y)` entity, matching Meta's floating panel samples,
+with a visual header grab handle but no Compose drag-driven movement.
+When opened, it is seeded once in front of the viewer and then left in
+Spatial-SDK-owned free transform mode. Forced radial placement writes stay
+disabled, but left-stick Y now nudges the panel's current SDK transform nearer
+or farther when it is not actively palm-grabbed.
 
 When the camera/video stack is active, the right primary button opens a
 front-of-camera private-layer control panel instead of the participant workflow
 panel. That panel mirrors the native private layer selector: seven generic
-layer choices, live projection-area scale, and live depth-alignment X/Y/scale
-controls. It is registered as `spatial_private_layer_panel`, renders at
-`panelRenderOrder=front-of-camera-video` with the `spatial-sdk-layer` panel
-render path, and updates the public opaque projection route through
+layer choices, live projection-area scale, live depth source policy
+(`mono-layer0`, `mono-layer1`, `eye-index`, or `compare`), and live
+depth-alignment X/Y/scale controls. It is registered as
+`spatial_private_layer_panel`, renders at
+`panelRenderOrder=front-of-camera-video` as a `spatial-sdk-mesh` world-space
+panel with layer config disabled, uses Spatial SDK `Grabbable` as the
+movement authority so it sticks to the grabbed pose, and updates the public
+opaque projection route through
 `nativeUpdatePrivateLayerOverride` and
+`nativeUpdatePrivateLayerDepthLayerPolicy` plus
 `nativeUpdatePrivateLayerDepthAlignment`.
+The panel explicitly accepts A/trigger select for its Compose controls; the
+inner palm/squeeze action remains the SDK grab path.
 
 For controller modality, this APK follows the official Spatial SDK panel sample
 shape: optional hands-and-controllers declarations are present, controller
@@ -214,6 +248,21 @@ Build with:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
 ```
 
+Builds that need the private-layer selector to visibly change the active
+camera projection layer must provide the downstream opaque shader inputs at
+build time. Prefer passing a private profile that names those shader sources
+and the projection effect constants:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 `
+  -Build `
+  -PrivateLayerProfilePath <path-to-private-layer-profile.json>
+```
+
+Without those inputs, the APK still builds and the panel buttons still submit
+layer state, but the native renderer intentionally falls back to the public raw
+camera projection path, so layer selection has no visible effect.
+
 The build wrapper writes
 `target\spatial-camera-panel-android\rusty-quest-spatial-camera-panel.apk`
 and `target\spatial-camera-panel-android\build-manifest.json`.
@@ -243,7 +292,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCamera
   -RequireSpatialVideoProjection
 ```
 
-After building with downstream opaque shader env vars, require the public
+For local host media, prefer staging through the wrapper so spaces and scoped
+storage do not break Android system-property transport:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -Serial <quest-serial> `
+  -VideoSourcePath "C:\Users\tillh\Downloads\VR App noodletest.mp4" `
+  -RequireSpatialVideoProjection
+```
+
+This stages the file to the package-scoped external path
+`/sdcard/Android/data/io.github.mesmerprism.rustyquest.spatial_camera_panel/files/v.mp4`,
+which is the path used by the successful native-loop Spatial proofs.
+
+After building with downstream opaque shader inputs, require the public
 multi-stack projection proof with:
 
 ```powershell

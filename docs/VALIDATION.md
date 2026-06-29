@@ -20,6 +20,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPa
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
 ```
 
+For a Spatial Camera Panel APK whose private-layer buttons visibly select the
+active projection layer, pass the downstream opaque shader profile at build
+time:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 `
+  -Build `
+  -PrivateLayerProfilePath <path-to-private-layer-profile.json>
+```
+
 The static gate checks the Spatial SDK package identity, `AppSystemActivity`
 activity, `VRFeature`/`ComposeFeature` registration, panel shape/resolution
 settings, app-private experiment record schemas, joinable questionnaire fields,
@@ -191,6 +201,27 @@ flags, capture-to-display/frame-age timing, repeated-capture and
 unavailable-streak counters, texture-transform/ray-UV/sample-UV policy labels,
 zero expanded CPU particle upload, resident GPU buffers, and
 `environmentDepthParticleBufferMemory=device-local`.
+
+The Spatial Camera Panel path now declares the same scene-depth permission
+surface for diagnostics and its camera/video smoke wrapper writes
+`permission-pregrant.json` with `USE_SCENE_DATA` app-op state. That does not
+claim real depth data by itself. The Spatial path also requests
+`XR_FB_passthrough` and records `nativePassthroughLayerActive` /
+`environmentDepthPassthroughPrerequisite=active` when the native passthrough
+activation call succeeds, because current headset evidence indicates depth may
+not provide real samples until passthrough is running. Current Spatial public
+multi-stack markers must separate fallback readiness from the active descriptor
+source: unbound/default runs still report the fallback descriptor, while real
+depth runs require `publicMultiStackDepthRealDescriptorBound=true`,
+`publicMultiStackDepthCurrentDescriptorSource=xr-meta-environment-depth`,
+`environmentDepthValidData=true`, and nonzero valid sample counters.
+The Spatial private-layer panel exposes depth source policy choices for
+`mono-layer0`, `mono-layer1`, `eye-index`, and `compare`. The 2026-06-29
+`-DepthLayerPolicy compare` smoke rendered layer 0 and layer 1 at the same
+shader UV and showed structured per-eye differences. Treat that as visual
+evidence that the two layers are not trivially identical, but not as literal
+byte-for-byte readback proof. General Spatial depth-stack alignment is deferred
+to manual panel calibration and later alignment work.
 `quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json`
 is the matching layer-1 comparison profile. It switches only
 `environment_depth.layer_policy` to `mono-layer1` and requires

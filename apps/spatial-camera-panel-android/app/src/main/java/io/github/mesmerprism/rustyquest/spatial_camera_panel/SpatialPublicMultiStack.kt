@@ -18,8 +18,30 @@ internal object SpatialPublicMultiStack {
           "3:opaque-analysis1-slot,4:public-post-blur-guide," +
           "5:opaque-projection-slot,6:public-depth-diagnostic"
 
-  fun markerFields(): String =
-      "publicMultiStackActive=true " +
+  fun markerFields(
+      nativePassthroughLayerActive: Boolean = false,
+      nativeEnvironmentDepthProviderRequested: Boolean = false,
+      nativeEnvironmentDepthProviderBound: Boolean = false,
+  ): String {
+    val depthSource =
+        if (nativeEnvironmentDepthProviderBound) {
+          "xr-meta-environment-depth"
+        } else {
+          "spatial-fallback-depth-descriptor"
+        }
+    val depthProviderState =
+        if (nativeEnvironmentDepthProviderBound) {
+          "provider-running"
+        } else {
+          "not-bound"
+        }
+    val depthAcquireStatus =
+        if (nativeEnvironmentDepthProviderBound) {
+          "waiting-for-first-acquire"
+        } else {
+          "not-attempted-provider-not-bound"
+        }
+    return "publicMultiStackActive=true " +
           "publicMultiStackSchema=$SCHEMA " +
           "publicMultiStackCarrier=$CARRIER " +
           "publicMultiStackLayerCount=$LAYER_COUNT " +
@@ -40,7 +62,25 @@ internal object SpatialPublicMultiStack {
           "publicGuideBlurRuntimeReady=false " +
           "publicMultiStackOpaqueGuideShaderEnv=RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER " +
           "publicMultiStackOpaqueProjectionShaderEnv=RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER " +
+          "publicMultiStackDepthSource=$depthSource " +
+          "publicMultiStackDepthProviderRequested=$nativeEnvironmentDepthProviderRequested " +
+          "publicMultiStackDepthRealProviderBound=$nativeEnvironmentDepthProviderBound " +
+          "publicMultiStackDepthValidData=false " +
+          "publicMultiStackDepthPermissionSurface=horizonos.permission.USE_SCENE+USE_SCENE_DATA " +
+          "environmentDepthSource=$depthSource " +
+          "environmentDepthProviderState=$depthProviderState " +
+          "environmentDepthProviderAvailable=$nativeEnvironmentDepthProviderBound " +
+          "environmentDepthRealProviderBound=$nativeEnvironmentDepthProviderBound " +
+          "environmentDepthAcquireStatus=$depthAcquireStatus " +
+          "environmentDepthValidData=false " +
+          "environmentDepthDebugValidSampleCount=0 " +
+          "environmentDepthAcquiredFrameCount=0 " +
+          "nativePassthroughRequested=true " +
+          "nativePassthroughLayerActive=$nativePassthroughLayerActive " +
+          "nativePassthroughActivationPath=spatial-native-receipt-xr-fb-passthrough " +
+          "nativePassthroughCompositionLayerSubmission=spatial-sdk-owned-end-frame " +
           "publicMultiStackLayerManifest=$LAYER_MANIFEST"
+  }
 
   fun inactiveMarkerFields(): String = "publicMultiStackActive=false"
 }
