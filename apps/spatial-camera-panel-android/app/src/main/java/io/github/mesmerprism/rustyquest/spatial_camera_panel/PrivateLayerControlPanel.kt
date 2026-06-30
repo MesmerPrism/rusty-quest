@@ -75,12 +75,12 @@ internal object PrivateLayerControls {
   val layers =
       listOf(
           PrivateLayerChoice(0, "Final", "final"),
-          PrivateLayerChoice(1, "Raw brightness", "raw-brightness"),
-          PrivateLayerChoice(2, "Preblur brightness", "preblur-brightness"),
-          PrivateLayerChoice(3, "Raw strength", "raw-strength"),
-          PrivateLayerChoice(4, "Blurred strength", "blurred-strength"),
-          PrivateLayerChoice(5, "Displacement", "displacement"),
-          PrivateLayerChoice(6, "Depth gradient", "depth-gradient"),
+          PrivateLayerChoice(1, "Opaque analysis 0", "opaque-analysis0-slot"),
+          PrivateLayerChoice(2, "Public guide blur", "public-guide-blur"),
+          PrivateLayerChoice(3, "Opaque analysis 1", "opaque-analysis1-slot"),
+          PrivateLayerChoice(4, "Public post-blur guide", "public-post-blur-guide"),
+          PrivateLayerChoice(5, "Opaque projection", "opaque-projection-slot"),
+          PrivateLayerChoice(6, "Public depth diagnostic", "public-depth-diagnostic"),
       )
 
   val depthSourcePolicies =

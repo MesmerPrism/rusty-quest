@@ -46,8 +46,8 @@ The currently documented public routes are:
 | Solid black OpenXR hands anchor particles | Opaque black OpenXR projection layer | Runtime/default OpenXR hands requested; app custom mesh visual disabled; resident-mesh anchor particles visible | Disabled | Compare resident custom mesh anchor placement against runtime hand visuals |
 
 These routes are public AGPL examples. Private downstream effects can attach
-later through the public extension-slot boundary, but Colorama, distortion, and
-other private visual layers are not part of this package.
+later through the public extension-slot boundary, but private visual-layer
+names, formulas, and tuning are not part of this package.
 
 ## Spatial Camera Panel Lane
 
@@ -61,6 +61,27 @@ Spatial SDK panel placement, sizing, and scaling controls. It does not replace
 `apps/native-renderer-android`, does not carry high-rate hand mesh or private
 particle payloads through Java/Kotlin JSON, and currently treats hands as not
 expected.
+
+The same lane now has two generic Spatial SDK asset/environment hooks. The
+Spatial SDK staged 3D asset path accepts only explicit GLB/GLTF `Mesh` URIs at
+runtime, usually staged by `Stage-SpatialCameraPanelAsset.ps1` or by
+`Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1
+-RequireSpatialAssetModel`; raw FBX files are local conversion inputs and are
+not packaged. The packaged virtual room path is opt-in through
+`debug.rustyquest.spatial.virtual_room.enabled` and loads a generic
+`assets/scenes/Composition.glxf` room, such as an exported official Spatial SDK
+panel sample, as a VR environment. That room path is explicitly not MRUK and
+does not place objects in the user's real passthrough room. When that room is
+enabled, prior room diagnostics placed the video plus custom camera projection
+surface either on a fixed virtual wall or in a full-field viewer-locked pose.
+The accepted default disables the room and skybox, starts the projection
+surface at 2m, opens the generic layer-control UI panel at 1m, and consumes
+right secondary/B as a no-op. The legacy launcher panel is suppressed on this
+camera-stack route, and the right primary button opens only the generic
+multi-layer control panel. Its layer buttons keep submitting the active layer
+override. Right-stick Y still controls projection target scale, Left-stick Y
+controls workflow/layer-control panel distance, and Right-stick X is
+intentionally ignored.
 
 The lane records low-rate session, Polar placeholder, ECG placeholder, block,
 and questionnaire JSONL files in app-private storage. Questionnaire rows remain

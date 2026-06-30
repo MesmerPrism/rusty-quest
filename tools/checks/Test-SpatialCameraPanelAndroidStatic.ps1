@@ -67,6 +67,7 @@ function Assert-RegistrationUsesSettings {
 
 $appGradle = Read-RequiredText "apps\spatial-camera-panel-android\app\build.gradle.kts"
 $manifest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\AndroidManifest.xml"
+$ids = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\res\values\ids.xml"
 $activity = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelActivity.kt"
 $stagedAssetModule = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialStagedAssetModule.kt"
 $spatialStereoVideoPlayback = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialStereoVideoPlayback.java"
@@ -102,11 +103,14 @@ $surfaceLayer = Read-RequiredText "apps\spatial-camera-panel-android\native-rece
 $replayHands = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\replay_hands.rs"
 $buildScript = Read-RequiredText "tools\Build-SpatialCameraPanelAndroid.ps1"
 $cameraProjectionSmoke = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1"
+$layeringMatrix = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidLayeringMatrix.ps1"
 $stageSpatialAsset = Read-RequiredText "tools\Stage-SpatialCameraPanelAsset.ps1"
 $spatialPermissionPregrant = Read-RequiredText "tools\Grant-SpatialCameraPanelAndroidPermissions.ps1"
 $uiActionWrapper = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidUiAction.ps1"
 $readme = Read-RequiredText "apps\spatial-camera-panel-android\README.md"
 $notes = Read-RequiredText "docs\SPATIAL_SDK_PORT_IMPLEMENTATION_PLAN.md"
+$carrierPlan = Read-RequiredText "docs\SPATIAL_LAYERING_CARRIER_PROBE_PLAN.md"
+$roomIterationLog = Read-RequiredText "docs\SPATIAL_ROOM_WORLDSPACE_ITERATION_LOG.md"
 $testScript = Read-RequiredText "tools\Test-SpatialCameraPanelAndroid.ps1"
 
 Assert-Contains "Gradle app" $appGradle 'namespace = "io.github.mesmerprism.rustyquest.spatial_camera_panel"'
@@ -115,6 +119,8 @@ Assert-Contains "Android manifest" $manifest 'android:name=".SpatialCameraPanelA
 Assert-Contains "Android manifest" $manifest 'com.oculus.permission.HAND_TRACKING'
 Assert-Contains "Android manifest" $manifest 'oculus.software.handtracking'
 Assert-Contains "Android manifest" $manifest 'com.oculus.handtracking.version'
+Assert-Contains "Android ids" $ids 'spatial_camera_projection_manual_custom_mesh_panel'
+Assert-Contains "Panel models" $panelModels 'ManualPanelSceneObjectCustomMesh("manual-panel-scene-object-custom-mesh")'
 Assert-Contains "Android manifest" $manifest 'com.oculus.feature.RENDER_MODEL'
 Assert-Contains "Android manifest" $manifest 'com.oculus.permission.RENDER_MODEL'
 Assert-Contains "Android manifest" $manifest 'horizonos.permission.USE_SCENE'
@@ -157,7 +163,8 @@ Assert-Contains "Activity" $activity "ButtonBits.ButtonB"
 Assert-Contains "Activity" $activity "controllerInput=right-secondary-button"
 Assert-Contains "Activity" $activity "nativePollSpatialControllerRightButtonB"
 Assert-Contains "Activity" $activity "rightControllerInactiveButtonStateAccepted=true"
-Assert-Contains "Activity" $activity "cameraProjectionWallToggleInput=right-controller-secondary-button"
+Assert-Contains "Activity" $activity "cameraProjectionWallToggleInput=disabled-right-secondary-noop"
+Assert-Contains "Activity" $activity "cameraProjectionWallToggleEnabled=false"
 Assert-Contains "Activity" $activity "virtualRoomWallPlacementMode"
 Assert-Contains "Activity" $activity "virtualRoomWallCenterM="
 Assert-Contains "Activity" $activity "CAMERA_HWB_PROJECTION_WALL_CENTER_MARKER"
@@ -166,11 +173,23 @@ Assert-Contains "Activity" $activity "legacy-workflow-panels-deactivated"
 Assert-Contains "Activity" $activity "onlyRightPrimaryPrivateLayerPanel=true"
 Assert-Contains "Activity" $activity "legacyLauncherPanelSuppressed=true"
 Assert-Contains "Activity" $activity "projectionDefaultPlacementMode="
-Assert-Contains "Activity" $activity "rightSecondaryTogglesFullFov=true"
+Assert-Contains "Activity" $activity "rightSecondaryTogglesFullFov=false"
 Assert-Contains "Activity" $activity "projectionDisplaySurface=video-plus-custom-camera-stack"
-Assert-Contains "Activity" $activity "scenequadlayer-room-object-depth-order-under-test"
+Assert-Contains "Activity" $activity "projection-layer-over-virtual-room"
+Assert-Contains "Activity" $activity "projectionStartGate="
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera_projection_start_gate_virtual_room_loaded"
+Assert-Contains "Activity" $activity 'SPATIAL_VIRTUAL_ROOM_SKYBOX_MESH_URI = "mesh://skybox"'
+Assert-Contains "Activity" $activity "skyboxEntityCreateApi=toolkit-varargs-first-room-replay"
+Assert-Contains "Activity" $activity "debug.rustyquest.spatial.skybox.mode"
+Assert-Contains "Activity" $activity "SpatialSkyboxMode.CustomSceneMesh"
+Assert-Contains "Models" $panelModels 'internal enum class SpatialSkyboxMode'
+Assert-Contains "Activity" $activity "SceneMesh.skybox"
+Assert-Contains "Activity" $activity "skyboxRenderer=custom-runtime-scene-mesh-skybox"
+Assert-Contains "Activity" $activity "skyboxProjectionForegroundPolicy=scene-layer-over-background-skybox"
+Assert-Contains "Activity" $activity "SPATIAL_CUSTOM_SKYBOX_RENDER_ORDER"
 Assert-Contains "Activity" $activity "projectionCarrierProperty=`$CAMERA_HWB_PROJECTION_CARRIER_PROPERTY"
-Assert-Contains "Activity" $activity "projectionAnchorHittable=NoCollision"
+Assert-Contains "Activity" $activity "projectionAnchorHittable=none-first-room-diagnostic"
+Assert-Contains "Activity" $activity "projectionAnchorMaterialRenderOrder=default-first-room-diagnostic"
 Assert-Contains "Activity" $activity "cameraHwbProjectionZIndexForPlacement"
 Assert-Contains "Activity" $activity "sceneQuadLayerRebuildStatus="
 Assert-Contains "Activity" $activity "sceneQuadLayerRebuildStatus=not-rebuilt-existing-scene-anchor-updated"
@@ -179,7 +198,10 @@ Assert-Contains "Activity" $activity "projection-placement-toggle-armed"
 Assert-Contains "Activity" $activity "toggleGuard=wait-for-secondary-release-after-projection-start"
 Assert-Contains "Activity" $activity "CAMERA_HWB_PROJECTION_PLACEMENT_TOGGLE_DEBOUNCE_MS"
 Assert-Contains "Activity" $activity "updateCameraHwbProjectionTargetScaleFromPanel"
-Assert-Contains "Activity" $activity 'CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER = "1.00"'
+Assert-Contains "Activity" $activity "PRIVATE_LAYER_PANEL_DISTANCE_METERS = 1.0f"
+Assert-Contains "Activity" $activity "PARTICLE_LAYER_TARGET_DISTANCE_MAX_METERS = 2.00f"
+Assert-Contains "Activity" $activity "CAMERA_HWB_PROJECTION_TARGET_DISTANCE_METERS = 2.0f"
+Assert-Contains "Activity" $activity 'CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER = "2.00"'
 Assert-Contains "Activity" $activity 'targetDistanceDefaultMeters=$CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER'
 Assert-Contains "Activity" $activity "targetDistanceJoystickControlsEnabled=false"
 Assert-Contains "Activity" $activity "projectionTargetScaleJoystickControlsEnabled=true"
@@ -209,7 +231,7 @@ Assert-Contains "Activity" $activity "publicMultiStackDepthLayerPolicy"
 Assert-Contains "Activity" $activity "publicMultiStackDepthLayerCompareMode"
 Assert-Contains "Activity" $activity "publicMultiStackDepthAlignmentControl=true"
 Assert-Contains "Activity" $activity "publicMultiStackDepthAlignmentLeftOffsetUv="
-Assert-Contains "Activity" $activity "panelRenderOrder=spatial-sdk-mesh-panel-depth-order"
+Assert-Contains "Activity" $activity "panelRenderOrder=spatial-sdk-quad-layer-z-index"
 Assert-Contains "Activity" $activity "panelOpensInFrontOfCameraVideo="
 Assert-Contains "Activity" $activity "type = GrabbableType.PIVOT_Y"
 Assert-Contains "Activity" $activity "privateLayerPanelGrabbable=true"
@@ -224,7 +246,7 @@ Assert-Contains "Activity" $activity "tryGetComponent<Transform>()"
 Assert-NotContains "Private layer panel" $privateLayerPanel "detectDragGestures"
 Assert-Contains "Private layer panel" $privateLayerPanel "PanelGrabHandle"
 Assert-NotContains "Private layer panel" $privateLayerPanel "dragPanel("
-Assert-Contains "Activity" $activity "privateLayerPanelRenderMode=spatial-sdk-mesh"
+Assert-Contains "Activity" $activity "privateLayerPanelRenderMode=spatial-sdk-layer"
 Assert-Contains "Activity" $activity "privateLayerPanelWorldSpace=true"
 Assert-Contains "Activity" $activity "privateLayerPanelPoseSource=initial-headset-facing-world-space-then-stored-placement-unless-grabbed"
 Assert-Contains "Activity" $activity "privateLayerPanelDistanceMode=left-stick-stored-placement"
@@ -240,14 +262,30 @@ Assert-Contains "Activity" $activity "privateLayerPanelGrabButton=controller-squ
 Assert-Contains "Activity" $activity "privateLayerPanelLayerZIndex="
 Assert-Contains "Activity" $activity "privateLayerPanelAboveCameraProjectionLayer="
 Assert-Contains "Activity" $activity "updatePrivateLayerPanelLayer"
-Assert-Contains "Activity" $activity "privateLayerPanelLayerConfig=disabled"
-Assert-Contains "Activity" $activity "PanelRenderMode.Mesh"
-Assert-NotContains "Activity" $activity "PanelRenderMode.Layer"
+Assert-Contains "Activity" $activity "privateLayerPanelLayerConfig=enabled"
+Assert-Contains "Activity" $activity "PanelRenderMode.Layer"
+Assert-Contains "Activity" $activity "PRIVATE_LAYER_PANEL_LAYER_Z_INDEX = 99"
 Assert-Contains "Activity" $activity "projectionPanelInputClearanceActive="
 Assert-Contains "Activity" $activity "projectionPanelInputBehindPrivateLayerPanel="
+Assert-Contains "Activity" $activity "val inputForegroundActive = false"
+Assert-Contains "Activity" $activity 'privateLayerPanelInputForegroundActive=$inputForegroundActive'
 Assert-Contains "Activity" $activity "projectionPanelInputPassThrough=true"
-Assert-Contains "Activity" $activity "projectionPanelHittable=NoCollision"
+Assert-Contains "Activity" $activity 'CameraHwbProjectionCarrierMode.VideoSurfacePanelSceneObject -> "NoCollision"'
+Assert-Contains "Activity" $activity 'projectionPanelHittable=$projectionPanelHittable'
+Assert-Contains "Activity" $activity '"none-manual-custom-mesh-noninteractive"'
+Assert-Contains "Activity" $activity "manualPanelNoHittable=true"
+Assert-Contains "Activity" $activity "manualPanelNoIsdkGrabbable=true"
+Assert-Contains "Activity" $activity "manualPanelForceSceneTexture=true"
+Assert-Contains "Activity" $activity "forceSceneTexture = true"
+Assert-Contains "Activity" $activity "panelInputOptionsClickButtons=0"
+Assert-Contains "Activity" $activity "PanelInputOptions(0)"
+Assert-Contains "Activity" $activity "PanelSceneObject("
+Assert-Contains "Activity" $activity "SceneObjectSystem"
+Assert-Contains "Activity" $activity "CompletableFuture<SceneObject>()"
+Assert-Contains "Activity" $activity "SceneMesh.singleSidedQuad"
+Assert-Contains "Activity" $activity "manual-panel-scene-object-custom-mesh"
 Assert-Contains "Activity" $activity "privateLayerPanelDefaultReachDistancePreserved=true"
+Assert-Contains "Activity" $activity "privateLayerPanelScaleAdjustedForForeground=false"
 Assert-Contains "Activity" $activity "Hittable(MeshCollision.NoCollision)"
 Assert-Contains "Activity" $activity "updateCameraHwbProjectionFromViewer("
 Assert-Contains "Activity" $activity "controller-primary-toggled-panel"
@@ -338,6 +376,9 @@ Assert-Contains "Activity" $activity "SpatialStereoVideoPlayback.stop"
 Assert-Contains "Activity" $activity "debug.rustyquest.spatial.camera_hwb_projection_probe.video.enabled"
 Assert-Contains "Activity" $activity "debug.rustyquest.spatial.camera_hwb_projection_probe.video.path"
 Assert-Contains "Activity" $activity "rustyquest.spatial.camera_hwb_projection_probe.video.enabled"
+Assert-Contains "Activity" $activity "debug.rustyquest.spatial.camera_hwb_projection_probe.synthetic_visual"
+Assert-Contains "Activity" $activity "syntheticCarrierVisualProbe=true"
+Assert-Contains "Activity" $activity "high-contrast-red-green-blue-yellow-checkerboard"
 Assert-Contains "Activity" $activity "videoProjectionNoPackagedMedia=true"
 Assert-Contains "Activity" $activity "videoProjectionControlPlane=spatial-activity-runtime-property-or-intent-extra"
 Assert-Contains "Activity" $activity "videoProjectionTransport=mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer"
@@ -403,18 +444,31 @@ Assert-Contains "Private layer panel" $privateLayerPanel "Depth Alignment"
 Assert-Contains "Private layer panel" $privateLayerPanel "PrivateLayerControls.layers"
 Assert-Contains "Private layer panel" $privateLayerPanel "PrivateLayerControls.depthSourcePolicies"
 Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(0, "Final", "final")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(1, "Raw brightness", "raw-brightness")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(2, "Preblur brightness", "preblur-brightness")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(3, "Raw strength", "raw-strength")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(4, "Blurred strength", "blurred-strength")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(5, "Displacement", "displacement")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(6, "Depth gradient", "depth-gradient")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(1, "Opaque analysis 0", "opaque-analysis0-slot")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(2, "Public guide blur", "public-guide-blur")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(3, "Opaque analysis 1", "opaque-analysis1-slot")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(4, "Public post-blur guide", "public-post-blur-guide")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(5, "Opaque projection", "opaque-projection-slot")'
+Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(6, "Public depth diagnostic", "public-depth-diagnostic")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerDepthSourceChoice(depthPolicyMonoLayer0, "Mono 0", "mono-layer0")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerDepthSourceChoice(depthPolicyMonoLayer1, "Mono 1", "mono-layer1")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerDepthSourceChoice(depthPolicyEyeIndex, "Per eye", "eye-index")'
 Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerDepthSourceChoice(depthPolicyCompare, "Compare", "compare")'
 Assert-Contains "Private layer panel" $privateLayerPanel "updateDepthLayerPolicy"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth sample scale"
+$privateLayerLabelNeedles = @(
+  ("Raw " + "brightness"),
+  ("Pre" + "blur brightness"),
+  ("Raw " + "strength"),
+  ("Blurred " + "strength"),
+  ("Dis" + "placement"),
+  ("Depth " + "gradient")
+)
+foreach ($needle in $privateLayerLabelNeedles) {
+  Assert-NotContains "Private layer panel" $privateLayerPanel $needle
+}
+Assert-NotContains "Activity" $activity ("1:" + "raw" + "-brightness")
+Assert-Contains "Activity" $activity "publicMultiStackLayerManifest=0:final,1:opaque-analysis0-slot,2:public-guide-blur,3:opaque-analysis1-slot,4:public-post-blur-guide,5:opaque-projection-slot,6:public-depth-diagnostic"
 Assert-Contains "Panel models" $panelModels "data class PanelPlacement"
 Assert-Contains "Panel models" $panelModels "data class SurfaceParticleControlState"
 Assert-Contains "Panel models" $panelModels "data class SpatialNativeInteropProbe"
@@ -706,6 +760,43 @@ Assert-Contains "Test script" $testScript '-OpaqueProjectionShader $OpaqueProjec
 Assert-Contains "Test script" $testScript '-OpaqueProjectionEffect $OpaqueProjectionEffect'
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera_hwb_projection_smoke"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "debug.rustyquest.spatial.camera_hwb_projection_probe"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "foreground_validation_passed"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "foreground-proof.json"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "dumpsys"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "screenshot_valid"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "Measure-SyntheticSurfacePixels"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "SyntheticVisualProbe"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "debug.rustyquest.spatial.camera_hwb_projection_probe.synthetic_visual"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "synthetic_visual_visible"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "SkyboxMode"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "debug.rustyquest.spatial.skybox.mode"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_skybox_custom_scene_mesh"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_skybox_custom_background_order"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "manual-panel-scene-object-custom-mesh"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "manual_panel_scene_object_custom_mesh_ready"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "projection_panel_hittable_manual_noninteractive"
+Assert-Contains "Layering matrix wrapper" $layeringMatrix "scenequadlayer-custom-skybox-only"
+Assert-Contains "Layering matrix wrapper" $layeringMatrix "scenequadlayer-room-custom-skybox"
+Assert-Contains "Layering matrix wrapper" $layeringMatrix "video-panel-room-custom-skybox"
+Assert-Contains "Layering matrix wrapper" $layeringMatrix '"manual-carrier"'
+Assert-Contains "Layering matrix wrapper" $layeringMatrix "manual-panel-custom-mesh-room-sample-skybox"
+Assert-Contains "Layering matrix wrapper" $layeringMatrix "manual-panel-custom-mesh-room-custom-skybox"
+Assert-Contains "Layering matrix wrapper" $layeringMatrix "SkyboxMode"
+Assert-Contains "Layering matrix wrapper" $layeringMatrix "debug.rustyquest.spatial.skybox.mode"
+Assert-Contains "Carrier probe plan" $carrierPlan "spatialsdkpanels.txt"
+Assert-Contains "Carrier probe plan" $carrierPlan "readable-producer-scene-material-quad"
+Assert-Contains "Carrier probe plan" $carrierPlan "SceneTexture"
+Assert-Contains "Carrier probe plan" $carrierPlan "SceneMaterial"
+Assert-Contains "Carrier probe plan" $carrierPlan "PanelInputOptions(clickButtons = 0)"
+Assert-Contains "Carrier probe plan" $carrierPlan "panelConfig.layerConfig = null"
+Assert-Contains "Carrier probe plan" $carrierPlan "manual-panel-scene-object-custom-mesh"
+Assert-Contains "Carrier probe plan" $carrierPlan "manual-carrier"
+Assert-Contains "Carrier probe plan" $carrierPlan "forceSceneTexture = true"
+Assert-Contains "Carrier probe plan" $carrierPlan "QuadLayerConfig(zIndex = 99)"
+Assert-Contains "Room/worldspace iteration log" $roomIterationLog "spatialsdkpanels.txt"
+Assert-Contains "Room/worldspace iteration log" $roomIterationLog "readable media producer"
+Assert-Contains "Room/worldspace iteration log" $roomIterationLog "panelConfig.layerConfig = null"
+Assert-Contains "Room/worldspace iteration log" $roomIterationLog "manualPanelNoHittable=true"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "debug.rustyquest.spatial.camera_hwb_projection_probe.depth.layer_policy"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "DepthLayerPolicy"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "debug.rustyquest.spatial_camera_panel.vr_input_system"
@@ -794,7 +885,7 @@ Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "debug.
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_asset_model_entity_created"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_asset_model_private_source_not_packaged"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_virtual_room_loaded"
-Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera_projection_wall_toggle_declared"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera_projection_wall_toggle_disabled"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "legacy_launcher_panel_suppressed"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera_projection_initial_full_fov_mode"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera_projection_room_render_order"
@@ -837,7 +928,7 @@ Assert-Contains "README" $readme "registerRequiredOpenXRExtensions()"
 Assert-Contains "README" $readme "XR_META_detached_controllers"
 Assert-Contains "README" $readme "Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1"
 Assert-Contains "README" $readme "right-stick-y-projection-target-scale"
-Assert-Contains "README" $readme "Left-stick Y controls workflow"
+Assert-Contains "README" $readme "controls workflow panel distance"
 Assert-Contains "README" $readme "Right-stick X is intentionally"
 Assert-Contains "README" $readme "spatial_private_layer_panel"
 Assert-Contains "README" $readme "Grabbable(type = PIVOT_Y)"
@@ -848,10 +939,12 @@ Assert-Contains "README" $readme "A/trigger select"
 Assert-Contains "README" $readme "movement authority"
 Assert-Contains "README" $readme "scenequadlayer-room-object"
 Assert-Contains "README" $readme "debug.rustyquest.spatial.camera_hwb_projection_probe.carrier"
-Assert-Contains "README" $readme "spatial-sdk-mesh"
-Assert-Contains "README" $readme "layer config disabled"
+Assert-Contains "README" $readme "spatial-sdk-layer"
+Assert-Contains "README" $readme "layer z-index"
+Assert-Contains "README" $readme "0.22m"
 Assert-Contains "README" $readme "projectionPanelInputPassThrough=true"
-Assert-Contains "README" $readme "projectionPanelHittable=NoCollision"
+Assert-Contains "README" $readme "projectionPanelHittable=none-manual-custom-mesh-noninteractive"
+Assert-Contains "README" $readme "forceSceneTexture=true"
 Assert-Contains "README" $readme "VideoSourcePath"
 Assert-Contains "README" $readme "Spatial SDK staged 3D asset"
 Assert-Contains "README" $readme "packaged virtual room"
@@ -868,7 +961,7 @@ Assert-Contains "Implementation notes" $notes "Public seven-slot camera guide mu
 Assert-Contains "Implementation notes" $notes "public multi-stack receipts"
 Assert-Contains "Implementation notes" $notes "right-stick-y-projection-target-scale"
 Assert-Contains "Implementation notes" $notes "Left-stick Y controls workflow-panel"
-Assert-Contains "Implementation notes" $notes "private-layer panel is open, left-stick Y controls that panel's stored"
+Assert-Contains "Implementation notes" $notes "layer-control panel is open it controls that panel's stored distance"
 Assert-Contains "Implementation notes" $notes "spatial_private_layer_panel"
 Assert-Contains "Implementation notes" $notes "scenequadlayer-room-object"
 Assert-Contains "Implementation notes" $notes "Grabbable(type = PIVOT_Y)"

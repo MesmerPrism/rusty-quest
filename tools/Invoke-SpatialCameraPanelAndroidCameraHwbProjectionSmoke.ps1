@@ -33,6 +33,8 @@ param(
     [bool]$AssetGrabbable = $true,
     [switch]$EnableVirtualRoom,
     [switch]$EnableSkybox,
+    [ValidateSet("", "none", "sample", "custom")]
+    [string]$SkyboxMode = "",
     [switch]$VideoOnly,
     [switch]$SkipInstall,
     [switch]$SkipPermissionPregrant,
@@ -42,7 +44,12 @@ param(
     [switch]$RequirePublicMultiStackProjection,
     [switch]$RequireSpatialVideoProjection,
     [switch]$RequireSpatialAssetModel,
-    [switch]$RequireSpatialVirtualRoom
+    [switch]$RequireSpatialVirtualRoom,
+    [switch]$SyntheticVisualProbe,
+    [int]$MinimumSyntheticRedPixels = 1000,
+    [int]$MinimumSyntheticGreenPixels = 1000,
+    [double]$MinimumSyntheticTargetPixelRatio = 0.01,
+    [switch]$SkipForceStopKnownXrPackages
 )
 
 $ErrorActionPreference = "Stop"
@@ -92,7 +99,7 @@ function Resolve-AdbServerPortArgument {
 function Invoke-AdbCommand {
     param(
         [Parameter(Mandatory=$true)][string]$Name,
-        [Parameter(Mandatory=$true)][string[]]$Arguments,
+        [Parameter(Mandatory=$true)][AllowEmptyString()][string[]]$Arguments,
         [switch]$AllowFailure
     )
 
@@ -188,6 +195,162 @@ function Assert-SummaryFlag {
     }
 }
 
+function Test-RegexAny {
+    param(
+        [AllowNull()][string]$Text,
+        [Parameter(Mandatory=$true)][string[]]$Patterns
+    )
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return $false
+    }
+    foreach ($pattern in $Patterns) {
+        if ($Text -match $pattern) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Get-SpatialForegroundProof {
+    param(
+        [Parameter(Mandatory=$true)][string]$PackageName,
+        [Parameter(Mandatory=$true)][string]$Activity,
+        [AllowNull()][string]$TargetPid,
+        [AllowNull()][string]$LaunchText,
+        [AllowNull()][string]$WindowText,
+        [AllowNull()][string]$ActivityText
+    )
+
+    $packagePattern = [regex]::Escape($PackageName)
+    $activityClass = $Activity
+    if ($Activity.Contains("/")) {
+        $activityClass = $Activity.Substring($Activity.IndexOf("/") + 1)
+    }
+    $activityClassPattern = [regex]::Escape($activityClass)
+    $componentPattern = [regex]::Escape($Activity)
+    $activityShortPattern = [regex]::Escape("$PackageName/$activityClass")
+    $pidText = if ($null -eq $TargetPid) { "" } else { $TargetPid.Trim() }
+
+    $launchComponentMatches = Test-RegexAny `
+        -Text $LaunchText `
+        -Patterns @($componentPattern, $activityShortPattern)
+    $windowFocusMatches = Test-RegexAny `
+        -Text $WindowText `
+        -Patterns @(
+            "mCurrentFocus=.*$packagePattern.*$activityClassPattern",
+            "mFocusedApp=.*$packagePattern.*$activityClassPattern",
+            "topFocusedDisplay.*$packagePattern.*$activityClassPattern"
+        )
+    $activityResumedMatches = Test-RegexAny `
+        -Text $ActivityText `
+        -Patterns @(
+            "topResumedActivity=.*$packagePattern.*$activityClassPattern",
+            "mResumedActivity=.*$packagePattern.*$activityClassPattern",
+            "ResumedActivity:.*$packagePattern.*$activityClassPattern",
+            "Hist\s+#0: ActivityRecord\{.*$packagePattern.*$activityClassPattern"
+        )
+    $processRecordMatches = $false
+    if (-not [string]::IsNullOrWhiteSpace($pidText) -and -not [string]::IsNullOrWhiteSpace($ActivityText)) {
+        $processRecordMatches =
+            $ActivityText.Contains("${pidText}:$PackageName") -or
+            ($ActivityText -match "ProcessRecord\{.*\s$pidText`:$packagePattern\b")
+    }
+
+    $focusedOrResumed = $windowFocusMatches -or $activityResumedMatches
+    $valid =
+        (-not [string]::IsNullOrWhiteSpace($pidText)) -and
+        $launchComponentMatches -and
+        $focusedOrResumed
+
+    return [ordered]@{
+        expected_package = $PackageName
+        expected_activity = $Activity
+        pid = $pidText
+        pid_live = -not [string]::IsNullOrWhiteSpace($pidText)
+        launch_component_matches = [bool]$launchComponentMatches
+        window_focus_matches = [bool]$windowFocusMatches
+        activity_resumed_matches = [bool]$activityResumedMatches
+        focused_or_resumed = [bool]$focusedOrResumed
+        process_record_matches_pid = [bool]$processRecordMatches
+        valid = [bool]$valid
+    }
+}
+
+function Measure-SyntheticSurfacePixels {
+    param(
+        [Parameter(Mandatory=$true)][string]$Path,
+        [int]$Stride = 4
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return [ordered]@{
+            path = $Path
+            exists = $false
+            sampled_pixels = 0
+            red_pixels = 0
+            green_pixels = 0
+            blue_pixels = 0
+            yellow_pixels = 0
+            white_pixels = 0
+            black_pixels = 0
+            synthetic_target_pixels = 0
+            synthetic_target_ratio = 0.0
+        }
+    }
+
+    Add-Type -AssemblyName System.Drawing
+    $bitmap = [System.Drawing.Bitmap]::new((Resolve-Path -LiteralPath $Path).Path)
+    try {
+        $strideClamped = [Math]::Max(1, $Stride)
+        $sampled = 0
+        $red = 0
+        $green = 0
+        $blue = 0
+        $yellow = 0
+        $white = 0
+        $black = 0
+        for ($y = 0; $y -lt $bitmap.Height; $y += $strideClamped) {
+            for ($x = 0; $x -lt $bitmap.Width; $x += $strideClamped) {
+                $sampled++
+                $pixel = $bitmap.GetPixel($x, $y)
+                if ($pixel.R -gt 150 -and $pixel.G -lt 95 -and $pixel.B -lt 95) {
+                    $red++
+                } elseif ($pixel.G -gt 130 -and $pixel.R -lt 110 -and $pixel.B -lt 130) {
+                    $green++
+                } elseif ($pixel.B -gt 150 -and $pixel.R -lt 110 -and $pixel.G -lt 140) {
+                    $blue++
+                } elseif ($pixel.R -gt 150 -and $pixel.G -gt 130 -and $pixel.B -lt 110) {
+                    $yellow++
+                } elseif ($pixel.R -gt 210 -and $pixel.G -gt 210 -and $pixel.B -gt 210) {
+                    $white++
+                } elseif ($pixel.R -lt 45 -and $pixel.G -lt 45 -and $pixel.B -lt 45) {
+                    $black++
+                }
+            }
+        }
+        $target = $red + $green + $blue + $yellow
+        $ratio = if ($sampled -gt 0) { [Math]::Round($target / [double]$sampled, 6) } else { 0.0 }
+        return [ordered]@{
+            path = (Resolve-Path -LiteralPath $Path).Path
+            exists = $true
+            width = $bitmap.Width
+            height = $bitmap.Height
+            sample_stride = $strideClamped
+            sampled_pixels = $sampled
+            red_pixels = $red
+            green_pixels = $green
+            blue_pixels = $blue
+            yellow_pixels = $yellow
+            white_pixels = $white
+            black_pixels = $black
+            synthetic_target_pixels = $target
+            synthetic_target_ratio = $ratio
+        }
+    } finally {
+        $bitmap.Dispose()
+    }
+}
+
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 }
@@ -252,8 +415,28 @@ $depthLayerPolicyToken = switch -Regex ($depthLayerPolicyRaw) {
 $projectionCarrierRaw = if ($null -eq $ProjectionCarrier) { "" } else { $ProjectionCarrier.Trim().ToLowerInvariant().Replace("_", "-") }
 $projectionCarrierToken = switch -Regex ($projectionCarrierRaw) {
     "^(video-surface-panel-scene-object|video-surface-panel|panel-scene-object)$" { "video-surface-panel-scene-object"; break }
+    "^(manual-panel-scene-object-custom-mesh|manual-panel-scene-object|custom-mesh-panel|manual-custom-mesh)$" { "manual-panel-scene-object-custom-mesh"; break }
     "^(scenequadlayer-room-object|scenequadlayer|scene-quad-layer|room-object|)$" { "scenequadlayer-room-object"; break }
-    default { throw "Unknown -ProjectionCarrier '$ProjectionCarrier'. Use scenequadlayer-room-object or video-surface-panel-scene-object." }
+    default { throw "Unknown -ProjectionCarrier '$ProjectionCarrier'. Use scenequadlayer-room-object, video-surface-panel-scene-object, or manual-panel-scene-object-custom-mesh." }
+}
+$skyboxModeRaw = if ($null -eq $SkyboxMode) { "" } else { $SkyboxMode.Trim().ToLowerInvariant().Replace("_", "-") }
+$effectiveSkyboxMode = switch ($skyboxModeRaw) {
+    "" { if ($EnableSkybox) { "sample" } else { "none" } }
+    "sample" { "sample" }
+    "custom" { "custom" }
+    "none" { "none" }
+    default { throw "Unknown -SkyboxMode '$SkyboxMode'. Use none, sample, or custom." }
+}
+$effectiveSkyboxEnabled = $effectiveSkyboxMode -ne "none"
+$expectedSkyboxModeMarker = switch ($effectiveSkyboxMode) {
+    "sample" { "sample-mesh-uri" }
+    "custom" { "custom-scene-mesh" }
+    default { "none" }
+}
+$expectedRoomRenderOrderToken = switch ($projectionCarrierToken) {
+    "video-surface-panel-scene-object" { "video-surface-panel-over-virtual-room" }
+    "manual-panel-scene-object-custom-mesh" { "manual-custom-mesh-panel-over-virtual-room" }
+    default { "projection-layer-over-virtual-room" }
 }
 $assetMeshUriTrimmed = if ($null -eq $AssetMeshUri) { "" } else { $AssetMeshUri.Trim() }
 $assetSourcePathTrimmed = if ($null -eq $AssetSourcePath) { "" } else { $AssetSourcePath.Trim() }
@@ -280,7 +463,10 @@ $tagLogcatErrorPath = Join-Path $OutDir "tag-logcat-stream.stderr.txt"
 $pidLogcatPath = Join-Path $OutDir "pid-logcat.txt"
 $allLogcatPath = Join-Path $OutDir "logcat-all.txt"
 $windowFocusPath = Join-Path $OutDir "window-focus.txt"
+$activityDumpPath = Join-Path $OutDir "activity-activities.txt"
+$foregroundProofPath = Join-Path $OutDir "foreground-proof.json"
 $screenshotPath = Join-Path $OutDir "screencap.png"
+$pixelSummaryPath = Join-Path $OutDir "screenshot-pixel-classification.json"
 $remoteScreenshotPath = "/data/local/tmp/rusty-quest-spatial-camera-hwb-projection-smoke.png"
 
 $summary = [ordered]@{
@@ -295,6 +481,11 @@ $summary = [ordered]@{
     serial = $Serial
     package = $PackageName
     activity = $Activity
+    foreground_validation_required = $true
+    foreground_expected_package = $PackageName
+    foreground_expected_activity = $Activity
+    foreground_proof_path = $foregroundProofPath
+    foreground_validation_passed = $false
     apk_path = (Resolve-Path -LiteralPath $resolvedApk).Path
     apk_sha256 = $apkSha256
     out_dir = (Resolve-Path -LiteralPath $OutDir).Path
@@ -329,14 +520,19 @@ $summary = [ordered]@{
     spatial_video_projection_opacity = $videoOpacityClamped
     projection_carrier = $projectionCarrierToken
     projection_carrier_property = "debug.rustyquest.spatial.camera_hwb_projection_probe.carrier"
+    projection_carrier_launch_extra = "rusty.quest.spatial.camera_hwb_projection_probe.carrier"
+    projection_carrier_launch_transport = "android-property-and-intent-extra"
+    projection_room_render_order_expected = $expectedRoomRenderOrderToken
     require_spatial_asset_model = [bool]$RequireSpatialAssetModel
     enable_spatial_virtual_room = [bool]$EnableVirtualRoom
-    enable_spatial_skybox = [bool]$EnableSkybox
+    enable_spatial_skybox = [bool]$effectiveSkyboxEnabled
+    spatial_skybox_mode = $effectiveSkyboxMode
     require_spatial_virtual_room = [bool]$RequireSpatialVirtualRoom
     spatial_virtual_room_module = "spatial-sdk-packaged-virtual-room"
     spatial_virtual_room_runtime_property_enabled = "debug.rustyquest.spatial.virtual_room.enabled"
     spatial_skybox_module = "spatial-sdk-skybox-only"
     spatial_skybox_runtime_property_enabled = "debug.rustyquest.spatial.skybox.enabled"
+    spatial_skybox_runtime_property_mode = "debug.rustyquest.spatial.skybox.mode"
     spatial_virtual_room_scene_uri = "apk:///scenes/Composition.glxf"
     spatial_virtual_room_asset_policy = "packaged-glxf-local-launch-input"
     spatial_asset_model_requested = $assetModelRequested
@@ -357,13 +553,25 @@ $summary = [ordered]@{
     spatial_asset_model_runtime_property_mesh_uri = "debug.rustyquest.spatial.asset_model.mesh_uri"
     spatial_asset_model_launch_transport = "none"
     public_multistack_depth_layer_policy = $depthLayerPolicyToken
+    synthetic_visual_probe = [bool]$SyntheticVisualProbe
+    synthetic_visual_property = "debug.rustyquest.spatial.camera_hwb_projection_probe.synthetic_visual"
+    synthetic_visual_pixel_thresholds = [ordered]@{
+        minimum_red_pixels = $MinimumSyntheticRedPixels
+        minimum_green_pixels = $MinimumSyntheticGreenPixels
+        minimum_target_pixel_ratio = $MinimumSyntheticTargetPixelRatio
+    }
+    synthetic_visual_visible = $false
     carrier = "runtime-detected"
     tag_logcat_stream_path = $tagLogcatStreamPath
     tag_logcat_error_path = $tagLogcatErrorPath
     pid_logcat_path = $pidLogcatPath
     all_logcat_path = $allLogcatPath
     window_focus_path = $windowFocusPath
+    activity_dump_path = $activityDumpPath
     screenshot_path = $screenshotPath
+    screenshot_pixel_classification_path = $pixelSummaryPath
+    screenshot_valid = $false
+    screenshot_invalid_reason = ""
 }
 
 $logcatProcess = $null
@@ -513,8 +721,14 @@ try {
     }
 
     $setpropResults = @()
+    $setpropResults += Invoke-AdbCommand -Name "disable SDK quad surface probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.sdk_quad_surface_probe", "0")
+    $setpropResults += Invoke-AdbCommand -Name "disable SDK quad Vulkan probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.sdk_quad_vulkan_probe", "0")
+    $setpropResults += Invoke-AdbCommand -Name "disable SDK quad stereo alpha probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.sdk_quad_stereo_alpha_probe", "0")
+    $setpropResults += Invoke-AdbCommand -Name "disable panel surface matrix probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.panel_surface_matrix_probe", "0")
     $setpropResults += Invoke-AdbCommand -Name "disable luma camera HWB probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_probe", "0")
+    $setpropResults += Invoke-AdbCommand -Name "clear Spatial skybox mode" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.skybox.mode", "none")
     $setpropResults += Invoke-AdbCommand -Name "configure raw camera projection probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe", $(if ($VideoOnly) { "0" } else { "1" }))
+    $setpropResults += Invoke-AdbCommand -Name "configure synthetic carrier visual probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.synthetic_visual", $(if ($SyntheticVisualProbe) { "1" } else { "0" }))
     $setpropResults += Invoke-AdbCommand -Name "configure Spatial video-only projection probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.video_projection_probe", $(if ($VideoOnly) { "1" } else { "0" }))
     $setpropResults += Invoke-AdbCommand -Name "set raw camera projection reader max images" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.reader_max_images", $readerMaxImagesClamped.ToString())
     $setpropResults += Invoke-AdbCommand -Name "set Spatial depth layer policy" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.depth.layer_policy", $depthLayerPolicyToken)
@@ -524,7 +738,8 @@ try {
     $setpropResults += Invoke-AdbCommand -Name "disable Spatial SDK multimodal input" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.multimodal_input.enabled", "0")
     $setpropResults += Invoke-AdbCommand -Name "disable native OpenXR controller action fallback" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.native_controller_actions.enabled", "0")
     $setpropResults += Invoke-AdbCommand -Name "configure Spatial packaged virtual room" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.virtual_room.enabled", $(if ($EnableVirtualRoom) { "1" } else { "0" }))
-    $setpropResults += Invoke-AdbCommand -Name "configure Spatial skybox" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.skybox.enabled", $(if ($EnableSkybox) { "1" } else { "0" }))
+    $setpropResults += Invoke-AdbCommand -Name "configure Spatial skybox" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.skybox.enabled", $(if ($effectiveSkyboxEnabled) { "1" } else { "0" }))
+    $setpropResults += Invoke-AdbCommand -Name "configure Spatial skybox mode" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.skybox.mode", $effectiveSkyboxMode)
     $setpropResults += Invoke-AdbCommand -Name "configure Spatial video projection enabled" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.video.enabled", $(if ($videoProjectionRequested) { "1" } else { "0" }))
     $setpropResults += Invoke-AdbCommand -Name "disable Spatial video high-rate JSON payload" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.video.high_rate_json_payload", "0")
     if ($videoProjectionRequested) {
@@ -547,7 +762,33 @@ try {
     }
     Save-Text -Path (Join-Path $OutDir "setprops.json") -Text ($setpropResults | ConvertTo-Json -Depth 6)
 
-    Invoke-AdbCommand -Name "force-stop Spatial SDK app" -Arguments @("shell", "am", "force-stop", $PackageName) -AllowFailure | Out-Null
+    $forceStoppedPackages = @()
+    if (-not $SkipForceStopKnownXrPackages) {
+        $knownXrPackages = @(
+            $PackageName,
+            "io.github.mesmerprism.rustyhostess.t",
+            "io.github.mesmerprism.rustyhostess.makepad",
+            "io.github.mesmerprism.rustymanifold.broker",
+            "io.github.mesmerprism.rustyquest.native_renderer"
+        ) | Select-Object -Unique
+        foreach ($knownPackage in $knownXrPackages) {
+            $stopKnown = Invoke-AdbCommand -Name "force-stop $knownPackage" -Arguments @("shell", "am", "force-stop", $knownPackage) -AllowFailure
+            $forceStoppedPackages += [pscustomobject]@{
+                package = $knownPackage
+                exit_code = $stopKnown.exit_code
+                output = $stopKnown.output
+            }
+        }
+    } else {
+        Invoke-AdbCommand -Name "force-stop Spatial SDK app" -Arguments @("shell", "am", "force-stop", $PackageName) -AllowFailure | Out-Null
+        $forceStoppedPackages += [pscustomobject]@{
+            package = $PackageName
+            exit_code = 0
+            output = "only target package stopped; known XR package cleanup skipped"
+        }
+    }
+    $summary.force_stopped_known_xr_packages = $forceStoppedPackages
+    Save-Text -Path (Join-Path $OutDir "force-stopped-packages.json") -Text ($forceStoppedPackages | ConvertTo-Json -Depth 5)
 
     $logcatArgs = @()
     if ($null -ne $script:ResolvedAdbServerPort) {
@@ -569,7 +810,10 @@ try {
         -WindowStyle Hidden
     Start-Sleep -Milliseconds 300
 
-    $launchArgs = @("shell", "am", "start", "-W", "-n", $Activity)
+    $launchArgs = @(
+        "shell", "am", "start", "-W", "-n", $Activity,
+        "--es", "rusty.quest.spatial.camera_hwb_projection_probe.carrier", $projectionCarrierToken
+    )
     if ($assetModelRequested) {
         $launchArgs += @(
             "--ez", "rusty.quest.spatial.asset_model.enabled", "true",
@@ -603,9 +847,33 @@ try {
     $windowFocus = (Invoke-AdbCommand -Name "dump window focus" -Arguments @("shell", "dumpsys", "window") -AllowFailure).output
     Save-Text -Path $windowFocusPath -Text $windowFocus
 
+    $activityDump = (Invoke-AdbCommand -Name "dump activity activities" -Arguments @("shell", "dumpsys", "activity", "activities") -AllowFailure).output
+    Save-Text -Path $activityDumpPath -Text $activityDump
+    $foregroundProof = Get-SpatialForegroundProof `
+        -PackageName $PackageName `
+        -Activity $Activity `
+        -TargetPid $targetPid `
+        -LaunchText $launch.output `
+        -WindowText $windowFocus `
+        -ActivityText $activityDump
+    $summary.foreground_proof = $foregroundProof
+    $summary.foreground_pid_live = [bool]$foregroundProof.pid_live
+    $summary.foreground_launch_component_matches = [bool]$foregroundProof.launch_component_matches
+    $summary.foreground_window_focus_matches = [bool]$foregroundProof.window_focus_matches
+    $summary.foreground_activity_resumed_matches = [bool]$foregroundProof.activity_resumed_matches
+    $summary.foreground_focused_or_resumed = [bool]$foregroundProof.focused_or_resumed
+    $summary.foreground_process_record_matches_pid = [bool]$foregroundProof.process_record_matches_pid
+    $summary.foreground_validation_passed = [bool]$foregroundProof.valid
+    Save-Text -Path $foregroundProofPath -Text ($foregroundProof | ConvertTo-Json -Depth 5)
+
     Invoke-AdbCommand -Name "capture screenshot" -Arguments @("shell", "screencap", "-p", $remoteScreenshotPath) -AllowFailure | Out-Null
     Invoke-AdbCommand -Name "pull screenshot" -Arguments @("pull", $remoteScreenshotPath, $screenshotPath) -AllowFailure | Out-Null
     Invoke-AdbCommand -Name "remove remote screenshot" -Arguments @("shell", "rm", $remoteScreenshotPath) -AllowFailure | Out-Null
+    if (Test-Path -LiteralPath $screenshotPath) {
+        $pixelSummary = Measure-SyntheticSurfacePixels -Path $screenshotPath -Stride 4
+        $summary.screenshot_pixel_classification = $pixelSummary
+        Save-Text -Path $pixelSummaryPath -Text ($pixelSummary | ConvertTo-Json -Depth 5)
+    }
 
     if ($null -ne $logcatProcess -and -not $logcatProcess.HasExited) {
         Stop-Process -Id $logcatProcess.Id -Force
@@ -629,12 +897,26 @@ try {
     $summary.scene_quad_layer_carrier = Test-TextContains $evidenceText "carrier=scenequadlayer-createAsAndroid-vulkan-wsi"
     $summary.scene_quad_layer_room_object_carrier = Test-TextContains $evidenceText "projectionCarrier=scenequadlayer-room-object"
     $summary.scene_quad_layer_created = Test-TextContains $evidenceText "status=raw-camera-projection-layer-created"
-    $summary.scene_panel_carrier = (Test-TextContains $evidenceText "scenePanelCarrier=true") -and (Test-TextContains $evidenceText "carrier=video-surface-panel-scene-object")
-    $summary.scene_panel_carrier_entity_created = $evidenceText -match "status=scene-panel-carrier-entity-spawned[^\r\n]*entityCreated=true"
-    $summary.scene_panel_carrier_ready = $evidenceText -match "status=scene-panel-ready[^\r\n]*surfaceValid=true"
+    $summary.video_surface_panel_scene_object_carrier = (Test-TextContains $evidenceText "scenePanelCarrier=true") -and (Test-TextContains $evidenceText "carrier=video-surface-panel-scene-object")
+    $summary.manual_panel_scene_object_custom_mesh_carrier = (Test-TextContains $evidenceText "scenePanelCarrier=true") -and (Test-TextContains $evidenceText "carrier=manual-panel-scene-object-custom-mesh")
+    $summary.manual_panel_scene_object_custom_mesh_ready = $evidenceText -match "status=manual-panel-carrier-ready[^\r\n]*surfaceValid=true"
+    $summary.manual_panel_scene_mesh_creator = Test-TextContains $evidenceText "sceneMeshCreator=single-sided-quad"
+    $summary.manual_panel_no_hittable = Test-TextContains $evidenceText "manualPanelNoHittable=true"
+    $summary.manual_panel_no_isdk_grabbable = Test-TextContains $evidenceText "manualPanelNoIsdkGrabbable=true"
+    $summary.manual_panel_input_click_buttons_zero = Test-TextContains $evidenceText "panelInputOptionsClickButtons=0"
+    $summary.scene_panel_carrier = [bool]$summary.video_surface_panel_scene_object_carrier -or [bool]$summary.manual_panel_scene_object_custom_mesh_carrier
+    $summary.scene_panel_carrier_entity_created = (
+        ($evidenceText -match "status=scene-panel-carrier-entity-spawned[^\r\n]*entityCreated=true") -or
+        [bool]$summary.manual_panel_scene_object_custom_mesh_ready
+    )
+    $summary.scene_panel_carrier_ready = (
+        ($evidenceText -match "status=scene-panel-ready[^\r\n]*surfaceValid=true") -or
+        [bool]$summary.manual_panel_scene_object_custom_mesh_ready
+    )
     $summary.scene_panel_carrier_native_start_requested = $evidenceText -match "status=native-start-requested[^\r\n]*scenePanelCarrier=true"
     $summary.projection_panel_input_pass_through = Test-TextContains $evidenceText "projectionPanelInputPassThrough=true"
     $summary.projection_panel_hittable_no_collision = Test-TextContains $evidenceText "projectionPanelHittable=NoCollision"
+    $summary.projection_panel_hittable_manual_noninteractive = Test-TextContains $evidenceText "projectionPanelHittable=none-manual-custom-mesh-noninteractive"
     $summary.private_layer_panel_default_reach_distance_preserved = Test-TextContains $evidenceText "privateLayerPanelDefaultReachDistancePreserved=true"
     $summary.private_layer_panel_left_stick_distance_enabled = Test-TextContains $evidenceText "privateLayerPanelDistanceControl=left-stick-y-private-panel-free-transform-distance"
     $summary.private_layer_panel_distance_persists_across_toggle = Test-TextContains $evidenceText "privateLayerPanelDistancePersistsAcrossToggle=true"
@@ -644,7 +926,9 @@ try {
     $summary.private_layer_panel_override_native_updated = Test-TextContains $evidenceText "status=private-layer-override-updated"
     $summary.private_layer_panel_projection_refresh_forced = Test-TextContains $evidenceText "layerOverrideForcedProjectionRefresh=true"
     $summary.layer_created = [bool]$summary.scene_quad_layer_created -or [bool]$summary.scene_panel_carrier_entity_created
-    $summary.carrier = if ([bool]$summary.scene_panel_carrier) {
+    $summary.carrier = if ([bool]$summary.manual_panel_scene_object_custom_mesh_carrier) {
+        "manual-panel-scene-object-custom-mesh"
+    } elseif ([bool]$summary.video_surface_panel_scene_object_carrier) {
         "video-surface-panel-scene-object"
     } elseif ([bool]$summary.scene_quad_layer_carrier) {
         "scenequadlayer-createAsAndroid-vulkan-wsi"
@@ -668,7 +952,7 @@ try {
     $summary.mapping_mode_target_local_raster = Test-TextContains $evidenceText "projectionContentMappingMode=target-local-raster"
     $summary.native_packed_left_target_rect = Test-TextContains $evidenceText "leftPackedEffectiveTargetScreenUvRect=0.062777;0.218750;0.375000;0.656250"
     $summary.native_packed_right_target_rect = Test-TextContains $evidenceText "rightPackedEffectiveTargetScreenUvRect=0.562222;0.218750;0.375000;0.671875"
-    $summary.projection_target_default_distance_one_meter = Test-TextContains $evidenceText "targetDistanceDefaultMeters=1.00"
+    $summary.projection_target_default_distance_two_meters = Test-TextContains $evidenceText "targetDistanceDefaultMeters=2.00"
     $summary.projection_target_stereo_horizontal_offset_readback = Test-TextContains $evidenceText "projectionTargetStereoHorizontalOffsetUv="
     $summary.projection_target_stereo_horizontal_offset_default = Test-TextContains $evidenceText "projectionTargetStereoHorizontalOffsetDefaultUv=0.046320"
     $summary.projection_target_left_right_offset_readback = (Test-TextContains $evidenceText "projectionTargetLeftOffsetUv=") -and (Test-TextContains $evidenceText "projectionTargetRightOffsetUv=")
@@ -780,23 +1064,65 @@ try {
     $summary.spatial_skybox_module_declared =
         Test-TextContains $evidenceText "spatialSkyboxModule=spatial-sdk-skybox-only"
     $summary.spatial_skybox_scene_configured =
-        Test-TextContains $evidenceText "channel=spatial-skybox status=scene-configured"
+        (Test-TextContains $evidenceText "status=scene-configured") -and
+        (Test-TextContains $evidenceText "skyboxMode=$expectedSkyboxModeMarker")
+    $summary.spatial_skybox_mode_marker =
+        Test-TextContains $evidenceText "skyboxMode=$expectedSkyboxModeMarker"
+    $summary.spatial_skybox_sample_mesh_uri =
+        Test-TextContains $evidenceText "skyboxRenderer=sample-toolkit-mesh-uri"
+    $summary.spatial_skybox_custom_scene_mesh =
+        Test-TextContains $evidenceText "skyboxRenderer=custom-runtime-scene-mesh-skybox"
+    $summary.spatial_skybox_custom_background_order =
+        (Test-TextContains $evidenceText "skyboxProjectionForegroundPolicy=scene-layer-over-background-skybox") -and
+        (Test-TextContains $evidenceText "skyboxDepthWrite=disabled") -and
+        (Test-TextContains $evidenceText "skyboxSortOrder=preprocess")
     $summary.spatial_skybox_only =
         Test-TextContains $evidenceText "skyboxOnly=true"
-    $summary.camera_projection_wall_toggle_declared =
-        Test-TextContains $evidenceText "cameraProjectionWallToggleInput=right-controller-secondary-button"
+    $summary.camera_projection_wall_toggle_disabled =
+        Test-TextContains $evidenceText "cameraProjectionWallToggleInput=disabled-right-secondary-noop"
     $summary.camera_projection_wall_mode_declared =
         Test-TextContains $evidenceText "virtualRoomWallPlacementMode=virtual-room-wall-fixed-quad"
     $summary.legacy_launcher_panel_suppressed =
         Test-TextContains $evidenceText "legacyLauncherPanelSuppressed=true"
     $summary.camera_projection_initial_full_fov_mode =
         Test-TextContains $evidenceText "projectionDefaultPlacementMode=viewer-pose-projection-locked-quad"
+    $summary.camera_projection_start_gate_virtual_room_loaded =
+        Test-TextContains $evidenceText "projectionStartGate=virtual-room-loaded"
     $summary.camera_projection_room_render_order =
-        Test-TextContains $evidenceText "projectionRoomRenderOrder=scenequadlayer-room-object-depth-order-under-test"
+        Test-TextContains $evidenceText "projectionRoomRenderOrder=$expectedRoomRenderOrderToken"
     $summary.private_layer_controls_apply_to_wall_and_full_fov =
         Test-TextContains $evidenceText "layerOverrideAppliesToWallAndFullFov=true"
     $summary.runtime_crash_false = (Test-TextContains $appScopedEvidenceText "runtimeCrash=false") -and -not ($appScopedEvidenceText -match "AndroidRuntime|FATAL|render-failed")
     $summary.screenshot_captured = Test-Path -LiteralPath $screenshotPath
+    $summary.synthetic_visual_presented =
+        Test-TextContains $evidenceText "status=synthetic-visual-presented"
+    $summary.synthetic_visual_canvas_drawn =
+        $evidenceText -match "status=synthetic-visual-presented[^\r\n]*canvasDrawn=true"
+    $summary.synthetic_visual_camera_runtime_disabled =
+        ($evidenceText -match "status=synthetic-visual-presented[^\r\n]*cameraRuntimeStarted=false") -and
+        ($evidenceText -match "status=synthetic-visual-presented[^\r\n]*sampledCameraTexture=false")
+    if ($SyntheticVisualProbe -and $summary.screenshot_captured -and $summary.Contains("screenshot_pixel_classification")) {
+        $pixelSummary = $summary.screenshot_pixel_classification
+        $summary.synthetic_visual_visible =
+            ([int]$pixelSummary.red_pixels -ge $MinimumSyntheticRedPixels) -and
+            ([int]$pixelSummary.green_pixels -ge $MinimumSyntheticGreenPixels) -and
+            ([double]$pixelSummary.synthetic_target_ratio -ge $MinimumSyntheticTargetPixelRatio)
+    } elseif (-not $SyntheticVisualProbe) {
+        $summary.synthetic_visual_visible = $false
+    }
+    $summary.screenshot_valid =
+        [bool]$summary.screenshot_captured -and
+        [bool]$summary.foreground_validation_passed -and
+        ((-not [bool]$SyntheticVisualProbe) -or [bool]$summary.synthetic_visual_visible)
+    if (-not [bool]$summary.screenshot_captured) {
+        $summary.screenshot_invalid_reason = "screencap-missing"
+    } elseif (-not [bool]$summary.foreground_validation_passed) {
+        $summary.screenshot_invalid_reason = "foreground-validation-failed"
+    } elseif ($SyntheticVisualProbe -and -not [bool]$summary.synthetic_visual_visible) {
+        $summary.screenshot_invalid_reason = "synthetic-target-not-visible"
+    } else {
+        $summary.screenshot_invalid_reason = ""
+    }
 
     $requiredFlags = if ($VideoOnly) {
         @(
@@ -805,6 +1131,22 @@ try {
             "native_start_requested",
             "runtime_crash_false",
             "screenshot_captured"
+        )
+    } elseif ($SyntheticVisualProbe) {
+        @(
+            "start",
+            "layer_created",
+            "synthetic_visual_presented",
+            "synthetic_visual_canvas_drawn",
+            "synthetic_visual_camera_runtime_disabled",
+            "camera_stack_particle_layer_suppressed",
+            "camera_stack_particles_suppression_enabled",
+            "camera_stack_particle_layer_visible_false",
+            "camera_stack_particle_layer_started_false",
+            "camera_stack_particle_suppress_failed_false",
+            "camera_stack_particle_renderer_ready_false",
+            "camera_stack_surface_layer_mode_absent",
+            "runtime_crash_false"
         )
     } else {
         @(
@@ -847,6 +1189,11 @@ try {
     if (-not $VideoOnly) {
         $requiredFlags += "spatial_controller_actions_disabled"
     }
+    $requiredFlags += @(
+        "foreground_validation_passed",
+        "screenshot_captured",
+        "screenshot_valid"
+    )
     if ($RequirePublicMultiStackProjection -and -not $VideoOnly) {
         $requiredFlags += @(
             "public_multistack_contract_ready",
@@ -926,6 +1273,21 @@ try {
             "spatial_asset_model_private_source_not_packaged"
         )
     }
+    if ($effectiveSkyboxEnabled) {
+        $requiredFlags += @(
+            "spatial_skybox_module_declared",
+            "spatial_skybox_scene_configured",
+            "spatial_skybox_mode_marker"
+        )
+        if ($effectiveSkyboxMode -eq "sample") {
+            $requiredFlags += "spatial_skybox_sample_mesh_uri"
+        } elseif ($effectiveSkyboxMode -eq "custom") {
+            $requiredFlags += @(
+                "spatial_skybox_custom_scene_mesh",
+                "spatial_skybox_custom_background_order"
+            )
+        }
+    }
     if ($RequireSpatialVirtualRoom) {
         $requiredFlags += @(
             "spatial_virtual_room_module_declared",
@@ -934,20 +1296,48 @@ try {
             "spatial_virtual_room_scene_configured",
             "spatial_virtual_room_generic_module",
             "spatial_virtual_room_not_mruk",
-            "camera_projection_wall_toggle_declared",
+            "camera_projection_wall_toggle_disabled",
             "camera_projection_wall_mode_declared",
             "legacy_launcher_panel_suppressed",
             "camera_projection_initial_full_fov_mode",
+            "camera_projection_start_gate_virtual_room_loaded",
             "camera_projection_room_render_order"
         )
         if (-not $VideoOnly) {
-            $requiredFlags += @(
-                "scene_panel_carrier",
-                "scene_panel_carrier_entity_created",
-                "scene_panel_carrier_ready",
-                "scene_panel_carrier_native_start_requested",
-                "private_layer_controls_apply_to_wall_and_full_fov"
-            )
+            if ($projectionCarrierToken -eq "video-surface-panel-scene-object") {
+                $requiredFlags += @(
+                    "scene_panel_carrier",
+                    "scene_panel_carrier_entity_created",
+                    "scene_panel_carrier_ready"
+                )
+                if (-not $SyntheticVisualProbe) {
+                    $requiredFlags += "scene_panel_carrier_native_start_requested"
+                }
+            } elseif ($projectionCarrierToken -eq "manual-panel-scene-object-custom-mesh") {
+                $requiredFlags += @(
+                    "scene_panel_carrier",
+                    "scene_panel_carrier_entity_created",
+                    "scene_panel_carrier_ready",
+                    "manual_panel_scene_object_custom_mesh_carrier",
+                    "manual_panel_scene_object_custom_mesh_ready",
+                    "manual_panel_scene_mesh_creator",
+                    "manual_panel_no_hittable",
+                    "manual_panel_no_isdk_grabbable",
+                    "manual_panel_input_click_buttons_zero",
+                    "projection_panel_hittable_manual_noninteractive"
+                )
+                if (-not $SyntheticVisualProbe) {
+                    $requiredFlags += "scene_panel_carrier_native_start_requested"
+                }
+            } else {
+                $requiredFlags += @(
+                    "scene_quad_layer_room_object_carrier",
+                    "scene_quad_layer_created"
+                )
+            }
+            if (-not $SyntheticVisualProbe) {
+                $requiredFlags += "private_layer_controls_apply_to_wall_and_full_fov"
+            }
         }
     }
     if (-not $AllowMissingMarkers) {
@@ -961,7 +1351,9 @@ try {
         Save-Text -Path (Join-Path $OutDir "stop.txt") -Text $stop.output
         $disable = Invoke-AdbCommand -Name "disable raw camera projection probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe", "0") -AllowFailure
         Save-Text -Path (Join-Path $OutDir "disable-projection-probe.txt") -Text $disable.output
-        $clearCarrier = Invoke-AdbCommand -Name "clear Spatial projection carrier" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.carrier", "") -AllowFailure
+        $disableSynthetic = Invoke-AdbCommand -Name "disable synthetic carrier visual probe" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.synthetic_visual", "0") -AllowFailure
+        Save-Text -Path (Join-Path $OutDir "disable-synthetic-visual-probe.txt") -Text $disableSynthetic.output
+        $clearCarrier = Invoke-AdbCommand -Name "clear Spatial projection carrier" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.carrier", "none") -AllowFailure
         Save-Text -Path (Join-Path $OutDir "clear-projection-carrier.txt") -Text $clearCarrier.output
         $disableVideo = Invoke-AdbCommand -Name "disable Spatial video projection" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.video.enabled", "0") -AllowFailure
         Save-Text -Path (Join-Path $OutDir "disable-video-projection.txt") -Text $disableVideo.output
@@ -973,6 +1365,8 @@ try {
         Save-Text -Path (Join-Path $OutDir "disable-spatial-virtual-room.txt") -Text $disableVirtualRoom.output
         $disableSkybox = Invoke-AdbCommand -Name "disable Spatial skybox" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.skybox.enabled", "0") -AllowFailure
         Save-Text -Path (Join-Path $OutDir "disable-spatial-skybox.txt") -Text $disableSkybox.output
+        $disableSkyboxMode = Invoke-AdbCommand -Name "disable Spatial skybox mode" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.skybox.mode", "none") -AllowFailure
+        Save-Text -Path (Join-Path $OutDir "disable-spatial-skybox-mode.txt") -Text $disableSkyboxMode.output
     }
 
     $summary.status = if ($AllowMissingMarkers) { "completed" } else { "passed" }

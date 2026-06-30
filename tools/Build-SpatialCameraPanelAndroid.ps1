@@ -701,13 +701,13 @@ $manifest = [ordered]@{
     spatial_panel_headlock_mode = "enabled-by-default-viewer-relative-while-workflow-panel-open"
     spatial_panel_headlock_default_pose_meters = "0.0;0.0;1.40"
     spatial_panel_headlock_default_scale = 0.65
-    spatial_private_layer_panel_render_mode = "spatial-sdk-mesh-world-space-old-input-path-layer-config-disabled"
-    spatial_private_layer_panel_pose_mode = "initial-headset-facing-world-space-then-sdk-owned"
-    spatial_private_layer_panel_movement_authority = "spatial-sdk-grabbable-free-transform-pivot-y-left-stick-y-distance"
+    spatial_private_layer_panel_render_mode = "spatial-sdk-layer-world-space-high-z"
+    spatial_private_layer_panel_pose_mode = "initial-headset-facing-world-space-then-stored-placement-unless-grabbed"
+    spatial_private_layer_panel_movement_authority = "app-stored-placement-with-spatial-sdk-grabbable-pivot-y-and-left-stick-y-distance"
     spatial_private_layer_panel_input_buttons = "button-a+trigger-l+trigger-r-select; controller-squeeze-grab"
     spatial_private_layer_panel_compose_drag_movement = $false
-    spatial_private_layer_panel_default_pose_meters = "0.0;0.0;0.72"
-    spatial_private_layer_panel_projection_input_order = "scenequadlayer-room-object-no-collision-private-layer-panel-mesh-input"
+    spatial_private_layer_panel_default_pose_meters = "0.0;0.0;1.00"
+    spatial_private_layer_panel_projection_input_order = "manual-custom-mesh-projection-noninteractive-private-layer-panel-layer-input"
     spatial_panel_headlock_hotload_tool = "tools/Set-SpatialCameraPanelHeadlock.ps1"
     spatial_panel_headlock_hotload_properties = @(
         "debug.rustyquest.spatial_camera_panel.panel.headlocked.enabled",
@@ -723,7 +723,7 @@ $manifest = [ordered]@{
         "debug.rustyquest.spatial_camera_panel.panel.headlocked.joystick.scale_rate_per_second"
     )
     spatial_panel_headlock_joystick_controls = "android-generic-motion-left-stick-y-workflow-panel-distance-private-layer-panel-distance-right-stick-y-projection-scale-disabled-while-private-panel-open-right-stick-x-ignored-right-stick-side-flick-panel-move-disabled"
-    spatial_camera_projection_distance_controls = "fixed-1m-default; no joystick distance control"
+    spatial_camera_projection_distance_controls = "fixed-2m-default; no joystick distance control"
     spatial_camera_projection_scale_controls = "android-right-stick-y; spatial-sdk-avatar-body-right-thumb-up-down; native-openxr-right-thumbstick-y diagnostic; panel-control"
     spatial_camera_projection_stereo_offset_controls = "disabled-default-locked; left-stick-y-controls-panel-distance-private-free-transform"
     spatial_camera_projection_distance_vr_input_system_property = "debug.rustyquest.spatial_camera_panel.vr_input_system"

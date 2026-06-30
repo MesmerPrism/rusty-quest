@@ -5,4 +5,5 @@
     <item type="id" name="spatial_camera_panel_launcher" />
     <item type="id" name="spatial_camera_surface_panel" />
     <item type="id" name="spatial_camera_projection_surface_panel" />
+    <item type="id" name="spatial_camera_projection_manual_custom_mesh_panel" />
 </resources>

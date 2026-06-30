@@ -65,9 +65,14 @@ Depth and render ordering are still active Spatial lane work. The public lane
 records depth source policy and alignment controls, but it does not yet claim a
 final depth-stack organization for the virtual room, skybox, GLB/GLTF assets,
 video layer, and custom camera projection surface. A previous room iteration
-proved the custom projection quad can be visible in front of the skybox, so the
-next validation goal is to make that foreground path repeatable while keeping
-the staged video and layer-control panel active.
+proved the custom projection quad can be visible in front of an explicitly
+backgrounded runtime skydome, but the original sample `mesh://skybox` path is a
+separate and currently negative ordering case for the direct `SceneQuadLayer`
+carrier: skybox-only evidence can hide the direct projection even while native
+video/camera frames are being produced. The repeatable foreground-room path is
+the `video-surface-panel-scene-object` carrier; direct `SceneQuadLayer` remains
+a comparison/diagnostic route while depth-stack organization is still active
+work.
 
 ## Headset Evidence
 
@@ -110,13 +115,16 @@ Treat that as a future Rusty Lattice / projection-space alignment
 investigation, not as a camera acquisition, HWB import, WSI carrier, or public
 multi-stack failure.
 
-For that investigation, the raw Camera2/HWB projection probe keeps the Spatial
-SDK quad carrier at a fixed 1.0m default distance and locks the opposed
-per-eye horizontal UV offset to the current default `0.046320`, captured from
-a live Quest 3S headset readback on 2026-06-28 where the camera projection and
-Meta performance HUD aligned simultaneously. Left-stick Y controls workflow
-panel distance, and when the private-layer panel is open it controls that
-panel's stored distance; it does not tune projection stereo offset.
+For that investigation, the raw Camera2/HWB projection probe now defaults to
+the accepted no-room ordering path: room and skybox are disabled at launch, the
+projection surface is fixed at a 2.0m default distance, the generic
+layer-control UI panel opens at a 1.0m default distance, and the opposed
+per-eye horizontal UV offset stays locked to the current default `0.046320`,
+captured from a live Quest 3S headset readback on 2026-06-28 where the camera
+projection and Meta performance HUD aligned simultaneously. Left-stick Y
+controls workflow panel distance, and when the layer-control panel is open it
+controls that panel's stored distance; it does not tune projection stereo
+offset.
 Runtime readback uses
 `projectionTargetStereoHorizontalOffsetUv`, `projectionTargetLeftOffsetUv`,
 `projectionTargetRightOffsetUv`, and the effective packed rect markers. While
@@ -143,22 +151,35 @@ When it is not actively grabbed, the app reapplies the stored placement so
 right-stick/default SDK nudges do not teleport it; while grabbed, the SDK
 transform is accepted and synced back into the stored placement.
 
-The right secondary/B button toggles the raw camera projection quad between a
+For the accepted no-room default, right secondary/B is deliberately disabled
+and consumed as a no-op; markers use
+`cameraProjectionWallToggleInput=disabled-right-secondary-noop` and
+`cameraProjectionWallToggleEnabled=false`. Earlier room diagnostics used the
+right secondary/B button to toggle the raw camera projection quad between a
 fixed virtual wall pose inside the packaged room and the full-field
-viewer-locked pose. With the virtual room enabled, the viewer-locked full-field
-pose is still the initial placement so the video plus custom camera projection
-surface starts like the pre-room path; B can then detach it to the fixed room
-wall. The current room-order experiment defaults the live surface carrier to
-`scenequadlayer-room-object`: a Spatial SDK `SceneQuadLayer` anchored to a
-generated single-sided room object with `projectionAnchorHittable=NoCollision`.
+viewer-locked pose. With the room enabled, the accepted live surface carrier is
+`video-surface-panel-scene-object`, because headset validation showed the
+`scenequadlayer-room-object` retry still rendered the custom projection behind
+authored room geometry while remaining visible outside/through the room window.
+A later restored first-room-style direct anchor also failed against the
+original sample `mesh://skybox`; skybox-only evidence showed the sample skybox
+can hide the direct projection by itself. The current first-room replay marker
+for that diagnostic is
+`skyboxEntityCreateApi=toolkit-varargs-first-room-replay`, which restores the
+old sample skybox `Entity.create(Mesh, Material, Transform)` call shape. The
+same diagnostic now also reports
+`projectionStartGate=virtual-room-loaded` and the old first-room
+`projectionRoomRenderOrder=projection-layer-over-virtual-room` token. Headset
+evidence with all three markers still did not show the custom projection, so
+this direct SceneQuadLayer path remains a negative comparison route.
 Set `debug.rustyquest.spatial.camera_hwb_projection_probe.carrier` to
-`video-surface-panel-scene-object` to compare against the saved panel-carrier
-checkpoint. Runtime evidence uses
+`scenequadlayer-room-object` only to reproduce that rejected comparison path.
+Earlier foreground-room runtime evidence used
 `cameraProjectionWallToggleInput=right-controller-secondary-button`,
 `virtualRoomWallPlacementMode=virtual-room-wall-fixed-quad`, and
 `virtualRoomWallCenterM` markers plus
-`projectionRoomRenderOrder=scenequadlayer-room-object-depth-order-under-test`
-and `legacyLauncherPanelSuppressed=true`.
+`projectionRoomRenderOrder=video-surface-panel-over-virtual-room` and
+`legacyLauncherPanelSuppressed=true`.
 
 When the camera/video stack is active, the right primary button opens a
 front-of-camera private-layer control panel instead of the participant workflow
@@ -167,26 +188,39 @@ layer selector: seven generic
 layer choices, live projection-area scale, live depth source policy
 (`mono-layer0`, `mono-layer1`, `eye-index`, or `compare`), and live
 depth-alignment X/Y/scale controls. It is registered as
-`spatial_private_layer_panel`, renders as the old `spatial-sdk-mesh`
-world-space panel with layer config disabled and
-`panelRenderOrder=spatial-sdk-mesh-panel-depth-order`, uses Spatial SDK
-`Grabbable` as the movement authority so it sticks to the grabbed pose, and
+`spatial_private_layer_panel`, currently renders through the targeted
+`spatial-sdk-layer` UI ordering test path with layer z-index `99`, uses
+Spatial SDK `Grabbable` as the movement authority so it sticks to the grabbed
+pose, and
 updates the public opaque
 projection route through
 `nativeUpdatePrivateLayerOverride` and
 `nativeUpdatePrivateLayerDepthLayerPolicy` plus
 `nativeUpdatePrivateLayerDepthAlignment`. Layer override markers include
-`layerOverrideAppliesToWallAndFullFov=true`, and the current override is
-reapplied after wall/full-FOV placement toggles.
-When the packaged room and full-FOV projection are both active, opening this
-control panel keeps the camera/video projection as a compositor layer above the
-room and keeps the projection plane at its full-FOV foreground size. The
-projection panel carrier is explicitly input-transparent
-(`projectionPanelInputPassThrough=true`, `projectionPanelHittable=NoCollision`),
-so controller rays and SDK grab skip the full-FOV render panel and resolve to
-the normal-distance UI panel first.
+`layerOverrideAppliesToWallAndFullFov=true`.
+In the accepted no-room default, opening this control panel keeps
+the camera/video projection at 2.0m and opens the UI at 1.0m so the UI is
+physically in front of the projection without the previous `0.25m`/`0.22m`
+foreground compensation path. The projection carrier is explicitly
+input-transparent
+(`projectionPanelInputPassThrough=true`, manual carrier
+`projectionPanelHittable=none-manual-custom-mesh-noninteractive`), so
+controller-ray and button behavior must be verified on headset rather than
+inferred from visibility markers alone.
 The panel explicitly accepts A/trigger select for its Compose controls; the
 inner palm/squeeze action remains the SDK grab path.
+
+The manual custom-mesh projection carrier
+(`manual-panel-scene-object-custom-mesh`) remains the active room/skybox
+input-test candidate, not a finalized carrier. It passed strict synthetic
+visibility checks with the room and skybox, and actual private-profile launches proved
+video, staged GLB, room, skybox, and non-hittable carrier markers. A high-z UI
+layer alone did not foreground the panel while the UI remained behind the
+`0.25m` projection plane; the successful visual ordering run used high-z UI,
+foreground UI distance/scale compensation, and manual projection
+`forceSceneTexture=true` with `layerConfig=null`. Do not treat this as complete
+until a headset run proves controller-ray targeting, button clickability, and
+layer-button effect changes in the actual app.
 
 For controller modality, this APK follows the official Spatial SDK panel sample
 shape: optional hands-and-controllers declarations are present, controller
@@ -238,6 +272,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
 - `app/src/main/.../SpatialAvatarHandVisualFeature.kt` owns suppression of the
   built-in Meta avatar hand visual so native/public hand visuals remain
   explicit.
+- Future Spatial lane growth should follow the official `FeatureDevSample`
+  modularity pattern: move reusable Spatial SDK behavior into feature/module
+  owners with their own component/system registration, and keep this Activity
+  as the registration/orchestration facade instead of adding every room,
+  carrier, panel-placement, controller, and marker behavior directly here.
 - `native-receipt/src/camera_hwb_probe.rs` is the Android JNI facade and
   raw camera probe orchestration entry point.
 - `native-receipt/src/camera_hwb_stream.rs` owns the Android Camera2 /
@@ -320,10 +359,10 @@ Build with:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
 ```
 
-Builds that need the private-layer selector to visibly change the active
+Builds that need the generic layer selector to visibly change the active
 camera projection layer must provide the downstream opaque shader inputs at
 build time. Prefer passing a private profile that names those shader sources
-and the projection effect constants:
+and projection constants:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 `

@@ -31,6 +31,13 @@ internal enum class CameraHwbProjectionPlacementMode(val markerToken: String) {
 internal enum class CameraHwbProjectionCarrierMode(val markerToken: String) {
   SceneQuadLayerRoomObject("scenequadlayer-room-object"),
   VideoSurfacePanelSceneObject("video-surface-panel-scene-object"),
+  ManualPanelSceneObjectCustomMesh("manual-panel-scene-object-custom-mesh"),
+}
+
+internal enum class SpatialSkyboxMode(val markerToken: String) {
+  None("none"),
+  SampleMeshUri("sample-mesh-uri"),
+  CustomSceneMesh("custom-scene-mesh"),
 }
 
 internal fun Long.hasReceiptBit(bit: Long): Boolean = (this and bit) != 0L

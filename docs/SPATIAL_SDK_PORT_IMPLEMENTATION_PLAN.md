@@ -7,6 +7,8 @@ OpenXR/Vulkan renderer and from downstream private effect stacks.
 The room/world-space projection iteration history from the pre-room baseline
 through the current video-surface panel carrier and private UI ordering work is
 tracked in `docs/SPATIAL_ROOM_WORLDSPACE_ITERATION_LOG.md`.
+The current targeted carrier matrix and Spatial SDK sample inventory are
+tracked in `docs/SPATIAL_LAYERING_CARRIER_PROBE_PLAN.md`.
 
 ## Owned Here
 
@@ -63,9 +65,9 @@ tracked in `docs/SPATIAL_ROOM_WORLDSPACE_ITERATION_LOG.md`.
   eye center. The live control is reported with
   `projectionTargetScaleJoystickControlsEnabled=true` and
   `right-stick-y-projection-target-scale`. Left-stick Y controls workflow-panel
-  distance after the default stereo horizontal offset was locked in; while the
-  private-layer panel is open, left-stick Y controls that panel's stored
-  distance and persists across close/open. Right-stick X is intentionally
+  distance after the default stereo horizontal offset was locked in; when the
+  layer-control panel is open it controls that panel's stored distance and
+  persists across close/open. Right-stick X is intentionally
   ignored/swallowed so it no longer drives panel scale, distance, or private
   panel side-flick movement.
 - The right primary button opens a generic `spatial_private_layer_panel` while
@@ -89,6 +91,11 @@ tracked in `docs/SPATIAL_ROOM_WORLDSPACE_ITERATION_LOG.md`.
   move the UI out from under the pointer. A/trigger select is explicitly
   enabled for the Compose layer buttons, while controller squeeze/palm remains
   the grab path.
+- The accepted default starts without the packaged room or skybox, uses the
+  manual custom-mesh projection carrier at 2.0m, opens the generic
+  layer-control UI panel at 1.0m, keeps right secondary/B disabled as a
+  consumed no-op, and preserves left-stick Y as the panel-distance control
+  while the layer-control UI is open.
 - In packaged-room full-FOV mode, projection visibility and controller
   hit-testing are intentionally separated: the projection remains a higher
   compositor layer than the room and keeps its foreground full-FOV size, but
@@ -105,6 +112,25 @@ tracked in `docs/SPATIAL_ROOM_WORLDSPACE_ITERATION_LOG.md`.
   and scalar `driver0_value01` / `driver1_value01` values.
 - Public deterministic native hand-anchor particle smoke tests over resident
   hand meshes.
+
+## Spatial Feature Modularity
+
+Use the official `FeatureDevSample` pattern as the default shape for new
+Spatial lane capabilities and refactors. That sample keeps reusable Spatial SDK
+behavior in feature modules (`:nativefeature`, `:kotlinfeature`) and registers
+those features beside `VRFeature` and `ComposeFeature`; the Activity orchestrates
+features rather than owning all component/system behavior directly.
+
+Apply that model here when a lane grows beyond a narrow facade method:
+
+- package virtual room and skybox behavior as a feature/module;
+- package staged GLB/GLTF asset behavior as a feature/module;
+- package projection carrier selection and markers as a feature/module;
+- package private layer panel placement/input policy as a feature/module;
+- package controller shortcut routing as a feature/module.
+
+This is especially relevant before adding new carrier experiments. Prefer a
+small feature-shaped slice over more growth in `SpatialCameraPanelActivity.kt`.
 
 ## Not Owned Here
 
@@ -154,16 +180,29 @@ right secondary/B button camera-projection wall/full-FOV toggle. With the room
 enabled, the projection surface starts in the full-FOV viewer-locked mode and
 reports
 `projectionDefaultPlacementMode=viewer-pose-projection-locked-quad`,
-`projectionCarrier=scenequadlayer-room-object`,
-`projectionRoomRenderOrder=scenequadlayer-room-object-depth-order-under-test`,
-and `legacyLauncherPanelSuppressed=true`. The previous
-`video-surface-panel-scene-object` carrier remains a runtime comparison path
-through `debug.rustyquest.spatial.camera_hwb_projection_probe.carrier`. The
-private-layer panel is currently back on the pre-room `spatial-sdk-mesh` input
-path while this room-object carrier is tested. The gate also checks right-stick
-projection target scale markers, placement-independent layer override markers,
-and the generic depth alignment JNI bridge without allowing private effect
-vocabulary into this public lane.
+`projectionCarrier=video-surface-panel-scene-object`,
+`projectionRoomRenderOrder=video-surface-panel-over-virtual-room`, and
+`legacyLauncherPanelSuppressed=true`. A headset retry with
+`scenequadlayer-room-object` proved that the old `SceneQuadLayer` path can keep
+input/control evidence alive but still renders behind authored room geometry,
+visible outside/through the room window. A restored first-room-style direct
+anchor plus original sample `mesh://skybox` also failed to show the projection;
+skybox-only evidence showed the sample skybox path can hide the direct
+SceneQuadLayer even without the room. The current replay patch restores the
+old sample skybox `Entity.create(Mesh, Material, Transform)` call shape and
+emits `skyboxEntityCreateApi=toolkit-varargs-first-room-replay`,
+`projectionStartGate=virtual-room-loaded`, and the old first-room
+`projectionRoomRenderOrder=projection-layer-over-virtual-room` token. Headset
+evidence with all three markers still did not show the custom projection, so
+the carrier remains a rejected runtime comparison path through
+`debug.rustyquest.spatial.camera_hwb_projection_probe.carrier`. The accepted
+default is the no-room/no-skybox ordering path: manual custom-mesh projection
+at 2.0m, generic layer-control UI at 1.0m, right secondary/B disabled as a
+consumed no-op, left-stick Y panel-distance persistence, and high-z
+layer-control UI rendering. The gate also checks right-stick projection target
+scale markers, placement-independent layer override markers, and the generic
+depth alignment JNI bridge without allowing private effect vocabulary into
+this public lane.
 
 ## Build
 
@@ -172,9 +211,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPa
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
 ```
 
-For a build where the private-layer panel buttons visibly change the active
-camera projection layer, pass the downstream opaque shader profile into the
-build wrapper:
+For a build where the generic layer-control panel buttons visibly change the
+active camera projection layer, pass the downstream opaque shader profile into
+the build wrapper:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 `
