@@ -3,10 +3,11 @@
 layout(location = 0) in vec2 inMaskUv;
 layout(location = 1) in vec4 inColor;
 layout(location = 2) in vec4 inParticleParams;
+layout(location = 3) in vec4 inColorParams;
 layout(location = 0) out vec4 outColor;
 
 #ifndef PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE
-#define PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE 1
+#define PRIVATE_PARTICLE_MASK_TEXTURE_MODE_CODE 2
 #endif
 
 #define PRIVATE_PARTICLE_MASK_MODE_PROCEDURAL 0
@@ -152,8 +153,9 @@ void main() {
   float outputAlphaScale = clamp(pc.transparencyParams.y, 0.0, 4.0);
   float rgbAlphaCoupling = clamp(pc.transparencyParams.w, 0.0, 1.0);
   float coverageAlpha = clamp(mask * inColor.a * opacity * inParticleParams.w, 0.0, 1.0);
-  vec3 baseRgb = clamp(inColor.rgb, vec3(0.0), vec3(1.0));
+  vec3 baseRgb = clamp(inColor.rgb, vec3(0.0), vec3(1.0))
+      * clamp(inColorParams.x, 0.0, 1.0);
   vec3 rgb = baseRgb * mix(1.0, coverageAlpha, rgbAlphaCoupling);
   float outputAlpha = clamp(coverageAlpha * outputAlphaScale, 0.0, 1.0);
-  outColor = vec4(rgb * outputAlpha, outputAlpha);
+  outColor = vec4(rgb, outputAlpha);
 }

@@ -117,8 +117,6 @@ static SURFACE_PARTICLE_RIGHT_EYE_WORLD_Y_BITS: AtomicU32 = AtomicU32::new(1.4_f
 static SURFACE_PARTICLE_RIGHT_EYE_WORLD_Z_BITS: AtomicU32 = AtomicU32::new(0.0_f32.to_bits());
 static SURFACE_PARTICLE_VIEWER_EYE_POSE_VALID: AtomicBool = AtomicBool::new(false);
 static SURFACE_PARTICLE_VIEWER_EYE_POSE_LOG_COUNT: AtomicU32 = AtomicU32::new(0);
-static SURFACE_PARTICLE_OPENXR_VIEWER_EYE_POSE_LOG_COUNT: AtomicU32 = AtomicU32::new(0);
-static SURFACE_PARTICLE_OPENXR_VIEWER_EYE_POSE_ACTIVE: AtomicBool = AtomicBool::new(false);
 static SURFACE_PARTICLE_WORLD_ANCHOR_X_BITS: AtomicU32 = AtomicU32::new(0.0_f32.to_bits());
 static SURFACE_PARTICLE_WORLD_ANCHOR_Y_BITS: AtomicU32 = AtomicU32::new(1.22_f32.to_bits());
 static SURFACE_PARTICLE_WORLD_ANCHOR_Z_BITS: AtomicU32 = AtomicU32::new((-2.0_f32).to_bits());
@@ -2189,28 +2187,22 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         finite_or(right_eye_z, viewer[2]),
     ];
 
-    let openxr_viewer_eye_pose_active =
-        SURFACE_PARTICLE_OPENXR_VIEWER_EYE_POSE_ACTIVE.load(Ordering::Relaxed);
-    if !openxr_viewer_eye_pose_active {
-        store_surface_particle_viewer_eye_pose(
-            viewer,
-            viewer_right,
-            viewer_up,
-            viewer_forward,
-            left_eye,
-            right_eye,
-        );
-        maybe_auto_recenter_surface_particle_world_anchor_on_viewer(viewer);
-    }
+    store_surface_particle_viewer_eye_pose(
+        viewer,
+        viewer_right,
+        viewer_up,
+        viewer_forward,
+        left_eye,
+        right_eye,
+    );
+    maybe_auto_recenter_surface_particle_world_anchor_on_viewer(viewer);
 
     let update_count = SURFACE_PARTICLE_VIEWER_EYE_POSE_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
     if update_count < 4 {
         android_log_info(
             "RQSpatialCameraPanelNative",
             &format!(
-                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-surface-particle-layer status=viewer-eye-pose-updated renderPolicy=native-vulkan-wsi-surface-panel privateSurfaceParticleEyePoseSource=Scene.getViewerPose+Scene.getEyeOffsets privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleOpenXrViewDrawAuthority={} privateSurfaceParticleSceneTickViewerEyePoseStored={} privateSurfaceParticleSceneTickPoseFallback=true viewerWorldM={:.4};{:.4};{:.4} viewerRight={:.4};{:.4};{:.4} viewerUp={:.4};{:.4};{:.4} viewerForward={:.4};{:.4};{:.4} leftEyeWorldM={:.4};{:.4};{:.4} rightEyeWorldM={:.4};{:.4};{:.4} explicitEyePoseValid={}",
-                bool_token(openxr_viewer_eye_pose_active),
-                bool_token(!openxr_viewer_eye_pose_active),
+                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-surface-particle-layer status=viewer-eye-pose-updated renderPolicy=native-vulkan-wsi-surface-panel privateSurfaceParticleEyePoseSource=Scene.getViewerPose+Scene.getEyeOffsets privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleOpenXrViewDrawAuthority=false viewerWorldM={:.4};{:.4};{:.4} viewerRight={:.4};{:.4};{:.4} viewerUp={:.4};{:.4};{:.4} viewerForward={:.4};{:.4};{:.4} leftEyeWorldM={:.4};{:.4};{:.4} rightEyeWorldM={:.4};{:.4};{:.4} explicitEyePoseValid={}",
                 viewer[0],
                 viewer[1],
                 viewer[2],
@@ -2888,8 +2880,6 @@ fn reset_surface_particle_world_anchor() {
     SURFACE_PARTICLE_WORLD_ANCHOR_VALID.store(false, Ordering::Relaxed);
     SURFACE_PARTICLE_VIEWER_EYE_POSE_VALID.store(false, Ordering::Relaxed);
     SURFACE_PARTICLE_VIEWER_EYE_POSE_LOG_COUNT.store(0, Ordering::Relaxed);
-    SURFACE_PARTICLE_OPENXR_VIEWER_EYE_POSE_LOG_COUNT.store(0, Ordering::Relaxed);
-    SURFACE_PARTICLE_OPENXR_VIEWER_EYE_POSE_ACTIVE.store(false, Ordering::Relaxed);
     SURFACE_PARTICLE_WORLD_ANCHOR_SKIP_LOG_COUNT.store(0, Ordering::Relaxed);
     SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_VALID.store(false, Ordering::Relaxed);
     SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_MAPPED_VALID.store(false, Ordering::Relaxed);
@@ -3400,7 +3390,7 @@ fn capture_surface_particle_off_axis_registration_if_needed(
         android_log_info(
             "RQSpatialCameraPanelNative",
             &format!(
-                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-surface-particle-layer status=private-openxr-diagnostic-registration-captured renderPolicy=native-vulkan-wsi-surface-panel privateSurfaceParticleOpenXrDiagnosticProjection=registered-openxr-eye-through-start-basis privateSurfaceParticleOpenXrViewDrawAuthority=true privateSurfaceParticleMainDrawProjection=spatial-sdk-world-explicit-viewer-camera-to-panel-plane privateSurfaceParticleMainDrawCameraBasisSource=OpenXR-xrLocateViews-mapped-to-spatial-world-with-scene-tick-fallback+forward-x-mirror-corrected-roll-stable privateSurfaceParticleCarrierPanelForwardSource=spatial-sdk-presentation-plane-only privateSurfaceParticleEyePoseSource=OpenXR-xrLocateViews-per-frame-mapped-to-spatial-world-with-scene-tick-fallback privateSurfaceParticlePanelPoseSource=Scene.getViewerPose-derived-panel-plane privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleWorldAnchorCenterSource=configured-spatial-world-coordinate privateSurfaceParticleWorldAnchorBasis=spatial-world-canonical-axes privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale privateSurfaceParticleCameraPoseCadence=render-loop-openxr-locateviews privateSurfaceParticleSceneTickPoseFallback=true privateSurfaceParticleCameraRealignEachFrame=false privateSurfaceParticleOffAxisStereoProjection=true rawStartEyeM={:.4};{:.4};{:.4} sceneStartEyeM={:.4};{:.4};{:.4} sceneStartForward={:.4};{:.4};{:.4} panelTargetDistanceMeters={:.3}",
+                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-surface-particle-layer status=private-openxr-diagnostic-registration-captured renderPolicy=native-vulkan-wsi-surface-panel privateSurfaceParticleOpenXrDiagnosticProjection=registered-openxr-eye-through-start-basis privateSurfaceParticleOpenXrViewDrawAuthority=false privateSurfaceParticleMainDrawProjection=spatial-sdk-world-explicit-viewer-camera-to-panel-plane privateSurfaceParticleMainDrawCameraBasisSource=Scene.getViewerPose-position+forward-x-mirror-corrected-roll-stable privateSurfaceParticleCarrierPanelForwardSource=spatial-sdk-presentation-plane-only privateSurfaceParticleEyePoseSource=Scene.getViewerPose+Scene.getEyeOffsets privateSurfaceParticlePanelPoseSource=Scene.getViewerPose-derived-panel-plane privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleWorldAnchorCenterSource=configured-spatial-world-coordinate privateSurfaceParticleWorldAnchorBasis=spatial-world-canonical-axes privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale privateSurfaceParticleCameraRealignEachFrame=false privateSurfaceParticleOffAxisStereoProjection=true rawStartEyeM={:.4};{:.4};{:.4} sceneStartEyeM={:.4};{:.4};{:.4} sceneStartForward={:.4};{:.4};{:.4} panelTargetDistanceMeters={:.3}",
                 registration.raw_origin[0],
                 registration.raw_origin[1],
                 registration.raw_origin[2],
@@ -3450,19 +3440,6 @@ fn update_surface_particle_off_axis_projection(
         registration.map_vector(mapping.raw_forward),
         surface_particle_panel_forward(panel_projection),
     );
-    let left_eye = viewer_forward_roll_stable_eye_position(
-        eye_position,
-        forward,
-        surface_particle_panel_eye_offset_right_meters(panel_projection, 0),
-    );
-    let right_eye = viewer_forward_roll_stable_eye_position(
-        eye_position,
-        forward,
-        surface_particle_panel_eye_offset_right_meters(panel_projection, 1),
-    );
-    store_surface_particle_viewer_eye_pose(eye_position, right, up, forward, left_eye, right_eye);
-    SURFACE_PARTICLE_OPENXR_VIEWER_EYE_POSE_ACTIVE.store(true, Ordering::Relaxed);
-    maybe_auto_recenter_surface_particle_world_anchor_on_viewer(eye_position);
     let center = add3(
         eye_position,
         scale3(forward, panel_projection.target_distance_meters),
@@ -3481,7 +3458,7 @@ fn update_surface_particle_off_axis_projection(
         android_log_info(
             "RQSpatialCameraPanelNative",
             &format!(
-                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-surface-particle-layer status=private-openxr-diagnostic-projection-updated renderPolicy=native-vulkan-wsi-surface-panel privateSurfaceParticleOpenXrDiagnosticProjection=registered-openxr-eye-through-start-basis privateSurfaceParticleOpenXrViewDrawAuthority=true privateSurfaceParticleMainDrawProjection=spatial-sdk-world-explicit-viewer-camera-to-panel-plane privateSurfaceParticleMainDrawCameraBasisSource=OpenXR-xrLocateViews-mapped-to-spatial-world-with-scene-tick-fallback+forward-x-mirror-corrected-roll-stable privateSurfaceParticleCarrierPanelForwardSource=spatial-sdk-presentation-plane-only privateSurfaceParticleEyePoseSource=OpenXR-xrLocateViews-per-frame-mapped-to-spatial-world-with-scene-tick-fallback privateSurfaceParticlePanelPoseSource=Scene.getViewerPose-derived-panel-plane privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleWorldAnchorCenterSource=configured-spatial-world-coordinate privateSurfaceParticleWorldAnchorBasis=spatial-world-canonical-axes privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale privateSurfaceParticleCameraPoseCadence=render-loop-openxr-locateviews privateSurfaceParticleSceneTickPoseFallback=true privateSurfaceParticleCameraRealignEachFrame=false privateSurfaceParticleOffAxisStereoProjection=true registeredEyeM={:.4};{:.4};{:.4} registeredPanelCenterM={:.4};{:.4};{:.4} registeredPanelForward={:.4};{:.4};{:.4} panelTargetDistanceMeters={:.3}",
+                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-surface-particle-layer status=private-openxr-diagnostic-projection-updated renderPolicy=native-vulkan-wsi-surface-panel privateSurfaceParticleOpenXrDiagnosticProjection=registered-openxr-eye-through-start-basis privateSurfaceParticleOpenXrViewDrawAuthority=false privateSurfaceParticleMainDrawProjection=spatial-sdk-world-explicit-viewer-camera-to-panel-plane privateSurfaceParticleMainDrawCameraBasisSource=Scene.getViewerPose-position+forward-x-mirror-corrected-roll-stable privateSurfaceParticleCarrierPanelForwardSource=spatial-sdk-presentation-plane-only privateSurfaceParticleEyePoseSource=Scene.getViewerPose+Scene.getEyeOffsets privateSurfaceParticlePanelPoseSource=Scene.getViewerPose-derived-panel-plane privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleWorldAnchorCenterSource=configured-spatial-world-coordinate privateSurfaceParticleWorldAnchorBasis=spatial-world-canonical-axes privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale privateSurfaceParticleCameraRealignEachFrame=false privateSurfaceParticleOffAxisStereoProjection=true registeredEyeM={:.4};{:.4};{:.4} registeredPanelCenterM={:.4};{:.4};{:.4} registeredPanelForward={:.4};{:.4};{:.4} panelTargetDistanceMeters={:.3}",
                 eye_position[0],
                 eye_position[1],
                 eye_position[2],
@@ -3492,33 +3469,6 @@ fn update_surface_particle_off_axis_projection(
                 forward[1],
                 forward[2],
                 panel_projection.target_distance_meters,
-            ),
-        );
-    }
-    if SURFACE_PARTICLE_OPENXR_VIEWER_EYE_POSE_LOG_COUNT.fetch_add(1, Ordering::Relaxed) < 4 {
-        android_log_info(
-            "RQSpatialCameraPanelNative",
-            &format!(
-                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-surface-particle-layer status=viewer-eye-pose-updated renderPolicy=native-vulkan-wsi-surface-panel privateSurfaceParticleEyePoseSource=OpenXR-xrLocateViews-per-frame-mapped-to-spatial-world privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleOpenXrViewDrawAuthority=true privateSurfaceParticleCameraPoseCadence=render-loop-openxr-locateviews privateSurfaceParticleSceneTickPoseFallback=true viewerWorldM={:.4};{:.4};{:.4} viewerRight={:.4};{:.4};{:.4} viewerUp={:.4};{:.4};{:.4} viewerForward={:.4};{:.4};{:.4} leftEyeWorldM={:.4};{:.4};{:.4} rightEyeWorldM={:.4};{:.4};{:.4} explicitEyePoseValid={}",
-                eye_position[0],
-                eye_position[1],
-                eye_position[2],
-                right[0],
-                right[1],
-                right[2],
-                up[0],
-                up[1],
-                up[2],
-                forward[0],
-                forward[1],
-                forward[2],
-                left_eye[0],
-                left_eye[1],
-                left_eye[2],
-                right_eye[0],
-                right_eye[1],
-                right_eye[2],
-                bool_token(true),
             ),
         );
     }
@@ -4451,7 +4401,7 @@ impl SurfaceParticlePrivatePayloadGpuResources {
 
     fn marker_fields(&self) -> String {
         format!(
-            "privateSurfaceParticleStagedGpuBuffersResident=true privateSurfaceParticlePayloadGpuUploadBytes={} privateSurfaceParticleMaskTextureGpuBytes={} privateSurfaceParticlePayloadBufferMode=storage-buffers-plus-r8-mask-texture-array privateSurfaceParticleMaskTextureFormat=R8_UNORM privateSurfaceParticleMaskTextureMode=texture-array-nearest privateSurfaceParticleMaskTextureSize={}x{}x{} privateSurfaceParticleMaskTextureGpuResident=true privateSurfaceParticlePayloadBoundToPrivateRenderer=true",
+            "privateSurfaceParticleStagedGpuBuffersResident=true privateSurfaceParticlePayloadGpuUploadBytes={} privateSurfaceParticleMaskTextureGpuBytes={} privateSurfaceParticlePayloadBufferMode=storage-buffers-plus-r8-mask-texture-array privateSurfaceParticleMaskTextureFormat=R8_UNORM privateSurfaceParticleMaskTextureMode=texture-array-blend privateSurfaceParticleMaskTextureSize={}x{}x{} privateSurfaceParticleMaskTextureGpuResident=true privateSurfaceParticlePayloadBoundToPrivateRenderer=true",
             self.upload_byte_count,
             self.mask_texture_byte_count,
             self.mask_texture.width,
@@ -5134,7 +5084,7 @@ impl SurfaceParticlePrivateDescriptorResources {
 
     fn draw_ready_marker_fields(&self) -> String {
         format!(
-            "privateSurfaceParticleMainDrawReady=true privateSurfaceParticleMainDrawRecorded=false privateSurfaceParticleMainDrawVerticesPerInstance={} privateSurfaceParticleMainDrawInstanceCount={} privateSurfaceParticleMainDrawParticleCount={} privateSurfaceParticleMainDrawTracerDrawCount={} privateSurfaceParticleMainDrawRetentionIndicatorDrawCount={} privateSurfaceParticleMainDrawVisible=true privateSurfaceParticleMainDrawProjection=spatial-sdk-world-explicit-viewer-camera-to-panel-plane privateSurfaceParticleMainDrawCameraBasisSource=OpenXR-xrLocateViews-mapped-to-spatial-world-with-scene-tick-fallback+forward-x-mirror-corrected-roll-stable privateSurfaceParticleCarrierPanelForwardSource=spatial-sdk-presentation-plane-only privateSurfaceParticleEyePoseSource=OpenXR-xrLocateViews-per-frame-mapped-to-spatial-world-with-scene-tick-fallback privateSurfaceParticlePanelPoseSource=Scene.getViewerPose-derived-panel-plane privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleWorldAnchorCenterSource=configured-spatial-world-coordinate privateSurfaceParticleWorldAnchorBasis=spatial-world-canonical-axes privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale privateSurfaceParticleOpenXrViewDrawAuthority=true privateSurfaceParticleCameraPoseCadence=render-loop-openxr-locateviews privateSurfaceParticleSceneTickPoseFallback=true privateSurfaceParticleCameraRealignEachFrame=false privateSurfaceParticleOffAxisStereoProjection=true privateSurfaceParticleMainDrawTargetDistanceMaxMeters=2.00",
+            "privateSurfaceParticleMainDrawReady=true privateSurfaceParticleMainDrawRecorded=false privateSurfaceParticleMainDrawVerticesPerInstance={} privateSurfaceParticleMainDrawInstanceCount={} privateSurfaceParticleMainDrawParticleCount={} privateSurfaceParticleMainDrawTracerDrawCount={} privateSurfaceParticleMainDrawRetentionIndicatorDrawCount={} privateSurfaceParticleMainDrawVisible=true privateSurfaceParticleMainDrawProjection=spatial-sdk-world-explicit-viewer-camera-to-panel-plane privateSurfaceParticleMainDrawCameraBasisSource=Scene.getViewerPose-position+forward-x-mirror-corrected-roll-stable privateSurfaceParticleCarrierPanelForwardSource=spatial-sdk-presentation-plane-only privateSurfaceParticleEyePoseSource=Scene.getViewerPose+Scene.getEyeOffsets privateSurfaceParticlePanelPoseSource=Scene.getViewerPose-derived-panel-plane privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleWorldAnchorCenterSource=configured-spatial-world-coordinate privateSurfaceParticleWorldAnchorBasis=spatial-world-canonical-axes privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale privateSurfaceParticleOpenXrViewDrawAuthority=false privateSurfaceParticleCameraRealignEachFrame=false privateSurfaceParticleOffAxisStereoProjection=true privateSurfaceParticleMainDrawTargetDistanceMaxMeters=2.00",
             PRIVATE_SURFACE_PARTICLE_VERTICES_PER_INSTANCE,
             self.draw_count,
             self.particle_count,
@@ -5145,7 +5095,7 @@ impl SurfaceParticlePrivateDescriptorResources {
 
     fn draw_recorded_marker_fields(&self) -> String {
         format!(
-            "privateSurfaceParticleMainDrawReady=true privateSurfaceParticleMainDrawRecorded=true privateSurfaceParticleMainDrawVerticesPerInstance={} privateSurfaceParticleMainDrawInstanceCount={} privateSurfaceParticleMainDrawParticleCount={} privateSurfaceParticleMainDrawTracerDrawCount={} privateSurfaceParticleMainDrawRetentionIndicatorDrawCount={} privateSurfaceParticleMainDrawVisible=true privateSurfaceParticleMainDrawProjection=spatial-sdk-world-explicit-viewer-camera-to-panel-plane privateSurfaceParticleMainDrawCameraBasisSource=OpenXR-xrLocateViews-mapped-to-spatial-world-with-scene-tick-fallback+forward-x-mirror-corrected-roll-stable privateSurfaceParticleCarrierPanelForwardSource=spatial-sdk-presentation-plane-only privateSurfaceParticleEyePoseSource=OpenXR-xrLocateViews-per-frame-mapped-to-spatial-world-with-scene-tick-fallback privateSurfaceParticlePanelPoseSource=Scene.getViewerPose-derived-panel-plane privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleWorldAnchorCenterSource=configured-spatial-world-coordinate privateSurfaceParticleWorldAnchorBasis=spatial-world-canonical-axes privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale privateSurfaceParticleOpenXrViewDrawAuthority=true privateSurfaceParticleCameraPoseCadence=render-loop-openxr-locateviews privateSurfaceParticleSceneTickPoseFallback=true privateSurfaceParticleCameraRealignEachFrame=false privateSurfaceParticleOffAxisStereoProjection=true privateSurfaceParticleMainDrawTargetDistanceMaxMeters=2.00",
+            "privateSurfaceParticleMainDrawReady=true privateSurfaceParticleMainDrawRecorded=true privateSurfaceParticleMainDrawVerticesPerInstance={} privateSurfaceParticleMainDrawInstanceCount={} privateSurfaceParticleMainDrawParticleCount={} privateSurfaceParticleMainDrawTracerDrawCount={} privateSurfaceParticleMainDrawRetentionIndicatorDrawCount={} privateSurfaceParticleMainDrawVisible=true privateSurfaceParticleMainDrawProjection=spatial-sdk-world-explicit-viewer-camera-to-panel-plane privateSurfaceParticleMainDrawCameraBasisSource=Scene.getViewerPose-position+forward-x-mirror-corrected-roll-stable privateSurfaceParticleCarrierPanelForwardSource=spatial-sdk-presentation-plane-only privateSurfaceParticleEyePoseSource=Scene.getViewerPose+Scene.getEyeOffsets privateSurfaceParticlePanelPoseSource=Scene.getViewerPose-derived-panel-plane privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleWorldAnchorCenterSource=configured-spatial-world-coordinate privateSurfaceParticleWorldAnchorBasis=spatial-world-canonical-axes privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale privateSurfaceParticleOpenXrViewDrawAuthority=false privateSurfaceParticleCameraRealignEachFrame=false privateSurfaceParticleOffAxisStereoProjection=true privateSurfaceParticleMainDrawTargetDistanceMaxMeters=2.00",
             PRIVATE_SURFACE_PARTICLE_VERTICES_PER_INSTANCE,
             self.draw_count,
             self.particle_count,

@@ -18,6 +18,10 @@ layout(push_constant) uniform SurfacePrivateParticlePush {
 layout(location = 0) out vec2 outMaskUv;
 layout(location = 1) out vec4 outColor;
 layout(location = 2) out vec4 outParticleParams;
+layout(location = 3) out vec4 outColorParams;
+
+const float NEAR_M = 0.05;
+const float FAR_DEPTH_SPAN_M = 12.0;
 
 const vec2 QUAD_POSITIONS[6] = vec2[](
     vec2(-1.0, -1.0),
@@ -102,9 +106,16 @@ void main() {
       && colorAlpha.a > 0.002
       && projectionValid
       && centerInsidePanel;
+  vec3 viewDir = safe_normalize(eyePosition - positionRadius.xyz, vec3(0.0, 0.0, 1.0));
+  vec3 safeNormal = safe_normalize(normalFlags.xyz, vec3(0.0, 1.0, 0.0));
+  float facing = valid ? clamp(dot(safeNormal, viewDir), 0.0, 1.0) : 1.0;
+  float depthSuppressionStrength = clamp(pc.transparencyParams.z, 0.0, 8.0);
+  float depth01 = clamp((depth - NEAR_M) / FAR_DEPTH_SPAN_M, 0.0, 1.0);
+  float depthAtten = exp2(-depthSuppressionStrength * depth01);
 
   gl_Position = valid ? vec4(panelNdc.x, -panelNdc.y, 0.0, 1.0) : vec4(4.0, 4.0, 0.0, 1.0);
   outMaskUv = rawQuad * 0.5 + vec2(0.5);
   outColor = valid ? colorAlpha : vec4(0.0);
   outParticleParams = vec4(1.0, depth, aux.y, valid ? 1.0 : 0.0);
+  outColorParams = vec4(depthAtten, facing, depthAtten, 1.0);
 }

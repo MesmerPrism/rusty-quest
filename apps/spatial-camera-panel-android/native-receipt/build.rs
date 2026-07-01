@@ -746,7 +746,7 @@ fn write_spatial_surface_private_particle_payload_metadata(
              #[allow(dead_code)]\n\
              pub(crate) const PRIVATE_SURFACE_PARTICLE_MASK_TEXTURE_LAYERS: u32 = 64;\n\
              #[allow(dead_code)]\n\
-             pub(crate) const PRIVATE_SURFACE_PARTICLE_MASK_TEXTURE_MODE: &str = \"texture-array-nearest\";\n\
+             pub(crate) const PRIVATE_SURFACE_PARTICLE_MASK_TEXTURE_MODE: &str = \"texture-array-blend\";\n\
              #[allow(dead_code)]\n\
              pub(crate) const PRIVATE_SURFACE_PARTICLE_POSITIONS_BYTES: &[u8] = include_bytes!(concat!(env!(\"OUT_DIR\"), \"/spatial_private_particle_positions.f32.bin\"));\n\
              #[allow(dead_code)]\n\
