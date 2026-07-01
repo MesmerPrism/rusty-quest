@@ -192,6 +192,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var lastParticleLayerTargetDistanceMeters: Float? = null
   private var lastParticleLayerSurfaceOverscanScale: Float? = null
   private var lastParticleLayerPanelOpacity: Float? = null
+  private var lastParticleLayerPanelLayerCheckMs = 0L
+  private var particleLayerPanelLayerConfigured = false
+  private var particleLayerSurfaceGeometryApplied = false
   private var remoteParticleLayerTargetDistanceMeters: Float? = null
   private var remoteParticleLayerViewYawDegrees: Float? = null
   private var polarSensorPanel: PolarSensorPanel? = null
@@ -5206,30 +5209,42 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val opacity = currentParticleLayerPanelOpacity()
     return runCatching {
           val layer = panel.layer ?: return "panel-layer-missing"
-          layer.setZIndex(PARTICLE_LAYER_Z_INDEX)
-          layer.setAlphaBlend(
-              LayerAlphaBlend(
-                  BlendFactor.SOURCE_ALPHA,
-                  BlendFactor.ONE_MINUS_SOURCE_ALPHA,
-                  BlendFactor.ONE,
-                  BlendFactor.ONE_MINUS_SOURCE_ALPHA,
-              )
-          )
-          layer.setColorScaleBias(Vector4(1.0f, 1.0f, 1.0f, opacity), Vector4(0.0f))
           val previousOpacity = lastParticleLayerPanelOpacity
-          lastParticleLayerPanelOpacity = opacity
-          if (forceLog || previousOpacity == null || abs(previousOpacity - opacity) >= 0.001f) {
+          val opacityChanged = previousOpacity == null || abs(previousOpacity - opacity) >= 0.001f
+          val layerConfigChanged = forceLog || !particleLayerPanelLayerConfigured
+          if (layerConfigChanged) {
+            layer.setZIndex(PARTICLE_LAYER_Z_INDEX)
+            layer.setAlphaBlend(
+                LayerAlphaBlend(
+                    BlendFactor.SOURCE_ALPHA,
+                    BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+                    BlendFactor.ONE,
+                    BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+                )
+            )
+            particleLayerPanelLayerConfigured = true
+          }
+          if (opacityChanged) {
+            layer.setColorScaleBias(Vector4(1.0f, 1.0f, 1.0f, opacity), Vector4(0.0f))
+            lastParticleLayerPanelOpacity = opacity
+          }
+          if (forceLog || layerConfigChanged || opacityChanged) {
             marker(
                 "channel=native-surface-particle-layer status=particle-panel-layer-updated " +
                     "renderPolicy=native-vulkan-wsi-surface-panel reason=${markerToken(reason)} " +
                     "particleLayerPanelAlphaBlendApplied=true " +
                     "particleLayerPanelColorScaleAlphaApplied=true " +
+                    "particleLayerPanelLayerConfigCached=true " +
                     "particleLayerPanelOpacity=${markerFloat(opacity)} " +
                     "particleLayerPanelOpacityProperty=$PARTICLE_LAYER_PANEL_OPACITY_PROPERTY " +
                     "particleLayerZIndex=$PARTICLE_LAYER_Z_INDEX runtimeCrash=false"
             )
           }
-          "updated-particle-layer-panel-alpha"
+          if (layerConfigChanged || opacityChanged) {
+            "updated-particle-layer-panel-alpha"
+          } else {
+            "unchanged-particle-layer-panel-alpha"
+          }
         }
         .getOrElse { throwable ->
           if (forceLog) {
@@ -5742,12 +5757,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     val previousTargetDistanceMeters = lastParticleLayerTargetDistanceMeters
     val previousSurfaceOverscanScale = lastParticleLayerSurfaceOverscanScale
-    if (
+    val surfaceGeometryChanged =
         previousTargetDistanceMeters == null ||
             abs(previousTargetDistanceMeters - targetDistanceMeters) >= 0.001f ||
             previousSurfaceOverscanScale == null ||
             abs(previousSurfaceOverscanScale - surfaceOverscanScale) >= 0.001f
-    ) {
+    if (surfaceGeometryChanged) {
       lastParticleLayerTargetDistanceMeters = targetDistanceMeters
       lastParticleLayerSurfaceOverscanScale = surfaceOverscanScale
       marker(
@@ -5766,12 +5781,23 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               projectionSurfaceMarkerFields
       )
     }
+    val now = SystemClock.elapsedRealtime()
     val center = viewerPose.t + forward * targetDistanceMeters
     val planePose = Pose(center, Quaternion.fromDirection(forward, up))
     entity.setComponent(Transform(planePose))
-    entity.setComponent(PanelDimensions(Vector2(surfaceWidthMeters, surfaceHeightMeters)))
+    if (surfaceGeometryChanged || !particleLayerSurfaceGeometryApplied) {
+      entity.setComponent(PanelDimensions(Vector2(surfaceWidthMeters, surfaceHeightMeters)))
+      particleLayerSurfaceGeometryApplied = true
+    }
     entity.setComponent(Visible(particleLayerVisibleForPanelMode()))
-    updateParticleLayerPanelLayer("projection-plane-update", forceLog = false)
+    if (
+        forceLog ||
+            surfaceGeometryChanged ||
+            now - lastParticleLayerPanelLayerCheckMs >= PARTICLE_LAYER_PANEL_LAYER_CHECK_INTERVAL_MS
+    ) {
+      lastParticleLayerPanelLayerCheckMs = now
+      updateParticleLayerPanelLayer("projection-plane-update", forceLog = false)
+    }
     val nativePanelPoseUpdateMask =
         if (nativeReceiptLibraryLoaded) {
           runCatching {
@@ -5840,8 +5866,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         } else {
           0L
         }
-
-    val now = SystemClock.elapsedRealtime()
     val shouldLog =
         forceLog ||
             (particleLayerProjectionMarkerCount < 4 &&
@@ -9768,6 +9792,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         "debug.rustyquest.spatial_camera_panel.particle_layer.panel_opacity"
     private const val PARTICLE_LAYER_PANEL_OPACITY_MIN = 0.0f
     private const val PARTICLE_LAYER_PANEL_OPACITY_MAX = 1.0f
+    private const val PARTICLE_LAYER_PANEL_LAYER_CHECK_INTERVAL_MS = 500L
     private const val PARTICLE_LAYER_CARRIER_PROPERTY =
         "debug.rustyquest.spatial_camera_panel.particle_layer.carrier"
     private const val PARTICLE_LAYER_CARRIER_DEFAULT = "manual-panel-scene-object-custom-mesh"

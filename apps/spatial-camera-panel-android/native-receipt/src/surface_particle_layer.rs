@@ -5997,6 +5997,7 @@ unsafe fn render_surface_particles(
             pipeline_resources.pipeline_layout(),
             descriptor_resources.descriptor_set(),
             particle_count,
+            frames_presented,
             start.elapsed().as_secs_f32(),
             &mut renderer,
             private_pipeline_resources.as_ref(),
@@ -7180,6 +7181,7 @@ unsafe fn record_command_buffer(
     pipeline_layout: vk::PipelineLayout,
     descriptor_set: vk::DescriptorSet,
     particle_count: u32,
+    frame_counter: u32,
     time_seconds: f32,
     renderer: &mut SurfaceParticleRenderer,
     private_pipeline_resources: Option<&SurfaceParticlePrivatePipelineResources>,
@@ -7195,7 +7197,6 @@ unsafe fn record_command_buffer(
     let params = current_surface_particle_parameters();
     let panel_projection = current_surface_particle_panel_projection();
     let stereo_layout = surface_particle_stereo_layout(extent);
-    let frame_counter = (time_seconds * 30.0).max(0.0) as u32;
     if let (Some(private_pipeline_resources), Some(private_descriptor_resources)) = (
         private_pipeline_resources,
         private_descriptor_resources.as_deref_mut(),

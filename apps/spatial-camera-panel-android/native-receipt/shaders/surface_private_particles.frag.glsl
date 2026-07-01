@@ -154,5 +154,6 @@ void main() {
   float coverageAlpha = clamp(mask * inColor.a * opacity * inParticleParams.w, 0.0, 1.0);
   vec3 baseRgb = clamp(inColor.rgb, vec3(0.0), vec3(1.0));
   vec3 rgb = baseRgb * mix(1.0, coverageAlpha, rgbAlphaCoupling);
-  outColor = vec4(rgb, clamp(coverageAlpha * outputAlphaScale, 0.0, 1.0));
+  float outputAlpha = clamp(coverageAlpha * outputAlphaScale, 0.0, 1.0);
+  outColor = vec4(rgb * outputAlpha, outputAlpha);
 }
