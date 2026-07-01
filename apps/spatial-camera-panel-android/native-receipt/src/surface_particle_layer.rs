@@ -19,11 +19,11 @@ use crate::acamera_sys::{
 use crate::live_hand_joints::{store_live_hand_panel_basis, LiveHandOpenXrHandles};
 use crate::replay_hands::{ReplayHandPanelProjection, ReplayHandsRenderer};
 use crate::surface_particle_projection::{
-    add3, canonical_world_basis, main_draw_panel_forward_distance, normalize_or,
+    add3, canonical_world_basis, draw_eye_world, main_draw_panel_forward_distance, normalize_or,
     normalize_quat_or_none, panel_eye_position as projection_panel_eye_position,
     panel_forward as projection_panel_forward, rotate_vec3_by_quat, scale3,
-    viewer_forward_roll_stable_camera_basis, viewer_forward_roll_stable_eye_position,
-    viewer_forward_roll_stable_panel_center, viewer_sphere_center_distance_exceeds_threshold,
+    viewer_forward_roll_stable_camera_basis, viewer_forward_roll_stable_panel_center,
+    viewer_sphere_center_distance_exceeds_threshold,
     SurfaceParticleFixedWorldRegistration, SurfaceParticleOpenXrPanelMapping,
 };
 use crate::{android_log_info, bool_token, marker_token};
@@ -3785,45 +3785,41 @@ fn surface_particle_panel_eye_offset_right_meters(
     finite_or(value, fallback).clamp(-0.12, 0.12)
 }
 
+fn current_surface_particle_stored_eye_world(eye_index: u32) -> Option<[f32; 3]> {
+    if !SURFACE_PARTICLE_VIEWER_EYE_POSE_VALID.load(Ordering::Relaxed) {
+        return None;
+    }
+    let eye = if eye_index == 0 {
+        [
+            f32::from_bits(SURFACE_PARTICLE_LEFT_EYE_WORLD_X_BITS.load(Ordering::Relaxed)),
+            f32::from_bits(SURFACE_PARTICLE_LEFT_EYE_WORLD_Y_BITS.load(Ordering::Relaxed)),
+            f32::from_bits(SURFACE_PARTICLE_LEFT_EYE_WORLD_Z_BITS.load(Ordering::Relaxed)),
+        ]
+    } else {
+        [
+            f32::from_bits(SURFACE_PARTICLE_RIGHT_EYE_WORLD_X_BITS.load(Ordering::Relaxed)),
+            f32::from_bits(SURFACE_PARTICLE_RIGHT_EYE_WORLD_Y_BITS.load(Ordering::Relaxed)),
+            f32::from_bits(SURFACE_PARTICLE_RIGHT_EYE_WORLD_Z_BITS.load(Ordering::Relaxed)),
+        ]
+    };
+    eye.iter()
+        .all(|component| component.is_finite())
+        .then_some(eye)
+}
+
 fn current_surface_particle_eye_world(
     panel_projection: ReplayHandPanelProjection,
     eye_index: u32,
 ) -> [f32; 3] {
-    if let Some(viewer) = current_surface_particle_viewer_world_position() {
-        return viewer_forward_roll_stable_eye_position(
-            viewer,
-            current_surface_particle_viewer_world_forward().unwrap_or([0.0, 0.0, -1.0]),
-            surface_particle_panel_eye_offset_right_meters(panel_projection, eye_index),
-        );
-    }
-    if SURFACE_PARTICLE_VIEWER_EYE_POSE_VALID.load(Ordering::Relaxed) {
-        let eye = if eye_index == 0 {
-            [
-                f32::from_bits(SURFACE_PARTICLE_LEFT_EYE_WORLD_X_BITS.load(Ordering::Relaxed)),
-                f32::from_bits(SURFACE_PARTICLE_LEFT_EYE_WORLD_Y_BITS.load(Ordering::Relaxed)),
-                f32::from_bits(SURFACE_PARTICLE_LEFT_EYE_WORLD_Z_BITS.load(Ordering::Relaxed)),
-            ]
-        } else {
-            [
-                f32::from_bits(SURFACE_PARTICLE_RIGHT_EYE_WORLD_X_BITS.load(Ordering::Relaxed)),
-                f32::from_bits(SURFACE_PARTICLE_RIGHT_EYE_WORLD_Y_BITS.load(Ordering::Relaxed)),
-                f32::from_bits(SURFACE_PARTICLE_RIGHT_EYE_WORLD_Z_BITS.load(Ordering::Relaxed)),
-            ]
-        };
-        if eye.iter().all(|component| component.is_finite()) {
-            return eye;
-        }
-    }
-    let panel_forward = surface_particle_panel_forward(panel_projection);
-    add3(
-        add3(
-            panel_projection.center,
-            scale3(panel_forward, -panel_projection.target_distance_meters),
-        ),
-        scale3(
-            panel_projection.right,
-            surface_particle_panel_eye_offset_right_meters(panel_projection, eye_index),
-        ),
+    draw_eye_world(
+        current_surface_particle_stored_eye_world(eye_index),
+        current_surface_particle_viewer_world_position(),
+        current_surface_particle_viewer_world_forward().unwrap_or([0.0, 0.0, -1.0]),
+        surface_particle_panel_eye_offset_right_meters(panel_projection, eye_index),
+        panel_projection.center,
+        panel_projection.right,
+        panel_projection.up,
+        panel_projection.target_distance_meters,
     )
 }
 
@@ -7428,6 +7424,17 @@ mod tests {
     }
 
     fn store_test_viewer_pose(viewer: [f32; 3], right: [f32; 3], up: [f32; 3], forward: [f32; 3]) {
+        store_test_viewer_pose_with_eyes(viewer, right, up, forward, viewer, viewer);
+    }
+
+    fn store_test_viewer_pose_with_eyes(
+        viewer: [f32; 3],
+        right: [f32; 3],
+        up: [f32; 3],
+        forward: [f32; 3],
+        left_eye: [f32; 3],
+        right_eye: [f32; 3],
+    ) {
         SURFACE_PARTICLE_VIEWER_WORLD_X_BITS.store(viewer[0].to_bits(), Ordering::Relaxed);
         SURFACE_PARTICLE_VIEWER_WORLD_Y_BITS.store(viewer[1].to_bits(), Ordering::Relaxed);
         SURFACE_PARTICLE_VIEWER_WORLD_Z_BITS.store(viewer[2].to_bits(), Ordering::Relaxed);
@@ -7440,12 +7447,12 @@ mod tests {
         SURFACE_PARTICLE_VIEWER_FORWARD_X_BITS.store(forward[0].to_bits(), Ordering::Relaxed);
         SURFACE_PARTICLE_VIEWER_FORWARD_Y_BITS.store(forward[1].to_bits(), Ordering::Relaxed);
         SURFACE_PARTICLE_VIEWER_FORWARD_Z_BITS.store(forward[2].to_bits(), Ordering::Relaxed);
-        SURFACE_PARTICLE_LEFT_EYE_WORLD_X_BITS.store(viewer[0].to_bits(), Ordering::Relaxed);
-        SURFACE_PARTICLE_LEFT_EYE_WORLD_Y_BITS.store(viewer[1].to_bits(), Ordering::Relaxed);
-        SURFACE_PARTICLE_LEFT_EYE_WORLD_Z_BITS.store(viewer[2].to_bits(), Ordering::Relaxed);
-        SURFACE_PARTICLE_RIGHT_EYE_WORLD_X_BITS.store(viewer[0].to_bits(), Ordering::Relaxed);
-        SURFACE_PARTICLE_RIGHT_EYE_WORLD_Y_BITS.store(viewer[1].to_bits(), Ordering::Relaxed);
-        SURFACE_PARTICLE_RIGHT_EYE_WORLD_Z_BITS.store(viewer[2].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_LEFT_EYE_WORLD_X_BITS.store(left_eye[0].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_LEFT_EYE_WORLD_Y_BITS.store(left_eye[1].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_LEFT_EYE_WORLD_Z_BITS.store(left_eye[2].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_RIGHT_EYE_WORLD_X_BITS.store(right_eye[0].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_RIGHT_EYE_WORLD_Y_BITS.store(right_eye[1].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_RIGHT_EYE_WORLD_Z_BITS.store(right_eye[2].to_bits(), Ordering::Relaxed);
         SURFACE_PARTICLE_VIEWER_EYE_POSE_VALID.store(true, Ordering::Relaxed);
     }
 
@@ -7643,13 +7650,15 @@ mod tests {
     }
 
     #[test]
-    fn private_main_draw_eye_offsets_use_roll_stable_yawed_right_when_viewer_is_yawed() {
+    fn private_main_draw_uses_scene_eye_offsets_when_viewer_is_yawed() {
         reset_surface_particle_world_anchor();
-        store_test_viewer_pose(
+        store_test_viewer_pose_with_eyes(
             [0.2, 1.4, 0.1],
             [0.0, 0.0, 1.0],
             [0.0, 1.0, 0.0],
             [1.0, 0.0, 0.0],
+            [0.2, 1.4, 0.0685],
+            [0.2, 1.4, 0.1315],
         );
         let carrier_panel =
             test_panel_projection([0.0, 1.4, -2.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]);
@@ -7667,11 +7676,7 @@ mod tests {
 
         assert_vec3_near(
             [push.params1[0], push.params1[1], push.params1[2]],
-            [
-                0.2,
-                1.4,
-                0.1 - DEFAULT_SURFACE_PARTICLE_LEFT_EYE_OFFSET_RIGHT_METERS,
-            ],
+            [0.2, 1.4, 0.0685],
         );
         assert_vec3_near(
             [
