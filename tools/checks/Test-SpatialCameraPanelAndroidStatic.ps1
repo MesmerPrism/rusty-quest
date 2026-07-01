@@ -1101,20 +1101,6 @@ Assert-Contains "Surface particle layer" $surfaceLayer "privateSurfaceParticleEy
 Assert-NotContains "Surface particle layer" $surfaceLayer "SURFACE_PARTICLE_OPENXR_VIEWER_EYE_POSE_ACTIVE"
 Assert-NotContains "Surface particle layer" $surfaceLayer "privateSurfaceParticleCameraPoseCadence=render-loop-openxr-locateviews"
 Assert-NotContains "Surface particle layer" $surfaceLayer "privateSurfaceParticleSceneTickViewerEyePoseStored="
-$openXrProjectionUpdateIndex = $surfaceLayer.IndexOf("fn update_surface_particle_off_axis_projection")
-$spatialWorldPanelProjectionIndex = $surfaceLayer.IndexOf("fn current_surface_particle_spatial_world_panel_projection", $openXrProjectionUpdateIndex)
-if ($openXrProjectionUpdateIndex -lt 0 -or $spatialWorldPanelProjectionIndex -lt 0) {
-    throw "Surface particle OpenXR diagnostic projection update block not found."
-}
-$openXrProjectionUpdateBody = $surfaceLayer.Substring(
-    $openXrProjectionUpdateIndex,
-    $spatialWorldPanelProjectionIndex - $openXrProjectionUpdateIndex)
-if ($openXrProjectionUpdateBody.Contains("store_surface_particle_viewer_eye_pose(")) {
-    throw "OpenXR diagnostic projection update must not overwrite the Scene viewer draw-camera eye pose."
-}
-if ($openXrProjectionUpdateBody.Contains("maybe_auto_recenter_surface_particle_world_anchor_on_viewer(")) {
-    throw "OpenXR diagnostic projection update must not recenter the fixed simulation world anchor."
-}
 Assert-Contains "Surface particle layer" $surfaceLayer "privateSurfaceParticlePanelPoseSource=Scene.getViewerPose-derived-panel-plane"
 Assert-Contains "Surface particle layer" $surfaceLayer "privateSurfaceParticlePanelDefinesEye=false"
 Assert-Contains "Surface particle layer" $surfaceLayer "privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space"
@@ -1137,18 +1123,7 @@ Assert-Contains "Surface particle layer" $surfaceLayer "projection_panel_forward
 Assert-Contains "Surface particle layer" $surfaceLayer "main_draw_panel_forward_distance("
 Assert-Contains "Surface particle layer" $surfaceLayer "current_surface_particle_viewer_world_forward"
 Assert-Contains "Surface particle layer" $surfaceLayer "viewer_forward_roll_stable_panel_center("
-Assert-Contains "Surface particle layer" $surfaceLayer "fn current_surface_particle_stored_eye_world"
-Assert-Contains "Surface particle layer" $surfaceLayer "draw_eye_world("
-$eyeWorldFunctionIndex = $surfaceLayer.IndexOf("fn current_surface_particle_eye_world")
-$drawEyeCallIndex = $surfaceLayer.IndexOf("draw_eye_world(", $eyeWorldFunctionIndex)
-$storedEyePriorityIndex = $surfaceLayer.IndexOf("current_surface_particle_stored_eye_world(eye_index)", $drawEyeCallIndex)
-$viewerPositionFallbackIndex = $surfaceLayer.IndexOf("current_surface_particle_viewer_world_position()", $drawEyeCallIndex)
-if ($eyeWorldFunctionIndex -lt 0 -or $drawEyeCallIndex -lt 0 -or $storedEyePriorityIndex -lt 0 -or $viewerPositionFallbackIndex -lt 0) {
-    throw "Surface particle draw-eye selection must call draw_eye_world with stored Scene eye priority and viewer reconstruction fallback."
-}
-if ($storedEyePriorityIndex -gt $viewerPositionFallbackIndex) {
-    throw "Surface particle draw-eye selection must use exact Scene eye world positions before roll-stable reconstruction."
-}
+Assert-Contains "Surface particle layer" $surfaceLayer "viewer_forward_roll_stable_eye_position("
 Assert-NotContains "Surface particle layer" $surfaceLayer "fixed_axis_draw_panel_center"
 Assert-NotContains "Surface particle layer" $surfaceLayer "fixed_axis_eye_position"
 Assert-NotContains "Surface particle layer" $surfaceLayer "pitch_preserving_yaw_neutral"
@@ -1163,7 +1138,6 @@ Assert-Contains "Surface particle projection" $surfaceProjection "fn particle_ca
 Assert-Contains "Surface particle projection" $surfaceProjection "fn viewer_forward_roll_stable_camera_basis"
 Assert-Contains "Surface particle projection" $surfaceProjection "fn viewer_forward_roll_stable_panel_center"
 Assert-Contains "Surface particle projection" $surfaceProjection "fn viewer_forward_roll_stable_eye_position"
-Assert-Contains "Surface particle projection" $surfaceProjection "fn draw_eye_world"
 Assert-NotContains "Surface particle projection" $surfaceProjection "fn fixed_axis_draw_panel_center"
 Assert-NotContains "Surface particle projection" $surfaceProjection "fn fixed_axis_eye_position"
 Assert-NotContains "Surface particle projection" $surfaceProjection "fn pitch_preserving_yaw_neutral"
@@ -1186,7 +1160,6 @@ Assert-Contains "Surface particle projection" $surfaceProjection "viewer_forward
 Assert-Contains "Surface particle projection" $surfaceProjection "viewer_forward_roll_stable_basis_corrects_spatial_horizontal_mirror"
 Assert-Contains "Surface particle projection" $surfaceProjection "viewer_forward_roll_stable_panel_center_keeps_yawed_view_direction"
 Assert-Contains "Surface particle projection" $surfaceProjection "viewer_forward_roll_stable_eye_position_uses_yawed_right"
-Assert-Contains "Surface particle projection" $surfaceProjection "draw_eye_world_prefers_scene_eye_over_reconstructed_yawed_eye"
 Assert-Contains "Surface particle projection" $surfaceProjection "backward_viewer_motion_shrinks_yawed_fixed_world_particle_projection"
 Assert-Contains "Surface particle projection" $surfaceProjection "viewer_sphere_center_distance_exceeds_threshold"
 Assert-Contains "Surface particle projection" $surfaceProjection "viewer_sphere_center_distance_triggers_only_beyond_half_meter"
@@ -1196,7 +1169,7 @@ Assert-Contains "Surface particle layer" $surfaceLayer "draw_camera_projection_u
 Assert-Contains "Surface particle layer" $surfaceLayer "draw_camera_projection_corrects_horizontal_viewer_yaw_mirror"
 Assert-Contains "Surface particle layer" $surfaceLayer "draw_camera_projection_preserves_viewer_pitch_and_yaw_without_roll"
 Assert-Contains "Surface particle layer" $surfaceLayer "private_main_draw_push_uses_viewer_forward_camera_basis_not_carrier_panel_yaw"
-Assert-Contains "Surface particle layer" $surfaceLayer "private_main_draw_uses_scene_eye_offsets_when_viewer_is_yawed"
+Assert-Contains "Surface particle layer" $surfaceLayer "private_main_draw_eye_offsets_use_roll_stable_yawed_right_when_viewer_is_yawed"
 Assert-Contains "Live hand bridge" $liveHandBridge "fun clearViewerBasis()"
 Assert-Contains "Live hand bridge" $liveHandBridge "fun updateSpatialViewerWorldBasis(viewerPose: Pose)"
 Assert-Contains "Live hand bridge" $liveHandBridge "nativeUpdateLiveHandPanelBasis("

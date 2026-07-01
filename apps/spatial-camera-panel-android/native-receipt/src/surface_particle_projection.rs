@@ -201,39 +201,6 @@ pub(crate) fn viewer_forward_roll_stable_eye_position(
     add3(viewer_position, scale3(right, offset.clamp(-0.12, 0.12)))
 }
 
-pub(crate) fn draw_eye_world(
-    stored_eye: Option<[f32; 3]>,
-    viewer_position: Option<[f32; 3]>,
-    viewer_forward: [f32; 3],
-    eye_offset_right_meters: f32,
-    panel_center: [f32; 3],
-    panel_right: [f32; 3],
-    panel_up: [f32; 3],
-    target_distance_meters: f32,
-) -> [f32; 3] {
-    if let Some(eye) = stored_eye {
-        if eye.iter().all(|component| component.is_finite()) {
-            return eye;
-        }
-    }
-    if let Some(viewer) = viewer_position {
-        if viewer.iter().all(|component| component.is_finite()) {
-            return viewer_forward_roll_stable_eye_position(
-                viewer,
-                viewer_forward,
-                eye_offset_right_meters,
-            );
-        }
-    }
-    add3(
-        panel_eye_position(panel_center, panel_right, panel_up, target_distance_meters),
-        scale3(
-            panel_right,
-            eye_offset_right_meters.clamp(-0.12, 0.12),
-        ),
-    )
-}
-
 pub(crate) fn viewer_sphere_center_distance_exceeds_threshold(
     viewer_position: [f32; 3],
     sphere_center: [f32; 3],
@@ -573,31 +540,6 @@ mod tests {
         assert_vec3_near(
             viewer_forward_roll_stable_eye_position([0.2, 1.4, 0.1], [1.0, 0.0, 0.0], -0.0315),
             [0.2, 1.4, 0.1315],
-        );
-    }
-
-    #[test]
-    fn draw_eye_world_prefers_scene_eye_over_reconstructed_yawed_eye() {
-        let scene_eye = [0.2, 1.4, 0.0685];
-        let reconstructed = viewer_forward_roll_stable_eye_position(
-            [0.2, 1.4, 0.1],
-            [1.0, 0.0, 0.0],
-            -0.0315,
-        );
-
-        assert_vec3_near(reconstructed, [0.2, 1.4, 0.1315]);
-        assert_vec3_near(
-            draw_eye_world(
-                Some(scene_eye),
-                Some([0.2, 1.4, 0.1]),
-                [1.0, 0.0, 0.0],
-                -0.0315,
-                [0.0, 1.4, -2.0],
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-                2.0,
-            ),
-            scene_eye,
         );
     }
 
