@@ -73,8 +73,10 @@ internal fun SpatialCameraPanel(
     setPanelHeadlocked: (Boolean, String) -> PanelPlacement,
     resizePanel: (Float, Float) -> PanelPlacement,
     resetPlacement: () -> PanelPlacement,
-    updateParticleControls: (Float, Float, Float) -> SurfaceParticleControlState,
+    updateParticleControls: (SurfaceParticleControlState) -> SurfaceParticleControlState,
     applyDriverProfile: (ActiveBlockSnapshot, String) -> SurfaceParticleControlState,
+    questionnaireDueReopensPanel: Boolean = true,
+    setQuestionnaireDueReopensPanel: (Boolean, String) -> Unit = { _, _ -> },
 ) {
   var snapshot by remember { mutableStateOf(store.snapshot()) }
   var localPlacement by remember { mutableStateOf(placement) }
@@ -82,13 +84,14 @@ internal fun SpatialCameraPanel(
 
   fun refreshSnapshot(source: String) {
     val updated = store.snapshot()
-    if (updated.stage == "questionnaire") {
+    if (updated.stage == "questionnaire" && questionnaireDueReopensPanel) {
       localPlacement = setWorkflowPanelVisible(true, true, source)
     }
     snapshot = updated
   }
 
   fun startBlockFromPanel(surfaceId: String?, source: String) {
+    setQuestionnaireDueReopensPanel(true, source)
     if (surfaceId != null) {
       store.selectSurface(surfaceId)
     }
@@ -103,7 +106,7 @@ internal fun SpatialCameraPanel(
     snapshot = store.snapshot()
   }
 
-  LaunchedEffect(snapshot.stage, snapshot.activeBlock?.deadlineUnixMs) {
+  LaunchedEffect(snapshot.stage, snapshot.activeBlock?.deadlineUnixMs, questionnaireDueReopensPanel) {
     while (snapshot.stage == "block_running") {
       delay(500L)
       store.syncElapsedBlock()
@@ -139,8 +142,8 @@ internal fun SpatialCameraPanel(
           onAdjust = { dx, dy, dz, ds -> localPlacement = adjustPlacement(dx, dy, dz, ds) },
           onResize = { dw, dh -> localPlacement = resizePanel(dw, dh) },
       )
-      SurfaceParticleControls(localParticleControls) { driver0, driver1, pointScale ->
-        localParticleControls = updateParticleControls(driver0, driver1, pointScale)
+      SurfaceParticleControls(localParticleControls) { controls ->
+        localParticleControls = updateParticleControls(controls)
       }
       HorizontalDivider()
       when (snapshot.stage) {
@@ -234,24 +237,63 @@ internal fun SpatialCameraPanelLauncher(openPanel: () -> Unit) {
 @Composable
 private fun SurfaceParticleControls(
     controls: SurfaceParticleControlState,
-    onChange: (Float, Float, Float) -> Unit,
+    onChange: (SurfaceParticleControlState) -> Unit,
 ) {
-  var driver0 by remember { mutableStateOf(controls.driver0Value01) }
-  var driver1 by remember { mutableStateOf(controls.driver1Value01) }
-  var pointScale by remember { mutableStateOf(controls.pointScale) }
+  var localControls by remember(controls) { mutableStateOf(controls) }
+
+  fun update(next: SurfaceParticleControlState) {
+    localControls = next
+    onChange(next)
+  }
+
   Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
     Text("Native particle compute", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-    NativeParticleSlider("Driver 0", driver0, 0.0f, 1.0f) {
-      driver0 = it
-      onChange(driver0, driver1, pointScale)
+    NativeParticleSlider("Driver 0", localControls.driver0Value01, 0.0f, 1.0f) {
+      update(localControls.copy(driver0Value01 = it))
     }
-    NativeParticleSlider("Driver 1", driver1, 0.0f, 1.0f) {
-      driver1 = it
-      onChange(driver0, driver1, pointScale)
+    NativeParticleSlider("Driver 1", localControls.driver1Value01, 0.0f, 1.0f) {
+      update(localControls.copy(driver1Value01 = it))
     }
-    NativeParticleSlider("Point scale", pointScale, 0.35f, 2.25f) {
-      pointScale = it
-      onChange(driver0, driver1, pointScale)
+    NativeParticleSlider("Driver 2", localControls.driver2Value01, 0.0f, 1.0f) {
+      update(localControls.copy(driver2Value01 = it))
+    }
+    NativeParticleSlider("Driver 3", localControls.driver3Value01, 0.0f, 1.0f) {
+      update(localControls.copy(driver3Value01 = it))
+    }
+    NativeParticleSlider("Driver 4", localControls.driver4Value01, 0.0f, 1.0f) {
+      update(localControls.copy(driver4Value01 = it))
+    }
+    NativeParticleSlider("Driver 5", localControls.driver5Value01, 0.0f, 1.0f) {
+      update(localControls.copy(driver5Value01 = it))
+    }
+    NativeParticleSlider("Driver 6", localControls.driver6Value01, 0.0f, 1.0f) {
+      update(localControls.copy(driver6Value01 = it))
+    }
+    NativeParticleSlider("Driver 7", localControls.driver7Value01, 0.0f, 1.0f) {
+      update(localControls.copy(driver7Value01 = it))
+    }
+    NativeParticleSlider("Point scale", localControls.pointScale, 0.35f, 2.25f) {
+      update(localControls.copy(pointScale = it))
+    }
+    NativeParticleSlider(
+        "Tracer slots",
+        localControls.tracerDrawSlotsPerOscillator,
+        0.0f,
+        7.0f,
+    ) {
+      update(localControls.copy(tracerDrawSlotsPerOscillator = it))
+    }
+    NativeParticleSlider("Tracer lifetime", localControls.tracerLifetimeSeconds, 0.0f, 0.5f) {
+      update(localControls.copy(tracerLifetimeSeconds = it))
+    }
+    NativeParticleSlider("Tracer copies/s", localControls.tracerCopiesPerSecond, 0.0f, 14.0f) {
+      update(localControls.copy(tracerCopiesPerSecond = it))
+    }
+    NativeParticleSlider("Opacity", localControls.transparencyOpacity, 0.0f, 1.0f) {
+      update(localControls.copy(transparencyOpacity = it))
+    }
+    NativeParticleSlider("World scale", localControls.projectionWorldScale, 0.5f, 2.0f) {
+      update(localControls.copy(projectionWorldScale = it))
     }
   }
 }

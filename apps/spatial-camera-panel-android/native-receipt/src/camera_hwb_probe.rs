@@ -1013,12 +1013,11 @@ unsafe fn render_camera_hwb_probe(
                 ));
             }
         }
-        let should_log_video_projection_frame =
-            mode.should_stream_latest_frame()
-                && video_settings.enabled
-                && (frames_presented <= 4
-                    || (!spatial_video_projection_rendered_marker_logged
-                        && record_result.video_stats.rendered));
+        let should_log_video_projection_frame = mode.should_stream_latest_frame()
+            && video_settings.enabled
+            && (frames_presented <= 4
+                || (!spatial_video_projection_rendered_marker_logged
+                    && record_result.video_stats.rendered));
         if should_log_video_projection_frame {
             log_marker(format!(
                 "status=spatial-video-projection-frame-composed framesPresented={} outputMode=raw-color-target-rect stereoSource=camera50-51 videoComposedBeforeCamera=true sameSurfaceComposition=true cameraProjectionAlignmentPreserved=true videoProjectionRendered={} spatialVideoProjectionRendered={} videoProjectionGpuImportReady={} {} {} runtimeCrash=false",

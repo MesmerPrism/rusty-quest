@@ -18,7 +18,7 @@ const RECORDED_HAND_REPLAY_JSON: &str = include_str!(concat!(
 const REPLAY_HAND_IPD_METERS: f32 = 0.064;
 const REPLAY_HAND_HEAD_Y_METERS: f32 = 1.68;
 const REPLAY_HAND_HEAD_Z_METERS: f32 = 0.45;
-const REPLAY_HAND_PANEL_TARGET_DISTANCE_METERS: f32 = 0.72;
+const REPLAY_HAND_PANEL_TARGET_DISTANCE_METERS: f32 = 2.0;
 const PUBLIC_HAND_ANCHOR_PARTICLES_PER_HAND: u32 = 1024;
 const PUBLIC_HAND_ANCHOR_PARTICLE_RADIUS_METERS: f32 = 0.0065;
 const PARTICLE_VERTICES_PER_INSTANCE: u32 = 6;
@@ -34,6 +34,13 @@ const PUBLIC_HAND_ANCHOR_NOISE_SPEED_HZ: f32 = 0.50;
 const HAND_MESH_COMPONENT_POLICY: &str =
     "keep_two_largest_components_drop_wrist_bridge_boundaries_v1";
 const HAND_MESH_KEPT_COMPONENT_RANK_COUNT: u32 = 2;
+const PUBLIC_HAND_ANCHOR_REPLAY_FALLBACK_ENABLED_PROPERTY: &str =
+    "debug.rustyquest.spatial_camera_panel.particle_layer.public_replay_fallback.enabled";
+
+#[cfg(target_os = "android")]
+extern "C" {
+    fn __system_property_get(name: *const libc::c_char, value: *mut libc::c_char) -> libc::c_int;
+}
 
 pub(crate) struct ReplayHandsRenderer {
     descriptor_pool: vk::DescriptorPool,
@@ -87,7 +94,9 @@ struct ReplayHandsStats {
 impl ReplayHandsStats {
     fn marker_fields(&self) -> String {
         format!(
-            "surfaceLayerMode=native-hand-anchor-particles forcedReplayHands=true forcedReplayMeshVisible=false diagnosticParticlesVisible=false publicHandAnchorParticlesVisible=true handAnchorParticlesVisible=true gpuReplayHandsResident=true properStereoHandAnchorParticles=true replayStereoProjection=per-eye-spatial-sdk-panel-plane-ray-intersection handAnchorParticleCoordinateSource=live-openxr-world-joints-gpu-skinned-resident-mesh-with-forced-replay-fallback privatePayloadActive=false driverProfileDynamicsActive=true liveHandGpuSkinningParticles=true rgbDriverColor=true jointClusterMode=false driverProfileId={} driverProfileSchemaId={} driverDynamicsMode={} driverBaseHz={:.2} driverMix01={:.1}",
+            "surfaceLayerMode=native-hand-anchor-particles forcedReplayHands=true forcedReplayMeshVisible=false diagnosticParticlesVisible=false publicHandAnchorParticlesVisible=true handAnchorParticlesVisible=true gpuReplayHandsResident=true properStereoHandAnchorParticles=true replayStereoProjection=per-eye-spatial-sdk-panel-plane-ray-intersection handAnchorParticleCoordinateSource=live-openxr-world-joints-gpu-skinned-resident-mesh-with-optional-replay-fallback privatePayloadActive=false publicHandAnchorReplayFallbackEnabled={} publicHandAnchorReplayFallbackProperty={} driverProfileDynamicsActive=true liveHandGpuSkinningParticles=true rgbDriverColor=true jointClusterMode=false driverProfileId={} driverProfileSchemaId={} driverDynamicsMode={} driverBaseHz={:.2} driverMix01={:.1}",
+            bool_token(public_hand_anchor_replay_fallback_enabled()),
+            marker_token(PUBLIC_HAND_ANCHOR_REPLAY_FALLBACK_ENABLED_PROPERTY),
             PUBLIC_HAND_ANCHOR_DRIVER_PROFILE_ID,
             PUBLIC_HAND_ANCHOR_PROFILE_ID,
             PUBLIC_HAND_ANCHOR_DYNAMICS_MODE,
@@ -225,18 +234,22 @@ pub(crate) struct ReplayHandPanelProjection {
     pub(crate) width_meters: f32,
     pub(crate) height_meters: f32,
     pub(crate) target_distance_meters: f32,
+    pub(crate) left_eye_offset_right_meters: f32,
+    pub(crate) right_eye_offset_right_meters: f32,
     pub(crate) valid: bool,
 }
 
 impl Default for ReplayHandPanelProjection {
     fn default() -> Self {
         Self {
-            center: [0.0, 1.22, -0.72],
+            center: [0.0, 1.22, -2.0],
             right: [1.0, 0.0, 0.0],
             up: [0.0, 1.0, 0.0],
-            width_meters: 1.44,
-            height_meters: 1.44,
+            width_meters: 4.0,
+            height_meters: 4.0,
             target_distance_meters: REPLAY_HAND_PANEL_TARGET_DISTANCE_METERS,
+            left_eye_offset_right_meters: -0.0315,
+            right_eye_offset_right_meters: 0.0315,
             valid: false,
         }
     }
@@ -554,6 +567,7 @@ impl ReplayHandsRenderer {
         live_hand_depth_offset_meters: f32,
         diagnostic_mode: u32,
     ) {
+        let replay_fallback_enabled = public_hand_anchor_replay_fallback_enabled();
         device.cmd_bind_pipeline(
             command_buffer,
             vk::PipelineBindPoint::GRAPHICS,
@@ -585,6 +599,9 @@ impl ReplayHandsRenderer {
             };
             let live_mesh_ready =
                 self.live_hands.status().frame_ready && live_hand_active && draw.skinning_ready;
+            if !live_mesh_ready && !replay_fallback_enabled {
+                continue;
+            }
             let push = ReplayHandPush {
                 eye_index,
                 hand_index: hand_index as u32,
@@ -1421,6 +1438,47 @@ fn join_usize(values: &[usize]) -> String {
         .map(|value| value.to_string())
         .collect::<Vec<_>>()
         .join(";")
+}
+
+fn public_hand_anchor_replay_fallback_enabled() -> bool {
+    android_system_property(PUBLIC_HAND_ANCHOR_REPLAY_FALLBACK_ENABLED_PROPERTY)
+        .and_then(|raw_value| parse_bool_property(&raw_value))
+        .unwrap_or(true)
+}
+
+fn parse_bool_property(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "y" | "on" | "enabled" => Some(true),
+        "0" | "false" | "no" | "n" | "off" | "disabled" => Some(false),
+        _ => None,
+    }
+}
+
+fn android_system_property(name: &str) -> Option<String> {
+    #[cfg(target_os = "android")]
+    {
+        const PROP_VALUE_MAX: usize = 92;
+        let name = std::ffi::CString::new(name).ok()?;
+        let mut value = [0 as libc::c_char; PROP_VALUE_MAX];
+        let len = unsafe { __system_property_get(name.as_ptr(), value.as_mut_ptr()) };
+        if len <= 0 {
+            return None;
+        }
+        let text = unsafe { CStr::from_ptr(value.as_ptr()) }
+            .to_string_lossy()
+            .trim()
+            .to_string();
+        if text.is_empty() {
+            None
+        } else {
+            Some(text)
+        }
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = name;
+        None
+    }
 }
 
 fn parse_vec3_rows(value: &serde_json::Value) -> Result<Vec<[f32; 3]>, String> {

@@ -135,6 +135,8 @@ import java.io.File
 import java.util.concurrent.CompletableFuture
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.math.sqrt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -162,7 +164,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var privateLayerDepthLayerPolicy = PrivateLayerControls.defaultDepthLayerPolicy
   private var privateLayerDepthAlignment = PrivateLayerDepthAlignment()
   private var panelLauncherEntity: Entity? = null
-  private var panelPlacement = PanelPlacement()
+  private var panelPlacement = PanelPlacement(visible = !startInParticleView())
   private var privateLayerPanelPlacement =
       PanelPlacement(
           visible = false,
@@ -173,7 +175,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           scale = PRIVATE_LAYER_PANEL_SCALE,
       )
   private var particleControls = SurfaceParticleControlState()
+  private var questionnaireDueReopensPanel by mutableStateOf(true)
   private var particleLayerEntity: Entity? = null
+  private var particleLayerPanelSceneObject: PanelSceneObject? = null
+  private var particleLayerManualPanelSurface: AndroidSurface? = null
   private var panelRegistrationCount = 0
   private var particleSurfacePanelReady = false
   private var particleSurfaceConsumerCalled = false
@@ -186,6 +191,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var lastParticleLayerProjectionMarkerMs = 0L
   private var lastParticleLayerTargetDistanceMeters: Float? = null
   private var lastParticleLayerSurfaceOverscanScale: Float? = null
+  private var lastParticleLayerPanelOpacity: Float? = null
+  private var remoteParticleLayerTargetDistanceMeters: Float? = null
+  private var remoteParticleLayerViewYawDegrees: Float? = null
   private var polarSensorPanel: PolarSensorPanel? = null
   private var panelHeadlockMarkerCount = 0
   private var lastPanelHeadlockMarkerMs = 0L
@@ -202,6 +210,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var lastSpatialControllerControllerTypeCount = -1
   private var lastSpatialControllerAllButtonState = -1
   private var spatialControllerSecondaryDown = false
+  private var spatialControllerRightTriggerDown = false
   private var nativeControllerSecondaryDown = false
   private val pinnedSpatialGameControllerIds = mutableSetOf<Int>()
   private var lastSpatialInputRouteMarkerMs = 0L
@@ -210,6 +219,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var androidControllerPrimaryMotionDown = false
   private var androidControllerSecondaryKeyDown = false
   private var androidControllerSecondaryMotionDown = false
+  private var androidControllerRightTriggerKeyDown = false
+  private var androidControllerRightTriggerMotionDown = false
   private var externalSwapchainProbeStarted = false
   private var externalSwapchainProbeLayer: SceneQuadLayer? = null
   private var externalSwapchainProbeSceneObject: SceneObject? = null
@@ -285,6 +296,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         SpatialAvatarHandVisualFeature(::marker),
         SpatialHandBillboardFlockFeature(::marker) { store.snapshot().surfaceTargetId },
         SpatialControllerInputLateFeature(::pollSpatialControllerInput),
+    ) + SpatialPrivateFeatureLoader.load(::marker, this) + listOf(
         ComposeFeature(),
     )
   }
@@ -294,6 +306,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     loadNativeReceiptLibrary()
     suppressParticleLayerIfCameraProjectionRequested("activity-created")
     deactivateLegacyWorkflowPanelsForCameraStack("activity-created")
+    deactivatePanelShellIfRequested("activity-created")
     if (shouldResetExperimentForPanelFirstLaunch(intent)) {
       store.resetForNewParticipant()
       marker(
@@ -303,7 +316,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       )
     }
     marker(
-        "channel=activity status=created package=io.github.mesmerprism.rustyquest.spatial_camera_panel " +
+        "channel=activity status=created package=${BuildConfig.APPLICATION_ID} " +
+            "sourceNamespace=io.github.mesmerprism.rustyquest.spatial_camera_panel " +
             "highRateJsonPayload=false hand_rendering_expected=false controller_rendering_expected=true " +
             "spatialPointerInputExpected=true nativeSurfaceParticleLayerExpected=true " +
             "spatialVrInputSystem=${currentSpatialVrInputSystemToken()} " +
@@ -318,6 +332,19 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "spatialSdk3dAssetModule=${SpatialStagedAssetModule.MODULE_ID} " +
             "spatialWorldHandBillboardFlock=spatial-sdk-world-hand-billboard-flock " +
             "spatialWorldHandBillboardFlockEnabledProperty=debug.rustyquest.spatial.hand_billboard_flock.enabled " +
+            "spatialPrivateFeatureLoader=optional-reflection-source-set " +
+            "spatialPrivateFeatureSourceEnv=RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR " +
+            "spatialPrivateFeatureResourceEnv=RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR " +
+            "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
+            "nativeSurfaceParticleLayerEnabled=${nativeSurfaceParticleLayerEnabled()} " +
+            "panelShellVisibleProperty=$PANEL_SHELL_VISIBLE_PROPERTY " +
+            "panelShellVisible=${panelShellVisible()} " +
+            "startInParticleViewProperty=$PANEL_START_IN_PARTICLE_VIEW_PROPERTY " +
+            "startInParticleView=${startInParticleView()} " +
+            "startInParticleViewDefault=${BuildConfig.START_IN_PARTICLE_VIEW_DEFAULT} " +
+            "panelLauncherVisibleProperty=$PANEL_LAUNCHER_VISIBLE_PROPERTY " +
+            "panelLauncherVisible=${panelLauncherVisible()} " +
+            "panelLauncherVisibleDefault=${BuildConfig.PANEL_LAUNCHER_VISIBLE_DEFAULT} " +
             "spatialVirtualRoomModule=$SPATIAL_VIRTUAL_ROOM_MODULE_ID " +
             "spatialVirtualRoomEnabledProperty=$SPATIAL_VIRTUAL_ROOM_ENABLED_PROPERTY " +
             "spatialVirtualRoomDefaultEnabled=false " +
@@ -327,6 +354,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "spatialSkyboxDefaultEnabled=false " +
             "spatialSkyboxDefaultMode=none " +
             "spatialSdk3dAssetHighRateJsonPayload=false " +
+            "questionnaireDueReopensPanelDefault=true " +
+            "remoteSurfaceTargetQuestionnaireAutoPanelSuppressed=true " +
             "spatialSdkLaneBoundaries=${SpatialSdkLaneBoundaries.summaryToken()}"
     )
     runSpatialVirtualRoomIfRequested("activity-created")
@@ -342,6 +371,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     setIntent(intent)
     suppressParticleLayerIfCameraProjectionRequested("new-intent")
     deactivateLegacyWorkflowPanelsForCameraStack("new-intent")
+    deactivatePanelShellIfRequested("new-intent")
     runValidationWorkflowIfRequested(intent)
     runPolarLiveValidationIfRequested(intent)
     runUiCommandIfRequested(intent)
@@ -352,6 +382,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
     if (handleControllerSecondaryButton(event)) {
+      return true
+    }
+    if (handleControllerTrigger(event)) {
       return true
     }
     if (handleControllerPrimaryButton(event)) {
@@ -366,6 +399,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     scene.setViewOrigin(0.0f, 0.0f, 2.0f, 180.0f)
     spatialSceneReady = true
     deactivateLegacyWorkflowPanelsForCameraStack("scene-ready")
+    deactivatePanelShellIfRequested("scene-ready")
     configureSpatialVirtualRoomScene("scene-ready")
     enableSpatialControllerInputRoute("scene-ready", forceLog = true)
     runSpatialStagedAssetIfRequested(intent, "scene-ready")
@@ -392,22 +426,36 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             Visible(launcherPanelVisibleForPanelMode()),
         )
     particleLayerEntity =
-        runCatching {
-              Entity.createPanelEntity(
-                  R.id.spatial_camera_surface_panel,
-                  Transform(particleLayerPose()),
-                  particleLayerSurfacePanelDimensions(),
-                  Visible(particleLayerVisibleForPanelMode()),
-              )
-            }
-            .getOrElse { throwable ->
-              marker(
-                  "channel=native-surface-particle-layer status=panel-entity-create-failed " +
-                      "renderPolicy=native-vulkan-wsi-surface-panel error=${markerToken(throwable.javaClass.simpleName)} " +
-                      "message=${markerToken(throwable.message ?: "none")}"
-              )
-              null
-            }
+        if (nativeSurfaceParticleLayerEnabled()) {
+          if (particleLayerManualCustomMeshCarrierEnabled()) {
+            createManualSurfaceParticleLayerPanel("scene-ready")
+          } else {
+            runCatching {
+                  Entity.createPanelEntity(
+                      R.id.spatial_camera_surface_panel,
+                      Transform(particleLayerPose()),
+                      particleLayerSurfacePanelDimensions(),
+                      Visible(particleLayerVisibleForPanelMode()),
+                  )
+                }
+                .getOrElse { throwable ->
+                  marker(
+                      "channel=native-surface-particle-layer status=panel-entity-create-failed " +
+                          "renderPolicy=native-vulkan-wsi-surface-panel error=${markerToken(throwable.javaClass.simpleName)} " +
+                          "message=${markerToken(throwable.message ?: "none")}"
+                  )
+                  null
+                }
+          }
+        } else {
+          marker(
+              "channel=native-surface-particle-layer status=panel-entity-suppressed " +
+                  "renderPolicy=native-vulkan-wsi-surface-panel source=property " +
+                  "nativeSurfaceParticleLayerEnabled=false " +
+                  "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY"
+          )
+          null
+        }
     applyPanelPlacement()
     updateWorkflowPanelHeadlockFromViewer(reason = "scene-ready", forceLog = true)
     updateParticleLayerProjectionFromViewer(reason = "scene-ready", forceLog = true)
@@ -429,7 +477,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     marker(
         "channel=experiment-panel status=panel-first-flow-ready " +
             "panelFirstExperimentFlow=true blockStartRequiresPanelClose=true " +
-            "questionnaireSubmitAutoStartsNextBlock=false questionnaireDueReopensPanel=true " +
+            "questionnaireSubmitAutoStartsNextBlock=false questionnaireDueReopensPanel=$questionnaireDueReopensPanel " +
+            "remoteSurfaceTargetQuestionnaireAutoPanelSuppressed=true " +
             "particleLayerVisible=${particleLayerVisibleForPanelMode()} " +
             "icosphereSurfaceAvailable=true rendererAuthority=native-vulkan-wsi-surface-panel"
     )
@@ -471,6 +520,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
     if (handleControllerSecondaryButton(event)) {
+      return true
+    }
+    if (handleControllerTrigger(event)) {
       return true
     }
     if (handleControllerPrimaryButton(event)) {
@@ -524,7 +576,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun registerPanels(): List<PanelRegistration> {
     val panels =
-        listOf(
+        listOfNotNull(
         ComposeViewPanelRegistration(
             R.id.spatial_camera_panel,
             composeViewCreator = { _, context ->
@@ -562,11 +614,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                           resizeWorkflowPanel(deltaWidth, deltaHeight)
                         },
                         resetPlacement = { resetWorkflowPanelPlacement() },
-                        updateParticleControls = { driver0, driver1, pointScale ->
-                          updateSurfaceParticleControls(driver0, driver1, pointScale)
+                        updateParticleControls = { controls ->
+                          updateSurfaceParticleControls(controls)
                         },
                         applyDriverProfile = { block, source ->
                           applyDriverProfileToParticleControls(block, source)
+                        },
+                        questionnaireDueReopensPanel = questionnaireDueReopensPanel,
+                        setQuestionnaireDueReopensPanel = { enabled, source ->
+                          setQuestionnaireDueReopensPanel(enabled, source)
                         },
                         polarPanel = ensurePolarSensorPanel(),
                     )
@@ -733,31 +789,51 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               startCameraHwbProjectionPanelCarrierIfReady("panel-setup")
             },
         ),
-        VideoSurfacePanelRegistration(
-            R.id.spatial_camera_surface_panel,
-            surfaceConsumer = { _, surface ->
-              particleSurfaceConsumerCalled = true
-              particleSurfaceConsumerSurfaceValid = surface.isValid
-              marker(
-                  "channel=native-surface-particle-layer status=surface-consumer-called " +
-                      "renderPolicy=native-vulkan-wsi-surface-panel surfaceValid=${surface.isValid} " +
-                      particleLayerPlacementMarkerFields() + " " +
-                      particleLayerStereoMarkerFields()
-              )
-              startNativeSurfaceParticleLayer(surface)
-            },
-            settingsCreator = { particleLayerMediaSettings() },
-            panelSetup = { panel, _ ->
-              particleSurfacePanelReady = true
-              marker(
-                  "channel=native-surface-particle-layer status=surface-panel-ready " +
-                      "renderPolicy=native-vulkan-wsi-surface-panel panelHandle=${panel.handle} " +
-                      "surfaceValid=${panel.surface.isValid} " +
-                      particleLayerPlacementMarkerFields() + " " +
-                      particleLayerStereoMarkerFields()
-              )
-            },
-        ),
+        if (nativeSurfaceParticleLayerEnabled() && !particleLayerManualCustomMeshCarrierEnabled()) {
+          VideoSurfacePanelRegistration(
+              R.id.spatial_camera_surface_panel,
+              surfaceConsumer = { _, surface ->
+                particleSurfaceConsumerCalled = true
+                particleSurfaceConsumerSurfaceValid = surface.isValid
+                marker(
+                    "channel=native-surface-particle-layer status=surface-consumer-called " +
+                        "renderPolicy=native-vulkan-wsi-surface-panel surfaceValid=${surface.isValid} " +
+                        "surfaceParticleProjectionCarrier=${markerToken(particleLayerCarrierToken())} " +
+                        particleLayerPlacementMarkerFields() + " " +
+                        particleLayerStereoMarkerFields()
+                )
+                startNativeSurfaceParticleLayer(surface)
+              },
+              settingsCreator = { particleLayerMediaSettings() },
+              panelSetup = { panel, _ ->
+                particleLayerPanelSceneObject = panel
+                particleSurfacePanelReady = true
+                val layerUpdateStatus =
+                    updateParticleLayerPanelLayer("panel-setup", forceLog = false)
+                marker(
+                    "channel=native-surface-particle-layer status=surface-panel-ready " +
+                        "renderPolicy=native-vulkan-wsi-surface-panel panelHandle=${panel.handle} " +
+                        "particleLayerPanelLayerUpdateStatus=${markerToken(layerUpdateStatus)} " +
+                        "surfaceValid=${panel.surface.isValid} " +
+                        "surfaceParticleProjectionCarrier=${markerToken(particleLayerCarrierToken())} " +
+                        particleLayerPlacementMarkerFields() + " " +
+                        particleLayerStereoMarkerFields()
+                )
+              },
+          )
+        } else {
+          val manualCarrier = particleLayerManualCustomMeshCarrierEnabled()
+          marker(
+              "channel=native-surface-particle-layer status=panel-registration-suppressed " +
+                  "renderPolicy=native-vulkan-wsi-surface-panel " +
+                  "source=${if (manualCarrier) "manual-scene-object-carrier" else "property"} " +
+                  "nativeSurfaceParticleLayerEnabled=${nativeSurfaceParticleLayerEnabled()} " +
+                  "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
+                  "surfaceParticleProjectionCarrier=${markerToken(particleLayerCarrierToken())} " +
+                  "manualPanelSceneObjectCustomMesh=$manualCarrier"
+          )
+          null
+        },
     )
     panelRegistrationCount = panels.size
     marker(
@@ -766,7 +842,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "workflowPanelRegistrationId=spatial_camera_panel " +
             "launcherPanelRegistrationId=spatial_camera_panel_launcher " +
             "projectionPanelRegistrationId=spatial_camera_projection_surface_panel " +
-            "particlePanelRegistrationId=spatial_camera_surface_panel"
+            "particlePanelRegistrationId=${if (nativeSurfaceParticleLayerEnabled() && !particleLayerManualCustomMeshCarrierEnabled()) "spatial_camera_surface_panel" else "manual-scene-object"} " +
+            "surfaceParticleProjectionCarrier=${markerToken(particleLayerCarrierToken())} " +
+            "nativeSurfaceParticleLayerEnabled=${nativeSurfaceParticleLayerEnabled()}"
     )
     scheduleParticleLayerLifecycleDiagnostics("register-panels")
     return panels
@@ -4276,7 +4354,138 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     return Pose(center, Quaternion.fromDirection(forward, up))
   }
 
+  @OptIn(SpatialSDKExperimentalAPI::class)
+  private fun createManualSurfaceParticleLayerPanel(reason: String): Entity? {
+    val targetDistanceMeters = currentParticleLayerTargetDistanceMeters()
+    val surfaceOverscanScale = currentParticleLayerSurfaceOverscanScale()
+    val surfaceWidthMeters =
+        particleLayerSurfaceWidthMeters(targetDistanceMeters, surfaceOverscanScale)
+    val surfaceHeightMeters =
+        particleLayerSurfaceHeightMeters(targetDistanceMeters, surfaceOverscanScale)
+    val entity = Entity(R.id.spatial_camera_surface_panel)
+    entity.setComponent(Transform(particleLayerPose()))
+    entity.setComponent(PanelDimensions(Vector2(surfaceWidthMeters, surfaceHeightMeters)))
+    entity.setComponent(Visible(particleLayerVisibleForPanelMode()))
+    val settings =
+        MediaPanelSettings(
+            shape = QuadShapeOptions(surfaceWidthMeters, surfaceHeightMeters),
+            display =
+                FixedMediaPanelDisplayOptions(
+                    widthPx = PARTICLE_LAYER_WIDTH_PX,
+                    heightPx = PARTICLE_LAYER_HEIGHT_PX,
+                ),
+            rendering = MediaPanelRenderOptions(stereoMode = StereoMode.LeftRight),
+            input = PanelInputOptions(0),
+        )
+    val panelSceneObject =
+        runCatching {
+              PanelSceneObject(
+                  scene,
+                  entity,
+                  settings.toPanelConfigOptions().apply {
+                    enableLayer = false
+                    layerConfig = null
+                    forceSceneTexture = true
+                    includeGlass = false
+                    sceneMeshCreator = { texture: SceneTexture ->
+                      val material =
+                          SceneMaterial(texture, AlphaMode.OPAQUE, SceneMaterial.UNLIT_SHADER)
+                              .apply {
+                                setStereoMode(StereoMode.LeftRight)
+                                setUnlit(true)
+                              }
+                      SceneMesh.singleSidedQuad(
+                          surfaceWidthMeters / 2.0f,
+                          surfaceHeightMeters / 2.0f,
+                          material,
+                      )
+                    }
+                  },
+              )
+            }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=native-surface-particle-layer status=manual-panel-carrier-create-failed " +
+                      "renderPolicy=native-vulkan-wsi-surface-panel reason=${markerToken(reason)} " +
+                      "surfaceParticleProjectionCarrier=${markerToken(particleLayerCarrierToken())} " +
+                      "manualPanelSceneObjectCustomMesh=true sceneMeshCreator=single-sided-quad " +
+                      "nativeStartRequested=false error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              return null
+            }
+    val surface =
+        runCatching { panelSceneObject.getSurface() }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=native-surface-particle-layer status=manual-panel-carrier-surface-failed " +
+                      "renderPolicy=native-vulkan-wsi-surface-panel reason=${markerToken(reason)} " +
+                      "surfaceParticleProjectionCarrier=${markerToken(particleLayerCarrierToken())} " +
+                      "manualPanelSceneObjectCustomMesh=true sceneMeshCreator=single-sided-quad " +
+                      "nativeStartRequested=false error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              panelSceneObject.destroy()
+              return null
+            }
+    val added =
+        runCatching {
+              systemManager
+                  .findSystem<SceneObjectSystem>()
+                  .addSceneObject(
+                      entity,
+                      CompletableFuture<SceneObject>().apply { complete(panelSceneObject) },
+                  )
+              true
+            }
+            .getOrElse { throwable ->
+              marker(
+                  "channel=native-surface-particle-layer status=manual-panel-carrier-add-failed " +
+                      "renderPolicy=native-vulkan-wsi-surface-panel reason=${markerToken(reason)} " +
+                      "surfaceParticleProjectionCarrier=${markerToken(particleLayerCarrierToken())} " +
+                      "manualPanelSceneObjectCustomMesh=true sceneMeshCreator=single-sided-quad " +
+                      "nativeStartRequested=false error=${markerToken(throwable.javaClass.simpleName)} " +
+                      "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+              )
+              panelSceneObject.destroy()
+              return null
+            }
+    particleLayerPanelSceneObject = panelSceneObject
+    particleLayerManualPanelSurface = surface
+    particleSurfacePanelReady = added
+    particleSurfaceConsumerCalled = true
+    particleSurfaceConsumerSurfaceValid = surface.isValid
+    val layerUpdateStatus = updateParticleLayerPanelLayer("manual-custom-mesh-created", false)
+    marker(
+        "channel=native-surface-particle-layer status=manual-panel-carrier-ready " +
+            "renderPolicy=native-vulkan-wsi-surface-panel reason=${markerToken(reason)} " +
+            "surfaceParticleProjectionCarrier=${markerToken(particleLayerCarrierToken())} " +
+            "manualPanelSceneObjectCustomMesh=true sceneMeshCreator=single-sided-quad " +
+            "sceneMesh=SceneMesh.singleSidedQuad manualPanelNoHittable=true " +
+            "manualPanelNoIsdkGrabbable=true panelInputOptionsClickButtons=0 " +
+            "manualPanelForceSceneTexture=true manualPanelEnableLayer=false " +
+            "manualPanelLayerConfig=none surfaceValid=${surface.isValid} " +
+            "particleLayerPanelLayerUpdateStatus=${markerToken(layerUpdateStatus)} " +
+            "nativeStartRequested=false panelRegistrationId=manual-scene-object " +
+            particleLayerPlacementMarkerFields() + " " +
+            particleLayerStereoMarkerFields() + " runtimeCrash=false"
+    )
+    startNativeSurfaceParticleLayer(surface)
+    return entity
+  }
+
   private fun startNativeSurfaceParticleLayer(surface: AndroidSurface) {
+    if (!nativeSurfaceParticleLayerEnabled()) {
+      marker(
+          "channel=native-surface-particle-layer status=start-suppressed " +
+              "renderPolicy=native-vulkan-wsi-surface-panel source=property " +
+              "nativeSurfaceParticleLayerEnabled=false " +
+              "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
+              "particleLayerVisible=false particleLayerStarted=$particleLayerStarted " +
+              "nativeSurfaceStartRequested=$nativeSurfaceStartRequested"
+      )
+      return
+    }
     if (cameraStackSuppressesParticles) {
       marker(
           "channel=native-surface-particle-layer status=start-suppressed " +
@@ -4328,6 +4537,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               "channel=native-surface-particle-layer status=start-requested " +
                   "renderPolicy=native-vulkan-wsi-surface-panel " +
                   "surfaceValid=$surfaceValid startMask=$startMask " +
+                  "surfaceParticleProjectionCarrier=${markerToken(particleLayerCarrierToken())} " +
                   "liveHandJointInputExpected=true " +
                   "openXrInstanceHandleNonZero=${openXrProbe.openXrInstanceHandleNonZero} " +
                   "openXrSessionHandleNonZero=${openXrProbe.openXrSessionHandleNonZero} " +
@@ -4353,12 +4563,37 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       driver1Value01: Float,
       pointScale: Float,
       source: String = "panel",
+  ): SurfaceParticleControlState =
+      updateSurfaceParticleControls(
+          particleControls.copy(
+              driver0Value01 = driver0Value01,
+              driver1Value01 = driver1Value01,
+              pointScale = pointScale,
+          ),
+          source,
+      )
+
+  private fun updateSurfaceParticleControls(
+      controls: SurfaceParticleControlState,
+      source: String = "panel",
   ): SurfaceParticleControlState {
     particleControls =
-        SurfaceParticleControlState(
-            driver0Value01 = driver0Value01.coerceIn(0.0f, 1.0f),
-            driver1Value01 = driver1Value01.coerceIn(0.0f, 1.0f),
-            pointScale = pointScale.coerceIn(0.35f, 2.25f),
+        controls.copy(
+            driver0Value01 = controls.driver0Value01.coerceIn(0.0f, 1.0f),
+            driver1Value01 = controls.driver1Value01.coerceIn(0.0f, 1.0f),
+            driver2Value01 = controls.driver2Value01.coerceIn(0.0f, 1.0f),
+            driver3Value01 = controls.driver3Value01.coerceIn(0.0f, 1.0f),
+            driver4Value01 = controls.driver4Value01.coerceIn(0.0f, 1.0f),
+            driver5Value01 = controls.driver5Value01.coerceIn(0.0f, 1.0f),
+            driver6Value01 = controls.driver6Value01.coerceIn(0.0f, 1.0f),
+            driver7Value01 = controls.driver7Value01.coerceIn(0.0f, 1.0f),
+            pointScale = controls.pointScale.coerceIn(0.35f, 2.25f),
+            tracerDrawSlotsPerOscillator =
+                controls.tracerDrawSlotsPerOscillator.coerceIn(0.0f, 7.0f),
+            tracerLifetimeSeconds = controls.tracerLifetimeSeconds.coerceIn(0.0f, 0.5f),
+            tracerCopiesPerSecond = controls.tracerCopiesPerSecond.coerceIn(0.0f, 14.0f),
+            transparencyOpacity = controls.transparencyOpacity.coerceIn(0.0f, 1.0f),
+            projectionWorldScale = controls.projectionWorldScale.coerceIn(0.5f, 2.0f),
         )
     submitNativeSurfaceParticleParameters(source = source)
     return particleControls
@@ -4406,20 +4641,96 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   particleControls.driver0Value01,
                   particleControls.driver1Value01,
                   particleControls.pointScale,
+                  particleControls.driver2Value01,
+                  particleControls.driver3Value01,
+                  particleControls.driver4Value01,
+                  particleControls.driver5Value01,
+                  particleControls.driver6Value01,
+                  particleControls.driver7Value01,
+                  particleControls.tracerDrawSlotsPerOscillator,
+                  particleControls.tracerLifetimeSeconds,
+                  particleControls.tracerCopiesPerSecond,
+                  particleControls.transparencyOpacity,
+                  particleControls.projectionWorldScale,
               )
           marker(
               "channel=native-surface-particle-layer status=parameters-submitted " +
                   "renderPolicy=native-vulkan-wsi-surface-panel transport=jni-live-queue " +
-                  "computeParameterBridge=true source=${markerToken(source)} parameterMask=$mask " +
+                  "computeParameterBridge=true privateSurfaceParticleUiParameterPacketReady=true " +
+                  "privateSurfaceParticleUiParameterTransport=jni-live-queue " +
+                  "privateSurfaceParticleUiParameterHighRatePayloadAllowed=false " +
+                  "privateSurfaceParticleUiParameterRejected=false " +
+                  "privateSurfaceParticleUiParameterRejectReason=none " +
+                  "source=${markerToken(source)} parameterMask=$mask " +
                   "driver0Value01=${"%.3f".format(particleControls.driver0Value01)} " +
                   "driver1Value01=${"%.3f".format(particleControls.driver1Value01)} " +
-                  "pointScale=${"%.3f".format(particleControls.pointScale)}"
+                  "driver2Value01=${"%.3f".format(particleControls.driver2Value01)} " +
+                  "driver3Value01=${"%.3f".format(particleControls.driver3Value01)} " +
+                  "driver4Value01=${"%.3f".format(particleControls.driver4Value01)} " +
+                  "driver5Value01=${"%.3f".format(particleControls.driver5Value01)} " +
+                  "driver6Value01=${"%.3f".format(particleControls.driver6Value01)} " +
+                  "driver7Value01=${"%.3f".format(particleControls.driver7Value01)} " +
+                  "pointScale=${"%.3f".format(particleControls.pointScale)} " +
+                  "tracerDrawSlotsPerOscillator=${"%.3f".format(particleControls.tracerDrawSlotsPerOscillator)} " +
+                  "tracerLifetimeSeconds=${"%.3f".format(particleControls.tracerLifetimeSeconds)} " +
+                  "tracerCopiesPerSecond=${"%.3f".format(particleControls.tracerCopiesPerSecond)} " +
+                  "transparencyOpacity=${"%.3f".format(particleControls.transparencyOpacity)} " +
+                  "projectionWorldScale=${"%.3f".format(particleControls.projectionWorldScale)}"
           )
         }
         .getOrElse { throwable ->
           marker(
               "channel=native-surface-particle-layer status=parameter-submit-failed " +
                   "renderPolicy=native-vulkan-wsi-surface-panel source=${markerToken(source)} " +
+                  "error=${markerToken(throwable.javaClass.simpleName)}"
+          )
+        }
+  }
+
+  private fun resolveSurfaceParticleAliasControl(intent: Intent, source: String) {
+    val parameterId =
+        intent.getStringExtra(EXTRA_PARTICLE_ALIAS_PARAMETER_ID)?.trim()?.takeIf { it.isNotBlank() }
+            ?: ""
+    val requestedValue = intent.getFloatExtra(EXTRA_PARTICLE_ALIAS_VALUE, 0.0f)
+    val activationProfile =
+        intent
+            .getStringExtra(EXTRA_PARTICLE_ALIAS_VISUAL_DRIVER_ACTIVATION_PROFILE)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: "default"
+    if (!nativeReceiptLibraryLoaded) {
+      marker(
+          "channel=native-surface-particle-layer status=alias-parameter-submit-skipped " +
+              "renderPolicy=native-vulkan-wsi-surface-panel reason=library-unavailable " +
+              "source=${markerToken(source)} parameterId=${markerToken(parameterId)} " +
+              "visualDriverActivationProfile=${markerToken(activationProfile)}"
+      )
+      return
+    }
+    runCatching {
+          val mask =
+              nativeResolveSurfaceParticleAliasParameter(
+                  parameterId,
+                  requestedValue,
+                  activationProfile,
+              )
+          marker(
+              "channel=native-surface-particle-layer status=alias-parameter-submitted " +
+                  "renderPolicy=native-vulkan-wsi-surface-panel transport=jni-live-queue " +
+                  "computeParameterBridge=true source=${markerToken(source)} " +
+                  "parameterId=${markerToken(parameterId)} " +
+                  "visualDriverActivationProfile=${markerToken(activationProfile)} " +
+                  "requestedValue=${markerFloat(requestedValue)} parameterMask=$mask " +
+                  "privateSurfaceParticleUiParameterPacketReady=true " +
+                  "privateSurfaceParticleUiParameterTransport=jni-live-queue " +
+                  "privateSurfaceParticleUiParameterHighRatePayloadAllowed=false"
+          )
+        }
+        .getOrElse { throwable ->
+          marker(
+              "channel=native-surface-particle-layer status=alias-parameter-submit-failed " +
+                  "renderPolicy=native-vulkan-wsi-surface-panel source=${markerToken(source)} " +
+                  "parameterId=${markerToken(parameterId)} " +
                   "error=${markerToken(throwable.javaClass.simpleName)}"
           )
         }
@@ -4510,6 +4821,28 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "launcherPanelVisible=false legacyLauncherPanelSuppressed=true " +
             "particleLayerVisible=false cameraStackSuppressesParticles=true " +
             "onlyRightPrimaryPrivateLayerPanel=true runtimeCrash=false"
+    )
+  }
+
+  private fun deactivatePanelShellIfRequested(source: String) {
+    if (panelShellVisible()) {
+      return
+    }
+    panelPlacement = panelPlacement.copy(visible = false)
+    privateLayerPanelVisible = false
+    privateLayerPanelPlacement = privateLayerPanelPlacement.copy(visible = false)
+    panelEntity?.setComponent(Visible(false))
+    privateLayerPanelEntity?.setComponent(Visible(false))
+    panelLauncherEntity?.setComponent(Visible(false))
+    particleLayerEntity?.setComponent(Visible(particleLayerVisibleForPanelMode()))
+    marker(
+        "channel=spatial-panel status=panel-shell-hidden " +
+            "source=${markerToken(source)} panelShellVisible=false " +
+            "panelShellVisibleProperty=$PANEL_SHELL_VISIBLE_PROPERTY " +
+            "workflowPanelVisible=false privateLayerPanelVisible=false launcherPanelVisible=false " +
+            "particleLayerVisible=${particleLayerVisibleForPanelMode()} " +
+            "cameraStackSuppressesParticles=$cameraStackSuppressesParticles " +
+            "nativeSurfaceParticleLayerSuppressed=false rendererAuthority=native-vulkan-wsi-surface-panel"
     )
   }
 
@@ -4655,6 +4988,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       focus: Boolean,
       source: String,
   ): PanelPlacement {
+    if (visible && !panelShellVisible()) {
+      deactivatePanelShellIfRequested(source)
+      marker(
+          "channel=spatial-panel status=mode-update-suppressed " +
+              "source=${markerToken(source)} requestedPanel=workflow-panel " +
+              "panelShellVisible=false panelShellVisibleProperty=$PANEL_SHELL_VISIBLE_PROPERTY " +
+              "workflowPanelVisible=false privateLayerPanelVisible=false launcherPanelVisible=false " +
+              "particleLayerVisible=${particleLayerVisibleForPanelMode()}"
+      )
+      return panelPlacement
+    }
     if (visible) {
       privateLayerPanelVisible = false
       privateLayerPanelPlacement = privateLayerPanelPlacement.copy(visible = false)
@@ -4696,11 +5040,34 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     return panelPlacement
   }
 
+  private fun setQuestionnaireDueReopensPanel(enabled: Boolean, source: String) {
+    if (questionnaireDueReopensPanel == enabled) {
+      return
+    }
+    questionnaireDueReopensPanel = enabled
+    marker(
+        "channel=experiment-panel status=questionnaire-auto-panel-policy-updated " +
+            "source=${markerToken(source)} questionnaireDueReopensPanel=$enabled " +
+            "remoteSurfaceTargetQuestionnaireAutoPanelSuppressed=${!enabled}"
+    )
+  }
+
   private fun setPrivateLayerPanelVisible(
       visible: Boolean,
       focus: Boolean,
       source: String,
   ): PanelPlacement {
+    if (visible && !panelShellVisible()) {
+      deactivatePanelShellIfRequested(source)
+      marker(
+          "channel=private-layer-panel status=mode-update-suppressed " +
+              "source=${markerToken(source)} requestedPanel=private-layer-panel " +
+              "panelShellVisible=false panelShellVisibleProperty=$PANEL_SHELL_VISIBLE_PROPERTY " +
+              "workflowPanelVisible=false privateLayerPanelVisible=false launcherPanelVisible=false " +
+              "particleLayerVisible=${particleLayerVisibleForPanelMode()} spatialPrivateLayerControlPanel=false"
+      )
+      return panelPlacement
+    }
     if (!visible && !PRIVATE_LAYER_PANEL_SDK_FREE_TRANSFORM) {
       syncPrivateLayerPanelPlacementFromEntity("private-layer-panel-close")
     }
@@ -4831,13 +5198,62 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         }
   }
 
+  private fun updateParticleLayerPanelLayer(
+      reason: String,
+      forceLog: Boolean = true,
+  ): String {
+    val panel = particleLayerPanelSceneObject ?: return "panel-scene-object-missing"
+    val opacity = currentParticleLayerPanelOpacity()
+    return runCatching {
+          val layer = panel.layer ?: return "panel-layer-missing"
+          layer.setZIndex(PARTICLE_LAYER_Z_INDEX)
+          layer.setAlphaBlend(
+              LayerAlphaBlend(
+                  BlendFactor.SOURCE_ALPHA,
+                  BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+                  BlendFactor.ONE,
+                  BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+              )
+          )
+          layer.setColorScaleBias(Vector4(1.0f, 1.0f, 1.0f, opacity), Vector4(0.0f))
+          val previousOpacity = lastParticleLayerPanelOpacity
+          lastParticleLayerPanelOpacity = opacity
+          if (forceLog || previousOpacity == null || abs(previousOpacity - opacity) >= 0.001f) {
+            marker(
+                "channel=native-surface-particle-layer status=particle-panel-layer-updated " +
+                    "renderPolicy=native-vulkan-wsi-surface-panel reason=${markerToken(reason)} " +
+                    "particleLayerPanelAlphaBlendApplied=true " +
+                    "particleLayerPanelColorScaleAlphaApplied=true " +
+                    "particleLayerPanelOpacity=${markerFloat(opacity)} " +
+                    "particleLayerPanelOpacityProperty=$PARTICLE_LAYER_PANEL_OPACITY_PROPERTY " +
+                    "particleLayerZIndex=$PARTICLE_LAYER_Z_INDEX runtimeCrash=false"
+            )
+          }
+          "updated-particle-layer-panel-alpha"
+        }
+        .getOrElse { throwable ->
+          if (forceLog) {
+            marker(
+                "channel=native-surface-particle-layer status=particle-panel-layer-update-failed " +
+                    "renderPolicy=native-vulkan-wsi-surface-panel reason=${markerToken(reason)} " +
+                    "particleLayerPanelOpacity=${markerFloat(opacity)} " +
+                    "particleLayerPanelOpacityProperty=$PARTICLE_LAYER_PANEL_OPACITY_PROPERTY " +
+                    "error=${markerToken(throwable.javaClass.simpleName)} " +
+                    "message=${markerToken(throwable.message ?: "none")} runtimeCrash=false"
+            )
+          }
+          "failed-${throwable.javaClass.simpleName}"
+        }
+  }
+
   private fun applyPanelPlacement(updatePrivateLayerPanelTransform: Boolean = false) {
+    val shellVisible = panelShellVisible()
     val pose = panelPose()
     panelEntity?.let { entity ->
       entity.setComponent(Transform(pose))
       entity.setComponent(Scale(Vector3(panelPlacement.scale, panelPlacement.scale, panelPlacement.scale)))
       entity.setComponent(panelDimensions())
-      entity.setComponent(Visible(panelPlacement.visible && !privateLayerPanelVisible))
+      entity.setComponent(Visible(shellVisible && panelPlacement.visible && !privateLayerPanelVisible))
     }
     privateLayerPanelEntity?.let { entity ->
       if (updatePrivateLayerPanelTransform) {
@@ -4853,19 +5269,25 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           )
       )
       entity.setComponent(privateLayerPanelDimensions())
-      entity.setComponent(Visible(privateLayerPanelVisible && privateLayerPanelPlacement.visible))
+      entity.setComponent(Visible(shellVisible && privateLayerPanelVisible && privateLayerPanelPlacement.visible))
     }
     panelLauncherEntity?.setComponent(Transform(panelLauncherPose()))
     panelLauncherEntity?.setComponent(panelLauncherDimensions())
     panelLauncherEntity?.setComponent(Visible(launcherPanelVisibleForPanelMode()))
     particleLayerEntity?.setComponent(Visible(particleLayerVisibleForPanelMode()))
+    updateParticleLayerPanelLayer("apply-panel-placement", forceLog = false)
   }
 
   private fun particleLayerVisibleForPanelMode(): Boolean =
-      !panelPlacement.visible && !privateLayerPanelVisible && !cameraStackSuppressesParticles
+      !panelPlacement.visible &&
+          !privateLayerPanelVisible &&
+          !cameraStackSuppressesParticles &&
+          nativeSurfaceParticleLayerEnabled()
 
   private fun launcherPanelVisibleForPanelMode(): Boolean =
-      !panelPlacement.visible &&
+      panelShellVisible() &&
+          panelLauncherVisible() &&
+          !panelPlacement.visible &&
           !privateLayerPanelVisible &&
           !cameraStackSuppressesParticles &&
           !spatialVirtualRoomEnabled()
@@ -5013,9 +5435,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   @OptIn(SpatialSDKExperimentalAPI::class)
   private fun headlockedPanelPoseFromViewer(): Pose? {
     val viewerPose = runCatching { scene.getViewerPose() }.getOrNull() ?: return null
-    val forward = viewerPose.forward().normalizedOr(Vector3(0.0f, 0.0f, -1.0f))
-    val up = viewerPose.up().normalizedOr(Vector3(0.0f, 1.0f, 0.0f))
-    val right = cross(forward, up).normalizedOr(Vector3(1.0f, 0.0f, 0.0f))
+    val rawForward = viewerPose.forward().normalizedOr(Vector3(0.0f, 0.0f, -1.0f))
+    val rawUp = viewerPose.up().normalizedOr(Vector3(0.0f, 1.0f, 0.0f))
+    val rawRight = cross(rawForward, rawUp).normalizedOr(Vector3(1.0f, 0.0f, 0.0f))
+    val yawDegrees = currentParticleLayerViewYawDegrees()
+    val rollStableBasis = rollStableParticleProjectionBasis(rawForward, yawDegrees)
+    val forward = rollStableBasis.first
+    val right = rollStableBasis.second
+    val up = rollStableBasis.third
     val center =
         viewerPose.t +
             right * panelPlacement.xMeters +
@@ -5285,9 +5712,19 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               }
               return
             }
-    val forward = viewerPose.forward().normalizedOr(Vector3(0.0f, 0.0f, -1.0f))
-    val up = viewerPose.up().normalizedOr(Vector3(0.0f, 1.0f, 0.0f))
-    val right = cross(forward, up).normalizedOr(Vector3(1.0f, 0.0f, 0.0f))
+    val rawForward = viewerPose.forward().normalizedOr(Vector3(0.0f, 0.0f, -1.0f))
+    val rawUp = viewerPose.up().normalizedOr(Vector3(0.0f, 1.0f, 0.0f))
+    val rawRight = cross(rawForward, rawUp).normalizedOr(Vector3(1.0f, 0.0f, 0.0f))
+    val yawDegrees = currentParticleLayerViewYawDegrees()
+    val rollStableBasis = rollStableParticleProjectionBasis(rawForward, yawDegrees)
+    val forward = rollStableBasis.first
+    val right = rollStableBasis.second
+    val up = rollStableBasis.third
+    val eyeOffsets = runCatching { scene.getEyeOffsets() }.getOrNull()
+    val leftEyeOffsetRightMeters = eyeOffsetRightMeters(eyeOffsets?.first)
+    val rightEyeOffsetRightMeters = eyeOffsetRightMeters(eyeOffsets?.second)
+    val leftEyeWorld = viewerPose.t + rawRight * leftEyeOffsetRightMeters
+    val rightEyeWorld = viewerPose.t + rawRight * rightEyeOffsetRightMeters
     val targetDistanceMeters = currentParticleLayerTargetDistanceMeters()
     val projectionWidthMeters = particleLayerProjectionWidthMeters(targetDistanceMeters)
     val projectionHeightMeters = particleLayerProjectionHeightMeters(targetDistanceMeters)
@@ -5296,6 +5733,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         particleLayerSurfaceWidthMeters(targetDistanceMeters, surfaceOverscanScale)
     val surfaceHeightMeters =
         particleLayerSurfaceHeightMeters(targetDistanceMeters, surfaceOverscanScale)
+    val projectionSurfaceMarkerFields =
+        particleLayerProjectionSurfaceMarkerFields(
+            projectionWidthMeters,
+            projectionHeightMeters,
+            surfaceWidthMeters,
+            surfaceHeightMeters,
+        )
     val previousTargetDistanceMeters = lastParticleLayerTargetDistanceMeters
     val previousSurfaceOverscanScale = lastParticleLayerSurfaceOverscanScale
     if (
@@ -5318,7 +5762,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               "projectionHeightMeters=${markerFloat(projectionHeightMeters)} " +
               "surfaceOverscanScale=${markerFloat(surfaceOverscanScale)} " +
               "surfaceWidthMeters=${markerFloat(surfaceWidthMeters)} " +
-              "surfaceHeightMeters=${markerFloat(surfaceHeightMeters)}"
+              "surfaceHeightMeters=${markerFloat(surfaceHeightMeters)} " +
+              projectionSurfaceMarkerFields
       )
     }
     val center = viewerPose.t + forward * targetDistanceMeters
@@ -5326,6 +5771,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     entity.setComponent(Transform(planePose))
     entity.setComponent(PanelDimensions(Vector2(surfaceWidthMeters, surfaceHeightMeters)))
     entity.setComponent(Visible(particleLayerVisibleForPanelMode()))
+    updateParticleLayerPanelLayer("projection-plane-update", forceLog = false)
     val nativePanelPoseUpdateMask =
         if (nativeReceiptLibraryLoaded) {
           runCatching {
@@ -5342,12 +5788,50 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     surfaceWidthMeters,
                     surfaceHeightMeters,
                     targetDistanceMeters,
+                    leftEyeOffsetRightMeters,
+                    rightEyeOffsetRightMeters,
                 )
               }
               .getOrElse { throwable ->
                 if (forceLog) {
                   marker(
                       "channel=native-surface-particle-layer status=panel-pose-native-update-failed " +
+                          "reason=${markerToken(reason)} error=${markerToken(throwable.javaClass.simpleName)}"
+                  )
+                }
+                0L
+              }
+        } else {
+          0L
+        }
+    val nativeViewerEyePoseUpdateMask =
+        if (nativeReceiptLibraryLoaded) {
+          runCatching {
+                nativeUpdateSurfaceParticleViewerEyePose(
+                    viewerPose.t.x,
+                    viewerPose.t.y,
+                    viewerPose.t.z,
+                    rawRight.x,
+                    rawRight.y,
+                    rawRight.z,
+                    rawUp.x,
+                    rawUp.y,
+                    rawUp.z,
+                    rawForward.x,
+                    rawForward.y,
+                    rawForward.z,
+                    leftEyeWorld.x,
+                    leftEyeWorld.y,
+                    leftEyeWorld.z,
+                    rightEyeWorld.x,
+                    rightEyeWorld.y,
+                    rightEyeWorld.z,
+                )
+              }
+              .getOrElse { throwable ->
+                if (forceLog) {
+                  marker(
+                      "channel=native-surface-particle-layer status=viewer-eye-pose-native-update-failed " +
                           "reason=${markerToken(reason)} error=${markerToken(throwable.javaClass.simpleName)}"
                   )
                 }
@@ -5368,7 +5852,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     particleLayerProjectionMarkerCount += 1
     lastParticleLayerProjectionMarkerMs = now
-    val eyeOffsets = runCatching { scene.getEyeOffsets() }.getOrNull()
     marker(
         "channel=native-surface-particle-layer status=projection-plane-updated " +
             "reason=${markerToken(reason)} " +
@@ -5376,12 +5859,24 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "viewerPoseSource=Scene.getViewerPose eyeOffsetsSource=Scene.getEyeOffsets " +
             "particleLayerTargetDistanceParameterSource=runtime-hotload-android-property " +
             "particleLayerTargetDistanceProperty=$PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY " +
-            "projectionPlaneFacingMode=viewer-forward-front-face " +
+            "particleLayerViewYawParameterSource=runtime-hotload-android-property-or-remote-ui-command " +
+            "particleLayerViewYawProperty=$PARTICLE_LAYER_VIEW_YAW_PROPERTY " +
+            "particleLayerViewYawDegrees=${markerFloat(yawDegrees)} " +
+            "projectionPlaneFacingMode=viewer-forward-front-face-roll-stable " +
+            "projectionPlaneRollAuthority=spatial-world-up " +
+            "projectionPlaneRollFollowsHeadset=false " +
             "viewerPositionM=${vectorMarker(viewerPose.t)} " +
-            "viewerForward=${vectorMarker(forward)} viewerUp=${vectorMarker(up)} " +
-            "viewerRight=${vectorMarker(right)} panelPoseNativeUpdateMask=$nativePanelPoseUpdateMask " +
+            "viewerForward=${vectorMarker(rawForward)} viewerUp=${vectorMarker(rawUp)} " +
+            "viewerRight=${vectorMarker(rawRight)} panelForward=${vectorMarker(forward)} " +
+            "panelRight=${vectorMarker(right)} panelUp=${vectorMarker(up)} " +
+            "panelPoseNativeUpdateMask=$nativePanelPoseUpdateMask " +
+            "viewerEyePoseNativeUpdateMask=$nativeViewerEyePoseUpdateMask " +
+            "drawCameraPoseSource=Scene.getViewerPose-position+forward-x-mirror-corrected-roll-stable " +
+            "panelDefinesEye=false " +
             "worldToPanelProjection=spatial-sdk-panel-plane-basis " +
+            "carrierSurfaceProjection=spatial-sdk-panel-plane-basis " +
             "particleLayerSurfaceOverscanProperty=$PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY " +
+            "$projectionSurfaceMarkerFields " +
             "projectionWidthMeters=${markerFloat(projectionWidthMeters)} " +
             "projectionHeightMeters=${markerFloat(projectionHeightMeters)} " +
             "surfaceOverscanScale=${markerFloat(surfaceOverscanScale)} " +
@@ -5390,41 +5885,159 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "projectionPlanePoseInvariantWithOverscan=true particleWorldScaleInvariantWithOverscan=true " +
             "planeCenterM=${vectorMarker(center)} planeQuaternion=${quaternionMarker(planePose.q)} " +
             "leftEyeOffsetM=${vectorMarker(eyeOffsets?.first ?: Vector3(0.0f))} " +
-            "rightEyeOffsetM=${vectorMarker(eyeOffsets?.second ?: Vector3(0.0f))}"
+            "rightEyeOffsetM=${vectorMarker(eyeOffsets?.second ?: Vector3(0.0f))} " +
+            "leftEyeWorldM=${vectorMarker(leftEyeWorld)} " +
+            "rightEyeWorldM=${vectorMarker(rightEyeWorld)} " +
+            "leftEyeOffsetRightMeters=${markerFloat(leftEyeOffsetRightMeters)} " +
+            "rightEyeOffsetRightMeters=${markerFloat(rightEyeOffsetRightMeters)} " +
+            "particleLayerEyeOffsetSource=Scene.getEyeOffsets.viewerLocalX"
     )
   }
 
-  private fun particleLayerPlacementMarkerFields(): String =
-      "cameraFacingParticleSurface=true projectionLockedParticleSurface=true " +
-          "placementMode=$PARTICLE_LAYER_PLACEMENT_MODE " +
-          "placementAuthority=$PARTICLE_LAYER_PLACEMENT_AUTHORITY " +
-          "targetCoordinateSpace=$PARTICLE_LAYER_TARGET_COORDINATE_SPACE " +
-          "targetProjectionSpace=$PARTICLE_LAYER_TARGET_PROJECTION_SPACE " +
-          "projectionContentMappingMode=$PARTICLE_LAYER_PROJECTION_CONTENT_MAPPING_MODE " +
-          "targetFovTangents=$PARTICLE_LAYER_TARGET_FOV_TANGENTS " +
-          "targetDistanceMeters=${markerFloat(currentParticleLayerTargetDistanceMeters())} " +
-          "targetDistanceDefaultMeters=$PARTICLE_LAYER_TARGET_DISTANCE_METERS " +
-          "targetDistanceProperty=$PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY " +
-          "surfaceOverscanScale=${markerFloat(currentParticleLayerSurfaceOverscanScale())} " +
-          "surfaceOverscanDefaultScale=$PARTICLE_LAYER_SURFACE_OVERSCAN_SCALE " +
-          "surfaceOverscanProperty=$PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY " +
-          "leftTargetSurfaceUvRect=$PARTICLE_LAYER_TARGET_SURFACE_UV_RECT " +
-          "rightTargetSurfaceUvRect=$PARTICLE_LAYER_TARGET_SURFACE_UV_RECT " +
-          "viewOriginMeters=$PARTICLE_LAYER_VIEW_ORIGIN_METERS " +
-          "viewOriginYawDegrees=$PARTICLE_LAYER_VIEW_ORIGIN_YAW_DEGREES " +
-          "x=$PARTICLE_LAYER_X_METERS y=$PARTICLE_LAYER_Y_METERS z=$PARTICLE_LAYER_Z_METERS " +
-          "projectionWidthMeters=${markerFloat(particleLayerProjectionWidthMeters(currentParticleLayerTargetDistanceMeters()))} " +
-          "projectionHeightMeters=${markerFloat(particleLayerProjectionHeightMeters(currentParticleLayerTargetDistanceMeters()))} " +
-          "surfaceWidthMeters=${markerFloat(particleLayerSurfaceWidthMeters(currentParticleLayerTargetDistanceMeters()))} " +
-          "surfaceHeightMeters=${markerFloat(particleLayerSurfaceHeightMeters(currentParticleLayerTargetDistanceMeters()))}"
+  private fun particleLayerPlacementMarkerFields(): String {
+    val targetDistanceMeters = currentParticleLayerTargetDistanceMeters()
+    val surfaceOverscanScale = currentParticleLayerSurfaceOverscanScale()
+    val projectionWidthMeters = particleLayerProjectionWidthMeters(targetDistanceMeters)
+    val projectionHeightMeters = particleLayerProjectionHeightMeters(targetDistanceMeters)
+    val surfaceWidthMeters = particleLayerSurfaceWidthMeters(targetDistanceMeters, surfaceOverscanScale)
+    val surfaceHeightMeters = particleLayerSurfaceHeightMeters(targetDistanceMeters, surfaceOverscanScale)
+    return "cameraFacingParticleSurface=true projectionLockedParticleSurface=true " +
+        "surfaceParticleProjectionCarrier=${markerToken(particleLayerCarrierToken())} " +
+        "surfaceParticleProjectionCarrierProperty=$PARTICLE_LAYER_CARRIER_PROPERTY " +
+        "manualPanelSceneObjectCustomMesh=${particleLayerManualCustomMeshCarrierEnabled()} " +
+        "manualPanelForceSceneTexture=${particleLayerManualCustomMeshCarrierEnabled()} " +
+        "placementMode=$PARTICLE_LAYER_PLACEMENT_MODE " +
+        "placementAuthority=$PARTICLE_LAYER_PLACEMENT_AUTHORITY " +
+        "targetCoordinateSpace=$PARTICLE_LAYER_TARGET_COORDINATE_SPACE " +
+        "targetProjectionSpace=$PARTICLE_LAYER_TARGET_PROJECTION_SPACE " +
+        "projectionContentMappingMode=$PARTICLE_LAYER_PROJECTION_CONTENT_MAPPING_MODE " +
+        "targetFovTangents=$PARTICLE_LAYER_TARGET_FOV_TANGENTS " +
+        "targetDistanceMeters=${markerFloat(targetDistanceMeters)} " +
+        "targetDistanceDefaultMeters=$PARTICLE_LAYER_TARGET_DISTANCE_METERS " +
+        "targetDistanceProperty=$PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY " +
+        "viewYawDegrees=${markerFloat(currentParticleLayerViewYawDegrees())} " +
+        "viewYawProperty=$PARTICLE_LAYER_VIEW_YAW_PROPERTY " +
+        "surfaceOverscanScale=${markerFloat(surfaceOverscanScale)} " +
+        "surfaceOverscanDefaultScale=$PARTICLE_LAYER_SURFACE_OVERSCAN_SCALE " +
+        "surfaceOverscanProperty=$PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY " +
+        particleLayerProjectionSurfaceMarkerFields(
+            projectionWidthMeters,
+            projectionHeightMeters,
+            surfaceWidthMeters,
+            surfaceHeightMeters,
+        ) +
+        " leftTargetSurfaceUvRect=$PARTICLE_LAYER_TARGET_SURFACE_UV_RECT " +
+        "rightTargetSurfaceUvRect=$PARTICLE_LAYER_TARGET_SURFACE_UV_RECT " +
+        "viewOriginMeters=$PARTICLE_LAYER_VIEW_ORIGIN_METERS " +
+        "viewOriginYawDegrees=$PARTICLE_LAYER_VIEW_ORIGIN_YAW_DEGREES " +
+        "x=$PARTICLE_LAYER_X_METERS y=$PARTICLE_LAYER_Y_METERS z=$PARTICLE_LAYER_Z_METERS " +
+        "projectionWidthMeters=${markerFloat(projectionWidthMeters)} " +
+        "projectionHeightMeters=${markerFloat(projectionHeightMeters)} " +
+        "surfaceWidthMeters=${markerFloat(surfaceWidthMeters)} " +
+        "surfaceHeightMeters=${markerFloat(surfaceHeightMeters)} " +
+        "particleLayerPanelOpacity=${markerFloat(currentParticleLayerPanelOpacity())} " +
+        "particleLayerPanelOpacityProperty=$PARTICLE_LAYER_PANEL_OPACITY_PROPERTY"
+  }
+
+  private fun particleLayerProjectionSurfaceMarkerFields(
+      projectionWidthMeters: Float,
+      projectionHeightMeters: Float,
+      surfaceWidthMeters: Float,
+      surfaceHeightMeters: Float,
+  ): String {
+    val scaleX = projectionWidthMeters / surfaceWidthMeters.coerceAtLeast(0.001f)
+    val scaleY = projectionHeightMeters / surfaceHeightMeters.coerceAtLeast(0.001f)
+    val dimensionsMatch =
+        abs(projectionWidthMeters - surfaceWidthMeters) < 0.001f &&
+            abs(projectionHeightMeters - surfaceHeightMeters) < 0.001f
+    return "overscanMode=none projectionSurfaceScaleX=${markerFloat(scaleX)} " +
+        "projectionSurfaceScaleY=${markerFloat(scaleY)} " +
+        "panelDimensionsMatchProjection=$dimensionsMatch overscanCompensated=not-required " +
+        "horizontalProjectionMode=wide-fov " +
+        "projectionHorizontalScale=${markerFloat(PARTICLE_LAYER_HORIZONTAL_FOV_SCALE)}"
+  }
 
   private fun currentParticleLayerTargetDistanceMeters(): Float =
-      readFloatSystemProperty(
+      remoteParticleLayerTargetDistanceMeters
+          ?: readFloatSystemProperty(
           PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY,
           PARTICLE_LAYER_TARGET_DISTANCE_METERS,
           PARTICLE_LAYER_TARGET_DISTANCE_MIN_METERS,
           PARTICLE_LAYER_TARGET_DISTANCE_MAX_METERS,
       )
+
+  private fun currentParticleLayerViewYawDegrees(): Float =
+      remoteParticleLayerViewYawDegrees
+          ?: readFloatSystemProperty(
+              PARTICLE_LAYER_VIEW_YAW_PROPERTY,
+              PARTICLE_LAYER_VIEW_YAW_DEGREES,
+              PARTICLE_LAYER_VIEW_YAW_MIN_DEGREES,
+              PARTICLE_LAYER_VIEW_YAW_MAX_DEGREES,
+          )
+
+  private fun currentParticleLayerPanelOpacity(): Float =
+      readFloatSystemProperty(
+          PARTICLE_LAYER_PANEL_OPACITY_PROPERTY,
+          PARTICLE_LAYER_PANEL_OPACITY,
+          PARTICLE_LAYER_PANEL_OPACITY_MIN,
+          PARTICLE_LAYER_PANEL_OPACITY_MAX,
+      )
+
+  private fun applyRemoteParticleLayerTargetDistance(intent: Intent, source: String) {
+    val requested =
+        intent.getFloatExtra(
+            EXTRA_PARTICLE_LAYER_TARGET_DISTANCE_METERS,
+            currentParticleLayerTargetDistanceMeters(),
+        )
+    val clamped =
+        requested.coerceIn(
+            PARTICLE_LAYER_TARGET_DISTANCE_MIN_METERS,
+            PARTICLE_LAYER_TARGET_DISTANCE_MAX_METERS,
+        )
+    remoteParticleLayerTargetDistanceMeters = clamped
+    updateParticleLayerProjectionFromViewer(
+        reason = "$source-particle-panel-distance",
+        forceLog = true,
+    )
+    marker(
+        "channel=native-surface-particle-layer status=particle-layer-target-distance-command-applied " +
+            "source=${markerToken(source)} " +
+            "particleLayerTargetDistanceCommand=true " +
+            "particleLayerTargetDistanceCommandTransport=remote-ui-command " +
+            "particleLayerTargetDistanceRequestedMeters=${markerFloat(requested)} " +
+            "particleLayerTargetDistanceMeters=${markerFloat(clamped)} " +
+            "particleLayerTargetDistanceProperty=$PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY " +
+            "noPhysicalControllerInput=true"
+    )
+  }
+
+  private fun applyRemoteParticleLayerViewYaw(intent: Intent, source: String) {
+    val requested =
+        intent.getFloatExtra(
+            EXTRA_PARTICLE_LAYER_VIEW_YAW_DEGREES,
+            currentParticleLayerViewYawDegrees(),
+        )
+    val clamped =
+        requested.coerceIn(
+            PARTICLE_LAYER_VIEW_YAW_MIN_DEGREES,
+            PARTICLE_LAYER_VIEW_YAW_MAX_DEGREES,
+        )
+    remoteParticleLayerViewYawDegrees = clamped
+    updateParticleLayerProjectionFromViewer(
+        reason = "$source-particle-panel-view-yaw",
+        forceLog = true,
+    )
+    marker(
+        "channel=native-surface-particle-layer status=particle-layer-view-yaw-command-applied " +
+            "source=${markerToken(source)} " +
+            "particleLayerViewYawCommand=true " +
+            "particleLayerViewYawCommandTransport=remote-ui-command " +
+            "particleLayerViewYawRequestedDegrees=${markerFloat(requested)} " +
+            "particleLayerViewYawDegrees=${markerFloat(clamped)} " +
+            "particleLayerViewYawProperty=$PARTICLE_LAYER_VIEW_YAW_PROPERTY " +
+            "noPhysicalControllerInput=true"
+    )
+  }
 
   private fun currentParticleLayerSurfaceOverscanScale(): Float =
       readFloatSystemProperty(
@@ -5436,25 +6049,25 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun particleLayerProjectionWidthMeters(targetDistanceMeters: Float): Float =
       (targetDistanceMeters * PARTICLE_LAYER_WIDTH_PER_DISTANCE)
-          .coerceIn(PARTICLE_LAYER_DIMENSION_MIN_METERS, PARTICLE_LAYER_DIMENSION_MAX_METERS)
+          .coerceIn(PARTICLE_LAYER_DIMENSION_MIN_METERS, PARTICLE_LAYER_WIDTH_MAX_METERS)
 
   private fun particleLayerProjectionHeightMeters(targetDistanceMeters: Float): Float =
       (targetDistanceMeters * PARTICLE_LAYER_HEIGHT_PER_DISTANCE)
-          .coerceIn(PARTICLE_LAYER_DIMENSION_MIN_METERS, PARTICLE_LAYER_DIMENSION_MAX_METERS)
+          .coerceIn(PARTICLE_LAYER_DIMENSION_MIN_METERS, PARTICLE_LAYER_HEIGHT_MAX_METERS)
 
   private fun particleLayerSurfaceWidthMeters(
       targetDistanceMeters: Float,
       overscanScale: Float = currentParticleLayerSurfaceOverscanScale(),
   ): Float =
       (particleLayerProjectionWidthMeters(targetDistanceMeters) * overscanScale)
-          .coerceIn(PARTICLE_LAYER_DIMENSION_MIN_METERS, PARTICLE_LAYER_SURFACE_DIMENSION_MAX_METERS)
+          .coerceIn(PARTICLE_LAYER_DIMENSION_MIN_METERS, PARTICLE_LAYER_SURFACE_WIDTH_MAX_METERS)
 
   private fun particleLayerSurfaceHeightMeters(
       targetDistanceMeters: Float,
       overscanScale: Float = currentParticleLayerSurfaceOverscanScale(),
   ): Float =
       (particleLayerProjectionHeightMeters(targetDistanceMeters) * overscanScale)
-          .coerceIn(PARTICLE_LAYER_DIMENSION_MIN_METERS, PARTICLE_LAYER_SURFACE_DIMENSION_MAX_METERS)
+          .coerceIn(PARTICLE_LAYER_DIMENSION_MIN_METERS, PARTICLE_LAYER_SURFACE_HEIGHT_MAX_METERS)
 
   private fun particleLayerSurfacePanelDimensions(
       targetDistanceMeters: Float = currentParticleLayerTargetDistanceMeters(),
@@ -5612,6 +6225,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               plane.projectionWidthMeters,
               plane.projectionHeightMeters,
               plane.targetDistanceMeters,
+              eyeOffsetRightMeters(plane.leftEyeOffset),
+              eyeOffsetRightMeters(plane.rightEyeOffset),
           )
         }
         .getOrElse { throwable ->
@@ -7071,12 +7686,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       if (pinnedSpatialGameControllerIds.add(deviceId)) {
         pinGameController(deviceId) { motionEvent: MotionEvent?, keyEvent: KeyEvent? ->
           keyEvent?.let {
-            if (!handleControllerSecondaryButton(it)) {
+            if (!handleControllerSecondaryButton(it) && !handleControllerTrigger(it)) {
               handleControllerPrimaryButton(it)
             }
           }
           motionEvent?.let { event ->
-            if (!handleControllerSecondaryButton(event) && !handleControllerPrimaryButton(event)) {
+            if (
+                !handleControllerSecondaryButton(event) &&
+                    !handleControllerTrigger(event) &&
+                    !handleControllerPrimaryButton(event)
+            ) {
               handleSpatialJoystickMotion(event, "pinned-android-game-controller")
             }
           }
@@ -7193,6 +7812,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         runCatching {
               val buttonABit = ButtonBits.ButtonA
               val buttonBBit = ButtonBits.ButtonB
+              val rightTriggerBit = ButtonBits.ButtonTriggerR
               val leftThumbUpBit = ButtonBits.ButtonThumbLU
               val leftThumbDownBit = ButtonBits.ButtonThumbLD
               val rightThumbUpBit = ButtonBits.ButtonThumbRU
@@ -7306,6 +7926,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   (rightInputButtonState and buttonBBit) != 0
               val rightAvatarSecondaryPressed =
                   rightAvatarSecondaryDown && (rightInputChangedButtons and buttonBBit) != 0
+              val rightTriggerDown =
+                  (rightInputButtonState and rightTriggerBit) != 0
+              val rightTriggerPressed =
+                  rightTriggerDown && (rightInputChangedButtons and rightTriggerBit) != 0
               val leftAvatarThumbUp = (leftInputButtonState and leftThumbUpBit) != 0
               val leftAvatarThumbDown =
                   (leftInputButtonState and leftThumbDownBit) != 0
@@ -7360,11 +7984,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   pressed = rightAvatarPressed,
                   secondaryDown = rightAvatarSecondaryDown,
                   secondaryPressed = rightAvatarSecondaryPressed,
+                  triggerDown = rightTriggerDown,
+                  triggerPressed = rightTriggerPressed,
               )
             }
             .getOrElse { throwable ->
               spatialControllerPrimaryDown = false
               spatialControllerSecondaryDown = false
+              spatialControllerRightTriggerDown = false
               if (
                   !spatialControllerRouteLogged ||
                       now - lastSpatialControllerRouteMarkerMs >= SPATIAL_CONTROLLER_ROUTE_MARKER_INTERVAL_MS
@@ -7398,7 +8025,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       marker(
           "channel=spatial-panel status=controller-input-route-ready " +
               "inputSource=${markerToken(snapshot.rightInputSource)} " +
-              "controllerInput=right-primary-button+right-secondary-button-wall-toggle+right-thumb-up-down-projection-scale+${currentLeftStickPanelDistanceMapping()} " +
+              "controllerInput=right-primary-button+right-secondary-button-wall-toggle+right-trigger-particle-recenter+right-thumb-up-down-projection-scale+${currentLeftStickPanelDistanceMapping()} " +
               "spatialVrInputSystem=${currentSpatialVrInputSystemToken()} " +
               "controllerComponentCount=${snapshot.componentCount} " +
               "controllerTypeComponentCount=${snapshot.controllerTypeCount} " +
@@ -7424,6 +8051,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               "rightAvatarChangedButtons=${snapshot.rightAvatarChangedButtons} " +
               "buttonABit=${ButtonBits.ButtonA} buttonADown=${snapshot.down} " +
               "buttonBBit=${ButtonBits.ButtonB} buttonBDown=${snapshot.secondaryDown} " +
+              "rightTriggerBit=${ButtonBits.ButtonTriggerR} rightTriggerDown=${snapshot.triggerDown} " +
+              "rightTriggerParticleRecenterEnabledForIcosphere=true " +
               "leftThumbUpBit=${ButtonBits.ButtonThumbLU} leftThumbDownBit=${ButtonBits.ButtonThumbLD} " +
               "leftThumbUp=${snapshot.leftThumbUp} leftThumbDown=${snapshot.leftThumbDown} " +
               "leftThumbYPanelDistanceEnabled=${currentLeftStickPanelDistanceEnabled()} leftThumbYPanelScrollReserved=false " +
@@ -7473,6 +8102,35 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   "leftAvatarChangedButtons=${snapshot.leftAvatarChangedButtons} " +
                   "allControllerButtonState=${snapshot.allControllerButtonState}",
       )
+    }
+
+    val triggerPressedEdge =
+        snapshot.triggerPressed || (snapshot.triggerDown && !spatialControllerRightTriggerDown)
+    spatialControllerRightTriggerDown = snapshot.triggerDown
+    if (triggerPressedEdge) {
+      if (
+          recenterSurfaceParticleSphereOnViewer(
+              inputSource = snapshot.rightInputSource,
+              detail =
+                  "buttonTriggerRBit=${ButtonBits.ButtonTriggerR} buttonState=${snapshot.buttonState} " +
+                      "changedButtons=${snapshot.changedButtons} " +
+                      "localRightControllerPreferred=${snapshot.rightInputSource == "spatial-sdk-controller-component"} " +
+                      "localRightControllerType=${markerToken(snapshot.localRightControllerType)} " +
+                      "localRightControllerAttachmentType=${markerToken(snapshot.localRightControllerAttachmentType)} " +
+                      "localRightControllerActive=${snapshot.localRightControllerActive} " +
+                      "localRightControllerButtonState=${snapshot.localRightControllerButtonState} " +
+                      "localRightControllerChangedButtons=${snapshot.localRightControllerChangedButtons} " +
+                      "rightAvatarControllerType=${markerToken(snapshot.rightAvatarControllerType)} " +
+                      "rightAvatarControllerActive=${snapshot.rightAvatarControllerActive} " +
+                      "rightAvatarButtonState=${snapshot.rightAvatarButtonState} " +
+                      "rightAvatarChangedButtons=${snapshot.rightAvatarChangedButtons} " +
+                      "controllerComponentCount=${snapshot.componentCount} " +
+                      "activeControllerComponentCount=${snapshot.activeCount}",
+              requireParticleView = true,
+          )
+      ) {
+        return
+      }
     }
 
     val secondaryPressedEdge =
@@ -7586,6 +8244,129 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "motionAction=$action motionButtonState=${event.buttonState} " +
                 "motionButtonBit=${MotionEvent.BUTTON_SECONDARY}",
     )
+  }
+
+  private fun handleControllerTrigger(event: KeyEvent): Boolean {
+    if (event.keyCode != KeyEvent.KEYCODE_BUTTON_R2) {
+      return false
+    }
+    val pressedEdge =
+        when (event.action) {
+          KeyEvent.ACTION_DOWN -> {
+            val firstDown = !androidControllerRightTriggerKeyDown && event.repeatCount == 0
+            androidControllerRightTriggerKeyDown = true
+            firstDown
+          }
+          KeyEvent.ACTION_UP -> {
+            androidControllerRightTriggerKeyDown = false
+            false
+          }
+          else -> false
+        }
+    if (!pressedEdge) {
+      return false
+    }
+    return recenterSurfaceParticleSphereOnViewer(
+        inputSource = "android-key-event",
+        detail = "keyCode=${event.keyCode} keyAction=${event.action} repeatCount=${event.repeatCount}",
+        requireParticleView = true,
+    )
+  }
+
+  private fun handleControllerTrigger(event: MotionEvent): Boolean {
+    if (!isJoystickEvent(event)) {
+      return false
+    }
+    val action = event.actionMasked
+    if (
+        action != MotionEvent.ACTION_BUTTON_PRESS &&
+            action != MotionEvent.ACTION_BUTTON_RELEASE &&
+            action != MotionEvent.ACTION_MOVE
+    ) {
+      return false
+    }
+    val rightTriggerValue =
+        maxOf(event.getAxisValue(MotionEvent.AXIS_RTRIGGER), event.getAxisValue(MotionEvent.AXIS_BRAKE))
+    val triggerDown = rightTriggerValue >= CONTROLLER_TRIGGER_PRESS_THRESHOLD
+    val pressedEdge = triggerDown && !androidControllerRightTriggerMotionDown
+    androidControllerRightTriggerMotionDown = triggerDown
+    if (!pressedEdge) {
+      return false
+    }
+    return recenterSurfaceParticleSphereOnViewer(
+        inputSource = "android-generic-motion-trigger",
+        detail =
+            "motionAction=$action motionButtonState=${event.buttonState} " +
+                "rightTriggerAxis=${markerFloat(rightTriggerValue)} " +
+                "rightTriggerThreshold=${markerFloat(CONTROLLER_TRIGGER_PRESS_THRESHOLD)}",
+        requireParticleView = true,
+    )
+  }
+
+  private fun recenterSurfaceParticleSphereOnViewer(
+      inputSource: String,
+      detail: String,
+      requireParticleView: Boolean,
+  ): Boolean {
+    val surfaceTargetId = store.snapshot().surfaceTargetId
+    val particleViewVisible = particleLayerVisibleForPanelMode()
+    if (surfaceTargetId != "icosphere" || (requireParticleView && !particleViewVisible)) {
+      marker(
+          "channel=native-surface-particle-layer status=particle-recenter-ignored " +
+              "controllerInput=right-trigger-button inputSource=${markerToken(inputSource)} " +
+              "${detail.trim()} surfaceTargetId=${markerToken(surfaceTargetId)} " +
+              "requiredSurfaceTargetId=icosphere particleLayerVisible=$particleViewVisible " +
+              "requireParticleView=$requireParticleView workflowPanelVisible=${panelPlacement.visible} " +
+              "privateLayerPanelVisible=$privateLayerPanelVisible " +
+              "privateSurfaceParticleWorldAnchorRecenterAccepted=false " +
+              "privateSurfaceParticleWorldAnchorRecenterRejectReason=not-icosphere-particle-view " +
+              "privateSurfaceParticleRecenterChangesCoordinateMapping=false"
+      )
+      return false
+    }
+    if (!nativeReceiptLibraryLoaded) {
+      marker(
+          "channel=native-surface-particle-layer status=particle-recenter-failed " +
+              "controllerInput=right-trigger-button inputSource=${markerToken(inputSource)} " +
+              "${detail.trim()} surfaceTargetId=${markerToken(surfaceTargetId)} " +
+              "reason=native-library-unavailable privateSurfaceParticleWorldAnchorRecenterAccepted=false " +
+              "privateSurfaceParticleRecenterChangesCoordinateMapping=false"
+      )
+      return true
+    }
+    return runCatching {
+          val mask = nativeRecenterSurfaceParticleSphereOnViewer()
+          val accepted = (mask and SURFACE_PARTICLE_RECENTER_ACCEPTED_BIT) != 0L
+          marker(
+              "channel=native-surface-particle-layer status=particle-recenter-requested " +
+                  "controllerInput=right-trigger-button inputSource=${markerToken(inputSource)} " +
+                  "${detail.trim()} surfaceTargetId=${markerToken(surfaceTargetId)} " +
+                  "particleLayerVisible=$particleViewVisible requireParticleView=$requireParticleView " +
+                  "nativeRecenterMask=$mask nativeRecenterAccepted=$accepted " +
+                  "privateSurfaceParticleWorldAnchorRecenterSource=spatial-sdk-viewer-trigger " +
+                  "privateSurfaceParticleWorldAnchorCenterSource=current-spatial-sdk-viewer-world-coordinate " +
+                  "privateSurfaceParticleWorldAnchorBasis=spatial-world-canonical-axes " +
+                  "privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius " +
+                  "privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space " +
+                  "privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale " +
+                  "privateSurfaceParticleSimWorldAxesStable=true " +
+                  "privateSurfaceParticleRecenterChangesCoordinateMapping=false " +
+                  "privateSurfaceParticleRecenterChangesOnlySphereCenter=true"
+          )
+          true
+        }
+        .getOrElse { throwable ->
+          marker(
+              "channel=native-surface-particle-layer status=particle-recenter-failed " +
+                  "controllerInput=right-trigger-button inputSource=${markerToken(inputSource)} " +
+                  "${detail.trim()} surfaceTargetId=${markerToken(surfaceTargetId)} " +
+                  "error=${markerToken(throwable.javaClass.simpleName)} " +
+                  "message=${markerToken(throwable.message ?: "none")} " +
+                  "privateSurfaceParticleWorldAnchorRecenterAccepted=false " +
+                  "privateSurfaceParticleRecenterChangesCoordinateMapping=false"
+          )
+          true
+        }
   }
 
   private fun toggleCameraHwbProjectionPlacementMode(inputSource: String, detail: String): Boolean {
@@ -7939,6 +8720,57 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       readOptionalBooleanSystemProperty(NATIVE_SPATIAL_CONTROLLER_ACTIONS_ENABLED_PROPERTY)
           ?: NATIVE_SPATIAL_CONTROLLER_ACTIONS_DEFAULT_ENABLED
 
+  private fun nativeSurfaceParticleLayerEnabled(): Boolean =
+      readOptionalBooleanSystemProperty(NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY) ?: true
+
+  private fun particleLayerCarrierMode(): String =
+      when (readSystemProperty(PARTICLE_LAYER_CARRIER_PROPERTY).trim().lowercase(Locale.US)) {
+        "video", "video-panel", "video-surface-panel", "video-surface-panel-scene-object" ->
+            "video-surface-panel-scene-object"
+        "manual", "manual-panel", "manual-custom-mesh", "manual-panel-scene-object",
+        "manual-panel-scene-object-custom-mesh" ->
+            "manual-panel-scene-object-custom-mesh"
+        else -> defaultParticleLayerCarrierMode()
+      }
+
+  private fun defaultParticleLayerCarrierMode(): String =
+      when (BuildConfig.PARTICLE_LAYER_CARRIER_DEFAULT.trim().lowercase(Locale.US)) {
+        "video", "video-panel", "video-surface-panel", "video-surface-panel-scene-object" ->
+            "video-surface-panel-scene-object"
+        "manual", "manual-panel", "manual-custom-mesh", "manual-panel-scene-object",
+        "manual-panel-scene-object-custom-mesh" ->
+            "manual-panel-scene-object-custom-mesh"
+        else -> PARTICLE_LAYER_CARRIER_DEFAULT
+      }
+
+  private fun particleLayerManualCustomMeshCarrierEnabled(): Boolean =
+      particleLayerCarrierMode() == "manual-panel-scene-object-custom-mesh"
+
+  private fun particleLayerCarrierToken(): String =
+      if (particleLayerManualCustomMeshCarrierEnabled()) {
+        "spatial-sdk-manual-panel-scene-object-android-surface"
+      } else {
+        "spatial-sdk-video-surface-panel-android-surface"
+      }
+
+  private fun panelShellVisible(): Boolean =
+      readOptionalBooleanSystemProperty(PANEL_SHELL_VISIBLE_PROPERTY) ?: true
+
+  private fun startInParticleView(): Boolean =
+      readOptionalBooleanSystemProperty(PANEL_START_IN_PARTICLE_VIEW_PROPERTY)
+          ?: parseBuildConfigBoolean(BuildConfig.START_IN_PARTICLE_VIEW_DEFAULT, false)
+
+  private fun panelLauncherVisible(): Boolean =
+      readOptionalBooleanSystemProperty(PANEL_LAUNCHER_VISIBLE_PROPERTY)
+          ?: parseBuildConfigBoolean(BuildConfig.PANEL_LAUNCHER_VISIBLE_DEFAULT, true)
+
+  private fun parseBuildConfigBoolean(value: String, fallback: Boolean): Boolean =
+      when (value.trim().lowercase(Locale.US)) {
+        "1", "true", "yes", "on", "enabled" -> true
+        "0", "false", "no", "off", "disabled" -> false
+        else -> fallback
+      }
+
   private fun spatialMultimodalRequiredOpenXrExtensions(): List<String> =
       if (spatialMultimodalInputEnabled()) {
         SPATIAL_MULTIMODAL_REQUIRED_OPENXR_EXTENSIONS
@@ -7988,11 +8820,50 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun dot(left: Vector3, right: Vector3): Float =
       left.x * right.x + left.y * right.y + left.z * right.z
 
+  private fun eyeOffsetRightMeters(offset: Vector3?): Float {
+    val value = offset?.x ?: 0.0f
+    return if (value.isNaN() || value.isInfinite()) {
+      0.0f
+    } else {
+      value.coerceIn(-0.12f, 0.12f)
+    }
+  }
+
   private fun vectorSubtract(left: Vector3, right: Vector3): Vector3 =
       Vector3(left.x - right.x, left.y - right.y, left.z - right.z)
 
   private fun vectorLength(vector: Vector3): Float =
       sqrt((vector.x * vector.x + vector.y * vector.y + vector.z * vector.z).toDouble()).toFloat()
+
+  private fun rollStableParticleProjectionBasis(
+      rawForward: Vector3,
+      yawDegrees: Float,
+  ): Triple<Vector3, Vector3, Vector3> {
+    val worldUp = Vector3(0.0f, 1.0f, 0.0f)
+    val baseForward = rawForward.normalizedOr(Vector3(0.0f, 0.0f, -1.0f))
+    val baseRight = rollStableRightForForward(baseForward)
+    val yawRadians = Math.toRadians(yawDegrees.toDouble())
+    val yawCos = cos(yawRadians).toFloat()
+    val yawSin = sin(yawRadians).toFloat()
+    val forward = (baseForward * yawCos + baseRight * yawSin).normalizedOr(baseForward)
+    val right = rollStableRightForForward(forward)
+    val up = cross(right, forward).normalizedOr(worldUp)
+    return Triple(forward, right, up)
+  }
+
+  private fun rollStableRightForForward(forward: Vector3): Vector3 {
+    val worldUp = Vector3(0.0f, 1.0f, 0.0f)
+    val depthForward = Vector3(0.0f, 0.0f, -1.0f)
+    val worldUpRight = cross(forward, worldUp)
+    if (vectorLength(worldUpRight) > 0.0001f) {
+      return worldUpRight.normalizedOr(Vector3(1.0f, 0.0f, 0.0f))
+    }
+    val depthRight = cross(forward, depthForward)
+    if (vectorLength(depthRight) > 0.0001f) {
+      return depthRight.normalizedOr(Vector3(1.0f, 0.0f, 0.0f))
+    }
+    return Vector3(1.0f, 0.0f, 0.0f)
+  }
 
   private fun Vector3.normalizedOr(fallback: Vector3): Vector3 {
     val length = sqrt((x * x + y * y + z * z).toDouble()).toFloat()
@@ -8076,6 +8947,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun panelStateToken(): String =
       when {
+        !panelShellVisible() -> "spatial-sdk-panel-shell-hidden"
         privateLayerPanelVisible -> "spatial-sdk-private-layer-panel-open"
         panelPlacement.visible -> "spatial-sdk-workflow-panel-open"
         else -> "spatial-sdk-particle-view-panel-closed"
@@ -8155,6 +9027,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private external fun nativeStopSurfaceParticleLayer()
 
+  private external fun nativeRecenterSurfaceParticleSphereOnViewer(): Long
+
   private external fun nativeStartSdkQuadVulkanProbe(
       surface: AndroidSurface,
       width: Int,
@@ -8224,6 +9098,23 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       driver0Value01: Float,
       driver1Value01: Float,
       pointScale: Float,
+      driver2Value01: Float,
+      driver3Value01: Float,
+      driver4Value01: Float,
+      driver5Value01: Float,
+      driver6Value01: Float,
+      driver7Value01: Float,
+      tracerDrawSlotsPerOscillator: Float,
+      tracerLifetimeSeconds: Float,
+      tracerCopiesPerSecond: Float,
+      transparencyOpacity: Float,
+      projectionWorldScale: Float,
+  ): Long
+
+  private external fun nativeResolveSurfaceParticleAliasParameter(
+      parameterId: String,
+      value: Float,
+      visualDriverActivationProfile: String,
   ): Long
 
   private external fun nativeUpdateSurfaceParticlePanelPose(
@@ -8239,6 +9130,29 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       widthMeters: Float,
       heightMeters: Float,
       targetDistanceMeters: Float,
+      leftEyeOffsetRightMeters: Float,
+      rightEyeOffsetRightMeters: Float,
+  ): Long
+
+  private external fun nativeUpdateSurfaceParticleViewerEyePose(
+      viewerX: Float,
+      viewerY: Float,
+      viewerZ: Float,
+      viewerRightX: Float,
+      viewerRightY: Float,
+      viewerRightZ: Float,
+      viewerUpX: Float,
+      viewerUpY: Float,
+      viewerUpZ: Float,
+      viewerForwardX: Float,
+      viewerForwardY: Float,
+      viewerForwardZ: Float,
+      leftEyeX: Float,
+      leftEyeY: Float,
+      leftEyeZ: Float,
+      rightEyeX: Float,
+      rightEyeY: Float,
+      rightEyeZ: Float,
   ): Long
 
   private external fun nativeCreateExternalOpenXrSwapchain(
@@ -8374,10 +9288,47 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             )
         "particle-controls" ->
             updateSurfaceParticleControls(
-                intent.getFloatExtra(EXTRA_DRIVER0, particleControls.driver0Value01),
-                intent.getFloatExtra(EXTRA_DRIVER1, particleControls.driver1Value01),
-                intent.getFloatExtra(EXTRA_POINT_SCALE, particleControls.pointScale),
+                particleControls.copy(
+                    driver0Value01 = intent.getFloatExtra(EXTRA_DRIVER0, particleControls.driver0Value01),
+                    driver1Value01 = intent.getFloatExtra(EXTRA_DRIVER1, particleControls.driver1Value01),
+                    driver2Value01 = intent.getFloatExtra(EXTRA_DRIVER2, particleControls.driver2Value01),
+                    driver3Value01 = intent.getFloatExtra(EXTRA_DRIVER3, particleControls.driver3Value01),
+                    driver4Value01 = intent.getFloatExtra(EXTRA_DRIVER4, particleControls.driver4Value01),
+                    driver5Value01 = intent.getFloatExtra(EXTRA_DRIVER5, particleControls.driver5Value01),
+                    driver6Value01 = intent.getFloatExtra(EXTRA_DRIVER6, particleControls.driver6Value01),
+                    driver7Value01 = intent.getFloatExtra(EXTRA_DRIVER7, particleControls.driver7Value01),
+                    pointScale = intent.getFloatExtra(EXTRA_POINT_SCALE, particleControls.pointScale),
+                    tracerDrawSlotsPerOscillator =
+                        intent.getFloatExtra(
+                            EXTRA_TRACER_DRAW_SLOTS,
+                            particleControls.tracerDrawSlotsPerOscillator,
+                        ),
+                    tracerLifetimeSeconds =
+                        intent.getFloatExtra(
+                            EXTRA_TRACER_LIFETIME_SECONDS,
+                            particleControls.tracerLifetimeSeconds,
+                        ),
+                    tracerCopiesPerSecond =
+                        intent.getFloatExtra(
+                            EXTRA_TRACER_COPIES_PER_SECOND,
+                            particleControls.tracerCopiesPerSecond,
+                        ),
+                    transparencyOpacity =
+                        intent.getFloatExtra(EXTRA_TRANSPARENCY_OPACITY, particleControls.transparencyOpacity),
+                    projectionWorldScale =
+                        intent.getFloatExtra(EXTRA_PROJECTION_WORLD_SCALE, particleControls.projectionWorldScale),
+                ),
+                source,
             )
+        "particle-panel-distance" -> applyRemoteParticleLayerTargetDistance(intent, source)
+        "particle-panel-view-yaw" -> applyRemoteParticleLayerViewYaw(intent, source)
+        "particle-recenter" ->
+            recenterSurfaceParticleSphereOnViewer(
+                inputSource = source,
+                detail = "remoteUiAction=particle-recenter controllerInputRequired=false",
+                requireParticleView = false,
+            )
+        "particle-alias-control" -> resolveSurfaceParticleAliasControl(intent, source)
         "participant-reset" -> {
           store.resetForNewParticipant()
           setWorkflowPanelVisible(true, focus = true, source = source)
@@ -8474,6 +9425,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     ensureRemoteParticipantAndPolarSetup(intent, source)
     store.selectSurface(remoteSurfaceTargetId(intent))
     store.prioritizeConditionForValidation(VALIDATION_DRIVER_PROFILE_ID)
+    setQuestionnaireDueReopensPanel(false, source)
     setWorkflowPanelVisible(false, focus = false, source = "$source-particle-view")
     val block = store.startNextBlock()
     if (block != null) {
@@ -8626,6 +9578,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "particleLayerEntityCreated=${particleLayerEntity != null} particleSurfacePanelReady=$particleSurfacePanelReady " +
             "particleSurfaceConsumerCalled=$particleSurfaceConsumerCalled " +
             "particleSurfaceConsumerSurfaceValid=$particleSurfaceConsumerSurfaceValid " +
+            "nativeSurfaceParticleLayerEnabled=${nativeSurfaceParticleLayerEnabled()} " +
+            "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
             "particleLayerStarted=$particleLayerStarted nativeSurfaceStartRequested=$nativeSurfaceStartRequested " +
             "lastNativeSurfaceStartMask=$lastNativeSurfaceStartMask " +
             "nativeReceiptLibraryLoaded=$nativeReceiptLibraryLoaded nativeReceiptLibraryError=${markerToken(nativeReceiptLibraryError)} " +
@@ -8663,7 +9617,25 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val EXTRA_DELTA_HEIGHT = "delta_height"
     private const val EXTRA_DRIVER0 = "driver0"
     private const val EXTRA_DRIVER1 = "driver1"
+    private const val EXTRA_DRIVER2 = "driver2"
+    private const val EXTRA_DRIVER3 = "driver3"
+    private const val EXTRA_DRIVER4 = "driver4"
+    private const val EXTRA_DRIVER5 = "driver5"
+    private const val EXTRA_DRIVER6 = "driver6"
+    private const val EXTRA_DRIVER7 = "driver7"
+    private const val EXTRA_PARTICLE_ALIAS_PARAMETER_ID = "parameter_id"
+    private const val EXTRA_PARTICLE_ALIAS_VALUE = "value"
+    private const val EXTRA_PARTICLE_ALIAS_VISUAL_DRIVER_ACTIVATION_PROFILE =
+        "visual_driver_activation_profile"
     private const val EXTRA_POINT_SCALE = "point_scale"
+    private const val EXTRA_TRACER_DRAW_SLOTS = "tracer_draw_slots_per_oscillator"
+    private const val EXTRA_TRACER_LIFETIME_SECONDS = "tracer_lifetime_seconds"
+    private const val EXTRA_TRACER_COPIES_PER_SECOND = "tracer_copies_per_second"
+    private const val EXTRA_TRANSPARENCY_OPACITY = "transparency_opacity"
+    private const val EXTRA_PROJECTION_WORLD_SCALE = "projection_world_scale"
+    private const val EXTRA_PARTICLE_LAYER_TARGET_DISTANCE_METERS =
+        "particle_layer_target_distance_meters"
+    private const val EXTRA_PARTICLE_LAYER_VIEW_YAW_DEGREES = "particle_layer_view_yaw_degrees"
     private const val EXTRA_RUN_LABEL = "run_label"
     private const val EXTRA_OPERATOR_ID = "operator_id"
     private const val EXTRA_NOTES = "notes"
@@ -8745,6 +9717,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val SPATIAL_SHOULD_CONSUME_LEFT_RIGHT_INPUT_PROPERTY =
         "debug.rustyquest.spatial_camera_panel.consume_left_right_input"
     private const val SPATIAL_SHOULD_CONSUME_LEFT_RIGHT_INPUT_DEFAULT = false
+    private const val NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY =
+        "debug.rustyquest.spatial.native_surface_particle_layer.enabled"
+    private const val PANEL_SHELL_VISIBLE_PROPERTY =
+        "debug.rustyquest.spatial.panel_shell.visible"
+    private const val PANEL_START_IN_PARTICLE_VIEW_PROPERTY =
+        "debug.rustyquest.spatial.panel.start_in_particle_view"
+    private const val PANEL_LAUNCHER_VISIBLE_PROPERTY =
+        "debug.rustyquest.spatial.panel_launcher.visible"
     private const val SPATIAL_VIRTUAL_ROOM_MODULE_ID = "spatial-sdk-packaged-virtual-room"
     private const val SPATIAL_VIRTUAL_ROOM_ENABLED_PROPERTY =
         "debug.rustyquest.spatial.virtual_room.enabled"
@@ -8773,28 +9753,45 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val PARTICLE_LAYER_PER_EYE_WIDTH_PX = 1024
     private const val PARTICLE_LAYER_WIDTH_PX = PARTICLE_LAYER_PER_EYE_WIDTH_PX * 2
     private const val PARTICLE_LAYER_HEIGHT_PX = 1024
-    private const val PARTICLE_LAYER_TARGET_DISTANCE_METERS = 0.72f
+    private const val PARTICLE_LAYER_TARGET_DISTANCE_METERS = 2.0f
     private const val PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY =
         "debug.rustyquest.spatial_camera_panel.particle_layer.target_distance_meters"
     private const val PARTICLE_LAYER_TARGET_DISTANCE_MIN_METERS = 0.20f
     private const val PARTICLE_LAYER_TARGET_DISTANCE_MAX_METERS = 2.00f
-    private const val PARTICLE_LAYER_WIDTH_METERS = 1.44f
-    private const val PARTICLE_LAYER_HEIGHT_METERS = 1.44f
+    private const val PARTICLE_LAYER_VIEW_YAW_DEGREES = 0.0f
+    private const val PARTICLE_LAYER_VIEW_YAW_PROPERTY =
+        "debug.rustyquest.spatial_camera_panel.particle_layer.view_yaw_degrees"
+    private const val PARTICLE_LAYER_VIEW_YAW_MIN_DEGREES = -45.0f
+    private const val PARTICLE_LAYER_VIEW_YAW_MAX_DEGREES = 45.0f
+    private const val PARTICLE_LAYER_PANEL_OPACITY = 1.0f
+    private const val PARTICLE_LAYER_PANEL_OPACITY_PROPERTY =
+        "debug.rustyquest.spatial_camera_panel.particle_layer.panel_opacity"
+    private const val PARTICLE_LAYER_PANEL_OPACITY_MIN = 0.0f
+    private const val PARTICLE_LAYER_PANEL_OPACITY_MAX = 1.0f
+    private const val PARTICLE_LAYER_CARRIER_PROPERTY =
+        "debug.rustyquest.spatial_camera_panel.particle_layer.carrier"
+    private const val PARTICLE_LAYER_CARRIER_DEFAULT = "manual-panel-scene-object-custom-mesh"
+    private const val PARTICLE_LAYER_WIDTH_METERS = 5.40f
+    private const val PARTICLE_LAYER_HEIGHT_METERS = 4.00f
+    private const val PARTICLE_LAYER_HORIZONTAL_FOV_SCALE =
+        PARTICLE_LAYER_WIDTH_METERS / PARTICLE_LAYER_HEIGHT_METERS
     private const val PARTICLE_LAYER_WIDTH_PER_DISTANCE =
         PARTICLE_LAYER_WIDTH_METERS / PARTICLE_LAYER_TARGET_DISTANCE_METERS
     private const val PARTICLE_LAYER_HEIGHT_PER_DISTANCE =
         PARTICLE_LAYER_HEIGHT_METERS / PARTICLE_LAYER_TARGET_DISTANCE_METERS
     private const val PARTICLE_LAYER_DIMENSION_MIN_METERS = 0.20f
-    private const val PARTICLE_LAYER_DIMENSION_MAX_METERS = 3.00f
-    private const val PARTICLE_LAYER_SURFACE_DIMENSION_MAX_METERS = 4.00f
-    private const val PARTICLE_LAYER_SURFACE_OVERSCAN_SCALE = 1.35f
+    private const val PARTICLE_LAYER_WIDTH_MAX_METERS = 5.40f
+    private const val PARTICLE_LAYER_HEIGHT_MAX_METERS = 4.00f
+    private const val PARTICLE_LAYER_SURFACE_WIDTH_MAX_METERS = 5.40f
+    private const val PARTICLE_LAYER_SURFACE_HEIGHT_MAX_METERS = 4.00f
+    private const val PARTICLE_LAYER_SURFACE_OVERSCAN_SCALE = 1.00f
     private const val PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY =
         "debug.rustyquest.spatial_camera_panel.particle_layer.surface_overscan_scale"
     private const val PARTICLE_LAYER_SURFACE_OVERSCAN_MIN_SCALE = 1.00f
-    private const val PARTICLE_LAYER_SURFACE_OVERSCAN_MAX_SCALE = 2.25f
+    private const val PARTICLE_LAYER_SURFACE_OVERSCAN_MAX_SCALE = 1.00f
     private const val PARTICLE_LAYER_X_METERS = 0.0f
     private const val PARTICLE_LAYER_Y_METERS = 1.22f
-    private const val PARTICLE_LAYER_Z_METERS = -0.72f
+    private const val PARTICLE_LAYER_Z_METERS = -2.0f
     private const val PARTICLE_LAYER_PARTICLE_COUNT = 2048
     private const val PARTICLE_LAYER_FRAME_COUNT = 0
     private const val PARTICLE_LAYER_Z_INDEX = 8
@@ -8811,6 +9808,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val PARTICLE_LAYER_VIEW_ORIGIN_METERS = "0.0;0.0;2.0"
     private const val PARTICLE_LAYER_VIEW_ORIGIN_YAW_DEGREES = "180.0"
     private const val PARTICLE_LAYER_PROJECTION_MARKER_INTERVAL_MS = 900L
+    private const val CONTROLLER_TRIGGER_PRESS_THRESHOLD = 0.65f
+    private const val SURFACE_PARTICLE_RECENTER_ACCEPTED_BIT = 1L shl 5
     private const val EXTERNAL_SWAPCHAIN_PROBE_PROPERTY =
         "debug.rustyquest.spatial.external_swapchain_probe"
     private const val EXTERNAL_SWAPCHAIN_PROBE_CYCLES_PROPERTY =

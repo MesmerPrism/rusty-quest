@@ -58,6 +58,14 @@ const PUBLIC_MULTISTACK_STATIC_MARKER_FIELDS: &str = concat!(
         "publicMultiStackPassExecutionReady=false ",
         "publicMultiStackOpaqueGuideShaderEnv=RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER ",
         "publicMultiStackOpaqueProjectionShaderEnv=RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER ",
+        "publicMultiStackPrivateSurfaceParticleHook=generic-build-time-private-surface-particle-hook ",
+        "publicMultiStackPrivateSurfaceParticleProfileEnv=RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE ",
+        "publicMultiStackPrivateSurfaceParticleShaderEnv=RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER ",
+        "publicMultiStackPrivateSurfaceParticlePayloadDirEnv=RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR ",
+        "publicMultiStackPrivateSurfaceParticleMarkerPrefixEnv=RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX ",
+        "publicMultiStackPrivateSurfaceParticleMetadataMode=build-inputs-only ",
+        "publicMultiStackPrivateSurfaceParticleMetadataValidationScope=public-build-hook ",
+        "publicMultiStackPrivateSurfaceParticlePublicDefaultActive=false ",
         "publicMultiStackLayerManifest=0:final,1:opaque-analysis0-slot,2:public-guide-blur,",
         "3:opaque-analysis1-slot,4:public-post-blur-guide,",
         "5:opaque-projection-slot,6:public-depth-diagnostic"
@@ -67,7 +75,7 @@ pub(crate) fn public_multistack_marker_fields() -> String {
     let passthrough_fields = spatial_native_passthrough_marker_fields();
     let depth_fields = spatial_environment_depth_marker_fields();
     format!(
-        "{} {} {} publicGuideBlurShaderCompiled={} publicGuideBlurShaderBytes={} publicMultiStackOpaqueGuideShaderCompiled={} publicMultiStackOpaqueGuideShaderBytes={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackOpaqueGuideShaderPassVariantsCompiled={} publicMultiStackOpaqueGuideShaderPassByteCounts={} publicMultiStackOpaqueProjectionShaderCompiled={} publicMultiStackOpaqueProjectionShaderBytes={} publicMultiStackOpaquePayloadExecutionReady=false",
+        "{} {} {} publicGuideBlurShaderCompiled={} publicGuideBlurShaderBytes={} publicMultiStackOpaqueGuideShaderCompiled={} publicMultiStackOpaqueGuideShaderBytes={} publicMultiStackOpaqueGuideShaderPassCount={} publicMultiStackOpaqueGuideShaderPassVariantsCompiled={} publicMultiStackOpaqueGuideShaderPassByteCounts={} publicMultiStackOpaqueProjectionShaderCompiled={} publicMultiStackOpaqueProjectionShaderBytes={} publicMultiStackOpaquePayloadExecutionReady=false publicMultiStackPrivateSurfaceParticleProfileConfigured={} publicMultiStackPrivateSurfaceParticleShaderConfigured={} publicMultiStackPrivateSurfaceParticlePayloadDirConfigured={} publicMultiStackPrivateSurfaceParticleMarkerPrefixConfigured={} publicMultiStackPrivateSurfaceParticleMetadataActive={} publicMultiStackPrivateSurfaceParticleExecutableInputsConfigured={} publicMultiStackPrivateSurfaceParticlePayloadActive={} publicMultiStackPrivateSurfaceParticleRendererStatus={} publicMultiStackPrivateSurfaceParticleExecutionReady={}",
         PUBLIC_MULTISTACK_STATIC_MARKER_FIELDS,
         passthrough_fields,
         depth_fields,
@@ -80,7 +88,40 @@ pub(crate) fn public_multistack_marker_fields() -> String {
         opaque_guide_shader_pass_byte_counts_marker(),
         bool_marker(OPAQUE_PROJECTION_SHADER_COMPILED),
         OPAQUE_PROJECTION_SHADER_BYTE_COUNT,
+        bool_marker(PRIVATE_SURFACE_PARTICLE_PROFILE_CONFIGURED),
+        bool_marker(PRIVATE_SURFACE_PARTICLE_SHADER_CONFIGURED),
+        bool_marker(PRIVATE_SURFACE_PARTICLE_PAYLOAD_DIR_CONFIGURED),
+        bool_marker(PRIVATE_SURFACE_PARTICLE_MARKER_PREFIX_CONFIGURED),
+        bool_marker(private_surface_particle_any_configured()),
+        bool_marker(private_surface_particle_executable_inputs_configured()),
+        bool_marker(PRIVATE_SURFACE_PARTICLE_STAGED_PAYLOAD_READY),
+        private_surface_particle_renderer_status(),
+        bool_marker(PRIVATE_SURFACE_PARTICLE_STAGED_PAYLOAD_READY),
     )
+}
+
+fn private_surface_particle_any_configured() -> bool {
+    PRIVATE_SURFACE_PARTICLE_PROFILE_CONFIGURED
+        || PRIVATE_SURFACE_PARTICLE_SHADER_CONFIGURED
+        || PRIVATE_SURFACE_PARTICLE_PAYLOAD_DIR_CONFIGURED
+        || PRIVATE_SURFACE_PARTICLE_MARKER_PREFIX_CONFIGURED
+}
+
+fn private_surface_particle_executable_inputs_configured() -> bool {
+    PRIVATE_SURFACE_PARTICLE_PROFILE_CONFIGURED
+        && PRIVATE_SURFACE_PARTICLE_SHADER_CONFIGURED
+        && PRIVATE_SURFACE_PARTICLE_PAYLOAD_DIR_CONFIGURED
+        && PRIVATE_SURFACE_PARTICLE_MARKER_PREFIX_CONFIGURED
+}
+
+fn private_surface_particle_renderer_status() -> &'static str {
+    if PRIVATE_SURFACE_PARTICLE_STAGED_PAYLOAD_READY {
+        "main-draw-overlay-public-hand-anchor-fallback"
+    } else if private_surface_particle_any_configured() {
+        "metadata-only-private-renderer-public-hand-anchor-fallback"
+    } else {
+        "public-default-no-private-surface-particle-inputs"
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -166,6 +207,27 @@ mod tests {
         assert!(fields.contains("publicMultiStackPassExecutionReady=false"));
         assert!(fields.contains("RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER"));
         assert!(fields.contains("RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER"));
+        assert!(fields.contains("RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE"));
+        assert!(fields.contains("RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER"));
+        assert!(fields.contains("RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR"));
+        assert!(fields.contains("RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX"));
+        assert!(fields.contains(
+            "publicMultiStackPrivateSurfaceParticleHook=generic-build-time-private-surface-particle-hook"
+        ));
+        assert!(
+            fields.contains("publicMultiStackPrivateSurfaceParticleMetadataMode=build-inputs-only")
+        );
+        assert!(fields.contains(
+            "publicMultiStackPrivateSurfaceParticleMetadataValidationScope=public-build-hook"
+        ));
+        assert!(fields.contains(&format!(
+            "publicMultiStackPrivateSurfaceParticlePayloadActive={}",
+            bool_marker(PRIVATE_SURFACE_PARTICLE_STAGED_PAYLOAD_READY)
+        )));
+        assert!(fields.contains(&format!(
+            "publicMultiStackPrivateSurfaceParticleRendererStatus={}",
+            private_surface_particle_renderer_status()
+        )));
         assert!(fields.contains(&format!(
             "publicMultiStackOpaqueGuideShaderCompiled={}",
             bool_marker(OPAQUE_GUIDE_SHADER_COMPILED)
@@ -189,6 +251,34 @@ mod tests {
             "publicMultiStackOpaqueProjectionShaderBytes={OPAQUE_PROJECTION_SHADER_BYTE_COUNT}"
         )));
         assert!(fields.contains("publicMultiStackOpaquePayloadExecutionReady=false"));
+        assert!(fields.contains(&format!(
+            "publicMultiStackPrivateSurfaceParticleProfileConfigured={}",
+            bool_marker(PRIVATE_SURFACE_PARTICLE_PROFILE_CONFIGURED)
+        )));
+        assert!(fields.contains(&format!(
+            "publicMultiStackPrivateSurfaceParticleShaderConfigured={}",
+            bool_marker(PRIVATE_SURFACE_PARTICLE_SHADER_CONFIGURED)
+        )));
+        assert!(fields.contains(&format!(
+            "publicMultiStackPrivateSurfaceParticlePayloadDirConfigured={}",
+            bool_marker(PRIVATE_SURFACE_PARTICLE_PAYLOAD_DIR_CONFIGURED)
+        )));
+        assert!(fields.contains(&format!(
+            "publicMultiStackPrivateSurfaceParticleMarkerPrefixConfigured={}",
+            bool_marker(PRIVATE_SURFACE_PARTICLE_MARKER_PREFIX_CONFIGURED)
+        )));
+        assert!(fields.contains(&format!(
+            "publicMultiStackPrivateSurfaceParticleMetadataActive={}",
+            bool_marker(private_surface_particle_any_configured())
+        )));
+        assert!(fields.contains(&format!(
+            "publicMultiStackPrivateSurfaceParticleExecutableInputsConfigured={}",
+            bool_marker(private_surface_particle_executable_inputs_configured())
+        )));
+        assert!(fields.contains(&format!(
+            "publicMultiStackPrivateSurfaceParticleExecutionReady={}",
+            bool_marker(PRIVATE_SURFACE_PARTICLE_STAGED_PAYLOAD_READY)
+        )));
         assert!(fields.contains("publicMultiStackDownstreamPayloadActive=false"));
         assert!(!fields.contains("publicMultiStackDownstreamPayloadActive=true"));
         assert_eq!(

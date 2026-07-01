@@ -10,6 +10,13 @@ param(
     [string]$OpaqueGuideShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER,
     [string]$OpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER,
     [string]$OpaqueProjectionEffect = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT,
+    [string]$PrivateSurfaceParticleProfilePath = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE,
+    [string]$PrivateSurfaceParticleShader = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER,
+    [string]$PrivateSurfaceParticlePayloadDir = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR,
+    [string]$PrivateSurfaceParticleMarkerPrefix = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX,
+    [string]$AppId = $env:RUSTY_QUEST_SPATIAL_APP_ID,
+    [string]$AppLabel = $env:RUSTY_QUEST_SPATIAL_APP_LABEL,
+    [string]$ApkFileName = $env:RUSTY_QUEST_SPATIAL_APK_FILE_NAME,
     [string]$OutDir = ""
 )
 
@@ -32,6 +39,25 @@ function Get-FileSha256 {
     $sha = [System.Security.Cryptography.SHA256]::Create()
     try {
         $bytes = [System.IO.File]::ReadAllBytes((Resolve-Path -LiteralPath $Path))
+        return ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
+function Get-DirectorySha256 {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    $root = (Resolve-Path -LiteralPath $Path).Path.TrimEnd([char[]]@('\', '/'))
+    $entries = Get-ChildItem -LiteralPath $root -Recurse -File |
+        Sort-Object FullName |
+        ForEach-Object {
+            $relative = $_.FullName.Substring($root.Length).TrimStart([char[]]@('\', '/')).Replace("\", "/")
+            "$relative=$((Get-FileSha256 -Path $_.FullName))"
+        }
+    $manifest = ($entries -join "`n")
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($manifest)
         return ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
     } finally {
         $sha.Dispose()
@@ -103,6 +129,112 @@ function Resolve-OptionalFilePath {
     return (Resolve-Path -LiteralPath $Path).Path
 }
 
+function Resolve-OptionalDirectoryPath {
+    param(
+        [string]$Path,
+        [Parameter(Mandatory=$true)][string]$Label
+    )
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ""
+    }
+    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
+        throw "$Label not found: $Path"
+    }
+    return (Resolve-Path -LiteralPath $Path).Path
+}
+
+function Test-PrivateSurfaceParticleProfile {
+    param([Parameter(Mandatory=$true)][string]$Path)
+    $profile = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
+    $schemaId = [string]$profile.schema_id
+    if ([string]::IsNullOrWhiteSpace($schemaId)) {
+        throw "Private surface-particle profile must declare schema_id: $Path"
+    }
+    if ($schemaId.StartsWith("rusty.morphospace.", [System.StringComparison]::Ordinal)) {
+        throw "Private surface-particle profile must not use rusty.morphospace schema ids: $schemaId"
+    }
+    if ($null -ne $profile.target_runtime -and [string]$profile.target_runtime -ne "rusty-quest-spatial-camera-panel-android") {
+        throw "Private surface-particle profile target_runtime must be rusty-quest-spatial-camera-panel-android"
+    }
+    if ($null -eq $profile.runtime_parameter_packet) {
+        throw "Private surface-particle profile must declare runtime_parameter_packet"
+    }
+    if ($profile.runtime_parameter_packet.packet_is_not_data_plane -ne $true) {
+        throw "Private surface-particle runtime packet must declare packet_is_not_data_plane=true"
+    }
+    $allowed = @($profile.runtime_parameter_packet.allowed_packet_fields | ForEach-Object { [string]$_ })
+    $forbidden = @($profile.runtime_parameter_packet.forbidden_packet_fields | ForEach-Object { [string]$_ })
+    foreach ($payload in @(
+            "particle_output_rows",
+            "phase_state_rows",
+            "neighbor_graph_rows",
+            "tracer_state_rows",
+            "texture_arrays",
+            "per-frame-expanded-particle-lists"
+        )) {
+        if ($forbidden -notcontains $payload) {
+            throw "Private surface-particle profile forbidden packet fields missing: $payload"
+        }
+        if ($allowed -contains $payload) {
+            throw "Private surface-particle profile allowed packet fields must not include: $payload"
+        }
+    }
+    if ($null -ne $profile.public_build_inputs) {
+        $expected = @{
+            profile_env = "RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE"
+            shader_env = "RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER"
+            payload_dir_env = "RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR"
+            marker_prefix_env = "RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX"
+        }
+        foreach ($entry in $expected.GetEnumerator()) {
+            $actual = $profile.public_build_inputs.PSObject.Properties[$entry.Key].Value
+            if ([string]$actual -ne $entry.Value) {
+                throw "Private surface-particle profile public_build_inputs.$($entry.Key) must be $($entry.Value)"
+            }
+        }
+    }
+}
+
+function Get-PrivateSurfaceParticlePayloadInfo {
+    param([string]$Path)
+    $result = [ordered]@{
+        files_present = $false
+        positions_bytes = 0
+        normals_bytes = 0
+        aux0_bytes = 0
+        mask_texture_bytes = 0
+    }
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return [pscustomobject]$result
+    }
+    $expected = @(
+        @{ Key = "positions_bytes"; Name = "private_particle_positions.f32.bin" },
+        @{ Key = "normals_bytes"; Name = "private_particle_normals.f32.bin" },
+        @{ Key = "aux0_bytes"; Name = "private_particle_aux0.u32.bin" },
+        @{ Key = "mask_texture_bytes"; Name = "private_particle_mask_texture.r8.bin" }
+    )
+    foreach ($entry in $expected) {
+        $file = Join-Path $Path $entry.Name
+        if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+            throw "Private surface-particle payload file missing: $file"
+        }
+        $result[$entry.Key] = (Get-Item -LiteralPath $file).Length
+    }
+    $result.files_present = $true
+    return [pscustomobject]$result
+}
+
+function Test-MarkerPrefix {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return ""
+    }
+    if ($Value -notmatch "^[A-Z0-9_]{3,80}$") {
+        throw "PrivateSurfaceParticleMarkerPrefix must be an uppercase marker token, got: $Value"
+    }
+    return $Value
+}
+
 function Test-ProjectionEffectValue {
     param([string]$Value)
     if ([string]::IsNullOrWhiteSpace($Value)) {
@@ -119,6 +251,48 @@ function Test-ProjectionEffectValue {
         }
     }
     return $true
+}
+
+function Resolve-SpatialAppId {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return "io.github.mesmerprism.rustyquest.spatial_camera_panel"
+    }
+    $trimmed = $Value.Trim()
+    if ($trimmed -notmatch "^[a-zA-Z][a-zA-Z0-9_]*(\.[a-zA-Z][a-zA-Z0-9_]*)+$") {
+        throw "AppId must be a valid Android application id, got: $Value"
+    }
+    return $trimmed
+}
+
+function Resolve-SpatialAppLabel {
+    param([string]$Value)
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return "Rusty Quest Spatial Camera Panel"
+    }
+    $trimmed = $Value.Trim()
+    if ($trimmed.Length -gt 80) {
+        throw "AppLabel must be 80 characters or shorter."
+    }
+    return $trimmed
+}
+
+function Resolve-ApkFileName {
+    param(
+        [string]$Value,
+        [Parameter(Mandatory=$true)][string]$ResolvedAppId
+    )
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        if ($ResolvedAppId -eq "io.github.mesmerprism.rustyquest.spatial_camera_panel") {
+            return "rusty-quest-spatial-camera-panel.apk"
+        }
+        return (($ResolvedAppId -replace '[^A-Za-z0-9_.-]+', '-') + ".apk")
+    }
+    $trimmed = $Value.Trim()
+    if ($trimmed -notmatch "^[A-Za-z0-9_.-]+\.apk$") {
+        throw "ApkFileName must be a simple .apk file name, got: $Value"
+    }
+    return $trimmed
 }
 
 function Resolve-Gradle {
@@ -154,6 +328,34 @@ function Resolve-Gradle {
     }
     return $gradleBat
 }
+
+$resolvedPrivateSurfaceParticleProfilePath = Resolve-OptionalFilePath -Path $PrivateSurfaceParticleProfilePath -Label "Private surface-particle profile"
+$resolvedPrivateSurfaceParticleShader = Resolve-OptionalFilePath -Path $PrivateSurfaceParticleShader -Label "Private surface-particle shader"
+$resolvedPrivateSurfaceParticlePayloadDir = Resolve-OptionalDirectoryPath -Path $PrivateSurfaceParticlePayloadDir -Label "Private surface-particle payload directory"
+$resolvedPrivateSurfaceParticleMarkerPrefix = Test-MarkerPrefix -Value $PrivateSurfaceParticleMarkerPrefix
+$resolvedAppId = Resolve-SpatialAppId -Value $AppId
+$resolvedAppLabel = Resolve-SpatialAppLabel -Value $AppLabel
+$resolvedApkFileName = Resolve-ApkFileName -Value $ApkFileName -ResolvedAppId $resolvedAppId
+$privateSurfaceParticleInputsConfigured =
+    (-not [string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleProfilePath)) -or
+    (-not [string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleShader)) -or
+    (-not [string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticlePayloadDir)) -or
+    (-not [string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleMarkerPrefix))
+if ($privateSurfaceParticleInputsConfigured -and [string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleProfilePath)) {
+    throw "Private surface-particle hook inputs require -PrivateSurfaceParticleProfilePath."
+}
+if (-not [string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleProfilePath)) {
+    Test-PrivateSurfaceParticleProfile -Path $resolvedPrivateSurfaceParticleProfilePath
+}
+$privateSurfaceParticlePayloadInfo = Get-PrivateSurfaceParticlePayloadInfo -Path $resolvedPrivateSurfaceParticlePayloadDir
+$privateSurfaceParticleExecutableInputsConfigured =
+    (-not [string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleProfilePath)) -and
+    (-not [string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleShader)) -and
+    (-not [string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticlePayloadDir)) -and
+    (-not [string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleMarkerPrefix))
+$privateSurfaceParticleStagedPayloadReady =
+    $privateSurfaceParticleExecutableInputsConfigured -and
+    $privateSurfaceParticlePayloadInfo.files_present
 
 if ([string]::IsNullOrWhiteSpace($AndroidHome)) {
     throw "ANDROID_HOME or -AndroidHome is required. Activate the Quest/Android toolchain first."
@@ -218,8 +420,8 @@ if ([string]::IsNullOrWhiteSpace($OutDir)) {
 }
 
 New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
-$resolvedTargetRoot = (Resolve-Path $targetRoot).Path.TrimEnd("\")
-$resolvedOutFull = [System.IO.Path]::GetFullPath($OutDir).TrimEnd("\")
+$resolvedTargetRoot = (Resolve-Path $targetRoot).Path.TrimEnd([char[]]@('\'))
+$resolvedOutFull = [System.IO.Path]::GetFullPath($OutDir).TrimEnd([char[]]@('\'))
 if (-not $resolvedOutFull.StartsWith($resolvedTargetRoot + "\", [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "OutDir must be under the repo target directory: $resolvedOutFull"
 }
@@ -260,6 +462,10 @@ $previousPrivateLayerProfile = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAY
 $previousOpaqueGuideShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER
 $previousOpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER
 $previousOpaqueProjectionEffect = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT
+$previousPrivateSurfaceParticleProfile = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE
+$previousPrivateSurfaceParticleShader = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER
+$previousPrivateSurfaceParticlePayloadDir = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR
+$previousPrivateSurfaceParticleMarkerPrefix = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX
 try {
     $env:ANDROID_HOME = $AndroidHome
     $env:ANDROID_NDK_HOME = $NdkHome
@@ -285,6 +491,29 @@ try {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER -ErrorAction SilentlyContinue
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER -ErrorAction SilentlyContinue
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT -ErrorAction SilentlyContinue
+    }
+    if ($privateSurfaceParticleInputsConfigured) {
+        $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE = $resolvedPrivateSurfaceParticleProfilePath
+        if ([string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleShader)) {
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER = $resolvedPrivateSurfaceParticleShader
+        }
+        if ([string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticlePayloadDir)) {
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR = $resolvedPrivateSurfaceParticlePayloadDir
+        }
+        if ([string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleMarkerPrefix)) {
+            Remove-Item Env:\RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX -ErrorAction SilentlyContinue
+        } else {
+            $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX = $resolvedPrivateSurfaceParticleMarkerPrefix
+        }
+    } else {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE -ErrorAction SilentlyContinue
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER -ErrorAction SilentlyContinue
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR -ErrorAction SilentlyContinue
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX -ErrorAction SilentlyContinue
     }
     Invoke-Checked "Spatial Camera Panel native receipt cargo build" $cargoCommand.Source @(
         "build",
@@ -344,6 +573,26 @@ try {
     } else {
         $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT = $previousOpaqueProjectionEffect
     }
+    if ($null -eq $previousPrivateSurfaceParticleProfile) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE = $previousPrivateSurfaceParticleProfile
+    }
+    if ($null -eq $previousPrivateSurfaceParticleShader) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER = $previousPrivateSurfaceParticleShader
+    }
+    if ($null -eq $previousPrivateSurfaceParticlePayloadDir) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR = $previousPrivateSurfaceParticlePayloadDir
+    }
+    if ($null -eq $previousPrivateSurfaceParticleMarkerPrefix) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX = $previousPrivateSurfaceParticleMarkerPrefix
+    }
 }
 $nativeReceiptBuiltLib = Join-Path $nativeReceiptTargetDir "aarch64-linux-android\release\libspatial_camera_panel_native_receipt.so"
 if (-not (Test-Path -LiteralPath $nativeReceiptBuiltLib)) {
@@ -359,10 +608,14 @@ New-Item -ItemType Directory -Force -Path $gradleUserHome | Out-Null
 $previousAndroidHome = $env:ANDROID_HOME
 $previousJavaHome = $env:JAVA_HOME
 $previousGradleUserHome = $env:GRADLE_USER_HOME
+$previousSpatialAppId = $env:RUSTY_QUEST_SPATIAL_APP_ID
+$previousSpatialAppLabel = $env:RUSTY_QUEST_SPATIAL_APP_LABEL
 try {
     $env:ANDROID_HOME = $AndroidHome
     $env:JAVA_HOME = $JavaHome
     $env:GRADLE_USER_HOME = $gradleUserHome
+    $env:RUSTY_QUEST_SPATIAL_APP_ID = $resolvedAppId
+    $env:RUSTY_QUEST_SPATIAL_APP_LABEL = $resolvedAppLabel
     Invoke-Checked "Spatial Camera Panel Gradle build" $gradleBat @(
         "--no-daemon",
         "--console=plain",
@@ -377,6 +630,16 @@ try {
     } else {
         $env:GRADLE_USER_HOME = $previousGradleUserHome
     }
+    if ($null -eq $previousSpatialAppId) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_APP_ID -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_APP_ID = $previousSpatialAppId
+    }
+    if ($null -eq $previousSpatialAppLabel) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_APP_LABEL -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_APP_LABEL = $previousSpatialAppLabel
+    }
 }
 
 $apkSource = Join-Path $appRoot "app\build\outputs\apk\debug\app-debug.apk"
@@ -384,7 +647,7 @@ if (-not (Test-Path -LiteralPath $apkSource)) {
     throw "Gradle build did not produce expected APK: $apkSource"
 }
 
-$apkOut = Join-Path $OutDir "rusty-quest-spatial-camera-panel.apk"
+$apkOut = Join-Path $OutDir $resolvedApkFileName
 Copy-Item -LiteralPath $apkSource -Destination $apkOut -Force
 $sha256 = Get-FileSha256 -Path $apkOut
 $nativeReceiptLibraryPackaged = Test-ZipEntry -ZipPath $apkOut -EntryName $nativeReceiptApkEntry
@@ -394,8 +657,11 @@ if (-not $nativeReceiptLibraryPackaged) {
 
 $manifest = [ordered]@{
     '$schema' = "rusty.quest.spatial_camera_panel_sdk_android.build_manifest.v1"
-    package_name = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
-    activity = "io.github.mesmerprism.rustyquest.spatial_camera_panel/.SpatialCameraPanelActivity"
+    package_name = $resolvedAppId
+    application_id = $resolvedAppId
+    app_label = $resolvedAppLabel
+    activity = "$resolvedAppId/io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialCameraPanelActivity"
+    source_namespace = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
     app_lane = "spatial-camera-panel-android"
     authority = "rusty.quest.spatial_camera_panel_sdk_panel"
     target_runtime = "quest-spatial-sdk-appsystemactivity-panel"
@@ -496,8 +762,45 @@ $manifest = [ordered]@{
     spatial_public_multistack_private_layer_profile_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedPrivateLayerProfilePath)) { "" } else { Get-FileSha256 -Path $resolvedPrivateLayerProfilePath })
     spatial_public_multistack_opaque_guide_shader_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedOpaqueGuideShader)) { "" } else { Get-FileSha256 -Path $resolvedOpaqueGuideShader })
     spatial_public_multistack_opaque_projection_shader_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedOpaqueProjectionShader)) { "" } else { Get-FileSha256 -Path $resolvedOpaqueProjectionShader })
-    native_surface_particle_layer = "VideoSurfacePanelRegistration-native-vulkan-wsi-surface-panel"
+    spatial_surface_private_particle_hook = "generic-build-time-private-surface-particle-hook"
+    spatial_surface_private_particle_public_default = "no-op-private-surface-particle-hook"
+    spatial_surface_private_particle_renderer_status = $(if ($privateSurfaceParticleStagedPayloadReady) { "main-draw-overlay-public-hand-anchor-fallback" } elseif ($privateSurfaceParticleInputsConfigured) { "metadata-only-private-renderer-public-hand-anchor-fallback" } else { "public-default-no-private-surface-particle-inputs" })
+    spatial_surface_private_particle_profile_configured = (-not [string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleProfilePath))
+    spatial_surface_private_particle_shader_configured = (-not [string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleShader))
+    spatial_surface_private_particle_payload_dir_configured = (-not [string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticlePayloadDir))
+    spatial_surface_private_particle_shader_compiled = (-not [string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleShader))
+    spatial_surface_private_particle_payload_files_present = $privateSurfaceParticlePayloadInfo.files_present
+    spatial_surface_private_particle_positions_bytes = $privateSurfaceParticlePayloadInfo.positions_bytes
+    spatial_surface_private_particle_normals_bytes = $privateSurfaceParticlePayloadInfo.normals_bytes
+    spatial_surface_private_particle_aux0_bytes = $privateSurfaceParticlePayloadInfo.aux0_bytes
+    spatial_surface_private_particle_mask_texture_bytes = $privateSurfaceParticlePayloadInfo.mask_texture_bytes
+    spatial_surface_private_particle_staged_payload_ready = $privateSurfaceParticleStagedPayloadReady
+    spatial_surface_private_particle_metadata_mode = "build-inputs-only"
+    spatial_surface_private_particle_metadata_validation_scope = "public-build-hook"
+    spatial_surface_private_particle_metadata_active = $privateSurfaceParticleInputsConfigured
+    spatial_surface_private_particle_executable_inputs_configured = $privateSurfaceParticleExecutableInputsConfigured
+    spatial_surface_private_particle_marker_prefix = $resolvedPrivateSurfaceParticleMarkerPrefix
+    spatial_surface_private_particle_build_env = @(
+        "RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE",
+        "RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER",
+        "RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR",
+        "RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX"
+    )
+    spatial_surface_private_particle_profile_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleProfilePath)) { "" } else { Get-FileSha256 -Path $resolvedPrivateSurfaceParticleProfilePath })
+    spatial_surface_private_particle_shader_sha256 = $(if ([string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticleShader)) { "" } else { Get-FileSha256 -Path $resolvedPrivateSurfaceParticleShader })
+    spatial_surface_private_particle_payload_hash = $(if ([string]::IsNullOrWhiteSpace($resolvedPrivateSurfaceParticlePayloadDir)) { "" } else { Get-DirectorySha256 -Path $resolvedPrivateSurfaceParticlePayloadDir })
+    spatial_surface_private_particle_high_rate_policy = "no-particle-phase-graph-tracer-texture-rows-in-control-plane"
+    native_surface_particle_layer = "PanelSceneObject-custom-mesh-forceSceneTexture-native-vulkan-wsi-surface-panel"
     native_surface_particle_layer_rendering = "native-vulkan-wsi-surface-panel-live-openxr-gpu-skinned-resident-rig-hand-anchor-particles-packed-stereo-left-right"
+    native_surface_particle_layer_renderer_mode = "public-hand-anchor-proof"
+    native_surface_particle_layer_private_renderer_mode = $(if ($privateSurfaceParticleStagedPayloadReady) { "main-draw-overlay-when-staged-payload-ready" } elseif ($privateSurfaceParticleInputsConfigured) { "metadata-only-when-private-inputs-configured" } else { "public-default" })
+    native_surface_particle_layer_private_metadata_mode = "build-inputs-only"
+    native_surface_particle_layer_private_metadata_active = $privateSurfaceParticleInputsConfigured
+    native_surface_particle_layer_private_staged_payload_ready = $privateSurfaceParticleStagedPayloadReady
+    native_surface_particle_layer_private_payload_active = $privateSurfaceParticleStagedPayloadReady
+    native_surface_particle_layer_private_execution_ready = $privateSurfaceParticleStagedPayloadReady
+    native_surface_particle_layer_private_draw_visible = $privateSurfaceParticleStagedPayloadReady
+    native_surface_particle_layer_private_tracers_active = $false
     native_surface_particle_layer_jni_bridge = "SpatialCameraPanelActivity.nativeStartSurfaceParticleLayer"
     native_surface_particle_layer_stop_bridge = "SpatialCameraPanelActivity.nativeStopSurfaceParticleLayer"
     native_surface_particle_layer_parameter_bridge = "SpatialCameraPanelActivity.nativeUpdateSurfaceParticleParameters"
@@ -608,7 +911,7 @@ $manifest = [ordered]@{
         "projectionLockedParticleSurface=true",
         "placementMode=viewer-pose-projection-locked-quad",
         "targetProjectionSpace=spatial-sdk-panel-plane-perspective-projection",
-        "projectionContentMappingMode=world-to-spatial-sdk-panel-plane-left-right",
+        "projectionContentMappingMode=spatial-world-to-panel-plane-left-right",
         "first-frame-presented"
     )
     native_surface_particle_layer_shape = [ordered]@{

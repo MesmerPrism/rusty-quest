@@ -53,6 +53,17 @@ static LIVE_HAND_PANEL_FORWARD_Y_BITS: AtomicU32 = AtomicU32::new(0.0_f32.to_bit
 static LIVE_HAND_PANEL_FORWARD_Z_BITS: AtomicU32 = AtomicU32::new((-1.0_f32).to_bits());
 static LIVE_HAND_PANEL_TARGET_DISTANCE_BITS: AtomicU32 = AtomicU32::new(0.72_f32.to_bits());
 static LIVE_HAND_PANEL_BASIS_VALID: AtomicBool = AtomicBool::new(false);
+static LIVE_HAND_BASIS_MODE_BITS: AtomicU32 = AtomicU32::new(LIVE_HAND_BASIS_MODE_DISABLED);
+
+const LIVE_HAND_BASIS_MODE_DISABLED: u32 = 0;
+const LIVE_HAND_BASIS_MODE_VIEWER_RELATIVE_PANEL: u32 = 1;
+const LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD: u32 = 2;
+const LIVE_HAND_COORDINATE_MAPPING_VIEWER_PANEL: &str =
+    "viewer-relative-openxr-to-spatial-sdk-panel-basis";
+const LIVE_HAND_COORDINATE_MAPPING_SPATIAL_VIEWER_WORLD: &str =
+    "openxr-local-floor-to-spatial-sdk-viewer-world-registration";
+const LIVE_HAND_COORDINATE_MAPPING_RAW_SCENE: &str =
+    "raw-openxr-local-floor-to-spatial-sdk-scene-fallback";
 
 extern "C" {
     fn clock_gettime(clock_id: libc::c_int, time_spec: *mut libc::timespec) -> libc::c_int;
@@ -164,18 +175,52 @@ impl Default for LiveHandJointStatus {
 
 impl LiveHandJointStatus {
     pub(crate) fn marker_fields(&self) -> String {
+        let (
+            placement_mode,
+            view_pose_source,
+            panel_basis_source,
+            camera_realign_each_frame,
+            correct_position_size_proof,
+        ) = match self.coordinate_mapping {
+            LIVE_HAND_COORDINATE_MAPPING_VIEWER_PANEL => (
+                "viewer-relative-openxr-to-spatial-sdk-panel-plane",
+                "xrLocateViews",
+                "Scene.getViewerPose-panel-plane",
+                true,
+                "spatial-sdk-panel-plane-projection",
+            ),
+            LIVE_HAND_COORDINATE_MAPPING_SPATIAL_VIEWER_WORLD => (
+                "openxr-local-floor-to-spatial-sdk-viewer-world",
+                "xrLocateViews+Scene.getViewerPose-fixed-registration",
+                "Scene.getViewerPose-spatial-world-basis",
+                false,
+                "spatial-sdk-world-space-joint-rows-fixed-view-registration",
+            ),
+            _ => (
+                "raw-openxr-local-floor-to-spatial-sdk-scene",
+                "disabled-fixed-raw-scene-transform",
+                "disabled-fixed-raw-scene-transform",
+                false,
+                "spatial-sdk-world-space-joint-rows-raw-scene-fallback",
+            ),
+        };
         format!(
-            "liveHandJointInputReady={} liveHandJointFrameReady={} liveHandJointFrameSource=XR_EXT_hand_tracking liveHandJointBufferPath=host-visible-storage-buffer liveHandJointGpuInputPath=recorded-compatible-compact-joint-pose-gpu-skinning liveHandCompactUploadEquivalent=true liveHandCompactFrameGate=native-equivalent-21-runtime-5-tip liveHandRuntimeJointPoseCount={} liveHandTipLengthCount={} liveHandJointPlacementMode=viewer-relative-openxr-to-spatial-sdk-panel-plane liveHandCoordinateTransform={} liveHandSceneTransformSource=runtime-hotload-android-property liveHandSceneOffsetProperties={};{};{} liveHandSceneYawProperty={} liveHandSceneHorizontalSignProperty={} liveHandSceneOffsetDefaultM=0.000;0.000;2.000 liveHandSceneYawDefaultDegrees=180.000 liveHandSceneHorizontalSignDefault=-1.000 liveHandViewPoseSource=xrLocateViews liveHandPanelBasisSource=Scene.getViewerPose-panel-plane liveHandCorrectPositionSizeProof=spatial-sdk-panel-plane-projection liveHandReferenceSpaceType={} liveHandPoseOrientationUpload=true liveHandJointStatusX=position-valid liveHandJointStatusY=pose-valid liveHandJointStatusW=position-tracked liveHandSkinningValidityPolicy=native-compact-frame-gate-trust-all-weights liveHandTimeSource={} liveHandTimespecConverterResolved={} liveHandExtensionFunctionsResolved={} liveHandTrackingSystemSupported={} liveHandReferenceSpaceReady={} liveHandTrackerReady={} liveHandViewPoseReady={} liveHandViewLocateStatus={} liveHandLeftActive={} liveHandRightActive={} liveHandUsingBoth={} liveHandActiveHandCount={} liveHandVisualizableJointCount={} liveHandFrameIndex={} liveHandTimestampNs={} liveHandLeftLocateStatus={} liveHandRightLocateStatus={} liveHandFallbackToReplay={} liveHandFallbackReason={}",
+            "liveHandJointInputReady={} liveHandJointFrameReady={} liveHandJointFrameSource=XR_EXT_hand_tracking liveHandJointBufferPath=host-visible-storage-buffer liveHandJointGpuInputPath=recorded-compatible-compact-joint-pose-gpu-skinning liveHandCompactUploadEquivalent=true liveHandCompactFrameGate=native-equivalent-21-runtime-5-tip liveHandRuntimeJointPoseCount={} liveHandTipLengthCount={} liveHandJointPlacementMode={} liveHandCoordinateTransform={} liveHandSceneTransformSource=runtime-hotload-android-property liveHandSceneOffsetProperties={};{};{} liveHandSceneYawProperty={} liveHandSceneHorizontalSignProperty={} liveHandSceneOffsetDefaultM=0.000;0.000;2.000 liveHandSceneYawDefaultDegrees=180.000 liveHandSceneHorizontalSignDefault=-1.000 liveHandViewPoseSource={} liveHandPanelBasisSource={} liveHandCameraRealignEachFrame={} liveHandCorrectPositionSizeProof={} liveHandReferenceSpaceType={} liveHandPoseOrientationUpload=true liveHandJointStatusX=position-valid liveHandJointStatusY=pose-valid liveHandJointStatusW=position-tracked liveHandSkinningValidityPolicy=native-compact-frame-gate-trust-all-weights liveHandTimeSource={} liveHandTimespecConverterResolved={} liveHandExtensionFunctionsResolved={} liveHandTrackingSystemSupported={} liveHandReferenceSpaceReady={} liveHandTrackerReady={} liveHandViewPoseReady={} liveHandViewLocateStatus={} liveHandLeftActive={} liveHandRightActive={} liveHandUsingBoth={} liveHandActiveHandCount={} liveHandVisualizableJointCount={} liveHandFrameIndex={} liveHandTimestampNs={} liveHandLeftLocateStatus={} liveHandRightLocateStatus={} liveHandFallbackToReplay={} liveHandFallbackReason={}",
             bool_token(self.input_ready),
             bool_token(self.frame_ready),
             self.compact_runtime_joint_pose_count,
             self.compact_tip_length_count,
+            placement_mode,
             self.coordinate_mapping,
             LIVE_HAND_SCENE_OFFSET_X_PROPERTY,
             LIVE_HAND_SCENE_OFFSET_Y_PROPERTY,
             LIVE_HAND_SCENE_OFFSET_Z_PROPERTY,
             LIVE_HAND_SCENE_YAW_DEGREES_PROPERTY,
             LIVE_HAND_SCENE_HORIZONTAL_SIGN_PROPERTY,
+            view_pose_source,
+            panel_basis_source,
+            bool_token(camera_realign_each_frame),
+            correct_position_size_proof,
             self.reference_space_type,
             self.time_source,
             bool_token(self.timespec_converter_resolved),
@@ -218,6 +263,7 @@ pub(crate) struct LiveHandJointInput {
     convert_timespec_time_to_time: Option<openxr_sys::pfn::ConvertTimespecTimeToTimeKHR>,
     local_space: openxr_sys::Space,
     trackers: [Option<openxr_sys::HandTrackerEXT>; LIVE_HAND_COUNT],
+    viewer_world_registration: Option<LiveHandWorldRegistration>,
     frame_counter: u32,
     status: LiveHandJointStatus,
     status_log_count: u32,
@@ -275,6 +321,7 @@ impl LiveHandJointInput {
             convert_timespec_time_to_time: typed_function(convert_timespec_time_to_time.function),
             local_space: openxr_sys::Space::NULL,
             trackers: [None, None],
+            viewer_world_registration: None,
             frame_counter: 0,
             status: LiveHandJointStatus {
                 extension_functions_resolved,
@@ -391,6 +438,7 @@ impl LiveHandJointInput {
             convert_timespec_time_to_time: None,
             local_space: openxr_sys::Space::NULL,
             trackers: [None, None],
+            viewer_world_registration: None,
             frame_counter: 0,
             status: LiveHandJointStatus {
                 fallback_reason: reason.to_string(),
@@ -428,11 +476,9 @@ impl LiveHandJointInput {
         let scene_transform = current_live_hand_scene_transform();
         let view_mapping = self.current_view_panel_mapping(xr_time);
         self.status.view_pose_ready = view_mapping.is_some();
-        self.status.coordinate_mapping = if view_mapping.is_some() {
-            "viewer-relative-openxr-to-spatial-sdk-panel-basis"
-        } else {
-            "raw-openxr-local-floor-to-spatial-sdk-scene-fallback"
-        };
+        self.status.coordinate_mapping = view_mapping
+            .map(|mapping| mapping.coordinate_mapping)
+            .unwrap_or(LIVE_HAND_COORDINATE_MAPPING_RAW_SCENE);
 
         let left = self.locate_hand(0, xr_time, &mut rows, scene_transform, view_mapping);
         let right = self.locate_hand(1, xr_time, &mut rows, scene_transform, view_mapping);
@@ -552,9 +598,35 @@ impl LiveHandJointInput {
         );
         let map_orientation =
             multiply_quat_xyzw(panel_orientation, inverse_quat_xyzw(view_orientation));
+        if panel_basis.mode == LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD {
+            let (registration, registration_status) =
+                if let Some(registration) = self.viewer_world_registration {
+                    (registration, "registration-ready")
+                } else {
+                    let registration = LiveHandWorldRegistration {
+                        raw_origin: view_position,
+                        raw_right,
+                        raw_up,
+                        raw_forward,
+                        scene_origin: panel_basis.center,
+                        scene_right: panel_basis.right,
+                        scene_up: panel_basis.up,
+                        scene_forward: panel_basis.forward,
+                        map_orientation,
+                    };
+                    self.viewer_world_registration = Some(registration);
+                    (registration, "registration-captured")
+                };
+            self.status.view_locate_status = format!(
+                "ready-view-count-{}-spatial-viewer-world-{}",
+                view_count_usize, registration_status
+            );
+            return Some(registration.as_mapping());
+        }
         self.status.view_locate_status =
             format!("ready-view-count-{}-panel-basis-ready", view_count_usize);
         Some(LiveHandViewPanelMapping {
+            coordinate_mapping: LIVE_HAND_COORDINATE_MAPPING_VIEWER_PANEL,
             view_position,
             raw_right,
             raw_up,
@@ -892,10 +964,12 @@ struct LiveHandPanelBasis {
     up: [f32; 3],
     forward: [f32; 3],
     target_distance_meters: f32,
+    mode: u32,
 }
 
 #[derive(Clone, Copy, Debug)]
 struct LiveHandViewPanelMapping {
+    coordinate_mapping: &'static str,
     view_position: [f32; 3],
     raw_right: [f32; 3],
     raw_up: [f32; 3],
@@ -905,6 +979,36 @@ struct LiveHandViewPanelMapping {
     panel_up: [f32; 3],
     panel_forward: [f32; 3],
     map_orientation: [f32; 4],
+}
+
+#[derive(Clone, Copy, Debug)]
+struct LiveHandWorldRegistration {
+    raw_origin: [f32; 3],
+    raw_right: [f32; 3],
+    raw_up: [f32; 3],
+    raw_forward: [f32; 3],
+    scene_origin: [f32; 3],
+    scene_right: [f32; 3],
+    scene_up: [f32; 3],
+    scene_forward: [f32; 3],
+    map_orientation: [f32; 4],
+}
+
+impl LiveHandWorldRegistration {
+    fn as_mapping(self) -> LiveHandViewPanelMapping {
+        LiveHandViewPanelMapping {
+            coordinate_mapping: LIVE_HAND_COORDINATE_MAPPING_SPATIAL_VIEWER_WORLD,
+            view_position: self.raw_origin,
+            raw_right: self.raw_right,
+            raw_up: self.raw_up,
+            raw_forward: self.raw_forward,
+            scene_eye_position: self.scene_origin,
+            panel_right: self.scene_right,
+            panel_up: self.scene_up,
+            panel_forward: self.scene_forward,
+            map_orientation: self.map_orientation,
+        }
+    }
 }
 
 pub(crate) fn store_live_hand_panel_basis(
@@ -930,7 +1034,48 @@ pub(crate) fn store_live_hand_panel_basis(
     LIVE_HAND_PANEL_FORWARD_Y_BITS.store(forward[1].to_bits(), Ordering::Relaxed);
     LIVE_HAND_PANEL_FORWARD_Z_BITS.store(forward[2].to_bits(), Ordering::Relaxed);
     LIVE_HAND_PANEL_TARGET_DISTANCE_BITS.store(
-        target_distance_meters.clamp(0.20, 1.50).to_bits(),
+        target_distance_meters.clamp(0.20, 2.00).to_bits(),
+        Ordering::Relaxed,
+    );
+    LIVE_HAND_BASIS_MODE_BITS.store(
+        if valid {
+            LIVE_HAND_BASIS_MODE_VIEWER_RELATIVE_PANEL
+        } else {
+            LIVE_HAND_BASIS_MODE_DISABLED
+        },
+        Ordering::Relaxed,
+    );
+    LIVE_HAND_PANEL_BASIS_VALID.store(valid, Ordering::Relaxed);
+}
+
+pub(crate) fn store_live_hand_spatial_viewer_basis(
+    center: [f32; 3],
+    right: [f32; 3],
+    up: [f32; 3],
+    valid: bool,
+) {
+    let right = normalize_vec3_or(right, [1.0, 0.0, 0.0]);
+    let up = normalize_vec3_or(up, [0.0, 1.0, 0.0]);
+    let forward = normalize_vec3_or(cross_vec3(up, right), [0.0, 0.0, -1.0]);
+    LIVE_HAND_PANEL_CENTER_X_BITS.store(center[0].to_bits(), Ordering::Relaxed);
+    LIVE_HAND_PANEL_CENTER_Y_BITS.store(center[1].to_bits(), Ordering::Relaxed);
+    LIVE_HAND_PANEL_CENTER_Z_BITS.store(center[2].to_bits(), Ordering::Relaxed);
+    LIVE_HAND_PANEL_RIGHT_X_BITS.store(right[0].to_bits(), Ordering::Relaxed);
+    LIVE_HAND_PANEL_RIGHT_Y_BITS.store(right[1].to_bits(), Ordering::Relaxed);
+    LIVE_HAND_PANEL_RIGHT_Z_BITS.store(right[2].to_bits(), Ordering::Relaxed);
+    LIVE_HAND_PANEL_UP_X_BITS.store(up[0].to_bits(), Ordering::Relaxed);
+    LIVE_HAND_PANEL_UP_Y_BITS.store(up[1].to_bits(), Ordering::Relaxed);
+    LIVE_HAND_PANEL_UP_Z_BITS.store(up[2].to_bits(), Ordering::Relaxed);
+    LIVE_HAND_PANEL_FORWARD_X_BITS.store(forward[0].to_bits(), Ordering::Relaxed);
+    LIVE_HAND_PANEL_FORWARD_Y_BITS.store(forward[1].to_bits(), Ordering::Relaxed);
+    LIVE_HAND_PANEL_FORWARD_Z_BITS.store(forward[2].to_bits(), Ordering::Relaxed);
+    LIVE_HAND_PANEL_TARGET_DISTANCE_BITS.store(0.0_f32.to_bits(), Ordering::Relaxed);
+    LIVE_HAND_BASIS_MODE_BITS.store(
+        if valid {
+            LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD
+        } else {
+            LIVE_HAND_BASIS_MODE_DISABLED
+        },
         Ordering::Relaxed,
     );
     LIVE_HAND_PANEL_BASIS_VALID.store(valid, Ordering::Relaxed);
@@ -938,6 +1083,10 @@ pub(crate) fn store_live_hand_panel_basis(
 
 fn current_live_hand_panel_basis() -> Option<LiveHandPanelBasis> {
     if !LIVE_HAND_PANEL_BASIS_VALID.load(Ordering::Relaxed) {
+        return None;
+    }
+    let mode = LIVE_HAND_BASIS_MODE_BITS.load(Ordering::Relaxed);
+    if mode == LIVE_HAND_BASIS_MODE_DISABLED {
         return None;
     }
     Some(LiveHandPanelBasis {
@@ -964,6 +1113,7 @@ fn current_live_hand_panel_basis() -> Option<LiveHandPanelBasis> {
         target_distance_meters: f32::from_bits(
             LIVE_HAND_PANEL_TARGET_DISTANCE_BITS.load(Ordering::Relaxed),
         ),
+        mode,
     })
 }
 

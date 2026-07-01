@@ -110,12 +110,25 @@ internal data class SpatialControllerPrimarySnapshot(
     val pressed: Boolean,
     val secondaryDown: Boolean,
     val secondaryPressed: Boolean,
+    val triggerDown: Boolean,
+    val triggerPressed: Boolean,
 )
 
 data class SurfaceParticleControlState(
     val driver0Value01: Float = 1.0f,
     val driver1Value01: Float = 0.0f,
-    val pointScale: Float = 1.0f,
+    val driver2Value01: Float = 0.0f,
+    val driver3Value01: Float = 0.0f,
+    val driver4Value01: Float = 0.0f,
+    val driver5Value01: Float = 0.0f,
+    val driver6Value01: Float = 0.0f,
+    val driver7Value01: Float = 0.0f,
+    val pointScale: Float = 0.70f,
+    val tracerDrawSlotsPerOscillator: Float = 7.0f,
+    val tracerLifetimeSeconds: Float = 0.5f,
+    val tracerCopiesPerSecond: Float = 14.0f,
+    val transparencyOpacity: Float = 0.36f,
+    val projectionWorldScale: Float = 1.0f,
 )
 
 data class SpatialNativeInteropProbe(

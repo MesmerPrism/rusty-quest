@@ -30,6 +30,8 @@ mod camera_hwb_stream;
 #[cfg(target_os = "android")]
 mod camera_hwb_wsi;
 #[cfg(target_os = "android")]
+mod live_hand_joint_bridge;
+#[cfg(target_os = "android")]
 mod live_hand_joints;
 #[cfg(target_os = "android")]
 mod replay_hands;
@@ -53,6 +55,7 @@ mod spatial_video_projection_probe;
 mod spatial_video_projection_settings;
 #[cfg(target_os = "android")]
 mod surface_particle_layer;
+mod surface_particle_projection;
 
 #[cfg(target_os = "android")]
 const ANDROID_LOG_INFO: c_int = 4;

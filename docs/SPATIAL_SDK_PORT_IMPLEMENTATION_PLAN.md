@@ -91,6 +91,12 @@ tracked in `docs/SPATIAL_LAYERING_CARRIER_PROBE_PLAN.md`.
   move the UI out from under the pointer. A/trigger select is explicitly
   enabled for the Compose layer buttons, while controller squeeze/palm remains
   the grab path.
+- The private icosphere surface has an explicit recenter request, not a
+  remapping request. Right trigger in particle view, and the controller-free
+  `particle-recenter` UI command, call the same native JNI path. Native consumes
+  the latest `Scene.getViewerPose` world position as the sphere center while
+  keeping canonical Spatial-world axes, fixed meter scale, and
+  `sim-space-fixed-in-spatial-sdk-world-space` registration unchanged.
 - The accepted default starts without the packaged room or skybox, uses the
   manual custom-mesh projection carrier at 2.0m, opens the generic
   layer-control UI panel at 1.0m, keeps right secondary/B disabled as a
@@ -112,7 +118,6 @@ tracked in `docs/SPATIAL_LAYERING_CARRIER_PROBE_PLAN.md`.
   and scalar `driver0_value01` / `driver1_value01` values.
 - Public deterministic native hand-anchor particle smoke tests over resident
   hand meshes.
-
 - An opt-in ECS world-space hand billboard flock named
   `spatial-sdk-world-hand-billboard-flock`. It creates persistent Spatial SDK
   carriers, samples Spatial SDK hand anchors, keeps public per-agent drift
@@ -122,13 +127,14 @@ tracked in `docs/SPATIAL_LAYERING_CARRIER_PROBE_PLAN.md`.
 
 ## ECS World-Space Hand Billboard Flock
 
-The public Spatial SDK path has an opt-in ECS flock module named
+The public Spatial SDK path now has an opt-in ECS flock module named
 `spatial-sdk-world-hand-billboard-flock`. It is disabled by default through
-`debug.rustyquest.spatial.hand_billboard_flock.enabled=false`. The carrier is
-selected through `debug.rustyquest.spatial.hand_billboard_flock.carrier`; the
-default `batched-scene-mesh` mode preserves the visible particle count while
-removing per-particle ECS component writes, and `ecs-entities` remains
-available for A/B baseline runs.
+`debug.rustyquest.spatial.hand_billboard_flock.enabled=false`.
+The carrier is selected through
+`debug.rustyquest.spatial.hand_billboard_flock.carrier`; the default
+`batched-scene-mesh` mode preserves the visible particle count while removing
+per-particle ECS component writes, and `ecs-entities` remains available for A/B
+baseline runs.
 
 Implementation order:
 
@@ -150,6 +156,17 @@ Non-scope:
 - no native custom skinning route;
 - no private effect formulas or tuned private profiles;
 - no high-rate JSON payloads.
+
+Private extension point:
+
+- `RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR` may add downstream Kotlin
+  source to the app build.
+- `RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_ASSET_DIR` may add downstream private
+  APK assets for that optional source.
+- `SpatialPrivateFeatureLoader` reflects a private registry class only when
+  that source is present.
+- Public source remains a carrier and does not name or implement downstream
+  formulas, profiles, or kernels.
 
 Validation starts with the static Spatial Camera Panel gate, then headset runs
 can enable the module with the property above and require

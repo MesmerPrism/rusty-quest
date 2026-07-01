@@ -37,11 +37,52 @@ low-rate driver-profile control. It packages a Spatial SDK/Compose panel under
 - Native hand-anchor particle smoke tests that use public deterministic
   resident-mesh anchor billboards.
 - An opt-in Spatial SDK ECS world-space hand billboard flock module. It creates
-  generic persistent Spatial SDK carrier objects, samples public hand anchors,
-  keeps drift state in system arrays, and avoids projection-surface particle
-  routing. The default `batched-scene-mesh` carrier renders high-density
-  billboards through two dynamic `TriangleMesh` scene objects; `ecs-entities`
-  remains an explicit comparison carrier.
+  a persistent pool of non-hittable billboard entities, updates only final
+  transforms and visibility each frame, keeps flock state in system arrays, and
+  avoids the projection-surface particle route.
+- Generic private surface-particle build hook metadata for downstream
+  GPU-resident payload experiments. The public app records profile, shader,
+  payload-directory, and marker-prefix build inputs, then routes configured
+  inputs through a metadata-only private renderer variant until a complete
+  staged payload is present. When the payload directory is supplied, the native receipt build
+  script copies the conventional private positions, normals, aux0, and mask
+  files into generated Rust payload metadata and reports shader/payload byte
+  counts as staged readiness markers. A configured render loop can allocate
+  startup Vulkan storage buffers for those staged bytes and report resident
+  staged-buffer markers. It can also create the private compute and graphics
+  descriptor/pipeline ABI from the staged shader and generic draw shaders.
+  It now allocates two private descriptor sets plus main-only output, phase,
+  driver-bank, and diagnostic storage buffers for the descriptor plan. The
+  native frame loop records a main-only private compute dispatch over the staged
+  payload, then draws the main private particle rows as a visible projection
+  surface overlay. Profile-derived tracer state and draw rows are allocated in
+  the same GPU-resident buffers and included in the merged source-order draw.
+  In staged private main-draw mode the public hand-anchor proof is not drawn as
+  a background fallback; markers report
+  `privateSurfaceParticlePublicFallbackActive=false` and
+  `privatePayloadVisibility=private-main-draw-only`. The private compute pass
+  captures the first eligible floor-space Spatial panel pose as a scene-fixed
+  world anchor, then uses the live panel pose only as the projection surface.
+  OpenXR local-floor mapping markers remain as diagnostics for comparison with
+  the hand-particle projection. Markers report
+  `privateSurfaceParticleWorldAnchorMode=spatial-sdk-scene-fixed-anchor`,
+  `privateSurfaceParticleWorldAnchorComputeSource=spatial-sdk-scene-fixed-anchor`,
+  and `privateSurfaceParticleWorldAnchorMapped=true` when the diagnostic OpenXR
+  mapper is also active.
+  The Compose panel and remote UI command path also expose a bounded generic
+  surface-particle parameter packet over the existing JNI live queue: driver
+  slots `0..7`, point scale, tracer draw slots, tracer lifetime, tracer copy
+  cadence, opacity, and projection world scale. The public app reports adopted
+  packet revisions and keeps high-rate rows out of Kotlin/Java.
+- Surface-particle renderer selection and frame-target carrier resources are
+  split inside the native receipt: generated private build metadata can be
+  reported in lifecycle markers, while the metadata-only private placeholder
+  holds public build-input completeness markers. The swapchain carrier owns
+  native surface-particle WSI creation, image acquisition, present, and
+  swapchain destruction; the frame-loop wrapper owns command buffers,
+  semaphores, and the frame fence; the pipeline/descriptor wrappers own shader
+  pipeline state and storage-buffer descriptors; the frame-target wrapper owns
+  only image views, render pass, framebuffers, and extent.
 
 ## Boundary
 
@@ -54,15 +95,24 @@ only through runtime properties or intent extras that point at an explicitly
 staged app-private or device-local file. Opaque downstream
 analysis/projection slots, visual semantics, effect formulas, coupling kernels,
 and tuned parameter profiles belong outside Rusty Quest.
-
+The private surface-particle hook follows the same boundary: profile/shader
+payload inputs are build metadata and validation inputs, not a Java/Kotlin JSON
+data plane, and no particle, phase, graph, texture, or tracer-state rows may
+flow through it. The private staged icosphere path also must not draw the
+public hand-particle proof behind the private rows; that proof remains the
+public default only when the private payload is absent.
 The world-space hand billboard flock follows the same public boundary. It owns
 only generic Spatial SDK carrier objects, hand-anchor sampling, public drift
-state, visibility, and status markers. Its default `batched-scene-mesh` carrier
-renders a fixed-count particle cloud through two dynamic `TriangleMesh` scene
-objects so high-density tests avoid per-particle ECS `Transform` writes;
-`ecs-entities` remains an explicit comparison carrier. It does not own private
-effect formulas, tuned profiles, native surface-particle buffers, or
-camera-projection target math.
+state, visibility, and status markers. Its default `batched-scene-mesh`
+carrier renders a fixed-count particle cloud through two dynamic
+`TriangleMesh` scene objects so high-density tests avoid per-particle ECS
+`Transform` writes; `ecs-entities` remains an explicit comparison carrier. It
+does not own private effect formulas, tuned profiles, native surface-particle
+buffers, or camera-projection target math.
+The optional private SpatialFeature hook follows the same boundary. Public
+source only discovers an env-provided source directory and reflects a registry
+class when present; downstream source owns any private systems, formulas, and
+profile semantics.
 
 The staged 3D asset path follows the same boundary: raw source model files are
 local inputs only and must not be packaged or committed. Runtime rendering uses
@@ -123,6 +173,15 @@ is active.
 Latest strict evidence:
 `local-artifacts\spatial-camera-panel-headset\20260629-152338-camera-hwb-projection-smoke\evidence-summary.json`;
 APK SHA-256 `FA45845AE0B239C75D6B0777E73F5E614919C77320208BECFBD0E1EAF19874CC`.
+
+A 2026-06-30 Quest 3S no-controller private surface-particle alias smoke passed
+for the generic `particle-alias-control` path:
+`local-artifacts\spatial-camera-panel-headset\20260630-164329-particle-alias-smoke\evidence-summary.json`;
+APK SHA-256 `87229743C77AC66FA971DD4DFFEFA915C7E330375C09A4B5BB1CA42EC9EAA027`.
+It validated active alias accept, inactive visual-driver alias reject,
+activated alias accept, forbidden high-rate reject, and profile-derived
+sphere-radius write using ADB intents, compact native alias markers, and JNI
+return masks. `controller_input_required=false`.
 
 A separate vergence/focus mismatch remains: when the camera projection is
 brought into comfortable focus, Meta system menus can appear doubled or soft.
@@ -289,7 +348,20 @@ Interaction SDK pointer input without native multimodal extension forcing.
   explicit.
 - `app/src/main/.../SpatialHandBillboardFlockFeature.kt` owns the opt-in
   public ECS world-space hand billboard flock. Enable it with
-  `debug.rustyquest.spatial.hand_billboard_flock.enabled=true`.
+  `debug.rustyquest.spatial.hand_billboard_flock.enabled=true`; the default is
+  disabled so existing projection and panel validations do not change.
+- `app/src/main/.../SpatialPrivateFeatureLoader.kt` owns the optional private
+  SpatialFeature extension point. Build with
+  `RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR=<kotlin-source-dir>` to include
+  downstream private source and optionally
+  `RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_ASSET_DIR=<asset-dir>` for downstream
+  private APK assets plus
+  `RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR=<res-dir>` for private
+  drawables/material resources; when absent, the loader returns no features.
+- Headless private stimulus runs can set
+  `debug.rustyquest.spatial.panel_shell.visible=false` to hide the workflow,
+  private-layer, launcher, and native surface-particle panels while leaving
+  Spatial SDK world entities/features active.
 - Future Spatial lane growth should follow the official `FeatureDevSample`
   modularity pattern: move reusable Spatial SDK behavior into feature/module
   owners with their own component/system registration, and keep this Activity
@@ -347,6 +419,19 @@ Interaction SDK pointer input without native multimodal extension forcing.
   present; downstream shader contents remain outside this public app.
 - `native-receipt/src/surface_particle_layer.rs`, `replay_hands.rs`, and
   `live_hand_joints.rs` remain Android-only surface-particle proof modules.
+  The private surface-particle hook records downstream input hashes and marker
+  env names, reports executable-input completeness, staged payload byte counts,
+  and generated private-shader compilation status. With complete staged inputs,
+  the surface route stages those bytes into startup storage buffers, creates
+  private compute plus graphics pipeline ABI at bindings `0,1,2,3,4,5,8,9`,
+  allocates private descriptor sets with main-only output, phase, driver-bank,
+  and diagnostic buffers, records main-only private compute dispatch, and draws
+  the private main particle rows with a Spatial panel-plane projection shader.
+  Profile-derived tracer state/draw rows are included in the same merged
+  billboard output in this slice. The native
+  surface-particle WSI path is split into swapchain, frame-loop, pipeline,
+  descriptor, and frame-target wrappers around the private staged-payload draw
+  path.
 - `tools/Stage-SpatialCameraPanelAsset.ps1` stages a local GLB/GLTF into the
   package-scoped external files directory and emits the runtime mesh URI. If
   the source is FBX, the script requires a converted GLB/GLTF path first.
@@ -395,6 +480,79 @@ camera projection path, so layer selection has no visible effect.
 The build wrapper writes
 `target\spatial-camera-panel-android\rusty-quest-spatial-camera-panel.apk`
 and `target\spatial-camera-panel-android\build-manifest.json`.
+
+The generic private surface-particle alias command is available through the UI
+action wrapper without controller input:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidUiAction.ps1 `
+  -Action particle-alias-control `
+  -ParticleAliasParameterId tracer_draw_slots_per_oscillator `
+  -ParticleAliasValue 3 `
+  -VisualDriverActivationProfile default `
+  -Serial <quest-serial> `
+  -ReadMarkers
+```
+
+When a private Spatial surface profile is configured at build time, native code
+resolves the alias from generated profile metadata, applies accepted requests to
+generic scalar fields, and emits `privateSurfaceParticleUiParameter*` accept or
+reject markers. Public source owns only generic fields and marker transport;
+private alias meanings stay in the configured profile.
+
+Use the focused no-controller headset smoke to validate the full alias sequence:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidParticleAliasSmoke.ps1 `
+  -Serial <quest-serial> `
+  -ClearLogcat `
+  -StopAfterRun
+```
+
+The smoke sends active, inactive, activated, forbidden high-rate, and
+profile-derived alias requests through `am start` intents. It captures
+pid-scoped logcat and app-private activity markers, then requires the matching
+`privateSurfaceParticleUiParameter*` accept/reject fields. It does not require physical controller input.
+
+The icosphere surface can be explicitly recentered without changing the
+simulation-to-Spatial coordinate mapping. Right trigger in particle view, or
+the no-controller `particle-recenter` UI command, asks native code to move only
+the particle sphere center to the latest `Scene.getViewerPose` world position.
+Native markers report `private-world-anchor-recentered`,
+`privateSurfaceParticleWorldAnchorCenterSource=current-spatial-sdk-viewer-world-coordinate`,
+and `privateSurfaceParticleRecenterChangesCoordinateMapping=false`.
+The same native world-anchor store also runs a startup distance guard for the
+first plausible tracked viewer pose: when that viewer pose is more than `0.5m`
+from the current sphere center, native logs `private-world-anchor-auto-recentered`
+and recenters only the sphere center to the viewer position while keeping
+canonical Spatial world axes and fixed meter scale. The guard locks after the
+first accepted tracked correction; normal head motion does not continuously
+drag the sphere. Use the explicit trigger or no-controller `particle-recenter`
+UI command for later intentional recentering.
+
+Use the focused particle visual smoke for the private icosphere projection
+surface after building with `RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_*`
+inputs, or with the matching `Build-SpatialCameraPanelAndroid.ps1`
+`-PrivateSurfaceParticleProfilePath`, `-PrivateSurfaceParticleShader`,
+`-PrivateSurfaceParticlePayloadDir`, and `-PrivateSurfaceParticleMarkerPrefix`
+arguments:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidParticleVisualSmoke.ps1 `
+  -Serial <quest-serial> `
+  -SurfaceTargetId icosphere `
+  -ClearLogcat `
+  -StopAfterRun
+```
+
+The smoke installs the APK, activates the `icosphere` surface target, forces the
+separate Spatial hand-billboard flock property on, then requires the selected
+icosphere path to suppress that flock. It also pulls app-private native markers
+and requires the private main-draw no-fallback renderer, a floor-space world
+anchor capture after startup provisional-anchor skips, OpenXR local-floor
+world-anchor capture/mapping, nonzero 2562-particle / 17934-tracer draw counts,
+and screenshot dimensions. It does not require
+physical controller input.
 
 Run the raw camera projection headset smoke with:
 

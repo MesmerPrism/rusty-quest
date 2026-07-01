@@ -5,16 +5,55 @@ plugins {
   alias(libs.plugins.compose.compiler)
 }
 
+val spatialApplicationId =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_APP_ID")
+    .orElse("io.github.mesmerprism.rustyquest.spatial_camera_panel")
+
+val spatialAppLabel =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_APP_LABEL")
+    .orElse("Rusty Quest Spatial Camera Panel")
+
+val spatialParticleLayerCarrierDefault =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_PARTICLE_LAYER_CARRIER_DEFAULT")
+    .orElse("manual-panel-scene-object-custom-mesh")
+
+val spatialStartInParticleViewDefault =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_START_IN_PARTICLE_VIEW_DEFAULT")
+    .orElse("false")
+
+val spatialPanelLauncherVisibleDefault =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_PANEL_LAUNCHER_VISIBLE_DEFAULT")
+    .orElse("true")
+
+fun buildConfigString(value: String): String =
+  "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+
 android {
   namespace = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
   compileSdk = 34
 
   defaultConfig {
-    applicationId = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
+    applicationId = spatialApplicationId.get()
     minSdk = 34
     targetSdk = 34
     versionCode = 1
     versionName = "0.1.0"
+    manifestPlaceholders["spatialAppLabel"] = spatialAppLabel.get()
+    buildConfigField(
+      "String",
+      "PARTICLE_LAYER_CARRIER_DEFAULT",
+      buildConfigString(spatialParticleLayerCarrierDefault.get()),
+    )
+    buildConfigField(
+      "String",
+      "START_IN_PARTICLE_VIEW_DEFAULT",
+      buildConfigString(spatialStartInParticleViewDefault.get()),
+    )
+    buildConfigField(
+      "String",
+      "PANEL_LAUNCHER_VISIBLE_DEFAULT",
+      buildConfigString(spatialPanelLauncherVisibleDefault.get()),
+    )
   }
 
   packaging {
@@ -37,6 +76,15 @@ android {
   sourceSets {
     getByName("main") {
       jniLibs.srcDir(layout.buildDirectory.dir("generated/rustJniLibs"))
+      providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR").orNull
+        ?.takeIf { it.isNotBlank() }
+        ?.let { java.srcDir(it) }
+      providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_ASSET_DIR").orNull
+        ?.takeIf { it.isNotBlank() }
+        ?.let { assets.srcDir(it) }
+      providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR").orNull
+        ?.takeIf { it.isNotBlank() }
+        ?.let { res.srcDir(it) }
     }
   }
 

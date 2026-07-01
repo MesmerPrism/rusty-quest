@@ -11,6 +11,8 @@ param(
         "panel-adjust",
         "panel-resize",
         "particle-controls",
+        "particle-recenter",
+        "particle-alias-control",
         "participant-reset",
         "participant-begin",
         "polar-setup-save",
@@ -42,7 +44,36 @@ param(
 
     [double]$Driver1 = 0.0,
 
+    [double]$Driver2 = 0.0,
+
+    [double]$Driver3 = 0.0,
+
+    [double]$Driver4 = 0.0,
+
+    [double]$Driver5 = 0.0,
+
+    [double]$Driver6 = 0.0,
+
+    [double]$Driver7 = 0.0,
+
     [double]$PointScale = 1.0,
+
+    [double]$TracerDrawSlotsPerOscillator = 7.0,
+
+    [double]$TracerLifetimeSeconds = 0.5,
+
+    [double]$TracerCopiesPerSecond = 14.0,
+
+    [double]$TransparencyOpacity = 0.36,
+
+    [double]$ProjectionWorldScale = 1.0,
+
+    [string]$ParticleAliasParameterId = "tracer_draw_slots_per_oscillator",
+
+    [double]$ParticleAliasValue = 7.0,
+
+    [ValidateSet("default", "particle-size-driver2", "all-visual-drivers")]
+    [string]$VisualDriverActivationProfile = "default",
 
     [string]$RunLabel = "remote-ui-command",
 
@@ -196,9 +227,6 @@ $intentArguments = @(
     "--es",
     "operator_id",
     $OperatorId,
-    "--es",
-    "notes",
-    $Notes,
     "--ef",
     "delta_x",
     (Format-InvariantNumber $DeltaX),
@@ -224,8 +252,50 @@ $intentArguments = @(
     "driver1",
     (Format-InvariantNumber ([Math]::Max(0.0, [Math]::Min(1.0, $Driver1)))),
     "--ef",
+    "driver2",
+    (Format-InvariantNumber ([Math]::Max(0.0, [Math]::Min(1.0, $Driver2)))),
+    "--ef",
+    "driver3",
+    (Format-InvariantNumber ([Math]::Max(0.0, [Math]::Min(1.0, $Driver3)))),
+    "--ef",
+    "driver4",
+    (Format-InvariantNumber ([Math]::Max(0.0, [Math]::Min(1.0, $Driver4)))),
+    "--ef",
+    "driver5",
+    (Format-InvariantNumber ([Math]::Max(0.0, [Math]::Min(1.0, $Driver5)))),
+    "--ef",
+    "driver6",
+    (Format-InvariantNumber ([Math]::Max(0.0, [Math]::Min(1.0, $Driver6)))),
+    "--ef",
+    "driver7",
+    (Format-InvariantNumber ([Math]::Max(0.0, [Math]::Min(1.0, $Driver7)))),
+    "--ef",
     "point_scale",
     (Format-InvariantNumber ([Math]::Max(0.4, [Math]::Min(2.4, $PointScale)))),
+    "--ef",
+    "tracer_draw_slots_per_oscillator",
+    (Format-InvariantNumber ([Math]::Max(0.0, [Math]::Min(7.0, $TracerDrawSlotsPerOscillator)))),
+    "--ef",
+    "tracer_lifetime_seconds",
+    (Format-InvariantNumber ([Math]::Max(0.0, [Math]::Min(0.5, $TracerLifetimeSeconds)))),
+    "--ef",
+    "tracer_copies_per_second",
+    (Format-InvariantNumber ([Math]::Max(0.0, [Math]::Min(14.0, $TracerCopiesPerSecond)))),
+    "--ef",
+    "transparency_opacity",
+    (Format-InvariantNumber ([Math]::Max(0.0, [Math]::Min(1.0, $TransparencyOpacity)))),
+    "--ef",
+    "projection_world_scale",
+    (Format-InvariantNumber ([Math]::Max(0.5, [Math]::Min(2.0, $ProjectionWorldScale)))),
+    "--es",
+    "parameter_id",
+    $ParticleAliasParameterId,
+    "--ef",
+    "value",
+    (Format-InvariantNumber $ParticleAliasValue),
+    "--es",
+    "visual_driver_activation_profile",
+    $VisualDriverActivationProfile,
     "--ei",
     "comfort_rating",
     ([Math]::Max(1, [Math]::Min(7, $ComfortRating))).ToString(),
@@ -234,7 +304,10 @@ $intentArguments = @(
     ([Math]::Max(1, [Math]::Min(7, $IntensityRating))).ToString(),
     "--ei",
     "engagement_rating",
-    ([Math]::Max(1, [Math]::Min(7, $EngagementRating))).ToString()
+    ([Math]::Max(1, [Math]::Min(7, $EngagementRating))).ToString(),
+    "--es",
+    "notes",
+    $Notes
 )
 
 $launch = Invoke-AdbCommand -Name "run Spatial Camera Panel UI action $Action" -Arguments $intentArguments

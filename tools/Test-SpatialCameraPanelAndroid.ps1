@@ -6,7 +6,15 @@ param(
     [string]$PrivateLayerProfilePath = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE,
     [string]$OpaqueGuideShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER,
     [string]$OpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER,
-    [string]$OpaqueProjectionEffect = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT
+    [string]$OpaqueProjectionEffect = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT,
+    [string]$PrivateSurfaceParticleProfilePath = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE,
+    [string]$PrivateSurfaceParticleShader = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER,
+    [string]$PrivateSurfaceParticlePayloadDir = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR,
+    [string]$PrivateSurfaceParticleMarkerPrefix = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX,
+    [string]$AppId = $env:RUSTY_QUEST_SPATIAL_APP_ID,
+    [string]$AppLabel = $env:RUSTY_QUEST_SPATIAL_APP_LABEL,
+    [string]$ApkFileName = $env:RUSTY_QUEST_SPATIAL_APK_FILE_NAME,
+    [string]$OutDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -26,6 +34,12 @@ if (-not (Test-Path -LiteralPath $buildPath)) {
 }
 
 & $staticCheckPath -RepoRoot $repoRootPath
+Push-Location -LiteralPath $repoRootPath
+try {
+    cargo test -p spatial-camera-panel-native-receipt surface_particle_projection
+} finally {
+    Pop-Location
+}
 
 if ($Build) {
     & $buildPath `
@@ -35,7 +49,15 @@ if ($Build) {
         -PrivateLayerProfilePath $PrivateLayerProfilePath `
         -OpaqueGuideShader $OpaqueGuideShader `
         -OpaqueProjectionShader $OpaqueProjectionShader `
-        -OpaqueProjectionEffect $OpaqueProjectionEffect
+        -OpaqueProjectionEffect $OpaqueProjectionEffect `
+        -PrivateSurfaceParticleProfilePath $PrivateSurfaceParticleProfilePath `
+        -PrivateSurfaceParticleShader $PrivateSurfaceParticleShader `
+        -PrivateSurfaceParticlePayloadDir $PrivateSurfaceParticlePayloadDir `
+        -PrivateSurfaceParticleMarkerPrefix $PrivateSurfaceParticleMarkerPrefix `
+        -AppId $AppId `
+        -AppLabel $AppLabel `
+        -ApkFileName $ApkFileName `
+        -OutDir $OutDir
 }
 
 Write-Host "Spatial Camera Panel Android validation passed"
