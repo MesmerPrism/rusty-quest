@@ -65,6 +65,15 @@ function Assert-FeatureDescriptorShape {
     foreach ($field in @("env", "assets", "shaders")) {
         Assert-RequiredProperty -Object $Feature.build_inputs -Name $field -Label "$Path build_inputs"
     }
+    foreach ($envEntry in @($Feature.build_inputs.env)) {
+        if ($envEntry -is [string]) {
+            throw "$Path build_inputs.env entries must be objects with a name property, not raw strings: $envEntry"
+        }
+        Assert-RequiredProperty -Object $envEntry -Name "name" -Label "$Path build_inputs.env entry"
+        if ([string]::IsNullOrWhiteSpace([string]$envEntry.name)) {
+            throw "$Path build_inputs.env entry has empty name"
+        }
+    }
     foreach ($field in @("required", "forbidden")) {
         Assert-RequiredProperty -Object $Feature.markers -Name $field -Label "$Path markers"
     }
