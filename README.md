@@ -16,6 +16,21 @@ connectivity. A report records device identity, ADB forward/tunnel state,
 Manifold broker endpoint readiness, runtime subscriber health, command-result
 stages, and stream capability descriptors.
 
+The same crate also defines
+`rusty.quest.connectivity_wifi_direct_lifecycle.v1`, the source artifact shape
+for QCL-040/QCL-041 Wi-Fi Direct lifecycle evidence. That artifact requires a
+live evidence tier, concrete source run and harness identity, an Agent Board
+`quest:<serial>` lease that matches the device serial, peer discovery, group
+formation, bounded TCP socket exchange, and cleanup before Hostess can promote
+direct-Wi-Fi topology.
+
+`apps/qcl041-wifi-direct-harness-android` is the Quest-side producer for the
+Windows peer route. It does not need an Android phone: the live path pairs the
+Quest APK with the Hostess Windows Wi-Fi Direct helper, records actual
+`WifiP2pManager` feature/permission/discovery/group/socket/cleanup state, and
+lets the host wrapper finalize Agent Board lease release before Hostess
+promotion.
+
 This crate is source-only and does not open ADB, WebSocket, UDP, LSL, or
 app-private transports. Hostess, WPF, Makepad tools, CLI routes, or future
 frontends should execute their own adapters and then emit this report shape for

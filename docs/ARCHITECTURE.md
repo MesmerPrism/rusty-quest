@@ -14,6 +14,9 @@ apps.
 - host-to-Quest device-link report contracts for device identity, ADB
   forward/tunnel state, broker endpoint readiness, runtime subscriber health,
   command-result stages, and stream capability descriptors.
+- QCL-040/QCL-041 Wi-Fi Direct lifecycle source artifacts, including live
+  evidence tier, Agent Board quest lease identity, peer discovery, group
+  formation, bounded TCP socket exchange, and cleanup evidence.
 - remote camera session plans, device-kind declarations, media-lane safety
   policy, low-rate runtime endpoint bindings, peer transport routes, and
   platform validation gates for Quest and Android phone endpoints.
@@ -73,6 +76,14 @@ Validation rejects high-rate JSON stream claims and rejects applied command
 results that lack runtime receipt stages, keeping transport readiness separate
 from effective runtime state.
 
+The same crate owns `rusty.quest.connectivity_wifi_direct_lifecycle.v1` for
+QCL-040/QCL-041 source evidence. Hostess may normalize this artifact into its
+connectivity topology report, but the artifact itself must identify the live
+source run, harness owner, matching Agent Board quest lease, peer class, and
+the full Wi-Fi Direct lifecycle from feature/permission checks through peer
+discovery, group formation, bounded TCP probe, and cleanup. Template artifacts
+or raw feature checks are not promotion evidence.
+
 ## Native Quest Renderer Contracts
 
 `crates/rusty-quest-native-renderer` owns
@@ -109,7 +120,6 @@ particle, or experiment authority. `SpatialSdkLaneBoundary.kt` records that
 layer/panel placement, camera projection, surface particles, experiment panel,
 and debug probes are separate route owners, while static checks reject direct
 camera/particle cross-ownership in the split native modules.
-
 The world-space hand billboard flock uses that substrate as a public carrier
 example. Its high-density `batched-scene-mesh` mode keeps public drift state in
 Kotlin arrays but renders particles through two dynamic `TriangleMesh` scene

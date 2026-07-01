@@ -1,37 +1,56 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="io.github.mesmerprism.rustymanifold.broker">
+    package="io.github.mesmerprism.rustyquest.qcl041">
 
-    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-feature
+        android:name="android.hardware.wifi.direct"
+        android:required="false" />
+    <uses-feature
+        android:name="oculus.software.handtracking"
+        android:required="false" />
+
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="com.oculus.permission.HAND_TRACKING" />
     <uses-permission
         android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation" />
     <uses-permission
         android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="horizonos.permission.HEADSET_CAMERA" />
-    <uses-permission android:name="horizonos.permission.SPATIAL_CAMERA" />
 
     <application
         android:allowBackup="false"
-        android:label="Rusty Manifold Broker"
+        android:debuggable="true"
+        android:label="QCL-041 Wi-Fi Direct"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="true">
+        <meta-data
+            android:name="com.oculus.supportedDevices"
+            android:value="quest2|questpro|quest3|quest3s" />
+        <meta-data
+            android:name="com.oculus.vr.focusaware"
+            android:value="true" />
+        <meta-data
+            android:name="com.oculus.handtracking.version"
+            android:value="V2.0" />
+
         <activity
-            android:name=".BrokerStartActivity"
+            android:name=".Qcl041WifiDirectHarnessActivity"
             android:exported="true"
             android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
+                <category android:name="com.oculus.intent.category.VR" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
         <service
-            android:name=".BrokerStartService"
+            android:name=".Qcl041WifiDirectHarnessService"
             android:exported="true"
             android:foregroundServiceType="dataSync"
             android:stopWithTask="false" />

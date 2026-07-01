@@ -1,0 +1,95 @@
+{
+  "$schema": "rusty.quest.connectivity_wifi_direct_lifecycle.v1",
+  "schema_version": 1,
+  "probe_id": "QCL-040",
+  "peer_class": "android_phone",
+  "evidence_tier": "product_harness",
+  "capture_kind": "live_wifi_direct_lifecycle",
+  "live_evidence": true,
+  "observed_at_utc": "2026-06-30T10:20:00Z",
+  "run_id": "qcl040-live-android-phone-synthetic-pass",
+  "harness": {
+    "harness_id": "rusty-quest-wifi-direct-qcl040-harness",
+    "owner": "Rusty Quest Wi-Fi Direct lifecycle harness",
+    "route": "quest_android_phone_wifi_direct_lifecycle",
+    "hostess_runs_harness": false,
+    "writes_live_source_artifact": true
+  },
+  "topology": {
+    "owner": "wifi_direct",
+    "network_provider": "wifi_direct",
+    "endpoint_direction": "peer_to_peer_group",
+    "peer_class": "android_phone"
+  },
+  "device": {
+    "model": "Quest",
+    "serial": "TESTQUESTSERIAL",
+    "wifi_direct_role": "client"
+  },
+  "host": {
+    "os": "android_phone_peer",
+    "toolchain_profile": "rusty_quest_wifi_direct_qcl040_contract_fixture"
+  },
+  "lease": {
+    "manager": "Agent Board",
+    "resource": "quest:TESTQUESTSERIAL",
+    "lease_id": "lease-qcl040-android-phone-001",
+    "reserved_before_live_steps": true,
+    "released_after_live_steps": true,
+    "adb_server_lifecycle_lease_used": false,
+    "reserve_command": "& 'C:\\Users\\tillh\\Agent Bureau\\scripts\\agent-board.ps1' reserve quest:TESTQUESTSERIAL --duration 45m --task \"QCL-040 direct Wi-Fi lifecycle evidence\"",
+    "release_command": "& 'C:\\Users\\tillh\\Agent Bureau\\scripts\\agent-board.ps1' release lease-qcl040-android-phone-001 --result done",
+    "adb_server_lifecycle_policy": "Use adb-server:lifecycle only for disruptive daemon lifecycle or Wi-Fi ADB setup/recovery."
+  },
+  "lifecycle": {
+    "feature": {
+      "status": "pass",
+      "evidence": "Quest Wi-Fi Direct feature was observed by the lifecycle harness.",
+      "required": true
+    },
+    "android_phone_peer": {
+      "status": "pass",
+      "evidence": "Android phone Wi-Fi Direct peer harness was available.",
+      "required": true
+    },
+    "permission_state": {
+      "status": "pass",
+      "evidence": "Wi-Fi Direct runtime permissions were accepted.",
+      "required": true
+    },
+    "peer_discovery": {
+      "status": "pass",
+      "evidence": "Wi-Fi Direct peer discovery observed one Android phone peer.",
+      "required": true,
+      "peer_count": 1
+    },
+    "group_formation": {
+      "status": "pass",
+      "evidence": "Wi-Fi Direct group formation completed with recorded roles.",
+      "required": true,
+      "local_role": "client",
+      "peer_role": "group_owner"
+    },
+    "socket_exchange": {
+      "status": "pass",
+      "evidence": "Bounded TCP probe exchanged bytes across the Wi-Fi Direct group.",
+      "required": true,
+      "protocol": "tcp",
+      "payload_class": "bounded_tcp_probe",
+      "bounded": true,
+      "messages_sent": 2,
+      "messages_received": 2
+    },
+    "cleanup": {
+      "status": "pass",
+      "evidence": "Wi-Fi Direct group cleanup completed.",
+      "required": true,
+      "completed": true
+    }
+  },
+  "measurements": {
+    "tcp_connect_ms": 31,
+    "wifi_direct_peer_count": 1,
+    "group_formation_ms": 940
+  }
+}

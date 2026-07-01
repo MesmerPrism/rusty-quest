@@ -1,0 +1,80 @@
+{
+  "$schema": "rusty.quest.connectivity_wifi_direct_lifecycle.v1",
+  "schema_version": 1,
+  "probe_id": "QCL-041",
+  "peer_class": "windows",
+  "evidence_tier": "product_harness",
+  "capture_kind": "live_wifi_direct_lifecycle",
+  "live_evidence": true,
+  "observed_at_utc": "2026-06-30T10:15:00Z",
+  "run_id": "qcl041-live-windows-serial-mismatch",
+  "harness": {
+    "harness_id": "rusty-quest-wifi-direct-qcl041-harness",
+    "owner": "Rusty Quest Wi-Fi Direct lifecycle harness",
+    "route": "quest_windows_wifi_direct_lifecycle",
+    "hostess_runs_harness": false,
+    "writes_live_source_artifact": true
+  },
+  "topology": {
+    "owner": "wifi_direct",
+    "network_provider": "wifi_direct",
+    "endpoint_direction": "peer_to_peer_group",
+    "peer_class": "windows"
+  },
+  "device": {
+    "model": "Quest",
+    "serial": "OTHERQUESTSERIAL",
+    "wifi_direct_role": "group_owner"
+  },
+  "host": {
+    "os": "windows",
+    "toolchain_profile": "rusty_quest_wifi_direct_qcl041_contract_fixture"
+  },
+  "lease": {
+    "manager": "Agent Board",
+    "resource": "quest:TESTQUESTSERIAL",
+    "lease_id": "lease-qcl041-windows-001",
+    "reserved_before_live_steps": true,
+    "released_after_live_steps": true,
+    "adb_server_lifecycle_lease_used": false
+  },
+  "lifecycle": {
+    "feature": {
+      "status": "pass",
+      "required": true
+    },
+    "windows_wifi_direct_api": {
+      "status": "pass",
+      "required": true
+    },
+    "permission_state": {
+      "status": "pass",
+      "required": true
+    },
+    "peer_discovery": {
+      "status": "pass",
+      "required": true,
+      "peer_count": 1
+    },
+    "group_formation": {
+      "status": "pass",
+      "required": true,
+      "local_role": "group_owner",
+      "peer_role": "client"
+    },
+    "socket_exchange": {
+      "status": "pass",
+      "required": true,
+      "protocol": "tcp",
+      "payload_class": "bounded_tcp_probe",
+      "bounded": true,
+      "messages_sent": 3,
+      "messages_received": 3
+    },
+    "cleanup": {
+      "status": "pass",
+      "required": true,
+      "completed": true
+    }
+  }
+}

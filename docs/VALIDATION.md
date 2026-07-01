@@ -22,9 +22,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPa
 
 For the public Spatial world-hand billboard flock, the high-density carrier
 property is `debug.rustyquest.spatial.hand_billboard_flock.carrier`. The
-default `batched-scene-mesh` mode should report `carrier=batched-scene-mesh`,
-`carrierEntityCount=2`, and `transformWrites=0`; `ecs-entities` is retained
-only as the old per-particle entity baseline.
+default `batched-scene-mesh` mode should report
+`carrier=batched-scene-mesh`, `carrierEntityCount=2`, and
+`transformWrites=0`; `ecs-entities` is retained only as the old per-particle
+entity baseline.
 
 For a Spatial Camera Panel APK whose private-layer buttons visibly select the
 active projection layer, pass the downstream opaque shader profile at build
@@ -469,6 +470,16 @@ runtime subscriber receipt stream, applied command stages, and stream
 capability descriptors. Damaged fixtures reject high-rate JSON stream payloads
 and applied command claims that do not include runtime receipt evidence.
 
+The same test command validates the QCL-040/QCL-041 Wi-Fi Direct lifecycle
+source contract in
+`fixtures/device-link/wifi-direct-lifecycle-qcl041-windows.pass.json` and
+`fixtures/device-link/wifi-direct-lifecycle-qcl040-android-phone.pass.json`.
+Damaged lifecycle fixtures reject template/source-identity gaps, mismatched
+quest lease serials, missing bounded TCP socket counters, and cleanup that did
+not complete. These are source-contract checks only; a live Hostess promotion
+still needs the corresponding leased peer-harness run and QCL-082 product
+media receiver evidence.
+
 Native Quest renderer plans are source-only validation:
 
 ```powershell
@@ -790,6 +801,29 @@ The camera-source broker APK is expected to declare `android.permission.CAMERA`,
 `horizonos.permission.HEADSET_CAMERA`, and
 `horizonos.permission.SPATIAL_CAMERA`; that expectation is specific to this
 broker adapter and does not change the camera-free Makepad app validation lane.
+
+The QCL-041 Wi-Fi Direct harness is the no-Android-phone live route for
+Quest-to-Windows Wi-Fi Direct lifecycle evidence:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-Qcl041WifiDirectHarnessAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-Qcl041WifiDirectHarnessAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-Qcl041WifiDirectLifecycle.ps1 -Serial <quest-serial>
+```
+
+The live wrapper reserves `quest:<serial>` with Agent Board, starts the Hostess
+Windows QCL-041 Wi-Fi Direct helper, installs/launches the Quest harness with
+serial-scoped `adb -s`, pulls the Quest artifact, releases the lease, and writes
+the final `rusty.quest.connectivity_wifi_direct_lifecycle.v1` artifact with
+`released_after_live_steps=true`. Windows Mobile Hotspot must be disabled before
+the run because it conflicts with Windows Wi-Fi Direct peer advertising. The
+first harness expects Windows to become group owner and serve the bounded TCP
+probe; if the Quest becomes group owner, the artifact fails precisely instead
+of promoting topology. Promote only the final wrapper artifact through Hostess:
+
+```powershell
+python S:\Work\repos\active\rusty-hostess\tools\hostessctl\hostessctl.py connectivity-probe run --mode fixture --probe-id QCL-041 --wifi-direct-lifecycle-report <final-artifact.json> --out target\connectivity-probe\qcl041-live-wifi-direct-lifecycle.json --fail-on-error
+```
 
 ## Live Quest Remote Camera Smoke
 

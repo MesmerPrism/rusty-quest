@@ -251,6 +251,10 @@ public final class LocalManifoldBrokerServer {
             reply.put("live_stream_events_synthesized", false);
             if (remoteCameraRuntime != null) {
                 reply.put("remote_camera_runtime", remoteCameraRuntime);
+                if (RemoteCameraSessionRuntime.isMediaStreamCommand(message)
+                        || "media_stream".equals(remoteCameraRuntime.optString("runtime_family", ""))) {
+                    reply.put("media_stream_runtime", remoteCameraRuntime);
+                }
                 reply.put(
                         "media_socket_runtime_started",
                         remoteCameraRuntime.optBoolean("media_socket_runtime_started", false));

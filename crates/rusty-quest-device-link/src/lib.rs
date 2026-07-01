@@ -6,9 +6,11 @@
 
 mod model;
 mod validation;
+mod wifi_direct_lifecycle;
 
 pub use model::*;
 pub use validation::validate_device_link_report;
+pub use wifi_direct_lifecycle::*;
 
 #[cfg(test)]
 mod tests {

@@ -10,11 +10,13 @@ $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $appRoot = Join-Path $repoRoot "apps\manifold-broker-android"
 $manifestPath = Join-Path $appRoot "AndroidManifest.xml"
 $activityPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\BrokerStartActivity.java"
+$servicePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\BrokerStartService.java"
+$launchEvidencePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\BrokerLaunchEvidence.java"
 $serverPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\LocalManifoldBrokerServer.java"
 $remoteCameraRuntimePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraSessionRuntime.java"
 $remoteCameraSourceRuntimePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraSourceRuntime.java"
 
-foreach ($path in @($manifestPath, $activityPath, $serverPath, $remoteCameraRuntimePath, $remoteCameraSourceRuntimePath)) {
+foreach ($path in @($manifestPath, $activityPath, $servicePath, $launchEvidencePath, $serverPath, $remoteCameraRuntimePath, $remoteCameraSourceRuntimePath)) {
     if (-not (Test-Path $path)) {
         throw "Missing Manifold broker Android file: $path"
     }
@@ -22,6 +24,8 @@ foreach ($path in @($manifestPath, $activityPath, $serverPath, $remoteCameraRunt
 
 $manifest = Get-Content -Raw -Path $manifestPath
 $activity = Get-Content -Raw -Path $activityPath
+$service = Get-Content -Raw -Path $servicePath
+$launchEvidence = Get-Content -Raw -Path $launchEvidencePath
 $server = Get-Content -Raw -Path $serverPath
 $remoteCameraRuntime = Get-Content -Raw -Path $remoteCameraRuntimePath
 $remoteCameraSourceRuntime = Get-Content -Raw -Path $remoteCameraSourceRuntimePath
@@ -32,14 +36,50 @@ if ($manifest -notmatch 'package="io\.github\.mesmerprism\.rustymanifold\.broker
 if ($manifest -notmatch 'android\.permission\.CAMERA') {
     throw "Manifold broker Android manifest must declare Android camera permission for camera-source mode."
 }
+if ($manifest -notmatch 'android\.permission\.INTERNET') {
+    throw "Manifold broker Android manifest must declare INTERNET for broker control and media sockets."
+}
+if ($manifest -notmatch 'android\.permission\.ACCESS_NETWORK_STATE') {
+    throw "Manifold broker Android manifest must declare ACCESS_NETWORK_STATE for Wi-Fi Direct network selection."
+}
+if ($manifest -notmatch 'android\.permission\.POST_NOTIFICATIONS') {
+    throw "Manifold broker Android manifest must declare POST_NOTIFICATIONS for foreground broker service evidence."
+}
+if ($manifest -notmatch 'android\.permission\.FOREGROUND_SERVICE') {
+    throw "Manifold broker Android manifest must declare FOREGROUND_SERVICE for the QCL-082 broker service."
+}
+if ($manifest -notmatch 'android\.permission\.FOREGROUND_SERVICE_DATA_SYNC') {
+    throw "Manifold broker Android manifest must declare FOREGROUND_SERVICE_DATA_SYNC for target-SDK 34 broker service startup."
+}
+if ($manifest -notmatch 'android\.permission\.NEARBY_WIFI_DEVICES') {
+    throw "Manifold broker Android manifest must declare NEARBY_WIFI_DEVICES for Android 13+ Wi-Fi Direct peer socket binding."
+}
+if ($manifest -notmatch 'android:usesPermissionFlags="neverForLocation"') {
+    throw "Manifold broker Android manifest must mark NEARBY_WIFI_DEVICES neverForLocation."
+}
+if ($manifest -notmatch 'android\.permission\.ACCESS_FINE_LOCATION') {
+    throw "Manifold broker Android manifest must retain ACCESS_FINE_LOCATION for pre-Android-13 Wi-Fi Direct fallback."
+}
 if ($manifest -notmatch 'horizonos\.permission\.HEADSET_CAMERA') {
     throw "Manifold broker Android manifest must declare Quest headset camera permission for camera-source mode."
 }
-if ($activity -notmatch 'rusty\.quest\.manifold_broker_android\.launch_evidence\.v1') {
-    throw "BrokerStartActivity does not emit launch evidence schema."
+if ($manifest -notmatch 'BrokerStartService' -or $manifest -notmatch 'android:exported="true"' -or $manifest -notmatch 'android:foregroundServiceType="dataSync"' -or $manifest -notmatch 'android:stopWithTask="false"') {
+    throw "Manifold broker Android manifest must expose BrokerStartService as a dataSync foreground service for QCL-082 automation."
+}
+if ($launchEvidence -notmatch 'rusty\.quest\.manifold_broker_android\.launch_evidence\.v1') {
+    throw "BrokerLaunchEvidence does not emit launch evidence schema."
 }
 if ($activity -notmatch 'requestPermissions') {
     throw "BrokerStartActivity does not request runtime camera permission."
+}
+if ($service -notmatch 'extends Service' -or $service -notmatch 'START_STICKY') {
+    throw "BrokerStartService must be a sticky Android Service."
+}
+if ($service -notmatch 'startForeground' -or $service -notmatch 'NotificationChannel') {
+    throw "BrokerStartService must promote itself to a notification-backed foreground service."
+}
+if ($service -notmatch 'LocalManifoldBrokerServer\.get\(\)\.start') {
+    throw "BrokerStartService does not start the local Manifold broker server."
 }
 if ($server -notmatch '/manifold/v1/events') {
     throw "Local broker server does not expose /manifold/v1/events."
@@ -52,6 +92,9 @@ if ($server -notmatch 'live_stream_events_synthesized') {
 }
 if ($server -notmatch 'remote_camera_runtime') {
     throw "Local broker server does not attach remote_camera_runtime command ack status."
+}
+if ($server -notmatch 'media_stream_runtime') {
+    throw "Local broker server does not attach media_stream_runtime command ack status for QCL-082."
 }
 if ($server -notmatch 'hostess\.makepad\.bridge_probe\.set_marker') {
     throw "Local broker server does not authorize the Hostess Makepad safe bridge probe command."
@@ -80,6 +123,18 @@ if ($remoteCameraRuntime -notmatch 'command\.remote_camera\.start_receiver') {
 if ($remoteCameraRuntime -notmatch 'command\.remote_camera\.start_sender') {
     throw "RemoteCameraSessionRuntime does not handle remote camera start_sender."
 }
+if ($remoteCameraRuntime -notmatch 'command\.media_stream\.start_source') {
+    throw "RemoteCameraSessionRuntime does not handle media_stream start_source."
+}
+if ($remoteCameraRuntime -notmatch 'rusty\.quest\.media_stream\.android_runtime_status\.v1') {
+    throw "RemoteCameraSessionRuntime does not emit the media-stream runtime status schema."
+}
+if ($remoteCameraRuntime -notmatch 'runtime_family", "media_stream"') {
+    throw "RemoteCameraSessionRuntime does not mark QCL-082 runtime_family=media_stream."
+}
+if ($remoteCameraRuntime -notmatch 'compatibility_runtime", "remote_camera"') {
+    throw "RemoteCameraSessionRuntime must expose the remote_camera compatibility runtime for media-stream aliases."
+}
 if ($remoteCameraRuntime -notmatch 'command\.remote_camera\.get_status') {
     throw "RemoteCameraSessionRuntime does not handle remote camera get_status."
 }
@@ -97,6 +152,39 @@ if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.transport_
 }
 if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.transport_routes') {
     throw "RemoteCameraSessionRuntime does not read the peer transport route runtime property."
+}
+if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.transport_bind_local_address') {
+    throw "RemoteCameraSessionRuntime does not read the explicit Wi-Fi Direct local bind address property."
+}
+if ($remoteCameraRuntime -notmatch 'optJSONObject\("params"\)') {
+    throw "RemoteCameraSessionRuntime does not read Hostess bridge-command params."
+}
+if ($remoteCameraRuntime -notmatch 'sender_source_kind",\s*"source_kind"') {
+    throw "RemoteCameraSessionRuntime does not accept sender source-kind params aliases."
+}
+if ($remoteCameraRuntime -notmatch 'peer_socket_bound_local_address') {
+    throw "RemoteCameraSessionRuntime does not report Wi-Fi Direct peer socket local binding diagnostics."
+}
+if ($remoteCameraRuntime -notmatch 'explicit_local_bind_address') {
+    throw "RemoteCameraSessionRuntime does not attempt explicit QCL-041-proven local address binding."
+}
+if ($remoteCameraRuntime -notmatch 'local_bind_host') {
+    throw "RemoteCameraSessionRuntime does not report the explicit local bind host in peer routes."
+}
+if ($remoteCameraRuntime -notmatch 'WIFI_DIRECT_PEER_BIND_WAIT_MS') {
+    throw "RemoteCameraSessionRuntime does not wait for Wi-Fi Direct peer socket binding before QCL-082 connect."
+}
+if ($remoteCameraRuntime -notmatch 'isLikelyWifiDirectPeerAddress') {
+    throw "RemoteCameraSessionRuntime does not identify direct-Wi-Fi peer address ranges before binding."
+}
+if ($remoteCameraRuntime -notmatch 'peer_socket_wifi_direct_bind_required') {
+    throw "RemoteCameraSessionRuntime does not report when Wi-Fi Direct peer binding is required."
+}
+if ($remoteCameraRuntime -notmatch 'getSocketFactory\(\)\.createSocket') {
+    throw "RemoteCameraSessionRuntime does not create peer sockets from the selected Android Network."
+}
+if ($remoteCameraRuntime -notmatch 'NetworkInterface\.getNetworkInterfaces') {
+    throw "RemoteCameraSessionRuntime does not fall back to Wi-Fi Direct local address binding."
 }
 if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.sender_source_kind') {
     throw "RemoteCameraSessionRuntime does not read the sender source kind runtime property."
@@ -138,7 +226,7 @@ if ($remoteCameraSourceRuntime -notmatch 'high_rate_json_payload", false') {
     throw "RemoteCameraSourceRuntime must prove high-rate media is not carried through JSON."
 }
 
-$combined = "$manifest`n$activity`n$server`n$remoteCameraRuntime`n$remoteCameraSourceRuntime"
+$combined = "$manifest`n$activity`n$service`n$launchEvidence`n$server`n$remoteCameraRuntime`n$remoteCameraSourceRuntime"
 $legacyTokens = @(
     ("RUSTY" + "_XR_"),
     ("rusty" + ".xr."),

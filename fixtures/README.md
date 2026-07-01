@@ -284,7 +284,14 @@
   as reusable data: serial-scoped ADB identity, ADB forward state, Manifold
   WebSocket endpoint readiness, runtime subscriber receipt health, command
   stage results, and stream capability descriptors for WebSocket command
-  events, LSL samples, UDP telemetry, and binary media.
+  events, LSL samples, UDP telemetry, and binary media. The
+  `wifi-direct-lifecycle-qcl041-windows.pass.json` and
+  `wifi-direct-lifecycle-qcl040-android-phone.pass.json` fixtures model
+  `rusty.quest.connectivity_wifi_direct_lifecycle.v1` source artifacts for
+  QCL-041 Windows and QCL-040 Android-phone Wi-Fi Direct lifecycle evidence.
+  They require live evidence tier, source run and harness identity, matching
+  Agent Board quest lease, peer discovery, group formation, bounded TCP socket
+  exchange, and cleanup before Hostess may promote direct-Wi-Fi topology.
 - `remote-camera-sessions/`: valid remote camera session plans for
   Quest-to-Quest and Quest-to-Android phone diagnostic streaming, including
   low-rate runtime endpoint bindings for sender source kind, sender media
@@ -302,4 +309,6 @@
   thresholds, proving the apply path consumes the typed native renderer property
   manifest before ADB writes. Device-link damaged fixtures also reject
   high-rate JSON stream claims and applied command reports without runtime
-  receipt stage evidence.
+  receipt stage evidence. Wi-Fi Direct lifecycle damaged fixtures reject
+  template/source-identity gaps, lease serial mismatch, missing bounded TCP
+  socket counters, and cleanup that did not complete.
