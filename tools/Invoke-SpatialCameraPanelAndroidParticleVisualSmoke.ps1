@@ -1093,9 +1093,9 @@ try {
         "overscanCompensated=not-required",
         "horizontalProjectionMode=wide-fov",
         "projectionHorizontalScale=1.3500",
-        "privateSurfaceParticleMainDrawCameraBasisSource=Scene.getViewerPose-position+forward-x-mirror-corrected-roll-stable",
+        "privateSurfaceParticleMainDrawCameraBasisSource=OpenXR-xrLocateViews-mapped-to-spatial-world-with-scene-tick-fallback+forward-x-mirror-corrected-roll-stable",
         "privateSurfaceParticleCarrierPanelForwardSource=spatial-sdk-presentation-plane-only",
-        "privateSurfaceParticleEyePoseSource=Scene.getViewerPose+Scene.getEyeOffsets",
+        "privateSurfaceParticleEyePoseSource=OpenXR-xrLocateViews-per-frame-mapped-to-spatial-world-with-scene-tick-fallback",
         "privateSurfaceParticlePanelPoseSource=Scene.getViewerPose-derived-panel-plane",
         "privateSurfaceParticlePanelDefinesEye=false",
         "privateSurfaceParticleWorldAnchorCenterSource=configured-spatial-world-coordinate",
@@ -1103,7 +1103,9 @@ try {
         "privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius",
         "privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space",
         "privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale",
-        "privateSurfaceParticleOpenXrViewDrawAuthority=false",
+        "privateSurfaceParticleOpenXrViewDrawAuthority=true",
+        "privateSurfaceParticleCameraPoseCadence=render-loop-openxr-locateviews",
+        "privateSurfaceParticleSceneTickPoseFallback=true",
         "privateSurfaceParticleCameraRealignEachFrame=false",
         "privateSurfaceParticleOffAxisStereoProjection=true",
         "privateSurfaceParticleMainDrawTargetDistanceMaxMeters=2.00"
@@ -1116,20 +1118,21 @@ try {
         $summary.private_main_draw_spatial_world_direct_mapping -and
         (Test-LineContainsAll $markerText @(
             "status=viewer-eye-pose-updated",
-            "privateSurfaceParticleEyePoseSource=Scene.getViewerPose+Scene.getEyeOffsets",
+            "privateSurfaceParticleEyePoseSource=OpenXR-xrLocateViews-per-frame-mapped-to-spatial-world",
             "privateSurfaceParticlePanelDefinesEye=false",
-            "privateSurfaceParticleOpenXrViewDrawAuthority=false",
+            "privateSurfaceParticleOpenXrViewDrawAuthority=true",
+            "privateSurfaceParticleCameraPoseCadence=render-loop-openxr-locateviews",
             "explicitEyePoseValid=true"
         ))
     $summary.private_openxr_diagnostic_registration_captured = Test-LineContainsAll $markerText @(
         "status=private-openxr-diagnostic-registration-captured",
         "privateSurfaceParticleOpenXrDiagnosticProjection=registered-openxr-eye-through-start-basis",
-        "privateSurfaceParticleOpenXrViewDrawAuthority=false"
+        "privateSurfaceParticleOpenXrViewDrawAuthority=true"
     )
     $summary.private_openxr_diagnostic_projection_updated = Test-LineContainsAll $markerText @(
         "status=private-openxr-diagnostic-projection-updated",
         "privateSurfaceParticleOpenXrDiagnosticProjection=registered-openxr-eye-through-start-basis",
-        "privateSurfaceParticleOpenXrViewDrawAuthority=false",
+        "privateSurfaceParticleOpenXrViewDrawAuthority=true",
         "registeredPanelCenterM="
     )
     $worldAnchorMotionSamples = @(Get-WorldAnchorMotionSamples -Text $markerText)
