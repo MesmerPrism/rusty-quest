@@ -283,6 +283,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             currentSpatialVrInputSystemType(),
         ),
         SpatialAvatarHandVisualFeature(::marker),
+        SpatialHandBillboardFlockFeature(::marker) { store.snapshot().surfaceTargetId },
         SpatialControllerInputLateFeature(::pollSpatialControllerInput),
         ComposeFeature(),
     )
@@ -315,6 +316,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "spatialControllerOnlyMode=false spatialHandsAndControllersManifest=true " +
             "spatialRequiredOpenXrExtensions=${spatialRequiredOpenXrExtensionMarker()} " +
             "spatialSdk3dAssetModule=${SpatialStagedAssetModule.MODULE_ID} " +
+            "spatialWorldHandBillboardFlock=spatial-sdk-world-hand-billboard-flock " +
+            "spatialWorldHandBillboardFlockEnabledProperty=debug.rustyquest.spatial.hand_billboard_flock.enabled " +
             "spatialVirtualRoomModule=$SPATIAL_VIRTUAL_ROOM_MODULE_ID " +
             "spatialVirtualRoomEnabledProperty=$SPATIAL_VIRTUAL_ROOM_ENABLED_PROPERTY " +
             "spatialVirtualRoomDefaultEnabled=false " +

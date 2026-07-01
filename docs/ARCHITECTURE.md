@@ -110,6 +110,14 @@ layer/panel placement, camera projection, surface particles, experiment panel,
 and debug probes are separate route owners, while static checks reject direct
 camera/particle cross-ownership in the split native modules.
 
+The world-space hand billboard flock uses that substrate as a public carrier
+example. Its high-density `batched-scene-mesh` mode keeps public drift state in
+Kotlin arrays but renders particles through two dynamic `TriangleMesh` scene
+objects, avoiding per-particle ECS component writes. The retained
+`ecs-entities` carrier remains a comparison path. Neither carrier contains
+downstream coupling kernels, tuned profiles, private replay payloads, or study
+semantics.
+
 The lane deliberately stays outside `apps/native-renderer-android`. It does
 not link the Rust native renderer, does not request camera or hand-tracking
 features, and does not move hand mesh frames, particle arrays, field buffers,

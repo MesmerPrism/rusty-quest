@@ -20,6 +20,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPa
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
 ```
 
+For the public Spatial world-hand billboard flock, the high-density carrier
+property is `debug.rustyquest.spatial.hand_billboard_flock.carrier`. The
+default `batched-scene-mesh` mode should report `carrier=batched-scene-mesh`,
+`carrierEntityCount=2`, and `transformWrites=0`; `ecs-entities` is retained
+only as the old per-particle entity baseline.
+
 For a Spatial Camera Panel APK whose private-layer buttons visibly select the
 active projection layer, pass the downstream opaque shader profile at build
 time:

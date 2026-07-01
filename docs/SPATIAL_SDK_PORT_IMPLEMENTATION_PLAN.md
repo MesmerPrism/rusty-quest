@@ -113,6 +113,49 @@ tracked in `docs/SPATIAL_LAYERING_CARRIER_PROBE_PLAN.md`.
 - Public deterministic native hand-anchor particle smoke tests over resident
   hand meshes.
 
+- An opt-in ECS world-space hand billboard flock named
+  `spatial-sdk-world-hand-billboard-flock`. It creates persistent Spatial SDK
+  carriers, samples Spatial SDK hand anchors, keeps public per-agent drift
+  state in system arrays, and can render either through the original
+  `ecs-entities` comparison path or the default `batched-scene-mesh` path with
+  two dynamic `TriangleMesh` scene objects.
+
+## ECS World-Space Hand Billboard Flock
+
+The public Spatial SDK path has an opt-in ECS flock module named
+`spatial-sdk-world-hand-billboard-flock`. It is disabled by default through
+`debug.rustyquest.spatial.hand_billboard_flock.enabled=false`. The carrier is
+selected through `debug.rustyquest.spatial.hand_billboard_flock.carrier`; the
+default `batched-scene-mesh` mode preserves the visible particle count while
+removing per-particle ECS component writes, and `ecs-entities` remains
+available for A/B baseline runs.
+
+Implementation order:
+
+1. Register a reusable `SpatialFeature` with a late `SystemBase`.
+2. Create persistent billboard carriers once when enabled.
+3. Keep per-agent phase and offset state in arrays owned by the system.
+4. Query Spatial SDK local hand anchor entities each frame.
+5. In `batched-scene-mesh` mode, pack camera-facing quads into two
+   `TriangleMesh` carriers and report zero per-particle `Transform` writes.
+6. In `ecs-entities` mode, write final `Transform` and `Visible` components
+   back to the retained entity pool for comparison.
+7. Use one shared viewer-facing orientation basis for all billboard cards.
+8. Report public markers for visible particle count, carrier count, source,
+   visibility, and boundary policy.
+
+Non-scope:
+
+- no projection-surface panel mapping;
+- no native custom skinning route;
+- no private effect formulas or tuned private profiles;
+- no high-rate JSON payloads.
+
+Validation starts with the static Spatial Camera Panel gate, then headset runs
+can enable the module with the property above and require
+`channel=spatial-hand-billboard-flock status=pool-created` plus
+`status=world-space-updated` markers.
+
 ## Spatial Feature Modularity
 
 Use the official `FeatureDevSample` pattern as the default shape for new

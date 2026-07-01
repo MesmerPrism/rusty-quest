@@ -36,6 +36,12 @@ low-rate driver-profile control. It packages a Spatial SDK/Compose panel under
   `driver0_value01` and `driver1_value01` handoff markers.
 - Native hand-anchor particle smoke tests that use public deterministic
   resident-mesh anchor billboards.
+- An opt-in Spatial SDK ECS world-space hand billboard flock module. It creates
+  generic persistent Spatial SDK carrier objects, samples public hand anchors,
+  keeps drift state in system arrays, and avoids projection-surface particle
+  routing. The default `batched-scene-mesh` carrier renders high-density
+  billboards through two dynamic `TriangleMesh` scene objects; `ecs-entities`
+  remains an explicit comparison carrier.
 
 ## Boundary
 
@@ -48,6 +54,15 @@ only through runtime properties or intent extras that point at an explicitly
 staged app-private or device-local file. Opaque downstream
 analysis/projection slots, visual semantics, effect formulas, coupling kernels,
 and tuned parameter profiles belong outside Rusty Quest.
+
+The world-space hand billboard flock follows the same public boundary. It owns
+only generic Spatial SDK carrier objects, hand-anchor sampling, public drift
+state, visibility, and status markers. Its default `batched-scene-mesh` carrier
+renders a fixed-count particle cloud through two dynamic `TriangleMesh` scene
+objects so high-density tests avoid per-particle ECS `Transform` writes;
+`ecs-entities` remains an explicit comparison carrier. It does not own private
+effect formulas, tuned profiles, native surface-particle buffers, or
+camera-projection target math.
 
 The staged 3D asset path follows the same boundary: raw source model files are
 local inputs only and must not be packaged or committed. Runtime rendering uses
@@ -272,6 +287,9 @@ Interaction SDK pointer input without native multimodal extension forcing.
 - `app/src/main/.../SpatialAvatarHandVisualFeature.kt` owns suppression of the
   built-in Meta avatar hand visual so native/public hand visuals remain
   explicit.
+- `app/src/main/.../SpatialHandBillboardFlockFeature.kt` owns the opt-in
+  public ECS world-space hand billboard flock. Enable it with
+  `debug.rustyquest.spatial.hand_billboard_flock.enabled=true`.
 - Future Spatial lane growth should follow the official `FeatureDevSample`
   modularity pattern: move reusable Spatial SDK behavior into feature/module
   owners with their own component/system registration, and keep this Activity

@@ -6,6 +6,7 @@ internal enum class SpatialSdkLaneKind {
   CameraProjection,
   PublicMultiStack,
   SurfaceParticle,
+  WorldHandBillboard,
   StagedAsset,
   VirtualRoom,
   DebugProbe,
@@ -100,6 +101,20 @@ internal object SurfaceParticleLayerController {
       )
 }
 
+internal object SpatialWorldHandBillboardFlockBoundary {
+  val boundary =
+      SpatialSdkLaneBoundary(
+          id = "spatial-sdk-world-hand-billboard-flock",
+          kind = SpatialSdkLaneKind.WorldHandBillboard,
+          owner = "Spatial SDK ECS world-space hand billboard flock module",
+          authority = "persistent public billboard carriers and hand-anchor world-space updates",
+          renderCarrier = "Spatial SDK Entity Mesh components or batched TriangleMesh SceneObjects in world space",
+          highRatePayloadPolicy = "system-owned arrays only, no Kotlin JSON frames",
+          mayRequest = setOf("spatial-sdk-layer-carrier"),
+          mustNotOwn = setOf("camera projection", "surface-particle native buffers", "private effect formulas"),
+      )
+}
+
 internal object SpatialStagedAssetBoundary {
   val boundary =
       SpatialSdkLaneBoundary(
@@ -150,6 +165,7 @@ internal object SpatialSdkLaneBoundaries {
           CameraProjectionProbeController.boundary,
           PublicMultiStackController.boundary,
           SurfaceParticleLayerController.boundary,
+          SpatialWorldHandBillboardFlockBoundary.boundary,
           SpatialStagedAssetBoundary.boundary,
           SpatialVirtualRoomBoundary.boundary,
           SpatialDebugProbeController.boundary,

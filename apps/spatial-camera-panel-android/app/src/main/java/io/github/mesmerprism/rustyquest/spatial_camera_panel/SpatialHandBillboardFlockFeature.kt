@@ -1,0 +1,734 @@
+package io.github.mesmerprism.rustyquest.spatial_camera_panel
+
+import android.graphics.Color as AndroidColor
+import android.net.Uri
+import android.os.SystemClock
+import com.meta.spatial.core.Color4
+import com.meta.spatial.core.Entity
+import com.meta.spatial.core.Pose
+import com.meta.spatial.core.Query
+import com.meta.spatial.core.SpatialFeature
+import com.meta.spatial.core.SpatialSDKExperimentalAPI
+import com.meta.spatial.core.SystemBase
+import com.meta.spatial.core.Vector3
+import com.meta.spatial.runtime.AlphaMode
+import com.meta.spatial.runtime.BlendMode
+import com.meta.spatial.runtime.DepthTest
+import com.meta.spatial.runtime.DepthWrite
+import com.meta.spatial.runtime.MaterialSidedness
+import com.meta.spatial.runtime.Scene
+import com.meta.spatial.runtime.SceneMaterial
+import com.meta.spatial.runtime.SceneMesh
+import com.meta.spatial.runtime.SceneObject
+import com.meta.spatial.runtime.SceneTexture
+import com.meta.spatial.runtime.SortOrder
+import com.meta.spatial.runtime.TriangleMesh
+import com.meta.spatial.toolkit.AvatarBody
+import com.meta.spatial.toolkit.Box
+import com.meta.spatial.toolkit.Material
+import com.meta.spatial.toolkit.Mesh
+import com.meta.spatial.toolkit.MeshCollision
+import com.meta.spatial.toolkit.Scale
+import com.meta.spatial.toolkit.Transform
+import com.meta.spatial.toolkit.Visible
+import java.util.Locale
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.max
+import kotlin.math.sin
+import kotlin.math.sqrt
+
+internal class SpatialHandBillboardFlockFeature(
+    private val marker: (String) -> Unit,
+    private val surfaceTargetProvider: () -> String = { "" },
+) : SpatialFeature {
+  override fun lateSystemsToRegister(): List<SystemBase> =
+      listOf(SpatialHandBillboardFlockSystem(marker, surfaceTargetProvider))
+}
+
+private class SpatialHandBillboardFlockSystem(
+    private val marker: (String) -> Unit,
+    private val surfaceTargetProvider: () -> String,
+) : SystemBase() {
+  private val entities = mutableListOf<Entity>()
+  private var batchedCloud: SpatialBatchedBillboardCloud? = null
+  private var seedOffsets = emptyArray<Vector3>()
+  private var phases = FloatArray(0)
+  private var lastConfig = SpatialHandBillboardFlockConfig.disabled()
+  private var lastFrameNanos = 0L
+  private var lastStatusMs = 0L
+  private var disabledLogged = false
+  private var lastDisabledReason = ""
+
+  override fun execute() {
+    val config = SpatialHandBillboardFlockConfig.read()
+    val surfaceTargetId = currentSurfaceTargetId()
+    val suppressedForIcosphere = surfaceTargetId == "icosphere"
+    if (!config.enabled || suppressedForIcosphere) {
+      val disabledReason = if (suppressedForIcosphere) "icosphere-surface-target" else "property-disabled"
+      destroyPool(disabledReason)
+      if (!disabledLogged || disabledReason != lastDisabledReason) {
+        disabledLogged = true
+        lastDisabledReason = disabledReason
+        marker(
+            "channel=spatial-hand-billboard-flock status=disabled " +
+                "reason=$disabledReason surfaceTargetId=${markerToken(surfaceTargetId)} " +
+                "module=$MODULE_ID enabledProperty=${SpatialHandBillboardFlockConfig.PROPERTY_ENABLED} " +
+                "propertyEnabled=${config.enabled} icosphereSuppressed=$suppressedForIcosphere " +
+                "directWorldSpace=true projectionPlane=false customGpuSkinning=false " +
+                "couplingDynamics=false highRateJsonPayload=false"
+        )
+      }
+      return
+    }
+    disabledLogged = false
+    lastDisabledReason = ""
+
+    val scene = getScene() ?: return
+    val carrierNeedsRecreate =
+        when (config.carrierMode) {
+          SpatialHandBillboardCarrierMode.EcsEntities -> entities.size != config.count
+          SpatialHandBillboardCarrierMode.BatchedSceneMesh -> batchedCloud == null
+        }
+    if (carrierNeedsRecreate || lastConfig.poolIdentityKey() != config.poolIdentityKey()) {
+      createPool(config, scene)
+    }
+    lastConfig = config
+
+    val nowNanos = SystemClock.elapsedRealtimeNanos()
+    val dtSeconds =
+        if (lastFrameNanos == 0L) {
+          0.0f
+        } else {
+          ((nowNanos - lastFrameNanos).coerceAtMost(80_000_000L).toFloat() / 1_000_000_000.0f)
+        }
+    lastFrameNanos = nowNanos
+
+    val viewerPose = runCatching { scene.getViewerPose() }.getOrNull() ?: Pose(Vector3(0.0f))
+    val anchors = findHandAnchors(viewerPose)
+    val visible = anchors.poses.isNotEmpty()
+    val frameStats =
+        when (config.carrierMode) {
+          SpatialHandBillboardCarrierMode.BatchedSceneMesh ->
+              updateBatchedCarrier(config, anchors, viewerPose, dtSeconds, visible)
+          SpatialHandBillboardCarrierMode.EcsEntities ->
+              updateEntityCarrier(config, anchors, viewerPose, dtSeconds, visible)
+        }
+
+    maybeLogStatus(config, anchors.source, anchors.activeHandCount, visible, frameStats)
+  }
+
+  private fun updateEntityCarrier(
+      config: SpatialHandBillboardFlockConfig,
+      anchors: HandAnchorSnapshot,
+      viewerPose: Pose,
+      dtSeconds: Float,
+      visible: Boolean,
+  ): SpatialHandBillboardFrameStats {
+    val billboardRotation = viewerPose.q
+    var transformWrites = 0
+    var visibleWrites = 0
+    for (i in entities.indices) {
+      phases[i] = wrapPhase(phases[i] + dtSeconds * config.driftHz * (1.0f + (i % 7) * 0.035f))
+      val anchor = anchors.poses[i % anchors.poses.size]
+      val phase = phases[i] * TWO_PI
+      val wobble =
+          Vector3(
+              cos(phase.toDouble()).toFloat() * config.driftMeters,
+              sin((phase * 0.73f).toDouble()).toFloat() * config.driftMeters,
+              sin((phase * 1.19f).toDouble()).toFloat() * config.driftMeters * 0.65f,
+      )
+      val position = anchor.t + seedOffsets[i] + wobble
+      entities[i].setComponent(Transform(Pose(position, billboardRotation)))
+      transformWrites += 1
+      entities[i].setComponent(Visible(visible))
+      visibleWrites += 1
+    }
+    return SpatialHandBillboardFrameStats(
+        transformWrites = transformWrites,
+        visibleWrites = visibleWrites,
+        carrierEntityCount = entities.size,
+    )
+  }
+
+  private fun updateBatchedCarrier(
+      config: SpatialHandBillboardFlockConfig,
+      anchors: HandAnchorSnapshot,
+      viewerPose: Pose,
+      dtSeconds: Float,
+      visible: Boolean,
+  ): SpatialHandBillboardFrameStats {
+    val cloud = batchedCloud ?: return SpatialHandBillboardFrameStats.empty()
+    val forward = viewerPose.forward().normalizedOr(Vector3(0.0f, 0.0f, -1.0f))
+    val up = viewerPose.up().normalizedOr(Vector3(0.0f, 1.0f, 0.0f))
+    val right = forward.cross(up).normalizedOr(Vector3(1.0f, 0.0f, 0.0f))
+    val billboardNormal = forward * -1.0f
+    val halfSize = config.billboardMeters * 0.5f
+    cloud.beginFrame()
+    for (i in 0 until config.count) {
+      phases[i] = wrapPhase(phases[i] + dtSeconds * config.driftHz * (1.0f + (i % 7) * 0.035f))
+      val anchor = anchors.poses[i % anchors.poses.size]
+      val phase = phases[i] * TWO_PI
+      val wobble =
+          Vector3(
+              cos(phase.toDouble()).toFloat() * config.driftMeters,
+              sin((phase * 0.73f).toDouble()).toFloat() * config.driftMeters,
+              sin((phase * 1.19f).toDouble()).toFloat() * config.driftMeters * 0.65f,
+          )
+      val position = anchor.t + seedOffsets[i] + wobble
+      cloud.setParticle(
+          handIndex = i % cloud.carrierEntityCount,
+          particleIndex = i / cloud.carrierEntityCount,
+          center = position,
+          billboardNormal = billboardNormal,
+          right = right,
+          up = up,
+          halfSize = halfSize,
+          color = publicBillboardColor(i, config.count, phases[i]),
+      )
+    }
+    val counts = IntArray(cloud.carrierEntityCount) { carrierIndex ->
+      config.count / cloud.carrierEntityCount + if (carrierIndex < config.count % cloud.carrierEntityCount) 1 else 0
+    }
+    val submitStats = cloud.submit(counts, visible)
+    return SpatialHandBillboardFrameStats(
+        carrierEntityCount = cloud.carrierEntityCount,
+        meshGeometryUpdates = submitStats.geometryUpdates,
+        meshPrimitiveUpdates = submitStats.primitiveUpdates,
+        sceneObjectVisibleWrites = submitStats.sceneObjectVisibleWrites,
+    )
+  }
+
+  private fun createPool(config: SpatialHandBillboardFlockConfig, scene: Scene) {
+    destroyPool("recreate")
+    seedOffsets = Array(config.count) { index -> seededOffset(index, config.count, config.spreadMeters) }
+    phases = FloatArray(config.count) { index -> ((index * 37) % 257) / 257.0f }
+
+    when (config.carrierMode) {
+      SpatialHandBillboardCarrierMode.BatchedSceneMesh -> {
+        batchedCloud = SpatialBatchedBillboardCloud.create(scene, config)
+      }
+      SpatialHandBillboardCarrierMode.EcsEntities -> {
+        repeat(config.count) {
+          val entity =
+              Entity.create(
+                  Mesh(Uri.parse("mesh://box"), MeshCollision.NoCollision),
+                  Box(Vector3(-0.5f, -0.5f, 0.0f), Vector3(0.5f, 0.5f, 0.001f)),
+                  Material().apply {
+                    baseColor = Color4(0.22f, 0.76f, 1.0f, 0.72f)
+                    unlit = true
+                  },
+                  Transform(Pose(Vector3(0.0f))),
+                  Scale(Vector3(config.billboardMeters, config.billboardMeters, config.billboardMeters)),
+                  Visible(false),
+              )
+          entities.add(entity)
+        }
+      }
+    }
+
+    val carrierEntityCount =
+        when (config.carrierMode) {
+          SpatialHandBillboardCarrierMode.BatchedSceneMesh -> batchedCloud?.carrierEntityCount ?: 0
+          SpatialHandBillboardCarrierMode.EcsEntities -> entities.size
+        }
+    marker(
+        "channel=spatial-hand-billboard-flock status=pool-created " +
+            "module=$MODULE_ID entityCount=${config.count} visualParticleCount=${config.count} " +
+            "carrier=${config.carrierMode.id} carrierEntityCount=$carrierEntityCount " +
+            "mesh=${config.carrierMode.meshMarker} collision=none unlit=true " +
+            "sharedMaterialConfig=true persistentCarriers=true spawnDestroyPerFrame=false " +
+            "simulationState=system-arrays publicParticleState=true " +
+            "directWorldSpace=true projectionPlane=false customGpuSkinning=false " +
+            "couplingDynamics=false highRateJsonPayload=false"
+    )
+  }
+
+  private fun destroyPool(reason: String) {
+    if (entities.isEmpty() && batchedCloud == null) {
+      return
+    }
+    val destroyedBatchedCarriers = batchedCloud?.carrierEntityCount ?: 0
+    runCatching { batchedCloud?.destroy() }
+    batchedCloud = null
+    for (entity in entities) {
+      runCatching { entity.destroy() }
+    }
+    val destroyed = entities.size
+    entities.clear()
+    seedOffsets = emptyArray()
+    phases = FloatArray(0)
+    lastFrameNanos = 0L
+    marker(
+        "channel=spatial-hand-billboard-flock status=pool-destroyed " +
+            "module=$MODULE_ID reason=${markerToken(reason)} destroyedEntityCount=$destroyed " +
+            "destroyedBatchedCarrierEntityCount=$destroyedBatchedCarriers"
+    )
+  }
+
+  private fun findHandAnchors(viewerPose: Pose): HandAnchorSnapshot {
+    val handPoses = mutableListOf<Pose>()
+    runCatching {
+          Query.where { has(AvatarBody.id) }
+              .eval()
+              .forEach { entity ->
+                val avatarBody = entity.tryGetComponent<AvatarBody>() ?: return@forEach
+                val localPlayer =
+                    runCatching { entity.isLocal() }.getOrDefault(true) && avatarBody.isPlayerControlled
+                if (!localPlayer) {
+                  return@forEach
+                }
+                avatarBody.leftHand.tryGetComponent<Transform>()?.transform?.let { handPoses.add(it) }
+                avatarBody.rightHand.tryGetComponent<Transform>()?.transform?.let { handPoses.add(it) }
+              }
+        }
+        .onFailure { throwable ->
+          marker(
+              "channel=spatial-hand-billboard-flock status=hand-anchor-query-failed " +
+                  "module=$MODULE_ID source=spatial-sdk-avatar-body-hand-entities " +
+                  "error=${markerToken(throwable.javaClass.simpleName)}"
+          )
+        }
+
+    if (handPoses.isNotEmpty()) {
+      return HandAnchorSnapshot(
+          poses = handPoses,
+          activeHandCount = handPoses.size,
+          source = "spatial-sdk-avatar-body-hand-entities",
+      )
+    }
+
+    val forward = viewerPose.forward().normalizedOr(Vector3(0.0f, 0.0f, -1.0f))
+    val fallback = Pose(viewerPose.t + forward * 0.72f, viewerPose.q)
+    return HandAnchorSnapshot(
+        poses = listOf(fallback),
+        activeHandCount = 0,
+        source = "viewer-forward-fallback",
+    )
+  }
+
+  private fun currentSurfaceTargetId(): String =
+      runCatching { surfaceTargetProvider() }
+          .getOrDefault("")
+          .trim()
+          .lowercase(Locale.US)
+
+  private fun maybeLogStatus(
+      config: SpatialHandBillboardFlockConfig,
+      source: String,
+      activeHandCount: Int,
+      visible: Boolean,
+      frameStats: SpatialHandBillboardFrameStats,
+  ) {
+    val nowMs = SystemClock.elapsedRealtime()
+    if (nowMs - lastStatusMs < STATUS_INTERVAL_MS) {
+      return
+    }
+    lastStatusMs = nowMs
+    marker(
+        "channel=spatial-hand-billboard-flock status=world-space-updated " +
+            "module=$MODULE_ID source=${markerToken(source)} activeHandCount=$activeHandCount " +
+            "entityCount=${config.count} visualParticleCount=${config.count} " +
+            "carrier=${config.carrierMode.id} carrierEntityCount=${frameStats.carrierEntityCount} " +
+            "transformWrites=${frameStats.transformWrites} visibleWrites=${frameStats.visibleWrites} " +
+            "meshGeometryUpdates=${frameStats.meshGeometryUpdates} " +
+            "meshPrimitiveUpdates=${frameStats.meshPrimitiveUpdates} " +
+            "sceneObjectVisibleWrites=${frameStats.sceneObjectVisibleWrites} visible=$visible " +
+            "sharedBillboardRotation=true perEntityLookAt=false directWorldSpace=true " +
+            "projectionPlane=false customGpuSkinning=false couplingDynamics=false " +
+            "highRateJsonPayload=false"
+    )
+  }
+
+  private fun seededOffset(index: Int, count: Int, spreadMeters: Float): Vector3 {
+    val goldenAngle = PI * (3.0 - sqrt(5.0))
+    val normalizedCount = max(1, count)
+    val y = 1.0 - (2.0 * (index + 0.5) / normalizedCount)
+    val radius = sqrt(max(0.0, 1.0 - y * y))
+    val theta = goldenAngle * index
+    return Vector3(
+        (cos(theta) * radius * spreadMeters).toFloat(),
+        (y * spreadMeters).toFloat(),
+        (sin(theta) * radius * spreadMeters).toFloat(),
+    )
+  }
+
+  companion object {
+    private const val MODULE_ID = "spatial-sdk-world-hand-billboard-flock"
+    private const val STATUS_INTERVAL_MS = 1000L
+    private const val TWO_PI = (PI * 2.0).toFloat()
+
+    private fun wrapPhase(value: Float): Float {
+      val wrapped = value % 1.0f
+      return if (wrapped < 0.0f) wrapped + 1.0f else wrapped
+    }
+  }
+}
+
+private data class SpatialHandBillboardFrameStats(
+    val transformWrites: Int = 0,
+    val visibleWrites: Int = 0,
+    val carrierEntityCount: Int = 0,
+    val meshGeometryUpdates: Int = 0,
+    val meshPrimitiveUpdates: Int = 0,
+    val sceneObjectVisibleWrites: Int = 0,
+) {
+  companion object {
+    fun empty(): SpatialHandBillboardFrameStats = SpatialHandBillboardFrameStats()
+  }
+}
+
+private data class SpatialBatchedBillboardSubmitStats(
+    val geometryUpdates: Int = 0,
+    val primitiveUpdates: Int = 0,
+    val sceneObjectVisibleWrites: Int = 0,
+)
+
+@OptIn(SpatialSDKExperimentalAPI::class)
+private class SpatialBatchedBillboardCloud private constructor(
+    private val hands: Array<SpatialBatchedBillboardHandMesh>,
+    private val material: SceneMaterial,
+    private val texture: SceneTexture,
+) {
+  val carrierEntityCount: Int
+    get() = hands.size
+
+  fun beginFrame() {
+    hands.forEach { it.beginFrame() }
+  }
+
+  fun setParticle(
+      handIndex: Int,
+      particleIndex: Int,
+      center: Vector3,
+      billboardNormal: Vector3,
+      right: Vector3,
+      up: Vector3,
+      halfSize: Float,
+      color: Int,
+  ) {
+    hands.getOrNull(handIndex)?.setParticle(particleIndex, center, billboardNormal, right, up, halfSize, color)
+  }
+
+  fun submit(counts: IntArray, visible: Boolean): SpatialBatchedBillboardSubmitStats {
+    var geometryUpdates = 0
+    var primitiveUpdates = 0
+    var visibleWrites = 0
+    for (handIndex in hands.indices) {
+      val stats = hands[handIndex].submit(counts.getOrElse(handIndex) { 0 }, visible)
+      geometryUpdates += stats.geometryUpdates
+      primitiveUpdates += stats.primitiveUpdates
+      visibleWrites += stats.sceneObjectVisibleWrites
+    }
+    return SpatialBatchedBillboardSubmitStats(geometryUpdates, primitiveUpdates, visibleWrites)
+  }
+
+  fun destroy() {
+    hands.forEach { it.destroy() }
+    runCatching { material.destroy() }
+    runCatching { texture.destroy() }
+  }
+
+  companion object {
+    fun create(scene: Scene, config: SpatialHandBillboardFlockConfig): SpatialBatchedBillboardCloud {
+      val texture = SceneTexture(AndroidColor.valueOf(1.0f, 1.0f, 1.0f, 1.0f))
+      val material =
+          SceneMaterial(texture, AlphaMode.TRANSLUCENT, SceneMaterial.UNLIT_SHADER).apply {
+            setUnlit(true)
+            setSidedness(MaterialSidedness.DOUBLE_SIDED)
+            setBlendMode(BlendMode.TRANSLUCENT)
+            setDepthWrite(DepthWrite.DISABLE)
+            setDepthTest(DepthTest.LESS_OR_EQUAL)
+            setSortOrder(SortOrder.TRANSLUCENT)
+            setRenderOrder(PUBLIC_BILLBOARD_RENDER_ORDER)
+          }
+      val capacityPerCarrier = ((config.count + PUBLIC_BILLBOARD_CARRIER_COUNT - 1) / PUBLIC_BILLBOARD_CARRIER_COUNT).coerceAtLeast(1)
+      return SpatialBatchedBillboardCloud(
+          hands =
+              Array(PUBLIC_BILLBOARD_CARRIER_COUNT) { index ->
+                SpatialBatchedBillboardHandMesh.create(scene, "carrier-$index", capacityPerCarrier, material)
+              },
+          material = material,
+          texture = texture,
+      )
+    }
+  }
+}
+
+@OptIn(SpatialSDKExperimentalAPI::class)
+private class SpatialBatchedBillboardHandMesh private constructor(
+    private val sceneObject: SceneObject,
+    private val sceneMesh: SceneMesh,
+    private val triangleMesh: TriangleMesh,
+    private val positions: FloatArray,
+    private val normals: FloatArray,
+    private val uvs: FloatArray,
+    private val colors: IntArray,
+    private val indices: IntArray,
+    private val capacity: Int,
+) {
+  private var activeIndices: IntArray = indices
+  private var lastIndexCount = indices.size
+  private var visible = false
+
+  fun beginFrame() {}
+
+  fun setParticle(
+      particleIndex: Int,
+      center: Vector3,
+      billboardNormal: Vector3,
+      right: Vector3,
+      up: Vector3,
+      halfSize: Float,
+      color: Int,
+  ) {
+    if (particleIndex !in 0 until capacity) {
+      return
+    }
+    val vertexBase = particleIndex * 4
+    val positionBase = vertexBase * 3
+    val rightX = right.x * halfSize
+    val rightY = right.y * halfSize
+    val rightZ = right.z * halfSize
+    val upX = up.x * halfSize
+    val upY = up.y * halfSize
+    val upZ = up.z * halfSize
+
+    writePosition(positionBase, center.x - rightX - upX, center.y - rightY - upY, center.z - rightZ - upZ)
+    writePosition(positionBase + 3, center.x + rightX - upX, center.y + rightY - upY, center.z + rightZ - upZ)
+    writePosition(positionBase + 6, center.x + rightX + upX, center.y + rightY + upY, center.z + rightZ + upZ)
+    writePosition(positionBase + 9, center.x - rightX + upX, center.y - rightY + upY, center.z - rightZ + upZ)
+
+    for (vertexOffset in 0 until 4) {
+      val normalBase = (vertexBase + vertexOffset) * 3
+      normals[normalBase] = billboardNormal.x
+      normals[normalBase + 1] = billboardNormal.y
+      normals[normalBase + 2] = billboardNormal.z
+      colors[vertexBase + vertexOffset] = color
+    }
+  }
+
+  fun submit(requestedParticleCount: Int, shouldBeVisible: Boolean): SpatialBatchedBillboardSubmitStats {
+    val activeCount = requestedParticleCount.coerceIn(0, capacity)
+    val vertexCount = activeCount * 4
+    val indexCount = activeCount * 6
+    var geometryUpdates = 0
+    var primitiveUpdates = 0
+    var visibleWrites = 0
+    if (vertexCount > 0) {
+      triangleMesh.updateGeometry(0, positions, normals, uvs, colors)
+      geometryUpdates += 1
+    }
+    if (indexCount != lastIndexCount) {
+      activeIndices = indices.copyOf(indexCount)
+      triangleMesh.updatePrimitives(0, activeIndices)
+      primitiveUpdates += 1
+      lastIndexCount = indexCount
+    }
+    if (vertexCount > 0 || primitiveUpdates > 0) {
+      sceneMesh.updateWithTriangleMesh(triangleMesh, false)
+    }
+    if (visible != shouldBeVisible) {
+      sceneObject.setIsVisible(shouldBeVisible)
+      visible = shouldBeVisible
+      visibleWrites += 1
+    }
+    return SpatialBatchedBillboardSubmitStats(geometryUpdates, primitiveUpdates, visibleWrites)
+  }
+
+  fun destroy() {
+    runCatching { sceneObject.destroy() }
+    runCatching { sceneMesh.destroy() }
+    runCatching { triangleMesh.destroy() }
+  }
+
+  private fun writePosition(base: Int, x: Float, y: Float, z: Float) {
+    positions[base] = x
+    positions[base + 1] = y
+    positions[base + 2] = z
+  }
+
+  companion object {
+    fun create(
+        scene: Scene,
+        label: String,
+        capacity: Int,
+        material: SceneMaterial,
+    ): SpatialBatchedBillboardHandMesh {
+      val vertexCapacity = capacity * 4
+      val indexCapacity = capacity * 6
+      val positions = FloatArray(vertexCapacity * 3)
+      val normals = FloatArray(vertexCapacity * 3)
+      val uvs = FloatArray(vertexCapacity * 2)
+      val colors = IntArray(vertexCapacity) { AndroidColor.WHITE }
+      val indices = IntArray(indexCapacity)
+      for (particleIndex in 0 until capacity) {
+        val vertexBase = particleIndex * 4
+        val uvBase = vertexBase * 2
+        uvs[uvBase] = 0.0f
+        uvs[uvBase + 1] = 1.0f
+        uvs[uvBase + 2] = 1.0f
+        uvs[uvBase + 3] = 1.0f
+        uvs[uvBase + 4] = 1.0f
+        uvs[uvBase + 5] = 0.0f
+        uvs[uvBase + 6] = 0.0f
+        uvs[uvBase + 7] = 0.0f
+        val indexBase = particleIndex * 6
+        indices[indexBase] = vertexBase
+        indices[indexBase + 1] = vertexBase + 1
+        indices[indexBase + 2] = vertexBase + 2
+        indices[indexBase + 3] = vertexBase
+        indices[indexBase + 4] = vertexBase + 2
+        indices[indexBase + 5] = vertexBase + 3
+      }
+      val triangleMesh =
+          TriangleMesh(vertexCapacity, indexCapacity, intArrayOf(0, indexCapacity), arrayOf(material))
+      triangleMesh.updateGeometry(0, positions, normals, uvs, colors)
+      triangleMesh.updatePrimitives(0, indices)
+      val sceneMesh = SceneMesh.fromTriangleMesh(triangleMesh, false)
+      val entity = Entity.create(Transform(Pose(Vector3(0.0f, 0.0f, 0.0f))))
+      val sceneObject = SceneObject(scene, sceneMesh, "spatial-hand-billboard-flock-$label", entity)
+      scene.addObject(sceneObject)
+      sceneObject.setIsVisible(false)
+      return SpatialBatchedBillboardHandMesh(
+          sceneObject = sceneObject,
+          sceneMesh = sceneMesh,
+          triangleMesh = triangleMesh,
+          positions = positions,
+          normals = normals,
+          uvs = uvs,
+          colors = colors,
+          indices = indices,
+          capacity = capacity,
+      )
+    }
+  }
+}
+
+private data class HandAnchorSnapshot(
+    val poses: List<Pose>,
+    val activeHandCount: Int,
+    val source: String,
+)
+
+private data class SpatialHandBillboardFlockConfig(
+    val enabled: Boolean,
+    val count: Int,
+    val billboardMeters: Float,
+    val spreadMeters: Float,
+    val driftMeters: Float,
+    val driftHz: Float,
+    val carrierMode: SpatialHandBillboardCarrierMode,
+) {
+  fun poolIdentityKey(): String =
+      "${count}|${formatFloat(billboardMeters)}|${formatFloat(spreadMeters)}|${carrierMode.id}"
+
+  companion object {
+    const val PROPERTY_ENABLED = "debug.rustyquest.spatial.hand_billboard_flock.enabled"
+    private const val PROPERTY_CARRIER = "debug.rustyquest.spatial.hand_billboard_flock.carrier"
+    private const val PROPERTY_COUNT = "debug.rustyquest.spatial.hand_billboard_flock.count"
+    private const val PROPERTY_BILLBOARD_METERS =
+        "debug.rustyquest.spatial.hand_billboard_flock.billboard_meters"
+    private const val PROPERTY_SPREAD_METERS =
+        "debug.rustyquest.spatial.hand_billboard_flock.spread_meters"
+    private const val PROPERTY_DRIFT_METERS =
+        "debug.rustyquest.spatial.hand_billboard_flock.drift_meters"
+    private const val PROPERTY_DRIFT_HZ = "debug.rustyquest.spatial.hand_billboard_flock.drift_hz"
+
+    fun disabled(): SpatialHandBillboardFlockConfig =
+        SpatialHandBillboardFlockConfig(
+            false,
+            64,
+            0.022f,
+            0.085f,
+            0.008f,
+            0.42f,
+            SpatialHandBillboardCarrierMode.BatchedSceneMesh,
+        )
+
+    fun read(): SpatialHandBillboardFlockConfig =
+        SpatialHandBillboardFlockConfig(
+            enabled = readBooleanSystemProperty(PROPERTY_ENABLED, false),
+            count = readIntSystemProperty(PROPERTY_COUNT, 64, 1, 2048),
+            billboardMeters = readFloatSystemProperty(PROPERTY_BILLBOARD_METERS, 0.022f, 0.004f, 0.08f),
+            spreadMeters = readFloatSystemProperty(PROPERTY_SPREAD_METERS, 0.085f, 0.0f, 0.35f),
+            driftMeters = readFloatSystemProperty(PROPERTY_DRIFT_METERS, 0.008f, 0.0f, 0.08f),
+            driftHz = readFloatSystemProperty(PROPERTY_DRIFT_HZ, 0.42f, 0.0f, 8.0f),
+            carrierMode = SpatialHandBillboardCarrierMode.parse(readSystemProperty(PROPERTY_CARRIER)),
+        )
+  }
+}
+
+private enum class SpatialHandBillboardCarrierMode(val id: String, val meshMarker: String) {
+  BatchedSceneMesh("batched-scene-mesh", "two-trianglemesh-billboard-clouds"),
+  EcsEntities("ecs-entities", "mesh-box-thin-card");
+
+  companion object {
+    fun parse(value: String): SpatialHandBillboardCarrierMode =
+        when (value.trim().lowercase(Locale.US)) {
+          "ecs", "entity", "entities", "ecs-entities" -> EcsEntities
+          "batched", "scene-mesh", "batched-scene-mesh", "trianglemesh", "triangle-mesh" ->
+              BatchedSceneMesh
+          else -> BatchedSceneMesh
+        }
+  }
+}
+
+private fun publicBillboardColor(index: Int, count: Int, phase01: Float): Int {
+  val t = if (count <= 1) 0.0f else index.toFloat() / (count - 1).toFloat()
+  val r = (0.32f + 0.62f * (0.5f + 0.5f * sin(((t + phase01 * 0.12f) * TWO_PI_PUBLIC).toDouble()).toFloat()))
+      .coerceIn(0.0f, 1.0f)
+  val g = (0.42f + 0.52f * (0.5f + 0.5f * sin(((t * 1.7f + 0.33f) * TWO_PI_PUBLIC).toDouble()).toFloat()))
+      .coerceIn(0.0f, 1.0f)
+  val b = (0.55f + 0.40f * (0.5f + 0.5f * cos(((t * 1.3f + phase01 * 0.19f) * TWO_PI_PUBLIC).toDouble()).toFloat()))
+      .coerceIn(0.0f, 1.0f)
+  return AndroidColor.argb(196, (r * 255.0f).toInt(), (g * 255.0f).toInt(), (b * 255.0f).toInt())
+}
+
+private fun readBooleanSystemProperty(propertyName: String, defaultValue: Boolean): Boolean =
+    when (readSystemProperty(propertyName).trim().lowercase(Locale.US)) {
+      "1", "true", "yes", "on" -> true
+      "0", "false", "no", "off" -> false
+      else -> defaultValue
+    }
+
+private fun readIntSystemProperty(
+    propertyName: String,
+    defaultValue: Int,
+    minValue: Int,
+    maxValue: Int,
+): Int = readSystemProperty(propertyName).toIntOrNull()?.coerceIn(minValue, maxValue) ?: defaultValue
+
+private fun readFloatSystemProperty(
+    propertyName: String,
+    defaultValue: Float,
+    minValue: Float,
+    maxValue: Float,
+): Float = readSystemProperty(propertyName).toFloatOrNull()?.coerceIn(minValue, maxValue) ?: defaultValue
+
+private fun readSystemProperty(propertyName: String): String =
+    runCatching {
+          val systemProperties = Class.forName("android.os.SystemProperties")
+          val get = systemProperties.getMethod("get", String::class.java, String::class.java)
+          get.invoke(null, propertyName, "") as String
+        }
+        .getOrDefault("")
+
+private fun markerToken(value: String): String =
+    value.trim().lowercase(Locale.US).replace(Regex("[^a-z0-9_.:-]+"), "-").ifBlank { "none" }
+
+private fun formatFloat(value: Float): String =
+    String.format(Locale.US, "%.3f", value.toDouble()).trimEnd('0').trimEnd('.')
+
+private const val PUBLIC_BILLBOARD_CARRIER_COUNT = 2
+private const val PUBLIC_BILLBOARD_RENDER_ORDER = 30
+private const val TWO_PI_PUBLIC = (PI * 2.0).toFloat()
+
+private fun Vector3.normalizedOr(fallback: Vector3): Vector3 {
+  val lengthSquared = x * x + y * y + z * z
+  if (lengthSquared <= 1.0e-8f) {
+    return fallback
+  }
+  val invLength = 1.0f / sqrt(lengthSquared)
+  return Vector3(x * invLength, y * invLength, z * invLength)
+}
