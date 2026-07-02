@@ -15,6 +15,12 @@
         android:name="oculus.software.handtracking"
         android:required="false" />
     <uses-feature
+        android:name="com.oculus.software.body_tracking"
+        android:required="false" />
+    <uses-feature
+        android:name="com.oculus.experimental.enabled"
+        android:required="false" />
+    <uses-feature
         android:name="com.oculus.feature.PASSTHROUGH"
         android:required="false" />
     <uses-feature

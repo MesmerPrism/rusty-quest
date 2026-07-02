@@ -122,13 +122,32 @@ class KuramotoSpatialActivity : AppSystemActivity() {
   private var lastParticleLayerProjectionMarkerMs = 0L
   private var lastParticleLayerTargetDistanceMeters: Float? = null
   private var lastParticleLayerSurfaceOverscanScale: Float? = null
+  private var lastParticleLayerPanelFlipBackFacing: Boolean? = null
+  private var lastParticleLayerPanelFlipMarkerMs = 0L
+
+  override fun registerRequiredOpenXRExtensions(): List<String> =
+      super.registerRequiredOpenXRExtensions() +
+          listOf(
+              "XR_META_body_tracking_full_body",
+              "XR_META_body_tracking_fidelity",
+          )
 
   override fun registerFeatures(): List<SpatialFeature> {
-    return listOf(
+    val features =
+        mutableListOf<SpatialFeature>(
         VRFeature(this),
         SpatialAvatarHandVisualFeature(::marker),
-        ComposeFeature(),
     )
+    if (currentWorkflowPanelEnabled()) {
+      features += ComposeFeature()
+    } else {
+      marker(
+          "channel=spatial-panel status=compose-feature-suppressed " +
+              "panelRegistrationId=kuramoto_experiment_panel workflowPanelEnabled=false " +
+              "workflowPanelProperty=$WORKFLOW_PANEL_ENABLED_PROPERTY"
+      )
+    }
+    return features + SpatialPrivateFeatureLoader.load(::marker, this)
   }
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -158,14 +177,32 @@ class KuramotoSpatialActivity : AppSystemActivity() {
         environmentIntensity = 0.2f,
     )
     scene.setViewOrigin(0.0f, 0.0f, 2.0f, 180.0f)
-    createDiagnosticBackdrop()
+    val workflowPanelEnabled = currentWorkflowPanelEnabled()
+    val diagnosticBackdropEnabled = currentDiagnosticBackdropEnabled(workflowPanelEnabled)
+    if (diagnosticBackdropEnabled) {
+      createDiagnosticBackdrop()
+    } else {
+      marker(
+          "channel=diagnostic-backdrop status=suppressed diagnosticBackdrop=false " +
+              "workflowPanelEnabled=$workflowPanelEnabled " +
+              "diagnosticBackdropProperty=$DIAGNOSTIC_BACKDROP_ENABLED_PROPERTY"
+      )
+    }
     panelEntity =
-        Entity.createPanelEntity(
-            R.id.kuramoto_experiment_panel,
-            Transform(panelPose()),
-            panelDimensions(),
-            Visible(true),
-        )
+        if (workflowPanelEnabled) {
+          Entity.createPanelEntity(
+              R.id.kuramoto_experiment_panel,
+              Transform(panelPose()),
+              panelDimensions(),
+              Visible(true),
+          )
+        } else {
+          marker(
+              "channel=spatial-panel status=suppressed panelRegistrationId=kuramoto_experiment_panel " +
+                  "workflowPanelEnabled=false workflowPanelProperty=$WORKFLOW_PANEL_ENABLED_PROPERTY"
+          )
+          null
+        }
     particleLayerEntity =
         runCatching {
               Entity.createPanelEntity(
@@ -186,12 +223,15 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     applyPanelPlacement()
     updateParticleLayerProjectionFromViewer(reason = "scene-ready", forceLog = true)
     logNativeInteropProbe(phase = "scene-ready", probeSurface = false)
-    marker(
-        "channel=spatial-panel status=spawned panelRegistrationId=kuramoto_experiment_panel " +
-            "panelY=${panelPlacement.yMeters} panelZ=${panelPlacement.zMeters} panelScale=${panelPlacement.scale} " +
-            "panelWidth=$PANEL_WIDTH_METERS panelHeight=$PANEL_HEIGHT_METERS " +
-            "visibleComponent=true panelDimensionsComponent=true diagnosticBackdrop=true"
-    )
+    if (workflowPanelEnabled) {
+      marker(
+          "channel=spatial-panel status=spawned panelRegistrationId=kuramoto_experiment_panel " +
+              "panelY=${panelPlacement.yMeters} panelZ=${panelPlacement.zMeters} panelScale=${panelPlacement.scale} " +
+              "panelWidth=$PANEL_WIDTH_METERS panelHeight=$PANEL_HEIGHT_METERS " +
+              "workflowPanelEnabled=true workflowPanelProperty=$WORKFLOW_PANEL_ENABLED_PROPERTY " +
+              "visibleComponent=true panelDimensionsComponent=true diagnosticBackdrop=$diagnosticBackdropEnabled"
+      )
+    }
     marker(
         "channel=native-surface-particle-layer status=panel-entity-spawned " +
             "renderPolicy=native-vulkan-wsi-surface-panel panelRegistrationId=kuramoto_particle_surface_panel " +
@@ -218,51 +258,61 @@ class KuramotoSpatialActivity : AppSystemActivity() {
   }
 
   override fun registerPanels(): List<PanelRegistration> {
-    val panels =
-        listOf(
-        ComposeViewPanelRegistration(
-            R.id.kuramoto_experiment_panel,
-            composeViewCreator = { _, context ->
-              ComposeView(context).apply {
-                setBackgroundColor(android.graphics.Color.rgb(255, 243, 176))
-                alpha = 1.0f
-                setWillNotDraw(false)
-                setLayerType(View.LAYER_TYPE_HARDWARE, null)
-                setContent {
-                  MaterialTheme(
-                      colorScheme =
-                          lightColorScheme(
-                              primary = PanelProbeHeader,
-                              onPrimary = Color.White,
-                              background = PanelProbeBackground,
-                              onBackground = PanelProbeInk,
-                              surface = PanelProbeBackground,
-                              onSurface = PanelProbeInk,
-                          )
-                  ) {
-                    KuramotoExperimentPanel(
-                        store = store,
-                        placement = panelPlacement,
-                        particleControls = particleControls,
-                        adjustPlacement = { dy, dz, scaleDelta ->
-                          adjustPanelPlacement(dy, dz, scaleDelta)
-                        },
-                        updateParticleControls = { driver0, driver1, pointScale ->
-                          updateSurfaceParticleControls(driver0, driver1, pointScale)
-                        },
-                    )
+    val panels = mutableListOf<PanelRegistration>()
+    if (currentWorkflowPanelEnabled()) {
+      panels +=
+          ComposeViewPanelRegistration(
+              R.id.kuramoto_experiment_panel,
+              composeViewCreator = { _, context ->
+                ComposeView(context).apply {
+                  setBackgroundColor(android.graphics.Color.rgb(255, 243, 176))
+                  alpha = 1.0f
+                  setWillNotDraw(false)
+                  setLayerType(View.LAYER_TYPE_HARDWARE, null)
+                  setContent {
+                    MaterialTheme(
+                        colorScheme =
+                            lightColorScheme(
+                                primary = PanelProbeHeader,
+                                onPrimary = Color.White,
+                                background = PanelProbeBackground,
+                                onBackground = PanelProbeInk,
+                                surface = PanelProbeBackground,
+                                onSurface = PanelProbeInk,
+                            )
+                    ) {
+                      KuramotoExperimentPanel(
+                          store = store,
+                          placement = panelPlacement,
+                          particleControls = particleControls,
+                          adjustPlacement = { dy, dz, scaleDelta ->
+                            adjustPanelPlacement(dy, dz, scaleDelta)
+                          },
+                          updateParticleControls = { driver0, driver1, pointScale ->
+                            updateSurfaceParticleControls(driver0, driver1, pointScale)
+                          },
+                      )
+                    }
                   }
                 }
-              }
-            },
-            settingsCreator = {
-              UIPanelSettings(
-                  shape = QuadShapeOptions(width = PANEL_WIDTH_METERS, height = PANEL_HEIGHT_METERS),
-                  style = PanelStyleOptions(themeResourceId = R.style.PanelAppThemeOpaqueProbe),
-                  display = DpPerMeterDisplayOptions(dpPerMeter = PANEL_DP_PER_METER),
-              )
-            },
-        ),
+              },
+              settingsCreator = {
+                UIPanelSettings(
+                    shape =
+                        QuadShapeOptions(width = PANEL_WIDTH_METERS, height = PANEL_HEIGHT_METERS),
+                    style = PanelStyleOptions(themeResourceId = R.style.PanelAppThemeOpaqueProbe),
+                    display = DpPerMeterDisplayOptions(dpPerMeter = PANEL_DP_PER_METER),
+                )
+              },
+          )
+    } else {
+      marker(
+          "channel=spatial-panel status=registration-suppressed " +
+              "panelRegistrationId=kuramoto_experiment_panel workflowPanelEnabled=false " +
+              "workflowPanelProperty=$WORKFLOW_PANEL_ENABLED_PROPERTY"
+      )
+    }
+    panels +=
         VideoSurfacePanelRegistration(
             R.id.kuramoto_particle_surface_panel,
             surfaceConsumer = { _, surface ->
@@ -287,12 +337,12 @@ class KuramotoSpatialActivity : AppSystemActivity() {
                       particleLayerStereoMarkerFields()
               )
             },
-        ),
-    )
+        )
     panelRegistrationCount = panels.size
     marker(
         "channel=native-surface-particle-layer status=panel-registrations-created " +
             "renderPolicy=native-vulkan-wsi-surface-panel panelRegistrationCount=$panelRegistrationCount " +
+            "workflowPanelEnabled=${currentWorkflowPanelEnabled()} " +
             "particlePanelRegistrationId=kuramoto_particle_surface_panel"
     )
     scheduleParticleLayerLifecycleDiagnostics("register-panels")
@@ -622,6 +672,10 @@ class KuramotoSpatialActivity : AppSystemActivity() {
 
   private fun applyPanelPlacement() {
     val entity = panelEntity ?: return
+    if (!currentWorkflowPanelEnabled()) {
+      entity.setComponent(Visible(false))
+      return
+    }
     entity.setComponent(Transform(panelPose()))
     entity.setComponent(Scale(Vector3(panelPlacement.scale, panelPlacement.scale, panelPlacement.scale)))
     entity.setComponent(panelDimensions())
@@ -691,7 +745,12 @@ class KuramotoSpatialActivity : AppSystemActivity() {
       )
     }
     val center = viewerPose.t + forward * targetDistanceMeters
-    val planePose = Pose(center, Quaternion.fromDirection(forward, up))
+    val now = SystemClock.elapsedRealtime()
+    val panelFlipEnabled = currentParticleLayerPanelFlipEnabled()
+    val panelFlipIntervalMs = currentParticleLayerPanelFlipIntervalMs()
+    val panelBackFacing = panelFlipEnabled && ((now / panelFlipIntervalMs) % 2L == 1L)
+    val panelForward = if (panelBackFacing) forward * -1.0f else forward
+    val planePose = Pose(center, Quaternion.fromDirection(panelForward, up))
     entity.setComponent(Transform(planePose))
     entity.setComponent(PanelDimensions(Vector2(surfaceWidthMeters, surfaceHeightMeters)))
     entity.setComponent(Visible(true))
@@ -726,7 +785,28 @@ class KuramotoSpatialActivity : AppSystemActivity() {
           0L
         }
 
-    val now = SystemClock.elapsedRealtime()
+    val flipStateChanged = lastParticleLayerPanelFlipBackFacing != panelBackFacing
+    if (
+        forceLog ||
+            flipStateChanged ||
+            (panelFlipEnabled && now - lastParticleLayerPanelFlipMarkerMs >= panelFlipIntervalMs)
+    ) {
+      lastParticleLayerPanelFlipBackFacing = panelBackFacing
+      lastParticleLayerPanelFlipMarkerMs = now
+      marker(
+          "channel=native-surface-particle-layer status=panel-flip-state " +
+              "reason=${markerToken(reason)} panelFlipEnabled=$panelFlipEnabled " +
+              "panelFlipProperty=$PARTICLE_LAYER_PANEL_FLIP_ENABLED_PROPERTY " +
+              "panelFlipIntervalMs=$panelFlipIntervalMs " +
+              "panelFlipIntervalProperty=$PARTICLE_LAYER_PANEL_FLIP_INTERVAL_MS_PROPERTY " +
+              "panelBackFacing=$panelBackFacing panelFrontFacing=${!panelBackFacing} " +
+              "visualAlternationMode=panel-gpu-vs-spatial-ecs " +
+              "nativeProjectionBasisUnflipped=true projectionPlaneFacingMode=viewer-forward-front-face " +
+              "viewerForward=${vectorMarker(forward)} panelForward=${vectorMarker(panelForward)} " +
+              "planeCenterM=${vectorMarker(center)} panelQuaternion=${quaternionMarker(planePose.q)}"
+      )
+    }
+
     val shouldLog =
         forceLog ||
             (particleLayerProjectionMarkerCount < 4 &&
@@ -746,8 +826,11 @@ class KuramotoSpatialActivity : AppSystemActivity() {
             "particleLayerTargetDistanceParameterSource=runtime-hotload-android-property " +
             "particleLayerTargetDistanceProperty=$PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY " +
             "projectionPlaneFacingMode=viewer-forward-front-face " +
+            "panelFlipEnabled=$panelFlipEnabled panelBackFacing=$panelBackFacing " +
+            "nativeProjectionBasisUnflipped=true " +
             "viewerPositionM=${vectorMarker(viewerPose.t)} " +
-            "viewerForward=${vectorMarker(forward)} viewerUp=${vectorMarker(up)} " +
+            "viewerForward=${vectorMarker(forward)} panelForward=${vectorMarker(panelForward)} " +
+            "viewerUp=${vectorMarker(up)} " +
             "viewerRight=${vectorMarker(right)} panelPoseNativeUpdateMask=$nativePanelPoseUpdateMask " +
             "worldToPanelProjection=spatial-sdk-panel-plane-basis " +
             "particleLayerSurfaceOverscanProperty=$PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY " +
@@ -777,6 +860,12 @@ class KuramotoSpatialActivity : AppSystemActivity() {
           "surfaceOverscanScale=${markerFloat(currentParticleLayerSurfaceOverscanScale())} " +
           "surfaceOverscanDefaultScale=$PARTICLE_LAYER_SURFACE_OVERSCAN_SCALE " +
           "surfaceOverscanProperty=$PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY " +
+          "panelFlipEnabled=${currentParticleLayerPanelFlipEnabled()} " +
+          "panelFlipDefaultEnabled=$PARTICLE_LAYER_PANEL_FLIP_ENABLED " +
+          "panelFlipProperty=$PARTICLE_LAYER_PANEL_FLIP_ENABLED_PROPERTY " +
+          "panelFlipIntervalMs=${currentParticleLayerPanelFlipIntervalMs()} " +
+          "panelFlipDefaultIntervalMs=$PARTICLE_LAYER_PANEL_FLIP_INTERVAL_MS " +
+          "panelFlipIntervalProperty=$PARTICLE_LAYER_PANEL_FLIP_INTERVAL_MS_PROPERTY " +
           "leftTargetSurfaceUvRect=$PARTICLE_LAYER_TARGET_SURFACE_UV_RECT " +
           "rightTargetSurfaceUvRect=$PARTICLE_LAYER_TARGET_SURFACE_UV_RECT " +
           "viewOriginMeters=$PARTICLE_LAYER_VIEW_ORIGIN_METERS " +
@@ -802,6 +891,26 @@ class KuramotoSpatialActivity : AppSystemActivity() {
           PARTICLE_LAYER_SURFACE_OVERSCAN_MIN_SCALE,
           PARTICLE_LAYER_SURFACE_OVERSCAN_MAX_SCALE,
       )
+
+  private fun currentParticleLayerPanelFlipEnabled(): Boolean =
+      readBooleanSystemProperty(
+          PARTICLE_LAYER_PANEL_FLIP_ENABLED_PROPERTY,
+          PARTICLE_LAYER_PANEL_FLIP_ENABLED,
+      )
+
+  private fun currentParticleLayerPanelFlipIntervalMs(): Long =
+      readLongSystemProperty(
+          PARTICLE_LAYER_PANEL_FLIP_INTERVAL_MS_PROPERTY,
+          PARTICLE_LAYER_PANEL_FLIP_INTERVAL_MS,
+          PARTICLE_LAYER_PANEL_FLIP_INTERVAL_MIN_MS,
+          PARTICLE_LAYER_PANEL_FLIP_INTERVAL_MAX_MS,
+      )
+
+  private fun currentWorkflowPanelEnabled(): Boolean =
+      readBooleanSystemProperty(WORKFLOW_PANEL_ENABLED_PROPERTY, WORKFLOW_PANEL_ENABLED)
+
+  private fun currentDiagnosticBackdropEnabled(workflowPanelEnabled: Boolean): Boolean =
+      readBooleanSystemProperty(DIAGNOSTIC_BACKDROP_ENABLED_PROPERTY, workflowPanelEnabled)
 
   private fun particleLayerProjectionWidthMeters(targetDistanceMeters: Float): Float =
       (targetDistanceMeters * PARTICLE_LAYER_WIDTH_PER_DISTANCE)
@@ -842,17 +951,33 @@ class KuramotoSpatialActivity : AppSystemActivity() {
       min: Float,
       max: Float,
   ): Float {
-    val text =
-        runCatching {
-              Class.forName("android.os.SystemProperties")
-                  .getMethod("get", String::class.java, String::class.java)
-                  .invoke(null, propertyName, "") as String
-            }
-            .getOrDefault("")
-            .trim()
+    val text = readSystemProperty(propertyName).trim()
     val parsed = text.toFloatOrNull()
     return if (parsed != null && parsed.isFinite()) parsed.coerceIn(min, max) else fallback
   }
+
+  private fun readBooleanSystemProperty(propertyName: String, fallback: Boolean): Boolean =
+      when (readSystemProperty(propertyName).trim().lowercase(Locale.US)) {
+        "1", "true", "yes", "on" -> true
+        "0", "false", "no", "off" -> false
+        else -> fallback
+      }
+
+  private fun readLongSystemProperty(
+      propertyName: String,
+      fallback: Long,
+      min: Long,
+      max: Long,
+  ): Long =
+      readSystemProperty(propertyName).trim().toLongOrNull()?.coerceIn(min, max) ?: fallback
+
+  private fun readSystemProperty(propertyName: String): String =
+      runCatching {
+            Class.forName("android.os.SystemProperties")
+                .getMethod("get", String::class.java, String::class.java)
+                .invoke(null, propertyName, "") as String
+          }
+          .getOrDefault("")
 
   private fun particleLayerStereoMarkerFields(): String =
       "stereoMode=$PARTICLE_LAYER_STEREO_MODE " +
@@ -1112,6 +1237,11 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     private const val PANEL_WIDTH_METERS = 2.048f
     private const val PANEL_HEIGHT_METERS = 1.254f
     private const val PANEL_DP_PER_METER = 720f
+    private const val WORKFLOW_PANEL_ENABLED = true
+    private const val WORKFLOW_PANEL_ENABLED_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.workflow_panel.enabled"
+    private const val DIAGNOSTIC_BACKDROP_ENABLED_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.diagnostic_backdrop.enabled"
     private const val PARTICLE_LAYER_PER_EYE_WIDTH_PX = 1024
     private const val PARTICLE_LAYER_WIDTH_PX = PARTICLE_LAYER_PER_EYE_WIDTH_PX * 2
     private const val PARTICLE_LAYER_HEIGHT_PX = 1024
@@ -1134,6 +1264,14 @@ class KuramotoSpatialActivity : AppSystemActivity() {
         "debug.rustyquest.kuramoto_spatial.particle_layer.surface_overscan_scale"
     private const val PARTICLE_LAYER_SURFACE_OVERSCAN_MIN_SCALE = 1.00f
     private const val PARTICLE_LAYER_SURFACE_OVERSCAN_MAX_SCALE = 2.25f
+    private const val PARTICLE_LAYER_PANEL_FLIP_ENABLED = false
+    private const val PARTICLE_LAYER_PANEL_FLIP_ENABLED_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.particle_layer.panel_flip.enabled"
+    private const val PARTICLE_LAYER_PANEL_FLIP_INTERVAL_MS = 1000L
+    private const val PARTICLE_LAYER_PANEL_FLIP_INTERVAL_MS_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.particle_layer.panel_flip.interval_ms"
+    private const val PARTICLE_LAYER_PANEL_FLIP_INTERVAL_MIN_MS = 250L
+    private const val PARTICLE_LAYER_PANEL_FLIP_INTERVAL_MAX_MS = 10000L
     private const val PARTICLE_LAYER_X_METERS = 0.0f
     private const val PARTICLE_LAYER_Y_METERS = 1.22f
     private const val PARTICLE_LAYER_Z_METERS = -0.72f

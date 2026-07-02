@@ -5,6 +5,14 @@ plugins {
   alias(libs.plugins.compose.compiler)
 }
 
+val privateSpatialEcsDir =
+    providers
+        .environmentVariable("RUSTY_KURAMOTO_PRIVATE_ECS_DIR")
+        .orNull
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?.let { file(it) }
+
 android {
   namespace = "io.github.mesmerprism.rustyquest.kuramoto_spatial"
   compileSdk = 34
@@ -37,6 +45,11 @@ android {
   sourceSets {
     getByName("main") {
       jniLibs.srcDir(layout.buildDirectory.dir("generated/rustJniLibs"))
+      if (privateSpatialEcsDir?.isDirectory == true) {
+        java.srcDir(privateSpatialEcsDir.resolve("src/main/kotlin"))
+        assets.srcDir(privateSpatialEcsDir.resolve("src/main/assets"))
+        res.srcDir(privateSpatialEcsDir.resolve("src/main/res"))
+      }
     }
   }
 

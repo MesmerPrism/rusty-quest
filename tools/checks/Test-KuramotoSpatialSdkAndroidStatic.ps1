@@ -45,12 +45,16 @@ $ids = Read-RequiredText (Join-Path $appRoot "app\src\main\res\values\ids.xml") 
 $styles = Read-RequiredText (Join-Path $appRoot "app\src\main\res\values\styles.xml") "styles"
 $colors = Read-RequiredText (Join-Path $appRoot "app\src\main\res\values\colors.xml") "colors"
 $activity = Read-RequiredText (Join-Path $sourceRoot "KuramotoSpatialActivity.kt") "Spatial activity"
+$privateFeatureLoader = Read-RequiredText (Join-Path $sourceRoot "SpatialPrivateFeatureLoader.kt") "private feature loader"
+$spatialCameraPanelSourceRoot = Join-Path $appRoot "app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel"
+$spatialLiveHandBridge = Read-RequiredText (Join-Path $spatialCameraPanelSourceRoot "SpatialLiveHandJointBridge.kt") "Spatial live hand bridge"
 $store = Read-RequiredText (Join-Path $sourceRoot "KuramotoExperimentStore.kt") "experiment store"
 $nativeReceiptCargo = Read-RequiredText (Join-Path $appRoot "native-receipt\Cargo.toml") "native receipt Cargo manifest"
 $nativeReceiptRust = Read-RequiredText (Join-Path $appRoot "native-receipt\src\lib.rs") "native receipt Rust source"
 $nativeReceiptSurfaceLayer = Read-RequiredText (Join-Path $appRoot "native-receipt\src\surface_particle_layer.rs") "native receipt surface particle layer"
 $nativeReceiptReplayHands = Read-RequiredText (Join-Path $appRoot "native-receipt\src\replay_hands.rs") "native receipt replay hand renderer"
 $nativeReceiptLiveHandJoints = Read-RequiredText (Join-Path $appRoot "native-receipt\src\live_hand_joints.rs") "native receipt live hand joint source"
+$nativeReceiptLiveHandJointBridge = Read-RequiredText (Join-Path $appRoot "native-receipt\src\live_hand_joint_bridge.rs") "native receipt live hand joint bridge"
 $nativeReceiptBuild = Read-RequiredText (Join-Path $appRoot "native-receipt\build.rs") "native receipt build script"
 $nativeReceiptComputeShader = Read-RequiredText (Join-Path $appRoot "native-receipt\shaders\surface_particles.comp.glsl") "native receipt compute shader"
 $nativeReceiptVertexShader = Read-RequiredText (Join-Path $appRoot "native-receipt\shaders\surface_particles.vert.glsl") "native receipt vertex shader"
@@ -104,6 +108,10 @@ Assert-ContainsTokens $appBuild @(
     'compose = true',
     'kotlinCompilerExtensionVersion = "1\.5\.15"',
     'jniLibs\.srcDir\(layout\.buildDirectory\.dir\("generated/rustJniLibs"\)\)',
+    'RUSTY_KURAMOTO_PRIVATE_ECS_DIR',
+    'java\.srcDir\(privateSpatialEcsDir\.resolve\("src/main/kotlin"\)\)',
+    'assets\.srcDir\(privateSpatialEcsDir\.resolve\("src/main/assets"\)\)',
+    'res\.srcDir\(privateSpatialEcsDir\.resolve\("src/main/res"\)\)',
     'allowUsageDataCollection\.set\(false\)',
     'implementation\(libs\.meta\.spatial\.sdk\.base\)',
     'implementation\(libs\.meta\.spatial\.sdk\.compose\)',
@@ -142,8 +150,15 @@ Assert-ContainsTokens $activity @(
     'class KuramotoSpatialActivity : AppSystemActivity',
     'VRFeature\(this\)',
     'ComposeFeature\(\)',
+    'SpatialPrivateFeatureLoader\.load\(::marker, this\)',
     'ComposeViewPanelRegistration',
     'VideoSurfacePanelRegistration',
+    'WORKFLOW_PANEL_ENABLED_PROPERTY',
+    'debug\.rustyquest\.kuramoto_spatial\.workflow_panel\.enabled',
+    'DIAGNOSTIC_BACKDROP_ENABLED_PROPERTY',
+    'debug\.rustyquest\.kuramoto_spatial\.diagnostic_backdrop\.enabled',
+    'compose-feature-suppressed',
+    'registration-suppressed',
     'MediaPanelSettings',
     'MediaPanelRenderOptions',
     'FixedMediaPanelDisplayOptions',
@@ -238,12 +253,16 @@ Assert-ContainsTokens $activity @(
     'onSceneTick\(\)',
     'scene\.getViewerPose\(\)',
     'scene\.getEyeOffsets\(\)',
-    'Quaternion\.fromDirection\(forward, up\)',
+    'Quaternion\.fromDirection\(panelForward, up\)',
     'AvatarSystem',
     'setShowHands\(false\)',
     'builtInMetaHandVisualPolicy=disabled',
     'status=projection-plane-updated',
     'projectionPlaneFacingMode=viewer-forward-front-face',
+    'status=panel-flip-state',
+    'panelFlipEnabled=',
+    'panelBackFacing=',
+    'nativeProjectionBasisUnflipped=true',
     'viewerPoseSource=Scene\.getViewerPose',
     'Transform\(panelPose\(\)\)',
     'Scale\(Vector3',
@@ -258,6 +277,10 @@ Assert-ContainsTokens $activity @(
     'PARTICLE_LAYER_SURFACE_OVERSCAN_SCALE = 1\.35f',
     'PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY =\s*"debug\.rustyquest\.kuramoto_spatial\.particle_layer\.surface_overscan_scale"',
     'currentParticleLayerSurfaceOverscanScale\(\)',
+    'PARTICLE_LAYER_PANEL_FLIP_ENABLED_PROPERTY =\s*"debug\.rustyquest\.kuramoto_spatial\.particle_layer\.panel_flip\.enabled"',
+    'PARTICLE_LAYER_PANEL_FLIP_INTERVAL_MS_PROPERTY =\s*"debug\.rustyquest\.kuramoto_spatial\.particle_layer\.panel_flip\.interval_ms"',
+    'currentParticleLayerPanelFlipEnabled\(\)',
+    'currentParticleLayerPanelFlipIntervalMs\(\)',
     'particleLayerProjectionWidthMeters',
     'particleLayerSurfaceWidthMeters',
     'surface-geometry-hotload-updated',
@@ -298,6 +321,25 @@ Assert-ContainsTokens $activity @(
     'hand_rendering_expected'
 ) "Spatial activity and panel"
 
+Assert-ContainsTokens $privateFeatureLoader @(
+    'SpatialPrivateFeatureLoader',
+    'SpatialPrivateFeatureRegistry',
+    'privateFeatureSlot=true',
+    'privateFeatureLoaded=true',
+    'privateFeatureContext=true',
+    'Class\.forName\(REGISTRY_CLASS\)'
+) "private feature loader"
+
+Assert-ContainsTokens $spatialLiveHandBridge @(
+    'object SpatialLiveHandJointBridge',
+    'NATIVE_RECEIPT_LIBRARY = "kuramoto_spatial_native_receipt"',
+    'nativeStartLiveHandJoints',
+    'nativeUpdateLiveHandPanelBasis',
+    'nativeUpdateLiveHandSpatialViewerWorldBasis',
+    'nativePollLiveHandJointRows',
+    'liveHandJointBridgeLoaded='
+) "Spatial live hand bridge"
+
 Assert-ContainsTokens $nativeReceiptCargo @(
     'name = "kuramoto-spatial-native-receipt"',
     'name = "kuramoto_spatial_native_receipt"',
@@ -306,11 +348,13 @@ Assert-ContainsTokens $nativeReceiptCargo @(
     'libc = "0\.2"',
     'openxr-sys = "0\.13\.1"',
     'serde_json = "1"',
+    'jni = "0\.21"',
     'build = "build\.rs"',
     'unsafe_code = "allow"'
 ) "native receipt Cargo manifest"
 
 Assert-ContainsTokens $nativeReceiptRust @(
+    'mod live_hand_joint_bridge;',
     '__android_log_print',
     'ash::Entry::load',
     'vk::ApplicationInfo',
@@ -571,6 +615,18 @@ Assert-ContainsTokens $nativeReceiptLiveHandJoints @(
     'store_live_hand_panel_basis',
     'current_view_panel_mapping',
     'apply_live_hand_view_panel_mapping',
+    'LIVE_HAND_LAST_ROWS',
+    'LIVE_HAND_LAST_RAW_SCENE_ROWS',
+    'LIVE_HAND_LAST_SPATIAL_VIEWER_WORLD_ROWS',
+    'copy_last_live_hand_rows',
+    'copy_last_live_hand_raw_scene_rows',
+    'copy_last_live_hand_spatial_viewer_world_rows',
+    'store_last_live_hand_rows',
+    'store_last_live_hand_raw_scene_rows',
+    'store_last_live_hand_spatial_viewer_world_rows',
+    'store_live_hand_spatial_viewer_world_basis',
+    'clear_last_live_hand_rows',
+    'current_view_spatial_viewer_world_mapping',
     'ViewConfigurationType::PRIMARY_STEREO',
     'poll_live_hand_scene_sign_property',
     'multiply_quat_xyzw',
@@ -589,6 +645,26 @@ Assert-ContainsTokens $nativeReceiptLiveHandJoints @(
     'liveHandFallbackToReplay',
     'liveHandCorrectPositionSizeProof=spatial-sdk-panel-plane-projection'
 ) "native receipt live hand joint source"
+
+Assert-ContainsTokens $nativeReceiptLiveHandJointBridge @(
+    'copy_last_live_hand_rows',
+    'copy_last_live_hand_raw_scene_rows',
+    'copy_last_live_hand_spatial_viewer_world_rows',
+    'store_live_hand_spatial_viewer_world_basis',
+    'selectable-row-cache',
+    'cached-gpu-panel-live-hand-rows',
+    'cached-spatial-viewer-world-live-hand-rows',
+    'cached-raw-scene-live-hand-rows',
+    'liveHandJointBridgePollMode=',
+    'liveHandJointBridgeSecondTracker=false',
+    'liveHandJointGpuInputPath=recorded-compatible-compact-joint-pose-gpu-skinning',
+    'status=basis-updated',
+    'Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialLiveHandJointBridge_nativeStartLiveHandJoints',
+    'Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialLiveHandJointBridge_nativeUpdateLiveHandPanelBasis',
+    'Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialLiveHandJointBridge_nativeUpdateLiveHandSpatialViewerWorldBasis',
+    'Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialLiveHandJointBridge_nativePollLiveHandJointRows',
+    'RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=live-hand-joint-bridge'
+) "native receipt live hand joint bridge"
 
 Assert-ContainsTokens $nativeReceiptComputeShader @(
     'layout\(local_size_x = 64',
@@ -704,8 +780,12 @@ Assert-ContainsTokens $buildScript @(
     'NdkHome = \$env:ANDROID_NDK_HOME',
     'RecordedHandCaptureDir = \$env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR',
     'RecordedHandFrameLimit = 24',
+    'RequireRecordedHandCapture',
+    '-RequireRecordedHandCapture needs -RecordedHandCaptureDir',
+    'PrivateSpatialEcsDir = \$env:RUSTY_KURAMOTO_PRIVATE_ECS_DIR',
     'RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR',
     'RUSTY_QUEST_NATIVE_RECORDED_HAND_FRAME_LIMIT',
+    'RUSTY_KURAMOTO_PRIVATE_ECS_DIR',
     'gradle-\$Version-bin\.zip',
     'services\.gradle\.org',
     'CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER',
@@ -754,6 +834,11 @@ Assert-ContainsTokens $buildScript @(
     'native_surface_particle_layer_target_distance_hotload_property = "debug\.rustyquest\.kuramoto_spatial\.particle_layer\.target_distance_meters"',
     'native_surface_particle_layer_target_distance_default_meters = 0\.72',
     'native_surface_particle_layer_target_distance_range_meters = "0\.20\.\.1\.50"',
+    'native_surface_particle_layer_panel_flip_property = "debug\.rustyquest\.kuramoto_spatial\.particle_layer\.panel_flip\.enabled"',
+    'native_surface_particle_layer_panel_flip_interval_property = "debug\.rustyquest\.kuramoto_spatial\.particle_layer\.panel_flip\.interval_ms"',
+    'spatial_private_ecs_overlay_configured',
+    'spatial_private_ecs_overlay_registry = "io\.github\.mesmerprism\.rustyquest\.spatial_camera_panel\.SpatialPrivateFeatureRegistry"',
+    'spatial_private_ecs_overlay_marker_channel = "spatial-hand-billboard-private-coupling"',
     'forced_replay_hand_source_mode',
     'forced_replay_hand_frame_limit',
     'surfaceLayerMode=native-kuramoto-study-hand-anchor-particles',

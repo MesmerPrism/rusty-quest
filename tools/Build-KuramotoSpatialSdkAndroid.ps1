@@ -6,6 +6,8 @@ param(
     [string]$GradleVersion = "9.4.1",
     [string]$RecordedHandCaptureDir = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR,
     [int]$RecordedHandFrameLimit = 24,
+    [switch]$RequireRecordedHandCapture,
+    [string]$PrivateSpatialEcsDir = $env:RUSTY_KURAMOTO_PRIVATE_ECS_DIR,
     [string]$OutDir = ""
 )
 
@@ -135,6 +137,9 @@ if ([string]::IsNullOrWhiteSpace($NdkHome)) {
     throw "ANDROID_NDK_HOME, -NdkHome, or an Android SDK ndk directory is required. Activate the Quest/Android toolchain first."
 }
 $resolvedRecordedHandCaptureDir = ""
+if ($RequireRecordedHandCapture -and [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
+    throw "-RequireRecordedHandCapture needs -RecordedHandCaptureDir so the APK cannot silently fall back to the public hand shape."
+}
 if (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
     if (-not (Test-Path -LiteralPath $RecordedHandCaptureDir -PathType Container)) {
         throw "Recorded hand capture directory not found: $RecordedHandCaptureDir"
@@ -142,6 +147,13 @@ if (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
     $resolvedRecordedHandCaptureDir = (Resolve-Path -LiteralPath $RecordedHandCaptureDir).Path
 }
 $resolvedRecordedHandFrameLimit = [Math]::Max(1, [Math]::Min(120, $RecordedHandFrameLimit))
+$resolvedPrivateSpatialEcsDir = ""
+if (-not [string]::IsNullOrWhiteSpace($PrivateSpatialEcsDir)) {
+    if (-not (Test-Path -LiteralPath $PrivateSpatialEcsDir -PathType Container)) {
+        throw "Private Spatial ECS overlay directory not found: $PrivateSpatialEcsDir"
+    }
+    $resolvedPrivateSpatialEcsDir = (Resolve-Path -LiteralPath $PrivateSpatialEcsDir).Path
+}
 
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Join-Path $PSScriptRoot ".."
@@ -257,10 +269,16 @@ New-Item -ItemType Directory -Force -Path $gradleUserHome | Out-Null
 $previousAndroidHome = $env:ANDROID_HOME
 $previousJavaHome = $env:JAVA_HOME
 $previousGradleUserHome = $env:GRADLE_USER_HOME
+$previousPrivateSpatialEcsDir = $env:RUSTY_KURAMOTO_PRIVATE_ECS_DIR
 try {
     $env:ANDROID_HOME = $AndroidHome
     $env:JAVA_HOME = $JavaHome
     $env:GRADLE_USER_HOME = $gradleUserHome
+    if ([string]::IsNullOrWhiteSpace($resolvedPrivateSpatialEcsDir)) {
+        Remove-Item Env:\RUSTY_KURAMOTO_PRIVATE_ECS_DIR -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_KURAMOTO_PRIVATE_ECS_DIR = $resolvedPrivateSpatialEcsDir
+    }
     Invoke-Checked "Kuramoto Spatial SDK Gradle build" $gradleBat @(
         "--no-daemon",
         "--console=plain",
@@ -274,6 +292,11 @@ try {
         Remove-Item Env:\GRADLE_USER_HOME -ErrorAction SilentlyContinue
     } else {
         $env:GRADLE_USER_HOME = $previousGradleUserHome
+    }
+    if ($null -eq $previousPrivateSpatialEcsDir) {
+        Remove-Item Env:\RUSTY_KURAMOTO_PRIVATE_ECS_DIR -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_KURAMOTO_PRIVATE_ECS_DIR = $previousPrivateSpatialEcsDir
     }
 }
 
@@ -367,6 +390,20 @@ $manifest = [ordered]@{
     native_surface_particle_layer_target_distance_hotload_property = "debug.rustyquest.kuramoto_spatial.particle_layer.target_distance_meters"
     native_surface_particle_layer_target_distance_default_meters = 0.72
     native_surface_particle_layer_target_distance_range_meters = "0.20..1.50"
+    native_surface_particle_layer_panel_flip_property = "debug.rustyquest.kuramoto_spatial.particle_layer.panel_flip.enabled"
+    native_surface_particle_layer_panel_flip_interval_property = "debug.rustyquest.kuramoto_spatial.particle_layer.panel_flip.interval_ms"
+    native_surface_particle_layer_panel_flip_default_enabled = $false
+    native_surface_particle_layer_panel_flip_default_interval_ms = 1000
+    spatial_private_ecs_overlay_configured = (-not [string]::IsNullOrWhiteSpace($resolvedPrivateSpatialEcsDir))
+    spatial_private_ecs_overlay_dir = $resolvedPrivateSpatialEcsDir
+    spatial_private_ecs_overlay_loader = "SpatialPrivateFeatureLoader"
+    spatial_private_ecs_overlay_registry = "io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialPrivateFeatureRegistry"
+    spatial_private_ecs_overlay_marker_channel = "spatial-hand-billboard-private-coupling"
+    spatial_private_ecs_overlay_render_toggles = @(
+        "debug.rustyquest.spatial.hand_billboard_private_coupling.render.ecs_cpu.enabled",
+        "debug.rustyquest.spatial.hand_billboard_private_coupling.render.ecs_gpu_reference.enabled",
+        "debug.rustyquest.spatial.hand_billboard_private_coupling.render.gpu_panel.enabled"
+    )
     forced_replay_hand_source_mode = $(if ([string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) { "public-shape-fallback" } else { "external-recorded-capture-build-env" })
     forced_replay_hand_frame_limit = $resolvedRecordedHandFrameLimit
     native_surface_particle_layer_markers = @(

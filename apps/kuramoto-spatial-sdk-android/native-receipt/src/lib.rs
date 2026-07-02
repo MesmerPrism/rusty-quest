@@ -10,6 +10,7 @@ use ash::vk;
 use ash::vk::Handle as VulkanHandle;
 use openxr_sys::Handle;
 
+mod live_hand_joint_bridge;
 mod live_hand_joints;
 mod replay_hands;
 mod surface_particle_layer;
