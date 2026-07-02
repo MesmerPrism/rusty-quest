@@ -377,6 +377,7 @@ function Get-SceneFixedWorldAnchorMotionSamples {
         }
         if ($valid) {
             $samples.Add([pscustomobject]@{
+                text_index = [int]$match.Index
                 world_anchor_center = [double[]]@($values[0], $values[1], $values[2])
                 world_anchor_forward = [double[]]@($values[3], $values[4], $values[5])
                 panel_center = [double[]]@($values[6], $values[7], $values[8])
@@ -386,6 +387,20 @@ function Get-SceneFixedWorldAnchorMotionSamples {
         }
     }
     return @($samples.ToArray())
+}
+
+function Get-LatestSceneFixedWorldAnchorEpochIndex {
+    param([AllowNull()][string]$Text)
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return -1
+    }
+    $latestIndex = -1
+    $pattern = "status=private-world-anchor-(captured|recentered|auto-recentered)"
+    foreach ($match in [regex]::Matches($Text, $pattern)) {
+        $latestIndex = [int]$match.Index
+    }
+    return $latestIndex
 }
 
 function Assert-SummaryFlag {
@@ -1083,6 +1098,7 @@ try {
     $summary.private_main_draw_spatial_world_direct_mapping =
         Test-TextContains $markerText "status=first-frame-presented"
     foreach ($requiredMarker in @(
+        "privateSurfaceParticleOpenXrViewDrawAuthority=false",
         "privateSurfaceParticleMainDrawProjection=spatial-sdk-world-explicit-viewer-camera-to-panel-plane",
         "projectionPlaneRollAuthority=spatial-world-up",
         "projectionPlaneRollFollowsHeadset=false",
@@ -1103,7 +1119,6 @@ try {
         "privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius",
         "privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space",
         "privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale",
-        "privateSurfaceParticleOpenXrViewDrawAuthority=false",
         "privateSurfaceParticleCameraRealignEachFrame=false",
         "privateSurfaceParticleOffAxisStereoProjection=true",
         "privateSurfaceParticleMainDrawTargetDistanceMaxMeters=2.00"
@@ -1119,17 +1134,18 @@ try {
             "privateSurfaceParticleEyePoseSource=Scene.getViewerPose+Scene.getEyeOffsets",
             "privateSurfaceParticlePanelDefinesEye=false",
             "privateSurfaceParticleOpenXrViewDrawAuthority=false",
+            "privateSurfaceParticleSceneViewerFallbackAvailable=true",
             "explicitEyePoseValid=true"
         ))
     $summary.private_openxr_diagnostic_registration_captured = Test-LineContainsAll $markerText @(
         "status=private-openxr-diagnostic-registration-captured",
         "privateSurfaceParticleOpenXrDiagnosticProjection=registered-openxr-eye-through-start-basis",
-        "privateSurfaceParticleOpenXrViewDrawAuthority=false"
+        "privateSurfaceParticleOpenXrDiagnosticDrawAuthority=diagnostic-only"
     )
     $summary.private_openxr_diagnostic_projection_updated = Test-LineContainsAll $markerText @(
         "status=private-openxr-diagnostic-projection-updated",
         "privateSurfaceParticleOpenXrDiagnosticProjection=registered-openxr-eye-through-start-basis",
-        "privateSurfaceParticleOpenXrViewDrawAuthority=false",
+        "privateSurfaceParticleOpenXrDiagnosticDrawAuthority=diagnostic-only",
         "registeredPanelCenterM="
     )
     $worldAnchorMotionSamples = @(Get-WorldAnchorMotionSamples -Text $markerText)
@@ -1140,7 +1156,17 @@ try {
     $summary.private_world_anchor_mapped_motion_meters = Get-MaxVectorSpan `
         -Samples $worldAnchorMotionSamples `
         -PropertyName "mapped_center"
-    $sceneFixedWorldAnchorMotionSamples = @(Get-SceneFixedWorldAnchorMotionSamples -Text $markerText)
+    $sceneFixedWorldAnchorMotionSamplesAll = @(Get-SceneFixedWorldAnchorMotionSamples -Text $markerText)
+    $sceneFixedWorldAnchorEpochIndex = Get-LatestSceneFixedWorldAnchorEpochIndex -Text $markerText
+    $sceneFixedWorldAnchorMotionSamples = @(
+        $sceneFixedWorldAnchorMotionSamplesAll |
+            Where-Object { [int]$_.text_index -gt $sceneFixedWorldAnchorEpochIndex }
+    )
+    if ($sceneFixedWorldAnchorMotionSamples.Count -lt 3) {
+        $sceneFixedWorldAnchorMotionSamples = $sceneFixedWorldAnchorMotionSamplesAll
+    }
+    $summary.private_scene_fixed_world_anchor_total_sample_count = $sceneFixedWorldAnchorMotionSamplesAll.Count
+    $summary.private_scene_fixed_world_anchor_epoch_start_index = $sceneFixedWorldAnchorEpochIndex
     $summary.private_scene_fixed_world_anchor_sample_count = $sceneFixedWorldAnchorMotionSamples.Count
     $summary.private_scene_fixed_world_anchor_panel_motion_meters = Get-MaxVectorSpan `
         -Samples $sceneFixedWorldAnchorMotionSamples `

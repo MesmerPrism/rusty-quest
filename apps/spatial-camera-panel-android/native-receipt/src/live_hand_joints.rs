@@ -1,3 +1,5 @@
+#![cfg_attr(not(target_os = "android"), allow(dead_code))]
+
 #[cfg(target_os = "android")]
 use std::ffi::CStr;
 use std::ffi::CString;
@@ -65,8 +67,14 @@ const LIVE_HAND_COORDINATE_MAPPING_SPATIAL_VIEWER_WORLD: &str =
 const LIVE_HAND_COORDINATE_MAPPING_RAW_SCENE: &str =
     "raw-openxr-local-floor-to-spatial-sdk-scene-fallback";
 
+#[cfg(target_os = "android")]
 extern "C" {
     fn clock_gettime(clock_id: libc::c_int, time_spec: *mut libc::timespec) -> libc::c_int;
+}
+
+#[cfg(not(target_os = "android"))]
+unsafe fn clock_gettime(_clock_id: libc::c_int, _time_spec: *mut libc::timespec) -> libc::c_int {
+    -1
 }
 
 #[cfg(target_os = "android")]

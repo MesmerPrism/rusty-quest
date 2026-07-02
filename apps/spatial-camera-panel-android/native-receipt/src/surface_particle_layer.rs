@@ -1,3 +1,5 @@
+#![cfg_attr(not(target_os = "android"), allow(dead_code))]
+
 use std::ffi::{c_void, CStr, CString};
 use std::mem;
 #[cfg(target_os = "android")]
@@ -54,8 +56,14 @@ const DEFAULT_SURFACE_PARTICLE_LEFT_EYE_OFFSET_RIGHT_METERS: f32 = -0.0315;
 const DEFAULT_SURFACE_PARTICLE_RIGHT_EYE_OFFSET_RIGHT_METERS: f32 = 0.0315;
 const DEFAULT_SURFACE_PARTICLE_SIM_WORLD_RADIUS_METERS: f32 = 2.0;
 
+#[cfg(target_os = "android")]
 extern "C" {
     fn clock_gettime(clock_id: libc::c_int, time_spec: *mut libc::timespec) -> libc::c_int;
+}
+
+#[cfg(not(target_os = "android"))]
+unsafe fn clock_gettime(_clock_id: libc::c_int, _time_spec: *mut libc::timespec) -> libc::c_int {
+    -1
 }
 
 static STOP_SURFACE_PARTICLES: AtomicBool = AtomicBool::new(false);
@@ -149,6 +157,18 @@ static SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_MAPPED_Y_BITS: AtomicU32 =
     AtomicU32::new(1.22_f32.to_bits());
 static SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_MAPPED_Z_BITS: AtomicU32 =
     AtomicU32::new((-2.0_f32).to_bits());
+static SURFACE_PARTICLE_OPENXR_WORLD_RIGHT_MAPPED_X_BITS: AtomicU32 =
+    AtomicU32::new(1.0_f32.to_bits());
+static SURFACE_PARTICLE_OPENXR_WORLD_RIGHT_MAPPED_Y_BITS: AtomicU32 =
+    AtomicU32::new(0.0_f32.to_bits());
+static SURFACE_PARTICLE_OPENXR_WORLD_RIGHT_MAPPED_Z_BITS: AtomicU32 =
+    AtomicU32::new(0.0_f32.to_bits());
+static SURFACE_PARTICLE_OPENXR_WORLD_UP_MAPPED_X_BITS: AtomicU32 =
+    AtomicU32::new(0.0_f32.to_bits());
+static SURFACE_PARTICLE_OPENXR_WORLD_UP_MAPPED_Y_BITS: AtomicU32 =
+    AtomicU32::new(1.0_f32.to_bits());
+static SURFACE_PARTICLE_OPENXR_WORLD_UP_MAPPED_Z_BITS: AtomicU32 =
+    AtomicU32::new(0.0_f32.to_bits());
 static SURFACE_PARTICLE_OPENXR_WORLD_FORWARD_MAPPED_X_BITS: AtomicU32 =
     AtomicU32::new(0.0_f32.to_bits());
 static SURFACE_PARTICLE_OPENXR_WORLD_FORWARD_MAPPED_Y_BITS: AtomicU32 =
@@ -848,16 +868,24 @@ impl SurfaceParticleRenderer {
     }
 }
 
+#[cfg(target_os = "android")]
 #[link(name = "android")]
 extern "C" {
     fn ANativeWindow_fromSurface(env: *mut c_void, surface: *mut c_void) -> *mut vk::ANativeWindow;
 }
 
 #[cfg(not(target_os = "android"))]
-#[link(name = "android")]
-extern "C" {
-    fn ANativeWindow_release(window: *mut vk::ANativeWindow);
+#[allow(non_snake_case)]
+unsafe fn ANativeWindow_fromSurface(
+    _env: *mut c_void,
+    _surface: *mut c_void,
+) -> *mut vk::ANativeWindow {
+    ptr::null_mut()
 }
+
+#[cfg(not(target_os = "android"))]
+#[allow(non_snake_case)]
+unsafe fn ANativeWindow_release(_window: *mut vk::ANativeWindow) {}
 
 #[cfg(target_os = "android")]
 extern "C" {
@@ -2202,7 +2230,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         android_log_info(
             "RQSpatialCameraPanelNative",
             &format!(
-                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-surface-particle-layer status=viewer-eye-pose-updated renderPolicy=native-vulkan-wsi-surface-panel privateSurfaceParticleEyePoseSource=Scene.getViewerPose+Scene.getEyeOffsets privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleOpenXrViewDrawAuthority=false viewerWorldM={:.4};{:.4};{:.4} viewerRight={:.4};{:.4};{:.4} viewerUp={:.4};{:.4};{:.4} viewerForward={:.4};{:.4};{:.4} leftEyeWorldM={:.4};{:.4};{:.4} rightEyeWorldM={:.4};{:.4};{:.4} explicitEyePoseValid={}",
+                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-surface-particle-layer status=viewer-eye-pose-updated renderPolicy=native-vulkan-wsi-surface-panel privateSurfaceParticleEyePoseSource=Scene.getViewerPose+Scene.getEyeOffsets privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleOpenXrViewDrawAuthority=false privateSurfaceParticleSceneViewerFallbackAvailable=true viewerWorldM={:.4};{:.4};{:.4} viewerRight={:.4};{:.4};{:.4} viewerUp={:.4};{:.4};{:.4} viewerForward={:.4};{:.4};{:.4} leftEyeWorldM={:.4};{:.4};{:.4} rightEyeWorldM={:.4};{:.4};{:.4} explicitEyePoseValid={}",
                 viewer[0],
                 viewer[1],
                 viewer[2],
@@ -3103,6 +3131,7 @@ fn update_surface_particle_openxr_world_anchor(
     panel_projection: ReplayHandPanelProjection,
 ) {
     if !surface_particle_world_anchor_pose_eligible(panel_projection) {
+        SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_MAPPED_VALID.store(false, Ordering::Relaxed);
         if SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_SKIP_LOG_COUNT.fetch_add(1, Ordering::Relaxed) < 3 {
             android_log_info(
                 "RQSpatialCameraPanelNative",
@@ -3121,6 +3150,7 @@ fn update_surface_particle_openxr_world_anchor(
         return;
     }
     let Some(mapping) = mapper.current_mapping(panel_projection) else {
+        SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_MAPPED_VALID.store(false, Ordering::Relaxed);
         if SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_SKIP_LOG_COUNT.fetch_add(1, Ordering::Relaxed) < 3 {
             android_log_info(
                 "RQSpatialCameraPanelNative",
@@ -3140,7 +3170,7 @@ fn update_surface_particle_openxr_world_anchor(
             mapping.view_position,
             scale3(mapping.raw_forward, panel_projection.target_distance_meters),
         );
-        let raw_forward = normalize_or(mapping.raw_forward, [0.0, 0.0, -1.0]);
+        let (_, _, raw_forward) = canonical_world_basis();
         SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_RAW_X_BITS
             .store(raw_anchor[0].to_bits(), Ordering::Relaxed);
         SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_RAW_Y_BITS
@@ -3173,6 +3203,7 @@ fn update_surface_particle_openxr_world_anchor(
         f32::from_bits(SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_RAW_Y_BITS.load(Ordering::Relaxed)),
         f32::from_bits(SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_RAW_Z_BITS.load(Ordering::Relaxed)),
     ];
+    let (raw_right, raw_up, _) = canonical_world_basis();
     let raw_forward = normalize_or(
         [
             f32::from_bits(
@@ -3188,6 +3219,8 @@ fn update_surface_particle_openxr_world_anchor(
         mapping.raw_forward,
     );
     let mapped_anchor = mapping.map_point(raw_anchor);
+    let mapped_right = mapping.map_vector(raw_right);
+    let mapped_up = mapping.map_vector(raw_up);
     let mapped_forward = mapping.map_vector(raw_forward);
     SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_MAPPED_X_BITS
         .store(mapped_anchor[0].to_bits(), Ordering::Relaxed);
@@ -3195,6 +3228,15 @@ fn update_surface_particle_openxr_world_anchor(
         .store(mapped_anchor[1].to_bits(), Ordering::Relaxed);
     SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_MAPPED_Z_BITS
         .store(mapped_anchor[2].to_bits(), Ordering::Relaxed);
+    SURFACE_PARTICLE_OPENXR_WORLD_RIGHT_MAPPED_X_BITS
+        .store(mapped_right[0].to_bits(), Ordering::Relaxed);
+    SURFACE_PARTICLE_OPENXR_WORLD_RIGHT_MAPPED_Y_BITS
+        .store(mapped_right[1].to_bits(), Ordering::Relaxed);
+    SURFACE_PARTICLE_OPENXR_WORLD_RIGHT_MAPPED_Z_BITS
+        .store(mapped_right[2].to_bits(), Ordering::Relaxed);
+    SURFACE_PARTICLE_OPENXR_WORLD_UP_MAPPED_X_BITS.store(mapped_up[0].to_bits(), Ordering::Relaxed);
+    SURFACE_PARTICLE_OPENXR_WORLD_UP_MAPPED_Y_BITS.store(mapped_up[1].to_bits(), Ordering::Relaxed);
+    SURFACE_PARTICLE_OPENXR_WORLD_UP_MAPPED_Z_BITS.store(mapped_up[2].to_bits(), Ordering::Relaxed);
     SURFACE_PARTICLE_OPENXR_WORLD_FORWARD_MAPPED_X_BITS
         .store(mapped_forward[0].to_bits(), Ordering::Relaxed);
     SURFACE_PARTICLE_OPENXR_WORLD_FORWARD_MAPPED_Y_BITS
@@ -3208,10 +3250,16 @@ fn update_surface_particle_openxr_world_anchor(
         android_log_info(
             "RQSpatialCameraPanelNative",
             &format!(
-                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-surface-particle-layer status=private-openxr-world-anchor-mapped renderPolicy=native-vulkan-wsi-surface-panel privateSurfaceParticleWorldAnchorMode=openxr-local-floor-fixed-anchor privateSurfaceParticleWorldAnchorMapped=true privateSurfaceParticleOpenXrWorldAnchorStable=true privateSurfaceParticlePublicFallbackActive=false mappedWorldAnchorCenterM={:.4};{:.4};{:.4} mappedWorldAnchorForward={:.4};{:.4};{:.4} panelCenterM={:.4};{:.4};{:.4} {}",
+                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-surface-particle-layer status=private-openxr-world-anchor-mapped renderPolicy=native-vulkan-wsi-surface-panel privateSurfaceParticleWorldAnchorMode=openxr-local-floor-fixed-anchor privateSurfaceParticleWorldAnchorMapped=true privateSurfaceParticleOpenXrWorldAnchorStable=true privateSurfaceParticleOpenXrDiagnosticDrawAuthority=diagnostic-only privateSurfaceParticleOpenXrViewDrawAuthority=false privateSurfaceParticleMainDrawProjection=spatial-sdk-world-explicit-viewer-camera-to-panel-plane privateSurfaceParticleWorldAnchorCenterSource=diagnostic-raw-openxr-stable-anchor-mapped-through-current-view privateSurfaceParticleWorldAnchorBasis=diagnostic-raw-openxr-canonical-axes-mapped-to-panel privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale privateSurfaceParticleCameraRealignEachFrame=false privateSurfaceParticlePublicFallbackActive=false mappedWorldAnchorCenterM={:.4};{:.4};{:.4} mappedWorldAnchorRight={:.4};{:.4};{:.4} mappedWorldAnchorUp={:.4};{:.4};{:.4} mappedWorldAnchorForward={:.4};{:.4};{:.4} panelCenterM={:.4};{:.4};{:.4} {}",
                 mapped_anchor[0],
                 mapped_anchor[1],
                 mapped_anchor[2],
+                mapped_right[0],
+                mapped_right[1],
+                mapped_right[2],
+                mapped_up[0],
+                mapped_up[1],
+                mapped_up[2],
                 mapped_forward[0],
                 mapped_forward[1],
                 mapped_forward[2],
@@ -3390,7 +3438,7 @@ fn capture_surface_particle_off_axis_registration_if_needed(
         android_log_info(
             "RQSpatialCameraPanelNative",
             &format!(
-                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-surface-particle-layer status=private-openxr-diagnostic-registration-captured renderPolicy=native-vulkan-wsi-surface-panel privateSurfaceParticleOpenXrDiagnosticProjection=registered-openxr-eye-through-start-basis privateSurfaceParticleOpenXrViewDrawAuthority=false privateSurfaceParticleMainDrawProjection=spatial-sdk-world-explicit-viewer-camera-to-panel-plane privateSurfaceParticleMainDrawCameraBasisSource=Scene.getViewerPose-position+forward-x-mirror-corrected-roll-stable privateSurfaceParticleCarrierPanelForwardSource=spatial-sdk-presentation-plane-only privateSurfaceParticleEyePoseSource=Scene.getViewerPose+Scene.getEyeOffsets privateSurfaceParticlePanelPoseSource=Scene.getViewerPose-derived-panel-plane privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleWorldAnchorCenterSource=configured-spatial-world-coordinate privateSurfaceParticleWorldAnchorBasis=spatial-world-canonical-axes privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale privateSurfaceParticleCameraRealignEachFrame=false privateSurfaceParticleOffAxisStereoProjection=true rawStartEyeM={:.4};{:.4};{:.4} sceneStartEyeM={:.4};{:.4};{:.4} sceneStartForward={:.4};{:.4};{:.4} panelTargetDistanceMeters={:.3}",
+                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-surface-particle-layer status=private-openxr-diagnostic-registration-captured renderPolicy=native-vulkan-wsi-surface-panel privateSurfaceParticleOpenXrDiagnosticProjection=registered-openxr-eye-through-start-basis privateSurfaceParticleOpenXrDiagnosticDrawAuthority=diagnostic-only privateSurfaceParticleMainDrawFallbackProjection=spatial-sdk-world-explicit-viewer-camera-to-panel-plane privateSurfaceParticleMainDrawCameraBasisSource=Scene.getViewerPose-position+forward-x-mirror-corrected-roll-stable privateSurfaceParticleCarrierPanelForwardSource=spatial-sdk-presentation-plane-only privateSurfaceParticleEyePoseSource=Scene.getViewerPose+Scene.getEyeOffsets privateSurfaceParticlePanelPoseSource=Scene.getViewerPose-derived-panel-plane privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleWorldAnchorCenterSource=configured-spatial-world-coordinate privateSurfaceParticleWorldAnchorBasis=spatial-world-canonical-axes privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale privateSurfaceParticleCameraRealignEachFrame=false privateSurfaceParticleOffAxisStereoProjection=true rawStartEyeM={:.4};{:.4};{:.4} sceneStartEyeM={:.4};{:.4};{:.4} sceneStartForward={:.4};{:.4};{:.4} panelTargetDistanceMeters={:.3}",
                 registration.raw_origin[0],
                 registration.raw_origin[1],
                 registration.raw_origin[2],
@@ -3458,7 +3506,7 @@ fn update_surface_particle_off_axis_projection(
         android_log_info(
             "RQSpatialCameraPanelNative",
             &format!(
-                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-surface-particle-layer status=private-openxr-diagnostic-projection-updated renderPolicy=native-vulkan-wsi-surface-panel privateSurfaceParticleOpenXrDiagnosticProjection=registered-openxr-eye-through-start-basis privateSurfaceParticleOpenXrViewDrawAuthority=false privateSurfaceParticleMainDrawProjection=spatial-sdk-world-explicit-viewer-camera-to-panel-plane privateSurfaceParticleMainDrawCameraBasisSource=Scene.getViewerPose-position+forward-x-mirror-corrected-roll-stable privateSurfaceParticleCarrierPanelForwardSource=spatial-sdk-presentation-plane-only privateSurfaceParticleEyePoseSource=Scene.getViewerPose+Scene.getEyeOffsets privateSurfaceParticlePanelPoseSource=Scene.getViewerPose-derived-panel-plane privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleWorldAnchorCenterSource=configured-spatial-world-coordinate privateSurfaceParticleWorldAnchorBasis=spatial-world-canonical-axes privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale privateSurfaceParticleCameraRealignEachFrame=false privateSurfaceParticleOffAxisStereoProjection=true registeredEyeM={:.4};{:.4};{:.4} registeredPanelCenterM={:.4};{:.4};{:.4} registeredPanelForward={:.4};{:.4};{:.4} panelTargetDistanceMeters={:.3}",
+                "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=native-surface-particle-layer status=private-openxr-diagnostic-projection-updated renderPolicy=native-vulkan-wsi-surface-panel privateSurfaceParticleOpenXrDiagnosticProjection=registered-openxr-eye-through-start-basis privateSurfaceParticleOpenXrDiagnosticDrawAuthority=diagnostic-only privateSurfaceParticleMainDrawFallbackProjection=spatial-sdk-world-explicit-viewer-camera-to-panel-plane privateSurfaceParticleMainDrawCameraBasisSource=Scene.getViewerPose-position+forward-x-mirror-corrected-roll-stable privateSurfaceParticleCarrierPanelForwardSource=spatial-sdk-presentation-plane-only privateSurfaceParticleEyePoseSource=Scene.getViewerPose+Scene.getEyeOffsets privateSurfaceParticlePanelPoseSource=Scene.getViewerPose-derived-panel-plane privateSurfaceParticlePanelDefinesEye=false privateSurfaceParticleWorldAnchorCenterSource=configured-spatial-world-coordinate privateSurfaceParticleWorldAnchorBasis=spatial-world-canonical-axes privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale privateSurfaceParticleCameraRealignEachFrame=false privateSurfaceParticleOffAxisStereoProjection=true registeredEyeM={:.4};{:.4};{:.4} registeredPanelCenterM={:.4};{:.4};{:.4} registeredPanelForward={:.4};{:.4};{:.4} panelTargetDistanceMeters={:.3}",
                 eye_position[0],
                 eye_position[1],
                 eye_position[2],
@@ -3502,6 +3550,12 @@ fn current_surface_particle_spatial_world_draw_camera_projection(
     }
 }
 
+fn current_surface_particle_gpu_panel_draw_projection(
+    panel_projection: ReplayHandPanelProjection,
+) -> ReplayHandPanelProjection {
+    current_surface_particle_spatial_world_draw_camera_projection(panel_projection)
+}
+
 #[allow(dead_code)]
 fn current_surface_particle_off_axis_panel_projection(
     fallback: ReplayHandPanelProjection,
@@ -3540,6 +3594,72 @@ fn current_surface_particle_off_axis_panel_projection(
         valid: true,
         ..fallback
     }
+}
+
+fn surface_particle_openxr_gpu_panel_remap_active() -> bool {
+    SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_MAPPED_VALID.load(Ordering::Relaxed)
+}
+
+fn current_surface_particle_openxr_panel_world_anchor() -> Option<SurfaceParticleWorldAnchor> {
+    if !surface_particle_openxr_gpu_panel_remap_active() {
+        return None;
+    }
+    Some(SurfaceParticleWorldAnchor {
+        center: [
+            f32::from_bits(
+                SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_MAPPED_X_BITS.load(Ordering::Relaxed),
+            ),
+            f32::from_bits(
+                SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_MAPPED_Y_BITS.load(Ordering::Relaxed),
+            ),
+            f32::from_bits(
+                SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_MAPPED_Z_BITS.load(Ordering::Relaxed),
+            ),
+        ],
+        right: normalize_or(
+            [
+                f32::from_bits(
+                    SURFACE_PARTICLE_OPENXR_WORLD_RIGHT_MAPPED_X_BITS.load(Ordering::Relaxed),
+                ),
+                f32::from_bits(
+                    SURFACE_PARTICLE_OPENXR_WORLD_RIGHT_MAPPED_Y_BITS.load(Ordering::Relaxed),
+                ),
+                f32::from_bits(
+                    SURFACE_PARTICLE_OPENXR_WORLD_RIGHT_MAPPED_Z_BITS.load(Ordering::Relaxed),
+                ),
+            ],
+            [1.0, 0.0, 0.0],
+        ),
+        up: normalize_or(
+            [
+                f32::from_bits(
+                    SURFACE_PARTICLE_OPENXR_WORLD_UP_MAPPED_X_BITS.load(Ordering::Relaxed),
+                ),
+                f32::from_bits(
+                    SURFACE_PARTICLE_OPENXR_WORLD_UP_MAPPED_Y_BITS.load(Ordering::Relaxed),
+                ),
+                f32::from_bits(
+                    SURFACE_PARTICLE_OPENXR_WORLD_UP_MAPPED_Z_BITS.load(Ordering::Relaxed),
+                ),
+            ],
+            [0.0, 1.0, 0.0],
+        ),
+        forward: normalize_or(
+            [
+                f32::from_bits(
+                    SURFACE_PARTICLE_OPENXR_WORLD_FORWARD_MAPPED_X_BITS.load(Ordering::Relaxed),
+                ),
+                f32::from_bits(
+                    SURFACE_PARTICLE_OPENXR_WORLD_FORWARD_MAPPED_Y_BITS.load(Ordering::Relaxed),
+                ),
+                f32::from_bits(
+                    SURFACE_PARTICLE_OPENXR_WORLD_FORWARD_MAPPED_Z_BITS.load(Ordering::Relaxed),
+                ),
+            ],
+            [0.0, 0.0, -1.0],
+        ),
+        valid: true,
+    })
 }
 
 fn current_surface_particle_world_anchor(
@@ -3785,6 +3905,23 @@ fn surface_particle_panel_eye_offset_right_meters(
     finite_or(value, fallback).clamp(-0.12, 0.12)
 }
 
+fn current_surface_particle_panel_eye_world(
+    panel_projection: ReplayHandPanelProjection,
+    eye_index: u32,
+) -> [f32; 3] {
+    let panel_forward = surface_particle_panel_forward(panel_projection);
+    add3(
+        add3(
+            panel_projection.center,
+            scale3(panel_forward, -panel_projection.target_distance_meters),
+        ),
+        scale3(
+            panel_projection.right,
+            surface_particle_panel_eye_offset_right_meters(panel_projection, eye_index),
+        ),
+    )
+}
+
 fn current_surface_particle_eye_world(
     panel_projection: ReplayHandPanelProjection,
     eye_index: u32,
@@ -3814,17 +3951,7 @@ fn current_surface_particle_eye_world(
             return eye;
         }
     }
-    let panel_forward = surface_particle_panel_forward(panel_projection);
-    add3(
-        add3(
-            panel_projection.center,
-            scale3(panel_forward, -panel_projection.target_distance_meters),
-        ),
-        scale3(
-            panel_projection.right,
-            surface_particle_panel_eye_offset_right_meters(panel_projection, eye_index),
-        ),
-    )
+    current_surface_particle_panel_eye_world(panel_projection, eye_index)
 }
 
 fn surface_particle_default_openxr_view() -> openxr_sys::View {
@@ -7173,8 +7300,7 @@ impl SurfaceParticlePrivatePush {
             params,
             panel_projection,
         );
-        let draw_projection =
-            current_surface_particle_spatial_world_draw_camera_projection(panel_projection);
+        let draw_projection = current_surface_particle_gpu_panel_draw_projection(panel_projection);
         let eye_world = current_surface_particle_eye_world(draw_projection, eye_index.min(1));
         push.params0[2] = eye_index.min(1) as f32;
         push.params1 = [eye_world[0], eye_world[1], eye_world[2], 1.0];
@@ -7380,6 +7506,15 @@ unsafe fn record_command_buffer(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    static SURFACE_PARTICLE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn surface_particle_test_guard() -> MutexGuard<'static, ()> {
+        SURFACE_PARTICLE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     fn assert_vec3_near(actual: [f32; 3], expected: [f32; 3]) {
         for (actual, expected) in actual.into_iter().zip(expected) {
@@ -7449,8 +7584,39 @@ mod tests {
         SURFACE_PARTICLE_VIEWER_EYE_POSE_VALID.store(true, Ordering::Relaxed);
     }
 
+    fn store_test_openxr_gpu_panel_anchor(
+        center: [f32; 3],
+        right: [f32; 3],
+        up: [f32; 3],
+        forward: [f32; 3],
+    ) {
+        SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_MAPPED_X_BITS
+            .store(center[0].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_MAPPED_Y_BITS
+            .store(center[1].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_MAPPED_Z_BITS
+            .store(center[2].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_OPENXR_WORLD_RIGHT_MAPPED_X_BITS
+            .store(right[0].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_OPENXR_WORLD_RIGHT_MAPPED_Y_BITS
+            .store(right[1].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_OPENXR_WORLD_RIGHT_MAPPED_Z_BITS
+            .store(right[2].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_OPENXR_WORLD_UP_MAPPED_X_BITS.store(up[0].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_OPENXR_WORLD_UP_MAPPED_Y_BITS.store(up[1].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_OPENXR_WORLD_UP_MAPPED_Z_BITS.store(up[2].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_OPENXR_WORLD_FORWARD_MAPPED_X_BITS
+            .store(forward[0].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_OPENXR_WORLD_FORWARD_MAPPED_Y_BITS
+            .store(forward[1].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_OPENXR_WORLD_FORWARD_MAPPED_Z_BITS
+            .store(forward[2].to_bits(), Ordering::Relaxed);
+        SURFACE_PARTICLE_OPENXR_WORLD_ANCHOR_MAPPED_VALID.store(true, Ordering::Relaxed);
+    }
+
     #[test]
     fn auto_recenter_moves_sphere_center_to_viewer_after_half_meter_drift() {
+        let _guard = surface_particle_test_guard();
         reset_surface_particle_world_anchor();
         store_surface_particle_world_anchor_canonical([0.0, 1.4, -2.0]);
 
@@ -7488,6 +7654,7 @@ mod tests {
 
     #[test]
     fn auto_recenter_keeps_sphere_center_when_viewer_stays_within_half_meter() {
+        let _guard = surface_particle_test_guard();
         reset_surface_particle_world_anchor();
         store_surface_particle_world_anchor_canonical([0.0, 1.4, 0.0]);
 
@@ -7502,7 +7669,41 @@ mod tests {
     }
 
     #[test]
+    fn auto_recenter_stores_viewer_world_anchor_not_openxr_panel_remap() {
+        let _guard = surface_particle_test_guard();
+        reset_surface_particle_world_anchor();
+        store_surface_particle_world_anchor_canonical([0.0, 1.4, -2.0]);
+        store_test_openxr_gpu_panel_anchor(
+            [2.0, 1.4, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 0.0, 0.0],
+        );
+
+        let recentered =
+            maybe_auto_recenter_surface_particle_world_anchor_on_viewer([0.0, 1.4, -1.0]);
+
+        assert!(recentered);
+        assert_vec3_near(
+            current_surface_particle_openxr_panel_world_anchor()
+                .expect("diagnostic OpenXR anchor should stay available")
+                .center,
+            [2.0, 1.4, 0.0],
+        );
+        let active_anchor = current_surface_particle_world_anchor(test_panel_projection(
+            [1.0, 1.4, -2.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+        ));
+        assert_vec3_near(active_anchor.center, [0.0, 1.4, -1.0]);
+        assert_vec3_near(active_anchor.right, [1.0, 0.0, 0.0]);
+        assert_vec3_near(active_anchor.up, [0.0, 1.0, 0.0]);
+        assert_vec3_near(active_anchor.forward, [0.0, 0.0, -1.0]);
+    }
+
+    #[test]
     fn draw_camera_projection_uses_viewer_forward_not_carrier_panel_yaw() {
+        let _guard = surface_particle_test_guard();
         reset_surface_particle_world_anchor();
         store_test_viewer_pose(
             [0.0, 1.4, 0.0],
@@ -7531,6 +7732,7 @@ mod tests {
 
     #[test]
     fn draw_camera_projection_corrects_horizontal_viewer_yaw_mirror() {
+        let _guard = surface_particle_test_guard();
         reset_surface_particle_world_anchor();
         store_test_viewer_pose(
             [0.0, 1.4, 0.0],
@@ -7559,6 +7761,7 @@ mod tests {
 
     #[test]
     fn draw_camera_projection_preserves_viewer_pitch_and_yaw_without_roll() {
+        let _guard = surface_particle_test_guard();
         reset_surface_particle_world_anchor();
         store_test_viewer_pose(
             [0.0, 1.4, 0.0],
@@ -7583,6 +7786,7 @@ mod tests {
 
     #[test]
     fn private_main_draw_push_uses_viewer_forward_camera_basis_not_carrier_panel_yaw() {
+        let _guard = surface_particle_test_guard();
         reset_surface_particle_world_anchor();
         store_test_viewer_pose(
             [0.0, 1.4, 0.0],
@@ -7606,7 +7810,11 @@ mod tests {
 
         assert_vec3_near(
             [push.params1[0], push.params1[1], push.params1[2]],
-            [0.0, 1.4, 0.0],
+            [
+                DEFAULT_SURFACE_PARTICLE_LEFT_EYE_OFFSET_RIGHT_METERS,
+                1.4,
+                0.0,
+            ],
         );
         assert_vec3_near(
             [
@@ -7644,6 +7852,7 @@ mod tests {
 
     #[test]
     fn private_main_draw_eye_offsets_use_roll_stable_yawed_right_when_viewer_is_yawed() {
+        let _guard = surface_particle_test_guard();
         reset_surface_particle_world_anchor();
         store_test_viewer_pose(
             [0.2, 1.4, 0.1],
@@ -7678,6 +7887,184 @@ mod tests {
                 push.eye_position[0],
                 push.eye_position[1],
                 push.eye_position[2],
+            ],
+            [0.0, 0.0, -1.0],
+        );
+    }
+
+    #[test]
+    fn private_main_compute_keeps_fixed_world_anchor_when_openxr_panel_mapping_is_available() {
+        let _guard = surface_particle_test_guard();
+        reset_surface_particle_world_anchor();
+        store_surface_particle_world_anchor_canonical([0.0, 1.4, -2.0]);
+        store_test_openxr_gpu_panel_anchor(
+            [2.0, 1.4, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 0.0, 0.0],
+        );
+
+        let push = SurfaceParticlePrivatePush::main_compute(
+            128,
+            0,
+            128,
+            3,
+            1.0,
+            test_params(),
+            test_panel_projection([0.0, 1.4, -2.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+        );
+
+        assert_vec3_near(
+            [
+                push.world_center_scale[0],
+                push.world_center_scale[1],
+                push.world_center_scale[2],
+            ],
+            [0.0, 1.4, -2.0],
+        );
+        assert_vec3_near(
+            [
+                push.eye_position[0],
+                push.eye_position[1],
+                push.eye_position[2],
+            ],
+            [1.0, 0.0, 0.0],
+        );
+        assert_vec3_near(
+            [
+                push.eye_orientation_xyzw[0],
+                push.eye_orientation_xyzw[1],
+                push.eye_orientation_xyzw[2],
+            ],
+            [0.0, 1.0, 0.0],
+        );
+        assert_vec3_near(
+            [
+                push.fov_tangents[0],
+                push.fov_tangents[1],
+                push.fov_tangents[2],
+            ],
+            [0.0, 0.0, -1.0],
+        );
+    }
+
+    #[test]
+    fn private_main_draw_keeps_scene_viewer_projection_when_openxr_panel_mapping_is_available() {
+        let _guard = surface_particle_test_guard();
+        reset_surface_particle_world_anchor();
+        store_test_viewer_pose(
+            [0.0, 1.4, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, -1.0],
+        );
+        store_test_openxr_gpu_panel_anchor(
+            [2.0, 1.4, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 0.0, 0.0],
+        );
+        let carrier_panel =
+            test_panel_projection([1.0, 1.4, -2.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]);
+
+        let push = SurfaceParticlePrivatePush::main_draw(
+            128,
+            0,
+            128,
+            3,
+            0,
+            1.0,
+            test_params(),
+            carrier_panel,
+        );
+
+        assert_vec3_near(
+            [push.params1[0], push.params1[1], push.params1[2]],
+            [
+                DEFAULT_SURFACE_PARTICLE_LEFT_EYE_OFFSET_RIGHT_METERS,
+                1.4,
+                0.0,
+            ],
+        );
+        assert_vec3_near(
+            [
+                push.world_center_scale[0],
+                push.world_center_scale[1],
+                push.world_center_scale[2],
+            ],
+            [0.0, 1.4, -2.0],
+        );
+        assert_vec3_near(
+            [
+                push.eye_position[0],
+                push.eye_position[1],
+                push.eye_position[2],
+            ],
+            [1.0, 0.0, 0.0],
+        );
+        assert_vec3_near(
+            [
+                push.eye_orientation_xyzw[0],
+                push.eye_orientation_xyzw[1],
+                push.eye_orientation_xyzw[2],
+            ],
+            [0.0, 1.0, 0.0],
+        );
+        assert_vec3_near(
+            [
+                push.fov_tangents[0],
+                push.fov_tangents[1],
+                push.fov_tangents[2],
+            ],
+            [0.0, 0.0, -1.0],
+        );
+    }
+
+    #[test]
+    fn private_main_draw_keeps_scene_viewer_projection_as_fallback_without_openxr_mapping() {
+        let _guard = surface_particle_test_guard();
+        reset_surface_particle_world_anchor();
+        store_test_viewer_pose(
+            [0.0, 1.4, 0.0],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, -1.0],
+        );
+        let carrier_panel =
+            test_panel_projection([1.0, 1.4, -2.0], [0.0, 0.0, 1.0], [0.0, 1.0, 0.0]);
+
+        let push = SurfaceParticlePrivatePush::main_draw(
+            128,
+            0,
+            128,
+            3,
+            0,
+            1.0,
+            test_params(),
+            carrier_panel,
+        );
+
+        assert_vec3_near(
+            [push.params1[0], push.params1[1], push.params1[2]],
+            [
+                DEFAULT_SURFACE_PARTICLE_LEFT_EYE_OFFSET_RIGHT_METERS,
+                1.4,
+                0.0,
+            ],
+        );
+        assert_vec3_near(
+            [
+                push.world_center_scale[0],
+                push.world_center_scale[1],
+                push.world_center_scale[2],
+            ],
+            [0.0, 1.4, -2.0],
+        );
+        assert_vec3_near(
+            [
+                push.fov_tangents[0],
+                push.fov_tangents[1],
+                push.fov_tangents[2],
             ],
             [0.0, 0.0, -1.0],
         );

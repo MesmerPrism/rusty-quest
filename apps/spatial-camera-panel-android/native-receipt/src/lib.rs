@@ -31,9 +31,9 @@ mod camera_hwb_stream;
 mod camera_hwb_wsi;
 #[cfg(target_os = "android")]
 mod live_hand_joint_bridge;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 mod live_hand_joints;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 mod replay_hands;
 #[cfg(target_os = "android")]
 mod spatial_controller_actions;
@@ -53,7 +53,7 @@ mod spatial_video_projection_native_stream;
 #[cfg(target_os = "android")]
 mod spatial_video_projection_probe;
 mod spatial_video_projection_settings;
-#[cfg(target_os = "android")]
+#[cfg(any(target_os = "android", test))]
 mod surface_particle_layer;
 mod surface_particle_projection;
 

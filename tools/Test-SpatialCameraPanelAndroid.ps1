@@ -36,7 +36,7 @@ if (-not (Test-Path -LiteralPath $buildPath)) {
 & $staticCheckPath -RepoRoot $repoRootPath
 Push-Location -LiteralPath $repoRootPath
 try {
-    cargo test -p spatial-camera-panel-native-receipt surface_particle_projection
+    cargo test -p spatial-camera-panel-native-receipt surface_particle
 } finally {
     Pop-Location
 }
