@@ -968,6 +968,26 @@ Community/context, not treated as API contract:
   Spatial live skinning against the native compact 21 runtime joint plus 5 tip
   length path, including bind-joint source rows, tip reconstruction, valid
   weight thresholds, and live triangle rejection counters.
+- 2026-07-02 live hand spatial viewer-world registration parity diagnostic:
+  the ECS comparison route exposed a world-fixed depth mirror in the OpenXR
+  bridge row cache after the head-locked startup path was removed. The native
+  receipt now has a hotload property,
+  `debug.rustyquest.kuramoto_spatial.live_hand_spatial_viewer_world_registration.parity`,
+  and `tools/Set-KuramotoSpatialLiveHandRegistrationParity.ps1` can switch
+  `none`, `flip-x`, `flip-y`, `flip-z`, `yaw-180`, and `flip-xz` while the APK
+  stays active. Headset inspection selected the current default best mapping as
+  `flip-x` plus
+  `debug.rustyquest.kuramoto_spatial.live_hand_spatial_viewer_world_registration.reflection_orientation=local-y`;
+  explicit `none` remains a diagnostic override. Markers report
+  `status=live-hand-spatial-viewer-world-reflection-orientation-updated`,
+  `status=live-hand-spatial-viewer-world-registration-diagnostic`,
+  `liveHandSpatialWorldRegistrationParity`,
+  `liveHandSpatialWorldRegistrationOrientationAdjusted`, and
+  `liveHandSpatialWorldRegistrationEffectivePositionDeterminant`. The
+  single-axis values are reflection diagnostics. The `yaw-180`/`flip-xz`
+  candidate rotates both lateral and forward axes together, keeps determinant
+  `+1`, and applies the same proper rotation to joint orientations; row order,
+  mesh pairing, and dynamics remain separate questions.
 - 2026-06-25 native-equivalent live mesh coverage patch: comparison against the
   native real-time app showed that the native GPU skinning path does not filter
   weighted joints in shader. It submits a full compact frame only after the CPU

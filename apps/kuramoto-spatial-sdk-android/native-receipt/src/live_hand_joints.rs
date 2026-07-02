@@ -33,6 +33,12 @@ const LIVE_HAND_SCENE_YAW_DEGREES_PROPERTY: &str =
     "debug.rustyquest.kuramoto_spatial.live_hand_scene.yaw_degrees";
 const LIVE_HAND_SCENE_HORIZONTAL_SIGN_PROPERTY: &str =
     "debug.rustyquest.kuramoto_spatial.live_hand_scene.horizontal_sign";
+const LIVE_HAND_SPATIAL_VIEWER_WORLD_REGISTRATION_MODE_PROPERTY: &str =
+    "debug.rustyquest.kuramoto_spatial.live_hand_spatial_viewer_world_registration.mode";
+const LIVE_HAND_SPATIAL_VIEWER_WORLD_REGISTRATION_PARITY_PROPERTY: &str =
+    "debug.rustyquest.kuramoto_spatial.live_hand_spatial_viewer_world_registration.parity";
+const LIVE_HAND_SPATIAL_VIEWER_WORLD_REFLECTION_ORIENTATION_PROPERTY: &str =
+    "debug.rustyquest.kuramoto_spatial.live_hand_spatial_viewer_world_registration.reflection_orientation";
 
 static LIVE_HAND_SCENE_OFFSET_X_BITS: AtomicU32 = AtomicU32::new(0.0_f32.to_bits());
 static LIVE_HAND_SCENE_OFFSET_Y_BITS: AtomicU32 = AtomicU32::new(0.0_f32.to_bits());
@@ -68,6 +74,12 @@ static LIVE_HAND_SPATIAL_VIEWER_WORLD_FORWARD_Y_BITS: AtomicU32 = AtomicU32::new
 static LIVE_HAND_SPATIAL_VIEWER_WORLD_FORWARD_Z_BITS: AtomicU32 =
     AtomicU32::new((-1.0_f32).to_bits());
 static LIVE_HAND_SPATIAL_VIEWER_WORLD_BASIS_VALID: AtomicBool = AtomicBool::new(false);
+static LIVE_HAND_SPATIAL_VIEWER_WORLD_REGISTRATION: OnceLock<
+    Mutex<Option<LiveHandSpatialViewerWorldMapping>>,
+> = OnceLock::new();
+static LIVE_HAND_SPATIAL_VIEWER_WORLD_PARITY_BITS: AtomicU32 = AtomicU32::new(0);
+static LIVE_HAND_SPATIAL_VIEWER_WORLD_PARITY_LOG_COUNT: AtomicU32 = AtomicU32::new(0);
+static LIVE_HAND_SPATIAL_VIEWER_WORLD_REFLECTION_ORIENTATION_BITS: AtomicU32 = AtomicU32::new(0);
 static LIVE_HAND_LAST_ROWS: OnceLock<Mutex<Option<LiveHandRowsSnapshot>>> = OnceLock::new();
 static LIVE_HAND_LAST_RAW_SCENE_ROWS: OnceLock<Mutex<Option<LiveHandRowsSnapshot>>> =
     OnceLock::new();
@@ -555,30 +567,60 @@ impl LiveHandJointInput {
     ) -> Option<LiveHandSpatialViewerWorldMapping> {
         let basis = current_live_hand_spatial_viewer_world_basis()?;
         let view_pose = self.current_view_pose(time, None)?;
-        let spatial_viewer_orientation = quat_from_basis(
-            basis.right,
-            basis.up,
-            [-basis.forward[0], -basis.forward[1], -basis.forward[2]],
-        );
-        let (map_orientation, _) = normalize_orientation_or_identity(multiply_quat_xyzw(
-            spatial_viewer_orientation,
-            inverse_quat_xyzw(view_pose.orientation),
-        ));
-        let mapped_view_position = rotate_vector_by_quat(map_orientation, view_pose.position);
-        let mapping = LiveHandSpatialViewerWorldMapping {
-            origin: [
-                basis.center[0] - mapped_view_position[0],
-                basis.center[1] - mapped_view_position[1],
-                basis.center[2] - mapped_view_position[2],
-            ],
-            map_orientation,
+        let (parity, parity_changed) = current_live_hand_spatial_viewer_world_parity();
+        if parity_changed {
+            self.spatial_viewer_world_registration_log_count = 0;
+        }
+        let fresh_mapping = spatial_viewer_world_mapping_from_view(basis, view_pose, parity);
+        let per_poll_registration = live_hand_spatial_viewer_world_registration_per_poll();
+        let stable_basis_ready = spatial_viewer_world_basis_ready_for_stable_registration(basis);
+        let mut initialized_now = false;
+        let mapping = if per_poll_registration {
+            fresh_mapping
+        } else {
+            let registration = live_hand_spatial_viewer_world_registration();
+            let mut slot = registration.lock().ok()?;
+            match *slot {
+                Some(mapping) => mapping,
+                None if !stable_basis_ready => {
+                    if self.spatial_viewer_world_registration_log_count < 4 {
+                        self.spatial_viewer_world_registration_log_count += 1;
+                        android_log_info(
+                            "RQKuramotoSpatialNative",
+                            &format!(
+                                "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=native-surface-particle-layer status=live-hand-spatial-viewer-world-registration-deferred renderPolicy=native-vulkan-wsi-surface-panel liveHandCoordinateTransform=openxr-local-floor-to-spatial-sdk-viewer-world-current-registration liveHandSpatialWorldRegistration=stable-openxr-view-to-spatial-sdk-viewer-world liveHandSpatialWorldRegistrationReason=startup-placeholder-spatial-viewer-basis liveHandSpatialViewerWorldBasisCenterM={:.4};{:.4};{:.4} liveHandOpenXrViewPositionM={:.4};{:.4};{:.4}",
+                                basis.center[0],
+                                basis.center[1],
+                                basis.center[2],
+                                view_pose.position[0],
+                                view_pose.position[1],
+                                view_pose.position[2],
+                            ),
+                        );
+                    }
+                    return None;
+                }
+                None => {
+                    *slot = Some(fresh_mapping);
+                    initialized_now = true;
+                    fresh_mapping
+                }
+            }
         };
         if self.spatial_viewer_world_registration_log_count < 4 {
             self.spatial_viewer_world_registration_log_count += 1;
             android_log_info(
                 "RQKuramotoSpatialNative",
                 &format!(
-                    "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=native-surface-particle-layer status=live-hand-spatial-viewer-world-registration-updated renderPolicy=native-vulkan-wsi-surface-panel liveHandCoordinateTransform=openxr-local-floor-to-spatial-sdk-viewer-world-current-registration liveHandSpatialWorldRegistration=per-poll-openxr-view-to-spatial-sdk-viewer-world liveHandSpatialViewerWorldBasisCenterM={:.4};{:.4};{:.4} liveHandOpenXrViewPositionM={:.4};{:.4};{:.4} liveHandSpatialWorldRegistrationOriginM={:.4};{:.4};{:.4} liveHandSpatialWorldRegistrationOrientationXYZW={:.5};{:.5};{:.5};{:.5}",
+                    "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=native-surface-particle-layer status=live-hand-spatial-viewer-world-registration-updated renderPolicy=native-vulkan-wsi-surface-panel liveHandCoordinateTransform=openxr-local-floor-to-spatial-sdk-viewer-world-current-registration liveHandSpatialWorldRegistration={} liveHandSpatialWorldRegistrationModeProperty={} liveHandSpatialWorldRegistrationInitializedNow={} liveHandSpatialWorldRegistrationStableBasisReady={} liveHandSpatialViewerWorldBasisCenterM={:.4};{:.4};{:.4} liveHandOpenXrViewPositionM={:.4};{:.4};{:.4} liveHandSpatialWorldRegistrationOriginM={:.4};{:.4};{:.4} liveHandSpatialWorldRegistrationOrientationXYZW={:.5};{:.5};{:.5};{:.5}",
+                    if per_poll_registration {
+                        "per-poll-openxr-view-to-spatial-sdk-viewer-world"
+                    } else {
+                        "stable-openxr-view-to-spatial-sdk-viewer-world"
+                    },
+                    LIVE_HAND_SPATIAL_VIEWER_WORLD_REGISTRATION_MODE_PROPERTY,
+                    bool_token(initialized_now),
+                    bool_token(stable_basis_ready),
                     basis.center[0],
                     basis.center[1],
                     basis.center[2],
@@ -592,6 +634,39 @@ impl LiveHandJointInput {
                     mapping.map_orientation[1],
                     mapping.map_orientation[2],
                     mapping.map_orientation[3],
+                ),
+            );
+            android_log_info(
+                "RQKuramotoSpatialNative",
+                &format!(
+                    "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=native-surface-particle-layer status=live-hand-spatial-viewer-world-registration-diagnostic renderPolicy=native-vulkan-wsi-surface-panel liveHandCoordinateTransform=openxr-local-floor-to-spatial-sdk-viewer-world-current-registration liveHandSpatialWorldRegistrationParityProperty={} liveHandSpatialWorldRegistrationParity={} liveHandSpatialWorldRegistrationParitySigns={:.0};{:.0};{:.0} liveHandSpatialWorldRegistrationOrientationAdjusted={} liveHandSpatialWorldRegistrationRawBasisDeterminant={:.3} liveHandSpatialWorldRegistrationSpatialBasisDeterminant={:.3} liveHandSpatialWorldRegistrationParityDeterminant={:.3} liveHandSpatialWorldRegistrationEffectivePositionDeterminant={:.3} liveHandSpatialWorldRegistrationRightDot={:.3} liveHandSpatialWorldRegistrationUpDot={:.3} liveHandSpatialWorldRegistrationForwardDot={:.3} liveHandSpatialWorldRegistrationCandidateParityDeterminants=none:{:.0};flip-x:{:.0};flip-y:{:.0};flip-z:{:.0};yaw-180:{:.0}",
+                    LIVE_HAND_SPATIAL_VIEWER_WORLD_REGISTRATION_PARITY_PROPERTY,
+                    mapping.parity.token(),
+                    mapping.parity.signs()[0],
+                    mapping.parity.signs()[1],
+                    mapping.parity.signs()[2],
+                    bool_token(mapping.parity.applies_to_orientation()),
+                    mapping.raw_basis_determinant,
+                    mapping.spatial_basis_determinant,
+                    mapping.parity_determinant,
+                    mapping.effective_position_determinant,
+                    dot_vec3(
+                        map_live_hand_spatial_viewer_world_vector(mapping.raw_right, mapping),
+                        mapping.spatial_right,
+                    ),
+                    dot_vec3(
+                        map_live_hand_spatial_viewer_world_vector(mapping.raw_up, mapping),
+                        mapping.spatial_up,
+                    ),
+                    dot_vec3(
+                        map_live_hand_spatial_viewer_world_vector(mapping.raw_forward, mapping),
+                        mapping.spatial_forward,
+                    ),
+                    LiveHandSpatialViewerWorldParity::None.determinant(),
+                    LiveHandSpatialViewerWorldParity::FlipX.determinant(),
+                    LiveHandSpatialViewerWorldParity::FlipY.determinant(),
+                    LiveHandSpatialViewerWorldParity::FlipZ.determinant(),
+                    LiveHandSpatialViewerWorldParity::Yaw180.determinant(),
                 ),
             );
         }
@@ -1066,10 +1141,159 @@ struct LiveHandSpatialViewerWorldBasis {
     forward: [f32; 3],
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LiveHandSpatialViewerWorldParity {
+    None,
+    FlipX,
+    FlipY,
+    FlipZ,
+    Yaw180,
+}
+
+impl LiveHandSpatialViewerWorldParity {
+    fn parse(value: Option<String>) -> Self {
+        match value.as_deref().map(marker_token).as_deref() {
+            None => Self::FlipX,
+            Some("none") | Some("off") | Some("disabled") | Some("0") | Some("false") => Self::None,
+            Some("flip-x") | Some("x") | Some("mirror-x") | Some("reflect-x") => Self::FlipX,
+            Some("flip-y") | Some("y") | Some("mirror-y") | Some("reflect-y") => Self::FlipY,
+            Some("flip-z") | Some("z") | Some("depth") | Some("mirror-z") | Some("reflect-z") => {
+                Self::FlipZ
+            }
+            Some("yaw-180") | Some("flip-xz") | Some("xz") | Some("half-turn")
+            | Some("rotate-y-180") => Self::Yaw180,
+            _ => Self::FlipX,
+        }
+    }
+
+    fn from_bits(bits: u32) -> Self {
+        match bits {
+            1 => Self::FlipX,
+            2 => Self::FlipY,
+            3 => Self::FlipZ,
+            4 => Self::Yaw180,
+            _ => Self::None,
+        }
+    }
+
+    fn bits(self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::FlipX => 1,
+            Self::FlipY => 2,
+            Self::FlipZ => 3,
+            Self::Yaw180 => 4,
+        }
+    }
+
+    fn token(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::FlipX => "flip-x",
+            Self::FlipY => "flip-y",
+            Self::FlipZ => "flip-z",
+            Self::Yaw180 => "yaw-180",
+        }
+    }
+
+    fn signs(self) -> [f32; 3] {
+        match self {
+            Self::None => [1.0, 1.0, 1.0],
+            Self::FlipX => [-1.0, 1.0, 1.0],
+            Self::FlipY => [1.0, -1.0, 1.0],
+            Self::FlipZ => [1.0, 1.0, -1.0],
+            Self::Yaw180 => [-1.0, 1.0, -1.0],
+        }
+    }
+
+    fn determinant(self) -> f32 {
+        match self {
+            Self::None | Self::Yaw180 => 1.0,
+            Self::FlipX | Self::FlipY | Self::FlipZ => -1.0,
+        }
+    }
+
+    fn applies_to_orientation(self) -> bool {
+        self.determinant() > 0.0
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LiveHandSpatialViewerWorldReflectionOrientation {
+    None,
+    LocalX,
+    LocalY,
+    LocalZ,
+}
+
+impl LiveHandSpatialViewerWorldReflectionOrientation {
+    fn parse(value: Option<String>) -> Self {
+        match value.as_deref().map(marker_token).as_deref() {
+            None => Self::LocalY,
+            Some("none") | Some("off") | Some("disabled") | Some("0") | Some("false") => Self::None,
+            Some("local-x") | Some("x") | Some("reflect-local-x") => Self::LocalX,
+            Some("local-y") | Some("y") | Some("reflect-local-y") => Self::LocalY,
+            Some("local-z") | Some("z") | Some("reflect-local-z") => Self::LocalZ,
+            _ => Self::LocalY,
+        }
+    }
+
+    fn from_bits(bits: u32) -> Self {
+        match bits {
+            1 => Self::LocalX,
+            2 => Self::LocalY,
+            3 => Self::LocalZ,
+            _ => Self::None,
+        }
+    }
+
+    fn bits(self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::LocalX => 1,
+            Self::LocalY => 2,
+            Self::LocalZ => 3,
+        }
+    }
+
+    fn token(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::LocalX => "local-x",
+            Self::LocalY => "local-y",
+            Self::LocalZ => "local-z",
+        }
+    }
+
+    fn local_signs(self) -> [f32; 3] {
+        match self {
+            Self::None => [1.0, 1.0, 1.0],
+            Self::LocalX => [-1.0, 1.0, 1.0],
+            Self::LocalY => [1.0, -1.0, 1.0],
+            Self::LocalZ => [1.0, 1.0, -1.0],
+        }
+    }
+
+    fn adjusts_orientation(self) -> bool {
+        self != Self::None
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct LiveHandSpatialViewerWorldMapping {
     origin: [f32; 3],
     map_orientation: [f32; 4],
+    raw_right: [f32; 3],
+    raw_up: [f32; 3],
+    raw_forward: [f32; 3],
+    spatial_right: [f32; 3],
+    spatial_up: [f32; 3],
+    spatial_forward: [f32; 3],
+    parity: LiveHandSpatialViewerWorldParity,
+    raw_basis_determinant: f32,
+    spatial_basis_determinant: f32,
+    parity_determinant: f32,
+    effective_position_determinant: f32,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -1127,6 +1351,9 @@ pub(crate) fn store_live_hand_spatial_viewer_world_basis(
     up: [f32; 3],
     valid: bool,
 ) {
+    if !valid {
+        clear_live_hand_spatial_viewer_world_registration();
+    }
     let right = normalize_vec3_or(right, [1.0, 0.0, 0.0]);
     let up = normalize_vec3_or(up, [0.0, 1.0, 0.0]);
     let forward = normalize_vec3_or(cross_vec3(up, right), [0.0, 0.0, -1.0]);
@@ -1202,6 +1429,177 @@ fn current_live_hand_spatial_viewer_world_basis() -> Option<LiveHandSpatialViewe
             f32::from_bits(LIVE_HAND_SPATIAL_VIEWER_WORLD_FORWARD_Z_BITS.load(Ordering::Relaxed)),
         ],
     })
+}
+
+pub(crate) fn clear_live_hand_spatial_viewer_world_registration() {
+    if let Some(registration) = LIVE_HAND_SPATIAL_VIEWER_WORLD_REGISTRATION.get() {
+        if let Ok(mut slot) = registration.lock() {
+            *slot = None;
+        }
+    }
+}
+
+fn live_hand_spatial_viewer_world_registration(
+) -> &'static Mutex<Option<LiveHandSpatialViewerWorldMapping>> {
+    LIVE_HAND_SPATIAL_VIEWER_WORLD_REGISTRATION.get_or_init(|| Mutex::new(None))
+}
+
+fn live_hand_spatial_viewer_world_registration_per_poll() -> bool {
+    let mode = android_system_property(LIVE_HAND_SPATIAL_VIEWER_WORLD_REGISTRATION_MODE_PROPERTY)
+        .map(|value| marker_token(&value));
+    matches!(
+        mode.as_deref(),
+        Some("per-poll") | Some("live") | Some("head-locked") | Some("current")
+    )
+}
+
+fn current_live_hand_spatial_viewer_world_parity() -> (LiveHandSpatialViewerWorldParity, bool) {
+    let parity = LiveHandSpatialViewerWorldParity::parse(android_system_property(
+        LIVE_HAND_SPATIAL_VIEWER_WORLD_REGISTRATION_PARITY_PROPERTY,
+    ));
+    let old_bits =
+        LIVE_HAND_SPATIAL_VIEWER_WORLD_PARITY_BITS.swap(parity.bits(), Ordering::Relaxed);
+    let previous = LiveHandSpatialViewerWorldParity::from_bits(old_bits);
+    let changed = previous != parity;
+    if changed {
+        clear_live_hand_spatial_viewer_world_registration();
+        log_live_hand_spatial_viewer_world_parity_update(previous, parity);
+    }
+    (parity, changed)
+}
+
+fn current_live_hand_spatial_viewer_world_reflection_orientation(
+) -> (LiveHandSpatialViewerWorldReflectionOrientation, bool) {
+    let orientation = LiveHandSpatialViewerWorldReflectionOrientation::parse(
+        android_system_property(LIVE_HAND_SPATIAL_VIEWER_WORLD_REFLECTION_ORIENTATION_PROPERTY),
+    );
+    let old_bits = LIVE_HAND_SPATIAL_VIEWER_WORLD_REFLECTION_ORIENTATION_BITS
+        .swap(orientation.bits(), Ordering::Relaxed);
+    let previous = LiveHandSpatialViewerWorldReflectionOrientation::from_bits(old_bits);
+    let changed = previous != orientation;
+    if changed {
+        log_live_hand_spatial_viewer_world_reflection_orientation_update(previous, orientation);
+    }
+    (orientation, changed)
+}
+
+fn log_live_hand_spatial_viewer_world_reflection_orientation_update(
+    previous: LiveHandSpatialViewerWorldReflectionOrientation,
+    current: LiveHandSpatialViewerWorldReflectionOrientation,
+) {
+    android_log_info(
+        "RQKuramotoSpatialNative",
+        &format!(
+            "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=native-surface-particle-layer status=live-hand-spatial-viewer-world-reflection-orientation-updated renderPolicy=native-vulkan-wsi-surface-panel transport=android-system-property liveHandCoordinateTransform=openxr-local-floor-to-spatial-sdk-viewer-world-current-registration liveHandSpatialWorldReflectionOrientationProperty={} liveHandSpatialWorldReflectionOrientationPrevious={} liveHandSpatialWorldReflectionOrientation={}",
+            LIVE_HAND_SPATIAL_VIEWER_WORLD_REFLECTION_ORIENTATION_PROPERTY,
+            previous.token(),
+            current.token(),
+        ),
+    );
+}
+
+fn log_live_hand_spatial_viewer_world_parity_update(
+    previous: LiveHandSpatialViewerWorldParity,
+    current: LiveHandSpatialViewerWorldParity,
+) {
+    let log_count = LIVE_HAND_SPATIAL_VIEWER_WORLD_PARITY_LOG_COUNT.fetch_add(1, Ordering::Relaxed);
+    if log_count >= 8 {
+        return;
+    }
+    android_log_info(
+        "RQKuramotoSpatialNative",
+        &format!(
+            "RUSTY_QUEST_KURAMOTO_SPATIAL_NATIVE channel=native-surface-particle-layer status=live-hand-spatial-viewer-world-registration-parity-updated renderPolicy=native-vulkan-wsi-surface-panel transport=android-system-property liveHandCoordinateTransform=openxr-local-floor-to-spatial-sdk-viewer-world-current-registration liveHandSpatialWorldRegistrationParityProperty={} liveHandSpatialWorldRegistrationParityPrevious={} liveHandSpatialWorldRegistrationParity={} liveHandSpatialWorldRegistrationCleared=true",
+            LIVE_HAND_SPATIAL_VIEWER_WORLD_REGISTRATION_PARITY_PROPERTY,
+            previous.token(),
+            current.token(),
+        ),
+    );
+}
+
+fn spatial_viewer_world_basis_ready_for_stable_registration(
+    basis: LiveHandSpatialViewerWorldBasis,
+) -> bool {
+    const STARTUP_CENTER_EPSILON_METERS: f32 = 0.001;
+    let default_center_delta =
+        (basis.center[0]).abs() + (basis.center[1]).abs() + (basis.center[2] - 2.0).abs();
+    default_center_delta > STARTUP_CENTER_EPSILON_METERS
+}
+
+fn spatial_viewer_world_mapping_from_view(
+    basis: LiveHandSpatialViewerWorldBasis,
+    view_pose: LiveHandViewPose,
+    parity: LiveHandSpatialViewerWorldParity,
+) -> LiveHandSpatialViewerWorldMapping {
+    let raw_right = rotate_vector_by_quat(view_pose.orientation, [1.0, 0.0, 0.0]);
+    let raw_up = rotate_vector_by_quat(view_pose.orientation, [0.0, 1.0, 0.0]);
+    let raw_forward = rotate_vector_by_quat(view_pose.orientation, [0.0, 0.0, -1.0]);
+    let signs = parity.signs();
+    let orientation_right = if parity.applies_to_orientation() {
+        scale_vec3(basis.right, signs[0])
+    } else {
+        basis.right
+    };
+    let orientation_up = if parity.applies_to_orientation() {
+        scale_vec3(basis.up, signs[1])
+    } else {
+        basis.up
+    };
+    let orientation_forward = if parity.applies_to_orientation() {
+        scale_vec3(basis.forward, signs[2])
+    } else {
+        basis.forward
+    };
+    let spatial_viewer_orientation = quat_from_basis(
+        orientation_right,
+        orientation_up,
+        [
+            -orientation_forward[0],
+            -orientation_forward[1],
+            -orientation_forward[2],
+        ],
+    );
+    let (map_orientation, _) = normalize_orientation_or_identity(multiply_quat_xyzw(
+        spatial_viewer_orientation,
+        inverse_quat_xyzw(view_pose.orientation),
+    ));
+    let raw_basis_determinant = determinant_from_basis(raw_right, raw_up, raw_forward);
+    let spatial_basis_determinant = determinant_from_basis(basis.right, basis.up, basis.forward);
+    let parity_determinant = parity.determinant();
+    let effective_position_determinant = if raw_basis_determinant.abs() > 0.000001 {
+        spatial_basis_determinant * parity_determinant / raw_basis_determinant
+    } else {
+        0.0
+    };
+    let mapped_view_position = map_spatial_viewer_world_vector(
+        view_pose.position,
+        raw_right,
+        raw_up,
+        raw_forward,
+        basis.right,
+        basis.up,
+        basis.forward,
+        parity,
+    );
+    LiveHandSpatialViewerWorldMapping {
+        origin: [
+            basis.center[0] - mapped_view_position[0],
+            basis.center[1] - mapped_view_position[1],
+            basis.center[2] - mapped_view_position[2],
+        ],
+        map_orientation,
+        raw_right,
+        raw_up,
+        raw_forward,
+        spatial_right: basis.right,
+        spatial_up: basis.up,
+        spatial_forward: basis.forward,
+        parity,
+        raw_basis_determinant,
+        spatial_basis_determinant,
+        parity_determinant,
+        effective_position_determinant,
+    }
 }
 
 pub(crate) fn copy_last_live_hand_rows() -> Option<LiveHandRowsSnapshot> {
@@ -1427,16 +1825,27 @@ fn apply_live_hand_spatial_viewer_world_mapping(
     orientation_xyzw: [f32; 4],
     mapping: LiveHandSpatialViewerWorldMapping,
 ) -> ([f32; 3], [f32; 4]) {
-    let mapped_position = rotate_vector_by_quat(mapping.map_orientation, position);
+    let mapped_position = map_live_hand_spatial_viewer_world_vector(position, mapping);
     let scene_position = [
         mapping.origin[0] + mapped_position[0],
         mapping.origin[1] + mapped_position[1],
         mapping.origin[2] + mapped_position[2],
     ];
-    let (scene_orientation, _) = normalize_orientation_or_identity(multiply_quat_xyzw(
-        mapping.map_orientation,
-        orientation_xyzw,
-    ));
+    let reflection_orientation = current_live_hand_spatial_viewer_world_reflection_orientation().0;
+    let scene_orientation =
+        if mapping.parity.determinant() < 0.0 && reflection_orientation.adjusts_orientation() {
+            map_live_hand_spatial_viewer_world_reflected_orientation(
+                orientation_xyzw,
+                mapping,
+                reflection_orientation,
+            )
+        } else {
+            normalize_orientation_or_identity(multiply_quat_xyzw(
+                mapping.map_orientation,
+                orientation_xyzw,
+            ))
+            .0
+        };
     (scene_position, scene_orientation)
 }
 
@@ -1467,6 +1876,77 @@ fn apply_live_hand_view_panel_position_mapping(
             + mapping.panel_forward[2] * rel_forward,
     ];
     scene_position
+}
+
+fn map_live_hand_spatial_viewer_world_vector(
+    vector: [f32; 3],
+    mapping: LiveHandSpatialViewerWorldMapping,
+) -> [f32; 3] {
+    map_spatial_viewer_world_vector(
+        vector,
+        mapping.raw_right,
+        mapping.raw_up,
+        mapping.raw_forward,
+        mapping.spatial_right,
+        mapping.spatial_up,
+        mapping.spatial_forward,
+        mapping.parity,
+    )
+}
+
+fn map_live_hand_spatial_viewer_world_reflected_orientation(
+    orientation_xyzw: [f32; 4],
+    mapping: LiveHandSpatialViewerWorldMapping,
+    reflection_orientation: LiveHandSpatialViewerWorldReflectionOrientation,
+) -> [f32; 4] {
+    let local_signs = reflection_orientation.local_signs();
+    let raw_right = scale_vec3(
+        rotate_vector_by_quat(orientation_xyzw, [1.0, 0.0, 0.0]),
+        local_signs[0],
+    );
+    let raw_up = scale_vec3(
+        rotate_vector_by_quat(orientation_xyzw, [0.0, 1.0, 0.0]),
+        local_signs[1],
+    );
+    let raw_back = scale_vec3(
+        rotate_vector_by_quat(orientation_xyzw, [0.0, 0.0, 1.0]),
+        local_signs[2],
+    );
+    quat_from_basis(
+        normalize_vec3_or(
+            map_live_hand_spatial_viewer_world_vector(raw_right, mapping),
+            [1.0, 0.0, 0.0],
+        ),
+        normalize_vec3_or(
+            map_live_hand_spatial_viewer_world_vector(raw_up, mapping),
+            [0.0, 1.0, 0.0],
+        ),
+        normalize_vec3_or(
+            map_live_hand_spatial_viewer_world_vector(raw_back, mapping),
+            [0.0, 0.0, 1.0],
+        ),
+    )
+}
+
+fn map_spatial_viewer_world_vector(
+    vector: [f32; 3],
+    raw_right: [f32; 3],
+    raw_up: [f32; 3],
+    raw_forward: [f32; 3],
+    spatial_right: [f32; 3],
+    spatial_up: [f32; 3],
+    spatial_forward: [f32; 3],
+    parity: LiveHandSpatialViewerWorldParity,
+) -> [f32; 3] {
+    let signs = parity.signs();
+    let rel_right = dot_vec3(vector, raw_right) * signs[0];
+    let rel_up = dot_vec3(vector, raw_up) * signs[1];
+    let rel_forward = dot_vec3(vector, raw_forward) * signs[2];
+    [
+        spatial_right[0] * rel_right + spatial_up[0] * rel_up + spatial_forward[0] * rel_forward,
+        spatial_right[1] * rel_right + spatial_up[1] * rel_up + spatial_forward[1] * rel_forward,
+        spatial_right[2] * rel_right + spatial_up[2] * rel_up + spatial_forward[2] * rel_forward,
+    ]
 }
 
 fn default_view() -> openxr_sys::View {
@@ -1558,12 +2038,20 @@ fn dot_vec3(a: [f32; 3], b: [f32; 3]) -> f32 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
+fn scale_vec3(value: [f32; 3], scale: f32) -> [f32; 3] {
+    [value[0] * scale, value[1] * scale, value[2] * scale]
+}
+
 fn cross_vec3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
     [
         a[1] * b[2] - a[2] * b[1],
         a[2] * b[0] - a[0] * b[2],
         a[0] * b[1] - a[1] * b[0],
     ]
+}
+
+fn determinant_from_basis(right: [f32; 3], up: [f32; 3], forward: [f32; 3]) -> f32 {
+    dot_vec3(right, cross_vec3(up, forward))
 }
 
 fn android_system_property(name: &str) -> Option<String> {

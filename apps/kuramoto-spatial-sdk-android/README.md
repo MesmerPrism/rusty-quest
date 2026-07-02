@@ -298,6 +298,29 @@ Candidate depth-axis correction while the APK remains active:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Set-KuramotoSpatialLiveHandSceneTransform.ps1 -Serial $serial -OffsetX 0 -OffsetY 0 -OffsetZ 2 -YawDegrees 0 -HorizontalSign 1
 ```
 
+Live hand spatial viewer-world registration parity diagnostic while the APK
+remains active:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Set-KuramotoSpatialLiveHandRegistrationParity.ps1 -Serial $serial -Parity yaw-180
+```
+
+This writes
+`debug.rustyquest.kuramoto_spatial.live_hand_spatial_viewer_world_registration.parity`
+with one of `none`, `flip-x`, `flip-y`, `flip-z`, `yaw-180`, or `flip-xz`.
+The default accepted ECS/OpenXR bridge mapping is `flip-x` with
+`debug.rustyquest.kuramoto_spatial.live_hand_spatial_viewer_world_registration.reflection_orientation`
+set to `local-y`; explicit `none` remains a diagnostic override.
+The single-axis values are reflection diagnostics; `yaw-180` / `flip-xz`
+rotates both the lateral and forward axes together and keeps the registration
+determinant positive. Native markers include
+`status=live-hand-spatial-viewer-world-registration-parity-updated`,
+`status=live-hand-spatial-viewer-world-reflection-orientation-updated`,
+`status=live-hand-spatial-viewer-world-registration-diagnostic`,
+`liveHandSpatialWorldRegistrationParity`, and
+`liveHandSpatialWorldRegistrationOrientationAdjusted`, and
+`liveHandSpatialWorldRegistrationEffectivePositionDeterminant`.
+
 Live post-skinning diagnostic depth-offset tuning while the APK remains active:
 
 ```powershell

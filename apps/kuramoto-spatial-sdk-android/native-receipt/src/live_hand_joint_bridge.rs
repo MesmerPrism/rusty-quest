@@ -5,10 +5,10 @@ use std::sync::{Mutex, OnceLock};
 use jni::sys::{jboolean, jclass, jfloatArray, jlong, JNIEnv};
 
 use crate::live_hand_joints::{
-    copy_last_live_hand_raw_scene_rows, copy_last_live_hand_rows,
-    copy_last_live_hand_spatial_viewer_world_rows, store_live_hand_panel_basis,
-    store_live_hand_spatial_viewer_world_basis, LiveHandJointInput, LiveHandOpenXrHandles,
-    LIVE_HAND_ROW_COUNT,
+    clear_live_hand_spatial_viewer_world_registration, copy_last_live_hand_raw_scene_rows,
+    copy_last_live_hand_rows, copy_last_live_hand_spatial_viewer_world_rows,
+    store_live_hand_panel_basis, store_live_hand_spatial_viewer_world_basis, LiveHandJointInput,
+    LiveHandOpenXrHandles, LIVE_HAND_ROW_COUNT,
 };
 use crate::{android_log_info, bool_token};
 
@@ -47,6 +47,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     let cache_ready = copy_last_live_hand_rows().is_some();
     let mut direct_input_ready = false;
     let mut mask = START_RECEIVED;
+    clear_live_hand_spatial_viewer_world_registration();
     if handles_complete {
         mask |= START_HANDLES_COMPLETE | START_INPUT_READY;
         let input = LiveHandJointInput::new(handles);
@@ -254,6 +255,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     _class: jclass,
 ) -> jlong {
     let previous = START_MASK_BITS.swap(0, Ordering::Relaxed);
+    clear_live_hand_spatial_viewer_world_registration();
     if let Ok(mut slot) = bridge_live_hand_input().lock() {
         if let Some(mut input) = slot.take() {
             unsafe { input.destroy() };

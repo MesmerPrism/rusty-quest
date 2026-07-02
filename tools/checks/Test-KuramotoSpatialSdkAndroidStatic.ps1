@@ -66,6 +66,7 @@ $targetDistanceTool = Read-RequiredText (Join-Path $repoRootPath "tools\Set-Kura
 $overscanTool = Read-RequiredText (Join-Path $repoRootPath "tools\Set-KuramotoSpatialParticleLayerOverscan.ps1") "particle layer overscan hotload tool"
 $diagnosticModeTool = Read-RequiredText (Join-Path $repoRootPath "tools\Set-KuramotoSpatialParticleDiagnosticMode.ps1") "particle diagnostic mode hotload tool"
 $liveHandSceneTransformTool = Read-RequiredText (Join-Path $repoRootPath "tools\Set-KuramotoSpatialLiveHandSceneTransform.ps1") "live hand scene-transform hotload tool"
+$liveHandRegistrationParityTool = Read-RequiredText (Join-Path $repoRootPath "tools\Set-KuramotoSpatialLiveHandRegistrationParity.ps1") "live hand registration parity hotload tool"
 $readme = Read-RequiredText (Join-Path $appRoot "README.md") "app README"
 $plan = Read-RequiredText (Join-Path $repoRootPath "docs\SPATIAL_SDK_PORT_IMPLEMENTATION_PLAN.md") "implementation plan"
 
@@ -187,7 +188,12 @@ Assert-ContainsTokens $activity @(
     'lightColorScheme',
     'onVRReady\(\)',
     'logNativeInteropProbe\(phase = "scene-ready", probeSurface = false\)',
-    'logNativeInteropProbe\(phase = "vr-ready", probeSurface = true\)',
+    'logNativeInteropProbe\(\s*phase = "vr-ready",\s*probeSurface = currentNativeSurfaceParticleLayerEnabled\(\),\s*\)',
+    'currentNativeSurfaceParticleLayerEnabled',
+    'debug\.rustyquest\.kuramoto_spatial\.native_surface_particle_layer\.enabled',
+    'debug\.rustyquest\.spatial\.native_surface_particle_layer\.enabled',
+    'status=panel-entity-suppressed',
+    'particlePanelRegistrationEnabled',
     'loadNativeReceiptLibrary\(\)',
     'System\.loadLibrary\(NATIVE_RECEIPT_LIBRARY\)',
     'recordNativeInteropReceipt',
@@ -607,14 +613,36 @@ Assert-ContainsTokens $nativeReceiptLiveHandJoints @(
     'LIVE_HAND_SCENE_OFFSET_Z_PROPERTY',
     'LIVE_HAND_SCENE_YAW_DEGREES_PROPERTY',
     'LIVE_HAND_SCENE_HORIZONTAL_SIGN_PROPERTY',
+    'LIVE_HAND_SPATIAL_VIEWER_WORLD_REGISTRATION_MODE_PROPERTY',
+    'LIVE_HAND_SPATIAL_VIEWER_WORLD_REGISTRATION_PARITY_PROPERTY',
+    'LIVE_HAND_SPATIAL_VIEWER_WORLD_REFLECTION_ORIENTATION_PROPERTY',
     'debug\.rustyquest\.kuramoto_spatial\.live_hand_scene\.offset_z_m',
     'debug\.rustyquest\.kuramoto_spatial\.live_hand_scene\.yaw_degrees',
     'debug\.rustyquest\.kuramoto_spatial\.live_hand_scene\.horizontal_sign',
+    'debug\.rustyquest\.kuramoto_spatial\.live_hand_spatial_viewer_world_registration\.mode',
+    'debug\.rustyquest\.kuramoto_spatial\.live_hand_spatial_viewer_world_registration\.parity',
+    'debug\.rustyquest\.kuramoto_spatial\.live_hand_spatial_viewer_world_registration\.reflection_orientation',
     'current_live_hand_scene_transform',
     'apply_live_hand_scene_transform',
     'store_live_hand_panel_basis',
     'current_view_panel_mapping',
     'apply_live_hand_view_panel_mapping',
+    'LiveHandSpatialViewerWorldParity',
+    'LiveHandSpatialViewerWorldReflectionOrientation',
+    'current_live_hand_spatial_viewer_world_parity',
+    'current_live_hand_spatial_viewer_world_reflection_orientation',
+    'None => Self::FlipX',
+    'None => Self::LocalY',
+    'live-hand-spatial-viewer-world-registration-parity-updated',
+    'live-hand-spatial-viewer-world-reflection-orientation-updated',
+    'live-hand-spatial-viewer-world-registration-diagnostic',
+    'yaw-180',
+    'scale_vec3',
+    'liveHandSpatialWorldRegistrationParity=',
+    'liveHandSpatialWorldRegistrationOrientationAdjusted=',
+    'liveHandSpatialWorldRegistrationEffectivePositionDeterminant=',
+    'determinant_from_basis',
+    'map_spatial_viewer_world_vector',
     'LIVE_HAND_LAST_ROWS',
     'LIVE_HAND_LAST_RAW_SCENE_ROWS',
     'LIVE_HAND_LAST_SPATIAL_VIEWER_WORLD_ROWS',
@@ -749,6 +777,25 @@ Assert-ContainsTokens $liveHandSceneTransformTool @(
     'adb setprop',
     'adb getprop'
 ) "live hand scene-transform hotload tool"
+
+Assert-ContainsTokens $liveHandRegistrationParityTool @(
+    'rusty\.quest\.kuramoto_spatial_live_hand_registration_parity_set\.v1',
+    '\[string\]\$Parity = "flip-x"',
+    '\[string\]\$ReflectionOrientation = "local-y"',
+    'ValidateSet\("none", "flip-x", "flip-y", "flip-z", "yaw-180", "flip-xz"\)',
+    'ValidateSet\("none", "local-x", "local-y", "local-z"\)',
+    'debug\.rustyquest\.kuramoto_spatial\.live_hand_spatial_viewer_world_registration\.parity',
+    'debug\.rustyquest\.kuramoto_spatial\.live_hand_spatial_viewer_world_registration\.reflection_orientation',
+    'live-hand-spatial-viewer-world-registration-parity-updated',
+    'live-hand-spatial-viewer-world-reflection-orientation-updated',
+    'live-hand-spatial-viewer-world-registration-diagnostic',
+    'liveHandSpatialWorldRegistrationParity',
+    'liveHandSpatialWorldRegistrationOrientationAdjusted',
+    'liveHandSpatialWorldRegistrationEffectivePositionDeterminant',
+    'Pass -Serial or set RUSTY_QUEST_SERIAL',
+    'adb setprop',
+    'adb getprop'
+) "live hand registration parity hotload tool"
 
 Assert-ContainsTokens $store @(
     'QUESTIONNAIRE_SCHEMA = "rusty\.kuramoto\.mesh\.experiment_questionnaire\.v2"',
@@ -991,6 +1038,10 @@ Assert-ContainsTokens $readme @(
     'debug\.rustyquest\.kuramoto_spatial\.live_hand_scene\.offset_z_m',
     'debug\.rustyquest\.kuramoto_spatial\.live_hand_scene\.horizontal_sign',
     'Set-KuramotoSpatialLiveHandSceneTransform\.ps1',
+    'live hand spatial viewer-world registration parity diagnostic',
+    'debug\.rustyquest\.kuramoto_spatial\.live_hand_spatial_viewer_world_registration\.parity',
+    'Set-KuramotoSpatialLiveHandRegistrationParity\.ps1',
+    'liveHandSpatialWorldRegistrationEffectivePositionDeterminant',
     'liveHandCompactFrameGate=native-equivalent-21-runtime-5-tip',
     'liveMeshSkinningPolicy=native-compact-frame-gated-full-weight-skinning',
     'liveMeshTriangleRetryPolicy=bounded-alternate-triangle-sampling',

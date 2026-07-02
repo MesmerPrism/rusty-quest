@@ -153,9 +153,12 @@ class KuramotoSpatialActivity : AppSystemActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     loadNativeReceiptLibrary()
+    val nativeSurfaceParticleLayerEnabled = currentNativeSurfaceParticleLayerEnabled()
     marker(
         "channel=activity status=created package=io.github.mesmerprism.rustyquest.kuramoto_spatial " +
-            "highRateJsonPayload=false hand_rendering_expected=true nativeSurfaceParticleLayerExpected=true"
+            "highRateJsonPayload=false hand_rendering_expected=true " +
+            "nativeSurfaceParticleLayerExpected=$nativeSurfaceParticleLayerEnabled " +
+            particleLayerEnabledMarkerFields()
     )
     scheduleParticleLayerLifecycleDiagnostics("activity-created")
     runValidationWorkflowIfRequested(intent)
@@ -179,6 +182,7 @@ class KuramotoSpatialActivity : AppSystemActivity() {
     scene.setViewOrigin(0.0f, 0.0f, 2.0f, 180.0f)
     val workflowPanelEnabled = currentWorkflowPanelEnabled()
     val diagnosticBackdropEnabled = currentDiagnosticBackdropEnabled(workflowPanelEnabled)
+    val nativeSurfaceParticleLayerEnabled = currentNativeSurfaceParticleLayerEnabled()
     if (diagnosticBackdropEnabled) {
       createDiagnosticBackdrop()
     } else {
@@ -204,22 +208,32 @@ class KuramotoSpatialActivity : AppSystemActivity() {
           null
         }
     particleLayerEntity =
-        runCatching {
-              Entity.createPanelEntity(
-                  R.id.kuramoto_particle_surface_panel,
-                  Transform(particleLayerPose()),
-                  particleLayerSurfacePanelDimensions(),
-                  Visible(true),
-              )
-            }
-            .getOrElse { throwable ->
-              marker(
-                  "channel=native-surface-particle-layer status=panel-entity-create-failed " +
-                      "renderPolicy=native-vulkan-wsi-surface-panel error=${markerToken(throwable.javaClass.simpleName)} " +
-                      "message=${markerToken(throwable.message ?: "none")}"
-              )
-              null
-            }
+        if (nativeSurfaceParticleLayerEnabled) {
+          runCatching {
+                Entity.createPanelEntity(
+                    R.id.kuramoto_particle_surface_panel,
+                    Transform(particleLayerPose()),
+                    particleLayerSurfacePanelDimensions(),
+                    Visible(true),
+                )
+              }
+              .getOrElse { throwable ->
+                marker(
+                    "channel=native-surface-particle-layer status=panel-entity-create-failed " +
+                        "renderPolicy=native-vulkan-wsi-surface-panel error=${markerToken(throwable.javaClass.simpleName)} " +
+                        "message=${markerToken(throwable.message ?: "none")} " +
+                        particleLayerEnabledMarkerFields()
+                )
+                null
+              }
+        } else {
+          marker(
+              "channel=native-surface-particle-layer status=panel-entity-suppressed " +
+                  "renderPolicy=native-vulkan-wsi-surface-panel panelRegistrationId=kuramoto_particle_surface_panel " +
+                  particleLayerEnabledMarkerFields()
+          )
+          null
+        }
     applyPanelPlacement()
     updateParticleLayerProjectionFromViewer(reason = "scene-ready", forceLog = true)
     logNativeInteropProbe(phase = "scene-ready", probeSurface = false)
@@ -230,21 +244,27 @@ class KuramotoSpatialActivity : AppSystemActivity() {
               "panelWidth=$PANEL_WIDTH_METERS panelHeight=$PANEL_HEIGHT_METERS " +
               "workflowPanelEnabled=true workflowPanelProperty=$WORKFLOW_PANEL_ENABLED_PROPERTY " +
               "visibleComponent=true panelDimensionsComponent=true diagnosticBackdrop=$diagnosticBackdropEnabled"
+          )
+    }
+    if (particleLayerEntity != null) {
+      marker(
+          "channel=native-surface-particle-layer status=panel-entity-spawned " +
+              "renderPolicy=native-vulkan-wsi-surface-panel panelRegistrationId=kuramoto_particle_surface_panel " +
+              particleLayerEnabledMarkerFields() + " " +
+              particleLayerPlacementMarkerFields() + " " +
+              particleLayerStereoMarkerFields()
       )
     }
-    marker(
-        "channel=native-surface-particle-layer status=panel-entity-spawned " +
-            "renderPolicy=native-vulkan-wsi-surface-panel panelRegistrationId=kuramoto_particle_surface_panel " +
-            particleLayerPlacementMarkerFields() + " " +
-            particleLayerStereoMarkerFields()
-    )
     scheduleParticleLayerLifecycleDiagnostics("scene-ready")
   }
 
   override fun onVRReady() {
     super.onVRReady()
     updateParticleLayerProjectionFromViewer(reason = "vr-ready", forceLog = true)
-    logNativeInteropProbe(phase = "vr-ready", probeSurface = true)
+    logNativeInteropProbe(
+        phase = "vr-ready",
+        probeSurface = currentNativeSurfaceParticleLayerEnabled(),
+    )
   }
 
   override fun onSceneTick() {
@@ -312,38 +332,51 @@ class KuramotoSpatialActivity : AppSystemActivity() {
               "workflowPanelProperty=$WORKFLOW_PANEL_ENABLED_PROPERTY"
       )
     }
-    panels +=
-        VideoSurfacePanelRegistration(
-            R.id.kuramoto_particle_surface_panel,
-            surfaceConsumer = { _, surface ->
-              particleSurfaceConsumerCalled = true
-              particleSurfaceConsumerSurfaceValid = surface.isValid
-              marker(
-                  "channel=native-surface-particle-layer status=surface-consumer-called " +
-                      "renderPolicy=native-vulkan-wsi-surface-panel surfaceValid=${surface.isValid} " +
-                      particleLayerPlacementMarkerFields() + " " +
-                      particleLayerStereoMarkerFields()
-              )
-              startNativeSurfaceParticleLayer(surface)
-            },
-            settingsCreator = { particleLayerMediaSettings() },
-            panelSetup = { panel, _ ->
-              particleSurfacePanelReady = true
-              marker(
-                  "channel=native-surface-particle-layer status=surface-panel-ready " +
-                      "renderPolicy=native-vulkan-wsi-surface-panel panelHandle=${panel.handle} " +
-                      "surfaceValid=${panel.surface.isValid} " +
-                      particleLayerPlacementMarkerFields() + " " +
-                      particleLayerStereoMarkerFields()
-              )
-            },
-        )
+    val nativeSurfaceParticleLayerEnabled = currentNativeSurfaceParticleLayerEnabled()
+    if (nativeSurfaceParticleLayerEnabled) {
+      panels +=
+          VideoSurfacePanelRegistration(
+              R.id.kuramoto_particle_surface_panel,
+              surfaceConsumer = { _, surface ->
+                particleSurfaceConsumerCalled = true
+                particleSurfaceConsumerSurfaceValid = surface.isValid
+                marker(
+                    "channel=native-surface-particle-layer status=surface-consumer-called " +
+                        "renderPolicy=native-vulkan-wsi-surface-panel surfaceValid=${surface.isValid} " +
+                        particleLayerEnabledMarkerFields() + " " +
+                        particleLayerPlacementMarkerFields() + " " +
+                        particleLayerStereoMarkerFields()
+                )
+                startNativeSurfaceParticleLayer(surface)
+              },
+              settingsCreator = { particleLayerMediaSettings() },
+              panelSetup = { panel, _ ->
+                particleSurfacePanelReady = true
+                marker(
+                    "channel=native-surface-particle-layer status=surface-panel-ready " +
+                        "renderPolicy=native-vulkan-wsi-surface-panel panelHandle=${panel.handle} " +
+                        "surfaceValid=${panel.surface.isValid} " +
+                        particleLayerEnabledMarkerFields() + " " +
+                        particleLayerPlacementMarkerFields() + " " +
+                        particleLayerStereoMarkerFields()
+                )
+              },
+          )
+    } else {
+      marker(
+          "channel=native-surface-particle-layer status=registration-suppressed " +
+              "renderPolicy=native-vulkan-wsi-surface-panel panelRegistrationId=kuramoto_particle_surface_panel " +
+              particleLayerEnabledMarkerFields()
+      )
+    }
     panelRegistrationCount = panels.size
     marker(
         "channel=native-surface-particle-layer status=panel-registrations-created " +
             "renderPolicy=native-vulkan-wsi-surface-panel panelRegistrationCount=$panelRegistrationCount " +
             "workflowPanelEnabled=${currentWorkflowPanelEnabled()} " +
-            "particlePanelRegistrationId=kuramoto_particle_surface_panel"
+            "particlePanelRegistrationId=kuramoto_particle_surface_panel " +
+            "particlePanelRegistrationEnabled=$nativeSurfaceParticleLayerEnabled " +
+            particleLayerEnabledMarkerFields()
     )
     scheduleParticleLayerLifecycleDiagnostics("register-panels")
     return panels
@@ -906,6 +939,19 @@ class KuramotoSpatialActivity : AppSystemActivity() {
           PARTICLE_LAYER_PANEL_FLIP_INTERVAL_MAX_MS,
       )
 
+  private fun currentNativeSurfaceParticleLayerEnabled(): Boolean {
+    val localValue = readSystemProperty(NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY).trim()
+    if (localValue.isNotBlank()) {
+      return parseBooleanToken(localValue, true)
+    }
+    return readBooleanSystemProperty(NATIVE_SURFACE_PARTICLE_LAYER_COMPAT_ENABLED_PROPERTY, true)
+  }
+
+  private fun particleLayerEnabledMarkerFields(): String =
+      "nativeSurfaceParticleLayerEnabled=${currentNativeSurfaceParticleLayerEnabled()} " +
+          "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
+          "nativeSurfaceParticleLayerCompatEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_COMPAT_ENABLED_PROPERTY"
+
   private fun currentWorkflowPanelEnabled(): Boolean =
       readBooleanSystemProperty(WORKFLOW_PANEL_ENABLED_PROPERTY, WORKFLOW_PANEL_ENABLED)
 
@@ -957,7 +1003,10 @@ class KuramotoSpatialActivity : AppSystemActivity() {
   }
 
   private fun readBooleanSystemProperty(propertyName: String, fallback: Boolean): Boolean =
-      when (readSystemProperty(propertyName).trim().lowercase(Locale.US)) {
+      parseBooleanToken(readSystemProperty(propertyName).trim(), fallback)
+
+  private fun parseBooleanToken(value: String, fallback: Boolean): Boolean =
+      when (value.lowercase(Locale.US)) {
         "1", "true", "yes", "on" -> true
         "0", "false", "no", "off" -> false
         else -> fallback
@@ -1242,6 +1291,10 @@ class KuramotoSpatialActivity : AppSystemActivity() {
         "debug.rustyquest.kuramoto_spatial.workflow_panel.enabled"
     private const val DIAGNOSTIC_BACKDROP_ENABLED_PROPERTY =
         "debug.rustyquest.kuramoto_spatial.diagnostic_backdrop.enabled"
+    private const val NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY =
+        "debug.rustyquest.kuramoto_spatial.native_surface_particle_layer.enabled"
+    private const val NATIVE_SURFACE_PARTICLE_LAYER_COMPAT_ENABLED_PROPERTY =
+        "debug.rustyquest.spatial.native_surface_particle_layer.enabled"
     private const val PARTICLE_LAYER_PER_EYE_WIDTH_PX = 1024
     private const val PARTICLE_LAYER_WIDTH_PX = PARTICLE_LAYER_PER_EYE_WIDTH_PX * 2
     private const val PARTICLE_LAYER_HEIGHT_PX = 1024
