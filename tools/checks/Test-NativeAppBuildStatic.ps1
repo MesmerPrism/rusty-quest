@@ -186,6 +186,7 @@ foreach ($requiredFeature in @(
     "sensor.polar_h10_ble",
     "environment_depth",
     "environment_depth.projection_sampler",
+    "hand_mesh_live_input",
     "hand_mesh_visual",
     "hand_anchor_particles",
     "particles.hand_anchor.ordering.gpu_index_remap",

@@ -46,18 +46,19 @@ use crate::{
         NativeDisplayCompositeSettings,
     },
     native_renderer_options::{
-        CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings, NativeCameraOutputMode,
-        NativeCameraQualityProfile, NativeCameraSyncMode, NativeEnvironmentDepthSettings,
-        NativeFoveationLevel, NativeFoveationSettings, NativeGuideGraphResolution,
-        NativeHandAnchorParticleOrderingMode, NativeHandAnchorParticleSettings,
-        NativePassthroughStyleSettings, NativePrivateLayerSettings,
-        NativeProjectionBorderStretchSettings, NativeProjectionSwapchainSettings,
-        NativeRendererRenderMode, NativeRendererRuntimeOptions, NativeStimulusVolumeSettings,
-        NativeSwapchainColorFormatMode, PROP_CAMERA_DIRECT_BORDER_OPACITY,
-        PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED, PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE,
-        PROP_CAMERA_READER_MAX_IMAGES, PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING,
-        PROP_CAMERA_SYNC_MODE, PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL,
-        PROP_GUIDE_BLUR_ENABLED, PROP_GUIDE_RESOLUTION, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
+        CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings,
+        HandMeshVisualMaterialSettings, NativeCameraOutputMode, NativeCameraQualityProfile,
+        NativeCameraSyncMode, NativeEnvironmentDepthSettings, NativeFoveationLevel,
+        NativeFoveationSettings, NativeGuideGraphResolution, NativeHandAnchorParticleOrderingMode,
+        NativeHandAnchorParticleSettings, NativePassthroughStyleSettings,
+        NativePrivateLayerSettings, NativeProjectionBorderStretchSettings,
+        NativeProjectionSwapchainSettings, NativeRendererRenderMode, NativeRendererRuntimeOptions,
+        NativeStimulusVolumeSettings, NativeSwapchainColorFormatMode,
+        PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED,
+        PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_READER_MAX_IMAGES,
+        PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
+        PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL, PROP_GUIDE_BLUR_ENABLED,
+        PROP_GUIDE_RESOLUTION, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
@@ -67,7 +68,10 @@ use crate::{
         PROP_HAND_MESH_GRAFT_COPIES_ENABLED, PROP_HAND_MESH_GRAFT_COPY_SCALE,
         PROP_HAND_MESH_INPUT_SOURCE, PROP_HAND_MESH_REAL_HANDS_VISIBLE,
         PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED,
-        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV, PROP_PROCESSING_LAYER, PROP_RENDER_MODE,
+        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV, PROP_HAND_MESH_VISUAL_MATERIAL_ALPHA,
+        PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_B, PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_G,
+        PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_R, PROP_HAND_MESH_VISUAL_MATERIAL_PROFILE,
+        PROP_HAND_MESH_VISUAL_MATERIAL_RIM_STRENGTH, PROP_PROCESSING_LAYER, PROP_RENDER_MODE,
         PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SWAPCHAIN_COLOR_FORMAT_MODE,
     },
     native_renderer_passthrough_style_options::NativePassthroughStyleAudioReactiveState,
@@ -697,6 +701,7 @@ unsafe fn run_projection_loop_inner(
     let sdf_visual_enabled = runtime_options.sdf_visual_enabled;
     let sdf_update_period_frames = runtime_options.sdf_update_period_frames;
     let hand_mesh_visual_diagnostic_settings = runtime_options.hand_mesh_visual_diagnostic_settings;
+    let hand_mesh_visual_material_settings = runtime_options.hand_mesh_visual_material_settings;
     let hand_mesh_graft_copies_enabled = runtime_options.hand_mesh_graft_copies_enabled;
     let hand_mesh_graft_copy_scale = runtime_options.hand_mesh_graft_copy_scale;
     let hand_mesh_real_hands_visible = runtime_options.hand_mesh_real_hands_visible;
@@ -712,7 +717,7 @@ unsafe fn run_projection_loop_inner(
     crate::marker(
         "recorded-replay-visual-proof",
         format!(
-            "status=config renderModeProperty={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} openxrDefaultHandVisualRequested={} property={} enabled={} handMeshInputSourceProperty={} compactHandInputSourceMode={} selectsLiveFrame={} allowsRecordedFallback={} sdfVisualEnabled={} handMeshVisualDiagnosticEnabled={} handMeshGraftCopiesEnabled={} handMeshGraftScaleProperty={} handMeshGraftScaleMultiplier={:.2} realHandsProperty={} handMeshRealHandsVisible={} recordedReplayVisualAcceptance=pending-headset-screenshot liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof liveSdfVisualAcceptance=pending-repeat-headset-visual-proof",
+            "status=config renderModeProperty={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} openxrDefaultHandVisualRequested={} property={} enabled={} handMeshInputSourceProperty={} compactHandInputSourceMode={} selectsLiveFrame={} allowsRecordedFallback={} sdfVisualEnabled={} handMeshVisualDiagnosticEnabled={} {} handMeshGraftCopiesEnabled={} handMeshGraftScaleProperty={} handMeshGraftScaleMultiplier={:.2} realHandsProperty={} handMeshRealHandsVisible={} recordedReplayVisualAcceptance=pending-headset-screenshot liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof liveSdfVisualAcceptance=pending-repeat-headset-visual-proof",
             PROP_RENDER_MODE,
             render_mode.marker_value(),
             render_mode.uses_custom_stereo_projection(),
@@ -727,6 +732,7 @@ unsafe fn run_projection_loop_inner(
             compact_hand_input_source_mode.allows_recorded_fallback(),
             sdf_visual_enabled,
             hand_mesh_visual_diagnostic_settings.enabled,
+            hand_mesh_visual_material_settings.marker_fields(),
             hand_mesh_graft_copies_enabled,
             PROP_HAND_MESH_GRAFT_COPY_SCALE,
             hand_mesh_graft_copy_scale,
@@ -806,13 +812,19 @@ unsafe fn run_projection_loop_inner(
     crate::marker(
         "hand-mesh-visual-diagnostic",
         format!(
-            "status=config renderMode={} solidBlackBackground={} openxrDefaultHandVisualRequested={} handMeshVisualDiagnosticPath=property-controlled-target-local-offset-tint enabledProperty={} offsetProperty={} alphaProperty={} graftCopiesProperty={} graftScaleProperty={} realHandsProperty={} handMeshGraftCopiesEnabled={} handMeshGraftScaleMultiplier={:.2} handMeshRealHandsVisible={} nativePassthroughRealHandMeshVisible={} solidBlackRealHandMeshVisible={} {} liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof liveSdfVisualAcceptance=pending-repeat-headset-visual-proof",
+            "status=config renderMode={} solidBlackBackground={} openxrDefaultHandVisualRequested={} handMeshVisualDiagnosticPath=property-controlled-target-local-offset-tint enabledProperty={} offsetProperty={} alphaProperty={} materialProfileProperty={} materialAlphaProperty={} materialBaseColorRProperty={} materialBaseColorGProperty={} materialBaseColorBProperty={} materialRimStrengthProperty={} graftCopiesProperty={} graftScaleProperty={} realHandsProperty={} handMeshGraftCopiesEnabled={} handMeshGraftScaleMultiplier={:.2} handMeshRealHandsVisible={} nativePassthroughRealHandMeshVisible={} solidBlackRealHandMeshVisible={} {} {} liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof liveSdfVisualAcceptance=pending-repeat-headset-visual-proof",
             render_mode.marker_value(),
             render_mode.uses_solid_black_background(),
             render_mode.requests_openxr_default_hand_visual(),
             PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED,
             PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV,
             PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA,
+            PROP_HAND_MESH_VISUAL_MATERIAL_PROFILE,
+            PROP_HAND_MESH_VISUAL_MATERIAL_ALPHA,
+            PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_R,
+            PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_G,
+            PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_B,
+            PROP_HAND_MESH_VISUAL_MATERIAL_RIM_STRENGTH,
             PROP_HAND_MESH_GRAFT_COPIES_ENABLED,
             PROP_HAND_MESH_GRAFT_COPY_SCALE,
             PROP_HAND_MESH_REAL_HANDS_VISIBLE,
@@ -822,6 +834,7 @@ unsafe fn run_projection_loop_inner(
             native_passthrough_requested && hand_mesh_real_hands_visible,
             render_mode.uses_solid_black_background() && hand_mesh_real_hands_visible,
             hand_mesh_visual_diagnostic_settings.marker_fields(),
+            hand_mesh_visual_material_settings.marker_fields(),
         ),
     );
     crate::marker(
@@ -1305,6 +1318,7 @@ unsafe fn run_projection_loop_inner(
         sdf_visual_enabled,
         sdf_update_period_frames,
         hand_mesh_visual_diagnostic_settings,
+        hand_mesh_visual_material_settings,
         hand_mesh_graft_copies_enabled,
         hand_mesh_graft_copy_scale,
         hand_mesh_real_hands_visible,
@@ -1834,6 +1848,7 @@ unsafe fn run_projection_frames(
     sdf_visual_enabled: bool,
     sdf_update_period_frames: u64,
     hand_mesh_visual_diagnostic_settings: HandMeshVisualDiagnosticSettings,
+    hand_mesh_visual_material_settings: HandMeshVisualMaterialSettings,
     hand_mesh_graft_copies_enabled: bool,
     hand_mesh_graft_copy_scale: f32,
     hand_mesh_real_hands_visible: bool,
@@ -2349,19 +2364,24 @@ unsafe fn run_projection_frames(
             frame_slot,
             GpuTimestampStage::CameraProjection,
         );
+        let remote_broker_camera_projection =
+            video_projection_settings.remote_broker_camera_projection_active();
         let prepared_camera_projection = if render_mode.uses_custom_stereo_projection()
-            && camera_output_mode.camera_import_enabled()
+            && (camera_output_mode.camera_import_enabled() || remote_broker_camera_projection)
         {
-            match camera_runtime
-                .and_then(NativeCameraRuntime::latest_stereo_frame)
-                .map(|stereo_frame| {
-                    camera_projection_renderer.prepare_stereo_frame(
-                        vk_device,
-                        cmd,
-                        frame_slot,
-                        &stereo_frame,
-                    )
-                }) {
+            let stereo_frame = if camera_output_mode.camera_import_enabled() {
+                camera_runtime.and_then(NativeCameraRuntime::latest_stereo_frame)
+            } else {
+                crate::remote_camera_projection_native_stream::latest_remote_stereo_frame()
+            };
+            match stereo_frame.map(|stereo_frame| {
+                camera_projection_renderer.prepare_stereo_frame(
+                    vk_device,
+                    cmd,
+                    frame_slot,
+                    &stereo_frame,
+                )
+            }) {
                 Some(Ok(prepared)) => prepared,
                 Some(Err(error)) => {
                     if frame_count == 0 || frame_count % 120 == 0 {
@@ -2380,7 +2400,11 @@ unsafe fn run_projection_frames(
         } else {
             if frame_count == 0 {
                 let disabled_reason = if !camera_output_mode.camera_import_enabled() {
-                    camera_output_mode.marker_value()
+                    if video_projection_settings.remote_broker_camera_projection_active() {
+                        "remote-broker-camera-projection-inactive"
+                    } else {
+                        camera_output_mode.marker_value()
+                    }
                 } else {
                     render_mode.marker_value()
                 };
@@ -2425,9 +2449,7 @@ unsafe fn run_projection_frames(
             GpuTimestampStage::CameraProjection,
         );
         frame_timings.camera_acquire_import_ms = elapsed_ms(stage_started);
-        if let (Some(runtime), Some(prepared)) =
-            (camera_runtime, prepared_camera_projection.as_ref())
-        {
+        if let Some(prepared) = prepared_camera_projection.as_ref() {
             let hit_delta = prepared
                 .stats
                 .import_cache_hits
@@ -2436,15 +2458,25 @@ unsafe fn run_projection_frames(
                 .stats
                 .import_cache_misses
                 .saturating_sub(last_camera_import_cache_misses);
-            for _ in 0..hit_delta {
-                runtime.record_hardware_buffer_cache_hit();
-            }
-            for _ in 0..miss_delta {
-                runtime.record_hardware_buffer_cache_miss();
+            if let Some(runtime) = camera_runtime {
+                for _ in 0..hit_delta {
+                    runtime.record_hardware_buffer_cache_hit();
+                }
+                for _ in 0..miss_delta {
+                    runtime.record_hardware_buffer_cache_miss();
+                }
             }
             last_camera_import_cache_hits = prepared.stats.import_cache_hits;
             last_camera_import_cache_misses = prepared.stats.import_cache_misses;
             camera_projection_stats = prepared.stats.clone();
+        } else {
+            if camera_projection_stats.rendered && (frame_count == 0 || frame_count % 120 == 0) {
+                crate::marker(
+                    "camera-projection",
+                    "status=missing-current-frame previousProjectionCleared=true cameraProjectionReady=false vulkanExternalImportReady=false",
+                );
+            }
+            camera_projection_stats = CameraProjectionFrameStats::default();
         }
         let stage_started = Instant::now();
         gpu_timestamp_tracker.write_stage_start(
@@ -2657,6 +2689,7 @@ unsafe fn run_projection_frames(
                 compact_hand_input_source_mode.allows_recorded_fallback(),
                 selected_primary_live_hand,
                 hand_mesh_visual_diagnostic_settings,
+                hand_mesh_visual_material_settings,
             ) {
                 Ok(stats) => stats,
                 Err(error) => {
@@ -2674,6 +2707,7 @@ unsafe fn run_projection_frames(
                         frame_count,
                         selected_primary_live_hand,
                         hand_mesh_visual_diagnostic_settings,
+                        hand_mesh_visual_material_settings,
                     )
                 }
             }
@@ -2683,6 +2717,7 @@ unsafe fn run_projection_frames(
                 frame_count,
                 selected_primary_live_hand,
                 hand_mesh_visual_diagnostic_settings,
+                hand_mesh_visual_material_settings,
             )
         };
         let mut secondary_hand_mesh_visual_stats = if let Some(renderer) =
@@ -2696,6 +2731,7 @@ unsafe fn run_projection_frames(
                 compact_hand_input_source_mode.allows_recorded_fallback(),
                 selected_secondary_live_hand,
                 hand_mesh_visual_diagnostic_settings,
+                hand_mesh_visual_material_settings,
             ) {
                 Ok(stats) => stats,
                 Err(error) => {
@@ -2713,6 +2749,7 @@ unsafe fn run_projection_frames(
                         frame_count,
                         selected_secondary_live_hand,
                         hand_mesh_visual_diagnostic_settings,
+                        hand_mesh_visual_material_settings,
                     )
                 }
             }
@@ -2722,6 +2759,7 @@ unsafe fn run_projection_frames(
                 frame_count,
                 selected_secondary_live_hand,
                 hand_mesh_visual_diagnostic_settings,
+                hand_mesh_visual_material_settings,
             )
         };
         if hand_mesh_graft_copies_enabled
@@ -3293,6 +3331,7 @@ unsafe fn run_projection_frames(
                 compact_hand_input_source_mode,
                 render_mode,
                 camera_output_mode,
+                remote_broker_camera_projection,
                 camera_ycbcr_mode,
                 camera_resolution_profile,
                 camera_reader_max_images,
@@ -4932,7 +4971,7 @@ fn display_composite_feedback_disabled_reason(
 fn video_projection_requested(
     settings: &crate::native_renderer_options::NativeVideoProjectionSettings,
 ) -> bool {
-    settings.active()
+    settings.video_background_active()
 }
 
 fn video_projection_disabled_reason(
@@ -4944,6 +4983,8 @@ fn video_projection_disabled_reason(
         "high-rate-json-payload-forbidden"
     } else if settings.path.trim().is_empty() {
         "video-path-empty"
+    } else if settings.remote_broker_camera_projection_active() {
+        "remote-broker-camera-projection-source"
     } else {
         "unknown"
     }

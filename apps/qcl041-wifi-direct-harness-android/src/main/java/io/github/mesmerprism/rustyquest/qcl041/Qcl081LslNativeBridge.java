@@ -48,6 +48,66 @@ final class Qcl081LslNativeBridge {
                 intervalMs));
     }
 
+    static boolean setConfigContent(String configContent) {
+        LoadState state = runtimeState();
+        if (!state.available) {
+            return false;
+        }
+        return nativeSetConfigContent(configContent == null ? "" : configContent);
+    }
+
+    static boolean setConfigPath(String configPath) {
+        LoadState state = runtimeState();
+        if (!state.available) {
+            return false;
+        }
+        return nativeSetConfigPath(configPath == null ? "" : configPath);
+    }
+
+    static JSONObject echoRoundTrip(
+            String commandStreamName,
+            String commandStreamType,
+            String commandSourceId,
+            String echoStreamName,
+            String echoStreamType,
+            String echoSourceId,
+            int sampleCount,
+            int warmupMs,
+            int outletHoldAfterMs,
+            int timeoutSeconds) throws JSONException {
+        LoadState state = runtimeState();
+        if (!state.available) {
+            JSONObject blocked = new JSONObject();
+            blocked.put("schema", "rusty.quest.qcl081_lsl_echo_roundtrip.v1");
+            blocked.put("status", "blocked");
+            blocked.put("source", "quest-runtime");
+            blocked.put("command_stream_name", commandStreamName);
+            blocked.put("command_stream_type", commandStreamType);
+            blocked.put("command_source_id", commandSourceId);
+            blocked.put("echo_stream_name", echoStreamName);
+            blocked.put("echo_stream_type", echoStreamType);
+            blocked.put("echo_source_id", echoSourceId);
+            blocked.put("samples_requested", sampleCount);
+            blocked.put("command_samples_received", 0);
+            blocked.put("echo_samples_published", 0);
+            blocked.put("issue_codes", new org.json.JSONArray()
+                    .put("rusty.quest.issue.qcl081_lsl_native_unavailable"));
+            blocked.put("notes", state.detail);
+            return blocked;
+        }
+        return new JSONObject(nativeEchoRoundTrip(
+                commandStreamName,
+                commandStreamType,
+                commandSourceId,
+                echoStreamName,
+                echoStreamType,
+                echoSourceId,
+                sampleCount,
+                warmupMs,
+                outletHoldAfterMs,
+                timeoutSeconds));
+    }
+
     private static LoadState loadRuntime() {
         StringBuilder attempts = new StringBuilder();
         try {
@@ -87,6 +147,10 @@ final class Qcl081LslNativeBridge {
 
     private static native String nativeLibraryInfo();
 
+    private static native boolean nativeSetConfigContent(String configContent);
+
+    private static native boolean nativeSetConfigPath(String configPath);
+
     private static native String nativePublishSamples(
             String streamName,
             String streamType,
@@ -94,4 +158,16 @@ final class Qcl081LslNativeBridge {
             int sampleCount,
             int warmupMs,
             int intervalMs);
+
+    private static native String nativeEchoRoundTrip(
+            String commandStreamName,
+            String commandStreamType,
+            String commandSourceId,
+            String echoStreamName,
+            String echoStreamType,
+            String echoSourceId,
+            int sampleCount,
+            int warmupMs,
+            int outletHoldAfterMs,
+            int timeoutSeconds);
 }

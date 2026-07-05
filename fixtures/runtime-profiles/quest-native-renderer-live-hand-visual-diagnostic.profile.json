@@ -9,6 +9,9 @@
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv",
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.material.alpha",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.material.profile",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.material.rim_strength",
     "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
     "debug.rustyquest.native_renderer.sdf.visual.enabled",
     "debug.rustyquest.native_renderer.sdf.update_period_frames"
@@ -45,6 +48,21 @@
       "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.alpha"
     },
     {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.material.alpha",
+      "value": "0.74",
+      "source_setting_id": "native_renderer.hand_mesh.visual.material.alpha"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.material.profile",
+      "value": "unity-basic-reference",
+      "source_setting_id": "native_renderer.hand_mesh.visual.material.profile"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.material.rim_strength",
+      "value": "0.20",
+      "source_setting_id": "native_renderer.hand_mesh.visual.material.rim_strength"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
       "value": "false",
       "source_setting_id": "native_renderer.hand_mesh.graft_copies.enabled"
@@ -69,6 +87,8 @@
     "allowsRecordedFallback=false",
     "sdfVisualEnabled=true",
     "handMeshVisualDiagnosticEnabled=true",
+    "handMeshVisualMaterialProfile=unity-basic-reference",
+    "handMeshVisualTextureImported=false",
     "handMeshGraftCopiesEnabled=false",
     "liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof",
     "liveSdfVisualAcceptance=pending-repeat-headset-visual-proof"

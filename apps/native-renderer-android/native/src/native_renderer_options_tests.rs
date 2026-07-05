@@ -3,9 +3,9 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::native_renderer_options::{
-        CompactHandInputSourceMode, NativeCameraOutputMode, NativeCameraQualityProfile,
-        NativeCameraResolutionProfile, NativeCameraStereoPairingPolicy, NativeCameraSyncMode,
-        NativeCameraYcbcrMode, NativeDisplayCompositeFeedbackProjection,
+        CompactHandInputSourceMode, HandMeshVisualMaterialProfile, NativeCameraOutputMode,
+        NativeCameraQualityProfile, NativeCameraResolutionProfile, NativeCameraStereoPairingPolicy,
+        NativeCameraSyncMode, NativeCameraYcbcrMode, NativeDisplayCompositeFeedbackProjection,
         NativeDisplayCompositeMode, NativeDisplayCompositeSource, NativeEnvironmentDepthDebugView,
         NativeEnvironmentDepthDepthUnitsPolicy, NativeEnvironmentDepthLayerPolicy,
         NativeEnvironmentDepthMode, NativeEnvironmentDepthReferenceSpace,
@@ -54,7 +54,10 @@ mod tests {
         PROP_HAND_MESH_GRAFT_COPIES_ENABLED, PROP_HAND_MESH_GRAFT_COPY_SCALE,
         PROP_HAND_MESH_INPUT_SOURCE, PROP_HAND_MESH_REAL_HANDS_VISIBLE,
         PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA, PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED,
-        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV, PROP_PASSTHROUGH_STYLE_BRIGHTNESS,
+        PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV, PROP_HAND_MESH_VISUAL_MATERIAL_ALPHA,
+        PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_B, PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_G,
+        PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_R, PROP_HAND_MESH_VISUAL_MATERIAL_PROFILE,
+        PROP_HAND_MESH_VISUAL_MATERIAL_RIM_STRENGTH, PROP_PASSTHROUGH_STYLE_BRIGHTNESS,
         PROP_PASSTHROUGH_STYLE_COLOR_AMPLITUDE, PROP_PASSTHROUGH_STYLE_COLOR_PHASE,
         PROP_PASSTHROUGH_STYLE_CONTRAST, PROP_PASSTHROUGH_STYLE_EDGE_COLOR_A,
         PROP_PASSTHROUGH_STYLE_EDGE_COLOR_B, PROP_PASSTHROUGH_STYLE_EDGE_COLOR_G,
@@ -71,10 +74,13 @@ mod tests {
         PROP_STIMULUS_VOLUME_RANDOMIZE_MAX_HZ, PROP_STIMULUS_VOLUME_RANDOMIZE_MIN_HZ,
         PROP_STIMULUS_VOLUME_RAYMARCH_SAMPLES, PROP_STIMULUS_VOLUME_RENDER_TARGET,
         PROP_STIMULUS_VOLUME_SAFETY_ACK, PROP_SWAPCHAIN_COLOR_FORMAT_MODE,
-        PROP_VIDEO_BORDER_BLEND_MODE, PROP_VIDEO_PROJECTION_ENABLED, PROP_VIDEO_PROJECTION_FPS_CAP,
-        PROP_VIDEO_PROJECTION_HEIGHT, PROP_VIDEO_PROJECTION_HIGH_RATE_JSON_PAYLOAD,
-        PROP_VIDEO_PROJECTION_LOOPING, PROP_VIDEO_PROJECTION_MAX_IMAGES,
-        PROP_VIDEO_PROJECTION_OPACITY, PROP_VIDEO_PROJECTION_PATH, PROP_VIDEO_PROJECTION_SOURCE,
+        PROP_VIDEO_BORDER_BLEND_MODE, PROP_VIDEO_PROJECTION_BROKER_CONNECT_TIMEOUT_MS,
+        PROP_VIDEO_PROJECTION_BROKER_HOST, PROP_VIDEO_PROJECTION_BROKER_LEFT_PORT,
+        PROP_VIDEO_PROJECTION_BROKER_RIGHT_PORT, PROP_VIDEO_PROJECTION_ENABLED,
+        PROP_VIDEO_PROJECTION_FPS_CAP, PROP_VIDEO_PROJECTION_HEIGHT,
+        PROP_VIDEO_PROJECTION_HIGH_RATE_JSON_PAYLOAD, PROP_VIDEO_PROJECTION_LOOPING,
+        PROP_VIDEO_PROJECTION_MAX_IMAGES, PROP_VIDEO_PROJECTION_OPACITY,
+        PROP_VIDEO_PROJECTION_PATH, PROP_VIDEO_PROJECTION_SOURCE,
         PROP_VIDEO_PROJECTION_STEREO_LAYOUT, PROP_VIDEO_PROJECTION_TARGET,
         PROP_VIDEO_PROJECTION_WIDTH,
     };
@@ -339,6 +345,47 @@ mod tests {
             .allows_recorded_fallback());
         assert!(!options.sdf_visual_enabled);
         assert!(!options.hand_mesh_visual_diagnostic_settings.enabled);
+    }
+
+    #[test]
+    fn hand_mesh_visual_material_defaults_to_unity_reference_profile() {
+        let options = options_from(&[]);
+        let settings = options.hand_mesh_visual_material_settings;
+
+        assert_eq!(
+            settings.profile,
+            HandMeshVisualMaterialProfile::UnityBasicReference
+        );
+        assert_eq!(settings.base_color, [0.78, 0.86, 0.83]);
+        assert!((settings.alpha - 0.74).abs() < 0.001);
+        assert!((settings.rim_strength - 0.20).abs() < 0.001);
+        let fields = settings.marker_fields();
+        assert!(fields.contains("handMeshVisualMaterialProfile=unity-basic-reference"));
+        assert!(fields.contains("handMeshVisualUnityReference=BasicHandMaterial"));
+        assert!(fields.contains("handMeshVisualTextureImported=false"));
+    }
+
+    #[test]
+    fn hand_mesh_visual_material_properties_parse_and_clamp() {
+        let options = options_from(&[
+            (PROP_HAND_MESH_VISUAL_MATERIAL_PROFILE, "mint"),
+            (PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_R, "-1.0"),
+            (PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_G, "0.50"),
+            (PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_B, "1.5"),
+            (PROP_HAND_MESH_VISUAL_MATERIAL_ALPHA, "0.01"),
+            (PROP_HAND_MESH_VISUAL_MATERIAL_RIM_STRENGTH, "1.5"),
+        ]);
+        let settings = options.hand_mesh_visual_material_settings;
+
+        assert_eq!(settings.profile, HandMeshVisualMaterialProfile::MintRim);
+        assert_eq!(settings.base_color, [0.0, 0.50, 1.0]);
+        assert!((settings.alpha - 0.05).abs() < 0.001);
+        assert!((settings.rim_strength - 1.0).abs() < 0.001);
+        assert_eq!(settings.push_material(), [0.0, 0.50, 1.0, 1.0]);
+        assert_eq!(
+            settings.push_params(Default::default()),
+            [0.0, 0.0, 0.05, 0.0]
+        );
     }
 
     #[test]
@@ -1529,6 +1576,8 @@ mod tests {
         let settings = options.video_projection_settings;
 
         assert!(settings.active());
+        assert!(settings.video_background_active());
+        assert!(!settings.remote_broker_camera_projection_active());
         assert_eq!(settings.source, NativeVideoProjectionSource::AppPrivateFile);
         assert_eq!(
             settings.stereo_layout,
@@ -1567,6 +1616,89 @@ mod tests {
         assert!(fields.contains("javaHardwareBufferBridge=false"));
         assert!(fields.contains("cpuPixelCopy=false"));
         assert!(fields.contains("highRateJsonPayload=false"));
+    }
+
+    #[test]
+    fn video_projection_settings_select_broker_rmanvid1_as_remote_camera_source() {
+        let options = options_from(&[
+            (PROP_VIDEO_PROJECTION_ENABLED, "true"),
+            (PROP_VIDEO_PROJECTION_SOURCE, "broker-rmanvid1"),
+            (PROP_VIDEO_PROJECTION_BROKER_HOST, "127.0.0.1"),
+            (PROP_VIDEO_PROJECTION_BROKER_LEFT_PORT, "8979"),
+            (PROP_VIDEO_PROJECTION_BROKER_RIGHT_PORT, "8980"),
+            (PROP_VIDEO_PROJECTION_BROKER_CONNECT_TIMEOUT_MS, "5000"),
+            (PROP_VIDEO_PROJECTION_WIDTH, "320"),
+            (PROP_VIDEO_PROJECTION_HEIGHT, "240"),
+            (PROP_VIDEO_PROJECTION_MAX_IMAGES, "3"),
+            (PROP_VIDEO_PROJECTION_FPS_CAP, "30"),
+            (PROP_VIDEO_PROJECTION_HIGH_RATE_JSON_PAYLOAD, "false"),
+        ]);
+        let settings = options.video_projection_settings;
+
+        assert!(settings.active());
+        assert!(!settings.video_background_active());
+        assert!(settings.remote_broker_camera_projection_active());
+        assert_eq!(settings.source, NativeVideoProjectionSource::BrokerRmanvid1);
+        assert_eq!(settings.broker_host, "127.0.0.1");
+        assert_eq!(settings.broker_left_port, 8979);
+        assert_eq!(settings.broker_right_port, 8980);
+
+        let fields = settings.marker_fields();
+        assert!(fields.contains("videoProjectionSource=broker-rmanvid1"));
+        assert!(fields.contains("videoProjectionStream=remote_camera_broker_stereo"));
+        assert!(fields.contains("videoProjectionBrokerLeftPort=8979"));
+        assert!(fields.contains("videoProjectionBrokerRightPort=8980"));
+        assert!(
+            fields.contains("videoProjectionSourceAuthority=manifold-broker-rmanvid1-camera2-h264")
+        );
+        assert!(fields.contains(
+            "videoProjectionTransport=rmanvid1-tcp-to-mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer"
+        ));
+        assert!(fields.contains("videoProjectionDecodePath=RMANVID1-to-MediaCodec-to-Surface"));
+        assert!(fields.contains("remoteBrokerCameraProjectionActive=true"));
+        assert!(fields.contains("highRateJsonPayload=false"));
+    }
+
+    #[test]
+    fn video_projection_broker_zero_port_disables_single_lane() {
+        let options = options_from(&[
+            (PROP_VIDEO_PROJECTION_ENABLED, "true"),
+            (PROP_VIDEO_PROJECTION_SOURCE, "broker-rmanvid1"),
+            (PROP_VIDEO_PROJECTION_BROKER_HOST, "127.0.0.1"),
+            (PROP_VIDEO_PROJECTION_BROKER_LEFT_PORT, "8979"),
+            (PROP_VIDEO_PROJECTION_BROKER_RIGHT_PORT, "0"),
+            (PROP_VIDEO_PROJECTION_BROKER_CONNECT_TIMEOUT_MS, "60000"),
+            (PROP_VIDEO_PROJECTION_STEREO_LAYOUT, "mono"),
+        ]);
+        let settings = options.video_projection_settings;
+
+        assert!(settings.active());
+        assert!(settings.remote_broker_camera_projection_active());
+        assert_eq!(settings.broker_left_port, 8979);
+        assert_eq!(settings.broker_right_port, 0);
+
+        let fields = settings.marker_fields();
+        assert!(fields.contains("videoProjectionBrokerLeftPort=8979"));
+        assert!(fields.contains("videoProjectionBrokerRightPort=0"));
+        assert!(fields.contains("videoProjectionStereoLayout=mono"));
+        assert!(fields.contains("remoteBrokerCameraProjectionActive=true"));
+    }
+
+    #[test]
+    fn video_projection_broker_requires_at_least_one_enabled_port() {
+        let options = options_from(&[
+            (PROP_VIDEO_PROJECTION_ENABLED, "true"),
+            (PROP_VIDEO_PROJECTION_SOURCE, "broker-rmanvid1"),
+            (PROP_VIDEO_PROJECTION_BROKER_HOST, "127.0.0.1"),
+            (PROP_VIDEO_PROJECTION_BROKER_LEFT_PORT, "0"),
+            (PROP_VIDEO_PROJECTION_BROKER_RIGHT_PORT, "0"),
+        ]);
+        let settings = options.video_projection_settings;
+
+        assert!(!settings.active());
+        assert!(!settings.remote_broker_camera_projection_active());
+        assert_eq!(settings.broker_left_port, 0);
+        assert_eq!(settings.broker_right_port, 0);
     }
 
     #[test]

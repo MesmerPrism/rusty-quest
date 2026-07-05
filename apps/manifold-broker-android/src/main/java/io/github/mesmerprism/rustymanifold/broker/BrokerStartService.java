@@ -6,6 +6,7 @@ import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
+import android.content.pm.ServiceInfo;
 import android.os.Build;
 import android.os.IBinder;
 
@@ -15,13 +16,25 @@ public final class BrokerStartService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        startForeground(NOTIFICATION_ID, buildNotification());
+        startForegroundCompat(buildNotification());
         LocalManifoldBrokerServer.get().start(getApplicationContext());
         BrokerLaunchEvidence.write(
                 getApplicationContext(),
                 BrokerLaunchEvidence.SERVICE_NAME,
                 "foreground_service");
         return START_STICKY;
+    }
+
+    private void startForegroundCompat(Notification notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                            | ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA);
+        } else {
+            startForeground(NOTIFICATION_ID, notification);
+        }
     }
 
     @Override

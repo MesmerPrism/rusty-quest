@@ -15,6 +15,7 @@ public final class Qcl041WifiDirectHarnessService extends Service {
     private static final int NOTIFICATION_ID = 41041;
 
     private Qcl041WifiDirectLifecycle lifecycle;
+    private Qcl030LocalOnlyHotspotProbe qcl030Probe;
     private Qcl041ProbeConfig config;
     private Qcl041LifecycleArtifact artifact;
 
@@ -30,20 +31,47 @@ public final class Qcl041WifiDirectHarnessService extends Service {
             lifecycle.stop();
             lifecycle = null;
         }
+        if (qcl030Probe != null) {
+            qcl030Probe.stop();
+            qcl030Probe = null;
+        }
         config = Qcl041ProbeConfig.from(intent);
-        artifact = new Qcl041LifecycleArtifact(this, config);
         startForeground(
                 NOTIFICATION_ID,
-                buildNotification("QCL-041 Wi-Fi Direct lifecycle starting"));
+                buildNotification("Quest connectivity probe starting"));
         if (!hasRuntimeWifiDirectPermission()) {
             String permissionName = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
                     ? Manifest.permission.NEARBY_WIFI_DEVICES
                     : Manifest.permission.ACCESS_FINE_LOCATION;
-            artifact.setPermissionState(false, false, permissionName + "=false; foreground service cannot request UI");
-            artifact.setCleanup(true, true, "Harness service stopped before Wi-Fi Direct mutation.");
+            String evidence = permissionName + "=false; foreground service cannot request UI";
+            if (config.isQcl030LocalOnlyHotspotRoute()) {
+                Qcl030LocalOnlyHotspotProbe.writePermissionBlocked(this, config, evidence);
+            } else {
+                artifact = new Qcl041LifecycleArtifact(this, config);
+                artifact.setPermissionState(false, false, evidence);
+                artifact.setCleanup(true, true, "Harness service stopped before Wi-Fi Direct mutation.");
+            }
             stopSelf(startId);
             return START_NOT_STICKY;
         }
+        if (config.isQcl030LocalOnlyHotspotRoute()) {
+            qcl030Probe = new Qcl030LocalOnlyHotspotProbe(
+                    this,
+                    config,
+                    new Qcl041WifiDirectLifecycle.StatusListener() {
+                        @Override
+                        public void onStatus(String status) {
+                            updateNotification(status);
+                            if ("QCL-030 lifecycle complete".equals(status)) {
+                                stopForeground(true);
+                                stopSelf(startId);
+                            }
+                        }
+                    });
+            qcl030Probe.start();
+            return START_STICKY;
+        }
+        artifact = new Qcl041LifecycleArtifact(this, config);
         lifecycle = new Qcl041WifiDirectLifecycle(
                 this,
                 config,
@@ -67,6 +95,10 @@ public final class Qcl041WifiDirectHarnessService extends Service {
         if (lifecycle != null) {
             lifecycle.stop();
             lifecycle = null;
+        }
+        if (qcl030Probe != null) {
+            qcl030Probe.stop();
+            qcl030Probe = null;
         }
         super.onDestroy();
     }

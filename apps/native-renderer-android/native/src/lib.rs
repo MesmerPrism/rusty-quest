@@ -107,6 +107,8 @@ mod projection_rect;
 mod projection_target_state;
 mod recorded_hand_replay;
 #[cfg(target_os = "android")]
+mod remote_camera_projection_native_stream;
+#[cfg(target_os = "android")]
 mod video_projection;
 mod video_projection_metadata;
 #[cfg(target_os = "android")]

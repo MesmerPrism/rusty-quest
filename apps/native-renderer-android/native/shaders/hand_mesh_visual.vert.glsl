@@ -18,6 +18,7 @@ layout(set = 0, binding = 2) readonly buffer HandMeshGraftParams {
 layout(push_constant) uniform HandMeshVisualPush {
     vec4 target_rect;
     vec4 params;
+    vec4 material;
     vec4 eye_position;
     vec4 eye_orientation_xyzw;
     vec4 fov_tangents;

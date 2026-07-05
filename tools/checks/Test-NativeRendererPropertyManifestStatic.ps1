@@ -20,7 +20,7 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-$expectedPropertyCount = 241
+$expectedPropertyCount = 251
 if ($manifest.property_count -ne $expectedPropertyCount -or $manifest.properties.Count -ne $expectedPropertyCount) {
     throw "Native renderer property manifest must cover the current $expectedPropertyCount-property runtime surface."
 }
@@ -54,6 +54,15 @@ foreach ($token in @(
     'debug.rustyquest.native_renderer.environment_depth.surface_support.min_neighbors',
     'debug.rustyquest.native_renderer.display_composite.high_rate_json_payload',
     'debug.rustyquest.native_renderer.control_panel.mode',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.material.profile',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.material.alpha',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.material.base_color.r',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.material.base_color.g',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.material.base_color.b',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.material.rim_strength',
+    'unity-basic-reference',
+    'mint-rim',
+    'flat-gray',
     'debug.rustyquest.native_renderer.video_border_blend.mode',
     'alpha-over',
     'crossfade',
@@ -68,6 +77,10 @@ foreach ($token in @(
     'two-band',
     'temporal-stabilized',
     'debug.rustyquest.native_renderer.video_projection.high_rate_json_payload',
+    'debug.rustyquest.native_renderer.video_projection.broker.host',
+    'debug.rustyquest.native_renderer.video_projection.broker.left_port',
+    'debug.rustyquest.native_renderer.video_projection.broker.right_port',
+    'debug.rustyquest.native_renderer.video_projection.broker.connect_timeout_ms',
     'debug.rustyquest.native_renderer.foveation.mode',
     'debug.rustyquest.native_renderer.foveation.level',
     'debug.rustyquest.native_renderer.foveation.dynamic',

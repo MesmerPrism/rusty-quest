@@ -16,6 +16,7 @@ public final class Qcl041WifiDirectHarnessActivity extends Activity {
     private Qcl041ProbeConfig config;
     private Qcl041LifecycleArtifact artifact;
     private Qcl041WifiDirectLifecycle lifecycle;
+    private Qcl030LocalOnlyHotspotProbe qcl030Probe;
     private TextView statusView;
 
     @Override
@@ -38,6 +39,11 @@ public final class Qcl041WifiDirectHarnessActivity extends Activity {
         setIntent(intent);
         if (lifecycle != null) {
             lifecycle.stop();
+            lifecycle = null;
+        }
+        if (qcl030Probe != null) {
+            qcl030Probe.stop();
+            qcl030Probe = null;
         }
         config = Qcl041ProbeConfig.from(intent);
         artifact = new Qcl041LifecycleArtifact(this, config);
@@ -48,6 +54,11 @@ public final class Qcl041WifiDirectHarnessActivity extends Activity {
     protected void onDestroy() {
         if (lifecycle != null) {
             lifecycle.stop();
+            lifecycle = null;
+        }
+        if (qcl030Probe != null) {
+            qcl030Probe.stop();
+            qcl030Probe = null;
         }
         super.onDestroy();
     }
@@ -60,6 +71,14 @@ public final class Qcl041WifiDirectHarnessActivity extends Activity {
         }
         if (missingRuntimePermissions().isEmpty()) {
             startLifecycle();
+            return;
+        }
+        if (config.isQcl030LocalOnlyHotspotRoute()) {
+            Qcl030LocalOnlyHotspotProbe.writePermissionBlocked(
+                    this,
+                    config,
+                    "QCL-030 foreground Activity runtime permission denied.");
+            setStatus("QCL-030 blocked: runtime permission denied");
             return;
         }
         artifact.setPermissionState(false, false, "Wi-Fi Direct runtime permission denied.");
@@ -91,6 +110,24 @@ public final class Qcl041WifiDirectHarnessActivity extends Activity {
     }
 
     private void startLifecycle() {
+        if (config.isQcl030LocalOnlyHotspotRoute()) {
+            qcl030Probe = new Qcl030LocalOnlyHotspotProbe(
+                    this,
+                    config,
+                    new Qcl041WifiDirectLifecycle.StatusListener() {
+                        @Override
+                        public void onStatus(final String status) {
+                            runOnUiThread(new Runnable() {
+                                @Override
+                                public void run() {
+                                    setStatus(status);
+                                }
+                            });
+                        }
+                    });
+            qcl030Probe.start();
+            return;
+        }
         lifecycle = new Qcl041WifiDirectLifecycle(
                 this,
                 config,

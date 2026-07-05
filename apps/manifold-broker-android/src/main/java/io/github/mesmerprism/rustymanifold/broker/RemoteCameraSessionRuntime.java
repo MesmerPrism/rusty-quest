@@ -861,6 +861,15 @@ final class RemoteCameraSessionRuntime {
         volatile String error = "";
         volatile long bytesSent;
         volatile long bytesReceived;
+        volatile long copyBytesRead;
+        volatile long copyBytesWritten;
+        volatile long copyReadOperations;
+        volatile long copyWriteOperations;
+        volatile long copyFirstReadUnixMs;
+        volatile long copyLastReadUnixMs;
+        volatile long copyLastWriteUnixMs;
+        volatile int copyLastReadSize;
+        volatile int copyLastWriteSize;
         volatile boolean stopRequested;
         volatile boolean terminalCounted;
         volatile Thread thread;
@@ -883,6 +892,10 @@ final class RemoteCameraSessionRuntime {
         volatile String peerSocketBoundLocalAddress = "";
         volatile String peerSocketBindLocalAddressError = "";
         volatile String peerSocketLocalAddressError = "";
+        volatile long transportAcceptCount;
+        volatile long localClientAcceptCount;
+        volatile long streamRecycleCount;
+        volatile long lastStreamRecycleUnixMs;
 
         static RuntimeLane receiver(
                 String sessionId,
@@ -996,40 +1009,85 @@ final class RemoteCameraSessionRuntime {
             Socket client = null;
             Socket remote = null;
             try {
-                state = "binding_local_receiver";
-                server = new ServerSocket();
-                server.setReuseAddress(true);
-                server.bind(new InetSocketAddress(InetAddress.getByName(host), port));
-                serverSocket = server;
                 if (transportPort > 0) {
                     state = "binding_transport_receiver";
                     transportServer = new ServerSocket();
                     transportServer.setReuseAddress(true);
                     transportServer.bind(new InetSocketAddress(InetAddress.getByName(transportHost), transportPort));
                     transportServerSocket = transportServer;
-                }
-                state = "waiting_for_local_client";
-                client = server.accept();
-                localClientSocket = client;
-                client.setTcpNoDelay(true);
-                if (transportServer == null) {
+                    while (!stopRequested) {
+                        try {
+                            server = bindLocalReceiverServer();
+                            state = streamRecycleCount == 0L
+                                    ? "waiting_for_transport_peer_with_local_listener"
+                                    : "waiting_for_transport_peer_recycle_with_local_listener";
+                            remote = transportServer.accept();
+                            transportSocket = remote;
+                            remote.setTcpNoDelay(true);
+                            transportAcceptCount += 1L;
+                            state = "transport_peer_connected_waiting_for_local_client";
+                            state = "waiting_for_local_client_after_transport_peer";
+                            client = server.accept();
+                            localClientSocket = client;
+                            client.setTcpNoDelay(true);
+                            localClientAcceptCount += 1L;
+                            state = "transport_peer_connected_streaming_to_local_client";
+                            closeReason = "";
+                            long segmentStartBytesRead = copyBytesRead;
+                            long segmentStartBytesWritten = copyBytesWritten;
+                            try {
+                                copyStream(remote.getInputStream(), client.getOutputStream(), false);
+                            } catch (IOException ex) {
+                                boolean copiedSegmentBytes = copyBytesRead > segmentStartBytesRead
+                                        || copyBytesWritten > segmentStartBytesWritten;
+                                closeReason = copiedSegmentBytes
+                                        ? "transport_stream_copy_error_after_bytes:"
+                                                + ex.getClass().getSimpleName()
+                                        : "transport_stream_copy_error:" + ex.getClass().getSimpleName();
+                            }
+                            if (!stopRequested) {
+                                if (closeReason == null || closeReason.length() == 0) {
+                                    closeReason = "transport_peer_closed";
+                                }
+                            }
+                        } finally {
+                            closeQuietly(remote);
+                            closeQuietly(client);
+                            closeQuietly(server);
+                            if (transportSocket == remote) {
+                                transportSocket = null;
+                            }
+                            if (localClientSocket == client) {
+                                localClientSocket = null;
+                            }
+                            if (serverSocket == server) {
+                                serverSocket = null;
+                            }
+                            remote = null;
+                            client = null;
+                            server = null;
+                        }
+                        if (!stopRequested) {
+                            streamRecycleCount += 1L;
+                            lastStreamRecycleUnixMs = System.currentTimeMillis();
+                            state = "transport_stream_recycle_waiting_for_peer";
+                        }
+                    }
+                    markStopped("stop_requested");
+                    return;
+                } else {
+                    server = bindLocalReceiverServer();
+                    state = "waiting_for_local_client";
+                    client = server.accept();
+                    localClientSocket = client;
+                    localClientAcceptCount += 1L;
+                    client.setTcpNoDelay(true);
                     state = "local_client_connected_waiting_for_remote_media";
                     while (!stopRequested && !client.isClosed()) {
                         Thread.sleep(100L);
                     }
                     markStopped("stop_requested");
                     return;
-                }
-                state = "local_client_connected_waiting_for_transport_peer";
-                remote = transportServer.accept();
-                transportSocket = remote;
-                remote.setTcpNoDelay(true);
-                state = "transport_peer_connected_streaming_to_local_client";
-                copyStream(remote.getInputStream(), client.getOutputStream(), false);
-                if (!stopRequested) {
-                    markStopped("transport_peer_closed");
-                } else {
-                    markStopped("stop_requested");
                 }
             } catch (Exception ex) {
                 markFailed(ex);
@@ -1039,6 +1097,15 @@ final class RemoteCameraSessionRuntime {
                 closeQuietly(transportServer);
                 closeQuietly(server);
             }
+        }
+
+        ServerSocket bindLocalReceiverServer() throws IOException {
+            state = "binding_local_receiver";
+            ServerSocket localServer = new ServerSocket();
+            localServer.setReuseAddress(true);
+            localServer.bind(new InetSocketAddress(InetAddress.getByName(host), port));
+            serverSocket = localServer;
+            return localServer;
         }
 
         void runSenderBridge() {
@@ -1081,8 +1148,20 @@ final class RemoteCameraSessionRuntime {
                     Thread.sleep(100L);
                     continue;
                 }
+                long now = System.currentTimeMillis();
+                if (copyFirstReadUnixMs == 0L) {
+                    copyFirstReadUnixMs = now;
+                }
+                copyLastReadUnixMs = now;
+                copyLastReadSize = read;
+                copyBytesRead += read;
+                copyReadOperations += 1L;
                 output.write(buffer, 0, read);
                 output.flush();
+                copyLastWriteUnixMs = System.currentTimeMillis();
+                copyLastWriteSize = read;
+                copyBytesWritten += read;
+                copyWriteOperations += 1L;
                 if (senderDirection) {
                     bytesSent += read;
                 } else {
@@ -1176,6 +1255,32 @@ final class RemoteCameraSessionRuntime {
             }
             json.put("bytes_sent", bytesSent);
             json.put("bytes_received", bytesReceived);
+            json.put("copy_bytes_read", copyBytesRead);
+            json.put("copy_bytes_written", copyBytesWritten);
+            json.put("copy_read_operations", copyReadOperations);
+            json.put("copy_write_operations", copyWriteOperations);
+            json.put("copy_last_read_size", copyLastReadSize);
+            json.put("copy_last_write_size", copyLastWriteSize);
+            json.put("transport_accept_count", transportAcceptCount);
+            json.put("local_client_accept_count", localClientAcceptCount);
+            json.put("stream_recycle_count", streamRecycleCount);
+            if (lastStreamRecycleUnixMs > 0L) {
+                json.put("last_stream_recycle_unix_ms", lastStreamRecycleUnixMs);
+                json.put(
+                        "last_stream_recycle_age_ms",
+                        Math.max(0L, System.currentTimeMillis() - lastStreamRecycleUnixMs));
+            }
+            if (copyFirstReadUnixMs > 0L) {
+                json.put("copy_first_read_unix_ms", copyFirstReadUnixMs);
+            }
+            if (copyLastReadUnixMs > 0L) {
+                json.put("copy_last_read_unix_ms", copyLastReadUnixMs);
+                json.put("copy_last_read_age_ms", Math.max(0L, System.currentTimeMillis() - copyLastReadUnixMs));
+            }
+            if (copyLastWriteUnixMs > 0L) {
+                json.put("copy_last_write_unix_ms", copyLastWriteUnixMs);
+                json.put("copy_last_write_age_ms", Math.max(0L, System.currentTimeMillis() - copyLastWriteUnixMs));
+            }
             json.put("started_unix_ms", startedUnixMs);
             json.put("media_payload_plane", "binary-media");
             json.put("high_rate_json_payload", false);

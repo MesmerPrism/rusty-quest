@@ -36,7 +36,10 @@
       "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled": "false",
       "debug.rustyquest.native_renderer.hand_mesh.input.source": "live-meta-openxr-hand-tracking",
       "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible": "true",
-      "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled": "true"
+      "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled": "true",
+      "debug.rustyquest.native_renderer.hand_mesh.visual.material.alpha": "0.74",
+      "debug.rustyquest.native_renderer.hand_mesh.visual.material.profile": "unity-basic-reference",
+      "debug.rustyquest.native_renderer.hand_mesh.visual.material.rim_strength": "0.20"
     },
     "clear_families": [
       "hand_mesh"
@@ -53,7 +56,9 @@
   },
   "markers": {
     "required": [
-      "handMeshRealHandsVisible=true"
+      "handMeshRealHandsVisible=true",
+      "handMeshVisualMaterialProfile=unity-basic-reference",
+      "handMeshVisualTextureImported=false"
     ],
     "forbidden": []
   },

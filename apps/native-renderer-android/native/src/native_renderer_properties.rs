@@ -51,6 +51,14 @@ pub(crate) const PROP_VIDEO_PROJECTION_SOURCE: &str =
     "debug.rustyquest.native_renderer.video_projection.source";
 pub(crate) const PROP_VIDEO_PROJECTION_PATH: &str =
     "debug.rustyquest.native_renderer.video_projection.path";
+pub(crate) const PROP_VIDEO_PROJECTION_BROKER_HOST: &str =
+    "debug.rustyquest.native_renderer.video_projection.broker.host";
+pub(crate) const PROP_VIDEO_PROJECTION_BROKER_LEFT_PORT: &str =
+    "debug.rustyquest.native_renderer.video_projection.broker.left_port";
+pub(crate) const PROP_VIDEO_PROJECTION_BROKER_RIGHT_PORT: &str =
+    "debug.rustyquest.native_renderer.video_projection.broker.right_port";
+pub(crate) const PROP_VIDEO_PROJECTION_BROKER_CONNECT_TIMEOUT_MS: &str =
+    "debug.rustyquest.native_renderer.video_projection.broker.connect_timeout_ms";
 pub(crate) const PROP_VIDEO_PROJECTION_STEREO_LAYOUT: &str =
     "debug.rustyquest.native_renderer.video_projection.stereo_layout";
 pub(crate) const PROP_VIDEO_PROJECTION_WIDTH: &str =
@@ -138,6 +146,18 @@ pub(crate) const PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV: &str =
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv";
 pub(crate) const PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA: &str =
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha";
+pub(crate) const PROP_HAND_MESH_VISUAL_MATERIAL_ALPHA: &str =
+    "debug.rustyquest.native_renderer.hand_mesh.visual.material.alpha";
+pub(crate) const PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_B: &str =
+    "debug.rustyquest.native_renderer.hand_mesh.visual.material.base_color.b";
+pub(crate) const PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_G: &str =
+    "debug.rustyquest.native_renderer.hand_mesh.visual.material.base_color.g";
+pub(crate) const PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_R: &str =
+    "debug.rustyquest.native_renderer.hand_mesh.visual.material.base_color.r";
+pub(crate) const PROP_HAND_MESH_VISUAL_MATERIAL_PROFILE: &str =
+    "debug.rustyquest.native_renderer.hand_mesh.visual.material.profile";
+pub(crate) const PROP_HAND_MESH_VISUAL_MATERIAL_RIM_STRENGTH: &str =
+    "debug.rustyquest.native_renderer.hand_mesh.visual.material.rim_strength";
 pub(crate) const PROP_HAND_MESH_GRAFT_COPIES_ENABLED: &str =
     "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled";
 pub(crate) const PROP_HAND_MESH_GRAFT_COPY_SCALE: &str =

@@ -14,7 +14,7 @@
     "particles.hand_anchor.ordering.gpu_index_remap"
   ],
   "depends_on": [
-    "hand_mesh_visual"
+    "hand_mesh_live_input"
   ],
   "incompatible_with": [],
   "exclusive_groups": {},

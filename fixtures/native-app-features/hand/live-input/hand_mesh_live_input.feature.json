@@ -1,0 +1,65 @@
+{
+  "schema": "rusty.quest.native_app_feature.v1",
+  "feature_id": "hand_mesh_live_input",
+  "module_path": "hand/live-input",
+  "module_kind": "hand-input",
+  "settings_surface": {
+    "authority": "rusty.quest.native_app_settings.v1",
+    "adapter": "runtime_profile"
+  },
+  "owner_lane": "rusty-quest",
+  "status": "public-substrate",
+  "description": "Live Meta/OpenXR hand tracking compact input and resident skinning substrate without requiring the custom hand mesh to be drawn.",
+  "provides": [
+    "hand_mesh.live_input",
+    "hand_mesh.resident_skinning_substrate"
+  ],
+  "depends_on": [
+    "quest.native.openxr_vulkan_base"
+  ],
+  "incompatible_with": [],
+  "exclusive_groups": {},
+  "android_manifest": {
+    "permissions": [
+      "com.oculus.permission.HAND_TRACKING"
+    ],
+    "uses_features": [
+      "oculus.software.handtracking"
+    ],
+    "activities": [],
+    "services": [],
+    "queries": []
+  },
+  "runtime_profile": {
+    "set": {
+      "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled": "false",
+      "debug.rustyquest.native_renderer.hand_mesh.input.source": "live-meta-openxr-hand-tracking"
+    },
+    "clear_families": [
+      "hand_mesh"
+    ],
+    "expected_render_modes": []
+  },
+  "build_inputs": {
+    "env": [],
+    "assets": [],
+    "shaders": [
+      "apps/native-renderer-android/native/shaders/gpu_hand_skinning.comp.glsl"
+    ]
+  },
+  "markers": {
+    "required": [
+      "compactHandInputSourceMode=live-meta-openxr-hand-tracking",
+      "selectsLiveFrame=true"
+    ],
+    "forbidden": []
+  },
+  "validation": {
+    "quick": [
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-NativeRendererHandVisualStatic.ps1 -RepoRoot ."
+    ],
+    "standard": [],
+    "device": []
+  },
+  "public_private_boundary": "Live hand tracking input, compact joint upload, and resident skinning buffers are public substrate; whether a custom hand mesh is drawn remains a separate visual feature."
+}

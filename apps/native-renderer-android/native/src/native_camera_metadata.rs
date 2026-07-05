@@ -73,7 +73,7 @@ pub(crate) struct NativeCameraCaptureResultCorrelation {
 }
 
 impl NativeCameraCaptureResultCorrelation {
-    fn unavailable() -> Self {
+    pub(crate) fn unavailable() -> Self {
         Self {
             status: "unavailable",
             delta_ns: None,

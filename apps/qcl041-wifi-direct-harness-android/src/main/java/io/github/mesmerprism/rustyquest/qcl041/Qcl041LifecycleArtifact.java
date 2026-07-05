@@ -45,7 +45,13 @@ final class Qcl041LifecycleArtifact {
     Qcl041LifecycleArtifact(Context context, Qcl041ProbeConfig config) {
         this.context = context.getApplicationContext();
         this.config = config;
-        setWindowsApiObserved(config.windowsApiObserved, config.windowsApiEvidence);
+        if (config.isQuestPeerRoute()) {
+            setWindowsApiObserved(
+                    true,
+                    "Quest-to-Quest route does not require the Windows Wi-Fi Direct helper API.");
+        } else {
+            setWindowsApiObserved(config.windowsApiObserved, config.windowsApiEvidence);
+        }
     }
 
     synchronized void setFeature(boolean packageFeaturePresent, Boolean wifiManagerP2pSupported) {
@@ -166,7 +172,7 @@ final class Qcl041LifecycleArtifact {
         root.put("$schema", Qcl041ProbeConfig.SCHEMA);
         root.put("schema_version", 1);
         root.put("probe_id", "QCL-041");
-        root.put("peer_class", "windows");
+        root.put("peer_class", config.peerClass);
         root.put("evidence_tier", config.evidenceTier);
         root.put("capture_kind", "live_wifi_direct_lifecycle");
         root.put("live_evidence", true);
@@ -187,18 +193,24 @@ final class Qcl041LifecycleArtifact {
         JSONObject harness = new JSONObject();
         harness.put("harness_id", Qcl041ProbeConfig.HARNESS_ID);
         harness.put("owner", Qcl041ProbeConfig.HARNESS_OWNER);
-        harness.put("route", Qcl041ProbeConfig.ROUTE);
+        harness.put("route", config.routeId());
         harness.put("hostess_runs_harness", false);
         harness.put("writes_live_source_artifact", true);
         return harness;
     }
 
-    private static JSONObject topologyJson() throws JSONException {
+    private JSONObject topologyJson() throws JSONException {
         JSONObject topology = new JSONObject();
         topology.put("owner", "wifi_direct");
         topology.put("network_provider", "wifi_direct");
-        topology.put("endpoint_direction", "peer_to_peer_group");
-        topology.put("peer_class", "windows");
+        topology.put(
+                "endpoint_direction",
+                config.isQuestPeerRoute() ? "quest_to_quest_peer_group" : "peer_to_peer_group");
+        topology.put("peer_class", config.peerClass);
+        if (config.isQuestPeerRoute()) {
+            topology.put("external_wifi_provider_required", false);
+            topology.put("q2q_role", config.q2qRole);
+        }
         return topology;
     }
 
@@ -213,7 +225,7 @@ final class Qcl041LifecycleArtifact {
 
     private JSONObject hostJson() throws JSONException {
         JSONObject host = new JSONObject();
-        host.put("os", "windows");
+        host.put("os", config.isQuestPeerRoute() ? "android-quest-peer" : "windows");
         host.put("toolchain_profile", config.hostToolchainProfile);
         return host;
     }

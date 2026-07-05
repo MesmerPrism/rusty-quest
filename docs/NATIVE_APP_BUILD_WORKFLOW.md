@@ -70,11 +70,13 @@ as a generic private-particle payload:
   texture, marker prefix, and profile meanings. Rusty Quest owns the Vulkan
   slot, sorting, mask sampler, low-rate scalar transport, and public markers.
 - Live hand surfaces should use `hand_anchor_particles` when the particles are
-  attached to the resident GPU-skinned hand mesh. The downstream private
-  private anchor payload supplies coordinate triangle/barycentric bindings and graph
-  edges, while Rusty Quest reuses the already-resident left and right custom
-  hand meshes. The hand path must be ready from the skinned mesh buffers, not
-  from the optional base hand visual being visible.
+  attached to the resident GPU-skinned hand mesh. `hand_mesh_live_input` owns
+  the compact live Meta/OpenXR hand input and resident skinning substrate, while
+  `hand_mesh_visual` remains a separate optional custom mesh draw target. A
+  downstream private anchor payload supplies coordinate triangle/barycentric
+  bindings and graph edges, while Rusty Quest reuses the already-resident left
+  and right hand buffers. The hand path must be ready from the skinned mesh
+  buffers, not from the optional base hand visual being visible.
 - `hand_mesh.input.source=live-meta-openxr-hand-tracking` may still allow the
   recorded compact-pose fallback until live joints arrive. This keeps particles
   visible in front of the camera at startup, then switches to live OpenXR joint
@@ -94,6 +96,17 @@ rows stay resident in native buffers. A downstream mesh-particle panel can use
 selector, while the renderer proves adoption through effective
 `privateParticle*`, `handAnchorParticle*`, and downstream-owned marker-prefix
 fields.
+
+The clean native hand lab is
+`fixtures/native-app-builds/native-openxr-hand-lab.app.json`. Validate it with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/Test-NativeOpenXrHandLabAndroid.ps1
+```
+
+It keeps the app custom hand mesh visual disabled, requests the
+runtime/default OpenXR hand visual, and draws only resident-mesh anchor
+particles over a solid black OpenXR projection layer.
 
 ## Runtime Profiles And Launch Overrides
 

@@ -87,19 +87,26 @@ fn start_impl(
         let playback_class_name = env.new_string(PLAYBACK_BINARY_CLASS_NAME)?;
         let playback_class =
             JClass::for_name_with_loader(env, playback_class_name, true, class_loader)?;
+        let source = env.new_string(settings.source.marker_value())?;
         let path = env.new_string(settings.path.as_str())?;
+        let broker_host = env.new_string(settings.broker_host.as_str())?;
         env.call_static_method(
             playback_class,
             jni_str!("start"),
-            jni_sig!("(Landroid/content/Context;Ljava/lang/String;IIIIZ)V"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;IIIIZLjava/lang/String;III)V"),
             &[
                 JValue::Object(&activity),
+                JValue::Object(&JObject::from(source)),
                 JValue::Object(&JObject::from(path)),
                 JValue::Int(settings.width as i32),
                 JValue::Int(settings.height as i32),
                 JValue::Int(settings.max_images as i32),
                 JValue::Int(settings.fps_cap as i32),
                 JValue::Bool(settings.looping),
+                JValue::Object(&JObject::from(broker_host)),
+                JValue::Int(settings.broker_left_port as i32),
+                JValue::Int(settings.broker_right_port as i32),
+                JValue::Int(settings.broker_connect_timeout_ms as i32),
             ],
         )?;
         Ok(())

@@ -31,6 +31,13 @@ Quest APK with the Hostess Windows Wi-Fi Direct helper, records actual
 lets the host wrapper finalize Agent Board lease release before Hostess
 promotion.
 
+`tools/Invoke-Qcl100QuestToQuestNativeStereoProjectionWifiDirect.ps1` is the
+QCL-100 facade for Quest-to-Quest native stereo projection over Wi-Fi Direct.
+Its helpers live under `tools/qcl100_native_projection/`: readiness checks,
+bridge request generation, QCL-041 relay/session setup, freshness parsing, and
+runtime summary writing stay separate so new recycle/datagram/RTP recovery work
+does not accumulate in the runner root.
+
 This crate is source-only and does not open ADB, WebSocket, UDP, LSL, or
 app-private transports. Hostess, WPF, Makepad tools, CLI routes, or future
 frontends should execute their own adapters and then emit this report shape for
@@ -74,8 +81,9 @@ surface selection, block timing, questionnaire capture, raw Camera2/HWB
 projection probes, and public blur/projection receipts can be tested with
 Spatial SDK panel placement, sizing, and scaling controls. It does not replace
 `apps/native-renderer-android`, does not carry high-rate hand mesh or private
-particle payloads through Java/Kotlin JSON, and currently treats hands as not
-expected.
+particle payloads through Java/Kotlin JSON, and keeps hand visuals explicit:
+the Spatial SDK avatar hand visual and the public ECS hand-billboard flock are
+both opt-in comparison surfaces.
 
 The same lane now has two generic Spatial SDK asset/environment hooks. The
 Spatial SDK staged 3D asset path accepts only explicit GLB/GLTF `Mesh` URIs at

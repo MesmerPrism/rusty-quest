@@ -2,11 +2,14 @@
 
 use crate::{
     native_renderer_properties::{
+        PROP_HAND_MESH_VISUAL_MATERIAL_ALPHA, PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_B,
+        PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_G, PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_R,
+        PROP_HAND_MESH_VISUAL_MATERIAL_PROFILE, PROP_HAND_MESH_VISUAL_MATERIAL_RIM_STRENGTH,
         PROP_PRIVATE_LAYER_EFFECT0, PROP_PRIVATE_LAYER_EFFECT1, PROP_PRIVATE_LAYER_EFFECT2,
         PROP_PRIVATE_LAYER_EFFECT3, PROP_PRIVATE_LAYER_ENABLED, PROP_PRIVATE_LAYER_OVERRIDE,
         PROP_PRIVATE_LAYER_SECONDS,
     },
-    native_renderer_property_values::{bool_value, f32_clamped_value},
+    native_renderer_property_values::{bool_value, f32_clamped_value, normalized_property},
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -214,6 +217,142 @@ impl CompactHandInputSourceMode {
 
     pub(crate) fn allows_recorded_fallback(self) -> bool {
         matches!(self, Self::Auto | Self::RecordedReplay | Self::LiveMeta)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HandMeshVisualMaterialProfile {
+    UnityBasicReference,
+    MintRim,
+    FlatGray,
+}
+
+impl HandMeshVisualMaterialProfile {
+    pub(crate) fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "mint-rim" | "mint" | "native-mint" | "current-mint" => Self::MintRim,
+            "flat-gray" | "flat-grey" | "gray" | "grey" | "legacy-gray" | "legacy-grey" => {
+                Self::FlatGray
+            }
+            "unity-basic"
+            | "unity-basic-reference"
+            | "basic-hand-material"
+            | "meta-basic-hand-material" => Self::UnityBasicReference,
+            _ => Self::UnityBasicReference,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::UnityBasicReference => "unity-basic-reference",
+            Self::MintRim => "mint-rim",
+            Self::FlatGray => "flat-gray",
+        }
+    }
+
+    fn defaults(self) -> ([f32; 3], f32, f32) {
+        match self {
+            Self::UnityBasicReference => ([0.78, 0.86, 0.83], 0.74, 0.20),
+            Self::MintRim => ([0.70, 0.935, 0.87], 0.72, 0.32),
+            Self::FlatGray => ([0.54, 0.54, 0.54], 1.0, 0.0),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HandMeshVisualMaterialSettings {
+    pub(crate) profile: HandMeshVisualMaterialProfile,
+    pub(crate) base_color: [f32; 3],
+    pub(crate) alpha: f32,
+    pub(crate) rim_strength: f32,
+}
+
+impl HandMeshVisualMaterialSettings {
+    pub(crate) fn from_property_lookup(mut lookup: impl FnMut(&str) -> Option<String>) -> Self {
+        let profile = HandMeshVisualMaterialProfile::from_property(lookup(
+            PROP_HAND_MESH_VISUAL_MATERIAL_PROFILE,
+        ));
+        let (default_base_color, default_alpha, default_rim_strength) = profile.defaults();
+        Self {
+            profile,
+            base_color: [
+                f32_clamped_value(
+                    lookup(PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_R),
+                    default_base_color[0],
+                    0.0,
+                    1.0,
+                ),
+                f32_clamped_value(
+                    lookup(PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_G),
+                    default_base_color[1],
+                    0.0,
+                    1.0,
+                ),
+                f32_clamped_value(
+                    lookup(PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_B),
+                    default_base_color[2],
+                    0.0,
+                    1.0,
+                ),
+            ],
+            alpha: f32_clamped_value(
+                lookup(PROP_HAND_MESH_VISUAL_MATERIAL_ALPHA),
+                default_alpha,
+                0.05,
+                1.0,
+            ),
+            rim_strength: f32_clamped_value(
+                lookup(PROP_HAND_MESH_VISUAL_MATERIAL_RIM_STRENGTH),
+                default_rim_strength,
+                0.0,
+                1.0,
+            ),
+        }
+    }
+
+    pub(crate) fn marker_fields(self) -> String {
+        format!(
+            "handMeshVisualMaterialProfile={} handMeshVisualMaterial=unity-basic-procedural-surface handMeshVisualMaterialSource=procedural-reference-not-unity-asset handMeshVisualUnityReference=BasicHandMaterial handMeshVisualUnityTextureReference=HandTracking_uvmap_2048 handMeshVisualTextureImported=false handMeshVisualMaterialBaseColor={:.3},{:.3},{:.3} handMeshVisualMaterialAlpha={:.2} handMeshVisualMaterialRimStrength={:.2} handMeshVisualFresnelApproximation=normal-facing-rim handMeshVisualDepthPolicy=overlay-no-depth handMeshVisualDepthTest=false handMeshVisualDepthWrite=false",
+            self.profile.marker_value(),
+            self.base_color[0],
+            self.base_color[1],
+            self.base_color[2],
+            self.alpha,
+            self.rim_strength,
+        )
+    }
+
+    pub(crate) fn push_material(self) -> [f32; 4] {
+        [
+            self.base_color[0],
+            self.base_color[1],
+            self.base_color[2],
+            self.rim_strength,
+        ]
+    }
+
+    pub(crate) fn push_params(
+        self,
+        diagnostic_settings: HandMeshVisualDiagnosticSettings,
+    ) -> [f32; 4] {
+        let mut params = diagnostic_settings.push_params();
+        if !diagnostic_settings.enabled {
+            params[2] = self.alpha;
+        }
+        params
+    }
+}
+
+impl Default for HandMeshVisualMaterialSettings {
+    fn default() -> Self {
+        let profile = HandMeshVisualMaterialProfile::UnityBasicReference;
+        let (base_color, alpha, rim_strength) = profile.defaults();
+        Self {
+            profile,
+            base_color,
+            alpha,
+            rim_strength,
+        }
     }
 }
 

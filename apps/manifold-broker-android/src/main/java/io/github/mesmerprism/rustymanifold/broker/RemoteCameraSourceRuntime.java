@@ -13,6 +13,8 @@ import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraDevice;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.CaptureRequest;
+import android.hardware.camera2.CaptureResult;
+import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
@@ -60,6 +62,7 @@ final class RemoteCameraSourceRuntime {
     private static final int ENCODER_DRAIN_TIMEOUT_US = 10_000;
     private static final long CAMERA_OPEN_TIMEOUT_MS = 5_000L;
     private static final long CAMERA_SESSION_TIMEOUT_MS = 5_000L;
+    private static final long SYNC_FRAME_REQUEST_INTERVAL_MS = 1_000L;
     private static final AtomicLong NEXT_SOURCE_ID = new AtomicLong(1L);
 
     private static final Object LOCK = new Object();
@@ -877,6 +880,92 @@ final class RemoteCameraSourceRuntime {
         return message != null ? message : "";
     }
 
+    private static final class Camera2FrameTracker {
+        private long captureCount;
+        private long firstFrameNumber = -1L;
+        private long lastFrameNumber = -1L;
+        private long firstSensorTimestampNs = -1L;
+        private long lastSensorTimestampNs = -1L;
+        private long firstCaptureElapsedMs = -1L;
+        private long lastCaptureElapsedMs = -1L;
+        private long lastCaptureUnixMs = -1L;
+
+        synchronized void record(TotalCaptureResult result) {
+            if (result == null) {
+                return;
+            }
+            long frameNumber = result.getFrameNumber();
+            Long sensorTimestamp = result.get(CaptureResult.SENSOR_TIMESTAMP);
+            long nowElapsedMs = SystemClock.elapsedRealtime();
+            long nowUnixMs = System.currentTimeMillis();
+            captureCount++;
+            if (firstFrameNumber < 0L) {
+                firstFrameNumber = frameNumber;
+                firstCaptureElapsedMs = nowElapsedMs;
+            }
+            lastFrameNumber = frameNumber;
+            lastCaptureElapsedMs = nowElapsedMs;
+            lastCaptureUnixMs = nowUnixMs;
+            if (sensorTimestamp != null) {
+                if (firstSensorTimestampNs < 0L) {
+                    firstSensorTimestampNs = sensorTimestamp;
+                }
+                lastSensorTimestampNs = sensorTimestamp;
+            }
+        }
+
+        synchronized JSONObject toJson() throws Exception {
+            JSONObject json = new JSONObject();
+            long nowElapsedMs = SystemClock.elapsedRealtime();
+            json.put("capture_callback_count", captureCount);
+            json.put("first_frame_number", firstFrameNumber);
+            json.put("last_frame_number", lastFrameNumber);
+            json.put(
+                    "frame_number_delta",
+                    firstFrameNumber >= 0L && lastFrameNumber >= firstFrameNumber
+                            ? lastFrameNumber - firstFrameNumber
+                            : -1L);
+            json.put("first_sensor_timestamp_ns", firstSensorTimestampNs);
+            json.put("last_sensor_timestamp_ns", lastSensorTimestampNs);
+            json.put(
+                    "sensor_timestamp_delta_ns",
+                    firstSensorTimestampNs >= 0L && lastSensorTimestampNs >= firstSensorTimestampNs
+                            ? lastSensorTimestampNs - firstSensorTimestampNs
+                            : -1L);
+            json.put("first_capture_elapsed_ms", firstCaptureElapsedMs);
+            json.put("last_capture_elapsed_ms", lastCaptureElapsedMs);
+            json.put("last_capture_unix_ms", lastCaptureUnixMs);
+            json.put(
+                    "last_capture_age_ms",
+                    lastCaptureElapsedMs >= 0L
+                            ? Math.max(0L, nowElapsedMs - lastCaptureElapsedMs)
+                            : -1L);
+            json.put("fresh_camera2_frames_observed", captureCount >= 2L && lastFrameNumber > firstFrameNumber);
+            return json;
+        }
+    }
+
+    private static final class EncodedPacketSnapshot {
+        final long presentationTimeUs;
+        final int flags;
+        final byte[] payload;
+        final long sourceElapsedNs;
+        final long sourceUnixNs;
+
+        EncodedPacketSnapshot(
+                long presentationTimeUs,
+                int flags,
+                byte[] payload,
+                long sourceElapsedNs,
+                long sourceUnixNs) {
+            this.presentationTimeUs = presentationTimeUs;
+            this.flags = flags;
+            this.payload = payload.clone();
+            this.sourceElapsedNs = sourceElapsedNs;
+            this.sourceUnixNs = sourceUnixNs;
+        }
+    }
+
     private static final class SourceGroup {
         final String groupKey;
         final String groupId;
@@ -890,6 +979,13 @@ final class RemoteCameraSourceRuntime {
         final Context context;
         final String permissionPolicy;
         final JSONObject permissionStatus;
+        final Camera2FrameTracker camera2FrameTracker = new Camera2FrameTracker();
+        final Object codecConfigLock = new Object();
+        final AtomicLong codecConfigCacheUpdateCount = new AtomicLong(0L);
+        final AtomicLong codecConfigReplayCount = new AtomicLong(0L);
+        final AtomicLong consumerSyncFrameRequestCount = new AtomicLong(0L);
+        final AtomicLong consumerSyncFrameAppliedCount = new AtomicLong(0L);
+        volatile EncodedPacketSnapshot cachedCodecConfigPacket;
         volatile String state = "created";
         volatile String closeReason = "";
         volatile String error = "";
@@ -984,7 +1080,15 @@ final class RemoteCameraSourceRuntime {
                 requestSyncFrame(encoder);
                 state = "source_streaming_synthetic";
                 int frameIndex = 0;
+                long nextSyncRequestMs = SystemClock.elapsedRealtime() + SYNC_FRAME_REQUEST_INTERVAL_MS;
                 while (!stopRequested) {
+                    long nowMs = SystemClock.elapsedRealtime();
+                    if (requestPendingConsumerSyncFrame(encoder)) {
+                        nextSyncRequestMs = nowMs + SYNC_FRAME_REQUEST_INTERVAL_MS;
+                    } else if (nowMs >= nextSyncRequestMs) {
+                        requestSyncFrame(encoder);
+                        nextSyncRequestMs = nowMs + SYNC_FRAME_REQUEST_INTERVAL_MS;
+                    }
                     long frameStartNs = SystemClock.elapsedRealtimeNanos();
                     drawSyntheticFrame(surface, frameIndex, profile);
                     drainEncoder(encoder, false);
@@ -1048,9 +1152,28 @@ final class RemoteCameraSourceRuntime {
                 if (selection.fpsRange != null) {
                     request.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, selection.fpsRange);
                 }
-                cameraSession.setRepeatingRequest(request.build(), null, handler);
+                cameraSession.setRepeatingRequest(
+                        request.build(),
+                        new CameraCaptureSession.CaptureCallback() {
+                            @Override
+                            public void onCaptureCompleted(
+                                    CameraCaptureSession session,
+                                    CaptureRequest request,
+                                    TotalCaptureResult result) {
+                                camera2FrameTracker.record(result);
+                            }
+                        },
+                        handler);
                 state = "source_streaming_camera2";
+                long nextSyncRequestMs = SystemClock.elapsedRealtime() + SYNC_FRAME_REQUEST_INTERVAL_MS;
                 while (!stopRequested) {
+                    long nowMs = SystemClock.elapsedRealtime();
+                    if (requestPendingConsumerSyncFrame(encoder)) {
+                        nextSyncRequestMs = nowMs + SYNC_FRAME_REQUEST_INTERVAL_MS;
+                    } else if (nowMs >= nextSyncRequestMs) {
+                        requestSyncFrame(encoder);
+                        nextSyncRequestMs = nowMs + SYNC_FRAME_REQUEST_INTERVAL_MS;
+                    }
                     drainEncoder(encoder, false);
                     Thread.sleep(5L);
                 }
@@ -1108,7 +1231,12 @@ final class RemoteCameraSourceRuntime {
                     outputBuffer.position(info.offset);
                     outputBuffer.limit(info.offset + info.size);
                     outputBuffer.get(payload);
-                    writePacketToOutputs(info.presentationTimeUs, info.flags, payload);
+                    long elapsedNs = SystemClock.elapsedRealtimeNanos();
+                    long unixNs = System.currentTimeMillis() * 1_000_000L;
+                    if ((info.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                        cacheCodecConfig(info.presentationTimeUs, info.flags, payload, elapsedNs, unixNs);
+                    }
+                    writePacketToOutputs(info.presentationTimeUs, info.flags, payload, elapsedNs, unixNs);
                 }
                 boolean eos = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
                 encoder.releaseOutputBuffer(status, false);
@@ -1118,12 +1246,57 @@ final class RemoteCameraSourceRuntime {
             }
         }
 
-        void writePacketToOutputs(long presentationTimeUs, int flags, byte[] payload) {
-            long elapsedNs = SystemClock.elapsedRealtimeNanos();
-            long unixNs = System.currentTimeMillis() * 1_000_000L;
+        void writePacketToOutputs(
+                long presentationTimeUs,
+                int flags,
+                byte[] payload,
+                long elapsedNs,
+                long unixNs) {
             for (SourcePort port : ports) {
                 port.writePacket(presentationTimeUs, flags, payload, elapsedNs, unixNs);
             }
+        }
+
+        void cacheCodecConfig(
+                long presentationTimeUs,
+                int flags,
+                byte[] payload,
+                long elapsedNs,
+                long unixNs) {
+            synchronized (codecConfigLock) {
+                cachedCodecConfigPacket = new EncodedPacketSnapshot(
+                        presentationTimeUs,
+                        flags,
+                        payload,
+                        elapsedNs,
+                        unixNs);
+                codecConfigCacheUpdateCount.incrementAndGet();
+            }
+        }
+
+        EncodedPacketSnapshot cachedCodecConfigPacket() {
+            synchronized (codecConfigLock) {
+                return cachedCodecConfigPacket;
+            }
+        }
+
+        void noteCodecConfigReplay() {
+            codecConfigReplayCount.incrementAndGet();
+        }
+
+        void requestConsumerSyncFrame() {
+            consumerSyncFrameRequestCount.incrementAndGet();
+        }
+
+        boolean requestPendingConsumerSyncFrame(MediaCodec encoder) {
+            long requested = consumerSyncFrameRequestCount.get();
+            long applied = consumerSyncFrameAppliedCount.get();
+            if (requested <= applied) {
+                return false;
+            }
+            requestSyncFrame(encoder);
+            consumerSyncFrameAppliedCount.set(requested);
+            return true;
         }
 
         MediaProfile firstProfile() {
@@ -1191,6 +1364,17 @@ final class RemoteCameraSourceRuntime {
             if (cameraSelection != null) {
                 json.put("camera_selection", cameraSelection.toJson());
             }
+            if (SOURCE_CAMERA2_MEDIACODEC_SURFACE.equals(sourceKind)) {
+                json.put("camera2_capture_freshness", camera2FrameTracker.toJson());
+            }
+            json.put("codec_config_cache_ready", cachedCodecConfigPacket() != null);
+            json.put("codec_config_cache_update_count", codecConfigCacheUpdateCount.get());
+            json.put("codec_config_replay_count", codecConfigReplayCount.get());
+            json.put("consumer_sync_frame_request_count", consumerSyncFrameRequestCount.get());
+            json.put("consumer_sync_frame_applied_count", consumerSyncFrameAppliedCount.get());
+            json.put(
+                    "consumer_sync_frame_pending_count",
+                    Math.max(0L, consumerSyncFrameRequestCount.get() - consumerSyncFrameAppliedCount.get()));
             JSONArray lanes = new JSONArray();
             for (SourcePort port : ports) {
                 lanes.put(port.toJson());
@@ -1213,14 +1397,22 @@ final class RemoteCameraSourceRuntime {
         volatile ServerSocket serverSocket;
         volatile Socket socket;
         volatile OutputStream output;
+        volatile boolean streamReady;
         volatile Thread acceptorThread;
         volatile String state = "created";
         volatile String error = "";
         volatile long headerBytes;
+        volatile long headerWriteCount;
+        volatile long lastHeaderElapsedMs = -1L;
+        volatile long consumerAcceptCount;
+        volatile long consumerReconnectCount;
         volatile long bytesWritten;
         volatile long packetCount;
         volatile long videoPacketCount;
         volatile long codecConfigPacketCount;
+        volatile long firstPacketElapsedMs = -1L;
+        volatile long lastPacketElapsedMs = -1L;
+        volatile long lastPacketUnixMs = -1L;
 
         SourcePort(String eye, int port, MediaProfile profile) {
             this.eye = eye;
@@ -1247,23 +1439,49 @@ final class RemoteCameraSourceRuntime {
         }
 
         void accept(SourceGroup group) {
-            Socket client = null;
-            try {
-                state = "waiting_for_source_consumer";
-                client = serverSocket.accept();
-                client.setTcpNoDelay(true);
-                socket = client;
-                output = client.getOutputStream();
-                MediaProfile headerProfile = profileForHeader(group);
-                headerBytes = writeStreamHeader(output, headerProfile, metadata(group, headerProfile));
-                bytesWritten += headerBytes;
-                state = "source_consumer_connected";
-            } catch (Exception ex) {
-                if (!group.stopRequested) {
-                    state = "failed";
-                    error = ex.getClass().getSimpleName() + ": " + safeMessage(ex);
+            while (!group.stopRequested) {
+                Socket client = null;
+                try {
+                    state = "waiting_for_source_consumer";
+                    client = serverSocket.accept();
+                    if (group.stopRequested) {
+                        closeQuietly(client);
+                        break;
+                    }
+                    client.setTcpNoDelay(true);
+                    OutputStream clientOutput = client.getOutputStream();
+                    MediaProfile headerProfile = profileForHeader(group);
+                    long writtenHeaderBytes = writeStreamHeader(
+                            clientOutput,
+                            headerProfile,
+                            metadata(group, headerProfile));
+                    headerBytes += writtenHeaderBytes;
+                    headerWriteCount++;
+                    lastHeaderElapsedMs = SystemClock.elapsedRealtime();
+                    consumerAcceptCount++;
+                    consumerReconnectCount = Math.max(0L, consumerAcceptCount - 1L);
+                    bytesWritten += writtenHeaderBytes;
+                    replayCachedCodecConfig(group, clientOutput);
+                    group.requestConsumerSyncFrame();
+                    socket = client;
+                    output = clientOutput;
+                    streamReady = true;
+                    state = "source_consumer_connected";
+                    while (!group.stopRequested && socket == client && !client.isClosed()) {
+                        Thread.sleep(25L);
+                    }
+                } catch (Exception ex) {
+                    if (!group.stopRequested) {
+                        state = "failed";
+                        error = ex.getClass().getSimpleName() + ": " + safeMessage(ex);
+                    }
+                } finally {
+                    if (socket == client) {
+                        closeCurrentConsumer(client);
+                    } else {
+                        closeQuietly(client);
+                    }
                 }
-                closeQuietly(client);
             }
         }
 
@@ -1297,34 +1515,74 @@ final class RemoteCameraSourceRuntime {
         }
 
         boolean hasOutput() {
-            return output != null && socket != null && !socket.isClosed();
+            return streamReady && output != null && socket != null && !socket.isClosed();
         }
 
         void writePacket(long presentationTimeUs, int flags, byte[] payload, long elapsedNs, long unixNs) {
+            Socket targetSocket = socket;
             OutputStream target = output;
-            if (target == null) {
+            if (target == null || !streamReady) {
                 return;
             }
             try {
                 long bytes = writeEncodedPacket(target, presentationTimeUs, flags, payload, elapsedNs, unixNs);
-                bytesWritten += bytes;
-                packetCount++;
-                if ((flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
-                    codecConfigPacketCount++;
-                } else {
-                    videoPacketCount++;
-                }
+                notePacketWrite(bytes, flags);
                 state = "source_streaming";
             } catch (Exception ex) {
                 state = "source_consumer_closed";
                 error = ex.getClass().getSimpleName() + ": " + safeMessage(ex);
-                close();
+                closeCurrentConsumer(targetSocket);
             }
         }
 
+        void replayCachedCodecConfig(SourceGroup group, OutputStream clientOutput) throws IOException {
+            EncodedPacketSnapshot snapshot = group.cachedCodecConfigPacket();
+            if (snapshot == null) {
+                return;
+            }
+            long bytes = writeEncodedPacket(
+                    clientOutput,
+                    snapshot.presentationTimeUs,
+                    snapshot.flags,
+                    snapshot.payload,
+                    SystemClock.elapsedRealtimeNanos(),
+                    System.currentTimeMillis() * 1_000_000L);
+            notePacketWrite(bytes, snapshot.flags);
+            group.noteCodecConfigReplay();
+        }
+
+        void notePacketWrite(long bytes, int flags) {
+            bytesWritten += bytes;
+            packetCount++;
+            long nowElapsedMs = SystemClock.elapsedRealtime();
+            if (firstPacketElapsedMs < 0L) {
+                firstPacketElapsedMs = nowElapsedMs;
+            }
+            lastPacketElapsedMs = nowElapsedMs;
+            lastPacketUnixMs = System.currentTimeMillis();
+            if ((flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                codecConfigPacketCount++;
+            } else {
+                videoPacketCount++;
+            }
+        }
+
+        void closeCurrentConsumer(Socket expectedSocket) {
+            if (expectedSocket != null && socket != expectedSocket) {
+                closeQuietly(expectedSocket);
+                return;
+            }
+            streamReady = false;
+            OutputStream currentOutput = output;
+            Socket currentSocket = socket;
+            output = null;
+            socket = null;
+            closeQuietly(currentOutput);
+            closeQuietly(currentSocket);
+        }
+
         void close() {
-            closeQuietly(output);
-            closeQuietly(socket);
+            closeCurrentConsumer(socket);
             closeQuietly(serverSocket);
             Thread thread = acceptorThread;
             if (thread != null) {
@@ -1339,10 +1597,27 @@ final class RemoteCameraSourceRuntime {
             json.put("state", state);
             json.put("connected", hasOutput());
             json.put("header_bytes", headerBytes);
+            json.put("header_write_count", headerWriteCount);
+            json.put("last_header_elapsed_ms", lastHeaderElapsedMs);
+            json.put(
+                    "last_header_age_ms",
+                    lastHeaderElapsedMs >= 0L
+                            ? Math.max(0L, SystemClock.elapsedRealtime() - lastHeaderElapsedMs)
+                            : -1L);
+            json.put("consumer_accept_count", consumerAcceptCount);
+            json.put("consumer_reconnect_count", consumerReconnectCount);
             json.put("bytes_written", bytesWritten);
             json.put("packet_count", packetCount);
             json.put("video_packet_count", videoPacketCount);
             json.put("codec_config_packet_count", codecConfigPacketCount);
+            json.put("first_packet_elapsed_ms", firstPacketElapsedMs);
+            json.put("last_packet_elapsed_ms", lastPacketElapsedMs);
+            json.put("last_packet_unix_ms", lastPacketUnixMs);
+            json.put(
+                    "last_packet_age_ms",
+                    lastPacketElapsedMs >= 0L
+                            ? Math.max(0L, SystemClock.elapsedRealtime() - lastPacketElapsedMs)
+                            : -1L);
             json.put("media_payload_plane", "binary-media");
             json.put("high_rate_json_payload", false);
             if (error.length() > 0) {

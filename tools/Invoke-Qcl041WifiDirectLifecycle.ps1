@@ -23,6 +23,28 @@ param(
     [int]$Qcl081WarmupMs = 1200,
     [int]$Qcl081IntervalMs = 10,
     [double]$Qcl081TimeoutSeconds = 25.0,
+    [switch]$RunQcl081LslEcho,
+    [ValidateSet("broker", "pylsl")]
+    [string]$Qcl081EchoCommandProducer = "broker",
+    [string]$Qcl081EchoScript = "S:\Work\repos\active\rusty-hostess\tools\connectivity_probe\qcl081_wifi_direct_lsl_echo_roundtrip.py",
+    [ValidateSet("pylsl")]
+    [string]$Qcl081EchoBackend = "pylsl",
+    [string]$Qcl081EchoCommandStreamName = "RustyQCL081WifiDirectCommand",
+    [string]$Qcl081EchoCommandStreamType = "rusty.quest.qcl081.wifi_direct.command",
+    [string]$Qcl081EchoStreamName = "RustyQCL081WifiDirectEcho",
+    [string]$Qcl081EchoStreamType = "rusty.quest.qcl081.wifi_direct.echo",
+    [int]$Qcl081EchoSampleCount = 300,
+    [int]$Qcl081EchoIntervalMs = 100,
+    [int]$Qcl081EchoWarmupMs = 250,
+    [int]$Qcl081EchoPreSendDelayMs = 3000,
+    [int]$Qcl081EchoBrokerHoldAfterMs = 10000,
+    [int]$Qcl081EchoOutletHoldAfterMs = 5000,
+    [string]$Qcl081EchoReceiverResolveScope = "link",
+    [string]$Qcl081EchoReceiverListenAddress = "",
+    [string]$Qcl081EchoReceiverKnownPeers = "",
+    [double]$Qcl081EchoTimeoutSeconds = 60.0,
+    [string]$Qcl081WindowsLslDll = "C:\Users\tillh\AppData\Local\Programs\Python\Python312\Lib\site-packages\pylsl\lib\lsl.dll",
+    [switch]$SkipQcl081EchoFirewallRule,
     [int]$HoldAfterSocketSeconds = 0,
     [switch]$RunQcl082ProductMedia,
     [string]$HostessCtl = "S:\Work\repos\active\rusty-hostess\tools\hostessctl\hostessctl.py",
@@ -81,6 +103,70 @@ function Write-JsonFile {
         [string]$Path
     )
     $Value | ConvertTo-Json -Depth 64 | Set-Content -Encoding UTF8 -Path $Path
+}
+
+function Resolve-ExecutablePath {
+    param([Parameter(Mandatory=$true)][string]$Command)
+    $resolved = Get-Command $Command -ErrorAction Stop
+    if ($resolved.Source) {
+        return $resolved.Source
+    }
+    return $resolved.Path
+}
+
+function Ensure-Qcl081EchoPythonFirewallRule {
+    param(
+        [Parameter(Mandatory=$true)][string]$PythonCommand,
+        [Parameter(Mandatory=$true)][string]$OutPath
+    )
+
+    $ruleDisplayName = "Rusty Hostess QCL-081 LSL Echo Python TCP"
+    $pythonPath = Resolve-ExecutablePath -Command $PythonCommand
+    $created = $false
+    $enabledExisting = $false
+    $status = "pass"
+    $errorMessage = ""
+    try {
+        $existing = @(Get-NetFirewallRule -DisplayName $ruleDisplayName -ErrorAction SilentlyContinue)
+        if ($existing.Count -gt 0) {
+            $existing | Set-NetFirewallRule -Enabled True -ErrorAction Stop
+            $enabledExisting = $true
+        } else {
+            New-NetFirewallRule `
+                -DisplayName $ruleDisplayName `
+                -Direction Inbound `
+                -Action Allow `
+                -Program $pythonPath `
+                -Protocol TCP `
+                -Profile Public,Private `
+                -ErrorAction Stop | Out-Null
+            $created = $true
+        }
+    } catch {
+        $status = "blocked"
+        $errorMessage = $_.Exception.Message
+    }
+
+    $report = [ordered]@{
+        schema = "rusty.hostess.qcl081_lsl_echo_python_firewall.v1"
+        status = $status
+        rule_display_name = $ruleDisplayName
+        python_command = $PythonCommand
+        python_path = $pythonPath
+        direction = "Inbound"
+        protocol = "TCP"
+        profile = "Public,Private"
+        action = "Allow"
+        created = $created
+        enabled_existing = $enabledExisting
+        skipped = $false
+        error = $errorMessage
+    }
+    Write-JsonFile -Value $report -Path $OutPath
+    if ($status -ne "pass") {
+        throw "QCL-081 LSL echo Python firewall rule could not be enabled: $errorMessage"
+    }
+    return $report
 }
 
 function Test-Qcl082Camera2SourceKind {
@@ -1184,6 +1270,14 @@ if ([string]::IsNullOrWhiteSpace($OutDir)) {
 }
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 
+$defaultPeerHelperProject = "S:\Work\repos\active\rusty-hostess\tools\connectivity_probe\qcl041_wifi_direct_peer_helper\qcl041-wifi-direct-peer-helper.csproj"
+$lslBrokerHelperProject = "S:\Work\repos\active\rusty-hostess\tools\connectivity_probe\qcl041_wifi_direct_broker\qcl041-wifi-direct-broker.csproj"
+if ($RunQcl081LslEcho -and $Qcl081EchoCommandProducer -eq "broker" -and
+    [string]::IsNullOrWhiteSpace($WindowsHelperExe) -and
+    $WindowsHelperProject -eq $defaultPeerHelperProject) {
+    $WindowsHelperProject = $lslBrokerHelperProject
+}
+
 $apkPath = Join-Path $repoRoot "target\qcl041-wifi-direct-harness-android\rusty-quest-qcl041-wifi-direct-harness.apk"
 $brokerApkPath = Join-Path $repoRoot "target\manifold-broker-android\rusty-manifold-broker.apk"
 if ($Build -or -not (Test-Path $apkPath)) {
@@ -1224,6 +1318,13 @@ $qcl081ReceiverReport = Join-Path $OutDir ("qcl081-wifi-direct-{0}-receiver.json
 $qcl081ReceiverStdout = Join-Path $OutDir ("qcl081-wifi-direct-{0}-receiver.stdout.txt" -f $qcl081ReceiverSlug)
 $qcl081ReceiverStderr = Join-Path $OutDir ("qcl081-wifi-direct-{0}-receiver.stderr.txt" -f $qcl081ReceiverSlug)
 $qcl081SourceId = "rusty-quest-qcl081-wifi-direct-$RunId"
+$qcl081EchoReport = Join-Path $OutDir "qcl081-wifi-direct-lsl-echo-roundtrip.json"
+$qcl081EchoStdout = Join-Path $OutDir "qcl081-wifi-direct-lsl-echo-roundtrip.stdout.txt"
+$qcl081EchoStderr = Join-Path $OutDir "qcl081-wifi-direct-lsl-echo-roundtrip.stderr.txt"
+$qcl081EchoFirewallPath = Join-Path $OutDir "qcl081-lsl-echo-python-firewall.json"
+$qcl081EchoReceiverApiConfigPath = Join-Path $OutDir "qcl081-lsl-echo-receiver-lsl_api.cfg"
+$qcl081EchoCommandSourceId = "rusty-host-qcl081-wifi-direct-command-$RunId"
+$qcl081EchoSourceId = "rusty-quest-qcl081-wifi-direct-echo-$RunId"
 $rawArtifact = Join-Path $OutDir "quest-artifact-raw.json"
 $finalArtifact = Join-Path $OutDir "wifi-direct-lifecycle-qcl041-windows.live.json"
 $qcl082ReceiverResult = Join-Path $OutDir "qcl082-rmanvid1-receiver-result.json"
@@ -1235,6 +1336,10 @@ $qcl082BrokerPermissionPreflightPath = Join-Path $OutDir "qcl082-broker-permissi
 $qcl082BrokerPrestartPath = Join-Path $OutDir "qcl082-broker-prestart.json"
 $helperProcess = $null
 $qcl081ReceiverProcess = $null
+$qcl081EchoProcess = $null
+$qcl081EchoArgs = @()
+$qcl081EchoStartDeferred = $false
+$qcl081EchoStartedAfterSocket = $false
 $qcl082ReceiverProcess = $null
 $qcl082Started = $false
 $qcl082BrokerPrestarted = $false
@@ -1289,6 +1394,22 @@ try {
         "--socket-timeout-seconds", $SocketTimeoutSeconds.ToString(),
         "--autonomous-group-owner", "true"
     )
+    if ($RunQcl081LslEcho -and $Qcl081EchoCommandProducer -eq "broker") {
+        if (-not (Test-Path $Qcl081WindowsLslDll)) {
+            throw "QCL-081 Windows liblsl DLL not found for broker command outlet: $Qcl081WindowsLslDll"
+        }
+        $helperArgs += @(
+            "--lsl-command-outlet", "true",
+            "--lsl-dll", $Qcl081WindowsLslDll,
+            "--lsl-command-stream-name", $Qcl081EchoCommandStreamName,
+            "--lsl-command-stream-type", $Qcl081EchoCommandStreamType,
+            "--lsl-command-source-id", $qcl081EchoCommandSourceId,
+            "--lsl-command-sample-count", $Qcl081EchoSampleCount.ToString(),
+            "--lsl-command-interval-ms", $Qcl081EchoIntervalMs.ToString(),
+            "--lsl-command-start-delay-ms", $Qcl081EchoPreSendDelayMs.ToString(),
+            "--lsl-command-hold-after-ms", $Qcl081EchoBrokerHoldAfterMs.ToString()
+        )
+    }
     $helperProcess = Start-Process -FilePath $helperExe -ArgumentList $helperArgs -PassThru -WindowStyle Hidden
     Start-Sleep -Seconds 3
     if ($RunQcl082ProductMedia) {
@@ -1423,6 +1544,96 @@ try {
         $qcl081ReceiverProcess = Start-Process -FilePath $receiverFile -ArgumentList $receiverArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $qcl081ReceiverStdout -RedirectStandardError $qcl081ReceiverStderr
         Start-Sleep -Milliseconds 500
     }
+    if ($RunQcl081LslEcho) {
+        if (-not (Test-Path $Qcl081EchoScript)) {
+            throw "QCL-081 Wi-Fi Direct LSL echo script not found: $Qcl081EchoScript"
+        }
+        if ($Qcl081EchoCommandProducer -eq "broker") {
+            Write-JsonFile -Value ([ordered]@{
+                schema = "rusty.hostess.qcl081_lsl_echo_python_firewall.v1"
+                status = "skipped"
+                skipped = $true
+                reason = "Broker process owns the Windows LSL command outlet."
+            }) -Path $qcl081EchoFirewallPath
+        } elseif ($SkipQcl081EchoFirewallRule) {
+            Write-JsonFile -Value ([ordered]@{
+                schema = "rusty.hostess.qcl081_lsl_echo_python_firewall.v1"
+                status = "skipped"
+                skipped = $true
+                reason = "SkipQcl081EchoFirewallRule was set."
+            }) -Path $qcl081EchoFirewallPath
+        } else {
+            Ensure-Qcl081EchoPythonFirewallRule -PythonCommand $Python -OutPath $qcl081EchoFirewallPath | Out-Null
+        }
+        $qcl081EchoArgs = @(
+            $Qcl081EchoScript,
+            "--run-id", $RunId,
+            "--out", $qcl081EchoReport,
+            "--command-stream-name", $Qcl081EchoCommandStreamName,
+            "--command-stream-type", $Qcl081EchoCommandStreamType,
+            "--command-source-id", $qcl081EchoCommandSourceId,
+            "--echo-stream-name", $Qcl081EchoStreamName,
+            "--echo-stream-type", $Qcl081EchoStreamType,
+            "--echo-source-id", $qcl081EchoSourceId,
+            "--sample-count", $Qcl081EchoSampleCount.ToString(),
+            "--interval-ms", $Qcl081EchoIntervalMs.ToString(),
+            "--pre-send-delay-ms", $Qcl081EchoPreSendDelayMs.ToString(),
+            "--command-mode", $(if ($Qcl081EchoCommandProducer -eq "broker") { "external" } else { "pylsl_outlet" }),
+            "--timeout-seconds", ([string]::Format([System.Globalization.CultureInfo]::InvariantCulture, "{0}", $Qcl081EchoTimeoutSeconds))
+        )
+        if (Test-Path $qcl081EchoReport) {
+            Remove-Item -LiteralPath $qcl081EchoReport -Force
+        }
+        if (Test-Path $qcl081EchoReceiverApiConfigPath) {
+            Remove-Item -LiteralPath $qcl081EchoReceiverApiConfigPath -Force
+        }
+        if ($Qcl081EchoCommandProducer -eq "broker" -and (
+            -not [string]::IsNullOrWhiteSpace($Qcl081EchoReceiverResolveScope) -or
+            -not [string]::IsNullOrWhiteSpace($Qcl081EchoReceiverListenAddress) -or
+            -not [string]::IsNullOrWhiteSpace($Qcl081EchoReceiverKnownPeers))) {
+            $qcl081EchoReceiverApiConfigLines = [System.Collections.Generic.List[string]]::new()
+            @(
+                "[ports]",
+                "IPv6 = disable",
+                "",
+                "[multicast]",
+                "ResolveScope = $(if ([string]::IsNullOrWhiteSpace($Qcl081EchoReceiverResolveScope)) { 'link' } else { $Qcl081EchoReceiverResolveScope })",
+                $(if ([string]::IsNullOrWhiteSpace($Qcl081EchoReceiverListenAddress)) { $null } else { "ListenAddress = $Qcl081EchoReceiverListenAddress" }),
+                "",
+                "[lab]",
+                $(if ([string]::IsNullOrWhiteSpace($Qcl081EchoReceiverKnownPeers)) { $null } else { "KnownPeers = {$Qcl081EchoReceiverKnownPeers}" }),
+                "SessionID = default",
+                "",
+                "[log]",
+                "level = 0",
+                ""
+            ) | Where-Object { $null -ne $_ } | ForEach-Object { $qcl081EchoReceiverApiConfigLines.Add($_) }
+            [System.IO.File]::WriteAllText(
+                $qcl081EchoReceiverApiConfigPath,
+                ($qcl081EchoReceiverApiConfigLines -join [Environment]::NewLine),
+                [System.Text.UTF8Encoding]::new($false))
+        }
+        if ($Qcl081EchoCommandProducer -eq "broker") {
+            $qcl081EchoStartDeferred = $true
+            Write-Host "Deferring QCL-081 Wi-Fi Direct LSL echo receiver until Wi-Fi Direct socket exchange is live."
+        } else {
+            Write-Host "Starting QCL-081 Wi-Fi Direct LSL echo backend=$Qcl081EchoBackend command_source_id=$qcl081EchoCommandSourceId echo_source_id=$qcl081EchoSourceId"
+            $previousLslApiCfg = $env:LSLAPICFG
+            try {
+                if (Test-Path $qcl081EchoReceiverApiConfigPath) {
+                    $env:LSLAPICFG = $qcl081EchoReceiverApiConfigPath
+                }
+                $qcl081EchoProcess = Start-Process -FilePath $Python -ArgumentList $qcl081EchoArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $qcl081EchoStdout -RedirectStandardError $qcl081EchoStderr
+            } finally {
+                if ($null -eq $previousLslApiCfg) {
+                    Remove-Item Env:\LSLAPICFG -ErrorAction SilentlyContinue
+                } else {
+                    $env:LSLAPICFG = $previousLslApiCfg
+                }
+            }
+            Start-Sleep -Milliseconds 500
+        }
+    }
 
     $activity = "io.github.mesmerprism.rustyquest.qcl041/.Qcl041WifiDirectHarnessActivity"
     $service = "io.github.mesmerprism.rustyquest.qcl041/.Qcl041WifiDirectHarnessService"
@@ -1472,6 +1683,21 @@ try {
             "--ei", "qcl041.qcl081_lsl_sample_count", $Qcl081SampleCount.ToString(),
             "--ei", "qcl041.qcl081_lsl_warmup_ms", $Qcl081WarmupMs.ToString(),
             "--ei", "qcl041.qcl081_lsl_interval_ms", $Qcl081IntervalMs.ToString()
+        )
+    }
+    if ($RunQcl081LslEcho) {
+        $intentArgs += @(
+            "--ez", "qcl041.qcl081_lsl_echo_enabled", "true",
+            "--es", "qcl041.qcl081_lsl_echo_command_stream_name", $Qcl081EchoCommandStreamName,
+            "--es", "qcl041.qcl081_lsl_echo_command_stream_type", $Qcl081EchoCommandStreamType,
+            "--es", "qcl041.qcl081_lsl_echo_command_source_id", $qcl081EchoCommandSourceId,
+            "--es", "qcl041.qcl081_lsl_echo_stream_name", $Qcl081EchoStreamName,
+            "--es", "qcl041.qcl081_lsl_echo_stream_type", $Qcl081EchoStreamType,
+            "--es", "qcl041.qcl081_lsl_echo_source_id", $qcl081EchoSourceId,
+            "--ei", "qcl041.qcl081_lsl_echo_sample_count", $Qcl081EchoSampleCount.ToString(),
+            "--ei", "qcl041.qcl081_lsl_echo_warmup_ms", $Qcl081EchoWarmupMs.ToString(),
+            "--ei", "qcl041.qcl081_lsl_echo_outlet_hold_after_ms", $Qcl081EchoOutletHoldAfterMs.ToString(),
+            "--ei", "qcl041.qcl081_lsl_echo_timeout_seconds", ([int][Math]::Ceiling($Qcl081EchoTimeoutSeconds)).ToString()
         )
     }
     if (-not [string]::IsNullOrWhiteSpace($WindowsPeerNameContains)) {
@@ -1539,7 +1765,14 @@ try {
     if (Test-Path $rawArtifact) {
         Remove-Item -LiteralPath $rawArtifact -Force
     }
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds + $SocketTimeoutSeconds + [Math]::Max(0, $HoldAfterSocketSeconds) + 30)
+    $dependentTimeoutSeconds = 0.0
+    if ($RunQcl081Lsl) {
+        $dependentTimeoutSeconds = [Math]::Max($dependentTimeoutSeconds, $Qcl081TimeoutSeconds)
+    }
+    if ($RunQcl081LslEcho) {
+        $dependentTimeoutSeconds = [Math]::Max($dependentTimeoutSeconds, $Qcl081EchoTimeoutSeconds)
+    }
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds + $SocketTimeoutSeconds + [Math]::Max(0, $HoldAfterSocketSeconds) + $dependentTimeoutSeconds + 30)
     $artifactReady = $false
     while ((Get-Date) -lt $deadline) {
         $oldErrorActionPreference = $ErrorActionPreference
@@ -1604,6 +1837,28 @@ try {
                     $qcl082Started = $true
                     $qcl082ReceiverProcess = $null
                 }
+                if ($RunQcl081LslEcho -and $Qcl081EchoCommandProducer -eq "broker" -and
+                    $qcl081EchoStartDeferred -and -not $qcl081EchoStartedAfterSocket -and
+                    $candidate.lifecycle.cleanup.completed -ne $true -and
+                    (Test-Qcl041SocketExchangeReady -Artifact $candidate -ExpectedRunId $RunId)) {
+                    Write-Host "Starting delayed QCL-081 Wi-Fi Direct LSL echo receiver after socket exchange."
+                    $previousLslApiCfg = $env:LSLAPICFG
+                    try {
+                        if (Test-Path $qcl081EchoReceiverApiConfigPath) {
+                            $env:LSLAPICFG = $qcl081EchoReceiverApiConfigPath
+                        }
+                        $qcl081EchoProcess = Start-Process -FilePath $Python -ArgumentList $qcl081EchoArgs -PassThru -WindowStyle Hidden -RedirectStandardOutput $qcl081EchoStdout -RedirectStandardError $qcl081EchoStderr
+                    } finally {
+                        if ($null -eq $previousLslApiCfg) {
+                            Remove-Item Env:\LSLAPICFG -ErrorAction SilentlyContinue
+                        } else {
+                            $env:LSLAPICFG = $previousLslApiCfg
+                        }
+                    }
+                    $qcl081EchoStartedAfterSocket = $true
+                    $qcl081EchoStartDeferred = $false
+                    Start-Sleep -Milliseconds 500
+                }
                 if ($candidate.run_id -eq $RunId -and $candidate.lifecycle.cleanup.completed -eq $true) {
                     $artifactReady = $true
                     break
@@ -1628,9 +1883,15 @@ try {
     if ($qcl081ReceiverProcess -and -not $qcl081ReceiverProcess.HasExited) {
         $qcl081ReceiverProcess.WaitForExit([int](($Qcl081TimeoutSeconds + 5.0) * 1000.0)) | Out-Null
     }
+    if ($qcl081EchoProcess -and -not $qcl081EchoProcess.HasExited) {
+        $qcl081EchoProcess.WaitForExit([int](($Qcl081EchoTimeoutSeconds + 5.0) * 1000.0)) | Out-Null
+    }
 } finally {
     if ($qcl081ReceiverProcess -and -not $qcl081ReceiverProcess.HasExited) {
         Stop-Process -Id $qcl081ReceiverProcess.Id -Force
+    }
+    if ($qcl081EchoProcess -and -not $qcl081EchoProcess.HasExited) {
+        Stop-Process -Id $qcl081EchoProcess.Id -Force
     }
     if ($qcl082ReceiverProcess -and -not $qcl082ReceiverProcess.HasExited) {
         Stop-Process -Id $qcl082ReceiverProcess.Id -Force
@@ -1666,6 +1927,9 @@ if (-not (Test-Path $helperReport)) {
 }
 if ($RunQcl081Lsl -and -not (Test-Path $qcl081ReceiverReport)) {
     throw "QCL-081 Wi-Fi Direct LSL receiver did not produce $qcl081ReceiverReport"
+}
+if ($RunQcl081LslEcho -and -not (Test-Path $qcl081EchoReport)) {
+    throw "QCL-081 Wi-Fi Direct LSL echo did not produce $qcl081EchoReport"
 }
 if ($RunQcl082ProductMedia -and -not (Test-Path $qcl082ReceiverResult)) {
     throw "QCL-082 product media live session did not produce $qcl082ReceiverResult"
@@ -1731,6 +1995,38 @@ if ($RunQcl081Lsl -and (Test-Path $qcl081ReceiverReport)) {
     $qcl081Report.topology | Add-Member -Force -MemberType NoteProperty -Name paired_topology_promotion_allowed -Value $true
     Write-JsonFile -Value $qcl081Report -Path $qcl081ReceiverReport
 }
+if ($RunQcl081LslEcho -and (Test-Path $qcl081EchoReport)) {
+    $qcl081Echo = Read-JsonFile $qcl081EchoReport
+    if ($null -eq $qcl081Echo.topology) {
+        $qcl081Echo | Add-Member -MemberType NoteProperty -Name topology -Value ([pscustomobject]@{})
+    }
+    $hostEndpoint = $artifact.diagnostics.qcl081_lsl_echo.windows_group_owner_address
+    if ([string]::IsNullOrWhiteSpace($hostEndpoint)) {
+        $hostEndpoint = $artifact.diagnostics.qcl081_lsl.windows_group_owner_address
+    }
+    if ([string]::IsNullOrWhiteSpace($hostEndpoint)) {
+        $hostEndpoint = "192.168.137.1"
+    }
+    $deviceEndpoint = $artifact.diagnostics.lifecycle.wifi_direct_local_address
+    $commandProducerBackend = if ($Qcl081EchoCommandProducer -eq "broker") { "qcl041_wifi_direct_broker_liblsl" } else { $Qcl081EchoBackend }
+    $qcl081Echo | Add-Member -Force -MemberType NoteProperty -Name command_producer_backend -Value $commandProducerBackend
+    $qcl081Echo | Add-Member -Force -MemberType NoteProperty -Name quest_backend -Value $Qcl081LslBackend
+    $qcl081Echo | Add-Member -Force -MemberType NoteProperty -Name echo_receiver_backend -Value $Qcl081EchoBackend
+    $qcl081Echo | Add-Member -Force -MemberType NoteProperty -Name host_endpoint -Value $hostEndpoint
+    $qcl081Echo | Add-Member -Force -MemberType NoteProperty -Name device_endpoint -Value $deviceEndpoint
+    if (Test-Path $qcl081EchoFirewallPath) {
+        $qcl081EchoFirewall = Read-JsonFile $qcl081EchoFirewallPath
+        $qcl081Echo | Add-Member -Force -MemberType NoteProperty -Name python_firewall_artifact -Value $qcl081EchoFirewallPath
+        $qcl081Echo | Add-Member -Force -MemberType NoteProperty -Name python_firewall_status -Value $qcl081EchoFirewall.status
+        $qcl081Echo | Add-Member -Force -MemberType NoteProperty -Name python_firewall_rule -Value $qcl081EchoFirewall.rule_display_name
+    }
+    $qcl081Echo.topology | Add-Member -Force -MemberType NoteProperty -Name topology_report_path -Value $finalArtifact
+    $qcl081Echo.topology | Add-Member -Force -MemberType NoteProperty -Name local_endpoint -Value $hostEndpoint
+    $qcl081Echo.topology | Add-Member -Force -MemberType NoteProperty -Name remote_endpoint -Value $deviceEndpoint
+    $qcl081Echo.topology | Add-Member -Force -MemberType NoteProperty -Name paired_topology_status -Value "pass"
+    $qcl081Echo.topology | Add-Member -Force -MemberType NoteProperty -Name paired_topology_promotion_allowed -Value $true
+    Write-JsonFile -Value $qcl081Echo -Path $qcl081EchoReport
+}
 if ($RunQcl082ProductMedia -and (Test-Path $qcl082ReceiverResult)) {
     Invoke-Checked "Hostess QCL-082 product media normalization" $Python @(
         $HostessCtl,
@@ -1751,6 +2047,9 @@ if ($RunQcl081Lsl) {
     Write-Host "QCL-081 Wi-Fi Direct LSL receiver artifact: $qcl081ReceiverReport"
     Write-Host "Hostess QCL-081 promotion command:"
     Write-Host "python S:\Work\repos\active\rusty-hostess\tools\hostessctl\hostessctl.py connectivity-probe run --mode live --probe-id QCL-081 --lsl-source quest-runtime --lsl-quest-runtime-report `"$qcl081ReceiverReport`" --serial $Serial --adb `"$Adb`" --out target\connectivity-probe\qcl081-live-wifi-direct-lsl.json --fail-on-error"
+}
+if ($RunQcl081LslEcho) {
+    Write-Host "QCL-081 Wi-Fi Direct LSL echo roundtrip artifact: $qcl081EchoReport"
 }
 if ($RunQcl082ProductMedia) {
     Write-Host "QCL-082 product media receiver artifact: $qcl082ReceiverResult"

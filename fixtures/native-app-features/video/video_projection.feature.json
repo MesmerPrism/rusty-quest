@@ -9,9 +9,10 @@
   },
   "owner_lane": "rusty-quest",
   "status": "public-app-feature",
-  "description": "App-private decoded video projection surface using MediaCodec into a Rust-owned AImageReader surface.",
+  "description": "Decoded video projection source family using MediaCodec into Rust-owned AImageReader surfaces for app-private video files and broker RMANVID1 stereo Camera2 lanes.",
   "provides": [
-    "video_projection.full_eye"
+    "video_projection.full_eye",
+    "video_projection.broker_rmanvid1_camera_projection"
   ],
   "depends_on": [
     "quest.native.openxr_vulkan_base"
@@ -24,7 +25,9 @@
     "media_plane": "video-projection"
   },
   "android_manifest": {
-    "permissions": [],
+    "permissions": [
+      "android.permission.INTERNET"
+    ],
     "uses_features": [],
     "activities": [],
     "services": [],
@@ -60,6 +63,7 @@
   "markers": {
     "required": [
       "videoProjectionEnabled=true",
+      "videoProjectionSource=app-private-file",
       "videoProjectionHighRateJsonPayload=false"
     ],
     "forbidden": [

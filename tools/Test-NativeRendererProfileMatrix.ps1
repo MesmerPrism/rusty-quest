@@ -36,6 +36,7 @@ if ($checkAllText -notmatch 'Test-NativeRendererProfileMatrix\.ps1') {
 
 $expectedProfileNames = @(
     "quest-native-renderer-breathing-room-pmb-scale.profile.json",
+    "quest-native-renderer-broker-rmanvid1-stereo-camera.profile.json",
     "quest-native-renderer-display-composite-capture-only.profile.json",
     "quest-native-renderer-display-composite-feedback.profile.json",
     "quest-native-renderer-direct-hwb-1280x960.profile.json",

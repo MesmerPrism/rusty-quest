@@ -16,6 +16,8 @@ use crate::native_renderer_options::NativeCameraYcbcrMode;
 
 const CAMERA_IMPORT_CACHE_LIMIT: usize = 18;
 const CAMERA_STEREO_DESCRIPTOR_LIMIT: usize = 12;
+const REMOTE_BROKER_CAMERA_IMPORT_CACHE_LIMIT: usize = 2;
+const REMOTE_BROKER_CAMERA_STEREO_DESCRIPTOR_LIMIT: usize = 1;
 const CAMERA_LUMA_DIAGNOSTIC_SAMPLE_AXIS: u32 = 64;
 const CAMERA_LUMA_DIAGNOSTIC_HIGH_FREQUENCY_THRESHOLD: u32 = 12;
 const CAMERA_LUMA_DIAGNOSTIC_BUFFER_BYTES: vk::DeviceSize = 32;
@@ -160,6 +162,39 @@ impl CameraCacheEvictionStats {
             || self.protected_skips > 0
             || self.deferred > 0
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct CameraProjectionCacheLimits {
+    import_limit: usize,
+    stereo_descriptor_limit: usize,
+    policy: &'static str,
+    remote_broker_camera_projection: bool,
+}
+
+impl CameraProjectionCacheLimits {
+    fn for_frame(frame: &NativeStereoCameraFrame) -> Self {
+        if is_remote_broker_frame(&frame.left) || is_remote_broker_frame(&frame.right) {
+            Self {
+                import_limit: REMOTE_BROKER_CAMERA_IMPORT_CACHE_LIMIT,
+                stereo_descriptor_limit: REMOTE_BROKER_CAMERA_STEREO_DESCRIPTOR_LIMIT,
+                policy: "remote-broker-mediacodec-bounded",
+                remote_broker_camera_projection: true,
+            }
+        } else {
+            Self {
+                import_limit: CAMERA_IMPORT_CACHE_LIMIT,
+                stereo_descriptor_limit: CAMERA_STEREO_DESCRIPTOR_LIMIT,
+                policy: "direct-camera2-default",
+                remote_broker_camera_projection: false,
+            }
+        }
+    }
+}
+
+fn is_remote_broker_frame(frame: &NativeCameraFrame) -> bool {
+    frame.camera_id.starts_with("remote-broker-")
+        || frame.image_dataspace_status == "remote-mediacodec-surface"
 }
 
 pub(crate) struct CameraProjectionRenderer {
@@ -393,9 +428,11 @@ impl CameraProjectionRenderer {
         &mut self,
         device: &ash::Device,
         protected_hardware_buffer_ids: &[u64],
+        import_cache_limit: usize,
     ) -> CameraCacheEvictionStats {
         let mut stats = CameraCacheEvictionStats::default();
-        while self.imports.len() >= CAMERA_IMPORT_CACHE_LIMIT {
+        let import_cache_limit = import_cache_limit.max(1);
+        while self.imports.len() >= import_cache_limit {
             stats.attempts += 1;
             let mut evict_index = None;
             for (index, import) in self.imports.iter().enumerate() {
@@ -430,9 +467,11 @@ impl CameraProjectionRenderer {
         &mut self,
         device: &ash::Device,
         protected_hardware_buffer_ids: &[u64],
+        stereo_descriptor_limit: usize,
     ) -> CameraCacheEvictionStats {
         let mut stats = CameraCacheEvictionStats::default();
-        while self.stereo_descriptors.len() >= CAMERA_STEREO_DESCRIPTOR_LIMIT {
+        let stereo_descriptor_limit = stereo_descriptor_limit.max(1);
+        while self.stereo_descriptors.len() >= stereo_descriptor_limit {
             stats.attempts += 1;
             let mut evict_index = None;
             for (index, descriptor) in self.stereo_descriptors.iter().enumerate() {
@@ -493,10 +532,21 @@ impl CameraProjectionRenderer {
             frame.left.hardware_buffer_id,
             frame.right.hardware_buffer_id,
         ];
-        let left =
-            self.prepare_frame_inner(device, cmd, &frame.left, &protected_hardware_buffer_ids)?;
-        let right =
-            self.prepare_frame_inner(device, cmd, &frame.right, &protected_hardware_buffer_ids)?;
+        let cache_limits = CameraProjectionCacheLimits::for_frame(frame);
+        let left = self.prepare_frame_inner(
+            device,
+            cmd,
+            &frame.left,
+            &protected_hardware_buffer_ids,
+            cache_limits,
+        )?;
+        let right = self.prepare_frame_inner(
+            device,
+            cmd,
+            &frame.right,
+            &protected_hardware_buffer_ids,
+            cache_limits,
+        )?;
         let (descriptor_set_layout, pipeline_layout, pipeline) = {
             let resources = self
                 .resources
@@ -516,14 +566,17 @@ impl CameraProjectionRenderer {
             descriptor.descriptor_set
         } else {
             let descriptors_before = self.stereo_descriptors.len();
-            let eviction_stats =
-                self.evict_stereo_descriptors_to_limit(device, &protected_hardware_buffer_ids);
+            let eviction_stats = self.evict_stereo_descriptors_to_limit(
+                device,
+                &protected_hardware_buffer_ids,
+                cache_limits.stereo_descriptor_limit,
+            );
             if eviction_stats.should_log() {
                 crate::marker(
                     "camera-projection-cache",
                     format!(
-                        "status=descriptor-lru-eviction descriptorCacheLimit={} descriptorsBefore={} descriptorsAfter={} evictionAttempts={} evictedDescriptorCount={} inFlightSkipCount={} protectedSkipCount={} cacheEvictionApplied={} cacheEvictionDeferred={}",
-                        CAMERA_STEREO_DESCRIPTOR_LIMIT,
+                        "status=descriptor-lru-eviction descriptorCacheLimit={} descriptorsBefore={} descriptorsAfter={} evictionAttempts={} evictedDescriptorCount={} inFlightSkipCount={} protectedSkipCount={} cacheEvictionApplied={} cacheEvictionDeferred={} cachePolicy={} remoteBrokerCameraProjectionBoundedImportCache={}",
+                        cache_limits.stereo_descriptor_limit,
                         descriptors_before,
                         self.stereo_descriptors.len(),
                         eviction_stats.attempts,
@@ -532,6 +585,8 @@ impl CameraProjectionRenderer {
                         eviction_stats.protected_skips,
                         eviction_stats.applied > 0,
                         eviction_stats.deferred > 0,
+                        cache_limits.policy,
+                        cache_limits.remote_broker_camera_projection,
                     ),
                 );
             }
@@ -640,6 +695,7 @@ impl CameraProjectionRenderer {
         cmd: vk::CommandBuffer,
         frame: &NativeCameraFrame,
         protected_hardware_buffer_ids: &[u64],
+        cache_limits: CameraProjectionCacheLimits,
     ) -> Result<PreparedCameraImport, String> {
         let key = CameraImportKey::from_frame(frame);
         if let Some(index) = self.imports.iter().position(|import| import.key == key) {
@@ -689,13 +745,17 @@ impl CameraProjectionRenderer {
         }
 
         let imports_before = self.imports.len();
-        let eviction_stats = self.evict_imports_to_limit(device, protected_hardware_buffer_ids);
+        let eviction_stats = self.evict_imports_to_limit(
+            device,
+            protected_hardware_buffer_ids,
+            cache_limits.import_limit,
+        );
         if eviction_stats.should_log() {
             crate::marker(
                 "camera-projection-cache",
                 format!(
-                    "status=import-lru-eviction importCacheLimit={} importsBefore={} importsAfter={} evictionAttempts={} evictedImportCount={} inFlightSkipCount={} protectedSkipCount={} cacheEvictionApplied={} cacheEvictionDeferred={}",
-                    CAMERA_IMPORT_CACHE_LIMIT,
+                    "status=import-lru-eviction importCacheLimit={} importsBefore={} importsAfter={} evictionAttempts={} evictedImportCount={} inFlightSkipCount={} protectedSkipCount={} cacheEvictionApplied={} cacheEvictionDeferred={} cachePolicy={} remoteBrokerCameraProjectionBoundedImportCache={}",
+                    cache_limits.import_limit,
                     imports_before,
                     self.imports.len(),
                     eviction_stats.attempts,
@@ -704,6 +764,8 @@ impl CameraProjectionRenderer {
                     eviction_stats.protected_skips,
                     eviction_stats.applied > 0,
                     eviction_stats.deferred > 0,
+                    cache_limits.policy,
+                    cache_limits.remote_broker_camera_projection,
                 ),
             );
         }
@@ -734,7 +796,7 @@ impl CameraProjectionRenderer {
         crate::marker(
             "camera-projection-import",
             format!(
-                "status=ok side={} cameraId={} sourceFrame={} hardwareBufferId={} width={} height={} nativeFormat={} layers={} stride={} usage={} externalFormat={} vkFormat={:?} allocationSize={} memoryTypeBits=0x{:x} descriptorShape=combined-immutable-sampler-ycbcr-conversion {} gpuImportWorked=true vulkanExternalImportReady=true",
+                "status=ok side={} cameraId={} sourceFrame={} hardwareBufferId={} width={} height={} nativeFormat={} layers={} stride={} usage={} externalFormat={} vkFormat={:?} allocationSize={} memoryTypeBits=0x{:x} descriptorShape=combined-immutable-sampler-ycbcr-conversion cachePolicy={} importCacheLimit={} descriptorCacheLimit={} remoteBrokerCameraProjectionBoundedImportCache={} {} gpuImportWorked=true vulkanExternalImportReady=true",
                 frame.side,
                 crate::sanitize(&frame.camera_id),
                 frame.source_frame,
@@ -749,6 +811,10 @@ impl CameraProjectionRenderer {
                 format_key.format,
                 import_properties.allocation_size,
                 import_properties.memory_type_bits,
+                cache_limits.policy,
+                cache_limits.import_limit,
+                cache_limits.stereo_descriptor_limit,
+                cache_limits.remote_broker_camera_projection,
                 resources.ycbcr_metadata.marker_fields()
             ),
         );

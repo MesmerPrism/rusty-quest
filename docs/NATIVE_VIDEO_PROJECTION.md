@@ -6,6 +6,27 @@ a Rust-created `AImageReader` `Surface`, and Rust imports the decoded
 `AHardwareBuffer` as a Vulkan sampled image. Video frames do not cross Java or
 Rust as CPU pixels and do not use high-rate JSON payloads.
 
+## Broker RMANVID1 Stereo Camera Source
+
+`debug.rustyquest.native_renderer.video_projection.source=broker-rmanvid1`
+selects the Quest-to-Quest stereo Camera2 inlet. This source connects to two
+local Manifold broker receiver sockets, one left lane and one right lane, and
+expects RMANVID1 H.264 camera packets from the peer headset. Java owns only the
+socket and MediaCodec control path. Each lane decodes into a Rust-created
+`AImageReader` surface, so the decoded frames enter Rust as
+`AHardwareBuffer` handles with `nativeImageReader=true`,
+`javaHardwareBufferBridge=false`, `cpuPixelCopy=false`, and
+`highRateJsonPayload=false`.
+
+The broker source is not a fullscreen SBS video background. The native renderer
+publishes the latest left and right broker frames as camera-frame-compatible
+records with `leftCameraId=remote-broker-left` and
+`rightCameraId=remote-broker-right`, then feeds the existing
+custom-stereo-projection camera renderer. Runtime evidence must include
+`remoteBrokerCameraProjectionActive=true`,
+`videoProjectionSourceAuthority=manifold-broker-rmanvid1-camera2-h264`, and
+`videoProjectionTransport=rmanvid1-tcp-to-mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer`.
+
 ## SBS Source Rects
 
 Side-by-side video keeps exact per-eye source UV ownership:

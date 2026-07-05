@@ -391,7 +391,13 @@ Assert-ContainsTokens $cameraProjection @(
     'query_ahb_vulkan_import_properties',
     'import_ahb_sampled_image',
     'transition_ahb_sampled_image_to_shader_read',
-    'AhbVulkanSampledImage'
+    'AhbVulkanSampledImage',
+    'REMOTE_BROKER_CAMERA_IMPORT_CACHE_LIMIT',
+    'REMOTE_BROKER_CAMERA_STEREO_DESCRIPTOR_LIMIT',
+    'remote-broker-mediacodec-bounded',
+    'remoteBrokerCameraProjectionBoundedImportCache',
+    'is_remote_broker_frame',
+    'remote-mediacodec-surface'
 ) "camera projection shared AHB Vulkan import use"
 
 Assert-ContainsTokens $ahbVulkan @(

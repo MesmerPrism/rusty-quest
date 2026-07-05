@@ -15,7 +15,7 @@
   ],
   "depends_on": [
     "quest.native.openxr_vulkan_base",
-    "hand_mesh_visual",
+    "hand_mesh_live_input",
     "particles.hand_anchor.ordering.gpu_index_remap"
   ],
   "incompatible_with": [],

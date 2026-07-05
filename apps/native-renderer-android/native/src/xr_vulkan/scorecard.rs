@@ -39,6 +39,7 @@ pub(super) fn write_projection_scorecard(
     compact_hand_input_source_mode: CompactHandInputSourceMode,
     render_mode: NativeRendererRenderMode,
     camera_output_mode: NativeCameraOutputMode,
+    remote_broker_camera_projection_active: bool,
     camera_ycbcr_mode: crate::native_renderer_options::NativeCameraYcbcrMode,
     camera_resolution_profile: crate::native_renderer_options::NativeCameraResolutionProfile,
     camera_reader_max_images: u32,
@@ -86,8 +87,8 @@ pub(super) fn write_projection_scorecard(
     } else {
         (0, 0, 0, 0, 0, 0, 0, 0, frame_count, 0, 0)
     };
-    let custom_camera_output_enabled =
-        render_mode.uses_custom_stereo_projection() && camera_output_mode.camera_import_enabled();
+    let custom_camera_output_enabled = render_mode.uses_custom_stereo_projection()
+        && (camera_output_mode.camera_import_enabled() || remote_broker_camera_projection_active);
     let private_projection_active =
         camera_output_mode.private_layer_projection_enabled() && private_extension_stats.ready;
     let guide_projection_active =
@@ -104,6 +105,8 @@ pub(super) fn write_projection_scorecard(
         render_mode.disabled_camera_projection_path()
     } else if render_mode.uses_solid_black_background() {
         render_mode.disabled_camera_projection_path()
+    } else if remote_broker_camera_projection_active {
+        "metadata-target-remote-broker-camera2-h264"
     } else if !camera_output_mode.camera_import_enabled() {
         "disabled-camera-output"
     } else if camera_output_mode.direct_hwb_forced() {
@@ -157,6 +160,37 @@ pub(super) fn write_projection_scorecard(
     let camera_capture_result_correlation_ready =
         camera_projection_stats.left_capture_result.ready()
             && camera_projection_stats.right_capture_result.ready();
+    crate::marker(
+        "camera-projection-scorecard",
+        format!(
+            "frame={} renderMode={} remoteBrokerCameraProjectionActive={} cameraProjectionReady={} openxrSubmitReady=true vulkanExternalImportReady={} projectionReady={} cameraProjectionPath={} leftCameraId={} rightCameraId={} leftSourceFrame={} rightSourceFrame={} leftHardwareBufferId={} rightHardwareBufferId={} leftImportSequence={} rightImportSequence={} stereoPairDeltaNs={} stereoPairingPolicy={} observedOpenXrFps={:.1} projectionExtent={}x{} sourceAuthority={} nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false",
+            frame_count,
+            render_mode.marker_value(),
+            remote_broker_camera_projection_active,
+            camera_projection_ready,
+            camera_projection_stats.rendered,
+            camera_projection_ready,
+            camera_projection_path,
+            crate::sanitize(&camera_projection_stats.left_camera_id),
+            crate::sanitize(&camera_projection_stats.right_camera_id),
+            camera_projection_stats.left_source_frame,
+            camera_projection_stats.right_source_frame,
+            camera_projection_stats.left_hardware_buffer_id,
+            camera_projection_stats.right_hardware_buffer_id,
+            camera_projection_stats.left_import_sequence,
+            camera_projection_stats.right_import_sequence,
+            camera_projection_stats.pair_delta_ns,
+            camera_projection_stats.stereo_pairing_policy,
+            observed_openxr_fps,
+            extent.width,
+            extent.height,
+            if remote_broker_camera_projection_active {
+                "manifold-broker-rmanvid1-camera2-h264"
+            } else {
+                "camera-runtime"
+            }
+        ),
+    );
     crate::marker(
         "timing-scorecard",
         format!(

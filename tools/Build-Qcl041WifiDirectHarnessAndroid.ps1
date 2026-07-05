@@ -5,7 +5,8 @@ param(
     [string]$OutDir = "",
     [string]$Keystore = "",
     [string]$LslAndroidNativeLibDir = "",
-    [switch]$SkipQcl081LslNative
+    [switch]$SkipQcl081LslNative,
+    [switch]$SkipQcl041SocketProbeNative
 )
 
 $ErrorActionPreference = "Stop"
@@ -75,14 +76,19 @@ $apksigner = Join-Path $buildTools "apksigner.bat"
 $javac = Join-Path $JavaHome "bin\javac.exe"
 $jar = Join-Path $JavaHome "bin\jar.exe"
 $keytool = Join-Path $JavaHome "bin\keytool.exe"
+$nativeBuildRequired = (-not $SkipQcl081LslNative) -or (-not $SkipQcl041SocketProbeNative)
 $clang = ""
-if (-not $SkipQcl081LslNative) {
+$clangC = ""
+if ($nativeBuildRequired) {
     if ([string]::IsNullOrWhiteSpace($AndroidNdkHome) -or -not (Test-Path $AndroidNdkHome)) {
-        throw "ANDROID_NDK_HOME, -AndroidNdkHome, or $defaultNdk is required for QCL-081 native bridge packaging."
+        throw "ANDROID_NDK_HOME, -AndroidNdkHome, or $defaultNdk is required for QCL-041 native socket probe or QCL-081 native bridge packaging."
     }
 }
 if (-not $SkipQcl081LslNative) {
     $clang = Join-Path $AndroidNdkHome "toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android29-clang++.cmd"
+}
+if (-not $SkipQcl041SocketProbeNative) {
+    $clangC = Join-Path $AndroidNdkHome "toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android29-clang.cmd"
 }
 
 foreach ($tool in @($platformJar, $aapt2, $d8, $zipalign, $apksigner, $javac, $jar, $keytool)) {
@@ -96,6 +102,15 @@ if (-not $SkipQcl081LslNative) {
             throw "Required native build tool not found: $tool"
         }
     }
+}
+if (-not $SkipQcl041SocketProbeNative) {
+    foreach ($tool in @($clangC)) {
+        if (-not (Test-Path $tool)) {
+            throw "Required native build tool not found: $tool"
+        }
+    }
+}
+if (-not $SkipQcl081LslNative) {
     foreach ($library in @("liblsl.so", "libc++_shared.so")) {
         $libraryPath = Join-Path $LslAndroidNativeLibDir $library
         if (-not (Test-Path $libraryPath)) {
@@ -163,6 +178,23 @@ if (-not $SkipQcl081LslNative) {
     Copy-Item -LiteralPath (Join-Path $LslAndroidNativeLibDir "libc++_shared.so") -Destination (Join-Path $nativePackLibDir "libc++_shared.so") -Force
     Copy-Item -LiteralPath $bridgeSo -Destination (Join-Path $nativePackLibDir "libqcl081_lsl_outlet_bridge.so") -Force
 }
+if (-not $SkipQcl041SocketProbeNative) {
+    $socketProbeSource = Join-Path $appRoot "src\main\cpp\qcl041_socket_probe.c"
+    $socketProbeSo = Join-Path $nativeOutDir "libqcl041_socket_probe.so"
+    Invoke-Checked "QCL-041 native fd socket probe" $clangC @(
+        "-shared",
+        "-fPIC",
+        "-std=c11",
+        "-I", (Join-Path $appRoot "src\main\cpp"),
+        $socketProbeSource,
+        "-landroid",
+        "-llog",
+        "-Wl,-z,max-page-size=16384",
+        "-Wl,-z,common-page-size=16384",
+        "-o", $socketProbeSo
+    )
+    Copy-Item -LiteralPath $socketProbeSo -Destination (Join-Path $nativePackLibDir "libqcl041_socket_probe.so") -Force
+}
 Invoke-Checked "aapt2 link" $aapt2 @(
     "link",
     "-o", $apkUnsigned,
@@ -176,7 +208,7 @@ Invoke-Checked "aapt2 link" $aapt2 @(
 
 Copy-Item $apkUnsigned $apkUnaligned
 Invoke-Checked "jar dex update" $jar @("uf", $apkUnaligned, "-C", $dexDir, "classes.dex")
-if (-not $SkipQcl081LslNative) {
+if ($nativeBuildRequired) {
     Invoke-Checked "jar native library update" $jar @("uf", $apkUnaligned, "-C", $nativePackRoot, "lib")
 }
 Invoke-Checked "zipalign" $zipalign @("-f", "4", $apkUnaligned, $apkAligned)
@@ -218,6 +250,7 @@ $manifest = [ordered]@{
     min_sdk = 29
     apk_path = $apkSigned
     apk_sha256 = $sha256
+    qcl041_socket_probe_native_packaged = (-not $SkipQcl041SocketProbeNative)
     qcl081_lsl_native_packaged = (-not $SkipQcl081LslNative)
     qcl081_lsl_native_lib_source = if ($SkipQcl081LslNative) { "" } else { $LslAndroidNativeLibDir }
     live_evidence_synthesized = $false

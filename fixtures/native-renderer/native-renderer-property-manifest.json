@@ -17,7 +17,7 @@
     "apps/native-renderer-android/native/src/manifold_scalar_driver_bridge.rs",
     "apps/native-renderer-android/native/src/lsl_transport_bridge.rs"
   ],
-  "property_count": 241,
+  "property_count": 251,
   "properties": [
     {
       "name": "debug.rustyquest.native_renderer.camera.direct_border.opacity",
@@ -1668,6 +1668,121 @@
       "range": {
         "min": -0.45,
         "max": 0.45
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.material.alpha",
+      "family": "hand_mesh",
+      "runtime_owner": "native_renderer_visual_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.05,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.material.base_color.b",
+      "family": "hand_mesh",
+      "runtime_owner": "native_renderer_visual_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.material.base_color.g",
+      "family": "hand_mesh",
+      "runtime_owner": "native_renderer_visual_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.material.base_color.r",
+      "family": "hand_mesh",
+      "runtime_owner": "native_renderer_visual_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.material.profile",
+      "family": "hand_mesh",
+      "runtime_owner": "native_renderer_visual_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "unity-basic-reference",
+        "mint-rim",
+        "flat-gray"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.material.rim_strength",
+      "family": "hand_mesh",
+      "runtime_owner": "native_renderer_visual_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.0,
+        "max": 1.0
       },
       "validators": [
         "runtime-parser",
@@ -4237,6 +4352,79 @@
       ]
     },
     {
+      "name": "debug.rustyquest.native_renderer.video_projection.broker.connect_timeout_ms",
+      "family": "video_projection",
+      "runtime_owner": "native_renderer_video_projection_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "u32",
+      "range": {
+        "min": 100,
+        "max": 60000
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_projection.broker.host",
+      "family": "video_projection",
+      "runtime_owner": "native_renderer_video_projection_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "string",
+      "non_empty": true,
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_projection.broker.left_port",
+      "family": "video_projection",
+      "runtime_owner": "native_renderer_video_projection_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "u32",
+      "range": {
+        "min": 1,
+        "max": 65535
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.video_projection.broker.right_port",
+      "family": "video_projection",
+      "runtime_owner": "native_renderer_video_projection_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "u32",
+      "range": {
+        "min": 1,
+        "max": 65535
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
       "name": "debug.rustyquest.native_renderer.video_projection.enabled",
       "family": "video_projection",
       "runtime_owner": "native_renderer_video_projection_options",
@@ -4382,7 +4570,8 @@
       "default_behavior": "runtime-owner-default-when-unset",
       "value_kind": "token",
       "allowed_values": [
-        "app-private-file"
+        "app-private-file",
+        "broker-rmanvid1"
       ],
       "validators": [
         "runtime-parser",

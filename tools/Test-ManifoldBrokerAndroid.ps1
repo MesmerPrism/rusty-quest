@@ -51,6 +51,9 @@ if ($manifest -notmatch 'android\.permission\.FOREGROUND_SERVICE') {
 if ($manifest -notmatch 'android\.permission\.FOREGROUND_SERVICE_DATA_SYNC') {
     throw "Manifold broker Android manifest must declare FOREGROUND_SERVICE_DATA_SYNC for target-SDK 34 broker service startup."
 }
+if ($manifest -notmatch 'android\.permission\.FOREGROUND_SERVICE_CAMERA') {
+    throw "Manifold broker Android manifest must declare FOREGROUND_SERVICE_CAMERA for target-SDK 34 camera-source service startup."
+}
 if ($manifest -notmatch 'android\.permission\.NEARBY_WIFI_DEVICES') {
     throw "Manifold broker Android manifest must declare NEARBY_WIFI_DEVICES for Android 13+ Wi-Fi Direct peer socket binding."
 }
@@ -63,8 +66,8 @@ if ($manifest -notmatch 'android\.permission\.ACCESS_FINE_LOCATION') {
 if ($manifest -notmatch 'horizonos\.permission\.HEADSET_CAMERA') {
     throw "Manifold broker Android manifest must declare Quest headset camera permission for camera-source mode."
 }
-if ($manifest -notmatch 'BrokerStartService' -or $manifest -notmatch 'android:exported="true"' -or $manifest -notmatch 'android:foregroundServiceType="dataSync"' -or $manifest -notmatch 'android:stopWithTask="false"') {
-    throw "Manifold broker Android manifest must expose BrokerStartService as a dataSync foreground service for QCL-082 automation."
+if ($manifest -notmatch 'BrokerStartService' -or $manifest -notmatch 'android:exported="true"' -or $manifest -notmatch 'android:foregroundServiceType="dataSync\|camera"' -or $manifest -notmatch 'android:stopWithTask="false"') {
+    throw "Manifold broker Android manifest must expose BrokerStartService as a dataSync and camera foreground service for QCL-082 automation."
 }
 if ($launchEvidence -notmatch 'rusty\.quest\.manifold_broker_android\.launch_evidence\.v1') {
     throw "BrokerLaunchEvidence does not emit launch evidence schema."
@@ -77,6 +80,9 @@ if ($service -notmatch 'extends Service' -or $service -notmatch 'START_STICKY') 
 }
 if ($service -notmatch 'startForeground' -or $service -notmatch 'NotificationChannel') {
     throw "BrokerStartService must promote itself to a notification-backed foreground service."
+}
+if ($service -notmatch 'FOREGROUND_SERVICE_TYPE_CAMERA' -or $service -notmatch 'FOREGROUND_SERVICE_TYPE_DATA_SYNC') {
+    throw "BrokerStartService must start foreground with both camera and dataSync service types."
 }
 if ($service -notmatch 'LocalManifoldBrokerServer\.get\(\)\.start') {
     throw "BrokerStartService does not start the local Manifold broker server."
@@ -150,6 +156,15 @@ if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.receiver_p
 if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.transport_receive_ports') {
     throw "RemoteCameraSessionRuntime does not read the transport receiver port runtime property."
 }
+if ($remoteCameraRuntime -notmatch 'waiting_for_transport_peer_with_local_listener') {
+    throw "RemoteCameraSessionRuntime must bind the local renderer listener while waiting for transport-backed receiver peers."
+}
+if ($remoteCameraRuntime -notmatch 'transport_peer_connected_waiting_for_local_client') {
+    throw "RemoteCameraSessionRuntime must preserve transport-backed receiver peer acceptance before consuming a local renderer client."
+}
+if ($remoteCameraRuntime -notmatch 'transport_stream_copy_error_after_bytes') {
+    throw "RemoteCameraSessionRuntime must recycle accepted transport receiver segments after post-byte copy errors."
+}
 if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.transport_routes') {
     throw "RemoteCameraSessionRuntime does not read the peer transport route runtime property."
 }
@@ -218,6 +233,18 @@ if ($remoteCameraSourceRuntime -notmatch 'CameraManager') {
 }
 if ($remoteCameraSourceRuntime -notmatch 'parseCameraIds') {
     throw "RemoteCameraSourceRuntime does not parse per-eye Camera2 id bindings."
+}
+if ($remoteCameraSourceRuntime -notmatch 'cachedCodecConfigPacket') {
+    throw "RemoteCameraSourceRuntime does not cache codec config for source-consumer reconnect epochs."
+}
+if ($remoteCameraSourceRuntime -notmatch 'replayCachedCodecConfig') {
+    throw "RemoteCameraSourceRuntime does not replay codec config after writing a fresh stream header."
+}
+if ($remoteCameraSourceRuntime -notmatch 'consumer_sync_frame_request_count') {
+    throw "RemoteCameraSourceRuntime does not report consumer-triggered sync-frame requests."
+}
+if ($remoteCameraSourceRuntime -notmatch 'streamReady') {
+    throw "RemoteCameraSourceRuntime must not expose a source socket until its stream header epoch is ready."
 }
 if ($remoteCameraRuntime -notmatch 'high_rate_json_payload", false') {
     throw "RemoteCameraSessionRuntime must prove high-rate media is not carried through JSON."

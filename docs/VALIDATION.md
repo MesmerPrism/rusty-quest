@@ -20,6 +20,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPa
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
 ```
 
+The hand-tracking lab lanes have dedicated wrappers:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeOpenXrHandLabAndroid.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialHandLabAndroid.ps1
+```
+
+Pass `-Build` only when the Quest build/ADB resources have been reserved. The
+native wrapper resolves `native-openxr-hand-lab.app.json` and builds from its
+feature lock; the Spatial wrapper builds the same Spatial app under the
+`io.github.mesmerprism.rustyquest.spatial_hand_lab` identity. To compare
+Spatial SDK built-in avatar hands, set
+`debug.rustyquest.spatial.avatar_hands.visible=true` before launch.
+
 For the public Spatial world-hand billboard flock, the high-density carrier
 property is `debug.rustyquest.spatial.hand_billboard_flock.carrier`. The
 default `batched-scene-mesh` mode should report
