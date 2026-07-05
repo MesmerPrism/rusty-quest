@@ -11,6 +11,7 @@ param(
     [string]$ParticipantId = "",
     [ValidateSet("real-hands", "gpu-replay-hands", "icosphere")]
     [string]$SurfaceTargetId = "icosphere",
+    [switch]$UsePrivateEcsIcosphere,
     [switch]$SkipInstall,
     [switch]$ClearLogcat,
     [switch]$StopAfterRun,
@@ -46,9 +47,30 @@ $ParticleLayerCarrierProperty = "debug.rustyquest.spatial_camera_panel.particle_
 $ParticleLayerCarrierValue = "manual-panel-scene-object-custom-mesh"
 $ParticleLayerRendererModeProperty = "debug.rustyquest.spatial_camera_panel.particle_layer.renderer_mode"
 $ParticleLayerRendererModeValue = "private-main-draw-only"
+$NativeSurfaceParticleLayerEnabledProperty = "debug.rustyquest.spatial.native_surface_particle_layer.enabled"
+$PrivateEcsEnabledProperty = "debug.rustyquest.spatial.viscereality_ecs.enabled"
+$PrivateEcsCarrierProperty = "debug.rustyquest.spatial.viscereality_ecs.carrier"
+$PrivateEcsCountProperty = "debug.rustyquest.spatial.viscereality_ecs.count"
+$PrivateEcsCarrierCountProperty = "debug.rustyquest.spatial.viscereality_ecs.carrier_count"
+$PrivateEcsSphereRadiusProperty = "debug.rustyquest.spatial.viscereality_ecs.sphere_radius_meters"
+$PrivateEcsBillboardMetersProperty = "debug.rustyquest.spatial.viscereality_ecs.billboard_meters"
+$PrivateEcsAutoRecenterDistanceProperty = "debug.rustyquest.spatial.viscereality_ecs.auto_recenter_distance_meters"
+$PrivateEcsCarrierValue = "batched-scene-mesh"
 $ParticleLayerDefaultTargetDistanceMeters = 2.00
 $ParticleLayerDefaultViewYawDegrees = 0.0
 $ParticleLayerDefaultSurfaceOverscanScale = 1.0
+
+if ($UsePrivateEcsIcosphere -and $SurfaceTargetId -ne "icosphere") {
+    throw "-UsePrivateEcsIcosphere requires -SurfaceTargetId icosphere."
+}
+if ($UsePrivateEcsIcosphere -and (
+        $ExerciseParticleRecenter `
+        -or $RequireWorldAnchorMotion `
+        -or $RequireWorldAnchorStabilityDuringPanelMotion `
+        -or $RequireWorldAnchorStabilityDuringPanelViewYawMotion)) {
+    throw "-UsePrivateEcsIcosphere is an exclusive renderer path; native surface-particle recenter and panel-motion assertions do not apply."
+}
+$script:EffectiveSkipParticleControlBoost = [bool]$SkipParticleControlBoost -or [bool]$UsePrivateEcsIcosphere
 
 function Resolve-ToolPath {
     param(
@@ -710,15 +732,25 @@ function Invoke-PanelViewYawMotionSequence {
 
 function Set-ParticleVisualBaselineProperties {
     $handBillboardFlockValue = "0"
+    $nativeSurfaceParticleLayerValue = if ($UsePrivateEcsIcosphere) { "0" } else { "true" }
+    $nativeSurfaceParticleLayerFile = if ($UsePrivateEcsIcosphere) { "disable-native-surface-particle-layer-for-private-ecs.txt" } else { "enable-native-surface-particle-layer.txt" }
+    $privateEcsEnabledValue = if ($UsePrivateEcsIcosphere) { "1" } else { "0" }
     $properties = @(
         @{ Name = "debug.rustyquest.spatial.camera_hwb_projection_probe"; Value = "0"; File = "disable-projection-probe.txt" },
         @{ Name = "debug.rustyquest.spatial.camera_hwb_projection_probe.synthetic_visual"; Value = "0"; File = "disable-synthetic-visual-probe.txt" },
         @{ Name = "debug.rustyquest.spatial.camera_hwb_projection_probe.carrier"; Value = "none"; File = "clear-projection-carrier.txt" },
         @{ Name = "debug.rustyquest.spatial.camera_hwb_projection_probe.video.enabled"; Value = "0"; File = "disable-video-projection.txt" },
         @{ Name = "debug.rustyquest.spatial.video_projection_probe"; Value = "0"; File = "disable-video-only-projection-probe.txt" },
-        @{ Name = "debug.rustyquest.spatial.native_surface_particle_layer.enabled"; Value = "true"; File = "enable-native-surface-particle-layer.txt" },
+        @{ Name = $NativeSurfaceParticleLayerEnabledProperty; Value = $nativeSurfaceParticleLayerValue; File = $nativeSurfaceParticleLayerFile },
         @{ Name = $ParticleLayerCarrierProperty; Value = $ParticleLayerCarrierValue; File = "set-particle-layer-carrier-manual-scene-object.txt" },
         @{ Name = $ParticleLayerRendererModeProperty; Value = $ParticleLayerRendererModeValue; File = "set-particle-layer-renderer-private-main-draw.txt" },
+        @{ Name = $PrivateEcsEnabledProperty; Value = $privateEcsEnabledValue; File = "set-private-ecs-icosphere-enabled.txt" },
+        @{ Name = $PrivateEcsCarrierProperty; Value = $PrivateEcsCarrierValue; File = "set-private-ecs-icosphere-carrier.txt" },
+        @{ Name = $PrivateEcsCountProperty; Value = "2562"; File = "set-private-ecs-icosphere-count.txt" },
+        @{ Name = $PrivateEcsCarrierCountProperty; Value = "2"; File = "set-private-ecs-icosphere-carrier-count.txt" },
+        @{ Name = $PrivateEcsSphereRadiusProperty; Value = "2.0"; File = "set-private-ecs-icosphere-radius.txt" },
+        @{ Name = $PrivateEcsBillboardMetersProperty; Value = "0.055"; File = "set-private-ecs-icosphere-billboard.txt" },
+        @{ Name = $PrivateEcsAutoRecenterDistanceProperty; Value = "0.5"; File = "set-private-ecs-icosphere-auto-recenter.txt" },
         @{ Name = "debug.rustyquest.spatial.panel_shell.visible"; Value = "false"; File = "hide-spatial-panel-shell.txt" },
         @{ Name = $ParticleLayerTargetDistanceProperty; Value = (Format-InvariantNumber -Value $ParticleLayerDefaultTargetDistanceMeters); File = "set-particle-layer-target-distance-default.txt" },
         @{ Name = $ParticleLayerViewYawProperty; Value = (Format-InvariantNumber -Value $ParticleLayerDefaultViewYawDegrees); File = "set-particle-layer-view-yaw-default.txt" },
@@ -804,6 +836,13 @@ $summary = [ordered]@{
     ui_command_action = $UiCommandAction
     participant_id = $ParticipantId
     surface_target_id = $SurfaceTargetId
+    private_ecs_icosphere_requested = [bool]$UsePrivateEcsIcosphere
+    renderer_ownership_mode = $(if ($UsePrivateEcsIcosphere) { "private-spatial-ecs-icosphere-only" } else { "native-surface-particle-layer" })
+    native_surface_particle_layer_enabled_property = $NativeSurfaceParticleLayerEnabledProperty
+    native_surface_particle_layer_requested_enabled = -not [bool]$UsePrivateEcsIcosphere
+    private_ecs_enabled_property = $PrivateEcsEnabledProperty
+    private_ecs_carrier_property = $PrivateEcsCarrierProperty
+    private_ecs_carrier_value = $PrivateEcsCarrierValue
     apk_path = (Resolve-Path -LiteralPath $resolvedApk).Path
     apk_sha256 = $apkSha256
     out_dir = (Resolve-Path -LiteralPath $OutDir).Path
@@ -812,6 +851,7 @@ $summary = [ordered]@{
     clear_logcat_requested = [bool]$ClearLogcat
     stop_after_run = [bool]$StopAfterRun
     allow_missing_markers = [bool]$AllowMissingMarkers
+    skip_particle_control_boost_effective = [bool]$script:EffectiveSkipParticleControlBoost
     controller_input_required = $false
     automation_input_policy = "adb-am-start-intent-commands-no-physical-controller"
     world_anchor_motion_requirement_requested = [bool]$RequireWorldAnchorMotion
@@ -891,7 +931,7 @@ try {
     $activation = Invoke-SurfaceTargetActivation
     $summary.surface_target_activation_exit_code = $activation.exit_code
     Start-Sleep -Milliseconds 700
-    if (-not $SkipParticleControlBoost) {
+    if (-not $script:EffectiveSkipParticleControlBoost) {
         $boost = Invoke-ParticleControlBoost
         $summary.particle_control_boost_exit_code = $boost.exit_code
     }
@@ -979,6 +1019,43 @@ try {
     $summary.left_in_particle_view = Test-TextContains $markerText "leftInParticleView=true"
     $summary.render_loop_ready = Test-TextContains $markerText "status=render-loop-ready"
     $summary.first_frame_presented = Test-TextContains $markerText "status=first-frame-presented"
+    $summary.private_ecs_feature_loaded = Test-LineContainsAll $markerText @(
+        "channel=spatial-private-feature-loader",
+        "status=loaded",
+        "privateFeatureLoaded=true"
+    )
+    $summary.private_ecs_pool_created = Test-LineContainsAll $markerText @(
+        "channel=spatial-viscereality-icosphere-ecs",
+        "status=pool-created",
+        "visualParticleCount=2562",
+        "privateViscerealityEcsCarrier=true",
+        "privateViscerealityEcsGeometryKind=icosphere",
+        "privateViscerealityEcsIcosphereRecursionLevel=4",
+        "privateViscerealityEcsGeometrySource=akd-Ico4-x-axis-rotation-30deg",
+        "privateViscerealityEcsFibonacciFallback=false",
+        "privateViscerealityEcsParticleTextureMode=static-reference-soft-disc",
+        "privateViscerealityEcsParticleTextureResource=static_reference_soft_disc",
+        "privateViscerealityEcsParticleTextureResourceFound=true",
+        "privateViscerealityEcsRendererExclusivity=spatial-ecs-only",
+        "nativeSurfaceParticleLayerExpectedEnabled=false"
+    )
+    $summary.private_ecs_world_space_updated = Test-LineContainsAll $markerText @(
+        "channel=spatial-viscereality-icosphere-ecs",
+        "status=world-space-updated",
+        "privateViscerealityEcsRecenterChangesCoordinateMapping=false",
+        "privateViscerealityEcsCameraRealignEachFrame=false",
+        "directWorldSpace=true",
+        "projectionPlane=false"
+    )
+    $summary.native_surface_particle_render_loop_absent = -not (Test-LineContainsAll $markerText @(
+        "channel=native-surface-particle-layer",
+        "status=render-loop-ready"
+    ))
+    $summary.private_ecs_native_surface_particle_layer_suppressed =
+        (-not [bool]$UsePrivateEcsIcosphere) -or (
+            [bool]$summary.native_surface_particle_layer_requested_enabled -eq $false -and
+            [bool]$summary.native_surface_particle_render_loop_absent
+        )
     $summary.private_main_tracer_ready_compact = Test-TextContains $markerText "status=private-main-tracer-ready-compact"
     $summary.private_main_tracer_presented_compact = Test-TextContains $markerText "status=private-main-tracer-presented-compact"
     $summary.private_main_tracer_ready_counts_compact = Test-TextContains $markerText "status=private-main-tracer-ready-counts-compact"
@@ -1239,43 +1316,62 @@ try {
     $summary.fatal_matches = ([regex]::Matches($pidLogcat, "FATAL")).Count
     $summary.render_failed_matches = ([regex]::Matches($pidLogcat, "render-failed")).Count
 
-    $requiredFlags = @(
-        "surface_target_activation_started",
-        "surface_target_activated",
-        "left_in_particle_view",
-        "render_loop_ready",
-        "first_frame_presented",
-        "private_main_tracer_ready_compact",
-        "private_main_tracer_presented_compact",
-        "private_main_tracer_ready_counts_compact",
-        "private_main_tracer_presented_counts_compact",
-        "private_profile_metadata_present",
-        "private_payload_staged",
-        "private_renderer_main_draw",
-        "private_renderer_no_public_fallback",
-        "private_payload_visibility_private_main_draw_only",
-        "private_overlay_public_fallback_absent",
-        "native_hand_anchor_renderer_absent_for_icosphere",
-        "hand_billboard_flock_icosphere_suppressed",
-        "hand_billboard_flock_world_space_absent",
-        "private_world_anchor_fixed_sim_transform",
-        "private_openxr_world_anchor_mapper_ready",
-        "private_openxr_world_anchor_captured",
-        "private_openxr_world_anchor_mapped",
-        "private_tracers_active",
-        "private_descriptor_sets_ready",
-        "private_main_compute_recorded",
-        "private_main_draw_recorded",
-        "private_main_draw_spatial_world_direct_mapping",
-        "private_main_draw_explicit_eye_mapping",
-        "private_main_draw_particle_count_nonzero",
-        "private_main_draw_tracer_count_nonzero",
-        "screenshot_initial_captured",
-        "screenshot_initial_dimensions_valid",
-        "screenshot_captured",
-        "screenshot_dimensions_valid"
-    )
-    if (-not $SkipParticleControlBoost) {
+    if ($UsePrivateEcsIcosphere) {
+        $requiredFlags = @(
+            "surface_target_activation_started",
+            "surface_target_activated",
+            "left_in_particle_view",
+            "private_ecs_feature_loaded",
+            "private_ecs_pool_created",
+            "private_ecs_world_space_updated",
+            "native_surface_particle_render_loop_absent",
+            "private_ecs_native_surface_particle_layer_suppressed",
+            "hand_billboard_flock_icosphere_suppressed",
+            "hand_billboard_flock_world_space_absent",
+            "screenshot_initial_captured",
+            "screenshot_initial_dimensions_valid",
+            "screenshot_captured",
+            "screenshot_dimensions_valid"
+        )
+    } else {
+        $requiredFlags = @(
+            "surface_target_activation_started",
+            "surface_target_activated",
+            "left_in_particle_view",
+            "render_loop_ready",
+            "first_frame_presented",
+            "private_main_tracer_ready_compact",
+            "private_main_tracer_presented_compact",
+            "private_main_tracer_ready_counts_compact",
+            "private_main_tracer_presented_counts_compact",
+            "private_profile_metadata_present",
+            "private_payload_staged",
+            "private_renderer_main_draw",
+            "private_renderer_no_public_fallback",
+            "private_payload_visibility_private_main_draw_only",
+            "private_overlay_public_fallback_absent",
+            "native_hand_anchor_renderer_absent_for_icosphere",
+            "hand_billboard_flock_icosphere_suppressed",
+            "hand_billboard_flock_world_space_absent",
+            "private_world_anchor_fixed_sim_transform",
+            "private_openxr_world_anchor_mapper_ready",
+            "private_openxr_world_anchor_captured",
+            "private_openxr_world_anchor_mapped",
+            "private_tracers_active",
+            "private_descriptor_sets_ready",
+            "private_main_compute_recorded",
+            "private_main_draw_recorded",
+            "private_main_draw_spatial_world_direct_mapping",
+            "private_main_draw_explicit_eye_mapping",
+            "private_main_draw_particle_count_nonzero",
+            "private_main_draw_tracer_count_nonzero",
+            "screenshot_initial_captured",
+            "screenshot_initial_dimensions_valid",
+            "screenshot_captured",
+            "screenshot_dimensions_valid"
+        )
+    }
+    if (-not $script:EffectiveSkipParticleControlBoost) {
         $requiredFlags += @("particle_controls_submitted", "parameters_updated")
     }
     if ($ExerciseParticleRecenter) {

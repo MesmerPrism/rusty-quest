@@ -343,9 +343,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
 - `app/src/main/.../SpatialCameraPanelModels.kt` owns shared panel placement,
   native-interop receipt, and low-rate control state models used by the
   Activity facade and panel UI.
-- `app/src/main/.../SpatialAvatarHandVisualFeature.kt` owns suppression of the
-  built-in Meta avatar hand visual so native/public hand visuals remain
-  explicit.
+- `app/src/main/.../SpatialAvatarHandVisualFeature.kt` owns the built-in Meta
+  avatar hand visual policy. The default keeps hands hidden so native/public
+  hand visuals remain explicit; set
+  `debug.rustyquest.spatial.avatar_hands.visible=true` on a headset to enable
+  the Spatial SDK `AvatarSystem` hand visual for comparison runs.
 - `app/src/main/.../SpatialHandBillboardFlockFeature.kt` owns the opt-in
   public ECS world-space hand billboard flock. Enable it with
   `debug.rustyquest.spatial.hand_billboard_flock.enabled=true`; the default is

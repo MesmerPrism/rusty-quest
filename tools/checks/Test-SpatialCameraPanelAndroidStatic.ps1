@@ -156,11 +156,17 @@ Assert-Contains "Activity" $activity "spatialPrivateFeatureResourceEnv=RUSTY_QUE
 Assert-Contains "Activity" $activity "NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY"
 Assert-Contains "Activity" $activity "debug.rustyquest.spatial.native_surface_particle_layer.enabled"
 Assert-Contains "Activity" $activity "nativeSurfaceParticleLayerEnabled()"
-Assert-Contains "Activity" $activity "source=property"
+Assert-Contains "Activity" $activity "PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY"
+Assert-Contains "Activity" $activity "debug.rustyquest.spatial.viscereality_ecs.enabled"
+Assert-Contains "Activity" $activity "privateSpatialEcsParticleRendererEnabled()"
+Assert-Contains "Activity" $activity "nativeSurfaceParticleLayerSuppressedByPrivateRenderer()"
+Assert-Contains "Activity" $activity "nativeSurfaceParticleLayerSuppressionSource()"
+Assert-Contains "Activity" $activity "private-spatial-ecs-particle-renderer"
+Assert-Contains "Activity" $activity "`"property`""
 Assert-Contains "Activity" $activity "PANEL_SHELL_VISIBLE_PROPERTY"
 Assert-Contains "Activity" $activity "debug.rustyquest.spatial.panel_shell.visible"
 Assert-Contains "Activity" $activity "panel-shell-hidden"
-Assert-Contains "Activity" $activity "nativeSurfaceParticleLayerSuppressed=false"
+Assert-Contains "Activity" $activity 'nativeSurfaceParticleLayerSuppressed=${!nativeSurfaceParticleLayerEnabled()}'
 Assert-Contains "Gradle" $appGradle "RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR"
 Assert-Contains "Gradle" $appGradle "java.srcDir(it)"
 Assert-Contains "Gradle" $appGradle "RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_ASSET_DIR"
@@ -614,6 +620,12 @@ Assert-Contains "Panel models" $panelModels "transparencyOpacity"
 Assert-Contains "Panel models" $panelModels "projectionWorldScale"
 Assert-Contains "Panel models" $panelModels "data class SpatialNativeInteropProbe"
 Assert-Contains "Avatar feature" $avatarFeature "internal class SpatialAvatarHandVisualFeature"
+Assert-Contains "Avatar feature" $avatarFeature "SpatialAvatarHandVisualPolicySystem"
+Assert-Contains "Avatar feature" $avatarFeature "debug.rustyquest.spatial.avatar_hands.visible"
+Assert-Contains "Avatar feature" $avatarFeature "avatarSystem.setShowHands(showHands)"
+Assert-Contains "Avatar feature" $avatarFeature "builtInMetaHandVisualPolicy=pending"
+Assert-Contains "Avatar feature" $avatarFeature "builtInMetaHandMaterialPolicy=sdk-owned-no-public-material-surface"
+Assert-Contains "Avatar feature" $avatarFeature 'builtInMetaHandVisualPolicy=$policy'
 Assert-Contains "Store" $store 'SESSION_SCHEMA = "rusty.quest.spatial_camera_panel.session.v1"'
 Assert-Contains "Store" $store 'EVENT_SCHEMA = "rusty.quest.spatial_camera_panel.event.v1"'
 Assert-Contains "Store" $store 'QUESTIONNAIRE_SCHEMA = "rusty.quest.spatial_camera_panel.questionnaire.v1"'

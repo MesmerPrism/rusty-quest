@@ -340,6 +340,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "spatialPrivateFeatureResourceEnv=RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR " +
             "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
             "nativeSurfaceParticleLayerEnabled=${nativeSurfaceParticleLayerEnabled()} " +
+            "privateSpatialEcsParticleRendererEnabledProperty=$PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY " +
+            "privateSpatialEcsParticleRendererEnabled=${privateSpatialEcsParticleRendererEnabled()} " +
+            "nativeSurfaceParticleLayerExclusiveRendererSuppressed=${nativeSurfaceParticleLayerSuppressedByPrivateRenderer()} " +
             "panelShellVisibleProperty=$PANEL_SHELL_VISIBLE_PROPERTY " +
             "panelShellVisible=${panelShellVisible()} " +
             "startInParticleViewProperty=$PANEL_START_IN_PARTICLE_VIEW_PROPERTY " +
@@ -453,9 +456,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         } else {
           marker(
               "channel=native-surface-particle-layer status=panel-entity-suppressed " +
-                  "renderPolicy=native-vulkan-wsi-surface-panel source=property " +
+                  "renderPolicy=native-vulkan-wsi-surface-panel source=${nativeSurfaceParticleLayerSuppressionSource()} " +
                   "nativeSurfaceParticleLayerEnabled=false " +
-                  "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY"
+                  "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
+                  "privateSpatialEcsParticleRendererEnabled=${privateSpatialEcsParticleRendererEnabled()} " +
+                  "privateSpatialEcsParticleRendererEnabledProperty=$PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY"
           )
           null
         }
@@ -829,9 +834,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           marker(
               "channel=native-surface-particle-layer status=panel-registration-suppressed " +
                   "renderPolicy=native-vulkan-wsi-surface-panel " +
-                  "source=${if (manualCarrier) "manual-scene-object-carrier" else "property"} " +
+                  "source=${if (manualCarrier) "manual-scene-object-carrier" else nativeSurfaceParticleLayerSuppressionSource()} " +
                   "nativeSurfaceParticleLayerEnabled=${nativeSurfaceParticleLayerEnabled()} " +
                   "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
+                  "privateSpatialEcsParticleRendererEnabled=${privateSpatialEcsParticleRendererEnabled()} " +
+                  "privateSpatialEcsParticleRendererEnabledProperty=$PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY " +
                   "surfaceParticleProjectionCarrier=${markerToken(particleLayerCarrierToken())} " +
                   "manualPanelSceneObjectCustomMesh=$manualCarrier"
           )
@@ -4481,9 +4488,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (!nativeSurfaceParticleLayerEnabled()) {
       marker(
           "channel=native-surface-particle-layer status=start-suppressed " +
-              "renderPolicy=native-vulkan-wsi-surface-panel source=property " +
+              "renderPolicy=native-vulkan-wsi-surface-panel source=${nativeSurfaceParticleLayerSuppressionSource()} " +
               "nativeSurfaceParticleLayerEnabled=false " +
               "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
+              "privateSpatialEcsParticleRendererEnabled=${privateSpatialEcsParticleRendererEnabled()} " +
+              "privateSpatialEcsParticleRendererEnabledProperty=$PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY " +
               "particleLayerVisible=false particleLayerStarted=$particleLayerStarted " +
               "nativeSurfaceStartRequested=$nativeSurfaceStartRequested"
       )
@@ -4845,7 +4854,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "workflowPanelVisible=false privateLayerPanelVisible=false launcherPanelVisible=false " +
             "particleLayerVisible=${particleLayerVisibleForPanelMode()} " +
             "cameraStackSuppressesParticles=$cameraStackSuppressesParticles " +
-            "nativeSurfaceParticleLayerSuppressed=false rendererAuthority=native-vulkan-wsi-surface-panel"
+            "nativeSurfaceParticleLayerSuppressed=${!nativeSurfaceParticleLayerEnabled()} " +
+            "privateSpatialEcsParticleRendererEnabled=${privateSpatialEcsParticleRendererEnabled()} " +
+            "rendererAuthority=${if (nativeSurfaceParticleLayerSuppressedByPrivateRenderer()) "private-spatial-ecs-particle-renderer" else "native-vulkan-wsi-surface-panel"}"
     )
   }
 
@@ -8745,7 +8756,21 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           ?: NATIVE_SPATIAL_CONTROLLER_ACTIONS_DEFAULT_ENABLED
 
   private fun nativeSurfaceParticleLayerEnabled(): Boolean =
-      readOptionalBooleanSystemProperty(NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY) ?: true
+      (readOptionalBooleanSystemProperty(NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY) ?: true) &&
+          !nativeSurfaceParticleLayerSuppressedByPrivateRenderer()
+
+  private fun nativeSurfaceParticleLayerSuppressedByPrivateRenderer(): Boolean =
+      privateSpatialEcsParticleRendererEnabled()
+
+  private fun nativeSurfaceParticleLayerSuppressionSource(): String =
+      if (nativeSurfaceParticleLayerSuppressedByPrivateRenderer()) {
+        "private-spatial-ecs-particle-renderer"
+      } else {
+        "property"
+      }
+
+  private fun privateSpatialEcsParticleRendererEnabled(): Boolean =
+      readOptionalBooleanSystemProperty(PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY) ?: false
 
   private fun particleLayerCarrierMode(): String =
       when (readSystemProperty(PARTICLE_LAYER_CARRIER_PROPERTY).trim().lowercase(Locale.US)) {
@@ -9743,6 +9768,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val SPATIAL_SHOULD_CONSUME_LEFT_RIGHT_INPUT_DEFAULT = false
     private const val NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY =
         "debug.rustyquest.spatial.native_surface_particle_layer.enabled"
+    private const val PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY =
+        "debug.rustyquest.spatial.viscereality_ecs.enabled"
     private const val PANEL_SHELL_VISIBLE_PROPERTY =
         "debug.rustyquest.spatial.panel_shell.visible"
     private const val PANEL_START_IN_PARTICLE_VIEW_PROPERTY =
