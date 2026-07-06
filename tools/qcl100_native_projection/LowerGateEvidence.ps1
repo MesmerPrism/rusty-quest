@@ -407,7 +407,17 @@ function New-Qcl100LowerGateEvidenceGateResult {
     $qcl041LowerGateIssueCodes = @($qcl041LowerGateIssues | ForEach-Object { Get-Qcl100LowerGateEvidenceIssueCode -Issue $_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $firstIssue = if ($Issues.Count -gt 0) { Get-Qcl100LowerGateEvidenceIssueCode -Issue $Issues[0] } else { "" }
     $firstQcl041LowerGateIssue = if ($qcl041LowerGateIssueCodes.Count -gt 0) { [string]$qcl041LowerGateIssueCodes[0] } else { "" }
-    $blockedReasonForQcl100 = if (-not [string]::IsNullOrWhiteSpace($firstQcl041LowerGateIssue)) {
+    $summaryBlockedReason = ""
+    if ($null -ne $Fields -and $Fields.Contains("summary_blocked_reason")) {
+        $summaryBlockedReason = [string]$Fields["summary_blocked_reason"]
+    }
+    $preferredSummaryBlockerCodes = @(
+        "qcl041_strict_local_p2p_app_transport_pass_connectivitymanager_network_absent",
+        "qcl041_connectivitymanager_other_uid_p2p_visible_client_uid_hidden"
+    )
+    $blockedReasonForQcl100 = if ($preferredSummaryBlockerCodes -contains $summaryBlockedReason) {
+        $summaryBlockedReason
+    } elseif (-not [string]::IsNullOrWhiteSpace($firstQcl041LowerGateIssue)) {
         $firstQcl041LowerGateIssue
     } else {
         $firstIssue
@@ -553,6 +563,7 @@ function Test-Qcl100LowerGateControlTcpEvidence {
         $summary = $artifact.object
         $fields = [ordered]@{
             status = [string](Get-Qcl100LowerGateEvidenceProperty -Object $summary -Name "status")
+            summary_blocked_reason = [string](Get-Qcl100LowerGateEvidenceProperty -Object $summary -Name "blocked_reason")
             matrix_focus = [string](Get-Qcl100LowerGateEvidenceProperty -Object $summary -Name "matrix_focus")
             qcl100_control_tcp_gate = Get-Qcl100LowerGateEvidenceBool (Get-Qcl100LowerGateEvidenceProperty -Object $summary -Name "qcl100_control_tcp_gate")
             require_tcp_tunnel_stream_pass = Get-Qcl100LowerGateEvidenceBool (Get-Qcl100LowerGateEvidenceProperty -Object $summary -Name "require_tcp_tunnel_stream_pass")
@@ -801,13 +812,20 @@ function Get-Qcl100LowerGateEvidence {
     $qcl041LowerGateIssueCodes = @($qcl041LowerGateIssues | ForEach-Object { Get-Qcl100LowerGateEvidenceIssueCode -Issue $_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $firstIssue = if ($issues.Count -gt 0) { Get-Qcl100LowerGateEvidenceIssueCode -Issue $issues[0] } else { "" }
     $firstQcl041LowerGateIssue = if ($qcl041LowerGateIssueCodes.Count -gt 0) { [string]$qcl041LowerGateIssueCodes[0] } else { "" }
-    $blockedReasonForQcl100 = if (-not [string]::IsNullOrWhiteSpace($firstQcl041LowerGateIssue)) {
+    $controlTcpGate = @($gates | Where-Object { $_.id -eq "qcl041_strict_control_tcp_gate" } | Select-Object -First 1)
+    $controlTcpFields = if ($controlTcpGate.Count -gt 0) { $controlTcpGate[0].fields } else { $null }
+    $controlTcpBlockedReason = if ($controlTcpGate.Count -gt 0) { [string]$controlTcpGate[0].blocked_reason_for_qcl100 } else { "" }
+    $preferredSummaryBlockerCodes = @(
+        "qcl041_strict_local_p2p_app_transport_pass_connectivitymanager_network_absent",
+        "qcl041_connectivitymanager_other_uid_p2p_visible_client_uid_hidden"
+    )
+    $blockedReasonForQcl100 = if ($preferredSummaryBlockerCodes -contains $controlTcpBlockedReason) {
+        $controlTcpBlockedReason
+    } elseif (-not [string]::IsNullOrWhiteSpace($firstQcl041LowerGateIssue)) {
         $firstQcl041LowerGateIssue
     } else {
         $firstIssue
     }
-    $controlTcpGate = @($gates | Where-Object { $_.id -eq "qcl041_strict_control_tcp_gate" } | Select-Object -First 1)
-    $controlTcpFields = if ($controlTcpGate.Count -gt 0) { $controlTcpGate[0].fields } else { $null }
     [ordered]@{
         schema = "rusty.quest.qcl100_lower_gate_evidence.v1"
         generated_at_utc = (Get-Date).ToUniversalTime().ToString("o")
@@ -935,6 +953,7 @@ function New-Qcl100LowerGateEvidenceSelfTestMatrixSummary {
         matrix_focus = "qcl100_control_tcp_gate"
         qcl100_control_tcp_gate = $true
         require_tcp_tunnel_stream_pass = $true
+        blocked_reason = $(if ($LocalP2pBindTcpStreamPass -and -not $Pass) { "qcl041_strict_local_p2p_app_transport_pass_connectivitymanager_network_absent" } else { "" })
         preflight = [ordered]@{
             infrastructure_wifi_disconnected = $true
             p2p0_ipv4_cleared = $true
@@ -1098,10 +1117,13 @@ function Invoke-Qcl100LowerGateEvidenceSelfTest {
         -RequireQcl041ClientP2pNetworkSocketAuthority `
         -RequireQcl041StrictUdpDatagramEchoPass `
         -RequireQcl041TcpTunnelStreamPass
-    if ([bool]$localP2pBindOnlyCase.passed -or $localP2pBindOnlyCase.blocked_reason_for_qcl100 -ne "qcl041_client_p2p_network_callback_not_seen") {
-        throw "QCL100 lower-gate evidence self-test expected local p2p bind-only diagnostics to stay blocked on missing callback-visible Network."
+    if ([bool]$localP2pBindOnlyCase.passed -or $localP2pBindOnlyCase.blocked_reason_for_qcl100 -ne "qcl041_strict_local_p2p_app_transport_pass_connectivitymanager_network_absent") {
+        throw "QCL100 lower-gate evidence self-test expected local p2p bind-only diagnostics to stay blocked on absent ConnectivityManager.Network authority."
     }
     $localP2pBindOnlyGate = @($localP2pBindOnlyCase.gates | Where-Object { $_.id -eq "qcl041_strict_control_tcp_gate" } | Select-Object -First 1)
+    if ($localP2pBindOnlyGate.first_qcl041_lower_gate_issue -ne "qcl041_client_p2p_network_callback_not_seen") {
+        throw "QCL100 lower-gate evidence self-test expected local p2p bind-only granular issue to remain callback-visible Network absence."
+    }
     if (-not [bool]$localP2pBindOnlyGate.fields.local_p2p_bind_diagnostic_non_promoting -or -not [bool]$localP2pBindOnlyGate.fields.local_p2p_bind_udp_pass -or -not [bool]$localP2pBindOnlyGate.fields.local_p2p_bind_tcp_pass -or -not [bool]$localP2pBindOnlyGate.fields.local_p2p_bind_tcp_stream_pass) {
         throw "QCL100 lower-gate evidence self-test expected local p2p bind diagnostic fields to be preserved in the control-TCP gate."
     }

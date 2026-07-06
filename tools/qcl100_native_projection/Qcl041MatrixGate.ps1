@@ -500,7 +500,13 @@ function Get-Qcl100Qcl041MatrixGateEvidence {
     $lowerGateIssueCodes = @($lowerGateIssues | ForEach-Object { Get-Qcl100Qcl041MatrixIssueCode -Issue $_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     $firstIssue = if ($issues.Count -gt 0) { Get-Qcl100Qcl041MatrixIssueCode -Issue $issues[0] } else { "" }
     $firstLowerGateIssue = if ($lowerGateIssueCodes.Count -gt 0) { [string]$lowerGateIssueCodes[0] } else { "" }
-    $blockedReasonForQcl100 = if (-not [string]::IsNullOrWhiteSpace($firstLowerGateIssue)) {
+    $preferredSummaryBlockerCodes = @(
+        "qcl041_strict_local_p2p_app_transport_pass_connectivitymanager_network_absent",
+        "qcl041_connectivitymanager_other_uid_p2p_visible_client_uid_hidden"
+    )
+    $blockedReasonForQcl100 = if ($preferredSummaryBlockerCodes -contains $blockedReason) {
+        $blockedReason
+    } elseif (-not [string]::IsNullOrWhiteSpace($firstLowerGateIssue)) {
         $firstLowerGateIssue
     } else {
         $firstIssue
@@ -540,6 +546,8 @@ function Get-Qcl100Qcl041MatrixGateEvidence {
             [string](Get-Qcl100MatrixGateProperty -Object $networkVisibilityDeepTrace -Name "classification")
         network_visibility_deep_trace_diagnostic_id =
             [string](Get-Qcl100MatrixGateProperty -Object $networkVisibilityDeepTrace -Name "diagnostic_id")
+        network_visibility_deep_trace_app_network_visibility_decision =
+            [string](Get-Qcl100MatrixGateProperty -Object $networkVisibilityDeepTrace -Name "app_network_visibility_decision")
         network_visibility_deep_trace_row_count = $networkVisibilityDeepTraceRowCount
         network_visibility_deep_trace_expected_row_ids = $networkVisibilityDeepTraceExpectedRowIds
         network_visibility_deep_trace_row_ids = $networkVisibilityDeepTraceRowIds
@@ -856,7 +864,7 @@ function New-Qcl100Qcl041MatrixSelfTestNetworkVisibilityDeepTrace {
         app_network_visibility_decision = $(if ($Pass) {
             "qcl041_and_shell_source_route_use_p2p0"
         } elseif ($LocalP2pBindTcpStreamPass) {
-            "qcl041_local_p2p_bind_transport_only"
+            "qcl041_strict_local_p2p_app_transport_pass_connectivitymanager_network_absent"
         } else {
             "qcl041_client_p2p_network_not_visible"
         })
@@ -1005,7 +1013,7 @@ function Invoke-Qcl100Qcl041MatrixGateSelfTest {
     Write-JsonFile -Value (New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $true -OwnerSerial $expectedOwnerSerial -ClientSerial $expectedClientSerial -RunId $expectedMatrixRunId) -Path $stalePath
     Write-JsonFile -Value (New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $true -OwnerSerial $expectedOwnerSerial -ClientSerial $expectedClientSerial -RunId $expectedMatrixRunId -ReceiverObservedUdpModes @() -ClientToOwnerWifiDirectUdpMatrixModePass $false -ClientToOwnerAppBoundUdpSocketPass $false -ClientP2pNetworkSocketAuthorityPass $false -UdpNetworkBoundReceiverObservedPackets 0) -Path $udpMissingPath
     Write-JsonFile -Value (New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $true -OwnerSerial $expectedOwnerSerial -ClientSerial $expectedClientSerial -RunId $expectedMatrixRunId) -Path $controlTcpPath
-    Write-JsonFile -Value (New-Qcl100Qcl041MatrixGateSelfTestSummary `
+    $localP2pBindOnlySummary = New-Qcl100Qcl041MatrixGateSelfTestSummary `
             -Pass $false `
             -OwnerSerial $expectedOwnerSerial `
             -ClientSerial $expectedClientSerial `
@@ -1022,7 +1030,9 @@ function Invoke-Qcl100Qcl041MatrixGateSelfTest {
             -LocalP2pBindTcpReceiverAccepts 1 `
             -LocalP2pBindTcpStreamPass $true `
             -LocalP2pBindTcpStreamReceiverAccepts 1 `
-            -LocalP2pBindTcpStreamBytesPerDirection 4194304) -Path $localP2pBindOnlyPath
+            -LocalP2pBindTcpStreamBytesPerDirection 4194304
+    $localP2pBindOnlySummary.blocked_reason = "qcl041_strict_local_p2p_app_transport_pass_connectivitymanager_network_absent"
+    Write-JsonFile -Value $localP2pBindOnlySummary -Path $localP2pBindOnlyPath
     $controlTcpGateIncompleteMatrixSummary = New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $true -OwnerSerial $expectedOwnerSerial -ClientSerial $expectedClientSerial -RunId $expectedMatrixRunId
     $controlTcpGateIncompleteMatrixSummary.matrix_focus = "qcl100_control_tcp_gate"
     $controlTcpGateIncompleteMatrixSummary.qcl100_control_tcp_gate = $true
@@ -1046,12 +1056,12 @@ function Invoke-Qcl100Qcl041MatrixGateSelfTest {
     Write-JsonFile -Value $olderCurrentWlanSummary -Path $olderCurrentWlanPath
     $strictApDisconnectedSummary = New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $false -OwnerSerial $expectedOwnerSerial -ClientSerial $expectedClientSerial -RunId "qcl041-matrix-gate-selftest-strict-ap-disconnected"
     $strictApDisconnectedSummary.status = "blocked"
-    $strictApDisconnectedSummary.blocked_reason = "qcl041_client_p2p_network_not_visible"
+    $strictApDisconnectedSummary.blocked_reason = "qcl041_strict_local_p2p_app_transport_pass_connectivitymanager_network_absent"
     $strictApDisconnectedSummary.preflight.infrastructure_wifi_disconnected = $true
     $strictApDisconnectedSummary.preflight.p2p0_ipv4_cleared = $true
     $strictApDisconnectedSummary.preflight.candidate_wifi_direct_prelaunch_routes_clear = $true
     $strictApDisconnectedSummary.app_network_visibility = [ordered]@{
-        decision = "qcl041_client_p2p_network_not_visible"
+        decision = "qcl041_strict_local_p2p_app_transport_pass_connectivitymanager_network_absent"
         client_qcl041_p2p_network_visible = $false
         client_wifi_p2p_network_request_visible = $false
         shell_client_route_get_from_p2p_source_uses_p2p0 = $true
@@ -1161,8 +1171,11 @@ function Invoke-Qcl100Qcl041MatrixGateSelfTest {
         -Qcl082TransportProtocol "udp" `
         -MaxAgeSeconds $maxAgeSeconds `
         -RequireFresh
-    if ([bool]$localP2pBindOnlyEvidence.passed -or $localP2pBindOnlyEvidence.blocked_reason_for_qcl100 -ne "qcl041_client_p2p_network_callback_not_seen") {
-        throw "QCL100 QCL041 matrix gate self-test expected local p2p bind-only diagnostic evidence to fail on missing callback-visible Network."
+    if ([bool]$localP2pBindOnlyEvidence.passed -or $localP2pBindOnlyEvidence.blocked_reason_for_qcl100 -ne "qcl041_strict_local_p2p_app_transport_pass_connectivitymanager_network_absent") {
+        throw "QCL100 QCL041 matrix gate self-test expected local p2p bind-only diagnostic evidence to fail on absent ConnectivityManager.Network authority."
+    }
+    if ($localP2pBindOnlyEvidence.first_lower_gate_issue -ne "qcl041_client_p2p_network_callback_not_seen") {
+        throw "QCL100 QCL041 matrix gate self-test expected the granular first lower-gate issue to remain callback-visible Network absence."
     }
     if (-not [bool]$localP2pBindOnlyEvidence.local_p2p_bind_diagnostic_non_promoting -or -not [bool]$localP2pBindOnlyEvidence.local_p2p_bind_udp_pass -or -not [bool]$localP2pBindOnlyEvidence.local_p2p_bind_tcp_pass -or -not [bool]$localP2pBindOnlyEvidence.local_p2p_bind_tcp_stream_pass) {
         throw "QCL100 QCL041 matrix gate self-test expected local p2p bind-only diagnostic fields to be preserved as non-promoting evidence."
@@ -1176,6 +1189,9 @@ function Invoke-Qcl100Qcl041MatrixGateSelfTest {
             $localP2pBindOnlyEvidence.network_visibility_deep_trace_classification -ne "p2p_framework_connected_local_bind_transport_only" -or
             [bool]$localP2pBindOnlyEvidence.network_visibility_deep_trace_local_p2p_promotes_qcl100) {
         throw "QCL100 QCL041 matrix gate self-test expected local p2p bind-only deep-trace classification to stay diagnostic-only."
+    }
+    if ($localP2pBindOnlyEvidence.network_visibility_deep_trace_app_network_visibility_decision -ne "qcl041_strict_local_p2p_app_transport_pass_connectivitymanager_network_absent") {
+        throw "QCL100 QCL041 matrix gate self-test expected deep-trace decision to use the current aggregate blocker label."
     }
     $controlTcpEvidence = Get-Qcl100Qcl041MatrixGateEvidence `
         -Path $controlTcpPath `
