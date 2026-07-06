@@ -40,6 +40,9 @@ final class Qcl041AppBoundSocketMatrix {
     private static final int TCP_RECEIVE_MS = 12_000;
     private static final String TCP_TUNNEL_MODE = "tcp_tunnel_control_socket";
     private static final String TCP_TUNNEL_STREAM_MODE = "tcp_tunnel_stream_socket";
+    private static final String UDP_LOCAL_P2P_BIND_MODE = "udp_local_p2p_bind_echo";
+    private static final String TCP_LOCAL_P2P_BIND_MODE = "tcp_local_p2p_bind_socket";
+    private static final String TCP_LOCAL_P2P_BIND_STREAM_MODE = "tcp_local_p2p_bind_stream_socket";
     private static final int TCP_TUNNEL_PORT_OFFSET = 2;
     private static final int TCP_TUNNEL_STREAM_PORT_OFFSET = 3;
     private static final int TCP_TUNNEL_BYTES_PER_DIRECTION = 256 * 1024;
@@ -55,6 +58,7 @@ final class Qcl041AppBoundSocketMatrix {
     private final Network wifiDirectNetwork;
     private final InetAddress groupOwnerAddress;
     private final InetAddress localAddress;
+    private final Qcl041AppNetworkTrace appNetworkTrace;
     private final Map<String, Integer> udpRxByMode = new HashMap<>();
     private final Map<String, Integer> tcpAcceptsByMode = new HashMap<>();
     private volatile long tcpTunnelStreamLastProgressMs = 0L;
@@ -66,13 +70,15 @@ final class Qcl041AppBoundSocketMatrix {
             ConnectivityManager connectivityManager,
             Network wifiDirectNetwork,
             InetAddress groupOwnerAddress,
-            InetAddress localAddress) {
+            InetAddress localAddress,
+            Qcl041AppNetworkTrace appNetworkTrace) {
         this.artifact = artifact;
         this.config = config;
         this.connectivityManager = connectivityManager;
         this.wifiDirectNetwork = wifiDirectNetwork;
         this.groupOwnerAddress = groupOwnerAddress;
         this.localAddress = localAddress;
+        this.appNetworkTrace = appNetworkTrace;
     }
 
     void runGroupOwnerReceiver() {
@@ -82,6 +88,11 @@ final class Qcl041AppBoundSocketMatrix {
         artifact.diagnostic(SECTION, "group_owner_receiver_started", true);
         checkpoint("group_owner_after_common");
         try {
+            if (config.isQ2qAppNetworkTraceOnly()) {
+                runTraceOnlyGroupOwnerReceiver();
+                completed = true;
+                return;
+            }
             Thread tcpTunnelThread = startTcpTunnelReceiverThread();
             Thread tcpTunnelStreamThread = startTcpTunnelStreamReceiverThread();
             runUdpReceiver();
@@ -109,13 +120,19 @@ final class Qcl041AppBoundSocketMatrix {
         checkpoint("client_after_common");
         try {
             sleepQuietly(1000L);
+            if (config.isQ2qAppNetworkTraceOnly()) {
+                runTraceOnlyClientSender();
+                completed = true;
+                return;
+            }
+            runUdpSendMode("udp_network_bound", false, true);
+            checkpoint("client_after_strict_udp_network_bound_echo");
             runTcpTunnelClient();
             checkpoint("client_after_tcp_tunnel_control");
             runTcpTunnelStreamClient();
             checkpoint("client_after_tcp_tunnel_stream");
             runUdpSendMode("udp_wildcard_unbound", false, false);
             runUdpSendMode("udp_source_bound", true, false);
-            runUdpSendMode("udp_network_bound", false, true);
             runUdpSendMode("udp_source_and_network_bound", true, true);
             runNativeUdpSendMode("udp_native_fd_network_bound");
             runUdpProcessBoundMode("udp_process_bound");
@@ -149,6 +166,13 @@ final class Qcl041AppBoundSocketMatrix {
         artifact.diagnostic(SECTION, "wifi_direct_network_found", wifiDirectNetwork != null);
         artifact.diagnostic(SECTION, "process_bind_experiment_enabled", true);
         artifact.diagnostic(SECTION, "connectivity_manager_found", connectivityManager != null);
+        artifact.diagnostic(SECTION, "network_visibility_only", config.isQ2qAppNetworkTraceOnly());
+        artifact.diagnostic(SECTION, "app_network_trace_enabled", config.appNetworkTraceRequested());
+        artifact.diagnostic(SECTION, "tcp_binding_variants", config.q2qTcpBindingVariants);
+        artifact.diagnostic(
+                SECTION,
+                "tcp_binding_variant_delay_ms",
+                Math.max(0, config.q2qTcpBindingVariantDelayMs));
         artifact.diagnostic(SECTION, "delayed_udp_enabled", delayedUdpEnabled());
         artifact.diagnostic(SECTION, "delayed_udp_delay_ms", delayedUdpDelayMs());
         artifact.diagnostic(SECTION, TCP_TUNNEL_STREAM_MODE + "_enabled", tcpTunnelStreamEnabled());
@@ -168,6 +192,120 @@ final class Qcl041AppBoundSocketMatrix {
         recordWifiP2pNetworkRequestVisibility("initial");
         artifact.diagnostic(SECTION, "matrix_port", config.q2qAppBoundSocketMatrixPort);
         artifact.diagnostic(SECTION, "pass_condition", "receiver_observed_bytes_on_group_owner");
+    }
+
+    private void runTraceOnlyGroupOwnerReceiver() {
+        artifact.diagnostic(SECTION, "network_visibility_only_group_owner_receiver", true);
+        recordTraceTcpVariant("network_visibility_only_group_owner", "start");
+        if (config.hasTcpBindingVariants()) {
+            Thread tcpReceiverThread = startTraceOnlyTcpReceiverThread();
+            Thread tcpStreamReceiverThread = localP2pTcpStreamVariantRequested()
+                    ? startTraceOnlyTcpStreamReceiverThread(TCP_LOCAL_P2P_BIND_STREAM_MODE)
+                    : null;
+            if (localP2pUdpVariantRequested()) {
+                runUdpReceiver();
+                checkpoint("network_visibility_only_group_owner_after_local_p2p_udp_receiver");
+            }
+            joinThread(tcpReceiverThread, "network_visibility_only_group_owner_tcp_receiver");
+            joinThread(tcpStreamReceiverThread, "network_visibility_only_group_owner_tcp_stream_receiver");
+        } else {
+            artifact.diagnostic(SECTION, "network_visibility_only_tcp_receiver_skipped", "no_tcp_binding_variants");
+            sleepQuietly(traceOnlyHoldMs());
+        }
+        recordNetworkVisibility("network_visibility_only_group_owner_final");
+        recordWifiP2pNetworkRequestVisibility("network_visibility_only_group_owner_final");
+        recordTraceTcpVariant("network_visibility_only_group_owner", "final");
+    }
+
+    private void runTraceOnlyClientSender() {
+        artifact.diagnostic(SECTION, "network_visibility_only_client_sender", true);
+        recordTraceTcpVariant("network_visibility_only_client", "start");
+        recordNetworkVisibility("network_visibility_only_client_start");
+        recordWifiP2pNetworkRequestVisibility("network_visibility_only_client_start");
+        if (!config.hasTcpBindingVariants()) {
+            artifact.diagnostic(SECTION, "network_visibility_only_tcp_variants_skipped", "no_tcp_binding_variants");
+            sleepQuietly(traceOnlyHoldMs());
+        } else {
+            runRequestedTcpBindingVariants();
+        }
+        recordNetworkVisibility("network_visibility_only_client_final");
+        recordWifiP2pNetworkRequestVisibility("network_visibility_only_client_final");
+        recordTraceTcpVariant("network_visibility_only_client", "final");
+    }
+
+    private Thread startTraceOnlyTcpReceiverThread() {
+        Thread thread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                runTcpReceiver();
+            }
+        }, "qcl041-trace-only-tcp-receiver");
+        thread.setDaemon(true);
+        thread.start();
+        artifact.diagnostic(SECTION, "network_visibility_only_tcp_receiver_thread_started", true);
+        checkpoint("network_visibility_only_group_owner_tcp_receiver_thread_started");
+        return thread;
+    }
+
+    private Thread startTraceOnlyTcpStreamReceiverThread(final String mode) {
+        Thread thread = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                runTcpTunnelStreamReceiver(mode);
+            }
+        }, "qcl041-trace-only-tcp-stream-receiver");
+        thread.setDaemon(true);
+        thread.start();
+        artifact.diagnostic(SECTION, mode + "_receiver_thread_started", true);
+        checkpoint("network_visibility_only_group_owner_tcp_stream_receiver_thread_started");
+        return thread;
+    }
+
+    private void runRequestedTcpBindingVariants() {
+        if (localP2pUdpVariantRequested()) {
+            runUdpLocalP2pBindMode(UDP_LOCAL_P2P_BIND_MODE);
+        }
+        if (config.tcpBindingVariantRequested("tcp_socket_factory")) {
+            runTcpSendMode("tcp_socket_factory", false, true, true);
+        }
+        if (config.tcpBindingVariantRequested("tcp_network_bind_socket")) {
+            runTcpSendMode("tcp_network_bind_socket", false, true, false);
+        }
+        if (config.tcpBindingVariantRequested("tcp_network_factory")) {
+            runTcpSendMode("tcp_network_factory", false, true, true);
+        }
+        if (config.tcpBindingVariantRequested("tcp_process_bound")) {
+            runTcpProcessBoundMode("tcp_process_bound");
+        }
+        if (config.tcpBindingVariantRequested("tcp_native_fd_network_bound")) {
+            runNativeTcpSendMode("tcp_native_fd_network_bound");
+        }
+        if (config.tcpBindingVariantRequested("tcp_delayed_network_bind_socket")
+                || config.tcpBindingVariantRequested("delayed_network_bind_socket")) {
+            runDelayedTcpBindingVariant("tcp_delayed_network_bind_socket", false);
+        }
+        if (config.tcpBindingVariantRequested("tcp_delayed_network_factory")
+                || config.tcpBindingVariantRequested("delayed_network_factory")) {
+            runDelayedTcpBindingVariant("tcp_delayed_network_factory", true);
+        }
+        if (localP2pTcpVariantRequested()) {
+            runTcpLocalP2pBindMode(TCP_LOCAL_P2P_BIND_MODE);
+        }
+        if (localP2pTcpStreamVariantRequested()) {
+            runTcpLocalP2pBindStreamMode(TCP_LOCAL_P2P_BIND_STREAM_MODE);
+        }
+    }
+
+    private void runDelayedTcpBindingVariant(String mode, boolean networkFactory) {
+        recordNetworkVisibility(mode + "_before_onavailable_wait");
+        recordWifiP2pNetworkRequestVisibility(mode + "_onavailable_wait");
+        int delayMs = Math.max(0, config.q2qTcpBindingVariantDelayMs);
+        artifact.diagnostic(SECTION, mode + "_delay_after_onavailable_ms", delayMs);
+        if (delayMs > 0) {
+            sleepQuietly(delayMs);
+        }
+        recordNetworkVisibility(mode + "_after_delay_before_connect");
+        runTcpSendMode(mode, false, true, networkFactory);
     }
 
     private void checkpoint(String label) {
@@ -237,9 +375,7 @@ final class Qcl041AppBoundSocketMatrix {
             socket.setSoTimeout(500);
             artifact.diagnostic(SECTION, "udp_receiver_bound", socket.getLocalSocketAddress().toString());
             byte[] buffer = new byte[2048];
-            int receiveWindowMs = UDP_RECEIVE_MS
-                    + delayedUdpDelayMs()
-                    + (delayedUdpEnabled() ? DELAYED_UDP_RECEIVE_GRACE_MS : 0);
+            int receiveWindowMs = udpReceiveWindowMs();
             artifact.diagnostic(SECTION, "udp_receive_window_ms", receiveWindowMs);
             artifact.diagnostic(SECTION, "udp_receive_delayed_grace_ms", DELAYED_UDP_RECEIVE_GRACE_MS);
             long deadline = SystemClock.elapsedRealtime() + receiveWindowMs;
@@ -379,6 +515,7 @@ final class Qcl041AppBoundSocketMatrix {
         long started = SystemClock.elapsedRealtime();
         String mode = TCP_TUNNEL_MODE;
         try {
+            recordTraceTcpVariant(mode, "before_tcp_bind_connect");
             recordNetworkVisibility(mode + "_client_pre_connect");
             if (wifiDirectNetwork == null) {
                 artifact.diagnostic(SECTION, mode + "_skipped", "wifi_direct_network_not_found");
@@ -406,6 +543,7 @@ final class Qcl041AppBoundSocketMatrix {
             artifact.diagnostic(SECTION, mode + "_connect_ms", SystemClock.elapsedRealtime() - started);
             artifact.diagnostic(SECTION, mode + "_local", socket.getLocalSocketAddress().toString());
             artifact.diagnostic(SECTION, mode + "_remote", socket.getRemoteSocketAddress().toString());
+            recordTraceTcpVariant(mode, "after_tcp_connect");
 
             OutputStream output = socket.getOutputStream();
             InputStream input = socket.getInputStream();
@@ -432,6 +570,7 @@ final class Qcl041AppBoundSocketMatrix {
             artifact.diagnostic(SECTION, mode + "_owner_to_client_crc32_match", ownerBytesMatched);
             artifact.diagnostic(SECTION, mode + "_bidirectional_client_observed", ownerBytesMatched);
         } catch (Exception ex) {
+            recordTraceTcpFailure(mode, ex);
             artifact.diagnostic(SECTION, mode + "_connect_error", errorText(ex));
             artifact.diagnostic(SECTION, mode + "_connect_ms", SystemClock.elapsedRealtime() - started);
         } finally {
@@ -441,11 +580,14 @@ final class Qcl041AppBoundSocketMatrix {
     }
 
     private void runTcpTunnelStreamReceiver() {
+        runTcpTunnelStreamReceiver(TCP_TUNNEL_STREAM_MODE);
+    }
+
+    private void runTcpTunnelStreamReceiver(String mode) {
         ServerSocket server = null;
         Socket peer = null;
         int accepts = 0;
         long started = SystemClock.elapsedRealtime();
-        String mode = TCP_TUNNEL_STREAM_MODE;
         int configuredBytes = tcpTunnelStreamBytesPerDirection();
         int configuredChunkBytes = tcpTunnelStreamChunkBytes(configuredBytes);
         int targetClientBytes = configuredBytes;
@@ -562,9 +704,15 @@ final class Qcl041AppBoundSocketMatrix {
     }
 
     private void runTcpTunnelStreamClient() {
+        runTcpTunnelStreamClient(TCP_TUNNEL_STREAM_MODE, true, false);
+    }
+
+    private void runTcpTunnelStreamClient(
+            String mode,
+            boolean networkFactorySocket,
+            boolean localP2pDiagnostic) {
         Socket socket = null;
         long started = SystemClock.elapsedRealtime();
-        String mode = TCP_TUNNEL_STREAM_MODE;
         int configuredBytes = tcpTunnelStreamBytesPerDirection();
         int chunkBytes = tcpTunnelStreamChunkBytes(configuredBytes);
         int clientToOwnerBytes = 0;
@@ -581,23 +729,48 @@ final class Qcl041AppBoundSocketMatrix {
                 return;
             }
             recordNetworkVisibility(mode + "_client_pre_connect");
-            if (wifiDirectNetwork == null) {
-                artifact.diagnostic(SECTION, mode + "_skipped", "wifi_direct_network_not_found");
-                return;
-            }
             if (groupOwnerAddress == null) {
                 artifact.diagnostic(SECTION, mode + "_skipped", "group_owner_address_not_found");
                 return;
             }
             streamAttempted = true;
-            socket = wifiDirectNetwork.getSocketFactory().createSocket();
-            artifact.diagnostic(SECTION, mode + "_network_factory_socket", true);
-            artifact.diagnostic(SECTION, mode + "_network_handle", wifiDirectNetwork.getNetworkHandle());
+            if (localP2pDiagnostic) {
+                artifact.diagnostic(SECTION, mode + "_diagnostic_non_promoting", true);
+                artifact.diagnostic(SECTION, mode + "_socket_authority", "network_interface_local_p2p_address_bind");
+                artifact.diagnostic(SECTION, mode + "_local_p2p_bind_authority_attempted", true);
+                recordTraceTcpVariant(mode, "before_local_p2p_bind_stream_connect");
+            } else {
+                recordTraceTcpVariant(mode, "before_tcp_bind_connect");
+            }
+            if (networkFactorySocket) {
+                if (wifiDirectNetwork == null) {
+                    artifact.diagnostic(SECTION, mode + "_skipped", "wifi_direct_network_not_found");
+                    return;
+                }
+                socket = wifiDirectNetwork.getSocketFactory().createSocket();
+                artifact.diagnostic(SECTION, mode + "_network_factory_socket", true);
+                artifact.diagnostic(SECTION, mode + "_network_handle", wifiDirectNetwork.getNetworkHandle());
+            } else {
+                socket = new Socket();
+            }
             if (localAddress != null) {
                 socket.bind(new InetSocketAddress(localAddress, 0));
                 artifact.diagnostic(SECTION, mode + "_source_bound", socket.getLocalSocketAddress().toString());
+                if (localP2pDiagnostic) {
+                    artifact.diagnostic(SECTION, mode + "_local_p2p_bind", socket.getLocalSocketAddress().toString());
+                    artifact.diagnostic(SECTION, mode + "_local_p2p_address", localAddress.getHostAddress());
+                    artifact.diagnostic(
+                            SECTION,
+                            mode + "_local_p2p_same_subnet_as_group_owner",
+                            Qcl041WifiDirectNetworkBinder.sameIpv4Slash24(localAddress, groupOwnerAddress));
+                }
             } else {
-                artifact.diagnostic(SECTION, mode + "_source_bound_skipped", "local_p2p_address_not_found");
+                if (localP2pDiagnostic) {
+                    artifact.diagnostic(SECTION, mode + "_skipped", "local_p2p_address_not_found");
+                    return;
+                } else {
+                    artifact.diagnostic(SECTION, mode + "_source_bound_skipped", "local_p2p_address_not_found");
+                }
             }
             artifact.diagnostic(SECTION, mode + "_local_before_connect", String.valueOf(socket.getLocalSocketAddress()));
             socket.connect(
@@ -608,6 +781,10 @@ final class Qcl041AppBoundSocketMatrix {
             artifact.diagnostic(SECTION, mode + "_connect_ms", SystemClock.elapsedRealtime() - started);
             artifact.diagnostic(SECTION, mode + "_local", socket.getLocalSocketAddress().toString());
             artifact.diagnostic(SECTION, mode + "_remote", socket.getRemoteSocketAddress().toString());
+            if (localP2pDiagnostic) {
+                artifact.diagnostic(SECTION, mode + "_local_p2p_bind_authority_pass", true);
+            }
+            recordTraceTcpVariant(mode, "after_tcp_connect");
 
             OutputStream output = socket.getOutputStream();
             InputStream input = socket.getInputStream();
@@ -661,6 +838,7 @@ final class Qcl041AppBoundSocketMatrix {
                 }
             }
         } catch (Exception ex) {
+            recordTraceTcpFailure(mode, ex);
             artifact.diagnostic(SECTION, mode + "_connect_error", errorText(ex));
             artifact.diagnostic(SECTION, mode + "_connect_ms", SystemClock.elapsedRealtime() - started);
         } finally {
@@ -670,6 +848,11 @@ final class Qcl041AppBoundSocketMatrix {
             boolean clientCrcMatched = clientToOwnerCrc.getValue() == expectedClientCrc;
             boolean ownerBytesMatched =
                     ownerToClientBytes == configuredBytes && ownerToClientCrc.getValue() == expectedOwnerCrc;
+            boolean bidirectionalObserved = streamAttempted
+                    && configuredBytes > 0
+                    && clientToOwnerBytes == configuredBytes
+                    && clientCrcMatched
+                    && ownerBytesMatched;
             artifact.diagnostic(SECTION, mode + "_client_to_owner_target_bytes", configuredBytes);
             artifact.diagnostic(SECTION, mode + "_owner_to_client_target_bytes", configuredBytes);
             artifact.diagnostic(SECTION, mode + "_client_to_owner_tx_bytes", clientToOwnerBytes);
@@ -685,11 +868,10 @@ final class Qcl041AppBoundSocketMatrix {
             artifact.diagnostic(
                     SECTION,
                     mode + "_bidirectional_client_observed",
-                    streamAttempted
-                            && configuredBytes > 0
-                            && clientToOwnerBytes == configuredBytes
-                            && clientCrcMatched
-                            && ownerBytesMatched);
+                    bidirectionalObserved);
+            if (localP2pDiagnostic) {
+                artifact.diagnostic(SECTION, mode + "_local_p2p_stream_bidirectional_bytes_pass", bidirectionalObserved);
+            }
             artifact.diagnostic(SECTION, mode + "_duration_ms", SystemClock.elapsedRealtime() - started);
             checkpoint(mode + "_client_final");
             closeQuietly(socket);
@@ -784,6 +966,30 @@ final class Qcl041AppBoundSocketMatrix {
                 artifact.diagnostic(SECTION, prefix + "_interface", properties.getInterfaceName());
                 artifact.diagnostic(SECTION, prefix + "_link_addresses", String.valueOf(properties.getLinkAddresses()));
                 artifact.diagnostic(SECTION, prefix + "_routes", String.valueOf(properties.getRoutes()));
+                boolean routeMatches = false;
+                boolean addressSameSubnet = false;
+                for (android.net.RouteInfo route : properties.getRoutes()) {
+                    try {
+                        if (groupOwnerAddress != null && route.matches(groupOwnerAddress)) {
+                            routeMatches = true;
+                            break;
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+                for (android.net.LinkAddress address : properties.getLinkAddresses()) {
+                    if (Qcl041WifiDirectNetworkBinder.sameIpv4Slash24(address.getAddress(), groupOwnerAddress)) {
+                        addressSameSubnet = true;
+                        break;
+                    }
+                }
+                artifact.diagnostic(SECTION, prefix + "_route_matches_group_owner", routeMatches);
+                artifact.diagnostic(SECTION, prefix + "_address_same_subnet_as_group_owner", addressSameSubnet);
+                artifact.diagnostic(
+                        SECTION,
+                        prefix + "_p2p_interface",
+                        properties.getInterfaceName() != null
+                                && properties.getInterfaceName().toLowerCase(Locale.US).contains("p2p"));
             }
         } catch (Exception ex) {
             artifact.diagnostic(SECTION, prefix + "_link_properties_error", errorText(ex));
@@ -793,6 +999,18 @@ final class Qcl041AppBoundSocketMatrix {
             artifact.diagnostic(SECTION, prefix + "_network_capabilities_found", capabilities != null);
             if (capabilities != null) {
                 artifact.diagnostic(SECTION, prefix + "_capabilities", capabilities.toString());
+                artifact.diagnostic(
+                        SECTION,
+                        prefix + "_has_transport_wifi",
+                        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI));
+                artifact.diagnostic(
+                        SECTION,
+                        prefix + "_has_capability_wifi_p2p",
+                        hasCapabilityByName(capabilities, "NET_CAPABILITY_WIFI_P2P"));
+                artifact.diagnostic(
+                        SECTION,
+                        prefix + "_has_capability_local_network",
+                        hasCapabilityByName(capabilities, "NET_CAPABILITY_LOCAL_NETWORK"));
             }
         } catch (Exception ex) {
             artifact.diagnostic(SECTION, prefix + "_network_capabilities_error", errorText(ex));
@@ -874,8 +1092,7 @@ final class Qcl041AppBoundSocketMatrix {
         boolean registered = false;
         long started = SystemClock.elapsedRealtime();
         try {
-            NetworkRequest request = new NetworkRequest.Builder()
-                    .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            NetworkRequest request = baseNetworkRequestBuilder()
                     .addCapability(wifiP2pCapability)
                     .build();
             artifact.diagnostic(SECTION, key + "request", request.toString());
@@ -1029,8 +1246,10 @@ final class Qcl041AppBoundSocketMatrix {
                     artifact.diagnostic(SECTION, mode + "_skipped", "wifi_direct_network_not_found");
                     return;
                 }
+                artifact.diagnostic(SECTION, mode + "_socket_authority_attempted", true);
                 wifiDirectNetwork.bindSocket(socket);
                 artifact.diagnostic(SECTION, mode + "_network_bound", true);
+                artifact.diagnostic(SECTION, mode + "_network_handle", wifiDirectNetwork.getNetworkHandle());
             }
             if (sourceBound) {
                 if (localAddress == null) {
@@ -1048,6 +1267,44 @@ final class Qcl041AppBoundSocketMatrix {
                 artifact.diagnostic(SECTION, mode + "_tx_packets", sequence + 1);
                 artifact.diagnostic(SECTION, mode + "_last_local", socket.getLocalSocketAddress().toString());
             }
+            if (networkBound) {
+                artifact.diagnostic(SECTION, mode + "_socket_authority_pass", true);
+            }
+        } catch (Exception ex) {
+            artifact.diagnostic(SECTION, mode + "_send_error", errorText(ex));
+        } finally {
+            closeQuietly(socket);
+        }
+    }
+
+    private void runUdpLocalP2pBindMode(String mode) {
+        DatagramSocket socket = null;
+        try {
+            artifact.diagnostic(SECTION, mode + "_diagnostic_non_promoting", true);
+            artifact.diagnostic(SECTION, mode + "_socket_authority", "network_interface_local_p2p_address_bind");
+            artifact.diagnostic(SECTION, mode + "_local_p2p_bind_authority_attempted", true);
+            if (localAddress == null) {
+                artifact.diagnostic(SECTION, mode + "_skipped", "local_p2p_address_not_found");
+                return;
+            }
+            socket = new DatagramSocket(null);
+            socket.setReuseAddress(true);
+            socket.bind(new InetSocketAddress(localAddress, 0));
+            artifact.diagnostic(SECTION, mode + "_local_p2p_bind", socket.getLocalSocketAddress().toString());
+            artifact.diagnostic(SECTION, mode + "_local_p2p_address", localAddress.getHostAddress());
+            artifact.diagnostic(
+                    SECTION,
+                    mode + "_local_p2p_same_subnet_as_group_owner",
+                    Qcl041WifiDirectNetworkBinder.sameIpv4Slash24(localAddress, groupOwnerAddress));
+            InetSocketAddress target =
+                    new InetSocketAddress(groupOwnerAddress, config.q2qAppBoundSocketMatrixPort);
+            for (int sequence = 0; sequence < UDP_SENDS_PER_MODE; sequence++) {
+                byte[] payload = (mode + ";seq=" + sequence + ";run_id=" + config.runId).getBytes(StandardCharsets.UTF_8);
+                socket.send(new DatagramPacket(payload, payload.length, target));
+                artifact.diagnostic(SECTION, mode + "_tx_packets", sequence + 1);
+                artifact.diagnostic(SECTION, mode + "_last_local", socket.getLocalSocketAddress().toString());
+            }
+            artifact.diagnostic(SECTION, mode + "_local_p2p_bind_authority_pass", true);
         } catch (Exception ex) {
             artifact.diagnostic(SECTION, mode + "_send_error", errorText(ex));
         } finally {
@@ -1119,7 +1376,9 @@ final class Qcl041AppBoundSocketMatrix {
                     config.q2qAppBoundSocketMatrixPort + 1));
             server.setSoTimeout(500);
             artifact.diagnostic(SECTION, "tcp_receiver_bound", server.getLocalSocketAddress().toString());
-            long deadline = SystemClock.elapsedRealtime() + TCP_RECEIVE_MS;
+            int receiveWindowMs = tcpReceiveWindowMs();
+            artifact.diagnostic(SECTION, "tcp_receive_window_ms", receiveWindowMs);
+            long deadline = SystemClock.elapsedRealtime() + receiveWindowMs;
             while (SystemClock.elapsedRealtime() < deadline) {
                 try {
                     peer = server.accept();
@@ -1163,6 +1422,7 @@ final class Qcl041AppBoundSocketMatrix {
         Socket socket = null;
         long started = SystemClock.elapsedRealtime();
         try {
+            recordTraceTcpVariant(mode, "before_tcp_bind_connect");
             if (networkFactory) {
                 if (wifiDirectNetwork == null) {
                     artifact.diagnostic(SECTION, mode + "_skipped", "wifi_direct_network_not_found");
@@ -1170,6 +1430,8 @@ final class Qcl041AppBoundSocketMatrix {
                 }
                 socket = wifiDirectNetwork.getSocketFactory().createSocket();
                 artifact.diagnostic(SECTION, mode + "_network_factory_socket", true);
+                artifact.diagnostic(SECTION, mode + "_network_handle", wifiDirectNetwork.getNetworkHandle());
+                artifact.diagnostic(SECTION, mode + "_socket_authority_attempted", true);
             } else {
                 socket = new Socket();
                 if (networkBound) {
@@ -1177,8 +1439,10 @@ final class Qcl041AppBoundSocketMatrix {
                         artifact.diagnostic(SECTION, mode + "_skipped", "wifi_direct_network_not_found");
                         return;
                     }
+                    artifact.diagnostic(SECTION, mode + "_socket_authority_attempted", true);
                     wifiDirectNetwork.bindSocket(socket);
                     artifact.diagnostic(SECTION, mode + "_network_bound", true);
+                    artifact.diagnostic(SECTION, mode + "_network_handle", wifiDirectNetwork.getNetworkHandle());
                 }
             }
             if (sourceBound) {
@@ -1207,12 +1471,74 @@ final class Qcl041AppBoundSocketMatrix {
             artifact.diagnostic(SECTION, mode + "_local", socket.getLocalSocketAddress().toString());
             artifact.diagnostic(SECTION, mode + "_remote", socket.getRemoteSocketAddress().toString());
             artifact.diagnostic(SECTION, mode + "_reply", reply == null ? "" : reply);
+            if (networkBound || networkFactory) {
+                artifact.diagnostic(SECTION, mode + "_socket_authority_pass", true);
+            }
+            recordTraceTcpVariant(mode, "after_tcp_connect");
         } catch (Exception ex) {
+            recordTraceTcpFailure(mode, ex);
             artifact.diagnostic(SECTION, mode + "_connect_error", errorText(ex));
             artifact.diagnostic(SECTION, mode + "_connect_ms", SystemClock.elapsedRealtime() - started);
         } finally {
             closeQuietly(socket);
         }
+    }
+
+    private void runTcpLocalP2pBindMode(String mode) {
+        Socket socket = null;
+        long started = SystemClock.elapsedRealtime();
+        try {
+            artifact.diagnostic(SECTION, mode + "_diagnostic_non_promoting", true);
+            artifact.diagnostic(SECTION, mode + "_socket_authority", "network_interface_local_p2p_address_bind");
+            artifact.diagnostic(SECTION, mode + "_local_p2p_bind_authority_attempted", true);
+            recordTraceTcpVariant(mode, "before_local_p2p_bind_connect");
+            if (localAddress == null) {
+                artifact.diagnostic(SECTION, mode + "_skipped", "local_p2p_address_not_found");
+                return;
+            }
+            if (groupOwnerAddress == null) {
+                artifact.diagnostic(SECTION, mode + "_skipped", "group_owner_address_not_found");
+                return;
+            }
+            socket = new Socket();
+            socket.bind(new InetSocketAddress(localAddress, 0));
+            artifact.diagnostic(SECTION, mode + "_local_p2p_bind", socket.getLocalSocketAddress().toString());
+            artifact.diagnostic(SECTION, mode + "_local_p2p_address", localAddress.getHostAddress());
+            artifact.diagnostic(
+                    SECTION,
+                    mode + "_local_p2p_same_subnet_as_group_owner",
+                    Qcl041WifiDirectNetworkBinder.sameIpv4Slash24(localAddress, groupOwnerAddress));
+            InetSocketAddress target =
+                    new InetSocketAddress(groupOwnerAddress, config.q2qAppBoundSocketMatrixPort + 1);
+            socket.connect(target, Math.max(3, config.socketTimeoutSeconds) * 1000);
+            socket.setSoTimeout(Math.max(3, config.socketTimeoutSeconds) * 1000);
+            BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(
+                    socket.getOutputStream(),
+                    StandardCharsets.UTF_8));
+            BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    socket.getInputStream(),
+                    StandardCharsets.UTF_8));
+            writer.write(mode + ";run_id=" + config.runId + "\n");
+            writer.flush();
+            String reply = reader.readLine();
+            artifact.diagnostic(SECTION, mode + "_connected", true);
+            artifact.diagnostic(SECTION, mode + "_connect_ms", SystemClock.elapsedRealtime() - started);
+            artifact.diagnostic(SECTION, mode + "_local", socket.getLocalSocketAddress().toString());
+            artifact.diagnostic(SECTION, mode + "_remote", socket.getRemoteSocketAddress().toString());
+            artifact.diagnostic(SECTION, mode + "_reply", reply == null ? "" : reply);
+            artifact.diagnostic(SECTION, mode + "_local_p2p_bind_authority_pass", true);
+            recordTraceTcpVariant(mode, "after_local_p2p_bind_connect");
+        } catch (Exception ex) {
+            recordTraceTcpFailure(mode, ex);
+            artifact.diagnostic(SECTION, mode + "_connect_error", errorText(ex));
+            artifact.diagnostic(SECTION, mode + "_connect_ms", SystemClock.elapsedRealtime() - started);
+        } finally {
+            closeQuietly(socket);
+        }
+    }
+
+    private void runTcpLocalP2pBindStreamMode(String mode) {
+        runTcpTunnelStreamClient(mode, false, true);
     }
 
     private void runTcpProcessBoundMode(String mode) {
@@ -1221,6 +1547,7 @@ final class Qcl041AppBoundSocketMatrix {
         boolean processBound = false;
         long started = SystemClock.elapsedRealtime();
         try {
+            recordTraceTcpVariant(mode, "before_tcp_bind_connect");
             previousNetwork = boundNetworkForProcess(mode);
             processBound = bindProcessForMode(mode);
             if (!processBound) {
@@ -1245,7 +1572,9 @@ final class Qcl041AppBoundSocketMatrix {
             artifact.diagnostic(SECTION, mode + "_local", socket.getLocalSocketAddress().toString());
             artifact.diagnostic(SECTION, mode + "_remote", socket.getRemoteSocketAddress().toString());
             artifact.diagnostic(SECTION, mode + "_reply", reply == null ? "" : reply);
+            recordTraceTcpVariant(mode, "after_tcp_connect");
         } catch (Exception ex) {
+            recordTraceTcpFailure(mode, ex);
             artifact.diagnostic(SECTION, mode + "_connect_error", errorText(ex));
             artifact.diagnostic(SECTION, mode + "_connect_ms", SystemClock.elapsedRealtime() - started);
         } finally {
@@ -1322,6 +1651,20 @@ final class Qcl041AppBoundSocketMatrix {
         }
     }
 
+    private void recordTraceTcpVariant(String mode, String phase) {
+        if (appNetworkTrace == null || !config.appNetworkTraceRequested()) {
+            return;
+        }
+        appNetworkTrace.recordTcpVariantPhase(mode, phase, groupOwnerAddress);
+    }
+
+    private void recordTraceTcpFailure(String mode, Exception ex) {
+        if (appNetworkTrace == null || !config.appNetworkTraceRequested()) {
+            return;
+        }
+        appNetworkTrace.recordTcpFailure("tcp_variant_" + mode + "_after_tcp_failure", groupOwnerAddress, ex);
+    }
+
     private boolean bindProcessForMode(String mode) {
         if (connectivityManager == null) {
             artifact.diagnostic(SECTION, mode + "_skipped", "connectivity_manager_not_found");
@@ -1376,6 +1719,30 @@ final class Qcl041AppBoundSocketMatrix {
 
     private static String sanitizeMode(String mode) {
         return mode.toLowerCase(Locale.US).replaceAll("[^a-z0-9_]+", "_");
+    }
+
+    private static NetworkRequest.Builder baseNetworkRequestBuilder() {
+        NetworkRequest.Builder builder = new NetworkRequest.Builder();
+        try {
+            builder.clearCapabilities();
+        } catch (Throwable ignored) {
+            removeCapabilityIfPresent(builder, "NET_CAPABILITY_INTERNET");
+            removeCapabilityIfPresent(builder, "NET_CAPABILITY_TRUSTED");
+            removeCapabilityIfPresent(builder, "NET_CAPABILITY_NOT_RESTRICTED");
+            removeCapabilityIfPresent(builder, "NET_CAPABILITY_NOT_VPN");
+        }
+        return builder;
+    }
+
+    private static void removeCapabilityIfPresent(NetworkRequest.Builder builder, String fieldName) {
+        int capability = capabilityByName(fieldName);
+        if (capability < 0) {
+            return;
+        }
+        try {
+            builder.removeCapability(capability);
+        } catch (Throwable ignored) {
+        }
     }
 
     private static int capabilityByName(String fieldName) {
@@ -1433,6 +1800,52 @@ final class Qcl041AppBoundSocketMatrix {
 
     private boolean tcpTunnelStreamEnabled() {
         return tcpTunnelStreamSeconds() > 0 && tcpTunnelStreamBytesPerDirection() > 0;
+    }
+
+    private long traceOnlyHoldMs() {
+        return Math.max(8_000L, Math.min(20_000L, Math.max(3, config.socketTimeoutSeconds) * 1000L));
+    }
+
+    private int udpReceiveWindowMs() {
+        int receiveWindowMs = UDP_RECEIVE_MS
+                + delayedUdpDelayMs()
+                + (delayedUdpEnabled() ? DELAYED_UDP_RECEIVE_GRACE_MS : 0);
+        if (config.isQ2qAppNetworkTraceOnly() && localP2pUdpVariantRequested()) {
+            receiveWindowMs = Math.max(receiveWindowMs, traceOnlyVariantReceiveWindowMs());
+        }
+        return receiveWindowMs;
+    }
+
+    private int tcpReceiveWindowMs() {
+        if (config.isQ2qAppNetworkTraceOnly() && config.hasTcpBindingVariants()) {
+            return Math.max(TCP_RECEIVE_MS, traceOnlyVariantReceiveWindowMs());
+        }
+        return TCP_RECEIVE_MS;
+    }
+
+    private int traceOnlyVariantReceiveWindowMs() {
+        return 45_000 + Math.max(0, config.q2qTcpBindingVariantDelayMs);
+    }
+
+    private boolean localP2pUdpVariantRequested() {
+        return config.tcpBindingVariantRequested(UDP_LOCAL_P2P_BIND_MODE)
+                || config.tcpBindingVariantRequested("local_p2p_udp")
+                || config.tcpBindingVariantRequested("udp_p2p0_bind")
+                || config.tcpBindingVariantRequested("p2p0_udp_bind");
+    }
+
+    private boolean localP2pTcpVariantRequested() {
+        return config.tcpBindingVariantRequested(TCP_LOCAL_P2P_BIND_MODE)
+                || config.tcpBindingVariantRequested("local_p2p_tcp")
+                || config.tcpBindingVariantRequested("tcp_p2p0_bind")
+                || config.tcpBindingVariantRequested("p2p0_tcp_bind");
+    }
+
+    private boolean localP2pTcpStreamVariantRequested() {
+        return config.tcpBindingVariantRequested(TCP_LOCAL_P2P_BIND_STREAM_MODE)
+                || config.tcpBindingVariantRequested("local_p2p_tcp_stream")
+                || config.tcpBindingVariantRequested("tcp_p2p0_bind_stream")
+                || config.tcpBindingVariantRequested("p2p0_tcp_stream_bind");
     }
 
     private static String readAsciiLine(InputStream input, int maxBytes) throws IOException {

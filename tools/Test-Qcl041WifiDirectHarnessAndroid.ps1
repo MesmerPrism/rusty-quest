@@ -13,6 +13,7 @@ $activityPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyque
 $servicePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\qcl041\Qcl041WifiDirectHarnessService.java"
 $lifecyclePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\qcl041\Qcl041WifiDirectLifecycle.java"
 $networkBinderPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\qcl041\Qcl041WifiDirectNetworkBinder.java"
+$appNetworkTracePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\qcl041\Qcl041AppNetworkTrace.java"
 $appBoundSocketMatrixPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\qcl041\Qcl041AppBoundSocketMatrix.java"
 $qcl030LocalOnlyHotspotProbePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\qcl041\Qcl030LocalOnlyHotspotProbe.java"
 $nativeSocketProbeBridgePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\qcl041\Qcl041NativeSocketProbe.java"
@@ -30,6 +31,7 @@ $buildPath = Join-Path $PSScriptRoot "Build-Qcl041WifiDirectHarnessAndroid.ps1"
 $invokePath = Join-Path $PSScriptRoot "Invoke-Qcl041WifiDirectLifecycle.ps1"
 $questHostedWindowsJoinPath = Join-Path $PSScriptRoot "Invoke-Qcl041QuestHostedWindowsJoinProbe.ps1"
 $q2qMatrixInvokePath = Join-Path $PSScriptRoot "Invoke-Qcl041QuestToQuestAppBoundSocketMatrix.ps1"
+$qcl041MatrixComparePath = Join-Path $PSScriptRoot "Compare-Qcl041MatrixArtifacts.ps1"
 $qcl030InvokePath = Join-Path $PSScriptRoot "Invoke-Qcl030QuestLocalOnlyHotspotProbe.ps1"
 $qcl100InvokePath = Join-Path $PSScriptRoot "Invoke-Qcl100QuestToQuestNativeStereoProjectionWifiDirect.ps1"
 $qcl100CommonPath = Join-Path $PSScriptRoot "qcl100_native_projection\Common.ps1"
@@ -41,8 +43,14 @@ $qcl100MatrixGatePath = Join-Path $PSScriptRoot "qcl100_native_projection\Qcl041
 $qcl100LowerGatePlanPath = Join-Path $PSScriptRoot "qcl100_native_projection\LowerGatePlan.ps1"
 $qcl100LowerGateEvidencePath = Join-Path $PSScriptRoot "qcl100_native_projection\LowerGateEvidence.ps1"
 $readmePath = Join-Path $appRoot "README.md"
+$qcl041StrictControlTcpPassFixturePath = Join-Path $repoRoot "fixtures\device-link\qcl041-strict-control-tcp-summary.pass.json"
+$qcl041ClientP2pNotVisibleFixturePath = Join-Path $repoRoot "fixtures\damaged\qcl041-client-p2p-network-not-visible.summary.json"
+$qcl041StaleP2p0FixturePath = Join-Path $repoRoot "fixtures\damaged\qcl041-stale-p2p0.summary.json"
+$qcl041ShellVisibleAppInvisibleFixturePath = Join-Path $repoRoot "fixtures\damaged\qcl041-shell-visible-but-app-invisible-p2p.summary.json"
+$qcl041StrictStreamFalseFixturePath = Join-Path $repoRoot "fixtures\damaged\qcl041-strict-stream-bit-false.summary.json"
+$qcl041LocalP2pBindDoesNotPromoteFixturePath = Join-Path $repoRoot "fixtures\damaged\qcl041-local-p2p-bind-does-not-promote.summary.json"
 
-foreach ($path in @($manifestPath, $activityPath, $servicePath, $lifecyclePath, $networkBinderPath, $appBoundSocketMatrixPath, $qcl030LocalOnlyHotspotProbePath, $nativeSocketProbeBridgePath, $qcl082MediaLanesPath, $qcl082CopyProgressPath, $qcl082ControlTcpMediaCarrierPath, $receiverSocketCandidatePath, $artifactPath, $configPath, $lslBridgePath, $nativeBridgePath, $nativeHeaderPath, $nativeSocketProbePath, $buildPath, $invokePath, $questHostedWindowsJoinPath, $q2qMatrixInvokePath, $qcl030InvokePath, $qcl100InvokePath, $qcl100CommonPath, $qcl100ParityBlockersPath, $qcl100RelayPath, $qcl100FreshnessPath, $qcl100RuntimeSummaryPath, $qcl100MatrixGatePath, $qcl100LowerGatePlanPath, $qcl100LowerGateEvidencePath, $readmePath)) {
+foreach ($path in @($manifestPath, $activityPath, $servicePath, $lifecyclePath, $networkBinderPath, $appNetworkTracePath, $appBoundSocketMatrixPath, $qcl030LocalOnlyHotspotProbePath, $nativeSocketProbeBridgePath, $qcl082MediaLanesPath, $qcl082CopyProgressPath, $qcl082ControlTcpMediaCarrierPath, $receiverSocketCandidatePath, $artifactPath, $configPath, $lslBridgePath, $nativeBridgePath, $nativeHeaderPath, $nativeSocketProbePath, $buildPath, $invokePath, $questHostedWindowsJoinPath, $q2qMatrixInvokePath, $qcl041MatrixComparePath, $qcl030InvokePath, $qcl100InvokePath, $qcl100CommonPath, $qcl100ParityBlockersPath, $qcl100RelayPath, $qcl100FreshnessPath, $qcl100RuntimeSummaryPath, $qcl100MatrixGatePath, $qcl100LowerGatePlanPath, $qcl100LowerGateEvidencePath, $readmePath, $qcl041StrictControlTcpPassFixturePath, $qcl041ClientP2pNotVisibleFixturePath, $qcl041StaleP2p0FixturePath, $qcl041ShellVisibleAppInvisibleFixturePath, $qcl041StrictStreamFalseFixturePath, $qcl041LocalP2pBindDoesNotPromoteFixturePath)) {
     if (-not (Test-Path $path)) {
         throw "Missing QCL-041 Wi-Fi Direct harness file: $path"
     }
@@ -53,6 +61,7 @@ $activity = Get-Content -Raw -Path $activityPath
 $service = Get-Content -Raw -Path $servicePath
 $lifecycle = Get-Content -Raw -Path $lifecyclePath
 $networkBinder = Get-Content -Raw -Path $networkBinderPath
+$appNetworkTrace = Get-Content -Raw -Path $appNetworkTracePath
 $appBoundSocketMatrix = Get-Content -Raw -Path $appBoundSocketMatrixPath
 $qcl030LocalOnlyHotspotProbe = Get-Content -Raw -Path $qcl030LocalOnlyHotspotProbePath
 $nativeSocketProbeBridge = Get-Content -Raw -Path $nativeSocketProbeBridgePath
@@ -71,6 +80,7 @@ $buildText = Get-Content -Raw -Path $buildPath
 $invoke = Get-Content -Raw -Path $invokePath
 $questHostedWindowsJoin = Get-Content -Raw -Path $questHostedWindowsJoinPath
 $q2qMatrixInvoke = Get-Content -Raw -Path $q2qMatrixInvokePath
+$qcl041MatrixCompare = Get-Content -Raw -Path $qcl041MatrixComparePath
 $qcl030Invoke = Get-Content -Raw -Path $qcl030InvokePath
 $qcl100Invoke = Get-Content -Raw -Path $qcl100InvokePath
 $qcl100Common = Get-Content -Raw -Path $qcl100CommonPath
@@ -82,7 +92,13 @@ $qcl100MatrixGate = Get-Content -Raw -Path $qcl100MatrixGatePath
 $qcl100LowerGatePlan = Get-Content -Raw -Path $qcl100LowerGatePlanPath
 $qcl100LowerGateEvidence = Get-Content -Raw -Path $qcl100LowerGateEvidencePath
 $readme = Get-Content -Raw -Path $readmePath
-$combined = "$manifest`n$activity`n$service`n$lifecycleSurface`n$qcl030LocalOnlyHotspotProbe`n$nativeSocketProbeBridge`n$artifact`n$config`n$lslBridge`n$nativeBridge`n$nativeHeader`n$nativeSocketProbe`n$buildText`n$invoke`n$questHostedWindowsJoin`n$q2qMatrixInvoke`n$qcl030Invoke`n$qcl100Invoke`n$qcl100Common`n$qcl100ParityBlockers`n$qcl100Relay`n$qcl100Freshness`n$qcl100RuntimeSummary`n$qcl100MatrixGate`n$qcl100LowerGatePlan`n$qcl100LowerGateEvidence`n$readme"
+$qcl041StrictControlTcpPassFixture = Get-Content -Raw -Path $qcl041StrictControlTcpPassFixturePath
+$qcl041ClientP2pNotVisibleFixture = Get-Content -Raw -Path $qcl041ClientP2pNotVisibleFixturePath
+$qcl041StaleP2p0Fixture = Get-Content -Raw -Path $qcl041StaleP2p0FixturePath
+$qcl041ShellVisibleAppInvisibleFixture = Get-Content -Raw -Path $qcl041ShellVisibleAppInvisibleFixturePath
+$qcl041StrictStreamFalseFixture = Get-Content -Raw -Path $qcl041StrictStreamFalseFixturePath
+$qcl041LocalP2pBindDoesNotPromoteFixture = Get-Content -Raw -Path $qcl041LocalP2pBindDoesNotPromoteFixturePath
+$combined = "$manifest`n$activity`n$service`n$lifecycleSurface`n$appNetworkTrace`n$qcl030LocalOnlyHotspotProbe`n$nativeSocketProbeBridge`n$artifact`n$config`n$lslBridge`n$nativeBridge`n$nativeHeader`n$nativeSocketProbe`n$buildText`n$invoke`n$questHostedWindowsJoin`n$q2qMatrixInvoke`n$qcl041MatrixCompare`n$qcl030Invoke`n$qcl100Invoke`n$qcl100Common`n$qcl100ParityBlockers`n$qcl100Relay`n$qcl100Freshness`n$qcl100RuntimeSummary`n$qcl100MatrixGate`n$qcl100LowerGatePlan`n$qcl100LowerGateEvidence`n$readme`n$qcl041StrictControlTcpPassFixture`n$qcl041ClientP2pNotVisibleFixture`n$qcl041StaleP2p0Fixture`n$qcl041ShellVisibleAppInvisibleFixture`n$qcl041StrictStreamFalseFixture`n$qcl041LocalP2pBindDoesNotPromoteFixture"
 
 function Assert-ContainsTokens {
     param(
@@ -109,6 +125,24 @@ function Assert-TextOrder {
     if ($firstIndex -lt 0 -or $secondIndex -lt 0 -or $firstIndex -ge $secondIndex) {
         throw "QCL-041 Wi-Fi Direct harness static check failed for ${Label}: expected '$First' before '$Second'."
     }
+}
+
+function Get-TextBetween {
+    param(
+        [string]$Text,
+        [string]$Start,
+        [string]$End,
+        [string]$Label
+    )
+    $startIndex = $Text.IndexOf($Start, [StringComparison]::Ordinal)
+    if ($startIndex -lt 0) {
+        throw "QCL-041 Wi-Fi Direct harness static check failed for ${Label}: missing start token '$Start'."
+    }
+    $endIndex = $Text.IndexOf($End, $startIndex, [StringComparison]::Ordinal)
+    if ($endIndex -lt 0 -or $endIndex -le $startIndex) {
+        throw "QCL-041 Wi-Fi Direct harness static check failed for ${Label}: missing end token '$End'."
+    }
+    return $Text.Substring($startIndex, $endIndex - $startIndex)
 }
 
 Assert-ContainsTokens $manifest @(
@@ -240,6 +274,22 @@ Assert-ContainsTokens $q2qMatrixInvoke @(
     'RequireCandidateWifiDirectRoutesClear',
     'RequireTcpTunnelStreamPass',
     'Qcl100ControlTcpGate',
+    'AppNetworkTrace',
+    'AppNetworkTraceOnly',
+    'AppNetworkRequestTrace',
+    'AppNetworkRequestTraceTimeoutSeconds',
+    'AppNetworkRequestTraceScopes',
+    'TcpBindingVariants',
+    'TcpBindingVariantDelaySeconds',
+    'qcl041_app_network_trace_only',
+    'diagnostic_pass',
+    'qcl041\.q2q_app_network_trace_enabled',
+    'qcl041\.q2q_app_network_trace_only',
+    'qcl041\.q2q_app_network_request_trace_enabled',
+    'qcl041\.q2q_app_network_request_trace_timeout_ms',
+    'qcl041\.q2q_app_network_request_trace_scopes',
+    'qcl041\.q2q_tcp_binding_variants',
+    'qcl041\.q2q_tcp_binding_variant_delay_ms',
     'PreflightOnly',
     '"cmd",\s*"wifi",\s*"status"',
     'Wifi is connected to',
@@ -298,6 +348,8 @@ Assert-ContainsTokens $q2qMatrixInvoke @(
     'preflight-shell-routes\.json',
     'preflight-candidate-wifi-direct-routes\.json',
     'Get-Qcl041AppNetworkVisibility',
+    'System\.Collections\.IDictionary',
+    '\$Matrix\.Contains\(\$Name\)',
     'app-network-visibility-summary\.json',
     'qcl041_sees_p2p_network_shell_route_not_p2p0',
     'qcl041_client_p2p_network_not_visible',
@@ -309,6 +361,14 @@ Assert-ContainsTokens $q2qMatrixInvoke @(
     'qcl041\.q2q_app_bound_socket_matrix_tcp_tunnel_stream_bytes_per_direction',
     'udp_process_bound',
     'tcp_process_bound',
+    'tcp_socket_factory',
+    'udp_local_p2p_bind_echo',
+    'tcp_local_p2p_bind_socket',
+    'tcp_local_p2p_bind_stream_socket',
+    'local_p2p_bind_authority_attempted',
+    'local_p2p_bind_authority_pass',
+    'network_interface_local_p2p_address_bind',
+    'diagnostic_non_promoting',
     'udp_native_fd_network_bound',
     'early_bound_delayed_udp_network_bound',
     'early_bound_delayed_udp_source_and_network_bound',
@@ -317,6 +377,8 @@ Assert-ContainsTokens $q2qMatrixInvoke @(
     'delayed_udp_native_fd_network_bound',
     'delayed_udp_process_bound',
     'tcp_native_fd_network_bound',
+    'tcp_delayed_network_bind_socket',
+    'tcp_delayed_network_factory',
     'native_udp_fd_pass',
     'delayed_app_bound_udp_socket_pass',
     'delayed_native_udp_fd_pass',
@@ -342,7 +404,26 @@ Assert-ContainsTokens $q2qMatrixInvoke @(
     'ControlTcpGateReady',
     'tcp_tunnel_bidirectional_bytes_pass',
     'tcp_tunnel_stream_bidirectional_bytes_pass',
-    'tcp_tunnel_stream_not_bidirectional',
+    'qcl041_client_p2p_tcp_stream_not_bidirectional',
+    'client_p2p_network_callback_seen',
+    'client_p2p_network_visible_app',
+    'client_p2p_network_selected_handle',
+    'client_p2p_network_link_properties_present',
+    'client_p2p_network_route_matches_group_owner',
+    'client_p2p_network_request_trace_candidate_seen',
+    'client_p2p_network_socket_authority_attempted',
+    'client_p2p_network_socket_authority_pass',
+    'client_p2p_interface_local_bind_non_promoting',
+    'client_p2p_interface_local_bind_udp_pass',
+    'client_p2p_interface_local_bind_udp_receiver_observed_packets',
+    'client_p2p_interface_local_bind_tcp_pass',
+    'client_p2p_interface_local_bind_tcp_receiver_accepts',
+    'client_p2p_interface_local_bind_tcp_stream_pass',
+    'client_p2p_interface_local_bind_tcp_stream_client_to_owner_rx_bytes',
+    'client_p2p_interface_local_bind_tcp_stream_owner_to_client_rx_bytes',
+    'udp_network_bound_receiver_observed_packets',
+    'udp_network_bound_receiver_observed_source_matches_client_p2p',
+    'udp_network_bound_socket_authority_pass',
     'receiver_packets',
     'receiver_accepts',
     'receiver_observed_bytes',
@@ -361,9 +442,120 @@ Assert-ContainsTokens $q2qMatrixInvoke @(
     'Get-Qcl041P2pIpv4Status',
     'active_group_shell_routes',
     'app_network_visibility',
+    'network_visibility_deep_trace',
+    'network-visibility-deep-trace\.json',
+    'qcl041_network_visibility_deep_trace',
+    'app_network_request_trace_enabled',
+    'app_network_request_trace_scopes',
+    'client_request_network_trace_candidate_seen',
+    'promotion_allowed',
+    'same_group_duplex_claimed',
     'post_run_network',
     'p2p0_ipv4_cleared'
 ) "Quest-to-Quest app-bound socket matrix wrapper"
+
+Assert-TextOrder `
+    -Text $appBoundSocketMatrix `
+    -First 'runUdpSendMode("udp_network_bound", false, true);' `
+    -Second 'runTcpTunnelClient();' `
+    -Label "QCL041 strict network-bound UDP echo before TCP tunnel"
+
+$requestedTcpVariantBlock = Get-TextBetween `
+    -Text $appBoundSocketMatrix `
+    -Start 'private void runRequestedTcpBindingVariants()' `
+    -End 'private void runDelayedTcpBindingVariant' `
+    -Label "QCL041 requested TCP variant ordering"
+
+Assert-TextOrder `
+    -Text $requestedTcpVariantBlock `
+    -First 'tcp_socket_factory' `
+    -Second 'tcp_network_bind_socket' `
+    -Label "QCL041 requested TCP variant socket-factory before bind-socket"
+
+Assert-TextOrder `
+    -Text $requestedTcpVariantBlock `
+    -First 'tcp_network_bind_socket' `
+    -Second 'tcp_process_bound' `
+    -Label "QCL041 requested TCP variant bind-socket before process-bound"
+
+Assert-TextOrder `
+    -Text $requestedTcpVariantBlock `
+    -First 'tcp_process_bound' `
+    -Second 'tcp_native_fd_network_bound' `
+    -Label "QCL041 requested TCP variant process-bound before native fd"
+
+Assert-ContainsTokens $appNetworkTrace @(
+    'class Qcl041AppNetworkTrace',
+    'ConnectivityManager\.NetworkCallback',
+    'registerNetworkCallback',
+    'requestNetwork',
+    'unregisterNetworkCallback',
+    'registerWifiP2pDefaultCapabilityCallback',
+    'registerWifiP2pCapabilityCallback',
+    'registerLocalNetworkCapabilityCallback',
+    'registerIncludeOtherUidWifiP2pCallback',
+    'registerIncludeOtherUidLocalNetworkCallback',
+    'registerBroadWifiCallback',
+    'setIncludeOtherUidNetworks',
+    'startRequestNetworkTraceIfRequested',
+    'requestNetworkTrace',
+    'baseNetworkRequestBuilder',
+    'latestCallbackWifiDirectNetwork',
+    'getAllNetworks',
+    'getNetworkCapabilities',
+    'getLinkProperties',
+    'NetworkInterface\.getNetworkInterfaces',
+    'onAvailable',
+    'onLost',
+    'onCapabilitiesChanged',
+    'onLinkPropertiesChanged',
+    'app_network_trace',
+    'recordTcpVariantPhase',
+    'recordTcpFailure',
+    'AppOpsManager',
+    'buildAppIdentityAndPolicySnapshot',
+    'network_permission_grants_all_present',
+    'network_permission_grants_all_declared_present',
+    'permission_nearby_wifi_devices_applicable',
+    'permission_access_fine_location_applicable',
+    'permission_access_fine_location_manifest_max_sdk',
+    'ACCESS_FINE_LOCATION_MANIFEST_MAX_SDK',
+    'appop_nearby_wifi_devices_mode',
+    'appop_fine_location_mode',
+    'appop_wifi_scan_mode',
+    'request_network_restricted_network_security_exception',
+    'include_other_uid_callback_registered',
+    'include_other_uid_wifi_direct_candidate_seen',
+    'include_other_uid_bind_socket_result',
+    'callback_wifi_p2p_default_registered',
+    'callback_wifi_p2p_clear_capabilities_registered',
+    'callback_local_network_reflection_registered',
+    'callback_wifi_transport_clear_capabilities_registered',
+    'callback_include_other_uid_wifi_p2p_registered',
+    'callback_include_other_uid_local_network_registered',
+    'all_network_count',
+    'callback_cached_network_count',
+    'callback_wifi_direct_candidate_seen',
+    'request_network_callback_cached_network_count',
+    'request_network_wifi_direct_candidate_seen',
+    'request_network_trace_enabled',
+    'request_network_trace_scopes',
+    'request_networks',
+    'p2p_candidate_count',
+    'route_match_count',
+    'network_interface_count',
+    'NET_CAPABILITY_WIFI_P2P',
+    'NET_CAPABILITY_LOCAL_NETWORK'
+) "QCL041 app-network trace"
+
+Assert-ContainsTokens $qcl041MatrixCompare @(
+    'Compare-Qcl041MatrixArtifacts',
+    'OlderCurrentWlanSummaryPath',
+    'StrictApDisconnectedSummaryPath',
+    'Get-Qcl100Qcl041MatrixArtifactComparison',
+    'rusty\.quest\.qcl100_qcl041_matrix_artifact_comparison\.v1',
+    'ConvertTo-Json -Depth 64'
+) "QCL041 matrix artifact comparison CLI"
 
 Assert-ContainsTokens $qcl100Invoke @(
     'Qcl041ArtifactWaitSeconds',
@@ -383,6 +575,10 @@ Assert-ContainsTokens $qcl100Invoke @(
     'XrReadinessSummaryPath',
     'NoMediaLaunchSummaryPath',
     'AllowLowerGateEvidenceSkippedCleanup',
+    'RequireQcl041ClientP2pNetworkCallbackSeen',
+    'RequireQcl041ClientP2pNetworkSocketAuthority',
+    'RequireQcl041StrictUdpDatagramEchoPass',
+    'RequireQcl041TcpTunnelStreamPass',
     'Invoke-Qcl100ParityBlockerSelfTest',
     'Invoke-Qcl100RuntimeSummarySelfTest',
     'Invoke-Qcl100Qcl041ArtifactFreshnessWaitSelfTest',
@@ -441,6 +637,8 @@ Assert-ContainsTokens $qcl100Invoke @(
     'qcl041_matrix_gate_passed',
     'qcl041_matrix_gate_passes_requirement',
     'qcl041_matrix_gate_blocked_reason',
+    'qcl041_matrix_gate_first_lower_gate_issue',
+    'qcl041_matrix_gate_lower_gate_issue_codes',
     'qcl041_matrix_gate_run_id',
     'qcl041_matrix_gate_transport_protocol',
     'qcl041_matrix_gate_required_topology',
@@ -555,6 +753,15 @@ Assert-ContainsTokens $qcl100MatrixGate @(
     'qcl041_matrix_client_to_owner_udp_mode_absent',
     'qcl041_matrix_control_tcp_stream_mode_absent',
     'qcl041_matrix_qcl100_transport_not_supported',
+    'Get-Qcl100Qcl041MatrixArtifactComparison',
+    'rusty\.quest\.qcl100_qcl041_matrix_artifact_comparison\.v1',
+    'older_current_wlan_pass_missing_strict_preflight_requirements',
+    'older_current_wlan_pass_used_infrastructure_wifi',
+    'strict_ap_disconnected_blocked_by_app_invisible_p2p',
+    'strict_ap_disconnected_blocked_by_strict_stream_bit_false',
+    'qcl100_lower_gate_satisfied_by_old_artifact',
+    'normalized_reason',
+    'artifact_comparison_case',
     'expected_run_id',
     'expected_owner_serial',
     'expected_client_serial',
@@ -575,12 +782,67 @@ Assert-ContainsTokens $qcl100MatrixGate @(
     'artifact_fresh_enough',
     'RequireFresh',
     'qcl041_matrix_receiver_observed_bytes_absent',
-    'qcl041_matrix_tcp_tunnel_stream_not_bidirectional',
+    'Get-Qcl100Qcl041MatrixLowerGateIssues',
+    'first_issue',
+    'lower_gate_issue_codes',
+    'lower_gate_issue_count',
+    'first_lower_gate_issue',
+    'blocked_reason_for_qcl100',
+    'qcl041_client_p2p_network_callback_not_seen',
+    'qcl041_client_p2p_network_not_visible_app',
+    'qcl041_client_p2p_network_link_properties_missing',
+    'qcl041_client_p2p_network_route_not_matching_group_owner',
+    'qcl041_client_p2p_udp_network_bound_not_receiver_observed',
+    'qcl041_client_p2p_tcp_stream_not_bidirectional',
     'owner_matrix_complete',
     'client_matrix_complete',
     'owner_matrix_last_checkpoint',
     'client_matrix_last_checkpoint',
     'receiver_observed_bytes',
+    'client_p2p_network_callback_seen',
+    'client_p2p_network_visible_app',
+    'client_p2p_network_link_properties_present',
+    'client_p2p_network_route_matches_group_owner',
+    'client_p2p_network_socket_authority_pass',
+    'network_visibility_deep_trace_classification',
+    'network_visibility_deep_trace_diagnostic_id',
+    'network_visibility_deep_trace_row_count',
+    'network_visibility_deep_trace_expected_row_ids',
+    'network_visibility_deep_trace_row_ids',
+    'network_visibility_deep_trace_missing_row_ids',
+    'network_visibility_deep_trace_expected_rows_present',
+    'network_visibility_deep_trace_local_p2p_promotes_qcl100',
+    'client_app_network_permissions_all_granted',
+    'client_app_network_permissions_all_declared_granted',
+    'client_permission_access_fine_location_applicable',
+    'client_app_network_authority_restriction_hint',
+    'client_request_wifi_p2p_restricted_network_security_exception',
+    'client_appop_nearby_wifi_devices_mode',
+    'client_after_group_formation_network_interface_p2p_count',
+    'client_include_other_uid_candidate_seen',
+    'client_include_other_uid_bind_socket_result',
+    'client_wifi_p2p_network_info_connected',
+    'client_wifi_p2p_group_interface',
+    'client_strict_local_p2p_app_transport_pass',
+    'callback_wifi_p2p_default',
+    'callback_wifi_p2p_clear_capabilities',
+    'callback_local_network_reflection',
+    'callback_wifi_transport_clear_capabilities',
+    'callback_include_other_uid_wifi_p2p',
+    'callback_include_other_uid_local_network',
+    'get_all_networks_standard',
+    'get_all_networks_include_other_uid_request_observed',
+    'wifi_p2p_request_network_info',
+    'wifi_p2p_request_connection_info',
+    'wifi_p2p_request_group_info',
+    'local_p2p_bind_tcp_stream_control',
+    'qcl041_local_p2p_bind_stream_authority',
+    'qcl100_android_network_authority',
+    'qcl100_same_group_simultaneous_native_render',
+    'local_p2p_bind_diagnostic_non_promoting',
+    'local_p2p_bind_only_case',
+    'local_p2p_bind_tcp_stream_pass',
+    'udp_network_bound_receiver_observed_packets',
     'tcp_tunnel_stream_bidirectional_bytes_pass',
     'receiver_observed_udp_modes',
     'receiver_observed_tcp_modes',
@@ -604,8 +866,41 @@ Assert-ContainsTokens $qcl100MatrixGate @(
     'control_tcp_gate_incomplete_matrix_case',
     'control_tcp_gate_incomplete_matrix_summary_path',
     'unsupported_transport_case',
+    'local_p2p_bind_only_summary_path',
     'qcl100-qcl041-matrix-gate-self-test\.json'
 ) "QCL-100 QCL041 matrix gate"
+
+Assert-ContainsTokens $combined @(
+    'fixture-qcl041-strict-control-tcp-pass',
+    'qcl041_client_p2p_network_not_visible',
+    'p2p0_ipv4_present',
+    'shell_client_route_get_from_p2p_source_uses_p2p0',
+    'qcl041_client_p2p_tcp_stream_not_bidirectional',
+    'fixture-qcl041-local-p2p-bind-does-not-promote',
+    'qcl041_strict_local_p2p_app_transport_pass_connectivitymanager_network_absent',
+    'network_interface_local_p2p_address_bind',
+    'diagnostic_pass',
+    'client_p2p_interface_local_bind_non_promoting',
+    'client_p2p_interface_local_bind_udp_pass',
+    'client_p2p_interface_local_bind_tcp_pass',
+    'client_p2p_interface_local_bind_tcp_stream_pass',
+    'client_p2p_network_callback_seen',
+    'client_p2p_network_socket_authority_pass',
+    'client_app_network_permissions_all_granted',
+    'client_app_network_permissions_all_declared_granted',
+    'client_permission_access_fine_location_applicable',
+    'client_app_network_authority_restriction_hint',
+    'client_request_wifi_p2p_restricted_network_security_exception',
+    'client_after_group_formation_network_interface_p2p_count',
+    'client_include_other_uid_candidate_seen',
+    'client_wifi_p2p_network_info_connected',
+    'client_wifi_p2p_group_interface',
+    'client_strict_local_p2p_app_transport_pass',
+    'qcl041_local_p2p_bind_stream_authority',
+    'qcl100_android_network_authority',
+    'qcl100_same_group_simultaneous_native_render',
+    'udp_network_bound_receiver_observed_packets'
+) "QCL041 matrix regression fixtures"
 
 Assert-ContainsTokens $qcl100LowerGatePlan @(
     'rusty\.quest\.qcl100_lower_gate_plan\.v1',
@@ -615,6 +910,25 @@ Assert-ContainsTokens $qcl100LowerGatePlan @(
     'qcl041_strict_control_tcp_gate',
     'Qcl100ControlTcpGate',
     'RequireTcpTunnelStreamPass',
+    'AppNetworkTrace',
+    'TcpBindingVariants',
+    'tcp_socket_factory,tcp_network_bind_socket,tcp_process_bound,tcp_native_fd_network_bound',
+    'accepted_lower_gate_authority',
+    'android_connectivitymanager_network',
+    'authority_tracks',
+    'alternate_authority_candidates',
+    'qcl041_local_p2p_bind_stream_authority',
+    'diagnostic_only_not_promoting',
+    'candidate_not_promoting',
+    'qcl100_android_network_authority',
+    'qcl100_same_group_simultaneous_native_render',
+    'RequireQcl041ClientP2pNetworkCallbackSeen',
+    'RequireQcl041ClientP2pNetworkSocketAuthority',
+    'RequireQcl041StrictUdpDatagramEchoPass',
+    'RequireQcl041TcpTunnelStreamPass',
+    'matrix\.client_p2p_network_callback_seen=true',
+    'matrix\.client_p2p_network_socket_authority_pass=true',
+    'matrix\.udp_network_bound_receiver_observed_packets>0',
     'qcl100_no_media_launch_gate',
     'available_after_wake_policy_and_lower_gates_pass',
     'NoMediaLaunchOnly',
@@ -640,6 +954,38 @@ Assert-ContainsTokens $qcl100LowerGateEvidence @(
     'promotion_allowed',
     'same_group_duplex_claimed',
     'qcl041_matrix_gate_passes_requirement',
+    'RequireQcl041ClientP2pNetworkCallbackSeen',
+    'RequireQcl041ClientP2pNetworkSocketAuthority',
+    'RequireQcl041StrictUdpDatagramEchoPass',
+    'RequireQcl041TcpTunnelStreamPass',
+    'qcl041_client_p2p_network_callback_not_seen',
+    'qcl041_client_p2p_network_not_visible_app',
+    'qcl041_client_p2p_network_link_properties_missing',
+    'qcl041_client_p2p_network_route_not_matching_group_owner',
+    'qcl041_client_p2p_udp_network_bound_not_receiver_observed',
+    'qcl041_client_p2p_network_socket_authority_not_proven',
+    'qcl041_client_p2p_tcp_stream_not_bidirectional',
+    'client_app_network_permissions_all_granted',
+    'client_app_network_permissions_all_declared_granted',
+    'client_permission_access_fine_location_applicable',
+    'client_app_network_authority_restriction_hint',
+    'client_request_wifi_p2p_restricted_network_security_exception',
+    'client_appop_nearby_wifi_devices_mode',
+    'client_after_group_formation_network_interface_p2p_count',
+    'client_include_other_uid_candidate_seen',
+    'client_wifi_p2p_network_info_connected',
+    'client_wifi_p2p_group_interface',
+    'client_strict_local_p2p_app_transport_pass',
+    'qcl041_local_p2p_bind_stream_authority',
+    'qcl100_android_network_authority',
+    'qcl100_same_group_simultaneous_native_render',
+    'local_p2p_bind_diagnostic_non_promoting',
+    'local_p2p_bind_only_case',
+    'Get-Qcl100LowerGateQcl041Issues',
+    'qcl041_lower_gate_issue_codes',
+    'qcl041_lower_gate_issue_count',
+    'first_qcl041_lower_gate_issue',
+    'blocked_reason_for_qcl100',
     'tcp_tunnel_stream_bidirectional_bytes_pass',
     'native_log_summary\.system_fatal_count',
     'cleanup_policy\.final_force_stop_cleanup_skipped',
@@ -799,7 +1145,16 @@ Assert-ContainsTokens $lifecycleSurface @(
     'buildQuestPeerConfig',
     'recordWifiP2pGroupDiagnostics',
     'requestConnectionInfo',
+    'requestNetworkInfo',
+    'NetworkInfoListener',
     'requestGroupInfo',
+    'wifi_p2p_request_connection_info_attempted',
+    'wifi_p2p_connection_info_group_formed',
+    'wifi_p2p_connection_info_group_owner_address_present',
+    'wifi_p2p_request_group_info_attempted',
+    'wifi_p2p_request_group_info_present',
+    'network_info_connected',
+    'wifi_p2p_group_interface',
     'groupOwnerAddress',
     'isGroupOwner',
     'Quest became group owner',
@@ -1049,6 +1404,8 @@ Assert-ContainsTokens $lifecycleSurface @(
     'runTcpTunnelClient',
     'runTcpTunnelStreamReceiver',
     'runTcpTunnelStreamClient',
+    'runTcpLocalP2pBindStreamMode',
+    'local_p2p_stream_bidirectional_bytes_pass',
     'checkpoint',
     'last_checkpoint',
     'client_sender_completed',

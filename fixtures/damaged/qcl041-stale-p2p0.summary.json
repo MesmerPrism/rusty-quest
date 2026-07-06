@@ -1,0 +1,48 @@
+{
+  "schema": "rusty.quest.qcl041_q2q_app_bound_socket_matrix_run.v1",
+  "run_id": "fixture-qcl041-stale-p2p0",
+  "status": "blocked_preflight",
+  "blocked_reason": "p2p0_ipv4_present",
+  "matrix_focus": "qcl100_control_tcp_gate",
+  "qcl100_control_tcp_gate": true,
+  "promotion_allowed": false,
+  "same_group_duplex_claimed": false,
+  "require_infrastructure_wifi_disconnected": true,
+  "require_p2p0_ipv4_cleared": true,
+  "require_candidate_wifi_direct_routes_clear": true,
+  "require_tcp_tunnel_stream_pass": true,
+  "preflight": {
+    "infrastructure_wifi_disconnected": true,
+    "p2p0_ipv4_cleared": false,
+    "candidate_wifi_direct_prelaunch_routes_clear": true,
+    "owner_p2p0": {
+      "ipv4_present": false
+    },
+    "client_p2p0": {
+      "ipv4_present": true,
+      "ipv4_address": "192.168.49.46"
+    }
+  },
+  "matrix": {
+    "owner_matrix_complete": false,
+    "client_matrix_complete": false,
+    "client_p2p_network_callback_seen": false,
+    "client_p2p_network_visible_app": false,
+    "client_p2p_network_selected_handle": null,
+    "client_p2p_network_selected_interface": "",
+    "client_p2p_network_link_properties_present": false,
+    "client_p2p_network_route_matches_group_owner": false,
+    "client_p2p_network_capability_wifi_p2p": false,
+    "client_p2p_network_capability_local_network": false,
+    "client_p2p_network_socket_authority_attempted": false,
+    "client_p2p_network_socket_authority_pass": false,
+    "udp_network_bound_receiver_observed_packets": 0,
+    "udp_network_bound_receiver_observed_source_address": "",
+    "udp_network_bound_receiver_observed_source_matches_client_p2p": false,
+    "udp_network_bound_network_handle": null,
+    "receiver_observed_bytes": false,
+    "tcp_tunnel_stream_bidirectional_bytes_pass": false,
+    "receiver_observed_udp_modes": [],
+    "receiver_observed_tcp_modes": []
+  }
+}

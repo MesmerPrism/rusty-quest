@@ -83,6 +83,10 @@ param(
     [string]$XrReadinessSummaryPath = "",
     [string]$NoMediaLaunchSummaryPath = "",
     [switch]$AllowLowerGateEvidenceSkippedCleanup,
+    [switch]$RequireQcl041ClientP2pNetworkCallbackSeen,
+    [switch]$RequireQcl041ClientP2pNetworkSocketAuthority,
+    [switch]$RequireQcl041StrictUdpDatagramEchoPass,
+    [switch]$RequireQcl041TcpTunnelStreamPass,
     [switch]$FreshnessSelfTest
 )
 
@@ -293,7 +297,11 @@ if ($ValidateLowerGateEvidenceOnly) {
         -Qcl041ControlTcpSummaryPath $Qcl041ControlTcpSummaryPath `
         -XrReadinessSummaryPath $XrReadinessSummaryPath `
         -NoMediaLaunchSummaryPath $NoMediaLaunchSummaryPath `
-        -AllowSkippedCleanup:$AllowLowerGateEvidenceSkippedCleanup
+        -AllowSkippedCleanup:$AllowLowerGateEvidenceSkippedCleanup `
+        -RequireQcl041ClientP2pNetworkCallbackSeen:$RequireQcl041ClientP2pNetworkCallbackSeen `
+        -RequireQcl041ClientP2pNetworkSocketAuthority:$RequireQcl041ClientP2pNetworkSocketAuthority `
+        -RequireQcl041StrictUdpDatagramEchoPass:$RequireQcl041StrictUdpDatagramEchoPass `
+        -RequireQcl041TcpTunnelStreamPass:$RequireQcl041TcpTunnelStreamPass
     Write-JsonFile -Value $lowerGateEvidence -Path $evidencePath
     $evidenceSummary = [ordered]@{
         schema = "rusty.quest.qcl100_quest_to_quest_native_stereo_projection_wifi_direct_run.v1"
@@ -307,6 +315,12 @@ if ($ValidateLowerGateEvidenceOnly) {
         same_group_duplex_claimed = $false
         lower_gate_evidence_artifact = $evidencePath
         lower_gate_evidence = $lowerGateEvidence
+        lower_gate_evidence_requirements = [ordered]@{
+            require_qcl041_client_p2p_network_callback_seen = [bool]$RequireQcl041ClientP2pNetworkCallbackSeen
+            require_qcl041_client_p2p_network_socket_authority = [bool]$RequireQcl041ClientP2pNetworkSocketAuthority
+            require_qcl041_strict_udp_datagram_echo_pass = [bool]$RequireQcl041StrictUdpDatagramEchoPass
+            require_qcl041_tcp_tunnel_stream_pass = [bool]$RequireQcl041TcpTunnelStreamPass
+        }
         freshness_acceptance = [ordered]@{
             required = "lower-gate evidence validation only; no media freshness or promotion claim is made"
             passed = $false
@@ -584,6 +598,8 @@ if ($effectiveRequireQcl041MatrixGatePass -or -not [string]::IsNullOrWhiteSpace(
     $qcl041MatrixGatePassed = [bool]($qcl041MatrixGateEvaluated -and [bool]$qcl041MatrixGate.passed)
     $qcl041MatrixGatePassesRequirement = [bool]((-not $effectiveRequireQcl041MatrixGatePass) -or $qcl041MatrixGatePassed)
     $qcl041MatrixGateBlockedReason = if ($qcl041MatrixGateEvaluated) { $qcl041MatrixGate.blocked_reason_for_qcl100 } else { "" }
+    $qcl041MatrixGateFirstLowerGateIssue = if ($qcl041MatrixGateEvaluated) { [string]$qcl041MatrixGate.first_lower_gate_issue } else { "" }
+    $qcl041MatrixGateLowerGateIssueCodes = if ($qcl041MatrixGateEvaluated) { @($qcl041MatrixGate.lower_gate_issue_codes) } else { @() }
     $qcl041MatrixGateRunId = if ($qcl041MatrixGateEvaluated) { $qcl041MatrixGate.run_id } else { "" }
     $qcl041MatrixGateTransportProtocol = if ($qcl041MatrixGateEvaluated) { $qcl041MatrixGate.qcl082_transport_protocol } else { $Qcl082TransportProtocol }
     $qcl041MatrixGateRequiredTopology = if ($qcl041MatrixGateEvaluated) { $qcl041MatrixGate.required_qcl100_media_topology } else { "" }
@@ -649,6 +665,8 @@ if ($effectiveRequireQcl041MatrixGatePass -or -not [string]::IsNullOrWhiteSpace(
                 qcl041_matrix_gate_passed = [bool]$qcl041MatrixGatePassed
                 qcl041_matrix_gate_passes_requirement = [bool]$qcl041MatrixGatePassesRequirement
                 qcl041_matrix_gate_blocked_reason = $qcl041MatrixGateBlockedReason
+                qcl041_matrix_gate_first_lower_gate_issue = $qcl041MatrixGateFirstLowerGateIssue
+                qcl041_matrix_gate_lower_gate_issue_codes = $qcl041MatrixGateLowerGateIssueCodes
                 qcl041_matrix_run_id_pin_requires_gate = [bool]$qcl041MatrixRunIdPinRequiresGate
                 required_qcl041_matrix_run_id = $RequiredQcl041MatrixRunId
                 qcl041_matrix_gate_run_id = $qcl041MatrixGateRunId
@@ -680,6 +698,8 @@ if ($effectiveRequireQcl041MatrixGatePass -or -not [string]::IsNullOrWhiteSpace(
             -Details ([ordered]@{
                 artifact = $qcl041MatrixGatePath
                 blocked_reason = $qcl041MatrixGateBlockedReason
+                first_lower_gate_issue = $qcl041MatrixGateFirstLowerGateIssue
+                lower_gate_issue_codes = $qcl041MatrixGateLowerGateIssueCodes
                 run_id = $qcl041MatrixGateRunId
                 required_run_id = $RequiredQcl041MatrixRunId
             })
@@ -837,6 +857,8 @@ if ($XrLaunchReadinessOnly) {
             qcl041_matrix_gate_passed = [bool]$qcl041MatrixGatePassed
             qcl041_matrix_gate_passes_requirement = [bool]$qcl041MatrixGatePassesRequirement
             qcl041_matrix_gate_blocked_reason = $qcl041MatrixGateBlockedReason
+            qcl041_matrix_gate_first_lower_gate_issue = $qcl041MatrixGateFirstLowerGateIssue
+            qcl041_matrix_gate_lower_gate_issue_codes = $qcl041MatrixGateLowerGateIssueCodes
             qcl041_matrix_run_id_pin_requires_gate = [bool]$qcl041MatrixRunIdPinRequiresGate
             required_qcl041_matrix_run_id = $RequiredQcl041MatrixRunId
             qcl041_matrix_gate_run_id = $qcl041MatrixGateRunId
@@ -873,6 +895,8 @@ if ($XrLaunchReadinessOnly) {
         -Details ([ordered]@{
             artifact = $qcl041MatrixGatePath
             blocked_reason = $qcl041MatrixGateBlockedReason
+            first_lower_gate_issue = $qcl041MatrixGateFirstLowerGateIssue
+            lower_gate_issue_codes = $qcl041MatrixGateLowerGateIssueCodes
             run_id = $qcl041MatrixGateRunId
             required_run_id = $RequiredQcl041MatrixRunId
         })
@@ -1834,6 +1858,8 @@ $summary["freshness_acceptance"] = [ordered]@{
     qcl041_matrix_gate_passed = [bool]$qcl041MatrixGatePassed
     qcl041_matrix_gate_passes_requirement = [bool]$qcl041MatrixGatePassesRequirement
     qcl041_matrix_gate_blocked_reason = $qcl041MatrixGateBlockedReason
+    qcl041_matrix_gate_first_lower_gate_issue = $qcl041MatrixGateFirstLowerGateIssue
+    qcl041_matrix_gate_lower_gate_issue_codes = $qcl041MatrixGateLowerGateIssueCodes
     qcl041_matrix_run_id_pin_requires_gate = [bool]$qcl041MatrixRunIdPinRequiresGate
     required_qcl041_matrix_run_id = $RequiredQcl041MatrixRunId
     qcl041_matrix_gate_run_id = $qcl041MatrixGateRunId
@@ -1980,6 +2006,8 @@ Add-Qcl100ParityBlocker `
     -Details ([ordered]@{
         artifact = $qcl041MatrixGatePath
         blocked_reason = $qcl041MatrixGateBlockedReason
+        first_lower_gate_issue = $qcl041MatrixGateFirstLowerGateIssue
+        lower_gate_issue_codes = $qcl041MatrixGateLowerGateIssueCodes
         run_id = $qcl041MatrixGateRunId
         required_run_id = $RequiredQcl041MatrixRunId
     })

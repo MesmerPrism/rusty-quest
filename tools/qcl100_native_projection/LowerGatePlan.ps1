@@ -144,7 +144,9 @@ function New-Qcl100LowerGatePlan {
         "-RequireInfrastructureWifiDisconnected",
         "-RequireP2p0Ipv4Cleared",
         "-RequireCandidateWifiDirectRoutesClear",
-        "-RequireTcpTunnelStreamPass"
+        "-RequireTcpTunnelStreamPass",
+        "-AppNetworkTrace",
+        "-TcpBindingVariants", "tcp_socket_factory,tcp_network_bind_socket,tcp_process_bound,tcp_native_fd_network_bound"
     )
     $xrReadinessArgs = @(
         "-RunId", $xrReadinessRunId,
@@ -179,7 +181,11 @@ function New-Qcl100LowerGatePlan {
         "-RouteClearSummaryPath", $routeClearSummaryPath,
         "-Qcl041ControlTcpSummaryPath", $controlTcpGateSummaryPath,
         "-XrReadinessSummaryPath", $xrReadinessSummaryPath,
-        "-NoMediaLaunchSummaryPath", $noMediaSummaryPath
+        "-NoMediaLaunchSummaryPath", $noMediaSummaryPath,
+        "-RequireQcl041ClientP2pNetworkCallbackSeen",
+        "-RequireQcl041ClientP2pNetworkSocketAuthority",
+        "-RequireQcl041StrictUdpDatagramEchoPass",
+        "-RequireQcl041TcpTunnelStreamPass"
     )
     $shortMediaBytes = if ($Qcl082ControlTcpMediaStreamBytesPerDirection -gt 0) {
         [Math]::Min($Qcl082ControlTcpMediaStreamBytesPerDirection, 262144)
@@ -221,6 +227,27 @@ function New-Qcl100LowerGatePlan {
         requested_lane_mode = $LaneMode
         requested_qcl082_transport_protocol = $Qcl082TransportProtocol
         diagnostic_transport_protocol = "control-tcp"
+        accepted_lower_gate_authority = "android_connectivitymanager_network"
+        authority_tracks = [ordered]@{
+            qcl041_local_p2p_bind_stream_authority = "diagnostic_only_not_promoting"
+            qcl100_android_network_authority = "required_for_current_lower_gate"
+            qcl100_same_group_simultaneous_native_render = "not_promoted"
+        }
+        alternate_authority_candidates = @(
+            [ordered]@{
+                id = "qcl041_local_p2p_bind_stream_authority"
+                status = "candidate_not_promoting"
+                observed_capability = "strict local p2p0 app-bound UDP/TCP/TCP-stream sockets can move bytes without a ConnectivityManager Network handle"
+                required_redesign_before_promotion = @(
+                    "new lower-gate contract distinct from android_connectivitymanager_network",
+                    "strict route-clear and stale-p2p0-clear preflight",
+                    "WifiP2pInfo.groupFormed and WifiP2pGroup interface p2p evidence",
+                    "receiver-observed local p2p0 UDP/TCP stream bytes and peer-source checks",
+                    "cleanup/readback classification",
+                    "promotion_allowed=false and same_group_duplex_claimed=false until QCL100 media/render gates are rerun under the redesigned authority"
+                )
+            }
+        )
         owner_serial = $OwnerSerial
         client_serial = $ClientSerial
         owner_wifi_direct_address = $OwnerWifiDirectAddress
@@ -251,7 +278,19 @@ function New-Qcl100LowerGatePlan {
                 -DeviceMutation "forms and tears down a QCL041 Wi-Fi Direct group on the two serial-scoped devices" `
                 -Command (New-Qcl100LowerGateCommand -ScriptPath $Qcl041MatrixScriptPath -Arguments $controlTcpGateArgs) `
                 -ExpectedArtifacts @($controlTcpGateSummaryPath) `
-                -RequiredPassFields @("status=pass", "qcl100_control_tcp_gate=true", "matrix_focus=qcl100_control_tcp_gate", "require_tcp_tunnel_stream_pass=true", "matrix.tcp_tunnel_stream_bidirectional_bytes_pass=true"))
+                -RequiredPassFields @(
+                    "status=pass",
+                    "qcl100_control_tcp_gate=true",
+                    "matrix_focus=qcl100_control_tcp_gate",
+                    "app_network_trace_enabled=true",
+                    "require_tcp_tunnel_stream_pass=true",
+                    "matrix.client_p2p_network_callback_seen=true",
+                    "matrix.client_p2p_network_visible_app=true",
+                    "matrix.client_p2p_network_link_properties_present=true",
+                    "matrix.client_p2p_network_route_matches_group_owner=true",
+                    "matrix.client_p2p_network_socket_authority_pass=true",
+                    "matrix.udp_network_bound_receiver_observed_packets>0",
+                    "matrix.tcp_tunnel_stream_bidirectional_bytes_pass=true"))
             (New-Qcl100LowerGateStep `
                 -Ordinal 3 `
                 -Id "qcl100_xr_readiness_gate" `
@@ -353,6 +392,16 @@ function Invoke-Qcl100LowerGatePlanSelfTest {
     if ([bool]$plan.promotion_allowed -or [bool]$plan.same_group_duplex_claimed) {
         throw "QCL100 lower-gate plan self-test expected plan-only artifact not to allow promotion or claim duplex."
     }
+    if ($plan.accepted_lower_gate_authority -ne "android_connectivitymanager_network" -or
+            $plan.authority_tracks.qcl041_local_p2p_bind_stream_authority -ne "diagnostic_only_not_promoting" -or
+            $plan.authority_tracks.qcl100_android_network_authority -ne "required_for_current_lower_gate" -or
+            $plan.authority_tracks.qcl100_same_group_simultaneous_native_render -ne "not_promoted") {
+        throw "QCL100 lower-gate plan self-test expected explicit non-promoting local-p2p0 authority labels."
+    }
+    $candidate = @($plan.alternate_authority_candidates | Where-Object { $_.id -eq "qcl041_local_p2p_bind_stream_authority" } | Select-Object -First 1)
+    if ($candidate.Count -eq 0 -or $candidate[0].status -ne "candidate_not_promoting") {
+        throw "QCL100 lower-gate plan self-test expected local p2p0 stream authority to remain candidate_not_promoting."
+    }
     if (@($plan.lower_gate_sequence).Count -ne 7) {
         throw "QCL100 lower-gate plan self-test expected seven ordered lower-gate steps."
     }
@@ -361,15 +410,26 @@ function Invoke-Qcl100LowerGatePlanSelfTest {
         throw "QCL100 lower-gate plan self-test expected route-clear passive preflight command."
     }
     $controlTcpStep = $plan.lower_gate_sequence[1]
-    if ($controlTcpStep.id -ne "qcl041_strict_control_tcp_gate" -or @($controlTcpStep.command.arguments) -notcontains "-Qcl100ControlTcpGate" -or @($controlTcpStep.command.arguments) -notcontains "-RequireTcpTunnelStreamPass") {
+    if ($controlTcpStep.id -ne "qcl041_strict_control_tcp_gate" -or @($controlTcpStep.command.arguments) -notcontains "-Qcl100ControlTcpGate" -or @($controlTcpStep.command.arguments) -notcontains "-RequireTcpTunnelStreamPass" -or @($controlTcpStep.command.arguments) -notcontains "-AppNetworkTrace") {
         throw "QCL100 lower-gate plan self-test expected strict QCL041 control-TCP gate command."
+    }
+    $controlTcpArgs = @($controlTcpStep.command.arguments)
+    $tcpVariantArgIndex = [array]::IndexOf($controlTcpArgs, "-TcpBindingVariants")
+    $expectedTcpVariants = "tcp_socket_factory,tcp_network_bind_socket,tcp_process_bound,tcp_native_fd_network_bound"
+    if ($tcpVariantArgIndex -lt 0 -or ($tcpVariantArgIndex + 1) -ge $controlTcpArgs.Count -or [string]$controlTcpArgs[$tcpVariantArgIndex + 1] -ne $expectedTcpVariants) {
+        throw "QCL100 lower-gate plan self-test expected the full ordered QCL041 TCP binding variant ladder: $expectedTcpVariants."
+    }
+    foreach ($requiredField in @("matrix.client_p2p_network_callback_seen=true", "matrix.client_p2p_network_socket_authority_pass=true", "matrix.udp_network_bound_receiver_observed_packets>0")) {
+        if (@($controlTcpStep.required_pass_fields) -notcontains $requiredField) {
+            throw "QCL100 lower-gate plan self-test expected strict QCL041 control-TCP field: $requiredField."
+        }
     }
     $noMediaStep = $plan.lower_gate_sequence[3]
     if ($noMediaStep.status -ne "available_after_wake_policy_and_lower_gates_pass" -or -not [bool]$noMediaStep.launches_native_renderer -or @($noMediaStep.command.arguments) -notcontains "-NoMediaLaunchOnly") {
         throw "QCL100 lower-gate plan self-test expected executable no-media launch gate to remain explicit."
     }
     $evidenceStep = $plan.lower_gate_sequence[4]
-    if ($evidenceStep.id -ne "qcl100_lower_gate_evidence_validation" -or $evidenceStep.status -ne "required_before_short_media_gate" -or @($evidenceStep.command.arguments) -notcontains "-ValidateLowerGateEvidenceOnly") {
+    if ($evidenceStep.id -ne "qcl100_lower_gate_evidence_validation" -or $evidenceStep.status -ne "required_before_short_media_gate" -or @($evidenceStep.command.arguments) -notcontains "-ValidateLowerGateEvidenceOnly" -or @($evidenceStep.command.arguments) -notcontains "-RequireQcl041StrictUdpDatagramEchoPass") {
         throw "QCL100 lower-gate plan self-test expected lower-gate evidence validation command before short media."
     }
     $fullParityStep = $plan.lower_gate_sequence[6]

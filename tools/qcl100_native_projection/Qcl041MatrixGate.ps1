@@ -37,6 +37,18 @@ function Get-Qcl100MatrixGateBool {
     return [bool]$value
 }
 
+function Get-Qcl100MatrixGateInt {
+    param($Value)
+    try {
+        if ($null -eq $Value) {
+            return 0
+        }
+        return [int]$Value
+    } catch {
+        return 0
+    }
+}
+
 function New-Qcl100Qcl041MatrixGateIssue {
     param(
         [Parameter(Mandatory=$true)]
@@ -114,6 +126,45 @@ function Test-Qcl100MatrixGateModePresent {
     return $false
 }
 
+function Get-Qcl100Qcl041MatrixLowerGateIssueCodes {
+    @(
+        "qcl041_client_p2p_network_callback_not_seen",
+        "qcl041_client_p2p_network_not_visible_app",
+        "qcl041_client_p2p_network_link_properties_missing",
+        "qcl041_client_p2p_network_route_not_matching_group_owner",
+        "qcl041_client_p2p_udp_network_bound_not_receiver_observed",
+        "qcl041_client_p2p_tcp_stream_not_bidirectional"
+    )
+}
+
+function Get-Qcl100Qcl041MatrixIssueCode {
+    param($Issue)
+    if ($null -eq $Issue) {
+        return ""
+    }
+    if ($Issue -is [System.Collections.IDictionary] -and $Issue.Contains("code")) {
+        return [string]$Issue["code"]
+    }
+    return [string](Get-Qcl100MatrixGateProperty -Object $Issue -Name "code")
+}
+
+function Get-Qcl100Qcl041MatrixLowerGateIssues {
+    param($Issues)
+    $acceptedCodes = @{}
+    foreach ($code in @(Get-Qcl100Qcl041MatrixLowerGateIssueCodes)) {
+        $acceptedCodes[$code] = $true
+    }
+
+    $lowerGateIssues = @()
+    foreach ($issue in @($Issues)) {
+        $code = Get-Qcl100Qcl041MatrixIssueCode -Issue $issue
+        if (-not [string]::IsNullOrWhiteSpace($code) -and $acceptedCodes.ContainsKey($code)) {
+            $lowerGateIssues += $issue
+        }
+    }
+    return $lowerGateIssues
+}
+
 function Get-Qcl100Qcl041MatrixGateEvidence {
     param(
         [string]$Path,
@@ -167,6 +218,42 @@ function Get-Qcl100Qcl041MatrixGateEvidence {
 
     $preflight = Get-Qcl100MatrixGateProperty -Object $summary -Name "preflight"
     $matrix = Get-Qcl100MatrixGateProperty -Object $summary -Name "matrix"
+    $networkVisibilityDeepTrace =
+        Get-Qcl100MatrixGateProperty -Object $summary -Name "network_visibility_deep_trace"
+    $networkVisibilityDeepTraceRows =
+        Get-Qcl100MatrixGateProperty -Object $networkVisibilityDeepTrace -Name "rows"
+    $networkVisibilityDeepTraceRowCount = if ($null -eq $networkVisibilityDeepTraceRows) {
+        0
+    } else {
+        @($networkVisibilityDeepTraceRows).Count
+    }
+    $networkVisibilityDeepTraceExpectedRowIds = @(
+        "callback_wifi_p2p_default",
+        "callback_wifi_p2p_clear_capabilities",
+        "callback_local_network_reflection",
+        "callback_wifi_transport_clear_capabilities",
+        "callback_include_other_uid_wifi_p2p",
+        "callback_include_other_uid_local_network",
+        "get_all_networks_standard",
+        "get_all_networks_include_other_uid_request_observed",
+        "wifi_p2p_request_network_info",
+        "wifi_p2p_request_connection_info",
+        "wifi_p2p_request_group_info",
+        "local_p2p_bind_tcp_stream_control"
+    )
+    $networkVisibilityDeepTraceRowIds = @()
+    foreach ($row in @($networkVisibilityDeepTraceRows)) {
+        $rowId = [string](Get-Qcl100MatrixGateProperty -Object $row -Name "id")
+        if (-not [string]::IsNullOrWhiteSpace($rowId)) {
+            $networkVisibilityDeepTraceRowIds += $rowId
+        }
+    }
+    $networkVisibilityDeepTraceMissingRowIds = @()
+    foreach ($expectedRowId in $networkVisibilityDeepTraceExpectedRowIds) {
+        if ($networkVisibilityDeepTraceRowIds -notcontains $expectedRowId) {
+            $networkVisibilityDeepTraceMissingRowIds += $expectedRowId
+        }
+    }
     $status = [string](Get-Qcl100MatrixGateProperty -Object $summary -Name "status")
     $blockedReason = [string](Get-Qcl100MatrixGateProperty -Object $summary -Name "blocked_reason")
     $matrixRunId = [string](Get-Qcl100MatrixGateProperty -Object $summary -Name "run_id")
@@ -195,6 +282,57 @@ function Get-Qcl100Qcl041MatrixGateEvidence {
     $clientMatrixLastCheckpoint = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_matrix_last_checkpoint")
     $receiverObservedBytes = Get-Qcl100MatrixGateBool -Object $matrix -Name "receiver_observed_bytes"
     $tcpTunnelStreamBidirectionalBytesPass = Get-Qcl100MatrixGateBool -Object $matrix -Name "tcp_tunnel_stream_bidirectional_bytes_pass"
+    $clientP2pNetworkCallbackSeen = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_network_callback_seen"
+    $clientP2pNetworkVisibleApp = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_network_visible_app"
+    $clientP2pNetworkLinkPropertiesPresent = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_network_link_properties_present"
+    $clientP2pNetworkRouteMatchesGroupOwner = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_network_route_matches_group_owner"
+    $clientP2pNetworkSocketAuthorityPass = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_network_socket_authority_pass"
+    $clientAppNetworkPermissionsAllGranted = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_app_network_permissions_all_granted"
+    $clientAppNetworkPermissionsAllDeclaredGranted = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_app_network_permissions_all_declared_granted"
+    $clientSdkInt = Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_sdk_int"
+    $clientTargetSdkInt = Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_target_sdk_int"
+    $clientNearbyWifiDevicesPermissionApplicable = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_permission_nearby_wifi_devices_applicable"
+    $clientAccessFineLocationPermissionApplicable = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_permission_access_fine_location_applicable"
+    $clientAccessFineLocationPermissionManifestMaxSdk = Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_permission_access_fine_location_manifest_max_sdk"
+    $clientAppNetworkAuthorityRestrictionHint = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_app_network_authority_restriction_hint")
+    $clientRequestWifiP2pRestrictedNetworkSecurityException = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_request_wifi_p2p_restricted_network_security_exception"
+    $clientAppOpNearbyWifiDevicesMode = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_appop_nearby_wifi_devices_mode")
+    $clientAppOpFineLocationMode = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_appop_fine_location_mode")
+    $clientAppOpWifiScanMode = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_appop_wifi_scan_mode")
+    $clientAfterGroupAllNetworkCount = Get-Qcl100MatrixGateInt (Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_after_group_formation_all_network_count")
+    $clientAfterGroupP2pCandidateCount = Get-Qcl100MatrixGateInt (Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_after_group_formation_p2p_candidate_count")
+    $clientAfterGroupNetworkInterfaceP2pCount = Get-Qcl100MatrixGateInt (Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_after_group_formation_network_interface_p2p_count")
+    $clientIncludeOtherUidCandidateSeen = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_include_other_uid_candidate_seen"
+    $clientIncludeOtherUidOnAvailableCount = Get-Qcl100MatrixGateInt (Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_include_other_uid_on_available_count")
+    $clientIncludeOtherUidCachedNetworkCount = Get-Qcl100MatrixGateInt (Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_include_other_uid_cached_network_count")
+    $clientIncludeOtherUidBindSocketResult = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_include_other_uid_bind_socket_result")
+    $clientWifiP2pNetworkInfoAvailable = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_wifi_p2p_network_info_available"
+    $clientWifiP2pNetworkInfoConnected = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_wifi_p2p_network_info_connected"
+    $clientWifiP2pNetworkInfoState = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_wifi_p2p_network_info_state")
+    $clientWifiP2pNetworkInfoDetailedState = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_wifi_p2p_network_info_detailed_state")
+    $clientWifiP2pGroupInterface = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_wifi_p2p_group_interface")
+    $clientWifiP2pGroupClientCount = Get-Qcl100MatrixGateInt (Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_wifi_p2p_group_client_count")
+    $clientStrictLocalP2pAppTransportPass = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_strict_local_p2p_app_transport_pass"
+    $qcl041LocalP2pBindStreamAuthority = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "qcl041_local_p2p_bind_stream_authority")
+    $qcl100AndroidNetworkAuthority = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "qcl100_android_network_authority")
+    $qcl100SameGroupSimultaneousNativeRender = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "qcl100_same_group_simultaneous_native_render")
+    $udpNetworkBoundReceiverObservedPackets = Get-Qcl100MatrixGateInt (Get-Qcl100MatrixGateProperty -Object $matrix -Name "udp_network_bound_receiver_observed_packets")
+    $localP2pBindNonPromoting = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_interface_local_bind_non_promoting"
+    $localP2pBindSocketAuthority = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_p2p_interface_local_bind_socket_authority")
+    $localP2pBindUdpAttempted = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_interface_local_bind_udp_attempted"
+    $localP2pBindUdpPass = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_interface_local_bind_udp_pass"
+    $localP2pBindUdpReceiverObservedPackets = Get-Qcl100MatrixGateInt (Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_p2p_interface_local_bind_udp_receiver_observed_packets")
+    $localP2pBindUdpReceiverObservedSourceAddress = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_p2p_interface_local_bind_udp_receiver_observed_source_address")
+    $localP2pBindTcpAttempted = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_interface_local_bind_tcp_attempted"
+    $localP2pBindTcpPass = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_interface_local_bind_tcp_pass"
+    $localP2pBindTcpReceiverAccepts = Get-Qcl100MatrixGateInt (Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_p2p_interface_local_bind_tcp_receiver_accepts")
+    $localP2pBindTcpReceiverAcceptedSource = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_p2p_interface_local_bind_tcp_receiver_accepted_source")
+    $localP2pBindTcpStreamAttempted = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_interface_local_bind_tcp_stream_attempted"
+    $localP2pBindTcpStreamPass = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_interface_local_bind_tcp_stream_pass"
+    $localP2pBindTcpStreamReceiverAccepts = Get-Qcl100MatrixGateInt (Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_p2p_interface_local_bind_tcp_stream_receiver_accepts")
+    $localP2pBindTcpStreamReceiverAcceptedSource = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_p2p_interface_local_bind_tcp_stream_receiver_accepted_source")
+    $localP2pBindTcpStreamClientToOwnerRxBytes = Get-Qcl100MatrixGateInt (Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_p2p_interface_local_bind_tcp_stream_client_to_owner_rx_bytes")
+    $localP2pBindTcpStreamOwnerToClientRxBytes = Get-Qcl100MatrixGateInt (Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_p2p_interface_local_bind_tcp_stream_owner_to_client_rx_bytes")
     $receiverObservedUdpModes = ConvertTo-Qcl100MatrixGateModeList -Modes (Get-Qcl100MatrixGateProperty -Object $matrix -Name "receiver_observed_udp_modes")
     $receiverObservedTcpModes = ConvertTo-Qcl100MatrixGateModeList -Modes (Get-Qcl100MatrixGateProperty -Object $matrix -Name "receiver_observed_tcp_modes")
     $clientToOwnerUdpEvidenceScope = [string](Get-Qcl100MatrixGateProperty -Object $matrix -Name "client_to_owner_udp_evidence_scope")
@@ -311,9 +449,34 @@ function Get-Qcl100Qcl041MatrixGateEvidence {
                 -Code "qcl041_matrix_receiver_observed_bytes_absent" `
                 -Message "QCL041 matrix did not report receiver-observed UDP or TCP bytes."
         }
+        if (-not $clientP2pNetworkCallbackSeen) {
+            $issues += New-Qcl100Qcl041MatrixGateIssue `
+                -Code "qcl041_client_p2p_network_callback_not_seen" `
+                -Message "QCL041 client app did not observe a same-epoch Wi-Fi Direct Network from ConnectivityManager callbacks."
+        }
+        if (-not $clientP2pNetworkVisibleApp) {
+            $issues += New-Qcl100Qcl041MatrixGateIssue `
+                -Code "qcl041_client_p2p_network_not_visible_app" `
+                -Message "QCL041 client app did not have an app-visible Wi-Fi Direct Network candidate."
+        }
+        if (-not $clientP2pNetworkLinkPropertiesPresent) {
+            $issues += New-Qcl100Qcl041MatrixGateIssue `
+                -Code "qcl041_client_p2p_network_link_properties_missing" `
+                -Message "QCL041 client selected P2P Network did not expose LinkProperties."
+        }
+        if (-not $clientP2pNetworkRouteMatchesGroupOwner) {
+            $issues += New-Qcl100Qcl041MatrixGateIssue `
+                -Code "qcl041_client_p2p_network_route_not_matching_group_owner" `
+                -Message "QCL041 client selected P2P Network did not report a route matching the group owner address."
+        }
+        if ($udpNetworkBoundReceiverObservedPackets -le 0 -or -not $clientP2pNetworkSocketAuthorityPass) {
+            $issues += New-Qcl100Qcl041MatrixGateIssue `
+                -Code "qcl041_client_p2p_udp_network_bound_not_receiver_observed" `
+                -Message "QCL041 client app-bound DatagramSocket echo was not receiver-observed on the group owner."
+        }
         if (-not $tcpTunnelStreamBidirectionalBytesPass) {
             $issues += New-Qcl100Qcl041MatrixGateIssue `
-                -Code "qcl041_matrix_tcp_tunnel_stream_not_bidirectional" `
+                -Code "qcl041_client_p2p_tcp_stream_not_bidirectional" `
                 -Message "QCL041 matrix did not report bidirectional sustained TCP tunnel stream bytes."
         }
         if (-not [bool]$transportRequirement.supported) {
@@ -333,7 +496,15 @@ function Get-Qcl100Qcl041MatrixGateEvidence {
         }
     }
 
-    $firstIssue = if ($issues.Count -gt 0) { $issues[0].code } else { "" }
+    $lowerGateIssues = @(Get-Qcl100Qcl041MatrixLowerGateIssues -Issues $issues)
+    $lowerGateIssueCodes = @($lowerGateIssues | ForEach-Object { Get-Qcl100Qcl041MatrixIssueCode -Issue $_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $firstIssue = if ($issues.Count -gt 0) { Get-Qcl100Qcl041MatrixIssueCode -Issue $issues[0] } else { "" }
+    $firstLowerGateIssue = if ($lowerGateIssueCodes.Count -gt 0) { [string]$lowerGateIssueCodes[0] } else { "" }
+    $blockedReasonForQcl100 = if (-not [string]::IsNullOrWhiteSpace($firstLowerGateIssue)) {
+        $firstLowerGateIssue
+    } else {
+        $firstIssue
+    }
     [ordered]@{
         schema = "rusty.quest.qcl100_qcl041_matrix_gate.v1"
         artifact_path = $Path
@@ -365,6 +536,18 @@ function Get-Qcl100Qcl041MatrixGateEvidence {
         require_candidate_wifi_direct_routes_clear = $requireCandidateWifiDirectRoutesClear
         require_tcp_tunnel_stream_pass = $requireTcpTunnelStreamPass
         matrix_focus = $matrixFocus
+        network_visibility_deep_trace_classification =
+            [string](Get-Qcl100MatrixGateProperty -Object $networkVisibilityDeepTrace -Name "classification")
+        network_visibility_deep_trace_diagnostic_id =
+            [string](Get-Qcl100MatrixGateProperty -Object $networkVisibilityDeepTrace -Name "diagnostic_id")
+        network_visibility_deep_trace_row_count = $networkVisibilityDeepTraceRowCount
+        network_visibility_deep_trace_expected_row_ids = $networkVisibilityDeepTraceExpectedRowIds
+        network_visibility_deep_trace_row_ids = $networkVisibilityDeepTraceRowIds
+        network_visibility_deep_trace_missing_row_ids = $networkVisibilityDeepTraceMissingRowIds
+        network_visibility_deep_trace_expected_rows_present =
+            [bool]($networkVisibilityDeepTraceMissingRowIds.Count -eq 0)
+        network_visibility_deep_trace_local_p2p_promotes_qcl100 =
+            Get-Qcl100MatrixGateBool -Object $networkVisibilityDeepTrace -Name "local_p2p_bind_stream_promotes_qcl100"
         qcl100_control_tcp_gate = $qcl100ControlTcpGate
         delayed_udp_required = $delayedUdpRequired
         whole_matrix_completion_required = $wholeMatrixCompletionRequired
@@ -381,6 +564,57 @@ function Get-Qcl100Qcl041MatrixGateEvidence {
         owner_matrix_last_checkpoint = $ownerMatrixLastCheckpoint
         client_matrix_last_checkpoint = $clientMatrixLastCheckpoint
         receiver_observed_bytes = $receiverObservedBytes
+        client_p2p_network_callback_seen = $clientP2pNetworkCallbackSeen
+        client_p2p_network_visible_app = $clientP2pNetworkVisibleApp
+        client_p2p_network_link_properties_present = $clientP2pNetworkLinkPropertiesPresent
+        client_p2p_network_route_matches_group_owner = $clientP2pNetworkRouteMatchesGroupOwner
+        client_p2p_network_socket_authority_pass = $clientP2pNetworkSocketAuthorityPass
+        client_app_network_permissions_all_granted = $clientAppNetworkPermissionsAllGranted
+        client_app_network_permissions_all_declared_granted = $clientAppNetworkPermissionsAllDeclaredGranted
+        client_sdk_int = $clientSdkInt
+        client_target_sdk_int = $clientTargetSdkInt
+        client_permission_nearby_wifi_devices_applicable = $clientNearbyWifiDevicesPermissionApplicable
+        client_permission_access_fine_location_applicable = $clientAccessFineLocationPermissionApplicable
+        client_permission_access_fine_location_manifest_max_sdk = $clientAccessFineLocationPermissionManifestMaxSdk
+        client_app_network_authority_restriction_hint = $clientAppNetworkAuthorityRestrictionHint
+        client_request_wifi_p2p_restricted_network_security_exception = $clientRequestWifiP2pRestrictedNetworkSecurityException
+        client_appop_nearby_wifi_devices_mode = $clientAppOpNearbyWifiDevicesMode
+        client_appop_fine_location_mode = $clientAppOpFineLocationMode
+        client_appop_wifi_scan_mode = $clientAppOpWifiScanMode
+        client_after_group_formation_all_network_count = $clientAfterGroupAllNetworkCount
+        client_after_group_formation_p2p_candidate_count = $clientAfterGroupP2pCandidateCount
+        client_after_group_formation_network_interface_p2p_count = $clientAfterGroupNetworkInterfaceP2pCount
+        client_include_other_uid_candidate_seen = $clientIncludeOtherUidCandidateSeen
+        client_include_other_uid_on_available_count = $clientIncludeOtherUidOnAvailableCount
+        client_include_other_uid_cached_network_count = $clientIncludeOtherUidCachedNetworkCount
+        client_include_other_uid_bind_socket_result = $clientIncludeOtherUidBindSocketResult
+        client_wifi_p2p_network_info_available = $clientWifiP2pNetworkInfoAvailable
+        client_wifi_p2p_network_info_connected = $clientWifiP2pNetworkInfoConnected
+        client_wifi_p2p_network_info_state = $clientWifiP2pNetworkInfoState
+        client_wifi_p2p_network_info_detailed_state = $clientWifiP2pNetworkInfoDetailedState
+        client_wifi_p2p_group_interface = $clientWifiP2pGroupInterface
+        client_wifi_p2p_group_client_count = $clientWifiP2pGroupClientCount
+        client_strict_local_p2p_app_transport_pass = $clientStrictLocalP2pAppTransportPass
+        qcl041_local_p2p_bind_stream_authority = $qcl041LocalP2pBindStreamAuthority
+        qcl100_android_network_authority = $qcl100AndroidNetworkAuthority
+        qcl100_same_group_simultaneous_native_render = $qcl100SameGroupSimultaneousNativeRender
+        udp_network_bound_receiver_observed_packets = $udpNetworkBoundReceiverObservedPackets
+        local_p2p_bind_diagnostic_non_promoting = $localP2pBindNonPromoting
+        local_p2p_bind_socket_authority = $localP2pBindSocketAuthority
+        local_p2p_bind_udp_attempted = $localP2pBindUdpAttempted
+        local_p2p_bind_udp_pass = $localP2pBindUdpPass
+        local_p2p_bind_udp_receiver_observed_packets = $localP2pBindUdpReceiverObservedPackets
+        local_p2p_bind_udp_receiver_observed_source_address = $localP2pBindUdpReceiverObservedSourceAddress
+        local_p2p_bind_tcp_attempted = $localP2pBindTcpAttempted
+        local_p2p_bind_tcp_pass = $localP2pBindTcpPass
+        local_p2p_bind_tcp_receiver_accepts = $localP2pBindTcpReceiverAccepts
+        local_p2p_bind_tcp_receiver_accepted_source = $localP2pBindTcpReceiverAcceptedSource
+        local_p2p_bind_tcp_stream_attempted = $localP2pBindTcpStreamAttempted
+        local_p2p_bind_tcp_stream_pass = $localP2pBindTcpStreamPass
+        local_p2p_bind_tcp_stream_receiver_accepts = $localP2pBindTcpStreamReceiverAccepts
+        local_p2p_bind_tcp_stream_receiver_accepted_source = $localP2pBindTcpStreamReceiverAcceptedSource
+        local_p2p_bind_tcp_stream_client_to_owner_rx_bytes = $localP2pBindTcpStreamClientToOwnerRxBytes
+        local_p2p_bind_tcp_stream_owner_to_client_rx_bytes = $localP2pBindTcpStreamOwnerToClientRxBytes
         tcp_tunnel_stream_bidirectional_bytes_pass = $tcpTunnelStreamBidirectionalBytesPass
         receiver_observed_udp_modes = $receiverObservedUdpModes
         receiver_observed_tcp_modes = $receiverObservedTcpModes
@@ -394,8 +628,244 @@ function Get-Qcl100Qcl041MatrixGateEvidence {
         matrix_same_group_udp_duplex_media_proof_required = $sameGroupUdpDuplexMediaProofRequired
         matrix_control_tcp_stream_mode_present = $matrixControlTcpStreamModePresent
         issues = $issues
-        blocked_reason_for_qcl100 = $firstIssue
+        first_issue = $firstIssue
+        lower_gate_issue_codes = $lowerGateIssueCodes
+        lower_gate_issue_count = [int]$lowerGateIssueCodes.Count
+        first_lower_gate_issue = $firstLowerGateIssue
+        blocked_reason_for_qcl100 = $blockedReasonForQcl100
         passed = [bool]($issues.Count -eq 0)
+    }
+}
+
+function Read-Qcl100Qcl041MatrixComparisonSummary {
+    param([string]$Path)
+    $present = $false
+    $parsed = $false
+    $summary = $null
+    $parseError = ""
+    $resolvedPath = ""
+    if (-not [string]::IsNullOrWhiteSpace($Path) -and (Test-Path -LiteralPath $Path)) {
+        $present = $true
+        $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
+        try {
+            $summary = Get-Content -Raw -LiteralPath $resolvedPath | ConvertFrom-Json
+            $parsed = $true
+        } catch {
+            $parseError = $_.Exception.Message
+        }
+    }
+    [pscustomobject]@{
+        path = $Path
+        resolved_path = $resolvedPath
+        present = $present
+        parsed = $parsed
+        parse_error = $parseError
+        object = $summary
+    }
+}
+
+function Get-Qcl100Qcl041MatrixComparisonFields {
+    param($Summary)
+    $preflight = Get-Qcl100MatrixGateProperty -Object $Summary -Name "preflight"
+    $matrix = Get-Qcl100MatrixGateProperty -Object $Summary -Name "matrix"
+    $appNetworkVisibility = Get-Qcl100MatrixGateProperty -Object $Summary -Name "app_network_visibility"
+    [ordered]@{
+        run_id = [string](Get-Qcl100MatrixGateProperty -Object $Summary -Name "run_id")
+        status = [string](Get-Qcl100MatrixGateProperty -Object $Summary -Name "status")
+        blocked_reason = [string](Get-Qcl100MatrixGateProperty -Object $Summary -Name "blocked_reason")
+        matrix_focus = [string](Get-Qcl100MatrixGateProperty -Object $Summary -Name "matrix_focus")
+        require_infrastructure_wifi_disconnected = Get-Qcl100MatrixGateBool -Object $Summary -Name "require_infrastructure_wifi_disconnected"
+        require_p2p0_ipv4_cleared = Get-Qcl100MatrixGateBool -Object $Summary -Name "require_p2p0_ipv4_cleared"
+        require_candidate_wifi_direct_routes_clear = Get-Qcl100MatrixGateBool -Object $Summary -Name "require_candidate_wifi_direct_routes_clear"
+        require_tcp_tunnel_stream_pass = Get-Qcl100MatrixGateBool -Object $Summary -Name "require_tcp_tunnel_stream_pass"
+        preflight_infrastructure_wifi_disconnected = Get-Qcl100MatrixGateBool -Object $preflight -Name "infrastructure_wifi_disconnected"
+        preflight_p2p0_ipv4_cleared = Get-Qcl100MatrixGateBool -Object $preflight -Name "p2p0_ipv4_cleared"
+        preflight_candidate_wifi_direct_routes_clear = Get-Qcl100MatrixGateBool -Object $preflight -Name "candidate_wifi_direct_prelaunch_routes_clear"
+        matrix_receiver_observed_bytes = Get-Qcl100MatrixGateBool -Object $matrix -Name "receiver_observed_bytes"
+        matrix_tcp_tunnel_stream_bidirectional_bytes_pass = Get-Qcl100MatrixGateBool -Object $matrix -Name "tcp_tunnel_stream_bidirectional_bytes_pass"
+        matrix_client_p2p_network_callback_seen = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_network_callback_seen"
+        matrix_client_p2p_network_visible_app = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_network_visible_app"
+        matrix_client_p2p_network_link_properties_present = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_network_link_properties_present"
+        matrix_client_p2p_network_route_matches_group_owner = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_network_route_matches_group_owner"
+        matrix_client_p2p_network_socket_authority_pass = Get-Qcl100MatrixGateBool -Object $matrix -Name "client_p2p_network_socket_authority_pass"
+        matrix_udp_network_bound_receiver_observed_packets = Get-Qcl100MatrixGateInt (Get-Qcl100MatrixGateProperty -Object $matrix -Name "udp_network_bound_receiver_observed_packets")
+        app_network_visibility_decision = [string](Get-Qcl100MatrixGateProperty -Object $appNetworkVisibility -Name "decision")
+        app_network_client_visible = [bool](
+            (Get-Qcl100MatrixGateBool -Object $appNetworkVisibility -Name "client_qcl041_p2p_network_visible") -or
+            (Get-Qcl100MatrixGateBool -Object $appNetworkVisibility -Name "client_wifi_p2p_network_request_visible") -or
+            (Get-Qcl100MatrixGateBool -Object $appNetworkVisibility -Name "client_p2p_network_callback_seen")
+        )
+        shell_client_route_get_from_p2p_source_uses_p2p0 = Get-Qcl100MatrixGateBool -Object $appNetworkVisibility -Name "shell_client_route_get_from_p2p_source_uses_p2p0"
+    }
+}
+
+function Get-Qcl100Qcl041MatrixArtifactComparison {
+    param(
+        [string]$OlderCurrentWlanSummaryPath,
+        [string]$StrictApDisconnectedSummaryPath
+    )
+
+    $older = Read-Qcl100Qcl041MatrixComparisonSummary -Path $OlderCurrentWlanSummaryPath
+    $strict = Read-Qcl100Qcl041MatrixComparisonSummary -Path $StrictApDisconnectedSummaryPath
+    $olderFields = if ($older.parsed) { Get-Qcl100Qcl041MatrixComparisonFields -Summary $older.object } else { [ordered]@{} }
+    $strictFields = if ($strict.parsed) { Get-Qcl100Qcl041MatrixComparisonFields -Summary $strict.object } else { [ordered]@{} }
+
+    $normalizedReason = ""
+    $message = ""
+    if (-not [bool]$older.present) {
+        $normalizedReason = "older_current_wlan_artifact_missing"
+        $message = "Older current-WLAN artifact is missing."
+    } elseif (-not [bool]$older.parsed) {
+        $normalizedReason = "older_current_wlan_artifact_parse_failed"
+        $message = "Older current-WLAN artifact could not be parsed."
+    } elseif (-not [bool]$strict.present) {
+        $normalizedReason = "strict_ap_disconnected_artifact_missing"
+        $message = "Strict AP-disconnected artifact is missing."
+    } elseif (-not [bool]$strict.parsed) {
+        $normalizedReason = "strict_ap_disconnected_artifact_parse_failed"
+        $message = "Strict AP-disconnected artifact could not be parsed."
+    } elseif (-not [bool]$olderFields.require_infrastructure_wifi_disconnected -or
+            -not [bool]$olderFields.require_p2p0_ipv4_cleared -or
+            -not [bool]$olderFields.require_candidate_wifi_direct_routes_clear) {
+        $normalizedReason = "older_current_wlan_pass_missing_strict_preflight_requirements"
+        $message = "Older artifact was not run with the strict AP-disconnected, stale-p2p0-clear, and candidate-route-clear preflight requirements."
+    } elseif (-not [bool]$olderFields.preflight_infrastructure_wifi_disconnected) {
+        $normalizedReason = "older_current_wlan_pass_used_infrastructure_wifi"
+        $message = "Older artifact cannot satisfy QCL100 lower gate because ordinary infrastructure Wi-Fi was still connected."
+    } elseif (-not [bool]$olderFields.preflight_p2p0_ipv4_cleared) {
+        $normalizedReason = "older_current_wlan_pass_started_with_stale_p2p0"
+        $message = "Older artifact cannot satisfy QCL100 lower gate because stale p2p0 IPv4 was present before launch."
+    } elseif (-not [bool]$olderFields.preflight_candidate_wifi_direct_routes_clear) {
+        $normalizedReason = "older_current_wlan_pass_started_with_candidate_wifi_direct_routes"
+        $message = "Older artifact cannot satisfy QCL100 lower gate because candidate Wi-Fi Direct routes were present before launch."
+    } elseif (-not [bool]$olderFields.require_tcp_tunnel_stream_pass) {
+        $normalizedReason = "older_current_wlan_pass_missing_strict_stream_requirement"
+        $message = "Older artifact did not require the strict bidirectional TCP tunnel stream bit."
+    } elseif (-not [bool]$olderFields.matrix_tcp_tunnel_stream_bidirectional_bytes_pass) {
+        $normalizedReason = "older_current_wlan_pass_strict_stream_bit_false"
+        $message = "Older artifact has the strict bidirectional TCP tunnel stream bit false."
+    } elseif ([string]$strictFields.app_network_visibility_decision -eq "qcl041_client_p2p_network_not_visible" -or
+            [string]$strictFields.app_network_visibility_decision -eq "qcl041_client_p2p_network_not_visible_app" -or
+            [string]$strictFields.app_network_visibility_decision -eq "qcl041_strict_local_p2p_app_transport_pass_connectivitymanager_network_absent" -or
+            [string]$strictFields.app_network_visibility_decision -eq "qcl041_connectivitymanager_other_uid_p2p_visible_client_uid_hidden" -or
+            [string]$strictFields.blocked_reason -eq "qcl041_client_p2p_network_not_visible_app" -or
+            [string]$strictFields.blocked_reason -eq "qcl041_strict_local_p2p_app_transport_pass_connectivitymanager_network_absent" -or
+            [string]$strictFields.blocked_reason -eq "qcl041_connectivitymanager_other_uid_p2p_visible_client_uid_hidden" -or
+            -not [bool]$strictFields.matrix_client_p2p_network_callback_seen -or
+            -not [bool]$strictFields.matrix_client_p2p_network_visible_app) {
+        $normalizedReason = "strict_ap_disconnected_blocked_by_app_invisible_p2p"
+        $message = "Strict AP-disconnected artifact shows shell-visible Wi-Fi Direct is not visible to the QCL041 app network APIs."
+    } elseif (-not [bool]$strictFields.matrix_client_p2p_network_link_properties_present) {
+        $normalizedReason = "strict_ap_disconnected_blocked_by_missing_p2p_link_properties"
+        $message = "Strict AP-disconnected artifact selected a client Wi-Fi Direct Network without LinkProperties."
+    } elseif (-not [bool]$strictFields.matrix_client_p2p_network_route_matches_group_owner) {
+        $normalizedReason = "strict_ap_disconnected_blocked_by_p2p_route_mismatch"
+        $message = "Strict AP-disconnected artifact selected a client Wi-Fi Direct Network that did not route to the group owner."
+    } elseif (-not [bool]$strictFields.matrix_client_p2p_network_socket_authority_pass -or
+            [int]$strictFields.matrix_udp_network_bound_receiver_observed_packets -le 0) {
+        $normalizedReason = "strict_ap_disconnected_blocked_by_udp_socket_authority"
+        $message = "Strict AP-disconnected artifact did not prove receiver-observed network-bound UDP socket authority before TCP."
+    } elseif ([string]$strictFields.blocked_reason -eq "tcp_tunnel_stream_not_bidirectional" -or
+            [string]$strictFields.blocked_reason -eq "qcl041_client_p2p_tcp_stream_not_bidirectional" -or
+            -not [bool]$strictFields.matrix_tcp_tunnel_stream_bidirectional_bytes_pass) {
+        $normalizedReason = "strict_ap_disconnected_blocked_by_strict_stream_bit_false"
+        $message = "Strict AP-disconnected artifact has the strict bidirectional TCP tunnel stream bit false."
+    } elseif ([string]$strictFields.blocked_reason -eq "p2p0_ipv4_present" -or
+            -not [bool]$strictFields.preflight_p2p0_ipv4_cleared) {
+        $normalizedReason = "strict_ap_disconnected_blocked_by_stale_p2p0"
+        $message = "Strict artifact did not begin from a stale-p2p0-clear state."
+    } else {
+        $normalizedReason = "artifact_pair_does_not_satisfy_qcl100_lower_gate"
+        $message = "The artifact pair does not prove the strict QCL100 lower gate; use the normalized fields to inspect the first unmet condition."
+    }
+
+    [ordered]@{
+        schema = "rusty.quest.qcl100_qcl041_matrix_artifact_comparison.v1"
+        generated_at_utc = (Get-Date).ToUniversalTime().ToString("o")
+        older_current_wlan_artifact = [ordered]@{
+            path = $older.path
+            resolved_path = $older.resolved_path
+            present = [bool]$older.present
+            parsed = [bool]$older.parsed
+            parse_error = $older.parse_error
+            fields = $olderFields
+        }
+        strict_ap_disconnected_artifact = [ordered]@{
+            path = $strict.path
+            resolved_path = $strict.resolved_path
+            present = [bool]$strict.present
+            parsed = [bool]$strict.parsed
+            parse_error = $strict.parse_error
+            fields = $strictFields
+        }
+        qcl100_lower_gate_satisfied_by_old_artifact = $false
+        normalized_reason = $normalizedReason
+        why_old_artifact_does_not_satisfy_qcl100_lower_gate = $message
+        comparison_completed = $true
+    }
+}
+
+function New-Qcl100Qcl041MatrixSelfTestNetworkVisibilityDeepTrace {
+    param(
+        [bool]$Pass,
+        [bool]$LocalP2pBindTcpStreamPass = $false
+    )
+    $rowIds = @(
+        "callback_wifi_p2p_default",
+        "callback_wifi_p2p_clear_capabilities",
+        "callback_local_network_reflection",
+        "callback_wifi_transport_clear_capabilities",
+        "callback_include_other_uid_wifi_p2p",
+        "callback_include_other_uid_local_network",
+        "get_all_networks_standard",
+        "get_all_networks_include_other_uid_request_observed",
+        "wifi_p2p_request_network_info",
+        "wifi_p2p_request_connection_info",
+        "wifi_p2p_request_group_info",
+        "local_p2p_bind_tcp_stream_control"
+    )
+    $rows = @()
+    foreach ($rowId in $rowIds) {
+        $observed = if ($Pass) {
+            $rowId -ne "local_p2p_bind_tcp_stream_control"
+        } elseif ($LocalP2pBindTcpStreamPass) {
+            @(
+                "wifi_p2p_request_network_info",
+                "wifi_p2p_request_connection_info",
+                "wifi_p2p_request_group_info",
+                "local_p2p_bind_tcp_stream_control"
+            ) -contains $rowId
+        } else {
+            $false
+        }
+        $rows += [ordered]@{
+            id = $rowId
+            status = $(if ($observed) { "observed" } else { "not_observed" })
+        }
+    }
+    [ordered]@{
+        schema = "rusty.quest.qcl041_network_visibility_deep_trace.v1"
+        diagnostic_id = "qcl041_network_visibility_deep_trace"
+        classification = $(if ($Pass) {
+            "android_connectivitymanager_network_authority_pass"
+        } elseif ($LocalP2pBindTcpStreamPass) {
+            "p2p_framework_connected_local_bind_transport_only"
+        } else {
+            "connectivitymanager_network_absent_or_not_observed"
+        })
+        app_network_visibility_decision = $(if ($Pass) {
+            "qcl041_and_shell_source_route_use_p2p0"
+        } elseif ($LocalP2pBindTcpStreamPass) {
+            "qcl041_local_p2p_bind_transport_only"
+        } else {
+            "qcl041_client_p2p_network_not_visible"
+        })
+        rows = @($rows)
+        qcl100_android_network_authority = $(if ($Pass) { "pass" } else { "blocked" })
+        qcl041_local_p2p_bind_stream_authority = $(if ($LocalP2pBindTcpStreamPass) { "diagnostic_pass" } else { "not_proven" })
+        local_p2p_bind_stream_promotes_qcl100 = $false
+        promotion_allowed = $false
+        same_group_duplex_claimed = $false
     }
 }
 
@@ -410,7 +880,21 @@ function New-Qcl100Qcl041MatrixGateSelfTestSummary {
         [string[]]$ReceiverObservedUdpModes = @("udp_network_bound"),
         [string[]]$ReceiverObservedTcpModes = @("tcp_tunnel_stream_socket"),
         [bool]$ClientToOwnerWifiDirectUdpMatrixModePass = $Pass,
-        [bool]$ClientToOwnerAppBoundUdpSocketPass = $Pass
+        [bool]$ClientToOwnerAppBoundUdpSocketPass = $Pass,
+        [bool]$ClientP2pNetworkCallbackSeen = $Pass,
+        [bool]$ClientP2pNetworkVisibleApp = $Pass,
+        [bool]$ClientP2pNetworkLinkPropertiesPresent = $Pass,
+        [bool]$ClientP2pNetworkRouteMatchesGroupOwner = $Pass,
+        [bool]$ClientP2pNetworkSocketAuthorityPass = $Pass,
+        [int]$UdpNetworkBoundReceiverObservedPackets = $(if ($Pass) { 1 } else { 0 }),
+        [bool]$LocalP2pBindNonPromoting = $false,
+        [bool]$LocalP2pBindUdpPass = $false,
+        [int]$LocalP2pBindUdpReceiverObservedPackets = 0,
+        [bool]$LocalP2pBindTcpPass = $false,
+        [int]$LocalP2pBindTcpReceiverAccepts = 0,
+        [bool]$LocalP2pBindTcpStreamPass = $false,
+        [int]$LocalP2pBindTcpStreamReceiverAccepts = 0,
+        [int]$LocalP2pBindTcpStreamBytesPerDirection = 0
     )
     [ordered]@{
         schema = "rusty.quest.qcl041_q2q_app_bound_socket_matrix_run.v1"
@@ -429,6 +913,47 @@ function New-Qcl100Qcl041MatrixGateSelfTestSummary {
             candidate_wifi_direct_prelaunch_routes_clear = $true
         }
         matrix = [ordered]@{
+            client_p2p_network_callback_seen = $ClientP2pNetworkCallbackSeen
+            client_p2p_network_visible_app = $ClientP2pNetworkVisibleApp
+            client_p2p_network_selected_handle = $(if ($ClientP2pNetworkVisibleApp) { 123456 } else { $null })
+            client_p2p_network_selected_interface = $(if ($ClientP2pNetworkVisibleApp) { "p2p0" } else { "" })
+            client_p2p_network_link_properties_present = $ClientP2pNetworkLinkPropertiesPresent
+            client_p2p_network_route_matches_group_owner = $ClientP2pNetworkRouteMatchesGroupOwner
+            client_p2p_network_capability_wifi_p2p = $ClientP2pNetworkVisibleApp
+            client_p2p_network_capability_local_network = $false
+            client_p2p_network_socket_authority_attempted = $ClientP2pNetworkSocketAuthorityPass
+            client_p2p_network_socket_authority_pass = $ClientP2pNetworkSocketAuthorityPass
+            client_app_network_permissions_all_granted = $true
+            client_app_network_permissions_all_declared_granted = $false
+            client_sdk_int = 33
+            client_target_sdk_int = 35
+            client_permission_nearby_wifi_devices_applicable = $true
+            client_permission_access_fine_location_applicable = $false
+            client_permission_access_fine_location_manifest_max_sdk = 32
+            udp_network_bound_receiver_observed_packets = $UdpNetworkBoundReceiverObservedPackets
+            udp_network_bound_receiver_observed_source_address = $(if ($UdpNetworkBoundReceiverObservedPackets -gt 0) { "192.168.49.46" } else { "" })
+            udp_network_bound_receiver_observed_source_matches_client_p2p = [bool]($UdpNetworkBoundReceiverObservedPackets -gt 0)
+            udp_network_bound_network_handle = $(if ($UdpNetworkBoundReceiverObservedPackets -gt 0) { 123456 } else { $null })
+            client_p2p_interface_local_bind_non_promoting = $LocalP2pBindNonPromoting
+            client_p2p_interface_local_bind_socket_authority = $(if ($LocalP2pBindNonPromoting) { "network_interface_local_p2p_address_bind" } else { "" })
+            client_p2p_interface_local_bind_udp_attempted = $LocalP2pBindNonPromoting
+            client_p2p_interface_local_bind_udp_pass = $LocalP2pBindUdpPass
+            client_p2p_interface_local_bind_udp_receiver_observed_packets = $LocalP2pBindUdpReceiverObservedPackets
+            client_p2p_interface_local_bind_udp_receiver_observed_source_address = $(if ($LocalP2pBindUdpReceiverObservedPackets -gt 0) { "192.168.49.46" } else { "" })
+            client_p2p_interface_local_bind_udp_receiver_observed_source_matches_client_p2p = [bool]($LocalP2pBindUdpReceiverObservedPackets -gt 0)
+            client_p2p_interface_local_bind_tcp_attempted = $LocalP2pBindNonPromoting
+            client_p2p_interface_local_bind_tcp_pass = $LocalP2pBindTcpPass
+            client_p2p_interface_local_bind_tcp_receiver_accepts = $LocalP2pBindTcpReceiverAccepts
+            client_p2p_interface_local_bind_tcp_receiver_accepted_source = $(if ($LocalP2pBindTcpReceiverAccepts -gt 0) { "192.168.49.46" } else { "" })
+            client_p2p_interface_local_bind_tcp_stream_attempted = $LocalP2pBindNonPromoting
+            client_p2p_interface_local_bind_tcp_stream_pass = $LocalP2pBindTcpStreamPass
+            client_p2p_interface_local_bind_tcp_stream_receiver_accepts = $LocalP2pBindTcpStreamReceiverAccepts
+            client_p2p_interface_local_bind_tcp_stream_receiver_accepted_source = $(if ($LocalP2pBindTcpStreamReceiverAccepts -gt 0) { "192.168.49.46" } else { "" })
+            client_p2p_interface_local_bind_tcp_stream_client_to_owner_rx_bytes = $(if ($LocalP2pBindTcpStreamPass) { $LocalP2pBindTcpStreamBytesPerDirection } else { 0 })
+            client_p2p_interface_local_bind_tcp_stream_owner_to_client_rx_bytes = $(if ($LocalP2pBindTcpStreamPass) { $LocalP2pBindTcpStreamBytesPerDirection } else { 0 })
+            qcl041_local_p2p_bind_stream_authority = $(if ($LocalP2pBindTcpStreamPass) { "diagnostic_pass" } else { "not_proven" })
+            qcl100_android_network_authority = $(if ($Pass) { "pass" } else { "blocked" })
+            qcl100_same_group_simultaneous_native_render = "not_promoted"
             receiver_observed_bytes = $ReceiverObservedBytes
             tcp_tunnel_stream_bidirectional_bytes_pass = $TcpTunnelStreamBidirectionalBytesPass
             receiver_observed_udp_modes = @($ReceiverObservedUdpModes)
@@ -441,6 +966,9 @@ function New-Qcl100Qcl041MatrixGateSelfTestSummary {
             same_group_udp_duplex_media_proven_by_matrix = $false
             same_group_udp_duplex_media_proof_required = "qcl100_same_epoch_final_window_media_and_renderer_freshness"
         }
+        network_visibility_deep_trace = New-Qcl100Qcl041MatrixSelfTestNetworkVisibilityDeepTrace `
+            -Pass $Pass `
+            -LocalP2pBindTcpStreamPass $LocalP2pBindTcpStreamPass
     }
 }
 
@@ -460,6 +988,9 @@ function Invoke-Qcl100Qcl041MatrixGateSelfTest {
     $controlTcpPath = Join-Path $OutputDirectory "qcl041-matrix-gate-selftest-control-tcp-summary.json"
     $controlTcpGateIncompleteMatrixPath = Join-Path $OutputDirectory "qcl041-matrix-gate-selftest-control-tcp-gate-incomplete-matrix-summary.json"
     $unsupportedTransportPath = Join-Path $OutputDirectory "qcl041-matrix-gate-selftest-unsupported-transport-summary.json"
+    $localP2pBindOnlyPath = Join-Path $OutputDirectory "qcl041-matrix-gate-selftest-local-p2p-bind-only-summary.json"
+    $olderCurrentWlanPath = Join-Path $OutputDirectory "qcl041-matrix-gate-selftest-older-current-wlan-summary.json"
+    $strictApDisconnectedPath = Join-Path $OutputDirectory "qcl041-matrix-gate-selftest-strict-ap-disconnected-summary.json"
     $expectedOwnerSerial = "340YC10G7T0JBW"
     $expectedClientSerial = "3487C10H3M017Q"
     $expectedMatrixRunId = "qcl041-matrix-gate-selftest-pass"
@@ -472,9 +1003,27 @@ function Invoke-Qcl100Qcl041MatrixGateSelfTest {
     Write-JsonFile -Value (New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $true -OwnerSerial $expectedOwnerSerial -ClientSerial $expectedClientSerial -RunId "qcl041-matrix-gate-selftest-other-run") -Path $wrongRunIdPath
     Write-JsonFile -Value (New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $true -OwnerSerial $expectedOwnerSerial -ClientSerial "WRONG-CLIENT" -RunId $expectedMatrixRunId) -Path $wrongClientPath
     Write-JsonFile -Value (New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $true -OwnerSerial $expectedOwnerSerial -ClientSerial $expectedClientSerial -RunId $expectedMatrixRunId) -Path $stalePath
-    Write-JsonFile -Value (New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $true -OwnerSerial $expectedOwnerSerial -ClientSerial $expectedClientSerial -RunId $expectedMatrixRunId -ReceiverObservedUdpModes @() -ClientToOwnerWifiDirectUdpMatrixModePass $false -ClientToOwnerAppBoundUdpSocketPass $false) -Path $udpMissingPath
-    Write-JsonFile -Value (New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $true -OwnerSerial $expectedOwnerSerial -ClientSerial $expectedClientSerial -RunId $expectedMatrixRunId -ReceiverObservedUdpModes @() -ClientToOwnerWifiDirectUdpMatrixModePass $false -ClientToOwnerAppBoundUdpSocketPass $false) -Path $controlTcpPath
-    $controlTcpGateIncompleteMatrixSummary = New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $true -OwnerSerial $expectedOwnerSerial -ClientSerial $expectedClientSerial -RunId $expectedMatrixRunId -ReceiverObservedUdpModes @() -ClientToOwnerWifiDirectUdpMatrixModePass $false -ClientToOwnerAppBoundUdpSocketPass $false
+    Write-JsonFile -Value (New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $true -OwnerSerial $expectedOwnerSerial -ClientSerial $expectedClientSerial -RunId $expectedMatrixRunId -ReceiverObservedUdpModes @() -ClientToOwnerWifiDirectUdpMatrixModePass $false -ClientToOwnerAppBoundUdpSocketPass $false -ClientP2pNetworkSocketAuthorityPass $false -UdpNetworkBoundReceiverObservedPackets 0) -Path $udpMissingPath
+    Write-JsonFile -Value (New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $true -OwnerSerial $expectedOwnerSerial -ClientSerial $expectedClientSerial -RunId $expectedMatrixRunId) -Path $controlTcpPath
+    Write-JsonFile -Value (New-Qcl100Qcl041MatrixGateSelfTestSummary `
+            -Pass $false `
+            -OwnerSerial $expectedOwnerSerial `
+            -ClientSerial $expectedClientSerial `
+            -RunId $expectedMatrixRunId `
+            -ReceiverObservedBytes $true `
+            -ReceiverObservedUdpModes @("udp_local_p2p_bind_echo") `
+            -ReceiverObservedTcpModes @("tcp_local_p2p_bind_socket", "tcp_local_p2p_bind_stream_socket") `
+            -ClientToOwnerWifiDirectUdpMatrixModePass $false `
+            -ClientToOwnerAppBoundUdpSocketPass $false `
+            -LocalP2pBindNonPromoting $true `
+            -LocalP2pBindUdpPass $true `
+            -LocalP2pBindUdpReceiverObservedPackets 4 `
+            -LocalP2pBindTcpPass $true `
+            -LocalP2pBindTcpReceiverAccepts 1 `
+            -LocalP2pBindTcpStreamPass $true `
+            -LocalP2pBindTcpStreamReceiverAccepts 1 `
+            -LocalP2pBindTcpStreamBytesPerDirection 4194304) -Path $localP2pBindOnlyPath
+    $controlTcpGateIncompleteMatrixSummary = New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $true -OwnerSerial $expectedOwnerSerial -ClientSerial $expectedClientSerial -RunId $expectedMatrixRunId
     $controlTcpGateIncompleteMatrixSummary.matrix_focus = "qcl100_control_tcp_gate"
     $controlTcpGateIncompleteMatrixSummary.qcl100_control_tcp_gate = $true
     $controlTcpGateIncompleteMatrixSummary.delayed_udp_required = $false
@@ -487,6 +1036,27 @@ function Invoke-Qcl100Qcl041MatrixGateSelfTest {
     $controlTcpGateIncompleteMatrixSummary.matrix.client_matrix_last_checkpoint = "client_after_tcp_tunnel_stream"
     Write-JsonFile -Value $controlTcpGateIncompleteMatrixSummary -Path $controlTcpGateIncompleteMatrixPath
     Write-JsonFile -Value (New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $true -OwnerSerial $expectedOwnerSerial -ClientSerial $expectedClientSerial -RunId $expectedMatrixRunId) -Path $unsupportedTransportPath
+    $olderCurrentWlanSummary = New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $true -OwnerSerial $expectedOwnerSerial -ClientSerial $expectedClientSerial -RunId "qcl041-matrix-gate-selftest-older-current-wlan"
+    $olderCurrentWlanSummary.require_infrastructure_wifi_disconnected = $false
+    $olderCurrentWlanSummary.require_p2p0_ipv4_cleared = $false
+    $olderCurrentWlanSummary.require_candidate_wifi_direct_routes_clear = $false
+    $olderCurrentWlanSummary.preflight.infrastructure_wifi_disconnected = $false
+    $olderCurrentWlanSummary.preflight.p2p0_ipv4_cleared = $true
+    $olderCurrentWlanSummary.preflight.candidate_wifi_direct_prelaunch_routes_clear = $true
+    Write-JsonFile -Value $olderCurrentWlanSummary -Path $olderCurrentWlanPath
+    $strictApDisconnectedSummary = New-Qcl100Qcl041MatrixGateSelfTestSummary -Pass $false -OwnerSerial $expectedOwnerSerial -ClientSerial $expectedClientSerial -RunId "qcl041-matrix-gate-selftest-strict-ap-disconnected"
+    $strictApDisconnectedSummary.status = "blocked"
+    $strictApDisconnectedSummary.blocked_reason = "qcl041_client_p2p_network_not_visible"
+    $strictApDisconnectedSummary.preflight.infrastructure_wifi_disconnected = $true
+    $strictApDisconnectedSummary.preflight.p2p0_ipv4_cleared = $true
+    $strictApDisconnectedSummary.preflight.candidate_wifi_direct_prelaunch_routes_clear = $true
+    $strictApDisconnectedSummary.app_network_visibility = [ordered]@{
+        decision = "qcl041_client_p2p_network_not_visible"
+        client_qcl041_p2p_network_visible = $false
+        client_wifi_p2p_network_request_visible = $false
+        shell_client_route_get_from_p2p_source_uses_p2p0 = $true
+    }
+    Write-JsonFile -Value $strictApDisconnectedSummary -Path $strictApDisconnectedPath
     [System.IO.File]::SetLastWriteTimeUtc($stalePath, (Get-Date).ToUniversalTime().AddSeconds(-($maxAgeSeconds + 60)))
 
     $passEvidence = Get-Qcl100Qcl041MatrixGateEvidence `
@@ -508,6 +1078,14 @@ function Invoke-Qcl100Qcl041MatrixGateSelfTest {
     }
     if ([bool]$passEvidence.matrix_same_group_udp_duplex_media_proven_by_matrix) {
         throw "QCL100 QCL041 matrix gate self-test expected matrix UDP evidence not to claim same-group duplex media proof."
+    }
+    if (-not [bool]$passEvidence.network_visibility_deep_trace_expected_rows_present -or
+            [int]$passEvidence.network_visibility_deep_trace_row_count -ne 12 -or
+            $passEvidence.network_visibility_deep_trace_classification -ne "android_connectivitymanager_network_authority_pass") {
+        throw "QCL100 QCL041 matrix gate self-test expected pass summary to preserve all network visibility deep-trace rows."
+    }
+    if ([bool]$passEvidence.network_visibility_deep_trace_local_p2p_promotes_qcl100) {
+        throw "QCL100 QCL041 matrix gate self-test expected local p2p bind evidence not to promote QCL100."
     }
     $failEvidence = Get-Qcl100Qcl041MatrixGateEvidence `
         -Path $failPath `
@@ -572,8 +1150,32 @@ function Invoke-Qcl100Qcl041MatrixGateSelfTest {
         -Qcl082TransportProtocol "udp" `
         -MaxAgeSeconds $maxAgeSeconds `
         -RequireFresh
-    if ([bool]$udpMissingEvidence.passed -or $udpMissingEvidence.blocked_reason_for_qcl100 -ne "qcl041_matrix_client_to_owner_udp_mode_absent") {
-        throw "QCL100 QCL041 matrix gate self-test expected UDP summary without directed client-to-owner UDP evidence to fail on missing UDP mode."
+    if ([bool]$udpMissingEvidence.passed -or $udpMissingEvidence.blocked_reason_for_qcl100 -ne "qcl041_client_p2p_udp_network_bound_not_receiver_observed") {
+        throw "QCL100 QCL041 matrix gate self-test expected UDP summary without strict network-bound echo evidence to fail on missing UDP socket authority."
+    }
+    $localP2pBindOnlyEvidence = Get-Qcl100Qcl041MatrixGateEvidence `
+        -Path $localP2pBindOnlyPath `
+        -ExpectedOwnerSerial $expectedOwnerSerial `
+        -ExpectedClientSerial $expectedClientSerial `
+        -ExpectedRunId $expectedMatrixRunId `
+        -Qcl082TransportProtocol "udp" `
+        -MaxAgeSeconds $maxAgeSeconds `
+        -RequireFresh
+    if ([bool]$localP2pBindOnlyEvidence.passed -or $localP2pBindOnlyEvidence.blocked_reason_for_qcl100 -ne "qcl041_client_p2p_network_callback_not_seen") {
+        throw "QCL100 QCL041 matrix gate self-test expected local p2p bind-only diagnostic evidence to fail on missing callback-visible Network."
+    }
+    if (-not [bool]$localP2pBindOnlyEvidence.local_p2p_bind_diagnostic_non_promoting -or -not [bool]$localP2pBindOnlyEvidence.local_p2p_bind_udp_pass -or -not [bool]$localP2pBindOnlyEvidence.local_p2p_bind_tcp_pass -or -not [bool]$localP2pBindOnlyEvidence.local_p2p_bind_tcp_stream_pass) {
+        throw "QCL100 QCL041 matrix gate self-test expected local p2p bind-only diagnostic fields to be preserved as non-promoting evidence."
+    }
+    if ($localP2pBindOnlyEvidence.qcl041_local_p2p_bind_stream_authority -ne "diagnostic_pass" -or
+            $localP2pBindOnlyEvidence.qcl100_android_network_authority -ne "blocked" -or
+            $localP2pBindOnlyEvidence.qcl100_same_group_simultaneous_native_render -ne "not_promoted") {
+        throw "QCL100 QCL041 matrix gate self-test expected local p2p bind-only authority labels to stay non-promoting."
+    }
+    if (-not [bool]$localP2pBindOnlyEvidence.network_visibility_deep_trace_expected_rows_present -or
+            $localP2pBindOnlyEvidence.network_visibility_deep_trace_classification -ne "p2p_framework_connected_local_bind_transport_only" -or
+            [bool]$localP2pBindOnlyEvidence.network_visibility_deep_trace_local_p2p_promotes_qcl100) {
+        throw "QCL100 QCL041 matrix gate self-test expected local p2p bind-only deep-trace classification to stay diagnostic-only."
     }
     $controlTcpEvidence = Get-Qcl100Qcl041MatrixGateEvidence `
         -Path $controlTcpPath `
@@ -614,6 +1216,12 @@ function Invoke-Qcl100Qcl041MatrixGateSelfTest {
     if ([bool]$unsupportedTransportEvidence.passed -or $unsupportedTransportEvidence.blocked_reason_for_qcl100 -ne "qcl041_matrix_qcl100_transport_not_supported") {
         throw "QCL100 QCL041 matrix gate self-test expected unsupported transport summary to fail on unsupported transport."
     }
+    $comparisonEvidence = Get-Qcl100Qcl041MatrixArtifactComparison `
+        -OlderCurrentWlanSummaryPath $olderCurrentWlanPath `
+        -StrictApDisconnectedSummaryPath $strictApDisconnectedPath
+    if ($comparisonEvidence.normalized_reason -ne "older_current_wlan_pass_missing_strict_preflight_requirements") {
+        throw "QCL100 QCL041 matrix gate self-test expected artifact comparison to reject older current-WLAN evidence on strict preflight requirements."
+    }
 
     $selfTest = [ordered]@{
         schema = "rusty.quest.qcl100_qcl041_matrix_gate_self_test.v1"
@@ -627,6 +1235,9 @@ function Invoke-Qcl100Qcl041MatrixGateSelfTest {
         control_tcp_summary_path = $controlTcpPath
         control_tcp_gate_incomplete_matrix_summary_path = $controlTcpGateIncompleteMatrixPath
         unsupported_transport_summary_path = $unsupportedTransportPath
+        local_p2p_bind_only_summary_path = $localP2pBindOnlyPath
+        older_current_wlan_summary_path = $olderCurrentWlanPath
+        strict_ap_disconnected_summary_path = $strictApDisconnectedPath
         pass_case = $passEvidence
         fail_case = $failEvidence
         missing_run_id_case = $missingRunIdEvidence
@@ -637,6 +1248,8 @@ function Invoke-Qcl100Qcl041MatrixGateSelfTest {
         control_tcp_case = $controlTcpEvidence
         control_tcp_gate_incomplete_matrix_case = $controlTcpGateIncompleteMatrixEvidence
         unsupported_transport_case = $unsupportedTransportEvidence
+        local_p2p_bind_only_case = $localP2pBindOnlyEvidence
+        artifact_comparison_case = $comparisonEvidence
         passed = $true
     }
     Write-JsonFile -Value $selfTest -Path (Join-Path $OutputDirectory "qcl100-qcl041-matrix-gate-self-test.json")

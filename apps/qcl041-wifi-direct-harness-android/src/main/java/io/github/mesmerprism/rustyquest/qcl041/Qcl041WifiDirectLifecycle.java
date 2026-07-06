@@ -97,6 +97,7 @@ final class Qcl041WifiDirectLifecycle {
     private final StatusListener listener;
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final Qcl041WifiDirectNetworkBinder networkBinder;
+    private final Qcl041AppNetworkTrace appNetworkTrace;
 
     private WifiP2pManager manager;
     private WifiP2pManager.Channel channel;
@@ -113,6 +114,7 @@ final class Qcl041WifiDirectLifecycle {
     private int questConnectAttemptCount;
     private int maxPeerCountObserved;
     private int connectionInfoPollCount;
+    private InetAddress lastGroupOwnerAddress;
 
     Qcl041WifiDirectLifecycle(
             Context context,
@@ -120,10 +122,11 @@ final class Qcl041WifiDirectLifecycle {
             Qcl041LifecycleArtifact artifact,
             StatusListener listener) {
         this.context = context.getApplicationContext();
-        this.networkBinder = new Qcl041WifiDirectNetworkBinder(this.context, artifact);
         this.config = config;
         this.artifact = artifact;
         this.listener = listener;
+        this.networkBinder = new Qcl041WifiDirectNetworkBinder(this.context, artifact);
+        this.appNetworkTrace = new Qcl041AppNetworkTrace(this.context, artifact, config);
     }
 
     void start() {
@@ -154,6 +157,8 @@ final class Qcl041WifiDirectLifecycle {
         }
 
         registerReceiver();
+        startAppNetworkTraceIfRequested();
+        recordAppNetworkSnapshot("before_discovery", null);
         requestCurrentStateAtStartup();
         maybeApplyP2pDeviceNameOverride(new Runnable() {
             @Override
@@ -173,6 +178,7 @@ final class Qcl041WifiDirectLifecycle {
     }
 
     void stop() {
+        stopAppNetworkTraceIfRequested();
         unregisterReceiver();
     }
 
@@ -335,6 +341,7 @@ final class Qcl041WifiDirectLifecycle {
                 } else if (WifiP2pManager.WIFI_P2P_CONNECTION_CHANGED_ACTION.equals(action)) {
                     NetworkInfo networkInfo =
                             intent.getParcelableExtra(WifiP2pManager.EXTRA_NETWORK_INFO);
+                    recordWifiP2pNetworkInfo("broadcast_connection_changed", networkInfo);
                     if (networkInfo != null && networkInfo.isConnected()) {
                         requestConnectionInfo();
                     } else if (config.isQuestPeerRoute()
@@ -1222,6 +1229,13 @@ final class Qcl041WifiDirectLifecycle {
         if (manager == null || channel == null) {
             return;
         }
+        artifact.diagnostic("lifecycle", "wifi_p2p_request_connection_info_attempted", true);
+        if (config.appNetworkTraceRequested()) {
+            artifact.diagnostic(
+                    "app_network_trace",
+                    "wifi_p2p_request_connection_info_attempted",
+                    true);
+        }
         try {
             manager.requestConnectionInfo(channel, new WifiP2pManager.ConnectionInfoListener() {
                 @Override
@@ -1231,7 +1245,90 @@ final class Qcl041WifiDirectLifecycle {
             });
         } catch (SecurityException ex) {
             artifact.recordFailure("requestConnectionInfo", ex.getMessage());
+            if (config.appNetworkTraceRequested()) {
+                artifact.diagnostic(
+                        "app_network_trace",
+                        "wifi_p2p_request_connection_info_error",
+                        ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            }
         }
+    }
+
+    private void requestWifiP2pNetworkInfo(final String phase) {
+        if (manager == null || channel == null) {
+            return;
+        }
+        artifact.diagnostic("lifecycle", phase + "_wifi_p2p_request_network_info_attempted", true);
+        if (config.appNetworkTraceRequested()) {
+            artifact.diagnostic(
+                    "app_network_trace",
+                    phase + "_wifi_p2p_request_network_info_attempted",
+                    true);
+        }
+        try {
+            manager.requestNetworkInfo(channel, new WifiP2pManager.NetworkInfoListener() {
+                @Override
+                public void onNetworkInfoAvailable(NetworkInfo networkInfo) {
+                    recordWifiP2pNetworkInfo(phase, networkInfo);
+                }
+            });
+        } catch (SecurityException ex) {
+            artifact.diagnostic(
+                    "lifecycle",
+                    phase + "_wifi_p2p_request_network_info_error",
+                    ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            if (config.appNetworkTraceRequested()) {
+                artifact.diagnostic(
+                        "app_network_trace",
+                        phase + "_wifi_p2p_request_network_info_error",
+                        ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            }
+        }
+    }
+
+    private void recordWifiP2pNetworkInfo(String phase, NetworkInfo networkInfo) {
+        recordWifiP2pNetworkInfo("lifecycle", phase + "_wifi_p2p_", networkInfo);
+        if (config.appNetworkTraceRequested()) {
+            recordWifiP2pNetworkInfo("app_network_trace", phase + "_wifi_p2p_", networkInfo);
+            recordWifiP2pNetworkInfo("app_network_trace", "wifi_p2p_", networkInfo);
+        }
+    }
+
+    private void recordWifiP2pNetworkInfo(String section, String prefix, NetworkInfo networkInfo) {
+        artifact.diagnostic(section, prefix + "network_info_present", networkInfo != null);
+        artifact.diagnostic(
+                section,
+                prefix + "network_info_available",
+                networkInfo != null && networkInfo.isAvailable());
+        artifact.diagnostic(
+                section,
+                prefix + "network_info_connected",
+                networkInfo != null && networkInfo.isConnected());
+        artifact.diagnostic(
+                section,
+                prefix + "network_info_state",
+                networkInfo == null || networkInfo.getState() == null
+                        ? ""
+                        : networkInfo.getState().toString());
+        artifact.diagnostic(
+                section,
+                prefix + "network_info_detailed_state",
+                networkInfo == null || networkInfo.getDetailedState() == null
+                        ? ""
+                        : networkInfo.getDetailedState().toString());
+        artifact.diagnostic(
+                section,
+                prefix + "network_info_type_name",
+                networkInfo == null || networkInfo.getTypeName() == null
+                        ? ""
+                        : networkInfo.getTypeName());
+        artifact.diagnostic(
+                section,
+                prefix + "network_info_reason",
+                networkInfo == null || networkInfo.getReason() == null
+                        ? ""
+                        : networkInfo.getReason());
+        artifact.writeQuietly();
     }
 
     private void handleConnectionInfo(WifiP2pInfo info) {
@@ -1241,16 +1338,41 @@ final class Qcl041WifiDirectLifecycle {
                 "lifecycle",
                 "connection_info_group_formed",
                 info != null && info.groupFormed);
+        if (config.appNetworkTraceRequested()) {
+            artifact.diagnostic(
+                    "app_network_trace",
+                    "wifi_p2p_connection_info_callback_count",
+                    connectionInfoPollCount);
+            artifact.diagnostic(
+                    "app_network_trace",
+                    "wifi_p2p_connection_info_group_formed",
+                    info != null && info.groupFormed);
+        }
         if (info != null) {
             artifact.diagnostic("lifecycle", "connection_info_is_group_owner", info.isGroupOwner);
             artifact.diagnostic(
                     "lifecycle",
                     "connection_info_group_owner_address_present",
                     info.groupOwnerAddress != null);
+            if (config.appNetworkTraceRequested()) {
+                artifact.diagnostic(
+                        "app_network_trace",
+                        "wifi_p2p_connection_info_is_group_owner",
+                        info.isGroupOwner);
+                artifact.diagnostic(
+                        "app_network_trace",
+                        "wifi_p2p_connection_info_group_owner_address_present",
+                        info.groupOwnerAddress != null);
+                artifact.diagnostic(
+                        "app_network_trace",
+                        "wifi_p2p_connection_info_group_owner_address",
+                        info.groupOwnerAddress == null ? "" : info.groupOwnerAddress.getHostAddress());
+            }
         }
         if (info == null || !info.groupFormed || socketStarted) {
             return;
         }
+        lastGroupOwnerAddress = info.groupOwnerAddress;
         long elapsedMs = groupFormationStartMs == 0
                 ? -1
                 : SystemClock.elapsedRealtime() - groupFormationStartMs;
@@ -1264,7 +1386,14 @@ final class Qcl041WifiDirectLifecycle {
                 elapsedMs,
                 "Wi-Fi Direct group formed; quest_group_owner=" + info.isGroupOwner);
         recordConnectivitySnapshot(info.groupOwnerAddress, "connectivity", "after_group_formation_");
+        recordAppNetworkSnapshot("after_group_formation", info.groupOwnerAddress);
+        requestWifiP2pNetworkInfo("after_group_formation");
         requestGroupInfoAfterFormation();
+
+        if (config.isQ2qAppNetworkTraceOnly()) {
+            startQ2qAppNetworkTraceOnly(info);
+            return;
+        }
 
         if (config.isQuestPeerRoute() && info.isGroupOwner) {
             startQuestGroupOwnerSocketExchange(info);
@@ -1286,6 +1415,66 @@ final class Qcl041WifiDirectLifecycle {
             return;
         }
         startSocketExchange(info);
+    }
+
+    private void startQ2qAppNetworkTraceOnly(final WifiP2pInfo info) {
+        if (socketStarted || cleanupStarted) {
+            return;
+        }
+        socketStarted = true;
+        updateStatus("running QCL-041 app-network trace-only diagnostic");
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                Network wifiDirectNetwork = null;
+                InetAddress localAddress = null;
+                try {
+                    wifiDirectNetwork = findCallbackPreferredUsableWifiDirectNetwork(
+                            info.groupOwnerAddress,
+                            "q2q_app_bound_socket_matrix",
+                            info.isGroupOwner ? "owner_p2p_network_" : "client_p2p_network_",
+                            30_000L);
+                    localAddress = findWifiDirectLocalAddress(info.groupOwnerAddress);
+                    recordAppNetworkSnapshot("network_visibility_only_before_matrix", info.groupOwnerAddress);
+                    artifact.setSocketExchange(
+                            false,
+                            0,
+                            0,
+                            null,
+                            "NetworkVisibilityOnly diagnostic skipped the promoting bounded TCP socket exchange.");
+                    artifact.diagnostic("app_network_trace", "network_visibility_only", true);
+                    artifact.diagnostic(
+                            "app_network_trace",
+                            "network_visibility_only_tcp_binding_variants",
+                            config.q2qTcpBindingVariants);
+                    artifact.diagnostic("app_network_trace", "network_visibility_only_matrix_attempted", true);
+                    artifact.writeQuietly();
+                    boolean matrixStarted = runQ2qAppBoundSocketMatrix(
+                            wifiDirectNetwork,
+                            info.groupOwnerAddress,
+                            localAddress,
+                            info.isGroupOwner,
+                            "network_visibility_only");
+                    artifact.diagnostic("app_network_trace", "network_visibility_only_matrix_started", matrixStarted);
+                    artifact.writeQuietly();
+                    recordAppNetworkSnapshot("network_visibility_only_after_matrix", info.groupOwnerAddress);
+                    artifact.diagnostic("app_network_trace", "network_visibility_only_matrix_completed", matrixStarted);
+                } catch (Throwable ex) {
+                    artifact.diagnostic(
+                            "app_network_trace",
+                            "network_visibility_only_error",
+                            ex.getClass().getSimpleName() + ": " + ex.getMessage());
+                    recordAppNetworkTcpFailure("network_visibility_only_failure", info.groupOwnerAddress, ex);
+                } finally {
+                    handler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            finishAfterSocketExchange();
+                        }
+                    });
+                }
+            }
+        }, "qcl041-app-network-trace-only").start();
     }
 
     private boolean qcl082MediaPathEnabled() {
@@ -1356,7 +1545,11 @@ final class Qcl041WifiDirectLifecycle {
             return;
         }
         socketStarted = true;
-        Network wifiDirectNetwork = findWifiDirectNetwork(info.groupOwnerAddress);
+        Network wifiDirectNetwork = findCallbackPreferredUsableWifiDirectNetwork(
+                info.groupOwnerAddress,
+                "qcl082_media_path",
+                "group_owner_p2p_network_",
+                30_000L);
         artifact.setSocketExchange(
                 false,
                 0,
@@ -1642,6 +1835,11 @@ final class Qcl041WifiDirectLifecycle {
             return;
         }
         artifact.diagnostic(diagnosticSection, diagnosticPrefix + "_network_name", group.getNetworkName());
+        String groupInterface = group.getInterface();
+        artifact.diagnostic(
+                diagnosticSection,
+                diagnosticPrefix + "_interface",
+                groupInterface == null ? "" : groupInterface);
         try {
             int networkId = group.getNetworkId();
             artifact.diagnostic(diagnosticSection, diagnosticPrefix + "_network_id", networkId);
@@ -1664,13 +1862,37 @@ final class Qcl041WifiDirectLifecycle {
                 diagnosticSection,
                 diagnosticPrefix + "_client_count",
                 clients == null ? 0 : clients.size());
+        if (config.appNetworkTraceRequested()) {
+            artifact.diagnostic("app_network_trace", "wifi_p2p_group_network_name", group.getNetworkName());
+            artifact.diagnostic(
+                    "app_network_trace",
+                    "wifi_p2p_group_interface",
+                    groupInterface == null ? "" : groupInterface);
+            artifact.diagnostic(
+                    "app_network_trace",
+                    "wifi_p2p_group_client_count",
+                    clients == null ? 0 : clients.size());
+        }
     }
 
     private void requestGroupInfoAfterFormation() {
+        artifact.diagnostic("lifecycle", "wifi_p2p_request_group_info_attempted", true);
+        if (config.appNetworkTraceRequested()) {
+            artifact.diagnostic(
+                    "app_network_trace",
+                    "wifi_p2p_request_group_info_attempted",
+                    true);
+        }
         try {
             manager.requestGroupInfo(channel, new WifiP2pManager.GroupInfoListener() {
                 @Override
                 public void onGroupInfoAvailable(WifiP2pGroup group) {
+                    if (config.appNetworkTraceRequested()) {
+                        artifact.diagnostic(
+                                "app_network_trace",
+                                "wifi_p2p_request_group_info_present",
+                                group != null);
+                    }
                     if (group != null) {
                         artifact.diagnostic("lifecycle", "group_network_name", group.getNetworkName());
                         recordWifiP2pGroupDiagnostics("lifecycle", "group", group);
@@ -1683,6 +1905,12 @@ final class Qcl041WifiDirectLifecycle {
             });
         } catch (SecurityException ex) {
             artifact.recordFailure("requestGroupInfo", ex.getMessage());
+            if (config.appNetworkTraceRequested()) {
+                artifact.diagnostic(
+                        "app_network_trace",
+                        "wifi_p2p_request_group_info_error",
+                        ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            }
         }
     }
 
@@ -1695,11 +1923,16 @@ final class Qcl041WifiDirectLifecycle {
                 long started = SystemClock.elapsedRealtime();
                 int sent = 0;
                 int received = 0;
-                Network wifiDirectNetwork = findWifiDirectNetwork(info.groupOwnerAddress);
+                Network wifiDirectNetwork = findCallbackPreferredUsableWifiDirectNetwork(
+                        info.groupOwnerAddress,
+                        "control_tcp",
+                        "client_p2p_network_",
+                        30_000L);
                 InetAddress localAddress = findWifiDirectLocalAddress(info.groupOwnerAddress);
                 boolean qcl082MediaStarted = false;
                 boolean appBoundMatrixStarted = false;
                 try (Socket socket = createSocketForWifiDirectNetwork(wifiDirectNetwork)) {
+                    recordAppNetworkSnapshot("before_tcp_bind_connect", info.groupOwnerAddress);
                     artifact.diagnostic("control_tcp", "socket_owner_package", Qcl041ProbeConfig.PACKAGE_NAME);
                     artifact.diagnostic("control_tcp", "socket_owner_uid", android.os.Process.myUid());
                     artifact.diagnostic("control_tcp", "socket_owner_pid", android.os.Process.myPid());
@@ -1798,6 +2031,7 @@ final class Qcl041WifiDirectLifecycle {
                             "client",
                             qcl082MediaStarted);
                 } catch (Exception ex) {
+                    recordAppNetworkTcpFailure("after_tcp_failure", info.groupOwnerAddress, ex);
                     artifact.setSocketExchange(
                             false,
                             sent,
@@ -1858,8 +2092,13 @@ final class Qcl041WifiDirectLifecycle {
                 Network wifiDirectNetwork = null;
                 InetAddress localAddress = null;
                 try {
-                    wifiDirectNetwork = findWifiDirectNetwork(info.groupOwnerAddress);
+                    wifiDirectNetwork = findCallbackPreferredUsableWifiDirectNetwork(
+                            info.groupOwnerAddress,
+                            "control_tcp",
+                            "owner_p2p_network_",
+                            30_000L);
                     localAddress = findWifiDirectLocalAddress(info.groupOwnerAddress);
+                    recordAppNetworkSnapshot("before_tcp_bind_connect", info.groupOwnerAddress);
                     artifact.diagnostic("control_tcp", "socket_owner_package", Qcl041ProbeConfig.PACKAGE_NAME);
                     artifact.diagnostic("control_tcp", "socket_owner_uid", android.os.Process.myUid());
                     artifact.diagnostic("control_tcp", "socket_owner_pid", android.os.Process.myPid());
@@ -1961,6 +2200,7 @@ final class Qcl041WifiDirectLifecycle {
                             "group_owner",
                             qcl082MediaStarted);
                 } catch (SocketTimeoutException ex) {
+                    recordAppNetworkTcpFailure("after_tcp_failure", info.groupOwnerAddress, ex);
                     artifact.setSocketExchange(
                             false,
                             sent,
@@ -1982,6 +2222,7 @@ final class Qcl041WifiDirectLifecycle {
                                 "after_bounded_tcp_timeout");
                     }
                 } catch (Exception ex) {
+                    recordAppNetworkTcpFailure("after_tcp_failure", info.groupOwnerAddress, ex);
                     artifact.setSocketExchange(
                             false,
                             sent,
@@ -2023,6 +2264,11 @@ final class Qcl041WifiDirectLifecycle {
             boolean groupOwnerReceiver,
             String trigger) {
         if (!config.q2qAppBoundSocketMatrixEnabled || !config.isQuestPeerRoute()) {
+            if (!(config.isQ2qAppNetworkTraceOnly() && config.isQuestPeerRoute())) {
+                return false;
+            }
+        }
+        if (!config.isQuestPeerRoute()) {
             return false;
         }
         artifact.diagnostic("q2q_app_bound_socket_matrix", "trigger", trigger);
@@ -2041,14 +2287,15 @@ final class Qcl041WifiDirectLifecycle {
                     (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE),
                     wifiDirectNetwork,
                     groupOwnerAddress,
-                    localAddress);
+                    localAddress,
+                    appNetworkTrace);
             if (groupOwnerReceiver) {
                 matrix.runGroupOwnerReceiver();
             } else {
                 matrix.runClientSender();
             }
             return true;
-        } catch (Exception ex) {
+        } catch (Throwable ex) {
             artifact.diagnostic(
                     "q2q_app_bound_socket_matrix",
                     "run_error",
@@ -6363,8 +6610,57 @@ final class Qcl041WifiDirectLifecycle {
                 preferredNetwork);
     }
 
+    private Network findCallbackPreferredUsableWifiDirectNetwork(
+            InetAddress groupOwnerAddress,
+            String section,
+            String prefix,
+            long timeoutMs) {
+        Network preferredNetwork = latestCallbackWifiDirectNetwork(groupOwnerAddress, section, prefix);
+        return findUsableWifiDirectNetwork(
+                groupOwnerAddress,
+                section,
+                prefix,
+                timeoutMs,
+                preferredNetwork);
+    }
+
+    private Network latestCallbackWifiDirectNetwork(
+            InetAddress groupOwnerAddress,
+            String section,
+            String prefix) {
+        if (!config.appNetworkTraceRequested()) {
+            artifact.diagnostic(section, prefix + "callback_selection_attempted", false);
+            return null;
+        }
+        return appNetworkTrace.latestCallbackWifiDirectNetwork(groupOwnerAddress, section, prefix);
+    }
+
     private void recordConnectivitySnapshot(InetAddress groupOwnerAddress, String section, String prefix) {
         networkBinder.recordConnectivitySnapshot(groupOwnerAddress, section, prefix);
+    }
+
+    private void startAppNetworkTraceIfRequested() {
+        if (config.appNetworkTraceRequested()) {
+            appNetworkTrace.start();
+        }
+    }
+
+    private void stopAppNetworkTraceIfRequested() {
+        if (config.appNetworkTraceRequested()) {
+            appNetworkTrace.stop();
+        }
+    }
+
+    private void recordAppNetworkSnapshot(String phase, InetAddress groupOwnerAddress) {
+        if (config.appNetworkTraceRequested()) {
+            appNetworkTrace.recordSnapshot(phase, groupOwnerAddress);
+        }
+    }
+
+    private void recordAppNetworkTcpFailure(String phase, InetAddress groupOwnerAddress, Throwable ex) {
+        if (config.appNetworkTraceRequested()) {
+            appNetworkTrace.recordTcpFailure(phase, groupOwnerAddress, ex);
+        }
     }
 
     private InetAddress findWifiDirectLocalAddress(InetAddress groupOwnerAddress) {
@@ -6565,7 +6861,9 @@ final class Qcl041WifiDirectLifecycle {
         cleanupStarted = true;
         updateStatus("cleaning up: " + reason);
         if (manager == null || channel == null) {
+            recordAppNetworkSnapshot("cleanup", lastGroupOwnerAddress);
             artifact.setCleanup(true, true, "No WifiP2pManager channel remained open.");
+            stopAppNetworkTraceIfRequested();
             unregisterReceiver();
             return;
         }
@@ -6580,10 +6878,12 @@ final class Qcl041WifiDirectLifecycle {
                 }
                 cleanupFinished[0] = true;
                 boolean passed = stopOk[0] && removeOk[0];
+                recordAppNetworkSnapshot("cleanup", lastGroupOwnerAddress);
                 artifact.setCleanup(
                         passed,
                         true,
                         "stopPeerDiscovery=" + stopOk[0] + "; removeGroup=" + removeOk[0]);
+                stopAppNetworkTraceIfRequested();
                 unregisterReceiver();
                 updateStatus("QCL-041 lifecycle complete");
             }
@@ -6640,7 +6940,9 @@ final class Qcl041WifiDirectLifecycle {
                     return;
                 }
                 cleanupFinished[0] = true;
+                recordAppNetworkSnapshot("cleanup", lastGroupOwnerAddress);
                 artifact.setCleanup(false, false, "Wi-Fi Direct cleanup callback timed out.");
+                stopAppNetworkTraceIfRequested();
                 unregisterReceiver();
             }
         }, 12_000L);

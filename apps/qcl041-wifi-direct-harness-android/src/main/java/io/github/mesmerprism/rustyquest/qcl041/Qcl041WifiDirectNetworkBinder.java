@@ -196,6 +196,11 @@ final class Qcl041WifiDirectNetworkBinder {
         artifact.diagnostic(section, prefix + "selected_network", result.network.toString());
         artifact.diagnostic(section, prefix + "selected_network_handle", result.network.getNetworkHandle());
         artifact.diagnostic(section, prefix + "selected_interface", result.interfaceName);
+        artifact.diagnostic(section, prefix + "selected_handle", result.network.getNetworkHandle());
+        artifact.diagnostic(section, prefix + "selected_link_properties_found", result.linkPropertiesFound);
+        artifact.diagnostic(section, prefix + "selected_route_matches_group_owner", result.routeMatchesGroupOwner);
+        artifact.diagnostic(section, prefix + "selected_wifi_p2p_capability", result.wifiP2pCapability);
+        artifact.diagnostic(section, prefix + "selected_local_network_capability", result.localNetworkCapability);
         artifact.diagnostic(section, prefix + "selected_validated", result.validated);
         artifact.diagnostic(section, prefix + "selected_nonvalidated_fallback", !result.validated);
         artifact.diagnostic(section, prefix + "selected_from_preferred", fromPreferred);
@@ -439,7 +444,11 @@ final class Qcl041WifiDirectNetworkBinder {
                         "preferred_missing_link_properties",
                         "preferred_cached_wifi_direct_network",
                         false,
-                        true);
+                        true,
+                        false,
+                        false,
+                        false,
+                        false);
             }
             return new UsableNetworkScanResult(null, "missing_link_properties");
         }
@@ -461,10 +470,19 @@ final class Qcl041WifiDirectNetworkBinder {
                 && capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI);
         boolean wifiP2pCapability = capabilities != null
                 && hasCapabilityByName(capabilities, "NET_CAPABILITY_WIFI_P2P");
+        boolean localNetworkCapability = capabilities != null
+                && hasCapabilityByName(capabilities, "NET_CAPABILITY_LOCAL_NETWORK");
         boolean validated = capabilities != null
                 && capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
         boolean partialConnectivity = capabilities != null
                 && hasCapabilityByName(capabilities, "NET_CAPABILITY_PARTIAL_CONNECTIVITY");
+        boolean addressSameSubnet = false;
+        for (android.net.LinkAddress address : properties.getLinkAddresses()) {
+            if (sameIpv4Slash24(address.getAddress(), groupOwnerAddress)) {
+                addressSameSubnet = true;
+                break;
+            }
+        }
         artifact.diagnostic(section, key + "interface", interfaceName == null ? "" : interfaceName);
         artifact.diagnostic(section, key + "link_addresses", joinLinkAddresses(properties));
         artifact.diagnostic(section, key + "routes", joinRoutes(properties, groupOwnerAddress));
@@ -473,17 +491,15 @@ final class Qcl041WifiDirectNetworkBinder {
         }
         artifact.diagnostic(section, key + "p2p_interface", p2pInterface);
         artifact.diagnostic(section, key + "route_matches_group_owner", routeMatches);
+        artifact.diagnostic(section, key + "address_same_subnet_as_group_owner", addressSameSubnet);
         artifact.diagnostic(section, key + "wifi_transport", wifiTransport);
         artifact.diagnostic(section, key + "wifi_p2p_capability", wifiP2pCapability);
+        artifact.diagnostic(section, key + "local_network_capability", localNetworkCapability);
         artifact.diagnostic(section, key + "validated", validated);
         artifact.diagnostic(section, key + "partial_connectivity", partialConnectivity);
-        if (!p2pInterface && !wifiP2pCapability) {
+        if (!p2pInterface && !wifiP2pCapability && !localNetworkCapability && !routeMatches && !addressSameSubnet) {
             artifact.diagnostic(section, key + "reject_reason", "not_wifi_direct_network");
             return new UsableNetworkScanResult(null, "not_wifi_direct_network");
-        }
-        if (!routeMatches) {
-            artifact.diagnostic(section, key + "reject_reason", "route_does_not_match_group_owner");
-            return new UsableNetworkScanResult(null, "route_does_not_match_group_owner");
         }
         if (!wifiTransport) {
             artifact.diagnostic(section, key + "reject_reason", "missing_wifi_transport");
@@ -499,7 +515,11 @@ final class Qcl041WifiDirectNetworkBinder {
                 "",
                 interfaceName == null ? "" : interfaceName,
                 validated,
-                false);
+                false,
+                true,
+                routeMatches,
+                wifiP2pCapability,
+                localNetworkCapability);
     }
 
     private static final class UsableNetworkScanResult {
@@ -508,9 +528,13 @@ final class Qcl041WifiDirectNetworkBinder {
         final String interfaceName;
         final boolean validated;
         final boolean missingLinkPropertiesFallback;
+        final boolean linkPropertiesFound;
+        final boolean routeMatchesGroupOwner;
+        final boolean wifiP2pCapability;
+        final boolean localNetworkCapability;
 
         UsableNetworkScanResult(Network network, String rejectReason) {
-            this(network, rejectReason, "", false, false);
+            this(network, rejectReason, "", false, false, false, false, false, false);
         }
 
         UsableNetworkScanResult(
@@ -518,12 +542,20 @@ final class Qcl041WifiDirectNetworkBinder {
                 String rejectReason,
                 String interfaceName,
                 boolean validated,
-                boolean missingLinkPropertiesFallback) {
+                boolean missingLinkPropertiesFallback,
+                boolean linkPropertiesFound,
+                boolean routeMatchesGroupOwner,
+                boolean wifiP2pCapability,
+                boolean localNetworkCapability) {
             this.network = network;
             this.rejectReason = rejectReason == null ? "" : rejectReason;
             this.interfaceName = interfaceName == null ? "" : interfaceName;
             this.validated = validated;
             this.missingLinkPropertiesFallback = missingLinkPropertiesFallback;
+            this.linkPropertiesFound = linkPropertiesFound;
+            this.routeMatchesGroupOwner = routeMatchesGroupOwner;
+            this.wifiP2pCapability = wifiP2pCapability;
+            this.localNetworkCapability = localNetworkCapability;
         }
     }
 

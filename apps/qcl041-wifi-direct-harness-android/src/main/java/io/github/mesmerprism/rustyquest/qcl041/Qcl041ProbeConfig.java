@@ -61,6 +61,13 @@ final class Qcl041ProbeConfig {
     final int q2qAppBoundSocketMatrixDelayedUdpDelayMs;
     final int q2qAppBoundSocketMatrixTcpTunnelStreamSeconds;
     final int q2qAppBoundSocketMatrixTcpTunnelStreamBytesPerDirection;
+    final boolean q2qAppNetworkTraceEnabled;
+    final boolean q2qAppNetworkTraceOnly;
+    final boolean q2qAppNetworkRequestTraceEnabled;
+    final int q2qAppNetworkRequestTraceTimeoutMs;
+    final String q2qAppNetworkRequestTraceScopes;
+    final String q2qTcpBindingVariants;
+    final int q2qTcpBindingVariantDelayMs;
     final boolean qcl030LocalOnlyHotspotEnabled;
     final String qcl030LocalOnlyHotspotRole;
     final int qcl030LocalOnlyHotspotHoldMs;
@@ -195,6 +202,27 @@ final class Qcl041ProbeConfig {
                         intent,
                         "qcl041.q2q_app_bound_socket_matrix_tcp_tunnel_stream_bytes_per_direction",
                         0);
+        this.q2qAppNetworkTraceOnly =
+                booleanExtra(intent, "qcl041.q2q_app_network_trace_only", false);
+        this.q2qAppNetworkRequestTraceEnabled =
+                booleanExtra(intent, "qcl041.q2q_app_network_request_trace_enabled", false);
+        this.q2qAppNetworkRequestTraceTimeoutMs =
+                intExtra(intent, "qcl041.q2q_app_network_request_trace_timeout_ms", 5000);
+        this.q2qAppNetworkRequestTraceScopes = stringExtra(
+                intent,
+                "qcl041.q2q_app_network_request_trace_scopes",
+                "wifi_p2p,local_network");
+        this.q2qTcpBindingVariants = stringExtra(
+                intent,
+                "qcl041.q2q_tcp_binding_variants",
+                "");
+        this.q2qTcpBindingVariantDelayMs =
+                intExtra(intent, "qcl041.q2q_tcp_binding_variant_delay_ms", 0);
+        this.q2qAppNetworkTraceEnabled =
+                this.q2qAppNetworkTraceOnly
+                        || this.q2qAppNetworkRequestTraceEnabled
+                        || !this.q2qTcpBindingVariants.trim().isEmpty()
+                        || booleanExtra(intent, "qcl041.q2q_app_network_trace_enabled", false);
         this.qcl030LocalOnlyHotspotEnabled =
                 booleanExtra(intent, "qcl041.qcl030_local_only_hotspot_enabled", false);
         this.qcl030LocalOnlyHotspotRole = stringExtra(
@@ -367,6 +395,58 @@ final class Qcl041ProbeConfig {
         return qcl030LocalOnlyHotspotEnabled;
     }
 
+    boolean isQ2qAppNetworkTraceOnly() {
+        return isQuestPeerRoute() && q2qAppNetworkTraceOnly;
+    }
+
+    boolean appNetworkTraceRequested() {
+        return q2qAppNetworkTraceEnabled || isQ2qAppNetworkTraceOnly();
+    }
+
+    boolean appNetworkRequestTraceRequested() {
+        return appNetworkTraceRequested() && q2qAppNetworkRequestTraceEnabled;
+    }
+
+    boolean appNetworkRequestTraceScopeRequested(String scope) {
+        if (scope == null || scope.trim().isEmpty()) {
+            return false;
+        }
+        String normalizedScope = normalizeRequestTraceScope(scope);
+        for (String part : q2qAppNetworkRequestTraceScopes.split("[,;\\s]+")) {
+            String normalized = normalizeRequestTraceScope(part);
+            if (normalized.isEmpty()) {
+                continue;
+            }
+            if ("all".equals(normalized) || normalized.equals(normalizedScope)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    boolean tcpBindingVariantRequested(String mode) {
+        if (mode == null || mode.trim().isEmpty()) {
+            return false;
+        }
+        String normalizedMode = mode.trim().toLowerCase();
+        for (String part : q2qTcpBindingVariants.split("[,;\\s]+")) {
+            String normalized = part.trim().toLowerCase();
+            if (normalized.isEmpty()) {
+                continue;
+            }
+            if ("all".equals(normalized)
+                    || normalized.equals(normalizedMode)
+                    || normalized.equals(normalizedMode.replace("tcp_", ""))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    boolean hasTcpBindingVariants() {
+        return !q2qTcpBindingVariants.trim().isEmpty();
+    }
+
     String routeId() {
         if (isQcl030LocalOnlyHotspotRoute()) {
             return ROUTE_QCL030_LOCAL_ONLY_HOTSPOT;
@@ -384,6 +464,32 @@ final class Qcl041ProbeConfig {
     private static String normalizePeerClass(String value) {
         String normalized = value == null ? "" : value.trim().toLowerCase();
         return PEER_CLASS_QUEST.equals(normalized) ? PEER_CLASS_QUEST : PEER_CLASS_WINDOWS;
+    }
+
+    private static String normalizeRequestTraceScope(String value) {
+        String normalized = value == null ? "" : value.trim().toLowerCase();
+        if ("p2p".equals(normalized) || "wifi-p2p".equals(normalized)) {
+            return "wifi_p2p";
+        }
+        if ("local".equals(normalized) || "local-network".equals(normalized)) {
+            return "local_network";
+        }
+        if ("broad_wifi".equals(normalized) || "transport_wifi".equals(normalized)) {
+            return "wifi";
+        }
+        if ("include-other-uid-p2p".equals(normalized)
+                || "include_other_uid_p2p".equals(normalized)
+                || "include-other-uid-wifi-p2p".equals(normalized)
+                || "include_other_uid_wifi_p2p".equals(normalized)) {
+            return "include_other_uid_wifi_p2p";
+        }
+        if ("include-other-uid-local".equals(normalized)
+                || "include_other_uid_local".equals(normalized)
+                || "include-other-uid-local-network".equals(normalized)
+                || "include_other_uid_local_network".equals(normalized)) {
+            return "include_other_uid_local_network";
+        }
+        return normalized;
     }
 
     private static String normalizeQ2qRole(String value) {
