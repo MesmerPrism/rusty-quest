@@ -28,6 +28,7 @@ $nativeHeaderPath = Join-Path $appRoot "src\main\cpp\liblsl_qcl081_min.h"
 $nativeSocketProbePath = Join-Path $appRoot "src\main\cpp\qcl041_socket_probe.c"
 $buildPath = Join-Path $PSScriptRoot "Build-Qcl041WifiDirectHarnessAndroid.ps1"
 $invokePath = Join-Path $PSScriptRoot "Invoke-Qcl041WifiDirectLifecycle.ps1"
+$questHostedWindowsJoinPath = Join-Path $PSScriptRoot "Invoke-Qcl041QuestHostedWindowsJoinProbe.ps1"
 $q2qMatrixInvokePath = Join-Path $PSScriptRoot "Invoke-Qcl041QuestToQuestAppBoundSocketMatrix.ps1"
 $qcl030InvokePath = Join-Path $PSScriptRoot "Invoke-Qcl030QuestLocalOnlyHotspotProbe.ps1"
 $qcl100InvokePath = Join-Path $PSScriptRoot "Invoke-Qcl100QuestToQuestNativeStereoProjectionWifiDirect.ps1"
@@ -37,9 +38,11 @@ $qcl100RelayPath = Join-Path $PSScriptRoot "qcl100_native_projection\Qcl041Relay
 $qcl100FreshnessPath = Join-Path $PSScriptRoot "qcl100_native_projection\Freshness.ps1"
 $qcl100RuntimeSummaryPath = Join-Path $PSScriptRoot "qcl100_native_projection\RuntimeSummary.ps1"
 $qcl100MatrixGatePath = Join-Path $PSScriptRoot "qcl100_native_projection\Qcl041MatrixGate.ps1"
+$qcl100LowerGatePlanPath = Join-Path $PSScriptRoot "qcl100_native_projection\LowerGatePlan.ps1"
+$qcl100LowerGateEvidencePath = Join-Path $PSScriptRoot "qcl100_native_projection\LowerGateEvidence.ps1"
 $readmePath = Join-Path $appRoot "README.md"
 
-foreach ($path in @($manifestPath, $activityPath, $servicePath, $lifecyclePath, $networkBinderPath, $appBoundSocketMatrixPath, $qcl030LocalOnlyHotspotProbePath, $nativeSocketProbeBridgePath, $qcl082MediaLanesPath, $qcl082CopyProgressPath, $qcl082ControlTcpMediaCarrierPath, $receiverSocketCandidatePath, $artifactPath, $configPath, $lslBridgePath, $nativeBridgePath, $nativeHeaderPath, $nativeSocketProbePath, $buildPath, $invokePath, $q2qMatrixInvokePath, $qcl030InvokePath, $qcl100InvokePath, $qcl100CommonPath, $qcl100ParityBlockersPath, $qcl100RelayPath, $qcl100FreshnessPath, $qcl100RuntimeSummaryPath, $qcl100MatrixGatePath, $readmePath)) {
+foreach ($path in @($manifestPath, $activityPath, $servicePath, $lifecyclePath, $networkBinderPath, $appBoundSocketMatrixPath, $qcl030LocalOnlyHotspotProbePath, $nativeSocketProbeBridgePath, $qcl082MediaLanesPath, $qcl082CopyProgressPath, $qcl082ControlTcpMediaCarrierPath, $receiverSocketCandidatePath, $artifactPath, $configPath, $lslBridgePath, $nativeBridgePath, $nativeHeaderPath, $nativeSocketProbePath, $buildPath, $invokePath, $questHostedWindowsJoinPath, $q2qMatrixInvokePath, $qcl030InvokePath, $qcl100InvokePath, $qcl100CommonPath, $qcl100ParityBlockersPath, $qcl100RelayPath, $qcl100FreshnessPath, $qcl100RuntimeSummaryPath, $qcl100MatrixGatePath, $qcl100LowerGatePlanPath, $qcl100LowerGateEvidencePath, $readmePath)) {
     if (-not (Test-Path $path)) {
         throw "Missing QCL-041 Wi-Fi Direct harness file: $path"
     }
@@ -66,6 +69,7 @@ $nativeHeader = Get-Content -Raw -Path $nativeHeaderPath
 $nativeSocketProbe = Get-Content -Raw -Path $nativeSocketProbePath
 $buildText = Get-Content -Raw -Path $buildPath
 $invoke = Get-Content -Raw -Path $invokePath
+$questHostedWindowsJoin = Get-Content -Raw -Path $questHostedWindowsJoinPath
 $q2qMatrixInvoke = Get-Content -Raw -Path $q2qMatrixInvokePath
 $qcl030Invoke = Get-Content -Raw -Path $qcl030InvokePath
 $qcl100Invoke = Get-Content -Raw -Path $qcl100InvokePath
@@ -75,8 +79,10 @@ $qcl100Relay = Get-Content -Raw -Path $qcl100RelayPath
 $qcl100Freshness = Get-Content -Raw -Path $qcl100FreshnessPath
 $qcl100RuntimeSummary = Get-Content -Raw -Path $qcl100RuntimeSummaryPath
 $qcl100MatrixGate = Get-Content -Raw -Path $qcl100MatrixGatePath
+$qcl100LowerGatePlan = Get-Content -Raw -Path $qcl100LowerGatePlanPath
+$qcl100LowerGateEvidence = Get-Content -Raw -Path $qcl100LowerGateEvidencePath
 $readme = Get-Content -Raw -Path $readmePath
-$combined = "$manifest`n$activity`n$service`n$lifecycleSurface`n$qcl030LocalOnlyHotspotProbe`n$nativeSocketProbeBridge`n$artifact`n$config`n$lslBridge`n$nativeBridge`n$nativeHeader`n$nativeSocketProbe`n$buildText`n$invoke`n$q2qMatrixInvoke`n$qcl030Invoke`n$qcl100Invoke`n$qcl100Common`n$qcl100ParityBlockers`n$qcl100Relay`n$qcl100Freshness`n$qcl100RuntimeSummary`n$qcl100MatrixGate`n$readme"
+$combined = "$manifest`n$activity`n$service`n$lifecycleSurface`n$qcl030LocalOnlyHotspotProbe`n$nativeSocketProbeBridge`n$artifact`n$config`n$lslBridge`n$nativeBridge`n$nativeHeader`n$nativeSocketProbe`n$buildText`n$invoke`n$questHostedWindowsJoin`n$q2qMatrixInvoke`n$qcl030Invoke`n$qcl100Invoke`n$qcl100Common`n$qcl100ParityBlockers`n$qcl100Relay`n$qcl100Freshness`n$qcl100RuntimeSummary`n$qcl100MatrixGate`n$qcl100LowerGatePlan`n$qcl100LowerGateEvidence`n$readme"
 
 function Assert-ContainsTokens {
     param(
@@ -126,6 +132,9 @@ Assert-ContainsTokens $manifest @(
     'com\.oculus\.vr\.focusaware',
     'com\.oculus\.handtracking\.version',
     'com\.oculus\.intent\.category\.VR',
+    'com\.oculus\.intent\.category\.2D',
+    'android:resizeableActivity="true"',
+    'android:defaultWidth="960dp"',
     'Qcl041WifiDirectHarnessActivity',
     'Qcl041WifiDirectHarnessService',
     'android:foregroundServiceType="dataSync"',
@@ -364,10 +373,29 @@ Assert-ContainsTokens $qcl100Invoke @(
     'Qcl082ControlTcpMediaStreamChunkBytes',
     'RequireQcl082UdpReceiveProxyNetworkBinding',
     'FreshnessSelfTest',
+    'LowerGatePlanOnly',
+    'NoMediaLaunchOnly',
+    'NoMediaLaunchSeconds',
+    'ValidateLowerGateEvidenceOnly',
+    'LowerGatePlanSummaryPath',
+    'RouteClearSummaryPath',
+    'Qcl041ControlTcpSummaryPath',
+    'XrReadinessSummaryPath',
+    'NoMediaLaunchSummaryPath',
+    'AllowLowerGateEvidenceSkippedCleanup',
     'Invoke-Qcl100ParityBlockerSelfTest',
     'Invoke-Qcl100RuntimeSummarySelfTest',
     'Invoke-Qcl100Qcl041ArtifactFreshnessWaitSelfTest',
     'Invoke-Qcl100Qcl041MatrixGateSelfTest',
+    'Invoke-Qcl100LowerGatePlanSelfTest',
+    'Invoke-Qcl100LowerGateEvidenceSelfTest',
+    'qcl100-lower-gate-plan\.json',
+    'qcl100-lower-gate-evidence\.json',
+    'lower_gate_plan_only',
+    'validate_lower_gate_evidence_only',
+    'no_media_launch_only',
+    'qcl041_started',
+    'qcl082_media_started',
     'RequireRelayFreshness',
     'RequireReceiveProxyFreshness',
     'owner-final-qcl041',
@@ -579,6 +607,45 @@ Assert-ContainsTokens $qcl100MatrixGate @(
     'qcl100-qcl041-matrix-gate-self-test\.json'
 ) "QCL-100 QCL041 matrix gate"
 
+Assert-ContainsTokens $qcl100LowerGatePlan @(
+    'rusty\.quest\.qcl100_lower_gate_plan\.v1',
+    'New-Qcl100LowerGatePlan',
+    'Invoke-Qcl100LowerGatePlanSelfTest',
+    'route_clear_passive_preflight',
+    'qcl041_strict_control_tcp_gate',
+    'Qcl100ControlTcpGate',
+    'RequireTcpTunnelStreamPass',
+    'qcl100_no_media_launch_gate',
+    'available_after_wake_policy_and_lower_gates_pass',
+    'NoMediaLaunchOnly',
+    'qcl100_lower_gate_evidence_validation',
+    'required_before_short_media_gate',
+    'ValidateLowerGateEvidenceOnly',
+    'qcl100_short_control_tcp_media_gate',
+    'qcl100_full_parity_promotion_attempt',
+    'blocked_until_lower_gates_pass',
+    'same_group_duplex_claimed',
+    'promotion_allowed = \$false',
+    'qcl100-lower-gate-plan-self-test\.json'
+) "QCL-100 lower-gate plan"
+
+Assert-ContainsTokens $qcl100LowerGateEvidence @(
+    'rusty\.quest\.qcl100_lower_gate_evidence\.v1',
+    'Get-Qcl100LowerGateEvidence',
+    'Invoke-Qcl100LowerGateEvidenceSelfTest',
+    'route_clear_passive_preflight',
+    'qcl041_strict_control_tcp_gate',
+    'qcl100_xr_readiness_gate',
+    'qcl100_no_media_launch_gate',
+    'promotion_allowed',
+    'same_group_duplex_claimed',
+    'qcl041_matrix_gate_passes_requirement',
+    'tcp_tunnel_stream_bidirectional_bytes_pass',
+    'native_log_summary\.system_fatal_count',
+    'cleanup_policy\.final_force_stop_cleanup_skipped',
+    'qcl100-lower-gate-evidence-self-test\.json'
+) "QCL-100 lower-gate evidence"
+
 Assert-ContainsTokens $qcl100ParityBlockers @(
     'Add-Qcl100ParityBlocker',
     'Set-Qcl100ParityBlockers',
@@ -717,6 +784,8 @@ Assert-ContainsTokens $lifecycleSurface @(
     'WIFI_P2P_PEERS_CHANGED_ACTION',
     'WIFI_P2P_CONNECTION_CHANGED_ACTION',
     'WIFI_P2P_THIS_DEVICE_CHANGED_ACTION',
+    'p2p_device_name_override',
+    'setDeviceName',
     'discoverPeers',
     'requestPeers',
     'connect',
@@ -1083,6 +1152,9 @@ Assert-ContainsTokens $config @(
     'qcl041\.lease_resource',
     'qcl041\.windows_api_observed',
     'qcl041\.windows_peer_name_contains',
+    'qcl041\.p2p_device_name_override',
+    'p2pDeviceNameOverride',
+    'hasP2pDeviceNameOverride',
     'qcl041\.group_owner_intent',
     'qcl041\.allow_quest_group_owner',
     'qcl041\.q2q_preclear_stale_group',
@@ -1314,6 +1386,16 @@ Assert-ContainsTokens $invoke @(
     'Qcl081LslBackend',
     'Qcl081ReceiverBackend',
     'Qcl081EchoBackend',
+    'P2pDeviceNameOverride',
+    'ConvertTo-AndroidShellQuotedArgument',
+    'qcl041\.p2p_device_name_override',
+    'LaunchSurface',
+    'panel_activity',
+    'ProbeProtectedP2pRenamePermissions',
+    'protected_p2p_rename_permission_artifact',
+    'NETWORK_SETTINGS',
+    'NETWORK_STACK',
+    'OVERRIDE_WIFI_CONFIG',
     'qcl081_wifi_direct_lsl_receiver\.py',
     'qcl081_wifi_direct_lsl_echo_roundtrip\.py',
     'receiver_backend',
@@ -1325,10 +1407,35 @@ Assert-ContainsTokens $invoke @(
     'connectivity-probe run --mode fixture --probe-id QCL-041'
 ) "live wrapper"
 
+Assert-ContainsTokens $questHostedWindowsJoin @(
+    'rusty\.quest\.qcl041\.quest_hosted_windows_join_probe\.v1',
+    'DIRECT-rq-QCL041PC',
+    'credential_sensitive_redacted',
+    'qcl041\.peer_class',
+    'qcl041\.q2q_role',
+    'group_owner',
+    'qcl041\.q2q_preclear_stale_group',
+    'qcl041\.q2q_network_name',
+    'qcl041\.q2q_passphrase',
+    'netsh wlan add profile',
+    'netsh wlan connect',
+    'windows_connected_to_quest_go',
+    'windows_wifi_direct_ipv4',
+    'tcp_response_bytes',
+    'final_socket_exchange_pass',
+    'final_cleanup_pass',
+    'windows_profile_deleted',
+    'previous_ssid_reconnect_invoked',
+    'quest_force_stop'
+) "Quest-hosted Windows join helper"
+
 Assert-ContainsTokens $readme @(
     'no Android phone',
     'Quest headset',
     'Windows QCL-041 helper',
+    'Invoke-Qcl041QuestHostedWindowsJoinProbe',
+    'Quest-hosted remediation branch',
+    'temporary Windows WLAN profile',
     'Hostess normalization',
     'official `liblsl`',
     'private planning notes'

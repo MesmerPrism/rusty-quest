@@ -18,6 +18,8 @@ final class Qcl041ProbeConfig {
     static final String PEER_CLASS_QUEST = "quest";
     static final String Q2Q_ROLE_CLIENT = "client";
     static final String Q2Q_ROLE_GROUP_OWNER = "group_owner";
+    static final String WINDOWS_PEER_CONNECT_MODE_TEMPORARY = "temporary";
+    static final String WINDOWS_PEER_CONNECT_MODE_LEGACY_DEFAULT = "legacy_default";
     static final String QCL030_ROLE_HOTSPOT_OWNER = "hotspot_owner";
     static final String QCL030_ROLE_HOTSPOT_CLIENT = "hotspot_client";
     static final String QCL030_CLIENT_JOIN_MODE_NETWORK_SPECIFIER = "network_specifier";
@@ -40,6 +42,9 @@ final class Qcl041ProbeConfig {
     final String peerNameContains;
     final String q2qRole;
     final String windowsPeerNameContains;
+    final boolean windowsPeerPreclearPersistentGroups;
+    final String windowsPeerConnectMode;
+    final String p2pDeviceNameOverride;
     final int groupOwnerIntent;
     final boolean allowQuestGroupOwner;
     final boolean q2qPreclearStaleGroup;
@@ -148,6 +153,14 @@ final class Qcl041ProbeConfig {
         this.peerNameContains = stringExtra(intent, "qcl041.peer_name_contains", "");
         this.q2qRole = normalizeQ2qRole(stringExtra(intent, "qcl041.q2q_role", Q2Q_ROLE_CLIENT));
         this.windowsPeerNameContains = stringExtra(intent, "qcl041.windows_peer_name_contains", "");
+        this.windowsPeerPreclearPersistentGroups =
+                booleanExtra(intent, "qcl041.windows_peer_preclear_persistent_groups", false);
+        this.windowsPeerConnectMode = normalizeWindowsPeerConnectMode(stringExtra(
+                intent,
+                "qcl041.windows_peer_connect_mode",
+                WINDOWS_PEER_CONNECT_MODE_TEMPORARY));
+        this.p2pDeviceNameOverride =
+                stringExtra(intent, "qcl041.p2p_device_name_override", "");
         this.groupOwnerIntent = intExtra(intent, "qcl041.group_owner_intent", 0);
         this.allowQuestGroupOwner = booleanExtra(intent, "qcl041.allow_quest_group_owner", false);
         this.q2qPreclearStaleGroup =
@@ -341,6 +354,15 @@ final class Qcl041ProbeConfig {
         return Q2Q_ROLE_GROUP_OWNER.equals(q2qRole);
     }
 
+    boolean useLegacyWindowsPeerConnectConfig() {
+        return !isQuestPeerRoute()
+                && WINDOWS_PEER_CONNECT_MODE_LEGACY_DEFAULT.equals(windowsPeerConnectMode);
+    }
+
+    boolean hasP2pDeviceNameOverride() {
+        return !p2pDeviceNameOverride.trim().isEmpty();
+    }
+
     boolean isQcl030LocalOnlyHotspotRoute() {
         return qcl030LocalOnlyHotspotEnabled;
     }
@@ -372,6 +394,17 @@ final class Qcl041ProbeConfig {
             return Q2Q_ROLE_GROUP_OWNER;
         }
         return Q2Q_ROLE_CLIENT;
+    }
+
+    private static String normalizeWindowsPeerConnectMode(String value) {
+        String normalized = value == null ? "" : value.trim().toLowerCase();
+        if (WINDOWS_PEER_CONNECT_MODE_LEGACY_DEFAULT.equals(normalized)
+                || "legacy".equals(normalized)
+                || "default".equals(normalized)
+                || "platform_default".equals(normalized)) {
+            return WINDOWS_PEER_CONNECT_MODE_LEGACY_DEFAULT;
+        }
+        return WINDOWS_PEER_CONNECT_MODE_TEMPORARY;
     }
 
     private static String stringExtra(Intent intent, String key, String fallback) {

@@ -37,6 +37,7 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.Inet4Address;
@@ -110,6 +111,8 @@ final class Qcl041WifiDirectLifecycle {
     private long groupFormationStartMs;
     private int peerDiscoveryPollCount;
     private int questConnectAttemptCount;
+    private int maxPeerCountObserved;
+    private int connectionInfoPollCount;
 
     Qcl041WifiDirectLifecycle(
             Context context,
@@ -152,11 +155,12 @@ final class Qcl041WifiDirectLifecycle {
 
         registerReceiver();
         requestCurrentStateAtStartup();
-        if (config.isQuestPeerRoute() && config.isQuestGroupOwnerRole()) {
-            startQuestGroupOwner();
-        } else {
-            startPeerDiscovery();
-        }
+        maybeApplyP2pDeviceNameOverride(new Runnable() {
+            @Override
+            public void run() {
+                startConfiguredRoute();
+            }
+        });
         handler.postDelayed(new Runnable() {
             @Override
             public void run() {
@@ -170,6 +174,27 @@ final class Qcl041WifiDirectLifecycle {
 
     void stop() {
         unregisterReceiver();
+    }
+
+    private void startConfiguredRoute() {
+        if (config.isQuestPeerRoute() && config.isQuestGroupOwnerRole()) {
+            startQuestGroupOwner();
+        } else if (!config.isQuestPeerRoute() && config.windowsPeerPreclearPersistentGroups) {
+            preclearPersistentGroupsThen(new Runnable() {
+                @Override
+                public void run() {
+                    startPeerDiscovery();
+                }
+            });
+        } else {
+            if (!config.isQuestPeerRoute()) {
+                artifact.diagnostic(
+                        "lifecycle",
+                        "windows_peer_persistent_group_preclear_skipped",
+                        "disabled");
+            }
+            startPeerDiscovery();
+        }
     }
 
     private void recordFeatureState() {
@@ -231,6 +256,66 @@ final class Qcl041WifiDirectLifecycle {
         } catch (Exception ex) {
             artifact.diagnostic("permissions", "location_mode_error", ex.getMessage());
             return false;
+        }
+    }
+
+    private void maybeApplyP2pDeviceNameOverride(final Runnable next) {
+        if (!config.hasP2pDeviceNameOverride()) {
+            artifact.diagnostic("lifecycle", "p2p_device_name_override_status", "not_requested");
+            next.run();
+            return;
+        }
+        final String requestedName = config.p2pDeviceNameOverride.trim();
+        final AtomicBoolean completed = new AtomicBoolean(false);
+        artifact.diagnostic("lifecycle", "p2p_device_name_override_requested", requestedName);
+        artifact.diagnostic("lifecycle", "p2p_device_name_override_reflection", "setDeviceName");
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (completed.compareAndSet(false, true)) {
+                    artifact.diagnostic("lifecycle", "p2p_device_name_override_status", "timeout");
+                    next.run();
+                }
+            }
+        }, 3000L);
+        try {
+            Method method = WifiP2pManager.class.getMethod(
+                    "setDeviceName",
+                    WifiP2pManager.Channel.class,
+                    String.class,
+                    WifiP2pManager.ActionListener.class);
+            method.invoke(manager, channel, requestedName, new WifiP2pManager.ActionListener() {
+                @Override
+                public void onSuccess() {
+                    if (completed.compareAndSet(false, true)) {
+                        artifact.diagnostic("lifecycle", "p2p_device_name_override_status", "accepted");
+                        handler.postDelayed(next, 500L);
+                    }
+                }
+
+                @Override
+                public void onFailure(int reason) {
+                    if (completed.compareAndSet(false, true)) {
+                        artifact.diagnostic("lifecycle", "p2p_device_name_override_status", "rejected");
+                        artifact.diagnostic("lifecycle", "p2p_device_name_override_failure_reason", reason);
+                        handler.postDelayed(next, 500L);
+                    }
+                }
+            });
+        } catch (NoSuchMethodException ex) {
+            if (completed.compareAndSet(false, true)) {
+                artifact.diagnostic("lifecycle", "p2p_device_name_override_status", "method_missing");
+                next.run();
+            }
+        } catch (Exception ex) {
+            if (completed.compareAndSet(false, true)) {
+                artifact.diagnostic(
+                        "lifecycle",
+                        "p2p_device_name_override_status",
+                        ex.getClass().getSimpleName());
+                artifact.diagnostic("lifecycle", "p2p_device_name_override_error", ex.getMessage());
+                next.run();
+            }
         }
     }
 
@@ -318,6 +403,178 @@ final class Qcl041WifiDirectLifecycle {
                 || detailedState == NetworkInfo.DetailedState.CONNECTING
                 || detailedState == NetworkInfo.DetailedState.AUTHENTICATING
                 || detailedState == NetworkInfo.DetailedState.OBTAINING_IPADDR;
+    }
+
+    private void preclearPersistentGroupsThen(final Runnable next) {
+        if (manager == null || channel == null) {
+            artifact.diagnostic(
+                    "lifecycle",
+                    "windows_peer_persistent_group_preclear_skipped",
+                    "manager_or_channel_missing");
+            next.run();
+            return;
+        }
+        updateStatus("pre-clearing stale Windows Wi-Fi Direct persistent groups");
+        artifact.diagnostic("lifecycle", "windows_peer_persistent_group_preclear_requested", true);
+        final AtomicBoolean completed = new AtomicBoolean(false);
+        handler.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (completed.compareAndSet(false, true)) {
+                    artifact.diagnostic(
+                            "lifecycle",
+                            "windows_peer_persistent_group_preclear_timeout",
+                            true);
+                    next.run();
+                }
+            }
+        }, 4000L);
+        try {
+            Class<?> listenerClass =
+                    Class.forName("android.net.wifi.p2p.WifiP2pManager$PersistentGroupInfoListener");
+            Method requestMethod = WifiP2pManager.class.getMethod(
+                    "requestPersistentGroupInfo",
+                    WifiP2pManager.Channel.class,
+                    listenerClass);
+            Object listener = Proxy.newProxyInstance(
+                    listenerClass.getClassLoader(),
+                    new Class<?>[] {listenerClass},
+                    new java.lang.reflect.InvocationHandler() {
+                        @Override
+                        public Object invoke(Object proxy, Method method, Object[] args) {
+                            if ("onPersistentGroupInfoAvailable".equals(method.getName())) {
+                                Object groupList = args == null || args.length == 0 ? null : args[0];
+                                handlePersistentGroupInfo(groupList, completed, next);
+                            }
+                            return null;
+                        }
+                    });
+            requestMethod.invoke(manager, channel, listener);
+        } catch (Exception ex) {
+            artifact.diagnostic(
+                    "lifecycle",
+                    "windows_peer_persistent_group_preclear_error",
+                    ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            if (completed.compareAndSet(false, true)) {
+                next.run();
+            }
+        }
+    }
+
+    private void handlePersistentGroupInfo(
+            Object groupList,
+            AtomicBoolean completed,
+            Runnable next) {
+        if (groupList == null) {
+            artifact.diagnostic("lifecycle", "windows_peer_persistent_group_count", 0);
+            if (completed.compareAndSet(false, true)) {
+                next.run();
+            }
+            return;
+        }
+        try {
+            Method getGroupListMethod = groupList.getClass().getMethod("getGroupList");
+            Object rawGroups = getGroupListMethod.invoke(groupList);
+            Collection<?> groups = rawGroups instanceof Collection ? (Collection<?>) rawGroups : null;
+            int count = groups == null ? 0 : groups.size();
+            artifact.diagnostic("lifecycle", "windows_peer_persistent_group_count", count);
+            if (groups == null || groups.isEmpty()) {
+                if (completed.compareAndSet(false, true)) {
+                    next.run();
+                }
+                return;
+            }
+            List<Integer> networkIds = new ArrayList<>();
+            for (Object rawGroup : groups) {
+                if (rawGroup instanceof WifiP2pGroup) {
+                    WifiP2pGroup group = (WifiP2pGroup) rawGroup;
+                    networkIds.add(group.getNetworkId());
+                    artifact.diagnostic(
+                            "lifecycle",
+                            "windows_peer_persistent_group_" + group.getNetworkId() + "_network_name",
+                            group.getNetworkName());
+                }
+            }
+            artifact.diagnostic("lifecycle", "windows_peer_persistent_group_network_ids", networkIds.toString());
+            deletePersistentGroups(networkIds, completed, next);
+        } catch (Exception ex) {
+            artifact.diagnostic(
+                    "lifecycle",
+                    "windows_peer_persistent_group_info_error",
+                    ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            if (completed.compareAndSet(false, true)) {
+                next.run();
+            }
+        }
+    }
+
+    private void deletePersistentGroups(
+            List<Integer> networkIds,
+            AtomicBoolean completed,
+            Runnable next) {
+        List<Integer> validNetworkIds = new ArrayList<>();
+        for (Integer networkId : networkIds) {
+            if (networkId != null && networkId >= 0) {
+                validNetworkIds.add(networkId);
+            }
+        }
+        if (validNetworkIds.isEmpty()) {
+            if (completed.compareAndSet(false, true)) {
+                next.run();
+            }
+            return;
+        }
+        final int[] remaining = new int[] {validNetworkIds.size()};
+        try {
+            Method deleteMethod = WifiP2pManager.class.getMethod(
+                    "deletePersistentGroup",
+                    WifiP2pManager.Channel.class,
+                    int.class,
+                    WifiP2pManager.ActionListener.class);
+            for (Integer networkId : validNetworkIds) {
+                deleteMethod.invoke(
+                        manager,
+                        channel,
+                        networkId,
+                        new WifiP2pManager.ActionListener() {
+                            @Override
+                            public void onSuccess() {
+                                artifact.diagnostic(
+                                        "lifecycle",
+                                        "windows_peer_persistent_group_delete_" + networkId,
+                                        "success");
+                                finishPersistentGroupDeleteIfDone(remaining, completed, next);
+                            }
+
+                            @Override
+                            public void onFailure(int reason) {
+                                artifact.diagnostic(
+                                        "lifecycle",
+                                        "windows_peer_persistent_group_delete_" + networkId + "_reason",
+                                        reason);
+                                finishPersistentGroupDeleteIfDone(remaining, completed, next);
+                            }
+                        });
+            }
+        } catch (Exception ex) {
+            artifact.diagnostic(
+                    "lifecycle",
+                    "windows_peer_persistent_group_delete_error",
+                    ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            if (completed.compareAndSet(false, true)) {
+                next.run();
+            }
+        }
+    }
+
+    private void finishPersistentGroupDeleteIfDone(
+            int[] remaining,
+            AtomicBoolean completed,
+            Runnable next) {
+        remaining[0] -= 1;
+        if (remaining[0] <= 0 && completed.compareAndSet(false, true)) {
+            handler.postDelayed(next, 750L);
+        }
     }
 
     private void requestCurrentStateAtStartup() {
@@ -620,6 +877,10 @@ final class Qcl041WifiDirectLifecycle {
         Collection<WifiP2pDevice> devices = peers == null ? null : peers.getDeviceList();
         int count = devices == null ? 0 : devices.size();
         artifact.setPeerDiscovery(count, "Wi-Fi Direct peer discovery observed peer_count=" + count);
+        if (count > maxPeerCountObserved) {
+            maxPeerCountObserved = count;
+            artifact.diagnostic("lifecycle", "peer_count_max_observed", maxPeerCountObserved);
+        }
         if (config.isQuestPeerRoute() && config.isQuestGroupOwnerRole()) {
             artifact.diagnostic("q2q", "group_owner_peer_connect_suppressed", true);
             return;
@@ -636,6 +897,8 @@ final class Qcl041WifiDirectLifecycle {
         }
         artifact.diagnostic("peer", "selected_device_name", selected.deviceName);
         artifact.diagnostic("peer", "selected_device_status", selected.status);
+        artifact.diagnostic("peer", "selected_device_address_present", selected.deviceAddress != null);
+        artifact.diagnostic("lifecycle", "peer_count_at_connect_start", count);
         connectToPeer(selected);
     }
 
@@ -679,17 +942,85 @@ final class Qcl041WifiDirectLifecycle {
                 recordQuestWifiP2pConfig("lifecycle", "connect_config", credentialedConfig);
                 return credentialedConfig;
             }
+        } else if (config.useLegacyWindowsPeerConnectConfig()) {
+            WifiP2pConfig legacyPeerConfig = buildLegacyWindowsPeerConfig(
+                    peer == null ? null : peer.deviceAddress);
+            if (legacyPeerConfig != null) {
+                return legacyPeerConfig;
+            }
+        } else {
+            WifiP2pConfig temporaryPeerConfig = buildTemporaryPeerConfig(
+                    "lifecycle",
+                    "connect_config",
+                    peer == null ? null : peer.deviceAddress);
+            if (temporaryPeerConfig != null) {
+                return temporaryPeerConfig;
+            }
         }
 
         WifiP2pConfig peerConfig = new WifiP2pConfig();
         peerConfig.deviceAddress = peer.deviceAddress;
         peerConfig.groupOwnerIntent = Math.max(0, Math.min(15, config.groupOwnerIntent));
         configurePbc(peerConfig);
+        applyTemporaryNetworkIdViaReflection(peerConfig, "lifecycle", "connect_config");
         if (config.isQuestPeerRoute()) {
-            applyTemporaryNetworkIdViaReflection(peerConfig, "lifecycle", "connect_fallback_config");
             recordQuestWifiP2pConfig("lifecycle", "connect_fallback_config", peerConfig);
+        } else {
+            recordPeerWifiP2pConfig("lifecycle", "connect_config", peerConfig);
         }
         return peerConfig;
+    }
+
+    private WifiP2pConfig buildLegacyWindowsPeerConfig(String peerDeviceAddress) {
+        WifiP2pConfig peerConfig = new WifiP2pConfig();
+        if (peerDeviceAddress != null && !peerDeviceAddress.trim().isEmpty()) {
+            peerConfig.deviceAddress = peerDeviceAddress;
+            artifact.diagnostic("lifecycle", "connect_config_peer_device_address_set", true);
+        } else {
+            artifact.diagnostic("lifecycle", "connect_config_peer_device_address_set", false);
+        }
+        peerConfig.groupOwnerIntent = Math.max(0, Math.min(15, config.groupOwnerIntent));
+        configurePbc(peerConfig);
+        artifact.diagnostic("lifecycle", "connect_config_mode", config.windowsPeerConnectMode);
+        artifact.diagnostic("lifecycle", "connect_config_builder", "legacy_mutable_default");
+        artifact.diagnostic("lifecycle", "connect_config_persistent_mode_request", "platform_default");
+        recordPeerWifiP2pConfig("lifecycle", "connect_config", peerConfig);
+        return peerConfig;
+    }
+
+    private WifiP2pConfig buildTemporaryPeerConfig(
+            String diagnosticSection,
+            String diagnosticPrefix,
+            String peerDeviceAddress) {
+        try {
+            WifiP2pConfig.Builder builder = new WifiP2pConfig.Builder()
+                    .enablePersistentMode(false);
+            artifact.diagnostic(diagnosticSection, diagnosticPrefix + "_mode", config.windowsPeerConnectMode);
+            if (peerDeviceAddress != null && !peerDeviceAddress.trim().isEmpty()) {
+                try {
+                    builder.setDeviceAddress(MacAddress.fromString(peerDeviceAddress));
+                    artifact.diagnostic(diagnosticSection, diagnosticPrefix + "_peer_device_address_set", true);
+                } catch (IllegalArgumentException ex) {
+                    artifact.diagnostic(
+                            diagnosticSection,
+                            diagnosticPrefix + "_peer_device_address_error",
+                            ex.getMessage());
+                    return null;
+                }
+            }
+            WifiP2pConfig built = builder.build();
+            built.groupOwnerIntent = Math.max(0, Math.min(15, config.groupOwnerIntent));
+            configurePbc(built);
+            artifact.diagnostic(diagnosticSection, diagnosticPrefix + "_builder", "device_address_temporary");
+            recordPeerWifiP2pConfig(diagnosticSection, diagnosticPrefix, built);
+            return built;
+        } catch (RuntimeException ex) {
+            artifact.diagnostic(
+                    diagnosticSection,
+                    diagnosticPrefix + "_builder_error",
+                    ex.getClass().getSimpleName() + ": " + ex.getMessage());
+            return null;
+        }
     }
 
     private WifiP2pConfig buildQuestCredentialedConfig(
@@ -737,19 +1068,29 @@ final class Qcl041WifiDirectLifecycle {
             WifiP2pConfig p2pConfig,
             String diagnosticSection,
             String diagnosticPrefix) {
-        try {
-            java.lang.reflect.Field field = WifiP2pConfig.class.getDeclaredField("netId");
-            field.setAccessible(true);
-            field.setInt(p2pConfig, WifiP2pGroup.NETWORK_ID_TEMPORARY);
-            artifact.diagnostic(diagnosticSection, diagnosticPrefix + "_temporary_network_id_reflection", true);
-            return true;
-        } catch (Exception ex) {
-            artifact.diagnostic(
-                    diagnosticSection,
-                    diagnosticPrefix + "_temporary_network_id_reflection_error",
-                    ex.getClass().getSimpleName() + ": " + ex.getMessage());
-            return false;
+        String[] candidateFields = new String[] {"mNetworkId", "networkId", "mNetId", "netId"};
+        List<String> errors = new ArrayList<>();
+        for (String candidateField : candidateFields) {
+            try {
+                java.lang.reflect.Field field = WifiP2pConfig.class.getDeclaredField(candidateField);
+                field.setAccessible(true);
+                field.setInt(p2pConfig, WifiP2pGroup.NETWORK_ID_TEMPORARY);
+                artifact.diagnostic(diagnosticSection, diagnosticPrefix + "_temporary_network_id_reflection", true);
+                artifact.diagnostic(
+                        diagnosticSection,
+                        diagnosticPrefix + "_temporary_network_id_reflection_field",
+                        candidateField);
+                return true;
+            } catch (Exception ex) {
+                errors.add(candidateField + "=" + ex.getClass().getSimpleName());
+            }
         }
+        artifact.diagnostic(diagnosticSection, diagnosticPrefix + "_temporary_network_id_reflection", false);
+        artifact.diagnostic(
+                diagnosticSection,
+                diagnosticPrefix + "_temporary_network_id_reflection_error",
+                String.join(";", errors));
+        return false;
     }
 
     private void recordQuestWifiP2pConfig(
@@ -777,6 +1118,42 @@ final class Qcl041WifiDirectLifecycle {
         }
     }
 
+    private void recordPeerWifiP2pConfig(
+            String diagnosticSection,
+            String diagnosticPrefix,
+            WifiP2pConfig p2pConfig) {
+        artifact.diagnostic(
+                diagnosticSection,
+                diagnosticPrefix + "_device_address_present",
+                p2pConfig.deviceAddress != null && !p2pConfig.deviceAddress.isEmpty());
+        artifact.diagnostic(
+                diagnosticSection,
+                diagnosticPrefix + "_group_owner_intent",
+                p2pConfig.groupOwnerIntent);
+        artifact.diagnostic(
+                diagnosticSection,
+                diagnosticPrefix + "_wps_setup",
+                p2pConfig.wps == null ? -1 : p2pConfig.wps.setup);
+        artifact.diagnostic(diagnosticSection, diagnosticPrefix + "_persistent_mode_requested", false);
+        try {
+            int networkId = p2pConfig.getNetworkId();
+            artifact.diagnostic(diagnosticSection, diagnosticPrefix + "_network_id", networkId);
+            artifact.diagnostic(
+                    diagnosticSection,
+                    diagnosticPrefix + "_temporary_network_id",
+                    networkId == WifiP2pGroup.NETWORK_ID_TEMPORARY);
+            artifact.diagnostic(
+                    diagnosticSection,
+                    diagnosticPrefix + "_persistent_network_id",
+                    networkId == WifiP2pGroup.NETWORK_ID_PERSISTENT);
+        } catch (RuntimeException ex) {
+            artifact.diagnostic(
+                    diagnosticSection,
+                    diagnosticPrefix + "_network_id_error",
+                    ex.getClass().getSimpleName() + ": " + ex.getMessage());
+        }
+    }
+
     private void connectToPeer(WifiP2pDevice peer) {
         connectStarted = true;
         questConnectAttemptCount++;
@@ -789,6 +1166,11 @@ final class Qcl041WifiDirectLifecycle {
                 @Override
                 public void onSuccess() {
                     artifact.diagnostic("lifecycle", "connect", "accepted");
+                    if (!config.isQuestPeerRoute()) {
+                        artifact.diagnostic("lifecycle", "windows_peer_connection_info_polling_started", true);
+                        requestConnectionInfo();
+                        pollConnectionInfoUntilSocketStarts();
+                    }
                     scheduleQuestConnectRetryIfNeeded(questConnectAttemptCount);
                 }
 
@@ -853,6 +1235,19 @@ final class Qcl041WifiDirectLifecycle {
     }
 
     private void handleConnectionInfo(WifiP2pInfo info) {
+        connectionInfoPollCount++;
+        artifact.diagnostic("lifecycle", "connection_info_callback_count", connectionInfoPollCount);
+        artifact.diagnostic(
+                "lifecycle",
+                "connection_info_group_formed",
+                info != null && info.groupFormed);
+        if (info != null) {
+            artifact.diagnostic("lifecycle", "connection_info_is_group_owner", info.isGroupOwner);
+            artifact.diagnostic(
+                    "lifecycle",
+                    "connection_info_group_owner_address_present",
+                    info.groupOwnerAddress != null);
+        }
         if (info == null || !info.groupFormed || socketStarted) {
             return;
         }
@@ -6138,6 +6533,31 @@ final class Qcl041WifiDirectLifecycle {
         }
     }
 
+    private void cancelPendingConnectThen(final Runnable next) {
+        if (!connectStarted || socketStarted || manager == null || channel == null) {
+            next.run();
+            return;
+        }
+        try {
+            manager.cancelConnect(channel, new WifiP2pManager.ActionListener() {
+                @Override
+                public void onSuccess() {
+                    artifact.diagnostic("cleanup", "cancelConnect", "success");
+                    handler.postDelayed(next, 500L);
+                }
+
+                @Override
+                public void onFailure(int reason) {
+                    artifact.diagnostic("cleanup", "cancelConnect_reason", reason);
+                    handler.postDelayed(next, 500L);
+                }
+            });
+        } catch (SecurityException ex) {
+            artifact.diagnostic("cleanup", "cancelConnect_error", ex.getMessage());
+            next.run();
+        }
+    }
+
     private void finishWithCleanup(final String reason) {
         if (cleanupStarted) {
             return;
@@ -6171,36 +6591,46 @@ final class Qcl041WifiDirectLifecycle {
         manager.stopPeerDiscovery(channel, new WifiP2pManager.ActionListener() {
             @Override
             public void onSuccess() {
-                removeGroupWithRetry(
-                        "cleanup",
-                        "cleanup_remove_group",
-                        Q2Q_REMOVE_GROUP_MAX_ATTEMPTS,
-                        finish,
-                        new Runnable() {
-                            @Override
-                            public void run() {
-                                removeOk[0] = false;
-                                finish.run();
-                            }
-                        });
+                cancelPendingConnectThen(new Runnable() {
+                    @Override
+                    public void run() {
+                        removeGroupWithRetry(
+                                "cleanup",
+                                "cleanup_remove_group",
+                                Q2Q_REMOVE_GROUP_MAX_ATTEMPTS,
+                                finish,
+                                new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        removeOk[0] = false;
+                                        finish.run();
+                                    }
+                                });
+                    }
+                });
             }
 
             @Override
             public void onFailure(int reasonCode) {
                 stopOk[0] = false;
                 artifact.diagnostic("cleanup", "stopPeerDiscovery_reason", reasonCode);
-                removeGroupWithRetry(
-                        "cleanup",
-                        "cleanup_remove_group",
-                        Q2Q_REMOVE_GROUP_MAX_ATTEMPTS,
-                        finish,
-                        new Runnable() {
-                            @Override
-                            public void run() {
-                                removeOk[0] = false;
-                                finish.run();
-                            }
-                        });
+                cancelPendingConnectThen(new Runnable() {
+                    @Override
+                    public void run() {
+                        removeGroupWithRetry(
+                                "cleanup",
+                                "cleanup_remove_group",
+                                Q2Q_REMOVE_GROUP_MAX_ATTEMPTS,
+                                finish,
+                                new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        removeOk[0] = false;
+                                        finish.run();
+                                    }
+                                });
+                    }
+                });
             }
         });
         handler.postDelayed(new Runnable() {

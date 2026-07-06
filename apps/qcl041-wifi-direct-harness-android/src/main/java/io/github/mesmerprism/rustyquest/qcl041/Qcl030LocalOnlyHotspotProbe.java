@@ -28,6 +28,7 @@ import java.lang.reflect.Method;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.Inet4Address;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
@@ -378,6 +379,12 @@ final class Qcl030LocalOnlyHotspotProbe {
         }
         writeQuietly();
         if (clientUdpSentBytes > 0 || clientTcpSentBytes > 0) {
+            if (config.qcl081LslEnabled) {
+                publishQcl081Lsl(network);
+            }
+            if (config.qcl081LslEchoEnabled) {
+                runQcl081LslEcho(network);
+            }
             finishPass("client_joined_and_sent_socket_bytes");
         } else if (clientSocketError.isEmpty()) {
             finishBlocked("client_socket_send_failed");
@@ -515,6 +522,226 @@ final class Qcl030LocalOnlyHotspotProbe {
             ownerTcpReceiverError = ex.getClass().getSimpleName() + "_" + sanitizeReason(ex.getMessage());
             writeQuietly();
         }
+    }
+
+    private void publishQcl081Lsl(Network network) {
+        diagnostic("qcl081_lsl", "enabled", true);
+        diagnostic("qcl081_lsl", "backend", config.qcl081LslBackend);
+        diagnostic("qcl081_lsl", "stream_name", config.qcl081LslStreamName);
+        diagnostic("qcl081_lsl", "stream_type", config.qcl081LslStreamType);
+        diagnostic("qcl081_lsl", "source_id", config.qcl081LslSourceId);
+        InetAddress ownerAddress = ownerAddress();
+        if (ownerAddress != null) {
+            diagnostic("qcl081_lsl", "windows_group_owner_address", ownerAddress.getHostAddress());
+        }
+        applyQcl081LslApiConfig("qcl081_lsl", network, ownerAddress);
+        boolean processBound = bindProcessForQcl081("qcl081_lsl", network);
+        Qcl081LslNativeBridge.LoadState loadState = Qcl081LslNativeBridge.runtimeState();
+        diagnostic("qcl081_lsl", "native_runtime_available", loadState.available);
+        diagnostic("qcl081_lsl", "native_runtime_detail", loadState.detail);
+        try {
+            JSONObject report = Qcl081LslNativeBridge.publishSamples(
+                    config.qcl081LslStreamName,
+                    config.qcl081LslStreamType,
+                    config.qcl081LslSourceId,
+                    Math.max(1, config.qcl081LslSampleCount),
+                    Math.max(0, config.qcl081LslWarmupMs),
+                    Math.max(1, config.qcl081LslIntervalMs));
+            diagnostic("qcl081_lsl", "publish_report", report);
+            diagnostic("qcl081_lsl", "publish_status", report.optString("status", "blocked"));
+            diagnostic("qcl081_lsl", "samples_published", report.optInt("samples_published", 0));
+        } catch (Exception ex) {
+            diagnostic("qcl081_lsl", "publish_error", ex.getMessage());
+        } finally {
+            unbindProcessAfterQcl081("qcl081_lsl", processBound);
+            writeQuietly();
+        }
+    }
+
+    private void runQcl081LslEcho(Network network) {
+        diagnostic("qcl081_lsl_echo", "enabled", true);
+        diagnostic("qcl081_lsl_echo", "backend", config.qcl081LslBackend);
+        diagnostic("qcl081_lsl_echo", "command_stream_name", config.qcl081LslEchoCommandStreamName);
+        diagnostic("qcl081_lsl_echo", "command_stream_type", config.qcl081LslEchoCommandStreamType);
+        diagnostic("qcl081_lsl_echo", "command_source_id", config.qcl081LslEchoCommandSourceId);
+        diagnostic("qcl081_lsl_echo", "echo_stream_name", config.qcl081LslEchoStreamName);
+        diagnostic("qcl081_lsl_echo", "echo_stream_type", config.qcl081LslEchoStreamType);
+        diagnostic("qcl081_lsl_echo", "echo_source_id", config.qcl081LslEchoSourceId);
+        diagnostic("qcl081_lsl_echo", "sample_count", Math.max(1, config.qcl081LslEchoSampleCount));
+        InetAddress ownerAddress = ownerAddress();
+        if (ownerAddress != null) {
+            diagnostic("qcl081_lsl_echo", "windows_group_owner_address", ownerAddress.getHostAddress());
+        }
+        applyQcl081LslApiConfig("qcl081_lsl_echo", network, ownerAddress);
+        boolean processBound = bindProcessForQcl081("qcl081_lsl_echo", network);
+        Qcl081LslNativeBridge.LoadState loadState = Qcl081LslNativeBridge.runtimeState();
+        diagnostic("qcl081_lsl_echo", "native_runtime_available", loadState.available);
+        diagnostic("qcl081_lsl_echo", "native_runtime_detail", loadState.detail);
+        try {
+            JSONObject report = Qcl081LslNativeBridge.echoRoundTrip(
+                    config.qcl081LslEchoCommandStreamName,
+                    config.qcl081LslEchoCommandStreamType,
+                    config.qcl081LslEchoCommandSourceId,
+                    config.qcl081LslEchoStreamName,
+                    config.qcl081LslEchoStreamType,
+                    config.qcl081LslEchoSourceId,
+                    Math.max(1, config.qcl081LslEchoSampleCount),
+                    Math.max(0, config.qcl081LslEchoWarmupMs),
+                    Math.max(0, config.qcl081LslEchoOutletHoldAfterMs),
+                    Math.max(1, config.qcl081LslEchoTimeoutSeconds));
+            diagnostic("qcl081_lsl_echo", "roundtrip_report", report);
+            diagnostic("qcl081_lsl_echo", "roundtrip_status", report.optString("status", "blocked"));
+            diagnostic(
+                    "qcl081_lsl_echo",
+                    "command_samples_received",
+                    report.optInt("command_samples_received", 0));
+            diagnostic(
+                    "qcl081_lsl_echo",
+                    "echo_samples_published",
+                    report.optInt("echo_samples_published", 0));
+            diagnostic(
+                    "qcl081_lsl_echo",
+                    "quest_processing_ms_summary",
+                    report.optJSONObject("quest_processing_ms_summary"));
+        } catch (Exception ex) {
+            diagnostic("qcl081_lsl_echo", "roundtrip_error", ex.getMessage());
+        } finally {
+            unbindProcessAfterQcl081("qcl081_lsl_echo", processBound);
+            writeQuietly();
+        }
+    }
+
+    private boolean bindProcessForQcl081(String section, Network network) {
+        diagnostic(section, "active_wifi_network_available", network != null);
+        diagnostic(section, "connectivity_manager_available", connectivityManager != null);
+        if (connectivityManager == null || network == null) {
+            diagnostic(section, "process_bound_to_active_wifi_network", false);
+            return false;
+        }
+        try {
+            boolean processBound = connectivityManager.bindProcessToNetwork(network);
+            diagnostic(section, "process_bound_to_active_wifi_network", processBound);
+            return processBound;
+        } catch (Exception ex) {
+            diagnostic(section, "process_bind_to_active_wifi_network_error", ex.getMessage());
+            return false;
+        }
+    }
+
+    private void unbindProcessAfterQcl081(String section, boolean processBound) {
+        if (connectivityManager == null || !processBound) {
+            return;
+        }
+        try {
+            connectivityManager.bindProcessToNetwork(null);
+            diagnostic(section, "process_unbound_after_lsl", true);
+        } catch (Exception ex) {
+            diagnostic(section, "process_unbind_error", ex.getMessage());
+        }
+    }
+
+    private void applyQcl081LslApiConfig(String section, Network network, InetAddress ownerAddress) {
+        String localAddressText = findActiveWifiLocalAddress(network, ownerAddress, section);
+        String ownerAddressText = ownerAddress == null ? "" : ownerAddress.getHostAddress();
+        String peers = localAddressText;
+        if (!ownerAddressText.isEmpty()) {
+            peers = peers.isEmpty() ? ownerAddressText : peers + ", " + ownerAddressText;
+        }
+        String configFileStem = config.runId.replaceAll("[^A-Za-z0-9._-]", "-");
+        String apiConfig = "[ports]\n"
+                + "IPv6 = disable\n"
+                + "\n"
+                + "[multicast]\n"
+                + "ResolveScope = link\n"
+                + (localAddressText.isEmpty() ? "" : "ListenAddress = " + localAddressText + "\n")
+                + "\n"
+                + "[lab]\n"
+                + (peers.isEmpty() ? "" : "KnownPeers = {" + peers + "}\n")
+                + "SessionID = default\n"
+                + "\n"
+                + "[log]\n"
+                + "level = 0\n";
+        diagnostic(section, "lsl_api_config_content", apiConfig);
+        diagnostic(section, "lsl_api_config_local_address", localAddressText);
+        diagnostic(section, "lsl_api_config_known_peers", peers);
+        boolean pathApplied = false;
+        try {
+            File configDir = new File(context.getFilesDir(), "qcl081-lsl-api");
+            if (!configDir.exists() && !configDir.mkdirs()) {
+                throw new IOException("Could not create " + configDir.getAbsolutePath());
+            }
+            File configFile = new File(configDir, configFileStem + "-active-wifi-lsl_api.cfg");
+            try (FileOutputStream output = new FileOutputStream(configFile, false)) {
+                output.write(apiConfig.getBytes(StandardCharsets.UTF_8));
+            }
+            diagnostic(section, "lsl_api_config_path", configFile.getAbsolutePath());
+            pathApplied = Qcl081LslNativeBridge.setConfigPath(configFile.getAbsolutePath());
+            diagnostic(section, "lsl_api_config_path_applied", pathApplied);
+        } catch (Exception ex) {
+            diagnostic(section, "lsl_api_config_path_error", ex.getMessage());
+        }
+        boolean contentApplied = Qcl081LslNativeBridge.setConfigContent(apiConfig);
+        diagnostic(section, "lsl_api_config_content_api_applied", contentApplied);
+        diagnostic(section, "lsl_api_config_applied", pathApplied || contentApplied);
+    }
+
+    private InetAddress ownerAddress() {
+        try {
+            return InetAddress.getByName(config.qcl030LocalOnlyHotspotOwnerHost);
+        } catch (Exception ex) {
+            diagnostic("qcl030_client_join", "owner_address_parse_error", ex.getMessage());
+            return null;
+        }
+    }
+
+    private String findActiveWifiLocalAddress(Network network, InetAddress ownerAddress, String section) {
+        if (connectivityManager == null || network == null) {
+            diagnostic(section, "active_wifi_local_address_found", false);
+            return "";
+        }
+        try {
+            LinkProperties properties = connectivityManager.getLinkProperties(network);
+            if (properties == null) {
+                diagnostic(section, "active_wifi_local_address_found", false);
+                diagnostic(section, "active_wifi_local_address_reject_reason", "missing_link_properties");
+                return "";
+            }
+            String fallback = "";
+            for (android.net.LinkAddress linkAddress : properties.getLinkAddresses()) {
+                InetAddress address = linkAddress.getAddress();
+                if (!(address instanceof Inet4Address) || address.isLoopbackAddress()) {
+                    continue;
+                }
+                if (fallback.isEmpty()) {
+                    fallback = address.getHostAddress();
+                }
+                if (sameIpv4Slash24(address, ownerAddress)) {
+                    diagnostic(section, "active_wifi_local_address", address.getHostAddress());
+                    diagnostic(section, "active_wifi_local_address_same_subnet", true);
+                    return address.getHostAddress();
+                }
+            }
+            if (!fallback.isEmpty()) {
+                diagnostic(section, "active_wifi_local_address", fallback);
+                diagnostic(section, "active_wifi_local_address_same_subnet", false);
+                return fallback;
+            }
+        } catch (Exception ex) {
+            diagnostic(section, "active_wifi_local_address_error", ex.getMessage());
+        }
+        diagnostic(section, "active_wifi_local_address_found", false);
+        return "";
+    }
+
+    private static boolean sameIpv4Slash24(InetAddress left, InetAddress right) {
+        if (!(left instanceof Inet4Address) || !(right instanceof Inet4Address)) {
+            return false;
+        }
+        byte[] leftBytes = left.getAddress();
+        byte[] rightBytes = right.getAddress();
+        return leftBytes[0] == rightBytes[0]
+                && leftBytes[1] == rightBytes[1]
+                && leftBytes[2] == rightBytes[2];
     }
 
     private void stopOwnerSocketReceivers() {

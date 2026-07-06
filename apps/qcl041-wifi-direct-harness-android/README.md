@@ -286,6 +286,26 @@ from Android's Wi-Fi Direct `Network` before connecting. The passing artifact
 showed `p2p0`, a `192.168.137.x` Quest address, one bounded request/ack, and
 Hostess `promotion.allowed=true`.
 
+For a Quest-hosted remediation branch where Windows joins the Android
+group-owner SSID as a WLAN client:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-Qcl041QuestHostedWindowsJoinProbe.ps1 `
+  -Serial <quest-serial> `
+  -Adb <path-to-adb>
+```
+
+This launches the same QCL041 harness with `peer_class=quest` and
+`q2q_role=group_owner`, creates a temporary credentialed `DIRECT-*` group,
+adds a temporary Windows WLAN profile, connects Windows to the Quest-hosted
+group, sends the bounded TCP probe to the Quest group-owner address, then
+deletes the temporary profile, reconnects the previous Windows WLAN profile,
+and waits for the Quest artifact to report cleanup. The summary redacts the
+lab credential, but the raw run directory is credential-sensitive evidence.
+This branch proves AP-less Quest-to-Windows transport through a Quest-hosted
+group; it does not prove that the original Windows-hosted autonomous-GO WinRT
+admission path is fixed.
+
 The same harness can also run the QCL-081 Quest-runtime LSL proof while the
 Wi-Fi Direct group is formed:
 

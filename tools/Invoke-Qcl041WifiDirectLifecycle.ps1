@@ -10,7 +10,17 @@ param(
     [int]$TimeoutSeconds = 45,
     [int]$SocketTimeoutSeconds = 20,
     [int]$GroupOwnerIntent = 0,
+    [ValidateSet("true", "false")]
+    [string]$WindowsAutonomousGroupOwner = "true",
+    [int]$WindowsGroupOwnerIntent = 15,
     [string]$WindowsPeerNameContains = "",
+    [switch]$WindowsPeerPreclearPersistentGroups,
+    [ValidateSet("temporary", "legacy_default")]
+    [string]$WindowsPeerConnectMode = "temporary",
+    [string]$P2pDeviceNameOverride = "",
+    [ValidateSet("auto", "activity", "panel_activity", "foreground_service")]
+    [string]$LaunchSurface = "auto",
+    [switch]$ProbeProtectedP2pRenamePermissions,
     [switch]$RunQcl081Lsl,
     [string]$Qcl081ReceiverScript = "S:\Work\repos\active\rusty-hostess\tools\connectivity_probe\qcl081_wifi_direct_lsl_receiver.py",
     [ValidateSet("pylsl")]
@@ -88,6 +98,12 @@ function Invoke-Checked {
     if ($LASTEXITCODE -ne 0) {
         throw "$Name failed with exit code $LASTEXITCODE"
     }
+}
+
+function ConvertTo-AndroidShellQuotedArgument {
+    param([Parameter(Mandatory=$true)][string]$Value)
+    $escaped = $Value -replace "'", "'\''"
+    return "'$escaped'"
 }
 
 function Read-JsonFile {
@@ -1089,6 +1105,57 @@ function Grant-WifiDirectPermission {
     return $summary
 }
 
+function Invoke-ProtectedP2pRenamePermissionProbe {
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$AdbPath,
+        [Parameter(Mandatory=$true)]
+        [string]$DeviceSerial,
+        [Parameter(Mandatory=$true)]
+        [string]$PackageName,
+        [Parameter(Mandatory=$true)]
+        [string]$OutPath
+    )
+
+    $permissions = @(
+        "android.permission.NETWORK_SETTINGS",
+        "android.permission.NETWORK_STACK",
+        "android.permission.OVERRIDE_WIFI_CONFIG"
+    )
+    $grants = @()
+    foreach ($permission in $permissions) {
+        $grant = Invoke-AdbCapture `
+            -AdbPath $AdbPath `
+            -DeviceSerial $DeviceSerial `
+            -Arguments @("shell", "pm", "grant", $PackageName, $permission)
+        $grants += [ordered]@{
+            permission = $permission
+            pm_grant_exit_code = $grant.exit_code
+            pm_grant_output = $grant.output
+            expected_for_sideloaded_debug_apk = "not_grantable_signature_or_privileged"
+        }
+    }
+    $permissionDump = & $AdbPath -s $DeviceSerial shell dumpsys package permissions 2>&1 | Out-String
+    $packageDump = & $AdbPath -s $DeviceSerial shell dumpsys package $PackageName 2>&1 | Out-String
+    $report = [ordered]@{
+        schema = "rusty.quest.qcl041.protected_p2p_rename_permission_probe.v1"
+        package = $PackageName
+        serial = $DeviceSerial
+        attempted_permissions = $permissions
+        grants = $grants
+        package_dump_mentions_network_settings = $packageDump.Contains("android.permission.NETWORK_SETTINGS")
+        package_dump_mentions_network_stack = $packageDump.Contains("android.permission.NETWORK_STACK")
+        package_dump_mentions_override_wifi_config = $packageDump.Contains("android.permission.OVERRIDE_WIFI_CONFIG")
+        platform_permissions_excerpt = (($permissionDump -split "`r?`n") | Where-Object {
+            $_ -match "NETWORK_SETTINGS|NETWORK_STACK|OVERRIDE_WIFI_CONFIG|sourcePackage=android|prot="
+        } | Select-Object -First 80) -join "`n"
+        result = "protected_permissions_not_changeable_by_pm_grant"
+        rationale = "WifiP2pManager.setDeviceName is gated by signature/privileged Wi-Fi permissions; adb shell pm grant cannot grant them to this sideloaded diagnostic APK."
+    }
+    Write-JsonFile -Value $report -Path $OutPath
+    return $report
+}
+
 function Wait-AndroidPackagePid {
     param(
         [Parameter(Mandatory=$true)]
@@ -1331,6 +1398,7 @@ $qcl082ReceiverResult = Join-Path $OutDir "qcl082-rmanvid1-receiver-result.json"
 $qcl082Report = Join-Path $OutDir "qcl082-product-media-live-qcl082.json"
 $wifiDirectPermissionPregrantPath = Join-Path $OutDir "qcl041-wifi-direct-permission-pregrant.json"
 $wifiDirectPermissionUiautomatorPath = Join-Path $OutDir "qcl041-wifi-direct-permission-uiautomator.json"
+$protectedP2pRenamePermissionPath = Join-Path $OutDir "qcl041-protected-p2p-rename-permission-probe.json"
 $qcl041HarnessLaunchPath = Join-Path $OutDir "qcl041-harness-launch.json"
 $qcl082BrokerPermissionPreflightPath = Join-Path $OutDir "qcl082-broker-permission-preflight.json"
 $qcl082BrokerPrestartPath = Join-Path $OutDir "qcl082-broker-prestart.json"
@@ -1371,6 +1439,13 @@ try {
     } elseif (Test-Path $wifiDirectPermissionPregrantPath) {
         $wifiDirectPermissionPregrant = Read-JsonFile $wifiDirectPermissionPregrantPath
     }
+    if ($ProbeProtectedP2pRenamePermissions) {
+        Invoke-ProtectedP2pRenamePermissionProbe `
+            -AdbPath $Adb `
+            -DeviceSerial $Serial `
+            -PackageName "io.github.mesmerprism.rustyquest.qcl041" `
+            -OutPath $protectedP2pRenamePermissionPath | Out-Null
+    }
     Invoke-Checked "QCL-041 harness force-stop" $Adb @("-s", $Serial, "shell", "am", "force-stop", "io.github.mesmerprism.rustyquest.qcl041")
     $remoteArtifact = "/sdcard/Android/data/io.github.mesmerprism.rustyquest.qcl041/files/qcl041/latest.json"
     $remoteRunArtifact = "/sdcard/Android/data/io.github.mesmerprism.rustyquest.qcl041/files/qcl041/$RunId.json"
@@ -1392,7 +1467,8 @@ try {
         "--listen-port", $ListenPort.ToString(),
         "--timeout-seconds", $TimeoutSeconds.ToString(),
         "--socket-timeout-seconds", $SocketTimeoutSeconds.ToString(),
-        "--autonomous-group-owner", "true"
+        "--autonomous-group-owner", $WindowsAutonomousGroupOwner.ToLowerInvariant(),
+        "--group-owner-intent", ([Math]::Max(0, [Math]::Min(15, $WindowsGroupOwnerIntent))).ToString()
     )
     if ($RunQcl081LslEcho -and $Qcl081EchoCommandProducer -eq "broker") {
         if (-not (Test-Path $Qcl081WindowsLslDll)) {
@@ -1637,9 +1713,18 @@ try {
 
     $activity = "io.github.mesmerprism.rustyquest.qcl041/.Qcl041WifiDirectHarnessActivity"
     $service = "io.github.mesmerprism.rustyquest.qcl041/.Qcl041WifiDirectHarnessService"
-    $qcl041LaunchSurface = if ($RunQcl082ProductMedia) { "foreground_service" } else { "activity" }
-    $qcl041Component = if ($RunQcl082ProductMedia) { $service } else { $activity }
-    $qcl041AmCommand = if ($RunQcl082ProductMedia) { "start-foreground-service" } else { "start" }
+    if ($RunQcl082ProductMedia -and $LaunchSurface -notin @("auto", "foreground_service")) {
+        throw "QCL-082 product media mode requires -LaunchSurface auto or foreground_service so the service remains alive while the broker/media path runs."
+    }
+    $qcl041LaunchSurface = if ($LaunchSurface -ne "auto") {
+        $LaunchSurface
+    } elseif ($RunQcl082ProductMedia) {
+        "foreground_service"
+    } else {
+        "activity"
+    }
+    $qcl041Component = if ($qcl041LaunchSurface -eq "foreground_service") { $service } else { $activity }
+    $qcl041AmCommand = if ($qcl041LaunchSurface -eq "foreground_service") { "start-foreground-service" } else { "start" }
     $intentArgs = @(
         "-s", $Serial,
         "shell", "am", $qcl041AmCommand,
@@ -1660,6 +1745,12 @@ try {
         "--ei", "qcl041.group_owner_intent", $GroupOwnerIntent.ToString(),
         "--ei", "qcl041.hold_after_socket_ms", ([Math]::Max(0, $HoldAfterSocketSeconds) * 1000).ToString()
     )
+    if ($qcl041LaunchSurface -eq "panel_activity") {
+        $intentArgs += @(
+            "-a", "android.intent.action.MAIN",
+            "-c", "com.oculus.intent.category.2D"
+        )
+    }
     if ($RunQcl082ProductMedia) {
         $qcl082RelaySourcePort = Get-Qcl082RelaySourcePort -SenderSourcePorts $Qcl082SenderSourcePorts
         $intentArgs += @(
@@ -1702,6 +1793,17 @@ try {
     }
     if (-not [string]::IsNullOrWhiteSpace($WindowsPeerNameContains)) {
         $intentArgs += @("--es", "qcl041.windows_peer_name_contains", $WindowsPeerNameContains)
+    }
+    $intentArgs += @("--es", "qcl041.windows_peer_connect_mode", $WindowsPeerConnectMode)
+    if (-not [string]::IsNullOrWhiteSpace($P2pDeviceNameOverride)) {
+        $intentArgs += @(
+            "--es",
+            "qcl041.p2p_device_name_override",
+            (ConvertTo-AndroidShellQuotedArgument -Value $P2pDeviceNameOverride)
+        )
+    }
+    if ($WindowsPeerPreclearPersistentGroups) {
+        $intentArgs += @("--ez", "qcl041.windows_peer_preclear_persistent_groups", "true")
     }
     Invoke-Checked "QCL-041 harness launch" $Adb $intentArgs
     $qcl041PackageName = "io.github.mesmerprism.rustyquest.qcl041"
@@ -1956,6 +2058,11 @@ if (Test-Path $wifiDirectPermissionUiautomatorPath) {
     $uiautomatorGrant = Read-JsonFile $wifiDirectPermissionUiautomatorPath
     $artifact.diagnostics.permissions | Add-Member -Force -MemberType NoteProperty -Name uiautomator_fallback_artifact -Value $wifiDirectPermissionUiautomatorPath
     $artifact.diagnostics.permissions | Add-Member -Force -MemberType NoteProperty -Name uiautomator_tap_attempted -Value $uiautomatorGrant.uiautomator_tap_attempted
+}
+if (Test-Path $protectedP2pRenamePermissionPath) {
+    $protectedP2pRenamePermission = Read-JsonFile $protectedP2pRenamePermissionPath
+    $artifact.diagnostics.permissions | Add-Member -Force -MemberType NoteProperty -Name protected_p2p_rename_permission_artifact -Value $protectedP2pRenamePermissionPath
+    $artifact.diagnostics.permissions | Add-Member -Force -MemberType NoteProperty -Name protected_p2p_rename_permission_result -Value $protectedP2pRenamePermission.result
 }
 if ($RunQcl082ProductMedia) {
     if ($null -eq $artifact.diagnostics.qcl082_product_media) {

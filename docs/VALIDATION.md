@@ -33,6 +33,61 @@ feature lock; the Spatial wrapper builds the same Spatial app under the
 `io.github.mesmerprism.rustyquest.spatial_hand_lab` identity. To compare
 Spatial SDK built-in avatar hands, set
 `debug.rustyquest.spatial.avatar_hands.visible=true` before launch.
+For app-owned native hand mesh edge inspection, set
+`debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.enabled=true`
+and choose `debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.width_px`
+between `0.50` and `4.00`. Existing hand diagnostic profiles enable this
+overlay for recorded-joint replay, live visual diagnostic, passthrough
+hands/grafts, and solid-black hands/grafts.
+
+For native hand material plus live joint recording, use the CLI control wrapper
+around the native hand lab:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 -Serial <quest-serial> -Action Prepare -MaterialProfile unity-basic-reference -Wireframe -DisableSdfVisual
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 -Serial <quest-serial> -Action Start -SessionId hand-joints-test-001
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 -Serial <quest-serial> -Action Stop
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 -Serial <quest-serial> -Action PullAndInspect -SessionId hand-joints-test-001
+```
+
+`Prepare` sets the startup material and live-hand properties; relaunch the
+native `NativeActivity` after that step. `Start` and `Stop` update
+`hand-joint-capture-control.json` in app-scoped external storage while the app
+is running. `PullAndInspect` retrieves `left/right.clip.jsonl` and verifies
+that recorded joint rows have the 21 runtime poses plus 5 tip lengths expected
+by the compact joint skinning replay path.
+
+For a fresh native OpenXR capture with the runtime-provided FB mesh topology,
+use the full mesh capture wrapper instead:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandMeshCapture.ps1 -Serial <quest-serial> -Action Prepare -MaterialProfile unity-basic-reference -Wireframe -DisableSdfVisual
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandMeshCapture.ps1 -Serial <quest-serial> -Action Start -SessionId hand-mesh-native-001
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandMeshCapture.ps1 -Serial <quest-serial> -Action Stop
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandMeshCapture.ps1 -Serial <quest-serial> -Action PullAndInspect -SessionId hand-mesh-native-001
+```
+
+This route requires `XR_EXT_hand_tracking` and `XR_FB_hand_tracking_mesh`. It
+writes `left/right.rig.json`, `left/right.clip.jsonl`,
+`left/right.validation_mesh.jsonl`, `status.jsonl`, and
+`capture.manifest.json` under app-scoped external storage. The clip rows are the
+same 21 runtime joints plus 5 tip lengths used by replay skinning, while the
+validation mesh rows are CPU-skinned from the OpenXR FB bind mesh.
+
+For the Spatial hand lab comparison capture, use:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Prepare -ShowAvatarHands $true -EnableBillboardWireframe
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Start -SessionId hand-spatial-001
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Stop
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action PullAndInspect -SessionId hand-spatial-001
+```
+
+Spatial SDK public APIs expose `AvatarBody` hand/head transforms and built-in
+`AvatarSystem` hand visuals, not the SDK-owned hand mesh topology. The Spatial
+capture manifest therefore marks `spatial_public_mesh_topology_available=false`
+and records `spatial_poses.jsonl` plus OpenXR joint-bridge clips when the
+Spatial app has OpenXR handles.
 
 For the public Spatial world-hand billboard flock, the high-density carrier
 property is `debug.rustyquest.spatial.hand_billboard_flock.carrier`. The
@@ -40,6 +95,11 @@ default `batched-scene-mesh` mode should report
 `carrier=batched-scene-mesh`, `carrierEntityCount=2`, and
 `transformWrites=0`; `ecs-entities` is retained only as the old per-particle
 entity baseline.
+Set `debug.rustyquest.spatial.hand_billboard_flock.visual_mode=wireframe-edges`
+to replace each app-owned billboard mesh item with edge quads. This is not a
+wireframe of the Spatial SDK built-in avatar hands; those remain
+`AvatarSystem`-owned and should report
+`spatialAvatarHandMeshWireframeSupported=false`.
 
 For a Spatial Camera Panel APK whose private-layer buttons visibly select the
 active projection layer, pass the downstream opaque shader profile at build

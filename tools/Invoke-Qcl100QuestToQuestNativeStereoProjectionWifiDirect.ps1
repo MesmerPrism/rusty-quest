@@ -57,6 +57,7 @@ param(
     [int]$Qcl082ReceiveProxyPeerIdleTimeoutMs = 3000,
     [int]$Qcl041ArtifactWaitSeconds = 180,
     [int]$NativeRendererBrokerConnectTimeoutMs = 60000,
+    [int]$NoMediaLaunchSeconds = 8,
     [double]$MinFreshFrameSpanSeconds = 25.0,
     [int]$MinFreshFrameLines = 5,
     [switch]$RequireInfrastructureWifiDisconnected,
@@ -73,6 +74,15 @@ param(
     [switch]$AllowWakePrepMutation,
     [switch]$SkipCleanup,
     [switch]$XrLaunchReadinessOnly,
+    [switch]$LowerGatePlanOnly,
+    [switch]$NoMediaLaunchOnly,
+    [switch]$ValidateLowerGateEvidenceOnly,
+    [string]$LowerGatePlanSummaryPath = "",
+    [string]$RouteClearSummaryPath = "",
+    [string]$Qcl041ControlTcpSummaryPath = "",
+    [string]$XrReadinessSummaryPath = "",
+    [string]$NoMediaLaunchSummaryPath = "",
+    [switch]$AllowLowerGateEvidenceSkippedCleanup,
     [switch]$FreshnessSelfTest
 )
 
@@ -109,6 +119,8 @@ $helperRoot = Join-Path $Qcl100ToolRoot "qcl100_native_projection"
 . (Join-Path $helperRoot "Freshness.ps1")
 . (Join-Path $helperRoot "RuntimeSummary.ps1")
 . (Join-Path $helperRoot "Qcl041MatrixGate.ps1")
+. (Join-Path $helperRoot "LowerGatePlan.ps1")
+. (Join-Path $helperRoot "LowerGateEvidence.ps1")
 
 
 
@@ -149,6 +161,8 @@ if ($FreshnessSelfTest) {
     Invoke-Qcl100RuntimeSummarySelfTest
     Invoke-Qcl100Qcl041ArtifactFreshnessWaitSelfTest -OutputDirectory $OutDir
     Invoke-Qcl100Qcl041MatrixGateSelfTest -OutputDirectory $OutDir
+    Invoke-Qcl100LowerGatePlanSelfTest -OutputDirectory $OutDir | Out-Null
+    Invoke-Qcl100LowerGateEvidenceSelfTest -OutputDirectory $OutDir | Out-Null
     return
 }
 
@@ -159,7 +173,7 @@ $wakePrepPolicy = if ($SkipWakePrep) {
 } else {
     "blocked_wake_prep_mutation_without_explicit_allow"
 }
-if (-not $PreflightOnly -and -not $XrLaunchReadinessOnly -and -not $SkipWakePrep -and -not $AllowWakePrepMutation) {
+if (-not $LowerGatePlanOnly -and -not $ValidateLowerGateEvidenceOnly -and -not $PreflightOnly -and -not $XrLaunchReadinessOnly -and -not $SkipWakePrep -and -not $AllowWakePrepMutation) {
     throw "QCL100 full media runs would mutate Quest wake state through Prepare-QuestForXrFocus. Pass -SkipWakePrep when an external keep-awake/watchdog thread owns headset state, or pass -AllowWakePrepMutation only when the operator explicitly wants this runner to apply wake prep."
 }
 
@@ -221,6 +235,92 @@ $qcl041MatrixGateBlockedReason = ""
 $qcl041MatrixGateRunId = ""
 $qcl041MatrixGateTransportProtocol = $Qcl082TransportProtocol
 $qcl041MatrixGateRequiredTopology = ""
+
+if ($LowerGatePlanOnly) {
+    $planPath = Join-Path $OutDir "qcl100-lower-gate-plan.json"
+    $summaryPath = Join-Path $OutDir "native-stereo-projection-summary.json"
+    $lowerGatePlan = New-Qcl100LowerGatePlan `
+        -RunId $RunId `
+        -OutDir $OutDir `
+        -OwnerSerial $OwnerSerial `
+        -ClientSerial $ClientSerial `
+        -OwnerWifiDirectAddress $OwnerWifiDirectAddress `
+        -ClientWifiDirectAddress $ClientWifiDirectAddress `
+        -Qcl041Q2qNetworkName $Qcl041Q2qNetworkName `
+        -Qcl041Q2qPassphrase $Qcl041Q2qPassphrase `
+        -Direction $Direction `
+        -LaneMode $LaneMode `
+        -Qcl082TransportProtocol $Qcl082TransportProtocol `
+        -ProjectionSeconds $ProjectionSeconds `
+        -NoMediaLaunchSeconds $NoMediaLaunchSeconds `
+        -Qcl082ControlTcpMediaStreamBytesPerDirection $Qcl082ControlTcpMediaStreamBytesPerDirection `
+        -RequiredQcl041MatrixSummaryPath $RequiredQcl041MatrixSummaryPath `
+        -RequiredQcl041MatrixRunId $RequiredQcl041MatrixRunId `
+        -MaxQcl041MatrixGateAgeSeconds $MaxQcl041MatrixGateAgeSeconds `
+        -Qcl100ScriptPath (Join-Path $Qcl100ToolRoot "Invoke-Qcl100QuestToQuestNativeStereoProjectionWifiDirect.ps1") `
+        -Qcl041MatrixScriptPath (Join-Path $Qcl100ToolRoot "Invoke-Qcl041QuestToQuestAppBoundSocketMatrix.ps1")
+    Write-JsonFile -Value $lowerGatePlan -Path $planPath
+    $planSummary = [ordered]@{
+        schema = "rusty.quest.qcl100_quest_to_quest_native_stereo_projection_wifi_direct_run.v1"
+        run_id = $RunId
+        status = "lower_gate_plan_only"
+        mode = "lower_gate_plan_only"
+        non_live_artifact = $true
+        launched = $false
+        device_mutation_performed = $false
+        promotion_allowed = $false
+        same_group_duplex_claimed = $false
+        lower_gate_plan_artifact = $planPath
+        lower_gate_plan = $lowerGatePlan
+        freshness_acceptance = [ordered]@{
+            required = "QCL100 lower-gate plan only; no device state, media, broker, or native renderer launch occurred"
+            passed = $false
+            blocked_reason = "lower_gate_plan_only"
+        }
+        evidence_dir = $OutDir
+    }
+    Write-JsonFile -Value $planSummary -Path $summaryPath
+    Get-Content -Raw $summaryPath
+    exit 0
+}
+
+if ($ValidateLowerGateEvidenceOnly) {
+    $evidencePath = Join-Path $OutDir "qcl100-lower-gate-evidence.json"
+    $summaryPath = Join-Path $OutDir "native-stereo-projection-summary.json"
+    $lowerGateEvidence = Get-Qcl100LowerGateEvidence `
+        -PlanSummaryPath $LowerGatePlanSummaryPath `
+        -RouteClearSummaryPath $RouteClearSummaryPath `
+        -Qcl041ControlTcpSummaryPath $Qcl041ControlTcpSummaryPath `
+        -XrReadinessSummaryPath $XrReadinessSummaryPath `
+        -NoMediaLaunchSummaryPath $NoMediaLaunchSummaryPath `
+        -AllowSkippedCleanup:$AllowLowerGateEvidenceSkippedCleanup
+    Write-JsonFile -Value $lowerGateEvidence -Path $evidencePath
+    $evidenceSummary = [ordered]@{
+        schema = "rusty.quest.qcl100_quest_to_quest_native_stereo_projection_wifi_direct_run.v1"
+        run_id = $RunId
+        status = if ([bool]$lowerGateEvidence.passed) { "lower_gate_evidence_validated" } else { "blocked_lower_gate_evidence" }
+        mode = "validate_lower_gate_evidence_only"
+        non_live_artifact = $true
+        launched = $false
+        device_mutation_performed = $false
+        promotion_allowed = $false
+        same_group_duplex_claimed = $false
+        lower_gate_evidence_artifact = $evidencePath
+        lower_gate_evidence = $lowerGateEvidence
+        freshness_acceptance = [ordered]@{
+            required = "lower-gate evidence validation only; no media freshness or promotion claim is made"
+            passed = $false
+            blocked_reason = "lower_gate_evidence_only"
+        }
+        evidence_dir = $OutDir
+    }
+    Write-JsonFile -Value $evidenceSummary -Path $summaryPath
+    Get-Content -Raw $summaryPath
+    if (-not [bool]$lowerGateEvidence.passed) {
+        exit 2
+    }
+    exit 0
+}
 
 if ($RequireInfrastructureWifiDisconnected -or $RequireP2p0Ipv4Cleared -or $RequireCandidateWifiDirectRoutesClear -or $PreflightOnly) {
     if ($RunQcl041PreclearBeforeAirgapPreflight) {
@@ -910,6 +1010,26 @@ function Write-Qcl100OrchestrationFailureSummary {
     }
 }
 
+function Read-Qcl100JsonIfPresent {
+    param([string]$Path)
+    if (Test-Path -LiteralPath $Path) {
+        return Get-Content -Raw $Path | ConvertFrom-Json
+    }
+    return $null
+}
+
+function Get-Qcl100RemoteCameraRuntimeFromExecution {
+    param($Execution)
+    if ($null -eq $Execution) {
+        return $null
+    }
+    $messages = @($Execution.command_execution.broker_messages)
+    if ($messages.Count -eq 0) {
+        return $null
+    }
+    return $messages[0].remote_camera_runtime
+}
+
 trap {
     $message = $_.Exception.Message
     try {
@@ -966,6 +1086,199 @@ foreach ($device in @(
 
 $ownerNativeLogcatCapture = Start-Qcl100NativeRendererLogcatCapture -Serial $OwnerSerial -Label "owner" -Path $ownerLog
 $clientNativeLogcatCapture = Start-Qcl100NativeRendererLogcatCapture -Serial $ClientSerial -Label "client" -Path $clientLog
+
+if ($NoMediaLaunchOnly) {
+    $ownerWakePrep = Prepare-QuestForXrFocus -Serial $OwnerSerial -Label "owner" -SkipWakePrep:$SkipWakePrep -AllowWakePrepMutation:$AllowWakePrepMutation
+    $clientWakePrep = Prepare-QuestForXrFocus -Serial $ClientSerial -Label "client" -SkipWakePrep:$SkipWakePrep -AllowWakePrepMutation:$AllowWakePrepMutation
+    $ownerXrReadiness = Get-QuestXrLaunchReadiness -Serial $OwnerSerial -Label "owner"
+    $clientXrReadiness = Get-QuestXrLaunchReadiness -Serial $ClientSerial -Label "client"
+    $xrReadinessBlocked = @()
+    if (-not [bool]$ownerXrReadiness.xr_launch_ready) {
+        $xrReadinessBlocked += [ordered]@{
+            role = "owner"
+            serial = $OwnerSerial
+            issues = $ownerXrReadiness.issues
+        }
+    }
+    if (-not [bool]$clientXrReadiness.xr_launch_ready) {
+        $xrReadinessBlocked += [ordered]@{
+            role = "client"
+            serial = $ClientSerial
+            issues = $clientXrReadiness.issues
+        }
+    }
+    if ($xrReadinessBlocked.Count -gt 0) {
+        $blockedSummaryPath = Join-Path $OutDir "native-stereo-projection-summary.json"
+        $blockedSummary = [ordered]@{
+            schema = "rusty.quest.qcl100_quest_to_quest_native_stereo_projection_wifi_direct_run.v1"
+            run_id = $RunId
+            status = "blocked"
+            mode = "no_media_launch_only"
+            blocked_stage = "xr_launch_readiness_preflight"
+            owner_serial = $OwnerSerial
+            client_serial = $ClientSerial
+            wake_prep_policy = $wakePrepPolicy
+            owner_wake_prep = $ownerWakePrep
+            client_wake_prep = $clientWakePrep
+            owner_xr_launch_readiness = $ownerXrReadiness
+            client_xr_launch_readiness = $clientXrReadiness
+            blocked_headsets = $xrReadinessBlocked
+            qcl041_started = $false
+            qcl082_media_started = $false
+            same_group_duplex_claimed = $false
+            cleanup_policy = [ordered]@{
+                final_force_stop_cleanup_skipped = [bool]$SkipCleanup
+                reason = if ($SkipCleanup) { "skip_cleanup_preserve_no_media_failure_state" } else { "blocked_preflight_force_stop_cleanup" }
+                force_stop_packages = if ($SkipCleanup) { @() } else { @($Qcl041Package, $BrokerPackage, $NativeRendererPackage) }
+            }
+            evidence_dir = $OutDir
+            issue = "One or more required Quest headsets are not mounted or are blocked by SensorLock/reprojected OS dialog before no-media broker/native launch."
+        }
+        Write-JsonFile -Value $blockedSummary -Path $blockedSummaryPath
+        if (-not $SkipCleanup) {
+            Stop-Qcl100DeviceApps -Serials @($OwnerSerial, $ClientSerial)
+        }
+        Get-Content -Raw $blockedSummaryPath
+        exit 2
+    }
+
+    $statusParams = [ordered]@{ session_id = $RunId }
+    $ownerStatus = New-BridgeRequest "owner-no-media-status" "command.remote_camera.get_status" $statusParams "request.qcl100.$RunId.owner.no_media_status" "evidence.qcl100.$RunId.owner.no_media_status"
+    $clientStatus = New-BridgeRequest "client-no-media-status" "command.remote_camera.get_status" $statusParams "request.qcl100.$RunId.client.no_media_status" "evidence.qcl100.$RunId.client.no_media_status"
+    $ownerNoMediaStatusProbe = Invoke-LiveBridgeCommand "owner-no-media-status" $OwnerSerial $OwnerBrokerLocalPort $ownerStatus -TimeoutSeconds 25 -RetryCount 3 -RetryDelayMs 1500
+    $clientNoMediaStatusProbe = Invoke-LiveBridgeCommand "client-no-media-status" $ClientSerial $ClientBrokerLocalPort $clientStatus -TimeoutSeconds 25 -RetryCount 3 -RetryDelayMs 1500
+
+    Start-NativeRenderer -Serial $OwnerSerial -Label "owner"
+    Start-NativeRenderer -Serial $ClientSerial -Label "client"
+    Start-Sleep -Seconds ([Math]::Max(1, $NoMediaLaunchSeconds))
+
+    $ownerNativeLogcatCaptureStop = Stop-Qcl100NativeRendererLogcatCapture -Capture $ownerNativeLogcatCapture
+    $clientNativeLogcatCaptureStop = Stop-Qcl100NativeRendererLogcatCapture -Capture $clientNativeLogcatCapture
+    if (-not (Test-Path -LiteralPath $ownerLog) -or (Get-Item -LiteralPath $ownerLog).Length -eq 0) {
+        Invoke-External -Name "owner no-media native renderer filtered logcat fallback" -File $Adb -Arguments @("-s", $OwnerSerial, "logcat", "-d", "-v", "threadtime", "RQNativeRenderer:I", "AndroidRuntime:E", "*:S") -LogPath $ownerLog | Out-Null
+    }
+    if (-not (Test-Path -LiteralPath $clientLog) -or (Get-Item -LiteralPath $clientLog).Length -eq 0) {
+        Invoke-External -Name "client no-media native renderer filtered logcat fallback" -File $Adb -Arguments @("-s", $ClientSerial, "logcat", "-d", "-v", "threadtime", "RQNativeRenderer:I", "AndroidRuntime:E", "*:S") -LogPath $clientLog | Out-Null
+    }
+    $ownerFinalFocus = Get-NativeRendererFocusSnapshot -Serial $OwnerSerial -Label "owner" -Suffix "no-media-final"
+    $clientFinalFocus = Get-NativeRendererFocusSnapshot -Serial $ClientSerial -Label "client" -Suffix "no-media-final"
+    $ownerStatusExecution = Read-Qcl100JsonIfPresent (Join-Path $MediaDir "owner-no-media-status-execution.json")
+    $clientStatusExecution = Read-Qcl100JsonIfPresent (Join-Path $MediaDir "client-no-media-status-execution.json")
+    $ownerNativeRenderer = Summarize-NativeRendererLog -LogPath $ownerLog
+    $clientNativeRenderer = Summarize-NativeRendererLog -LogPath $clientLog
+    $ownerBrokerStatus = Summarize-BrokerRuntime (Get-Qcl100RemoteCameraRuntimeFromExecution $ownerStatusExecution)
+    $clientBrokerStatus = Summarize-BrokerRuntime (Get-Qcl100RemoteCameraRuntimeFromExecution $clientStatusExecution)
+    $ownerNoMediaPass = [bool](
+        $ownerNoMediaStatusProbe.status -eq "pass" -and
+        $null -ne $ownerBrokerStatus -and
+        [bool]$ownerFinalFocus.focus_active -and
+        [int]$ownerNativeRenderer.system_fatal_count -eq 0 -and
+        [int]$ownerNativeRenderer.fatal_count -eq 0
+    )
+    $clientNoMediaPass = [bool](
+        $clientNoMediaStatusProbe.status -eq "pass" -and
+        $null -ne $clientBrokerStatus -and
+        [bool]$clientFinalFocus.focus_active -and
+        [int]$clientNativeRenderer.system_fatal_count -eq 0 -and
+        [int]$clientNativeRenderer.fatal_count -eq 0
+    )
+    $noMediaPassed = [bool]($ownerNoMediaPass -and $clientNoMediaPass)
+    $noMediaSummary = [ordered]@{
+        schema = "rusty.quest.qcl100_quest_to_quest_native_stereo_projection_wifi_direct_run.v1"
+        run_id = $RunId
+        status = if ($noMediaPassed) { "pass" } else { "blocked" }
+        mode = "no_media_launch_only"
+        no_media_launch_seconds = [Math]::Max(1, $NoMediaLaunchSeconds)
+        qcl041_started = $false
+        qcl082_media_started = $false
+        qcl041_relay_started = $false
+        broker_launch_required = $true
+        native_renderer_launch_required = $true
+        promotion_allowed = $false
+        same_group_duplex_claimed = $false
+        owner_serial = $OwnerSerial
+        client_serial = $ClientSerial
+        wake_prep_policy = $wakePrepPolicy
+        owner_wake_prep = $ownerWakePrep
+        client_wake_prep = $clientWakePrep
+        owner_xr_launch_readiness = $ownerXrReadiness
+        client_xr_launch_readiness = $clientXrReadiness
+        permission_pregrant_receipts = [ordered]@{
+            owner_qcl_broker = $ownerQclPermission
+            client_qcl_broker = $clientQclPermission
+            owner_native_renderer = $ownerNativePermission
+            client_native_renderer = $clientNativePermission
+        }
+        runtime_profile_plans = [ordered]@{
+            owner_native_renderer = $ownerProfilePlan
+            client_native_renderer = $clientProfilePlan
+        }
+        lane_mode_property_overrides = [ordered]@{
+            owner_native_renderer = $ownerLaneModeOverride
+            client_native_renderer = $clientLaneModeOverride
+        }
+        final_status_probes = [ordered]@{
+            owner = $ownerNoMediaStatusProbe
+            client = $clientNoMediaStatusProbe
+        }
+        owner_broker_status = $ownerBrokerStatus
+        client_broker_status = $clientBrokerStatus
+        owner_native_renderer_projection = $ownerNativeRenderer
+        client_native_renderer_projection = $clientNativeRenderer
+        native_log_summary = [ordered]@{
+            owner = [ordered]@{
+                log_path = $ownerLog
+                fatal_count = $ownerNativeRenderer.fatal_count
+                fatal_lines = $ownerNativeRenderer.fatal_lines
+                system_fatal_count = $ownerNativeRenderer.system_fatal_count
+                system_fatal_lines = $ownerNativeRenderer.system_fatal_lines
+            }
+            client = [ordered]@{
+                log_path = $clientLog
+                fatal_count = $clientNativeRenderer.fatal_count
+                fatal_lines = $clientNativeRenderer.fatal_lines
+                system_fatal_count = $clientNativeRenderer.system_fatal_count
+                system_fatal_lines = $clientNativeRenderer.system_fatal_lines
+            }
+            fatal_count = ([int]$ownerNativeRenderer.fatal_count + [int]$clientNativeRenderer.fatal_count)
+            system_fatal_count = ([int]$ownerNativeRenderer.system_fatal_count + [int]$clientNativeRenderer.system_fatal_count)
+        }
+        native_renderer_logcat_capture = [ordered]@{
+            owner = $ownerNativeLogcatCaptureStop
+            client = $clientNativeLogcatCaptureStop
+        }
+        owner_final_focus = $ownerFinalFocus
+        client_final_focus = $clientFinalFocus
+        owner_no_media_launch_pass = $ownerNoMediaPass
+        client_no_media_launch_pass = $clientNoMediaPass
+        freshness_acceptance = [ordered]@{
+            required = "no-media launch only; broker and native renderer launch without QCL041 relays, QCL082 media, or same-group duplex promotion"
+            passed = $noMediaPassed
+            owner_broker_status_present = [bool]($null -ne $ownerBrokerStatus)
+            client_broker_status_present = [bool]($null -ne $clientBrokerStatus)
+            owner_native_focus_active = [bool]$ownerFinalFocus.focus_active
+            client_native_focus_active = [bool]$clientFinalFocus.focus_active
+            native_log_system_fatal_count = ([int]$ownerNativeRenderer.system_fatal_count + [int]$clientNativeRenderer.system_fatal_count)
+            native_log_fatal_count = ([int]$ownerNativeRenderer.fatal_count + [int]$clientNativeRenderer.fatal_count)
+        }
+        cleanup_policy = [ordered]@{
+            final_force_stop_cleanup_skipped = [bool]$SkipCleanup
+            reason = if ($SkipCleanup) { "skip_cleanup_preserve_no_media_launch_state" } else { "no_media_launch_force_stop_cleanup" }
+            force_stop_packages = if ($SkipCleanup) { @() } else { @($Qcl041Package, $BrokerPackage, $NativeRendererPackage) }
+        }
+        evidence_dir = $OutDir
+    }
+    $noMediaSummaryPath = Join-Path $OutDir "native-stereo-projection-summary.json"
+    Write-JsonFile -Value $noMediaSummary -Path $noMediaSummaryPath
+    if (-not $SkipCleanup) {
+        Stop-Qcl100DeviceApps -Serials @($OwnerSerial, $ClientSerial)
+    }
+    Get-Content -Raw $noMediaSummaryPath
+    if (-not $noMediaPassed) {
+        exit 2
+    }
+    exit 0
+}
 
 Invoke-Qcl041PreclearOnly -Serial $OwnerSerial -LeaseId $OwnerLeaseId -Label "owner"
 Invoke-Qcl041PreclearOnly -Serial $ClientSerial -LeaseId $ClientLeaseId -Label "client"
@@ -1281,26 +1594,6 @@ if ($qcl041ReadFailures.Count -gt 0) {
         "$($_.label): $($_.error)"
     })
     throw "QCL100 final QCL041 artifact read blocked after attempting both owner and client final artifacts (qcl041_final_artifact_read_blocked): $($failureLabels -join ' | ')"
-}
-
-function Read-Qcl100JsonIfPresent {
-    param([string]$Path)
-    if (Test-Path -LiteralPath $Path) {
-        return Get-Content -Raw $Path | ConvertFrom-Json
-    }
-    return $null
-}
-
-function Get-Qcl100RemoteCameraRuntimeFromExecution {
-    param($Execution)
-    if ($null -eq $Execution) {
-        return $null
-    }
-    $messages = @($Execution.command_execution.broker_messages)
-    if ($messages.Count -eq 0) {
-        return $null
-    }
-    return $messages[0].remote_camera_runtime
 }
 
 $ownerQcl041 = Get-Content -Raw (Join-Path $OutDir "owner-qcl041.json") | ConvertFrom-Json
