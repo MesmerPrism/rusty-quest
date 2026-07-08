@@ -76,6 +76,8 @@ $publicMultiStack = Read-RequiredText "apps\spatial-camera-panel-android\app\src
 $panelController = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ExperimentPanelController.kt"
 $privateLayerPanel = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\PrivateLayerControlPanel.kt"
 $panelModels = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelModels.kt"
+$activityRuntimeHelpers = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelRuntimeHelpers.kt"
+$kotlinSpatialVideoSettings = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialVideoProjectionSettings.kt"
 $avatarFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAvatarHandVisualFeature.kt"
 $avatarProbeFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAvatarHandInvestigationFeature.kt"
 $handBillboardFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialHandBillboardFlockFeature.kt"
@@ -138,6 +140,11 @@ Assert-Contains "Android manifest" $manifest 'oculus.software.handtracking'
 Assert-Contains "Android manifest" $manifest 'com.oculus.handtracking.version'
 Assert-Contains "Android ids" $ids 'spatial_camera_projection_manual_custom_mesh_panel'
 Assert-Contains "Panel models" $panelModels 'ManualPanelSceneObjectCustomMesh("manual-panel-scene-object-custom-mesh")'
+Assert-Contains "Activity runtime helpers" $activityRuntimeHelpers "internal fun activityMarkerToken"
+Assert-Contains "Activity runtime helpers" $activityRuntimeHelpers "internal fun activityReadSystemProperty"
+Assert-Contains "Activity runtime helpers" $activityRuntimeHelpers "internal fun activityRollStableParticleProjectionBasis"
+Assert-Contains "Kotlin spatial video settings" $kotlinSpatialVideoSettings "internal data class SpatialVideoProjectionSettings"
+Assert-Contains "Kotlin spatial video settings" $kotlinSpatialVideoSettings "val highRateJsonPayload: Boolean"
 Assert-Contains "Android manifest" $manifest 'com.oculus.feature.RENDER_MODEL'
 Assert-Contains "Android manifest" $manifest 'com.oculus.permission.RENDER_MODEL'
 Assert-Contains "Android manifest" $manifest 'horizonos.permission.USE_SCENE'
@@ -601,7 +608,7 @@ Assert-Contains "Activity" $activity "applyRemoteParticleLayerTargetDistance"
 Assert-Contains "Activity" $activity "applyRemoteParticleLayerViewYaw"
 Assert-Contains "Activity" $activity "remoteParticleLayerTargetDistanceMeters"
 Assert-Contains "Activity" $activity "remoteParticleLayerViewYawDegrees"
-Assert-Contains "Activity" $activity "rollStableParticleProjectionBasis(rawForward, yawDegrees)"
+Assert-Contains "Activity" $activity "activityRollStableParticleProjectionBasis(rawForward, yawDegrees)"
 Assert-Contains "Activity" $activity "projectionPlaneRollAuthority=spatial-world-up"
 Assert-Contains "Activity" $activity "projectionPlaneRollFollowsHeadset=false"
 Assert-Contains "Activity" $activity "PARTICLE_LAYER_WIDTH_METERS = 5.40f"
@@ -1938,6 +1945,8 @@ Assert-Contains "Activity" $activity "PARTICLE_LAYER_PANEL_LAYER_CHECK_INTERVAL_
 Assert-Contains "Activity" $activity "particleLayerPanelLayerConfigCached=true"
 Assert-Contains "README" $readme "Raw Camera2/AHardwareBuffer projection probes"
 Assert-Contains "README" $readme "Spatial SDK Lane Source Map"
+Assert-Contains "README" $readme "SpatialCameraPanelRuntimeHelpers.kt"
+Assert-Contains "README" $readme "SpatialVideoProjectionSettings.kt"
 Assert-Contains "README" $readme "public seven-slot camera guide multi-stack contract"
 Assert-Contains "README" $readme "official Spatial SDK panel sample"
 Assert-Contains "README" $readme "normal path is"
@@ -1991,6 +2000,8 @@ Assert-Contains "README" $readme "nativeUpdatePrivateLayerOverride"
 Assert-Contains "README" $readme "nativeUpdatePrivateLayerDepthAlignment"
 Assert-Contains "Implementation notes" $notes "Private effect formulas"
 Assert-Contains "Implementation notes" $notes "Public seven-slot camera guide multi-stack contract"
+Assert-Contains "Implementation notes" $notes "SpatialCameraPanelRuntimeHelpers.kt"
+Assert-Contains "Implementation notes" $notes "SpatialVideoProjectionSettings.kt"
 Assert-Contains "Implementation notes" $notes "public multi-stack receipts"
 Assert-Contains "Implementation notes" $notes "right-stick-y-projection-target-scale"
 Assert-Contains "Implementation notes" $notes "Left-stick Y controls workflow-panel"

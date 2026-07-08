@@ -321,6 +321,14 @@ Interaction SDK pointer input without native multimodal extension forcing.
 - `app/src/main/.../SpatialCameraPanelActivity.kt` remains the Spatial SDK
   Activity facade: lifecycle, panel registration, scene tick routing, JNI
   calls, and route orchestration.
+- `app/src/main/.../SpatialCameraPanelRuntimeHelpers.kt` owns shared marker
+  token formatting, Android system-property and intent-extra parsing, and
+  small Spatial vector math helpers used by the facade. It must stay free of
+  lifecycle, panel, camera, particle, and JNI start/stop authority.
+- `app/src/main/.../SpatialVideoProjectionSettings.kt` owns the Kotlin-side
+  low-rate video projection settings value object used by the Spatial camera
+  projection route. It does not decode media or own native AImageReader /
+  AHardwareBuffer handoff.
 - `app/src/main/.../SpatialSdkLaneBoundary.kt` records the explicit route
   boundaries. Spatial SDK layer/panel primitives are the carrier substrate;
   experiment panel, camera projection, surface particles, and debug probes are

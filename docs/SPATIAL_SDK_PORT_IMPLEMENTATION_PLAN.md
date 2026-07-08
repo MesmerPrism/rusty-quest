@@ -190,6 +190,10 @@ features rather than owning all component/system behavior directly.
 
 Apply that model here when a lane grows beyond a narrow facade method:
 
+- keep `SpatialCameraPanelActivity.kt` as the lifecycle/JNI/panel-registration
+  facade, with pure parsing/formatting/math helpers in
+  `SpatialCameraPanelRuntimeHelpers.kt` and low-rate video settings in
+  `SpatialVideoProjectionSettings.kt`;
 - package virtual room and skybox behavior as a feature/module;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection and markers as a feature/module;
