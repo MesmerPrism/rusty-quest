@@ -201,7 +201,9 @@ Apply that model here when a lane grows beyond a narrow facade method:
 - package private layer panel placement/input policy in
   `SpatialPanelPlacementModule.kt`;
 - package controller shortcut routing policy in
-  `SpatialControllerRoutingModule.kt`.
+  `SpatialControllerRoutingModule.kt`;
+- package OpenXR extension policy, explicit opt-in multimodal input defaults,
+  and native receipt bit decoding in `SpatialOpenXrRouteModule.kt`.
 
 All Spatial feature modules must stay explicit opt-in. Individual modules can
 be registered or available in source, but they should not create scene objects,

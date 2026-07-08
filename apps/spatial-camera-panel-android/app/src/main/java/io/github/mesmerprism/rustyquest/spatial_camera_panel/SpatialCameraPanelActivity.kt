@@ -976,31 +976,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       surfaceProbe: NativeInteropSurfaceProbeResult,
   ): NativeInteropReceiptResult {
     if (!nativeReceiptLibraryLoaded) {
-      return NativeInteropReceiptResult(
-          status = "library-unavailable",
-          mask = 0L,
-          openXrInstanceHandleNonZero = false,
-          openXrSessionHandleNonZero = false,
-          openXrGetInstanceProcAddrHandleNonZero = false,
-          openXrGetInstanceProcAddrCallable = false,
-          xrGetInstancePropertiesResolved = false,
-          xrGetInstancePropertiesSucceeded = false,
-          xrGetSystemResolved = false,
-          xrGetSystemSucceeded = false,
-          xrVulkanGraphicsRequirements2Resolved = false,
-          xrVulkanGraphicsRequirements2Succeeded = false,
-          xrCreateVulkanInstanceResolved = false,
-          xrGetVulkanGraphicsDevice2Resolved = false,
-          xrCreateVulkanDeviceResolved = false,
-          vkInstanceCreated = false,
-          vkGraphicsDeviceObtained = false,
-          vkGraphicsComputeQueueFound = false,
-          vkDeviceCreated = false,
-          vkQueueObtained = false,
-          vkObjectsDestroyed = false,
-          surfaceValid = false,
-          error = nativeReceiptLibraryError,
-      )
+      return SpatialOpenXrRouteModule.nativeInteropReceiptUnavailable(nativeReceiptLibraryError)
     }
     return runCatching {
           val mask =
@@ -1010,71 +986,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   probe.openXrGetInstanceProcAddrHandle,
                   surfaceProbe.surfaceValid,
               )
-          NativeInteropReceiptResult(
-              status = "received",
-              mask = mask,
-              openXrInstanceHandleNonZero = mask.hasReceiptBit(NATIVE_RECEIPT_OPENXR_INSTANCE_BIT),
-              openXrSessionHandleNonZero = mask.hasReceiptBit(NATIVE_RECEIPT_OPENXR_SESSION_BIT),
-              openXrGetInstanceProcAddrHandleNonZero =
-                  mask.hasReceiptBit(NATIVE_RECEIPT_OPENXR_GET_PROC_BIT),
-              openXrGetInstanceProcAddrCallable =
-                  mask.hasReceiptBit(NATIVE_RECEIPT_OPENXR_GET_PROC_CALLABLE_BIT),
-              xrGetInstancePropertiesResolved =
-                  mask.hasReceiptBit(NATIVE_RECEIPT_XR_GET_INSTANCE_PROPERTIES_RESOLVED_BIT),
-              xrGetInstancePropertiesSucceeded =
-                  mask.hasReceiptBit(NATIVE_RECEIPT_XR_GET_INSTANCE_PROPERTIES_SUCCEEDED_BIT),
-              xrGetSystemResolved = mask.hasReceiptBit(NATIVE_RECEIPT_XR_GET_SYSTEM_RESOLVED_BIT),
-              xrGetSystemSucceeded =
-                  mask.hasReceiptBit(NATIVE_RECEIPT_XR_GET_SYSTEM_SUCCEEDED_BIT),
-              xrVulkanGraphicsRequirements2Resolved =
-                  mask.hasReceiptBit(NATIVE_RECEIPT_XR_VULKAN_REQUIREMENTS2_RESOLVED_BIT),
-              xrVulkanGraphicsRequirements2Succeeded =
-                  mask.hasReceiptBit(NATIVE_RECEIPT_XR_VULKAN_REQUIREMENTS2_SUCCEEDED_BIT),
-              xrCreateVulkanInstanceResolved =
-                  mask.hasReceiptBit(NATIVE_RECEIPT_XR_CREATE_VULKAN_INSTANCE_RESOLVED_BIT),
-              xrGetVulkanGraphicsDevice2Resolved =
-                  mask.hasReceiptBit(NATIVE_RECEIPT_XR_GET_VULKAN_GRAPHICS_DEVICE2_RESOLVED_BIT),
-              xrCreateVulkanDeviceResolved =
-                  mask.hasReceiptBit(NATIVE_RECEIPT_XR_CREATE_VULKAN_DEVICE_RESOLVED_BIT),
-              vkInstanceCreated = mask.hasReceiptBit(NATIVE_RECEIPT_VK_INSTANCE_CREATED_BIT),
-              vkGraphicsDeviceObtained =
-                  mask.hasReceiptBit(NATIVE_RECEIPT_VK_GRAPHICS_DEVICE_OBTAINED_BIT),
-              vkGraphicsComputeQueueFound =
-                  mask.hasReceiptBit(NATIVE_RECEIPT_VK_GRAPHICS_COMPUTE_QUEUE_FOUND_BIT),
-              vkDeviceCreated = mask.hasReceiptBit(NATIVE_RECEIPT_VK_DEVICE_CREATED_BIT),
-              vkQueueObtained = mask.hasReceiptBit(NATIVE_RECEIPT_VK_QUEUE_OBTAINED_BIT),
-              vkObjectsDestroyed = mask.hasReceiptBit(NATIVE_RECEIPT_VK_OBJECTS_DESTROYED_BIT),
-              surfaceValid = mask.hasReceiptBit(NATIVE_RECEIPT_PANEL_SURFACE_BIT),
-              error = "none",
-          )
+          SpatialOpenXrRouteModule.nativeInteropReceiptReceived(mask)
         }
             .getOrElse { throwable ->
-              NativeInteropReceiptResult(
-              status = "call-failed",
-              mask = 0L,
-              openXrInstanceHandleNonZero = false,
-              openXrSessionHandleNonZero = false,
-              openXrGetInstanceProcAddrHandleNonZero = false,
-              openXrGetInstanceProcAddrCallable = false,
-              xrGetInstancePropertiesResolved = false,
-              xrGetInstancePropertiesSucceeded = false,
-              xrGetSystemResolved = false,
-              xrGetSystemSucceeded = false,
-              xrVulkanGraphicsRequirements2Resolved = false,
-              xrVulkanGraphicsRequirements2Succeeded = false,
-              xrCreateVulkanInstanceResolved = false,
-              xrGetVulkanGraphicsDevice2Resolved = false,
-              xrCreateVulkanDeviceResolved = false,
-              vkInstanceCreated = false,
-              vkGraphicsDeviceObtained = false,
-              vkGraphicsComputeQueueFound = false,
-              vkDeviceCreated = false,
-              vkQueueObtained = false,
-              vkObjectsDestroyed = false,
-              surfaceValid = false,
-              error = throwable.javaClass.simpleName,
-          )
-        }
+              SpatialOpenXrRouteModule.nativeInteropReceiptCallFailed(throwable.javaClass.simpleName)
+            }
   }
 
   private fun startSpatialNativePassthroughForDepthPrerequisite(source: String): Long {
@@ -1125,7 +1041,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         "channel=spatial-native-passthrough status=start-requested " +
             "source=${activityMarkerToken(source)} nativePassthroughRequested=true " +
             "nativePassthroughStartMask=$mask " +
-            "nativePassthroughLayerActive=${mask.hasReceiptBit(SPATIAL_NATIVE_PASSTHROUGH_LAYER_ACTIVE_BIT)} " +
+            "nativePassthroughLayerActive=${SpatialOpenXrRouteModule.nativePassthroughLayerActive(mask)} " +
             "nativePassthroughActivationPath=spatial-native-receipt-xr-fb-passthrough " +
             "nativePassthroughCompositionLayerSubmission=spatial-sdk-owned-end-frame " +
             "spatialScenePassthroughMaterialActive=${cameraHwbProjectionEntity != null} " +
@@ -1188,8 +1104,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         "channel=spatial-environment-depth status=start-requested " +
             "source=${activityMarkerToken(source)} environmentDepthProviderRequested=true " +
             "nativeEnvironmentDepthStartMask=$mask " +
-            "environmentDepthRealProviderBound=${mask.hasReceiptBit(SPATIAL_ENVIRONMENT_DEPTH_PROVIDER_STARTED_BIT)} " +
-            "environmentDepthAcquireThreadStarted=${mask.hasReceiptBit(SPATIAL_ENVIRONMENT_DEPTH_ACQUIRE_THREAD_STARTED_BIT)} " +
+            "environmentDepthRealProviderBound=${SpatialOpenXrRouteModule.spatialEnvironmentDepthProviderStarted(mask)} " +
+            "environmentDepthAcquireThreadStarted=${SpatialOpenXrRouteModule.spatialEnvironmentDepthAcquireThreadStarted(mask)} " +
             "environmentDepthAcquireStatus=see-native-logcat " +
             "environmentDepthAcquireDisplayTimePolicy=diagnostic-zero-time " +
             "spatialSdkOwnsFrameLoop=true " +
@@ -1279,9 +1195,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     marker(
         "channel=spatial-multimodal-input status=request-result phase=$phase " +
             "spatialMultimodalInputRequest=true requestMask=$requestMask " +
-            "supportsSimultaneousHandsAndControllers=${requestMask.hasReceiptBit(SPATIAL_MULTIMODAL_INPUT_SUPPORTED_BIT)} " +
-            "resumeFunctionResolved=${requestMask.hasReceiptBit(SPATIAL_MULTIMODAL_INPUT_RESUME_RESOLVED_BIT)} " +
-            "resumeSucceeded=${requestMask.hasReceiptBit(SPATIAL_MULTIMODAL_INPUT_RESUME_SUCCEEDED_BIT)} " +
+            "supportsSimultaneousHandsAndControllers=${SpatialOpenXrRouteModule.spatialMultimodalInputSupported(requestMask)} " +
+            "resumeFunctionResolved=${SpatialOpenXrRouteModule.spatialMultimodalInputResumeResolved(requestMask)} " +
+            "resumeSucceeded=${SpatialOpenXrRouteModule.spatialMultimodalInputResumeSucceeded(requestMask)} " +
             "inputOwnership=spatial-sdk-interaction-sdk " +
             "spatialRequiredOpenXrExtensions=${spatialRequiredOpenXrExtensionMarker()} " +
             "property=$SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY"
@@ -1578,7 +1494,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             }
     nativeSpatialControllerActionsStartMask = startMask
     nativeSpatialControllerActionsStarted =
-        startMask.hasReceiptBit(NATIVE_SPATIAL_CONTROLLER_ACTION_SET_ATTACHED_BIT)
+        SpatialOpenXrRouteModule.nativeSpatialControllerActionSetAttached(startMask)
     marker(
         "channel=spatial-controller-actions status=start-result phase=$phase " +
             "nativeControllerActionBridge=true startMask=$startMask " +
@@ -2250,11 +2166,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val nativePassthroughStartMask =
         startSpatialNativePassthroughForDepthPrerequisite("raw-projection-start")
     val nativePassthroughLayerActive =
-        nativePassthroughStartMask.hasReceiptBit(SPATIAL_NATIVE_PASSTHROUGH_LAYER_ACTIVE_BIT)
+        SpatialOpenXrRouteModule.nativePassthroughLayerActive(nativePassthroughStartMask)
     val nativeEnvironmentDepthStartMask =
         startSpatialEnvironmentDepthProbe("raw-projection-start")
     val nativeEnvironmentDepthProviderBound =
-        nativeEnvironmentDepthStartMask.hasReceiptBit(SPATIAL_ENVIRONMENT_DEPTH_PROVIDER_STARTED_BIT)
+        SpatialOpenXrRouteModule.spatialEnvironmentDepthProviderStarted(
+            nativeEnvironmentDepthStartMask
+        )
     updateNativeCameraHwbProjectionStereoOffset(
         reason = "raw-projection-start",
         forceLog = true,
@@ -2602,11 +2520,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val nativePassthroughStartMask =
         startSpatialNativePassthroughForDepthPrerequisite("raw-projection-panel-carrier-start")
     val nativePassthroughLayerActive =
-        nativePassthroughStartMask.hasReceiptBit(SPATIAL_NATIVE_PASSTHROUGH_LAYER_ACTIVE_BIT)
+        SpatialOpenXrRouteModule.nativePassthroughLayerActive(nativePassthroughStartMask)
     val nativeEnvironmentDepthStartMask =
         startSpatialEnvironmentDepthProbe("raw-projection-panel-carrier-start")
     val nativeEnvironmentDepthProviderBound =
-        nativeEnvironmentDepthStartMask.hasReceiptBit(SPATIAL_ENVIRONMENT_DEPTH_PROVIDER_STARTED_BIT)
+        SpatialOpenXrRouteModule.spatialEnvironmentDepthProviderStarted(
+            nativeEnvironmentDepthStartMask
+        )
     updateNativeCameraHwbProjectionStereoOffset(
         reason = "raw-projection-panel-carrier-start",
         forceLog = true,
@@ -8030,8 +7950,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun spatialMultimodalInputEnabled(): Boolean =
-      activityReadOptionalBooleanSystemProperty(SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY)
-          ?: SPATIAL_MULTIMODAL_INPUT_DEFAULT_ENABLED
+      SpatialOpenXrRouteModule.spatialMultimodalInputEnabled(
+          activityReadOptionalBooleanSystemProperty(SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY)
+      )
 
   private fun nativeSpatialControllerActionsEnabled(): Boolean =
       SpatialControllerRoutingModule.nativeSpatialControllerActionsEnabled(
@@ -8097,18 +8018,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           ?: activityParseBuildConfigBoolean(BuildConfig.PANEL_LAUNCHER_VISIBLE_DEFAULT, true)
 
   private fun spatialMultimodalRequiredOpenXrExtensions(): List<String> =
-      if (spatialMultimodalInputEnabled()) {
-        SPATIAL_MULTIMODAL_REQUIRED_OPENXR_EXTENSIONS
-      } else {
-        emptyList()
-      }
+      SpatialOpenXrRouteModule.spatialMultimodalRequiredOpenXrExtensions(
+          spatialMultimodalInputEnabled()
+      )
 
   private fun spatialRequiredOpenXrExtensions(): List<String> =
-      (SPATIAL_PASSTHROUGH_REQUIRED_OPENXR_EXTENSIONS + spatialMultimodalRequiredOpenXrExtensions())
-          .distinct()
+      SpatialOpenXrRouteModule.spatialRequiredOpenXrExtensions(spatialMultimodalInputEnabled())
 
   private fun spatialRequiredOpenXrExtensionMarker(): String =
-      spatialRequiredOpenXrExtensions().ifEmpty { listOf("none") }.joinToString(";")
+      SpatialOpenXrRouteModule.spatialRequiredOpenXrExtensionMarker(
+          spatialMultimodalInputEnabled()
+      )
 
   private fun particleLayerStereoMarkerFields(): String =
       "stereoMode=$PARTICLE_LAYER_STEREO_MODE " +
@@ -9084,50 +9004,5 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         "rustyquest.spatial.camera_hwb_projection_probe.video.opacity"
     private const val EXTRA_VIDEO_PROJECTION_HIGH_RATE_JSON_PAYLOAD =
         "rustyquest.spatial.camera_hwb_projection_probe.video.high_rate_json_payload"
-    private const val OPENXR_ERROR_HANDLE_INVALID = -12
-    private const val NATIVE_RECEIPT_LIBRARY = "spatial_camera_panel_native_receipt"
-    private const val SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY =
-        "debug.rustyquest.spatial.multimodal_input.enabled"
-    private const val SPATIAL_MULTIMODAL_INPUT_DEFAULT_ENABLED = false
-    private const val XR_META_SIMULTANEOUS_HANDS_AND_CONTROLLERS_EXTENSION =
-        "XR_META_simultaneous_hands_and_controllers"
-    private const val XR_META_DETACHED_CONTROLLERS_EXTENSION =
-        "XR_META_detached_controllers"
-    private const val XR_FB_PASSTHROUGH_EXTENSION = "XR_FB_passthrough"
-    private const val XR_META_ENVIRONMENT_DEPTH_EXTENSION = "XR_META_environment_depth"
-    private val SPATIAL_PASSTHROUGH_REQUIRED_OPENXR_EXTENSIONS =
-        listOf(XR_FB_PASSTHROUGH_EXTENSION, XR_META_ENVIRONMENT_DEPTH_EXTENSION)
-    private val SPATIAL_MULTIMODAL_REQUIRED_OPENXR_EXTENSIONS =
-        listOf(
-            XR_META_SIMULTANEOUS_HANDS_AND_CONTROLLERS_EXTENSION,
-            XR_META_DETACHED_CONTROLLERS_EXTENSION,
-        )
-    private const val SPATIAL_MULTIMODAL_INPUT_SUPPORTED_BIT = 1L shl 8
-    private const val SPATIAL_MULTIMODAL_INPUT_RESUME_RESOLVED_BIT = 1L shl 9
-    private const val SPATIAL_MULTIMODAL_INPUT_RESUME_SUCCEEDED_BIT = 1L shl 10
-    private const val NATIVE_SPATIAL_CONTROLLER_ACTION_SET_ATTACHED_BIT = 1L shl 8
-    private const val SPATIAL_NATIVE_PASSTHROUGH_LAYER_ACTIVE_BIT = 1L shl 10
-    private const val SPATIAL_ENVIRONMENT_DEPTH_PROVIDER_STARTED_BIT = 1L shl 22
-    private const val SPATIAL_ENVIRONMENT_DEPTH_ACQUIRE_THREAD_STARTED_BIT = 1L shl 23
-    private const val NATIVE_RECEIPT_OPENXR_INSTANCE_BIT = 1L shl 1
-    private const val NATIVE_RECEIPT_OPENXR_SESSION_BIT = 1L shl 2
-    private const val NATIVE_RECEIPT_OPENXR_GET_PROC_BIT = 1L shl 3
-    private const val NATIVE_RECEIPT_PANEL_SURFACE_BIT = 1L shl 4
-    private const val NATIVE_RECEIPT_OPENXR_GET_PROC_CALLABLE_BIT = 1L shl 5
-    private const val NATIVE_RECEIPT_XR_GET_INSTANCE_PROPERTIES_RESOLVED_BIT = 1L shl 6
-    private const val NATIVE_RECEIPT_XR_GET_INSTANCE_PROPERTIES_SUCCEEDED_BIT = 1L shl 7
-    private const val NATIVE_RECEIPT_XR_GET_SYSTEM_RESOLVED_BIT = 1L shl 8
-    private const val NATIVE_RECEIPT_XR_GET_SYSTEM_SUCCEEDED_BIT = 1L shl 9
-    private const val NATIVE_RECEIPT_XR_VULKAN_REQUIREMENTS2_RESOLVED_BIT = 1L shl 10
-    private const val NATIVE_RECEIPT_XR_VULKAN_REQUIREMENTS2_SUCCEEDED_BIT = 1L shl 11
-    private const val NATIVE_RECEIPT_XR_CREATE_VULKAN_INSTANCE_RESOLVED_BIT = 1L shl 12
-    private const val NATIVE_RECEIPT_XR_GET_VULKAN_GRAPHICS_DEVICE2_RESOLVED_BIT = 1L shl 13
-    private const val NATIVE_RECEIPT_XR_CREATE_VULKAN_DEVICE_RESOLVED_BIT = 1L shl 14
-    private const val NATIVE_RECEIPT_VK_INSTANCE_CREATED_BIT = 1L shl 15
-    private const val NATIVE_RECEIPT_VK_GRAPHICS_DEVICE_OBTAINED_BIT = 1L shl 16
-    private const val NATIVE_RECEIPT_VK_GRAPHICS_COMPUTE_QUEUE_FOUND_BIT = 1L shl 17
-    private const val NATIVE_RECEIPT_VK_DEVICE_CREATED_BIT = 1L shl 18
-    private const val NATIVE_RECEIPT_VK_QUEUE_OBTAINED_BIT = 1L shl 19
-    private const val NATIVE_RECEIPT_VK_OBJECTS_DESTROYED_BIT = 1L shl 20
   }
 }

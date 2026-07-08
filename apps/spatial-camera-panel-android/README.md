@@ -345,6 +345,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   left-stick panel-distance mapping, and right-primary panel toggle decisions.
   It must not query Spatial ECS entities, mutate panel state, pin Android game
   controllers, emit markers, or call JNI.
+- `app/src/main/.../SpatialOpenXrRouteModule.kt` owns OpenXR route policy:
+  required extension lists, the explicit opt-in multimodal input default,
+  native receipt bit decoding, and marker-ready native route status helpers.
+  It must not load native libraries, call JNI, query the Spatial runtime, or
+  mutate Activity state.
 - `app/src/main/.../SpatialVirtualRoomModule.kt` owns the explicit opt-in
   packaged virtual room and skybox route: GLXF load, lighting, IBL/skydome
   setup, skybox resources, property parsing, markers, and cleanup. It remains
