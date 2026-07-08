@@ -56,6 +56,7 @@ param(
     [bool]$RequireQcl082UdpReceiveProxyNetworkBinding = $true,
     [int]$Qcl082ReceiveProxyPeerIdleTimeoutMs = 3000,
     [int]$Qcl041ArtifactWaitSeconds = 180,
+    [int]$LiveBridgeCommandTimeoutSeconds = 60,
     [int]$NativeRendererBrokerConnectTimeoutMs = 60000,
     [int]$NoMediaLaunchSeconds = 8,
     [double]$MinFreshFrameSpanSeconds = 25.0,
@@ -68,6 +69,8 @@ param(
     [string]$RequiredQcl041MatrixSummaryPath = "",
     [string]$RequiredQcl041MatrixRunId = "",
     [int]$MaxQcl041MatrixGateAgeSeconds = 1800,
+    [ValidateSet("android_connectivitymanager_network", "rusty_direct_p2p_socket_authority")]
+    [string]$Qcl100LowerGateAuthority = "android_connectivitymanager_network",
     [switch]$PreflightOnly,
     [switch]$SkipInstall,
     [switch]$SkipWakePrep,
@@ -104,6 +107,9 @@ if ($Qcl041Q2qNetworkName -notmatch '^DIRECT-[A-Za-z0-9]{2}.*$' -or $Qcl041Q2qNe
 if ($Qcl041Q2qPassphrase -notmatch '^[\x20-\x7e]{8,63}$') {
     throw "Qcl041Q2qPassphrase must be 8-63 printable ASCII characters."
 }
+if ($LiveBridgeCommandTimeoutSeconds -lt 15) {
+    throw "LiveBridgeCommandTimeoutSeconds must be at least 15 seconds so bridge commands have a bounded but useful live window."
+}
 
 $MediaDir = Join-Path $OutDir "media"
 New-Item -ItemType Directory -Force -Path $MediaDir | Out-Null
@@ -118,6 +124,7 @@ $helperRoot = Join-Path $Qcl100ToolRoot "qcl100_native_projection"
 . (Join-Path $helperRoot "Common.ps1")
 . (Join-Path $helperRoot "ParityBlockers.ps1")
 . (Join-Path $helperRoot "BridgeCommands.ps1")
+. (Join-Path $helperRoot "DirectP2pMediaAuthority.ps1")
 . (Join-Path $helperRoot "Qcl041Relay.ps1")
 . (Join-Path $helperRoot "Readiness.ps1")
 . (Join-Path $helperRoot "Freshness.ps1")
@@ -255,12 +262,14 @@ if ($LowerGatePlanOnly) {
         -Direction $Direction `
         -LaneMode $LaneMode `
         -Qcl082TransportProtocol $Qcl082TransportProtocol `
+        -TransportOwner $TransportOwner `
         -ProjectionSeconds $ProjectionSeconds `
         -NoMediaLaunchSeconds $NoMediaLaunchSeconds `
         -Qcl082ControlTcpMediaStreamBytesPerDirection $Qcl082ControlTcpMediaStreamBytesPerDirection `
         -RequiredQcl041MatrixSummaryPath $RequiredQcl041MatrixSummaryPath `
         -RequiredQcl041MatrixRunId $RequiredQcl041MatrixRunId `
         -MaxQcl041MatrixGateAgeSeconds $MaxQcl041MatrixGateAgeSeconds `
+        -Qcl100LowerGateAuthority $Qcl100LowerGateAuthority `
         -Qcl100ScriptPath (Join-Path $Qcl100ToolRoot "Invoke-Qcl100QuestToQuestNativeStereoProjectionWifiDirect.ps1") `
         -Qcl041MatrixScriptPath (Join-Path $Qcl100ToolRoot "Invoke-Qcl041QuestToQuestAppBoundSocketMatrix.ps1")
     Write-JsonFile -Value $lowerGatePlan -Path $planPath
@@ -274,6 +283,7 @@ if ($LowerGatePlanOnly) {
         device_mutation_performed = $false
         promotion_allowed = $false
         same_group_duplex_claimed = $false
+        qcl100_lower_gate_authority = $Qcl100LowerGateAuthority
         lower_gate_plan_artifact = $planPath
         lower_gate_plan = $lowerGatePlan
         freshness_acceptance = [ordered]@{
@@ -298,6 +308,7 @@ if ($ValidateLowerGateEvidenceOnly) {
         -XrReadinessSummaryPath $XrReadinessSummaryPath `
         -NoMediaLaunchSummaryPath $NoMediaLaunchSummaryPath `
         -AllowSkippedCleanup:$AllowLowerGateEvidenceSkippedCleanup `
+        -Qcl100LowerGateAuthority $Qcl100LowerGateAuthority `
         -RequireQcl041ClientP2pNetworkCallbackSeen:$RequireQcl041ClientP2pNetworkCallbackSeen `
         -RequireQcl041ClientP2pNetworkSocketAuthority:$RequireQcl041ClientP2pNetworkSocketAuthority `
         -RequireQcl041StrictUdpDatagramEchoPass:$RequireQcl041StrictUdpDatagramEchoPass `
@@ -313,9 +324,11 @@ if ($ValidateLowerGateEvidenceOnly) {
         device_mutation_performed = $false
         promotion_allowed = $false
         same_group_duplex_claimed = $false
+        qcl100_lower_gate_authority = $Qcl100LowerGateAuthority
         lower_gate_evidence_artifact = $evidencePath
         lower_gate_evidence = $lowerGateEvidence
         lower_gate_evidence_requirements = [ordered]@{
+            qcl100_lower_gate_authority = $Qcl100LowerGateAuthority
             require_qcl041_client_p2p_network_callback_seen = [bool]$RequireQcl041ClientP2pNetworkCallbackSeen
             require_qcl041_client_p2p_network_socket_authority = [bool]$RequireQcl041ClientP2pNetworkSocketAuthority
             require_qcl041_strict_udp_datagram_echo_pass = [bool]$RequireQcl041StrictUdpDatagramEchoPass
@@ -591,6 +604,7 @@ if ($effectiveRequireQcl041MatrixGatePass -or -not [string]::IsNullOrWhiteSpace(
         -ExpectedRunId $RequiredQcl041MatrixRunId `
         -Qcl082TransportProtocol $Qcl082TransportProtocol `
         -MaxAgeSeconds $MaxQcl041MatrixGateAgeSeconds `
+        -Qcl100LowerGateAuthority $Qcl100LowerGateAuthority `
         -RequireFresh:$effectiveRequireQcl041MatrixGatePass
     $qcl041MatrixGatePath = Join-Path $OutDir "qcl041-matrix-gate.json"
     Write-JsonFile -Value $qcl041MatrixGate -Path $qcl041MatrixGatePath
@@ -794,6 +808,7 @@ if ($XrLaunchReadinessOnly) {
         run_id = $RunId
         status = $readinessStatus
         mode = "xr_launch_readiness_only"
+        qcl100_lower_gate_authority = $Qcl100LowerGateAuthority
         non_invasive = $true
         blocked_stage = $readinessBlockedReason
         blocked_reason = $readinessBlockedReason
@@ -1009,12 +1024,14 @@ function Write-Qcl100OrchestrationFailureSummary {
         blocked_stage = "qcl100_orchestration_exception"
         blocked_reason = $Message
         qcl041_artifact_wait_seconds = $Qcl041ArtifactWaitSeconds
+        live_bridge_command_timeout_seconds = $LiveBridgeCommandTimeoutSeconds
         artifacts = [ordered]@{
             owner_qcl041 = (Test-Path -LiteralPath (Join-Path $OutDir "owner-qcl041.json"))
             client_qcl041 = (Test-Path -LiteralPath (Join-Path $OutDir "client-qcl041.json"))
             owner_native_log = (Test-Path -LiteralPath $ownerLog)
             client_native_log = (Test-Path -LiteralPath $clientLog)
         }
+        live_bridge_command_attempts = Get-Qcl100LiveBridgeCommandAttemptReceipts
         qcl041_artifact_reads = $script:qcl100Qcl041ArtifactReads
         native_log_summary = [ordered]@{
             owner = New-Qcl100TrapNativeLogSummary -Path $ownerLog
@@ -1042,6 +1059,30 @@ function Read-Qcl100JsonIfPresent {
     return $null
 }
 
+function Get-Qcl100LiveBridgeCommandAttemptReceipts {
+    $receipts = @()
+    if (-not (Test-Path -LiteralPath $MediaDir)) {
+        return $receipts
+    }
+    $files = @(Get-ChildItem -LiteralPath $MediaDir -Filter "*-live-command-attempt.json" -File -ErrorAction SilentlyContinue | Sort-Object Name)
+    foreach ($file in $files) {
+        try {
+            $receipts += [ordered]@{
+                path = $file.FullName
+                last_write_utc = $file.LastWriteTimeUtc.ToString("o")
+                receipt = Get-Content -Raw -LiteralPath $file.FullName | ConvertFrom-Json
+            }
+        } catch {
+            $receipts += [ordered]@{
+                path = $file.FullName
+                last_write_utc = $file.LastWriteTimeUtc.ToString("o")
+                read_error = $_.Exception.Message
+            }
+        }
+    }
+    return $receipts
+}
+
 function Get-Qcl100RemoteCameraRuntimeFromExecution {
     param($Execution)
     if ($null -eq $Execution) {
@@ -1052,6 +1093,162 @@ function Get-Qcl100RemoteCameraRuntimeFromExecution {
         return $null
     }
     return $messages[0].remote_camera_runtime
+}
+
+function Get-Qcl100RemoteCameraRuntimeFromBridgeResult {
+    param($BridgeResult)
+    if ($null -eq $BridgeResult -or [string]::IsNullOrWhiteSpace([string]$BridgeResult.execution_path)) {
+        return $null
+    }
+    $execution = Read-Qcl100JsonIfPresent ([string]$BridgeResult.execution_path)
+    return Get-Qcl100RemoteCameraRuntimeFromExecution $execution
+}
+
+function Assert-Qcl100ReceiverReady {
+    param(
+        [string]$Label,
+        $BridgeResult
+    )
+    $runtime = Get-Qcl100RemoteCameraRuntimeFromBridgeResult $BridgeResult
+    if ($null -eq $runtime) {
+        throw "QCL100 $Label receiver start did not produce remote_camera_runtime readiness evidence."
+    }
+    if ([bool]$runtime.receiver_ready) {
+        return
+    }
+    $status = [string]$runtime.receiver_ready_status
+    if ([string]::IsNullOrWhiteSpace($status)) {
+        $status = "unknown"
+    }
+    throw "QCL100 $Label receiver did not reach receiver_ready before sender start; status=$status execution=$($BridgeResult.execution_path)"
+}
+
+function Get-Qcl100DirectP2pAddressRefresh {
+    param(
+        [string]$OwnerOutPath,
+        [string]$ClientOutPath,
+        [int]$TimeoutSeconds = 45
+    )
+    $started = Get-Date
+    $receiptPath = Join-Path $OutDir "qcl100-direct-p2p-address-refresh-attempt.json"
+    $lastError = ""
+    $ownerArtifact = $null
+    $clientArtifact = $null
+    $ownerObserved = ""
+    $clientObserved = ""
+    $clientAcceptedByOwner = ""
+    $clientSocketLocal = ""
+    $ownerGroupOwnerAddressFromClient = ""
+    $clientGroupOwnerAddressFromOwner = ""
+    $attempt = 0
+    $receipt = [ordered]@{
+        schema = "rusty.quest.qcl100_direct_p2p_address_refresh_attempt.v1"
+        run_id = $RunId
+        status = "running"
+        started_at_utc = $started.ToUniversalTime().ToString("o")
+        timeout_seconds = $TimeoutSeconds
+        owner_out_path = $OwnerOutPath
+        client_out_path = $ClientOutPath
+        attempt_count = 0
+        owner_observed_wifi_direct_address = ""
+        client_observed_wifi_direct_address = ""
+        client_accepted_by_owner = ""
+        client_socket_local_address = ""
+        owner_group_owner_address_from_client = ""
+        client_group_owner_address_from_owner = ""
+        last_error = ""
+    }
+    Write-JsonFile -Value $receipt -Path $receiptPath
+    while (((Get-Date) - $started).TotalSeconds -lt $TimeoutSeconds) {
+        $attempt++
+        try {
+            Read-Qcl041Artifact `
+                -Serial $OwnerSerial `
+                -OutPath $OwnerOutPath `
+                -TimeoutSeconds 2 `
+                -RequireRelayFreshness:$false `
+                -RequireReceiveProxyFreshness:$false `
+                -Label "owner-address-refresh"
+            Read-Qcl041Artifact `
+                -Serial $ClientSerial `
+                -OutPath $ClientOutPath `
+                -TimeoutSeconds 2 `
+                -RequireRelayFreshness:$false `
+                -RequireReceiveProxyFreshness:$false `
+                -Label "client-address-refresh"
+            $ownerArtifact = Get-Content -Raw -LiteralPath $OwnerOutPath | ConvertFrom-Json
+            $clientArtifact = Get-Content -Raw -LiteralPath $ClientOutPath | ConvertFrom-Json
+            $ownerObserved = Get-RustyQuestQcl041WifiDirectLocalAddress -Artifact $ownerArtifact
+            $clientObserved = Get-RustyQuestQcl041WifiDirectLocalAddress -Artifact $clientArtifact
+            $clientAcceptedByOwner = Get-RustyQuestQcl041WifiDirectAcceptedPeerAddress -Artifact $ownerArtifact
+            $clientSocketLocal = Get-RustyQuestQcl041WifiDirectSocketLocalAddress -Artifact $clientArtifact
+            $ownerGroupOwnerAddressFromClient = Get-RustyQuestQcl041WifiDirectGroupOwnerAddress -Artifact $clientArtifact
+            $clientGroupOwnerAddressFromOwner = Get-RustyQuestQcl041WifiDirectGroupOwnerAddress -Artifact $ownerArtifact
+            if ([string]::IsNullOrWhiteSpace($ownerObserved) -and
+                -not [string]::IsNullOrWhiteSpace($ownerGroupOwnerAddressFromClient) -and
+                $ownerGroupOwnerAddressFromClient -ne $clientObserved) {
+                $ownerObserved = $ownerGroupOwnerAddressFromClient
+            }
+            if ([string]::IsNullOrWhiteSpace($clientObserved)) {
+                if (-not [string]::IsNullOrWhiteSpace($clientSocketLocal)) {
+                    $clientObserved = $clientSocketLocal
+                } elseif (-not [string]::IsNullOrWhiteSpace($clientAcceptedByOwner)) {
+                    $clientObserved = $clientAcceptedByOwner
+                } elseif (-not [string]::IsNullOrWhiteSpace($clientGroupOwnerAddressFromOwner) -and
+                    $clientGroupOwnerAddressFromOwner -ne $ownerObserved) {
+                    $clientObserved = $clientGroupOwnerAddressFromOwner
+                }
+            }
+            if (-not [string]::IsNullOrWhiteSpace($ownerObserved) -and
+                -not [string]::IsNullOrWhiteSpace($clientObserved)) {
+                break
+            }
+            $lastError = "owner='$ownerObserved' client='$clientObserved' acceptedByOwner='$clientAcceptedByOwner' clientSocket='$clientSocketLocal' ownerGroupOwnerFromClient='$ownerGroupOwnerAddressFromClient' clientGroupOwnerFromOwner='$clientGroupOwnerAddressFromOwner'"
+        } catch {
+            $lastError = $_.Exception.Message
+        }
+        $receipt["attempt_count"] = $attempt
+        $receipt["owner_observed_wifi_direct_address"] = $ownerObserved
+        $receipt["client_observed_wifi_direct_address"] = $clientObserved
+        $receipt["client_accepted_by_owner"] = $clientAcceptedByOwner
+        $receipt["client_socket_local_address"] = $clientSocketLocal
+        $receipt["owner_group_owner_address_from_client"] = $ownerGroupOwnerAddressFromClient
+        $receipt["client_group_owner_address_from_owner"] = $clientGroupOwnerAddressFromOwner
+        $receipt["last_error"] = $lastError
+        $receipt["elapsed_ms"] = [int][Math]::Ceiling(((Get-Date) - $started).TotalMilliseconds)
+        Write-JsonFile -Value $receipt -Path $receiptPath
+        Start-Sleep -Milliseconds 500
+    }
+    $summary = Get-RustyQuestDirectP2pAddressRefreshSummary `
+        -OwnerRequestedAddress $OwnerWifiDirectAddress `
+        -ClientRequestedAddress $ClientWifiDirectAddress `
+        -OwnerObservedAddress $ownerObserved `
+        -ClientObservedAddress $clientObserved
+    $summary["attempt_count"] = $attempt
+    $summary["timeout_seconds"] = $TimeoutSeconds
+    $summary["client_accepted_by_owner"] = $clientAcceptedByOwner
+    $summary["client_socket_local_address"] = $clientSocketLocal
+    $summary["owner_group_owner_address_from_client"] = $ownerGroupOwnerAddressFromClient
+    $summary["client_group_owner_address_from_owner"] = $clientGroupOwnerAddressFromOwner
+    $summary["last_error"] = $lastError
+    $summary["attempt_receipt_path"] = $receiptPath
+    $receipt["attempt_count"] = $attempt
+    $receipt["owner_observed_wifi_direct_address"] = $ownerObserved
+    $receipt["client_observed_wifi_direct_address"] = $clientObserved
+    $receipt["client_accepted_by_owner"] = $clientAcceptedByOwner
+    $receipt["client_socket_local_address"] = $clientSocketLocal
+    $receipt["owner_group_owner_address_from_client"] = $ownerGroupOwnerAddressFromClient
+    $receipt["client_group_owner_address_from_owner"] = $clientGroupOwnerAddressFromOwner
+    $receipt["last_error"] = $lastError
+    $receipt["elapsed_ms"] = [int][Math]::Ceiling(((Get-Date) - $started).TotalMilliseconds)
+    $receipt["status"] = if ([bool]$summary.ready) { "pass" } else { "blocked" }
+    $receipt["ended_at_utc"] = (Get-Date).ToUniversalTime().ToString("o")
+    $receipt["ready"] = [bool]$summary.ready
+    $receipt["blocked_reason"] = [string]$summary.blocked_reason
+    $receipt["issues"] = @($summary.issues)
+    $receipt["summary"] = $summary
+    Write-JsonFile -Value $receipt -Path $receiptPath
+    return $summary
 }
 
 trap {
@@ -1138,7 +1335,16 @@ if ($NoMediaLaunchOnly) {
             run_id = $RunId
             status = "blocked"
             mode = "no_media_launch_only"
+            qcl100_lower_gate_authority = $Qcl100LowerGateAuthority
             blocked_stage = "xr_launch_readiness_preflight"
+            require_qcl041_matrix_gate_pass = [bool]$effectiveRequireQcl041MatrixGatePass
+            requested_require_qcl041_matrix_gate_pass = [bool]$RequireQcl041MatrixGatePass
+            qcl041_matrix_run_id_pin_requires_gate = [bool]$qcl041MatrixRunIdPinRequiresGate
+            required_qcl041_matrix_summary_path = $RequiredQcl041MatrixSummaryPath
+            required_qcl041_matrix_run_id = $RequiredQcl041MatrixRunId
+            max_qcl041_matrix_gate_age_seconds = [Math]::Max(0, $MaxQcl041MatrixGateAgeSeconds)
+            qcl041_matrix_gate = $qcl041MatrixGate
+            qcl041_matrix_gate_artifact = $qcl041MatrixGatePath
             owner_serial = $OwnerSerial
             client_serial = $ClientSerial
             wake_prep_policy = $wakePrepPolicy
@@ -1212,7 +1418,16 @@ if ($NoMediaLaunchOnly) {
         run_id = $RunId
         status = if ($noMediaPassed) { "pass" } else { "blocked" }
         mode = "no_media_launch_only"
+        qcl100_lower_gate_authority = $Qcl100LowerGateAuthority
         no_media_launch_seconds = [Math]::Max(1, $NoMediaLaunchSeconds)
+        require_qcl041_matrix_gate_pass = [bool]$effectiveRequireQcl041MatrixGatePass
+        requested_require_qcl041_matrix_gate_pass = [bool]$RequireQcl041MatrixGatePass
+        qcl041_matrix_run_id_pin_requires_gate = [bool]$qcl041MatrixRunIdPinRequiresGate
+        required_qcl041_matrix_summary_path = $RequiredQcl041MatrixSummaryPath
+        required_qcl041_matrix_run_id = $RequiredQcl041MatrixRunId
+        max_qcl041_matrix_gate_age_seconds = [Math]::Max(0, $MaxQcl041MatrixGateAgeSeconds)
+        qcl041_matrix_gate = $qcl041MatrixGate
+        qcl041_matrix_gate_artifact = $qcl041MatrixGatePath
         qcl041_started = $false
         qcl082_media_started = $false
         qcl041_relay_started = $false
@@ -1278,6 +1493,19 @@ if ($NoMediaLaunchOnly) {
         freshness_acceptance = [ordered]@{
             required = "no-media launch only; broker and native renderer launch without QCL041 relays, QCL082 media, or same-group duplex promotion"
             passed = $noMediaPassed
+            qcl041_matrix_gate_required = [bool]$effectiveRequireQcl041MatrixGatePass
+            qcl041_matrix_gate_evaluated = [bool]$qcl041MatrixGateEvaluated
+            qcl041_matrix_gate_artifact = $qcl041MatrixGatePath
+            qcl041_matrix_gate_passed = [bool]$qcl041MatrixGatePassed
+            qcl041_matrix_gate_passes_requirement = [bool]$qcl041MatrixGatePassesRequirement
+            qcl041_matrix_gate_blocked_reason = $qcl041MatrixGateBlockedReason
+            qcl041_matrix_gate_first_lower_gate_issue = $qcl041MatrixGateFirstLowerGateIssue
+            qcl041_matrix_gate_lower_gate_issue_codes = $qcl041MatrixGateLowerGateIssueCodes
+            qcl041_matrix_run_id_pin_requires_gate = [bool]$qcl041MatrixRunIdPinRequiresGate
+            required_qcl041_matrix_run_id = $RequiredQcl041MatrixRunId
+            qcl041_matrix_gate_run_id = $qcl041MatrixGateRunId
+            qcl041_matrix_gate_transport_protocol = $qcl041MatrixGateTransportProtocol
+            qcl041_matrix_gate_required_topology = $qcl041MatrixGateRequiredTopology
             owner_broker_status_present = [bool]($null -ne $ownerBrokerStatus)
             client_broker_status_present = [bool]($null -ne $clientBrokerStatus)
             owner_native_focus_active = [bool]$ownerFinalFocus.focus_active
@@ -1411,17 +1639,38 @@ $effectiveCameraIds = $effectiveCameraIdSpecs -join ","
 
 
 
-$receiverParams = [ordered]@{
-    session_id = $RunId
-    receiver_bind_host = "127.0.0.1"
-    receiver_ports = $effectiveReceiverPorts
-    transport_bind_host = "0.0.0.0"
-    transport_receive_ports = $effectiveTransportReceivePorts
+function New-Qcl100ReceiverParams {
+    param([string]$TransportBindHost = "0.0.0.0")
+    return New-RustyQuestRemoteCameraReceiverParams `
+        -SessionId $RunId `
+        -ReceiverPorts $effectiveReceiverPorts `
+        -TransportReceivePorts $effectiveTransportReceivePorts `
+        -TransportBindHost $TransportBindHost
 }
-$ownerTransportRoutes = if ($TransportOwner -eq "broker") { Get-TransportRouteSpec $ClientWifiDirectAddress } else { "none" }
-$clientTransportRoutes = if ($TransportOwner -eq "broker") { Get-TransportRouteSpec $OwnerWifiDirectAddress } else { "none" }
-$ownerTransportBindLocalAddress = if ($TransportOwner -eq "broker") { $OwnerWifiDirectAddress } else { "" }
-$clientTransportBindLocalAddress = if ($TransportOwner -eq "broker") { $ClientWifiDirectAddress } else { "" }
+
+$receiverParams = New-Qcl100ReceiverParams
+$effectiveOwnerWifiDirectAddress = $OwnerWifiDirectAddress
+$effectiveClientWifiDirectAddress = $ClientWifiDirectAddress
+$directP2pAddressRefresh = $null
+$ownerTransportRoutes = if ($TransportOwner -eq "broker") { Get-TransportRouteSpec $effectiveClientWifiDirectAddress } else { "none" }
+$clientTransportRoutes = if ($TransportOwner -eq "broker") { Get-TransportRouteSpec $effectiveOwnerWifiDirectAddress } else { "none" }
+$ownerTransportBindLocalAddress = if ($TransportOwner -eq "broker") { $effectiveOwnerWifiDirectAddress } else { "" }
+$clientTransportBindLocalAddress = if ($TransportOwner -eq "broker") { $effectiveClientWifiDirectAddress } else { "" }
+$ownerReceiverTransportBindHost = if ($TransportOwner -eq "broker") { $ownerTransportBindLocalAddress } else { "0.0.0.0" }
+$clientReceiverTransportBindHost = if ($TransportOwner -eq "broker") { $clientTransportBindLocalAddress } else { "0.0.0.0" }
+$directP2pAuthoritySummary = if ($TransportOwner -eq "broker") {
+    New-RustyQuestDirectP2pAuthoritySummary `
+        -OwnerWifiDirectAddress $effectiveOwnerWifiDirectAddress `
+        -ClientWifiDirectAddress $effectiveClientWifiDirectAddress `
+        -OwnerTransportRoutes $ownerTransportRoutes `
+        -ClientTransportRoutes $clientTransportRoutes `
+        -OwnerTransportBindLocalAddress $ownerTransportBindLocalAddress `
+        -ClientTransportBindLocalAddress $clientTransportBindLocalAddress `
+        -OwnerReceiverTransportBindHost $ownerReceiverTransportBindHost `
+        -ClientReceiverTransportBindHost $clientReceiverTransportBindHost
+} else {
+    $null
+}
 $ownerSenderParams = New-SenderParams `
     -TransportRoutes $ownerTransportRoutes `
     -TransportBindLocalAddress $ownerTransportBindLocalAddress
@@ -1434,23 +1683,25 @@ $clientRecv = New-BridgeRequest "client-start-receiver" "command.remote_camera.s
 $ownerSender = New-BridgeRequest "owner-start-source-only" "command.remote_camera.start_sender" $ownerSenderParams "request.qcl100.$RunId.owner.source_only" "evidence.qcl100.$RunId.owner.source_only"
 $clientSender = New-BridgeRequest "client-start-source-only" "command.remote_camera.start_sender" $clientSenderParams "request.qcl100.$RunId.client.source_only" "evidence.qcl100.$RunId.client.source_only"
 
-if ($ownerReceives) {
-    Invoke-LiveBridgeCommand "owner-start-receiver" $OwnerSerial $OwnerBrokerLocalPort $ownerRecv
+if ($ownerReceives -and $TransportOwner -ne "broker") {
+    $ownerReceiverStartProbe = Invoke-LiveBridgeCommand "owner-start-receiver" $OwnerSerial $OwnerBrokerLocalPort $ownerRecv -TimeoutSeconds $LiveBridgeCommandTimeoutSeconds
+    Assert-Qcl100ReceiverReady -Label "owner" -BridgeResult $ownerReceiverStartProbe
 }
-if ($clientReceives) {
-    Invoke-LiveBridgeCommand "client-start-receiver" $ClientSerial $ClientBrokerLocalPort $clientRecv
+if ($clientReceives -and $TransportOwner -ne "broker") {
+    $clientReceiverStartProbe = Invoke-LiveBridgeCommand "client-start-receiver" $ClientSerial $ClientBrokerLocalPort $clientRecv -TimeoutSeconds $LiveBridgeCommandTimeoutSeconds
+    Assert-Qcl100ReceiverReady -Label "client" -BridgeResult $clientReceiverStartProbe
 }
 if ($ownerSends -and $TransportOwner -eq "qcl041") {
-    Invoke-LiveBridgeCommand "owner-start-source-only" $OwnerSerial $OwnerBrokerLocalPort $ownerSender
+    Invoke-LiveBridgeCommand "owner-start-source-only" $OwnerSerial $OwnerBrokerLocalPort $ownerSender -TimeoutSeconds $LiveBridgeCommandTimeoutSeconds
 }
 if ($clientSends -and $TransportOwner -eq "qcl041") {
-    Invoke-LiveBridgeCommand "client-start-source-only" $ClientSerial $ClientBrokerLocalPort $clientSender
+    Invoke-LiveBridgeCommand "client-start-source-only" $ClientSerial $ClientBrokerLocalPort $clientSender -TimeoutSeconds $LiveBridgeCommandTimeoutSeconds
 }
 
-if ($ownerRendererRequired) {
+if ($ownerRendererRequired -and $TransportOwner -ne "broker") {
     Start-NativeRenderer -Serial $OwnerSerial -Label "owner"
 }
-if ($clientRendererRequired) {
+if ($clientRendererRequired -and $TransportOwner -ne "broker") {
     Start-NativeRenderer -Serial $ClientSerial -Label "client"
 }
 Start-Sleep -Seconds 2
@@ -1512,6 +1763,21 @@ if ($ownerQcl041Role -eq "group_owner") {
         $RunId `
         $RequireQcl082UdpReceiveProxyNetworkBinding
 }
+Write-JsonFile -Value ([ordered]@{
+    schema = "rusty.quest.qcl100_qcl041_relay_launch_stage.v1"
+    run_id = $RunId
+    stage = "qcl041_relays_launched"
+    timestamp_utc = (Get-Date).ToUniversalTime().ToString("o")
+    transport_owner = $TransportOwner
+    owner_qcl041_role = $ownerQcl041Role
+    client_qcl041_role = $clientQcl041Role
+    owner_relay_required = [bool]$ownerRelayRequired
+    client_relay_required = [bool]$clientRelayRequired
+    owner_receive_proxy_required = [bool]$ownerReceiveProxyRequired
+    client_receive_proxy_required = [bool]$clientReceiveProxyRequired
+    owner_deferred_receiver_target_required = [bool]$ownerDeferredReceiverTargetRequired
+    client_deferred_receiver_target_required = [bool]$clientDeferredReceiverTargetRequired
+}) -Path (Join-Path $OutDir "qcl100-qcl041-relays-launched.json")
 if ($ownerDeferredReceiverTargetRequired) {
     $qcl082DeferredReceiverTargets.owner_to_client = Publish-Qcl082DeferredReceiverTarget `
         -SenderSerial $OwnerSerial `
@@ -1531,11 +1797,64 @@ if ($clientDeferredReceiverTargetRequired) {
 
 Start-Sleep -Seconds 8
 
-if ($ownerSends -and $TransportOwner -eq "broker") {
-    Invoke-LiveBridgeCommand "owner-start-source-only" $OwnerSerial $OwnerBrokerLocalPort $ownerSender
+if (($ownerSends -or $clientSends) -and $TransportOwner -eq "broker") {
+    $ownerAddressRefreshPath = Join-Path $OutDir "owner-qcl041-address-refresh.json"
+    $clientAddressRefreshPath = Join-Path $OutDir "client-qcl041-address-refresh.json"
+    $directP2pAddressRefresh = Get-Qcl100DirectP2pAddressRefresh `
+        -OwnerOutPath $ownerAddressRefreshPath `
+        -ClientOutPath $clientAddressRefreshPath `
+        -TimeoutSeconds 45
+    Assert-RustyQuestDirectP2pAddressRefreshReady -Summary $directP2pAddressRefresh -Label "QCL100 broker media"
+    $effectiveOwnerWifiDirectAddress = [string]$directP2pAddressRefresh.owner_effective_wifi_direct_address
+    $effectiveClientWifiDirectAddress = [string]$directP2pAddressRefresh.client_effective_wifi_direct_address
+    $ownerTransportRoutes = Get-TransportRouteSpec $effectiveClientWifiDirectAddress
+    $clientTransportRoutes = Get-TransportRouteSpec $effectiveOwnerWifiDirectAddress
+    $ownerTransportBindLocalAddress = $effectiveOwnerWifiDirectAddress
+    $clientTransportBindLocalAddress = $effectiveClientWifiDirectAddress
+    $ownerReceiverTransportBindHost = $effectiveOwnerWifiDirectAddress
+    $clientReceiverTransportBindHost = $effectiveClientWifiDirectAddress
+    $directP2pAuthoritySummary = New-RustyQuestDirectP2pAuthoritySummary `
+        -OwnerWifiDirectAddress $effectiveOwnerWifiDirectAddress `
+        -ClientWifiDirectAddress $effectiveClientWifiDirectAddress `
+        -OwnerTransportRoutes $ownerTransportRoutes `
+        -ClientTransportRoutes $clientTransportRoutes `
+        -OwnerTransportBindLocalAddress $ownerTransportBindLocalAddress `
+        -ClientTransportBindLocalAddress $clientTransportBindLocalAddress `
+        -OwnerReceiverTransportBindHost $ownerReceiverTransportBindHost `
+        -ClientReceiverTransportBindHost $clientReceiverTransportBindHost
+    $ownerReceiverParams = New-Qcl100ReceiverParams -TransportBindHost $ownerReceiverTransportBindHost
+    $clientReceiverParams = New-Qcl100ReceiverParams -TransportBindHost $clientReceiverTransportBindHost
+    $ownerRecv = New-BridgeRequest "owner-start-receiver" "command.remote_camera.start_receiver" $ownerReceiverParams "request.qcl100.$RunId.owner.receiver" "evidence.qcl100.$RunId.owner.receiver"
+    $clientRecv = New-BridgeRequest "client-start-receiver" "command.remote_camera.start_receiver" $clientReceiverParams "request.qcl100.$RunId.client.receiver" "evidence.qcl100.$RunId.client.receiver"
+    if ($ownerReceives) {
+        $ownerReceiverStartProbe = Invoke-LiveBridgeCommand "owner-start-receiver" $OwnerSerial $OwnerBrokerLocalPort $ownerRecv -TimeoutSeconds $LiveBridgeCommandTimeoutSeconds
+        Assert-Qcl100ReceiverReady -Label "owner" -BridgeResult $ownerReceiverStartProbe
+    }
+    if ($clientReceives) {
+        $clientReceiverStartProbe = Invoke-LiveBridgeCommand "client-start-receiver" $ClientSerial $ClientBrokerLocalPort $clientRecv -TimeoutSeconds $LiveBridgeCommandTimeoutSeconds
+        Assert-Qcl100ReceiverReady -Label "client" -BridgeResult $clientReceiverStartProbe
+    }
+    if ($ownerRendererRequired) {
+        Start-NativeRenderer -Serial $OwnerSerial -Label "owner"
+    }
+    if ($clientRendererRequired) {
+        Start-NativeRenderer -Serial $ClientSerial -Label "client"
+    }
+    Start-Sleep -Seconds 2
+    $ownerSenderParams = New-SenderParams `
+        -TransportRoutes $ownerTransportRoutes `
+        -TransportBindLocalAddress $ownerTransportBindLocalAddress
+    $clientSenderParams = New-SenderParams `
+        -TransportRoutes $clientTransportRoutes `
+        -TransportBindLocalAddress $clientTransportBindLocalAddress
+    $ownerSender = New-BridgeRequest "owner-start-source-only" "command.remote_camera.start_sender" $ownerSenderParams "request.qcl100.$RunId.owner.source_only" "evidence.qcl100.$RunId.owner.source_only"
+    $clientSender = New-BridgeRequest "client-start-source-only" "command.remote_camera.start_sender" $clientSenderParams "request.qcl100.$RunId.client.source_only" "evidence.qcl100.$RunId.client.source_only"
+    if ($ownerSends) {
+        Invoke-LiveBridgeCommand "owner-start-source-only" $OwnerSerial $OwnerBrokerLocalPort $ownerSender -TimeoutSeconds $LiveBridgeCommandTimeoutSeconds
+    }
 }
 if ($clientSends -and $TransportOwner -eq "broker") {
-    Invoke-LiveBridgeCommand "client-start-source-only" $ClientSerial $ClientBrokerLocalPort $clientSender
+    Invoke-LiveBridgeCommand "client-start-source-only" $ClientSerial $ClientBrokerLocalPort $clientSender -TimeoutSeconds $LiveBridgeCommandTimeoutSeconds
 }
 if ($TransportOwner -eq "broker") {
     Start-Sleep -Seconds 2
@@ -1638,6 +1957,12 @@ $ownerReceiveProxyFreshness = Get-Qcl082ReceiveProxyFreshness -Diagnostics $owne
 $clientReceiveProxyFreshness = Get-Qcl082ReceiveProxyFreshness -Diagnostics $clientQcl041.diagnostics -ReferenceUnixMs $clientQcl041ReferenceUnixMs
 $ownerBrokerReceiverObservedFreshness = Get-BrokerReceiverObservedFreshness -BrokerStatus $ownerBrokerStatus
 $clientBrokerReceiverObservedFreshness = Get-BrokerReceiverObservedFreshness -BrokerStatus $clientBrokerStatus
+$ownerDirectP2pSenderAuthority = Get-Qcl100DirectP2pSenderAuthority `
+    -BrokerStatus $ownerBrokerStatus `
+    -Required:([bool]($TransportOwner -eq "broker" -and $ownerSends))
+$clientDirectP2pSenderAuthority = Get-Qcl100DirectP2pSenderAuthority `
+    -BrokerStatus $clientBrokerStatus `
+    -Required:([bool]($TransportOwner -eq "broker" -and $clientSends))
 $qcl082MediaTopologyAcceptance = Get-Qcl100Qcl082MediaTopologyAcceptance `
     -OwnerRelayFreshness $ownerRelayFreshness `
     -ClientRelayFreshness $clientRelayFreshness `
@@ -1647,6 +1972,12 @@ $qcl082MediaTopologyAcceptance = Get-Qcl100Qcl082MediaTopologyAcceptance `
     -ClientRelayRequired:$clientRelayRequired `
     -OwnerReceiveProxyRequired:$ownerReceiveProxyRequired `
     -ClientReceiveProxyRequired:$clientReceiveProxyRequired
+$qcl082MediaTopologyRequired = [bool](
+    $ownerRelayRequired -or
+    $clientRelayRequired -or
+    $ownerReceiveProxyRequired -or
+    $clientReceiveProxyRequired
+)
 $ownerCameraSourceFreshness = Resolve-Qcl100CameraSourceFreshness `
     -CurrentFreshness $ownerCameraSourceFreshness `
     -RelayFreshness $ownerRelayFreshness `
@@ -1678,6 +2009,7 @@ $summary = [ordered]@{
     require_infrastructure_wifi_disconnected = [bool]$RequireInfrastructureWifiDisconnected
     require_p2p0_ipv4_cleared = [bool]$RequireP2p0Ipv4Cleared
     require_candidate_wifi_direct_routes_clear = [bool]$RequireCandidateWifiDirectRoutesClear
+    qcl100_lower_gate_authority = $Qcl100LowerGateAuthority
     require_qcl041_matrix_gate_pass = [bool]$effectiveRequireQcl041MatrixGatePass
     requested_require_qcl041_matrix_gate_pass = [bool]$RequireQcl041MatrixGatePass
     qcl041_matrix_run_id_pin_requires_gate = [bool]$qcl041MatrixRunIdPinRequiresGate
@@ -1756,6 +2088,10 @@ $summary = [ordered]@{
             active_lane_count = $activeLaneCount
         }
     }
+    direct_p2p_address_refresh = $directP2pAddressRefresh
+    direct_p2p_media_authority = $directP2pAuthoritySummary
+    live_bridge_command_timeout_seconds = $LiveBridgeCommandTimeoutSeconds
+    live_bridge_command_attempts = Get-Qcl100LiveBridgeCommandAttemptReceipts
     owner_relay = $ownerQcl041.diagnostics.qcl082_relay
     owner_relay_left = $ownerQcl041.diagnostics.qcl082_relay_left
     owner_relay_right = $ownerQcl041.diagnostics.qcl082_relay_right
@@ -1782,9 +2118,30 @@ $summary = [ordered]@{
     client_receive_proxy_freshness = $clientReceiveProxyFreshness
     owner_broker_receiver_observed_freshness = $ownerBrokerReceiverObservedFreshness
     client_broker_receiver_observed_freshness = $clientBrokerReceiverObservedFreshness
+    owner_direct_p2p_sender_authority = $ownerDirectP2pSenderAuthority
+    client_direct_p2p_sender_authority = $clientDirectP2pSenderAuthority
     qcl082_media_topology_acceptance = $qcl082MediaTopologyAcceptance
+    qcl082_media_topology_required = [bool]$qcl082MediaTopologyRequired
     owner_native_renderer_projection = $ownerNativeRenderer
     client_native_renderer_projection = $clientNativeRenderer
+    native_log_summary = [ordered]@{
+        owner = [ordered]@{
+            log_path = $ownerLog
+            fatal_count = $ownerNativeRenderer.fatal_count
+            fatal_lines = $ownerNativeRenderer.fatal_lines
+            system_fatal_count = $ownerNativeRenderer.system_fatal_count
+            system_fatal_lines = $ownerNativeRenderer.system_fatal_lines
+        }
+        client = [ordered]@{
+            log_path = $clientLog
+            fatal_count = $clientNativeRenderer.fatal_count
+            fatal_lines = $clientNativeRenderer.fatal_lines
+            system_fatal_count = $clientNativeRenderer.system_fatal_count
+            system_fatal_lines = $clientNativeRenderer.system_fatal_lines
+        }
+        fatal_count = ([int]$ownerNativeRenderer.fatal_count + [int]$clientNativeRenderer.fatal_count)
+        system_fatal_count = ([int]$ownerNativeRenderer.system_fatal_count + [int]$clientNativeRenderer.system_fatal_count)
+    }
     native_renderer_logcat_capture = [ordered]@{
         owner = $ownerNativeLogcatCaptureStop
         client = $clientNativeLogcatCaptureStop
@@ -1840,6 +2197,17 @@ $summary["active_receiver_projection_ready"] = [bool](
     ((-not $ownerRendererRequired) -or $summary["owner_projection_ready"]) -and
     ((-not $clientRendererRequired) -or $summary["client_projection_ready"])
 )
+$summary["direct_p2p_media_ready"] = [bool](
+    $TransportOwner -eq "broker" -and
+    ((-not $ownerSends) -or $ownerDirectP2pSenderAuthority.accepted) -and
+    ((-not $clientSends) -or $clientDirectP2pSenderAuthority.accepted) -and
+    ((-not $ownerReceives) -or $ownerBrokerReceiverObservedFreshness.fresh) -and
+    ((-not $clientReceives) -or $clientBrokerReceiverObservedFreshness.fresh)
+)
+$summary["direct_p2p_native_projection_ready"] = [bool](
+    $summary["direct_p2p_media_ready"] -and
+    $summary["active_receiver_projection_ready"]
+)
 $summary["freshness_acceptance"] = [ordered]@{
     required = "active_direction_paths_have_fresh_camera2_source_frames_fresh_qcl082_relay_bytes_app_bound_udp_or_control_tcp_qcl082_media_topology_fresh_broker_receiver_observed_bytes_and_active_receiver_renderer_eyes_have_sustained_advancing_AHardwareBuffer_frames_plus_scorecard_progression"
     direction = $Direction
@@ -1867,8 +2235,12 @@ $summary["freshness_acceptance"] = [ordered]@{
     qcl041_matrix_gate_required_topology = $qcl041MatrixGateRequiredTopology
     owner_broker_receiver_observed_required = [bool]$ownerReceives
     client_broker_receiver_observed_required = [bool]$clientReceives
+    owner_direct_p2p_sender_authority_required = [bool]($TransportOwner -eq "broker" -and $ownerSends)
+    client_direct_p2p_sender_authority_required = [bool]($TransportOwner -eq "broker" -and $clientSends)
     owner_stream_required = [bool]$ownerRendererRequired
     client_stream_required = [bool]$clientRendererRequired
+    native_log_system_fatal_count = ([int]$ownerNativeRenderer.system_fatal_count + [int]$clientNativeRenderer.system_fatal_count)
+    native_log_fatal_count = ([int]$ownerNativeRenderer.fatal_count + [int]$clientNativeRenderer.fatal_count)
     owner_camera_source_fresh = [bool]$ownerCameraSourceFreshness.fresh
     client_camera_source_fresh = [bool]$clientCameraSourceFreshness.fresh
     owner_relay_bytes_fresh = [bool]$ownerRelayFreshness.fresh
@@ -1883,6 +2255,10 @@ $summary["freshness_acceptance"] = [ordered]@{
     client_broker_receiver_observed_fresh_lane_count = $clientBrokerReceiverObservedFreshness.fresh_receiver_observed_lane_count
     owner_broker_receiver_observed_byte_count = $ownerBrokerReceiverObservedFreshness.receiver_observed_byte_count
     client_broker_receiver_observed_byte_count = $clientBrokerReceiverObservedFreshness.receiver_observed_byte_count
+    owner_direct_p2p_sender_authority_accepted = [bool]$ownerDirectP2pSenderAuthority.accepted
+    client_direct_p2p_sender_authority_accepted = [bool]$clientDirectP2pSenderAuthority.accepted
+    owner_direct_p2p_sender_authority_accepted_lane_count = $ownerDirectP2pSenderAuthority.accepted_lane_count
+    client_direct_p2p_sender_authority_accepted_lane_count = $clientDirectP2pSenderAuthority.accepted_lane_count
     owner_relay_transport_protocols = $ownerRelayFreshness.transport_protocols
     client_relay_transport_protocols = $clientRelayFreshness.transport_protocols
     owner_receive_proxy_transport_protocols = $ownerReceiveProxyFreshness.transport_protocols
@@ -1927,6 +2303,7 @@ $summary["freshness_acceptance"] = [ordered]@{
     client_relay_udp_lanes_missing_app_bound_udp_media_lane = $clientRelayFreshness.udp_lanes_missing_app_bound_udp_media_lane
     owner_receive_proxy_udp_lanes_missing_app_bound_udp_media_lane = $ownerReceiveProxyFreshness.udp_lanes_missing_app_bound_udp_media_lane
     client_receive_proxy_udp_lanes_missing_app_bound_udp_media_lane = $clientReceiveProxyFreshness.udp_lanes_missing_app_bound_udp_media_lane
+    qcl082_media_topology_required = [bool]$qcl082MediaTopologyRequired
     qcl082_media_topology_accepted = [bool]$qcl082MediaTopologyAcceptance.accepted
     qcl082_media_topology_required_path_count = $qcl082MediaTopologyAcceptance.required_path_count
     qcl082_media_topology_accepted_path_count = $qcl082MediaTopologyAcceptance.accepted_path_count
@@ -1952,7 +2329,10 @@ $summary["freshness_acceptance"] = [ordered]@{
     client_receive_proxy_passed = [bool]((-not $clientReceiveProxyRequired) -or $clientReceiveProxyFreshness.fresh)
     owner_broker_receiver_observed_passed = [bool]((-not $ownerReceives) -or $ownerBrokerReceiverObservedFreshness.fresh)
     client_broker_receiver_observed_passed = [bool]((-not $clientReceives) -or $clientBrokerReceiverObservedFreshness.fresh)
-    qcl082_media_topology_passed = [bool]$qcl082MediaTopologyAcceptance.accepted
+    owner_direct_p2p_sender_authority_passed = [bool]((-not ($TransportOwner -eq "broker" -and $ownerSends)) -or $ownerDirectP2pSenderAuthority.accepted)
+    client_direct_p2p_sender_authority_passed = [bool]((-not ($TransportOwner -eq "broker" -and $clientSends)) -or $clientDirectP2pSenderAuthority.accepted)
+    qcl082_media_topology_passed = [bool]((-not $qcl082MediaTopologyRequired) -or $qcl082MediaTopologyAcceptance.accepted)
+    native_log_passed = [bool](([int]$ownerNativeRenderer.system_fatal_count + [int]$clientNativeRenderer.system_fatal_count + [int]$ownerNativeRenderer.fatal_count + [int]$clientNativeRenderer.fatal_count) -eq 0)
     owner_stream_passed = [bool]((-not $ownerRendererRequired) -or $ownerNativeRenderer.stream_fresh_frames)
     client_stream_passed = [bool]((-not $clientRendererRequired) -or $clientNativeRenderer.stream_fresh_frames)
     owner_scorecard_passed = [bool]((-not $ownerRendererRequired) -or $ownerNativeRenderer.scorecard_fresh_frames)
@@ -1965,6 +2345,8 @@ $summary["freshness_acceptance"] = [ordered]@{
     client_receive_proxy = $clientReceiveProxyFreshness
     owner_broker_receiver_observed = $ownerBrokerReceiverObservedFreshness
     client_broker_receiver_observed = $clientBrokerReceiverObservedFreshness
+    owner_direct_p2p_sender_authority = $ownerDirectP2pSenderAuthority
+    client_direct_p2p_sender_authority = $clientDirectP2pSenderAuthority
     qcl082_media_topology = $qcl082MediaTopologyAcceptance
     owner_left = $ownerNativeRenderer.left_frame_freshness
     owner_right = $ownerNativeRenderer.right_frame_freshness
@@ -1984,7 +2366,10 @@ $summary["freshness_acceptance"] = [ordered]@{
         ((-not $clientReceiveProxyRequired) -or $clientReceiveProxyFreshness.fresh) -and
         ((-not $ownerReceives) -or $ownerBrokerReceiverObservedFreshness.fresh) -and
         ((-not $clientReceives) -or $clientBrokerReceiverObservedFreshness.fresh) -and
-        $qcl082MediaTopologyAcceptance.accepted -and
+        ((-not ($TransportOwner -eq "broker" -and $ownerSends)) -or $ownerDirectP2pSenderAuthority.accepted) -and
+        ((-not ($TransportOwner -eq "broker" -and $clientSends)) -or $clientDirectP2pSenderAuthority.accepted) -and
+        ((-not $qcl082MediaTopologyRequired) -or $qcl082MediaTopologyAcceptance.accepted) -and
+        ([int]$ownerNativeRenderer.system_fatal_count + [int]$clientNativeRenderer.system_fatal_count + [int]$ownerNativeRenderer.fatal_count + [int]$clientNativeRenderer.fatal_count) -eq 0 -and
         ((-not $ownerRendererRequired) -or $ownerNativeRenderer.stream_fresh_frames) -and
         ((-not $clientRendererRequired) -or $clientNativeRenderer.stream_fresh_frames) -and
         ((-not $ownerRendererRequired) -or $ownerNativeRenderer.scorecard_fresh_frames) -and
@@ -1994,7 +2379,8 @@ $summary["freshness_acceptance"] = [ordered]@{
 $summary["transport_claims"] = New-Qcl100TransportClaims `
     -Direction $Direction `
     -FreshnessAcceptance $summary["freshness_acceptance"] `
-    -MediaTopologyAcceptance $qcl082MediaTopologyAcceptance
+    -MediaTopologyAcceptance $qcl082MediaTopologyAcceptance `
+    -MediaTopologyRequired:$qcl082MediaTopologyRequired
 $summary["same_group_duplex_claimed"] = [bool]$summary["transport_claims"]["same_group_duplex_claimed"]
 $qcl100ParityBlockers = [System.Collections.ArrayList]::new()
 Add-Qcl100ParityBlocker `
@@ -2061,15 +2447,49 @@ Add-Qcl100ParityBlocker `
     -Reason "client_broker_receiver_observed_bytes_not_fresh"
 Add-Qcl100ParityBlocker `
     -Blockers $qcl100ParityBlockers `
+    -Gate "owner_direct_p2p_sender_authority" `
+    -Required ([bool]($TransportOwner -eq "broker" -and $ownerSends)) `
+    -Passed ([bool]$ownerDirectP2pSenderAuthority.accepted) `
+    -Reason "owner_direct_p2p_sender_authority_not_accepted" `
+    -Details ([ordered]@{
+        accepted_lane_count = $ownerDirectP2pSenderAuthority.accepted_lane_count
+        lane_count = $ownerDirectP2pSenderAuthority.lane_count
+        lanes = $ownerDirectP2pSenderAuthority.lanes
+    })
+Add-Qcl100ParityBlocker `
+    -Blockers $qcl100ParityBlockers `
+    -Gate "client_direct_p2p_sender_authority" `
+    -Required ([bool]($TransportOwner -eq "broker" -and $clientSends)) `
+    -Passed ([bool]$clientDirectP2pSenderAuthority.accepted) `
+    -Reason "client_direct_p2p_sender_authority_not_accepted" `
+    -Details ([ordered]@{
+        accepted_lane_count = $clientDirectP2pSenderAuthority.accepted_lane_count
+        lane_count = $clientDirectP2pSenderAuthority.lane_count
+        lanes = $clientDirectP2pSenderAuthority.lanes
+    })
+Add-Qcl100ParityBlocker `
+    -Blockers $qcl100ParityBlockers `
     -Gate "qcl082_media_topology" `
-    -Required $true `
-    -Passed ([bool]$qcl082MediaTopologyAcceptance.accepted) `
+    -Required ([bool]$qcl082MediaTopologyRequired) `
+    -Passed ([bool]((-not $qcl082MediaTopologyRequired) -or $qcl082MediaTopologyAcceptance.accepted)) `
     -Reason "qcl082_media_topology_not_accepted" `
     -Details ([ordered]@{
         required_path_count = $qcl082MediaTopologyAcceptance.required_path_count
         accepted_path_count = $qcl082MediaTopologyAcceptance.accepted_path_count
         rejected_path_count = $qcl082MediaTopologyAcceptance.rejected_path_count
         issues = $qcl082MediaTopologyAcceptance.issues
+    })
+Add-Qcl100ParityBlocker `
+    -Blockers $qcl100ParityBlockers `
+    -Gate "native_log_summary" `
+    -Required $true `
+    -Passed ([bool](([int]$ownerNativeRenderer.system_fatal_count + [int]$clientNativeRenderer.system_fatal_count + [int]$ownerNativeRenderer.fatal_count + [int]$clientNativeRenderer.fatal_count) -eq 0)) `
+    -Reason "native_or_system_fatal_lines_present" `
+    -Details ([ordered]@{
+        fatal_count = ([int]$ownerNativeRenderer.fatal_count + [int]$clientNativeRenderer.fatal_count)
+        system_fatal_count = ([int]$ownerNativeRenderer.system_fatal_count + [int]$clientNativeRenderer.system_fatal_count)
+        owner_log = $ownerLog
+        client_log = $clientLog
     })
 Add-Qcl100ParityBlocker `
     -Blockers $qcl100ParityBlockers `

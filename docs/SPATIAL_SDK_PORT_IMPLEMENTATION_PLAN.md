@@ -135,6 +135,11 @@ The carrier is selected through
 `batched-scene-mesh` mode preserves the visible particle count while removing
 per-particle ECS component writes, and `ecs-entities` remains available for A/B
 baseline runs.
+The batched carrier also supports
+`debug.rustyquest.spatial.hand_billboard_flock.visual_mode=wireframe-edges`,
+which emits four thin app-owned edge quads for each billboard mesh item. This
+is the Spatial SDK wireframe comparison path; the built-in `AvatarSystem` hand
+mesh remains SDK-owned and is marker-reported as not publicly wireframeable.
 
 Implementation order:
 
@@ -144,10 +149,12 @@ Implementation order:
 4. Query Spatial SDK local hand anchor entities each frame.
 5. In `batched-scene-mesh` mode, pack camera-facing quads into two
    `TriangleMesh` carriers and report zero per-particle `Transform` writes.
-6. In `ecs-entities` mode, write final `Transform` and `Visible` components
+6. In `wireframe-edges` visual mode, replace each filled billboard face with
+   four edge quads in the same `TriangleMesh` carrier.
+7. In `ecs-entities` mode, write final `Transform` and `Visible` components
    back to the retained entity pool for comparison.
-7. Use one shared viewer-facing orientation basis for all billboard cards.
-8. Report public markers for visible particle count, carrier count, source,
+8. Use one shared viewer-facing orientation basis for all billboard cards.
+9. Report public markers for visible particle count, carrier count, source,
    visibility, and boundary policy.
 
 Non-scope:

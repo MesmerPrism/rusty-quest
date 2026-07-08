@@ -280,10 +280,9 @@ foreach ($path in @($handLabLockPath, $handLabProfilePath, $handLabSettingsPath)
 }
 $handLabLock = Read-Json -Path $handLabLockPath
 Assert-SetEquals -Label "native OpenXR hand lab selected feature closure" -Expected @(
-    "hand_anchor_particles",
     "hand_mesh_live_input",
+    "hand_mesh_visual",
     "input.controllers_and_hands_optional",
-    "particles.hand_anchor.ordering.gpu_index_remap",
     "quest.native.openxr_vulkan_base",
     "renderer.background.solid_black"
 ) -Actual @($handLabLock.selected_feature_ids | ForEach-Object { [string]$_ })
@@ -292,18 +291,19 @@ Assert-SetEquals -Label "native OpenXR hand lab Android permission surface" -Exp
     "org.khronos.openxr.permission.OPENXR",
     "org.khronos.openxr.permission.OPENXR_SYSTEM"
 ) -Actual @($handLabLock.android_manifest.permissions | ForEach-Object { [string]$_ })
-foreach ($deniedFeature in @("hand_mesh_visual", "renderer.private_particles", "camera.hwb", "sdf_visual", "video_projection")) {
+foreach ($deniedFeature in @("hand_anchor_particles", "renderer.private_particles", "camera.hwb", "sdf_visual", "video_projection")) {
     if (@($handLabLock.selected_feature_ids | ForEach-Object { [string]$_ }) -contains $deniedFeature) {
         throw "Native OpenXR hand lab feature lock accidentally selected denied feature: $deniedFeature"
     }
 }
 foreach ($marker in @(
-    "openxrDefaultHandVisualRequested=true",
-    "customHandMeshVisualRequested=false",
-    "handMeshRealHandsVisible=false",
+    "openxrDefaultHandVisualRequested=false",
+    "customHandMeshVisualRequested=true",
+    "handMeshRealHandsVisible=true",
+    "handMeshVisualWireframeEnabled=true",
+    "handMeshVisualWireframeMode=shader-barycentric-triangle-edges",
     "compactHandInputSourceMode=live-meta-openxr-hand-tracking",
-    "handAnchorParticlesEnabled=true",
-    "handAnchorParticleCoordinateSpace=openxr-reference-space"
+    "handAnchorParticlesEnabled=false"
 )) {
     if (@($handLabLock.expected_markers.required | ForEach-Object { [string]$_ }) -notcontains $marker) {
         throw "Native OpenXR hand lab feature lock is missing required marker: $marker"
@@ -311,23 +311,22 @@ foreach ($marker in @(
 }
 $handLabProfile = Read-Json -Path $handLabProfilePath
 $handLabRenderModeSet = @($handLabProfile.set_properties | Where-Object { [string]$_.name -eq "debug.rustyquest.native_renderer.render.mode" })
-if ($handLabRenderModeSet.Count -ne 1 -or [string]$handLabRenderModeSet[0].value -ne "solid-black-openxr-hands-anchor-particles") {
-    throw "Native OpenXR hand lab runtime profile did not set solid-black-openxr-hands-anchor-particles render mode"
+if ($handLabRenderModeSet.Count -ne 1 -or [string]$handLabRenderModeSet[0].value -ne "solid-black-hands-and-grafts") {
+    throw "Native OpenXR hand lab runtime profile did not set solid-black-hands-and-grafts render mode"
 }
 $handLabSettings = Read-Json -Path $handLabSettingsPath
 foreach ($requiredModule in @(
     "background/solid-black",
     "core/openxr-vulkan",
     "hand/live-input",
-    "input/controllers-and-hands",
-    "particles/hand-anchor/ordering/gpu-index-remap",
-    "particles/hand-anchor/renderer"
+    "hand/mesh",
+    "input/controllers-and-hands"
 )) {
     if (-not (@($handLabSettings.modules | ForEach-Object { [string]$_.module_path }) -contains $requiredModule)) {
         throw "Generated native OpenXR hand lab settings are missing required module: $requiredModule"
     }
 }
-foreach ($forbiddenModule in @("hand/mesh", "particles/private/renderer", "camera/hwb", "sdf/visual", "video/projection")) {
+foreach ($forbiddenModule in @("particles/hand-anchor/renderer", "particles/private/renderer", "camera/hwb", "sdf/visual", "video/projection")) {
     if (@($handLabSettings.modules | ForEach-Object { [string]$_.module_path }) -contains $forbiddenModule) {
         throw "Generated native OpenXR hand lab settings selected forbidden module: $forbiddenModule"
     }

@@ -79,7 +79,7 @@ pub(crate) use crate::native_renderer_video_projection_options::{
 pub(crate) use crate::native_renderer_visual_options::HandMeshVisualMaterialProfile;
 pub(crate) use crate::native_renderer_visual_options::{
     CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings, HandMeshVisualMaterialSettings,
-    NativePrivateLayerSettings, NativeRendererRenderMode,
+    HandMeshVisualMeshSource, NativePrivateLayerSettings, NativeRendererRenderMode,
 };
 
 #[derive(Clone, Debug)]
@@ -104,6 +104,7 @@ pub(crate) struct NativeRendererRuntimeOptions {
     pub(crate) sdf_visual_enabled: bool,
     pub(crate) sdf_update_period_frames: u64,
     pub(crate) hand_mesh_visual_diagnostic_settings: HandMeshVisualDiagnosticSettings,
+    pub(crate) hand_mesh_visual_mesh_source: HandMeshVisualMeshSource,
     pub(crate) hand_mesh_visual_material_settings: HandMeshVisualMaterialSettings,
     pub(crate) hand_mesh_graft_copies_enabled: bool,
     pub(crate) hand_mesh_graft_copy_scale: f32,
@@ -156,8 +157,11 @@ impl NativeRendererRuntimeOptions {
             lookup(PROP_HAND_MESH_INPUT_SOURCE),
             replay_visual_proof_enabled,
         );
-        let requested_sdf_visual =
-            replay_visual_proof_enabled || bool_value(lookup(PROP_ENABLE_SDF_VISUAL), false);
+        let requested_sdf_visual = replay_visual_proof_enabled
+            || bool_value(
+                lookup(PROP_SDF_FIELD_VISUAL_ENABLED).or_else(|| lookup(PROP_ENABLE_SDF_VISUAL)),
+                false,
+            );
         let sdf_visual_enabled = requested_sdf_visual && render_mode.allows_sdf_visual();
         let sdf_update_period_frames = u64_value(lookup(PROP_SDF_UPDATE_PERIOD_FRAMES), 2, 1, 120);
         let diagnostic_enabled = replay_visual_proof_enabled
@@ -169,6 +173,8 @@ impl NativeRendererRuntimeOptions {
         let diagnostic_alpha = f32_value(lookup(PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA), 0.86);
         let hand_mesh_visual_material_settings =
             HandMeshVisualMaterialSettings::from_property_lookup(&mut lookup);
+        let hand_mesh_visual_mesh_source =
+            HandMeshVisualMeshSource::from_property(lookup(PROP_HAND_MESH_VISUAL_MESH_SOURCE));
         let hand_mesh_graft_copies_enabled = render_mode.forces_graft_copies()
             || bool_value(lookup(PROP_HAND_MESH_GRAFT_COPIES_ENABLED), false);
         let hand_mesh_graft_copy_scale =
@@ -227,6 +233,7 @@ impl NativeRendererRuntimeOptions {
                 diagnostic_offset_uv,
                 diagnostic_alpha,
             ),
+            hand_mesh_visual_mesh_source,
             hand_mesh_visual_material_settings,
             hand_mesh_graft_copies_enabled,
             hand_mesh_graft_copy_scale,

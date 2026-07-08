@@ -29,6 +29,7 @@ layout(push_constant) uniform HandMeshVisualPush {
 layout(location = 0) flat out uint v_component;
 layout(location = 1) out float v_depth;
 layout(location = 2) flat out float v_normal_z;
+layout(location = 3) out vec3 v_barycentric;
 
 vec4 safe_normalize_quat(vec4 quat) {
     float length_sq = max(dot(quat, quat), 0.000000000001);
@@ -113,6 +114,9 @@ vec3 graft_world_normal(vec3 source_normal, uint target_index) {
 void main() {
     uint triangle_index = uint(gl_VertexIndex) / 3u;
     uint corner_index = uint(gl_VertexIndex) - triangle_index * 3u;
+    v_barycentric = corner_index == 0u
+        ? vec3(1.0, 0.0, 0.0)
+        : (corner_index == 1u ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0));
     uvec4 triangle = skinning_triangles.triangles[triangle_index];
     uint vertex_index = triangle.x;
     if (corner_index == 1u) {

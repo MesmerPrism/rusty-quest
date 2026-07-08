@@ -9,6 +9,8 @@
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv",
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.width_px",
     "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
     "debug.rustyquest.native_renderer.hand_mesh.graft_copies.scale",
     "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
@@ -47,6 +49,16 @@
       "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.alpha"
     },
     {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.enabled",
+      "value": "true",
+      "source_setting_id": "native_renderer.hand_mesh.visual.wireframe.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.width_px",
+      "value": "1.35",
+      "source_setting_id": "native_renderer.hand_mesh.visual.wireframe.width_px"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
       "value": "true",
       "source_setting_id": "native_renderer.hand_mesh.graft_copies.enabled"
@@ -81,6 +93,7 @@
     "handMeshGraftCopiesEnabled=true",
     "handMeshGraftScaleMultiplier=0.85",
     "handMeshRealHandsVisible=false",
+    "handMeshVisualWireframeEnabled=true",
     "RUSTY_QUEST_NATIVE_RENDERER channel=camera-runtime",
     "cameraRuntimeMode=skipped-native-passthrough",
     "RUSTY_QUEST_NATIVE_RENDERER channel=native-passthrough",

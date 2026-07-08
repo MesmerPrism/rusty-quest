@@ -86,6 +86,7 @@ final class Qcl041WifiDirectLifecycle {
     private static final long Q2Q_CONNECT_RETRY_DELAY_MS = 70_000L;
     private static final int Q2Q_REMOVE_GROUP_MAX_ATTEMPTS = 4;
     private static final long Q2Q_REMOVE_GROUP_RETRY_DELAY_MS = 1_000L;
+    private static final long WIFI_DIRECT_LOCAL_ADDRESS_WAIT_MS = 5_000L;
 
     interface StatusListener {
         void onStatus(String status);
@@ -912,7 +913,9 @@ final class Qcl041WifiDirectLifecycle {
     private WifiP2pDevice selectPeer(Collection<WifiP2pDevice> devices) {
         String needle = config.effectivePeerNameContains().toLowerCase(Locale.US);
         WifiP2pDevice first = null;
+        int count = 0;
         for (WifiP2pDevice device : devices) {
+            count++;
             if (first == null) {
                 first = device;
             }
@@ -921,7 +924,19 @@ final class Qcl041WifiDirectLifecycle {
                 return device;
             }
         }
-        return needle.isEmpty() ? first : null;
+        if (needle.isEmpty()) {
+            return first;
+        }
+        if (config.isQuestPeerRoute() && count == 1 && first != null) {
+            artifact.diagnostic("peer", "single_quest_peer_name_fallback", true);
+            artifact.diagnostic("peer", "single_quest_peer_name_fallback_requested", needle);
+            artifact.diagnostic(
+                    "peer",
+                    "single_quest_peer_name_fallback_device_name",
+                    first.deviceName == null ? "" : first.deviceName);
+            return first;
+        }
+        return null;
     }
 
     private WifiP2pConfig buildQuestGroupOwnerConfig() {
@@ -1395,6 +1410,17 @@ final class Qcl041WifiDirectLifecycle {
             return;
         }
 
+        if (config.isQuestPeerRoute()
+                && config.qcl082MediaPathBeforeSocketProbe
+                && qcl082MediaPathEnabled()) {
+            if (info.isGroupOwner) {
+                startQuestGroupOwnerMediaPathAfterClientJoin(info);
+            } else {
+                startQuestClientQcl082MediaPath(info);
+            }
+            return;
+        }
+
         if (config.isQuestPeerRoute() && info.isGroupOwner) {
             startQuestGroupOwnerSocketExchange(info);
             return;
@@ -1429,12 +1455,33 @@ final class Qcl041WifiDirectLifecycle {
                 Network wifiDirectNetwork = null;
                 InetAddress localAddress = null;
                 try {
-                    wifiDirectNetwork = findCallbackPreferredUsableWifiDirectNetwork(
-                            info.groupOwnerAddress,
-                            "q2q_app_bound_socket_matrix",
-                            info.isGroupOwner ? "owner_p2p_network_" : "client_p2p_network_",
-                            30_000L);
-                    localAddress = findWifiDirectLocalAddress(info.groupOwnerAddress);
+                    String prefix = info.isGroupOwner ? "owner_p2p_network_" : "client_p2p_network_";
+                    if (config.isRustyDirectP2pSocketAuthority()) {
+                        artifact.diagnostic(
+                                "q2q_app_bound_socket_matrix",
+                                "qcl100_lower_gate_authority",
+                                config.qcl100LowerGateAuthority);
+                        artifact.diagnostic(
+                                "q2q_app_bound_socket_matrix",
+                                prefix + "android_network_wait_skipped_for_rusty_direct_p2p_socket_authority",
+                                true);
+                        artifact.diagnostic(
+                                "app_network_trace",
+                                "network_visibility_only_android_network_wait_skipped_for_rusty_direct_p2p_socket_authority",
+                                true);
+                        localAddress = waitForWifiDirectLocalAddress(
+                                info.groupOwnerAddress,
+                                "q2q_app_bound_socket_matrix",
+                                prefix,
+                                WIFI_DIRECT_LOCAL_ADDRESS_WAIT_MS);
+                    } else {
+                        wifiDirectNetwork = findCallbackPreferredUsableWifiDirectNetwork(
+                                info.groupOwnerAddress,
+                                "q2q_app_bound_socket_matrix",
+                                prefix,
+                                30_000L);
+                        localAddress = findWifiDirectLocalAddress(info.groupOwnerAddress);
+                    }
                     recordAppNetworkSnapshot("network_visibility_only_before_matrix", info.groupOwnerAddress);
                     artifact.setSocketExchange(
                             false,
@@ -1447,6 +1494,10 @@ final class Qcl041WifiDirectLifecycle {
                             "app_network_trace",
                             "network_visibility_only_tcp_binding_variants",
                             config.q2qTcpBindingVariants);
+                    artifact.diagnostic(
+                            "app_network_trace",
+                            "network_visibility_only_qcl100_lower_gate_authority",
+                            config.qcl100LowerGateAuthority);
                     artifact.diagnostic("app_network_trace", "network_visibility_only_matrix_attempted", true);
                     artifact.writeQuietly();
                     boolean matrixStarted = runQ2qAppBoundSocketMatrix(
@@ -1558,6 +1609,27 @@ final class Qcl041WifiDirectLifecycle {
                 "QCL-094 bounded TCP probe skipped because QCL-082 media path owns the first Quest-to-Quest Wi-Fi Direct socket.");
         artifact.diagnostic("qcl082_media_path", "started_before_socket_probe", true);
         artifact.diagnostic("qcl082_media_path", "quest_group_owner_media_path", true);
+        startQcl082MediaPathThenFinish(wifiDirectNetwork, info.groupOwnerAddress);
+    }
+
+    private void startQuestClientQcl082MediaPath(WifiP2pInfo info) {
+        if (socketStarted || cleanupStarted) {
+            return;
+        }
+        socketStarted = true;
+        Network wifiDirectNetwork = findCallbackPreferredUsableWifiDirectNetwork(
+                info.groupOwnerAddress,
+                "qcl082_media_path",
+                "client_p2p_network_",
+                30_000L);
+        artifact.setSocketExchange(
+                false,
+                0,
+                0,
+                null,
+                "QCL-094 bounded TCP probe skipped because QCL-082 media path owns the first Quest-to-Quest Wi-Fi Direct socket.");
+        artifact.diagnostic("qcl082_media_path", "started_before_socket_probe", true);
+        artifact.diagnostic("qcl082_media_path", "quest_client_media_path", true);
         startQcl082MediaPathThenFinish(wifiDirectNetwork, info.groupOwnerAddress);
     }
 
@@ -1726,7 +1798,11 @@ final class Qcl041WifiDirectLifecycle {
                         ? "deferred_until_udp_relay_after_loopback_source_connect"
                         : "not_udp_relay_transport");
         artifact.writeQuietly();
-        if (config.isQuestPeerRoute() && !config.isQuestGroupOwnerRole()) {
+        if (config.isQuestPeerRoute()
+                && !config.isQuestGroupOwnerRole()
+                && config.qcl082MediaPathBeforeSocketProbe) {
+            announceQcl082PeerAddress(wifiDirectNetwork, groupOwnerAddress);
+        } else if (config.isQuestPeerRoute() && !config.isQuestGroupOwnerRole()) {
             artifact.diagnostic(
                     "qcl082_peer_address",
                     "announce_skipped",
@@ -1928,7 +2004,11 @@ final class Qcl041WifiDirectLifecycle {
                         "control_tcp",
                         "client_p2p_network_",
                         30_000L);
-                InetAddress localAddress = findWifiDirectLocalAddress(info.groupOwnerAddress);
+                InetAddress localAddress = waitForWifiDirectLocalAddress(
+                        info.groupOwnerAddress,
+                        "control_tcp",
+                        "client_",
+                        WIFI_DIRECT_LOCAL_ADDRESS_WAIT_MS);
                 boolean qcl082MediaStarted = false;
                 boolean appBoundMatrixStarted = false;
                 try (Socket socket = createSocketForWifiDirectNetwork(wifiDirectNetwork)) {
@@ -2097,7 +2177,11 @@ final class Qcl041WifiDirectLifecycle {
                             "control_tcp",
                             "owner_p2p_network_",
                             30_000L);
-                    localAddress = findWifiDirectLocalAddress(info.groupOwnerAddress);
+                    localAddress = waitForWifiDirectLocalAddress(
+                            info.groupOwnerAddress,
+                            "control_tcp",
+                            "group_owner_",
+                            WIFI_DIRECT_LOCAL_ADDRESS_WAIT_MS);
                     recordAppNetworkSnapshot("before_tcp_bind_connect", info.groupOwnerAddress);
                     artifact.diagnostic("control_tcp", "socket_owner_package", Qcl041ProbeConfig.PACKAGE_NAME);
                     artifact.diagnostic("control_tcp", "socket_owner_uid", android.os.Process.myUid());
@@ -6665,6 +6749,35 @@ final class Qcl041WifiDirectLifecycle {
 
     private InetAddress findWifiDirectLocalAddress(InetAddress groupOwnerAddress) {
         return networkBinder.findWifiDirectLocalAddress(groupOwnerAddress);
+    }
+
+    private InetAddress waitForWifiDirectLocalAddress(
+            InetAddress groupOwnerAddress,
+            String section,
+            String prefix,
+            long timeoutMs) {
+        long startedMs = SystemClock.elapsedRealtime();
+        long deadlineMs = startedMs + Math.max(0L, timeoutMs);
+        int attempts = 0;
+        while (true) {
+            attempts++;
+            InetAddress localAddress = findWifiDirectLocalAddress(groupOwnerAddress);
+            long elapsedMs = SystemClock.elapsedRealtime() - startedMs;
+            if (localAddress != null) {
+                artifact.diagnostic(section, prefix + "wifi_direct_local_address_wait_result", "found");
+                artifact.diagnostic(section, prefix + "wifi_direct_local_address_wait_attempts", attempts);
+                artifact.diagnostic(section, prefix + "wifi_direct_local_address_wait_elapsed_ms", elapsedMs);
+                return localAddress;
+            }
+            long nowMs = SystemClock.elapsedRealtime();
+            if (nowMs >= deadlineMs) {
+                artifact.diagnostic(section, prefix + "wifi_direct_local_address_wait_result", "timeout");
+                artifact.diagnostic(section, prefix + "wifi_direct_local_address_wait_attempts", attempts);
+                artifact.diagnostic(section, prefix + "wifi_direct_local_address_wait_elapsed_ms", elapsedMs);
+                return null;
+            }
+            SystemClock.sleep(Math.min(250L, Math.max(1L, deadlineMs - nowMs)));
+        }
     }
 
     private static boolean sameIpv4Slash24(InetAddress left, InetAddress right) {

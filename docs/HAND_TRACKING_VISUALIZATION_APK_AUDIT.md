@@ -16,23 +16,26 @@ It resolves to a source-only OpenXR/Vulkan APK with:
 - `input.controllers_and_hands_optional`
 - `renderer.background.solid_black`
 - `hand_mesh_live_input`
-- `hand_anchor_particles`
-- `particles.hand_anchor.ordering.gpu_index_remap`
+- `hand_mesh_visual`
 
 `hand_mesh_live_input` is the important split point. It enables live
 Meta/OpenXR compact hand input and the resident GPU skinning substrate without
-requesting the app's custom hand mesh draw. `hand_anchor_particles` then uses
-those resident skinned buffers for topology particles. The app spec keeps
+requiring per-frame expanded mesh vertices. `hand_mesh_visual` then draws the
+resident selected mesh with the procedural hand material and optional
+shader-barycentric wireframe overlay. The app spec keeps
 camera, video, display-composite, SDF, private particles, private layers,
-Makepad, and the custom mesh visual denied.
+Makepad, and hand-anchor particles denied.
 
 The accepted target to return to is:
 
-- render mode `solid-black-openxr-hands-anchor-particles`
-- runtime/default OpenXR hand visual requested
-- app custom hand mesh visual disabled
-- graft copies disabled
-- hand-anchor particles enabled in OpenXR reference-space meters
+- render mode `solid-black-hands-and-grafts`
+- live OpenXR compact joint input selected
+- resident XR_FB hand mesh visual selected by
+  `debug.rustyquest.native_renderer.hand_mesh.visual.mesh_source=openxr-fb-mesh`
+- shader-barycentric wireframe enabled for exact triangle inspection
+- existing graft-copy markers remain separate from source-mesh selection
+- SDF field visual disabled through
+  `debug.rustyquest.native_renderer.sdf.field_visual.enabled=false`
 - private hand-particle payload inactive
 
 Use:
@@ -65,6 +68,36 @@ headset when the run needs the SDK's `AvatarSystem` hand visual for comparison.
 
 The public ECS hand billboard path remains separate and opt-in through
 `debug.rustyquest.spatial.hand_billboard_flock.enabled=true`.
+Its app-owned `TriangleMesh` carrier can render filled billboard quads or
+wireframe edge quads:
+
+- `debug.rustyquest.spatial.hand_billboard_flock.visual_mode=filled-billboards`
+- `debug.rustyquest.spatial.hand_billboard_flock.visual_mode=wireframe-edges`
+- `debug.rustyquest.spatial.hand_billboard_flock.wireframe.source=spatial-sdk-joint-proxy`
+- `debug.rustyquest.spatial.hand_billboard_flock.wireframe.width_m=0.0035`
+
+This Spatial wireframe mode applies only to Rusty Quest app-owned
+`TriangleMesh` geometry. The built-in `AvatarSystem` hand mesh remains
+SDK-owned; runtime markers report `spatialAvatarHandMeshWireframeSupported=false`
+so the comparison path cannot be mistaken for custom hand topology access.
+When `wireframe.source` is hotloaded to `openxr-fb-mesh` or `custom-mesh`, the
+Spatial markers report that the requested exact source is unavailable and that
+the resolved visual remains the app-owned Spatial joint proxy.
+
+For the Spatial SDK hand-mesh investigation APK, also enable the read-only
+Avatar hand probe:
+
+- `debug.rustyquest.spatial.avatar_hand_probe.enabled=true`
+- `debug.rustyquest.spatial.avatar_hand_probe.sample_period_frames=30`
+- `debug.rustyquest.spatial.avatar_hand_probe.detail_limit=16`
+- `debug.rustyquest.spatial.hand_billboard_flock.wireframe.source=avatar-system-public-mesh-probe`
+
+The probe emits `channel=spatial-avatar-hand-investigation` markers with
+`sdkBuiltInHandMeshPubliclyObserved`, `handCandidateMeshCount`,
+`meshExtractionStatus`, and `skinningExtractionStatus`. The expected 0.13.1
+public-API result is transform/material metadata only, not vertex/index
+readback; exact wireframe still comes from app-owned `TriangleMesh` proxy
+geometry unless a public topology path is observed at runtime.
 
 Use:
 
@@ -98,11 +131,78 @@ these startup properties:
 - `debug.rustyquest.native_renderer.hand_mesh.visual.material.base_color.g`
 - `debug.rustyquest.native_renderer.hand_mesh.visual.material.base_color.b`
 - `debug.rustyquest.native_renderer.hand_mesh.visual.material.rim_strength`
+- `debug.rustyquest.native_renderer.hand_mesh.visual.mesh_source`
+- `debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.enabled`
+- `debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.width_px`
 
 The shader uses a base RGB color, alpha, subtle normal/depth tinting, and a
-normal-facing rim approximation. It deliberately emits
-`handMeshVisualTextureImported=false`, because exact wire/triangle inspection
-belongs in the separate mesh/wire debug visual path.
+normal-facing rim approximation. When wireframe is enabled, the same triangle
+draw emits shader-barycentric edge lines over the resident selected topology.
+`hand_mesh.visual.mesh_source=auto` accepts whichever topology is packaged,
+`openxr-fb-mesh` requires an XR_FB hand mesh topology, and `custom-mesh`
+requires a non-XR_FB custom topology. The frame markers report both the
+requested and resolved source through `handMeshVisualMeshSourceSelection` and
+`handMeshVisualResolvedMeshSource`. Wireframe enabled/width and mesh source are
+runtime-polled Android properties, so they can be changed with `adb setprop`
+during a running session. The material deliberately emits
+`handMeshVisualTextureImported=false`; the Unity UV texture remains only a
+reference, not a runtime asset.
+
+## Recording And Replay Modes
+
+The hand substrate now keeps two recorded replay modes visible instead of
+treating all captures as one artifact:
+
+- `recorded-mesh-validation-frames`: replay already-skinned animated mesh rows
+  from `left/right.validation_mesh.jsonl`. This is useful as a visual/reference
+  capture of what the provider produced.
+- `recorded-joints-skin-live`: replay compact runtime joint rows from
+  `left/right.clip.jsonl`, then skin the rig through the same resident CPU/GPU
+  shape used by live OpenXR hands.
+
+The second mode is the autonomy target for custom hand meshes. A headset run
+can record live OpenXR compact joint clips, pull them from app-scoped external
+storage, inspect them locally, and later combine them with an existing
+`left/right.rig.json` plus optional `validation_mesh_jsonl` frames for a full
+`recorded_hand_replay_source.v1` bundle.
+
+The live joint recorder is controlled by a low-rate app-scoped external control
+file, not by high-rate Android properties:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 `
+  -Serial <quest-serial> `
+  -Action Prepare `
+  -MaterialProfile unity-basic-reference `
+  -VisualMeshSource openxr-fb-mesh `
+  -Wireframe `
+  -DisableSdfVisual
+
+# Launch or relaunch the native hand lab after Prepare so startup material
+# properties are consumed by NativeActivity.
+
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 `
+  -Serial <quest-serial> `
+  -Action Start `
+  -SessionId hand-joints-test-001 `
+  -MaxFrames 900
+
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 `
+  -Serial <quest-serial> `
+  -Action Stop
+
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 `
+  -Serial <quest-serial> `
+  -Action PullAndInspect `
+  -SessionId hand-joints-test-001
+```
+
+Pulled captures land under `target\native-renderer-hand-joint-captures` and
+contain `capture.manifest.json`, `left.clip.jsonl`, `right.clip.jsonl`, and
+`hand-joint-capture-inspection.json`. Runtime logcat should show
+`channel=hand-joint-capture`, `replayMode=recorded-joints-skin-live`,
+`leftFrames`, `rightFrames`, and the active
+`handMeshVisualMaterialProfile`.
 
 Spatial SDK's built-in `AvatarSystem` hand visual remains SDK-owned. The public
 toggle can show or hide those hands, but there is no supported public

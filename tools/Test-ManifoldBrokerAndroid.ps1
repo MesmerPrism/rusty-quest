@@ -14,9 +14,10 @@ $servicePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymani
 $launchEvidencePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\BrokerLaunchEvidence.java"
 $serverPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\LocalManifoldBrokerServer.java"
 $remoteCameraRuntimePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraSessionRuntime.java"
+$remoteCameraDirectP2pSocketAuthorityPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraDirectP2pSocketAuthority.java"
 $remoteCameraSourceRuntimePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraSourceRuntime.java"
 
-foreach ($path in @($manifestPath, $activityPath, $servicePath, $launchEvidencePath, $serverPath, $remoteCameraRuntimePath, $remoteCameraSourceRuntimePath)) {
+foreach ($path in @($manifestPath, $activityPath, $servicePath, $launchEvidencePath, $serverPath, $remoteCameraRuntimePath, $remoteCameraDirectP2pSocketAuthorityPath, $remoteCameraSourceRuntimePath)) {
     if (-not (Test-Path $path)) {
         throw "Missing Manifold broker Android file: $path"
     }
@@ -28,6 +29,7 @@ $service = Get-Content -Raw -Path $servicePath
 $launchEvidence = Get-Content -Raw -Path $launchEvidencePath
 $server = Get-Content -Raw -Path $serverPath
 $remoteCameraRuntime = Get-Content -Raw -Path $remoteCameraRuntimePath
+$remoteCameraDirectP2pSocketAuthority = Get-Content -Raw -Path $remoteCameraDirectP2pSocketAuthorityPath
 $remoteCameraSourceRuntime = Get-Content -Raw -Path $remoteCameraSourceRuntimePath
 
 if ($manifest -notmatch 'package="io\.github\.mesmerprism\.rustymanifold\.broker"') {
@@ -156,6 +158,21 @@ if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.receiver_p
 if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.transport_receive_ports') {
     throw "RemoteCameraSessionRuntime does not read the transport receiver port runtime property."
 }
+if ($remoteCameraRuntime -notmatch 'RECEIVER_START_READY_WAIT_MS') {
+    throw "RemoteCameraSessionRuntime must bound receiver start readiness waits."
+}
+if ($remoteCameraRuntime -notmatch 'rusty\.quest\.remote_camera\.receiver_start_readiness\.v1') {
+    throw "RemoteCameraSessionRuntime does not emit receiver start readiness evidence."
+}
+if ($remoteCameraRuntime -notmatch 'receiver_ready') {
+    throw "RemoteCameraSessionRuntime does not report receiver readiness before sender startup."
+}
+if ($remoteCameraRuntime -notmatch 'transport_server_bound_address') {
+    throw "RemoteCameraSessionRuntime does not report transport receiver bound address diagnostics."
+}
+if ($remoteCameraRuntime -notmatch 'local_receiver_bound_address') {
+    throw "RemoteCameraSessionRuntime does not report local receiver bound address diagnostics."
+}
 if ($remoteCameraRuntime -notmatch 'waiting_for_transport_peer_with_local_listener') {
     throw "RemoteCameraSessionRuntime must bind the local renderer listener while waiting for transport-backed receiver peers."
 }
@@ -180,7 +197,7 @@ if ($remoteCameraRuntime -notmatch 'sender_source_kind",\s*"source_kind"') {
 if ($remoteCameraRuntime -notmatch 'peer_socket_bound_local_address') {
     throw "RemoteCameraSessionRuntime does not report Wi-Fi Direct peer socket local binding diagnostics."
 }
-if ($remoteCameraRuntime -notmatch 'explicit_local_bind_address') {
+if ($remoteCameraDirectP2pSocketAuthority -notmatch 'rusty_direct_p2p_explicit_local_bind_address') {
     throw "RemoteCameraSessionRuntime does not attempt explicit QCL-041-proven local address binding."
 }
 if ($remoteCameraRuntime -notmatch 'local_bind_host') {
@@ -189,7 +206,7 @@ if ($remoteCameraRuntime -notmatch 'local_bind_host') {
 if ($remoteCameraRuntime -notmatch 'WIFI_DIRECT_PEER_BIND_WAIT_MS') {
     throw "RemoteCameraSessionRuntime does not wait for Wi-Fi Direct peer socket binding before QCL-082 connect."
 }
-if ($remoteCameraRuntime -notmatch 'isLikelyWifiDirectPeerAddress') {
+if ($remoteCameraDirectP2pSocketAuthority -notmatch 'isLikelyWifiDirectPeerAddress') {
     throw "RemoteCameraSessionRuntime does not identify direct-Wi-Fi peer address ranges before binding."
 }
 if ($remoteCameraRuntime -notmatch 'peer_socket_wifi_direct_bind_required') {
@@ -198,8 +215,20 @@ if ($remoteCameraRuntime -notmatch 'peer_socket_wifi_direct_bind_required') {
 if ($remoteCameraRuntime -notmatch 'getSocketFactory\(\)\.createSocket') {
     throw "RemoteCameraSessionRuntime does not create peer sockets from the selected Android Network."
 }
-if ($remoteCameraRuntime -notmatch 'NetworkInterface\.getNetworkInterfaces') {
+if ($remoteCameraDirectP2pSocketAuthority -notmatch 'NetworkInterface\.getNetworkInterfaces') {
     throw "RemoteCameraSessionRuntime does not fall back to Wi-Fi Direct local address binding."
+}
+if ($remoteCameraDirectP2pSocketAuthority -notmatch 'findInterfaceNameForAddress') {
+    throw "RemoteCameraDirectP2pSocketAuthority does not expose interface-name diagnostics for bound receiver sockets."
+}
+if ($remoteCameraDirectP2pSocketAuthority -notmatch 'rusty_direct_p2p_socket_authority') {
+    throw "RemoteCameraDirectP2pSocketAuthority does not name the Rusty direct p2p socket authority."
+}
+if ($remoteCameraRuntime -notmatch 'peer_socket_authority') {
+    throw "RemoteCameraSessionRuntime does not report the peer socket authority in lane evidence."
+}
+if ($remoteCameraRuntime -notmatch 'RemoteCameraDirectP2pSocketAuthority\.requiresDirectP2pSocket') {
+    throw "RemoteCameraSessionRuntime does not delegate direct p2p socket selection to the shared authority."
 }
 if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.sender_source_kind') {
     throw "RemoteCameraSessionRuntime does not read the sender source kind runtime property."
@@ -239,6 +268,15 @@ if ($remoteCameraSourceRuntime -notmatch 'cachedCodecConfigPacket') {
 }
 if ($remoteCameraSourceRuntime -notmatch 'replayCachedCodecConfig') {
     throw "RemoteCameraSourceRuntime does not replay codec config after writing a fresh stream header."
+}
+if ($remoteCameraSourceRuntime -notmatch 'projectionMetadataReady", true') {
+    throw "RemoteCameraSourceRuntime must emit projection-ready RMANVID1 stream header metadata."
+}
+if ($remoteCameraSourceRuntime -notmatch 'projectionGeometryProfile", "full-frame-diagnostic"') {
+    throw "RemoteCameraSourceRuntime must declare the full-frame projection profile for RMANVID1 stream headers."
+}
+if ($remoteCameraSourceRuntime -notmatch 'contentMappingIntent", "map-full-frame-content-to-projection-area"') {
+    throw "RemoteCameraSourceRuntime must declare full-frame content mapping for RMANVID1 stream headers."
 }
 if ($remoteCameraSourceRuntime -notmatch 'consumer_sync_frame_request_count') {
     throw "RemoteCameraSourceRuntime does not report consumer-triggered sync-frame requests."

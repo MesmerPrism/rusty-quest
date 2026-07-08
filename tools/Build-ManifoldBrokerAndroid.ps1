@@ -39,6 +39,28 @@ function Invoke-Checked {
     }
 }
 
+function Get-FileSha256Hex {
+    param([Parameter(Mandatory=$true)][string]$Path)
+
+    $cmd = Get-Command Get-FileHash -ErrorAction SilentlyContinue
+    if ($null -ne $cmd) {
+        return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            $hash = $sha.ComputeHash($stream)
+            return -join ($hash | ForEach-Object { $_.ToString("x2") })
+        } finally {
+            $sha.Dispose()
+        }
+    } finally {
+        $stream.Dispose()
+    }
+}
+
 if ([string]::IsNullOrWhiteSpace($AndroidHome)) {
     throw "ANDROID_HOME or -AndroidHome is required."
 }
@@ -146,7 +168,7 @@ Invoke-Checked "apksigner" $apksigner @(
     $apkAligned
 )
 
-$sha256 = (Get-FileHash -Algorithm SHA256 -Path $apkSigned).Hash.ToLowerInvariant()
+$sha256 = Get-FileSha256Hex -Path $apkSigned
 $manifest = [ordered]@{
     '$schema' = "rusty.quest.manifold_broker_android.build_manifest.v1"
     package_name = "io.github.mesmerprism.rustymanifold.broker"

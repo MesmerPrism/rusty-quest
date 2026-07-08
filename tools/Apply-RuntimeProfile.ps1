@@ -14,7 +14,7 @@ $AndroidPropertyValueMaxBytes = 92
 $NativeRendererPropertyPrefix = "debug.rustyquest.native_renderer."
 $NativeRendererPropertyManifestRelativePath = "fixtures\native-renderer\native-renderer-property-manifest.json"
 $NativeRendererPropertyManifestSchema = "rusty.quest.native_renderer_property_manifest.v2"
-$NativeRendererPropertyManifestLifecycle = "startup-effective"
+$NativeRendererPropertyManifestAllowedLifecycles = @("startup-effective", "runtime-polled")
 $NativeRendererPropertyManifestClearBehavior = "profile-owned-explicit-set"
 $NativeRendererPropertyManifestDefaultBehavior = "runtime-owner-default-when-unset"
 $EnvironmentDepthPropertyPrefix = "debug.rustyquest.native_renderer.environment_depth."
@@ -199,7 +199,7 @@ function Import-NativeRendererPropertyManifest {
         if ($byName.ContainsKey($name)) {
             throw "Native renderer property manifest contains duplicate property: $name"
         }
-        if ([string]$entry.lifecycle -ne $NativeRendererPropertyManifestLifecycle) {
+        if ([string]$entry.lifecycle -notin $NativeRendererPropertyManifestAllowedLifecycles) {
             throw "Native renderer property manifest entry $name has unsupported lifecycle: $($entry.lifecycle)"
         }
         if ([string]$entry.clear_behavior -ne $NativeRendererPropertyManifestClearBehavior) {

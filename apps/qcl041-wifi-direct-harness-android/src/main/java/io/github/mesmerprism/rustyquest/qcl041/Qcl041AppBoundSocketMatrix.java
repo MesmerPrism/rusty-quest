@@ -168,6 +168,7 @@ final class Qcl041AppBoundSocketMatrix {
         artifact.diagnostic(SECTION, "connectivity_manager_found", connectivityManager != null);
         artifact.diagnostic(SECTION, "network_visibility_only", config.isQ2qAppNetworkTraceOnly());
         artifact.diagnostic(SECTION, "app_network_trace_enabled", config.appNetworkTraceRequested());
+        artifact.diagnostic(SECTION, "qcl100_lower_gate_authority", config.qcl100LowerGateAuthority);
         artifact.diagnostic(SECTION, "tcp_binding_variants", config.q2qTcpBindingVariants);
         artifact.diagnostic(
                 SECTION,
@@ -227,6 +228,14 @@ final class Qcl041AppBoundSocketMatrix {
             sleepQuietly(traceOnlyHoldMs());
         } else {
             runRequestedTcpBindingVariants();
+        }
+        if (skipRustyDirectControlGateFinalNetworkVisibility()) {
+            artifact.diagnostic(
+                    SECTION,
+                    "network_visibility_only_client_final_skipped",
+                    "rusty_direct_qcl100_control_tcp_gate_after_required_local_p2p_variants");
+            checkpoint("network_visibility_only_client_final_skipped_after_local_p2p_stream");
+            return;
         }
         recordNetworkVisibility("network_visibility_only_client_final");
         recordWifiP2pNetworkRequestVisibility("network_visibility_only_client_final");
@@ -1019,6 +1028,14 @@ final class Qcl041AppBoundSocketMatrix {
 
     private void recordWifiP2pNetworkRequestVisibility(String prefix) {
         String key = prefix + "_wifi_p2p_request_";
+        if (skipRustyDirectControlGateWifiP2pNetworkRequestVisibility()) {
+            artifact.diagnostic(SECTION, key + "attempted", false);
+            artifact.diagnostic(
+                    SECTION,
+                    key + "skipped",
+                    "rusty_direct_qcl100_control_tcp_gate_uses_explicit_p2p_socket_binding");
+            return;
+        }
         artifact.diagnostic(SECTION, key + "attempted", true);
         artifact.diagnostic(SECTION, key + "connectivity_manager_found", connectivityManager != null);
         if (connectivityManager == null) {
@@ -1846,6 +1863,20 @@ final class Qcl041AppBoundSocketMatrix {
                 || config.tcpBindingVariantRequested("local_p2p_tcp_stream")
                 || config.tcpBindingVariantRequested("tcp_p2p0_bind_stream")
                 || config.tcpBindingVariantRequested("p2p0_tcp_stream_bind");
+    }
+
+    private boolean skipRustyDirectControlGateFinalNetworkVisibility() {
+        return config.qcl100ControlTcpGate
+                && config.isRustyDirectP2pSocketAuthority()
+                && config.isQ2qAppNetworkTraceOnly()
+                && localP2pUdpVariantRequested()
+                && localP2pTcpVariantRequested()
+                && localP2pTcpStreamVariantRequested();
+    }
+
+    private boolean skipRustyDirectControlGateWifiP2pNetworkRequestVisibility() {
+        return config.qcl100ControlTcpGate
+                && config.isRustyDirectP2pSocketAuthority();
     }
 
     private static String readAsciiLine(InputStream input, int maxBytes) throws IOException {

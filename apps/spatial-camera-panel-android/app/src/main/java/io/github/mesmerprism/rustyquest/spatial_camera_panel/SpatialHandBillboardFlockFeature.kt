@@ -35,6 +35,7 @@ import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 
@@ -75,6 +76,10 @@ private class SpatialHandBillboardFlockSystem(
                 "reason=$disabledReason surfaceTargetId=${markerToken(surfaceTargetId)} " +
                 "module=$MODULE_ID enabledProperty=${SpatialHandBillboardFlockConfig.PROPERTY_ENABLED} " +
                 "propertyEnabled=${config.enabled} icosphereSuppressed=$suppressedForIcosphere " +
+                "visualMode=${config.visualMode.id} wireframeEnabled=${config.visualMode.wireframeEnabled} " +
+                "wireframeWidthMeters=${formatFloat(config.wireframeWidthMeters)} " +
+                "${config.wireframeSourceMarkerFields()} " +
+                "spatialAvatarHandMeshWireframeSupported=false " +
                 "directWorldSpace=true projectionPlane=false customGpuSkinning=false " +
                 "couplingDynamics=false highRateJsonPayload=false"
         )
@@ -237,6 +242,11 @@ private class SpatialHandBillboardFlockSystem(
             "module=$MODULE_ID entityCount=${config.count} visualParticleCount=${config.count} " +
             "carrier=${config.carrierMode.id} carrierEntityCount=$carrierEntityCount " +
             "mesh=${config.carrierMode.meshMarker} collision=none unlit=true " +
+            "visualMode=${config.visualMode.id} wireframeEnabled=${config.visualMode.wireframeEnabled} " +
+            "wireframeWidthMeters=${formatFloat(config.wireframeWidthMeters)} " +
+            "${config.wireframeSourceMarkerFields()} " +
+            "appOwnedTriangleMeshWireframe=${config.carrierMode == SpatialHandBillboardCarrierMode.BatchedSceneMesh && config.visualMode.wireframeEnabled} " +
+            "spatialAvatarHandMeshWireframeSupported=false spatialBuiltInHandWireframeAuthority=sdk-owned-avatar-system-not-app-owned " +
             "sharedMaterialConfig=true persistentCarriers=true spawnDestroyPerFrame=false " +
             "simulationState=system-arrays publicParticleState=true " +
             "directWorldSpace=true projectionPlane=false customGpuSkinning=false " +
@@ -334,6 +344,11 @@ private class SpatialHandBillboardFlockSystem(
             "meshGeometryUpdates=${frameStats.meshGeometryUpdates} " +
             "meshPrimitiveUpdates=${frameStats.meshPrimitiveUpdates} " +
             "sceneObjectVisibleWrites=${frameStats.sceneObjectVisibleWrites} visible=$visible " +
+            "visualMode=${config.visualMode.id} wireframeEnabled=${config.visualMode.wireframeEnabled} " +
+            "wireframeWidthMeters=${formatFloat(config.wireframeWidthMeters)} " +
+            "${config.wireframeSourceMarkerFields()} " +
+            "appOwnedTriangleMeshWireframe=${config.carrierMode == SpatialHandBillboardCarrierMode.BatchedSceneMesh && config.visualMode.wireframeEnabled} " +
+            "spatialAvatarHandMeshWireframeSupported=false " +
             "sharedBillboardRotation=true perEntityLookAt=false directWorldSpace=true " +
             "projectionPlane=false customGpuSkinning=false couplingDynamics=false " +
             "highRateJsonPayload=false"
@@ -446,7 +461,14 @@ private class SpatialBatchedBillboardCloud private constructor(
       return SpatialBatchedBillboardCloud(
           hands =
               Array(PUBLIC_BILLBOARD_CARRIER_COUNT) { index ->
-                SpatialBatchedBillboardHandMesh.create(scene, "carrier-$index", capacityPerCarrier, material)
+                SpatialBatchedBillboardHandMesh.create(
+                    scene,
+                    "carrier-$index",
+                    capacityPerCarrier,
+                    material,
+                    config.visualMode,
+                    config.wireframeWidthMeters,
+                )
               },
           material = material,
           texture = texture,
@@ -466,10 +488,16 @@ private class SpatialBatchedBillboardHandMesh private constructor(
     private val colors: IntArray,
     private val indices: IntArray,
     private val capacity: Int,
+    private val visualMode: SpatialHandBillboardVisualMode,
+    private val wireframeWidthMeters: Float,
 ) {
   private var activeIndices: IntArray = indices
   private var lastIndexCount = indices.size
   private var visible = false
+  private val verticesPerParticle: Int =
+      if (visualMode == SpatialHandBillboardVisualMode.WireframeEdges) 16 else 4
+  private val indicesPerParticle: Int =
+      if (visualMode == SpatialHandBillboardVisualMode.WireframeEdges) 24 else 6
 
   fun beginFrame() {}
 
@@ -485,7 +513,7 @@ private class SpatialBatchedBillboardHandMesh private constructor(
     if (particleIndex !in 0 until capacity) {
       return
     }
-    val vertexBase = particleIndex * 4
+    val vertexBase = particleIndex * verticesPerParticle
     val positionBase = vertexBase * 3
     val rightX = right.x * halfSize
     val rightY = right.y * halfSize
@@ -494,12 +522,27 @@ private class SpatialBatchedBillboardHandMesh private constructor(
     val upY = up.y * halfSize
     val upZ = up.z * halfSize
 
-    writePosition(positionBase, center.x - rightX - upX, center.y - rightY - upY, center.z - rightZ - upZ)
-    writePosition(positionBase + 3, center.x + rightX - upX, center.y + rightY - upY, center.z + rightZ - upZ)
-    writePosition(positionBase + 6, center.x + rightX + upX, center.y + rightY + upY, center.z + rightZ + upZ)
-    writePosition(positionBase + 9, center.x - rightX + upX, center.y - rightY + upY, center.z - rightZ + upZ)
+    val c0 = floatArrayOf(center.x - rightX - upX, center.y - rightY - upY, center.z - rightZ - upZ)
+    val c1 = floatArrayOf(center.x + rightX - upX, center.y + rightY - upY, center.z + rightZ - upZ)
+    val c2 = floatArrayOf(center.x + rightX + upX, center.y + rightY + upY, center.z + rightZ + upZ)
+    val c3 = floatArrayOf(center.x - rightX + upX, center.y - rightY + upY, center.z - rightZ + upZ)
 
-    for (vertexOffset in 0 until 4) {
+    if (visualMode == SpatialHandBillboardVisualMode.WireframeEdges) {
+      val lineHalf = min(wireframeWidthMeters * 0.5f, halfSize * 0.35f).coerceAtLeast(0.00035f)
+      val upOffset = floatArrayOf(up.x * lineHalf, up.y * lineHalf, up.z * lineHalf)
+      val rightOffset = floatArrayOf(right.x * lineHalf, right.y * lineHalf, right.z * lineHalf)
+      writeLineQuad(positionBase, 0, c0, c1, upOffset)
+      writeLineQuad(positionBase, 1, c1, c2, rightOffset)
+      writeLineQuad(positionBase, 2, c2, c3, upOffset)
+      writeLineQuad(positionBase, 3, c3, c0, rightOffset)
+    } else {
+      writePosition(positionBase, c0[0], c0[1], c0[2])
+      writePosition(positionBase + 3, c1[0], c1[1], c1[2])
+      writePosition(positionBase + 6, c2[0], c2[1], c2[2])
+      writePosition(positionBase + 9, c3[0], c3[1], c3[2])
+    }
+
+    for (vertexOffset in 0 until verticesPerParticle) {
       val normalBase = (vertexBase + vertexOffset) * 3
       normals[normalBase] = billboardNormal.x
       normals[normalBase + 1] = billboardNormal.y
@@ -508,10 +551,24 @@ private class SpatialBatchedBillboardHandMesh private constructor(
     }
   }
 
+  private fun writeLineQuad(
+      positionBase: Int,
+      edgeIndex: Int,
+      a: FloatArray,
+      b: FloatArray,
+      offset: FloatArray,
+  ) {
+    val base = positionBase + edgeIndex * 12
+    writePosition(base, a[0] - offset[0], a[1] - offset[1], a[2] - offset[2])
+    writePosition(base + 3, b[0] - offset[0], b[1] - offset[1], b[2] - offset[2])
+    writePosition(base + 6, b[0] + offset[0], b[1] + offset[1], b[2] + offset[2])
+    writePosition(base + 9, a[0] + offset[0], a[1] + offset[1], a[2] + offset[2])
+  }
+
   fun submit(requestedParticleCount: Int, shouldBeVisible: Boolean): SpatialBatchedBillboardSubmitStats {
     val activeCount = requestedParticleCount.coerceIn(0, capacity)
-    val vertexCount = activeCount * 4
-    val indexCount = activeCount * 6
+    val vertexCount = activeCount * verticesPerParticle
+    val indexCount = activeCount * indicesPerParticle
     var geometryUpdates = 0
     var primitiveUpdates = 0
     var visibleWrites = 0
@@ -554,32 +611,46 @@ private class SpatialBatchedBillboardHandMesh private constructor(
         label: String,
         capacity: Int,
         material: SceneMaterial,
+        visualMode: SpatialHandBillboardVisualMode,
+        wireframeWidthMeters: Float,
     ): SpatialBatchedBillboardHandMesh {
-      val vertexCapacity = capacity * 4
-      val indexCapacity = capacity * 6
+      val verticesPerParticle = if (visualMode == SpatialHandBillboardVisualMode.WireframeEdges) 16 else 4
+      val indicesPerParticle = if (visualMode == SpatialHandBillboardVisualMode.WireframeEdges) 24 else 6
+      val vertexCapacity = capacity * verticesPerParticle
+      val indexCapacity = capacity * indicesPerParticle
       val positions = FloatArray(vertexCapacity * 3)
       val normals = FloatArray(vertexCapacity * 3)
       val uvs = FloatArray(vertexCapacity * 2)
       val colors = IntArray(vertexCapacity) { AndroidColor.WHITE }
       val indices = IntArray(indexCapacity)
       for (particleIndex in 0 until capacity) {
-        val vertexBase = particleIndex * 4
-        val uvBase = vertexBase * 2
-        uvs[uvBase] = 0.0f
-        uvs[uvBase + 1] = 1.0f
-        uvs[uvBase + 2] = 1.0f
-        uvs[uvBase + 3] = 1.0f
-        uvs[uvBase + 4] = 1.0f
-        uvs[uvBase + 5] = 0.0f
-        uvs[uvBase + 6] = 0.0f
-        uvs[uvBase + 7] = 0.0f
-        val indexBase = particleIndex * 6
-        indices[indexBase] = vertexBase
-        indices[indexBase + 1] = vertexBase + 1
-        indices[indexBase + 2] = vertexBase + 2
-        indices[indexBase + 3] = vertexBase
-        indices[indexBase + 4] = vertexBase + 2
-        indices[indexBase + 5] = vertexBase + 3
+        val vertexBase = particleIndex * verticesPerParticle
+        for (vertexOffset in 0 until verticesPerParticle) {
+          val uvBase = (vertexBase + vertexOffset) * 2
+          val corner = vertexOffset % 4
+          uvs[uvBase] = if (corner == 1 || corner == 2) 1.0f else 0.0f
+          uvs[uvBase + 1] = if (corner == 0 || corner == 1) 1.0f else 0.0f
+        }
+        val indexBase = particleIndex * indicesPerParticle
+        if (visualMode == SpatialHandBillboardVisualMode.WireframeEdges) {
+          for (edgeIndex in 0 until 4) {
+            val edgeVertexBase = vertexBase + edgeIndex * 4
+            val edgeIndexBase = indexBase + edgeIndex * 6
+            indices[edgeIndexBase] = edgeVertexBase
+            indices[edgeIndexBase + 1] = edgeVertexBase + 1
+            indices[edgeIndexBase + 2] = edgeVertexBase + 2
+            indices[edgeIndexBase + 3] = edgeVertexBase
+            indices[edgeIndexBase + 4] = edgeVertexBase + 2
+            indices[edgeIndexBase + 5] = edgeVertexBase + 3
+          }
+        } else {
+          indices[indexBase] = vertexBase
+          indices[indexBase + 1] = vertexBase + 1
+          indices[indexBase + 2] = vertexBase + 2
+          indices[indexBase + 3] = vertexBase
+          indices[indexBase + 4] = vertexBase + 2
+          indices[indexBase + 5] = vertexBase + 3
+        }
       }
       val triangleMesh =
           TriangleMesh(vertexCapacity, indexCapacity, intArrayOf(0, indexCapacity), arrayOf(material))
@@ -600,6 +671,8 @@ private class SpatialBatchedBillboardHandMesh private constructor(
           colors = colors,
           indices = indices,
           capacity = capacity,
+          visualMode = visualMode,
+          wireframeWidthMeters = wireframeWidthMeters,
       )
     }
   }
@@ -615,20 +688,37 @@ private data class SpatialHandBillboardFlockConfig(
     val enabled: Boolean,
     val count: Int,
     val billboardMeters: Float,
+    val wireframeWidthMeters: Float,
     val spreadMeters: Float,
     val driftMeters: Float,
     val driftHz: Float,
     val carrierMode: SpatialHandBillboardCarrierMode,
+    val visualMode: SpatialHandBillboardVisualMode,
+    val wireframeSource: SpatialHandBillboardWireframeSource,
 ) {
   fun poolIdentityKey(): String =
-      "${count}|${formatFloat(billboardMeters)}|${formatFloat(spreadMeters)}|${carrierMode.id}"
+      "${count}|${formatFloat(billboardMeters)}|${formatFloat(wireframeWidthMeters)}|${formatFloat(spreadMeters)}|${carrierMode.id}|${visualMode.id}|${wireframeSource.id}"
+
+  fun wireframeSourceMarkerFields(): String =
+      "wireframeSourceProperty=$PROPERTY_WIREFRAME_SOURCE " +
+          "wireframeRequestedSource=${wireframeSource.id} " +
+          "wireframeResolvedSource=${wireframeSource.resolvedSource} " +
+          "wireframeRequestedSourceAvailable=${wireframeSource.exactSourceAvailable} " +
+          "wireframeHotload=true openXrFbMeshWireframeSupported=false " +
+          "customHandMeshWireframeSupported=false avatarSystemPublicMeshWireframeSupported=false " +
+          "spatialProxyWireframeSupported=true"
 
   companion object {
     const val PROPERTY_ENABLED = "debug.rustyquest.spatial.hand_billboard_flock.enabled"
     private const val PROPERTY_CARRIER = "debug.rustyquest.spatial.hand_billboard_flock.carrier"
+    private const val PROPERTY_VISUAL_MODE = "debug.rustyquest.spatial.hand_billboard_flock.visual_mode"
+    private const val PROPERTY_WIREFRAME_SOURCE =
+        "debug.rustyquest.spatial.hand_billboard_flock.wireframe.source"
     private const val PROPERTY_COUNT = "debug.rustyquest.spatial.hand_billboard_flock.count"
     private const val PROPERTY_BILLBOARD_METERS =
         "debug.rustyquest.spatial.hand_billboard_flock.billboard_meters"
+    private const val PROPERTY_WIREFRAME_WIDTH_METERS =
+        "debug.rustyquest.spatial.hand_billboard_flock.wireframe.width_m"
     private const val PROPERTY_SPREAD_METERS =
         "debug.rustyquest.spatial.hand_billboard_flock.spread_meters"
     private const val PROPERTY_DRIFT_METERS =
@@ -640,10 +730,13 @@ private data class SpatialHandBillboardFlockConfig(
             false,
             64,
             0.022f,
+            0.0035f,
             0.085f,
             0.008f,
             0.42f,
             SpatialHandBillboardCarrierMode.BatchedSceneMesh,
+            SpatialHandBillboardVisualMode.FilledBillboards,
+            SpatialHandBillboardWireframeSource.SpatialSdkJointProxy,
         )
 
     fun read(): SpatialHandBillboardFlockConfig =
@@ -651,10 +744,14 @@ private data class SpatialHandBillboardFlockConfig(
             enabled = readBooleanSystemProperty(PROPERTY_ENABLED, false),
             count = readIntSystemProperty(PROPERTY_COUNT, 64, 1, 2048),
             billboardMeters = readFloatSystemProperty(PROPERTY_BILLBOARD_METERS, 0.022f, 0.004f, 0.08f),
+            wireframeWidthMeters = readFloatSystemProperty(PROPERTY_WIREFRAME_WIDTH_METERS, 0.0035f, 0.00075f, 0.020f),
             spreadMeters = readFloatSystemProperty(PROPERTY_SPREAD_METERS, 0.085f, 0.0f, 0.35f),
             driftMeters = readFloatSystemProperty(PROPERTY_DRIFT_METERS, 0.008f, 0.0f, 0.08f),
             driftHz = readFloatSystemProperty(PROPERTY_DRIFT_HZ, 0.42f, 0.0f, 8.0f),
             carrierMode = SpatialHandBillboardCarrierMode.parse(readSystemProperty(PROPERTY_CARRIER)),
+            visualMode = SpatialHandBillboardVisualMode.parse(readSystemProperty(PROPERTY_VISUAL_MODE)),
+            wireframeSource =
+                SpatialHandBillboardWireframeSource.parse(readSystemProperty(PROPERTY_WIREFRAME_SOURCE)),
         )
   }
 }
@@ -670,6 +767,60 @@ private enum class SpatialHandBillboardCarrierMode(val id: String, val meshMarke
           "batched", "scene-mesh", "batched-scene-mesh", "trianglemesh", "triangle-mesh" ->
               BatchedSceneMesh
           else -> BatchedSceneMesh
+        }
+  }
+}
+
+private enum class SpatialHandBillboardVisualMode(val id: String, val wireframeEnabled: Boolean) {
+  FilledBillboards("filled-billboards", false),
+  WireframeEdges("wireframe-edges", true);
+
+  companion object {
+    fun parse(value: String): SpatialHandBillboardVisualMode =
+        when (value.trim().lowercase(Locale.US)) {
+          "wire", "wireframe", "wireframe-edges", "edges", "mesh-wireframe" -> WireframeEdges
+          "filled", "fill", "filled-billboards", "billboards" -> FilledBillboards
+          else -> FilledBillboards
+        }
+  }
+}
+
+private enum class SpatialHandBillboardWireframeSource(
+    val id: String,
+    val resolvedSource: String,
+    val exactSourceAvailable: Boolean,
+) {
+  SpatialSdkJointProxy(
+      "spatial-sdk-joint-proxy",
+      "spatial-sdk-joint-proxy",
+      true,
+  ),
+  OpenXrFbMesh(
+      "openxr-fb-mesh",
+      "spatial-sdk-joint-proxy",
+      false,
+  ),
+  CustomMesh(
+      "custom-mesh",
+      "spatial-sdk-joint-proxy",
+      false,
+  ),
+  AvatarSystemPublicMeshProbe(
+      "avatar-system-public-mesh-probe",
+      "spatial-sdk-joint-proxy",
+      false,
+  );
+
+  companion object {
+    fun parse(value: String): SpatialHandBillboardWireframeSource =
+        when (value.trim().lowercase(Locale.US)) {
+          "openxr-fb-mesh", "openxr-fb", "xr-fb-mesh", "xr-fb", "fb" -> OpenXrFbMesh
+          "custom-mesh", "custom", "recorded-custom-mesh", "embedded-custom-mesh" -> CustomMesh
+          "avatar-system-public-mesh-probe", "avatar-system", "spatial-avatar-hand-mesh",
+          "spatial-sdk-avatar-hand-mesh", "avatar" -> AvatarSystemPublicMeshProbe
+          "spatial-sdk-joint-proxy", "spatial-proxy", "spatial", "proxy", "auto", "" ->
+              SpatialSdkJointProxy
+          else -> SpatialSdkJointProxy
         }
   }
 }

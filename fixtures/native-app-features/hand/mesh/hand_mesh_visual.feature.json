@@ -37,9 +37,12 @@
       "debug.rustyquest.native_renderer.hand_mesh.input.source": "live-meta-openxr-hand-tracking",
       "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible": "true",
       "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled": "true",
+      "debug.rustyquest.native_renderer.hand_mesh.visual.mesh_source": "openxr-fb-mesh",
       "debug.rustyquest.native_renderer.hand_mesh.visual.material.alpha": "0.74",
       "debug.rustyquest.native_renderer.hand_mesh.visual.material.profile": "unity-basic-reference",
-      "debug.rustyquest.native_renderer.hand_mesh.visual.material.rim_strength": "0.20"
+      "debug.rustyquest.native_renderer.hand_mesh.visual.material.rim_strength": "0.20",
+      "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.enabled": "true",
+      "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.width_px": "1.35"
     },
     "clear_families": [
       "hand_mesh"
@@ -58,6 +61,9 @@
     "required": [
       "handMeshRealHandsVisible=true",
       "handMeshVisualMaterialProfile=unity-basic-reference",
+      "handMeshVisualMeshSourceSelection=openxr-fb-mesh",
+      "handMeshVisualResolvedMeshSource=openxr-fb-mesh",
+      "handMeshVisualWireframeEnabled=true",
       "handMeshVisualTextureImported=false"
     ],
     "forbidden": []

@@ -1495,19 +1495,59 @@ final class RemoteCameraSourceRuntime {
 
         JSONObject metadata(SourceGroup group, MediaProfile headerProfile) throws Exception {
             JSONObject metadata = new JSONObject();
+            JSONArray sourceValidUvRect = new JSONArray();
+            sourceValidUvRect.put(0.0);
+            sourceValidUvRect.put(0.0);
+            sourceValidUvRect.put(1.0);
+            sourceValidUvRect.put(1.0);
+            double aspectRatio = headerProfile.height > 0
+                    ? (double) headerProfile.width / (double) headerProfile.height
+                    : 1.0;
             metadata.put("schema", "rusty.quest.remote_camera.stream_metadata.v1");
             metadata.put("source", group.sourceKind);
             metadata.put("source_mode", group.sourceKind);
             metadata.put("eye", eye);
             metadata.put("lane_id", profile.laneId);
             metadata.put("source_family", profile.sourceFamily);
-            metadata.put("projection_metadata_ready", false);
+            metadata.put("projection_metadata_ready", true);
+            metadata.put("projectionMetadataReady", true);
+            metadata.put("projectionGeometryProfile", "full-frame-diagnostic");
+            metadata.put("syntheticProjectionProfile", "full-frame-diagnostic");
+            metadata.put("poseSource", "stream-header-full-frame-projection-contract");
+            metadata.put("poseCoordinateConvention", "runtime-openxr-view");
             metadata.put("content_width", headerProfile.width);
             metadata.put("content_height", headerProfile.height);
+            metadata.put("contentKind", "camera-frame");
+            metadata.put("contentWidth", headerProfile.width);
+            metadata.put("contentHeight", headerProfile.height);
+            metadata.put("contentAspectRatio", aspectRatio);
+            metadata.put("desiredDisplayAspectRatio", aspectRatio);
+            metadata.put("desiredProjectionAspectRatio", aspectRatio);
+            metadata.put("contentCoordinateSpace", "normalized-uv");
+            metadata.put("contentOrigin", "top-left");
+            metadata.put("contentXAxis", "right");
+            metadata.put("contentYAxis", "down");
+            metadata.put("contentMappingIntent", "map-full-frame-content-to-projection-area");
+            metadata.put("sourceSamplingMode", "target-local-raster");
+            metadata.put("contentGeometryMetadataSource", "stream-header");
+            metadata.put("contentGeometryDefault", false);
+            metadata.put("sourceValidUvRect", sourceValidUvRect);
+            metadata.put("deliveredWidth", headerProfile.width);
+            metadata.put("deliveredHeight", headerProfile.height);
             metadata.put("stream_framing", profile.streamFraming);
             metadata.put("raster_orientation", "top-left-origin-y-down");
+            metadata.put("orientationKind", "standard-stimulus-default");
+            metadata.put("rasterOrientation", "top-left-origin-y-down");
+            metadata.put("uprightMarker", "unspecified");
+            metadata.put("orientationMetadataSource", "stream-header");
+            metadata.put("orientationDefault", false);
+            metadata.put("stimulusRasterOrientation", "top-left-origin-y-down");
+            metadata.put("stimulusUprightMarker", "unspecified");
+            metadata.put("stimulusOrientationMetadataSource", "stream-header");
+            metadata.put("stimulusOrientationDefault", false);
             if (group.cameraSelection != null) {
                 metadata.put("camera_id", group.cameraSelection.cameraId);
+                metadata.put("cameraId", group.cameraSelection.cameraId);
                 metadata.put("lens_facing", group.cameraSelection.lensFacing);
                 metadata.put("selected_reason", group.cameraSelection.selectedReason);
             }

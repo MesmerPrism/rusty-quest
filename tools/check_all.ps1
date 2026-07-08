@@ -27,6 +27,8 @@ try {
     Invoke-Checked "native renderer property parity" "python" @("tools\check_native_renderer_property_parity.py", "--out", "local-artifacts\native-renderer-property-parity.json")
     Invoke-Checked "native app-build static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-NativeAppBuildStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "QCL-041 Wi-Fi Direct Android harness" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-Qcl041WifiDirectHarnessAndroid.ps1")
+    Invoke-Checked "QCL-099 stereo projection runner" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-Qcl099StereoProjectionRunner.ps1")
+    Invoke-Checked "QCL-100 crash/relaunch watch static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-Qcl100CrashRelaunchWatchStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "Spatial Camera Panel Android static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-SpatialCameraPanelAndroid.ps1", "-RepoRoot", ".")
     Invoke-Checked "Manifold broker Android scaffold" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-ManifoldBrokerAndroid.ps1")
     Invoke-Checked "Native renderer Android scaffold" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-NativeRendererAndroid.ps1", "-SkipProfileMatrix")

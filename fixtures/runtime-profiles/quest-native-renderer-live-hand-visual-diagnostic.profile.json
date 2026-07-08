@@ -9,10 +9,14 @@
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv",
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.mesh_source",
     "debug.rustyquest.native_renderer.hand_mesh.visual.material.alpha",
     "debug.rustyquest.native_renderer.hand_mesh.visual.material.profile",
     "debug.rustyquest.native_renderer.hand_mesh.visual.material.rim_strength",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.enabled",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.width_px",
     "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
+    "debug.rustyquest.native_renderer.sdf.field_visual.enabled",
     "debug.rustyquest.native_renderer.sdf.visual.enabled",
     "debug.rustyquest.native_renderer.sdf.update_period_frames"
   ],
@@ -48,6 +52,11 @@
       "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.alpha"
     },
     {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.mesh_source",
+      "value": "openxr-fb-mesh",
+      "source_setting_id": "native_renderer.hand_mesh.visual.mesh_source"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.hand_mesh.visual.material.alpha",
       "value": "0.74",
       "source_setting_id": "native_renderer.hand_mesh.visual.material.alpha"
@@ -63,9 +72,24 @@
       "source_setting_id": "native_renderer.hand_mesh.visual.material.rim_strength"
     },
     {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.enabled",
+      "value": "true",
+      "source_setting_id": "native_renderer.hand_mesh.visual.wireframe.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.width_px",
+      "value": "1.35",
+      "source_setting_id": "native_renderer.hand_mesh.visual.wireframe.width_px"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
       "value": "false",
       "source_setting_id": "native_renderer.hand_mesh.graft_copies.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.sdf.field_visual.enabled",
+      "value": "true",
+      "source_setting_id": "native_renderer.sdf.field_visual.enabled"
     },
     {
       "name": "debug.rustyquest.native_renderer.sdf.visual.enabled",
@@ -85,9 +109,12 @@
     "compactHandInputSourceMode=live-meta-openxr-hand-tracking",
     "selectsLiveFrame=true",
     "allowsRecordedFallback=false",
+    "sdfFieldVisualEnabled=true",
     "sdfVisualEnabled=true",
     "handMeshVisualDiagnosticEnabled=true",
+    "handMeshVisualMeshSourceSelection=openxr-fb-mesh",
     "handMeshVisualMaterialProfile=unity-basic-reference",
+    "handMeshVisualWireframeEnabled=true",
     "handMeshVisualTextureImported=false",
     "handMeshGraftCopiesEnabled=false",
     "liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof",

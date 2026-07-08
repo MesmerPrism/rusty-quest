@@ -20,12 +20,12 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-$expectedPropertyCount = 251
+$expectedPropertyCount = 255
 if ($manifest.property_count -ne $expectedPropertyCount -or $manifest.properties.Count -ne $expectedPropertyCount) {
     throw "Native renderer property manifest must cover the current $expectedPropertyCount-property runtime surface."
 }
 foreach ($entry in @($manifest.properties)) {
-    if ([string]$entry.lifecycle -ne "startup-effective") {
+    if ([string]$entry.lifecycle -notin @("startup-effective", "runtime-polled")) {
         throw "Native renderer property manifest entry $($entry.name) has unexpected lifecycle."
     }
     if ([string]$entry.clear_behavior -ne "profile-owned-explicit-set") {
@@ -60,6 +60,12 @@ foreach ($token in @(
     'debug.rustyquest.native_renderer.hand_mesh.visual.material.base_color.g',
     'debug.rustyquest.native_renderer.hand_mesh.visual.material.base_color.b',
     'debug.rustyquest.native_renderer.hand_mesh.visual.material.rim_strength',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.mesh_source',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.width_px',
+    'openxr-fb-mesh',
+    'custom-mesh',
+    'debug.rustyquest.native_renderer.sdf.field_visual.enabled',
     'unity-basic-reference',
     'mint-rim',
     'flat-gray',

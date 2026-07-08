@@ -1,26 +1,29 @@
 {
   "schema": "rusty.quest.runtime_profile.v1",
-  "profile_id": "profile.quest.native_renderer.native_passthrough_hands_and_grafts",
+  "profile_id": "profile.quest.native_renderer.recorded_joint_replay_material",
   "target_platform": "quest",
   "owned_android_properties": [
     "debug.rustyquest.native_renderer.render.mode",
     "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
     "debug.rustyquest.native_renderer.hand_mesh.input.source",
+    "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv",
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.material.alpha",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.material.profile",
+    "debug.rustyquest.native_renderer.hand_mesh.visual.material.rim_strength",
     "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.enabled",
     "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.width_px",
     "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
-    "debug.rustyquest.native_renderer.hand_mesh.graft_copies.scale",
-    "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
+    "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
     "debug.rustyquest.native_renderer.sdf.visual.enabled",
     "debug.rustyquest.native_renderer.sdf.update_period_frames"
   ],
   "set_properties": [
     {
       "name": "debug.rustyquest.native_renderer.render.mode",
-      "value": "native-passthrough-graft-only",
+      "value": "custom-stereo-projection",
       "source_setting_id": "native_renderer.render.mode"
     },
     {
@@ -30,23 +33,43 @@
     },
     {
       "name": "debug.rustyquest.native_renderer.hand_mesh.input.source",
-      "value": "live-meta-openxr-hand-tracking",
+      "value": "recorded-replay",
       "source_setting_id": "native_renderer.hand_mesh.input.source"
     },
     {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
+      "value": "true",
+      "source_setting_id": "native_renderer.hand_mesh.real_hands.visible"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled",
-      "value": "false",
+      "value": "true",
       "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.enabled"
     },
     {
       "name": "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv",
-      "value": "0.0,0.0",
+      "value": "0.0,-0.10",
       "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.offset_uv"
     },
     {
       "name": "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha",
-      "value": "0.82",
+      "value": "1.0",
       "source_setting_id": "native_renderer.hand_mesh.visual.diagnostic.alpha"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.material.alpha",
+      "value": "0.74",
+      "source_setting_id": "native_renderer.hand_mesh.visual.material.alpha"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.material.profile",
+      "value": "unity-basic-reference",
+      "source_setting_id": "native_renderer.hand_mesh.visual.material.profile"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.material.rim_strength",
+      "value": "0.20",
+      "source_setting_id": "native_renderer.hand_mesh.visual.material.rim_strength"
     },
     {
       "name": "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.enabled",
@@ -60,18 +83,13 @@
     },
     {
       "name": "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled",
-      "value": "true",
+      "value": "false",
       "source_setting_id": "native_renderer.hand_mesh.graft_copies.enabled"
     },
     {
-      "name": "debug.rustyquest.native_renderer.hand_mesh.graft_copies.scale",
-      "value": "0.85",
-      "source_setting_id": "native_renderer.hand_mesh.graft_copies.scale"
-    },
-    {
-      "name": "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible",
-      "value": "true",
-      "source_setting_id": "native_renderer.hand_mesh.real_hands.visible"
+      "name": "debug.rustyquest.native_renderer.hand_anchor_particles.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_anchor_particles.enabled"
     },
     {
       "name": "debug.rustyquest.native_renderer.sdf.visual.enabled",
@@ -85,24 +103,20 @@
     }
   ],
   "expected_markers": [
-    "RUSTY_QUEST_NATIVE_RENDERER channel=render-mode",
-    "renderMode=native-passthrough-graft-only",
-    "customStereoProjectionEnabled=false",
-    "nativePassthroughRequested=true",
-    "sdfVisualEnabled=false",
-    "handMeshGraftCopiesEnabled=true",
-    "handMeshGraftScaleMultiplier=0.85",
+    "RUSTY_QUEST_NATIVE_RENDERER channel=recorded-hand-replay",
+    "renderMode=custom-stereo-projection",
+    "recordedReplayVisualProofEnabled=false",
+    "compactHandInputSourceMode=recorded-replay",
+    "recordedJointReplayMode=clip_jsonl-compact-joint-skinning",
+    "recordedMeshReplayMode=validation_mesh_jsonl",
     "handMeshRealHandsVisible=true",
+    "handMeshCompactInputSource=recorded-replay",
+    "handMeshVisualMaterialProfile=unity-basic-reference",
     "handMeshVisualWireframeEnabled=true",
-    "nativePassthroughRealHandMeshVisible=true",
-    "RUSTY_QUEST_NATIVE_RENDERER channel=camera-runtime",
-    "cameraRuntimeMode=skipped-native-passthrough",
-    "RUSTY_QUEST_NATIVE_RENDERER channel=native-passthrough",
-    "fbPassthroughEnabled=true",
-    "nativePassthroughLayerActive=true",
-    "cameraProjectionPath=disabled-native-passthrough-graft-only"
+    "handMeshVisualWireframeMode=shader-barycentric-triangle-edges",
+    "handMeshVisualTextureImported=false"
   ],
   "validation_commands": [
-    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-native-passthrough-hands-and-grafts.profile.json -DryRun -Out local-artifacts/native-renderer-native-passthrough-hands-and-grafts-property-write-plan.json"
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-recorded-joint-replay-material.profile.json -DryRun -Out local-artifacts/native-renderer-recorded-joint-replay-material-property-write-plan.json"
   ]
 }

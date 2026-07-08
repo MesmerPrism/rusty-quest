@@ -36,8 +36,15 @@ function Summarize-BrokerRuntime {
                         stream_recycle_count = $_.stream_recycle_count
                         close_reason = $_.close_reason
                         error = $_.error
+                        peer_route = $_.peer_route
+                        peer_socket_authority = $_.peer_socket_authority
                         peer_socket_created_from_wifi_direct_network = $_.peer_socket_created_from_wifi_direct_network
                         peer_socket_bound_to_wifi_direct_network = $_.peer_socket_bound_to_wifi_direct_network
+                        peer_socket_network_route_matches_peer = $_.peer_socket_network_route_matches_peer
+                        peer_socket_network_wifi_transport = $_.peer_socket_network_wifi_transport
+                        peer_socket_wifi_direct_bind_required = $_.peer_socket_wifi_direct_bind_required
+                        peer_socket_wifi_direct_bind_attempts = $_.peer_socket_wifi_direct_bind_attempts
+                        peer_socket_network_interface = $_.peer_socket_network_interface
                         peer_socket_network_selection = $_.peer_socket_network_selection
                 peer_socket_local_interface = $_.peer_socket_local_interface
                 peer_socket_bound_local_address = $_.peer_socket_bound_local_address
@@ -134,6 +141,59 @@ function Get-BrokerReceiverObservedFreshness {
         receiver_observed_byte_count = ($records | ForEach-Object { ConvertTo-LongSafe $_.bytes_received } | Measure-Object -Sum).Sum
         lanes = $records
         fresh = [bool]($records.Count -eq $activeLaneCount -and $freshRecords.Count -eq $records.Count)
+    }
+}
+
+function Get-Qcl100DirectP2pSenderAuthority {
+    param(
+        $BrokerStatus,
+        [bool]$Required = $true
+    )
+    $senderLanes = @()
+    if ($null -ne $BrokerStatus -and $null -ne $BrokerStatus.lanes) {
+        $senderLanes = @($BrokerStatus.lanes | Where-Object { $_.role -eq "sender" })
+    }
+    $records = @()
+    $eyes = @()
+    if ($leftLaneActive) {
+        $eyes += "left"
+    }
+    if ($rightLaneActive) {
+        $eyes += "right"
+    }
+    foreach ($eye in $eyes) {
+        $lane = @($senderLanes | Where-Object { $_.eye -eq $eye } | Select-Object -First 1)[0]
+        $bytesSent = ConvertTo-LongSafe $lane.bytes_sent
+        $records += [ordered]@{
+            eye = $eye
+            state = $lane.state
+            bytes_sent = $bytesSent
+            peer_route = $lane.peer_route
+            peer_socket_authority = $lane.peer_socket_authority
+            peer_socket_bound_local_address = $lane.peer_socket_bound_local_address
+            peer_socket_local_interface = $lane.peer_socket_local_interface
+            peer_socket_network_interface = $lane.peer_socket_network_interface
+            peer_socket_network_selection = $lane.peer_socket_network_selection
+            peer_socket_wifi_direct_bind_required = $lane.peer_socket_wifi_direct_bind_required
+            peer_socket_wifi_direct_bind_attempts = ConvertTo-LongSafe $lane.peer_socket_wifi_direct_bind_attempts
+            peer_socket_local_address_same_subnet = $lane.peer_socket_local_address_same_subnet
+            direct_p2p_sender_authority_accepted = [bool](
+                $lane.peer_socket_authority -eq "rusty_direct_p2p_socket_authority" -and
+                -not [string]::IsNullOrWhiteSpace([string]$lane.peer_socket_bound_local_address) -and
+                (Test-Qcl100Truthy $lane.peer_socket_wifi_direct_bind_required) -and
+                (Test-Qcl100Truthy $lane.peer_socket_local_address_same_subnet) -and
+                $bytesSent -gt 0L)
+        }
+    }
+    $acceptedRecords = @($records | Where-Object { $_.direct_p2p_sender_authority_accepted })
+    [ordered]@{
+        required = "broker sender lanes must use rusty_direct_p2p_socket_authority, bind a local p2p0 source address on the peer subnet, and report positive media bytes"
+        required_by_direction = [bool]$Required
+        expected_lane_count = if ($Required) { $activeLaneCount } else { 0 }
+        lane_count = $records.Count
+        accepted_lane_count = $acceptedRecords.Count
+        lanes = $records
+        accepted = [bool]((-not $Required) -or ($records.Count -eq $activeLaneCount -and $acceptedRecords.Count -eq $records.Count))
     }
 }
 
@@ -622,7 +682,8 @@ function New-Qcl100TransportClaims {
     param(
         [string]$Direction,
         $FreshnessAcceptance,
-        $MediaTopologyAcceptance
+        $MediaTopologyAcceptance,
+        [bool]$MediaTopologyRequired = $true
     )
     $passed = Test-Qcl100Truthy (Get-Qcl100SummaryProperty -Object $FreshnessAcceptance -Name "passed")
     $duplexDirection = [bool]($Direction -eq "duplex")
@@ -670,6 +731,8 @@ function New-Qcl100TransportClaims {
         "same_group_duplex_proven_with_justified_control_tcp_alternate"
     } elseif ($mixedAcceptedAlternate) {
         "same_group_duplex_proven_with_mixed_accepted_topology"
+    } elseif (-not $MediaTopologyRequired) {
+        "same_group_duplex_topology_not_required_for_broker_direct_media_no_duplex_claim"
     } elseif (-not $mediaTopologyAccepted) {
         "same_group_duplex_topology_not_accepted"
     } else {
@@ -688,6 +751,7 @@ function New-Qcl100TransportClaims {
         status = $status
         required_transport_topology = Get-Qcl100SummaryProperty -Object $MediaTopologyAcceptance -Name "required_transport_topology"
         accepted_modes = $acceptedModes
+        qcl082_media_topology_required = [bool]$MediaTopologyRequired
         qcl082_media_topology_accepted = $mediaTopologyAccepted
         qcl082_media_topology_required_path_count = $requiredPathCount
         qcl082_media_topology_accepted_path_count = $acceptedPathCount
@@ -914,6 +978,33 @@ function Assert-Qcl100BrokerReceiverObservedFreshness {
     }
 }
 
+function Assert-Qcl100DirectP2pSenderAuthority {
+    param(
+        [string]$Name,
+        $Authority,
+        [bool]$ExpectedAccepted,
+        [int]$ExpectedLaneCount,
+        [int]$ExpectedAcceptedLaneCount
+    )
+    if ([bool]$Authority.accepted -ne $ExpectedAccepted) {
+        throw "QCL100 direct-p2p sender authority self-test '$Name' expected accepted=$ExpectedAccepted but got $($Authority.accepted)."
+    }
+    if ((ConvertTo-LongSafe $Authority.lane_count) -ne $ExpectedLaneCount) {
+        throw "QCL100 direct-p2p sender authority self-test '$Name' expected lane count=$ExpectedLaneCount but got $($Authority.lane_count)."
+    }
+    if ((ConvertTo-LongSafe $Authority.accepted_lane_count) -ne $ExpectedAcceptedLaneCount) {
+        throw "QCL100 direct-p2p sender authority self-test '$Name' expected accepted lanes=$ExpectedAcceptedLaneCount but got $($Authority.accepted_lane_count)."
+    }
+    [ordered]@{
+        name = $Name
+        expected_accepted = $ExpectedAccepted
+        accepted = [bool]$Authority.accepted
+        lane_count = $Authority.lane_count
+        accepted_lane_count = $Authority.accepted_lane_count
+        lanes = $Authority.lanes
+    }
+}
+
 function Invoke-Qcl100RuntimeSummarySelfTest {
     $leftLaneActive = $true
     $rightLaneActive = $true
@@ -1116,6 +1207,74 @@ function Invoke-Qcl100RuntimeSummarySelfTest {
             }
         )
     }
+    $directSenderBrokerStatus = [pscustomobject]@{
+        lanes = @(
+            [pscustomobject]@{
+                role = "sender"
+                eye = "left"
+                state = "transport_peer_connected_streaming_from_local_source"
+                bytes_sent = 4096
+                peer_route = [pscustomobject]@{
+                    route_kind = "rusty_direct_p2p_socket_authority"
+                    connect_host = "192.168.49.102"
+                    connect_port = 9079
+                    local_bind_host = "192.168.49.1"
+                }
+                peer_socket_authority = "rusty_direct_p2p_socket_authority"
+                peer_socket_bound_local_address = "192.168.49.1"
+                peer_socket_local_interface = "rusty_direct_p2p_explicit_local_bind_address"
+                peer_socket_network_selection = "rusty_direct_p2p_explicit_local_bind_address"
+                peer_socket_wifi_direct_bind_required = $true
+                peer_socket_wifi_direct_bind_attempts = 1
+                peer_socket_local_address_same_subnet = $true
+            },
+            [pscustomobject]@{
+                role = "sender"
+                eye = "right"
+                state = "transport_peer_connected_streaming_from_local_source"
+                bytes_sent = 8192
+                peer_route = [pscustomobject]@{
+                    route_kind = "rusty_direct_p2p_socket_authority"
+                    connect_host = "192.168.49.102"
+                    connect_port = 9080
+                    local_bind_host = "192.168.49.1"
+                }
+                peer_socket_authority = "rusty_direct_p2p_socket_authority"
+                peer_socket_bound_local_address = "192.168.49.1"
+                peer_socket_local_interface = "rusty_direct_p2p_explicit_local_bind_address"
+                peer_socket_network_selection = "rusty_direct_p2p_explicit_local_bind_address"
+                peer_socket_wifi_direct_bind_required = $true
+                peer_socket_wifi_direct_bind_attempts = 1
+                peer_socket_local_address_same_subnet = $true
+            }
+        )
+    }
+    $wrongAuthoritySenderBrokerStatus = [pscustomobject]@{
+        lanes = @(
+            [pscustomobject]@{
+                role = "sender"
+                eye = "left"
+                state = "transport_peer_connected_streaming_from_local_source"
+                bytes_sent = 4096
+                peer_socket_authority = "android_connectivitymanager_network_or_rusty_direct_p2p_fallback"
+                peer_socket_bound_local_address = ""
+                peer_socket_wifi_direct_bind_required = $true
+                peer_socket_wifi_direct_bind_attempts = 1
+                peer_socket_local_address_same_subnet = $false
+            },
+            [pscustomobject]@{
+                role = "sender"
+                eye = "right"
+                state = "transport_peer_connected_streaming_from_local_source"
+                bytes_sent = 8192
+                peer_socket_authority = "rusty_direct_p2p_socket_authority"
+                peer_socket_bound_local_address = "192.168.49.1"
+                peer_socket_wifi_direct_bind_required = $true
+                peer_socket_wifi_direct_bind_attempts = 1
+                peer_socket_local_address_same_subnet = $true
+            }
+        )
+    }
     $relayFreshness = Get-Qcl082RelayFreshness -Diagnostics $relayDiagnostics -ReferenceUnixMs $referenceUnixMs
     $receiveProxyFreshness = Get-Qcl082ReceiveProxyFreshness -Diagnostics $receiveProxyDiagnostics -ReferenceUnixMs $referenceUnixMs
     $staleRelayFreshness = Get-Qcl082RelayFreshness -Diagnostics $staleRelayDiagnostics -ReferenceUnixMs $referenceUnixMs
@@ -1158,6 +1317,9 @@ function Invoke-Qcl100RuntimeSummarySelfTest {
         -ReferenceUnixMs $referenceUnixMs
     $receiverObservedFreshness = Get-BrokerReceiverObservedFreshness -BrokerStatus $receiverBrokerStatus
     $staleReceiverObservedFreshness = Get-BrokerReceiverObservedFreshness -BrokerStatus $staleReceiverBrokerStatus
+    $directSenderAuthority = Get-Qcl100DirectP2pSenderAuthority -BrokerStatus $directSenderBrokerStatus -Required:$true
+    $wrongAuthoritySenderAuthority = Get-Qcl100DirectP2pSenderAuthority -BrokerStatus $wrongAuthoritySenderBrokerStatus -Required:$true
+    $notRequiredSenderAuthority = Get-Qcl100DirectP2pSenderAuthority -BrokerStatus $wrongAuthoritySenderBrokerStatus -Required:$false
     $controlTcpTopology = Get-Qcl100Qcl082MediaTopologyAcceptance `
         -OwnerRelayFreshness $relayFreshness `
         -ClientRelayFreshness $relayFreshness `
@@ -1320,6 +1482,24 @@ function Invoke-Qcl100RuntimeSummarySelfTest {
             -ExpectedLaneCount 2 `
             -ExpectedFreshLaneCount 1 `
             -ExpectedByteCount 12288
+        Assert-Qcl100DirectP2pSenderAuthority `
+            -Name "direct-p2p-sender-authority-accepted" `
+            -Authority $directSenderAuthority `
+            -ExpectedAccepted $true `
+            -ExpectedLaneCount 2 `
+            -ExpectedAcceptedLaneCount 2
+        Assert-Qcl100DirectP2pSenderAuthority `
+            -Name "direct-p2p-sender-authority-rejects-wrong-authority" `
+            -Authority $wrongAuthoritySenderAuthority `
+            -ExpectedAccepted $false `
+            -ExpectedLaneCount 2 `
+            -ExpectedAcceptedLaneCount 1
+        Assert-Qcl100DirectP2pSenderAuthority `
+            -Name "direct-p2p-sender-authority-neutral-when-not-required" `
+            -Authority $notRequiredSenderAuthority `
+            -ExpectedAccepted $true `
+            -ExpectedLaneCount 2 `
+            -ExpectedAcceptedLaneCount 1
         Assert-Qcl100TransportClaims `
             -Name "transport-claims-control-tcp-duplex-justified-alternate" `
             -Claims (New-Qcl100TransportClaims -Direction "duplex" -FreshnessAcceptance $passedAcceptance -MediaTopologyAcceptance $controlTcpTopology) `
@@ -1348,6 +1528,13 @@ function Invoke-Qcl100RuntimeSummarySelfTest {
             -ExpectedAppBoundUdpDuplexClaimed $false `
             -ExpectedJustifiedAlternateClaimed $false `
             -ExpectedStatus "active_direction_stream_render_proven"
+        Assert-Qcl100TransportClaims `
+            -Name "transport-claims-broker-direct-no-qcl041-topology-no-duplex-claim" `
+            -Claims (New-Qcl100TransportClaims -Direction "duplex" -FreshnessAcceptance $passedAcceptance -MediaTopologyAcceptance $unacceptedTopologyWithAppBoundCounts -MediaTopologyRequired:$false) `
+            -ExpectedSameGroupDuplexClaimed $false `
+            -ExpectedAppBoundUdpDuplexClaimed $false `
+            -ExpectedJustifiedAlternateClaimed $false `
+            -ExpectedStatus "same_group_duplex_topology_not_required_for_broker_direct_media_no_duplex_claim"
         Assert-Qcl100TransportClaims `
             -Name "transport-claims-blocked-does-not-claim-duplex" `
             -Claims (New-Qcl100TransportClaims -Direction "duplex" -FreshnessAcceptance $blockedAcceptance -MediaTopologyAcceptance $controlTcpTopology) `

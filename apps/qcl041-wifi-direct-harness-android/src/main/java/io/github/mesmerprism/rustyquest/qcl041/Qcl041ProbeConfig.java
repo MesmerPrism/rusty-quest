@@ -24,6 +24,10 @@ final class Qcl041ProbeConfig {
     static final String QCL030_ROLE_HOTSPOT_CLIENT = "hotspot_client";
     static final String QCL030_CLIENT_JOIN_MODE_NETWORK_SPECIFIER = "network_specifier";
     static final String QCL030_CLIENT_JOIN_MODE_ACTIVE_WIFI = "active_wifi";
+    static final String LOWER_GATE_AUTHORITY_ANDROID_CONNECTIVITYMANAGER_NETWORK =
+            "android_connectivitymanager_network";
+    static final String LOWER_GATE_AUTHORITY_RUSTY_DIRECT_P2P_SOCKET =
+            "rusty_direct_p2p_socket_authority";
     static final String DEFAULT_Q2Q_NETWORK_NAME = "DIRECT-rq-QCL100";
     static final String DEFAULT_Q2Q_PASSPHRASE = "RustyQcl100Pass";
 
@@ -66,6 +70,8 @@ final class Qcl041ProbeConfig {
     final boolean q2qAppNetworkRequestTraceEnabled;
     final int q2qAppNetworkRequestTraceTimeoutMs;
     final String q2qAppNetworkRequestTraceScopes;
+    final boolean qcl100ControlTcpGate;
+    final String qcl100LowerGateAuthority;
     final String q2qTcpBindingVariants;
     final int q2qTcpBindingVariantDelayMs;
     final boolean qcl030LocalOnlyHotspotEnabled;
@@ -80,6 +86,7 @@ final class Qcl041ProbeConfig {
     final String qcl030LocalOnlyHotspotClientJoinMode;
     final boolean qcl030LocalOnlyHotspotRequireSsidMatch;
     final boolean qcl082RelayEnabled;
+    final boolean qcl082MediaPathBeforeSocketProbe;
     final String qcl082RelaySourceHost;
     final int qcl082RelaySourcePort;
     final String qcl082RelayReceiverHost;
@@ -212,6 +219,12 @@ final class Qcl041ProbeConfig {
                 intent,
                 "qcl041.q2q_app_network_request_trace_scopes",
                 "wifi_p2p,local_network");
+        this.qcl100ControlTcpGate =
+                booleanExtra(intent, "qcl041.qcl100_control_tcp_gate", false);
+        this.qcl100LowerGateAuthority = normalizeLowerGateAuthority(stringExtra(
+                intent,
+                "qcl041.qcl100_lower_gate_authority",
+                LOWER_GATE_AUTHORITY_ANDROID_CONNECTIVITYMANAGER_NETWORK));
         this.q2qTcpBindingVariants = stringExtra(
                 intent,
                 "qcl041.q2q_tcp_binding_variants",
@@ -250,6 +263,8 @@ final class Qcl041ProbeConfig {
         this.qcl030LocalOnlyHotspotRequireSsidMatch =
                 booleanExtra(intent, "qcl041.qcl030_local_only_hotspot_require_ssid_match", false);
         this.qcl082RelayEnabled = booleanExtra(intent, "qcl041.qcl082_relay_enabled", false);
+        this.qcl082MediaPathBeforeSocketProbe =
+                booleanExtra(intent, "qcl041.qcl082_media_path_before_socket_probe", false);
         this.qcl082RelaySourceHost = stringExtra(intent, "qcl041.qcl082_relay_source_host", "127.0.0.1");
         this.qcl082RelaySourcePort = intExtra(intent, "qcl041.qcl082_relay_source_port", 8879);
         this.qcl082RelayReceiverHost = stringExtra(intent, "qcl041.qcl082_relay_receiver_host", "192.168.137.1");
@@ -424,6 +439,10 @@ final class Qcl041ProbeConfig {
         return false;
     }
 
+    boolean isRustyDirectP2pSocketAuthority() {
+        return LOWER_GATE_AUTHORITY_RUSTY_DIRECT_P2P_SOCKET.equals(qcl100LowerGateAuthority);
+    }
+
     boolean tcpBindingVariantRequested(String mode) {
         if (mode == null || mode.trim().isEmpty()) {
             return false;
@@ -511,6 +530,15 @@ final class Qcl041ProbeConfig {
             return WINDOWS_PEER_CONNECT_MODE_LEGACY_DEFAULT;
         }
         return WINDOWS_PEER_CONNECT_MODE_TEMPORARY;
+    }
+
+    private static String normalizeLowerGateAuthority(String value) {
+        String normalized = value == null ? "" : value.trim().toLowerCase().replace('-', '_');
+        if (LOWER_GATE_AUTHORITY_RUSTY_DIRECT_P2P_SOCKET.equals(normalized)
+                || "rusty_direct_network_authority".equals(normalized)) {
+            return LOWER_GATE_AUTHORITY_RUSTY_DIRECT_P2P_SOCKET;
+        }
+        return LOWER_GATE_AUTHORITY_ANDROID_CONNECTIVITYMANAGER_NETWORK;
     }
 
     private static String stringExtra(Intent intent, String key, String fallback) {

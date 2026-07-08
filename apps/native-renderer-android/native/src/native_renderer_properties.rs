@@ -5,6 +5,8 @@
 
 pub(crate) const PROP_ENABLE_SDF_VISUAL: &str =
     "debug.rustyquest.native_renderer.sdf.visual.enabled";
+pub(crate) const PROP_SDF_FIELD_VISUAL_ENABLED: &str =
+    "debug.rustyquest.native_renderer.sdf.field_visual.enabled";
 pub(crate) const PROP_RENDER_MODE: &str = "debug.rustyquest.native_renderer.render.mode";
 pub(crate) const PROP_CAMERA_OUTPUT_MODE: &str = "debug.rustyquest.native_renderer.camera.output";
 pub(crate) const PROP_GUIDE_BLUR_ENABLED: &str =
@@ -146,6 +148,8 @@ pub(crate) const PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV: &str =
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.offset_uv";
 pub(crate) const PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA: &str =
     "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha";
+pub(crate) const PROP_HAND_MESH_VISUAL_MESH_SOURCE: &str =
+    "debug.rustyquest.native_renderer.hand_mesh.visual.mesh_source";
 pub(crate) const PROP_HAND_MESH_VISUAL_MATERIAL_ALPHA: &str =
     "debug.rustyquest.native_renderer.hand_mesh.visual.material.alpha";
 pub(crate) const PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_B: &str =
@@ -158,6 +162,10 @@ pub(crate) const PROP_HAND_MESH_VISUAL_MATERIAL_PROFILE: &str =
     "debug.rustyquest.native_renderer.hand_mesh.visual.material.profile";
 pub(crate) const PROP_HAND_MESH_VISUAL_MATERIAL_RIM_STRENGTH: &str =
     "debug.rustyquest.native_renderer.hand_mesh.visual.material.rim_strength";
+pub(crate) const PROP_HAND_MESH_VISUAL_WIREFRAME_ENABLED: &str =
+    "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.enabled";
+pub(crate) const PROP_HAND_MESH_VISUAL_WIREFRAME_WIDTH_PX: &str =
+    "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.width_px";
 pub(crate) const PROP_HAND_MESH_GRAFT_COPIES_ENABLED: &str =
     "debug.rustyquest.native_renderer.hand_mesh.graft_copies.enabled";
 pub(crate) const PROP_HAND_MESH_GRAFT_COPY_SCALE: &str =

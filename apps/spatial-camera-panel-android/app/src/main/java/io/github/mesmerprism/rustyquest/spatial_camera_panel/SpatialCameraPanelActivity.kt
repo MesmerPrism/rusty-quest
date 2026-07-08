@@ -297,7 +297,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             currentSpatialVrInputSystemType(),
         ),
         SpatialAvatarHandVisualFeature(::marker),
+        SpatialAvatarHandInvestigationFeature(::marker),
         SpatialHandBillboardFlockFeature(::marker) { store.snapshot().surfaceTargetId },
+        SpatialHandCaptureRecorderFeature(this, ::marker) {
+          SpatialNativeInteropProbe.capture(scene)
+        },
         SpatialControllerInputLateFeature(::pollSpatialControllerInput),
     ) + SpatialPrivateFeatureLoader.load(::marker, this) + listOf(
         ComposeFeature(),

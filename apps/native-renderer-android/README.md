@@ -201,6 +201,21 @@ should enable the high-contrast diagnostic overlay with
 `debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.alpha`, then
 capture visual evidence that the mesh and SDF effects are visible over the
 camera projection.
+For exact triangle inspection, enable
+`debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.enabled=true`.
+The wire overlay is shader-barycentric on the resident selected triangle list,
+so it works for live compact joint skinning, recorded joint replay, and
+post-skinning graft copies without CPU-expanded edge buffers. Select the
+resident visual source with
+`debug.rustyquest.native_renderer.hand_mesh.visual.mesh_source`: `auto` accepts
+the packaged topology, `openxr-fb-mesh` requires the Meta/OpenXR FB mesh
+topology, and `custom-mesh` requires a non-FB custom topology. The visual source
+and wireframe enabled/width properties are runtime-polled, so low-rate
+`adb setprop` changes can switch the inspection mode without relaunching.
+The optional field overlay now uses the clearer property
+`debug.rustyquest.native_renderer.sdf.field_visual.enabled`; the older
+`debug.rustyquest.native_renderer.sdf.visual.enabled` remains a compatibility
+alias.
 The staged property bundle for that later retest is
 `fixtures/runtime-profiles/quest-native-renderer-live-hand-visual-diagnostic.profile.json`;
 it forces `live-meta-openxr-hand-tracking`, keeps recorded fallback available

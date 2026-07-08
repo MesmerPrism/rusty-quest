@@ -58,6 +58,10 @@ mod guide_blur_graph;
 mod hand_mesh_graft;
 #[cfg(target_os = "android")]
 mod live_hand_compact;
+#[cfg(target_os = "android")]
+mod live_hand_joint_capture;
+#[cfg(target_os = "android")]
+mod live_hand_mesh_capture;
 mod lsl_android;
 mod lsl_transport_bridge;
 mod manifold_breath_bridge;
@@ -310,7 +314,7 @@ fn android_main(app: android_activity::AndroidApp) {
     marker(
         "render-mode",
         format!(
-            "status=config property={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} openxrDefaultHandVisualRequested={} sdfVisualEnabled={} handMeshGraftCopiesEnabled={} handMeshGraftScaleMultiplier={:.2} realHandsProperty={} handMeshRealHandsVisible={} {}",
+            "status=config property={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} openxrDefaultHandVisualRequested={} sdfFieldVisualEnabled={} sdfVisualEnabled={} handMeshGraftCopiesEnabled={} handMeshGraftScaleMultiplier={:.2} realHandsProperty={} handMeshRealHandsVisible={} {}",
             native_renderer_options::PROP_RENDER_MODE,
             runtime_options.render_mode.marker_value(),
             runtime_options.render_mode.uses_custom_stereo_projection(),
@@ -319,6 +323,7 @@ fn android_main(app: android_activity::AndroidApp) {
             runtime_options
                 .render_mode
                 .requests_openxr_default_hand_visual(),
+            runtime_options.sdf_visual_enabled,
             runtime_options.sdf_visual_enabled,
             runtime_options.hand_mesh_graft_copies_enabled,
             runtime_options.hand_mesh_graft_copy_scale,

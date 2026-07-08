@@ -274,6 +274,12 @@ Assert-ContainsTokens $q2qMatrixInvoke @(
     'RequireCandidateWifiDirectRoutesClear',
     'RequireTcpTunnelStreamPass',
     'Qcl100ControlTcpGate',
+    'Qcl041GroupOwnerLabel',
+    'qcl041_group_owner_label',
+    'owner_qcl041_role',
+    'client_qcl041_role',
+    'wifi_status_command_exit_code',
+    'wifi_status_command_available',
     'AppNetworkTrace',
     'AppNetworkTraceOnly',
     'AppNetworkRequestTrace',
@@ -288,8 +294,10 @@ Assert-ContainsTokens $q2qMatrixInvoke @(
     'qcl041\.q2q_app_network_request_trace_enabled',
     'qcl041\.q2q_app_network_request_trace_timeout_ms',
     'qcl041\.q2q_app_network_request_trace_scopes',
+    'qcl041\.qcl100_lower_gate_authority',
     'qcl041\.q2q_tcp_binding_variants',
     'qcl041\.q2q_tcp_binding_variant_delay_ms',
+    'rusty_direct_p2p_socket_authority',
     'PreflightOnly',
     '"cmd",\s*"wifi",\s*"status"',
     'Wifi is connected to',
@@ -419,6 +427,9 @@ Assert-ContainsTokens $q2qMatrixInvoke @(
     'client_p2p_interface_local_bind_tcp_pass',
     'client_p2p_interface_local_bind_tcp_receiver_accepts',
     'client_p2p_interface_local_bind_tcp_stream_pass',
+    'local_p2p_bind_tcp_stream_pass',
+    'local_p2p_bind_tcp_stream_sender_to_receiver_rx_bytes',
+    'local_p2p_bind_tcp_stream_receiver_to_sender_rx_bytes',
     'client_p2p_interface_local_bind_tcp_stream_client_to_owner_rx_bytes',
     'client_p2p_interface_local_bind_tcp_stream_owner_to_client_rx_bytes',
     'udp_network_bound_receiver_observed_packets',
@@ -432,6 +443,10 @@ Assert-ContainsTokens $q2qMatrixInvoke @(
     'Test-Qcl041MatrixArtifactComplete',
     'owner_matrix_complete',
     'client_matrix_complete',
+    'group_owner_artifact_label',
+    'group_client_artifact_label',
+    'owner_physical_matrix_role',
+    'client_physical_matrix_role',
     'owner_matrix_last_checkpoint',
     'client_matrix_last_checkpoint',
     'owner_matrix_missing',
@@ -445,6 +460,13 @@ Assert-ContainsTokens $q2qMatrixInvoke @(
     'network_visibility_deep_trace',
     'network-visibility-deep-trace\.json',
     'qcl041_network_visibility_deep_trace',
+    'rustyDirectLocalP2pGatePass',
+    '-not \$rustyDirectLocalP2pGatePass -and \$AppNetworkTraceOnly',
+    'FenceQuestSettingsBeforeLaunch',
+    'settings_fence_before_launch',
+    'settings-fence-before-launch\.json',
+    'com.oculus.panelapp.settings',
+    'com.android.settings',
     'app_network_request_trace_enabled',
     'app_network_request_trace_scopes',
     'client_request_network_trace_candidate_seen',
@@ -453,6 +475,16 @@ Assert-ContainsTokens $q2qMatrixInvoke @(
     'post_run_network',
     'p2p0_ipv4_cleared'
 ) "Quest-to-Quest app-bound socket matrix wrapper"
+
+Assert-ContainsTokens $combined @(
+    'android_network_wait_skipped_for_rusty_direct_p2p_socket_authority',
+    'network_visibility_only_qcl100_lower_gate_authority',
+    'skipRustyDirectControlGateWifiP2pNetworkRequestVisibility',
+    'rusty_direct_qcl100_control_tcp_gate_uses_explicit_p2p_socket_binding',
+    'LOWER_GATE_AUTHORITY_RUSTY_DIRECT_P2P_SOCKET',
+    'isRustyDirectP2pSocketAuthority',
+    'qcl100_lower_gate_authority'
+) "QCL041 Rusty direct p2p authority harness path"
 
 Assert-TextOrder `
     -Text $appBoundSocketMatrix `
@@ -712,7 +744,7 @@ Assert-ContainsTokens $qcl100Invoke @(
 Assert-TextOrder `
     -Text $qcl100Invoke `
     -First '$ownerFinalStatusProbe = Invoke-LiveBridgeCommand "owner-final-status"' `
-    -Second 'Read-Qcl041Artifact `' `
+    -Second '$ownerQcl041Read = Invoke-Qcl100FinalQcl041ArtifactRead `' `
     -Label "QCL-100 final broker status before QCL041 artifact freshness wait"
 
 Assert-ContainsTokens $qcl100Relay @(
@@ -884,6 +916,9 @@ Assert-ContainsTokens $combined @(
     'client_p2p_interface_local_bind_udp_pass',
     'client_p2p_interface_local_bind_tcp_pass',
     'client_p2p_interface_local_bind_tcp_stream_pass',
+    'local_p2p_bind_tcp_stream_pass',
+    'local_p2p_bind_tcp_stream_sender_to_receiver_rx_bytes',
+    'local_p2p_bind_tcp_stream_receiver_to_sender_rx_bytes',
     'client_p2p_network_callback_seen',
     'client_p2p_network_socket_authority_pass',
     'client_app_network_permissions_all_granted',
@@ -1206,6 +1241,13 @@ Assert-ContainsTokens $lifecycleSurface @(
     'lane_count',
     'pollPeerDiscoveryUntilConnectStarts',
     'peer_discovery_poll_count',
+    'single_quest_peer_name_fallback',
+    'single_quest_peer_name_fallback_requested',
+    'waitForWifiDirectLocalAddress',
+    'WIFI_DIRECT_LOCAL_ADDRESS_WAIT_MS',
+    '"client_"',
+    '"group_owner_"',
+    'wifi_direct_local_address_wait_result',
     'initial_stale_group_preclear',
     'removeStaleQuestGroupBeforeInitialCreate',
     'q2qPreclearOnly',

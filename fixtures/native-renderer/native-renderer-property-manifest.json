@@ -17,7 +17,7 @@
     "apps/native-renderer-android/native/src/manifold_scalar_driver_bridge.rs",
     "apps/native-renderer-android/native/src/lsl_transport_bridge.rs"
   ],
-  "property_count": 251,
+  "property_count": 255,
   "properties": [
     {
       "name": "debug.rustyquest.native_renderer.camera.direct_border.opacity",
@@ -1783,6 +1783,60 @@
       "range": {
         "min": 0.0,
         "max": 1.0
+      },
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.mesh_source",
+      "family": "hand_mesh",
+      "runtime_owner": "native_renderer_visual_options",
+      "lifecycle": "runtime-polled",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "auto",
+        "openxr-fb-mesh",
+        "custom-mesh"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.enabled",
+      "family": "hand_mesh",
+      "runtime_owner": "native_renderer_visual_options",
+      "lifecycle": "runtime-polled",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.width_px",
+      "family": "hand_mesh",
+      "runtime_owner": "native_renderer_visual_options",
+      "lifecycle": "runtime-polled",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "f32",
+      "range": {
+        "min": 0.5,
+        "max": 4.0
       },
       "validators": [
         "runtime-parser",
@@ -4034,6 +4088,21 @@
       "name": "debug.rustyquest.native_renderer.replay.visual_proof.enabled",
       "family": "replay",
       "runtime_owner": "native_renderer_visual_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "bool",
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.sdf.field_visual.enabled",
+      "family": "sdf",
+      "runtime_owner": "native_renderer_options",
       "lifecycle": "startup-effective",
       "clear_behavior": "profile-owned-explicit-set",
       "default_behavior": "runtime-owner-default-when-unset",

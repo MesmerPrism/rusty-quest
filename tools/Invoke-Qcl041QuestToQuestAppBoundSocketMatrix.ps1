@@ -18,12 +18,16 @@ param(
     [string]$RouteProbeTarget = "192.168.49.1",
     [string]$OwnerWifiDirectAddress = "192.168.49.1",
     [string]$ClientWifiDirectAddress = "192.168.49.46",
+    [ValidateSet("owner", "client")]
+    [string]$Qcl041GroupOwnerLabel = "owner",
     [int]$ActiveRouteProbeWaitSeconds = 35,
     [switch]$RequireInfrastructureWifiDisconnected,
     [switch]$RequireP2p0Ipv4Cleared,
     [switch]$RequireCandidateWifiDirectRoutesClear,
     [switch]$RequireTcpTunnelStreamPass,
     [switch]$Qcl100ControlTcpGate,
+    [ValidateSet("android_connectivitymanager_network", "rusty_direct_p2p_socket_authority")]
+    [string]$Qcl100LowerGateAuthority = "android_connectivitymanager_network",
     [switch]$AppNetworkTrace,
     [switch]$AppNetworkTraceOnly,
     [switch]$AppNetworkRequestTrace,
@@ -31,6 +35,8 @@ param(
     [string[]]$AppNetworkRequestTraceScopes = @("wifi_p2p", "local_network"),
     [string[]]$TcpBindingVariants = @(),
     [int]$TcpBindingVariantDelaySeconds = 5,
+    [switch]$FenceQuestSettingsBeforeLaunch,
+    [switch]$ClearLogcatAfterSettingsFence,
     [switch]$PreflightOnly,
     [switch]$SkipInstall
 )
@@ -38,6 +44,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $Qcl041Package = "io.github.mesmerprism.rustyquest.qcl041"
+$rustyDirectP2pAuthority = [string]$Qcl100LowerGateAuthority -eq "rusty_direct_p2p_socket_authority"
 $requestedDelayedUdpDelaySeconds = [Math]::Max(0, $DelayedUdpDelaySeconds)
 $effectiveDelayedUdpDelaySeconds = if ($Qcl100ControlTcpGate -or $AppNetworkTraceOnly) { 0 } else { $requestedDelayedUdpDelaySeconds }
 $effectiveRequireTcpTunnelStreamPass = [bool]($RequireTcpTunnelStreamPass -or $Qcl100ControlTcpGate)
@@ -58,6 +65,8 @@ $normalizedTcpBindingVariants = @(
         Select-Object -Unique
 )
 $tcpBindingVariantsText = $normalizedTcpBindingVariants -join ","
+$ownerQcl041Role = if ($Qcl041GroupOwnerLabel -eq "owner") { "group_owner" } else { "client" }
+$clientQcl041Role = if ($Qcl041GroupOwnerLabel -eq "client") { "group_owner" } else { "client" }
 $normalizedAppNetworkRequestTraceScopes = @(
     $AppNetworkRequestTraceScopes |
         ForEach-Object { @(([string]$_ -split "[,;\s]+")) } |
@@ -147,15 +156,69 @@ function Invoke-AdbProbe {
     }
 }
 
+function Invoke-Qcl041QuestSettingsFenceForDevice {
+    param([Parameter(Mandatory=$true)][string]$Serial)
+    $panelStop = Invoke-AdbProbe `
+        -Serial $Serial `
+        -Arguments @("shell", "am", "force-stop", "com.oculus.panelapp.settings") `
+        -Name "force-stop com.oculus.panelapp.settings"
+    $androidStop = Invoke-AdbProbe `
+        -Serial $Serial `
+        -Arguments @("shell", "am", "force-stop", "com.android.settings") `
+        -Name "force-stop com.android.settings"
+    $homeKey = Invoke-AdbProbe `
+        -Serial $Serial `
+        -Arguments @("shell", "input", "keyevent", "HOME") `
+        -Name "input keyevent HOME"
+    $focus = Invoke-AdbProbe `
+        -Serial $Serial `
+        -Arguments @("shell", "sh", "-c", "dumpsys window | grep -E '^[[:space:]]*mCurrentFocus=|^[[:space:]]*mFocusedApp=|mCurrentFocus: RunningWindowInfo'") `
+        -Name "dumpsys window focus"
+    $logcatClear = $null
+    if ($ClearLogcatAfterSettingsFence) {
+        $logcatClear = Invoke-AdbProbe `
+            -Serial $Serial `
+            -Arguments @("shell", "logcat", "-c") `
+            -Name "logcat clear"
+    }
+    $focusText = [string]$focus.output
+    [ordered]@{
+        serial = $Serial
+        force_stop_panel_settings = $panelStop
+        force_stop_android_settings = $androidStop
+        home_key = $homeKey
+        logcat_clear = $logcatClear
+        focus_probe = $focus
+        focus_not_settings = [bool]($focus.exit_code -eq 0 -and $focusText -notmatch "com\.oculus\.panelapp\.settings|com\.android\.settings|SettingsActivity")
+        sensor_lock_visible = [bool]($focusText -match "mCurrentFocus=.*SensorLockActivity|mFocusedApp=.*SensorLockActivity|activity: .*SensorLockActivity")
+    }
+}
+
+function Invoke-Qcl041QuestSettingsFence {
+    [ordered]@{
+        requested = [bool]$FenceQuestSettingsBeforeLaunch
+        performed = [bool]$FenceQuestSettingsBeforeLaunch
+        purpose = "fence_external_meta_settings_wifi_scan_surface_before_qcl041_group_formation"
+        clear_logcat_after_fence = [bool]$ClearLogcatAfterSettingsFence
+        owner = if ($FenceQuestSettingsBeforeLaunch) { Invoke-Qcl041QuestSettingsFenceForDevice -Serial $OwnerSerial } else { $null }
+        client = if ($FenceQuestSettingsBeforeLaunch) { Invoke-Qcl041QuestSettingsFenceForDevice -Serial $ClientSerial } else { $null }
+        promotion_allowed = $false
+        same_group_duplex_claimed = $false
+    }
+}
+
 function Get-Qcl041WifiStatus {
     param([Parameter(Mandatory=$true)][string]$Serial)
-    $output = Invoke-AdbText -Serial $Serial -Arguments @("shell", "cmd", "wifi", "status") -Name "wifi status"
+    $probe = Invoke-AdbProbe -Serial $Serial -Arguments @("shell", "cmd", "wifi", "status") -Name "wifi status"
+    $output = [string]$probe.output
     $ssid = ""
     if ($output -match 'Wifi is connected to "([^"]+)"') {
         $ssid = $Matches[1]
     }
     [ordered]@{
         serial = $Serial
+        wifi_status_command_exit_code = $probe.exit_code
+        wifi_status_command_available = [bool]($probe.exit_code -eq 0 -and $output -notmatch "Can't find service")
         wifi_enabled = [bool]($output -match '(?m)^Wifi is enabled')
         infrastructure_connected = [bool](-not [string]::IsNullOrWhiteSpace($ssid))
         infrastructure_ssid = $ssid
@@ -503,7 +566,8 @@ function Start-Qcl041MatrixService {
         "--ez", "qcl041.q2q_app_network_request_trace_enabled", $(if ($appNetworkRequestTraceEnabled) { "true" } else { "false" }),
         "--ei", "qcl041.q2q_app_network_request_trace_timeout_ms", ($effectiveAppNetworkRequestTraceTimeoutSeconds * 1000).ToString(),
         "--es", "qcl041.q2q_app_network_request_trace_scopes", $appNetworkRequestTraceScopesText,
-        "--es", "qcl041.q2q_tcp_binding_variants", $tcpBindingVariantsText,
+        "--ez", "qcl041.qcl100_control_tcp_gate", $(if ($Qcl100ControlTcpGate) { "true" } else { "false" }),
+        "--es", "qcl041.qcl100_lower_gate_authority", $Qcl100LowerGateAuthority,
         "--ei", "qcl041.q2q_tcp_binding_variant_delay_ms", ([Math]::Max(0, $TcpBindingVariantDelaySeconds) * 1000).ToString(),
         "--ei", "qcl041.q2q_app_bound_socket_matrix_port", $MatrixPort.ToString(),
         "--ei", "qcl041.q2q_app_bound_socket_matrix_delayed_udp_delay_ms", ($effectiveDelayedUdpDelaySeconds * 1000).ToString(),
@@ -513,6 +577,9 @@ function Start-Qcl041MatrixService {
         "--ez", "qcl041.qcl082_receive_proxy_enabled", "false",
         "--ez", "qcl041.qcl082_ack_pacing_enabled", "false"
     )
+    if (-not [string]::IsNullOrWhiteSpace($tcpBindingVariantsText)) {
+        $intentArgs += @("--es", "qcl041.q2q_tcp_binding_variants", $tcpBindingVariantsText)
+    }
     $output = Invoke-AdbText -Serial $Serial -Arguments $intentArgs -Name "start qcl041 matrix"
     $output | Set-Content -Encoding UTF8 -Path (Join-Path $OutDir "$Role-launch.txt")
 }
@@ -616,7 +683,7 @@ function Wait-Qcl041Artifacts {
                 }
                 if ($null -ne $matrix) {
                     $ownerReady = [bool](
-                        ($ControlTcpGateReady -and (Test-Qcl041ControlTcpGateArtifactReady -Matrix $matrix -Role "group_owner")) -or
+                        ($ControlTcpGateReady -and (Test-Qcl041ControlTcpGateArtifactReady -Matrix $matrix -Role $ownerQcl041Role)) -or
                         (-not $ControlTcpGateReady -and (Test-Qcl041MatrixArtifactComplete -Matrix $matrix)))
                 }
             }
@@ -632,7 +699,7 @@ function Wait-Qcl041Artifacts {
                 }
                 if ($null -ne $matrix) {
                     $clientReady = [bool](
-                        ($ControlTcpGateReady -and (Test-Qcl041ControlTcpGateArtifactReady -Matrix $matrix -Role "client")) -or
+                        ($ControlTcpGateReady -and (Test-Qcl041ControlTcpGateArtifactReady -Matrix $matrix -Role $clientQcl041Role)) -or
                         (-not $ControlTcpGateReady -and (Test-Qcl041MatrixArtifactComplete -Matrix $matrix)))
                 }
             }
@@ -653,6 +720,27 @@ function Wait-Qcl041Artifacts {
 function Test-Qcl041ControlTcpGateArtifactReady {
     param($Matrix, [string]$Role)
     if ($null -eq $Matrix) {
+        return $false
+    }
+    $requiredStreamBytes = [Math]::Max(1L, [long]$TcpTunnelStreamBytesPerDirection)
+    if ($rustyDirectP2pAuthority) {
+        if ($Role -eq "group_owner") {
+            return [bool](
+                (Get-LongValue (Get-MatrixValue -Matrix $Matrix -Name "udp_local_p2p_bind_echo_rx_packets")) -gt 0 -and
+                (Get-LongValue (Get-MatrixValue -Matrix $Matrix -Name "tcp_local_p2p_bind_stream_socket_client_to_owner_rx_bytes")) -ge $requiredStreamBytes -and
+                (Get-LongValue (Get-MatrixValue -Matrix $Matrix -Name "tcp_local_p2p_bind_stream_socket_owner_to_client_tx_bytes")) -ge $requiredStreamBytes -and
+                (Get-BoolValue (Get-MatrixValue -Matrix $Matrix -Name "tcp_local_p2p_bind_stream_socket_client_to_owner_crc32_match")))
+        }
+        if ($Role -eq "client") {
+            return [bool](
+                (Get-BoolValue (Get-MatrixValue -Matrix $Matrix -Name "udp_local_p2p_bind_echo_local_p2p_bind_authority_pass")) -and
+                (Get-LongValue (Get-MatrixValue -Matrix $Matrix -Name "udp_local_p2p_bind_echo_tx_packets")) -gt 0 -and
+                (Get-BoolValue (Get-MatrixValue -Matrix $Matrix -Name "tcp_local_p2p_bind_socket_local_p2p_bind_authority_pass")) -and
+                (Get-LongValue (Get-MatrixValue -Matrix $Matrix -Name "tcp_local_p2p_bind_stream_socket_client_to_owner_tx_bytes")) -ge $requiredStreamBytes -and
+                (Get-LongValue (Get-MatrixValue -Matrix $Matrix -Name "tcp_local_p2p_bind_stream_socket_owner_to_client_rx_bytes")) -ge $requiredStreamBytes -and
+                (Get-BoolValue (Get-MatrixValue -Matrix $Matrix -Name "tcp_local_p2p_bind_stream_socket_client_to_owner_crc32_match")) -and
+                (Get-BoolValue (Get-MatrixValue -Matrix $Matrix -Name "tcp_local_p2p_bind_stream_socket_owner_to_client_crc32_match")))
+        }
         return $false
     }
     if ($Role -eq "group_owner") {
@@ -688,6 +776,17 @@ function Get-MatrixValue {
         return $null
     }
     return $property.Value
+}
+
+function Get-MatrixFirstValue {
+    param($Matrix, [string[]]$Names)
+    foreach ($name in $Names) {
+        $value = Get-MatrixValue -Matrix $Matrix -Name $name
+        if ($null -ne $value) {
+            return $value
+        }
+    }
+    return $null
 }
 
 function Get-LongValue {
@@ -735,32 +834,81 @@ function Test-Qcl041MatrixArtifactComplete {
     return $false
 }
 
+function Get-Qcl041RoleMatrixSelection {
+    param(
+        $OwnerArtifact,
+        $ClientArtifact
+    )
+    $ownerMatrixPhysical = if ($null -ne $OwnerArtifact -and $null -ne $OwnerArtifact.diagnostics) {
+        $OwnerArtifact.diagnostics.q2q_app_bound_socket_matrix
+    } else {
+        $null
+    }
+    $clientMatrixPhysical = if ($null -ne $ClientArtifact -and $null -ne $ClientArtifact.diagnostics) {
+        $ClientArtifact.diagnostics.q2q_app_bound_socket_matrix
+    } else {
+        $null
+    }
+    $ownerTracePhysical = if ($null -ne $OwnerArtifact -and $null -ne $OwnerArtifact.diagnostics) {
+        $OwnerArtifact.diagnostics.app_network_trace
+    } else {
+        $null
+    }
+    $clientTracePhysical = if ($null -ne $ClientArtifact -and $null -ne $ClientArtifact.diagnostics) {
+        $ClientArtifact.diagnostics.app_network_trace
+    } else {
+        $null
+    }
+    $ownerRolePhysical = [string](Get-MatrixValue -Matrix $ownerMatrixPhysical -Name "role")
+    $clientRolePhysical = [string](Get-MatrixValue -Matrix $clientMatrixPhysical -Name "role")
+
+    $groupOwnerMatrix = $ownerMatrixPhysical
+    $groupOwnerTrace = $ownerTracePhysical
+    $groupOwnerArtifactLabel = "owner"
+    if ($clientRolePhysical -eq "group_owner_receiver") {
+        $groupOwnerMatrix = $clientMatrixPhysical
+        $groupOwnerTrace = $clientTracePhysical
+        $groupOwnerArtifactLabel = "client"
+    }
+
+    $groupClientMatrix = $clientMatrixPhysical
+    $groupClientTrace = $clientTracePhysical
+    $groupClientArtifactLabel = "client"
+    if ($ownerRolePhysical -eq "client_sender") {
+        $groupClientMatrix = $ownerMatrixPhysical
+        $groupClientTrace = $ownerTracePhysical
+        $groupClientArtifactLabel = "owner"
+    }
+
+    [ordered]@{
+        owner_matrix_physical = $ownerMatrixPhysical
+        client_matrix_physical = $clientMatrixPhysical
+        owner_trace_physical = $ownerTracePhysical
+        client_trace_physical = $clientTracePhysical
+        owner_role_physical = $ownerRolePhysical
+        client_role_physical = $clientRolePhysical
+        group_owner_matrix = $groupOwnerMatrix
+        group_owner_trace = $groupOwnerTrace
+        group_owner_artifact_label = $groupOwnerArtifactLabel
+        group_client_matrix = $groupClientMatrix
+        group_client_trace = $groupClientTrace
+        group_client_artifact_label = $groupClientArtifactLabel
+    }
+}
+
 function Get-Qcl041AppNetworkVisibility {
     param(
         $OwnerArtifact,
         $ClientArtifact,
         $ActiveShellRoutes
     )
-    $ownerMatrix = if ($null -ne $OwnerArtifact -and $null -ne $OwnerArtifact.diagnostics) {
-        $OwnerArtifact.diagnostics.q2q_app_bound_socket_matrix
-    } else {
-        $null
-    }
-    $clientMatrix = if ($null -ne $ClientArtifact -and $null -ne $ClientArtifact.diagnostics) {
-        $ClientArtifact.diagnostics.q2q_app_bound_socket_matrix
-    } else {
-        $null
-    }
-    $ownerTrace = if ($null -ne $OwnerArtifact -and $null -ne $OwnerArtifact.diagnostics) {
-        $OwnerArtifact.diagnostics.app_network_trace
-    } else {
-        $null
-    }
-    $clientTrace = if ($null -ne $ClientArtifact -and $null -ne $ClientArtifact.diagnostics) {
-        $ClientArtifact.diagnostics.app_network_trace
-    } else {
-        $null
-    }
+    $roleSelection = Get-Qcl041RoleMatrixSelection -OwnerArtifact $OwnerArtifact -ClientArtifact $ClientArtifact
+    $ownerMatrix = $roleSelection.group_owner_matrix
+    $clientMatrix = $roleSelection.group_client_matrix
+    $ownerTrace = $roleSelection.group_owner_trace
+    $clientTrace = $roleSelection.group_client_trace
+    $groupOwnerArtifactLabel = [string]$roleSelection.group_owner_artifact_label
+    $groupClientArtifactLabel = [string]$roleSelection.group_client_artifact_label
     $ownerVisible = Get-BoolValue (Get-MatrixValue -Matrix $ownerMatrix -Name "initial_network_available")
     $clientVisible = Get-BoolValue (Get-MatrixValue -Matrix $clientMatrix -Name "initial_network_available")
     $ownerRequestVisible = Get-BoolValue (Get-MatrixValue -Matrix $ownerMatrix -Name "initial_wifi_p2p_request_network_found")
@@ -835,6 +983,10 @@ function Get-Qcl041AppNetworkVisibility {
     }
     [ordered]@{
         owner_qcl041_p2p_network_visible = $ownerVisible
+        group_owner_artifact_label = $roleSelection.group_owner_artifact_label
+        group_client_artifact_label = $roleSelection.group_client_artifact_label
+        owner_physical_matrix_role = $roleSelection.owner_role_physical
+        client_physical_matrix_role = $roleSelection.client_role_physical
         owner_initial_network = Get-MatrixValue -Matrix $ownerMatrix -Name "initial_network"
         owner_initial_network_handle = Get-MatrixValue -Matrix $ownerMatrix -Name "initial_network_handle"
         owner_initial_link_properties_found = Get-BoolValue (Get-MatrixValue -Matrix $ownerMatrix -Name "initial_link_properties_found")
@@ -981,11 +1133,8 @@ function Get-Qcl041NetworkVisibilityDeepTrace {
         $Matrix,
         $AppNetworkVisibility
     )
-    $clientTrace = if ($null -ne $ClientArtifact -and $null -ne $ClientArtifact.diagnostics) {
-        $ClientArtifact.diagnostics.app_network_trace
-    } else {
-        $null
-    }
+    $roleSelection = Get-Qcl041RoleMatrixSelection -OwnerArtifact $OwnerArtifact -ClientArtifact $ClientArtifact
+    $clientTrace = $roleSelection.group_client_trace
     $clientCallbackCandidateSeen = [bool](
         (Get-BoolValue (Get-MatrixValue -Matrix $clientTrace -Name "latest_callback_wifi_direct_network_seen")) -or
         (Get-BoolValue (Get-MatrixValue -Matrix $clientTrace -Name "callback_wifi_direct_candidate_seen")))
@@ -1005,7 +1154,9 @@ function Get-Qcl041NetworkVisibilityDeepTrace {
         Get-BoolValue (Get-MatrixValue -Matrix $clientTrace -Name "wifi_p2p_connection_info_group_formed")
     $clientWifiP2pGroupInterface =
         Get-MatrixValue -Matrix $clientTrace -Name "wifi_p2p_group_interface"
-    $localP2pBindStreamPass = Get-BoolValue (Get-MatrixValue -Matrix $Matrix -Name "client_p2p_interface_local_bind_tcp_stream_pass")
+    $localP2pBindStreamPass = Get-BoolValue (Get-MatrixFirstValue -Matrix $Matrix -Names @(
+        "local_p2p_bind_tcp_stream_pass",
+        "client_p2p_interface_local_bind_tcp_stream_pass"))
     $androidNetworkAuthority = [string](Get-MatrixValue -Matrix $Matrix -Name "qcl100_android_network_authority")
     $localBindAuthority = [string](Get-MatrixValue -Matrix $Matrix -Name "qcl041_local_p2p_bind_stream_authority")
     $clientAppVisible = [bool](
@@ -1114,13 +1265,21 @@ function Get-Qcl041NetworkVisibilityDeepTrace {
             })
         New-Qcl041NetworkVisibilityDeepTraceRow `
             -Id "local_p2p_bind_tcp_stream_control" `
-            -Attempted (Get-BoolValue (Get-MatrixValue -Matrix $Matrix -Name "client_p2p_interface_local_bind_tcp_stream_attempted")) `
+            -Attempted (Get-BoolValue (Get-MatrixFirstValue -Matrix $Matrix -Names @(
+                "local_p2p_bind_tcp_stream_attempted",
+                "client_p2p_interface_local_bind_tcp_stream_attempted"))) `
             -Observed $localP2pBindStreamPass `
             -Authority "diagnostic_only_local_p2p_bind_not_qcl100_android_network_authority" `
             -Evidence ([ordered]@{
-                client_to_owner_rx_bytes = Get-LongValue (Get-MatrixValue -Matrix $Matrix -Name "client_p2p_interface_local_bind_tcp_stream_client_to_owner_rx_bytes")
-                owner_to_client_rx_bytes = Get-LongValue (Get-MatrixValue -Matrix $Matrix -Name "client_p2p_interface_local_bind_tcp_stream_owner_to_client_rx_bytes")
+                sender_to_receiver_rx_bytes = Get-LongValue (Get-MatrixFirstValue -Matrix $Matrix -Names @(
+                    "local_p2p_bind_tcp_stream_sender_to_receiver_rx_bytes",
+                    "client_p2p_interface_local_bind_tcp_stream_client_to_owner_rx_bytes"))
+                receiver_to_sender_rx_bytes = Get-LongValue (Get-MatrixFirstValue -Matrix $Matrix -Names @(
+                    "local_p2p_bind_tcp_stream_receiver_to_sender_rx_bytes",
+                    "client_p2p_interface_local_bind_tcp_stream_owner_to_client_rx_bytes"))
                 local_bind_authority = $localBindAuthority
+                sender_artifact_label = Get-MatrixValue -Matrix $Matrix -Name "local_p2p_bind_tcp_stream_sender_artifact_label"
+                receiver_artifact_label = Get-MatrixValue -Matrix $Matrix -Name "local_p2p_bind_tcp_stream_receiver_artifact_label"
             })
     )
 
@@ -1144,6 +1303,10 @@ function Get-Qcl041NetworkVisibilityDeepTrace {
         classification = $classification
         app_network_visibility_decision = if ($null -ne $AppNetworkVisibility) { [string]$AppNetworkVisibility.decision } else { "" }
         rows = @($rows)
+        group_owner_artifact_label = $roleSelection.group_owner_artifact_label
+        group_client_artifact_label = $roleSelection.group_client_artifact_label
+        owner_physical_matrix_role = $roleSelection.owner_role_physical
+        client_physical_matrix_role = $roleSelection.client_role_physical
         qcl100_android_network_authority = $androidNetworkAuthority
         qcl041_local_p2p_bind_stream_authority = $localBindAuthority
         local_p2p_bind_stream_promotes_qcl100 = $false
@@ -1163,26 +1326,13 @@ function Summarize-Qcl041Matrix {
     } else {
         1L
     }
-    $ownerMatrix = if ($null -ne $OwnerArtifact -and $null -ne $OwnerArtifact.diagnostics) {
-        $OwnerArtifact.diagnostics.q2q_app_bound_socket_matrix
-    } else {
-        $null
-    }
-    $clientMatrix = if ($null -ne $ClientArtifact -and $null -ne $ClientArtifact.diagnostics) {
-        $ClientArtifact.diagnostics.q2q_app_bound_socket_matrix
-    } else {
-        $null
-    }
-    $ownerTrace = if ($null -ne $OwnerArtifact -and $null -ne $OwnerArtifact.diagnostics) {
-        $OwnerArtifact.diagnostics.app_network_trace
-    } else {
-        $null
-    }
-    $clientTrace = if ($null -ne $ClientArtifact -and $null -ne $ClientArtifact.diagnostics) {
-        $ClientArtifact.diagnostics.app_network_trace
-    } else {
-        $null
-    }
+    $roleSelection = Get-Qcl041RoleMatrixSelection -OwnerArtifact $OwnerArtifact -ClientArtifact $ClientArtifact
+    $ownerMatrix = $roleSelection.group_owner_matrix
+    $clientMatrix = $roleSelection.group_client_matrix
+    $ownerTrace = $roleSelection.group_owner_trace
+    $clientTrace = $roleSelection.group_client_trace
+    $groupOwnerArtifactLabel = [string]$roleSelection.group_owner_artifact_label
+    $groupClientArtifactLabel = [string]$roleSelection.group_client_artifact_label
     $udpModes = @(
         "udp_wildcard_unbound",
         "udp_source_bound",
@@ -1216,6 +1366,8 @@ function Summarize-Qcl041Matrix {
         $mode = $_
         [ordered]@{
             mode = $mode
+            receiver_artifact_label = $groupOwnerArtifactLabel
+            sender_artifact_label = $groupClientArtifactLabel
             receiver_packets = Get-LongValue (Get-MatrixValue -Matrix $ownerMatrix -Name "${mode}_rx_packets")
             receiver_last_source = Get-MatrixValue -Matrix $ownerMatrix -Name "${mode}_last_source"
             receiver_last_source_port = Get-MatrixValue -Matrix $ownerMatrix -Name "${mode}_last_source_port"
@@ -1241,6 +1393,8 @@ function Summarize-Qcl041Matrix {
         $mode = $_
         [ordered]@{
             mode = $mode
+            receiver_artifact_label = $groupOwnerArtifactLabel
+            sender_artifact_label = $groupClientArtifactLabel
             receiver_accepts = Get-LongValue (Get-MatrixValue -Matrix $ownerMatrix -Name "${mode}_accepts")
             receiver_accepted_source = Get-MatrixValue -Matrix $ownerMatrix -Name "${mode}_accepted_source"
             connected = Get-MatrixValue -Matrix $clientMatrix -Name "${mode}_connected"
@@ -1296,14 +1450,19 @@ function Summarize-Qcl041Matrix {
     $localP2pTcpAccepts = if ($localP2pTcpRow.Count -gt 0) { [long]$localP2pTcpRow[0].receiver_accepts } else { 0L }
     $localP2pTcpStreamRow = @($tcpRows | Where-Object { $_.mode -eq "tcp_local_p2p_bind_stream_socket" } | Select-Object -First 1)
     $localP2pTcpStreamAccepts = if ($localP2pTcpStreamRow.Count -gt 0) { [long]$localP2pTcpStreamRow[0].receiver_accepts } else { 0L }
+    $localP2pTcpStreamAttempted = if ($localP2pTcpStreamRow.Count -gt 0) { [bool]$localP2pTcpStreamRow[0].sender_local_p2p_bind_authority_attempted } else { $false }
+    $localP2pTcpStreamSenderToReceiverRxBytes = if ($localP2pTcpStreamRow.Count -gt 0) { [long]$localP2pTcpStreamRow[0].receiver_client_to_owner_bytes } else { 0L }
+    $localP2pTcpStreamReceiverToSenderRxBytes = if ($localP2pTcpStreamRow.Count -gt 0) { [long]$localP2pTcpStreamRow[0].sender_owner_to_client_rx_bytes } else { 0L }
+    $localP2pTcpStreamSenderToReceiverCrc32Match = if ($localP2pTcpStreamRow.Count -gt 0) { Get-BoolValue $localP2pTcpStreamRow[0].receiver_client_to_owner_crc32_match } else { $false }
+    $localP2pTcpStreamReceiverToSenderCrc32Match = if ($localP2pTcpStreamRow.Count -gt 0) { Get-BoolValue $localP2pTcpStreamRow[0].sender_owner_to_client_crc32_match } else { $false }
     $localP2pTcpStreamPass = [bool](
         $localP2pTcpStreamRow.Count -gt 0 -and
         [bool]$localP2pTcpStreamRow[0].connected -and
         [bool]$localP2pTcpStreamRow[0].sender_local_p2p_bind_authority_pass -and
-        $localP2pTcpStreamRow[0].receiver_client_to_owner_bytes -ge $tcpTunnelStreamMinimumBytes -and
-        $localP2pTcpStreamRow[0].sender_owner_to_client_rx_bytes -ge $tcpTunnelStreamMinimumBytes -and
-        [bool]$localP2pTcpStreamRow[0].receiver_client_to_owner_crc32_match -and
-        [bool]$localP2pTcpStreamRow[0].sender_owner_to_client_crc32_match)
+        $localP2pTcpStreamSenderToReceiverRxBytes -ge $tcpTunnelStreamMinimumBytes -and
+        $localP2pTcpStreamReceiverToSenderRxBytes -ge $tcpTunnelStreamMinimumBytes -and
+        $localP2pTcpStreamSenderToReceiverCrc32Match -and
+        $localP2pTcpStreamReceiverToSenderCrc32Match)
     $clientLocalP2pAddress = [string](Get-MatrixValue -Matrix $clientMatrix -Name "local_p2p_address")
     $clientP2pCallbackSeen = [bool](
         (Get-BoolValue (Get-MatrixValue -Matrix $clientMatrix -Name "client_p2p_network_callback_seen")) -or
@@ -1392,6 +1551,16 @@ function Summarize-Qcl041Matrix {
     [ordered]@{
         owner_matrix_present = [bool]($null -ne $ownerMatrix)
         client_matrix_present = [bool]($null -ne $clientMatrix)
+        group_owner_artifact_label = $roleSelection.group_owner_artifact_label
+        group_client_artifact_label = $roleSelection.group_client_artifact_label
+        owner_physical_matrix_role = $roleSelection.owner_role_physical
+        client_physical_matrix_role = $roleSelection.client_role_physical
+        group_owner_matrix_present = [bool]($null -ne $ownerMatrix)
+        group_client_matrix_present = [bool]($null -ne $clientMatrix)
+        group_owner_matrix_complete = Test-Qcl041MatrixArtifactComplete -Matrix $ownerMatrix
+        group_client_matrix_complete = Test-Qcl041MatrixArtifactComplete -Matrix $clientMatrix
+        group_owner_matrix_last_checkpoint = Get-MatrixValue -Matrix $ownerMatrix -Name "last_checkpoint"
+        group_client_matrix_last_checkpoint = Get-MatrixValue -Matrix $clientMatrix -Name "last_checkpoint"
         owner_matrix_complete = Test-Qcl041MatrixArtifactComplete -Matrix $ownerMatrix
         client_matrix_complete = Test-Qcl041MatrixArtifactComplete -Matrix $clientMatrix
         owner_matrix_last_checkpoint = Get-MatrixValue -Matrix $ownerMatrix -Name "last_checkpoint"
@@ -1477,12 +1646,22 @@ function Summarize-Qcl041Matrix {
             [bool]$localP2pTcpRow[0].sender_local_p2p_bind_authority_pass)
         client_p2p_interface_local_bind_tcp_receiver_accepts = $localP2pTcpAccepts
         client_p2p_interface_local_bind_tcp_receiver_accepted_source = if ($localP2pTcpRow.Count -gt 0) { [string]$localP2pTcpRow[0].receiver_accepted_source } else { "" }
-        client_p2p_interface_local_bind_tcp_stream_attempted = if ($localP2pTcpStreamRow.Count -gt 0) { [bool]$localP2pTcpStreamRow[0].sender_local_p2p_bind_authority_attempted } else { $false }
+        local_p2p_bind_tcp_stream_attempted = $localP2pTcpStreamAttempted
+        local_p2p_bind_tcp_stream_pass = $localP2pTcpStreamPass
+        local_p2p_bind_tcp_stream_receiver_accepts = $localP2pTcpStreamAccepts
+        local_p2p_bind_tcp_stream_receiver_accepted_source = if ($localP2pTcpStreamRow.Count -gt 0) { [string]$localP2pTcpStreamRow[0].receiver_accepted_source } else { "" }
+        local_p2p_bind_tcp_stream_receiver_artifact_label = $groupOwnerArtifactLabel
+        local_p2p_bind_tcp_stream_sender_artifact_label = $groupClientArtifactLabel
+        local_p2p_bind_tcp_stream_sender_to_receiver_rx_bytes = $localP2pTcpStreamSenderToReceiverRxBytes
+        local_p2p_bind_tcp_stream_receiver_to_sender_rx_bytes = $localP2pTcpStreamReceiverToSenderRxBytes
+        local_p2p_bind_tcp_stream_sender_to_receiver_crc32_match = $localP2pTcpStreamSenderToReceiverCrc32Match
+        local_p2p_bind_tcp_stream_receiver_to_sender_crc32_match = $localP2pTcpStreamReceiverToSenderCrc32Match
+        client_p2p_interface_local_bind_tcp_stream_attempted = $localP2pTcpStreamAttempted
         client_p2p_interface_local_bind_tcp_stream_pass = $localP2pTcpStreamPass
         client_p2p_interface_local_bind_tcp_stream_receiver_accepts = $localP2pTcpStreamAccepts
         client_p2p_interface_local_bind_tcp_stream_receiver_accepted_source = if ($localP2pTcpStreamRow.Count -gt 0) { [string]$localP2pTcpStreamRow[0].receiver_accepted_source } else { "" }
-        client_p2p_interface_local_bind_tcp_stream_client_to_owner_rx_bytes = if ($localP2pTcpStreamRow.Count -gt 0) { [long]$localP2pTcpStreamRow[0].receiver_client_to_owner_bytes } else { 0L }
-        client_p2p_interface_local_bind_tcp_stream_owner_to_client_rx_bytes = if ($localP2pTcpStreamRow.Count -gt 0) { [long]$localP2pTcpStreamRow[0].sender_owner_to_client_rx_bytes } else { 0L }
+        client_p2p_interface_local_bind_tcp_stream_client_to_owner_rx_bytes = $localP2pTcpStreamSenderToReceiverRxBytes
+        client_p2p_interface_local_bind_tcp_stream_owner_to_client_rx_bytes = $localP2pTcpStreamReceiverToSenderRxBytes
         udp_network_bound_receiver_observed_packets = $strictUdpNetworkBoundPackets
         udp_network_bound_receiver_observed_source_address = $strictUdpNetworkBoundSource
         udp_network_bound_receiver_observed_source_matches_client_p2p = [bool](
@@ -1517,6 +1696,10 @@ function Summarize-Qcl041Matrix {
     }
 }
 
+$settingsFence = Invoke-Qcl041QuestSettingsFence
+$settingsFencePath = Join-Path $OutDir "settings-fence-before-launch.json"
+Write-Qcl041JsonFile -Value $settingsFence -Path $settingsFencePath
+
 $preflight = [ordered]@{
     owner_wifi = Get-Qcl041WifiStatus -Serial $OwnerSerial
     client_wifi = Get-Qcl041WifiStatus -Serial $ClientSerial
@@ -1547,6 +1730,7 @@ if ($RequireInfrastructureWifiDisconnected -and -not [bool]$preflight.infrastruc
         blocked_reason = "infrastructure_wifi_connected"
         matrix_focus = $matrixFocus
         qcl100_control_tcp_gate = [bool]$Qcl100ControlTcpGate
+        qcl100_lower_gate_authority = $Qcl100LowerGateAuthority
         delayed_udp_required = $delayedUdpRequired
         whole_matrix_completion_required = $wholeMatrixCompletionRequired
         requested_delayed_udp_delay_seconds = $requestedDelayedUdpDelaySeconds
@@ -1554,7 +1738,12 @@ if ($RequireInfrastructureWifiDisconnected -and -not [bool]$preflight.infrastruc
         tcp_tunnel_stream_seconds = [Math]::Max(0, $TcpTunnelStreamSeconds)
         tcp_tunnel_stream_bytes_per_direction = [Math]::Max(0, $TcpTunnelStreamBytesPerDirection)
         route_probe_target = $RouteProbeTarget
+        qcl041_group_owner_label = $Qcl041GroupOwnerLabel
+        owner_qcl041_role = $ownerQcl041Role
+        client_qcl041_role = $clientQcl041Role
         active_route_probe_wait_seconds = [Math]::Max(0, $ActiveRouteProbeWaitSeconds)
+        settings_fence_before_launch = $settingsFence
+        settings_fence_before_launch_artifact = $settingsFencePath
         preflight = $preflight
         preflight_shell_routes_artifact = $preflightRoutesPath
         preflight_candidate_wifi_direct_routes_artifact = $preflightCandidateRoutesPath
@@ -1589,6 +1778,7 @@ if ($RequireP2p0Ipv4Cleared -and -not [bool]$preflight.p2p0_ipv4_cleared) {
         blocked_reason = "p2p0_ipv4_present"
         matrix_focus = $matrixFocus
         qcl100_control_tcp_gate = [bool]$Qcl100ControlTcpGate
+        qcl100_lower_gate_authority = $Qcl100LowerGateAuthority
         delayed_udp_required = $delayedUdpRequired
         whole_matrix_completion_required = $wholeMatrixCompletionRequired
         requested_delayed_udp_delay_seconds = $requestedDelayedUdpDelaySeconds
@@ -1597,6 +1787,8 @@ if ($RequireP2p0Ipv4Cleared -and -not [bool]$preflight.p2p0_ipv4_cleared) {
         tcp_tunnel_stream_bytes_per_direction = [Math]::Max(0, $TcpTunnelStreamBytesPerDirection)
         route_probe_target = $RouteProbeTarget
         active_route_probe_wait_seconds = [Math]::Max(0, $ActiveRouteProbeWaitSeconds)
+        settings_fence_before_launch = $settingsFence
+        settings_fence_before_launch_artifact = $settingsFencePath
         preflight = $preflight
         preflight_shell_routes_artifact = $preflightRoutesPath
         preflight_candidate_wifi_direct_routes_artifact = $preflightCandidateRoutesPath
@@ -1632,6 +1824,7 @@ if ($RequireCandidateWifiDirectRoutesClear -and -not [bool]$preflight.candidate_
         blocked_reason = "candidate_wifi_direct_routes_not_clear"
         matrix_focus = $matrixFocus
         qcl100_control_tcp_gate = [bool]$Qcl100ControlTcpGate
+        qcl100_lower_gate_authority = $Qcl100LowerGateAuthority
         delayed_udp_required = $delayedUdpRequired
         whole_matrix_completion_required = $wholeMatrixCompletionRequired
         requested_delayed_udp_delay_seconds = $requestedDelayedUdpDelaySeconds
@@ -1641,7 +1834,12 @@ if ($RequireCandidateWifiDirectRoutesClear -and -not [bool]$preflight.candidate_
         route_probe_target = $RouteProbeTarget
         owner_wifi_direct_address = $OwnerWifiDirectAddress
         client_wifi_direct_address = $ClientWifiDirectAddress
+        qcl041_group_owner_label = $Qcl041GroupOwnerLabel
+        owner_qcl041_role = $ownerQcl041Role
+        client_qcl041_role = $clientQcl041Role
         active_route_probe_wait_seconds = [Math]::Max(0, $ActiveRouteProbeWaitSeconds)
+        settings_fence_before_launch = $settingsFence
+        settings_fence_before_launch_artifact = $settingsFencePath
         preflight = $preflight
         preflight_shell_routes_artifact = $preflightRoutesPath
         preflight_candidate_wifi_direct_routes_artifact = $preflightCandidateRoutesPath
@@ -1675,6 +1873,7 @@ if ($PreflightOnly) {
         status = "preflight_only"
         matrix_focus = $matrixFocus
         qcl100_control_tcp_gate = [bool]$Qcl100ControlTcpGate
+        qcl100_lower_gate_authority = $Qcl100LowerGateAuthority
         delayed_udp_required = $delayedUdpRequired
         whole_matrix_completion_required = $wholeMatrixCompletionRequired
         requested_delayed_udp_delay_seconds = $requestedDelayedUdpDelaySeconds
@@ -1684,7 +1883,12 @@ if ($PreflightOnly) {
         route_probe_target = $RouteProbeTarget
         owner_wifi_direct_address = $OwnerWifiDirectAddress
         client_wifi_direct_address = $ClientWifiDirectAddress
+        qcl041_group_owner_label = $Qcl041GroupOwnerLabel
+        owner_qcl041_role = $ownerQcl041Role
+        client_qcl041_role = $clientQcl041Role
         active_route_probe_wait_seconds = [Math]::Max(0, $ActiveRouteProbeWaitSeconds)
+        settings_fence_before_launch = $settingsFence
+        settings_fence_before_launch_artifact = $settingsFencePath
         preflight = $preflight
         preflight_shell_routes_artifact = $preflightRoutesPath
         preflight_candidate_wifi_direct_routes_artifact = $preflightCandidateRoutesPath
@@ -1716,9 +1920,15 @@ if (-not $SkipInstall) {
     Install-Qcl041Apk -Serial $ClientSerial
 }
 
-Start-Qcl041MatrixService -Serial $OwnerSerial -Role "group_owner"
-Start-Sleep -Seconds ([Math]::Max(1, $LaunchDelaySeconds))
-Start-Qcl041MatrixService -Serial $ClientSerial -Role "client"
+if ($Qcl041GroupOwnerLabel -eq "owner") {
+    Start-Qcl041MatrixService -Serial $OwnerSerial -Role $ownerQcl041Role
+    Start-Sleep -Seconds ([Math]::Max(1, $LaunchDelaySeconds))
+    Start-Qcl041MatrixService -Serial $ClientSerial -Role $clientQcl041Role
+} else {
+    Start-Qcl041MatrixService -Serial $ClientSerial -Role $clientQcl041Role
+    Start-Sleep -Seconds ([Math]::Max(1, $LaunchDelaySeconds))
+    Start-Qcl041MatrixService -Serial $OwnerSerial -Role $ownerQcl041Role
+}
 
 $activeGroupShellRoutes = Wait-Qcl041ActiveShellRouteSnapshot `
     -TargetAddress $RouteProbeTarget `
@@ -1764,23 +1974,36 @@ $postRunShellRoutes = Get-Qcl041ShellRouteSnapshots -Phase "post_run" -TargetAdd
 $postRunShellRoutesPath = Join-Path $OutDir "post-run-shell-routes.json"
 Write-Qcl041JsonFile -Value $postRunShellRoutes -Path $postRunShellRoutesPath
 
+$rustyDirectMinimumBytes = [Math]::Max(1L, (Get-LongValue $matrix.tcp_tunnel_stream_required_bytes_per_direction))
+$rustyDirectLocalP2pGatePass = [bool](
+    $rustyDirectP2pAuthority -and
+    [bool]$Qcl100ControlTcpGate -and
+    [bool]$matrix.client_strict_local_p2p_app_transport_pass -and
+    [bool]$matrix.client_p2p_interface_local_bind_udp_pass -and
+    [bool]$matrix.client_p2p_interface_local_bind_tcp_pass -and
+    [bool]$matrix.local_p2p_bind_tcp_stream_pass -and
+    (Get-LongValue $matrix.local_p2p_bind_tcp_stream_sender_to_receiver_rx_bytes) -ge $rustyDirectMinimumBytes -and
+    (Get-LongValue $matrix.local_p2p_bind_tcp_stream_receiver_to_sender_rx_bytes) -ge $rustyDirectMinimumBytes)
+
 $matrixBlockedReason = if (-not [bool]$matrix.owner_matrix_present) {
     "owner_matrix_missing"
 } elseif (-not [bool]$matrix.client_matrix_present) {
     "client_matrix_missing"
-} elseif ($wholeMatrixCompletionRequired -and -not [bool]$matrix.owner_matrix_complete) {
+} elseif (-not $rustyDirectLocalP2pGatePass -and $wholeMatrixCompletionRequired -and -not [bool]$matrix.owner_matrix_complete) {
     "owner_matrix_incomplete"
-} elseif ($wholeMatrixCompletionRequired -and -not [bool]$matrix.client_matrix_complete) {
+} elseif (-not $rustyDirectLocalP2pGatePass -and $wholeMatrixCompletionRequired -and -not [bool]$matrix.client_matrix_complete) {
     "client_matrix_incomplete"
-} elseif ($AppNetworkTraceOnly -and -not [bool]$matrix.owner_matrix_complete) {
+} elseif (-not $rustyDirectLocalP2pGatePass -and $AppNetworkTraceOnly -and -not [bool]$matrix.owner_matrix_complete) {
     "owner_matrix_incomplete"
-} elseif ($AppNetworkTraceOnly -and -not [bool]$matrix.client_matrix_complete) {
+} elseif (-not $rustyDirectLocalP2pGatePass -and $AppNetworkTraceOnly -and -not [bool]$matrix.client_matrix_complete) {
     "client_matrix_incomplete"
 } else {
     ""
 }
 $summaryStatus = if (-not [string]::IsNullOrWhiteSpace($matrixBlockedReason)) {
     "blocked"
+} elseif ($rustyDirectP2pAuthority -and [bool]$Qcl100ControlTcpGate) {
+    if ($rustyDirectLocalP2pGatePass) { "pass" } else { "blocked" }
 } elseif ($AppNetworkTraceOnly) {
     "diagnostic_pass"
 } elseif ($effectiveRequireTcpTunnelStreamPass -and -not [bool]$matrix.tcp_tunnel_stream_bidirectional_bytes_pass) {
@@ -1790,12 +2013,26 @@ $summaryStatus = if (-not [string]::IsNullOrWhiteSpace($matrixBlockedReason)) {
 } else {
     "blocked"
 }
-$blockedReason = if (-not [string]::IsNullOrWhiteSpace($matrixBlockedReason)) {
+$blockedReason = if ($summaryStatus -ne "blocked") {
+    ""
+} elseif (-not [string]::IsNullOrWhiteSpace($matrixBlockedReason)) {
     $matrixBlockedReason
 } elseif ($AppNetworkTraceOnly -and
         $null -ne $appNetworkVisibility -and
         -not [string]::IsNullOrWhiteSpace([string]$appNetworkVisibility.decision)) {
     [string]$appNetworkVisibility.decision
+} elseif ($rustyDirectP2pAuthority -and [bool]$Qcl100ControlTcpGate -and -not [bool]$matrix.client_wifi_p2p_network_info_connected) {
+    "rusty_direct_p2p_socket_authority_group_not_connected"
+} elseif ($rustyDirectP2pAuthority -and [bool]$Qcl100ControlTcpGate -and [string]$matrix.client_wifi_p2p_group_interface -ne "p2p0") {
+    "rusty_direct_p2p_socket_authority_group_interface_not_p2p0"
+} elseif ($rustyDirectP2pAuthority -and [bool]$Qcl100ControlTcpGate -and -not [bool]$matrix.client_p2p_interface_local_bind_udp_pass) {
+    "rusty_direct_p2p_socket_authority_local_udp_not_receiver_observed"
+} elseif ($rustyDirectP2pAuthority -and [bool]$Qcl100ControlTcpGate -and -not [bool]$matrix.client_p2p_interface_local_bind_tcp_pass) {
+    "rusty_direct_p2p_socket_authority_local_tcp_not_accepted"
+} elseif ($rustyDirectP2pAuthority -and [bool]$Qcl100ControlTcpGate -and -not [bool]$matrix.local_p2p_bind_tcp_stream_pass) {
+    "rusty_direct_p2p_socket_authority_local_tcp_stream_not_bidirectional"
+} elseif ($rustyDirectP2pAuthority -and [bool]$Qcl100ControlTcpGate -and -not $rustyDirectLocalP2pGatePass) {
+    "rusty_direct_p2p_socket_authority_local_gate_incomplete"
 } elseif ($appNetworkTraceEnabled -and -not [bool]$matrix.client_p2p_network_callback_seen) {
     "qcl041_client_p2p_network_callback_not_seen"
 } elseif (-not [bool]$matrix.client_p2p_network_visible_app) {
@@ -1826,6 +2063,7 @@ $summary = [ordered]@{
     matrix_port = $MatrixPort
     matrix_focus = $matrixFocus
     qcl100_control_tcp_gate = [bool]$Qcl100ControlTcpGate
+    qcl100_lower_gate_authority = $Qcl100LowerGateAuthority
     app_network_trace_enabled = $appNetworkTraceEnabled
     app_network_trace_only = [bool]$AppNetworkTraceOnly
     app_network_request_trace_enabled = $appNetworkRequestTraceEnabled
@@ -1842,7 +2080,12 @@ $summary = [ordered]@{
     route_probe_target = $RouteProbeTarget
     owner_wifi_direct_address = $OwnerWifiDirectAddress
     client_wifi_direct_address = $ClientWifiDirectAddress
+    qcl041_group_owner_label = $Qcl041GroupOwnerLabel
+    owner_qcl041_role = $ownerQcl041Role
+    client_qcl041_role = $clientQcl041Role
     active_route_probe_wait_seconds = [Math]::Max(0, $ActiveRouteProbeWaitSeconds)
+    settings_fence_before_launch = $settingsFence
+    settings_fence_before_launch_artifact = $settingsFencePath
     require_infrastructure_wifi_disconnected = [bool]$RequireInfrastructureWifiDisconnected
     require_p2p0_ipv4_cleared = [bool]$RequireP2p0Ipv4Cleared
     require_candidate_wifi_direct_routes_clear = [bool]$RequireCandidateWifiDirectRoutesClear

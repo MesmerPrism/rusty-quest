@@ -3,10 +3,11 @@ mod tests {
     use std::collections::BTreeMap;
 
     use crate::native_renderer_options::{
-        CompactHandInputSourceMode, HandMeshVisualMaterialProfile, NativeCameraOutputMode,
-        NativeCameraQualityProfile, NativeCameraResolutionProfile, NativeCameraStereoPairingPolicy,
-        NativeCameraSyncMode, NativeCameraYcbcrMode, NativeDisplayCompositeFeedbackProjection,
-        NativeDisplayCompositeMode, NativeDisplayCompositeSource, NativeEnvironmentDepthDebugView,
+        CompactHandInputSourceMode, HandMeshVisualMaterialProfile, HandMeshVisualMeshSource,
+        NativeCameraOutputMode, NativeCameraQualityProfile, NativeCameraResolutionProfile,
+        NativeCameraStereoPairingPolicy, NativeCameraSyncMode, NativeCameraYcbcrMode,
+        NativeDisplayCompositeFeedbackProjection, NativeDisplayCompositeMode,
+        NativeDisplayCompositeSource, NativeEnvironmentDepthDebugView,
         NativeEnvironmentDepthDepthUnitsPolicy, NativeEnvironmentDepthLayerPolicy,
         NativeEnvironmentDepthMode, NativeEnvironmentDepthReferenceSpace,
         NativeEnvironmentDepthSource, NativeEnvironmentDepthSurfaceComponentMode,
@@ -57,27 +58,29 @@ mod tests {
         PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV, PROP_HAND_MESH_VISUAL_MATERIAL_ALPHA,
         PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_B, PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_G,
         PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_R, PROP_HAND_MESH_VISUAL_MATERIAL_PROFILE,
-        PROP_HAND_MESH_VISUAL_MATERIAL_RIM_STRENGTH, PROP_PASSTHROUGH_STYLE_BRIGHTNESS,
-        PROP_PASSTHROUGH_STYLE_COLOR_AMPLITUDE, PROP_PASSTHROUGH_STYLE_COLOR_PHASE,
-        PROP_PASSTHROUGH_STYLE_CONTRAST, PROP_PASSTHROUGH_STYLE_EDGE_COLOR_A,
-        PROP_PASSTHROUGH_STYLE_EDGE_COLOR_B, PROP_PASSTHROUGH_STYLE_EDGE_COLOR_G,
-        PROP_PASSTHROUGH_STYLE_EDGE_COLOR_R, PROP_PASSTHROUGH_STYLE_MODE,
-        PROP_PASSTHROUGH_STYLE_OPACITY, PROP_PASSTHROUGH_STYLE_SATURATION,
-        PROP_PERIPHERAL_STRETCH_BLEND_MODE, PROP_PERIPHERAL_STRETCH_CORE_SCALE,
-        PROP_PERIPHERAL_STRETCH_EDGE_INSET_UV, PROP_PERIPHERAL_STRETCH_MAX_INSET_UV,
-        PROP_PROCESSING_LAYER, PROP_PROJECTION_BORDER_OPACITY, PROP_PROJECTION_BORDER_POLICY,
+        PROP_HAND_MESH_VISUAL_MATERIAL_RIM_STRENGTH, PROP_HAND_MESH_VISUAL_MESH_SOURCE,
+        PROP_HAND_MESH_VISUAL_WIREFRAME_ENABLED, PROP_HAND_MESH_VISUAL_WIREFRAME_WIDTH_PX,
+        PROP_PASSTHROUGH_STYLE_BRIGHTNESS, PROP_PASSTHROUGH_STYLE_COLOR_AMPLITUDE,
+        PROP_PASSTHROUGH_STYLE_COLOR_PHASE, PROP_PASSTHROUGH_STYLE_CONTRAST,
+        PROP_PASSTHROUGH_STYLE_EDGE_COLOR_A, PROP_PASSTHROUGH_STYLE_EDGE_COLOR_B,
+        PROP_PASSTHROUGH_STYLE_EDGE_COLOR_G, PROP_PASSTHROUGH_STYLE_EDGE_COLOR_R,
+        PROP_PASSTHROUGH_STYLE_MODE, PROP_PASSTHROUGH_STYLE_OPACITY,
+        PROP_PASSTHROUGH_STYLE_SATURATION, PROP_PERIPHERAL_STRETCH_BLEND_MODE,
+        PROP_PERIPHERAL_STRETCH_CORE_SCALE, PROP_PERIPHERAL_STRETCH_EDGE_INSET_UV,
+        PROP_PERIPHERAL_STRETCH_MAX_INSET_UV, PROP_PROCESSING_LAYER,
+        PROP_PROJECTION_BORDER_OPACITY, PROP_PROJECTION_BORDER_POLICY,
         PROP_PROJECTION_SWAPCHAIN_RESOLUTION_SCALE, PROP_RENDER_MODE,
-        PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SDF_UPDATE_PERIOD_FRAMES,
-        PROP_STIMULUS_VOLUME_CENTRAL_FOV_FRACTION, PROP_STIMULUS_VOLUME_COMPOSITION,
-        PROP_STIMULUS_VOLUME_ENABLED, PROP_STIMULUS_VOLUME_GRADIENT_SMOOTHING,
-        PROP_STIMULUS_VOLUME_PATTERN_FAMILY, PROP_STIMULUS_VOLUME_RANDOMIZE_ENABLED,
-        PROP_STIMULUS_VOLUME_RANDOMIZE_MAX_HZ, PROP_STIMULUS_VOLUME_RANDOMIZE_MIN_HZ,
-        PROP_STIMULUS_VOLUME_RAYMARCH_SAMPLES, PROP_STIMULUS_VOLUME_RENDER_TARGET,
-        PROP_STIMULUS_VOLUME_SAFETY_ACK, PROP_SWAPCHAIN_COLOR_FORMAT_MODE,
-        PROP_VIDEO_BORDER_BLEND_MODE, PROP_VIDEO_PROJECTION_BROKER_CONNECT_TIMEOUT_MS,
-        PROP_VIDEO_PROJECTION_BROKER_HOST, PROP_VIDEO_PROJECTION_BROKER_LEFT_PORT,
-        PROP_VIDEO_PROJECTION_BROKER_RIGHT_PORT, PROP_VIDEO_PROJECTION_ENABLED,
-        PROP_VIDEO_PROJECTION_FPS_CAP, PROP_VIDEO_PROJECTION_HEIGHT,
+        PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SDF_FIELD_VISUAL_ENABLED,
+        PROP_SDF_UPDATE_PERIOD_FRAMES, PROP_STIMULUS_VOLUME_CENTRAL_FOV_FRACTION,
+        PROP_STIMULUS_VOLUME_COMPOSITION, PROP_STIMULUS_VOLUME_ENABLED,
+        PROP_STIMULUS_VOLUME_GRADIENT_SMOOTHING, PROP_STIMULUS_VOLUME_PATTERN_FAMILY,
+        PROP_STIMULUS_VOLUME_RANDOMIZE_ENABLED, PROP_STIMULUS_VOLUME_RANDOMIZE_MAX_HZ,
+        PROP_STIMULUS_VOLUME_RANDOMIZE_MIN_HZ, PROP_STIMULUS_VOLUME_RAYMARCH_SAMPLES,
+        PROP_STIMULUS_VOLUME_RENDER_TARGET, PROP_STIMULUS_VOLUME_SAFETY_ACK,
+        PROP_SWAPCHAIN_COLOR_FORMAT_MODE, PROP_VIDEO_BORDER_BLEND_MODE,
+        PROP_VIDEO_PROJECTION_BROKER_CONNECT_TIMEOUT_MS, PROP_VIDEO_PROJECTION_BROKER_HOST,
+        PROP_VIDEO_PROJECTION_BROKER_LEFT_PORT, PROP_VIDEO_PROJECTION_BROKER_RIGHT_PORT,
+        PROP_VIDEO_PROJECTION_ENABLED, PROP_VIDEO_PROJECTION_FPS_CAP, PROP_VIDEO_PROJECTION_HEIGHT,
         PROP_VIDEO_PROJECTION_HIGH_RATE_JSON_PAYLOAD, PROP_VIDEO_PROJECTION_LOOPING,
         PROP_VIDEO_PROJECTION_MAX_IMAGES, PROP_VIDEO_PROJECTION_OPACITY,
         PROP_VIDEO_PROJECTION_PATH, PROP_VIDEO_PROJECTION_SOURCE,
@@ -359,10 +362,15 @@ mod tests {
         assert_eq!(settings.base_color, [0.78, 0.86, 0.83]);
         assert!((settings.alpha - 0.74).abs() < 0.001);
         assert!((settings.rim_strength - 0.20).abs() < 0.001);
+        assert!(!settings.wireframe_enabled);
+        assert!((settings.wireframe_width_px - 1.35).abs() < 0.001);
+        assert_eq!(settings.push_wireframe_width_px(), 0.0);
         let fields = settings.marker_fields();
         assert!(fields.contains("handMeshVisualMaterialProfile=unity-basic-reference"));
         assert!(fields.contains("handMeshVisualUnityReference=BasicHandMaterial"));
         assert!(fields.contains("handMeshVisualTextureImported=false"));
+        assert!(fields.contains("handMeshVisualWireframeAvailable=true"));
+        assert!(fields.contains("handMeshVisualWireframeEnabled=false"));
     }
 
     #[test]
@@ -374,6 +382,8 @@ mod tests {
             (PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_B, "1.5"),
             (PROP_HAND_MESH_VISUAL_MATERIAL_ALPHA, "0.01"),
             (PROP_HAND_MESH_VISUAL_MATERIAL_RIM_STRENGTH, "1.5"),
+            (PROP_HAND_MESH_VISUAL_WIREFRAME_ENABLED, "true"),
+            (PROP_HAND_MESH_VISUAL_WIREFRAME_WIDTH_PX, "9.0"),
         ]);
         let settings = options.hand_mesh_visual_material_settings;
 
@@ -381,10 +391,36 @@ mod tests {
         assert_eq!(settings.base_color, [0.0, 0.50, 1.0]);
         assert!((settings.alpha - 0.05).abs() < 0.001);
         assert!((settings.rim_strength - 1.0).abs() < 0.001);
+        assert!(settings.wireframe_enabled);
+        assert_eq!(settings.wireframe_width_px, 4.0);
+        assert_eq!(settings.push_wireframe_width_px(), 4.0);
         assert_eq!(settings.push_material(), [0.0, 0.50, 1.0, 1.0]);
         assert_eq!(
             settings.push_params(Default::default()),
             [0.0, 0.0, 0.05, 0.0]
+        );
+    }
+
+    #[test]
+    fn hand_mesh_visual_mesh_source_parses_for_hotload_surface() {
+        let default_options = options_from(&[]);
+        assert_eq!(
+            default_options.hand_mesh_visual_mesh_source,
+            HandMeshVisualMeshSource::Auto
+        );
+
+        let custom = options_from(&[(PROP_HAND_MESH_VISUAL_MESH_SOURCE, "custom")]);
+        assert_eq!(
+            custom.hand_mesh_visual_mesh_source,
+            HandMeshVisualMeshSource::CustomMesh
+        );
+        assert_eq!(
+            HandMeshVisualMeshSource::from_property_lookup_or_default(
+                |name| (name == PROP_HAND_MESH_VISUAL_MESH_SOURCE)
+                    .then(|| "openxr-fb-mesh".to_string()),
+                custom.hand_mesh_visual_mesh_source,
+            ),
+            HandMeshVisualMeshSource::OpenXrFbMesh
         );
     }
 
@@ -584,7 +620,7 @@ mod tests {
     #[test]
     fn sdf_and_diagnostic_values_parse_and_clamp() {
         let options = options_from(&[
-            (PROP_ENABLE_SDF_VISUAL, "on"),
+            (PROP_SDF_FIELD_VISUAL_ENABLED, "on"),
             (PROP_SDF_UPDATE_PERIOD_FRAMES, "999"),
             (PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED, "yes"),
             (PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV, "9.0,-9.0"),
@@ -601,6 +637,12 @@ mod tests {
         assert_eq!(options.hand_mesh_visual_diagnostic_settings.alpha, 1.0);
         assert!(options.hand_mesh_graft_copies_enabled);
         assert!(!options.hand_mesh_real_hands_visible);
+    }
+
+    #[test]
+    fn legacy_sdf_visual_property_still_enables_sdf_field_visual() {
+        let options = options_from(&[(PROP_ENABLE_SDF_VISUAL, "on")]);
+        assert!(options.sdf_visual_enabled);
     }
 
     #[test]

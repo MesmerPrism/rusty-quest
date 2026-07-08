@@ -8,7 +8,10 @@ use crate::{
     camera_projection_metadata::TargetRect,
     gpu_sdf_field::SkinnedHandMeshDrawResources,
     hand_mesh_graft::{HandMeshGraftParams, GRAFT_COPY_TARGET_COUNT},
-    native_renderer_options::{HandMeshVisualDiagnosticSettings, HandMeshVisualMaterialSettings},
+    native_renderer_options::{
+        HandMeshVisualDiagnosticSettings, HandMeshVisualMaterialSettings, HandMeshVisualMeshSource,
+        PROP_HAND_MESH_VISUAL_MESH_SOURCE,
+    },
     recorded_hand_replay::{
         RecordedHandReplaySummary, RecordedHandSkinningFrame, RecordedMeshTargetTransform,
     },
@@ -37,6 +40,12 @@ pub(crate) struct GpuHandMeshVisualFrameStats {
     pub(crate) visible: bool,
     pub(crate) handedness: &'static str,
     pub(crate) source_handedness: String,
+    pub(crate) source_kind: String,
+    pub(crate) topology_key: String,
+    pub(crate) mesh_source_selection: HandMeshVisualMeshSource,
+    pub(crate) resolved_mesh_source: &'static str,
+    pub(crate) mesh_source_available: bool,
+    pub(crate) readiness_reason: &'static str,
     pub(crate) frame_index: u32,
     pub(crate) timestamp_ns: u64,
     pub(crate) drawn_vertex_count: u32,
@@ -61,10 +70,37 @@ impl GpuHandMeshVisualFrameStats {
         diagnostic_settings: HandMeshVisualDiagnosticSettings,
         material_settings: HandMeshVisualMaterialSettings,
     ) -> Self {
+        Self::unavailable_with_source(
+            replay,
+            frame_count,
+            handedness,
+            HandMeshVisualMeshSource::Auto,
+            "unavailable",
+            diagnostic_settings,
+            material_settings,
+        )
+    }
+
+    pub(crate) fn unavailable_with_source(
+        replay: &RecordedHandReplaySummary,
+        frame_count: u64,
+        handedness: &'static str,
+        mesh_source_selection: HandMeshVisualMeshSource,
+        readiness_reason: &'static str,
+        diagnostic_settings: HandMeshVisualDiagnosticSettings,
+        material_settings: HandMeshVisualMaterialSettings,
+    ) -> Self {
         let frame = replay.skinning_frame_for_count(frame_count);
+        let source_resolution = resolve_hand_mesh_visual_source(replay, mesh_source_selection);
         Self {
             handedness,
             source_handedness: replay.handedness.clone(),
+            source_kind: replay.source_kind.clone(),
+            topology_key: replay.topology_key.clone(),
+            mesh_source_selection,
+            resolved_mesh_source: source_resolution.resolved_source,
+            mesh_source_available: source_resolution.available,
+            readiness_reason,
             frame_index: frame.map(|frame| frame.frame_index).unwrap_or(0),
             timestamp_ns: frame.map(|frame| frame.timestamp_ns).unwrap_or(0),
             component_count: replay.mesh_component_summary.component_count,
@@ -78,9 +114,16 @@ impl GpuHandMeshVisualFrameStats {
 
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "animatedHandMeshVisualReady={} animatedHandMeshVisualVisible={} handMeshVisualPath=recorded-compact-joint-gpu-skinned-resident-triangle-draw recordedSkinnedMeshFrameSource=compact_joint_gpu_skinning gpuTriangleDraw=true cpuProjection=false validationMeshUploadPerFrame=false skinnedPositionBufferResident=true handMeshVisualSmoothSurfaceShading=true handMeshVisualComponentColoring=false gpuNormalDepthComponentShading=true gpuNormalDepthComponentShadingMode=subtle handMeshVisualHand={} handMeshVisualSourceHandedness={} handMeshFrame={} handMeshTimestampNs={} handMeshDrawnTriangles={} handMeshDrawnVertices={} handMeshSkinnedPositionBufferBytes={} handMeshTriangleIndexBufferBytes={} handMeshComponentCount={} handMeshComponentVertexCounts={} handMeshComponentTriangleCounts={} handMeshComponentRank0=hand-inside handMeshComponentRank1=hand-back handMeshComponentRank2=wrist-cap handMeshGraftCopyCount={} {} {}",
+            "animatedHandMeshVisualReady={} animatedHandMeshVisualVisible={} handMeshVisualPath=compact-joint-gpu-skinned-resident-selected-mesh-triangle-draw recordedSkinnedMeshFrameSource=compact_joint_gpu_skinning gpuTriangleDraw=true cpuProjection=false validationMeshUploadPerFrame=false skinnedPositionBufferResident=true handMeshVisualMeshSourceProperty={} handMeshVisualMeshSourceSelection={} handMeshVisualResolvedMeshSource={} handMeshVisualMeshSourceAvailable={} handMeshVisualSourceKind={} handMeshVisualTopologyKey={} handMeshVisualReadinessReason={} handMeshVisualHotload=true handMeshVisualSmoothSurfaceShading=true handMeshVisualComponentColoring=false gpuNormalDepthComponentShading=true gpuNormalDepthComponentShadingMode=subtle handMeshVisualHand={} handMeshVisualSourceHandedness={} handMeshFrame={} handMeshTimestampNs={} handMeshDrawnTriangles={} handMeshDrawnVertices={} handMeshSkinnedPositionBufferBytes={} handMeshTriangleIndexBufferBytes={} handMeshComponentCount={} handMeshComponentVertexCounts={} handMeshComponentTriangleCounts={} handMeshComponentRank0=hand-inside handMeshComponentRank1=hand-back handMeshComponentRank2=wrist-cap handMeshGraftCopyCount={} {} {}",
             self.ready,
             self.visible,
+            PROP_HAND_MESH_VISUAL_MESH_SOURCE,
+            self.mesh_source_selection.marker_value(),
+            self.resolved_mesh_source,
+            self.mesh_source_available,
+            crate::sanitize(&self.source_kind),
+            crate::sanitize(&self.topology_key),
+            self.readiness_reason,
             self.handedness,
             crate::sanitize(&self.source_handedness),
             self.frame_index,
@@ -323,7 +366,11 @@ impl GpuHandMeshVisualRenderer {
         crate::marker(
             "hand-mesh-visual",
             format!(
-                "status=created handMeshVisualPath=recorded-compact-joint-gpu-skinned-resident-triangle-draw recordedSkinnedMeshFrameSource=compact_joint_gpu_skinning handMeshVisualSourceHandedness={} frameCount={} vertexCount={} triangleCount={} skinnedPositionBufferBytes={} triangleIndexBufferBytes={} componentCount={} componentVertexCounts={} componentTriangleCounts={} gpuTriangleDraw=true cpuProjection=false validationMeshUploadPerFrame=false skinnedPositionBufferResident=true handMeshVisualMaterial=property-driven-procedural-surface handMeshVisualMaterialProfiles=unity-basic-reference,mint-rim,flat-gray handMeshVisualSmoothSurfaceShading=true handMeshVisualComponentColoring=false gpuNormalDepthComponentShading=true gpuNormalDepthComponentShadingMode=subtle handMeshGraftCopyPath=post-skinning-instanced-source-mesh-to-opposite-fingertips handMeshGraftSourceAnimationReuse=true handMeshGraftParamsBufferBytes={}",
+                "status=created handMeshVisualPath=compact-joint-gpu-skinned-resident-selected-mesh-triangle-draw recordedSkinnedMeshFrameSource=compact_joint_gpu_skinning handMeshVisualMeshSourceProperty={} handMeshVisualResolvedMeshSource={} handMeshVisualSourceKind={} handMeshVisualTopologyKey={} handMeshVisualSourceHandedness={} frameCount={} vertexCount={} triangleCount={} skinnedPositionBufferBytes={} triangleIndexBufferBytes={} componentCount={} componentVertexCounts={} componentTriangleCounts={} gpuTriangleDraw=true cpuProjection=false validationMeshUploadPerFrame=false skinnedPositionBufferResident=true handMeshVisualMaterial=property-driven-procedural-surface handMeshVisualMaterialProfiles=unity-basic-reference,mint-rim,flat-gray handMeshVisualWireframeAvailable=true handMeshVisualWireframeMode=shader-barycentric-triangle-edges handMeshVisualWireframeTopologySource=resident-selected-mesh-triangle-indices handMeshVisualSmoothSurfaceShading=true handMeshVisualComponentColoring=false gpuNormalDepthComponentShading=true gpuNormalDepthComponentShadingMode=subtle handMeshGraftCopyPath=post-skinning-instanced-source-mesh-to-opposite-fingertips handMeshGraftSourceAnimationReuse=true handMeshGraftParamsBufferBytes={}",
+                PROP_HAND_MESH_VISUAL_MESH_SOURCE,
+                replay_mesh_visual_source_kind(replay),
+                crate::sanitize(&replay.source_kind),
+                crate::sanitize(&replay.topology_key),
                 crate::sanitize(&replay.handedness),
                 replay.skinning_frames.len(),
                 draw_resources.vertex_count,
@@ -365,9 +412,22 @@ impl GpuHandMeshVisualRenderer {
         live_hand_frame: Option<&RecordedHandSkinningFrame>,
         allow_recorded_replay_fallback: bool,
         handedness: &'static str,
+        mesh_source_selection: HandMeshVisualMeshSource,
         diagnostic_settings: HandMeshVisualDiagnosticSettings,
         material_settings: HandMeshVisualMaterialSettings,
     ) -> Result<GpuHandMeshVisualFrameStats, String> {
+        let source_resolution = resolve_hand_mesh_visual_source(replay, mesh_source_selection);
+        if !source_resolution.available {
+            return Ok(GpuHandMeshVisualFrameStats::unavailable_with_source(
+                replay,
+                frame_count,
+                handedness,
+                mesh_source_selection,
+                "selected-mesh-source-unavailable",
+                diagnostic_settings,
+                material_settings,
+            ));
+        }
         let frame = match live_hand_frame.or_else(|| {
             allow_recorded_replay_fallback
                 .then(|| replay.skinning_frame_for_count(frame_count))
@@ -375,20 +435,24 @@ impl GpuHandMeshVisualRenderer {
         }) {
             Some(frame) => frame,
             None => {
-                return Ok(GpuHandMeshVisualFrameStats::unavailable(
+                return Ok(GpuHandMeshVisualFrameStats::unavailable_with_source(
                     replay,
                     frame_count,
                     handedness,
+                    mesh_source_selection,
+                    "no-compact-joint-frame",
                     diagnostic_settings,
                     material_settings,
                 ));
             }
         };
         if !skinning_ready {
-            return Ok(GpuHandMeshVisualFrameStats::unavailable(
+            return Ok(GpuHandMeshVisualFrameStats::unavailable_with_source(
                 replay,
                 frame_count,
                 handedness,
+                mesh_source_selection,
+                "hand-mesh-skinning-not-ready",
                 diagnostic_settings,
                 material_settings,
             ));
@@ -399,6 +463,12 @@ impl GpuHandMeshVisualRenderer {
             visible: true,
             handedness,
             source_handedness: replay.handedness.clone(),
+            source_kind: replay.source_kind.clone(),
+            topology_key: replay.topology_key.clone(),
+            mesh_source_selection,
+            resolved_mesh_source: source_resolution.resolved_source,
+            mesh_source_available: true,
+            readiness_reason: "ready",
             frame_index: frame.frame_index,
             timestamp_ns: frame.timestamp_ns,
             drawn_vertex_count,
@@ -479,6 +549,8 @@ impl GpuHandMeshVisualRenderer {
         if !stats.live_compact_input_frame && stats.diagnostic_settings.enabled {
             params[0] += live_hand_mesh_proof_offset_x(stats.handedness);
         }
+        let mut eye_position = eye_projection.position;
+        eye_position[3] = stats.material_settings.push_wireframe_width_px();
         let world_eye_projection = stats.live_compact_input_frame;
         let push = HandMeshVisualPush {
             target_rect: [
@@ -489,7 +561,7 @@ impl GpuHandMeshVisualRenderer {
             ],
             params,
             material: stats.material_settings.push_material(),
-            eye_position: eye_projection.position,
+            eye_position,
             eye_orientation_xyzw: eye_projection.orientation_xyzw,
             fov_tangents: eye_projection.fov_tangents,
             target0: [
@@ -566,6 +638,8 @@ impl GpuHandMeshVisualRenderer {
         let params = stats
             .material_settings
             .push_params(stats.diagnostic_settings);
+        let mut eye_position = eye_projection.position;
+        eye_position[3] = stats.material_settings.push_wireframe_width_px();
         let push = HandMeshVisualPush {
             target_rect: [
                 target_rect.x,
@@ -575,7 +649,7 @@ impl GpuHandMeshVisualRenderer {
             ],
             params,
             material: stats.material_settings.push_material(),
-            eye_position: eye_projection.position,
+            eye_position,
             eye_orientation_xyzw: eye_projection.orientation_xyzw,
             fov_tangents: eye_projection.fov_tangents,
             target0: [
@@ -656,6 +730,41 @@ fn compact_frame_center(frame: &RecordedHandSkinningFrame) -> [f32; 4] {
         center[2] * inv_count,
         1.0,
     ]
+}
+
+#[derive(Clone, Copy, Debug)]
+struct HandMeshVisualSourceResolution {
+    resolved_source: &'static str,
+    available: bool,
+}
+
+fn resolve_hand_mesh_visual_source(
+    replay: &RecordedHandReplaySummary,
+    selection: HandMeshVisualMeshSource,
+) -> HandMeshVisualSourceResolution {
+    let resident_source = replay_mesh_visual_source_kind(replay);
+    let available = match selection {
+        HandMeshVisualMeshSource::Auto => true,
+        HandMeshVisualMeshSource::OpenXrFbMesh => resident_source == "openxr-fb-mesh",
+        HandMeshVisualMeshSource::CustomMesh => resident_source == "custom-mesh",
+    };
+    HandMeshVisualSourceResolution {
+        resolved_source: resident_source,
+        available,
+    }
+}
+
+fn replay_mesh_visual_source_kind(replay: &RecordedHandReplaySummary) -> &'static str {
+    if replay
+        .topology_key
+        .trim()
+        .to_ascii_lowercase()
+        .starts_with("openxr-fb-handmesh")
+    {
+        "openxr-fb-mesh"
+    } else {
+        "custom-mesh"
+    }
 }
 
 struct OwnedBuffer {

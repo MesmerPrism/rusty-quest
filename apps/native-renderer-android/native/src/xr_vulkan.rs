@@ -39,6 +39,8 @@ use crate::{
     gpu_stimulus_volume::{GpuStimulusVolumeFrameStats, GpuStimulusVolumeRenderer},
     guide_blur_graph::{GuideBlurGraphFrameStats, GuideBlurGraphRenderer},
     live_hand_compact::{LiveHandCompactFrameSet, LiveHandCompactInput, LiveHandCompactStats},
+    live_hand_joint_capture::LiveHandJointCaptureRecorder,
+    live_hand_mesh_capture::LiveHandMeshCaptureRecorder,
     manifold_breath_bridge::ManifoldBreathBridge,
     native_camera::NativeCameraRuntime,
     native_renderer_display_composite_options::{
@@ -47,18 +49,18 @@ use crate::{
     },
     native_renderer_options::{
         CompactHandInputSourceMode, HandMeshVisualDiagnosticSettings,
-        HandMeshVisualMaterialSettings, NativeCameraOutputMode, NativeCameraQualityProfile,
-        NativeCameraSyncMode, NativeEnvironmentDepthSettings, NativeFoveationLevel,
-        NativeFoveationSettings, NativeGuideGraphResolution, NativeHandAnchorParticleOrderingMode,
-        NativeHandAnchorParticleSettings, NativePassthroughStyleSettings,
-        NativePrivateLayerSettings, NativeProjectionBorderStretchSettings,
-        NativeProjectionSwapchainSettings, NativeRendererRenderMode, NativeRendererRuntimeOptions,
-        NativeStimulusVolumeSettings, NativeSwapchainColorFormatMode,
-        PROP_CAMERA_DIRECT_BORDER_OPACITY, PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED,
-        PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE, PROP_CAMERA_READER_MAX_IMAGES,
-        PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING, PROP_CAMERA_SYNC_MODE,
-        PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL, PROP_GUIDE_BLUR_ENABLED,
-        PROP_GUIDE_RESOLUTION, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
+        HandMeshVisualMaterialSettings, HandMeshVisualMeshSource, NativeCameraOutputMode,
+        NativeCameraQualityProfile, NativeCameraSyncMode, NativeEnvironmentDepthSettings,
+        NativeFoveationLevel, NativeFoveationSettings, NativeGuideGraphResolution,
+        NativeHandAnchorParticleOrderingMode, NativeHandAnchorParticleSettings,
+        NativePassthroughStyleSettings, NativePrivateLayerSettings,
+        NativeProjectionBorderStretchSettings, NativeProjectionSwapchainSettings,
+        NativeRendererRenderMode, NativeRendererRuntimeOptions, NativeStimulusVolumeSettings,
+        NativeSwapchainColorFormatMode, PROP_CAMERA_DIRECT_BORDER_OPACITY,
+        PROP_CAMERA_LUMA_DIAGNOSTIC_ENABLED, PROP_CAMERA_OUTPUT_MODE, PROP_CAMERA_QUALITY_PROFILE,
+        PROP_CAMERA_READER_MAX_IMAGES, PROP_CAMERA_RESOLUTION_PROFILE, PROP_CAMERA_STEREO_PAIRING,
+        PROP_CAMERA_SYNC_MODE, PROP_CAMERA_YCBCR_MODE, PROP_ENABLE_SDF_VISUAL,
+        PROP_GUIDE_BLUR_ENABLED, PROP_GUIDE_RESOLUTION, PROP_HAND_ANCHOR_PARTICLES_ENABLED,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_IMPLEMENTATION,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_INTERVAL_FRAMES,
         PROP_HAND_ANCHOR_PARTICLES_ORDERING_MODE, PROP_HAND_ANCHOR_PARTICLES_PER_HAND,
@@ -71,8 +73,9 @@ use crate::{
         PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV, PROP_HAND_MESH_VISUAL_MATERIAL_ALPHA,
         PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_B, PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_G,
         PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_R, PROP_HAND_MESH_VISUAL_MATERIAL_PROFILE,
-        PROP_HAND_MESH_VISUAL_MATERIAL_RIM_STRENGTH, PROP_PROCESSING_LAYER, PROP_RENDER_MODE,
-        PROP_REPLAY_VISUAL_PROOF_ENABLED, PROP_SWAPCHAIN_COLOR_FORMAT_MODE,
+        PROP_HAND_MESH_VISUAL_MATERIAL_RIM_STRENGTH, PROP_HAND_MESH_VISUAL_MESH_SOURCE,
+        PROP_PROCESSING_LAYER, PROP_RENDER_MODE, PROP_REPLAY_VISUAL_PROOF_ENABLED,
+        PROP_SDF_FIELD_VISUAL_ENABLED, PROP_SWAPCHAIN_COLOR_FORMAT_MODE,
     },
     native_renderer_passthrough_style_options::NativePassthroughStyleAudioReactiveState,
     native_renderer_properties::PROP_PRIVATE_PARTICLES_WORLD_ANCHOR_SCALE_M,
@@ -126,13 +129,15 @@ pub(crate) struct XrVulkanReadiness {
     pub(crate) vulkan_external_import_prereqs_ready: bool,
     pub(crate) live_hand_tracking_extension_available: bool,
     pub(crate) live_hand_tracking_extension_enabled: bool,
+    pub(crate) live_hand_tracking_mesh_extension_available: bool,
+    pub(crate) live_hand_tracking_mesh_extension_enabled: bool,
     pub(crate) live_hand_tracking_system_supported: bool,
 }
 
 impl XrVulkanReadiness {
     pub(crate) fn marker_fields(&self) -> String {
         format!(
-            "androidOpenxrLoaderReady={} openxrInstanceReady={} vulkanInstanceReady={} externalHwbExtensionReady={} samplerYcbcrExtensionReady={} samplerYcbcrFeatureReady={} fragmentDensityMapExtensionReady={} fragmentDensityMap2ExtensionReady={} fragmentDensityMapFeatureReady={} fragmentDensityMapFormatReady={} vulkanExternalImportPrereqsReady={} liveMetaHandTrackingExtensionAvailable={} liveMetaHandTrackingExtensionEnabled={} liveMetaHandTrackingSystemSupported={} openxrSubmitReady=false vulkanExternalImportReady=false",
+            "androidOpenxrLoaderReady={} openxrInstanceReady={} vulkanInstanceReady={} externalHwbExtensionReady={} samplerYcbcrExtensionReady={} samplerYcbcrFeatureReady={} fragmentDensityMapExtensionReady={} fragmentDensityMap2ExtensionReady={} fragmentDensityMapFeatureReady={} fragmentDensityMapFormatReady={} vulkanExternalImportPrereqsReady={} liveMetaHandTrackingExtensionAvailable={} liveMetaHandTrackingExtensionEnabled={} liveMetaHandTrackingMeshExtensionAvailable={} liveMetaHandTrackingMeshExtensionEnabled={} liveMetaHandTrackingSystemSupported={} openxrSubmitReady=false vulkanExternalImportReady=false",
             self.android_loader_ready,
             self.openxr_instance_ready,
             self.vulkan_instance_ready,
@@ -146,6 +151,8 @@ impl XrVulkanReadiness {
             self.vulkan_external_import_prereqs_ready,
             self.live_hand_tracking_extension_available,
             self.live_hand_tracking_extension_enabled,
+            self.live_hand_tracking_mesh_extension_available,
+            self.live_hand_tracking_mesh_extension_enabled,
             self.live_hand_tracking_system_supported
         )
     }
@@ -326,6 +333,8 @@ unsafe fn run_projection_loop_inner(
     enabled_extensions.khr_android_create_instance = true;
     enabled_extensions.khr_vulkan_enable2 = true;
     enabled_extensions.ext_hand_tracking = available_extensions.ext_hand_tracking;
+    enabled_extensions.fb_hand_tracking_mesh =
+        enabled_extensions.ext_hand_tracking && available_extensions.fb_hand_tracking_mesh;
     enabled_extensions.fb_passthrough =
         native_passthrough_requested && available_extensions.fb_passthrough;
     enabled_extensions.meta_environment_depth = runtime_options
@@ -646,6 +655,15 @@ unsafe fn run_projection_loop_inner(
     );
     let reference_space =
         create_projection_reference_space(&session, runtime_options.environment_depth_settings)?;
+    let mut hand_mesh_capture_recorder = LiveHandMeshCaptureRecorder::new(
+        app,
+        &xr_instance,
+        system,
+        &session,
+        available_extensions.fb_hand_tracking_mesh,
+        enabled_extensions.fb_hand_tracking_mesh,
+        runtime_options.hand_mesh_visual_material_settings,
+    );
     let color_format =
         choose_swapchain_format(&session, runtime_options.swapchain_color_format_mode)?;
     let render_pass = create_projection_render_pass(
@@ -701,6 +719,7 @@ unsafe fn run_projection_loop_inner(
     let sdf_visual_enabled = runtime_options.sdf_visual_enabled;
     let sdf_update_period_frames = runtime_options.sdf_update_period_frames;
     let hand_mesh_visual_diagnostic_settings = runtime_options.hand_mesh_visual_diagnostic_settings;
+    let hand_mesh_visual_mesh_source = runtime_options.hand_mesh_visual_mesh_source;
     let hand_mesh_visual_material_settings = runtime_options.hand_mesh_visual_material_settings;
     let hand_mesh_graft_copies_enabled = runtime_options.hand_mesh_graft_copies_enabled;
     let hand_mesh_graft_copy_scale = runtime_options.hand_mesh_graft_copy_scale;
@@ -717,7 +736,7 @@ unsafe fn run_projection_loop_inner(
     crate::marker(
         "recorded-replay-visual-proof",
         format!(
-            "status=config renderModeProperty={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} openxrDefaultHandVisualRequested={} property={} enabled={} handMeshInputSourceProperty={} compactHandInputSourceMode={} selectsLiveFrame={} allowsRecordedFallback={} sdfVisualEnabled={} handMeshVisualDiagnosticEnabled={} {} handMeshGraftCopiesEnabled={} handMeshGraftScaleProperty={} handMeshGraftScaleMultiplier={:.2} realHandsProperty={} handMeshRealHandsVisible={} recordedReplayVisualAcceptance=pending-headset-screenshot liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof liveSdfVisualAcceptance=pending-repeat-headset-visual-proof",
+            "status=config renderModeProperty={} renderMode={} customStereoProjectionEnabled={} nativePassthroughRequested={} solidBlackBackground={} openxrDefaultHandVisualRequested={} property={} enabled={} handMeshInputSourceProperty={} compactHandInputSourceMode={} selectsLiveFrame={} allowsRecordedFallback={} sdfFieldVisualProperty={} legacySdfVisualProperty={} sdfFieldVisualEnabled={} sdfVisualEnabled={} handMeshVisualMeshSourceProperty={} handMeshVisualMeshSourceSelection={} handMeshVisualDiagnosticEnabled={} {} handMeshGraftCopiesEnabled={} handMeshGraftScaleProperty={} handMeshGraftScaleMultiplier={:.2} realHandsProperty={} handMeshRealHandsVisible={} recordedReplayVisualAcceptance=pending-headset-screenshot liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof liveSdfVisualAcceptance=pending-repeat-headset-visual-proof",
             PROP_RENDER_MODE,
             render_mode.marker_value(),
             render_mode.uses_custom_stereo_projection(),
@@ -730,7 +749,12 @@ unsafe fn run_projection_loop_inner(
             compact_hand_input_source_mode.marker_value(),
             compact_hand_input_source_mode.selects_live_frame(),
             compact_hand_input_source_mode.allows_recorded_fallback(),
+            PROP_SDF_FIELD_VISUAL_ENABLED,
+            PROP_ENABLE_SDF_VISUAL,
             sdf_visual_enabled,
+            sdf_visual_enabled,
+            PROP_HAND_MESH_VISUAL_MESH_SOURCE,
+            hand_mesh_visual_mesh_source.marker_value(),
             hand_mesh_visual_diagnostic_settings.enabled,
             hand_mesh_visual_material_settings.marker_fields(),
             hand_mesh_graft_copies_enabled,
@@ -812,13 +836,15 @@ unsafe fn run_projection_loop_inner(
     crate::marker(
         "hand-mesh-visual-diagnostic",
         format!(
-            "status=config renderMode={} solidBlackBackground={} openxrDefaultHandVisualRequested={} handMeshVisualDiagnosticPath=property-controlled-target-local-offset-tint enabledProperty={} offsetProperty={} alphaProperty={} materialProfileProperty={} materialAlphaProperty={} materialBaseColorRProperty={} materialBaseColorGProperty={} materialBaseColorBProperty={} materialRimStrengthProperty={} graftCopiesProperty={} graftScaleProperty={} realHandsProperty={} handMeshGraftCopiesEnabled={} handMeshGraftScaleMultiplier={:.2} handMeshRealHandsVisible={} nativePassthroughRealHandMeshVisible={} solidBlackRealHandMeshVisible={} {} {} liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof liveSdfVisualAcceptance=pending-repeat-headset-visual-proof",
+            "status=config renderMode={} solidBlackBackground={} openxrDefaultHandVisualRequested={} handMeshVisualDiagnosticPath=property-controlled-target-local-offset-tint enabledProperty={} offsetProperty={} alphaProperty={} meshSourceProperty={} meshSourceSelection={} materialProfileProperty={} materialAlphaProperty={} materialBaseColorRProperty={} materialBaseColorGProperty={} materialBaseColorBProperty={} materialRimStrengthProperty={} graftCopiesProperty={} graftScaleProperty={} realHandsProperty={} handMeshGraftCopiesEnabled={} handMeshGraftScaleMultiplier={:.2} handMeshRealHandsVisible={} nativePassthroughRealHandMeshVisible={} solidBlackRealHandMeshVisible={} {} {} liveHandMeshVisualAcceptance=pending-repeat-headset-visual-proof liveSdfVisualAcceptance=pending-repeat-headset-visual-proof",
             render_mode.marker_value(),
             render_mode.uses_solid_black_background(),
             render_mode.requests_openxr_default_hand_visual(),
             PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ENABLED,
             PROP_HAND_MESH_VISUAL_DIAGNOSTIC_OFFSET_UV,
             PROP_HAND_MESH_VISUAL_DIAGNOSTIC_ALPHA,
+            PROP_HAND_MESH_VISUAL_MESH_SOURCE,
+            hand_mesh_visual_mesh_source.marker_value(),
             PROP_HAND_MESH_VISUAL_MATERIAL_PROFILE,
             PROP_HAND_MESH_VISUAL_MATERIAL_ALPHA,
             PROP_HAND_MESH_VISUAL_MATERIAL_BASE_COLOR_R,
@@ -977,7 +1003,8 @@ unsafe fn run_projection_loop_inner(
                     crate::marker(
                         "gpu-sdf-field",
                         format!(
-                            "status=skinning-active-sdf-overlay-deferred reason=property-disabled property={} dynamicSdfReady=false sdfVisualEffectVisible=false gpuSdfFieldReady=false gpuSdfOverlayVisible=false cpuSdfPerFrame=false meshToSdfKernel=false targetSpaceMeshToSdfKernelAvailable=true fullSkinnedMeshSdfReady=false compactJointSkinningKernel=true jointMatrixSkinningKernel=false jointMatrixUploadPerFrame=false compactJointPoseUploadPerFrame=true sourceMeshToSdfKernel=false",
+                            "status=hand-mesh-skinning-active-sdf-field-visual-deferred reason=property-disabled sdfFieldVisualProperty={} legacySdfVisualProperty={} handMeshSkinningReady=true dynamicSdfReady=false sdfFieldVisualReady=false sdfVisualEffectVisible=false gpuSdfFieldReady=false gpuSdfOverlayVisible=false cpuSdfPerFrame=false meshToSdfKernel=false targetSpaceMeshToSdfKernelAvailable=true fullSkinnedMeshSdfReady=false compactJointSkinningKernel=true jointMatrixSkinningKernel=false jointMatrixUploadPerFrame=false compactJointPoseUploadPerFrame=true sourceMeshToSdfKernel=false",
+                            PROP_SDF_FIELD_VISUAL_ENABLED,
                             PROP_ENABLE_SDF_VISUAL
                         ),
                     );
@@ -1011,7 +1038,7 @@ unsafe fn run_projection_loop_inner(
                 crate::marker(
                     "hand-mesh-visual",
                     format!(
-                        "status=unavailable reason={} animatedHandMeshVisualReady=false animatedHandMeshVisualVisible=false handMeshVisualPath=recorded-compact-joint-gpu-skinned-resident-triangle-draw gpuTriangleDraw=false cpuProjection=false validationMeshUploadPerFrame=false",
+                        "status=unavailable reason={} animatedHandMeshVisualReady=false animatedHandMeshVisualVisible=false handMeshVisualPath=compact-joint-gpu-skinned-resident-selected-mesh-triangle-draw gpuTriangleDraw=false cpuProjection=false validationMeshUploadPerFrame=false",
                         crate::sanitize(&error)
                     ),
                 );
@@ -1021,7 +1048,7 @@ unsafe fn run_projection_loop_inner(
     } else {
         crate::marker(
             "hand-mesh-visual",
-            "status=unavailable reason=no-resident-skinned-mesh-runtime animatedHandMeshVisualReady=false animatedHandMeshVisualVisible=false handMeshVisualPath=recorded-compact-joint-gpu-skinned-resident-triangle-draw gpuTriangleDraw=false cpuProjection=false validationMeshUploadPerFrame=false",
+            "status=unavailable reason=no-resident-skinned-mesh-runtime animatedHandMeshVisualReady=false animatedHandMeshVisualVisible=false handMeshVisualPath=compact-joint-gpu-skinned-resident-selected-mesh-triangle-draw gpuTriangleDraw=false cpuProjection=false validationMeshUploadPerFrame=false",
         );
         None
     };
@@ -1265,12 +1292,17 @@ unsafe fn run_projection_loop_inner(
     crate::marker(
         "openxr-live-hand",
         format!(
-            "status=ready-check extensionAvailable={} extensionEnabled={} systemSupported={} liveMetaHandFrameSource=XR_EXT_hand_tracking liveMetaHandGpuInputPath=recorded-compatible-compact-joint-pose-tip-length",
+            "status=ready-check extensionAvailable={} extensionEnabled={} meshExtensionAvailable={} meshExtensionEnabled={} systemSupported={} liveMetaHandFrameSource=XR_EXT_hand_tracking liveMetaHandMeshProvider=XR_FB_hand_tracking_mesh liveMetaHandGpuInputPath=recorded-compatible-compact-joint-pose-tip-length",
             available_extensions.ext_hand_tracking,
             enabled_extensions.ext_hand_tracking,
+            available_extensions.fb_hand_tracking_mesh,
+            enabled_extensions.fb_hand_tracking_mesh,
             live_hand_tracking_system_supported
         ),
     );
+
+    let mut hand_joint_capture_recorder =
+        LiveHandJointCaptureRecorder::new(app, hand_mesh_visual_material_settings);
 
     let loop_result = run_projection_frames(
         app,
@@ -1313,11 +1345,14 @@ unsafe fn run_projection_loop_inner(
         &mut gpu_timestamp_tracker,
         &mut private_extension_slot_runtime,
         &mut live_hand_compact,
+        &mut hand_joint_capture_recorder,
+        &mut hand_mesh_capture_recorder,
         compact_hand_input_source_mode,
         replay_visual_proof_enabled,
         sdf_visual_enabled,
         sdf_update_period_frames,
         hand_mesh_visual_diagnostic_settings,
+        hand_mesh_visual_mesh_source,
         hand_mesh_visual_material_settings,
         hand_mesh_graft_copies_enabled,
         hand_mesh_graft_copy_scale,
@@ -1352,6 +1387,8 @@ unsafe fn run_projection_loop_inner(
         &display_composite_projection_metadata,
         &video_projection_metadata,
     );
+    hand_joint_capture_recorder.finish_active("projection-loop-ended");
+    hand_mesh_capture_recorder.finish_active("projection-loop-ended");
 
     let _ = vk_device.device_wait_idle();
     if let Err(error) = vk_device.wait_for_fences(&fences, true, 1_000_000_000) {
@@ -1420,6 +1457,8 @@ unsafe fn probe_inner(
         .enumerate_extensions()
         .map_err(|error| format!("enumerate OpenXR extensions: {error}"))?;
     readiness.live_hand_tracking_extension_available = available_extensions.ext_hand_tracking;
+    readiness.live_hand_tracking_mesh_extension_available =
+        available_extensions.fb_hand_tracking_mesh;
     if !available_extensions.khr_android_create_instance {
         return Err("OpenXR runtime does not expose XR_KHR_android_create_instance".to_string());
     }
@@ -1431,7 +1470,10 @@ unsafe fn probe_inner(
     enabled_extensions.khr_android_create_instance = true;
     enabled_extensions.khr_vulkan_enable2 = true;
     enabled_extensions.ext_hand_tracking = available_extensions.ext_hand_tracking;
+    enabled_extensions.fb_hand_tracking_mesh =
+        enabled_extensions.ext_hand_tracking && available_extensions.fb_hand_tracking_mesh;
     readiness.live_hand_tracking_extension_enabled = enabled_extensions.ext_hand_tracking;
+    readiness.live_hand_tracking_mesh_extension_enabled = enabled_extensions.fb_hand_tracking_mesh;
     let xr_instance = create_android_instance(
         &entry,
         app,
@@ -1843,11 +1885,14 @@ unsafe fn run_projection_frames(
     gpu_timestamp_tracker: &mut GpuTimestampTracker,
     private_extension_slot_runtime: &mut PrivateExtensionSlotRuntime,
     live_hand_compact: &mut LiveHandCompactInput,
+    hand_joint_capture_recorder: &mut LiveHandJointCaptureRecorder,
+    hand_mesh_capture_recorder: &mut LiveHandMeshCaptureRecorder,
     compact_hand_input_source_mode: CompactHandInputSourceMode,
     replay_visual_proof_enabled: bool,
     sdf_visual_enabled: bool,
     sdf_update_period_frames: u64,
     hand_mesh_visual_diagnostic_settings: HandMeshVisualDiagnosticSettings,
+    hand_mesh_visual_mesh_source: HandMeshVisualMeshSource,
     hand_mesh_visual_material_settings: HandMeshVisualMaterialSettings,
     hand_mesh_graft_copies_enabled: bool,
     hand_mesh_graft_copy_scale: f32,
@@ -2566,6 +2611,18 @@ unsafe fn run_projection_frames(
                 (LiveHandCompactFrameSet::default(), stats)
             };
         frame_timings.live_hand_ms = elapsed_ms(stage_started);
+        hand_joint_capture_recorder.update_and_record(
+            frame_count,
+            &live_hand_frames,
+            &live_hand_stats,
+            hand_mesh_visual_material_settings,
+        );
+        hand_mesh_capture_recorder.update_and_record(
+            reference_space,
+            frame_state.predicted_display_time,
+            frame_count,
+            hand_mesh_visual_material_settings,
+        );
         let selected_primary_live_hand_frame = compact_hand_input_source_mode
             .selects_live_frame()
             .then(|| live_hand_frames.primary_frame())
@@ -2678,6 +2735,10 @@ unsafe fn run_projection_frames(
             frame_slot,
             GpuTimestampStage::HandMeshVisual,
         );
+        let hand_mesh_visual_mesh_source =
+            hotload_hand_mesh_visual_mesh_source(hand_mesh_visual_mesh_source);
+        let hand_mesh_visual_material_settings =
+            hotload_hand_mesh_visual_material_settings(hand_mesh_visual_material_settings);
         let mut primary_hand_mesh_visual_stats = if let Some(renderer) =
             gpu_hand_mesh_visual_renderer.as_mut()
         {
@@ -2688,6 +2749,7 @@ unsafe fn run_projection_frames(
                 selected_primary_live_hand_frame,
                 compact_hand_input_source_mode.allows_recorded_fallback(),
                 selected_primary_live_hand,
+                hand_mesh_visual_mesh_source,
                 hand_mesh_visual_diagnostic_settings,
                 hand_mesh_visual_material_settings,
             ) {
@@ -2702,20 +2764,24 @@ unsafe fn run_projection_frames(
                                 ),
                             );
                     }
-                    GpuHandMeshVisualFrameStats::unavailable(
+                    GpuHandMeshVisualFrameStats::unavailable_with_source(
                         replay,
                         frame_count,
                         selected_primary_live_hand,
+                        hand_mesh_visual_mesh_source,
+                        "record-frame-error",
                         hand_mesh_visual_diagnostic_settings,
                         hand_mesh_visual_material_settings,
                     )
                 }
             }
         } else {
-            GpuHandMeshVisualFrameStats::unavailable(
+            GpuHandMeshVisualFrameStats::unavailable_with_source(
                 replay,
                 frame_count,
                 selected_primary_live_hand,
+                hand_mesh_visual_mesh_source,
+                "renderer-unavailable",
                 hand_mesh_visual_diagnostic_settings,
                 hand_mesh_visual_material_settings,
             )
@@ -2730,6 +2796,7 @@ unsafe fn run_projection_frames(
                 selected_secondary_live_hand_frame,
                 compact_hand_input_source_mode.allows_recorded_fallback(),
                 selected_secondary_live_hand,
+                hand_mesh_visual_mesh_source,
                 hand_mesh_visual_diagnostic_settings,
                 hand_mesh_visual_material_settings,
             ) {
@@ -2744,20 +2811,24 @@ unsafe fn run_projection_frames(
                             ),
                         );
                     }
-                    GpuHandMeshVisualFrameStats::unavailable(
+                    GpuHandMeshVisualFrameStats::unavailable_with_source(
                         secondary_replay,
                         frame_count,
                         selected_secondary_live_hand,
+                        hand_mesh_visual_mesh_source,
+                        "secondary-record-frame-error",
                         hand_mesh_visual_diagnostic_settings,
                         hand_mesh_visual_material_settings,
                     )
                 }
             }
         } else {
-            GpuHandMeshVisualFrameStats::unavailable(
+            GpuHandMeshVisualFrameStats::unavailable_with_source(
                 secondary_replay,
                 frame_count,
                 selected_secondary_live_hand,
+                hand_mesh_visual_mesh_source,
+                "secondary-renderer-unavailable",
                 hand_mesh_visual_diagnostic_settings,
                 hand_mesh_visual_material_settings,
             )
@@ -5749,6 +5820,32 @@ fn hand_mesh_visual_eye_projection(view: &xr::View) -> HandMeshVisualEyeProjecti
             view.fov.angle_up.tan(),
         ],
     }
+}
+
+fn hotload_hand_mesh_visual_mesh_source(
+    startup_value: HandMeshVisualMeshSource,
+) -> HandMeshVisualMeshSource {
+    HandMeshVisualMeshSource::from_property_lookup_or_default(read_hotload_property, startup_value)
+}
+
+fn hotload_hand_mesh_visual_material_settings(
+    startup_value: HandMeshVisualMaterialSettings,
+) -> HandMeshVisualMaterialSettings {
+    startup_value.with_hotload_wireframe_properties(read_hotload_property)
+}
+
+#[cfg(target_os = "android")]
+fn read_hotload_property(name: &str) -> Option<String> {
+    let mut property = android_properties::getprop(name);
+    property.value().and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_owned())
+    })
+}
+
+#[cfg(not(target_os = "android"))]
+fn read_hotload_property(_name: &str) -> Option<String> {
+    None
 }
 
 fn handedness_label(value: &str) -> &'static str {

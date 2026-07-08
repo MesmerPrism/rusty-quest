@@ -470,7 +470,10 @@ fn validate_native_renderer_manifest_entry(
     entry: &NativeRendererPropertyManifestEntry,
     errors: &mut Vec<ValidationError>,
 ) {
-    if entry.lifecycle != "startup-effective" {
+    if !matches!(
+        entry.lifecycle.as_str(),
+        "startup-effective" | "runtime-polled"
+    ) {
         errors.push(ValidationError::new(format!(
             "{} manifest lifecycle {} is not supported",
             entry.name, entry.lifecycle

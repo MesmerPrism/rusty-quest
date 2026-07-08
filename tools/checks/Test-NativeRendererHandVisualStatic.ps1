@@ -46,6 +46,14 @@ $recordedHandReplayModule = Read-RequiredText `
     (Join-Path $srcRoot "recorded_hand_replay.rs") `
     "recorded hand replay source"
 $liveHandCompact = Read-RequiredText (Join-Path $srcRoot "live_hand_compact.rs") "live hand compact input"
+$liveHandJointCapture = Read-RequiredText (Join-Path $srcRoot "live_hand_joint_capture.rs") "live hand joint capture"
+$liveHandMeshCapture = Read-RequiredText (Join-Path $srcRoot "live_hand_mesh_capture.rs") "live hand mesh capture"
+$handJointCaptureTool = Read-RequiredText `
+    (Join-Path $repoRootPath "tools\Invoke-NativeRendererHandJointCapture.ps1") `
+    "hand joint capture CLI"
+$handMeshCaptureTool = Read-RequiredText `
+    (Join-Path $repoRootPath "tools\Invoke-NativeRendererHandMeshCapture.ps1") `
+    "hand mesh capture CLI"
 $gpuHandMeshVisual = Read-RequiredText (Join-Path $srcRoot "gpu_hand_mesh_visual.rs") "GPU hand mesh visual"
 $gpuMeshReplay = Read-RequiredText (Join-Path $srcRoot "gpu_mesh_replay.rs") "GPU mesh replay"
 $handMeshGraft = Read-RequiredText (Join-Path $srcRoot "hand_mesh_graft.rs") "hand mesh graft"
@@ -86,6 +94,9 @@ Assert-ContainsTokens "$recordedHandReplayModule`n$nativeBuildRs`n$xrVulkanSurfa
     'rig_json',
     'clip_jsonl',
     'validation_mesh_jsonl',
+    'replayModes=recorded-mesh-validation-frames,recorded-joints-skin-live',
+    'recordedMeshReplayMode=validation_mesh_jsonl',
+    'recordedJointReplayMode=clip_jsonl-compact-joint-skinning',
     'normalize_xy_points',
     'recordedInputEquivalent=true',
     'validationInputShape=bind-mesh-plus-compact-joint-frame',
@@ -121,12 +132,19 @@ Assert-ContainsTokens "$nativeBuildRs`n$nativeLib`n$recordedHandReplayModule`n$n
     'HandMeshVisualDiagnosticSettings',
     'HandMeshVisualMaterialSettings',
     'HandMeshVisualMaterialProfile',
+    'HandMeshVisualMeshSource',
     'hand_mesh_visual.vert.glsl',
     'hand_mesh_visual.frag.glsl',
-    'handMeshVisualPath=recorded-compact-joint-gpu-skinned-resident-triangle-draw',
+    'handMeshVisualPath=compact-joint-gpu-skinned-resident-selected-mesh-triangle-draw',
     'recordedSkinnedMeshFrameSource=compact_joint_gpu_skinning',
     'animatedHandMeshVisualReady',
     'animatedHandMeshVisualVisible',
+    'handMeshVisualMeshSourceProperty',
+    'handMeshVisualMeshSourceSelection',
+    'handMeshVisualResolvedMeshSource',
+    'handMeshVisualMeshSourceAvailable',
+    'handMeshVisualReadinessReason',
+    'handMeshVisualHotload=true',
     'handMeshVisualDiagnosticEnabled',
     'handMeshVisualDiagnosticOffsetUv',
     'liveHandMeshVisualAcceptance',
@@ -157,6 +175,14 @@ Assert-ContainsTokens "$nativeBuildRs`n$nativeLib`n$recordedHandReplayModule`n$n
     'handMeshVisualMaterialBaseColor',
     'handMeshVisualMaterialAlpha',
     'handMeshVisualMaterialRimStrength',
+    'handMeshVisualWireframeAvailable=true',
+    'handMeshVisualWireframeEnabled',
+    'handMeshVisualWireframeWidthPx',
+    'handMeshVisualWireframeMode=shader-barycentric-triangle-edges',
+    'handMeshVisualWireframeLinePath=fragment-derivative-anti-aliased',
+    'handMeshVisualWireframeTopologySource=resident-selected-mesh-triangle-indices',
+    'handMeshVisualWireframeHotloadProperties',
+    'vulkanWideLinesRequired=false',
     'handMeshVisualFresnelApproximation=normal-facing-rim',
     'handMeshVisualDepthPolicy=overlay-no-depth',
     'handMeshVisualDepthTest=false',
@@ -167,7 +193,13 @@ Assert-ContainsTokens "$nativeBuildRs`n$nativeLib`n$recordedHandReplayModule`n$n
     'debug.rustyquest.native_renderer.hand_mesh.visual.material.base_color.g',
     'debug.rustyquest.native_renderer.hand_mesh.visual.material.base_color.b',
     'debug.rustyquest.native_renderer.hand_mesh.visual.material.rim_strength',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.mesh_source',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.enabled',
+    'debug.rustyquest.native_renderer.hand_mesh.visual.wireframe.width_px',
     'vec4 material',
+    'v_barycentric',
+    'wireframe_edge_alpha',
+    'fwidth',
     'handMeshVisualSmoothSurfaceShading=true',
     'handMeshVisualComponentColoring=false',
     'HandMeshGraftParams',
@@ -219,6 +251,61 @@ Assert-ContainsTokens "$nativeLib`n$liveHandCompact`n$xrVulkanSurface" @(
     'runtime_joint_poses',
     'tip_length_rows'
 ) "live Meta hand compact route"
+
+Assert-ContainsTokens "$nativeLib`n$xrVulkanSurface`n$liveHandJointCapture`n$handJointCaptureTool" @(
+    'mod live_hand_joint_capture',
+    'LiveHandJointCaptureRecorder',
+    'update_and_record',
+    'finish_active',
+    'hand-joint-capture-control\.json',
+    'hand-joint-captures',
+    'rusty\.quest\.native_renderer\.hand_joint_capture_control\.v1',
+    'rusty\.quest\.native_renderer\.hand_joint_capture_manifest\.v1',
+    'rusty\.quest\.native_renderer\.hand_joint_frame\.v1',
+    'replay_mode = "recorded-joints-skin-live"',
+    'companion_mesh_replay = "validation_mesh_jsonl"',
+    'left\.clip\.jsonl',
+    'right\.clip\.jsonl',
+    'runtime_provider": "XR_EXT_hand_tracking"',
+    'requires_hand_mesh_rig_for_skinning',
+    'hand_material',
+    'wireframe_enabled',
+    'WireframeWidthPx',
+    'Invoke-AdbCommand',
+    'Prepare-MaterialLiveRun',
+    'PullAndInspect',
+    'hand-joint-capture-inspection\.json',
+    'debug\.rustyquest\.native_renderer\.hand_mesh\.visual\.material\.profile',
+    'debug\.rustyquest\.native_renderer\.hand_mesh\.visual\.mesh_source',
+    'debug\.rustyquest\.native_renderer\.hand_mesh\.visual\.wireframe\.enabled',
+    'debug\.rustyquest\.native_renderer\.hand_mesh\.visual\.wireframe\.width_px',
+    'debug\.rustyquest\.native_renderer\.hand_mesh\.real_hands\.visible',
+    'debug\.rustyquest\.native_renderer\.hand_mesh\.input\.source'
+) "live hand joint capture route"
+
+Assert-ContainsTokens "$nativeLib`n$xrVulkanSurface`n$liveHandMeshCapture`n$handMeshCaptureTool" @(
+    'mod live_hand_mesh_capture',
+    'LiveHandMeshCaptureRecorder',
+    'XR_FB_hand_tracking_mesh',
+    'fb_hand_tracking_mesh',
+    'xrGetHandMeshFB',
+    'hand-mesh-capture-control\.json',
+    'hand-mesh-captures',
+    'rusty\.quest\.native_renderer\.hand_mesh_capture_control\.v1',
+    'rusty\.quest\.native_renderer\.hand_mesh_capture_manifest\.v1',
+    'rusty\.matter\.hand_mesh_rig\.v1',
+    'rusty\.matter\.hand_joint_frame\.v1',
+    'rusty\.matter\.hand_validation_frame\.v1',
+    'left\.rig\.json',
+    'right\.rig\.json',
+    'left\.validation_mesh\.jsonl',
+    'right\.validation_mesh\.jsonl',
+    'recorded-mesh-validation-frames',
+    'recorded-joints-skin-live',
+    'hand_visual_mesh_source',
+    'debug\.rustyquest\.native_renderer\.hand_mesh\.visual\.mesh_source',
+    'hand-mesh-capture-inspection\.json'
+) "live OpenXR FB hand mesh capture route"
 
 Assert-ContainsTokens "$gpuMeshReplay`n$xrVulkanSurface" @(
     'GpuMeshReplayResources',

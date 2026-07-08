@@ -1,6 +1,74 @@
 # Dot-sourced helper functions for Invoke-Qcl100QuestToQuestNativeStereoProjectionWifiDirect.ps1.
 # Keep these functions side-effect free until called by the runner facade.
 
+function Read-Qcl041AppFile {
+    param(
+        [string]$Serial,
+        [string]$DevicePath,
+        [int]$TimeoutSeconds = 5
+    )
+    return Read-RustyQuestAdbAppFile `
+        -AdbPath $Adb `
+        -Serial $Serial `
+        -Package $Qcl041Package `
+        -DevicePath $DevicePath `
+        -TimeoutSeconds $TimeoutSeconds
+}
+
+function Wait-Qcl041AppFile {
+    param(
+        [string]$Serial,
+        [string]$DevicePath,
+        [string]$OutPath,
+        [int]$TimeoutSeconds = 15,
+        [string]$Label = ""
+    )
+    $started = Get-Date
+    $attempt = 0
+    $lastError = ""
+    $effectiveTimeoutSeconds = [Math]::Max(1, $TimeoutSeconds)
+    while (((Get-Date) - $started).TotalSeconds -lt $effectiveTimeoutSeconds) {
+        $attempt++
+        $read = Read-Qcl041AppFile -Serial $Serial -DevicePath $DevicePath -TimeoutSeconds ([Math]::Min(5, $effectiveTimeoutSeconds))
+        if ([bool]$read.timed_out) {
+            $lastError = "qcl041_app_file_read_timeout after $($read.timeout_seconds)s"
+        } elseif (-not [string]::IsNullOrWhiteSpace([string]$read.stdout)) {
+            $saved = Save-RustyQuestJsonArtifactFromStdout `
+                -Content ([string]$read.stdout) `
+                -OutPath $OutPath `
+                -Label $Label `
+                -ExitCode $read.exit_code
+            if ([bool]$saved.saved) {
+                return [ordered]@{
+                    status = if ([bool]$saved.accepted_with_nonzero_exit_code) { "pass_with_nonzero_exit_code" } else { "pass" }
+                    label = $Label
+                    attempts = $attempt
+                    elapsed_ms = [int][Math]::Ceiling(((Get-Date) - $started).TotalMilliseconds)
+                    artifact_path = $OutPath
+                    artifact_present = $true
+                    adb_exit_code = $read.exit_code
+                    accepted_with_nonzero_exit_code = [bool]$saved.accepted_with_nonzero_exit_code
+                    warning = [string]$saved.warning
+                    last_error = ""
+                }
+            }
+            $lastError = "qcl041_app_file_stdout_json_parse_failed exit_code=$($read.exit_code): $($saved.error)"
+        } else {
+            $lastError = if (-not [string]::IsNullOrWhiteSpace([string]$read.stderr)) { [string]$read.stderr } else { [string]$read.stdout }
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    return [ordered]@{
+        status = "timeout"
+        label = $Label
+        attempts = $attempt
+        elapsed_ms = [int][Math]::Ceiling(((Get-Date) - $started).TotalMilliseconds)
+        artifact_path = $OutPath
+        artifact_present = $false
+        last_error = $lastError
+    }
+}
+
 function Start-Qcl041Relay {
     param(
         [string]$Serial,
@@ -173,12 +241,13 @@ function Invoke-Qcl041PreclearOnly {
         -File $Adb `
         -Arguments $intentArgs `
         -LogPath $launchPath | Out-Null
-    Start-Sleep -Seconds 8
     $artifactPath = Join-Path $MediaDir "$Label-qcl041-preclear.json"
-    $content = & $Adb -s $Serial exec-out run-as $Qcl041Package cat "files/qcl041/$preclearRunId.json" 2>&1 | Out-String
-    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($content)) {
-        $content | Set-Content -Encoding UTF8 -Path $artifactPath
-    }
+    $artifactRead = Wait-Qcl041AppFile `
+        -Serial $Serial `
+        -DevicePath "files/qcl041/$preclearRunId.json" `
+        -OutPath $artifactPath `
+        -TimeoutSeconds 15 `
+        -Label "$Label-qcl041-preclear"
     Invoke-AdbBestEffort -Serial $Serial -Arguments @("shell", "am", "force-stop", $Qcl041Package)
     return [ordered]@{
         schema = "rusty.quest.qcl100_qcl041_preclear_receipt.v1"
@@ -190,6 +259,7 @@ function Invoke-Qcl041PreclearOnly {
         launch_log_path = $launchPath
         artifact_path = $artifactPath
         artifact_present = [bool](Test-Path -LiteralPath $artifactPath)
+        artifact_read = $artifactRead
         final_force_stop_attempted = $true
     }
 }
@@ -258,11 +328,18 @@ function Read-Qcl041Artifact {
     }
     while (((Get-Date) - $started).TotalSeconds -lt $TimeoutSeconds) {
         $attempt++
-        $content = & $Adb -s $Serial exec-out run-as $Qcl041Package cat "files/qcl041/$RunId.json" 2>&1 | Out-String
-        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($content)) {
-            try {
-                $artifact = $content | ConvertFrom-Json
-                $content | Set-Content -Encoding UTF8 -Path $OutPath
+        $readTimeoutSeconds = [Math]::Min(5, [Math]::Max(1, [int][Math]::Ceiling($TimeoutSeconds)))
+        $read = Read-Qcl041AppFile -Serial $Serial -DevicePath "files/qcl041/$RunId.json" -TimeoutSeconds $readTimeoutSeconds
+        if ([bool]$read.timed_out) {
+            $lastError = "qcl041_artifact_adb_read_timeout after $($read.timeout_seconds)s"
+        } elseif (-not [string]::IsNullOrWhiteSpace([string]$read.stdout)) {
+            $saved = Save-RustyQuestJsonArtifactFromStdout `
+                -Content ([string]$read.stdout) `
+                -OutPath $OutPath `
+                -Label $Label `
+                -ExitCode $read.exit_code
+            if ([bool]$saved.saved) {
+                $artifact = $saved.artifact
                 if (-not $RequireRelayFreshness -and -not $RequireReceiveProxyFreshness) {
                     return
                 }
@@ -275,11 +352,11 @@ function Read-Qcl041Artifact {
                     return
                 }
                 $lastError = "qcl041_artifact_qcl082_freshness_wait: " + ($waitState | ConvertTo-Json -Compress -Depth 8)
-            } catch {
-                $lastError = "artifact_mid_hold_or_final_wait: $($_.Exception.Message)"
+            } else {
+                $lastError = "artifact_mid_hold_or_final_wait: qcl041_artifact_stdout_json_parse_failed exit_code=$($read.exit_code): $($saved.error)"
             }
         } else {
-            $lastError = $content
+            $lastError = if (-not [string]::IsNullOrWhiteSpace([string]$read.stderr)) { [string]$read.stderr } else { [string]$read.stdout }
         }
         Start-Sleep -Milliseconds 500
     }
@@ -357,10 +434,10 @@ function Wait-Qcl041AdvertisedReceiveTarget {
     $attempt = 0
     while (((Get-Date) - $started).TotalSeconds -lt $TimeoutSeconds) {
         $attempt++
-        $content = & $Adb -s $Serial exec-out run-as $Qcl041Package cat "files/qcl041/$RunId.json" 2>&1 | Out-String
-        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($content)) {
+        $read = Read-Qcl041AppFile -Serial $Serial -DevicePath "files/qcl041/$RunId.json" -TimeoutSeconds 5
+        if ($read.exit_code -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$read.stdout)) {
             try {
-                $artifact = $content | ConvertFrom-Json
+                $artifact = [string]$read.stdout | ConvertFrom-Json
                 $diag = $artifact.diagnostics
                 $receive = $diag.qcl082_receive_proxy
                 $host = [string]$receive.advertised_receive_address
@@ -498,14 +575,13 @@ function Publish-Qcl082DeferredReceiverTarget {
 
 function Get-TransportRouteSpec {
     param([string]$PeerHost)
-    $routes = @()
-    if ($leftLaneActive) {
-        $routes += "left:${PeerHost}:$LeftTransportPort"
-    }
-    if ($rightLaneActive) {
-        $routes += "right:${PeerHost}:$RightTransportPort"
-    }
-    return ($routes -join ";")
+    return Get-RustyQuestDirectP2pTransportRouteSpec `
+        -PeerHost $PeerHost `
+        -LeftLaneActive:$leftLaneActive `
+        -RightLaneActive:$rightLaneActive `
+        -LeftTransportPort $LeftTransportPort `
+        -RightTransportPort $RightTransportPort `
+        -LanePrefix "qcl100-native"
 }
 
 function New-SenderParams {
@@ -513,21 +589,12 @@ function New-SenderParams {
         [string]$TransportRoutes,
         [string]$TransportBindLocalAddress
     )
-    $params = [ordered]@{
-        session_id = $RunId
-        sender_source_host = "127.0.0.1"
-        sender_source_ports = $effectiveSenderSourcePorts
-        sender_source_kind = "camera2_mediacodec_surface"
-        sender_media_profiles = $effectiveMediaProfiles
-        sender_camera_ids = $effectiveCameraIds
-        sender_camera_id = "none"
-        sender_camera_facing = "none"
-        sender_quality_profile = "qcl100-native-stereo-direct-wifi"
-        camera_permission_policy = "camera_permission_required"
-        transport_routes = $TransportRoutes
-    }
-    if (-not [string]::IsNullOrWhiteSpace($TransportBindLocalAddress)) {
-        $params.transport_bind_local_address = $TransportBindLocalAddress
-    }
-    return $params
+    return New-RustyQuestRemoteCameraSenderParams `
+        -SessionId $RunId `
+        -SenderSourcePorts $effectiveSenderSourcePorts `
+        -MediaProfiles $effectiveMediaProfiles `
+        -CameraIds $effectiveCameraIds `
+        -QualityProfile "qcl100-native-stereo-direct-wifi" `
+        -TransportRoutes $TransportRoutes `
+        -TransportBindLocalAddress $TransportBindLocalAddress
 }

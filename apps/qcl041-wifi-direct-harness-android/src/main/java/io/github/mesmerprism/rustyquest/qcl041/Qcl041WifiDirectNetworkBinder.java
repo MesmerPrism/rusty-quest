@@ -497,7 +497,17 @@ final class Qcl041WifiDirectNetworkBinder {
         artifact.diagnostic(section, key + "local_network_capability", localNetworkCapability);
         artifact.diagnostic(section, key + "validated", validated);
         artifact.diagnostic(section, key + "partial_connectivity", partialConnectivity);
-        if (!p2pInterface && !wifiP2pCapability && !localNetworkCapability && !routeMatches && !addressSameSubnet) {
+        boolean hasP2pIdentity = p2pInterface
+                || wifiP2pCapability
+                || localNetworkCapability
+                || addressSameSubnet;
+        if (!hasP2pIdentity) {
+            if (routeMatches) {
+                artifact.diagnostic(
+                        section,
+                        key + "route_matches_group_owner_rejected_without_p2p_identity",
+                        true);
+            }
             artifact.diagnostic(section, key + "reject_reason", "not_wifi_direct_network");
             return new UsableNetworkScanResult(null, "not_wifi_direct_network");
         }

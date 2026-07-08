@@ -348,10 +348,29 @@ Interaction SDK pointer input without native multimodal extension forcing.
   hand visuals remain explicit; set
   `debug.rustyquest.spatial.avatar_hands.visible=true` on a headset to enable
   the Spatial SDK `AvatarSystem` hand visual for comparison runs.
+- `app/src/main/.../SpatialAvatarHandInvestigationFeature.kt` owns the
+  read-only Spatial SDK hand investigation probe. Enable it with
+  `debug.rustyquest.spatial.avatar_hand_probe.enabled=true`; it samples
+  `AvatarBody`, `AvatarAttachment`, `Controller`, `Mesh`, `Material`,
+  `MeshMaterialOverrides`, and `MeshCreationSystem` through public APIs and
+  reports whether any hand candidate exposes a public mesh/material entity. Its
+  markers deliberately keep `sceneMeshVertexReadbackPublic=false` and
+  `spatialAvatarHandMeshWireframeSupported=false` unless a supported public
+  topology path exists.
 - `app/src/main/.../SpatialHandBillboardFlockFeature.kt` owns the opt-in
   public ECS world-space hand billboard flock. Enable it with
   `debug.rustyquest.spatial.hand_billboard_flock.enabled=true`; the default is
-  disabled so existing projection and panel validations do not change.
+  disabled so existing projection and panel validations do not change. Its
+  app-owned `TriangleMesh` carrier supports
+  `debug.rustyquest.spatial.hand_billboard_flock.visual_mode=wireframe-edges`
+  for edge-quad wire inspection. Select
+  `debug.rustyquest.spatial.hand_billboard_flock.wireframe.source=spatial-sdk-joint-proxy`
+  for the supported app-owned proxy. Requests for `openxr-fb-mesh` or
+  `custom-mesh`, and the Spatial-specific
+  `avatar-system-public-mesh-probe`, are runtime-polled and reported in
+  markers, but they resolve back to the Spatial proxy unless the read-only
+  probe observes a supported public topology path for the SDK-owned
+  `AvatarSystem` hand mesh.
 - `app/src/main/.../SpatialPrivateFeatureLoader.kt` owns the optional private
   SpatialFeature extension point. Build with
   `RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR=<kotlin-source-dir>` to include
