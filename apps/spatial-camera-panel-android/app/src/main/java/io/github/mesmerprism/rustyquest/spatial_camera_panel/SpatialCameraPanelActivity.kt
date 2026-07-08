@@ -4,7 +4,6 @@ import android.content.Intent
 import android.graphics.Color as AndroidColor
 import android.graphics.Paint as AndroidPaint
 import android.graphics.PorterDuff
-import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -73,15 +72,10 @@ import com.meta.spatial.core.Vector2
 import com.meta.spatial.core.Vector3
 import com.meta.spatial.core.Vector4
 import com.meta.spatial.runtime.AlphaMode
-import com.meta.spatial.runtime.BlendMode
 import com.meta.spatial.runtime.BlendFactor
 import com.meta.spatial.runtime.ButtonBits
-import com.meta.spatial.runtime.DepthTest
-import com.meta.spatial.runtime.DepthWrite
 import com.meta.spatial.runtime.LayerAlphaBlend
 import com.meta.spatial.runtime.LayerFilters
-import com.meta.spatial.runtime.MaterialSidedness
-import com.meta.spatial.runtime.NetworkedAssetLoader
 import com.meta.spatial.runtime.PanelSceneObject
 import com.meta.spatial.runtime.PanelSurface
 import com.meta.spatial.runtime.ReferenceSpace
@@ -93,7 +87,6 @@ import com.meta.spatial.runtime.SceneObject
 import com.meta.spatial.runtime.SceneQuadLayer
 import com.meta.spatial.runtime.SceneSwapchain
 import com.meta.spatial.runtime.SceneTexture
-import com.meta.spatial.runtime.SortOrder
 import com.meta.spatial.runtime.StereoMode
 import com.meta.spatial.toolkit.AppSystemActivity
 import com.meta.spatial.toolkit.AvatarAttachment
@@ -104,7 +97,6 @@ import com.meta.spatial.toolkit.ControllerType
 import com.meta.spatial.toolkit.DpPerMeterDisplayOptions
 import com.meta.spatial.toolkit.Grabbable
 import com.meta.spatial.toolkit.GrabbableType
-import com.meta.spatial.toolkit.GLXFInfo
 import com.meta.spatial.toolkit.Hittable
 import com.meta.spatial.toolkit.Material
 import com.meta.spatial.toolkit.MediaPanelDisplayOptions
@@ -130,7 +122,6 @@ import com.meta.spatial.toolkit.createPanelEntity
 import com.meta.spatial.vr.LocomotionControls
 import com.meta.spatial.vr.VRFeature
 import com.meta.spatial.vr.VrInputSystemType
-import com.meta.spatial.okhttp3.OkHttpAssetFetcher
 import java.io.File
 import java.util.concurrent.CompletableFuture
 import java.util.Locale
@@ -138,9 +129,6 @@ import kotlin.math.abs
 import kotlin.math.sqrt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -270,15 +258,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var sdkQuadSurfaceProbeAnchorMaterial: SceneMaterial? = null
   private val stagedAssetModule = SpatialStagedAssetModule(::marker)
   private val activityScope = CoroutineScope(Dispatchers.Main)
-  private var spatialVirtualRoomEntity: Entity? = null
-  private var spatialVirtualRoomSkyboxEntity: Entity? = null
-  private var spatialVirtualRoomSkyboxSceneObject: SceneObject? = null
-  private var spatialVirtualRoomSkyboxMesh: SceneMesh? = null
-  private var spatialVirtualRoomSkyboxMaterial: SceneMaterial? = null
-  private var spatialVirtualRoomSkyboxTexture: SceneTexture? = null
-  private var spatialVirtualRoomLoadJob: Job? = null
-  private var spatialVirtualRoomConfigured = false
-  private var spatialVirtualRoomLoaded = false
+  private val spatialVirtualRoomModule: SpatialVirtualRoomModule by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialVirtualRoomModule(
+        context = applicationContext,
+        scene = scene,
+        activityScope = activityScope,
+        loadGlxf = { uri, root, onLoaded ->
+          glXFManager.inflateGLXF(uri, rootEntity = root, onLoaded = onLoaded)
+        },
+        marker = ::marker,
+    )
+  }
   private var spatialSceneReady = false
 
   override fun registerRequiredOpenXRExtensions(): List<String> {
@@ -353,12 +343,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "panelLauncherVisibleProperty=$PANEL_LAUNCHER_VISIBLE_PROPERTY " +
             "panelLauncherVisible=${panelLauncherVisible()} " +
             "panelLauncherVisibleDefault=${BuildConfig.PANEL_LAUNCHER_VISIBLE_DEFAULT} " +
-            "spatialVirtualRoomModule=$SPATIAL_VIRTUAL_ROOM_MODULE_ID " +
-            "spatialVirtualRoomEnabledProperty=$SPATIAL_VIRTUAL_ROOM_ENABLED_PROPERTY " +
+            "spatialVirtualRoomModule=${SpatialVirtualRoomModule.MODULE_ID} " +
+            "spatialVirtualRoomEnabledProperty=${SpatialVirtualRoomModule.ENABLED_PROPERTY} " +
             "spatialVirtualRoomDefaultEnabled=false " +
-            "spatialSkyboxModule=$SPATIAL_SKYBOX_MODULE_ID " +
-            "spatialSkyboxEnabledProperty=$SPATIAL_SKYBOX_ENABLED_PROPERTY " +
-            "spatialSkyboxModeProperty=$SPATIAL_SKYBOX_MODE_PROPERTY " +
+            "spatialSkyboxModule=${SpatialVirtualRoomModule.SKYBOX_MODULE_ID} " +
+            "spatialSkyboxEnabledProperty=${SpatialVirtualRoomModule.SKYBOX_ENABLED_PROPERTY} " +
+            "spatialSkyboxModeProperty=${SpatialVirtualRoomModule.SKYBOX_MODE_PROPERTY} " +
             "spatialSkyboxDefaultEnabled=false " +
             "spatialSkyboxDefaultMode=none " +
             "spatialSdk3dAssetHighRateJsonPayload=false " +
@@ -889,293 +879,45 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun runSpatialVirtualRoomIfRequested(reason: String) {
-    if (!spatialVirtualRoomEnabled()) {
-      return
-    }
-    if (spatialVirtualRoomLoadJob != null || spatialVirtualRoomEntity != null) {
+    if (!spatialVirtualRoomModule.enabled() || spatialVirtualRoomModule.isStarted()) {
       return
     }
     cameraHwbProjectionCarrierMode = currentCameraHwbProjectionCarrierMode()
     applyPanelPlacement()
-    runCatching {
-          NetworkedAssetLoader.init(
-              File(applicationContext.cacheDir.canonicalPath),
-              OkHttpAssetFetcher(),
-          )
-        }
-        .onFailure { throwable ->
-          marker(
-              "channel=spatial-virtual-room status=asset-loader-init-failed " +
-                  "module=$SPATIAL_VIRTUAL_ROOM_MODULE_ID reason=${activityMarkerToken(reason)} " +
-                  "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                  "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
-          )
-          return
-        }
-    val root = Entity.create()
-    spatialVirtualRoomEntity = root
-    marker(
-        "channel=spatial-virtual-room status=load-requested " +
-            "module=$SPATIAL_VIRTUAL_ROOM_MODULE_ID reason=${activityMarkerToken(reason)} " +
-            "sceneUri=${activityMarkerToken(SPATIAL_VIRTUAL_ROOM_SCENE_URI)} " +
-            "roomAssetSource=packaged-glxf virtualRoomSceneAuthoring=meta-spatial-editor " +
-            "sampleRoomAssetPolicy=local-launch-input genericModuleSupport=true " +
-            "projectionDefaultPlacementMode=${cameraHwbProjectionPlacementMode.markerToken} " +
-            "projectionCarrier=${cameraHwbProjectionCarrierToken()} " +
-            "projectionCarrierProperty=$CAMERA_HWB_PROJECTION_CARRIER_PROPERTY " +
-            "projectionRoomRenderOrder=${cameraHwbProjectionRoomRenderOrderToken()} " +
-            "rightSecondaryTogglesFullFov=false " +
-            "projectionDisplaySurface=video-plus-custom-camera-stack " +
-            "legacyLauncherPanelSuppressed=true " +
-            "mrukPlacement=false passthroughRoomPlacement=false highRateJsonPayload=false"
+    spatialVirtualRoomModule.runIfRequested(
+        reason = reason,
+        projectionState = spatialVirtualRoomProjectionState(),
+        onLoaded = {
+          runSpatialStagedAssetIfRequested(intent, "virtual-room-loaded")
+          runSpatialVideoProjectionProbeIfRequested("virtual-room-loaded")
+          runCameraHwbProjectionProbeIfRequested("virtual-room-loaded")
+        },
     )
-    spatialVirtualRoomLoadJob =
-        activityScope.launch {
-          runCatching {
-                glXFManager.inflateGLXF(
-                    Uri.parse(SPATIAL_VIRTUAL_ROOM_SCENE_URI),
-                    rootEntity = root,
-                    onLoaded = { composition -> onSpatialVirtualRoomLoaded(composition) },
-                )
-              }
-              .onFailure { throwable ->
-                marker(
-                    "channel=spatial-virtual-room status=load-failed " +
-                        "module=$SPATIAL_VIRTUAL_ROOM_MODULE_ID " +
-                        "sceneUri=${activityMarkerToken(SPATIAL_VIRTUAL_ROOM_SCENE_URI)} " +
-                        "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                        "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
-                )
-                destroySpatialVirtualRoom("load-failed")
-              }
-        }
   }
 
-  private fun onSpatialVirtualRoomLoaded(composition: GLXFInfo) {
-    spatialVirtualRoomLoaded = true
-    val environmentEntity =
-        runCatching { composition.getNodeByName(SPATIAL_VIRTUAL_ROOM_ENVIRONMENT_NODE).entity }
-            .getOrNull()
-    val environmentMesh = environmentEntity?.tryGetComponent<Mesh>()
-    marker(
-        "channel=spatial-virtual-room status=loaded " +
-            "module=$SPATIAL_VIRTUAL_ROOM_MODULE_ID " +
-            "sceneUri=${activityMarkerToken(SPATIAL_VIRTUAL_ROOM_SCENE_URI)} " +
-            "environmentNode=${activityMarkerToken(SPATIAL_VIRTUAL_ROOM_ENVIRONMENT_NODE)} " +
-            "environmentNodeFound=${environmentEntity != null} " +
-            "environmentMeshFound=${environmentMesh != null} " +
-            "environmentMaterialPolicy=sample-authored-normal-materials " +
-            "roomDepthWrite=sample-authored roomSortOrder=sample-authored " +
-            "roomProjectionForegroundPolicy=normal-room-depth-order " +
-            "roomAssetSource=packaged-glxf genericModuleSupport=true " +
-            "privateSourceAssetPackaged=false highRateJsonPayload=false"
-    )
-    runSpatialStagedAssetIfRequested(intent, "virtual-room-loaded")
-    runSpatialVideoProjectionProbeIfRequested("virtual-room-loaded")
-    runCameraHwbProjectionProbeIfRequested("virtual-room-loaded")
-  }
-
-  @OptIn(SpatialSDKExperimentalAPI::class)
   private fun configureSpatialVirtualRoomScene(reason: String) {
-    val virtualRoomEnabled = spatialVirtualRoomEnabled()
-    val skyboxMode = currentSpatialSkyboxMode()
-    val skyboxEnabled = skyboxMode != SpatialSkyboxMode.None
-    if ((!virtualRoomEnabled && !skyboxEnabled) || spatialVirtualRoomConfigured) {
+    if (!spatialVirtualRoomModule.shouldConfigureScene()) {
       return
     }
     cameraHwbProjectionCarrierMode = currentCameraHwbProjectionCarrierMode()
-    spatialVirtualRoomConfigured = true
-    val lightingConfigured =
-        runCatching {
-              scene.setLightingEnvironment(
-                  ambientColor = Vector3(0.0f),
-                  sunColor = Vector3(7.0f, 7.0f, 7.0f),
-                  sunDirection = -Vector3(1.0f, 3.0f, -2.0f),
-                  environmentIntensity = 0.3f,
-              )
-              true
-            }
-            .getOrDefault(false)
-    val iblConfigured =
-        runCatching {
-              scene.updateIBLEnvironment(SPATIAL_VIRTUAL_ROOM_IBL_ASSET)
-              true
-            }
-            .getOrDefault(false)
-    val skydomeResourceId =
-        resources.getIdentifier(SPATIAL_VIRTUAL_ROOM_SKYDOME_RESOURCE, "drawable", packageName)
-    val skyboxCreated =
-        when (skyboxMode) {
-          SpatialSkyboxMode.None -> false
-          SpatialSkyboxMode.SampleMeshUri ->
-              createSampleSpatialSkybox(skydomeResourceId)
-          SpatialSkyboxMode.CustomSceneMesh ->
-              createCustomSpatialSkybox(skydomeResourceId)
-        }
-    val channel = if (virtualRoomEnabled) "spatial-virtual-room" else "spatial-skybox"
-    val module = if (virtualRoomEnabled) SPATIAL_VIRTUAL_ROOM_MODULE_ID else SPATIAL_SKYBOX_MODULE_ID
-    marker(
-        "channel=$channel status=scene-configured " +
-            "module=$module reason=${activityMarkerToken(reason)} " +
-            "virtualRoomEnabled=$virtualRoomEnabled skyboxOnly=${skyboxEnabled && !virtualRoomEnabled} " +
-            "skyboxMode=${skyboxMode.markerToken} " +
-            "lightingConfigured=$lightingConfigured iblConfigured=$iblConfigured " +
-            "iblAsset=${activityMarkerToken(SPATIAL_VIRTUAL_ROOM_IBL_ASSET)} " +
-            "skydomeResource=${activityMarkerToken(SPATIAL_VIRTUAL_ROOM_SKYDOME_RESOURCE)} " +
-            "skydomeResourceFound=${skydomeResourceId != 0} skyboxCreated=$skyboxCreated " +
-            skyboxMarkerFields(skyboxMode) + " " +
-            "referenceSpace=LOCAL_FLOOR viewOrigin=0.0;0.0;2.0 yawDegrees=180.0 " +
-            "projectionDefaultPlacementMode=${cameraHwbProjectionPlacementMode.markerToken} " +
-            "projectionCarrier=${cameraHwbProjectionCarrierToken()} " +
-            "projectionCarrierProperty=$CAMERA_HWB_PROJECTION_CARRIER_PROPERTY " +
-            "rightSecondaryTogglesFullFov=false " +
-            "projectionRoomRenderOrder=${cameraHwbProjectionRoomRenderOrderToken()} " +
-            "legacyLauncherPanelSuppressed=true " +
-            "roomAssetSource=packaged-glxf roomMeshLoaded=$virtualRoomEnabled " +
-            "mrukPlacement=false passthroughRoomPlacement=false " +
-            "runtimeCrash=false"
-    )
+    spatialVirtualRoomModule.configureScene(reason, spatialVirtualRoomProjectionState())
   }
 
-  private fun createSampleSpatialSkybox(skydomeResourceId: Int): Boolean {
-    if (skydomeResourceId == 0 || spatialVirtualRoomSkyboxEntity != null) {
-      return false
-    }
-    return runCatching {
-          val entity =
-              Entity.create(
-                  Mesh(
-                      Uri.parse(SPATIAL_VIRTUAL_ROOM_SKYBOX_MESH_URI),
-                      hittable = MeshCollision.NoCollision,
-                  ),
-                  Material().apply {
-                    baseTextureAndroidResourceId = skydomeResourceId
-                    unlit = true
-                  },
-                  Transform(Pose(Vector3(0.0f, 0.0f, 0.0f))),
-              )
-          spatialVirtualRoomSkyboxEntity = entity
-          true
-        }
-        .getOrDefault(false)
-  }
-
-  @OptIn(SpatialSDKExperimentalAPI::class)
-  private fun createCustomSpatialSkybox(skydomeResourceId: Int): Boolean {
-    if (skydomeResourceId == 0 || spatialVirtualRoomSkyboxSceneObject != null) {
-      return false
-    }
-    return runCatching {
-          val texture = SceneTexture.fromResource(applicationContext, skydomeResourceId)
-          val material =
-              SceneMaterial(texture, AlphaMode.OPAQUE, SceneMaterial.UNLIT_SHADER).apply {
-                setUnlit(true)
-                setSidedness(MaterialSidedness.BACK_SIDED)
-                setBlendMode(BlendMode.OPAQUE)
-                setDepthWrite(DepthWrite.DISABLE)
-                setDepthTest(DepthTest.LESS_OR_EQUAL)
-                setSortOrder(SortOrder.PREPROCESS)
-                setRenderOrder(SPATIAL_CUSTOM_SKYBOX_RENDER_ORDER)
-              }
-          val mesh = SceneMesh.skybox(SPATIAL_CUSTOM_SKYBOX_RADIUS_METERS, material)
-          val entity = Entity.create(Transform(Pose(Vector3(0.0f, 0.0f, 0.0f))))
-          val sceneObject = SceneObject(scene, mesh, SPATIAL_CUSTOM_SKYBOX_SCENE_OBJECT_NAME, entity)
-          scene.addObject(sceneObject)
-          spatialVirtualRoomSkyboxTexture = texture
-          spatialVirtualRoomSkyboxMaterial = material
-          spatialVirtualRoomSkyboxMesh = mesh
-          spatialVirtualRoomSkyboxEntity = entity
-          spatialVirtualRoomSkyboxSceneObject = sceneObject
-          true
-        }
-        .getOrDefault(false)
-  }
-
-  private fun skyboxMarkerFields(mode: SpatialSkyboxMode): String =
-      when (mode) {
-        SpatialSkyboxMode.None ->
-            "skyboxRenderer=disabled skyboxMeshUri=none " +
-                "skyboxEntityCreateApi=none skyboxDepthWrite=disabled " +
-                "skyboxDepthTest=disabled skyboxSortOrder=none skyboxRenderOrder=none " +
-                "skyboxRadiusMeters=none skyboxMaterialSidedness=none " +
-                "skyboxProjectionForegroundPolicy=no-skybox"
-        SpatialSkyboxMode.SampleMeshUri ->
-            "skyboxRenderer=sample-toolkit-mesh-uri " +
-                "skyboxMeshUri=$SPATIAL_VIRTUAL_ROOM_SKYBOX_MESH_URI " +
-                "skyboxEntityCreateApi=toolkit-varargs-first-room-replay " +
-                "skyboxDepthWrite=sample-authored skyboxDepthTest=sample-authored " +
-                "skyboxSortOrder=sample-authored skyboxRenderOrder=sample-authored " +
-                "skyboxRadiusMeters=sample-authored skyboxMaterialSidedness=sample-authored " +
-                "skyboxProjectionForegroundPolicy=sample-skybox-layering-under-test"
-        SpatialSkyboxMode.CustomSceneMesh ->
-            "skyboxRenderer=custom-runtime-scene-mesh-skybox " +
-                "skyboxMeshUri=SceneMesh.skybox " +
-                "skyboxEntityCreateApi=scene-object-runtime-skydome " +
-                "skyboxDepthWrite=disabled skyboxDepthTest=less-or-equal " +
-                "skyboxSortOrder=preprocess " +
-                "skyboxRenderOrder=$SPATIAL_CUSTOM_SKYBOX_RENDER_ORDER " +
-                "skyboxRadiusMeters=${activityMarkerFloat(SPATIAL_CUSTOM_SKYBOX_RADIUS_METERS)} " +
-                "skyboxMaterialSidedness=back-sided " +
-                "skyboxProjectionForegroundPolicy=scene-layer-over-background-skybox"
-      }
-
-  private fun destroySpatialVirtualRoom(reason: String) {
-    spatialVirtualRoomLoadJob?.cancel()
-    spatialVirtualRoomLoadJob = null
-    spatialVirtualRoomEntity?.let { entity -> runCatching { entity.destroy() } }
-    spatialVirtualRoomSkyboxSceneObject?.let { sceneObject ->
-      runCatching { scene.destroyObject(sceneObject) }.recoverCatching { sceneObject.destroy() }
-    }
-    spatialVirtualRoomSkyboxMesh?.let { mesh -> runCatching { mesh.destroy() } }
-    spatialVirtualRoomSkyboxMaterial?.let { material -> runCatching { material.destroy() } }
-    spatialVirtualRoomSkyboxTexture?.let { texture -> runCatching { texture.destroy() } }
-    spatialVirtualRoomSkyboxEntity?.let { entity -> runCatching { entity.destroy() } }
-    val hadRoom =
-        spatialVirtualRoomEntity != null ||
-            spatialVirtualRoomSkyboxEntity != null ||
-            spatialVirtualRoomSkyboxSceneObject != null
-    spatialVirtualRoomEntity = null
-    spatialVirtualRoomSkyboxEntity = null
-    spatialVirtualRoomSkyboxSceneObject = null
-    spatialVirtualRoomSkyboxMesh = null
-    spatialVirtualRoomSkyboxMaterial = null
-    spatialVirtualRoomSkyboxTexture = null
-    spatialVirtualRoomConfigured = false
-    spatialVirtualRoomLoaded = false
-    if (hadRoom) {
-      marker(
-          "channel=spatial-virtual-room status=destroyed " +
-              "module=$SPATIAL_VIRTUAL_ROOM_MODULE_ID reason=${activityMarkerToken(reason)}"
+  private fun spatialVirtualRoomProjectionState(): SpatialVirtualRoomProjectionState =
+      SpatialVirtualRoomProjectionState(
+          placementModeToken = cameraHwbProjectionPlacementMode.markerToken,
+          carrierToken = cameraHwbProjectionCarrierToken(),
+          carrierProperty = CAMERA_HWB_PROJECTION_CARRIER_PROPERTY,
+          roomRenderOrderToken = cameraHwbProjectionRoomRenderOrderToken(),
       )
-    }
-  }
 
-  private fun spatialVirtualRoomEnabled(): Boolean =
-      activityReadOptionalBooleanSystemProperty(SPATIAL_VIRTUAL_ROOM_ENABLED_PROPERTY) ?: false
+  private fun destroySpatialVirtualRoom(reason: String) = spatialVirtualRoomModule.destroy(reason)
 
-  private fun spatialSkyboxEnabled(): Boolean =
-      currentSpatialSkyboxMode() != SpatialSkyboxMode.None
+  private fun spatialVirtualRoomEnabled(): Boolean = spatialVirtualRoomModule.enabled()
 
-  private fun currentSpatialSkyboxMode(): SpatialSkyboxMode {
-    val modeToken =
-        activityReadSystemProperty(SPATIAL_SKYBOX_MODE_PROPERTY)
-            .trim()
-            .lowercase(Locale.US)
-            .replace("_", "-")
-    return when (modeToken) {
-      "sample", "sample-mesh", "sample-mesh-uri", "mesh://skybox", "mesh-skybox" ->
-          SpatialSkyboxMode.SampleMeshUri
-      "custom", "custom-skybox", "custom-scene-mesh", "runtime-scene-mesh" ->
-          SpatialSkyboxMode.CustomSceneMesh
-      "none", "off", "disabled", "" ->
-          if (activityReadOptionalBooleanSystemProperty(SPATIAL_SKYBOX_ENABLED_PROPERTY) == true) {
-            SpatialSkyboxMode.SampleMeshUri
-          } else {
-            SpatialSkyboxMode.None
-          }
-      else -> SpatialSkyboxMode.None
-    }
-  }
+  private fun spatialVirtualRoomLoaded(): Boolean = spatialVirtualRoomModule.loaded
+
+  private fun spatialSkyboxEnabled(): Boolean = spatialVirtualRoomModule.skyboxEnabled()
 
   private fun logNativeInteropProbe(phase: String, probeSurface: Boolean) {
     val probe = SpatialNativeInteropProbe.capture(scene)
@@ -2179,7 +1921,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       )
       return
     }
-    if (spatialVirtualRoomEnabled() && !spatialVirtualRoomLoaded) {
+    if (spatialVirtualRoomEnabled() && !spatialVirtualRoomLoaded()) {
       marker(
           "channel=spatial-video-projection status=start-deferred " +
               "reason=${activityMarkerToken(reason)} deferredUntil=virtual-room-loaded " +
@@ -2349,7 +2091,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       )
       return
     }
-    if (spatialVirtualRoomEnabled() && !spatialVirtualRoomLoaded) {
+    if (spatialVirtualRoomEnabled() && !spatialVirtualRoomLoaded()) {
       marker(
           "channel=camera-hwb-spatial-probe status=start-deferred " +
               "reason=${activityMarkerToken(reason)} deferredUntil=virtual-room-loaded " +
@@ -9011,7 +8753,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ): Int
 
   private fun runSpatialStagedAssetIfRequested(intent: Intent?, reason: String) {
-    if (spatialVirtualRoomEnabled() && !spatialVirtualRoomLoaded) {
+    if (spatialVirtualRoomEnabled() && !spatialVirtualRoomLoaded()) {
       marker(
           "channel=spatial-sdk-asset-model status=start-deferred " +
               "module=${SpatialStagedAssetModule.MODULE_ID} reason=${activityMarkerToken(reason)} " +
@@ -9561,21 +9303,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         "debug.rustyquest.spatial.panel.start_in_particle_view"
     private const val PANEL_LAUNCHER_VISIBLE_PROPERTY =
         "debug.rustyquest.spatial.panel_launcher.visible"
-    private const val SPATIAL_VIRTUAL_ROOM_MODULE_ID = "spatial-sdk-packaged-virtual-room"
-    private const val SPATIAL_VIRTUAL_ROOM_ENABLED_PROPERTY =
-        "debug.rustyquest.spatial.virtual_room.enabled"
-    private const val SPATIAL_SKYBOX_MODULE_ID = "spatial-sdk-skybox-only"
-    private const val SPATIAL_SKYBOX_ENABLED_PROPERTY = "debug.rustyquest.spatial.skybox.enabled"
-    private const val SPATIAL_SKYBOX_MODE_PROPERTY = "debug.rustyquest.spatial.skybox.mode"
-    private const val SPATIAL_VIRTUAL_ROOM_SCENE_URI = "apk:///scenes/Composition.glxf"
-    private const val SPATIAL_VIRTUAL_ROOM_ENVIRONMENT_NODE = "Environment"
-    private const val SPATIAL_VIRTUAL_ROOM_IBL_ASSET = "environment.env"
-    private const val SPATIAL_VIRTUAL_ROOM_SKYDOME_RESOURCE = "skydome"
-    private const val SPATIAL_VIRTUAL_ROOM_SKYBOX_MESH_URI = "mesh://skybox"
-    private const val SPATIAL_CUSTOM_SKYBOX_SCENE_OBJECT_NAME =
-        "rusty_quest_background_skybox"
-    private const val SPATIAL_CUSTOM_SKYBOX_RADIUS_METERS = 280.0f
-    private const val SPATIAL_CUSTOM_SKYBOX_RENDER_ORDER = -1000
     private const val PANEL_WIDTH_MIN_METERS = 1.20f
     private const val PANEL_WIDTH_MAX_METERS = 2.60f
     private const val PANEL_HEIGHT_MIN_METERS = 0.75f

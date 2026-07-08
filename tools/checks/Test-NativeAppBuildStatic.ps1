@@ -14,6 +14,8 @@ $schemaDir = Join-Path $repoRootPath "schemas"
 $profileGate = Join-Path $repoRootPath "tools\Test-NativeAppBuildProfile.ps1"
 $resolver = Join-Path $repoRootPath "tools\Resolve-NativeAppBuild.ps1"
 $permissionTool = Join-Path $repoRootPath "tools\Grant-NativeRendererPermissions.ps1"
+$agentsFile = Join-Path $repoRootPath "AGENTS.md"
+$nativeAppWorkflowDoc = Join-Path $repoRootPath "docs\NATIVE_APP_BUILD_WORKFLOW.md"
 
 function Read-Json {
     param([Parameter(Mandatory=$true)][string]$Path)
@@ -86,10 +88,35 @@ foreach ($path in @(
     (Join-Path $schemaDir "rusty.quest.native_app_settings.v1.schema.json"),
     $resolver,
     $permissionTool,
-    $profileGate
+    $profileGate,
+    $agentsFile,
+    $nativeAppWorkflowDoc
 )) {
     if (-not (Test-Path -LiteralPath $path)) {
         throw "Native app-build workflow file is missing: $path"
+    }
+}
+
+$agentsText = Get-Content -Raw -LiteralPath $agentsFile
+foreach ($requiredAgentsNeedle in @(
+    "Keep Quest runtime features explicit opt-in",
+    "they must not",
+    "affect an app package, permissions, runtime profile, scene graph, input route,",
+    "or marker stream unless"
+)) {
+    if ($agentsText -notmatch [regex]::Escape($requiredAgentsNeedle)) {
+        throw "AGENTS.md is missing native app feature opt-in guardrail: $requiredAgentsNeedle"
+    }
+}
+$workflowText = Get-Content -Raw -LiteralPath $nativeAppWorkflowDoc
+foreach ($requiredWorkflowNeedle in @(
+    "Every native OpenXR/Vulkan feature is explicit opt-in",
+    "must not change APK manifest",
+    "or marker expectations until an app-build spec requests it",
+    "deny known-nearby feature families"
+)) {
+    if ($workflowText -notmatch [regex]::Escape($requiredWorkflowNeedle)) {
+        throw "Native app-build workflow is missing explicit feature opt-in guardrail: $requiredWorkflowNeedle"
     }
 }
 

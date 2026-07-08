@@ -61,6 +61,11 @@ ordinary serial-scoped ADB work behind a global `adb-server` lease.
   problem. Split only by durable authority, schema, route, validation, adapter,
   or test-family boundaries; preserve facades, schema IDs, serde fields,
   fixture outputs, CLI behavior, validation outcomes, and dependency boundaries.
+- Keep Quest runtime features explicit opt-in. Native OpenXR/Vulkan and Meta
+  Spatial SDK modules may be present in the source tree, but they must not
+  affect an app package, permissions, runtime profile, scene graph, input route,
+  or marker stream unless a feature descriptor, app spec, runtime profile,
+  Android property, or intent extra explicitly enables that feature.
 - After a split, update the nearest distributed file map: this `AGENTS.md`,
   `README.md`, `docs/ARCHITECTURE.md`, fixture docs, validation docs, or the
   planning `agent-state\iteration-events.jsonl`.

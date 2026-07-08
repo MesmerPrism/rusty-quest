@@ -329,6 +329,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   low-rate video projection settings value object used by the Spatial camera
   projection route. It does not decode media or own native AImageReader /
   AHardwareBuffer handoff.
+- `app/src/main/.../SpatialVirtualRoomModule.kt` owns the explicit opt-in
+  packaged virtual room and skybox route: GLXF load, lighting, IBL/skydome
+  setup, skybox resources, property parsing, markers, and cleanup. It remains
+  inert unless `debug.rustyquest.spatial.virtual_room.enabled` or the skybox
+  properties opt it in, and it must not own camera frames, panel UI, native
+  particle buffers, or JNI start/stop authority.
 - `app/src/main/.../SpatialSdkLaneBoundary.kt` records the explicit route
   boundaries. Spatial SDK layer/panel primitives are the carrier substrate;
   experiment panel, camera projection, surface particles, and debug probes are
@@ -336,10 +342,10 @@ Interaction SDK pointer input without native multimodal extension forcing.
 - `app/src/main/.../SpatialStagedAssetModule.kt` owns the generic Spatial SDK
   staged 3D asset path. It creates a runtime `Mesh` entity from an explicit
   GLB/GLTF URI and marks raw FBX URIs as conversion-required.
-- The Activity owns the generic packaged virtual room path. It loads a packaged
-  GLXF composition only when `debug.rustyquest.spatial.virtual_room.enabled`
-  is true, applies sample-style lighting and skybox resources if present, and
-  marks `mrukPlacement=false`.
+- The Activity remains the facade for the generic packaged virtual room path.
+  It delegates room and skybox behavior to `SpatialVirtualRoomModule.kt`, then
+  starts dependent staged-asset, video, and camera probes only after the module
+  reports the room loaded.
 - `app/src/main/.../SpatialPublicMultiStack.kt` mirrors the public seven-slot
   camera guide multi-stack receipt fields for Kotlin-side start, carrier, and
   placement markers. It marks opaque downstream slots inactive in this public
@@ -396,6 +402,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   owners with their own component/system registration, and keep this Activity
   as the registration/orchestration facade instead of adding every room,
   carrier, panel-placement, controller, and marker behavior directly here.
+- Feature modules must be explicit opt-in. A module may be registered or
+  present in source, but it must not create scene objects, start native routes,
+  change input behavior, alter package/permission expectations, or emit active
+  markers unless a documented property, profile, app spec, or intent extra
+  enables it for that run.
 - `native-receipt/src/camera_hwb_probe.rs` is the Android JNI facade and
   raw camera probe orchestration entry point.
 - `native-receipt/src/camera_hwb_stream.rs` owns the Android Camera2 /
