@@ -350,6 +350,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   native receipt bit decoding, and marker-ready native route status helpers.
   It must not load native libraries, call JNI, query the Spatial runtime, or
   mutate Activity state.
+- `app/src/main/.../SpatialSurfaceParticleRouteModule.kt` owns the
+  surface-particle route policy: native-layer opt-in/suppression defaults,
+  carrier token parsing, panel dimensions, projection-surface math, media
+  settings, and route marker fields. It must not create scene objects, read
+  runtime properties, call JNI, or mutate Activity state.
 - `app/src/main/.../SpatialVirtualRoomModule.kt` owns the explicit opt-in
   packaged virtual room and skybox route: GLXF load, lighting, IBL/skydome
   setup, skybox resources, property parsing, markers, and cleanup. It remains

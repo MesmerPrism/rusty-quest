@@ -4032,15 +4032,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     entity.setComponent(PanelDimensions(Vector2(surfaceWidthMeters, surfaceHeightMeters)))
     entity.setComponent(Visible(particleLayerVisibleForPanelMode()))
     val settings =
-        MediaPanelSettings(
-            shape = QuadShapeOptions(surfaceWidthMeters, surfaceHeightMeters),
-            display =
-                FixedMediaPanelDisplayOptions(
-                    widthPx = PARTICLE_LAYER_WIDTH_PX,
-                    heightPx = PARTICLE_LAYER_HEIGHT_PX,
-                ),
-            rendering = MediaPanelRenderOptions(stereoMode = StereoMode.LeftRight),
-            input = PanelInputOptions(0),
+        SpatialSurfaceParticleRouteModule.manualCarrierMediaSettings(
+            surfaceWidthMeters,
+            surfaceHeightMeters,
         )
     val panelSceneObject =
         runCatching {
@@ -5446,46 +5440,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun particleLayerPlacementMarkerFields(): String {
     val targetDistanceMeters = currentParticleLayerTargetDistanceMeters()
     val surfaceOverscanScale = currentParticleLayerSurfaceOverscanScale()
-    val projectionWidthMeters = particleLayerProjectionWidthMeters(targetDistanceMeters)
-    val projectionHeightMeters = particleLayerProjectionHeightMeters(targetDistanceMeters)
-    val surfaceWidthMeters = particleLayerSurfaceWidthMeters(targetDistanceMeters, surfaceOverscanScale)
-    val surfaceHeightMeters = particleLayerSurfaceHeightMeters(targetDistanceMeters, surfaceOverscanScale)
-    return "cameraFacingParticleSurface=true projectionLockedParticleSurface=true " +
-        "surfaceParticleProjectionCarrier=${activityMarkerToken(particleLayerCarrierToken())} " +
-        "surfaceParticleProjectionCarrierProperty=$PARTICLE_LAYER_CARRIER_PROPERTY " +
-        "manualPanelSceneObjectCustomMesh=${particleLayerManualCustomMeshCarrierEnabled()} " +
-        "manualPanelForceSceneTexture=${particleLayerManualCustomMeshCarrierEnabled()} " +
-        "placementMode=$PARTICLE_LAYER_PLACEMENT_MODE " +
-        "placementAuthority=$PARTICLE_LAYER_PLACEMENT_AUTHORITY " +
-        "targetCoordinateSpace=$PARTICLE_LAYER_TARGET_COORDINATE_SPACE " +
-        "targetProjectionSpace=$PARTICLE_LAYER_TARGET_PROJECTION_SPACE " +
-        "projectionContentMappingMode=$PARTICLE_LAYER_PROJECTION_CONTENT_MAPPING_MODE " +
-        "targetFovTangents=$PARTICLE_LAYER_TARGET_FOV_TANGENTS " +
-        "targetDistanceMeters=${activityMarkerFloat(targetDistanceMeters)} " +
-        "targetDistanceDefaultMeters=$PARTICLE_LAYER_TARGET_DISTANCE_METERS " +
-        "targetDistanceProperty=$PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY " +
-        "viewYawDegrees=${activityMarkerFloat(currentParticleLayerViewYawDegrees())} " +
-        "viewYawProperty=$PARTICLE_LAYER_VIEW_YAW_PROPERTY " +
-        "surfaceOverscanScale=${activityMarkerFloat(surfaceOverscanScale)} " +
-        "surfaceOverscanDefaultScale=$PARTICLE_LAYER_SURFACE_OVERSCAN_SCALE " +
-        "surfaceOverscanProperty=$PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY " +
-        particleLayerProjectionSurfaceMarkerFields(
-            projectionWidthMeters,
-            projectionHeightMeters,
-            surfaceWidthMeters,
-            surfaceHeightMeters,
-        ) +
-        " leftTargetSurfaceUvRect=$PARTICLE_LAYER_TARGET_SURFACE_UV_RECT " +
-        "rightTargetSurfaceUvRect=$PARTICLE_LAYER_TARGET_SURFACE_UV_RECT " +
-        "viewOriginMeters=$PARTICLE_LAYER_VIEW_ORIGIN_METERS " +
-        "viewOriginYawDegrees=$PARTICLE_LAYER_VIEW_ORIGIN_YAW_DEGREES " +
-        "x=$PARTICLE_LAYER_X_METERS y=$PARTICLE_LAYER_Y_METERS z=$PARTICLE_LAYER_Z_METERS " +
-        "projectionWidthMeters=${activityMarkerFloat(projectionWidthMeters)} " +
-        "projectionHeightMeters=${activityMarkerFloat(projectionHeightMeters)} " +
-        "surfaceWidthMeters=${activityMarkerFloat(surfaceWidthMeters)} " +
-        "surfaceHeightMeters=${activityMarkerFloat(surfaceHeightMeters)} " +
-        "particleLayerPanelOpacity=${activityMarkerFloat(currentParticleLayerPanelOpacity())} " +
-        "particleLayerPanelOpacityProperty=$PARTICLE_LAYER_PANEL_OPACITY_PROPERTY"
+    return SpatialSurfaceParticleRouteModule.placementMarkerFields(
+        carrierMode = particleLayerCarrierMode(),
+        targetDistanceMeters = targetDistanceMeters,
+        viewYawDegrees = currentParticleLayerViewYawDegrees(),
+        surfaceOverscanScale = surfaceOverscanScale,
+        panelOpacity = currentParticleLayerPanelOpacity(),
+    )
   }
 
   private fun particleLayerProjectionSurfaceMarkerFields(
@@ -5493,27 +5454,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       projectionHeightMeters: Float,
       surfaceWidthMeters: Float,
       surfaceHeightMeters: Float,
-  ): String {
-    val scaleX = projectionWidthMeters / surfaceWidthMeters.coerceAtLeast(0.001f)
-    val scaleY = projectionHeightMeters / surfaceHeightMeters.coerceAtLeast(0.001f)
-    val dimensionsMatch =
-        abs(projectionWidthMeters - surfaceWidthMeters) < 0.001f &&
-            abs(projectionHeightMeters - surfaceHeightMeters) < 0.001f
-    return "overscanMode=none projectionSurfaceScaleX=${activityMarkerFloat(scaleX)} " +
-        "projectionSurfaceScaleY=${activityMarkerFloat(scaleY)} " +
-        "panelDimensionsMatchProjection=$dimensionsMatch overscanCompensated=not-required " +
-        "horizontalProjectionMode=wide-fov " +
-        "projectionHorizontalScale=${activityMarkerFloat(PARTICLE_LAYER_HORIZONTAL_FOV_SCALE)}"
-  }
+  ): String =
+      SpatialSurfaceParticleRouteModule.projectionSurfaceMarkerFields(
+          projectionWidthMeters,
+          projectionHeightMeters,
+          surfaceWidthMeters,
+          surfaceHeightMeters,
+      )
 
   private fun currentParticleLayerTargetDistanceMeters(): Float =
       remoteParticleLayerTargetDistanceMeters
           ?: activityReadFloatSystemProperty(
-          PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY,
-          PARTICLE_LAYER_TARGET_DISTANCE_METERS,
-          PARTICLE_LAYER_TARGET_DISTANCE_MIN_METERS,
-          PARTICLE_LAYER_TARGET_DISTANCE_MAX_METERS,
-      )
+              PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY,
+              PARTICLE_LAYER_TARGET_DISTANCE_METERS,
+              PARTICLE_LAYER_TARGET_DISTANCE_MIN_METERS,
+              PARTICLE_LAYER_TARGET_DISTANCE_MAX_METERS,
+          )
 
   private fun currentParticleLayerViewYawDegrees(): Float =
       remoteParticleLayerViewYawDegrees
@@ -5597,37 +5553,28 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       )
 
   private fun particleLayerProjectionWidthMeters(targetDistanceMeters: Float): Float =
-      (targetDistanceMeters * PARTICLE_LAYER_WIDTH_PER_DISTANCE)
-          .coerceIn(PARTICLE_LAYER_DIMENSION_MIN_METERS, PARTICLE_LAYER_WIDTH_MAX_METERS)
+      SpatialSurfaceParticleRouteModule.projectionWidthMeters(targetDistanceMeters)
 
   private fun particleLayerProjectionHeightMeters(targetDistanceMeters: Float): Float =
-      (targetDistanceMeters * PARTICLE_LAYER_HEIGHT_PER_DISTANCE)
-          .coerceIn(PARTICLE_LAYER_DIMENSION_MIN_METERS, PARTICLE_LAYER_HEIGHT_MAX_METERS)
+      SpatialSurfaceParticleRouteModule.projectionHeightMeters(targetDistanceMeters)
 
   private fun particleLayerSurfaceWidthMeters(
       targetDistanceMeters: Float,
       overscanScale: Float = currentParticleLayerSurfaceOverscanScale(),
   ): Float =
-      (particleLayerProjectionWidthMeters(targetDistanceMeters) * overscanScale)
-          .coerceIn(PARTICLE_LAYER_DIMENSION_MIN_METERS, PARTICLE_LAYER_SURFACE_WIDTH_MAX_METERS)
+      SpatialSurfaceParticleRouteModule.surfaceWidthMeters(targetDistanceMeters, overscanScale)
 
   private fun particleLayerSurfaceHeightMeters(
       targetDistanceMeters: Float,
       overscanScale: Float = currentParticleLayerSurfaceOverscanScale(),
   ): Float =
-      (particleLayerProjectionHeightMeters(targetDistanceMeters) * overscanScale)
-          .coerceIn(PARTICLE_LAYER_DIMENSION_MIN_METERS, PARTICLE_LAYER_SURFACE_HEIGHT_MAX_METERS)
+      SpatialSurfaceParticleRouteModule.surfaceHeightMeters(targetDistanceMeters, overscanScale)
 
   private fun particleLayerSurfacePanelDimensions(
       targetDistanceMeters: Float = currentParticleLayerTargetDistanceMeters(),
       overscanScale: Float = currentParticleLayerSurfaceOverscanScale(),
   ): PanelDimensions =
-      PanelDimensions(
-          Vector2(
-              particleLayerSurfaceWidthMeters(targetDistanceMeters, overscanScale),
-              particleLayerSurfaceHeightMeters(targetDistanceMeters, overscanScale),
-          )
-      )
+      SpatialSurfaceParticleRouteModule.surfacePanelDimensions(targetDistanceMeters, overscanScale)
 
   @OptIn(SpatialSDKExperimentalAPI::class)
   private fun updateCameraHwbProjectionFromViewer(reason: String, forceLog: Boolean) {
@@ -7960,58 +7907,46 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       )
 
   private fun nativeSurfaceParticleLayerEnabled(): Boolean =
-      (activityReadOptionalBooleanSystemProperty(NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY) ?: true) &&
-          !nativeSurfaceParticleLayerSuppressedByPrivateRenderer()
+      SpatialSurfaceParticleRouteModule.nativeSurfaceParticleLayerEnabled(
+          activityReadOptionalBooleanSystemProperty(NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY),
+          privateSpatialEcsParticleRendererEnabled(),
+      )
 
   private fun nativeSurfaceParticleLayerSuppressedByPrivateRenderer(): Boolean =
-      privateSpatialEcsParticleRendererEnabled()
+      SpatialSurfaceParticleRouteModule.nativeSurfaceParticleLayerSuppressedByPrivateRenderer(
+          privateSpatialEcsParticleRendererEnabled()
+      )
 
   private fun nativeSurfaceParticleLayerSuppressionSource(): String =
-      if (nativeSurfaceParticleLayerSuppressedByPrivateRenderer()) {
-        "private-spatial-ecs-particle-renderer"
-      } else {
-        "property"
-      }
+      SpatialSurfaceParticleRouteModule.nativeSurfaceParticleLayerSuppressionSource(
+          nativeSurfaceParticleLayerSuppressedByPrivateRenderer()
+      )
 
   private fun privateSpatialEcsParticleRendererEnabled(): Boolean =
-      activityReadOptionalBooleanSystemProperty(PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY) ?: false
+      SpatialSurfaceParticleRouteModule.privateSpatialEcsParticleRendererEnabled(
+          activityReadOptionalBooleanSystemProperty(PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY)
+      )
 
-  private fun particleLayerCarrierMode(): String =
-      when (activityReadSystemProperty(PARTICLE_LAYER_CARRIER_PROPERTY).trim().lowercase(Locale.US)) {
-        "video", "video-panel", "video-surface-panel", "video-surface-panel-scene-object" ->
-            "video-surface-panel-scene-object"
-        "manual", "manual-panel", "manual-custom-mesh", "manual-panel-scene-object",
-        "manual-panel-scene-object-custom-mesh" ->
-            "manual-panel-scene-object-custom-mesh"
-        else -> defaultParticleLayerCarrierMode()
-      }
-
-  private fun defaultParticleLayerCarrierMode(): String =
-      when (BuildConfig.PARTICLE_LAYER_CARRIER_DEFAULT.trim().lowercase(Locale.US)) {
-        "video", "video-panel", "video-surface-panel", "video-surface-panel-scene-object" ->
-            "video-surface-panel-scene-object"
-        "manual", "manual-panel", "manual-custom-mesh", "manual-panel-scene-object",
-        "manual-panel-scene-object-custom-mesh" ->
-            "manual-panel-scene-object-custom-mesh"
-        else -> PARTICLE_LAYER_CARRIER_DEFAULT
-      }
+  private fun particleLayerCarrierMode(): SpatialSurfaceParticleCarrierMode =
+      SpatialSurfaceParticleRouteModule.carrierMode(
+          activityReadSystemProperty(PARTICLE_LAYER_CARRIER_PROPERTY),
+          BuildConfig.PARTICLE_LAYER_CARRIER_DEFAULT,
+      )
 
   private fun particleLayerManualCustomMeshCarrierEnabled(): Boolean =
-      particleLayerCarrierMode() == "manual-panel-scene-object-custom-mesh"
+      SpatialSurfaceParticleRouteModule.manualCustomMeshCarrierEnabled(particleLayerCarrierMode())
 
   private fun particleLayerCarrierToken(): String =
-      if (particleLayerManualCustomMeshCarrierEnabled()) {
-        "spatial-sdk-manual-panel-scene-object-android-surface"
-      } else {
-        "spatial-sdk-video-surface-panel-android-surface"
-      }
+      SpatialSurfaceParticleRouteModule.carrierToken(particleLayerCarrierMode())
 
   private fun panelShellVisible(): Boolean =
       activityReadOptionalBooleanSystemProperty(PANEL_SHELL_VISIBLE_PROPERTY) ?: true
 
   private fun startInParticleView(): Boolean =
-      activityReadOptionalBooleanSystemProperty(PANEL_START_IN_PARTICLE_VIEW_PROPERTY)
-          ?: activityParseBuildConfigBoolean(BuildConfig.START_IN_PARTICLE_VIEW_DEFAULT, false)
+      SpatialSurfaceParticleRouteModule.startInParticleView(
+          activityReadOptionalBooleanSystemProperty(PANEL_START_IN_PARTICLE_VIEW_PROPERTY),
+          activityParseBuildConfigBoolean(BuildConfig.START_IN_PARTICLE_VIEW_DEFAULT, false),
+      )
 
   private fun panelLauncherVisible(): Boolean =
       activityReadOptionalBooleanSystemProperty(PANEL_LAUNCHER_VISIBLE_PROPERTY)
@@ -8031,9 +7966,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       )
 
   private fun particleLayerStereoMarkerFields(): String =
-      "stereoMode=$PARTICLE_LAYER_STEREO_MODE " +
-          "perEyeExtent=${PARTICLE_LAYER_PER_EYE_WIDTH_PX}x$PARTICLE_LAYER_HEIGHT_PX " +
-          "packedExtent=${PARTICLE_LAYER_WIDTH_PX}x$PARTICLE_LAYER_HEIGHT_PX"
+      SpatialSurfaceParticleRouteModule.stereoMarkerFields()
 
   @OptIn(SpatialSDKExperimentalAPI::class)
   private fun cameraHwbProjectionPanelMediaSettings(): MediaPanelSettings {
@@ -8059,28 +7992,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun particleLayerMediaSettings(): MediaPanelSettings =
-      MediaPanelSettings(
-          shape =
-              QuadShapeOptions(
-                  particleLayerSurfaceWidthMeters(PARTICLE_LAYER_TARGET_DISTANCE_METERS),
-                  particleLayerSurfaceHeightMeters(PARTICLE_LAYER_TARGET_DISTANCE_METERS),
-              ),
-          display =
-              FixedMediaPanelDisplayOptions(
-                  widthPx = PARTICLE_LAYER_WIDTH_PX,
-                  heightPx = PARTICLE_LAYER_HEIGHT_PX,
-              ),
-          rendering =
-              MediaPanelRenderOptions(
-                  false,
-                  StereoMode.LeftRight,
-                  SamplerConfig(),
-                  0,
-                  PARTICLE_LAYER_Z_INDEX,
-              ),
-          style = PanelStyleOptions(themeResourceId = R.style.PanelAppThemeOpaqueProbe),
-          input = PanelInputOptions(0),
-      )
+      SpatialSurfaceParticleRouteModule.mediaSettings()
 
   private fun privateLayerPanelSettings(): PanelSettings =
       SpatialPanelPlacementModule.privateLayerPanelSettings()
@@ -8786,76 +8698,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val EXTRA_POLAR_SCAN_SECONDS = "polar_scan_seconds"
     private const val EXTRA_POLAR_CONNECT_DELAY_SECONDS = "polar_connect_delay_seconds"
     private const val EXTRA_POLAR_ECG_SECONDS = "polar_ecg_seconds"
-    private const val NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY =
-        "debug.rustyquest.spatial.native_surface_particle_layer.enabled"
-    private const val PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY =
-        "debug.rustyquest.spatial.viscereality_ecs.enabled"
     private const val PANEL_SHELL_VISIBLE_PROPERTY =
         "debug.rustyquest.spatial.panel_shell.visible"
-    private const val PANEL_START_IN_PARTICLE_VIEW_PROPERTY =
-        "debug.rustyquest.spatial.panel.start_in_particle_view"
     private const val PANEL_LAUNCHER_VISIBLE_PROPERTY =
         "debug.rustyquest.spatial.panel_launcher.visible"
-    private const val PARTICLE_LAYER_PER_EYE_WIDTH_PX = 1024
-    private const val PARTICLE_LAYER_WIDTH_PX = PARTICLE_LAYER_PER_EYE_WIDTH_PX * 2
-    private const val PARTICLE_LAYER_HEIGHT_PX = 1024
-    private const val PARTICLE_LAYER_TARGET_DISTANCE_METERS = 2.0f
-    private const val PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.particle_layer.target_distance_meters"
-    private const val PARTICLE_LAYER_TARGET_DISTANCE_MIN_METERS = 0.20f
-    private const val PARTICLE_LAYER_TARGET_DISTANCE_MAX_METERS = 2.00f
-    private const val PARTICLE_LAYER_VIEW_YAW_DEGREES = 0.0f
-    private const val PARTICLE_LAYER_VIEW_YAW_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.particle_layer.view_yaw_degrees"
-    private const val PARTICLE_LAYER_VIEW_YAW_MIN_DEGREES = -45.0f
-    private const val PARTICLE_LAYER_VIEW_YAW_MAX_DEGREES = 45.0f
-    private const val PARTICLE_LAYER_PANEL_OPACITY = 1.0f
-    private const val PARTICLE_LAYER_PANEL_OPACITY_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.particle_layer.panel_opacity"
-    private const val PARTICLE_LAYER_PANEL_OPACITY_MIN = 0.0f
-    private const val PARTICLE_LAYER_PANEL_OPACITY_MAX = 1.0f
-    private const val PARTICLE_LAYER_PANEL_LAYER_CHECK_INTERVAL_MS = 500L
-    private const val PARTICLE_LAYER_CARRIER_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.particle_layer.carrier"
-    private const val PARTICLE_LAYER_CARRIER_DEFAULT = "manual-panel-scene-object-custom-mesh"
-    private const val PARTICLE_LAYER_WIDTH_METERS = 5.40f
-    private const val PARTICLE_LAYER_HEIGHT_METERS = 4.00f
-    private const val PARTICLE_LAYER_HORIZONTAL_FOV_SCALE =
-        PARTICLE_LAYER_WIDTH_METERS / PARTICLE_LAYER_HEIGHT_METERS
-    private const val PARTICLE_LAYER_WIDTH_PER_DISTANCE =
-        PARTICLE_LAYER_WIDTH_METERS / PARTICLE_LAYER_TARGET_DISTANCE_METERS
-    private const val PARTICLE_LAYER_HEIGHT_PER_DISTANCE =
-        PARTICLE_LAYER_HEIGHT_METERS / PARTICLE_LAYER_TARGET_DISTANCE_METERS
-    private const val PARTICLE_LAYER_DIMENSION_MIN_METERS = 0.20f
-    private const val PARTICLE_LAYER_WIDTH_MAX_METERS = 5.40f
-    private const val PARTICLE_LAYER_HEIGHT_MAX_METERS = 4.00f
-    private const val PARTICLE_LAYER_SURFACE_WIDTH_MAX_METERS = 5.40f
-    private const val PARTICLE_LAYER_SURFACE_HEIGHT_MAX_METERS = 4.00f
-    private const val PARTICLE_LAYER_SURFACE_OVERSCAN_SCALE = 1.00f
-    private const val PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.particle_layer.surface_overscan_scale"
-    private const val PARTICLE_LAYER_SURFACE_OVERSCAN_MIN_SCALE = 1.00f
-    private const val PARTICLE_LAYER_SURFACE_OVERSCAN_MAX_SCALE = 1.00f
-    private const val PARTICLE_LAYER_X_METERS = 0.0f
-    private const val PARTICLE_LAYER_Y_METERS = 1.22f
-    private const val PARTICLE_LAYER_Z_METERS = -2.0f
-    private const val PARTICLE_LAYER_PARTICLE_COUNT = 2048
-    private const val PARTICLE_LAYER_FRAME_COUNT = 0
-    private const val PARTICLE_LAYER_Z_INDEX = 8
-    private const val PARTICLE_LAYER_STEREO_MODE = "LeftRight"
-    private const val PARTICLE_LAYER_PLACEMENT_MODE = "viewer-pose-projection-locked-quad"
-    private const val PARTICLE_LAYER_PLACEMENT_AUTHORITY = "spatial-sdk-viewer-pose-scene-tick"
-    private const val PARTICLE_LAYER_TARGET_COORDINATE_SPACE = "spatial-sdk-surface-panel-eye-uv"
-    private const val PARTICLE_LAYER_TARGET_PROJECTION_SPACE =
-        "spatial-sdk-panel-plane-perspective-projection"
-    private const val PARTICLE_LAYER_PROJECTION_CONTENT_MAPPING_MODE =
-        "world-to-spatial-sdk-panel-plane-left-right"
-    private const val PARTICLE_LAYER_TARGET_FOV_TANGENTS = "panel-plane-derived"
-    private const val PARTICLE_LAYER_TARGET_SURFACE_UV_RECT = "0.0;0.0;1.0;1.0"
-    private const val PARTICLE_LAYER_VIEW_ORIGIN_METERS = "0.0;0.0;2.0"
-    private const val PARTICLE_LAYER_VIEW_ORIGIN_YAW_DEGREES = "180.0"
-    private const val PARTICLE_LAYER_PROJECTION_MARKER_INTERVAL_MS = 900L
-    private const val SURFACE_PARTICLE_RECENTER_ACCEPTED_BIT = 1L shl 5
     private const val EXTERNAL_SWAPCHAIN_PROBE_PROPERTY =
         "debug.rustyquest.spatial.external_swapchain_probe"
     private const val EXTERNAL_SWAPCHAIN_PROBE_CYCLES_PROPERTY =
