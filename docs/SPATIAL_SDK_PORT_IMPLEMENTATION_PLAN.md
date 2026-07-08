@@ -196,7 +196,8 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `SpatialVideoProjectionSettings.kt`;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
-- package projection carrier selection and markers as a feature/module;
+- package projection carrier selection, target-rect math, and markers in
+  `CameraHwbProjectionModule.kt`;
 - package private layer panel placement/input policy as a feature/module;
 - package controller shortcut routing as a feature/module.
 

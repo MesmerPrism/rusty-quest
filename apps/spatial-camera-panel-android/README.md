@@ -329,6 +329,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   low-rate video projection settings value object used by the Spatial camera
   projection route. It does not decode media or own native AImageReader /
   AHardwareBuffer handoff.
+- `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
+  camera-HWB projection carrier/config marker surface: carrier token parsing,
+  panel z-index/display-role policy, target-rect math, stereo marker fields,
+  and receipt constants. It must not create Spatial scene objects, start JNI
+  native routes, consume controller input, or own camera frames.
 - `app/src/main/.../SpatialVirtualRoomModule.kt` owns the explicit opt-in
   packaged virtual room and skybox route: GLXF load, lighting, IBL/skydome
   setup, skybox resources, property parsing, markers, and cleanup. It remains

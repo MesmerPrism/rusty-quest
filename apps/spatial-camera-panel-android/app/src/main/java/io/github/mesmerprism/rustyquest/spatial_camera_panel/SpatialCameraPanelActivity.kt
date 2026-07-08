@@ -6102,108 +6102,47 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun cameraHwbProjectionZIndexForPlacement(
       placementMode: CameraHwbProjectionPlacementMode,
-  ): Int =
-      when (cameraHwbProjectionCarrierMode) {
-        CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject ->
-            CAMERA_HWB_PROJECTION_SCENE_QUAD_LAYER_Z_INDEX
-        CameraHwbProjectionCarrierMode.VideoSurfacePanelSceneObject ->
-            when (placementMode) {
-              CameraHwbProjectionPlacementMode.ViewerLocked ->
-                  CAMERA_HWB_PROJECTION_PANEL_VIEWER_LOCKED_Z_INDEX
-              CameraHwbProjectionPlacementMode.VirtualRoomWall ->
-                  CAMERA_HWB_PROJECTION_PANEL_WALL_Z_INDEX
-            }
-        CameraHwbProjectionCarrierMode.ManualPanelSceneObjectCustomMesh ->
-            when (placementMode) {
-              CameraHwbProjectionPlacementMode.ViewerLocked ->
-                  CAMERA_HWB_PROJECTION_PANEL_VIEWER_LOCKED_Z_INDEX
-              CameraHwbProjectionPlacementMode.VirtualRoomWall ->
-                  CAMERA_HWB_PROJECTION_PANEL_WALL_Z_INDEX
-            }
-      }
+  ): Int = CameraHwbProjectionModule.zIndexForPlacement(cameraHwbProjectionCarrierMode, placementMode)
 
   private fun cameraHwbProjectionDisplayRoleForPlacement(
       placementMode: CameraHwbProjectionPlacementMode,
-  ): String =
-      when (placementMode) {
-        CameraHwbProjectionPlacementMode.ViewerLocked -> "full-fov-video-plus-custom-camera-stack"
-        CameraHwbProjectionPlacementMode.VirtualRoomWall -> "room-wall-video-plus-custom-camera-stack"
-      }
+  ): String = CameraHwbProjectionModule.displayRoleForPlacement(placementMode)
 
   private fun cameraHwbProjectionScenePanelCarrierEnabled(): Boolean =
-      cameraHwbProjectionCarrierMode == CameraHwbProjectionCarrierMode.VideoSurfacePanelSceneObject ||
-          cameraHwbProjectionCarrierMode ==
-              CameraHwbProjectionCarrierMode.ManualPanelSceneObjectCustomMesh
+      CameraHwbProjectionModule.scenePanelCarrierEnabled(cameraHwbProjectionCarrierMode)
 
   private fun cameraHwbProjectionManualCustomMeshCarrierEnabled(): Boolean =
-      cameraHwbProjectionCarrierMode == CameraHwbProjectionCarrierMode.ManualPanelSceneObjectCustomMesh
+      CameraHwbProjectionModule.manualCustomMeshCarrierEnabled(cameraHwbProjectionCarrierMode)
 
   private fun cameraHwbProjectionPanelRegistrationId(): String =
-      if (cameraHwbProjectionManualCustomMeshCarrierEnabled()) {
-        "spatial_camera_projection_manual_custom_mesh_panel"
-      } else {
-        "spatial_camera_projection_surface_panel"
-      }
+      CameraHwbProjectionModule.panelRegistrationId(cameraHwbProjectionCarrierMode)
 
   private fun cameraHwbProjectionSyntheticVisualProbeEnabled(): Boolean =
       activityReadOptionalBooleanSystemProperty(CAMERA_HWB_PROJECTION_SYNTHETIC_VISUAL_PROPERTY) == true
 
   private fun cameraHwbProjectionCarrierToken(): String =
-      cameraHwbProjectionCarrierMode.markerToken
+      CameraHwbProjectionModule.carrierToken(cameraHwbProjectionCarrierMode)
 
   private fun currentCameraHwbProjectionCarrierMode(): CameraHwbProjectionCarrierMode {
-    val token =
+    val rawToken =
         (activityReadOptionalStringIntentExtra(intent, CAMERA_HWB_PROJECTION_CARRIER_EXTRA)
                 ?: activityReadSystemProperty(CAMERA_HWB_PROJECTION_CARRIER_PROPERTY))
-            .trim()
-            .lowercase(Locale.US)
-            .replace("_", "-")
-    return when (token) {
-      "video-surface-panel-scene-object", "video-surface-panel", "panel-scene-object" ->
-          CameraHwbProjectionCarrierMode.VideoSurfacePanelSceneObject
-      "manual-panel-scene-object-custom-mesh",
-      "manual-panel-scene-object",
-      "custom-mesh-panel",
-      "manual-custom-mesh" -> CameraHwbProjectionCarrierMode.ManualPanelSceneObjectCustomMesh
-      "scenequadlayer-createasandroid-vulkan-wsi",
-      "scenequadlayer-room-object",
-      "scenequadlayer",
-      "scene-quad-layer",
-      "room-object" -> CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject
-      "" ->
-          if (spatialVirtualRoomEnabled()) {
-            CameraHwbProjectionCarrierMode.VideoSurfacePanelSceneObject
-          } else {
-            CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject
-          }
-      else -> CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject
-    }
+    return CameraHwbProjectionModule.carrierModeForToken(rawToken, spatialVirtualRoomEnabled())
   }
 
   private fun cameraHwbProjectionRoomRenderOrderToken(): String =
-      when {
-        !spatialVirtualRoomEnabled() -> "no-room-scenequadlayer-baseline"
-        cameraHwbProjectionCarrierMode == CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject ->
-            "projection-layer-over-virtual-room"
-        cameraHwbProjectionCarrierMode ==
-            CameraHwbProjectionCarrierMode.ManualPanelSceneObjectCustomMesh ->
-            "manual-custom-mesh-panel-over-virtual-room"
-        else -> "video-surface-panel-over-virtual-room"
-      }
+      CameraHwbProjectionModule.roomRenderOrderToken(
+          spatialVirtualRoomEnabled(),
+          cameraHwbProjectionCarrierMode,
+      )
 
   private fun cameraHwbProjectionStartGateToken(): String =
-      if (spatialVirtualRoomEnabled()) {
-        "virtual-room-loaded"
-      } else {
-        "scene-ready"
-      }
+      CameraHwbProjectionModule.startGateToken(spatialVirtualRoomEnabled())
 
   private fun cameraHwbProjectionCarrierTransportToken(): String =
-      if (intent?.hasExtra(CAMERA_HWB_PROJECTION_CARRIER_EXTRA) == true) {
-        "intent-extra"
-      } else {
-        "android-property-or-default"
-      }
+      CameraHwbProjectionModule.carrierTransportToken(
+          intent?.hasExtra(CAMERA_HWB_PROJECTION_CARRIER_EXTRA) == true
+      )
 
   private fun currentSpatialVideoProjectionSettings(intent: Intent?): SpatialVideoProjectionSettings {
     val enabled =
@@ -6450,12 +6389,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun cameraHwbProjectionPanelHittableToken(): String =
-      when (cameraHwbProjectionCarrierMode) {
-        CameraHwbProjectionCarrierMode.VideoSurfacePanelSceneObject -> "NoCollision"
-        CameraHwbProjectionCarrierMode.ManualPanelSceneObjectCustomMesh ->
-            "none-manual-custom-mesh-noninteractive"
-        CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject -> "not-applicable-scenequadlayer"
-      }
+      CameraHwbProjectionModule.panelHittableToken(cameraHwbProjectionCarrierMode)
 
   private fun cameraHwbProjectionMarkerFields(plane: CameraHwbProjectionPlane? = null): String {
     val targetScale = currentCameraHwbProjectionTargetScale()
@@ -6466,111 +6400,37 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         plane?.projectionWidthMeters ?: cameraHwbProjectionWidthMeters(targetDistanceMeters)
     val projectionHeightMeters =
         plane?.projectionHeightMeters ?: cameraHwbProjectionHeightMeters(targetDistanceMeters)
-    val placementAuthority =
-        when (placementMode) {
-          CameraHwbProjectionPlacementMode.ViewerLocked ->
-              CAMERA_HWB_PROJECTION_PLACEMENT_AUTHORITY
-          CameraHwbProjectionPlacementMode.VirtualRoomWall ->
-              CAMERA_HWB_PROJECTION_WALL_PLACEMENT_AUTHORITY
-        }
-    val layerZIndex = cameraHwbProjectionZIndexForPlacement(placementMode)
-    val displayRole = cameraHwbProjectionDisplayRoleForPlacement(placementMode)
-    val projectionPanelHittable = cameraHwbProjectionPanelHittableToken()
-    val projectionAnchorHittable =
-        when (cameraHwbProjectionCarrierMode) {
-          CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject -> "none-first-room-diagnostic"
-          CameraHwbProjectionCarrierMode.VideoSurfacePanelSceneObject -> "not-applicable-panel-carrier"
-          CameraHwbProjectionCarrierMode.ManualPanelSceneObjectCustomMesh ->
-              "not-applicable-manual-custom-mesh-panel"
-        }
-    return "placementMode=${placementMode.markerToken} " +
-        "placementAuthority=$placementAuthority " +
-        "projectionCarrier=${cameraHwbProjectionCarrierToken()} " +
-        "projectionCarrierProperty=$CAMERA_HWB_PROJECTION_CARRIER_PROPERTY " +
-        "projectionCarrierIntentExtra=$CAMERA_HWB_PROJECTION_CARRIER_EXTRA " +
-        "projectionCarrierTransport=${cameraHwbProjectionCarrierTransportToken()} " +
-        "projectionCarrierRoomObject=${cameraHwbProjectionCarrierMode == CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject} " +
-        "projectionStartGate=${cameraHwbProjectionStartGateToken()} " +
-        "projectionDisplaySurface=$displayRole " +
-        "projectionDisplaySurfaceContainsVideo=true " +
-        "projectionDisplaySurfaceContainsCustomCameraProjection=true " +
-        "projectionContentMappingMode=target-local-raster " +
-        "targetClipPolicy=clip-to-visible-eye " +
-        "projectionRoomRenderOrder=${cameraHwbProjectionRoomRenderOrderToken()} " +
-        "projectionPanelInputPassThrough=true " +
-        "projectionPanelHittable=$projectionPanelHittable " +
-        "projectionAnchorHittable=$projectionAnchorHittable " +
-        "cameraVideoProjectionLayerZIndex=$layerZIndex " +
-        "legacyLauncherPanelSuppressed=${legacyLauncherPanelSuppressedForCameraStack()} " +
-        "viewerLockedPlacementMode=$CAMERA_HWB_PROJECTION_PLACEMENT_MODE " +
-        "virtualRoomWallPlacementMode=$CAMERA_HWB_PROJECTION_WALL_PLACEMENT_MODE " +
-        "virtualRoomWallPlacementActive=${placementMode == CameraHwbProjectionPlacementMode.VirtualRoomWall} " +
-        "cameraProjectionWallToggleInput=disabled-right-secondary-noop " +
-        "cameraProjectionWallToggleEnabled=${cameraHwbProjectionSecondaryToggleEnabled()} " +
-        "virtualRoomWallCenterM=$CAMERA_HWB_PROJECTION_WALL_CENTER_MARKER " +
-        "virtualRoomWallSizeM=$CAMERA_HWB_PROJECTION_WALL_SIZE_MARKER " +
-        "cameraFacingParticleSurface=true projectionLockedParticleSurface=true " +
-        "targetDistanceMeters=${activityMarkerFloat(targetDistanceMeters)} " +
-        "targetDistanceDefaultMeters=$CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER " +
-        "targetDistanceProperty=none-fixed-camera-projection-default " +
-        "targetDistanceParameterSource=${cameraHwbProjectionTargetDistanceSource()} " +
-        "virtualRoomForegroundDistanceActive=${cameraHwbProjectionVirtualRoomForegroundDistanceActive(placementMode)} " +
-        "virtualRoomForegroundDistanceMeters=${activityMarkerFloat(CAMERA_HWB_PROJECTION_ROOM_FOREGROUND_TARGET_DISTANCE_METERS)} " +
-        "projectionPanelInputClearanceActive=${cameraHwbProjectionPrivatePanelInputClearanceActive(placementMode)} " +
-        "projectionPanelInputBehindPrivateLayerPanel=${cameraHwbProjectionInputCarrierBehindPrivatePanel(placementMode, targetDistanceMeters)} " +
-        "projectionPanelInputClearanceMeters=${activityMarkerFloat(CAMERA_HWB_PROJECTION_PRIVATE_PANEL_INPUT_CLEARANCE_METERS)} " +
-        "projectionPanelInputClearanceTargetDistanceMeters=${activityMarkerFloat(cameraHwbProjectionPrivatePanelInputClearanceDistanceMeters())} " +
-        "targetDistanceJoystickControlsEnabled=false " +
-        "targetDistanceJoystickInput=none-fixed-distance " +
-        "projectionTargetScaleJoystickControlsEnabled=true " +
-        "projectionTargetScaleJoystickInput=android-right-stick-y;spatial-sdk-avatar-body-right-thumb-up-down;native-openxr-right-thumbstick-y;panel-control " +
-        "projectionTargetScaleJoystickRateProperty=$CAMERA_HWB_PROJECTION_TARGET_SCALE_JOYSTICK_RATE_PROPERTY " +
-        "projectionTargetScaleJoystickRatePerSecond=${activityMarkerFloat(currentCameraHwbProjectionTargetScaleJoystickRate())} " +
-        "stereoHorizontalOffsetJoystickControlsEnabled=false " +
-        "stereoHorizontalOffsetJoystickInput=disabled-default-locked-left-stick-y-controls-workflow-or-private-panel-distance-only " +
-        "stereoHorizontalOffsetJoystickRateProperty=none-disabled " +
-        "stereoHorizontalOffsetJoystickRateUvPerSecond=0.000 " +
-        "cameraHwbProjectionStereoHorizontalOffsetIgnoresPanelVisibility=true " +
-        "targetFovTangents=$CAMERA_HWB_PROJECTION_TARGET_FOV_TANGENTS " +
-        "projectionWidthMeters=${activityMarkerFloat(projectionWidthMeters)} " +
-        "projectionHeightMeters=${activityMarkerFloat(projectionHeightMeters)} " +
-        "surfaceOverscanScale=$CAMERA_HWB_PROJECTION_SURFACE_OVERSCAN_MARKER " +
-        "surfaceWidthMeters=${activityMarkerFloat(projectionWidthMeters)} " +
-        "surfaceHeightMeters=${activityMarkerFloat(projectionHeightMeters)} " +
-        "projectionPlaneAngularCoveragePreserved=true " +
-        "eyeSpaceTargetRectPreserved=true " +
-        "projectionTarget=$CAMERA_HWB_PROJECTION_TARGET " +
-        "borderOpacity=$CAMERA_HWB_PROJECTION_BORDER_OPACITY_MARKER " +
-        "leftCameraId=50 rightCameraId=51 " +
-        "leftTargetScreenUvRect=$CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_MARKER " +
-        "rightTargetScreenUvRect=$CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_MARKER " +
-        "leftEffectiveTargetScreenUvRect=${cameraHwbProjectionLeftEffectiveTargetRectMarker()} " +
-        "rightEffectiveTargetScreenUvRect=${cameraHwbProjectionRightEffectiveTargetRectMarker()} " +
-        "leftPackedEffectiveTargetScreenUvRect=${cameraHwbProjectionLeftPackedEffectiveTargetRectMarker()} " +
-        "rightPackedEffectiveTargetScreenUvRect=${cameraHwbProjectionRightPackedEffectiveTargetRectMarker()} " +
-        "projectionTargetControlsEnabled=true " +
-        "projectionTargetLiveScale=${activityMarkerFloat(targetScale)} " +
-        "projectionTargetTunedMaxScale=${activityMarkerFloat(targetScale)} " +
-        "projectionTargetMinScale=${activityMarkerFloat(CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE)} " +
-        "projectionTargetMaxScale=${activityMarkerFloat(CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE)} " +
-        "projectionTargetOffsetUv=0.000000,0.000000 " +
-        "projectionTargetStereoHorizontalOffsetUv=${activityMarkerFloat6(stereoHorizontalOffsetUv)} " +
-        "projectionTargetStereoHorizontalOffsetDefaultUv=${activityMarkerFloat6(CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV)} " +
-        "projectionTargetStereoHorizontalOffsetRangeUv=$CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_RANGE_MARKER " +
-        "projectionTargetLeftOffsetUv=${activityMarkerFloat6(-stereoHorizontalOffsetUv)},0.000000 " +
-        "projectionTargetRightOffsetUv=${activityMarkerFloat6(stereoHorizontalOffsetUv)},0.000000 " +
-        "projectionTargetStereoHorizontalOffsetSign=positive-increases-separation " +
-        "targetClipPolicy=clip-to-visible-eye " +
-        "targetCoordinateSpace=$PARTICLE_LAYER_TARGET_COORDINATE_SPACE " +
-        "targetProjectionSpace=$PARTICLE_LAYER_TARGET_PROJECTION_SPACE " +
-        "projectionContentMappingMode=target-local-raster"
+    return CameraHwbProjectionModule.markerFields(
+        CameraHwbProjectionMarkerInput(
+            carrierMode = cameraHwbProjectionCarrierMode,
+            placementMode = placementMode,
+            carrierTransportToken = cameraHwbProjectionCarrierTransportToken(),
+            startGateToken = cameraHwbProjectionStartGateToken(),
+            roomRenderOrderToken = cameraHwbProjectionRoomRenderOrderToken(),
+            targetDistanceMeters = targetDistanceMeters,
+            projectionWidthMeters = projectionWidthMeters,
+            projectionHeightMeters = projectionHeightMeters,
+            targetScale = targetScale,
+            stereoHorizontalOffsetUv = stereoHorizontalOffsetUv,
+            targetScaleJoystickRatePerSecond = currentCameraHwbProjectionTargetScaleJoystickRate(),
+            legacyLauncherPanelSuppressed = legacyLauncherPanelSuppressedForCameraStack(),
+            targetDistanceSource = cameraHwbProjectionTargetDistanceSource(),
+            virtualRoomForegroundDistanceActive =
+                cameraHwbProjectionVirtualRoomForegroundDistanceActive(placementMode),
+            privatePanelInputClearanceActive =
+                cameraHwbProjectionPrivatePanelInputClearanceActive(placementMode),
+            inputCarrierBehindPrivatePanel =
+                cameraHwbProjectionInputCarrierBehindPrivatePanel(placementMode, targetDistanceMeters),
+            privatePanelInputClearanceTargetDistanceMeters =
+                cameraHwbProjectionPrivatePanelInputClearanceDistanceMeters(),
+            targetCoordinateSpace = PARTICLE_LAYER_TARGET_COORDINATE_SPACE,
+            targetProjectionSpace = PARTICLE_LAYER_TARGET_PROJECTION_SPACE,
+        )
+    )
   }
 
   private fun cameraHwbProjectionStereoMarkerFields(): String =
-      "stereoMode=LeftRight stereoSource=camera50-51 leftCameraId=50 rightCameraId=51 " +
-          "monoDuplicated=false " +
-          "perEyeExtent=${CAMERA_HWB_PROJECTION_PER_EYE_WIDTH_PX}x$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
-          "packedExtent=${CAMERA_HWB_PROJECTION_WIDTH_PX}x$CAMERA_HWB_PROJECTION_HEIGHT_PX"
+      CameraHwbProjectionModule.stereoMarkerFields()
 
   private fun currentCameraHwbProjectionTargetDistanceMeters(): Float {
     val requestedDistance =
@@ -6622,9 +6482,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun cameraHwbProjectionVirtualRoomForegroundDistanceActive(
       placementMode: CameraHwbProjectionPlacementMode = cameraHwbProjectionPlacementMode,
   ): Boolean =
-      placementMode == CameraHwbProjectionPlacementMode.ViewerLocked &&
-          spatialVirtualRoomEnabled() &&
-          cameraHwbProjectionScenePanelCarrierEnabled()
+      CameraHwbProjectionModule.virtualRoomForegroundDistanceActive(
+          placementMode,
+          spatialVirtualRoomEnabled(),
+          cameraHwbProjectionScenePanelCarrierEnabled(),
+      )
 
   private fun cameraHwbProjectionWidthMeters(targetDistanceMeters: Float): Float =
       particleLayerProjectionWidthMeters(targetDistanceMeters)
@@ -6671,16 +6533,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       baseWidth: Float,
       baseHeight: Float,
       offsetX: Float,
-  ): FloatArray {
-    val scale = currentCameraHwbProjectionTargetScale()
-    val width = (baseWidth * scale).coerceIn(0.0001f, 1.0f)
-    val height = (baseHeight * scale).coerceIn(0.0001f, 1.0f)
-    val centerX = baseX + baseWidth * 0.5f + offsetX
-    val centerY = baseY + baseHeight * 0.5f
-    val x = (centerX - width * 0.5f).coerceIn(0.0f, 1.0f - width)
-    val y = (centerY - height * 0.5f).coerceIn(0.0f, 1.0f - height)
-    return floatArrayOf(x, y, width, height)
-  }
+  ): FloatArray =
+      CameraHwbProjectionModule.effectiveTargetRect(
+          baseX,
+          baseY,
+          baseWidth,
+          baseHeight,
+          offsetX,
+          currentCameraHwbProjectionTargetScale(),
+      )
 
   private fun cameraHwbProjectionLeftEffectiveTargetRect(): FloatArray =
       cameraHwbProjectionEffectiveTargetRect(
@@ -6701,7 +6562,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       )
 
   private fun cameraHwbProjectionRectMarker(rect: FloatArray): String =
-      "${activityMarkerFloat6(rect[0])};${activityMarkerFloat6(rect[1])};${activityMarkerFloat6(rect[2])};${activityMarkerFloat6(rect[3])}"
+      CameraHwbProjectionModule.rectMarker(rect)
 
   private fun cameraHwbProjectionLeftEffectiveTargetRectMarker(): String =
       cameraHwbProjectionRectMarker(cameraHwbProjectionLeftEffectiveTargetRect())
@@ -9464,79 +9325,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val CAMERA_HWB_PROBE_DEFAULT_READER_MAX_IMAGES = 4
     private const val CAMERA_HWB_PROBE_MIN_READER_MAX_IMAGES = 3
     private const val CAMERA_HWB_PROBE_MAX_READER_MAX_IMAGES = 12
-    private const val CAMERA_HWB_PROJECTION_PROBE_PROPERTY =
-        "debug.rustyquest.spatial.camera_hwb_projection_probe"
-    private const val CAMERA_HWB_PROJECTION_SYNTHETIC_VISUAL_PROPERTY =
-        "debug.rustyquest.spatial.camera_hwb_projection_probe.synthetic_visual"
-    private const val CAMERA_HWB_PROJECTION_READER_MAX_IMAGES_PROPERTY =
-        "debug.rustyquest.spatial.camera_hwb_projection_probe.reader_max_images"
-    private const val CAMERA_HWB_PROJECTION_WIDTH_PX = 2048
-    private const val CAMERA_HWB_PROJECTION_HEIGHT_PX = 1024
-    private const val CAMERA_HWB_PROJECTION_PER_EYE_WIDTH_PX = 1024
-    private const val CAMERA_HWB_PROJECTION_TARGET_DISTANCE_METERS = 2.0f
-    private const val CAMERA_HWB_PROJECTION_ROOM_FOREGROUND_TARGET_DISTANCE_METERS = 0.25f
-    private const val CAMERA_HWB_PROJECTION_PRIVATE_PANEL_INPUT_CLEARANCE_METERS = 0.03f
-    private const val CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER = "2.00"
-    private const val CAMERA_HWB_PROJECTION_TARGET_SCALE_PROPERTY =
-        "debug.rustyquest.spatial.camera_hwb_projection_probe.projection.target.scale"
-    private const val CAMERA_HWB_PROJECTION_TARGET_SCALE_JOYSTICK_RATE_PROPERTY =
-        "debug.rustyquest.spatial.camera_hwb_projection_probe.projection.target.joystick.scale.rate_per_second"
-    private const val CAMERA_HWB_PROJECTION_DEPTH_LAYER_POLICY_PROPERTY =
-        "debug.rustyquest.spatial.camera_hwb_projection_probe.depth.layer_policy"
-    private const val CAMERA_HWB_PROJECTION_TARGET_SCALE_JOYSTICK_RATE_PER_SECOND = 0.30f
-    private const val CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV = 0.046320f
-    private const val CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MIN_UV = -0.12f
-    private const val CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MAX_UV = 0.12f
-    private const val CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_RANGE_MARKER =
-        "-0.120000..0.120000"
-    private const val CAMERA_HWB_PROJECTION_TARGET_SCALE_JOYSTICK_MARKER_INTERVAL_MS = 450L
-    private const val CAMERA_HWB_PROJECTION_TARGET_FOV_TANGENTS = "-1.0;1.0;-1.0;1.0"
-    private const val CAMERA_HWB_PROJECTION_SURFACE_OVERSCAN_MARKER = "1.0"
-    private const val CAMERA_HWB_PROJECTION_BORDER_OPACITY_MARKER = "0.0"
-    private const val CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE_DEFAULT = 1.0f
-    private const val CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE = 0.25f
-    private const val CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE = 1.80f
-    private const val CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_X = 0.171875f
-    private const val CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_Y = 0.218750f
-    private const val CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_WIDTH = 0.750000f
-    private const val CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_HEIGHT = 0.656250f
-    private const val CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_X = 0.078125f
-    private const val CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_Y = 0.218750f
-    private const val CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_WIDTH = 0.750000f
-    private const val CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_HEIGHT = 0.671875f
-    private const val CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_MARKER =
-        "0.171875;0.218750;0.750000;0.656250"
-    private const val CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_MARKER =
-        "0.078125;0.218750;0.750000;0.671875"
-    private const val CAMERA_HWB_PROJECTION_TARGET = "full-eye"
-    private const val CAMERA_HWB_PROJECTION_PLACEMENT_MODE =
-        "viewer-pose-projection-locked-quad"
-    private const val CAMERA_HWB_PROJECTION_PLACEMENT_AUTHORITY =
-        "spatial-sdk-viewer-pose-scene-tick"
-    private const val CAMERA_HWB_PROJECTION_WALL_PLACEMENT_MODE =
-        "virtual-room-wall-fixed-quad"
-    private const val CAMERA_HWB_PROJECTION_WALL_PLACEMENT_AUTHORITY =
-        "spatial-sdk-virtual-room-fixed-wall"
-    private const val CAMERA_HWB_PROJECTION_WALL_CENTER_X_METERS = 0.0f
-    private const val CAMERA_HWB_PROJECTION_WALL_CENTER_Y_METERS = 1.45f
-    private const val CAMERA_HWB_PROJECTION_WALL_CENTER_Z_METERS = -2.40f
-    private const val CAMERA_HWB_PROJECTION_WALL_WIDTH_METERS = 1.60f
-    private const val CAMERA_HWB_PROJECTION_WALL_HEIGHT_METERS = 0.90f
-    private const val CAMERA_HWB_PROJECTION_WALL_CENTER_MARKER = "0.0;1.45;-2.40"
-    private const val CAMERA_HWB_PROJECTION_WALL_SIZE_MARKER = "1.60;0.90"
-    private const val CAMERA_HWB_PROJECTION_CARRIER_PROPERTY =
-        "debug.rustyquest.spatial.camera_hwb_projection_probe.carrier"
-    private const val CAMERA_HWB_PROJECTION_CARRIER_EXTRA =
-        "rusty.quest.spatial.camera_hwb_projection_probe.carrier"
-    private const val CAMERA_HWB_PROJECTION_SCENE_QUAD_LAYER_Z_INDEX = 40
-    private const val CAMERA_HWB_PROJECTION_PANEL_VIEWER_LOCKED_Z_INDEX = -20
-    private const val CAMERA_HWB_PROJECTION_PANEL_WALL_Z_INDEX = -16
-    private const val CAMERA_HWB_PROJECTION_PLACEMENT_TOGGLE_DEBOUNCE_MS = 650L
-    private const val CAMERA_HWB_PROJECTION_FRAME_COUNT_UNBOUNDED = 0
-    private const val CAMERA_HWB_PROJECTION_DEFAULT_READER_MAX_IMAGES = 4
-    private const val CAMERA_HWB_PROJECTION_MIN_READER_MAX_IMAGES = 3
-    private const val CAMERA_HWB_PROJECTION_MAX_READER_MAX_IMAGES = 12
-    private const val CAMERA_HWB_PROJECTION_MARKER_INTERVAL_MS = 900L
     private const val SPATIAL_VIDEO_PROJECTION_PROBE_PROPERTY =
         "debug.rustyquest.spatial.video_projection_probe"
     private const val SPATIAL_VIDEO_PROJECTION_FRAME_COUNT_UNBOUNDED = 0
