@@ -20,6 +20,19 @@ Rusty Quest owns platform profile contracts and write/readback transports. It
 does not own Makepad widget implementation, Matter simulation truth, Optics
 appearance truth, Manifold command authority, or Lattice relation contracts.
 
+## Runtime Surface Default
+
+For new Quest runtime work, prefer native OpenXR/Vulkan and Meta Spatial SDK
+apps in this repo. Keep reusable hand, space, mesh, visual, command, and report
+contracts in Lattice, Matter, Optics, Manifold, GUI, and Hostess before adding
+Quest adapters.
+
+Do not add new Makepad compatibility shims, profile surfaces, or Quest-Makepad
+parity work here unless the user explicitly asks for Makepad migration,
+regression repair, or historical evidence replay. When old Makepad evidence is
+useful, port the accepted contract, marker, fixture, or scorecard shape into a
+native Quest path.
+
 ## Read Order
 
 1. `README.md`
