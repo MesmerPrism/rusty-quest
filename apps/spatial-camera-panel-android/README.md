@@ -334,6 +334,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   panel z-index/display-role policy, target-rect math, stereo marker fields,
   and receipt constants. It must not create Spatial scene objects, start JNI
   native routes, consume controller input, or own camera frames.
+- `app/src/main/.../SpatialPanelPlacementModule.kt` owns workflow/private-layer
+  panel placement policy: default distances and sizes, headlock property
+  parsing, placement clamping, pose/dimension/settings factories, private
+  layer `Grabbable(type = PIVOT_Y)` setup, and headlock marker fields. It must
+  not mutate Spatial scene entities, consume controller input, or call JNI.
 - `app/src/main/.../SpatialVirtualRoomModule.kt` owns the explicit opt-in
   packaged virtual room and skybox route: GLXF load, lighting, IBL/skydome
   setup, skybox resources, property parsing, markers, and cleanup. It remains

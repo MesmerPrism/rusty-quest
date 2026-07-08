@@ -151,15 +151,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var privateLayerDepthAlignment = PrivateLayerDepthAlignment()
   private var panelLauncherEntity: Entity? = null
   private var panelPlacement = PanelPlacement(visible = !startInParticleView())
-  private var privateLayerPanelPlacement =
-      PanelPlacement(
-          visible = false,
-          headlocked = true,
-          xMeters = PRIVATE_LAYER_PANEL_OFFSET_X_METERS,
-          yMeters = PRIVATE_LAYER_PANEL_OFFSET_Y_METERS,
-          zMeters = PRIVATE_LAYER_PANEL_DISTANCE_METERS,
-          scale = PRIVATE_LAYER_PANEL_SCALE,
-      )
+  private var privateLayerPanelPlacement = SpatialPanelPlacementModule.initialPrivateLayerPlacement()
   private var particleControls = SurfaceParticleControlState()
   private var questionnaireDueReopensPanel by mutableStateOf(true)
   private var particleLayerEntity: Entity? = null
@@ -4637,26 +4629,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       deltaZ: Float,
       deltaScale: Float,
   ): PanelPlacement {
-    val yRange =
-        if (panelPlacement.headlocked) {
-          PANEL_HEADLOCK_OFFSET_Y_MIN_METERS..PANEL_HEADLOCK_OFFSET_Y_MAX_METERS
-        } else {
-          PANEL_WORLD_Y_MIN_METERS..PANEL_WORLD_Y_MAX_METERS
-        }
-    val zRange =
-        if (panelPlacement.headlocked) {
-          PANEL_HEADLOCK_DISTANCE_MIN_METERS..PANEL_HEADLOCK_DISTANCE_MAX_METERS
-        } else {
-          PANEL_WORLD_Z_MIN_METERS..PANEL_WORLD_Z_MAX_METERS
-        }
     panelPlacement =
-        panelPlacement.copy(
-            xMeters =
-                (panelPlacement.xMeters + deltaX)
-                    .coerceIn(PANEL_HEADLOCK_OFFSET_X_MIN_METERS, PANEL_HEADLOCK_OFFSET_X_MAX_METERS),
-            yMeters = (panelPlacement.yMeters + deltaY).coerceIn(yRange.start, yRange.endInclusive),
-            zMeters = (panelPlacement.zMeters + deltaZ).coerceIn(zRange.start, zRange.endInclusive),
-            scale = (panelPlacement.scale + deltaScale).coerceIn(0.65f, 1.6f),
+        SpatialPanelPlacementModule.adjustWorkflowPlacement(
+            panelPlacement,
+            deltaX,
+            deltaY,
+            deltaZ,
+            deltaScale,
         )
     applyPanelPlacement()
     persistPanelHeadlockTuning("compose-placement-buttons")
@@ -4670,14 +4649,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun resizeWorkflowPanel(deltaWidth: Float, deltaHeight: Float): PanelPlacement {
     panelPlacement =
-        panelPlacement.copy(
-            widthMeters =
-                (panelPlacement.widthMeters + deltaWidth)
-                    .coerceIn(PANEL_WIDTH_MIN_METERS, PANEL_WIDTH_MAX_METERS),
-            heightMeters =
-                (panelPlacement.heightMeters + deltaHeight)
-                    .coerceIn(PANEL_HEIGHT_MIN_METERS, PANEL_HEIGHT_MAX_METERS),
-    )
+        SpatialPanelPlacementModule.resizeWorkflowPanel(panelPlacement, deltaWidth, deltaHeight)
     applyPanelPlacement()
     persistPanelHeadlockTuning("compose-panel-resize")
     marker(
@@ -4691,19 +4663,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun resetWorkflowPanelPlacement(): PanelPlacement {
     privateLayerPanelVisible = false
     privateLayerPanelPlacement = privateLayerPanelPlacement.copy(visible = false)
-    panelPlacement =
-        panelPlacement.copy(
-            visible = true,
-            xMeters = PANEL_HEADLOCK_OFFSET_X_METERS,
-            yMeters =
-                if (panelPlacement.headlocked) PANEL_HEADLOCK_OFFSET_Y_METERS else PANEL_FOCUS_Y_METERS,
-            zMeters =
-                if (panelPlacement.headlocked) PANEL_FRONT_OF_CAMERA_VIDEO_DISTANCE_METERS
-                else PANEL_FOCUS_Z_METERS,
-            scale = if (panelPlacement.headlocked) PANEL_FRONT_OF_CAMERA_VIDEO_SCALE else 1.0f,
-            widthMeters = PANEL_WIDTH_METERS,
-            heightMeters = PANEL_HEIGHT_METERS,
-        )
+    panelPlacement = SpatialPanelPlacementModule.resetWorkflowPanelPlacement(panelPlacement)
     applyPanelPlacement()
     persistPanelHeadlockTuning("compose-panel-reset")
     recordPanelState("compose-panel-reset")
@@ -4716,21 +4676,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun setPanelHeadlocked(enabled: Boolean, source: String): PanelPlacement {
-    panelPlacement =
-        if (enabled) {
-          panelPlacement.copy(
-              headlocked = true,
-              xMeters = panelPlacement.xMeters.coerceIn(PANEL_HEADLOCK_OFFSET_X_MIN_METERS, PANEL_HEADLOCK_OFFSET_X_MAX_METERS),
-              yMeters = panelPlacement.yMeters.coerceIn(PANEL_HEADLOCK_OFFSET_Y_MIN_METERS, PANEL_HEADLOCK_OFFSET_Y_MAX_METERS),
-              zMeters = panelPlacement.zMeters.coerceIn(PANEL_HEADLOCK_DISTANCE_MIN_METERS, PANEL_HEADLOCK_DISTANCE_MAX_METERS),
-          )
-        } else {
-          panelPlacement.copy(
-              headlocked = false,
-              yMeters = PANEL_FOCUS_Y_METERS,
-              zMeters = PANEL_FOCUS_Z_METERS,
-          )
-        }
+    panelPlacement = SpatialPanelPlacementModule.setWorkflowHeadlocked(panelPlacement, enabled)
     applyPanelPlacement()
     persistPanelHeadlockTuning(source)
     marker(
@@ -5049,21 +4995,28 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun particleLayerVisibleForPanelMode(): Boolean =
-      !panelPlacement.visible &&
-          !privateLayerPanelVisible &&
-          !cameraStackSuppressesParticles &&
-          nativeSurfaceParticleLayerEnabled()
+      SpatialPanelPlacementModule.particleLayerVisibleForPanelMode(
+          workflowPanelVisible = panelPlacement.visible,
+          privateLayerPanelVisible = privateLayerPanelVisible,
+          cameraStackSuppressesParticles = cameraStackSuppressesParticles,
+          nativeSurfaceParticleLayerEnabled = nativeSurfaceParticleLayerEnabled(),
+      )
 
   private fun launcherPanelVisibleForPanelMode(): Boolean =
-      panelShellVisible() &&
-          panelLauncherVisible() &&
-          !panelPlacement.visible &&
-          !privateLayerPanelVisible &&
-          !cameraStackSuppressesParticles &&
-          !spatialVirtualRoomEnabled()
+      SpatialPanelPlacementModule.launcherPanelVisibleForPanelMode(
+          panelShellVisible = panelShellVisible(),
+          panelLauncherVisible = panelLauncherVisible(),
+          workflowPanelVisible = panelPlacement.visible,
+          privateLayerPanelVisible = privateLayerPanelVisible,
+          cameraStackSuppressesParticles = cameraStackSuppressesParticles,
+          spatialVirtualRoomEnabled = spatialVirtualRoomEnabled(),
+      )
 
   private fun legacyLauncherPanelSuppressedForCameraStack(): Boolean =
-      cameraStackSuppressesParticles || spatialVirtualRoomEnabled()
+      SpatialPanelPlacementModule.legacyLauncherPanelSuppressedForCameraStack(
+          cameraStackSuppressesParticles,
+          spatialVirtualRoomEnabled(),
+      )
 
   private fun panelPose(): Pose =
       if (panelPlacement.headlocked) {
@@ -5080,37 +5033,19 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       }
 
   private fun worldPanelPose(): Pose =
-      Pose(
-          Vector3(panelPlacement.xMeters, panelPlacement.yMeters, panelPlacement.zMeters),
-          Quaternion(6.12323426e-17f, 6.12323426e-17f, 1.0f, -3.74939976e-33f),
-      )
+      SpatialPanelPlacementModule.workflowWorldPose(panelPlacement)
 
   private fun panelLauncherPose(): Pose =
-      Pose(
-          Vector3(PANEL_LAUNCHER_X_METERS, PANEL_LAUNCHER_Y_METERS, PANEL_LAUNCHER_Z_METERS),
-          Quaternion(6.12323426e-17f, 6.12323426e-17f, 1.0f, -3.74939976e-33f),
-      )
+      SpatialPanelPlacementModule.panelLauncherPose()
 
   private fun privateLayerPanelWorldPose(): Pose =
-      Pose(
-          Vector3(
-              privateLayerPanelPlacement.xMeters,
-              privateLayerPanelPlacement.yMeters,
-              privateLayerPanelPlacement.zMeters,
-          ),
-          Quaternion(6.12323426e-17f, 6.12323426e-17f, 1.0f, -3.74939976e-33f),
-      )
+      SpatialPanelPlacementModule.privateLayerPanelWorldPose(privateLayerPanelPlacement)
 
   private fun activeHeadlockedPanelPlacement(): PanelPlacement =
       if (privateLayerPanelVisible) privateLayerPanelPlacement else panelPlacement
 
   private fun privateLayerPanelGrabbable(enabled: Boolean): Grabbable =
-      Grabbable(
-          enabled = enabled,
-          type = GrabbableType.PIVOT_Y,
-          minHeight = PRIVATE_LAYER_PANEL_GRAB_MIN_HEIGHT_METERS,
-          maxHeight = PRIVATE_LAYER_PANEL_GRAB_MAX_HEIGHT_METERS,
-      )
+      SpatialPanelPlacementModule.privateLayerPanelGrabbable(enabled)
 
   @OptIn(SpatialSDKExperimentalAPI::class)
   private fun syncPrivateLayerPanelPlacementFromEntity(reason: String): Boolean {
@@ -5175,31 +5110,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun coercePrivateLayerPanelPlacement(placement: PanelPlacement): PanelPlacement {
-    val distance =
-        placement.zMeters.coerceIn(PRIVATE_LAYER_PANEL_DISTANCE_MIN_METERS, PANEL_HEADLOCK_DISTANCE_MAX_METERS)
-    val maxLateral =
-        (distance * PRIVATE_LAYER_PANEL_MAX_LATERAL_DISTANCE_FRACTION).coerceAtLeast(0.05f)
-    val lateralLength =
-        sqrt((placement.xMeters * placement.xMeters + placement.yMeters * placement.yMeters).toDouble())
-            .toFloat()
-    val lateralScale =
-        if (lateralLength > maxLateral && lateralLength > 0.000001f) {
-          maxLateral / lateralLength
-        } else {
-          1.0f
-        }
-    return placement.copy(
-        xMeters =
-            (placement.xMeters * lateralScale)
-                .coerceIn(PANEL_HEADLOCK_OFFSET_X_MIN_METERS, PANEL_HEADLOCK_OFFSET_X_MAX_METERS),
-        yMeters =
-            (placement.yMeters * lateralScale)
-                .coerceIn(PANEL_HEADLOCK_OFFSET_Y_MIN_METERS, PANEL_HEADLOCK_OFFSET_Y_MAX_METERS),
-        zMeters = distance,
-        scale = placement.scale.coerceIn(PRIVATE_LAYER_PANEL_SCALE_MIN, PANEL_HEADLOCK_SCALE_MAX),
-        widthMeters = placement.widthMeters.coerceIn(PANEL_WIDTH_MIN_METERS, PANEL_WIDTH_MAX_METERS),
-        heightMeters = placement.heightMeters.coerceIn(PANEL_HEIGHT_MIN_METERS, PANEL_HEIGHT_MAX_METERS),
-    )
+    return SpatialPanelPlacementModule.coercePrivateLayerPanelPlacement(placement)
   }
 
   @OptIn(SpatialSDKExperimentalAPI::class)
@@ -5311,67 +5222,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun pollPanelHeadlockHotload(reason: String) {
-    val requestedHeadlocked =
-        activityReadOptionalBooleanSystemProperty(PANEL_HEADLOCK_ENABLED_PROPERTY)
-            ?: panelPlacement.headlocked
-    val updated =
-        panelPlacement.copy(
-            headlocked = requestedHeadlocked,
-            xMeters =
-                (activityReadOptionalFloatSystemProperty(
-                        PANEL_HEADLOCK_OFFSET_X_PROPERTY,
-                        PANEL_HEADLOCK_OFFSET_X_MIN_METERS,
-                        PANEL_HEADLOCK_OFFSET_X_MAX_METERS,
-                    )
-                    ?: panelPlacement.xMeters)
-                    .coerceIn(PANEL_HEADLOCK_OFFSET_X_MIN_METERS, PANEL_HEADLOCK_OFFSET_X_MAX_METERS),
-            yMeters =
-                (activityReadOptionalFloatSystemProperty(
-                        PANEL_HEADLOCK_OFFSET_Y_PROPERTY,
-                        PANEL_HEADLOCK_OFFSET_Y_MIN_METERS,
-                        PANEL_HEADLOCK_OFFSET_Y_MAX_METERS,
-                    )
-                    ?: panelPlacement.yMeters)
-                    .coerceIn(
-                        if (requestedHeadlocked) PANEL_HEADLOCK_OFFSET_Y_MIN_METERS else PANEL_WORLD_Y_MIN_METERS,
-                        if (requestedHeadlocked) PANEL_HEADLOCK_OFFSET_Y_MAX_METERS else PANEL_WORLD_Y_MAX_METERS,
-                    ),
-            zMeters =
-                (activityReadOptionalFloatSystemProperty(
-                        PANEL_HEADLOCK_DISTANCE_PROPERTY,
-                        PANEL_HEADLOCK_DISTANCE_MIN_METERS,
-                        PANEL_HEADLOCK_DISTANCE_MAX_METERS,
-                    )
-                    ?: panelPlacement.zMeters)
-                    .coerceIn(
-                        if (requestedHeadlocked) PANEL_HEADLOCK_DISTANCE_MIN_METERS else PANEL_WORLD_Z_MIN_METERS,
-                        if (requestedHeadlocked) PANEL_HEADLOCK_DISTANCE_MAX_METERS else PANEL_WORLD_Z_MAX_METERS,
-                    ),
-            widthMeters =
-                (activityReadOptionalFloatSystemProperty(
-                        PANEL_HEADLOCK_WIDTH_PROPERTY,
-                        PANEL_WIDTH_MIN_METERS,
-                        PANEL_WIDTH_MAX_METERS,
-                    )
-                    ?: panelPlacement.widthMeters)
-                    .coerceIn(PANEL_WIDTH_MIN_METERS, PANEL_WIDTH_MAX_METERS),
-            heightMeters =
-                (activityReadOptionalFloatSystemProperty(
-                        PANEL_HEADLOCK_HEIGHT_PROPERTY,
-                        PANEL_HEIGHT_MIN_METERS,
-                        PANEL_HEIGHT_MAX_METERS,
-                    )
-                    ?: panelPlacement.heightMeters)
-                    .coerceIn(PANEL_HEIGHT_MIN_METERS, PANEL_HEIGHT_MAX_METERS),
-            scale =
-                (activityReadOptionalFloatSystemProperty(
-                        PANEL_HEADLOCK_SCALE_PROPERTY,
-                        PANEL_HEADLOCK_SCALE_MIN,
-                        PANEL_HEADLOCK_SCALE_MAX,
-                    )
-                    ?: panelPlacement.scale)
-                    .coerceIn(PANEL_HEADLOCK_SCALE_MIN, PANEL_HEADLOCK_SCALE_MAX),
-        )
+    val updated = SpatialPanelPlacementModule.hotloadedWorkflowPlacement(panelPlacement)
     if (!panelPlacement.headlockEquivalent(updated)) {
       panelPlacement = updated
       applyPanelPlacement()
@@ -6603,60 +6454,21 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           ?: SPATIAL_SHOULD_CONSUME_LEFT_RIGHT_INPUT_DEFAULT
 
   private fun panelHeadlockMarkerFields(): String {
-    val placement = activeHeadlockedPanelPlacement()
-    val activePanelToken =
-        if (privateLayerPanelVisible) "private-layer-panel" else "workflow-panel"
-    val distanceMode =
-        if (privateLayerPanelVisible) {
-          "left-stick-stored-placement"
-        } else {
-          "viewer-forward-distance"
-        }
-    return "headlockedPanelEnabled=${placement.headlocked} " +
-          "headlockedPanelDefaultEnabled=true " +
-          "activeHeadlockedPanel=${activityMarkerToken(activePanelToken)} " +
-          "headlockedPanelOffsetXMeters=${activityMarkerFloat(placement.xMeters)} " +
-          "headlockedPanelOffsetYMeters=${activityMarkerFloat(placement.yMeters)} " +
-          "headlockedPanelDistanceMeters=${activityMarkerFloat(placement.zMeters)} " +
-          "headlockedPanelDistanceMode=${activityMarkerToken(distanceMode)} " +
-          "privateLayerPanelWorldSpace=true " +
-          "privateLayerPanelPoseSource=initial-headset-facing-world-space-then-stored-placement-unless-grabbed " +
-          "privateLayerPanelLayerConfig=enabled " +
-          "privateLayerPanelLayerZIndex=$PRIVATE_LAYER_PANEL_LAYER_Z_INDEX " +
-          "privateLayerPanelGrabbable=true " +
-          "privateLayerPanelGrabType=PIVOT_Y " +
-          "privateLayerPanelTransformAuthority=app-stored-placement-unless-grabbed " +
-          "privateLayerPanelForcedDistanceDisabled=false " +
-          "composeDragPanelMovement=false " +
-          "panelRenderOrder=spatial-sdk-quad-layer-z-index " +
-          "panelOpensInFrontOfCameraVideo=${placement.zMeters < CAMERA_HWB_PROJECTION_TARGET_DISTANCE_METERS} " +
-          "panelDistanceLessThanCameraProjection=${placement.zMeters < currentCameraHwbProjectionTargetDistanceMeters()} " +
-          "projectionPanelInputClearanceActive=${cameraHwbProjectionPrivatePanelInputClearanceActive()} " +
-          "projectionPanelInputBehindPrivateLayerPanel=${cameraHwbProjectionInputCarrierBehindPrivatePanel()} " +
-          "projectionPanelInputClearanceMeters=${activityMarkerFloat(CAMERA_HWB_PROJECTION_PRIVATE_PANEL_INPUT_CLEARANCE_METERS)} " +
-          "cameraVideoProjectionLayerZIndex=${cameraHwbProjectionZIndexForPlacement(cameraHwbProjectionPlacementMode)} " +
-          "privateLayerPanelAboveCameraProjectionLayer=quad-layer-z-index " +
-          "privateLayerPanelRenderMode=spatial-sdk-layer " +
-          "panelRenderOrderProof=ui-panel-quad-layer-high-z-over-projection-test " +
-          "rightStickSideFlickPanelMoveDisabled=true " +
-          "privateLayerPanelDistancePersistsAcrossToggle=true " +
-          "panelScale=${activityMarkerFloat(placement.scale)} " +
-          "panelWidth=${activityMarkerFloat(placement.widthMeters)} " +
-          "panelHeight=${activityMarkerFloat(placement.heightMeters)}"
+    return SpatialPanelPlacementModule.headlockMarkerFields(
+        SpatialPanelHeadlockMarkerInput(
+            activePlacement = activeHeadlockedPanelPlacement(),
+            privateLayerPanelVisible = privateLayerPanelVisible,
+            cameraTargetDistanceMeters = currentCameraHwbProjectionTargetDistanceMeters(),
+            projectionInputClearanceActive = cameraHwbProjectionPrivatePanelInputClearanceActive(),
+            projectionInputCarrierBehindPrivatePanel = cameraHwbProjectionInputCarrierBehindPrivatePanel(),
+            cameraProjectionLayerZIndex =
+                cameraHwbProjectionZIndexForPlacement(cameraHwbProjectionPlacementMode),
+        )
+    )
   }
 
   private fun panelHeadlockPropertyMarkerFields(): String =
-      "headlockedPanelEnabledProperty=$PANEL_HEADLOCK_ENABLED_PROPERTY " +
-          "headlockedPanelOffsetXProperty=$PANEL_HEADLOCK_OFFSET_X_PROPERTY " +
-          "headlockedPanelOffsetYProperty=$PANEL_HEADLOCK_OFFSET_Y_PROPERTY " +
-          "headlockedPanelDistanceProperty=$PANEL_HEADLOCK_DISTANCE_PROPERTY " +
-          "headlockedPanelWidthProperty=$PANEL_HEADLOCK_WIDTH_PROPERTY " +
-          "headlockedPanelHeightProperty=$PANEL_HEADLOCK_HEIGHT_PROPERTY " +
-          "headlockedPanelScaleProperty=$PANEL_HEADLOCK_SCALE_PROPERTY " +
-          "headlockedPanelJoystickEnabledProperty=$PANEL_HEADLOCK_JOYSTICK_ENABLED_PROPERTY " +
-          "headlockedPanelJoystickTranslateRateProperty=$PANEL_HEADLOCK_JOYSTICK_TRANSLATE_RATE_PROPERTY " +
-          "headlockedPanelJoystickDistanceRateProperty=$PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_PROPERTY " +
-          "headlockedPanelJoystickScaleRateProperty=$PANEL_HEADLOCK_JOYSTICK_SCALE_RATE_PROPERTY"
+      SpatialPanelPlacementModule.headlockPropertyMarkerFields()
 
   private fun applyCameraHwbProjectionScaleJoystickInput(event: MotionEvent): Boolean {
     if (event.action != MotionEvent.ACTION_MOVE || !isJoystickEvent(event)) {
@@ -8365,37 +8177,24 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           input = PanelInputOptions(0),
       )
 
-  private fun privateLayerPanelSettings(): PanelSettings {
-    return UIPanelSettings(
-        shape = QuadShapeOptions(width = PANEL_WIDTH_METERS, height = PANEL_HEIGHT_METERS),
-        style = PanelStyleOptions(themeResourceId = R.style.PanelAppThemeOpaqueProbe),
-        display = DpPerMeterDisplayOptions(dpPerMeter = PANEL_DP_PER_METER),
-        rendering = UIPanelRenderOptions(PanelRenderMode.Layer()),
-        input =
-            PanelInputOptions(
-                ButtonBits.ButtonA or ButtonBits.ButtonTriggerL or ButtonBits.ButtonTriggerR
-            ),
-    )
-  }
+  private fun privateLayerPanelSettings(): PanelSettings =
+      SpatialPanelPlacementModule.privateLayerPanelSettings()
 
   private fun panelDimensions(): PanelDimensions =
-      PanelDimensions(Vector2(panelPlacement.widthMeters, panelPlacement.heightMeters))
+      SpatialPanelPlacementModule.panelDimensions(panelPlacement)
 
   private fun privateLayerPanelDimensions(): PanelDimensions =
-      PanelDimensions(
-          Vector2(privateLayerPanelPlacement.widthMeters, privateLayerPanelPlacement.heightMeters)
-      )
+      SpatialPanelPlacementModule.privateLayerPanelDimensions(privateLayerPanelPlacement)
 
   private fun panelLauncherDimensions(): PanelDimensions =
-      PanelDimensions(Vector2(PANEL_LAUNCHER_WIDTH_METERS, PANEL_LAUNCHER_HEIGHT_METERS))
+      SpatialPanelPlacementModule.panelLauncherDimensions()
 
   private fun panelStateToken(): String =
-      when {
-        !panelShellVisible() -> "spatial-sdk-panel-shell-hidden"
-        privateLayerPanelVisible -> "spatial-sdk-private-layer-panel-open"
-        panelPlacement.visible -> "spatial-sdk-workflow-panel-open"
-        else -> "spatial-sdk-particle-view-panel-closed"
-      }
+      SpatialPanelPlacementModule.panelStateToken(
+          panelShellVisible = panelShellVisible(),
+          privateLayerPanelVisible = privateLayerPanelVisible,
+          workflowPanelVisible = panelPlacement.visible,
+      )
 
   private fun recordPanelState(source: String) {
     runCatching { store.recordPanelForegroundState(panelStateToken(), source) }
@@ -9082,70 +8881,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val EXTRA_POLAR_SCAN_SECONDS = "polar_scan_seconds"
     private const val EXTRA_POLAR_CONNECT_DELAY_SECONDS = "polar_connect_delay_seconds"
     private const val EXTRA_POLAR_ECG_SECONDS = "polar_ecg_seconds"
-    private const val PANEL_WIDTH_METERS = 1.20f
-    private const val PANEL_HEIGHT_METERS = 1.254f
-    private const val PANEL_DP_PER_METER = 720f
-    private const val PANEL_FOCUS_Y_METERS = 1.1f
-    private const val PANEL_FOCUS_Z_METERS = 0.475f
-    private const val PANEL_WORLD_Y_MIN_METERS = 0.8f
-    private const val PANEL_WORLD_Y_MAX_METERS = 2.2f
-    private const val PANEL_WORLD_Z_MIN_METERS = -3.2f
-    private const val PANEL_WORLD_Z_MAX_METERS = 0.8f
-    private const val PANEL_HEADLOCK_TUNING_FILE = "spatial_camera_panel_headlock_tuning.json"
-    private const val PANEL_HEADLOCK_OFFSET_X_METERS = 0.0f
-    private const val PANEL_HEADLOCK_OFFSET_Y_METERS = 0.0f
-    private const val PANEL_HEADLOCK_DISTANCE_METERS = 1.40f
-    private const val PANEL_HEADLOCK_SCALE = 0.65f
-    private const val PANEL_FRONT_OF_CAMERA_VIDEO_DISTANCE_METERS = 0.72f
-    private const val PANEL_FRONT_OF_CAMERA_VIDEO_SCALE = 0.65f
-    private const val PRIVATE_LAYER_PANEL_OFFSET_X_METERS = 0.0f
-    private const val PRIVATE_LAYER_PANEL_OFFSET_Y_METERS = 0.0f
-    private const val PRIVATE_LAYER_PANEL_DISTANCE_METERS = 1.0f
-    private const val PRIVATE_LAYER_PANEL_SCALE = 0.65f
-    private const val PRIVATE_LAYER_PANEL_DISTANCE_MIN_METERS = 0.18f
-    private const val PRIVATE_LAYER_PANEL_SCALE_MIN = 0.15f
-    private const val PRIVATE_LAYER_PANEL_MAX_LATERAL_DISTANCE_FRACTION = 0.80f
-    private const val PRIVATE_LAYER_PANEL_GRAB_MIN_HEIGHT_METERS = 0.55f
-    private const val PRIVATE_LAYER_PANEL_GRAB_MAX_HEIGHT_METERS = 2.50f
-    private const val PRIVATE_LAYER_PANEL_LAYER_Z_INDEX = 99
-    private const val PRIVATE_LAYER_PANEL_SDK_FREE_TRANSFORM = true
-    private const val PANEL_HEADLOCK_OFFSET_X_MIN_METERS = -0.85f
-    private const val PANEL_HEADLOCK_OFFSET_X_MAX_METERS = 0.85f
-    private const val PANEL_HEADLOCK_OFFSET_Y_MIN_METERS = -0.65f
-    private const val PANEL_HEADLOCK_OFFSET_Y_MAX_METERS = 0.65f
-    private const val PANEL_HEADLOCK_DISTANCE_MIN_METERS = 0.35f
-    private const val PANEL_HEADLOCK_DISTANCE_MAX_METERS = 1.50f
-    private const val PANEL_HEADLOCK_SCALE_MIN = 0.65f
-    private const val PANEL_HEADLOCK_SCALE_MAX = 1.60f
-    private const val PANEL_HEADLOCK_ENABLED_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.panel.headlocked.enabled"
-    private const val PANEL_HEADLOCK_OFFSET_X_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.panel.headlocked.offset_x_m"
-    private const val PANEL_HEADLOCK_OFFSET_Y_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.panel.headlocked.offset_y_m"
-    private const val PANEL_HEADLOCK_DISTANCE_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.panel.headlocked.distance_meters"
-    private const val PANEL_HEADLOCK_WIDTH_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.panel.headlocked.width_meters"
-    private const val PANEL_HEADLOCK_HEIGHT_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.panel.headlocked.height_meters"
-    private const val PANEL_HEADLOCK_SCALE_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.panel.headlocked.scale"
-    private const val PANEL_HEADLOCK_JOYSTICK_ENABLED_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.panel.headlocked.joystick.enabled"
-    private const val PANEL_HEADLOCK_JOYSTICK_TRANSLATE_RATE_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.panel.headlocked.joystick.translate_rate_mps"
-    private const val PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.panel.headlocked.joystick.distance_rate_mps"
-    private const val PANEL_HEADLOCK_JOYSTICK_SCALE_RATE_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.panel.headlocked.joystick.scale_rate_per_second"
-    private const val PANEL_HEADLOCK_JOYSTICK_TRANSLATE_RATE_METERS_PER_SECOND = 0.18f
-    private const val PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_METERS_PER_SECOND = 0.16f
-    private const val PANEL_HEADLOCK_JOYSTICK_SCALE_RATE_PER_SECOND = 0.30f
-    private const val PANEL_HEADLOCK_JOYSTICK_DEADZONE = 0.14f
-    private const val PRIVATE_LAYER_PANEL_GRABBABLE_MARKER_INTERVAL_MS = 450L
-    private const val PANEL_HEADLOCK_JOYSTICK_MARKER_INTERVAL_MS = 450L
-    private const val PANEL_HEADLOCK_MARKER_INTERVAL_MS = 900L
     private const val SPATIAL_CONTROLLER_ROUTE_MARKER_INTERVAL_MS = 2500L
     private const val SPATIAL_JOYSTICK_ARBITRATION_MARKER_INTERVAL_MS = 350L
     private const val SPATIAL_VR_INPUT_SYSTEM_PROPERTY =
@@ -9164,16 +8899,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         "debug.rustyquest.spatial.panel.start_in_particle_view"
     private const val PANEL_LAUNCHER_VISIBLE_PROPERTY =
         "debug.rustyquest.spatial.panel_launcher.visible"
-    private const val PANEL_WIDTH_MIN_METERS = 1.20f
-    private const val PANEL_WIDTH_MAX_METERS = 2.60f
-    private const val PANEL_HEIGHT_MIN_METERS = 0.75f
-    private const val PANEL_HEIGHT_MAX_METERS = 1.65f
-    private const val PANEL_LAUNCHER_WIDTH_METERS = 0.78f
-    private const val PANEL_LAUNCHER_HEIGHT_METERS = 0.30f
-    private const val PANEL_LAUNCHER_DP_PER_METER = 680f
-    private const val PANEL_LAUNCHER_X_METERS = -0.62f
-    private const val PANEL_LAUNCHER_Y_METERS = 0.92f
-    private const val PANEL_LAUNCHER_Z_METERS = 0.525f
     private const val PARTICLE_LAYER_PER_EYE_WIDTH_PX = 1024
     private const val PARTICLE_LAYER_WIDTH_PX = PARTICLE_LAYER_PER_EYE_WIDTH_PX * 2
     private const val PARTICLE_LAYER_HEIGHT_PX = 1024
