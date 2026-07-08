@@ -200,10 +200,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `CameraHwbProjectionModule.kt`;
 - package private layer panel placement/input policy in
   `SpatialPanelPlacementModule.kt`;
-- package controller shortcut routing as a feature/module.
+- package controller shortcut routing policy in
+  `SpatialControllerRoutingModule.kt`.
 
-All Spatial feature modules must stay explicit opt-in. A module can be
-registered or available in source, but it should not create scene objects,
+All Spatial feature modules must stay explicit opt-in. Individual modules can
+be registered or available in source, but they should not create scene objects,
 start native routes, alter input handling, request package/permission behavior,
 or emit active capability markers unless a documented property, profile,
 app-build spec, or intent extra enables that feature for the current run.

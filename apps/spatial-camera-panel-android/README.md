@@ -339,6 +339,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   parsing, placement clamping, pose/dimension/settings factories, private
   layer `Grabbable(type = PIVOT_Y)` setup, and headlock marker fields. It must
   not mutate Spatial scene entities, consume controller input, or call JNI.
+- `app/src/main/.../SpatialControllerRoutingModule.kt` owns controller input
+  policy helpers: Spatial VR input-system property parsing, controller route
+  timing constants, trigger thresholds, joystick axis normalization,
+  left-stick panel-distance mapping, and right-primary panel toggle decisions.
+  It must not query Spatial ECS entities, mutate panel state, pin Android game
+  controllers, emit markers, or call JNI.
 - `app/src/main/.../SpatialVirtualRoomModule.kt` owns the explicit opt-in
   packaged virtual room and skybox route: GLXF load, lighting, IBL/skydome
   setup, skybox resources, property parsing, markers, and cleanup. It remains
@@ -412,11 +418,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   owners with their own component/system registration, and keep this Activity
   as the registration/orchestration facade instead of adding every room,
   carrier, panel-placement, controller, and marker behavior directly here.
-- Feature modules must be explicit opt-in. A module may be registered or
-  present in source, but it must not create scene objects, start native routes,
-  change input behavior, alter package/permission expectations, or emit active
-  markers unless a documented property, profile, app spec, or intent extra
-  enables it for that run.
+- Feature modules must be explicit opt-in. Individual modules may be registered
+  or present in source, but they must not create scene objects, start native
+  routes, change input behavior, alter package/permission expectations, or emit
+  active markers unless a documented property, profile, app spec, or intent
+  extra enables that feature for the current run.
 - `native-receipt/src/camera_hwb_probe.rs` is the Android JNI facade and
   raw camera probe orchestration entry point.
 - `native-receipt/src/camera_hwb_stream.rs` owns the Android Camera2 /

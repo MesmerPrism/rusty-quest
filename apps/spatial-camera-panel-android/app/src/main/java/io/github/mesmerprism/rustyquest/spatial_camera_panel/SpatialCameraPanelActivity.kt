@@ -9,7 +9,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
-import android.view.InputDevice
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -6436,22 +6435,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun currentSpatialVrInputSystemToken(): String =
-      when (activityReadSystemProperty(SPATIAL_VR_INPUT_SYSTEM_PROPERTY).trim().lowercase(Locale.US)) {
-        "simple", "simple-controller", "simple_controller" -> "simple_controller"
-        "interaction", "interaction-sdk", "interaction_sdk", "isdk" -> "interaction_sdk"
-        "default", "" -> SPATIAL_VR_INPUT_SYSTEM_DEFAULT_TOKEN
-        else -> SPATIAL_VR_INPUT_SYSTEM_DEFAULT_TOKEN
-      }
+      SpatialControllerRoutingModule.spatialVrInputSystemToken(
+          activityReadSystemProperty(SPATIAL_VR_INPUT_SYSTEM_PROPERTY)
+      )
 
   private fun currentSpatialVrInputSystemType(): VrInputSystemType =
-      when (currentSpatialVrInputSystemToken()) {
-        "simple_controller" -> VrInputSystemType.SIMPLE_CONTROLLER
-        else -> VrInputSystemType.INTERACTION_SDK
-      }
+      SpatialControllerRoutingModule.spatialVrInputSystemType(currentSpatialVrInputSystemToken())
 
   private fun currentSpatialShouldConsumeLeftRightInput(): Boolean =
-      activityReadOptionalBooleanSystemProperty(SPATIAL_SHOULD_CONSUME_LEFT_RIGHT_INPUT_PROPERTY)
-          ?: SPATIAL_SHOULD_CONSUME_LEFT_RIGHT_INPUT_DEFAULT
+      SpatialControllerRoutingModule.shouldConsumeLeftRightInput(
+          activityReadOptionalBooleanSystemProperty(SPATIAL_SHOULD_CONSUME_LEFT_RIGHT_INPUT_PROPERTY)
+      )
 
   private fun panelHeadlockMarkerFields(): String {
     return SpatialPanelPlacementModule.headlockMarkerFields(
@@ -7954,51 +7948,46 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun openWorkflowPanelFromController(inputSource: String, detail: String): Boolean {
-    val rightPrimary =
-        inputSource == "spatial-sdk-avatar-body-controller" ||
-            inputSource == "spatial-sdk-controller-component" ||
-            inputSource == "spatial-sdk-controller-component-fallback" ||
-            inputSource == "android-key-event" ||
-            inputSource == "android-generic-motion-button"
-    if (!rightPrimary) return false
+    if (!SpatialControllerRoutingModule.isRightPrimaryPanelToggleSource(inputSource)) return false
     val opensPrivateLayerPanel =
         cameraStackSuppressesParticles || cameraHwbProjectionProbeStarted || spatialVideoProjectionStarted
     val panelToggleAction =
-        when {
-          privateLayerPanelVisible -> {
-            setPrivateLayerPanelVisible(
-                false,
-                focus = false,
-                source = "right-controller-primary-button-toggle-close",
-            )
-            "close-private-layer-panel"
-          }
-          panelPlacement.visible -> {
-            setWorkflowPanelVisible(
-                false,
-                focus = false,
-                source = "right-controller-primary-button-toggle-close",
-            )
-            "close-workflow-panel"
-          }
-          opensPrivateLayerPanel -> {
-            setPrivateLayerPanelVisible(
-                true,
-                focus = true,
-                source = "right-controller-primary-button",
-            )
-            "open-private-layer-panel"
-          }
-          else -> {
-            setWorkflowPanelVisible(true, focus = true, source = "right-controller-primary-button")
-            "open-workflow-panel"
-          }
-        }
+        SpatialControllerRoutingModule.panelToggleAction(
+            privateLayerPanelVisible = privateLayerPanelVisible,
+            workflowPanelVisible = panelPlacement.visible,
+            opensPrivateLayerPanel = opensPrivateLayerPanel,
+        )
+    when (panelToggleAction) {
+      SpatialControllerPanelToggleAction.ClosePrivateLayerPanel -> {
+        setPrivateLayerPanelVisible(
+            false,
+            focus = false,
+            source = "right-controller-primary-button-toggle-close",
+        )
+      }
+      SpatialControllerPanelToggleAction.CloseWorkflowPanel -> {
+        setWorkflowPanelVisible(
+            false,
+            focus = false,
+            source = "right-controller-primary-button-toggle-close",
+        )
+      }
+      SpatialControllerPanelToggleAction.OpenPrivateLayerPanel -> {
+        setPrivateLayerPanelVisible(
+            true,
+            focus = true,
+            source = "right-controller-primary-button",
+        )
+      }
+      SpatialControllerPanelToggleAction.OpenWorkflowPanel -> {
+        setWorkflowPanelVisible(true, focus = true, source = "right-controller-primary-button")
+      }
+    }
     marker(
         "channel=spatial-panel status=controller-primary-toggled-panel " +
             "controllerInput=right-primary-button inputSource=${activityMarkerToken(inputSource)} " +
             "${detail.trim()} " +
-            "panelToggleAction=${activityMarkerToken(panelToggleAction)} " +
+            "panelToggleAction=${activityMarkerToken(panelToggleAction.markerToken)} " +
             "panelMode=${panelStateToken()} workflowPanelVisible=${panelPlacement.visible} " +
             "privateLayerPanelVisible=$privateLayerPanelVisible " +
             "opensPrivateLayerPanel=$opensPrivateLayerPanel " +
@@ -8009,40 +7998,35 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun isJoystickEvent(event: MotionEvent): Boolean =
-      event.isFromSource(InputDevice.SOURCE_JOYSTICK) || event.isFromSource(InputDevice.SOURCE_GAMEPAD)
+      SpatialControllerRoutingModule.isJoystickEvent(event)
 
   private fun currentPanelHeadlockJoystickEnabled(): Boolean =
-      activityReadOptionalBooleanSystemProperty(PANEL_HEADLOCK_JOYSTICK_ENABLED_PROPERTY) ?: true
+      SpatialControllerRoutingModule.panelHeadlockJoystickEnabled(
+          activityReadOptionalBooleanSystemProperty(PANEL_HEADLOCK_JOYSTICK_ENABLED_PROPERTY)
+      )
 
   private fun currentLeftStickPanelDistanceEnabled(): Boolean =
-      currentPanelHeadlockJoystickEnabled() &&
-          when {
-            privateLayerPanelVisible ->
-                if (PRIVATE_LAYER_PANEL_SDK_FREE_TRANSFORM) !privateLayerPanelIsGrabbed()
-                else privateLayerPanelPlacement.headlocked
-            panelPlacement.visible -> panelPlacement.headlocked
-            else -> false
-          }
+      SpatialControllerRoutingModule.leftStickPanelDistanceEnabled(
+          joystickEnabled = currentPanelHeadlockJoystickEnabled(),
+          privateLayerPanelVisible = privateLayerPanelVisible,
+          privateLayerFreeTransform = PRIVATE_LAYER_PANEL_SDK_FREE_TRANSFORM,
+          privateLayerGrabbed = privateLayerPanelIsGrabbed(),
+          privateLayerHeadlocked = privateLayerPanelPlacement.headlocked,
+          workflowPanelVisible = panelPlacement.visible,
+          workflowPanelHeadlocked = panelPlacement.headlocked,
+      )
 
   private fun currentLeftStickPanelDistanceMapping(): String =
-      if (privateLayerPanelVisible && PRIVATE_LAYER_PANEL_SDK_FREE_TRANSFORM) {
-        "left-stick-y-private-panel-free-transform-distance"
-      } else {
-        "left-stick-y-panel-distance"
-      }
+      SpatialControllerRoutingModule.leftStickPanelDistanceMapping(
+          privateLayerPanelVisible = privateLayerPanelVisible,
+          privateLayerFreeTransform = PRIVATE_LAYER_PANEL_SDK_FREE_TRANSFORM,
+      )
 
   private fun privateLayerPanelIsGrabbed(): Boolean =
       privateLayerPanelEntity?.tryGetComponent<Grabbable>()?.isGrabbed ?: false
 
   private fun joystickAxis(event: MotionEvent, primaryAxis: Int, fallbackAxis: Int? = null): Float {
-    val primary = event.getAxisValue(primaryAxis)
-    val value =
-        if (abs(primary) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE || fallbackAxis == null) {
-          primary
-        } else {
-          event.getAxisValue(fallbackAxis)
-        }
-    return if (abs(value) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE) value.coerceIn(-1.0f, 1.0f) else 0.0f
+    return SpatialControllerRoutingModule.joystickAxis(event, primaryAxis, fallbackAxis)
   }
 
   private fun spatialMultimodalInputEnabled(): Boolean =
@@ -8050,8 +8034,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           ?: SPATIAL_MULTIMODAL_INPUT_DEFAULT_ENABLED
 
   private fun nativeSpatialControllerActionsEnabled(): Boolean =
-      activityReadOptionalBooleanSystemProperty(NATIVE_SPATIAL_CONTROLLER_ACTIONS_ENABLED_PROPERTY)
-          ?: NATIVE_SPATIAL_CONTROLLER_ACTIONS_DEFAULT_ENABLED
+      SpatialControllerRoutingModule.nativeSpatialControllerActionsEnabled(
+          activityReadOptionalBooleanSystemProperty(NATIVE_SPATIAL_CONTROLLER_ACTIONS_ENABLED_PROPERTY)
+      )
 
   private fun nativeSurfaceParticleLayerEnabled(): Boolean =
       (activityReadOptionalBooleanSystemProperty(NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY) ?: true) &&
@@ -8881,14 +8866,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val EXTRA_POLAR_SCAN_SECONDS = "polar_scan_seconds"
     private const val EXTRA_POLAR_CONNECT_DELAY_SECONDS = "polar_connect_delay_seconds"
     private const val EXTRA_POLAR_ECG_SECONDS = "polar_ecg_seconds"
-    private const val SPATIAL_CONTROLLER_ROUTE_MARKER_INTERVAL_MS = 2500L
-    private const val SPATIAL_JOYSTICK_ARBITRATION_MARKER_INTERVAL_MS = 350L
-    private const val SPATIAL_VR_INPUT_SYSTEM_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.vr_input_system"
-    private const val SPATIAL_VR_INPUT_SYSTEM_DEFAULT_TOKEN = "interaction_sdk"
-    private const val SPATIAL_SHOULD_CONSUME_LEFT_RIGHT_INPUT_PROPERTY =
-        "debug.rustyquest.spatial_camera_panel.consume_left_right_input"
-    private const val SPATIAL_SHOULD_CONSUME_LEFT_RIGHT_INPUT_DEFAULT = false
     private const val NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY =
         "debug.rustyquest.spatial.native_surface_particle_layer.enabled"
     private const val PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY =
@@ -8958,7 +8935,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val PARTICLE_LAYER_VIEW_ORIGIN_METERS = "0.0;0.0;2.0"
     private const val PARTICLE_LAYER_VIEW_ORIGIN_YAW_DEGREES = "180.0"
     private const val PARTICLE_LAYER_PROJECTION_MARKER_INTERVAL_MS = 900L
-    private const val CONTROLLER_TRIGGER_PRESS_THRESHOLD = 0.65f
     private const val SURFACE_PARTICLE_RECENTER_ACCEPTED_BIT = 1L shl 5
     private const val EXTERNAL_SWAPCHAIN_PROBE_PROPERTY =
         "debug.rustyquest.spatial.external_swapchain_probe"
@@ -9113,9 +9089,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY =
         "debug.rustyquest.spatial.multimodal_input.enabled"
     private const val SPATIAL_MULTIMODAL_INPUT_DEFAULT_ENABLED = false
-    private const val NATIVE_SPATIAL_CONTROLLER_ACTIONS_ENABLED_PROPERTY =
-        "debug.rustyquest.spatial.native_controller_actions.enabled"
-    private const val NATIVE_SPATIAL_CONTROLLER_ACTIONS_DEFAULT_ENABLED = false
     private const val XR_META_SIMULTANEOUS_HANDS_AND_CONTROLLERS_EXTENSION =
         "XR_META_simultaneous_hands_and_controllers"
     private const val XR_META_DETACHED_CONTROLLERS_EXTENSION =
