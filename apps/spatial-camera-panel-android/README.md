@@ -391,9 +391,10 @@ Interaction SDK pointer input without native multimodal extension forcing.
 - `app/src/main/.../SpatialSurfaceParticleRouteModule.kt` owns the
   surface-particle route policy: native-layer opt-in/suppression defaults,
   carrier token parsing, panel dimensions, projection-surface math, media
-  settings, route lifecycle marker fields, parameter/alias marker fields, and
-  camera-stack particle suppression marker fields. It must not create scene
-  objects, read runtime properties, call JNI, or mutate Activity state.
+  settings, route lifecycle marker fields, parameter/alias marker fields,
+  projection update marker fields, and camera-stack particle suppression marker
+  fields. It must not create scene objects, read runtime properties, call JNI,
+  or mutate Activity state.
 - `app/src/main/.../SpatialSurfaceParticlePanelCarrierModule.kt` owns native
   surface-particle manual panel carrier construction: the manual custom-mesh
   `PanelSceneObject`, create/surface/add failure markers, and readiness marker

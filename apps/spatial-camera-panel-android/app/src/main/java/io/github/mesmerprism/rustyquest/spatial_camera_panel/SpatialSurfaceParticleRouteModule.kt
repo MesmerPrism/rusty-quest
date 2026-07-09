@@ -241,6 +241,150 @@ internal object SpatialSurfaceParticleRouteModule {
         "projectionHorizontalScale=${activityMarkerFloat(PARTICLE_LAYER_HORIZONTAL_FOV_SCALE)}"
   }
 
+  fun nativeSurfaceParticleProjectionPlaneUpdateSuppressedMarker(reason: String): String =
+      "channel=native-surface-particle-layer status=projection-plane-update-suppressed " +
+          "reason=${activityMarkerToken(reason)} cameraStackSuppressesParticles=true " +
+          "particleLayerVisible=false nativePanelPoseAuthority=camera-hwb-projection-plane"
+
+  fun nativeSurfaceParticleProjectionPlaneUpdateSkippedMarker(
+      reason: String,
+      error: String,
+  ): String =
+      "channel=native-surface-particle-layer status=projection-plane-update-skipped " +
+          "reason=${activityMarkerToken(reason)} error=${activityMarkerToken(error)}"
+
+  fun nativeSurfaceParticleSurfaceGeometryHotloadUpdatedMarker(
+      targetDistanceMeters: Float,
+      projectionWidthMeters: Float,
+      projectionHeightMeters: Float,
+      surfaceOverscanScale: Float,
+      surfaceWidthMeters: Float,
+      surfaceHeightMeters: Float,
+      projectionSurfaceMarkerFields: String,
+  ): String =
+      "channel=native-surface-particle-layer status=surface-geometry-hotload-updated " +
+          "particleLayerTargetDistanceParameterSource=runtime-hotload-android-property " +
+          "particleLayerTargetDistanceProperty=$PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY " +
+          "particleLayerSurfaceOverscanParameterSource=runtime-hotload-android-property " +
+          "particleLayerSurfaceOverscanProperty=$PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY " +
+          "targetDistanceMeters=${activityMarkerFloat(targetDistanceMeters)} " +
+          "projectionPlanePoseInvariantWithOverscan=true " +
+          "projectionWidthMeters=${activityMarkerFloat(projectionWidthMeters)} " +
+          "projectionHeightMeters=${activityMarkerFloat(projectionHeightMeters)} " +
+          "surfaceOverscanScale=${activityMarkerFloat(surfaceOverscanScale)} " +
+          "surfaceWidthMeters=${activityMarkerFloat(surfaceWidthMeters)} " +
+          "surfaceHeightMeters=${activityMarkerFloat(surfaceHeightMeters)} " +
+          projectionSurfaceMarkerFields
+
+  fun nativeSurfaceParticlePanelPoseNativeUpdateFailedMarker(
+      reason: String,
+      error: String,
+  ): String =
+      "channel=native-surface-particle-layer status=panel-pose-native-update-failed " +
+          "reason=${activityMarkerToken(reason)} error=${activityMarkerToken(error)}"
+
+  fun nativeSurfaceParticleViewerEyePoseNativeUpdateFailedMarker(
+      reason: String,
+      error: String,
+  ): String =
+      "channel=native-surface-particle-layer status=viewer-eye-pose-native-update-failed " +
+          "reason=${activityMarkerToken(reason)} error=${activityMarkerToken(error)}"
+
+  fun nativeSurfaceParticleProjectionPlaneUpdatedMarker(
+      reason: String,
+      placementMarkerFields: String,
+      viewYawDegrees: Float,
+      viewerPositionM: String,
+      viewerForward: String,
+      viewerUp: String,
+      viewerRight: String,
+      panelForward: String,
+      panelRight: String,
+      panelUp: String,
+      nativePanelPoseUpdateMask: Long,
+      nativeViewerEyePoseUpdateMask: Long,
+      projectionSurfaceMarkerFields: String,
+      projectionWidthMeters: Float,
+      projectionHeightMeters: Float,
+      surfaceOverscanScale: Float,
+      surfaceWidthMeters: Float,
+      surfaceHeightMeters: Float,
+      planeCenterM: String,
+      planeQuaternion: String,
+      leftEyeOffsetM: String,
+      rightEyeOffsetM: String,
+      leftEyeWorldM: String,
+      rightEyeWorldM: String,
+      leftEyeOffsetRightMeters: Float,
+      rightEyeOffsetRightMeters: Float,
+  ): String =
+      "channel=native-surface-particle-layer status=projection-plane-updated " +
+          "reason=${activityMarkerToken(reason)} " +
+          placementMarkerFields + " " +
+          "viewerPoseSource=Scene.getViewerPose eyeOffsetsSource=Scene.getEyeOffsets " +
+          "particleLayerTargetDistanceParameterSource=runtime-hotload-android-property " +
+          "particleLayerTargetDistanceProperty=$PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY " +
+          "particleLayerViewYawParameterSource=runtime-hotload-android-property-or-remote-ui-command " +
+          "particleLayerViewYawProperty=$PARTICLE_LAYER_VIEW_YAW_PROPERTY " +
+          "particleLayerViewYawDegrees=${activityMarkerFloat(viewYawDegrees)} " +
+          "projectionPlaneFacingMode=viewer-forward-front-face-roll-stable " +
+          "projectionPlaneRollAuthority=spatial-world-up " +
+          "projectionPlaneRollFollowsHeadset=false " +
+          "viewerPositionM=$viewerPositionM " +
+          "viewerForward=$viewerForward viewerUp=$viewerUp " +
+          "viewerRight=$viewerRight panelForward=$panelForward " +
+          "panelRight=$panelRight panelUp=$panelUp " +
+          "panelPoseNativeUpdateMask=$nativePanelPoseUpdateMask " +
+          "viewerEyePoseNativeUpdateMask=$nativeViewerEyePoseUpdateMask " +
+          "drawCameraPoseSource=Scene.getViewerPose-position+forward-x-mirror-corrected-roll-stable " +
+          "panelDefinesEye=false " +
+          "worldToPanelProjection=spatial-sdk-panel-plane-basis " +
+          "carrierSurfaceProjection=spatial-sdk-panel-plane-basis " +
+          "particleLayerSurfaceOverscanProperty=$PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY " +
+          "$projectionSurfaceMarkerFields " +
+          "projectionWidthMeters=${activityMarkerFloat(projectionWidthMeters)} " +
+          "projectionHeightMeters=${activityMarkerFloat(projectionHeightMeters)} " +
+          "surfaceOverscanScale=${activityMarkerFloat(surfaceOverscanScale)} " +
+          "surfaceWidthMeters=${activityMarkerFloat(surfaceWidthMeters)} " +
+          "surfaceHeightMeters=${activityMarkerFloat(surfaceHeightMeters)} " +
+          "projectionPlanePoseInvariantWithOverscan=true particleWorldScaleInvariantWithOverscan=true " +
+          "planeCenterM=$planeCenterM planeQuaternion=$planeQuaternion " +
+          "leftEyeOffsetM=$leftEyeOffsetM " +
+          "rightEyeOffsetM=$rightEyeOffsetM " +
+          "leftEyeWorldM=$leftEyeWorldM " +
+          "rightEyeWorldM=$rightEyeWorldM " +
+          "leftEyeOffsetRightMeters=${activityMarkerFloat(leftEyeOffsetRightMeters)} " +
+          "rightEyeOffsetRightMeters=${activityMarkerFloat(rightEyeOffsetRightMeters)} " +
+          "particleLayerEyeOffsetSource=Scene.getEyeOffsets.viewerLocalX"
+
+  fun particleLayerTargetDistanceCommandAppliedMarker(
+      source: String,
+      requestedMeters: Float,
+      targetDistanceMeters: Float,
+  ): String =
+      "channel=native-surface-particle-layer status=particle-layer-target-distance-command-applied " +
+          "source=${activityMarkerToken(source)} " +
+          "particleLayerTargetDistanceCommand=true " +
+          "particleLayerTargetDistanceCommandTransport=remote-ui-command " +
+          "particleLayerTargetDistanceRequestedMeters=${activityMarkerFloat(requestedMeters)} " +
+          "particleLayerTargetDistanceMeters=${activityMarkerFloat(targetDistanceMeters)} " +
+          "particleLayerTargetDistanceProperty=$PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY " +
+          "noPhysicalControllerInput=true"
+
+  fun particleLayerViewYawCommandAppliedMarker(
+      source: String,
+      requestedDegrees: Float,
+      viewYawDegrees: Float,
+  ): String =
+      "channel=native-surface-particle-layer status=particle-layer-view-yaw-command-applied " +
+          "source=${activityMarkerToken(source)} " +
+          "particleLayerViewYawCommand=true " +
+          "particleLayerViewYawCommandTransport=remote-ui-command " +
+          "particleLayerViewYawRequestedDegrees=${activityMarkerFloat(requestedDegrees)} " +
+          "particleLayerViewYawDegrees=${activityMarkerFloat(viewYawDegrees)} " +
+          "particleLayerViewYawProperty=$PARTICLE_LAYER_VIEW_YAW_PROPERTY " +
+          "noPhysicalControllerInput=true"
+
   fun nativeSurfaceParticleStartSuppressedDisabledMarker(
       suppressionSource: String,
       privateRendererEnabled: Boolean,

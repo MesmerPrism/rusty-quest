@@ -4981,9 +4981,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       entity.setComponent(Visible(false))
       if (forceLog) {
         marker(
-            "channel=native-surface-particle-layer status=projection-plane-update-suppressed " +
-                "reason=${activityMarkerToken(reason)} cameraStackSuppressesParticles=true " +
-                "particleLayerVisible=false nativePanelPoseAuthority=camera-hwb-projection-plane"
+            SpatialSurfaceParticleRouteModule.nativeSurfaceParticleProjectionPlaneUpdateSuppressedMarker(
+                reason
+            )
         )
       }
       return
@@ -4993,8 +4993,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             .getOrElse { throwable ->
               if (forceLog) {
                 marker(
-                    "channel=native-surface-particle-layer status=projection-plane-update-skipped " +
-                        "reason=${activityMarkerToken(reason)} error=${activityMarkerToken(throwable.javaClass.simpleName)}"
+                    SpatialSurfaceParticleRouteModule.nativeSurfaceParticleProjectionPlaneUpdateSkippedMarker(
+                        reason,
+                        throwable.javaClass.simpleName,
+                    )
                 )
               }
               return
@@ -5021,7 +5023,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val surfaceHeightMeters =
         particleLayerSurfaceHeightMeters(targetDistanceMeters, surfaceOverscanScale)
     val projectionSurfaceMarkerFields =
-        particleLayerProjectionSurfaceMarkerFields(
+        SpatialSurfaceParticleRouteModule.projectionSurfaceMarkerFields(
             projectionWidthMeters,
             projectionHeightMeters,
             surfaceWidthMeters,
@@ -5038,19 +5040,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       lastParticleLayerTargetDistanceMeters = targetDistanceMeters
       lastParticleLayerSurfaceOverscanScale = surfaceOverscanScale
       marker(
-          "channel=native-surface-particle-layer status=surface-geometry-hotload-updated " +
-              "particleLayerTargetDistanceParameterSource=runtime-hotload-android-property " +
-              "particleLayerTargetDistanceProperty=$PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY " +
-              "particleLayerSurfaceOverscanParameterSource=runtime-hotload-android-property " +
-              "particleLayerSurfaceOverscanProperty=$PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY " +
-              "targetDistanceMeters=${activityMarkerFloat(targetDistanceMeters)} " +
-              "projectionPlanePoseInvariantWithOverscan=true " +
-              "projectionWidthMeters=${activityMarkerFloat(projectionWidthMeters)} " +
-              "projectionHeightMeters=${activityMarkerFloat(projectionHeightMeters)} " +
-              "surfaceOverscanScale=${activityMarkerFloat(surfaceOverscanScale)} " +
-              "surfaceWidthMeters=${activityMarkerFloat(surfaceWidthMeters)} " +
-              "surfaceHeightMeters=${activityMarkerFloat(surfaceHeightMeters)} " +
-              projectionSurfaceMarkerFields
+          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleSurfaceGeometryHotloadUpdatedMarker(
+              targetDistanceMeters,
+              projectionWidthMeters,
+              projectionHeightMeters,
+              surfaceOverscanScale,
+              surfaceWidthMeters,
+              surfaceHeightMeters,
+              projectionSurfaceMarkerFields,
+          )
       )
     }
     val now = SystemClock.elapsedRealtime()
@@ -5093,8 +5091,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               .getOrElse { throwable ->
                 if (forceLog) {
                   marker(
-                      "channel=native-surface-particle-layer status=panel-pose-native-update-failed " +
-                          "reason=${activityMarkerToken(reason)} error=${activityMarkerToken(throwable.javaClass.simpleName)}"
+                      SpatialSurfaceParticleRouteModule.nativeSurfaceParticlePanelPoseNativeUpdateFailedMarker(
+                          reason,
+                          throwable.javaClass.simpleName,
+                      )
                   )
                 }
                 0L
@@ -5129,8 +5129,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               .getOrElse { throwable ->
                 if (forceLog) {
                   marker(
-                      "channel=native-surface-particle-layer status=viewer-eye-pose-native-update-failed " +
-                          "reason=${activityMarkerToken(reason)} error=${activityMarkerToken(throwable.javaClass.simpleName)}"
+                      SpatialSurfaceParticleRouteModule.nativeSurfaceParticleViewerEyePoseNativeUpdateFailedMarker(
+                          reason,
+                          throwable.javaClass.simpleName,
+                      )
                   )
                 }
                 0L
@@ -5149,44 +5151,34 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     particleLayerProjectionMarkerCount += 1
     lastParticleLayerProjectionMarkerMs = now
     marker(
-        "channel=native-surface-particle-layer status=projection-plane-updated " +
-            "reason=${activityMarkerToken(reason)} " +
-            particleLayerPlacementMarkerFields() + " " +
-            "viewerPoseSource=Scene.getViewerPose eyeOffsetsSource=Scene.getEyeOffsets " +
-            "particleLayerTargetDistanceParameterSource=runtime-hotload-android-property " +
-            "particleLayerTargetDistanceProperty=$PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY " +
-            "particleLayerViewYawParameterSource=runtime-hotload-android-property-or-remote-ui-command " +
-            "particleLayerViewYawProperty=$PARTICLE_LAYER_VIEW_YAW_PROPERTY " +
-            "particleLayerViewYawDegrees=${activityMarkerFloat(yawDegrees)} " +
-            "projectionPlaneFacingMode=viewer-forward-front-face-roll-stable " +
-            "projectionPlaneRollAuthority=spatial-world-up " +
-            "projectionPlaneRollFollowsHeadset=false " +
-            "viewerPositionM=${activityVectorMarker(viewerPose.t)} " +
-            "viewerForward=${activityVectorMarker(rawForward)} viewerUp=${activityVectorMarker(rawUp)} " +
-            "viewerRight=${activityVectorMarker(rawRight)} panelForward=${activityVectorMarker(forward)} " +
-            "panelRight=${activityVectorMarker(right)} panelUp=${activityVectorMarker(up)} " +
-            "panelPoseNativeUpdateMask=$nativePanelPoseUpdateMask " +
-            "viewerEyePoseNativeUpdateMask=$nativeViewerEyePoseUpdateMask " +
-            "drawCameraPoseSource=Scene.getViewerPose-position+forward-x-mirror-corrected-roll-stable " +
-            "panelDefinesEye=false " +
-            "worldToPanelProjection=spatial-sdk-panel-plane-basis " +
-            "carrierSurfaceProjection=spatial-sdk-panel-plane-basis " +
-            "particleLayerSurfaceOverscanProperty=$PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY " +
-            "$projectionSurfaceMarkerFields " +
-            "projectionWidthMeters=${activityMarkerFloat(projectionWidthMeters)} " +
-            "projectionHeightMeters=${activityMarkerFloat(projectionHeightMeters)} " +
-            "surfaceOverscanScale=${activityMarkerFloat(surfaceOverscanScale)} " +
-            "surfaceWidthMeters=${activityMarkerFloat(surfaceWidthMeters)} " +
-            "surfaceHeightMeters=${activityMarkerFloat(surfaceHeightMeters)} " +
-            "projectionPlanePoseInvariantWithOverscan=true particleWorldScaleInvariantWithOverscan=true " +
-            "planeCenterM=${activityVectorMarker(center)} planeQuaternion=${activityQuaternionMarker(planePose.q)} " +
-            "leftEyeOffsetM=${activityVectorMarker(eyeOffsets?.first ?: Vector3(0.0f))} " +
-            "rightEyeOffsetM=${activityVectorMarker(eyeOffsets?.second ?: Vector3(0.0f))} " +
-            "leftEyeWorldM=${activityVectorMarker(leftEyeWorld)} " +
-            "rightEyeWorldM=${activityVectorMarker(rightEyeWorld)} " +
-            "leftEyeOffsetRightMeters=${activityMarkerFloat(leftEyeOffsetRightMeters)} " +
-            "rightEyeOffsetRightMeters=${activityMarkerFloat(rightEyeOffsetRightMeters)} " +
-            "particleLayerEyeOffsetSource=Scene.getEyeOffsets.viewerLocalX"
+        SpatialSurfaceParticleRouteModule.nativeSurfaceParticleProjectionPlaneUpdatedMarker(
+            reason = reason,
+            placementMarkerFields = particleLayerPlacementMarkerFields(),
+            viewYawDegrees = yawDegrees,
+            viewerPositionM = activityVectorMarker(viewerPose.t),
+            viewerForward = activityVectorMarker(rawForward),
+            viewerUp = activityVectorMarker(rawUp),
+            viewerRight = activityVectorMarker(rawRight),
+            panelForward = activityVectorMarker(forward),
+            panelRight = activityVectorMarker(right),
+            panelUp = activityVectorMarker(up),
+            nativePanelPoseUpdateMask = nativePanelPoseUpdateMask,
+            nativeViewerEyePoseUpdateMask = nativeViewerEyePoseUpdateMask,
+            projectionSurfaceMarkerFields = projectionSurfaceMarkerFields,
+            projectionWidthMeters = projectionWidthMeters,
+            projectionHeightMeters = projectionHeightMeters,
+            surfaceOverscanScale = surfaceOverscanScale,
+            surfaceWidthMeters = surfaceWidthMeters,
+            surfaceHeightMeters = surfaceHeightMeters,
+            planeCenterM = activityVectorMarker(center),
+            planeQuaternion = activityQuaternionMarker(planePose.q),
+            leftEyeOffsetM = activityVectorMarker(eyeOffsets?.first ?: Vector3(0.0f)),
+            rightEyeOffsetM = activityVectorMarker(eyeOffsets?.second ?: Vector3(0.0f)),
+            leftEyeWorldM = activityVectorMarker(leftEyeWorld),
+            rightEyeWorldM = activityVectorMarker(rightEyeWorld),
+            leftEyeOffsetRightMeters = leftEyeOffsetRightMeters,
+            rightEyeOffsetRightMeters = rightEyeOffsetRightMeters,
+        )
     )
   }
 
@@ -5201,19 +5193,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         panelOpacity = currentParticleLayerPanelOpacity(),
     )
   }
-
-  private fun particleLayerProjectionSurfaceMarkerFields(
-      projectionWidthMeters: Float,
-      projectionHeightMeters: Float,
-      surfaceWidthMeters: Float,
-      surfaceHeightMeters: Float,
-  ): String =
-      SpatialSurfaceParticleRouteModule.projectionSurfaceMarkerFields(
-          projectionWidthMeters,
-          projectionHeightMeters,
-          surfaceWidthMeters,
-          surfaceHeightMeters,
-      )
 
   private fun currentParticleLayerTargetDistanceMeters(): Float =
       remoteParticleLayerTargetDistanceMeters
@@ -5258,14 +5237,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         forceLog = true,
     )
     marker(
-        "channel=native-surface-particle-layer status=particle-layer-target-distance-command-applied " +
-            "source=${activityMarkerToken(source)} " +
-            "particleLayerTargetDistanceCommand=true " +
-            "particleLayerTargetDistanceCommandTransport=remote-ui-command " +
-            "particleLayerTargetDistanceRequestedMeters=${activityMarkerFloat(requested)} " +
-            "particleLayerTargetDistanceMeters=${activityMarkerFloat(clamped)} " +
-            "particleLayerTargetDistanceProperty=$PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY " +
-            "noPhysicalControllerInput=true"
+        SpatialSurfaceParticleRouteModule.particleLayerTargetDistanceCommandAppliedMarker(
+            source,
+            requested,
+            clamped,
+        )
     )
   }
 
@@ -5286,14 +5262,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         forceLog = true,
     )
     marker(
-        "channel=native-surface-particle-layer status=particle-layer-view-yaw-command-applied " +
-            "source=${activityMarkerToken(source)} " +
-            "particleLayerViewYawCommand=true " +
-            "particleLayerViewYawCommandTransport=remote-ui-command " +
-            "particleLayerViewYawRequestedDegrees=${activityMarkerFloat(requested)} " +
-            "particleLayerViewYawDegrees=${activityMarkerFloat(clamped)} " +
-            "particleLayerViewYawProperty=$PARTICLE_LAYER_VIEW_YAW_PROPERTY " +
-            "noPhysicalControllerInput=true"
+        SpatialSurfaceParticleRouteModule.particleLayerViewYawCommandAppliedMarker(
+            source,
+            requested,
+            clamped,
+        )
     )
   }
 
