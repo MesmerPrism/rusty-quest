@@ -204,6 +204,10 @@ Apply that model here when a lane grows beyond a narrow facade method:
   raw-projection startup/swapchain/completion/native-start marker fields,
   panel-carrier start lifecycle marker fields, placement-toggle marker fields, and markers in
   `CameraHwbProjectionModule.kt`;
+- package camera-HWB projection panel carrier construction, the Spatial SDK
+  video-surface panel entity, manual custom-mesh `PanelSceneObject`, and
+  create/surface/add/readiness marker fields in
+  `CameraHwbProjectionPanelCarrierModule.kt`;
 - package private layer panel placement/input policy in
   `SpatialPanelPlacementModule.kt`;
 - package controller shortcut routing policy in

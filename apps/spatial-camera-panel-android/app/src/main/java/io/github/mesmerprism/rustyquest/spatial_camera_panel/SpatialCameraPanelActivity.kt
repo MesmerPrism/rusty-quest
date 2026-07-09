@@ -2143,44 +2143,31 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       return
     }
     cameraHwbProjectionEntity =
-        runCatching {
-              Entity.createPanelEntity(
-                  R.id.spatial_camera_projection_surface_panel,
-                  Transform(plane.pose),
-                  PanelDimensions(Vector2(plane.projectionWidthMeters, plane.projectionHeightMeters)),
-                  Hittable(MeshCollision.NoCollision),
-                  Visible(true),
-              )
-            }
-            .getOrElse { throwable ->
-              marker(
-                  "channel=camera-hwb-spatial-probe status=scene-panel-carrier-create-failed " +
-                      "rawCameraProjectionProbe=true scenePanelCarrier=true " +
-                      "sceneQuadLayerCreated=false nativeStartRequested=false " +
-                      "panelRegistrationId=spatial_camera_projection_surface_panel " +
-                      "carrier=${cameraHwbProjectionCarrierToken()} " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
-              )
-              null
-            }
+        when (
+            val result =
+                CameraHwbProjectionPanelCarrierModule.createVideoSurfacePanelEntity(
+                    plane = plane,
+                    carrier = cameraHwbProjectionCarrierToken(),
+                )
+        ) {
+          is CameraHwbProjectionPanelEntityCreateResult.Ready -> result.entity
+          is CameraHwbProjectionPanelEntityCreateResult.Failed -> {
+            marker(result.marker)
+            null
+          }
+        }
     cameraHwbProjectionPanelEntity = cameraHwbProjectionEntity
     val entityCreated = cameraHwbProjectionPanelEntity != null
     marker(
-        "channel=camera-hwb-spatial-probe status=scene-panel-carrier-entity-spawned " +
-            "rawCameraProjectionProbe=true scenePanelCarrier=true entityCreated=$entityCreated " +
-            "sceneQuadLayerCreated=false nativeStartRequested=false " +
-            "panelRegistrationId=spatial_camera_projection_surface_panel " +
-            "carrier=${cameraHwbProjectionCarrierToken()} " +
-            cameraHwbProjectionMarkerFields(plane) + " " +
-            cameraHwbProjectionStereoMarkerFields() + " " +
-            spatialVideoProjectionMarkerFields(videoSettings) + " " +
-            SpatialPublicMultiStack.markerFields() + " " +
-            "poseSource=${CameraHwbProjectionModule.poseSourceToken(plane)} " +
-            "viewerPositionM=${activityVectorMarker(plane.viewerPosition)} " +
-            "viewerForward=${activityVectorMarker(plane.forward)} viewerUp=${activityVectorMarker(plane.up)} " +
-            "viewerRight=${activityVectorMarker(plane.right)} planeCenterM=${activityVectorMarker(plane.center)} " +
-            "planeQuaternion=${activityQuaternionMarker(plane.pose.q)} runtimeCrash=false"
+        CameraHwbProjectionPanelCarrierModule.scenePanelCarrierEntitySpawnedMarker(
+            entityCreated = entityCreated,
+            carrier = cameraHwbProjectionCarrierToken(),
+            plane = plane,
+            projectionMarkerFields = cameraHwbProjectionMarkerFields(plane),
+            stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
+            videoProjectionMarkerFields = spatialVideoProjectionMarkerFields(videoSettings),
+            publicMultiStackMarkerFields = SpatialPublicMultiStack.markerFields(),
+        )
     )
     if (entityCreated) {
       startCameraHwbProjectionPanelCarrierIfReady("entity-spawned")
@@ -2192,120 +2179,38 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       plane: CameraHwbProjectionPlane,
       videoSettings: SpatialVideoProjectionSettings,
   ): Entity? {
-    val entity = Entity(R.id.spatial_camera_projection_manual_custom_mesh_panel)
-    entity.setComponent(Transform(plane.pose))
-    entity.setComponent(PanelDimensions(Vector2(plane.projectionWidthMeters, plane.projectionHeightMeters)))
-    entity.setComponent(Visible(true))
-    val settings =
-        MediaPanelSettings(
-            shape = QuadShapeOptions(plane.projectionWidthMeters, plane.projectionHeightMeters),
-            display =
-                FixedMediaPanelDisplayOptions(
-                    CAMERA_HWB_PROJECTION_WIDTH_PX,
-                    CAMERA_HWB_PROJECTION_HEIGHT_PX,
-                ),
-            rendering = MediaPanelRenderOptions(stereoMode = StereoMode.LeftRight),
-            input = PanelInputOptions(0),
+    val carrierResult =
+        CameraHwbProjectionPanelCarrierModule.createManualCustomMeshPanel(
+            scene = scene,
+            sceneObjectSystem = systemManager.findSystem<SceneObjectSystem>(),
+            plane = plane,
+            carrier = cameraHwbProjectionCarrierToken(),
         )
-    val panelSceneObject =
-        runCatching {
-              PanelSceneObject(
-                  scene,
-                  entity,
-                  settings.toPanelConfigOptions().apply {
-                    enableLayer = false
-                    layerConfig = null
-                    forceSceneTexture = true
-                    includeGlass = false
-                    sceneMeshCreator = { texture: SceneTexture ->
-                      val material =
-                          SceneMaterial(texture, AlphaMode.OPAQUE, SceneMaterial.UNLIT_SHADER)
-                              .apply {
-                                setStereoMode(StereoMode.LeftRight)
-                                setUnlit(true)
-                              }
-                      SceneMesh.singleSidedQuad(
-                          plane.projectionWidthMeters / 2.0f,
-                          plane.projectionHeightMeters / 2.0f,
-                          material,
-                      )
-                    }
-                  },
-              )
-            }
-            .getOrElse { throwable ->
-              marker(
-                  "channel=camera-hwb-spatial-probe status=manual-panel-carrier-create-failed " +
-                      "rawCameraProjectionProbe=true scenePanelCarrier=true manualPanelSceneObject=true " +
-                      "sceneMeshCreator=single-sided-quad sceneQuadLayerCreated=false " +
-                      "nativeStartRequested=false panelRegistrationId=spatial_camera_projection_manual_custom_mesh_panel " +
-                      "carrier=${cameraHwbProjectionCarrierToken()} " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
-              )
-              return null
-            }
-    val surface =
-        runCatching { panelSceneObject.getSurface() }
-            .getOrElse { throwable ->
-              marker(
-                  "channel=camera-hwb-spatial-probe status=manual-panel-carrier-surface-failed " +
-                      "rawCameraProjectionProbe=true scenePanelCarrier=true manualPanelSceneObject=true " +
-                      "sceneMeshCreator=single-sided-quad sceneQuadLayerCreated=false " +
-                      "nativeStartRequested=false panelRegistrationId=spatial_camera_projection_manual_custom_mesh_panel " +
-                      "carrier=${cameraHwbProjectionCarrierToken()} " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
-              )
-              panelSceneObject.destroy()
-              return null
-            }
-    val added =
-        runCatching {
-              systemManager
-                  .findSystem<SceneObjectSystem>()
-                  .addSceneObject(
-                      entity,
-                      CompletableFuture<SceneObject>().apply { complete(panelSceneObject) },
-                  )
-              true
-            }
-            .getOrElse { throwable ->
-              marker(
-                  "channel=camera-hwb-spatial-probe status=manual-panel-carrier-add-failed " +
-                      "rawCameraProjectionProbe=true scenePanelCarrier=true manualPanelSceneObject=true " +
-                      "sceneMeshCreator=single-sided-quad sceneQuadLayerCreated=false " +
-                      "nativeStartRequested=false panelRegistrationId=spatial_camera_projection_manual_custom_mesh_panel " +
-                      "carrier=${cameraHwbProjectionCarrierToken()} " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
-              )
-              panelSceneObject.destroy()
-              return null
-            }
-    cameraHwbProjectionPanelSceneObject = panelSceneObject
-    cameraHwbProjectionPanelReady = added
-    cameraHwbProjectionPanelSurface = surface
+    val readyCarrier =
+        when (carrierResult) {
+          is CameraHwbProjectionManualPanelCarrierResult.Ready -> carrierResult
+          is CameraHwbProjectionManualPanelCarrierResult.Failed -> {
+            marker(carrierResult.marker)
+            return null
+          }
+        }
+    cameraHwbProjectionPanelSceneObject = readyCarrier.panelSceneObject
+    cameraHwbProjectionPanelReady = true
+    cameraHwbProjectionPanelSurface = readyCarrier.surface
     cameraHwbProjectionPanelSurfaceConsumerCalled = true
     val panelLayerUpdateStatus =
         updateCameraHwbProjectionPanelCarrierLayer(plane, "manual-custom-mesh-created")
     marker(
-        "channel=camera-hwb-spatial-probe status=manual-panel-carrier-ready " +
-            "rawCameraProjectionProbe=true scenePanelCarrier=true manualPanelSceneObject=true " +
-            "sceneMeshCreator=single-sided-quad sceneMesh=SceneMesh.singleSidedQuad " +
-            "manualPanelSceneObjectCustomMesh=true manualPanelNoHittable=true " +
-            "manualPanelNoIsdkGrabbable=true panelInputOptionsClickButtons=0 " +
-            "manualPanelForceSceneTexture=true " +
-            "panelLayerUpdateStatus=${activityMarkerToken(panelLayerUpdateStatus)} " +
-            "surfaceValid=${surface.isValid} sceneQuadLayerCreated=false nativeStartRequested=false " +
-            "panelRegistrationId=spatial_camera_projection_manual_custom_mesh_panel " +
-            "carrier=${cameraHwbProjectionCarrierToken()} " +
-            cameraHwbProjectionMarkerFields(plane) + " " +
-            cameraHwbProjectionStereoMarkerFields() + " " +
-            spatialVideoProjectionMarkerFields(videoSettings) + " " +
-            "runtimeCrash=false"
+        CameraHwbProjectionPanelCarrierModule.manualPanelCarrierReadyMarker(
+            surfaceValid = readyCarrier.surface.isValid,
+            panelLayerUpdateStatus = panelLayerUpdateStatus,
+            carrier = cameraHwbProjectionCarrierToken(),
+            projectionMarkerFields = cameraHwbProjectionMarkerFields(plane),
+            stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
+            videoProjectionMarkerFields = spatialVideoProjectionMarkerFields(videoSettings),
+        )
     )
-    return entity
+    return readyCarrier.entity
   }
 
   @OptIn(SpatialSDKExperimentalAPI::class)

@@ -346,6 +346,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   It must not query the Spatial scene, create
   Spatial scene objects, start JNI native routes, consume controller input, or
   own camera frames.
+- `app/src/main/.../CameraHwbProjectionPanelCarrierModule.kt` owns camera-HWB
+  projection panel carrier construction: the Spatial SDK video-surface panel
+  entity, the manual custom-mesh `PanelSceneObject`, carrier create/surface/add
+  failure markers, entity-spawn markers, and manual-carrier readiness markers.
+  It must not start JNI native routes, update native projection parameters,
+  poll controllers, or decide whether a carrier is enabled for the current run.
 - `app/src/main/.../SpatialPanelPlacementModule.kt` owns workflow/private-layer
   panel placement policy: default distances and sizes, headlock property
   parsing, placement clamping, pose/dimension/settings factories, private
