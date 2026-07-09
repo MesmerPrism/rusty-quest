@@ -2222,7 +2222,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             cameraHwbProjectionStereoMarkerFields() + " " +
             spatialVideoProjectionMarkerFields(videoSettings) + " " +
             SpatialPublicMultiStack.markerFields() + " " +
-            "poseSource=${cameraHwbProjectionPoseSourceToken(plane)} " +
+            "poseSource=${CameraHwbProjectionModule.poseSourceToken(plane)} " +
             "viewerPositionM=${activityVectorMarker(plane.viewerPosition)} " +
             "viewerForward=${activityVectorMarker(plane.forward)} viewerUp=${activityVectorMarker(plane.up)} " +
             "viewerRight=${activityVectorMarker(plane.right)} planeCenterM=${activityVectorMarker(plane.center)} " +
@@ -3177,7 +3177,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     cameraHwbProjectionStereoMarkerFields() + " " +
                     spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings) + " " +
                     SpatialPublicMultiStack.markerFields() + " " +
-                    "poseSource=${cameraHwbProjectionPoseSourceToken(plane)} viewerPositionM=${activityVectorMarker(plane.viewerPosition)} " +
+                    "poseSource=${CameraHwbProjectionModule.poseSourceToken(plane)} viewerPositionM=${activityVectorMarker(plane.viewerPosition)} " +
                     "viewerForward=${activityVectorMarker(plane.forward)} viewerUp=${activityVectorMarker(plane.up)} " +
                     "viewerRight=${activityVectorMarker(plane.right)} planeCenterM=${activityVectorMarker(plane.center)} " +
                     "planeQuaternion=${activityQuaternionMarker(plane.pose.q)} " +
@@ -5517,7 +5517,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     marker(
         "channel=camera-hwb-spatial-probe status=raw-camera-projection-plane-updated " +
             "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true " +
-            "viewerPoseSource=${cameraHwbProjectionPoseSourceToken(plane)} eyeOffsetsSource=Scene.getEyeOffsets " +
+            "viewerPoseSource=${CameraHwbProjectionModule.poseSourceToken(plane)} eyeOffsetsSource=Scene.getEyeOffsets " +
             cameraHwbProjectionMarkerFields(plane) + " " +
             cameraHwbProjectionStereoMarkerFields() + " " +
             spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings) + " " +
@@ -5666,70 +5666,26 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   @OptIn(SpatialSDKExperimentalAPI::class)
   private fun cameraHwbProjectionPlaneFromViewer(): CameraHwbProjectionPlane {
     val viewerPose = runCatching { scene.getViewerPose() }.getOrNull()
-    val fallbackViewerPosition = Vector3(0.0f, 1.20f, -2.0f)
-    val fallbackForward = Vector3(0.0f, 0.0f, -1.0f)
-    val fallbackUp = Vector3(0.0f, 1.0f, 0.0f)
-    val viewerPosition = viewerPose?.t ?: fallbackViewerPosition
-    val forward = viewerPose?.forward()?.activityNormalizedOr(fallbackForward) ?: fallbackForward
-    val up = viewerPose?.up()?.activityNormalizedOr(fallbackUp) ?: fallbackUp
-    val right = activityCross(forward, up).activityNormalizedOr(Vector3(1.0f, 0.0f, 0.0f))
     val targetDistanceMeters = currentCameraHwbProjectionTargetDistanceMeters()
-    val projectionWidthMeters = cameraHwbProjectionWidthMeters(targetDistanceMeters)
-    val projectionHeightMeters = cameraHwbProjectionHeightMeters(targetDistanceMeters)
-    val center = viewerPosition + forward * targetDistanceMeters
-    val pose = Pose(center, Quaternion.fromDirection(forward, up))
-    val eyeOffsets = runCatching { scene.getEyeOffsets() }.getOrNull()
-    return CameraHwbProjectionPlane(
-        viewerPosition = viewerPosition,
-        forward = forward,
-        up = up,
-        right = right,
-        center = center,
-        pose = pose,
-        placementMode = CameraHwbProjectionPlacementMode.ViewerLocked,
+    return CameraHwbProjectionModule.viewerLockedProjectionPlane(
+        viewerPosition = viewerPose?.t,
+        viewerForward = viewerPose?.forward(),
+        viewerUp = viewerPose?.up(),
+        eyeOffsets = runCatching { scene.getEyeOffsets() }.getOrNull(),
         targetDistanceMeters = targetDistanceMeters,
-        projectionWidthMeters = projectionWidthMeters,
-        projectionHeightMeters = projectionHeightMeters,
-        leftEyeOffset = eyeOffsets?.first ?: Vector3(0.0f),
-        rightEyeOffset = eyeOffsets?.second ?: Vector3(0.0f),
+        projectionWidthMeters = cameraHwbProjectionWidthMeters(targetDistanceMeters),
+        projectionHeightMeters = cameraHwbProjectionHeightMeters(targetDistanceMeters),
     )
   }
 
   @OptIn(SpatialSDKExperimentalAPI::class)
   private fun cameraHwbProjectionPlaneOnVirtualWall(): CameraHwbProjectionPlane {
     val viewerPose = runCatching { scene.getViewerPose() }.getOrNull()
-    val viewerPosition = viewerPose?.t ?: Vector3(0.0f, 1.20f, 0.0f)
-    val forward = Vector3(0.0f, 0.0f, 1.0f)
-    val up = Vector3(0.0f, 1.0f, 0.0f)
-    val right = Vector3(1.0f, 0.0f, 0.0f)
-    val center =
-        Vector3(
-            CAMERA_HWB_PROJECTION_WALL_CENTER_X_METERS,
-            CAMERA_HWB_PROJECTION_WALL_CENTER_Y_METERS,
-            CAMERA_HWB_PROJECTION_WALL_CENTER_Z_METERS,
-        )
-    val eyeOffsets = runCatching { scene.getEyeOffsets() }.getOrNull()
-    return CameraHwbProjectionPlane(
-        viewerPosition = viewerPosition,
-        forward = forward,
-        up = up,
-        right = right,
-        center = center,
-        pose = Pose(center, Quaternion.fromDirection(forward, up)),
-        placementMode = CameraHwbProjectionPlacementMode.VirtualRoomWall,
-        targetDistanceMeters = activityVectorLength(activityVectorSubtract(center, viewerPosition)),
-        projectionWidthMeters = CAMERA_HWB_PROJECTION_WALL_WIDTH_METERS,
-        projectionHeightMeters = CAMERA_HWB_PROJECTION_WALL_HEIGHT_METERS,
-        leftEyeOffset = eyeOffsets?.first ?: Vector3(0.0f),
-        rightEyeOffset = eyeOffsets?.second ?: Vector3(0.0f),
+    return CameraHwbProjectionModule.virtualWallProjectionPlane(
+        viewerPosition = viewerPose?.t,
+        eyeOffsets = runCatching { scene.getEyeOffsets() }.getOrNull(),
     )
   }
-
-  private fun cameraHwbProjectionPoseSourceToken(plane: CameraHwbProjectionPlane): String =
-      when (plane.placementMode) {
-        CameraHwbProjectionPlacementMode.ViewerLocked -> "Scene.getViewerPose"
-        CameraHwbProjectionPlacementMode.VirtualRoomWall -> "virtual-room-wall-fixed-pose"
-      }
 
   private fun cameraHwbProjectionZIndexForPlacement(
       placementMode: CameraHwbProjectionPlacementMode,

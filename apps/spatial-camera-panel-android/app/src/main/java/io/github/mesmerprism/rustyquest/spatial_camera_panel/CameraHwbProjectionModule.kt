@@ -1,5 +1,8 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
+import com.meta.spatial.core.Pose
+import com.meta.spatial.core.Quaternion
+import com.meta.spatial.core.Vector3
 import java.util.Locale
 
 internal const val CAMERA_HWB_PROJECTION_PROBE_PROPERTY =
@@ -204,6 +207,77 @@ internal object CameraHwbProjectionModule {
       placementMode == CameraHwbProjectionPlacementMode.ViewerLocked &&
           virtualRoomEnabled &&
           scenePanelCarrierEnabled
+
+  fun viewerLockedProjectionPlane(
+      viewerPosition: Vector3?,
+      viewerForward: Vector3?,
+      viewerUp: Vector3?,
+      eyeOffsets: Pair<Vector3, Vector3>?,
+      targetDistanceMeters: Float,
+      projectionWidthMeters: Float,
+      projectionHeightMeters: Float,
+  ): CameraHwbProjectionPlane {
+    val fallbackViewerPosition = Vector3(0.0f, 1.20f, -2.0f)
+    val fallbackForward = Vector3(0.0f, 0.0f, -1.0f)
+    val fallbackUp = Vector3(0.0f, 1.0f, 0.0f)
+    val fallbackRight = Vector3(1.0f, 0.0f, 0.0f)
+    val resolvedViewerPosition = viewerPosition ?: fallbackViewerPosition
+    val forward = viewerForward?.activityNormalizedOr(fallbackForward) ?: fallbackForward
+    val up = viewerUp?.activityNormalizedOr(fallbackUp) ?: fallbackUp
+    val right = activityCross(forward, up).activityNormalizedOr(fallbackRight)
+    val center = resolvedViewerPosition + forward * targetDistanceMeters
+    return CameraHwbProjectionPlane(
+        viewerPosition = resolvedViewerPosition,
+        forward = forward,
+        up = up,
+        right = right,
+        center = center,
+        pose = Pose(center, Quaternion.fromDirection(forward, up)),
+        placementMode = CameraHwbProjectionPlacementMode.ViewerLocked,
+        targetDistanceMeters = targetDistanceMeters,
+        projectionWidthMeters = projectionWidthMeters,
+        projectionHeightMeters = projectionHeightMeters,
+        leftEyeOffset = eyeOffsets?.first ?: Vector3(0.0f),
+        rightEyeOffset = eyeOffsets?.second ?: Vector3(0.0f),
+    )
+  }
+
+  fun virtualWallProjectionPlane(
+      viewerPosition: Vector3?,
+      eyeOffsets: Pair<Vector3, Vector3>?,
+  ): CameraHwbProjectionPlane {
+    val resolvedViewerPosition = viewerPosition ?: Vector3(0.0f, 1.20f, 0.0f)
+    val forward = Vector3(0.0f, 0.0f, 1.0f)
+    val up = Vector3(0.0f, 1.0f, 0.0f)
+    val right = Vector3(1.0f, 0.0f, 0.0f)
+    val center =
+        Vector3(
+            CAMERA_HWB_PROJECTION_WALL_CENTER_X_METERS,
+            CAMERA_HWB_PROJECTION_WALL_CENTER_Y_METERS,
+            CAMERA_HWB_PROJECTION_WALL_CENTER_Z_METERS,
+        )
+    return CameraHwbProjectionPlane(
+        viewerPosition = resolvedViewerPosition,
+        forward = forward,
+        up = up,
+        right = right,
+        center = center,
+        pose = Pose(center, Quaternion.fromDirection(forward, up)),
+        placementMode = CameraHwbProjectionPlacementMode.VirtualRoomWall,
+        targetDistanceMeters =
+            activityVectorLength(activityVectorSubtract(center, resolvedViewerPosition)),
+        projectionWidthMeters = CAMERA_HWB_PROJECTION_WALL_WIDTH_METERS,
+        projectionHeightMeters = CAMERA_HWB_PROJECTION_WALL_HEIGHT_METERS,
+        leftEyeOffset = eyeOffsets?.first ?: Vector3(0.0f),
+        rightEyeOffset = eyeOffsets?.second ?: Vector3(0.0f),
+    )
+  }
+
+  fun poseSourceToken(plane: CameraHwbProjectionPlane): String =
+      when (plane.placementMode) {
+        CameraHwbProjectionPlacementMode.ViewerLocked -> "Scene.getViewerPose"
+        CameraHwbProjectionPlacementMode.VirtualRoomWall -> "virtual-room-wall-fixed-pose"
+      }
 
   fun effectiveTargetRect(
       baseX: Float,

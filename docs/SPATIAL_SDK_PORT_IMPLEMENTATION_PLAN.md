@@ -199,7 +199,8 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `SpatialDiagnosticProbeRouteModule.kt`;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
-- package projection carrier selection, target-rect math, and markers in
+- package projection carrier selection, placement-plane construction from
+  Activity-observed scene inputs, target-rect math, and markers in
   `CameraHwbProjectionModule.kt`;
 - package private layer panel placement/input policy in
   `SpatialPanelPlacementModule.kt`;

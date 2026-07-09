@@ -338,9 +338,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   surfaces, call JNI, or mutate Activity probe state.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
-  panel z-index/display-role policy, target-rect math, stereo marker fields,
-  and receipt constants. It must not create Spatial scene objects, start JNI
-  native routes, consume controller input, or own camera frames.
+  panel z-index/display-role policy, viewer-locked and virtual-wall projection
+  plane construction from Activity-observed scene inputs, target-rect math,
+  stereo marker fields, and receipt constants. It must not query the Spatial
+  scene, create Spatial scene objects, start JNI native routes, consume
+  controller input, or own camera frames.
 - `app/src/main/.../SpatialPanelPlacementModule.kt` owns workflow/private-layer
   panel placement policy: default distances and sizes, headlock property
   parsing, placement clamping, pose/dimension/settings factories, private
