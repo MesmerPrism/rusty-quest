@@ -193,6 +193,281 @@ internal object SpatialDiagnosticProbeRouteModule {
           "spatialFeatureOptInRoute=android-system-property " +
           "featureOptInProperty=$propertyName"
 
+  fun externalSwapchainProbeStartMarker(reason: String, cycles: Int, cycleMs: Long): String =
+      "channel=external-xr-swapchain-wrap-probe status=start externalSwapchainProbe=true " +
+          "reason=${activityMarkerToken(reason)} cycles=$cycles cycleMs=$cycleMs " +
+          "debugProperty=$EXTERNAL_SWAPCHAIN_PROBE_PROPERTY rendererAuthority=spatial-sdk-openxr-session " +
+          "nativeFrameLoop=false customProjectionStack=false camera2Stack=false privateShaderStack=false " +
+          explicitOptInMarkerFields(EXTERNAL_SWAPCHAIN_PROBE_PROPERTY)
+
+  fun externalSwapchainProbeLibraryUnavailableCompleteMarker(
+      cycleIndex: Int,
+      cycleCount: Int,
+      error: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=complete externalSwapchainProbe=true " +
+          "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=none " +
+          "xrCreateSwapchainResult=library-unavailable wrappedExternalSwapchain=false " +
+          "sceneQuadLayerCreated=false swapchainImagesEnumerated=0 nativeCanRenderIntoImages=false " +
+          "visiblePatternConfirmed=false destroyOwnership=unknown deviceLost=false runtimeCrash=false " +
+          "error=${activityMarkerToken(error)}"
+
+  fun externalSwapchainProbeMissingOpenXrHandlesCompleteMarker(
+      cycleIndex: Int,
+      cycleCount: Int,
+      openXrInstanceHandleNonZero: Boolean,
+      openXrSessionHandleNonZero: Boolean,
+      openXrGetInstanceProcAddrHandleNonZero: Boolean,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=complete externalSwapchainProbe=true " +
+          "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=none " +
+          "xrCreateSwapchainResult=missing-openxr-handles wrappedExternalSwapchain=false " +
+          "sceneQuadLayerCreated=false swapchainImagesEnumerated=0 nativeCanRenderIntoImages=false " +
+          "visiblePatternConfirmed=false destroyOwnership=unknown deviceLost=false runtimeCrash=false " +
+          "openXrInstanceHandleNonZero=$openXrInstanceHandleNonZero " +
+          "openXrSessionHandleNonZero=$openXrSessionHandleNonZero " +
+          "openXrGetInstanceProcAddrHandleNonZero=$openXrGetInstanceProcAddrHandleNonZero"
+
+  fun externalSwapchainProbeNativeCreateCallFailedMarker(
+      cycleIndex: Int,
+      error: String,
+      message: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=native-create-call-failed " +
+          "externalSwapchainProbe=true cycleIndex=$cycleIndex " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun externalSwapchainProbeZeroHandleCompleteMarker(
+      cycleIndex: Int,
+      cycleCount: Int,
+      sdkHandleWrapMode: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=complete externalSwapchainProbe=true " +
+          "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=$sdkHandleWrapMode " +
+          "xrCreateSwapchainResult=failed-or-zero-handle wrappedExternalSwapchain=false " +
+          "sceneQuadLayerCreated=false swapchainImagesEnumerated=0 nativeCanRenderIntoImages=false " +
+          "visiblePatternConfirmed=false destroyOwnership=unknown deviceLost=false runtimeCrash=false"
+
+  fun externalSwapchainProbeExternalWrapFailedMarker(
+      cycleIndex: Int,
+      externalHandle: Long,
+      sdkHandleWrapMode: String,
+      error: String,
+      message: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=external-wrap-failed " +
+          "externalSwapchainProbe=true cycleIndex=$cycleIndex externalHandle=$externalHandle " +
+          "sdkHandleWrapMode=$sdkHandleWrapMode wrappedExternalSwapchain=false " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun externalSwapchainProbeExternalWrapFailedCompleteMarker(
+      cycleIndex: Int,
+      cycleCount: Int,
+      sdkHandleWrapMode: String,
+      destroyOwnership: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=complete externalSwapchainProbe=true " +
+          "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=$sdkHandleWrapMode " +
+          "xrCreateSwapchainResult=success wrappedExternalSwapchain=false " +
+          "sceneQuadLayerCreated=false swapchainImagesEnumerated=see-native-marker " +
+          "nativeCanRenderIntoImages=false visiblePatternConfirmed=false " +
+          "destroyOwnership=$destroyOwnership deviceLost=false runtimeCrash=false"
+
+  fun externalSwapchainProbeExternalWrapResultMarker(
+      cycleIndex: Int,
+      externalHandle: Long,
+      wrapperHandle: Long,
+      wrapperNativeHandle: Long,
+      wrapperPlatformHandle: Long,
+      platformHandleMatchesExternal: Boolean,
+      nativeHandleMatchesExternal: Boolean,
+      handleMatchesExternal: Boolean,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=external-wrap-result " +
+          "externalSwapchainProbe=true cycleIndex=$cycleIndex externalHandle=$externalHandle " +
+          "wrappedExternalSwapchain=true wrapperHandle=$wrapperHandle " +
+          "wrapperNativeHandle=$wrapperNativeHandle wrapperPlatformHandle=$wrapperPlatformHandle " +
+          "wrapperSurfaceValid=false wrapperSurfaceProbe=skipped-raw-external-getSurface-crashes " +
+          "platformHandleMatchesExternal=$platformHandleMatchesExternal " +
+          "nativeHandleMatchesExternal=$nativeHandleMatchesExternal " +
+          "handleMatchesExternal=$handleMatchesExternal"
+
+  fun externalSwapchainProbeLayerCreatedMarker(
+      cycleIndex: Int,
+      layerPositionM: String,
+      layerQuaternion: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=layer-created " +
+          "externalSwapchainProbe=true cycleIndex=$cycleIndex sceneQuadLayerCreated=true " +
+          "widthMeters=$EXTERNAL_SWAPCHAIN_PROBE_WIDTH_METERS " +
+          "heightMeters=$EXTERNAL_SWAPCHAIN_PROBE_HEIGHT_METERS " +
+          "stereoMode=None poseSource=Scene.getViewerPose " +
+          "layerPositionM=$layerPositionM layerQuaternion=$layerQuaternion"
+
+  fun externalSwapchainProbeLayerCreateFailedMarker(
+      cycleIndex: Int,
+      error: String,
+      message: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=layer-create-failed " +
+          "externalSwapchainProbe=true cycleIndex=$cycleIndex sceneQuadLayerCreated=false " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun externalSwapchainProbeCycleVisibleMarker(
+      cycleIndex: Int,
+      cycleCount: Int,
+      sdkHandleWrapMode: String,
+      layerCreated: Boolean,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=cycle-visible externalSwapchainProbe=true " +
+          "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=$sdkHandleWrapMode " +
+          "xrCreateSwapchainResult=success wrappedExternalSwapchain=true " +
+          "sceneQuadLayerCreated=$layerCreated swapchainImagesEnumerated=see-native-marker " +
+          "nativeCanRenderIntoImages=false visiblePatternConfirmed=false " +
+          "renderBlockReason=missing-spatial-sdk-vulkan-device-queue " +
+          "destroyOwnership=pending deviceLost=false runtimeCrash=false"
+
+  fun externalSwapchainProbeLayerCreateFailedCompleteMarker(
+      cycleIndex: Int,
+      cycleCount: Int,
+      sdkHandleWrapMode: String,
+      destroyOwnership: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=complete externalSwapchainProbe=true " +
+          "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=$sdkHandleWrapMode " +
+          "xrCreateSwapchainResult=success wrappedExternalSwapchain=true sceneQuadLayerCreated=false " +
+          "swapchainImagesEnumerated=see-native-marker nativeCanRenderIntoImages=false " +
+          "visiblePatternConfirmed=false destroyOwnership=$destroyOwnership deviceLost=false " +
+          "runtimeCrash=false lifecycleTortureSkipped=scene-quad-layer-create-failed"
+
+  fun externalSwapchainProbeCycleCompleteMarker(
+      cycleIndex: Int,
+      cycleCount: Int,
+      sdkHandleWrapMode: String,
+      layerCreated: Boolean,
+      destroyOwnership: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=cycle-complete " +
+          "externalSwapchainProbe=true cycleIndex=$cycleIndex cycleCount=$cycleCount " +
+          "sdkHandleWrapMode=$sdkHandleWrapMode xrCreateSwapchainResult=success " +
+          "wrappedExternalSwapchain=true sceneQuadLayerCreated=$layerCreated " +
+          "swapchainImagesEnumerated=see-native-marker nativeCanRenderIntoImages=false " +
+          "visiblePatternConfirmed=false destroyOwnership=$destroyOwnership " +
+          "deviceLost=false runtimeCrash=false"
+
+  fun externalSwapchainProbeCompleteMarker(
+      cycleCount: Int,
+      sdkHandleWrapMode: String,
+      layerCreated: Boolean,
+      destroyOwnership: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=complete " +
+          "externalSwapchainProbe=true cycleCount=$cycleCount sdkHandleWrapMode=$sdkHandleWrapMode " +
+          "xrCreateSwapchainResult=success wrappedExternalSwapchain=true " +
+          "sceneQuadLayerCreated=$layerCreated swapchainImagesEnumerated=see-native-marker " +
+          "nativeCanRenderIntoImages=false visiblePatternConfirmed=false " +
+          "destroyOwnership=$destroyOwnership deviceLost=false runtimeCrash=false"
+
+  fun externalSwapchainProbeSdkSwapchainCreateFailedMarker(
+      cycleIndex: Int,
+      error: String,
+      message: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=sdk-swapchain-create-failed " +
+          "externalSwapchainProbe=true cycleIndex=$cycleIndex sdkHandleWrapMode=none " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)}"
+
+  fun externalSwapchainProbeSdkSwapchainCreatedMarker(
+      cycleIndex: Int,
+      handle: Long,
+      nativeHandle: Long,
+      platformHandle: Long,
+      surfaceValid: Boolean,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=sdk-swapchain-created " +
+          "externalSwapchainProbe=true cycleIndex=$cycleIndex handle=$handle " +
+          "nativeHandle=$nativeHandle platformHandle=$platformHandle " +
+          "surfaceValid=$surfaceValid"
+
+  fun externalSwapchainProbeSdkHandleWrapZeroMarker(
+      cycleIndex: Int,
+      handleLabel: String,
+      sourceHandle: Long,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=sdk-handle-wrap-result " +
+          "externalSwapchainProbe=true cycleIndex=$cycleIndex handleLabel=$handleLabel " +
+          "sourceHandle=$sourceHandle wrapped=false error=zero-handle sdkWrapDestroySkipped=true"
+
+  fun externalSwapchainProbeSdkHandleWrapSuccessMarker(
+      cycleIndex: Int,
+      handleLabel: String,
+      sourceHandle: Long,
+      wrapperHandle: Long,
+      wrapperNativeHandle: Long,
+      wrapperPlatformHandle: Long,
+      wrapperSurfaceValid: Boolean,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=sdk-handle-wrap-result " +
+          "externalSwapchainProbe=true cycleIndex=$cycleIndex handleLabel=$handleLabel " +
+          "sourceHandle=$sourceHandle wrapped=true wrapperHandle=$wrapperHandle " +
+          "wrapperNativeHandle=$wrapperNativeHandle " +
+          "wrapperPlatformHandle=$wrapperPlatformHandle " +
+          "wrapperSurfaceValid=$wrapperSurfaceValid sdkWrapDestroySkipped=true"
+
+  fun externalSwapchainProbeSdkHandleWrapFailedMarker(
+      cycleIndex: Int,
+      handleLabel: String,
+      sourceHandle: Long,
+      error: String,
+      message: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=sdk-handle-wrap-result " +
+          "externalSwapchainProbe=true cycleIndex=$cycleIndex handleLabel=$handleLabel " +
+          "sourceHandle=$sourceHandle wrapped=false " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} sdkWrapDestroySkipped=true"
+
+  fun externalSwapchainProbeSdkSwapchainDestroyFailedMarker(cycleIndex: Int, error: String): String =
+      "channel=external-xr-swapchain-wrap-probe status=sdk-swapchain-destroy-failed " +
+          "externalSwapchainProbe=true cycleIndex=$cycleIndex " +
+          "error=${activityMarkerToken(error)}"
+
+  fun externalSwapchainProbeSdkHandleWrapSummaryMarker(
+      cycleIndex: Int,
+      sdkHandleWrapMode: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=sdk-handle-wrap-summary " +
+          "externalSwapchainProbe=true cycleIndex=$cycleIndex sdkHandleWrapMode=$sdkHandleWrapMode"
+
+  fun externalSwapchainProbeNativeDestroyCallFailedMarker(
+      reason: String,
+      externalHandle: Long,
+      error: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=native-destroy-call-failed " +
+          "externalSwapchainProbe=true reason=${activityMarkerToken(reason)} " +
+          "externalHandle=$externalHandle error=${activityMarkerToken(error)}"
+
+  fun externalSwapchainProbeDestroyedMarker(
+      reason: String,
+      layerDestroyed: Boolean,
+      sceneObjectDestroyed: Boolean,
+      wrapperDestroyed: Boolean,
+      wrapperDestroySkipped: Boolean,
+      nativeDestroyResult: String,
+      destroyOwnership: String,
+  ): String =
+      "channel=external-xr-swapchain-wrap-probe status=destroyed externalSwapchainProbe=true " +
+          "reason=${activityMarkerToken(reason)} layerDestroyed=$layerDestroyed " +
+          "sceneObjectDestroyed=$sceneObjectDestroyed wrapperDestroyed=$wrapperDestroyed " +
+          "wrapperDestroySkipped=$wrapperDestroySkipped " +
+          "nativeDestroyResult=$nativeDestroyResult destroyOwnership=$destroyOwnership " +
+          "deviceLost=false runtimeCrash=false"
+
   fun sdkQuadSurfaceProbeStartMarker(reason: String, holdMs: Long): String =
       "channel=sdk-owned-quad-surface-probe status=start sdkQuadSurfaceProbe=true " +
           "reason=${activityMarkerToken(reason)} debugProperty=$SDK_QUAD_SURFACE_PROBE_PROPERTY " +

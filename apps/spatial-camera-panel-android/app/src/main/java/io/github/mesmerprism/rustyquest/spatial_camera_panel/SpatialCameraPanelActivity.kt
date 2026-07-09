@@ -3487,13 +3487,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val cycles = SpatialDiagnosticProbeRouteModule.externalSwapchainProbeCycles()
     val cycleMs = SpatialDiagnosticProbeRouteModule.externalSwapchainProbeCycleMs()
     marker(
-        "channel=external-xr-swapchain-wrap-probe status=start externalSwapchainProbe=true " +
-            "reason=${activityMarkerToken(reason)} cycles=$cycles cycleMs=$cycleMs " +
-            "debugProperty=$EXTERNAL_SWAPCHAIN_PROBE_PROPERTY rendererAuthority=spatial-sdk-openxr-session " +
-            "nativeFrameLoop=false customProjectionStack=false camera2Stack=false privateShaderStack=false " +
-            SpatialDiagnosticProbeRouteModule.explicitOptInMarkerFields(
-                EXTERNAL_SWAPCHAIN_PROBE_PROPERTY
-            )
+        SpatialDiagnosticProbeRouteModule.externalSwapchainProbeStartMarker(
+            reason = reason,
+            cycles = cycles,
+            cycleMs = cycleMs,
+        )
     )
     Handler(Looper.getMainLooper()).post { runExternalSwapchainProbeCycle(1, cycles, cycleMs) }
   }
@@ -3506,12 +3504,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     cleanupExternalSwapchainProbe("cycle-$cycleIndex-pre-cleanup")
     if (!nativeReceiptLibraryLoaded) {
       marker(
-          "channel=external-xr-swapchain-wrap-probe status=complete externalSwapchainProbe=true " +
-              "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=none " +
-              "xrCreateSwapchainResult=library-unavailable wrappedExternalSwapchain=false " +
-              "sceneQuadLayerCreated=false swapchainImagesEnumerated=0 nativeCanRenderIntoImages=false " +
-              "visiblePatternConfirmed=false destroyOwnership=unknown deviceLost=false runtimeCrash=false " +
-              "error=${activityMarkerToken(nativeReceiptLibraryError)}"
+          SpatialDiagnosticProbeRouteModule.externalSwapchainProbeLibraryUnavailableCompleteMarker(
+              cycleIndex = cycleIndex,
+              cycleCount = cycleCount,
+              error = nativeReceiptLibraryError,
+          )
       )
       return
     }
@@ -3521,14 +3518,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         !probe.openXrSessionHandleNonZero ||
         !probe.openXrGetInstanceProcAddrHandleNonZero) {
       marker(
-          "channel=external-xr-swapchain-wrap-probe status=complete externalSwapchainProbe=true " +
-              "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=none " +
-              "xrCreateSwapchainResult=missing-openxr-handles wrappedExternalSwapchain=false " +
-              "sceneQuadLayerCreated=false swapchainImagesEnumerated=0 nativeCanRenderIntoImages=false " +
-              "visiblePatternConfirmed=false destroyOwnership=unknown deviceLost=false runtimeCrash=false " +
-              "openXrInstanceHandleNonZero=${probe.openXrInstanceHandleNonZero} " +
-              "openXrSessionHandleNonZero=${probe.openXrSessionHandleNonZero} " +
-              "openXrGetInstanceProcAddrHandleNonZero=${probe.openXrGetInstanceProcAddrHandleNonZero}"
+          SpatialDiagnosticProbeRouteModule.externalSwapchainProbeMissingOpenXrHandlesCompleteMarker(
+              cycleIndex = cycleIndex,
+              cycleCount = cycleCount,
+              openXrInstanceHandleNonZero = probe.openXrInstanceHandleNonZero,
+              openXrSessionHandleNonZero = probe.openXrSessionHandleNonZero,
+              openXrGetInstanceProcAddrHandleNonZero = probe.openXrGetInstanceProcAddrHandleNonZero,
+          )
       )
       return
     }
@@ -3546,21 +3542,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             }
             .getOrElse { throwable ->
               marker(
-                  "channel=external-xr-swapchain-wrap-probe status=native-create-call-failed " +
-                      "externalSwapchainProbe=true cycleIndex=$cycleIndex " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.externalSwapchainProbeNativeCreateCallFailedMarker(
+                      cycleIndex = cycleIndex,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               0L
             }
     externalSwapchainProbeExternalHandle = externalHandle
     if (externalHandle == 0L) {
       marker(
-          "channel=external-xr-swapchain-wrap-probe status=complete externalSwapchainProbe=true " +
-              "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=$sdkHandleWrapMode " +
-              "xrCreateSwapchainResult=failed-or-zero-handle wrappedExternalSwapchain=false " +
-              "sceneQuadLayerCreated=false swapchainImagesEnumerated=0 nativeCanRenderIntoImages=false " +
-              "visiblePatternConfirmed=false destroyOwnership=unknown deviceLost=false runtimeCrash=false"
+          SpatialDiagnosticProbeRouteModule.externalSwapchainProbeZeroHandleCompleteMarker(
+              cycleIndex = cycleIndex,
+              cycleCount = cycleCount,
+              sdkHandleWrapMode = sdkHandleWrapMode,
+          )
       )
       return
     }
@@ -3569,33 +3566,37 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         runCatching { SceneSwapchain(externalHandle) }
             .getOrElse { throwable ->
               marker(
-                  "channel=external-xr-swapchain-wrap-probe status=external-wrap-failed " +
-                      "externalSwapchainProbe=true cycleIndex=$cycleIndex externalHandle=$externalHandle " +
-                      "sdkHandleWrapMode=$sdkHandleWrapMode wrappedExternalSwapchain=false " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.externalSwapchainProbeExternalWrapFailedMarker(
+                      cycleIndex = cycleIndex,
+                      externalHandle = externalHandle,
+                      sdkHandleWrapMode = sdkHandleWrapMode,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               val ownership = cleanupExternalSwapchainProbe("cycle-$cycleIndex-wrap-failed")
               marker(
-                  "channel=external-xr-swapchain-wrap-probe status=complete externalSwapchainProbe=true " +
-                      "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=$sdkHandleWrapMode " +
-                      "xrCreateSwapchainResult=success wrappedExternalSwapchain=false " +
-                      "sceneQuadLayerCreated=false swapchainImagesEnumerated=see-native-marker " +
-                      "nativeCanRenderIntoImages=false visiblePatternConfirmed=false " +
-                      "destroyOwnership=$ownership deviceLost=false runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.externalSwapchainProbeExternalWrapFailedCompleteMarker(
+                      cycleIndex = cycleIndex,
+                      cycleCount = cycleCount,
+                      sdkHandleWrapMode = sdkHandleWrapMode,
+                      destroyOwnership = ownership,
+                  )
               )
               return
             }
     externalSwapchainProbeWrappedSwapchain = wrapped
     marker(
-        "channel=external-xr-swapchain-wrap-probe status=external-wrap-result " +
-            "externalSwapchainProbe=true cycleIndex=$cycleIndex externalHandle=$externalHandle " +
-            "wrappedExternalSwapchain=true wrapperHandle=${wrapped.handle} " +
-            "wrapperNativeHandle=${wrapped.nativeHandle()} wrapperPlatformHandle=${wrapped.platformHandle()} " +
-            "wrapperSurfaceValid=false wrapperSurfaceProbe=skipped-raw-external-getSurface-crashes " +
-            "platformHandleMatchesExternal=${wrapped.platformHandle() == externalHandle} " +
-            "nativeHandleMatchesExternal=${wrapped.nativeHandle() == externalHandle} " +
-            "handleMatchesExternal=${wrapped.handle == externalHandle}"
+        SpatialDiagnosticProbeRouteModule.externalSwapchainProbeExternalWrapResultMarker(
+            cycleIndex = cycleIndex,
+            externalHandle = externalHandle,
+            wrapperHandle = wrapped.handle,
+            wrapperNativeHandle = wrapped.nativeHandle(),
+            wrapperPlatformHandle = wrapped.platformHandle(),
+            platformHandleMatchesExternal = wrapped.platformHandle() == externalHandle,
+            nativeHandleMatchesExternal = wrapped.nativeHandle() == externalHandle,
+            handleMatchesExternal = wrapped.handle == externalHandle,
+        )
     )
 
     val layerCreated =
@@ -3619,43 +3620,42 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               layer.setZIndex(EXTERNAL_SWAPCHAIN_PROBE_Z_INDEX)
               externalSwapchainProbeLayer = layer
               marker(
-                  "channel=external-xr-swapchain-wrap-probe status=layer-created " +
-                      "externalSwapchainProbe=true cycleIndex=$cycleIndex sceneQuadLayerCreated=true " +
-                      "widthMeters=$EXTERNAL_SWAPCHAIN_PROBE_WIDTH_METERS " +
-                      "heightMeters=$EXTERNAL_SWAPCHAIN_PROBE_HEIGHT_METERS " +
-                      "stereoMode=None poseSource=Scene.getViewerPose " +
-                      "layerPositionM=${activityVectorMarker(pose.t)} layerQuaternion=${activityQuaternionMarker(pose.q)}"
+                  SpatialDiagnosticProbeRouteModule.externalSwapchainProbeLayerCreatedMarker(
+                      cycleIndex = cycleIndex,
+                      layerPositionM = activityVectorMarker(pose.t),
+                      layerQuaternion = activityQuaternionMarker(pose.q),
+                  )
               )
               true
             }
             .getOrElse { throwable ->
               marker(
-                  "channel=external-xr-swapchain-wrap-probe status=layer-create-failed " +
-                      "externalSwapchainProbe=true cycleIndex=$cycleIndex sceneQuadLayerCreated=false " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.externalSwapchainProbeLayerCreateFailedMarker(
+                      cycleIndex = cycleIndex,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               false
             }
 
     marker(
-        "channel=external-xr-swapchain-wrap-probe status=cycle-visible externalSwapchainProbe=true " +
-            "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=$sdkHandleWrapMode " +
-            "xrCreateSwapchainResult=success wrappedExternalSwapchain=true " +
-            "sceneQuadLayerCreated=$layerCreated swapchainImagesEnumerated=see-native-marker " +
-            "nativeCanRenderIntoImages=false visiblePatternConfirmed=false " +
-            "renderBlockReason=missing-spatial-sdk-vulkan-device-queue " +
-            "destroyOwnership=pending deviceLost=false runtimeCrash=false"
+        SpatialDiagnosticProbeRouteModule.externalSwapchainProbeCycleVisibleMarker(
+            cycleIndex = cycleIndex,
+            cycleCount = cycleCount,
+            sdkHandleWrapMode = sdkHandleWrapMode,
+            layerCreated = layerCreated,
+        )
     )
     if (!layerCreated) {
       val ownership = cleanupExternalSwapchainProbe("cycle-$cycleIndex-layer-create-failed")
       marker(
-          "channel=external-xr-swapchain-wrap-probe status=complete externalSwapchainProbe=true " +
-              "cycleIndex=$cycleIndex cycleCount=$cycleCount sdkHandleWrapMode=$sdkHandleWrapMode " +
-              "xrCreateSwapchainResult=success wrappedExternalSwapchain=true sceneQuadLayerCreated=false " +
-              "swapchainImagesEnumerated=see-native-marker nativeCanRenderIntoImages=false " +
-              "visiblePatternConfirmed=false destroyOwnership=$ownership deviceLost=false " +
-              "runtimeCrash=false lifecycleTortureSkipped=scene-quad-layer-create-failed"
+          SpatialDiagnosticProbeRouteModule.externalSwapchainProbeLayerCreateFailedCompleteMarker(
+              cycleIndex = cycleIndex,
+              cycleCount = cycleCount,
+              sdkHandleWrapMode = sdkHandleWrapMode,
+              destroyOwnership = ownership,
+          )
       )
       return
     }
@@ -3664,13 +3664,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             {
               val ownership = cleanupExternalSwapchainProbe("cycle-$cycleIndex-destroy")
               marker(
-                  "channel=external-xr-swapchain-wrap-probe status=cycle-complete " +
-                      "externalSwapchainProbe=true cycleIndex=$cycleIndex cycleCount=$cycleCount " +
-                      "sdkHandleWrapMode=$sdkHandleWrapMode xrCreateSwapchainResult=success " +
-                      "wrappedExternalSwapchain=true sceneQuadLayerCreated=$layerCreated " +
-                      "swapchainImagesEnumerated=see-native-marker nativeCanRenderIntoImages=false " +
-                      "visiblePatternConfirmed=false destroyOwnership=$ownership " +
-                      "deviceLost=false runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.externalSwapchainProbeCycleCompleteMarker(
+                      cycleIndex = cycleIndex,
+                      cycleCount = cycleCount,
+                      sdkHandleWrapMode = sdkHandleWrapMode,
+                      layerCreated = layerCreated,
+                      destroyOwnership = ownership,
+                  )
               )
               if (cycleIndex < cycleCount) {
                 Handler(Looper.getMainLooper())
@@ -3680,12 +3680,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     )
               } else {
                 marker(
-                    "channel=external-xr-swapchain-wrap-probe status=complete " +
-                        "externalSwapchainProbe=true cycleCount=$cycleCount sdkHandleWrapMode=$sdkHandleWrapMode " +
-                        "xrCreateSwapchainResult=success wrappedExternalSwapchain=true " +
-                        "sceneQuadLayerCreated=$layerCreated swapchainImagesEnumerated=see-native-marker " +
-                        "nativeCanRenderIntoImages=false visiblePatternConfirmed=false " +
-                        "destroyOwnership=$ownership deviceLost=false runtimeCrash=false"
+                    SpatialDiagnosticProbeRouteModule.externalSwapchainProbeCompleteMarker(
+                        cycleCount = cycleCount,
+                        sdkHandleWrapMode = sdkHandleWrapMode,
+                        layerCreated = layerCreated,
+                        destroyOwnership = ownership,
+                    )
                 )
               }
             },
@@ -3698,19 +3698,23 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         runCatching { SceneSwapchain.create(EXTERNAL_SWAPCHAIN_PROBE_WIDTH_PX, EXTERNAL_SWAPCHAIN_PROBE_HEIGHT_PX, 1) }
             .getOrElse { throwable ->
               marker(
-                  "channel=external-xr-swapchain-wrap-probe status=sdk-swapchain-create-failed " +
-                      "externalSwapchainProbe=true cycleIndex=$cycleIndex sdkHandleWrapMode=none " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")}"
+                  SpatialDiagnosticProbeRouteModule.externalSwapchainProbeSdkSwapchainCreateFailedMarker(
+                      cycleIndex = cycleIndex,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               return "none"
             }
     val sdkSurfaceValid = runCatching { sdkSwap.getSurface()?.isValid == true }.getOrDefault(false)
     marker(
-        "channel=external-xr-swapchain-wrap-probe status=sdk-swapchain-created " +
-            "externalSwapchainProbe=true cycleIndex=$cycleIndex handle=${sdkSwap.handle} " +
-            "nativeHandle=${sdkSwap.nativeHandle()} platformHandle=${sdkSwap.platformHandle()} " +
-            "surfaceValid=$sdkSurfaceValid"
+        SpatialDiagnosticProbeRouteModule.externalSwapchainProbeSdkSwapchainCreatedMarker(
+            cycleIndex = cycleIndex,
+            handle = sdkSwap.handle,
+            nativeHandle = sdkSwap.nativeHandle(),
+            platformHandle = sdkSwap.platformHandle(),
+            surfaceValid = sdkSurfaceValid,
+        )
     )
     var firstSuccess = "none"
     listOf(
@@ -3721,9 +3725,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         .forEach { (label, handle) ->
           if (handle == 0L) {
             marker(
-                "channel=external-xr-swapchain-wrap-probe status=sdk-handle-wrap-result " +
-                    "externalSwapchainProbe=true cycleIndex=$cycleIndex handleLabel=$label " +
-                    "sourceHandle=$handle wrapped=false error=zero-handle sdkWrapDestroySkipped=true"
+                SpatialDiagnosticProbeRouteModule.externalSwapchainProbeSdkHandleWrapZeroMarker(
+                    cycleIndex = cycleIndex,
+                    handleLabel = label,
+                    sourceHandle = handle,
+                )
             )
             return@forEach
           }
@@ -3736,35 +3742,43 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 val wrapperSurfaceValid =
                     runCatching { wrapper.getSurface()?.isValid == true }.getOrDefault(false)
                 marker(
-                    "channel=external-xr-swapchain-wrap-probe status=sdk-handle-wrap-result " +
-                        "externalSwapchainProbe=true cycleIndex=$cycleIndex handleLabel=$label " +
-                        "sourceHandle=$handle wrapped=true wrapperHandle=${wrapper.handle} " +
-                        "wrapperNativeHandle=${wrapper.nativeHandle()} " +
-                        "wrapperPlatformHandle=${wrapper.platformHandle()} " +
-                        "wrapperSurfaceValid=$wrapperSurfaceValid sdkWrapDestroySkipped=true"
+                    SpatialDiagnosticProbeRouteModule.externalSwapchainProbeSdkHandleWrapSuccessMarker(
+                        cycleIndex = cycleIndex,
+                        handleLabel = label,
+                        sourceHandle = handle,
+                        wrapperHandle = wrapper.handle,
+                        wrapperNativeHandle = wrapper.nativeHandle(),
+                        wrapperPlatformHandle = wrapper.platformHandle(),
+                        wrapperSurfaceValid = wrapperSurfaceValid,
+                    )
                 )
               }
               .onFailure { throwable ->
                 marker(
-                    "channel=external-xr-swapchain-wrap-probe status=sdk-handle-wrap-result " +
-                        "externalSwapchainProbe=true cycleIndex=$cycleIndex handleLabel=$label " +
-                        "sourceHandle=$handle wrapped=false " +
-                        "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                        "message=${activityMarkerToken(throwable.message ?: "none")} sdkWrapDestroySkipped=true"
+                    SpatialDiagnosticProbeRouteModule.externalSwapchainProbeSdkHandleWrapFailedMarker(
+                        cycleIndex = cycleIndex,
+                        handleLabel = label,
+                        sourceHandle = handle,
+                        error = throwable.javaClass.simpleName,
+                        message = throwable.message ?: "none",
+                    )
                 )
               }
         }
     runCatching { sdkSwap.destroy() }
         .onFailure { throwable ->
           marker(
-              "channel=external-xr-swapchain-wrap-probe status=sdk-swapchain-destroy-failed " +
-                  "externalSwapchainProbe=true cycleIndex=$cycleIndex " +
-                  "error=${activityMarkerToken(throwable.javaClass.simpleName)}"
+              SpatialDiagnosticProbeRouteModule.externalSwapchainProbeSdkSwapchainDestroyFailedMarker(
+                  cycleIndex = cycleIndex,
+                  error = throwable.javaClass.simpleName,
+              )
           )
         }
     marker(
-        "channel=external-xr-swapchain-wrap-probe status=sdk-handle-wrap-summary " +
-            "externalSwapchainProbe=true cycleIndex=$cycleIndex sdkHandleWrapMode=$firstSuccess"
+        SpatialDiagnosticProbeRouteModule.externalSwapchainProbeSdkHandleWrapSummaryMarker(
+            cycleIndex = cycleIndex,
+            sdkHandleWrapMode = firstSuccess,
+        )
     )
     return firstSuccess
   }
@@ -3821,9 +3835,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               }
               .getOrElse { throwable ->
                 marker(
-                    "channel=external-xr-swapchain-wrap-probe status=native-destroy-call-failed " +
-                        "externalSwapchainProbe=true reason=${activityMarkerToken(reason)} " +
-                        "externalHandle=$externalHandle error=${activityMarkerToken(throwable.javaClass.simpleName)}"
+                    SpatialDiagnosticProbeRouteModule.externalSwapchainProbeNativeDestroyCallFailedMarker(
+                        reason = reason,
+                        externalHandle = externalHandle,
+                        error = throwable.javaClass.simpleName,
+                    )
                 )
                 Int.MIN_VALUE
               }
@@ -3841,12 +3857,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         !wrapperDestroyed ||
         nativeDestroyResult != "not-run") {
       marker(
-          "channel=external-xr-swapchain-wrap-probe status=destroyed externalSwapchainProbe=true " +
-              "reason=${activityMarkerToken(reason)} layerDestroyed=$layerDestroyed " +
-              "sceneObjectDestroyed=$sceneObjectDestroyed wrapperDestroyed=$wrapperDestroyed " +
-              "wrapperDestroySkipped=$wrapperDestroySkipped " +
-              "nativeDestroyResult=$nativeDestroyResult destroyOwnership=$destroyOwnership " +
-              "deviceLost=false runtimeCrash=false"
+          SpatialDiagnosticProbeRouteModule.externalSwapchainProbeDestroyedMarker(
+              reason = reason,
+              layerDestroyed = layerDestroyed,
+              sceneObjectDestroyed = sceneObjectDestroyed,
+              wrapperDestroyed = wrapperDestroyed,
+              wrapperDestroySkipped = wrapperDestroySkipped,
+              nativeDestroyResult = nativeDestroyResult,
+              destroyOwnership = destroyOwnership,
+          )
       )
     }
     return destroyOwnership
