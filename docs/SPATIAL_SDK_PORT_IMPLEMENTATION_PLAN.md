@@ -207,8 +207,9 @@ Apply that model here when a lane grows beyond a narrow facade method:
 - package controller shortcut routing policy in
   `SpatialControllerRoutingModule.kt`;
 - package OpenXR extension policy, explicit opt-in multimodal input defaults,
-  native interop probe/receipt markers, multimodal opt-in marker fields, and
-  native receipt bit decoding in `SpatialOpenXrRouteModule.kt`;
+  native interop probe/receipt markers, native passthrough/environment-depth
+  start markers, native controller-action start markers, and multimodal opt-in marker fields
+  plus native receipt bit decoding in `SpatialOpenXrRouteModule.kt`;
 - package surface-particle route policy, carrier parsing, dimensions, media
   settings, and marker fields in `SpatialSurfaceParticleRouteModule.kt`.
 

@@ -356,8 +356,10 @@ Interaction SDK pointer input without native multimodal extension forcing.
   controllers, emit markers, or call JNI.
 - `app/src/main/.../SpatialOpenXrRouteModule.kt` owns OpenXR route policy:
   required extension lists, the explicit opt-in multimodal input default,
-  native interop probe/receipt marker fields, multimodal opt-in marker fields,
-  native receipt bit decoding, and marker-ready native route status helpers.
+  native interop probe/receipt marker fields, native passthrough and
+  environment-depth start marker fields, native controller-action start marker
+  fields, multimodal opt-in marker fields, native receipt bit decoding, and
+  marker-ready native route status helpers.
   It must not load native libraries, call JNI, query the Spatial runtime, or
   mutate Activity state.
 - `app/src/main/.../SpatialSurfaceParticleRouteModule.kt` owns the

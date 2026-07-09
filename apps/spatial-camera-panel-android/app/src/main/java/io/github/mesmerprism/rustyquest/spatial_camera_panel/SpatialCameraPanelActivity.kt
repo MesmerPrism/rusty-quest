@@ -970,28 +970,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun startSpatialNativePassthroughForDepthPrerequisite(source: String): Long {
     if (!nativeReceiptLibraryLoaded) {
-      marker(
-          "channel=spatial-native-passthrough status=library-unavailable " +
-              "source=${activityMarkerToken(source)} nativePassthroughRequested=true " +
-              "nativePassthroughLayerActive=false error=${activityMarkerToken(nativeReceiptLibraryError)}"
-      )
+      marker(SpatialOpenXrRouteModule.nativePassthroughLibraryUnavailableMarker(source, nativeReceiptLibraryError))
       return 0L
     }
     val probe =
         runCatching { SpatialNativeInteropProbe.capture(scene) }
             .getOrElse { SpatialNativeInteropProbe(runtimeName = "unavailable", 0L, 0L, 0L) }
+    val requiredOpenXrExtensions = spatialRequiredOpenXrExtensionMarker()
     if (!probe.openXrInstanceHandleNonZero ||
         !probe.openXrSessionHandleNonZero ||
         !probe.openXrGetInstanceProcAddrHandleNonZero) {
-      marker(
-          "channel=spatial-native-passthrough status=deferred " +
-              "source=${activityMarkerToken(source)} nativePassthroughRequested=true " +
-              "nativePassthroughLayerActive=false openXrHandlesReady=false " +
-              "openXrInstanceHandleNonZero=${probe.openXrInstanceHandleNonZero} " +
-              "openXrSessionHandleNonZero=${probe.openXrSessionHandleNonZero} " +
-              "openXrGetInstanceProcAddrHandleNonZero=${probe.openXrGetInstanceProcAddrHandleNonZero} " +
-              "spatialRequiredOpenXrExtensions=${spatialRequiredOpenXrExtensionMarker()}"
-      )
+      marker(SpatialOpenXrRouteModule.nativePassthroughDeferredMarker(source, probe, requiredOpenXrExtensions))
       return 0L
     }
     val mask =
@@ -1004,55 +993,41 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             }
             .getOrElse { throwable ->
               marker(
-                  "channel=spatial-native-passthrough status=start-call-failed " +
-                      "source=${activityMarkerToken(source)} nativePassthroughRequested=true " +
-                      "nativePassthroughLayerActive=false error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} " +
-                      "spatialRequiredOpenXrExtensions=${spatialRequiredOpenXrExtensionMarker()}"
+                  SpatialOpenXrRouteModule.nativePassthroughStartCallFailedMarker(
+                      source,
+                      throwable.javaClass.simpleName,
+                      throwable.message ?: "none",
+                      requiredOpenXrExtensions,
+                  )
               )
               0L
             }
     marker(
-        "channel=spatial-native-passthrough status=start-requested " +
-            "source=${activityMarkerToken(source)} nativePassthroughRequested=true " +
-            "nativePassthroughStartMask=$mask " +
-            "nativePassthroughLayerActive=${SpatialOpenXrRouteModule.nativePassthroughLayerActive(mask)} " +
-            "nativePassthroughActivationPath=spatial-native-receipt-xr-fb-passthrough " +
-            "nativePassthroughCompositionLayerSubmission=spatial-sdk-owned-end-frame " +
-            "spatialScenePassthroughMaterialActive=${cameraHwbProjectionEntity != null} " +
-            "openXrInstanceHandleNonZero=${probe.openXrInstanceHandleNonZero} " +
-            "openXrSessionHandleNonZero=${probe.openXrSessionHandleNonZero} " +
-            "openXrGetInstanceProcAddrHandleNonZero=${probe.openXrGetInstanceProcAddrHandleNonZero} " +
-            "spatialRequiredOpenXrExtensions=${spatialRequiredOpenXrExtensionMarker()}"
+        SpatialOpenXrRouteModule.nativePassthroughStartRequestedMarker(
+            source,
+            mask,
+            probe,
+            cameraHwbProjectionEntity != null,
+            requiredOpenXrExtensions,
+        )
     )
     return mask
   }
 
   private fun startSpatialEnvironmentDepthProbe(source: String): Long {
     if (!nativeReceiptLibraryLoaded) {
-      marker(
-          "channel=spatial-environment-depth status=library-unavailable " +
-              "source=${activityMarkerToken(source)} environmentDepthProviderRequested=true " +
-              "environmentDepthRealProviderBound=false error=${activityMarkerToken(nativeReceiptLibraryError)}"
-      )
+      marker(SpatialOpenXrRouteModule.spatialEnvironmentDepthLibraryUnavailableMarker(source, nativeReceiptLibraryError))
       nativeSpatialEnvironmentDepthStartMask = 0L
       return 0L
     }
     val probe =
         runCatching { SpatialNativeInteropProbe.capture(scene) }
             .getOrElse { SpatialNativeInteropProbe(runtimeName = "unavailable", 0L, 0L, 0L) }
+    val requiredOpenXrExtensions = spatialRequiredOpenXrExtensionMarker()
     if (!probe.openXrInstanceHandleNonZero ||
         !probe.openXrSessionHandleNonZero ||
         !probe.openXrGetInstanceProcAddrHandleNonZero) {
-      marker(
-          "channel=spatial-environment-depth status=deferred " +
-              "source=${activityMarkerToken(source)} environmentDepthProviderRequested=true " +
-              "environmentDepthRealProviderBound=false openXrHandlesReady=false " +
-              "openXrInstanceHandleNonZero=${probe.openXrInstanceHandleNonZero} " +
-              "openXrSessionHandleNonZero=${probe.openXrSessionHandleNonZero} " +
-              "openXrGetInstanceProcAddrHandleNonZero=${probe.openXrGetInstanceProcAddrHandleNonZero} " +
-              "spatialRequiredOpenXrExtensions=${spatialRequiredOpenXrExtensionMarker()}"
-      )
+      marker(SpatialOpenXrRouteModule.spatialEnvironmentDepthDeferredMarker(source, probe, requiredOpenXrExtensions))
       nativeSpatialEnvironmentDepthStartMask = 0L
       return 0L
     }
@@ -1066,28 +1041,23 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             }
             .getOrElse { throwable ->
               marker(
-                  "channel=spatial-environment-depth status=start-call-failed " +
-                      "source=${activityMarkerToken(source)} environmentDepthProviderRequested=true " +
-                      "environmentDepthRealProviderBound=false error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} " +
-                      "spatialRequiredOpenXrExtensions=${spatialRequiredOpenXrExtensionMarker()}"
+                  SpatialOpenXrRouteModule.spatialEnvironmentDepthStartCallFailedMarker(
+                      source,
+                      throwable.javaClass.simpleName,
+                      throwable.message ?: "none",
+                      requiredOpenXrExtensions,
+                  )
               )
               0L
             }
     nativeSpatialEnvironmentDepthStartMask = mask
     marker(
-        "channel=spatial-environment-depth status=start-requested " +
-            "source=${activityMarkerToken(source)} environmentDepthProviderRequested=true " +
-            "nativeEnvironmentDepthStartMask=$mask " +
-            "environmentDepthRealProviderBound=${SpatialOpenXrRouteModule.spatialEnvironmentDepthProviderStarted(mask)} " +
-            "environmentDepthAcquireThreadStarted=${SpatialOpenXrRouteModule.spatialEnvironmentDepthAcquireThreadStarted(mask)} " +
-            "environmentDepthAcquireStatus=see-native-logcat " +
-            "environmentDepthAcquireDisplayTimePolicy=diagnostic-zero-time " +
-            "spatialSdkOwnsFrameLoop=true " +
-            "openXrInstanceHandleNonZero=${probe.openXrInstanceHandleNonZero} " +
-            "openXrSessionHandleNonZero=${probe.openXrSessionHandleNonZero} " +
-            "openXrGetInstanceProcAddrHandleNonZero=${probe.openXrGetInstanceProcAddrHandleNonZero} " +
-            "spatialRequiredOpenXrExtensions=${spatialRequiredOpenXrExtensionMarker()}"
+        SpatialOpenXrRouteModule.spatialEnvironmentDepthStartRequestedMarker(
+            source,
+            mask,
+            probe,
+            requiredOpenXrExtensions,
+        )
     )
     return mask
   }
@@ -1394,11 +1364,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       phase: String,
   ) {
     if (!nativeSpatialControllerActionsEnabled()) {
-      marker(
-          "channel=spatial-controller-actions status=disabled-by-property phase=$phase " +
-              "nativeControllerActionBridge=false property=$NATIVE_SPATIAL_CONTROLLER_ACTIONS_ENABLED_PROPERTY " +
-              "reason=spatial-sdk-vrfeature-owns-openxr-action-sets"
-      )
+      marker(SpatialOpenXrRouteModule.nativeControllerActionsDisabledMarker(phase))
       return
     }
     if (nativeSpatialControllerActionsStarted || !nativeReceiptLibraryLoaded) {
@@ -1409,10 +1375,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             !probe.openXrSessionHandleNonZero ||
             !probe.openXrGetInstanceProcAddrHandleNonZero
     ) {
-      marker(
-          "channel=spatial-controller-actions status=start-deferred phase=$phase " +
-              "nativeControllerActionBridge=true openXrHandlesReady=false"
-      )
+      marker(SpatialOpenXrRouteModule.nativeControllerActionsStartDeferredMarker(phase))
       return
     }
     val startMask =
@@ -1425,10 +1388,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             }
             .getOrElse { throwable ->
               marker(
-                  "channel=spatial-controller-actions status=start-error phase=$phase " +
-                      "nativeControllerActionBridge=true error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} " +
-                      "actionSetAttached=false"
+                  SpatialOpenXrRouteModule.nativeControllerActionsStartErrorMarker(
+                      phase,
+                      throwable.javaClass.simpleName,
+                      throwable.message ?: "none",
+                  )
               )
               0L
             }
@@ -1436,11 +1400,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     nativeSpatialControllerActionsStarted =
         SpatialOpenXrRouteModule.nativeSpatialControllerActionSetAttached(startMask)
     marker(
-        "channel=spatial-controller-actions status=start-result phase=$phase " +
-            "nativeControllerActionBridge=true startMask=$startMask " +
-            "actionSetAttached=$nativeSpatialControllerActionsStarted " +
-            "leftThumbstickYAction=$nativeSpatialControllerActionsStarted " +
-            "leftControllerThumbstickY=/user/hand/left/input/thumbstick/y"
+        SpatialOpenXrRouteModule.nativeControllerActionsStartResultMarker(
+            phase,
+            startMask,
+            nativeSpatialControllerActionsStarted,
+        )
     )
   }
 

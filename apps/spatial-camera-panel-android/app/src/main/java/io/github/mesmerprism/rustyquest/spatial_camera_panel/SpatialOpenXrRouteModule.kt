@@ -167,6 +167,134 @@ internal object SpatialOpenXrRouteModule {
   fun spatialEnvironmentDepthAcquireThreadStarted(mask: Long): Boolean =
       mask.hasReceiptBit(SPATIAL_ENVIRONMENT_DEPTH_ACQUIRE_THREAD_STARTED_BIT)
 
+  fun nativePassthroughLibraryUnavailableMarker(source: String, error: String): String =
+      "channel=spatial-native-passthrough status=library-unavailable " +
+          "source=${activityMarkerToken(source)} nativePassthroughRequested=true " +
+          "nativePassthroughLayerActive=false error=${activityMarkerToken(error)}"
+
+  fun nativePassthroughDeferredMarker(
+      source: String,
+      probe: SpatialNativeInteropProbe,
+      requiredOpenXrExtensions: String,
+  ): String =
+      "channel=spatial-native-passthrough status=deferred " +
+          "source=${activityMarkerToken(source)} nativePassthroughRequested=true " +
+          "nativePassthroughLayerActive=false openXrHandlesReady=false " +
+          "openXrInstanceHandleNonZero=${probe.openXrInstanceHandleNonZero} " +
+          "openXrSessionHandleNonZero=${probe.openXrSessionHandleNonZero} " +
+          "openXrGetInstanceProcAddrHandleNonZero=${probe.openXrGetInstanceProcAddrHandleNonZero} " +
+          "spatialRequiredOpenXrExtensions=$requiredOpenXrExtensions"
+
+  fun nativePassthroughStartCallFailedMarker(
+      source: String,
+      error: String,
+      message: String,
+      requiredOpenXrExtensions: String,
+  ): String =
+      "channel=spatial-native-passthrough status=start-call-failed " +
+          "source=${activityMarkerToken(source)} nativePassthroughRequested=true " +
+          "nativePassthroughLayerActive=false error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} " +
+          "spatialRequiredOpenXrExtensions=$requiredOpenXrExtensions"
+
+  fun nativePassthroughStartRequestedMarker(
+      source: String,
+      mask: Long,
+      probe: SpatialNativeInteropProbe,
+      spatialScenePassthroughMaterialActive: Boolean,
+      requiredOpenXrExtensions: String,
+  ): String =
+      "channel=spatial-native-passthrough status=start-requested " +
+          "source=${activityMarkerToken(source)} nativePassthroughRequested=true " +
+          "nativePassthroughStartMask=$mask " +
+          "nativePassthroughLayerActive=${nativePassthroughLayerActive(mask)} " +
+          "nativePassthroughActivationPath=spatial-native-receipt-xr-fb-passthrough " +
+          "nativePassthroughCompositionLayerSubmission=spatial-sdk-owned-end-frame " +
+          "spatialScenePassthroughMaterialActive=$spatialScenePassthroughMaterialActive " +
+          "openXrInstanceHandleNonZero=${probe.openXrInstanceHandleNonZero} " +
+          "openXrSessionHandleNonZero=${probe.openXrSessionHandleNonZero} " +
+          "openXrGetInstanceProcAddrHandleNonZero=${probe.openXrGetInstanceProcAddrHandleNonZero} " +
+          "spatialRequiredOpenXrExtensions=$requiredOpenXrExtensions"
+
+  fun spatialEnvironmentDepthLibraryUnavailableMarker(source: String, error: String): String =
+      "channel=spatial-environment-depth status=library-unavailable " +
+          "source=${activityMarkerToken(source)} environmentDepthProviderRequested=true " +
+          "environmentDepthRealProviderBound=false error=${activityMarkerToken(error)}"
+
+  fun spatialEnvironmentDepthDeferredMarker(
+      source: String,
+      probe: SpatialNativeInteropProbe,
+      requiredOpenXrExtensions: String,
+  ): String =
+      "channel=spatial-environment-depth status=deferred " +
+          "source=${activityMarkerToken(source)} environmentDepthProviderRequested=true " +
+          "environmentDepthRealProviderBound=false openXrHandlesReady=false " +
+          "openXrInstanceHandleNonZero=${probe.openXrInstanceHandleNonZero} " +
+          "openXrSessionHandleNonZero=${probe.openXrSessionHandleNonZero} " +
+          "openXrGetInstanceProcAddrHandleNonZero=${probe.openXrGetInstanceProcAddrHandleNonZero} " +
+          "spatialRequiredOpenXrExtensions=$requiredOpenXrExtensions"
+
+  fun spatialEnvironmentDepthStartCallFailedMarker(
+      source: String,
+      error: String,
+      message: String,
+      requiredOpenXrExtensions: String,
+  ): String =
+      "channel=spatial-environment-depth status=start-call-failed " +
+          "source=${activityMarkerToken(source)} environmentDepthProviderRequested=true " +
+          "environmentDepthRealProviderBound=false error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} " +
+          "spatialRequiredOpenXrExtensions=$requiredOpenXrExtensions"
+
+  fun spatialEnvironmentDepthStartRequestedMarker(
+      source: String,
+      mask: Long,
+      probe: SpatialNativeInteropProbe,
+      requiredOpenXrExtensions: String,
+  ): String =
+      "channel=spatial-environment-depth status=start-requested " +
+          "source=${activityMarkerToken(source)} environmentDepthProviderRequested=true " +
+          "nativeEnvironmentDepthStartMask=$mask " +
+          "environmentDepthRealProviderBound=${spatialEnvironmentDepthProviderStarted(mask)} " +
+          "environmentDepthAcquireThreadStarted=${spatialEnvironmentDepthAcquireThreadStarted(mask)} " +
+          "environmentDepthAcquireStatus=see-native-logcat " +
+          "environmentDepthAcquireDisplayTimePolicy=diagnostic-zero-time " +
+          "spatialSdkOwnsFrameLoop=true " +
+          "openXrInstanceHandleNonZero=${probe.openXrInstanceHandleNonZero} " +
+          "openXrSessionHandleNonZero=${probe.openXrSessionHandleNonZero} " +
+          "openXrGetInstanceProcAddrHandleNonZero=${probe.openXrGetInstanceProcAddrHandleNonZero} " +
+          "spatialRequiredOpenXrExtensions=$requiredOpenXrExtensions"
+
+  fun nativeControllerActionsDisabledMarker(phase: String): String =
+      "channel=spatial-controller-actions status=disabled-by-property phase=$phase " +
+          "nativeControllerActionBridge=false property=$NATIVE_SPATIAL_CONTROLLER_ACTIONS_ENABLED_PROPERTY " +
+          "reason=spatial-sdk-vrfeature-owns-openxr-action-sets"
+
+  fun nativeControllerActionsStartDeferredMarker(phase: String): String =
+      "channel=spatial-controller-actions status=start-deferred phase=$phase " +
+          "nativeControllerActionBridge=true openXrHandlesReady=false"
+
+  fun nativeControllerActionsStartErrorMarker(
+      phase: String,
+      error: String,
+      message: String,
+  ): String =
+      "channel=spatial-controller-actions status=start-error phase=$phase " +
+          "nativeControllerActionBridge=true error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} " +
+          "actionSetAttached=false"
+
+  fun nativeControllerActionsStartResultMarker(
+      phase: String,
+      startMask: Long,
+      actionSetAttached: Boolean,
+  ): String =
+      "channel=spatial-controller-actions status=start-result phase=$phase " +
+          "nativeControllerActionBridge=true startMask=$startMask " +
+          "actionSetAttached=$actionSetAttached " +
+          "leftThumbstickYAction=$actionSetAttached " +
+          "leftControllerThumbstickY=/user/hand/left/input/thumbstick/y"
+
   fun spatialMultimodalInputSupported(mask: Long): Boolean =
       mask.hasReceiptBit(SPATIAL_MULTIMODAL_INPUT_SUPPORTED_BIT)
 
