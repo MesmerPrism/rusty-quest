@@ -565,6 +565,74 @@ internal object SpatialDiagnosticProbeRouteModule {
           "nativeVulkanProducer=false visiblePatternConfirmed=false " +
           "humanVisiblePatternCheckRequired=true holdMs=$holdMs runtimeCrash=false"
 
+  fun sdkQuadSurfaceProbeLayerCreatedMarker(
+      canvasDrawn: Boolean,
+      anchorMode: String,
+      sceneObjectHandle: Long,
+      layerPositionM: String,
+      layerQuaternion: String,
+  ): String =
+      "channel=sdk-owned-quad-surface-probe status=layer-created " +
+          "sdkQuadSurfaceProbe=true sceneQuadLayerCreated=true " +
+          "canvasDrawn=$canvasDrawn anchorMode=$anchorMode " +
+          "sceneObjectHandle=$sceneObjectHandle " +
+          "widthMeters=$SDK_QUAD_SURFACE_PROBE_WIDTH_METERS " +
+          "heightMeters=$SDK_QUAD_SURFACE_PROBE_HEIGHT_METERS zIndex=$SDK_QUAD_SURFACE_PROBE_Z_INDEX " +
+          "stereoMode=None poseSource=Scene.getViewerPose " +
+          "layerPositionM=$layerPositionM layerQuaternion=$layerQuaternion"
+
+  fun sdkQuadSurfaceProbeLayerCreateFailedMarker(
+      canvasDrawn: Boolean,
+      anchorMode: String,
+      error: String,
+      message: String,
+  ): String =
+      "channel=sdk-owned-quad-surface-probe status=layer-create-failed " +
+          "sdkQuadSurfaceProbe=true sceneQuadLayerCreated=false canvasDrawn=$canvasDrawn " +
+          "anchorMode=$anchorMode error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun sdkQuadSurfaceProbeCanvasDrawSkippedMarker(): String =
+      "channel=sdk-owned-quad-surface-probe status=canvas-draw-skipped " +
+          "sdkQuadSurfaceProbe=true reason=surface-invalid canvasDrawn=false"
+
+  fun sdkQuadSurfaceProbeCanvasDrawCompleteMarker(drawn: Boolean): String =
+      "channel=sdk-owned-quad-surface-probe status=canvas-draw-complete " +
+          "sdkQuadSurfaceProbe=true canvasDrawn=$drawn checkerCells=$SDK_QUAD_SURFACE_PROBE_CHECKER_CELLS " +
+          "producer=android-canvas widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX " +
+          "heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX"
+
+  fun sdkQuadSurfaceProbeCanvasDrawFailedMarker(error: String, message: String): String =
+      "channel=sdk-owned-quad-surface-probe status=canvas-draw-failed " +
+          "sdkQuadSurfaceProbe=true canvasDrawn=false " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun sdkQuadSurfaceProbeSceneAnchorDestroyedMarker(
+      reason: String,
+      layerDestroyed: Boolean,
+      sceneObjectDestroyed: Boolean,
+      anchorMeshDestroyed: Boolean,
+      anchorMaterialDestroyed: Boolean,
+      cleanupStatus: String,
+  ): String =
+      "channel=sdk-owned-quad-surface-probe status=scene-anchor-destroyed " +
+          "sdkQuadSurfaceProbe=true reason=${activityMarkerToken(reason)} " +
+          "layerDestroyed=$layerDestroyed sceneObjectDestroyed=$sceneObjectDestroyed " +
+          "anchorMeshDestroyed=$anchorMeshDestroyed anchorMaterialDestroyed=$anchorMaterialDestroyed " +
+          "cleanupStatus=$cleanupStatus runtimeCrash=false"
+
+  fun sdkQuadSurfaceProbeDestroyedMarker(
+      reason: String,
+      sceneCleanupStatus: String,
+      swapchainDestroyed: Boolean,
+      cleanupStatus: String,
+  ): String =
+      "channel=sdk-owned-quad-surface-probe status=destroyed sdkQuadSurfaceProbe=true " +
+          "reason=${activityMarkerToken(reason)} sceneCleanupStatus=$sceneCleanupStatus " +
+          "swapchainDestroyed=$swapchainDestroyed " +
+          "cleanupStatus=$cleanupStatus runtimeCrash=false"
+
   fun sdkQuadVulkanProbeStartMarker(reason: String, holdMs: Long, frameCount: Int): String =
       "channel=sdk-owned-quad-vulkan-probe status=start sdkQuadVulkanProbe=true " +
           "reason=${activityMarkerToken(reason)} debugProperty=$SDK_QUAD_VULKAN_PROBE_PROPERTY " +

@@ -2984,23 +2984,24 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             layer.setZIndex(SDK_QUAD_SURFACE_PROBE_Z_INDEX)
             sdkQuadSurfaceProbeLayer = layer
             marker(
-                "channel=sdk-owned-quad-surface-probe status=layer-created " +
-                    "sdkQuadSurfaceProbe=true sceneQuadLayerCreated=true " +
-                    "canvasDrawn=$canvasDrawn anchorMode=$anchorMode " +
-                    "sceneObjectHandle=${sceneObject.handle} " +
-                    "widthMeters=$SDK_QUAD_SURFACE_PROBE_WIDTH_METERS " +
-                    "heightMeters=$SDK_QUAD_SURFACE_PROBE_HEIGHT_METERS zIndex=$SDK_QUAD_SURFACE_PROBE_Z_INDEX " +
-                    "stereoMode=None poseSource=Scene.getViewerPose " +
-                    "layerPositionM=${activityVectorMarker(pose.t)} layerQuaternion=${activityQuaternionMarker(pose.q)}"
+                SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeLayerCreatedMarker(
+                    canvasDrawn = canvasDrawn,
+                    anchorMode = anchorMode,
+                    sceneObjectHandle = sceneObject.handle,
+                    layerPositionM = activityVectorMarker(pose.t),
+                    layerQuaternion = activityQuaternionMarker(pose.q),
+                )
             )
             true
           }
           .getOrElse { throwable ->
             marker(
-                "channel=sdk-owned-quad-surface-probe status=layer-create-failed " +
-                    "sdkQuadSurfaceProbe=true sceneQuadLayerCreated=false canvasDrawn=$canvasDrawn " +
-                    "anchorMode=$anchorMode error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                    "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeLayerCreateFailedMarker(
+                    canvasDrawn = canvasDrawn,
+                    anchorMode = anchorMode,
+                    error = throwable.javaClass.simpleName,
+                    message = throwable.message ?: "none",
+                )
             )
             false
           }
@@ -3119,10 +3120,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun drawSdkQuadSurfaceCheckerboard(surface: AndroidSurface): Boolean {
     if (!surface.isValid) {
-      marker(
-          "channel=sdk-owned-quad-surface-probe status=canvas-draw-skipped " +
-              "sdkQuadSurfaceProbe=true reason=surface-invalid canvasDrawn=false"
-      )
+      marker(SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeCanvasDrawSkippedMarker())
       return false
     }
     var canvas: android.graphics.Canvas? = null
@@ -3157,22 +3155,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         }
         .onSuccess { drawn ->
           canvas?.let { locked -> runCatching { surface.unlockCanvasAndPost(locked) } }
-          marker(
-              "channel=sdk-owned-quad-surface-probe status=canvas-draw-complete " +
-                  "sdkQuadSurfaceProbe=true canvasDrawn=$drawn checkerCells=$SDK_QUAD_SURFACE_PROBE_CHECKER_CELLS " +
-                  "producer=android-canvas widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX " +
-                  "heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX"
-          )
+          marker(SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeCanvasDrawCompleteMarker(drawn))
         }
         .onFailure { throwable ->
           canvas?.let { locked ->
             runCatching { surface.unlockCanvasAndPost(locked) }
           }
           marker(
-              "channel=sdk-owned-quad-surface-probe status=canvas-draw-failed " +
-                  "sdkQuadSurfaceProbe=true canvasDrawn=false " +
-                  "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                  "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+              SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeCanvasDrawFailedMarker(
+                  error = throwable.javaClass.simpleName,
+                  message = throwable.message ?: "none",
+              )
           )
         }
         .getOrDefault(false)
@@ -3312,14 +3305,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           "destroyed"
         } else {
           "incomplete"
-        }
+    }
     if (!layerDestroyed || !sceneObjectDestroyed || !meshDestroyed || !materialDestroyed) {
       marker(
-          "channel=sdk-owned-quad-surface-probe status=scene-anchor-destroyed " +
-              "sdkQuadSurfaceProbe=true reason=${activityMarkerToken(reason)} " +
-              "layerDestroyed=$layerDestroyed sceneObjectDestroyed=$sceneObjectDestroyed " +
-              "anchorMeshDestroyed=$meshDestroyed anchorMaterialDestroyed=$materialDestroyed " +
-              "cleanupStatus=$cleanupStatus runtimeCrash=false"
+          SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeSceneAnchorDestroyedMarker(
+              reason = reason,
+              layerDestroyed = layerDestroyed,
+              sceneObjectDestroyed = sceneObjectDestroyed,
+              anchorMeshDestroyed = meshDestroyed,
+              anchorMaterialDestroyed = materialDestroyed,
+              cleanupStatus = cleanupStatus,
+          )
       )
     }
     return cleanupStatus
@@ -3426,13 +3422,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           "destroyed"
         } else {
           "incomplete"
-        }
+    }
     if (!sceneCleanupDestroyed || !swapchainDestroyed || reason != "pre-run") {
       marker(
-          "channel=sdk-owned-quad-surface-probe status=destroyed sdkQuadSurfaceProbe=true " +
-              "reason=${activityMarkerToken(reason)} sceneCleanupStatus=$sceneCleanupStatus " +
-              "swapchainDestroyed=$swapchainDestroyed " +
-              "cleanupStatus=$cleanupStatus runtimeCrash=false"
+          SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeDestroyedMarker(
+              reason = reason,
+              sceneCleanupStatus = sceneCleanupStatus,
+              swapchainDestroyed = swapchainDestroyed,
+              cleanupStatus = cleanupStatus,
+          )
       )
     }
     return cleanupStatus
