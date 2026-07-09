@@ -230,8 +230,9 @@ Apply that model here when a lane grows beyond a narrow facade method:
   start markers, native controller-action start markers, and multimodal opt-in marker fields
   plus native receipt bit decoding in `SpatialOpenXrRouteModule.kt`;
 - package surface-particle route policy, carrier parsing, dimensions, media
-  settings, route lifecycle marker fields, and camera-stack particle
-  suppression marker fields in `SpatialSurfaceParticleRouteModule.kt`.
+  settings, route lifecycle marker fields, parameter/alias marker fields, and
+  camera-stack particle suppression marker fields in
+  `SpatialSurfaceParticleRouteModule.kt`.
 - package native surface-particle manual panel carrier construction,
   custom-mesh `PanelSceneObject` creation, create/surface/add failure markers,
   and readiness marker fields in `SpatialSurfaceParticlePanelCarrierModule.kt`.

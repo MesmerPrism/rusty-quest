@@ -305,6 +305,81 @@ internal object SpatialSurfaceParticleRouteModule {
           "renderPolicy=$RENDER_POLICY error=${activityMarkerToken(error)} " +
           "message=${activityMarkerToken(message)}"
 
+  fun nativeSurfaceParticleParameterSubmitSkippedMarker(source: String): String =
+      "channel=native-surface-particle-layer status=parameter-submit-skipped " +
+          "renderPolicy=$RENDER_POLICY reason=library-unavailable " +
+          "source=${activityMarkerToken(source)}"
+
+  fun nativeSurfaceParticleParametersSubmittedMarker(
+      source: String,
+      parameterMask: Long,
+      controls: SurfaceParticleControlState,
+  ): String =
+      "channel=native-surface-particle-layer status=parameters-submitted " +
+          "renderPolicy=$RENDER_POLICY transport=jni-live-queue " +
+          "computeParameterBridge=true privateSurfaceParticleUiParameterPacketReady=true " +
+          "privateSurfaceParticleUiParameterTransport=jni-live-queue " +
+          "privateSurfaceParticleUiParameterHighRatePayloadAllowed=false " +
+          "privateSurfaceParticleUiParameterRejected=false " +
+          "privateSurfaceParticleUiParameterRejectReason=none " +
+          "source=${activityMarkerToken(source)} parameterMask=$parameterMask " +
+          "driver0Value01=${surfaceParticleParameterFloat(controls.driver0Value01)} " +
+          "driver1Value01=${surfaceParticleParameterFloat(controls.driver1Value01)} " +
+          "driver2Value01=${surfaceParticleParameterFloat(controls.driver2Value01)} " +
+          "driver3Value01=${surfaceParticleParameterFloat(controls.driver3Value01)} " +
+          "driver4Value01=${surfaceParticleParameterFloat(controls.driver4Value01)} " +
+          "driver5Value01=${surfaceParticleParameterFloat(controls.driver5Value01)} " +
+          "driver6Value01=${surfaceParticleParameterFloat(controls.driver6Value01)} " +
+          "driver7Value01=${surfaceParticleParameterFloat(controls.driver7Value01)} " +
+          "pointScale=${surfaceParticleParameterFloat(controls.pointScale)} " +
+          "tracerDrawSlotsPerOscillator=${surfaceParticleParameterFloat(controls.tracerDrawSlotsPerOscillator)} " +
+          "tracerLifetimeSeconds=${surfaceParticleParameterFloat(controls.tracerLifetimeSeconds)} " +
+          "tracerCopiesPerSecond=${surfaceParticleParameterFloat(controls.tracerCopiesPerSecond)} " +
+          "transparencyOpacity=${surfaceParticleParameterFloat(controls.transparencyOpacity)} " +
+          "projectionWorldScale=${surfaceParticleParameterFloat(controls.projectionWorldScale)}"
+
+  fun nativeSurfaceParticleParameterSubmitFailedMarker(source: String, error: String): String =
+      "channel=native-surface-particle-layer status=parameter-submit-failed " +
+          "renderPolicy=$RENDER_POLICY source=${activityMarkerToken(source)} " +
+          "error=${activityMarkerToken(error)}"
+
+  fun nativeSurfaceParticleAliasSubmitSkippedMarker(
+      source: String,
+      parameterId: String,
+      visualDriverActivationProfile: String,
+  ): String =
+      "channel=native-surface-particle-layer status=alias-parameter-submit-skipped " +
+          "renderPolicy=$RENDER_POLICY reason=library-unavailable " +
+          "source=${activityMarkerToken(source)} parameterId=${activityMarkerToken(parameterId)} " +
+          "visualDriverActivationProfile=${activityMarkerToken(visualDriverActivationProfile)}"
+
+  fun nativeSurfaceParticleAliasSubmittedMarker(
+      source: String,
+      parameterId: String,
+      visualDriverActivationProfile: String,
+      requestedValue: Float,
+      parameterMask: Long,
+  ): String =
+      "channel=native-surface-particle-layer status=alias-parameter-submitted " +
+          "renderPolicy=$RENDER_POLICY transport=jni-live-queue " +
+          "computeParameterBridge=true source=${activityMarkerToken(source)} " +
+          "parameterId=${activityMarkerToken(parameterId)} " +
+          "visualDriverActivationProfile=${activityMarkerToken(visualDriverActivationProfile)} " +
+          "requestedValue=${activityMarkerFloat(requestedValue)} parameterMask=$parameterMask " +
+          "privateSurfaceParticleUiParameterPacketReady=true " +
+          "privateSurfaceParticleUiParameterTransport=jni-live-queue " +
+          "privateSurfaceParticleUiParameterHighRatePayloadAllowed=false"
+
+  fun nativeSurfaceParticleAliasSubmitFailedMarker(
+      source: String,
+      parameterId: String,
+      error: String,
+  ): String =
+      "channel=native-surface-particle-layer status=alias-parameter-submit-failed " +
+          "renderPolicy=$RENDER_POLICY source=${activityMarkerToken(source)} " +
+          "parameterId=${activityMarkerToken(parameterId)} " +
+          "error=${activityMarkerToken(error)}"
+
   fun cameraStackParticleLayerSuppressedMarker(
       source: String,
       stopAttempted: Boolean,
@@ -395,4 +470,7 @@ internal object SpatialSurfaceParticleRouteModule {
             SpatialSurfaceParticleCarrierMode.ManualPanelSceneObjectCustomMesh
         else -> null
       }
+
+  private fun surfaceParticleParameterFloat(value: Float): String =
+      String.format(Locale.US, "%.3f", value)
 }

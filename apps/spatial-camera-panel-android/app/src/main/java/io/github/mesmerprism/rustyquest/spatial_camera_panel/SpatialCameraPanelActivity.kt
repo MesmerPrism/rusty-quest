@@ -4059,8 +4059,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun submitNativeSurfaceParticleParameters(source: String) {
     if (!nativeReceiptLibraryLoaded) {
       marker(
-          "channel=native-surface-particle-layer status=parameter-submit-skipped " +
-              "renderPolicy=native-vulkan-wsi-surface-panel reason=library-unavailable source=${activityMarkerToken(source)}"
+          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleParameterSubmitSkippedMarker(source)
       )
       return
     }
@@ -4083,35 +4082,19 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   particleControls.projectionWorldScale,
               )
           marker(
-              "channel=native-surface-particle-layer status=parameters-submitted " +
-                  "renderPolicy=native-vulkan-wsi-surface-panel transport=jni-live-queue " +
-                  "computeParameterBridge=true privateSurfaceParticleUiParameterPacketReady=true " +
-                  "privateSurfaceParticleUiParameterTransport=jni-live-queue " +
-                  "privateSurfaceParticleUiParameterHighRatePayloadAllowed=false " +
-                  "privateSurfaceParticleUiParameterRejected=false " +
-                  "privateSurfaceParticleUiParameterRejectReason=none " +
-                  "source=${activityMarkerToken(source)} parameterMask=$mask " +
-                  "driver0Value01=${"%.3f".format(particleControls.driver0Value01)} " +
-                  "driver1Value01=${"%.3f".format(particleControls.driver1Value01)} " +
-                  "driver2Value01=${"%.3f".format(particleControls.driver2Value01)} " +
-                  "driver3Value01=${"%.3f".format(particleControls.driver3Value01)} " +
-                  "driver4Value01=${"%.3f".format(particleControls.driver4Value01)} " +
-                  "driver5Value01=${"%.3f".format(particleControls.driver5Value01)} " +
-                  "driver6Value01=${"%.3f".format(particleControls.driver6Value01)} " +
-                  "driver7Value01=${"%.3f".format(particleControls.driver7Value01)} " +
-                  "pointScale=${"%.3f".format(particleControls.pointScale)} " +
-                  "tracerDrawSlotsPerOscillator=${"%.3f".format(particleControls.tracerDrawSlotsPerOscillator)} " +
-                  "tracerLifetimeSeconds=${"%.3f".format(particleControls.tracerLifetimeSeconds)} " +
-                  "tracerCopiesPerSecond=${"%.3f".format(particleControls.tracerCopiesPerSecond)} " +
-                  "transparencyOpacity=${"%.3f".format(particleControls.transparencyOpacity)} " +
-                  "projectionWorldScale=${"%.3f".format(particleControls.projectionWorldScale)}"
+              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleParametersSubmittedMarker(
+                  source,
+                  mask,
+                  particleControls,
+              )
           )
         }
         .getOrElse { throwable ->
           marker(
-              "channel=native-surface-particle-layer status=parameter-submit-failed " +
-                  "renderPolicy=native-vulkan-wsi-surface-panel source=${activityMarkerToken(source)} " +
-                  "error=${activityMarkerToken(throwable.javaClass.simpleName)}"
+              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleParameterSubmitFailedMarker(
+                  source,
+                  throwable.javaClass.simpleName,
+              )
           )
         }
   }
@@ -4129,10 +4112,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             ?: "default"
     if (!nativeReceiptLibraryLoaded) {
       marker(
-          "channel=native-surface-particle-layer status=alias-parameter-submit-skipped " +
-              "renderPolicy=native-vulkan-wsi-surface-panel reason=library-unavailable " +
-              "source=${activityMarkerToken(source)} parameterId=${activityMarkerToken(parameterId)} " +
-              "visualDriverActivationProfile=${activityMarkerToken(activationProfile)}"
+          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleAliasSubmitSkippedMarker(
+              source,
+              parameterId,
+              activationProfile,
+          )
       )
       return
     }
@@ -4144,23 +4128,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   activationProfile,
               )
           marker(
-              "channel=native-surface-particle-layer status=alias-parameter-submitted " +
-                  "renderPolicy=native-vulkan-wsi-surface-panel transport=jni-live-queue " +
-                  "computeParameterBridge=true source=${activityMarkerToken(source)} " +
-                  "parameterId=${activityMarkerToken(parameterId)} " +
-                  "visualDriverActivationProfile=${activityMarkerToken(activationProfile)} " +
-                  "requestedValue=${activityMarkerFloat(requestedValue)} parameterMask=$mask " +
-                  "privateSurfaceParticleUiParameterPacketReady=true " +
-                  "privateSurfaceParticleUiParameterTransport=jni-live-queue " +
-                  "privateSurfaceParticleUiParameterHighRatePayloadAllowed=false"
+              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleAliasSubmittedMarker(
+                  source,
+                  parameterId,
+                  activationProfile,
+                  requestedValue,
+                  mask,
+              )
           )
         }
         .getOrElse { throwable ->
           marker(
-              "channel=native-surface-particle-layer status=alias-parameter-submit-failed " +
-                  "renderPolicy=native-vulkan-wsi-surface-panel source=${activityMarkerToken(source)} " +
-                  "parameterId=${activityMarkerToken(parameterId)} " +
-                  "error=${activityMarkerToken(throwable.javaClass.simpleName)}"
+              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleAliasSubmitFailedMarker(
+                  source,
+                  parameterId,
+                  throwable.javaClass.simpleName,
+              )
           )
         }
   }
