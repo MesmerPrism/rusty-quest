@@ -1763,34 +1763,29 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       return
     }
     if (!spatialSceneReady) {
-      marker(
-          "channel=spatial-video-projection status=start-deferred " +
-              "reason=${activityMarkerToken(reason)} deferredUntil=scene-ready " +
-              "sceneReady=false runtimeCrash=false"
-      )
+      marker(SpatialVideoProjectionRouteModule.startDeferredForSceneMarker(reason))
       return
     }
     if (spatialVirtualRoomEnabled() && !spatialVirtualRoomLoaded()) {
       marker(
-          "channel=spatial-video-projection status=start-deferred " +
-              "reason=${activityMarkerToken(reason)} deferredUntil=virtual-room-loaded " +
-              "sceneReady=$spatialSceneReady spatialVirtualRoomLoaded=false runtimeCrash=false"
+          SpatialVideoProjectionRouteModule.startDeferredForVirtualRoomMarker(
+              reason,
+              spatialSceneReady,
+          )
       )
       return
     }
     spatialVideoProjectionProbeStarted = true
     val videoSettings = currentSpatialVideoProjectionSettings(intent)
     marker(
-        "channel=spatial-video-projection status=start videoOnlySpatialProjection=true " +
-            "reason=${activityMarkerToken(reason)} debugProperty=$SPATIAL_VIDEO_PROJECTION_PROBE_PROPERTY " +
-            "widthPx=$CAMERA_HWB_PROJECTION_WIDTH_PX heightPx=$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
-            "requestedFrames=0 frameLimit=none carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
-            "cameraRuntimeStarted=false rawCameraProjectionProbe=false " +
-            cameraHwbProjectionMarkerFields() + " " +
-            cameraHwbProjectionStereoMarkerFields() + " " +
-            spatialVideoProjectionMarkerFields(videoSettings) + " " +
-            "outputMode=video-only-full-sbs sampledCameraTexture=false " +
-            "privateShaderStack=false customProjectionStack=false"
+        SpatialVideoProjectionRouteModule.startMarker(
+            reason = reason,
+            widthPx = CAMERA_HWB_PROJECTION_WIDTH_PX,
+            heightPx = CAMERA_HWB_PROJECTION_HEIGHT_PX,
+            projectionMarkerFields = cameraHwbProjectionMarkerFields(),
+            stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
+            settings = videoSettings,
+        )
     )
     Handler(Looper.getMainLooper()).post { runSpatialVideoProjectionProbe(videoSettings) }
   }
@@ -1807,21 +1802,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     setWorkflowPanelVisible(false, focus = false, source = "spatial-video-projection-probe")
     if (!videoSettings.active) {
       configureNativeSpatialVideoProjection(videoSettings, "video-only-inactive")
-      marker(
-          "channel=spatial-video-projection status=complete videoOnlySpatialProjection=true " +
-              "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
-              "nativeStartRequested=false cameraRuntimeStarted=false " +
-              "error=video-path-missing " +
-              spatialVideoProjectionMarkerFields(videoSettings) + " runtimeCrash=false"
-      )
+      marker(SpatialVideoProjectionRouteModule.inactiveCompleteMarker(videoSettings))
       return
     }
     if (!nativeReceiptLibraryLoaded) {
       marker(
-          "channel=spatial-video-projection status=complete videoOnlySpatialProjection=true " +
-              "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
-              "nativeStartRequested=false cameraRuntimeStarted=false " +
-              "error=${activityMarkerToken(nativeReceiptLibraryError)} runtimeCrash=false"
+          SpatialVideoProjectionRouteModule.nativeReceiptUnavailableCompleteMarker(
+              nativeReceiptLibraryError
+          )
       )
       return
     }
@@ -1835,11 +1823,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             }
             .getOrElse { throwable ->
               marker(
-                  "channel=spatial-video-projection status=complete videoOnlySpatialProjection=true " +
-                      "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
-                      "nativeStartRequested=false cameraRuntimeStarted=false " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialVideoProjectionRouteModule.sdkSwapchainCreateFailedCompleteMarker(
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               return
             }
@@ -1848,34 +1835,41 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         runCatching { sdkSwapchain.getSurface() }
             .getOrElse { throwable ->
               marker(
-                  "channel=spatial-video-projection status=get-surface-failed " +
-                      "videoOnlySpatialProjection=true handle=${sdkSwapchain.handle} " +
-                      "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialVideoProjectionRouteModule.getSurfaceFailedMarker(
+                      handle = sdkSwapchain.handle,
+                      nativeHandle = sdkSwapchain.nativeHandle(),
+                      platformHandle = sdkSwapchain.platformHandle(),
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               null
             }
     sdkQuadSurfaceProbeSurface = surface
     val surfaceValid = surface?.isValid == true
     marker(
-        "channel=spatial-video-projection status=sdk-swapchain-created videoOnlySpatialProjection=true " +
-            "sdkSwapchainCreated=true handle=${sdkSwapchain.handle} " +
-            "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
-            "surfaceValid=$surfaceValid widthPx=$CAMERA_HWB_PROJECTION_WIDTH_PX " +
-            "heightPx=$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
-            "carrier=scenequadlayer-createAsAndroid-vulkan-wsi cameraRuntimeStarted=false " +
-            cameraHwbProjectionStereoMarkerFields() + " " +
-            spatialVideoProjectionMarkerFields(videoSettings)
+        SpatialVideoProjectionRouteModule.sdkSwapchainCreatedMarker(
+            handle = sdkSwapchain.handle,
+            nativeHandle = sdkSwapchain.nativeHandle(),
+            platformHandle = sdkSwapchain.platformHandle(),
+            surfaceValid = surfaceValid,
+            widthPx = CAMERA_HWB_PROJECTION_WIDTH_PX,
+            heightPx = CAMERA_HWB_PROJECTION_HEIGHT_PX,
+            stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
+            settings = videoSettings,
+        )
     )
     val renderSurface = surface
     if (!surfaceValid) {
       val cleanupStatus = cleanupSdkQuadSurfaceProbe("spatial-video-projection-surface-invalid")
       marker(
-          "channel=spatial-video-projection status=complete videoOnlySpatialProjection=true " +
-              "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=false " +
-              "nativeStartRequested=false cameraRuntimeStarted=false cleanupStatus=$cleanupStatus " +
-              "runtimeCrash=false"
+          SpatialVideoProjectionRouteModule.completeMarker(
+              sdkSwapchainCreated = true,
+              surfaceValid = surfaceValid,
+              sceneQuadLayerCreated = false,
+              nativeStartRequested = false,
+              cleanupStatus = cleanupStatus,
+          )
       )
       return
     }
@@ -1884,10 +1878,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (!layerCreated) {
       val cleanupStatus = cleanupSdkQuadSurfaceProbe("spatial-video-projection-layer-create-failed")
       marker(
-          "channel=spatial-video-projection status=complete videoOnlySpatialProjection=true " +
-              "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=false " +
-              "nativeStartRequested=false cameraRuntimeStarted=false cleanupStatus=$cleanupStatus " +
-              "runtimeCrash=false"
+          SpatialVideoProjectionRouteModule.completeMarker(
+              sdkSwapchainCreated = true,
+              surfaceValid = surfaceValid,
+              sceneQuadLayerCreated = false,
+              nativeStartRequested = false,
+              cleanupStatus = cleanupStatus,
+          )
       )
       return
     }
@@ -1906,21 +1903,24 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             .getOrElse { throwable ->
               val cleanupStatus = cleanupSdkQuadSurfaceProbe("spatial-video-projection-start-failed")
               marker(
-                  "channel=spatial-video-projection status=complete videoOnlySpatialProjection=true " +
-                      "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
-                      "nativeStartRequested=false cameraRuntimeStarted=false cleanupStatus=$cleanupStatus " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialVideoProjectionRouteModule.completeMarker(
+                      sdkSwapchainCreated = true,
+                      surfaceValid = surfaceValid,
+                      sceneQuadLayerCreated = true,
+                      nativeStartRequested = false,
+                      cleanupStatus = cleanupStatus,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               return
             }
     marker(
-        "channel=spatial-video-projection status=native-start-requested videoOnlySpatialProjection=true " +
-            "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
-            "nativeStartRequested=true startMask=$startMask requestedFrames=0 frameLimit=none " +
-            "carrier=scenequadlayer-createAsAndroid-vulkan-wsi cameraRuntimeStarted=false " +
-            "sampledCameraTexture=false outputMode=video-only-full-sbs " +
-            spatialVideoProjectionMarkerFields(videoSettings) + " runtimeCrash=false"
+        SpatialVideoProjectionRouteModule.nativeStartRequestedMarker(
+            surfaceValid = surfaceValid,
+            startMask = startMask,
+            settings = videoSettings,
+        )
     )
     updateCameraHwbProjectionFromViewer(reason = "video-only-start", forceLog = true)
   }
@@ -5617,9 +5617,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ): Long {
     if (!nativeReceiptLibraryLoaded) {
       marker(
-          "channel=spatial-video-projection status=native-configure-skipped " +
-              "reason=${activityMarkerToken(reason)} nativeReceiptLibraryLoaded=false " +
-              spatialVideoProjectionMarkerFields(settings) + " runtimeCrash=false"
+          SpatialVideoProjectionRouteModule.nativeConfigureSkippedMarker(
+              reason,
+              settings,
+          )
       )
       return 0L
     }
@@ -5640,19 +5641,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             }
             .getOrElse { throwable ->
               marker(
-                  "channel=spatial-video-projection status=native-configure-failed " +
-                      "reason=${activityMarkerToken(reason)} " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} " +
-                      spatialVideoProjectionMarkerFields(settings) + " runtimeCrash=false"
+                  SpatialVideoProjectionRouteModule.nativeConfigureFailedMarker(
+                      reason = reason,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                      settings = settings,
+                  )
               )
               return 0L
             }
-    marker(
-        "channel=spatial-video-projection status=native-configured " +
-            "reason=${activityMarkerToken(reason)} configureMask=$mask " +
-            spatialVideoProjectionMarkerFields(settings) + " runtimeCrash=false"
-    )
+    marker(SpatialVideoProjectionRouteModule.nativeConfiguredMarker(reason, mask, settings))
     return mask
   }
 
@@ -5660,11 +5658,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       settings: SpatialVideoProjectionSettings,
       reason: String,
   ) {
-    marker(
-        "channel=spatial-video-projection status=start-requested " +
-            "reason=${activityMarkerToken(reason)} " +
-            spatialVideoProjectionMarkerFields(settings) + " runtimeCrash=false"
-    )
+    marker(SpatialVideoProjectionRouteModule.startRequestedMarker(reason, settings))
     SpatialStereoVideoPlayback.start(
         this,
         settings.path,
@@ -5702,11 +5696,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     spatialVideoProjectionStarted = false
     spatialVideoProjectionSettings = SpatialVideoProjectionSettings.disabled()
-    marker(
-        "channel=spatial-video-projection status=stopped " +
-            "reason=${activityMarkerToken(reason)} videoProjectionStopRequested=true " +
-            spatialVideoProjectionMarkerFields(previousSettings) + " runtimeCrash=false"
-    )
+    marker(SpatialVideoProjectionRouteModule.stoppedMarker(reason, previousSettings))
   }
 
   private fun cameraHwbProjectionPanelHittableToken(): String =

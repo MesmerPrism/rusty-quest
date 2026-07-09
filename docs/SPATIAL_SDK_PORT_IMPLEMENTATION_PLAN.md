@@ -193,7 +193,8 @@ Apply that model here when a lane grows beyond a narrow facade method:
 - keep `SpatialCameraPanelActivity.kt` as the lifecycle/JNI/panel-registration
   facade, with pure parsing/formatting/math helpers in
   `SpatialCameraPanelRuntimeHelpers.kt` and default-disabled video projection
-  route policy in `SpatialVideoProjectionSettings.kt`;
+  route policy plus video-only probe lifecycle marker fields in
+  `SpatialVideoProjectionSettings.kt`;
 - package raw Camera2/HWB and diagnostic probe route defaults, dimensions,
   durations, Android property opt-ins, opt-in marker fields, raw Camera2/HWB diagnostic probe marker fields,
   SDK-owned quad surface/Vulkan/stereo-alpha probe lifecycle marker fields,

@@ -327,9 +327,10 @@ Interaction SDK pointer input without native multimodal extension forcing.
   lifecycle, panel, camera, particle, and JNI start/stop authority.
 - `app/src/main/.../SpatialVideoProjectionSettings.kt` owns the Kotlin-side
   video projection route policy: default-disabled opt-in controls,
-  intent/property parsing, the low-rate settings value object, and marker
-  fields used by the Spatial camera projection route. It does not decode media
-  or own native AImageReader / AHardwareBuffer handoff.
+  intent/property parsing, the low-rate settings value object, route marker
+  fields, and video-only probe lifecycle marker fields used by the Spatial
+  camera projection route. It does not decode media or own native AImageReader
+  / AHardwareBuffer handoff.
 - `app/src/main/.../SpatialDiagnosticProbeRouteModule.kt` owns the
   default-disabled route policy for diagnostic probes: raw Camera2/HWB,
   external OpenXR swapchain wrapping, SDK-owned quad surface/Vulkan probes,

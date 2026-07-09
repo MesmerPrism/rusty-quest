@@ -103,6 +103,10 @@ internal data class SpatialVideoProjectionSettings(
 internal object SpatialVideoProjectionRouteModule {
   const val MODULE_ID = "spatial-video-projection-route-policy"
 
+  private const val CHANNEL = "spatial-video-projection"
+  private const val CARRIER = "scenequadlayer-createAsAndroid-vulkan-wsi"
+  private const val OUTPUT_MODE = "video-only-full-sbs"
+
   fun currentSettings(intent: Intent?): SpatialVideoProjectionSettings {
     val enabled =
         activityReadOptionalBooleanIntentExtra(intent, EXTRA_VIDEO_PROJECTION_ENABLED)
@@ -251,4 +255,163 @@ internal object SpatialVideoProjectionRouteModule {
           "nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false " +
           "highRateJsonPayload=${settings.highRateJsonPayload} " +
           "rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false"
+
+  fun startDeferredForSceneMarker(reason: String): String =
+      "channel=$CHANNEL status=start-deferred " +
+          "reason=${activityMarkerToken(reason)} deferredUntil=scene-ready " +
+          "sceneReady=false runtimeCrash=false"
+
+  fun startDeferredForVirtualRoomMarker(reason: String, sceneReady: Boolean): String =
+      "channel=$CHANNEL status=start-deferred " +
+          "reason=${activityMarkerToken(reason)} deferredUntil=virtual-room-loaded " +
+          "sceneReady=$sceneReady spatialVirtualRoomLoaded=false runtimeCrash=false"
+
+  fun startMarker(
+      reason: String,
+      widthPx: Int,
+      heightPx: Int,
+      projectionMarkerFields: String,
+      stereoMarkerFields: String,
+      settings: SpatialVideoProjectionSettings,
+  ): String =
+      "channel=$CHANNEL status=start videoOnlySpatialProjection=true " +
+          "reason=${activityMarkerToken(reason)} debugProperty=$SPATIAL_VIDEO_PROJECTION_PROBE_PROPERTY " +
+          "widthPx=$widthPx heightPx=$heightPx " +
+          "requestedFrames=0 frameLimit=none carrier=$CARRIER " +
+          "cameraRuntimeStarted=false rawCameraProjectionProbe=false " +
+          "${projectionMarkerFields.trim()} " +
+          "${stereoMarkerFields.trim()} " +
+          "${markerFields(settings)} " +
+          "outputMode=$OUTPUT_MODE sampledCameraTexture=false " +
+          "privateShaderStack=false customProjectionStack=false"
+
+  fun inactiveCompleteMarker(settings: SpatialVideoProjectionSettings): String =
+      "channel=$CHANNEL status=complete videoOnlySpatialProjection=true " +
+          "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
+          "nativeStartRequested=false cameraRuntimeStarted=false " +
+          "error=video-path-missing " +
+          markerFields(settings) + " runtimeCrash=false"
+
+  fun nativeReceiptUnavailableCompleteMarker(error: String): String =
+      "channel=$CHANNEL status=complete videoOnlySpatialProjection=true " +
+          "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
+          "nativeStartRequested=false cameraRuntimeStarted=false " +
+          "error=${activityMarkerToken(error)} runtimeCrash=false"
+
+  fun sdkSwapchainCreateFailedCompleteMarker(error: String, message: String): String =
+      "channel=$CHANNEL status=complete videoOnlySpatialProjection=true " +
+          "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
+          "nativeStartRequested=false cameraRuntimeStarted=false " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun getSurfaceFailedMarker(
+      handle: Long,
+      nativeHandle: Long,
+      platformHandle: Long,
+      error: String,
+      message: String,
+  ): String =
+      "channel=$CHANNEL status=get-surface-failed " +
+          "videoOnlySpatialProjection=true handle=$handle " +
+          "nativeHandle=$nativeHandle platformHandle=$platformHandle " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun sdkSwapchainCreatedMarker(
+      handle: Long,
+      nativeHandle: Long,
+      platformHandle: Long,
+      surfaceValid: Boolean,
+      widthPx: Int,
+      heightPx: Int,
+      stereoMarkerFields: String,
+      settings: SpatialVideoProjectionSettings,
+  ): String =
+      "channel=$CHANNEL status=sdk-swapchain-created videoOnlySpatialProjection=true " +
+          "sdkSwapchainCreated=true handle=$handle " +
+          "nativeHandle=$nativeHandle platformHandle=$platformHandle " +
+          "surfaceValid=$surfaceValid widthPx=$widthPx " +
+          "heightPx=$heightPx " +
+          "carrier=$CARRIER cameraRuntimeStarted=false " +
+          "${stereoMarkerFields.trim()} " +
+          markerFields(settings)
+
+  fun completeMarker(
+      sdkSwapchainCreated: Boolean,
+      surfaceValid: Boolean,
+      sceneQuadLayerCreated: Boolean,
+      nativeStartRequested: Boolean,
+      cleanupStatus: String? = null,
+      error: String? = null,
+      message: String? = null,
+  ): String =
+      buildString {
+        append("channel=$CHANNEL status=complete videoOnlySpatialProjection=true ")
+        append("sdkSwapchainCreated=$sdkSwapchainCreated surfaceValid=$surfaceValid ")
+        append("sceneQuadLayerCreated=$sceneQuadLayerCreated ")
+        append("nativeStartRequested=$nativeStartRequested ")
+        append("cameraRuntimeStarted=false ")
+        if (cleanupStatus != null) {
+          append("cleanupStatus=$cleanupStatus ")
+        }
+        if (error != null) {
+          append("error=${activityMarkerToken(error)} ")
+        }
+        if (message != null) {
+          append("message=${activityMarkerToken(message)} ")
+        }
+        append("runtimeCrash=false")
+      }
+
+  fun nativeStartRequestedMarker(
+      surfaceValid: Boolean,
+      startMask: Long,
+      settings: SpatialVideoProjectionSettings,
+  ): String =
+      "channel=$CHANNEL status=native-start-requested videoOnlySpatialProjection=true " +
+          "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
+          "nativeStartRequested=true startMask=$startMask requestedFrames=0 frameLimit=none " +
+          "carrier=$CARRIER cameraRuntimeStarted=false " +
+          "sampledCameraTexture=false outputMode=$OUTPUT_MODE " +
+          markerFields(settings) + " runtimeCrash=false"
+
+  fun nativeConfigureSkippedMarker(
+      reason: String,
+      settings: SpatialVideoProjectionSettings,
+  ): String =
+      "channel=$CHANNEL status=native-configure-skipped " +
+          "reason=${activityMarkerToken(reason)} nativeReceiptLibraryLoaded=false " +
+          markerFields(settings) + " runtimeCrash=false"
+
+  fun nativeConfigureFailedMarker(
+      reason: String,
+      error: String,
+      message: String,
+      settings: SpatialVideoProjectionSettings,
+  ): String =
+      "channel=$CHANNEL status=native-configure-failed " +
+          "reason=${activityMarkerToken(reason)} " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} " +
+          markerFields(settings) + " runtimeCrash=false"
+
+  fun nativeConfiguredMarker(
+      reason: String,
+      configureMask: Long,
+      settings: SpatialVideoProjectionSettings,
+  ): String =
+      "channel=$CHANNEL status=native-configured " +
+          "reason=${activityMarkerToken(reason)} configureMask=$configureMask " +
+          markerFields(settings) + " runtimeCrash=false"
+
+  fun startRequestedMarker(reason: String, settings: SpatialVideoProjectionSettings): String =
+      "channel=$CHANNEL status=start-requested " +
+          "reason=${activityMarkerToken(reason)} " +
+          markerFields(settings) + " runtimeCrash=false"
+
+  fun stoppedMarker(reason: String, settings: SpatialVideoProjectionSettings): String =
+      "channel=$CHANNEL status=stopped " +
+          "reason=${activityMarkerToken(reason)} videoProjectionStopRequested=true " +
+          markerFields(settings) + " runtimeCrash=false"
 }
