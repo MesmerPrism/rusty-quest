@@ -547,6 +547,75 @@ internal object SpatialSurfaceParticleRouteModule {
           "parameterId=${activityMarkerToken(parameterId)} " +
           "error=${activityMarkerToken(error)}"
 
+  fun nativeSurfaceParticleRecenterIgnoredMarker(
+      inputSource: String,
+      detail: String,
+      surfaceTargetId: String,
+      particleLayerVisible: Boolean,
+      requireParticleView: Boolean,
+      workflowPanelVisible: Boolean,
+      privateLayerPanelVisible: Boolean,
+  ): String =
+      "channel=native-surface-particle-layer status=particle-recenter-ignored " +
+          "controllerInput=right-trigger-button inputSource=${activityMarkerToken(inputSource)} " +
+          "${detail.trim()} surfaceTargetId=${activityMarkerToken(surfaceTargetId)} " +
+          "requiredSurfaceTargetId=icosphere particleLayerVisible=$particleLayerVisible " +
+          "requireParticleView=$requireParticleView workflowPanelVisible=$workflowPanelVisible " +
+          "privateLayerPanelVisible=$privateLayerPanelVisible " +
+          "privateSurfaceParticleWorldAnchorRecenterAccepted=false " +
+          "privateSurfaceParticleWorldAnchorRecenterRejectReason=not-icosphere-particle-view " +
+          "privateSurfaceParticleRecenterChangesCoordinateMapping=false"
+
+  fun nativeSurfaceParticleRecenterNativeUnavailableMarker(
+      inputSource: String,
+      detail: String,
+      surfaceTargetId: String,
+  ): String =
+      "channel=native-surface-particle-layer status=particle-recenter-failed " +
+          "controllerInput=right-trigger-button inputSource=${activityMarkerToken(inputSource)} " +
+          "${detail.trim()} surfaceTargetId=${activityMarkerToken(surfaceTargetId)} " +
+          "reason=native-library-unavailable privateSurfaceParticleWorldAnchorRecenterAccepted=false " +
+          "privateSurfaceParticleRecenterChangesCoordinateMapping=false"
+
+  fun nativeSurfaceParticleRecenterRequestedMarker(
+      inputSource: String,
+      detail: String,
+      surfaceTargetId: String,
+      particleLayerVisible: Boolean,
+      requireParticleView: Boolean,
+      nativeRecenterMask: Long,
+      nativeRecenterAccepted: Boolean,
+  ): String =
+      "channel=native-surface-particle-layer status=particle-recenter-requested " +
+          "controllerInput=right-trigger-button inputSource=${activityMarkerToken(inputSource)} " +
+          "${detail.trim()} surfaceTargetId=${activityMarkerToken(surfaceTargetId)} " +
+          "particleLayerVisible=$particleLayerVisible requireParticleView=$requireParticleView " +
+          "nativeRecenterMask=$nativeRecenterMask nativeRecenterAccepted=$nativeRecenterAccepted " +
+          "privateSurfaceParticleWorldAnchorRecenterSource=spatial-sdk-viewer-trigger " +
+          "privateSurfaceParticleWorldAnchorCenterSource=current-spatial-sdk-viewer-world-coordinate " +
+          "privateSurfaceParticleWorldAnchorBasis=spatial-world-canonical-axes " +
+          "privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius " +
+          "privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space " +
+          "privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale " +
+          "privateSurfaceParticleSimWorldAxesStable=true " +
+          "privateSurfaceParticleRecenterChangesCoordinateMapping=false " +
+          "privateSurfaceParticleRecenterChangesOnlySphereCenter=true"
+
+  fun nativeSurfaceParticleRecenterFailedMarker(
+      inputSource: String,
+      detail: String,
+      surfaceTargetId: String,
+      error: String,
+      message: String,
+  ): String =
+      "channel=native-surface-particle-layer status=particle-recenter-failed " +
+          "controllerInput=right-trigger-button inputSource=${activityMarkerToken(inputSource)} " +
+          "${detail.trim()} surfaceTargetId=${activityMarkerToken(surfaceTargetId)} " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} " +
+          "privateSurfaceParticleWorldAnchorRecenterAccepted=false " +
+          "privateSurfaceParticleRecenterChangesCoordinateMapping=false"
+
   fun cameraStackParticleLayerSuppressedMarker(
       source: String,
       stopAttempted: Boolean,

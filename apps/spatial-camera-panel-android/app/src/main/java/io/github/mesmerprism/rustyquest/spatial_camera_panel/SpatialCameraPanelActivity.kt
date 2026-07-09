@@ -7029,25 +7029,25 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val particleViewVisible = particleLayerVisibleForPanelMode()
     if (surfaceTargetId != "icosphere" || (requireParticleView && !particleViewVisible)) {
       marker(
-          "channel=native-surface-particle-layer status=particle-recenter-ignored " +
-              "controllerInput=right-trigger-button inputSource=${activityMarkerToken(inputSource)} " +
-              "${detail.trim()} surfaceTargetId=${activityMarkerToken(surfaceTargetId)} " +
-              "requiredSurfaceTargetId=icosphere particleLayerVisible=$particleViewVisible " +
-              "requireParticleView=$requireParticleView workflowPanelVisible=${panelPlacement.visible} " +
-              "privateLayerPanelVisible=$privateLayerPanelVisible " +
-              "privateSurfaceParticleWorldAnchorRecenterAccepted=false " +
-              "privateSurfaceParticleWorldAnchorRecenterRejectReason=not-icosphere-particle-view " +
-              "privateSurfaceParticleRecenterChangesCoordinateMapping=false"
+          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleRecenterIgnoredMarker(
+              inputSource = inputSource,
+              detail = detail,
+              surfaceTargetId = surfaceTargetId,
+              particleLayerVisible = particleViewVisible,
+              requireParticleView = requireParticleView,
+              workflowPanelVisible = panelPlacement.visible,
+              privateLayerPanelVisible = privateLayerPanelVisible,
+          )
       )
       return false
     }
     if (!nativeReceiptLibraryLoaded) {
       marker(
-          "channel=native-surface-particle-layer status=particle-recenter-failed " +
-              "controllerInput=right-trigger-button inputSource=${activityMarkerToken(inputSource)} " +
-              "${detail.trim()} surfaceTargetId=${activityMarkerToken(surfaceTargetId)} " +
-              "reason=native-library-unavailable privateSurfaceParticleWorldAnchorRecenterAccepted=false " +
-              "privateSurfaceParticleRecenterChangesCoordinateMapping=false"
+          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleRecenterNativeUnavailableMarker(
+              inputSource = inputSource,
+              detail = detail,
+              surfaceTargetId = surfaceTargetId,
+          )
       )
       return true
     }
@@ -7055,32 +7055,27 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           val mask = nativeRecenterSurfaceParticleSphereOnViewer()
           val accepted = (mask and SURFACE_PARTICLE_RECENTER_ACCEPTED_BIT) != 0L
           marker(
-              "channel=native-surface-particle-layer status=particle-recenter-requested " +
-                  "controllerInput=right-trigger-button inputSource=${activityMarkerToken(inputSource)} " +
-                  "${detail.trim()} surfaceTargetId=${activityMarkerToken(surfaceTargetId)} " +
-                  "particleLayerVisible=$particleViewVisible requireParticleView=$requireParticleView " +
-                  "nativeRecenterMask=$mask nativeRecenterAccepted=$accepted " +
-                  "privateSurfaceParticleWorldAnchorRecenterSource=spatial-sdk-viewer-trigger " +
-                  "privateSurfaceParticleWorldAnchorCenterSource=current-spatial-sdk-viewer-world-coordinate " +
-                  "privateSurfaceParticleWorldAnchorBasis=spatial-world-canonical-axes " +
-                  "privateSurfaceParticleWorldAnchorScaleSource=fixed-sim-meter-radius " +
-                  "privateSurfaceParticleSimRegistration=sim-space-fixed-in-spatial-sdk-world-space " +
-                  "privateSurfaceParticleSimTransform=spatial-world-from-sim-fixed-configured-origin-basis-meter-scale " +
-                  "privateSurfaceParticleSimWorldAxesStable=true " +
-                  "privateSurfaceParticleRecenterChangesCoordinateMapping=false " +
-                  "privateSurfaceParticleRecenterChangesOnlySphereCenter=true"
+              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleRecenterRequestedMarker(
+                  inputSource = inputSource,
+                  detail = detail,
+                  surfaceTargetId = surfaceTargetId,
+                  particleLayerVisible = particleViewVisible,
+                  requireParticleView = requireParticleView,
+                  nativeRecenterMask = mask,
+                  nativeRecenterAccepted = accepted,
+              )
           )
           true
         }
         .getOrElse { throwable ->
           marker(
-              "channel=native-surface-particle-layer status=particle-recenter-failed " +
-                  "controllerInput=right-trigger-button inputSource=${activityMarkerToken(inputSource)} " +
-                  "${detail.trim()} surfaceTargetId=${activityMarkerToken(surfaceTargetId)} " +
-                  "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                  "message=${activityMarkerToken(throwable.message ?: "none")} " +
-                  "privateSurfaceParticleWorldAnchorRecenterAccepted=false " +
-                  "privateSurfaceParticleRecenterChangesCoordinateMapping=false"
+              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleRecenterFailedMarker(
+                  inputSource = inputSource,
+                  detail = detail,
+                  surfaceTargetId = surfaceTargetId,
+                  error = throwable.javaClass.simpleName,
+                  message = throwable.message ?: "none",
+              )
           )
           true
         }
