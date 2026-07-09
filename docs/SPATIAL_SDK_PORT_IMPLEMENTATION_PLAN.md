@@ -196,7 +196,7 @@ Apply that model here when a lane grows beyond a narrow facade method:
   route policy in `SpatialVideoProjectionSettings.kt`;
 - package raw Camera2/HWB and diagnostic probe route defaults, dimensions,
   durations, Android property opt-ins, opt-in marker fields, raw Camera2/HWB diagnostic probe marker fields,
-  and SDK-owned quad surface probe lifecycle marker fields in `SpatialDiagnosticProbeRouteModule.kt`;
+  and SDK-owned quad surface/Vulkan probe lifecycle marker fields in `SpatialDiagnosticProbeRouteModule.kt`;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, placement-plane construction from

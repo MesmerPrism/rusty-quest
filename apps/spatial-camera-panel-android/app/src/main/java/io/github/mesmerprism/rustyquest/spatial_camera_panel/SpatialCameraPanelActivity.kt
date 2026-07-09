@@ -1156,13 +1156,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val holdMs = SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeHoldMs()
     val frameCount = SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeFrameCount()
     marker(
-        "channel=sdk-owned-quad-vulkan-probe status=start sdkQuadVulkanProbe=true " +
-            "reason=${activityMarkerToken(reason)} debugProperty=$SDK_QUAD_VULKAN_PROBE_PROPERTY " +
-            "widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX " +
-            "holdMs=$holdMs requestedFrames=$frameCount producer=native-vulkan-wsi " +
-            "renderPolicy=sdk-owned-scenequadlayer-android-surface-wsi " +
-            "videoSurfacePanelRegistration=false externalSwapchain=false privateShaderStack=false " +
-            SpatialDiagnosticProbeRouteModule.explicitOptInMarkerFields(SDK_QUAD_VULKAN_PROBE_PROPERTY)
+        SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeStartMarker(
+            reason = reason,
+            holdMs = holdMs,
+            frameCount = frameCount,
+        )
     )
     Handler(Looper.getMainLooper()).post { runSdkQuadVulkanProbe(holdMs, frameCount) }
   }
@@ -1171,11 +1169,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     cleanupSdkQuadSurfaceProbe("vulkan-pre-run")
     if (!nativeReceiptLibraryLoaded) {
       marker(
-          "channel=sdk-owned-quad-vulkan-probe status=complete sdkQuadVulkanProbe=true " +
-              "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
-              "nativeStartRequested=false nativeVulkanProducer=false firstFramePresented=false " +
-              "manualSceneQuadLayerViable=false error=${activityMarkerToken(nativeReceiptLibraryError)} " +
-              "runtimeCrash=false"
+          SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeCompleteMarker(
+              sdkSwapchainCreated = false,
+              surfaceValid = false,
+              sceneQuadLayerCreated = false,
+              nativeStartRequested = false,
+              nativeVulkanProducer = false,
+              firstFramePresented = "false",
+              manualSceneQuadLayerViable = false,
+              error = nativeReceiptLibraryError,
+          )
       )
       return
     }
@@ -1189,11 +1192,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             }
             .getOrElse { throwable ->
               marker(
-                  "channel=sdk-owned-quad-vulkan-probe status=complete sdkQuadVulkanProbe=true " +
-                      "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
-                      "nativeStartRequested=false nativeVulkanProducer=false firstFramePresented=false " +
-                      "manualSceneQuadLayerViable=false error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeCompleteMarker(
+                      sdkSwapchainCreated = false,
+                      surfaceValid = false,
+                      sceneQuadLayerCreated = false,
+                      nativeStartRequested = false,
+                      nativeVulkanProducer = false,
+                      firstFramePresented = "false",
+                      manualSceneQuadLayerViable = false,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               return
             }
@@ -1202,31 +1211,40 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         runCatching { sdkSwapchain.getSurface() }
             .getOrElse { throwable ->
               marker(
-                  "channel=sdk-owned-quad-vulkan-probe status=get-surface-failed " +
-                      "sdkQuadVulkanProbe=true handle=${sdkSwapchain.handle} " +
-                      "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeGetSurfaceFailedMarker(
+                      handle = sdkSwapchain.handle,
+                      nativeHandle = sdkSwapchain.nativeHandle(),
+                      platformHandle = sdkSwapchain.platformHandle(),
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               null
             }
     sdkQuadSurfaceProbeSurface = surface
     val surfaceValid = surface?.isValid == true
     marker(
-        "channel=sdk-owned-quad-vulkan-probe status=sdk-swapchain-created " +
-            "sdkQuadVulkanProbe=true sdkSwapchainCreated=true handle=${sdkSwapchain.handle} " +
-            "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
-            "surfaceValid=$surfaceValid widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX " +
-            "heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX"
+        SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeSdkSwapchainCreatedMarker(
+            handle = sdkSwapchain.handle,
+            nativeHandle = sdkSwapchain.nativeHandle(),
+            platformHandle = sdkSwapchain.platformHandle(),
+            surfaceValid = surfaceValid,
+        )
     )
     val renderSurface = surface
     if (!surfaceValid) {
       val cleanupStatus = cleanupSdkQuadSurfaceProbe("vulkan-surface-invalid")
       marker(
-          "channel=sdk-owned-quad-vulkan-probe status=complete sdkQuadVulkanProbe=true " +
-              "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=false " +
-              "nativeStartRequested=false nativeVulkanProducer=false firstFramePresented=false " +
-              "manualSceneQuadLayerViable=false cleanupStatus=$cleanupStatus runtimeCrash=false"
+          SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeCompleteMarker(
+              sdkSwapchainCreated = true,
+              surfaceValid = surfaceValid,
+              sceneQuadLayerCreated = false,
+              nativeStartRequested = false,
+              nativeVulkanProducer = false,
+              firstFramePresented = "false",
+              manualSceneQuadLayerViable = false,
+              cleanupStatus = cleanupStatus,
+          )
       )
       return
     }
@@ -1238,18 +1256,23 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             anchorMode = "generated-single-sided-quad",
         )
     marker(
-        "channel=sdk-owned-quad-vulkan-probe status=layer-created " +
-            "sdkQuadVulkanProbe=true sceneQuadLayerCreated=$layerCreated " +
-            "manualSceneQuadLayerViable=$layerCreated anchorMode=generated-single-sided-quad " +
-            "stereoMode=None producer=native-vulkan-wsi"
+        SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeLayerCreatedMarker(
+            layerCreated = layerCreated
+        )
     )
     if (!layerCreated) {
       val cleanupStatus = cleanupSdkQuadSurfaceProbe("vulkan-layer-create-failed")
       marker(
-          "channel=sdk-owned-quad-vulkan-probe status=complete sdkQuadVulkanProbe=true " +
-              "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=false " +
-              "nativeStartRequested=false nativeVulkanProducer=false firstFramePresented=false " +
-              "manualSceneQuadLayerViable=false cleanupStatus=$cleanupStatus runtimeCrash=false"
+          SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeCompleteMarker(
+              sdkSwapchainCreated = true,
+              surfaceValid = surfaceValid,
+              sceneQuadLayerCreated = false,
+              nativeStartRequested = false,
+              nativeVulkanProducer = false,
+              firstFramePresented = "false",
+              manualSceneQuadLayerViable = false,
+              cleanupStatus = cleanupStatus,
+          )
       )
       return
     }
@@ -1266,21 +1289,28 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             .getOrElse { throwable ->
               val cleanupStatus = cleanupSdkQuadSurfaceProbe("vulkan-start-failed")
               marker(
-                  "channel=sdk-owned-quad-vulkan-probe status=complete sdkQuadVulkanProbe=true " +
-                      "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
-                      "nativeStartRequested=false nativeVulkanProducer=false firstFramePresented=false " +
-                      "manualSceneQuadLayerViable=true cleanupStatus=$cleanupStatus " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeCompleteMarker(
+                      sdkSwapchainCreated = true,
+                      surfaceValid = surfaceValid,
+                      sceneQuadLayerCreated = true,
+                      nativeStartRequested = false,
+                      nativeVulkanProducer = false,
+                      firstFramePresented = "false",
+                      manualSceneQuadLayerViable = true,
+                      cleanupStatus = cleanupStatus,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               return
             }
     marker(
-        "channel=sdk-owned-quad-vulkan-probe status=native-start-requested " +
-            "sdkQuadVulkanProbe=true sdkSwapchainCreated=true surfaceValid=$surfaceValid " +
-            "sceneQuadLayerCreated=true manualSceneQuadLayerViable=true nativeStartRequested=true " +
-            "nativeVulkanProducer=true startMask=$startMask requestedFrames=$frameCount " +
-            "holdMs=$holdMs renderPolicy=sdk-owned-scenequadlayer-android-surface-wsi"
+        SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeNativeStartRequestedMarker(
+            surfaceValid = surfaceValid,
+            startMask = startMask,
+            frameCount = frameCount,
+            holdMs = holdMs,
+        )
     )
     Handler(Looper.getMainLooper())
         .postDelayed(
@@ -1290,11 +1320,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               }
               val cleanupStatus = cleanupSdkQuadSurfaceProbe("vulkan-hold-complete")
               marker(
-                  "channel=sdk-owned-quad-vulkan-probe status=complete sdkQuadVulkanProbe=true " +
-                      "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
-                      "manualSceneQuadLayerViable=true nativeStartRequested=true nativeVulkanProducer=true " +
-                      "firstFramePresented=see-native-logcat requestedFrames=$frameCount " +
-                      "cleanupStatus=$cleanupStatus runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeHoldCompleteMarker(
+                      surfaceValid = surfaceValid,
+                      frameCount = frameCount,
+                      cleanupStatus = cleanupStatus,
+                  )
               )
             },
             holdMs,

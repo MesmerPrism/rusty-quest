@@ -290,6 +290,101 @@ internal object SpatialDiagnosticProbeRouteModule {
           "nativeVulkanProducer=false visiblePatternConfirmed=false " +
           "humanVisiblePatternCheckRequired=true holdMs=$holdMs runtimeCrash=false"
 
+  fun sdkQuadVulkanProbeStartMarker(reason: String, holdMs: Long, frameCount: Int): String =
+      "channel=sdk-owned-quad-vulkan-probe status=start sdkQuadVulkanProbe=true " +
+          "reason=${activityMarkerToken(reason)} debugProperty=$SDK_QUAD_VULKAN_PROBE_PROPERTY " +
+          "widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX " +
+          "holdMs=$holdMs requestedFrames=$frameCount producer=native-vulkan-wsi " +
+          "renderPolicy=sdk-owned-scenequadlayer-android-surface-wsi " +
+          "videoSurfacePanelRegistration=false externalSwapchain=false privateShaderStack=false " +
+          explicitOptInMarkerFields(SDK_QUAD_VULKAN_PROBE_PROPERTY)
+
+  fun sdkQuadVulkanProbeCompleteMarker(
+      sdkSwapchainCreated: Boolean,
+      surfaceValid: Boolean,
+      sceneQuadLayerCreated: Boolean,
+      nativeStartRequested: Boolean,
+      nativeVulkanProducer: Boolean,
+      firstFramePresented: String,
+      manualSceneQuadLayerViable: Boolean,
+      cleanupStatus: String? = null,
+      error: String? = null,
+      message: String? = null,
+  ): String =
+      buildString {
+        append("channel=sdk-owned-quad-vulkan-probe status=complete sdkQuadVulkanProbe=true ")
+        append("sdkSwapchainCreated=$sdkSwapchainCreated surfaceValid=$surfaceValid ")
+        append("sceneQuadLayerCreated=$sceneQuadLayerCreated ")
+        append("nativeStartRequested=$nativeStartRequested ")
+        append("nativeVulkanProducer=$nativeVulkanProducer ")
+        append("firstFramePresented=$firstFramePresented ")
+        append("manualSceneQuadLayerViable=$manualSceneQuadLayerViable ")
+        if (cleanupStatus != null) {
+          append("cleanupStatus=$cleanupStatus ")
+        }
+        if (error != null) {
+          append("error=${activityMarkerToken(error)} ")
+        }
+        if (message != null) {
+          append("message=${activityMarkerToken(message)} ")
+        }
+        append("runtimeCrash=false")
+      }
+
+  fun sdkQuadVulkanProbeHoldCompleteMarker(
+      surfaceValid: Boolean,
+      frameCount: Int,
+      cleanupStatus: String,
+  ): String =
+      "channel=sdk-owned-quad-vulkan-probe status=complete sdkQuadVulkanProbe=true " +
+          "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
+          "manualSceneQuadLayerViable=true nativeStartRequested=true nativeVulkanProducer=true " +
+          "firstFramePresented=see-native-logcat requestedFrames=$frameCount " +
+          "cleanupStatus=$cleanupStatus runtimeCrash=false"
+
+  fun sdkQuadVulkanProbeGetSurfaceFailedMarker(
+      handle: Long,
+      nativeHandle: Long,
+      platformHandle: Long,
+      error: String,
+      message: String,
+  ): String =
+      "channel=sdk-owned-quad-vulkan-probe status=get-surface-failed " +
+          "sdkQuadVulkanProbe=true handle=$handle " +
+          "nativeHandle=$nativeHandle platformHandle=$platformHandle " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun sdkQuadVulkanProbeSdkSwapchainCreatedMarker(
+      handle: Long,
+      nativeHandle: Long,
+      platformHandle: Long,
+      surfaceValid: Boolean,
+  ): String =
+      "channel=sdk-owned-quad-vulkan-probe status=sdk-swapchain-created " +
+          "sdkQuadVulkanProbe=true sdkSwapchainCreated=true handle=$handle " +
+          "nativeHandle=$nativeHandle platformHandle=$platformHandle " +
+          "surfaceValid=$surfaceValid widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX " +
+          "heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX"
+
+  fun sdkQuadVulkanProbeLayerCreatedMarker(layerCreated: Boolean): String =
+      "channel=sdk-owned-quad-vulkan-probe status=layer-created " +
+          "sdkQuadVulkanProbe=true sceneQuadLayerCreated=$layerCreated " +
+          "manualSceneQuadLayerViable=$layerCreated anchorMode=generated-single-sided-quad " +
+          "stereoMode=None producer=native-vulkan-wsi"
+
+  fun sdkQuadVulkanProbeNativeStartRequestedMarker(
+      surfaceValid: Boolean,
+      startMask: Long,
+      frameCount: Int,
+      holdMs: Long,
+  ): String =
+      "channel=sdk-owned-quad-vulkan-probe status=native-start-requested " +
+          "sdkQuadVulkanProbe=true sdkSwapchainCreated=true surfaceValid=$surfaceValid " +
+          "sceneQuadLayerCreated=true manualSceneQuadLayerViable=true nativeStartRequested=true " +
+          "nativeVulkanProducer=true startMask=$startMask requestedFrames=$frameCount " +
+          "holdMs=$holdMs renderPolicy=sdk-owned-scenequadlayer-android-surface-wsi"
+
   fun cameraHwbProbeStartMarker(
       reason: String,
       frameCount: Int,
