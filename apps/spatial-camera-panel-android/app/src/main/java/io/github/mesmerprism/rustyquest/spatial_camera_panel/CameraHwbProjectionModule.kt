@@ -363,6 +363,117 @@ internal object CameraHwbProjectionModule {
           "perEyeExtent=${CAMERA_HWB_PROJECTION_PER_EYE_WIDTH_PX}x$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
           "packedExtent=${CAMERA_HWB_PROJECTION_WIDTH_PX}x$CAMERA_HWB_PROJECTION_HEIGHT_PX"
 
+  fun rawProjectionStartDeferredForSceneMarker(reason: String): String =
+      "channel=camera-hwb-spatial-probe status=start-deferred " +
+          "reason=${activityMarkerToken(reason)} deferredUntil=scene-ready " +
+          "sceneReady=false runtimeCrash=false"
+
+  fun rawProjectionStartDeferredForVirtualRoomMarker(reason: String, sceneReady: Boolean): String =
+      "channel=camera-hwb-spatial-probe status=start-deferred " +
+          "reason=${activityMarkerToken(reason)} deferredUntil=virtual-room-loaded " +
+          "sceneReady=$sceneReady spatialVirtualRoomLoaded=false runtimeCrash=false"
+
+  fun rawProjectionStartMarker(
+      reason: String,
+      startGateToken: String,
+      readerMaxImages: Int,
+      carrier: String,
+      projectionMarkerFields: String,
+      stereoMarkerFields: String,
+      videoProjectionMarkerFields: String,
+      publicMultiStackMarkerFields: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=start rawCameraProjectionProbe=true " +
+          "reason=${activityMarkerToken(reason)} debugProperty=$CAMERA_HWB_PROJECTION_PROBE_PROPERTY " +
+          "projectionStartGate=$startGateToken " +
+          "widthPx=$CAMERA_HWB_PROJECTION_WIDTH_PX heightPx=$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
+          "requestedFrames=0 frameLimit=none holdMs=none readerMaxImages=$readerMaxImages " +
+          "cameraPreference=50-then-51 carrier=$carrier " +
+          "${projectionMarkerFields.trim()} " +
+          "${stereoMarkerFields.trim()} " +
+          "${videoProjectionMarkerFields.trim()} " +
+          "${publicMultiStackMarkerFields.trim()} " +
+          "outputMode=raw-color-target-rect sampledCameraTexture=true " +
+          "sampledLeftCameraTexture=true sampledRightCameraTexture=true monoDuplicated=false " +
+          "sampledCameraTextureSource=native-camera-hwb-pending-first-frame " +
+          "privateShaderStack=false " +
+          "customProjectionStack=false"
+
+  fun rawProjectionGetSurfaceFailedMarker(
+      handle: Long,
+      nativeHandle: Long,
+      platformHandle: Long,
+      error: String,
+      message: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=get-surface-failed " +
+          "rawCameraProjectionProbe=true handle=$handle " +
+          "nativeHandle=$nativeHandle platformHandle=$platformHandle " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun rawProjectionSdkSwapchainCreatedMarker(
+      handle: Long,
+      nativeHandle: Long,
+      platformHandle: Long,
+      surfaceValid: Boolean,
+      carrier: String,
+      stereoMarkerFields: String,
+      publicMultiStackMarkerFields: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=sdk-swapchain-created rawCameraProjectionProbe=true " +
+          "sdkSwapchainCreated=true handle=$handle " +
+          "nativeHandle=$nativeHandle platformHandle=$platformHandle " +
+          "surfaceValid=$surfaceValid widthPx=$CAMERA_HWB_PROJECTION_WIDTH_PX " +
+          "heightPx=$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
+          "carrier=$carrier " +
+          "renderSurfaceCarrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+          "${stereoMarkerFields.trim()} " +
+          publicMultiStackMarkerFields.trim()
+
+  fun rawProjectionSyntheticVisualPresentedMarker(
+      surfaceValid: Boolean,
+      canvasDrawn: Boolean,
+      carrier: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=synthetic-visual-presented " +
+          "rawCameraProjectionProbe=true syntheticCarrierVisualProbe=true " +
+          "surfaceValid=$surfaceValid canvasDrawn=$canvasDrawn " +
+          "sceneQuadLayerCreated=true scenePanelCarrier=false nativeStartRequested=false " +
+          "cameraRuntimeStarted=false carrier=$carrier " +
+          "renderSurfaceCarrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+          "syntheticVisualPattern=high-contrast-red-green-blue-yellow-checkerboard " +
+          "sampledCameraTexture=false privateShaderStack=false customProjectionStack=false " +
+          "runtimeCrash=false"
+
+  fun rawProjectionNativeStartRequestedMarker(
+      surfaceValid: Boolean,
+      startMask: Long,
+      readerMaxImages: Int,
+      carrier: String,
+      projectionMarkerFields: String,
+      stereoMarkerFields: String,
+      videoProjectionMarkerFields: String,
+      publicMultiStackMarkerFields: String,
+      nativePassthroughStartMask: Long,
+      nativeEnvironmentDepthStartMask: Long,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=native-start-requested rawCameraProjectionProbe=true " +
+          "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
+          "nativeStartRequested=true startMask=$startMask requestedFrames=0 frameLimit=none " +
+          "readerMaxImages=$readerMaxImages carrier=$carrier " +
+          "renderSurfaceCarrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+          "${projectionMarkerFields.trim()} " +
+          "${stereoMarkerFields.trim()} " +
+          "${videoProjectionMarkerFields.trim()} " +
+          "${publicMultiStackMarkerFields.trim()} " +
+          "nativePassthroughStartMask=$nativePassthroughStartMask " +
+          "nativeEnvironmentDepthStartMask=$nativeEnvironmentDepthStartMask " +
+          "outputMode=raw-color-target-rect sampledCameraTexture=see-native-logcat " +
+          "sampledLeftCameraTexture=see-native-logcat sampledRightCameraTexture=see-native-logcat " +
+          "monoDuplicated=false " +
+          "privateShaderStack=false customProjectionStack=false runtimeCrash=false"
+
   fun targetScaleJoystickAdjustedMarker(
       inputSource: String,
       controllerJoystickMapping: String,

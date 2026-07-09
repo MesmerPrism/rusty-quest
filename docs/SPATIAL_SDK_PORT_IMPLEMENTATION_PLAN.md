@@ -201,6 +201,7 @@ Apply that model here when a lane grows beyond a narrow facade method:
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, placement-plane construction from
   Activity-observed scene inputs, target-rect math, target scale, stereo offset,
+  raw-projection startup/swapchain/native-start marker fields,
   placement-toggle marker fields, and markers in
   `CameraHwbProjectionModule.kt`;
 - package private layer panel placement/input policy in

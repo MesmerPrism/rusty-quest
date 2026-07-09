@@ -1878,18 +1878,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       return
     }
     if (!spatialSceneReady) {
-      marker(
-          "channel=camera-hwb-spatial-probe status=start-deferred " +
-              "reason=${activityMarkerToken(reason)} deferredUntil=scene-ready " +
-              "sceneReady=false runtimeCrash=false"
-      )
+      marker(CameraHwbProjectionModule.rawProjectionStartDeferredForSceneMarker(reason))
       return
     }
     if (spatialVirtualRoomEnabled() && !spatialVirtualRoomLoaded()) {
       marker(
-          "channel=camera-hwb-spatial-probe status=start-deferred " +
-              "reason=${activityMarkerToken(reason)} deferredUntil=virtual-room-loaded " +
-              "sceneReady=$spatialSceneReady spatialVirtualRoomLoaded=false runtimeCrash=false"
+          CameraHwbProjectionModule.rawProjectionStartDeferredForVirtualRoomMarker(
+              reason,
+              spatialSceneReady,
+          )
       )
       return
     }
@@ -1905,21 +1902,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     cameraHwbProjectionCarrierMode = currentCameraHwbProjectionCarrierMode()
     val carrier = cameraHwbProjectionCarrierToken()
     marker(
-        "channel=camera-hwb-spatial-probe status=start rawCameraProjectionProbe=true " +
-            "reason=${activityMarkerToken(reason)} debugProperty=$CAMERA_HWB_PROJECTION_PROBE_PROPERTY " +
-            "projectionStartGate=${cameraHwbProjectionStartGateToken()} " +
-            "widthPx=$CAMERA_HWB_PROJECTION_WIDTH_PX heightPx=$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
-            "requestedFrames=0 frameLimit=none holdMs=none readerMaxImages=$readerMaxImages " +
-            "cameraPreference=50-then-51 carrier=$carrier " +
-            cameraHwbProjectionMarkerFields() + " " +
-            cameraHwbProjectionStereoMarkerFields() + " " +
-            spatialVideoProjectionMarkerFields(videoSettings) + " " +
-            SpatialPublicMultiStack.markerFields() + " " +
-            "outputMode=raw-color-target-rect sampledCameraTexture=true " +
-            "sampledLeftCameraTexture=true sampledRightCameraTexture=true monoDuplicated=false " +
-            "sampledCameraTextureSource=native-camera-hwb-pending-first-frame " +
-            "privateShaderStack=false " +
-            "customProjectionStack=false"
+        CameraHwbProjectionModule.rawProjectionStartMarker(
+            reason = reason,
+            startGateToken = cameraHwbProjectionStartGateToken(),
+            readerMaxImages = readerMaxImages,
+            carrier = carrier,
+            projectionMarkerFields = cameraHwbProjectionMarkerFields(),
+            stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
+            videoProjectionMarkerFields = spatialVideoProjectionMarkerFields(videoSettings),
+            publicMultiStackMarkerFields = SpatialPublicMultiStack.markerFields(),
+        )
     )
     Handler(Looper.getMainLooper()).post { runCameraHwbProjectionProbe(readerMaxImages, videoSettings) }
   }
@@ -1983,26 +1975,28 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         runCatching { sdkSwapchain.getSurface() }
             .getOrElse { throwable ->
               marker(
-                  "channel=camera-hwb-spatial-probe status=get-surface-failed " +
-                      "rawCameraProjectionProbe=true handle=${sdkSwapchain.handle} " +
-                      "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  CameraHwbProjectionModule.rawProjectionGetSurfaceFailedMarker(
+                      handle = sdkSwapchain.handle,
+                      nativeHandle = sdkSwapchain.nativeHandle(),
+                      platformHandle = sdkSwapchain.platformHandle(),
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               null
             }
     sdkQuadSurfaceProbeSurface = surface
     val surfaceValid = surface?.isValid == true
     marker(
-        "channel=camera-hwb-spatial-probe status=sdk-swapchain-created rawCameraProjectionProbe=true " +
-            "sdkSwapchainCreated=true handle=${sdkSwapchain.handle} " +
-            "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
-            "surfaceValid=$surfaceValid widthPx=$CAMERA_HWB_PROJECTION_WIDTH_PX " +
-            "heightPx=$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
-            "carrier=${cameraHwbProjectionCarrierToken()} " +
-            "renderSurfaceCarrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
-            cameraHwbProjectionStereoMarkerFields() + " " +
-            SpatialPublicMultiStack.markerFields()
+        CameraHwbProjectionModule.rawProjectionSdkSwapchainCreatedMarker(
+            handle = sdkSwapchain.handle,
+            nativeHandle = sdkSwapchain.nativeHandle(),
+            platformHandle = sdkSwapchain.platformHandle(),
+            surfaceValid = surfaceValid,
+            carrier = cameraHwbProjectionCarrierToken(),
+            stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
+            publicMultiStackMarkerFields = SpatialPublicMultiStack.markerFields(),
+        )
     )
     val renderSurface = surface
     if (!surfaceValid) {
@@ -2033,18 +2027,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           drawCameraHwbProjectionSyntheticVisual(
               renderSurface,
               "SceneQuadLayer",
-          )
+      )
       cameraHwbProjectionSyntheticVisualPresented = canvasDrawn
       marker(
-          "channel=camera-hwb-spatial-probe status=synthetic-visual-presented " +
-              "rawCameraProjectionProbe=true syntheticCarrierVisualProbe=true " +
-              "surfaceValid=$surfaceValid canvasDrawn=$canvasDrawn " +
-              "sceneQuadLayerCreated=true scenePanelCarrier=false nativeStartRequested=false " +
-              "cameraRuntimeStarted=false carrier=${cameraHwbProjectionCarrierToken()} " +
-              "renderSurfaceCarrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
-              "syntheticVisualPattern=high-contrast-red-green-blue-yellow-checkerboard " +
-              "sampledCameraTexture=false privateShaderStack=false customProjectionStack=false " +
-              "runtimeCrash=false"
+          CameraHwbProjectionModule.rawProjectionSyntheticVisualPresentedMarker(
+              surfaceValid = surfaceValid,
+              canvasDrawn = canvasDrawn,
+              carrier = cameraHwbProjectionCarrierToken(),
+          )
       )
       updateCameraHwbProjectionFromViewer(reason = "synthetic-visual-start", forceLog = true)
       return
@@ -2106,25 +2096,23 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               return
             }
     marker(
-        "channel=camera-hwb-spatial-probe status=native-start-requested rawCameraProjectionProbe=true " +
-            "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
-            "nativeStartRequested=true startMask=$startMask requestedFrames=0 frameLimit=none " +
-            "readerMaxImages=$readerMaxImages carrier=${cameraHwbProjectionCarrierToken()} " +
-            "renderSurfaceCarrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
-            cameraHwbProjectionMarkerFields() + " " +
-            cameraHwbProjectionStereoMarkerFields() + " " +
-            spatialVideoProjectionMarkerFields(videoSettings) + " " +
-            SpatialPublicMultiStack.markerFields(
-                nativePassthroughLayerActive = nativePassthroughLayerActive,
-                nativeEnvironmentDepthProviderRequested = true,
-                nativeEnvironmentDepthProviderBound = nativeEnvironmentDepthProviderBound,
-            ) + " " +
-            "nativePassthroughStartMask=$nativePassthroughStartMask " +
-            "nativeEnvironmentDepthStartMask=$nativeEnvironmentDepthStartMask " +
-            "outputMode=raw-color-target-rect sampledCameraTexture=see-native-logcat " +
-            "sampledLeftCameraTexture=see-native-logcat sampledRightCameraTexture=see-native-logcat " +
-            "monoDuplicated=false " +
-            "privateShaderStack=false customProjectionStack=false runtimeCrash=false"
+        CameraHwbProjectionModule.rawProjectionNativeStartRequestedMarker(
+            surfaceValid = surfaceValid,
+            startMask = startMask,
+            readerMaxImages = readerMaxImages,
+            carrier = cameraHwbProjectionCarrierToken(),
+            projectionMarkerFields = cameraHwbProjectionMarkerFields(),
+            stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
+            videoProjectionMarkerFields = spatialVideoProjectionMarkerFields(videoSettings),
+            publicMultiStackMarkerFields =
+                SpatialPublicMultiStack.markerFields(
+                    nativePassthroughLayerActive = nativePassthroughLayerActive,
+                    nativeEnvironmentDepthProviderRequested = true,
+                    nativeEnvironmentDepthProviderBound = nativeEnvironmentDepthProviderBound,
+                ),
+            nativePassthroughStartMask = nativePassthroughStartMask,
+            nativeEnvironmentDepthStartMask = nativeEnvironmentDepthStartMask,
+        )
     )
     updateCameraHwbProjectionFromViewer(reason = "raw-projection-start", forceLog = true)
   }
