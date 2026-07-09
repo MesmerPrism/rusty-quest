@@ -1208,23 +1208,18 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (sdkQuadSurfaceProbeStarted) {
       return
     }
-    if (activityReadOptionalBooleanSystemProperty(SDK_QUAD_SURFACE_PROBE_PROPERTY) != true) {
+    if (!SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeEnabled()) {
       return
     }
     sdkQuadSurfaceProbeStarted = true
-    val holdMs =
-        activityReadLongSystemProperty(
-            SDK_QUAD_SURFACE_PROBE_HOLD_MS_PROPERTY,
-            SDK_QUAD_SURFACE_PROBE_DEFAULT_HOLD_MS,
-            SDK_QUAD_SURFACE_PROBE_MIN_HOLD_MS,
-            SDK_QUAD_SURFACE_PROBE_MAX_HOLD_MS,
-        )
+    val holdMs = SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeHoldMs()
     marker(
         "channel=sdk-owned-quad-surface-probe status=start sdkQuadSurfaceProbe=true " +
             "reason=${activityMarkerToken(reason)} debugProperty=$SDK_QUAD_SURFACE_PROBE_PROPERTY " +
             "widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX " +
             "holdMs=$holdMs producer=android-canvas nativeVulkanProducer=false " +
-            "videoSurfacePanelRegistration=false externalSwapchain=false privateShaderStack=false"
+            "videoSurfacePanelRegistration=false externalSwapchain=false privateShaderStack=false " +
+            SpatialDiagnosticProbeRouteModule.explicitOptInMarkerFields(SDK_QUAD_SURFACE_PROBE_PROPERTY)
     )
     Handler(Looper.getMainLooper()).post { runSdkQuadSurfaceProbe(holdMs) }
   }
@@ -1233,31 +1228,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (sdkQuadVulkanProbeStarted) {
       return
     }
-    if (activityReadOptionalBooleanSystemProperty(SDK_QUAD_VULKAN_PROBE_PROPERTY) != true) {
+    if (!SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeEnabled()) {
       return
     }
     sdkQuadVulkanProbeStarted = true
-    val holdMs =
-        activityReadLongSystemProperty(
-            SDK_QUAD_VULKAN_PROBE_HOLD_MS_PROPERTY,
-            SDK_QUAD_VULKAN_PROBE_DEFAULT_HOLD_MS,
-            SDK_QUAD_VULKAN_PROBE_MIN_HOLD_MS,
-            SDK_QUAD_VULKAN_PROBE_MAX_HOLD_MS,
-        )
-    val frameCount =
-        activityReadIntSystemProperty(
-            SDK_QUAD_VULKAN_PROBE_FRAME_COUNT_PROPERTY,
-            SDK_QUAD_VULKAN_PROBE_DEFAULT_FRAME_COUNT,
-            1,
-            SDK_QUAD_VULKAN_PROBE_MAX_FRAME_COUNT,
-        )
+    val holdMs = SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeHoldMs()
+    val frameCount = SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeFrameCount()
     marker(
         "channel=sdk-owned-quad-vulkan-probe status=start sdkQuadVulkanProbe=true " +
             "reason=${activityMarkerToken(reason)} debugProperty=$SDK_QUAD_VULKAN_PROBE_PROPERTY " +
             "widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX " +
             "holdMs=$holdMs requestedFrames=$frameCount producer=native-vulkan-wsi " +
             "renderPolicy=sdk-owned-scenequadlayer-android-surface-wsi " +
-            "videoSurfacePanelRegistration=false externalSwapchain=false privateShaderStack=false"
+            "videoSurfacePanelRegistration=false externalSwapchain=false privateShaderStack=false " +
+            SpatialDiagnosticProbeRouteModule.explicitOptInMarkerFields(SDK_QUAD_VULKAN_PROBE_PROPERTY)
     )
     Handler(Looper.getMainLooper()).post { runSdkQuadVulkanProbe(holdMs, frameCount) }
   }
@@ -1400,17 +1384,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (sdkQuadStereoAlphaProbeStarted) {
       return
     }
-    if (activityReadOptionalBooleanSystemProperty(SDK_QUAD_STEREO_ALPHA_PROBE_PROPERTY) != true) {
+    if (!SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeEnabled()) {
       return
     }
     sdkQuadStereoAlphaProbeStarted = true
-    val holdMs =
-        activityReadLongSystemProperty(
-            SDK_QUAD_STEREO_ALPHA_PROBE_HOLD_MS_PROPERTY,
-            SDK_QUAD_STEREO_ALPHA_PROBE_DEFAULT_HOLD_MS,
-            SDK_QUAD_STEREO_ALPHA_PROBE_MIN_HOLD_MS,
-            SDK_QUAD_STEREO_ALPHA_PROBE_MAX_HOLD_MS,
-        )
+    val holdMs = SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeHoldMs()
     marker(
         "channel=sdk-owned-quad-stereo-alpha-probe status=start " +
             "sdkQuadStereoAlphaProbe=true reason=${activityMarkerToken(reason)} " +
@@ -1420,7 +1398,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "perEyeExtentPx=${SDK_QUAD_STEREO_ALPHA_PROBE_PER_EYE_WIDTH_PX}x$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX " +
             "stereoMode=LeftRight producer=android-canvas nativeVulkanProducer=false " +
             "setClipPlanned=true alphaBlendPlanned=true colorScaleAlphaPlanned=true " +
-            "zIndexChangePlanned=true holdMs=$holdMs"
+            "zIndexChangePlanned=true holdMs=$holdMs " +
+            SpatialDiagnosticProbeRouteModule.explicitOptInMarkerFields(
+                SDK_QUAD_STEREO_ALPHA_PROBE_PROPERTY
+            )
     )
     Handler(Looper.getMainLooper()).post { runSdkQuadStereoAlphaProbe(holdMs) }
   }
@@ -1429,7 +1410,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (panelSurfaceMatrixProbeStarted) {
       return
     }
-    if (activityReadOptionalBooleanSystemProperty(PANEL_SURFACE_MATRIX_PROBE_PROPERTY) != true) {
+    if (!SpatialDiagnosticProbeRouteModule.panelSurfaceMatrixProbeEnabled()) {
       return
     }
     panelSurfaceMatrixProbeStarted = true
@@ -1438,7 +1419,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "reason=${activityMarkerToken(reason)} debugProperty=$PANEL_SURFACE_MATRIX_PROBE_PROPERTY " +
             "widthPx=$PANEL_SURFACE_MATRIX_PROBE_WIDTH_PX heightPx=$PANEL_SURFACE_MATRIX_PROBE_HEIGHT_PX " +
             "variants=useSwapchain-true-useTexture-false,useSwapchain-false-useTexture-true " +
-            "sceneQuadLayerBackedByPanelSurfaceSwapchainPlanned=true nativeVulkanProducerPlanned=true"
+            "sceneQuadLayerBackedByPanelSurfaceSwapchainPlanned=true nativeVulkanProducerPlanned=true " +
+            SpatialDiagnosticProbeRouteModule.explicitOptInMarkerFields(
+                PANEL_SURFACE_MATRIX_PROBE_PROPERTY
+            )
     )
     Handler(Looper.getMainLooper()).post {
       runPanelSurfaceMatrixProbeVariant(
@@ -3623,29 +3607,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (externalSwapchainProbeStarted) {
       return
     }
-    if (activityReadOptionalBooleanSystemProperty(EXTERNAL_SWAPCHAIN_PROBE_PROPERTY) != true) {
+    if (!SpatialDiagnosticProbeRouteModule.externalSwapchainProbeEnabled()) {
       return
     }
     externalSwapchainProbeStarted = true
-    val cycles =
-        activityReadIntSystemProperty(
-            EXTERNAL_SWAPCHAIN_PROBE_CYCLES_PROPERTY,
-            EXTERNAL_SWAPCHAIN_PROBE_DEFAULT_CYCLES,
-            1,
-            EXTERNAL_SWAPCHAIN_PROBE_MAX_CYCLES,
-        )
-    val cycleMs =
-        activityReadLongSystemProperty(
-            EXTERNAL_SWAPCHAIN_PROBE_CYCLE_MS_PROPERTY,
-            EXTERNAL_SWAPCHAIN_PROBE_DEFAULT_CYCLE_MS,
-            EXTERNAL_SWAPCHAIN_PROBE_MIN_CYCLE_MS,
-            EXTERNAL_SWAPCHAIN_PROBE_MAX_CYCLE_MS,
-        )
+    val cycles = SpatialDiagnosticProbeRouteModule.externalSwapchainProbeCycles()
+    val cycleMs = SpatialDiagnosticProbeRouteModule.externalSwapchainProbeCycleMs()
     marker(
         "channel=external-xr-swapchain-wrap-probe status=start externalSwapchainProbe=true " +
             "reason=${activityMarkerToken(reason)} cycles=$cycles cycleMs=$cycleMs " +
             "debugProperty=$EXTERNAL_SWAPCHAIN_PROBE_PROPERTY rendererAuthority=spatial-sdk-openxr-session " +
-            "nativeFrameLoop=false customProjectionStack=false camera2Stack=false privateShaderStack=false"
+            "nativeFrameLoop=false customProjectionStack=false camera2Stack=false privateShaderStack=false " +
+            SpatialDiagnosticProbeRouteModule.explicitOptInMarkerFields(
+                EXTERNAL_SWAPCHAIN_PROBE_PROPERTY
+            )
     )
     Handler(Looper.getMainLooper()).post { runExternalSwapchainProbeCycle(1, cycles, cycleMs) }
   }
@@ -8563,75 +8538,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         "debug.rustyquest.spatial.panel_shell.visible"
     private const val PANEL_LAUNCHER_VISIBLE_PROPERTY =
         "debug.rustyquest.spatial.panel_launcher.visible"
-    private const val EXTERNAL_SWAPCHAIN_PROBE_PROPERTY =
-        "debug.rustyquest.spatial.external_swapchain_probe"
-    private const val EXTERNAL_SWAPCHAIN_PROBE_CYCLES_PROPERTY =
-        "debug.rustyquest.spatial.external_swapchain_probe.cycles"
-    private const val EXTERNAL_SWAPCHAIN_PROBE_CYCLE_MS_PROPERTY =
-        "debug.rustyquest.spatial.external_swapchain_probe.cycle_ms"
-    private const val EXTERNAL_SWAPCHAIN_PROBE_WIDTH_PX = 256
-    private const val EXTERNAL_SWAPCHAIN_PROBE_HEIGHT_PX = 256
-    private const val EXTERNAL_SWAPCHAIN_PROBE_WIDTH_METERS = 0.35f
-    private const val EXTERNAL_SWAPCHAIN_PROBE_HEIGHT_METERS = 0.35f
-    private const val EXTERNAL_SWAPCHAIN_PROBE_DISTANCE_METERS = 0.85f
-    private const val EXTERNAL_SWAPCHAIN_PROBE_Z_INDEX = 18
-    private const val EXTERNAL_SWAPCHAIN_PROBE_DEFAULT_CYCLES = 1
-    private const val EXTERNAL_SWAPCHAIN_PROBE_MAX_CYCLES = 10
-    private const val EXTERNAL_SWAPCHAIN_PROBE_DEFAULT_CYCLE_MS = 60_000L
-    private const val EXTERNAL_SWAPCHAIN_PROBE_MIN_CYCLE_MS = 1_000L
-    private const val EXTERNAL_SWAPCHAIN_PROBE_MAX_CYCLE_MS = 60_000L
-    private const val EXTERNAL_SWAPCHAIN_PROBE_INTER_CYCLE_MS = 750L
-    private const val SDK_QUAD_SURFACE_PROBE_PROPERTY =
-        "debug.rustyquest.spatial.sdk_quad_surface_probe"
-    private const val SDK_QUAD_SURFACE_PROBE_HOLD_MS_PROPERTY =
-        "debug.rustyquest.spatial.sdk_quad_surface_probe.hold_ms"
-    private const val SDK_QUAD_SURFACE_PROBE_WIDTH_PX = 512
-    private const val SDK_QUAD_SURFACE_PROBE_HEIGHT_PX = 512
-    private const val SDK_QUAD_SURFACE_PROBE_CHECKER_CELLS = 8
-    private const val SDK_QUAD_SURFACE_PROBE_WIDTH_METERS = 0.55f
-    private const val SDK_QUAD_SURFACE_PROBE_HEIGHT_METERS = 0.55f
-    private const val SDK_QUAD_SURFACE_PROBE_DISTANCE_METERS = 0.85f
-    private const val SDK_QUAD_SURFACE_PROBE_Z_INDEX = 22
-    private const val SDK_QUAD_SURFACE_PROBE_DEFAULT_HOLD_MS = 30_000L
-    private const val SDK_QUAD_SURFACE_PROBE_MIN_HOLD_MS = 1_000L
-    private const val SDK_QUAD_SURFACE_PROBE_MAX_HOLD_MS = 120_000L
-    private const val SDK_QUAD_VULKAN_PROBE_PROPERTY =
-        "debug.rustyquest.spatial.sdk_quad_vulkan_probe"
-    private const val SDK_QUAD_VULKAN_PROBE_HOLD_MS_PROPERTY =
-        "debug.rustyquest.spatial.sdk_quad_vulkan_probe.hold_ms"
-    private const val SDK_QUAD_VULKAN_PROBE_FRAME_COUNT_PROPERTY =
-        "debug.rustyquest.spatial.sdk_quad_vulkan_probe.frame_count"
-    private const val SDK_QUAD_VULKAN_PROBE_DEFAULT_HOLD_MS = 8_000L
-    private const val SDK_QUAD_VULKAN_PROBE_MIN_HOLD_MS = 1_000L
-    private const val SDK_QUAD_VULKAN_PROBE_MAX_HOLD_MS = 120_000L
-    private const val SDK_QUAD_VULKAN_PROBE_DEFAULT_FRAME_COUNT = 240
-    private const val SDK_QUAD_VULKAN_PROBE_MAX_FRAME_COUNT = 1_800
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_PROPERTY =
-        "debug.rustyquest.spatial.sdk_quad_stereo_alpha_probe"
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_HOLD_MS_PROPERTY =
-        "debug.rustyquest.spatial.sdk_quad_stereo_alpha_probe.hold_ms"
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_PX = 2048
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX = 1024
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_PER_EYE_WIDTH_PX = 1024
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_METERS = 1.15f
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_METERS = 1.15f
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_LOW = 24
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_HIGH = 34
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_HIGH = 0.88f
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_LOW = 0.45f
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_CHANGE_MS = 1_500L
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_CHANGE_MS = 3_000L
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_RESTORE_MS = 5_500L
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_DEFAULT_HOLD_MS = 30_000L
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_MIN_HOLD_MS = 3_000L
-    private const val SDK_QUAD_STEREO_ALPHA_PROBE_MAX_HOLD_MS = 120_000L
-    private const val PANEL_SURFACE_MATRIX_PROBE_PROPERTY =
-        "debug.rustyquest.spatial.panel_surface_matrix_probe"
-    private const val PANEL_SURFACE_MATRIX_PROBE_WIDTH_PX = 512
-    private const val PANEL_SURFACE_MATRIX_PROBE_HEIGHT_PX = 512
-    private const val PANEL_SURFACE_MATRIX_PROBE_FRAME_COUNT = 90
-    private const val PANEL_SURFACE_MATRIX_PROBE_VARIANT_HOLD_MS = 2_500L
-    private const val PANEL_SURFACE_MATRIX_PROBE_INTER_VARIANT_MS = 500L
     private const val CAMERA_HWB_PROBE_PROPERTY =
         "debug.rustyquest.spatial.camera_hwb_probe"
     private const val CAMERA_HWB_PROBE_HOLD_MS_PROPERTY =

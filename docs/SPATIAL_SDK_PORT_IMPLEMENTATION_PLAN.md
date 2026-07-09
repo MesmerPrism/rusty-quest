@@ -194,6 +194,9 @@ Apply that model here when a lane grows beyond a narrow facade method:
   facade, with pure parsing/formatting/math helpers in
   `SpatialCameraPanelRuntimeHelpers.kt` and default-disabled video projection
   route policy in `SpatialVideoProjectionSettings.kt`;
+- package diagnostic probe route defaults, dimensions, durations, Android
+  property opt-ins, and opt-in marker fields in
+  `SpatialDiagnosticProbeRouteModule.kt`;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, target-rect math, and markers in

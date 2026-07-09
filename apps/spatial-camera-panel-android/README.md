@@ -330,6 +330,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   intent/property parsing, the low-rate settings value object, and marker
   fields used by the Spatial camera projection route. It does not decode media
   or own native AImageReader / AHardwareBuffer handoff.
+- `app/src/main/.../SpatialDiagnosticProbeRouteModule.kt` owns the
+  default-disabled route policy for diagnostic probes: external OpenXR
+  swapchain wrapping, SDK-owned quad surface/Vulkan probes, stereo-alpha probe
+  dimensions/timing, panel-surface matrix variants, and explicit opt-in marker
+  fields. It must not create scene objects, draw surfaces, call JNI, or mutate
+  Activity probe state.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, target-rect math, stereo marker fields,
