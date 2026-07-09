@@ -326,9 +326,10 @@ Interaction SDK pointer input without native multimodal extension forcing.
   small Spatial vector math helpers used by the facade. It must stay free of
   lifecycle, panel, camera, particle, and JNI start/stop authority.
 - `app/src/main/.../SpatialVideoProjectionSettings.kt` owns the Kotlin-side
-  low-rate video projection settings value object used by the Spatial camera
-  projection route. It does not decode media or own native AImageReader /
-  AHardwareBuffer handoff.
+  video projection route policy: default-disabled opt-in controls,
+  intent/property parsing, the low-rate settings value object, and marker
+  fields used by the Spatial camera projection route. It does not decode media
+  or own native AImageReader / AHardwareBuffer handoff.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, target-rect math, stereo marker fields,
@@ -432,7 +433,9 @@ Interaction SDK pointer input without native multimodal extension forcing.
   or present in source, but they must not create scene objects, start native
   routes, change input behavior, alter package/permission expectations, or emit
   active markers unless a documented property, profile, app spec, or intent
-  extra enables that feature for the current run.
+  extra enables that feature for the current run. Route-policy modules should
+  own default-disabled controls and marker fields that identify the opt-in route
+  so static gates can check the feature does not bleed into unrelated app runs.
 - `native-receipt/src/camera_hwb_probe.rs` is the Android JNI facade and
   raw camera probe orchestration entry point.
 - `native-receipt/src/camera_hwb_stream.rs` owns the Android Camera2 /

@@ -192,8 +192,8 @@ Apply that model here when a lane grows beyond a narrow facade method:
 
 - keep `SpatialCameraPanelActivity.kt` as the lifecycle/JNI/panel-registration
   facade, with pure parsing/formatting/math helpers in
-  `SpatialCameraPanelRuntimeHelpers.kt` and low-rate video settings in
-  `SpatialVideoProjectionSettings.kt`;
+  `SpatialCameraPanelRuntimeHelpers.kt` and default-disabled video projection
+  route policy in `SpatialVideoProjectionSettings.kt`;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, target-rect math, and markers in
@@ -211,7 +211,9 @@ All Spatial feature modules must stay explicit opt-in. Individual modules can
 be registered or available in source, but they should not create scene objects,
 start native routes, alter input handling, request package/permission behavior,
 or emit active capability markers unless a documented property, profile,
-app-build spec, or intent extra enables that feature for the current run.
+app-build spec, or intent extra enables that feature for the current run. Keep
+the opt-in default and marker evidence in the owning route module so static
+gates can prove a feature is present in source without being active by default.
 
 This is especially relevant before adding new carrier experiments. Prefer a
 small feature-shaped slice over more growth in `SpatialCameraPanelActivity.kt`.
