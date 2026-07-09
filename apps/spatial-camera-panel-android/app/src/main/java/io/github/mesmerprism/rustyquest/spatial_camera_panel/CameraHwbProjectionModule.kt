@@ -363,6 +363,183 @@ internal object CameraHwbProjectionModule {
           "perEyeExtent=${CAMERA_HWB_PROJECTION_PER_EYE_WIDTH_PX}x$CAMERA_HWB_PROJECTION_HEIGHT_PX " +
           "packedExtent=${CAMERA_HWB_PROJECTION_WIDTH_PX}x$CAMERA_HWB_PROJECTION_HEIGHT_PX"
 
+  fun targetScaleJoystickAdjustedMarker(
+      inputSource: String,
+      controllerJoystickMapping: String,
+      detail: String,
+      dtSeconds: Float,
+      scaleRate: Float,
+      panelVisible: Boolean,
+      previousScale: Float,
+      updatedScale: Float,
+      targetDistanceMeters: Float,
+      stereoHorizontalOffsetUv: Float,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=target-scale-joystick-adjusted " +
+          "rawCameraProjectionProbe=true inputSource=${activityMarkerToken(inputSource)} " +
+          "controllerJoystickMapping=${activityMarkerToken(controllerJoystickMapping)} " +
+          "${detail.trim()} dtSeconds=${activityMarkerFloat(dtSeconds)} " +
+          "projectionTargetScaleRatePerSecond=${activityMarkerFloat(scaleRate)} " +
+          "panelVisible=$panelVisible " +
+          "cameraHwbProjectionScaleIgnoresPanelVisibility=true " +
+          "previousProjectionTargetLiveScale=${activityMarkerFloat(previousScale)} " +
+          "projectionTargetLiveScale=${activityMarkerFloat(updatedScale)} " +
+          "projectionTargetTunedMaxScale=${activityMarkerFloat(updatedScale)} " +
+          "projectionTargetMinScale=${activityMarkerFloat(CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE)} " +
+          "projectionTargetMaxScale=${activityMarkerFloat(CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE)} " +
+          "targetDistanceMeters=${activityMarkerFloat(targetDistanceMeters)} " +
+          "projectionPlaneAngularCoveragePreserved=true " +
+          "eyeSpaceTargetRectPreserved=true " +
+          "leftEffectiveTargetScreenUvRect=${leftEffectiveTargetRectMarker(updatedScale, stereoHorizontalOffsetUv)} " +
+          "rightEffectiveTargetScreenUvRect=${rightEffectiveTargetRectMarker(updatedScale, stereoHorizontalOffsetUv)} " +
+          "leftPackedEffectiveTargetScreenUvRect=${leftPackedEffectiveTargetRectMarker(updatedScale, stereoHorizontalOffsetUv)} " +
+          "rightPackedEffectiveTargetScreenUvRect=${rightPackedEffectiveTargetRectMarker(updatedScale, stereoHorizontalOffsetUv)}"
+
+  fun targetScalePanelAdjustedMarker(
+      source: String,
+      previousScale: Float,
+      updatedScale: Float,
+      stereoHorizontalOffsetUv: Float,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=target-scale-panel-adjusted " +
+          "rawCameraProjectionProbe=true inputSource=spatial-sdk-compose-panel " +
+          "source=${activityMarkerToken(source)} previousProjectionTargetLiveScale=${activityMarkerFloat(previousScale)} " +
+          "projectionTargetLiveScale=${activityMarkerFloat(updatedScale)} " +
+          "projectionTargetMinScale=${activityMarkerFloat(CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE)} " +
+          "projectionTargetMaxScale=${activityMarkerFloat(CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE)} " +
+          "leftPackedEffectiveTargetScreenUvRect=${leftPackedEffectiveTargetRectMarker(updatedScale, stereoHorizontalOffsetUv)} " +
+          "rightPackedEffectiveTargetScreenUvRect=${rightPackedEffectiveTargetRectMarker(updatedScale, stereoHorizontalOffsetUv)} " +
+          "runtimeCrash=false"
+
+  fun targetStereoHorizontalOffsetUpdateFailedMarker(
+      reason: String,
+      stereoOffsetUv: Float,
+      error: String,
+      message: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=target-stereo-horizontal-offset-update-failed " +
+          "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true " +
+          "projectionTargetStereoHorizontalOffsetUv=${activityMarkerFloat6(stereoOffsetUv)} " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun targetStereoHorizontalOffsetNativeUpdatedMarker(
+      reason: String,
+      updateMask: Long,
+      targetScale: Float,
+      stereoOffsetUv: Float,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=target-stereo-horizontal-offset-native-updated " +
+          "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true updateMask=$updateMask " +
+          "projectionTargetStereoHorizontalOffsetUv=${activityMarkerFloat6(stereoOffsetUv)} " +
+          "projectionTargetLeftOffsetUv=${activityMarkerFloat6(-stereoOffsetUv)},0.000000 " +
+          "projectionTargetRightOffsetUv=${activityMarkerFloat6(stereoOffsetUv)},0.000000 " +
+          "leftPackedEffectiveTargetScreenUvRect=${leftPackedEffectiveTargetRectMarker(targetScale, stereoOffsetUv)} " +
+          "rightPackedEffectiveTargetScreenUvRect=${rightPackedEffectiveTargetRectMarker(targetScale, stereoOffsetUv)} " +
+          "runtimeCrash=false"
+
+  fun targetScaleUpdateFailedMarker(
+      reason: String,
+      targetScale: Float,
+      error: String,
+      message: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=target-scale-update-failed " +
+          "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true " +
+          "projectionTargetLiveScale=${activityMarkerFloat(targetScale)} " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun targetScaleNativeUpdatedMarker(
+      reason: String,
+      updateMask: Long,
+      targetScale: Float,
+      stereoHorizontalOffsetUv: Float,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=target-scale-native-updated " +
+          "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true updateMask=$updateMask " +
+          "projectionTargetLiveScale=${activityMarkerFloat(targetScale)} " +
+          "projectionTargetTunedMaxScale=${activityMarkerFloat(targetScale)} " +
+          "leftPackedEffectiveTargetScreenUvRect=${leftPackedEffectiveTargetRectMarker(targetScale, stereoHorizontalOffsetUv)} " +
+          "rightPackedEffectiveTargetScreenUvRect=${rightPackedEffectiveTargetRectMarker(targetScale, stereoHorizontalOffsetUv)} " +
+          "runtimeCrash=false"
+
+  fun projectionPlacementToggleDisabledMarker(
+      inputSource: String,
+      detail: String,
+      placementMode: CameraHwbProjectionPlacementMode,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=projection-placement-toggle-ignored " +
+          "controllerInput=right-secondary-button inputSource=${activityMarkerToken(inputSource)} " +
+          "${detail.trim()} placementMode=${placementMode.markerToken} " +
+          "cameraProjectionWallToggleInput=disabled-right-secondary-noop " +
+          "cameraProjectionWallToggleEnabled=false " +
+          "toggleGuard=disabled-no-room-distance-diagnostic " +
+          "projectionStartsInFullFov=true runtimeCrash=false"
+
+  fun projectionPlacementToggleNotArmedMarker(
+      inputSource: String,
+      detail: String,
+      placementMode: CameraHwbProjectionPlacementMode,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=projection-placement-toggle-ignored " +
+          "controllerInput=right-secondary-button inputSource=${activityMarkerToken(inputSource)} " +
+          "${detail.trim()} placementMode=${placementMode.markerToken} " +
+          "toggleGuard=wait-for-secondary-release-after-projection-start " +
+          "projectionStartsInFullFov=true runtimeCrash=false"
+
+  fun projectionPlacementToggleDebouncedMarker(
+      inputSource: String,
+      detail: String,
+      placementMode: CameraHwbProjectionPlacementMode,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=projection-placement-toggle-ignored " +
+          "controllerInput=right-secondary-button inputSource=${activityMarkerToken(inputSource)} " +
+          "${detail.trim()} placementMode=${placementMode.markerToken} " +
+          "toggleDebounceMs=$CAMERA_HWB_PROJECTION_PLACEMENT_TOGGLE_DEBOUNCE_MS " +
+          "runtimeCrash=false"
+
+  fun projectionPlacementToggledMarker(
+      inputSource: String,
+      detail: String,
+      previousPlacementMode: CameraHwbProjectionPlacementMode,
+      placementMode: CameraHwbProjectionPlacementMode,
+      projectionEntityPresent: Boolean,
+      carrierMode: CameraHwbProjectionCarrierMode,
+      roomRenderOrderToken: String,
+      layerOverrideReapplied: Boolean,
+      layerOverrideUpdateMask: Long,
+      layerOverride: Float,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=projection-placement-toggled " +
+          "controllerInput=right-secondary-button inputSource=${activityMarkerToken(inputSource)} " +
+          "${detail.trim()} " +
+          "previousPlacementMode=${previousPlacementMode.markerToken} " +
+          "placementMode=${placementMode.markerToken} " +
+          "virtualRoomWallPlacementActive=${placementMode == CameraHwbProjectionPlacementMode.VirtualRoomWall} " +
+          "projectionEntityPresent=$projectionEntityPresent " +
+          "sceneQuadLayerRebuildStatus=not-rebuilt-existing-scene-anchor-updated " +
+          "projectionCarrier=${carrierToken(carrierMode)} " +
+          "projectionCarrierProperty=$CAMERA_HWB_PROJECTION_CARRIER_PROPERTY " +
+          "projectionDisplaySurface=${displayRoleForPlacement(placementMode)} " +
+          "projectionRoomRenderOrder=$roomRenderOrderToken " +
+          "cameraVideoProjectionLayerZIndex=${zIndexForPlacement(carrierMode, placementMode)} " +
+          "cameraProjectionWallToggleInput=disabled-right-secondary-noop " +
+          "cameraProjectionWallToggleEnabled=false " +
+          "virtualRoomWallCenterM=$CAMERA_HWB_PROJECTION_WALL_CENTER_MARKER " +
+          "virtualRoomWallSizeM=$CAMERA_HWB_PROJECTION_WALL_SIZE_MARKER " +
+          "layerOverrideReappliedOnPlacementToggle=$layerOverrideReapplied " +
+          "layerOverrideUpdateMask=$layerOverrideUpdateMask " +
+          "publicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(layerOverride)} " +
+          "layerOverrideAppliesToWallAndFullFov=true " +
+          "cameraProjectionPlacementIndependentLayerControl=true " +
+          "mrukPlacement=false passthroughRoomPlacement=false runtimeCrash=false"
+
+  fun projectionPlacementToggleArmedMarker(inputSource: String): String =
+      "channel=camera-hwb-spatial-probe status=projection-placement-toggle-armed " +
+          "controllerInput=right-secondary-button inputSource=${activityMarkerToken(inputSource)} " +
+          "projectionStartsInFullFov=true runtimeCrash=false"
+
   fun markerFields(input: CameraHwbProjectionMarkerInput): String {
     val placementAuthority =
         when (input.placementMode) {
