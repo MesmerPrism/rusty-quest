@@ -376,6 +376,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   carrier token parsing, panel dimensions, projection-surface math, media
   settings, and route marker fields. It must not create scene objects, read
   runtime properties, call JNI, or mutate Activity state.
+- `app/src/main/.../SpatialSurfaceParticlePanelCarrierModule.kt` owns native
+  surface-particle manual panel carrier construction: the manual custom-mesh
+  `PanelSceneObject`, create/surface/add failure markers, and readiness marker
+  fields. It must not decide feature opt-in, start JNI native routes, own
+  particle parameter state, or mutate Activity lifecycle state.
 - `app/src/main/.../SpatialVirtualRoomModule.kt` owns the explicit opt-in
   packaged virtual room and skybox route: GLXF load, lighting, IBL/skydome
   setup, skybox resources, property parsing, markers, and cleanup. It remains

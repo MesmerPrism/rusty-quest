@@ -218,6 +218,9 @@ Apply that model here when a lane grows beyond a narrow facade method:
   plus native receipt bit decoding in `SpatialOpenXrRouteModule.kt`;
 - package surface-particle route policy, carrier parsing, dimensions, media
   settings, and marker fields in `SpatialSurfaceParticleRouteModule.kt`.
+- package native surface-particle manual panel carrier construction,
+  custom-mesh `PanelSceneObject` creation, create/surface/add failure markers,
+  and readiness marker fields in `SpatialSurfaceParticlePanelCarrierModule.kt`.
 
 All Spatial feature modules must stay explicit opt-in. Individual modules can be compiled,
 registered, or available in source, but they should not create scene

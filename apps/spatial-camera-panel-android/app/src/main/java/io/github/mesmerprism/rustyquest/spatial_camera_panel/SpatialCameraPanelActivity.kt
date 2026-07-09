@@ -70,7 +70,6 @@ import com.meta.spatial.core.SystemBase
 import com.meta.spatial.core.Vector2
 import com.meta.spatial.core.Vector3
 import com.meta.spatial.core.Vector4
-import com.meta.spatial.runtime.AlphaMode
 import com.meta.spatial.runtime.BlendFactor
 import com.meta.spatial.runtime.ButtonBits
 import com.meta.spatial.runtime.LayerAlphaBlend
@@ -85,7 +84,6 @@ import com.meta.spatial.runtime.SceneMesh
 import com.meta.spatial.runtime.SceneObject
 import com.meta.spatial.runtime.SceneQuadLayer
 import com.meta.spatial.runtime.SceneSwapchain
-import com.meta.spatial.runtime.SceneTexture
 import com.meta.spatial.runtime.StereoMode
 import com.meta.spatial.toolkit.AppSystemActivity
 import com.meta.spatial.toolkit.AvatarAttachment
@@ -122,7 +120,6 @@ import com.meta.spatial.vr.LocomotionControls
 import com.meta.spatial.vr.VRFeature
 import com.meta.spatial.vr.VrInputSystemType
 import java.io.File
-import java.util.concurrent.CompletableFuture
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.sqrt
@@ -3799,110 +3796,43 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         particleLayerSurfaceWidthMeters(targetDistanceMeters, surfaceOverscanScale)
     val surfaceHeightMeters =
         particleLayerSurfaceHeightMeters(targetDistanceMeters, surfaceOverscanScale)
-    val entity = Entity(R.id.spatial_camera_surface_panel)
-    entity.setComponent(Transform(particleLayerPose()))
-    entity.setComponent(PanelDimensions(Vector2(surfaceWidthMeters, surfaceHeightMeters)))
-    entity.setComponent(Visible(particleLayerVisibleForPanelMode()))
-    val settings =
-        SpatialSurfaceParticleRouteModule.manualCarrierMediaSettings(
-            surfaceWidthMeters,
-            surfaceHeightMeters,
+    val carrierResult =
+        SpatialSurfaceParticlePanelCarrierModule.createManualCustomMeshPanel(
+            scene = scene,
+            sceneObjectSystem = systemManager.findSystem<SceneObjectSystem>(),
+            pose = particleLayerPose(),
+            surfaceWidthMeters = surfaceWidthMeters,
+            surfaceHeightMeters = surfaceHeightMeters,
+            visible = particleLayerVisibleForPanelMode(),
+            reason = reason,
+            carrier = particleLayerCarrierToken(),
         )
-    val panelSceneObject =
-        runCatching {
-              PanelSceneObject(
-                  scene,
-                  entity,
-                  settings.toPanelConfigOptions().apply {
-                    enableLayer = false
-                    layerConfig = null
-                    forceSceneTexture = true
-                    includeGlass = false
-                    sceneMeshCreator = { texture: SceneTexture ->
-                      val material =
-                          SceneMaterial(texture, AlphaMode.OPAQUE, SceneMaterial.UNLIT_SHADER)
-                              .apply {
-                                setStereoMode(StereoMode.LeftRight)
-                                setUnlit(true)
-                              }
-                      SceneMesh.singleSidedQuad(
-                          surfaceWidthMeters / 2.0f,
-                          surfaceHeightMeters / 2.0f,
-                          material,
-                      )
-                    }
-                  },
-              )
-            }
-            .getOrElse { throwable ->
-              marker(
-                  "channel=native-surface-particle-layer status=manual-panel-carrier-create-failed " +
-                      "renderPolicy=native-vulkan-wsi-surface-panel reason=${activityMarkerToken(reason)} " +
-                      "surfaceParticleProjectionCarrier=${activityMarkerToken(particleLayerCarrierToken())} " +
-                      "manualPanelSceneObjectCustomMesh=true sceneMeshCreator=single-sided-quad " +
-                      "nativeStartRequested=false error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
-              )
-              return null
-            }
-    val surface =
-        runCatching { panelSceneObject.getSurface() }
-            .getOrElse { throwable ->
-              marker(
-                  "channel=native-surface-particle-layer status=manual-panel-carrier-surface-failed " +
-                      "renderPolicy=native-vulkan-wsi-surface-panel reason=${activityMarkerToken(reason)} " +
-                      "surfaceParticleProjectionCarrier=${activityMarkerToken(particleLayerCarrierToken())} " +
-                      "manualPanelSceneObjectCustomMesh=true sceneMeshCreator=single-sided-quad " +
-                      "nativeStartRequested=false error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
-              )
-              panelSceneObject.destroy()
-              return null
-            }
-    val added =
-        runCatching {
-              systemManager
-                  .findSystem<SceneObjectSystem>()
-                  .addSceneObject(
-                      entity,
-                      CompletableFuture<SceneObject>().apply { complete(panelSceneObject) },
-                  )
-              true
-            }
-            .getOrElse { throwable ->
-              marker(
-                  "channel=native-surface-particle-layer status=manual-panel-carrier-add-failed " +
-                      "renderPolicy=native-vulkan-wsi-surface-panel reason=${activityMarkerToken(reason)} " +
-                      "surfaceParticleProjectionCarrier=${activityMarkerToken(particleLayerCarrierToken())} " +
-                      "manualPanelSceneObjectCustomMesh=true sceneMeshCreator=single-sided-quad " +
-                      "nativeStartRequested=false error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
-              )
-              panelSceneObject.destroy()
-              return null
-            }
-    particleLayerPanelSceneObject = panelSceneObject
-    particleLayerManualPanelSurface = surface
-    particleSurfacePanelReady = added
+    val readyCarrier =
+        when (carrierResult) {
+          is SpatialSurfaceParticleManualPanelCarrierResult.Ready -> carrierResult
+          is SpatialSurfaceParticleManualPanelCarrierResult.Failed -> {
+            marker(carrierResult.marker)
+            return null
+          }
+        }
+    particleLayerPanelSceneObject = readyCarrier.panelSceneObject
+    particleLayerManualPanelSurface = readyCarrier.surface
+    particleSurfacePanelReady = true
     particleSurfaceConsumerCalled = true
-    particleSurfaceConsumerSurfaceValid = surface.isValid
+    particleSurfaceConsumerSurfaceValid = readyCarrier.surface.isValid
     val layerUpdateStatus = updateParticleLayerPanelLayer("manual-custom-mesh-created", false)
     marker(
-        "channel=native-surface-particle-layer status=manual-panel-carrier-ready " +
-            "renderPolicy=native-vulkan-wsi-surface-panel reason=${activityMarkerToken(reason)} " +
-            "surfaceParticleProjectionCarrier=${activityMarkerToken(particleLayerCarrierToken())} " +
-            "manualPanelSceneObjectCustomMesh=true sceneMeshCreator=single-sided-quad " +
-            "sceneMesh=SceneMesh.singleSidedQuad manualPanelNoHittable=true " +
-            "manualPanelNoIsdkGrabbable=true panelInputOptionsClickButtons=0 " +
-            "manualPanelForceSceneTexture=true manualPanelEnableLayer=false " +
-            "manualPanelLayerConfig=none surfaceValid=${surface.isValid} " +
-            "particleLayerPanelLayerUpdateStatus=${activityMarkerToken(layerUpdateStatus)} " +
-            "nativeStartRequested=false panelRegistrationId=manual-scene-object " +
-            particleLayerPlacementMarkerFields() + " " +
-            particleLayerStereoMarkerFields() + " runtimeCrash=false"
+        SpatialSurfaceParticlePanelCarrierModule.manualPanelCarrierReadyMarker(
+            reason = reason,
+            carrier = particleLayerCarrierToken(),
+            surfaceValid = readyCarrier.surface.isValid,
+            layerUpdateStatus = layerUpdateStatus,
+            placementMarkerFields = particleLayerPlacementMarkerFields(),
+            stereoMarkerFields = particleLayerStereoMarkerFields(),
+        )
     )
-    startNativeSurfaceParticleLayer(surface)
-    return entity
+    startNativeSurfaceParticleLayer(readyCarrier.surface)
+    return readyCarrier.entity
   }
 
   private fun startNativeSurfaceParticleLayer(surface: AndroidSurface) {
