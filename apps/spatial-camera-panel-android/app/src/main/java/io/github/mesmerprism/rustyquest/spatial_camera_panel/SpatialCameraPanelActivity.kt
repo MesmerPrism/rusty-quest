@@ -1358,14 +1358,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     panelSurfaceMatrixProbeStarted = true
     marker(
-        "channel=panel-surface-matrix-probe status=start panelSurfaceMatrixProbe=true " +
-            "reason=${activityMarkerToken(reason)} debugProperty=$PANEL_SURFACE_MATRIX_PROBE_PROPERTY " +
-            "widthPx=$PANEL_SURFACE_MATRIX_PROBE_WIDTH_PX heightPx=$PANEL_SURFACE_MATRIX_PROBE_HEIGHT_PX " +
-            "variants=useSwapchain-true-useTexture-false,useSwapchain-false-useTexture-true " +
-            "sceneQuadLayerBackedByPanelSurfaceSwapchainPlanned=true nativeVulkanProducerPlanned=true " +
-            SpatialDiagnosticProbeRouteModule.explicitOptInMarkerFields(
-                PANEL_SURFACE_MATRIX_PROBE_PROPERTY
-            )
+        SpatialDiagnosticProbeRouteModule.panelSurfaceMatrixProbeStartMarker(reason)
     )
     Handler(Looper.getMainLooper()).post {
       runPanelSurfaceMatrixProbeVariant(
@@ -1453,12 +1446,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             .onSuccess { panelSurface = it }
             .getOrElse { throwable ->
               marker(
-                  "channel=panel-surface-matrix-probe status=variant-complete " +
-                      "panelSurfaceMatrixProbe=true variant=$variantName panelSurfaceCreated=false " +
-                      "surfaceValid=false swapchainNonNull=false textureNonNull=false " +
-                      "swapchainBacksSceneQuadLayer=false nativeVulkanStartRequested=false " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.panelSurfaceMatrixProbeVariantCreateFailedMarker(
+                      variantName = variantName,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               scheduleNextPanelSurfaceMatrixVariant(variantIndex)
               return
@@ -1470,11 +1462,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val swapchainNonNull = swapchain != null
     val textureNonNull = texture != null
     marker(
-        "channel=panel-surface-matrix-probe status=variant-created " +
-            "panelSurfaceMatrixProbe=true variant=$variantName panelSurfaceCreated=true " +
-            "surfaceValid=$surfaceValid swapchainNonNull=$swapchainNonNull textureNonNull=$textureNonNull " +
-            "widthPx=${created.widthInPx} heightPx=${created.heightInPx} mips=${created.mips} " +
-            "reportedUseSwapchain=${created.useSwapchain} reportedUseTexture=${created.useTexture}"
+        SpatialDiagnosticProbeRouteModule.panelSurfaceMatrixProbeVariantCreatedMarker(
+            variantName = variantName,
+            surfaceValid = surfaceValid,
+            swapchainNonNull = swapchainNonNull,
+            textureNonNull = textureNonNull,
+            widthPx = created.widthInPx,
+            heightPx = created.heightInPx,
+            mips = created.mips,
+            reportedUseSwapchain = created.useSwapchain,
+            reportedUseTexture = created.useTexture,
+        )
     )
 
     val layerCreated =
@@ -1488,9 +1486,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           false
         }
     marker(
-        "channel=panel-surface-matrix-probe status=scenequadlayer-attempted " +
-            "panelSurfaceMatrixProbe=true variant=$variantName swapchainNonNull=$swapchainNonNull " +
-            "swapchainBacksSceneQuadLayer=$layerCreated anchorMode=generated-single-sided-quad"
+        SpatialDiagnosticProbeRouteModule.panelSurfaceMatrixProbeSceneQuadLayerAttemptedMarker(
+            variantName = variantName,
+            swapchainNonNull = swapchainNonNull,
+            layerCreated = layerCreated,
+        )
     )
 
     val nativeStartMask =
@@ -1505,10 +1505,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               }
               .getOrElse { throwable ->
                 marker(
-                    "channel=panel-surface-matrix-probe status=native-start-failed " +
-                        "panelSurfaceMatrixProbe=true variant=$variantName nativeVulkanStartRequested=false " +
-                        "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                        "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                    SpatialDiagnosticProbeRouteModule.panelSurfaceMatrixProbeNativeStartFailedMarker(
+                        variantName = variantName,
+                        error = throwable.javaClass.simpleName,
+                        message = throwable.message ?: "none",
+                    )
                 )
                 0L
               }
@@ -1517,10 +1518,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         }
     val nativeStartRequested = nativeStartMask != 0L
     marker(
-        "channel=panel-surface-matrix-probe status=native-start-attempted " +
-            "panelSurfaceMatrixProbe=true variant=$variantName surfaceValid=$surfaceValid " +
-            "nativeReceiptLibraryLoaded=$nativeReceiptLibraryLoaded nativeVulkanStartRequested=$nativeStartRequested " +
-            "nativeStartMask=$nativeStartMask"
+        SpatialDiagnosticProbeRouteModule.panelSurfaceMatrixProbeNativeStartAttemptedMarker(
+            variantName = variantName,
+            surfaceValid = surfaceValid,
+            nativeReceiptLibraryLoaded = nativeReceiptLibraryLoaded,
+            nativeStartRequested = nativeStartRequested,
+            nativeStartMask = nativeStartMask,
+        )
     )
     Handler(Looper.getMainLooper())
         .postDelayed(
@@ -1536,12 +1540,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       }
                       .getOrDefault(false)
               marker(
-                  "channel=panel-surface-matrix-probe status=variant-complete " +
-                      "panelSurfaceMatrixProbe=true variant=$variantName panelSurfaceCreated=true " +
-                      "surfaceValid=$surfaceValid swapchainNonNull=$swapchainNonNull textureNonNull=$textureNonNull " +
-                      "swapchainBacksSceneQuadLayer=$layerCreated nativeVulkanStartRequested=$nativeStartRequested " +
-                      "nativeStartMask=$nativeStartMask sceneCleanupStatus=$sceneCleanupStatus " +
-                      "panelSurfaceDestroyed=$panelSurfaceDestroyed runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.panelSurfaceMatrixProbeVariantCompleteMarker(
+                      variantName = variantName,
+                      surfaceValid = surfaceValid,
+                      swapchainNonNull = swapchainNonNull,
+                      textureNonNull = textureNonNull,
+                      layerCreated = layerCreated,
+                      nativeStartRequested = nativeStartRequested,
+                      nativeStartMask = nativeStartMask,
+                      sceneCleanupStatus = sceneCleanupStatus,
+                      panelSurfaceDestroyed = panelSurfaceDestroyed,
+                  )
               )
               scheduleNextPanelSurfaceMatrixVariant(variantIndex)
             },
@@ -1564,10 +1573,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           )
       return
     }
-    marker(
-        "channel=panel-surface-matrix-probe status=complete panelSurfaceMatrixProbe=true " +
-        "variantsTested=2 runtimeCrash=false"
-    )
+    marker(SpatialDiagnosticProbeRouteModule.panelSurfaceMatrixProbeCompleteMarker())
   }
 
   private fun runCameraHwbProbeIfRequested(reason: String) {

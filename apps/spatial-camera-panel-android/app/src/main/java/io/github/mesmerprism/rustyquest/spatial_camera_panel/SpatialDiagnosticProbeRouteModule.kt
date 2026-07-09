@@ -563,6 +563,100 @@ internal object SpatialDiagnosticProbeRouteModule {
           "error=${activityMarkerToken(error)} " +
           "message=${activityMarkerToken(message)} runtimeCrash=false"
 
+  fun panelSurfaceMatrixProbeStartMarker(reason: String): String =
+      "channel=panel-surface-matrix-probe status=start panelSurfaceMatrixProbe=true " +
+          "reason=${activityMarkerToken(reason)} debugProperty=$PANEL_SURFACE_MATRIX_PROBE_PROPERTY " +
+          "widthPx=$PANEL_SURFACE_MATRIX_PROBE_WIDTH_PX heightPx=$PANEL_SURFACE_MATRIX_PROBE_HEIGHT_PX " +
+          "variants=useSwapchain-true-useTexture-false,useSwapchain-false-useTexture-true " +
+          "sceneQuadLayerBackedByPanelSurfaceSwapchainPlanned=true nativeVulkanProducerPlanned=true " +
+          explicitOptInMarkerFields(PANEL_SURFACE_MATRIX_PROBE_PROPERTY)
+
+  fun panelSurfaceMatrixProbeVariantCreateFailedMarker(
+      variantName: String,
+      error: String,
+      message: String,
+  ): String =
+      "channel=panel-surface-matrix-probe status=variant-complete " +
+          "panelSurfaceMatrixProbe=true variant=${activityMarkerToken(variantName)} " +
+          "panelSurfaceCreated=false surfaceValid=false swapchainNonNull=false textureNonNull=false " +
+          "swapchainBacksSceneQuadLayer=false nativeVulkanStartRequested=false " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun panelSurfaceMatrixProbeVariantCreatedMarker(
+      variantName: String,
+      surfaceValid: Boolean,
+      swapchainNonNull: Boolean,
+      textureNonNull: Boolean,
+      widthPx: Int,
+      heightPx: Int,
+      mips: Int,
+      reportedUseSwapchain: Boolean,
+      reportedUseTexture: Boolean,
+  ): String =
+      "channel=panel-surface-matrix-probe status=variant-created " +
+          "panelSurfaceMatrixProbe=true variant=${activityMarkerToken(variantName)} " +
+          "panelSurfaceCreated=true surfaceValid=$surfaceValid " +
+          "swapchainNonNull=$swapchainNonNull textureNonNull=$textureNonNull " +
+          "widthPx=$widthPx heightPx=$heightPx mips=$mips " +
+          "reportedUseSwapchain=$reportedUseSwapchain reportedUseTexture=$reportedUseTexture"
+
+  fun panelSurfaceMatrixProbeSceneQuadLayerAttemptedMarker(
+      variantName: String,
+      swapchainNonNull: Boolean,
+      layerCreated: Boolean,
+  ): String =
+      "channel=panel-surface-matrix-probe status=scenequadlayer-attempted " +
+          "panelSurfaceMatrixProbe=true variant=${activityMarkerToken(variantName)} " +
+          "swapchainNonNull=$swapchainNonNull " +
+          "swapchainBacksSceneQuadLayer=$layerCreated anchorMode=generated-single-sided-quad"
+
+  fun panelSurfaceMatrixProbeNativeStartFailedMarker(
+      variantName: String,
+      error: String,
+      message: String,
+  ): String =
+      "channel=panel-surface-matrix-probe status=native-start-failed " +
+          "panelSurfaceMatrixProbe=true variant=${activityMarkerToken(variantName)} " +
+          "nativeVulkanStartRequested=false error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun panelSurfaceMatrixProbeNativeStartAttemptedMarker(
+      variantName: String,
+      surfaceValid: Boolean,
+      nativeReceiptLibraryLoaded: Boolean,
+      nativeStartRequested: Boolean,
+      nativeStartMask: Long,
+  ): String =
+      "channel=panel-surface-matrix-probe status=native-start-attempted " +
+          "panelSurfaceMatrixProbe=true variant=${activityMarkerToken(variantName)} " +
+          "surfaceValid=$surfaceValid nativeReceiptLibraryLoaded=$nativeReceiptLibraryLoaded " +
+          "nativeVulkanStartRequested=$nativeStartRequested nativeStartMask=$nativeStartMask"
+
+  fun panelSurfaceMatrixProbeVariantCompleteMarker(
+      variantName: String,
+      surfaceValid: Boolean,
+      swapchainNonNull: Boolean,
+      textureNonNull: Boolean,
+      layerCreated: Boolean,
+      nativeStartRequested: Boolean,
+      nativeStartMask: Long,
+      sceneCleanupStatus: String,
+      panelSurfaceDestroyed: Boolean,
+  ): String =
+      "channel=panel-surface-matrix-probe status=variant-complete " +
+          "panelSurfaceMatrixProbe=true variant=${activityMarkerToken(variantName)} " +
+          "panelSurfaceCreated=true surfaceValid=$surfaceValid " +
+          "swapchainNonNull=$swapchainNonNull textureNonNull=$textureNonNull " +
+          "swapchainBacksSceneQuadLayer=$layerCreated " +
+          "nativeVulkanStartRequested=$nativeStartRequested nativeStartMask=$nativeStartMask " +
+          "sceneCleanupStatus=$sceneCleanupStatus " +
+          "panelSurfaceDestroyed=$panelSurfaceDestroyed runtimeCrash=false"
+
+  fun panelSurfaceMatrixProbeCompleteMarker(): String =
+      "channel=panel-surface-matrix-probe status=complete panelSurfaceMatrixProbe=true " +
+          "variantsTested=2 runtimeCrash=false"
+
   fun cameraHwbProbeStartMarker(
       reason: String,
       frameCount: Int,
