@@ -385,6 +385,184 @@ internal object SpatialDiagnosticProbeRouteModule {
           "nativeVulkanProducer=true startMask=$startMask requestedFrames=$frameCount " +
           "holdMs=$holdMs renderPolicy=sdk-owned-scenequadlayer-android-surface-wsi"
 
+  fun sdkQuadStereoAlphaProbeStartMarker(reason: String, holdMs: Long): String =
+      "channel=sdk-owned-quad-stereo-alpha-probe status=start " +
+          "sdkQuadStereoAlphaProbe=true reason=${activityMarkerToken(reason)} " +
+          "debugProperty=$SDK_QUAD_STEREO_ALPHA_PROBE_PROPERTY " +
+          "widthPx=$SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_PX " +
+          "heightPx=$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX " +
+          "perEyeExtentPx=${SDK_QUAD_STEREO_ALPHA_PROBE_PER_EYE_WIDTH_PX}x$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX " +
+          "stereoMode=LeftRight producer=android-canvas nativeVulkanProducer=false " +
+          "setClipPlanned=true alphaBlendPlanned=true colorScaleAlphaPlanned=true " +
+          "zIndexChangePlanned=true holdMs=$holdMs " +
+          explicitOptInMarkerFields(SDK_QUAD_STEREO_ALPHA_PROBE_PROPERTY)
+
+  fun sdkQuadStereoAlphaProbeCompleteMarker(
+      sdkSwapchainCreated: Boolean,
+      surfaceValid: Boolean,
+      canvasDrawn: Boolean,
+      sceneQuadLayerCreated: Boolean,
+      setClipApplied: Boolean,
+      alphaBlendApplied: Boolean,
+      zIndexChanged: Boolean,
+      manualSceneQuadLayerViable: Boolean? = null,
+      colorScaleAlphaApplied: Boolean? = null,
+      cleanupStatus: String? = null,
+      error: String? = null,
+      message: String? = null,
+      includeOperatorChecks: Boolean = false,
+  ): String =
+      buildString {
+        append("channel=sdk-owned-quad-stereo-alpha-probe status=complete ")
+        append("sdkQuadStereoAlphaProbe=true sdkSwapchainCreated=$sdkSwapchainCreated ")
+        append("surfaceValid=$surfaceValid canvasDrawn=$canvasDrawn ")
+        append("sceneQuadLayerCreated=$sceneQuadLayerCreated ")
+        if (manualSceneQuadLayerViable != null) {
+          append("manualSceneQuadLayerViable=$manualSceneQuadLayerViable ")
+        }
+        append("stereoMode=LeftRight ")
+        append("setClipApplied=$setClipApplied alphaBlendApplied=$alphaBlendApplied ")
+        if (colorScaleAlphaApplied != null) {
+          append("colorScaleAlphaApplied=$colorScaleAlphaApplied ")
+        }
+        append("zIndexChanged=$zIndexChanged ")
+        if (cleanupStatus != null) {
+          append("cleanupStatus=$cleanupStatus ")
+        }
+        if (error != null) {
+          append("error=${activityMarkerToken(error)} ")
+        }
+        if (message != null) {
+          append("message=${activityMarkerToken(message)} ")
+        }
+        if (includeOperatorChecks) {
+          append("eyeLeakageCheck=operator-visible-required ")
+          append("uvOrientationCheck=operator-visible-required ")
+          append("alphaConventionCheck=operator-visible-required ")
+        }
+        append("runtimeCrash=false")
+      }
+
+  fun sdkQuadStereoAlphaProbeGetSurfaceFailedMarker(
+      handle: Long,
+      nativeHandle: Long,
+      platformHandle: Long,
+      error: String,
+      message: String,
+  ): String =
+      "channel=sdk-owned-quad-stereo-alpha-probe status=get-surface-failed " +
+          "sdkQuadStereoAlphaProbe=true handle=$handle " +
+          "nativeHandle=$nativeHandle platformHandle=$platformHandle " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun sdkQuadStereoAlphaProbeSdkSwapchainCreatedMarker(
+      handle: Long,
+      nativeHandle: Long,
+      platformHandle: Long,
+      surfaceValid: Boolean,
+  ): String =
+      "channel=sdk-owned-quad-stereo-alpha-probe status=sdk-swapchain-created " +
+          "sdkQuadStereoAlphaProbe=true sdkSwapchainCreated=true handle=$handle " +
+          "nativeHandle=$nativeHandle platformHandle=$platformHandle " +
+          "surfaceValid=$surfaceValid widthPx=$SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_PX " +
+          "heightPx=$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX"
+
+  fun sdkQuadStereoAlphaProbeVisibleWindowMarker(
+      surfaceValid: Boolean,
+      canvasDrawn: Boolean,
+      sceneQuadLayerCreated: Boolean,
+      manualSceneQuadLayerViable: Boolean,
+      holdMs: Long,
+  ): String =
+      "channel=sdk-owned-quad-stereo-alpha-probe status=visible-window " +
+          "sdkQuadStereoAlphaProbe=true sdkSwapchainCreated=true surfaceValid=$surfaceValid " +
+          "canvasDrawn=$canvasDrawn sceneQuadLayerCreated=$sceneQuadLayerCreated " +
+          "manualSceneQuadLayerViable=$manualSceneQuadLayerViable stereoMode=LeftRight " +
+          "leftEyePattern=red-grid rightEyePattern=blue-grid " +
+          "expectedUvOrientation=left-half-to-left-eye-right-half-to-right-eye " +
+          "eyeLeakageCheck=operator-visible-required croppingCheck=operator-visible-required " +
+          "alphaConventionCheck=operator-visible-required holdMs=$holdMs runtimeCrash=false"
+
+  fun sdkQuadStereoAlphaProbeZIndexUpdatedMarker(): String =
+      "channel=sdk-owned-quad-stereo-alpha-probe status=z-index-updated " +
+          "sdkQuadStereoAlphaProbe=true zIndexChanged=true " +
+          "zIndex=$SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_HIGH runtimeCrash=false"
+
+  fun sdkQuadStereoAlphaProbeZIndexUpdateFailedMarker(error: String, message: String): String =
+      "channel=sdk-owned-quad-stereo-alpha-probe status=z-index-update-failed " +
+          "sdkQuadStereoAlphaProbe=true zIndexChanged=false " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun sdkQuadStereoAlphaProbeAlphaUpdatedMarker(): String =
+      "channel=sdk-owned-quad-stereo-alpha-probe status=alpha-updated " +
+          "sdkQuadStereoAlphaProbe=true colorScaleAlphaApplied=true " +
+          "alpha=${activityMarkerFloat(SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_LOW)} " +
+          "alphaConvention=premultiplied-unknown-source-alpha-blend-factors runtimeCrash=false"
+
+  fun sdkQuadStereoAlphaProbeAlphaUpdateFailedMarker(error: String): String =
+      "channel=sdk-owned-quad-stereo-alpha-probe status=alpha-update-failed " +
+          "sdkQuadStereoAlphaProbe=true colorScaleAlphaApplied=false " +
+          "error=${activityMarkerToken(error)} runtimeCrash=false"
+
+  fun sdkQuadStereoAlphaProbeAlphaRestoredMarker(): String =
+      "channel=sdk-owned-quad-stereo-alpha-probe status=alpha-restored " +
+          "sdkQuadStereoAlphaProbe=true colorScaleAlphaApplied=true " +
+          "alpha=1.0000 runtimeCrash=false"
+
+  fun sdkQuadStereoAlphaProbeAlphaRestoreFailedMarker(error: String): String =
+      "channel=sdk-owned-quad-stereo-alpha-probe status=alpha-restore-failed " +
+          "sdkQuadStereoAlphaProbe=true colorScaleAlphaApplied=false " +
+          "error=${activityMarkerToken(error)} runtimeCrash=false"
+
+  fun sdkQuadStereoAlphaProbeLayerCreatedMarker(
+      canvasDrawn: Boolean,
+      sceneObjectHandle: Long,
+      layerPositionM: String,
+      layerQuaternion: String,
+  ): String =
+      "channel=sdk-owned-quad-stereo-alpha-probe status=layer-created " +
+          "sdkQuadStereoAlphaProbe=true sceneQuadLayerCreated=true canvasDrawn=$canvasDrawn " +
+          "anchorMode=generated-single-sided-quad sceneObjectHandle=$sceneObjectHandle " +
+          "widthMeters=$SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_METERS " +
+          "heightMeters=$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_METERS " +
+          "zIndex=$SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_LOW stereoMode=LeftRight " +
+          "setClipApplied=true clipUv=0.04;0.04;0.96;0.96 " +
+          "alphaBlendApplied=true sourceFactorColor=SOURCE_ALPHA " +
+          "destinationFactorColor=ONE_MINUS_SOURCE_ALPHA sourceFactorAlpha=ONE " +
+          "destinationFactorAlpha=ONE_MINUS_SOURCE_ALPHA " +
+          "colorScaleAlphaApplied=true alpha=${activityMarkerFloat(SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_HIGH)} " +
+          "poseSource=Scene.getViewerPose layerPositionM=$layerPositionM " +
+          "layerQuaternion=$layerQuaternion"
+
+  fun sdkQuadStereoAlphaProbeLayerCreateFailedMarker(
+      canvasDrawn: Boolean,
+      error: String,
+      message: String,
+  ): String =
+      "channel=sdk-owned-quad-stereo-alpha-probe status=layer-create-failed " +
+          "sdkQuadStereoAlphaProbe=true sceneQuadLayerCreated=false canvasDrawn=$canvasDrawn " +
+          "stereoMode=LeftRight error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun sdkQuadStereoAlphaProbeCanvasDrawSkippedMarker(): String =
+      "channel=sdk-owned-quad-stereo-alpha-probe status=canvas-draw-skipped " +
+          "sdkQuadStereoAlphaProbe=true reason=surface-invalid canvasDrawn=false"
+
+  fun sdkQuadStereoAlphaProbeCanvasDrawCompleteMarker(drawn: Boolean): String =
+      "channel=sdk-owned-quad-stereo-alpha-probe status=canvas-draw-complete " +
+          "sdkQuadStereoAlphaProbe=true canvasDrawn=$drawn widthPx=$SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_PX " +
+          "heightPx=$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX " +
+          "leftEyePattern=red-grid rightEyePattern=blue-grid " +
+          "perEyeExtentPx=${SDK_QUAD_STEREO_ALPHA_PROBE_PER_EYE_WIDTH_PX}x$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX"
+
+  fun sdkQuadStereoAlphaProbeCanvasDrawFailedMarker(error: String, message: String): String =
+      "channel=sdk-owned-quad-stereo-alpha-probe status=canvas-draw-failed " +
+          "sdkQuadStereoAlphaProbe=true canvasDrawn=false " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
   fun cameraHwbProbeStartMarker(
       reason: String,
       frameCount: Int,

@@ -1341,18 +1341,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     sdkQuadStereoAlphaProbeStarted = true
     val holdMs = SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeHoldMs()
     marker(
-        "channel=sdk-owned-quad-stereo-alpha-probe status=start " +
-            "sdkQuadStereoAlphaProbe=true reason=${activityMarkerToken(reason)} " +
-            "debugProperty=$SDK_QUAD_STEREO_ALPHA_PROBE_PROPERTY " +
-            "widthPx=$SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_PX " +
-            "heightPx=$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX " +
-            "perEyeExtentPx=${SDK_QUAD_STEREO_ALPHA_PROBE_PER_EYE_WIDTH_PX}x$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX " +
-            "stereoMode=LeftRight producer=android-canvas nativeVulkanProducer=false " +
-            "setClipPlanned=true alphaBlendPlanned=true colorScaleAlphaPlanned=true " +
-            "zIndexChangePlanned=true holdMs=$holdMs " +
-            SpatialDiagnosticProbeRouteModule.explicitOptInMarkerFields(
-                SDK_QUAD_STEREO_ALPHA_PROBE_PROPERTY
-            )
+        SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeStartMarker(
+            reason = reason,
+            holdMs = holdMs,
+        )
     )
     Handler(Looper.getMainLooper()).post { runSdkQuadStereoAlphaProbe(holdMs) }
   }
@@ -2462,12 +2454,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             }
             .getOrElse { throwable ->
               marker(
-                  "channel=sdk-owned-quad-stereo-alpha-probe status=complete " +
-                      "sdkQuadStereoAlphaProbe=true sdkSwapchainCreated=false surfaceValid=false " +
-                      "canvasDrawn=false sceneQuadLayerCreated=false stereoMode=LeftRight " +
-                      "setClipApplied=false alphaBlendApplied=false zIndexChanged=false " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeCompleteMarker(
+                      sdkSwapchainCreated = false,
+                      surfaceValid = false,
+                      canvasDrawn = false,
+                      sceneQuadLayerCreated = false,
+                      setClipApplied = false,
+                      alphaBlendApplied = false,
+                      zIndexChanged = false,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               return
             }
@@ -2476,31 +2473,39 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         runCatching { sdkSwapchain.getSurface() }
             .getOrElse { throwable ->
               marker(
-                  "channel=sdk-owned-quad-stereo-alpha-probe status=get-surface-failed " +
-                      "sdkQuadStereoAlphaProbe=true handle=${sdkSwapchain.handle} " +
-                      "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeGetSurfaceFailedMarker(
+                      handle = sdkSwapchain.handle,
+                      nativeHandle = sdkSwapchain.nativeHandle(),
+                      platformHandle = sdkSwapchain.platformHandle(),
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               null
             }
     sdkQuadSurfaceProbeSurface = surface
     val surfaceValid = surface?.isValid == true
     marker(
-        "channel=sdk-owned-quad-stereo-alpha-probe status=sdk-swapchain-created " +
-            "sdkQuadStereoAlphaProbe=true sdkSwapchainCreated=true handle=${sdkSwapchain.handle} " +
-            "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
-            "surfaceValid=$surfaceValid widthPx=$SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_PX " +
-            "heightPx=$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX"
+        SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeSdkSwapchainCreatedMarker(
+            handle = sdkSwapchain.handle,
+            nativeHandle = sdkSwapchain.nativeHandle(),
+            platformHandle = sdkSwapchain.platformHandle(),
+            surfaceValid = surfaceValid,
+        )
     )
     if (!surfaceValid) {
       val cleanupStatus = cleanupSdkQuadSurfaceProbe("stereo-alpha-surface-invalid")
       marker(
-          "channel=sdk-owned-quad-stereo-alpha-probe status=complete " +
-              "sdkQuadStereoAlphaProbe=true sdkSwapchainCreated=true surfaceValid=$surfaceValid " +
-              "canvasDrawn=false sceneQuadLayerCreated=false stereoMode=LeftRight " +
-              "setClipApplied=false alphaBlendApplied=false zIndexChanged=false " +
-              "cleanupStatus=$cleanupStatus runtimeCrash=false"
+          SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeCompleteMarker(
+              sdkSwapchainCreated = true,
+              surfaceValid = surfaceValid,
+              canvasDrawn = false,
+              sceneQuadLayerCreated = false,
+              setClipApplied = false,
+              alphaBlendApplied = false,
+              zIndexChanged = false,
+              cleanupStatus = cleanupStatus,
+          )
       )
       return
     }
@@ -2513,23 +2518,27 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     val viable = surfaceValid && canvasDrawn && layerCreated
     marker(
-        "channel=sdk-owned-quad-stereo-alpha-probe status=visible-window " +
-            "sdkQuadStereoAlphaProbe=true sdkSwapchainCreated=true surfaceValid=$surfaceValid " +
-            "canvasDrawn=$canvasDrawn sceneQuadLayerCreated=$layerCreated " +
-            "manualSceneQuadLayerViable=$viable stereoMode=LeftRight " +
-            "leftEyePattern=red-grid rightEyePattern=blue-grid " +
-            "expectedUvOrientation=left-half-to-left-eye-right-half-to-right-eye " +
-            "eyeLeakageCheck=operator-visible-required croppingCheck=operator-visible-required " +
-            "alphaConventionCheck=operator-visible-required holdMs=$holdMs runtimeCrash=false"
+        SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeVisibleWindowMarker(
+            surfaceValid = surfaceValid,
+            canvasDrawn = canvasDrawn,
+            sceneQuadLayerCreated = layerCreated,
+            manualSceneQuadLayerViable = viable,
+            holdMs = holdMs,
+        )
     )
     if (!layerCreated) {
       val cleanupStatus = cleanupSdkQuadSurfaceProbe("stereo-alpha-layer-create-failed")
       marker(
-          "channel=sdk-owned-quad-stereo-alpha-probe status=complete " +
-              "sdkQuadStereoAlphaProbe=true sdkSwapchainCreated=true surfaceValid=$surfaceValid " +
-              "canvasDrawn=$canvasDrawn sceneQuadLayerCreated=false stereoMode=LeftRight " +
-              "setClipApplied=false alphaBlendApplied=false zIndexChanged=false " +
-              "cleanupStatus=$cleanupStatus runtimeCrash=false"
+          SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeCompleteMarker(
+              sdkSwapchainCreated = true,
+              surfaceValid = surfaceValid,
+              canvasDrawn = canvasDrawn,
+              sceneQuadLayerCreated = false,
+              setClipApplied = false,
+              alphaBlendApplied = false,
+              zIndexChanged = false,
+              cleanupStatus = cleanupStatus,
+          )
       )
       return
     }
@@ -2542,18 +2551,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     }
                     .onSuccess {
                       sdkQuadStereoAlphaProbeZIndexChanged = true
-                      marker(
-                          "channel=sdk-owned-quad-stereo-alpha-probe status=z-index-updated " +
-                              "sdkQuadStereoAlphaProbe=true zIndexChanged=true " +
-                              "zIndex=${SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_HIGH} runtimeCrash=false"
-                      )
+                      marker(SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeZIndexUpdatedMarker())
                     }
                     .onFailure { throwable ->
                       marker(
-                          "channel=sdk-owned-quad-stereo-alpha-probe status=z-index-update-failed " +
-                              "sdkQuadStereoAlphaProbe=true zIndexChanged=false " +
-                              "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                              "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                          SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeZIndexUpdateFailedMarker(
+                              error = throwable.javaClass.simpleName,
+                              message = throwable.message ?: "none",
+                          )
                       )
                     }
               }
@@ -2571,18 +2576,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       )
                     }
                     .onSuccess {
-                      marker(
-                          "channel=sdk-owned-quad-stereo-alpha-probe status=alpha-updated " +
-                              "sdkQuadStereoAlphaProbe=true colorScaleAlphaApplied=true " +
-                              "alpha=${activityMarkerFloat(SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_LOW)} " +
-                              "alphaConvention=premultiplied-unknown-source-alpha-blend-factors runtimeCrash=false"
-                      )
+                      marker(SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeAlphaUpdatedMarker())
                     }
                     .onFailure { throwable ->
                       marker(
-                          "channel=sdk-owned-quad-stereo-alpha-probe status=alpha-update-failed " +
-                              "sdkQuadStereoAlphaProbe=true colorScaleAlphaApplied=false " +
-                              "error=${activityMarkerToken(throwable.javaClass.simpleName)} runtimeCrash=false"
+                          SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeAlphaUpdateFailedMarker(
+                              error = throwable.javaClass.simpleName
+                          )
                       )
                     }
               }
@@ -2597,17 +2597,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       layer.setColorScaleBias(Vector4(1.0f), Vector4(0.0f))
                     }
                     .onSuccess {
-                      marker(
-                          "channel=sdk-owned-quad-stereo-alpha-probe status=alpha-restored " +
-                              "sdkQuadStereoAlphaProbe=true colorScaleAlphaApplied=true " +
-                              "alpha=1.0000 runtimeCrash=false"
-                      )
+                      marker(SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeAlphaRestoredMarker())
                     }
                     .onFailure { throwable ->
                       marker(
-                          "channel=sdk-owned-quad-stereo-alpha-probe status=alpha-restore-failed " +
-                              "sdkQuadStereoAlphaProbe=true colorScaleAlphaApplied=false " +
-                              "error=${activityMarkerToken(throwable.javaClass.simpleName)} runtimeCrash=false"
+                          SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeAlphaRestoreFailedMarker(
+                              error = throwable.javaClass.simpleName
+                          )
                       )
                     }
               }
@@ -2619,15 +2615,19 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             {
               val cleanupStatus = cleanupSdkQuadSurfaceProbe("stereo-alpha-hold-complete")
               marker(
-                  "channel=sdk-owned-quad-stereo-alpha-probe status=complete " +
-                      "sdkQuadStereoAlphaProbe=true sdkSwapchainCreated=true surfaceValid=$surfaceValid " +
-                      "canvasDrawn=$canvasDrawn sceneQuadLayerCreated=$layerCreated " +
-                      "manualSceneQuadLayerViable=$viable stereoMode=LeftRight " +
-                      "setClipApplied=true alphaBlendApplied=true colorScaleAlphaApplied=true " +
-                      "zIndexChanged=$sdkQuadStereoAlphaProbeZIndexChanged cleanupStatus=$cleanupStatus " +
-                      "eyeLeakageCheck=operator-visible-required " +
-                      "uvOrientationCheck=operator-visible-required " +
-                      "alphaConventionCheck=operator-visible-required runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeCompleteMarker(
+                      sdkSwapchainCreated = true,
+                      surfaceValid = surfaceValid,
+                      canvasDrawn = canvasDrawn,
+                      sceneQuadLayerCreated = layerCreated,
+                      setClipApplied = true,
+                      alphaBlendApplied = true,
+                      zIndexChanged = sdkQuadStereoAlphaProbeZIndexChanged,
+                      manualSceneQuadLayerViable = viable,
+                      colorScaleAlphaApplied = true,
+                      cleanupStatus = cleanupStatus,
+                      includeOperatorChecks = true,
+                  )
               )
             },
             holdMs,
@@ -2685,38 +2685,29 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             )
             sdkQuadSurfaceProbeLayer = layer
             marker(
-                "channel=sdk-owned-quad-stereo-alpha-probe status=layer-created " +
-                    "sdkQuadStereoAlphaProbe=true sceneQuadLayerCreated=true canvasDrawn=$canvasDrawn " +
-                    "anchorMode=generated-single-sided-quad sceneObjectHandle=${sceneObject.handle} " +
-                    "widthMeters=$SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_METERS " +
-                    "heightMeters=$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_METERS " +
-                    "zIndex=${SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_LOW} stereoMode=LeftRight " +
-                    "setClipApplied=true clipUv=0.04;0.04;0.96;0.96 " +
-                    "alphaBlendApplied=true sourceFactorColor=SOURCE_ALPHA " +
-                    "destinationFactorColor=ONE_MINUS_SOURCE_ALPHA sourceFactorAlpha=ONE " +
-                    "destinationFactorAlpha=ONE_MINUS_SOURCE_ALPHA " +
-                    "colorScaleAlphaApplied=true alpha=${activityMarkerFloat(SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_HIGH)} " +
-                    "poseSource=Scene.getViewerPose layerPositionM=${activityVectorMarker(pose.t)} " +
-                    "layerQuaternion=${activityQuaternionMarker(pose.q)}"
+                SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeLayerCreatedMarker(
+                    canvasDrawn = canvasDrawn,
+                    sceneObjectHandle = sceneObject.handle,
+                    layerPositionM = activityVectorMarker(pose.t),
+                    layerQuaternion = activityQuaternionMarker(pose.q),
+                )
             )
             true
           }
           .getOrElse { throwable ->
             marker(
-                "channel=sdk-owned-quad-stereo-alpha-probe status=layer-create-failed " +
-                    "sdkQuadStereoAlphaProbe=true sceneQuadLayerCreated=false canvasDrawn=$canvasDrawn " +
-                    "stereoMode=LeftRight error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                    "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeLayerCreateFailedMarker(
+                    canvasDrawn = canvasDrawn,
+                    error = throwable.javaClass.simpleName,
+                    message = throwable.message ?: "none",
+                )
             )
             false
           }
 
   private fun drawSdkQuadStereoAlphaPattern(surface: AndroidSurface): Boolean {
     if (!surface.isValid) {
-      marker(
-          "channel=sdk-owned-quad-stereo-alpha-probe status=canvas-draw-skipped " +
-              "sdkQuadStereoAlphaProbe=true reason=surface-invalid canvasDrawn=false"
-      )
+      marker(SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeCanvasDrawSkippedMarker())
       return false
     }
     var canvas: android.graphics.Canvas? = null
@@ -2766,11 +2757,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         .onSuccess { drawn ->
           canvas?.let { locked -> runCatching { surface.unlockCanvasAndPost(locked) } }
           marker(
-              "channel=sdk-owned-quad-stereo-alpha-probe status=canvas-draw-complete " +
-                  "sdkQuadStereoAlphaProbe=true canvasDrawn=$drawn widthPx=$SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_PX " +
-                  "heightPx=$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX " +
-                  "leftEyePattern=red-grid rightEyePattern=blue-grid " +
-                  "perEyeExtentPx=${SDK_QUAD_STEREO_ALPHA_PROBE_PER_EYE_WIDTH_PX}x$SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX"
+              SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeCanvasDrawCompleteMarker(
+                  drawn = drawn
+              )
           )
         }
         .onFailure { throwable ->
@@ -2778,10 +2767,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             runCatching { surface.unlockCanvasAndPost(locked) }
           }
           marker(
-              "channel=sdk-owned-quad-stereo-alpha-probe status=canvas-draw-failed " +
-                  "sdkQuadStereoAlphaProbe=true canvasDrawn=false " +
-                  "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                  "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+              SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeCanvasDrawFailedMarker(
+                  error = throwable.javaClass.simpleName,
+                  message = throwable.message ?: "none",
+              )
           )
         }
         .getOrDefault(false)
