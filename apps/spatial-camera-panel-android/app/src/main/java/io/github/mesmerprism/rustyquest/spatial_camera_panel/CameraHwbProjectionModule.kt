@@ -431,6 +431,66 @@ internal object CameraHwbProjectionModule {
           "${stereoMarkerFields.trim()} " +
           publicMultiStackMarkerFields.trim()
 
+  fun rawProjectionCompleteMarker(
+      sdkSwapchainCreated: Boolean,
+      surfaceValid: Boolean,
+      sceneQuadLayerCreated: Boolean,
+      nativeStartRequested: Boolean,
+      sampledCameraTexture: Boolean,
+      cleanupStatus: String? = null,
+      error: String? = null,
+      message: String? = null,
+  ): String =
+      buildString {
+        append("channel=camera-hwb-spatial-probe status=complete rawCameraProjectionProbe=true ")
+        append("sdkSwapchainCreated=$sdkSwapchainCreated surfaceValid=$surfaceValid ")
+        append("sceneQuadLayerCreated=$sceneQuadLayerCreated ")
+        append("nativeStartRequested=$nativeStartRequested ")
+        append("sampledCameraTexture=$sampledCameraTexture ")
+        if (cleanupStatus != null) {
+          append("cleanupStatus=$cleanupStatus ")
+        }
+        if (error != null) {
+          append("error=${activityMarkerToken(error)} ")
+        }
+        if (message != null) {
+          append("message=${activityMarkerToken(message)} ")
+        }
+        append("runtimeCrash=false")
+      }
+
+  fun rawProjectionCompleteBeforeSwapchainMarker(
+      error: String,
+      message: String? = null,
+  ): String =
+      rawProjectionCompleteMarker(
+          sdkSwapchainCreated = false,
+          surfaceValid = false,
+          sceneQuadLayerCreated = false,
+          nativeStartRequested = false,
+          sampledCameraTexture = false,
+          error = error,
+          message = message,
+      )
+
+  fun rawProjectionCompleteAfterCleanupMarker(
+      surfaceValid: Boolean,
+      sceneQuadLayerCreated: Boolean,
+      cleanupStatus: String,
+      error: String? = null,
+      message: String? = null,
+  ): String =
+      rawProjectionCompleteMarker(
+          sdkSwapchainCreated = true,
+          surfaceValid = surfaceValid,
+          sceneQuadLayerCreated = sceneQuadLayerCreated,
+          nativeStartRequested = false,
+          sampledCameraTexture = false,
+          cleanupStatus = cleanupStatus,
+          error = error,
+          message = message,
+      )
+
   fun rawProjectionSyntheticVisualPresentedMarker(
       surfaceValid: Boolean,
       canvasDrawn: Boolean,

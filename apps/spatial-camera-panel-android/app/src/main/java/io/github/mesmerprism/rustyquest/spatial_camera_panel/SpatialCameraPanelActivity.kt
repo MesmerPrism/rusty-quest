@@ -1941,10 +1941,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     setWorkflowPanelVisible(false, focus = false, source = "camera-hwb-projection-probe")
     if (!nativeReceiptLibraryLoaded) {
       marker(
-          "channel=camera-hwb-spatial-probe status=complete rawCameraProjectionProbe=true " +
-              "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
-              "nativeStartRequested=false sampledCameraTexture=false " +
-              "error=${activityMarkerToken(nativeReceiptLibraryError)} runtimeCrash=false"
+          CameraHwbProjectionModule.rawProjectionCompleteBeforeSwapchainMarker(
+              nativeReceiptLibraryError
+          )
       )
       return
     }
@@ -1962,11 +1961,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             }
             .getOrElse { throwable ->
               marker(
-                  "channel=camera-hwb-spatial-probe status=complete rawCameraProjectionProbe=true " +
-                      "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
-                      "nativeStartRequested=false sampledCameraTexture=false " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  CameraHwbProjectionModule.rawProjectionCompleteBeforeSwapchainMarker(
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               return
             }
@@ -2002,10 +2000,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (!surfaceValid) {
       val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-projection-surface-invalid")
       marker(
-          "channel=camera-hwb-spatial-probe status=complete rawCameraProjectionProbe=true " +
-              "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=false " +
-              "nativeStartRequested=false sampledCameraTexture=false cleanupStatus=$cleanupStatus " +
-              "runtimeCrash=false"
+          CameraHwbProjectionModule.rawProjectionCompleteAfterCleanupMarker(
+              surfaceValid = surfaceValid,
+              sceneQuadLayerCreated = false,
+              cleanupStatus = cleanupStatus,
+          )
       )
       return
     }
@@ -2014,10 +2013,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (!layerCreated) {
       val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-projection-layer-create-failed")
       marker(
-          "channel=camera-hwb-spatial-probe status=complete rawCameraProjectionProbe=true " +
-              "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=false " +
-              "nativeStartRequested=false sampledCameraTexture=false cleanupStatus=$cleanupStatus " +
-              "runtimeCrash=false"
+          CameraHwbProjectionModule.rawProjectionCompleteAfterCleanupMarker(
+              surfaceValid = surfaceValid,
+              sceneQuadLayerCreated = false,
+              cleanupStatus = cleanupStatus,
+          )
       )
       return
     }
@@ -2087,11 +2087,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             .getOrElse { throwable ->
               val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-projection-start-failed")
               marker(
-                  "channel=camera-hwb-spatial-probe status=complete rawCameraProjectionProbe=true " +
-                      "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
-                      "nativeStartRequested=false sampledCameraTexture=false cleanupStatus=$cleanupStatus " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  CameraHwbProjectionModule.rawProjectionCompleteAfterCleanupMarker(
+                      surfaceValid = surfaceValid,
+                      sceneQuadLayerCreated = true,
+                      cleanupStatus = cleanupStatus,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               return
             }
