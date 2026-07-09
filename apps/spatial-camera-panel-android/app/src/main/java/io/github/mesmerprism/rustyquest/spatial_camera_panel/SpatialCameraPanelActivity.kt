@@ -1137,12 +1137,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     sdkQuadSurfaceProbeStarted = true
     val holdMs = SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeHoldMs()
     marker(
-        "channel=sdk-owned-quad-surface-probe status=start sdkQuadSurfaceProbe=true " +
-            "reason=${activityMarkerToken(reason)} debugProperty=$SDK_QUAD_SURFACE_PROBE_PROPERTY " +
-            "widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX " +
-            "holdMs=$holdMs producer=android-canvas nativeVulkanProducer=false " +
-            "videoSurfacePanelRegistration=false externalSwapchain=false privateShaderStack=false " +
-            SpatialDiagnosticProbeRouteModule.explicitOptInMarkerFields(SDK_QUAD_SURFACE_PROBE_PROPERTY)
+        SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeStartMarker(
+            reason = reason,
+            holdMs = holdMs,
+        )
     )
     Handler(Looper.getMainLooper()).post { runSdkQuadSurfaceProbe(holdMs) }
   }
@@ -2806,11 +2804,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             }
             .getOrElse { throwable ->
               marker(
-                  "channel=sdk-owned-quad-surface-probe status=complete sdkQuadSurfaceProbe=true " +
-                      "sdkSwapchainCreated=false surfaceValid=false canvasDrawn=false " +
-                      "sceneQuadLayerCreated=false manualSceneQuadLayerViable=false " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeCompleteMarker(
+                      sdkSwapchainCreated = false,
+                      surfaceValid = false,
+                      canvasDrawn = false,
+                      sceneQuadLayerCreated = false,
+                      manualSceneQuadLayerViable = false,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               return
             }
@@ -2819,22 +2821,25 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         runCatching { sdkSwapchain.getSurface() }
             .getOrElse { throwable ->
               marker(
-                  "channel=sdk-owned-quad-surface-probe status=get-surface-failed " +
-                      "sdkQuadSurfaceProbe=true handle=${sdkSwapchain.handle} " +
-                      "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeGetSurfaceFailedMarker(
+                      handle = sdkSwapchain.handle,
+                      nativeHandle = sdkSwapchain.nativeHandle(),
+                      platformHandle = sdkSwapchain.platformHandle(),
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               null
             }
     sdkQuadSurfaceProbeSurface = surface
     val surfaceValid = surface?.isValid == true
     marker(
-        "channel=sdk-owned-quad-surface-probe status=sdk-swapchain-created " +
-            "sdkQuadSurfaceProbe=true sdkSwapchainCreated=true handle=${sdkSwapchain.handle} " +
-            "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
-            "surfaceValid=$surfaceValid widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX " +
-            "heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX"
+        SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeSdkSwapchainCreatedMarker(
+            handle = sdkSwapchain.handle,
+            nativeHandle = sdkSwapchain.nativeHandle(),
+            platformHandle = sdkSwapchain.platformHandle(),
+            surfaceValid = surfaceValid,
+        )
     )
 
     val canvasDrawn = surface?.let { drawSdkQuadSurfaceCheckerboard(it) } ?: false
@@ -2866,21 +2871,31 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
     val viable = surfaceValid && canvasDrawn && layerCreated
     marker(
-        "channel=sdk-owned-quad-surface-probe status=visible-window sdkQuadSurfaceProbe=true " +
-            "sdkSwapchainCreated=true surfaceValid=$surfaceValid canvasDrawn=$canvasDrawn " +
-            "sceneQuadLayerCreated=$layerCreated manualSceneQuadLayerViable=$viable " +
-            "plainEntitySceneObjectLayerCreated=$plainEntityLayerCreated anchorMode=$anchorMode " +
-            "nativeVulkanProducer=false visiblePatternConfirmed=false " +
-            "humanVisiblePatternCheckRequired=true holdMs=$holdMs runtimeCrash=false"
+        SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeVisibleWindowMarker(
+            surfaceValid = surfaceValid,
+            canvasDrawn = canvasDrawn,
+            sceneQuadLayerCreated = layerCreated,
+            manualSceneQuadLayerViable = viable,
+            plainEntitySceneObjectLayerCreated = plainEntityLayerCreated,
+            anchorMode = anchorMode,
+            holdMs = holdMs,
+        )
     )
     if (!layerCreated) {
       val cleanupStatus = cleanupSdkQuadSurfaceProbe("layer-create-failed")
       marker(
-          "channel=sdk-owned-quad-surface-probe status=complete sdkQuadSurfaceProbe=true " +
-              "sdkSwapchainCreated=true surfaceValid=$surfaceValid canvasDrawn=$canvasDrawn " +
-              "sceneQuadLayerCreated=false manualSceneQuadLayerViable=false cleanupStatus=$cleanupStatus " +
-              "plainEntitySceneObjectLayerCreated=$plainEntityLayerCreated anchorMode=$anchorMode " +
-              "nativeVulkanProducer=false visiblePatternConfirmed=false runtimeCrash=false"
+          SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeCompleteMarker(
+              sdkSwapchainCreated = true,
+              surfaceValid = surfaceValid,
+              canvasDrawn = canvasDrawn,
+              sceneQuadLayerCreated = false,
+              manualSceneQuadLayerViable = false,
+              cleanupStatus = cleanupStatus,
+              plainEntitySceneObjectLayerCreated = plainEntityLayerCreated,
+              anchorMode = anchorMode,
+              nativeVulkanProducer = false,
+              visiblePatternConfirmed = false,
+          )
       )
       return
     }
@@ -2889,12 +2904,19 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             {
               val cleanupStatus = cleanupSdkQuadSurfaceProbe("hold-complete")
               marker(
-                  "channel=sdk-owned-quad-surface-probe status=complete sdkQuadSurfaceProbe=true " +
-                      "sdkSwapchainCreated=true surfaceValid=$surfaceValid canvasDrawn=$canvasDrawn " +
-                      "sceneQuadLayerCreated=$layerCreated manualSceneQuadLayerViable=$viable " +
-                      "plainEntitySceneObjectLayerCreated=$plainEntityLayerCreated anchorMode=$anchorMode " +
-                      "cleanupStatus=$cleanupStatus nativeVulkanProducer=false " +
-                      "visiblePatternConfirmed=false humanVisiblePatternCheckRequired=true runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeCompleteMarker(
+                      sdkSwapchainCreated = true,
+                      surfaceValid = surfaceValid,
+                      canvasDrawn = canvasDrawn,
+                      sceneQuadLayerCreated = layerCreated,
+                      manualSceneQuadLayerViable = viable,
+                      cleanupStatus = cleanupStatus,
+                      plainEntitySceneObjectLayerCreated = plainEntityLayerCreated,
+                      anchorMode = anchorMode,
+                      nativeVulkanProducer = false,
+                      visiblePatternConfirmed = false,
+                      humanVisiblePatternCheckRequired = true,
+                  )
               )
             },
             holdMs,

@@ -193,6 +193,103 @@ internal object SpatialDiagnosticProbeRouteModule {
           "spatialFeatureOptInRoute=android-system-property " +
           "featureOptInProperty=$propertyName"
 
+  fun sdkQuadSurfaceProbeStartMarker(reason: String, holdMs: Long): String =
+      "channel=sdk-owned-quad-surface-probe status=start sdkQuadSurfaceProbe=true " +
+          "reason=${activityMarkerToken(reason)} debugProperty=$SDK_QUAD_SURFACE_PROBE_PROPERTY " +
+          "widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX " +
+          "holdMs=$holdMs producer=android-canvas nativeVulkanProducer=false " +
+          "videoSurfacePanelRegistration=false externalSwapchain=false privateShaderStack=false " +
+          explicitOptInMarkerFields(SDK_QUAD_SURFACE_PROBE_PROPERTY)
+
+  fun sdkQuadSurfaceProbeCompleteMarker(
+      sdkSwapchainCreated: Boolean,
+      surfaceValid: Boolean,
+      canvasDrawn: Boolean,
+      sceneQuadLayerCreated: Boolean,
+      manualSceneQuadLayerViable: Boolean,
+      cleanupStatus: String? = null,
+      plainEntitySceneObjectLayerCreated: Boolean? = null,
+      anchorMode: String? = null,
+      nativeVulkanProducer: Boolean? = null,
+      visiblePatternConfirmed: Boolean? = null,
+      humanVisiblePatternCheckRequired: Boolean? = null,
+      error: String? = null,
+      message: String? = null,
+  ): String =
+      buildString {
+        append("channel=sdk-owned-quad-surface-probe status=complete sdkQuadSurfaceProbe=true ")
+        append("sdkSwapchainCreated=$sdkSwapchainCreated surfaceValid=$surfaceValid ")
+        append("canvasDrawn=$canvasDrawn ")
+        append("sceneQuadLayerCreated=$sceneQuadLayerCreated ")
+        append("manualSceneQuadLayerViable=$manualSceneQuadLayerViable ")
+        if (cleanupStatus != null) {
+          append("cleanupStatus=$cleanupStatus ")
+        }
+        if (plainEntitySceneObjectLayerCreated != null) {
+          append("plainEntitySceneObjectLayerCreated=$plainEntitySceneObjectLayerCreated ")
+        }
+        if (anchorMode != null) {
+          append("anchorMode=$anchorMode ")
+        }
+        if (nativeVulkanProducer != null) {
+          append("nativeVulkanProducer=$nativeVulkanProducer ")
+        }
+        if (visiblePatternConfirmed != null) {
+          append("visiblePatternConfirmed=$visiblePatternConfirmed ")
+        }
+        if (humanVisiblePatternCheckRequired != null) {
+          append("humanVisiblePatternCheckRequired=$humanVisiblePatternCheckRequired ")
+        }
+        if (error != null) {
+          append("error=${activityMarkerToken(error)} ")
+        }
+        if (message != null) {
+          append("message=${activityMarkerToken(message)} ")
+        }
+        append("runtimeCrash=false")
+      }
+
+  fun sdkQuadSurfaceProbeGetSurfaceFailedMarker(
+      handle: Long,
+      nativeHandle: Long,
+      platformHandle: Long,
+      error: String,
+      message: String,
+  ): String =
+      "channel=sdk-owned-quad-surface-probe status=get-surface-failed " +
+          "sdkQuadSurfaceProbe=true handle=$handle " +
+          "nativeHandle=$nativeHandle platformHandle=$platformHandle " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun sdkQuadSurfaceProbeSdkSwapchainCreatedMarker(
+      handle: Long,
+      nativeHandle: Long,
+      platformHandle: Long,
+      surfaceValid: Boolean,
+  ): String =
+      "channel=sdk-owned-quad-surface-probe status=sdk-swapchain-created " +
+          "sdkQuadSurfaceProbe=true sdkSwapchainCreated=true handle=$handle " +
+          "nativeHandle=$nativeHandle platformHandle=$platformHandle " +
+          "surfaceValid=$surfaceValid widthPx=$SDK_QUAD_SURFACE_PROBE_WIDTH_PX " +
+          "heightPx=$SDK_QUAD_SURFACE_PROBE_HEIGHT_PX"
+
+  fun sdkQuadSurfaceProbeVisibleWindowMarker(
+      surfaceValid: Boolean,
+      canvasDrawn: Boolean,
+      sceneQuadLayerCreated: Boolean,
+      manualSceneQuadLayerViable: Boolean,
+      plainEntitySceneObjectLayerCreated: Boolean,
+      anchorMode: String,
+      holdMs: Long,
+  ): String =
+      "channel=sdk-owned-quad-surface-probe status=visible-window sdkQuadSurfaceProbe=true " +
+          "sdkSwapchainCreated=true surfaceValid=$surfaceValid canvasDrawn=$canvasDrawn " +
+          "sceneQuadLayerCreated=$sceneQuadLayerCreated manualSceneQuadLayerViable=$manualSceneQuadLayerViable " +
+          "plainEntitySceneObjectLayerCreated=$plainEntitySceneObjectLayerCreated anchorMode=$anchorMode " +
+          "nativeVulkanProducer=false visiblePatternConfirmed=false " +
+          "humanVisiblePatternCheckRequired=true holdMs=$holdMs runtimeCrash=false"
+
   fun cameraHwbProbeStartMarker(
       reason: String,
       frameCount: Int,
