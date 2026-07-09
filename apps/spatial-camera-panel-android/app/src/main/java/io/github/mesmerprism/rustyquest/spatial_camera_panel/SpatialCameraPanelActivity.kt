@@ -3911,47 +3911,40 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun startNativeSurfaceParticleLayer(surface: AndroidSurface) {
     if (!nativeSurfaceParticleLayerEnabled()) {
       marker(
-          "channel=native-surface-particle-layer status=start-suppressed " +
-              "renderPolicy=native-vulkan-wsi-surface-panel source=${nativeSurfaceParticleLayerSuppressionSource()} " +
-              "nativeSurfaceParticleLayerEnabled=false " +
-              "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
-              "privateSpatialEcsParticleRendererEnabled=${privateSpatialEcsParticleRendererEnabled()} " +
-              "privateSpatialEcsParticleRendererEnabledProperty=$PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY " +
-              "particleLayerVisible=false particleLayerStarted=$particleLayerStarted " +
-              "nativeSurfaceStartRequested=$nativeSurfaceStartRequested"
+          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStartSuppressedDisabledMarker(
+              suppressionSource = nativeSurfaceParticleLayerSuppressionSource(),
+              privateRendererEnabled = privateSpatialEcsParticleRendererEnabled(),
+              particleLayerStarted = particleLayerStarted,
+              nativeSurfaceStartRequested = nativeSurfaceStartRequested,
+          )
       )
       return
     }
     if (cameraStackSuppressesParticles) {
       marker(
-          "channel=native-surface-particle-layer status=start-suppressed " +
-              "renderPolicy=native-vulkan-wsi-surface-panel source=camera-stack " +
-              "cameraStackSuppressesParticles=true particleLayerVisible=false " +
-              "particleLayerStarted=$particleLayerStarted nativeSurfaceStartRequested=$nativeSurfaceStartRequested"
+          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStartSuppressedCameraStackMarker(
+              particleLayerStarted = particleLayerStarted,
+              nativeSurfaceStartRequested = nativeSurfaceStartRequested,
+          )
       )
       return
     }
     if (particleLayerStarted) {
-      marker(
-          "channel=native-surface-particle-layer status=start-skipped " +
-              "renderPolicy=native-vulkan-wsi-surface-panel reason=already-started"
-      )
+      marker(SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStartSkippedAlreadyStartedMarker())
       return
     }
     if (!nativeReceiptLibraryLoaded) {
       marker(
-          "channel=native-surface-particle-layer status=library-unavailable " +
-              "renderPolicy=native-vulkan-wsi-surface-panel error=${activityMarkerToken(nativeReceiptLibraryError)}"
+          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleLibraryUnavailableMarker(
+              nativeReceiptLibraryError
+          )
       )
       return
     }
     val surfaceValid = surface.isValid
     val openXrProbe = SpatialNativeInteropProbe.capture(scene)
     if (!surfaceValid) {
-      marker(
-          "channel=native-surface-particle-layer status=surface-unavailable " +
-              "renderPolicy=native-vulkan-wsi-surface-panel surfaceValid=false"
-      )
+      marker(SpatialSurfaceParticleRouteModule.nativeSurfaceParticleSurfaceUnavailableMarker())
       return
     }
     runCatching {
@@ -3970,26 +3963,26 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           nativeSurfaceStartRequested = true
           lastNativeSurfaceStartMask = startMask
           marker(
-              "channel=native-surface-particle-layer status=start-requested " +
-                  "renderPolicy=native-vulkan-wsi-surface-panel " +
-                  "surfaceValid=$surfaceValid startMask=$startMask " +
-                  "surfaceParticleProjectionCarrier=${activityMarkerToken(particleLayerCarrierToken())} " +
-                  "liveHandJointInputExpected=true " +
-                  "openXrInstanceHandleNonZero=${openXrProbe.openXrInstanceHandleNonZero} " +
-                  "openXrSessionHandleNonZero=${openXrProbe.openXrSessionHandleNonZero} " +
-                  "openXrGetInstanceProcAddrHandleNonZero=${openXrProbe.openXrGetInstanceProcAddrHandleNonZero} " +
-                  "widthPx=$PARTICLE_LAYER_WIDTH_PX heightPx=$PARTICLE_LAYER_HEIGHT_PX " +
-                  "particleCount=$PARTICLE_LAYER_PARTICLE_COUNT frameCount=$PARTICLE_LAYER_FRAME_COUNT " +
-                  particleLayerPlacementMarkerFields() + " " +
-                  particleLayerStereoMarkerFields()
+              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStartRequestedMarker(
+                  surfaceValid = surfaceValid,
+                  startMask = startMask,
+                  carrier = particleLayerCarrierToken(),
+                  openXrInstanceHandleNonZero = openXrProbe.openXrInstanceHandleNonZero,
+                  openXrSessionHandleNonZero = openXrProbe.openXrSessionHandleNonZero,
+                  openXrGetInstanceProcAddrHandleNonZero =
+                      openXrProbe.openXrGetInstanceProcAddrHandleNonZero,
+                  placementMarkerFields = particleLayerPlacementMarkerFields(),
+                  stereoMarkerFields = particleLayerStereoMarkerFields(),
+              )
           )
           submitNativeSurfaceParticleParameters(source = "start")
         }
         .getOrElse { throwable ->
           marker(
-              "channel=native-surface-particle-layer status=start-failed " +
-                  "renderPolicy=native-vulkan-wsi-surface-panel error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                  "message=${activityMarkerToken(throwable.message ?: "none")}"
+              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStartFailedMarker(
+                  error = throwable.javaClass.simpleName,
+                  message = throwable.message ?: "none",
+              )
           )
     }
   }
@@ -4184,25 +4177,25 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             particleLayerStarted = false
             nativeSurfaceStartRequested = false
             marker(
-                "channel=camera-hwb-spatial-probe status=particle-layer-suppressed " +
-                    "source=${activityMarkerToken(source)} cameraStackSuppressesParticles=true " +
-                    "stopAttempted=true stopSucceeded=true particleLayerVisible=false " +
-                    "launcherPanelVisible=${launcherPanelVisibleForPanelMode()} " +
-                    "legacyLauncherPanelSuppressed=true launcherPanelSuppressedForCameraStack=true " +
-                    "particleLayerStarted=$particleLayerStarted " +
-                    "nativeSurfaceStartRequested=$nativeSurfaceStartRequested " +
-                    "particleLayerRenderContinuity=stopped-for-camera-stack"
+                SpatialSurfaceParticleRouteModule.cameraStackParticleLayerSuppressedMarker(
+                    source = source,
+                    stopAttempted = true,
+                    stopSucceeded = true,
+                    launcherPanelVisible = launcherPanelVisibleForPanelMode(),
+                    particleLayerStarted = particleLayerStarted,
+                    nativeSurfaceStartRequested = nativeSurfaceStartRequested,
+                )
             )
           }
           .onFailure { throwable ->
             marker(
-                "channel=camera-hwb-spatial-probe status=particle-layer-suppress-failed " +
-                    "source=${activityMarkerToken(source)} cameraStackSuppressesParticles=true " +
-                    "stopAttempted=true stopSucceeded=false particleLayerVisible=false " +
-                    "particleLayerStarted=$particleLayerStarted " +
-                    "nativeSurfaceStartRequested=$nativeSurfaceStartRequested " +
-                    "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                    "message=${activityMarkerToken(throwable.message ?: "none")}"
+                SpatialSurfaceParticleRouteModule.cameraStackParticleLayerSuppressFailedMarker(
+                    source = source,
+                    particleLayerStarted = particleLayerStarted,
+                    nativeSurfaceStartRequested = nativeSurfaceStartRequested,
+                    error = throwable.javaClass.simpleName,
+                    message = throwable.message ?: "none",
+                )
             )
           }
       return
@@ -4212,14 +4205,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       nativeSurfaceStartRequested = false
     }
     marker(
-        "channel=camera-hwb-spatial-probe status=particle-layer-suppressed " +
-            "source=${activityMarkerToken(source)} cameraStackSuppressesParticles=true " +
-            "stopAttempted=$stopAttempted stopSucceeded=true particleLayerVisible=false " +
-            "launcherPanelVisible=${launcherPanelVisibleForPanelMode()} " +
-            "legacyLauncherPanelSuppressed=true launcherPanelSuppressedForCameraStack=true " +
-            "particleLayerStarted=$particleLayerStarted " +
-            "nativeSurfaceStartRequested=$nativeSurfaceStartRequested " +
-            "particleLayerRenderContinuity=stopped-for-camera-stack"
+        SpatialSurfaceParticleRouteModule.cameraStackParticleLayerSuppressedMarker(
+            source = source,
+            stopAttempted = stopAttempted,
+            stopSucceeded = true,
+            launcherPanelVisible = launcherPanelVisibleForPanelMode(),
+            particleLayerStarted = particleLayerStarted,
+            nativeSurfaceStartRequested = nativeSurfaceStartRequested,
+        )
     )
   }
 
@@ -4292,18 +4285,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             particleLayerStarted = false
             nativeSurfaceStartRequested = false
             marker(
-                "channel=native-surface-particle-layer status=stopped " +
-                    "renderPolicy=native-vulkan-wsi-surface-panel source=${activityMarkerToken(source)} " +
-                    "particleLayerStarted=$particleLayerStarted " +
-                    "nativeSurfaceStartRequested=$nativeSurfaceStartRequested"
+                SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStoppedMarker(
+                    source = source,
+                    particleLayerStarted = particleLayerStarted,
+                    nativeSurfaceStartRequested = nativeSurfaceStartRequested,
+                )
             )
           }
           .onFailure { throwable ->
             marker(
-                "channel=native-surface-particle-layer status=stop-failed " +
-                    "renderPolicy=native-vulkan-wsi-surface-panel source=${activityMarkerToken(source)} " +
-                    "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                    "message=${activityMarkerToken(throwable.message ?: "none")}"
+                SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStopFailedMarker(
+                    source = source,
+                    error = throwable.javaClass.simpleName,
+                    message = throwable.message ?: "none",
+                )
             )
           }
     } else if (!wasStarted) {

@@ -87,6 +87,8 @@ internal enum class SpatialSurfaceParticleCarrierMode(val markerToken: String) {
 internal object SpatialSurfaceParticleRouteModule {
   const val MODULE_ID = "spatial-surface-particle-route-policy"
 
+  private const val RENDER_POLICY = "native-vulkan-wsi-surface-panel"
+
   fun nativeSurfaceParticleLayerEnabled(
       rawValue: Boolean?,
       privateRendererEnabled: Boolean,
@@ -238,6 +240,118 @@ internal object SpatialSurfaceParticleRouteModule {
         "horizontalProjectionMode=wide-fov " +
         "projectionHorizontalScale=${activityMarkerFloat(PARTICLE_LAYER_HORIZONTAL_FOV_SCALE)}"
   }
+
+  fun nativeSurfaceParticleStartSuppressedDisabledMarker(
+      suppressionSource: String,
+      privateRendererEnabled: Boolean,
+      particleLayerStarted: Boolean,
+      nativeSurfaceStartRequested: Boolean,
+  ): String =
+      "channel=native-surface-particle-layer status=start-suppressed " +
+          "renderPolicy=$RENDER_POLICY source=$suppressionSource " +
+          "nativeSurfaceParticleLayerEnabled=false " +
+          "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
+          "privateSpatialEcsParticleRendererEnabled=$privateRendererEnabled " +
+          "privateSpatialEcsParticleRendererEnabledProperty=$PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY " +
+          "particleLayerVisible=false particleLayerStarted=$particleLayerStarted " +
+          "nativeSurfaceStartRequested=$nativeSurfaceStartRequested"
+
+  fun nativeSurfaceParticleStartSuppressedCameraStackMarker(
+      particleLayerStarted: Boolean,
+      nativeSurfaceStartRequested: Boolean,
+  ): String =
+      "channel=native-surface-particle-layer status=start-suppressed " +
+          "renderPolicy=$RENDER_POLICY source=camera-stack " +
+          "cameraStackSuppressesParticles=true particleLayerVisible=false " +
+          "particleLayerStarted=$particleLayerStarted nativeSurfaceStartRequested=$nativeSurfaceStartRequested"
+
+  fun nativeSurfaceParticleStartSkippedAlreadyStartedMarker(): String =
+      "channel=native-surface-particle-layer status=start-skipped " +
+          "renderPolicy=$RENDER_POLICY reason=already-started"
+
+  fun nativeSurfaceParticleLibraryUnavailableMarker(error: String): String =
+      "channel=native-surface-particle-layer status=library-unavailable " +
+          "renderPolicy=$RENDER_POLICY error=${activityMarkerToken(error)}"
+
+  fun nativeSurfaceParticleSurfaceUnavailableMarker(): String =
+      "channel=native-surface-particle-layer status=surface-unavailable " +
+          "renderPolicy=$RENDER_POLICY surfaceValid=false"
+
+  fun nativeSurfaceParticleStartRequestedMarker(
+      surfaceValid: Boolean,
+      startMask: Long,
+      carrier: String,
+      openXrInstanceHandleNonZero: Boolean,
+      openXrSessionHandleNonZero: Boolean,
+      openXrGetInstanceProcAddrHandleNonZero: Boolean,
+      placementMarkerFields: String,
+      stereoMarkerFields: String,
+  ): String =
+      "channel=native-surface-particle-layer status=start-requested " +
+          "renderPolicy=$RENDER_POLICY " +
+          "surfaceValid=$surfaceValid startMask=$startMask " +
+          "surfaceParticleProjectionCarrier=${activityMarkerToken(carrier)} " +
+          "liveHandJointInputExpected=true " +
+          "openXrInstanceHandleNonZero=$openXrInstanceHandleNonZero " +
+          "openXrSessionHandleNonZero=$openXrSessionHandleNonZero " +
+          "openXrGetInstanceProcAddrHandleNonZero=$openXrGetInstanceProcAddrHandleNonZero " +
+          "widthPx=$PARTICLE_LAYER_WIDTH_PX heightPx=$PARTICLE_LAYER_HEIGHT_PX " +
+          "particleCount=$PARTICLE_LAYER_PARTICLE_COUNT frameCount=$PARTICLE_LAYER_FRAME_COUNT " +
+          placementMarkerFields + " " +
+          stereoMarkerFields
+
+  fun nativeSurfaceParticleStartFailedMarker(error: String, message: String): String =
+      "channel=native-surface-particle-layer status=start-failed " +
+          "renderPolicy=$RENDER_POLICY error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)}"
+
+  fun cameraStackParticleLayerSuppressedMarker(
+      source: String,
+      stopAttempted: Boolean,
+      stopSucceeded: Boolean,
+      launcherPanelVisible: Boolean,
+      particleLayerStarted: Boolean,
+      nativeSurfaceStartRequested: Boolean,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=particle-layer-suppressed " +
+          "source=${activityMarkerToken(source)} cameraStackSuppressesParticles=true " +
+          "stopAttempted=$stopAttempted stopSucceeded=$stopSucceeded particleLayerVisible=false " +
+          "launcherPanelVisible=$launcherPanelVisible " +
+          "legacyLauncherPanelSuppressed=true launcherPanelSuppressedForCameraStack=true " +
+          "particleLayerStarted=$particleLayerStarted " +
+          "nativeSurfaceStartRequested=$nativeSurfaceStartRequested " +
+          "particleLayerRenderContinuity=stopped-for-camera-stack"
+
+  fun cameraStackParticleLayerSuppressFailedMarker(
+      source: String,
+      particleLayerStarted: Boolean,
+      nativeSurfaceStartRequested: Boolean,
+      error: String,
+      message: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=particle-layer-suppress-failed " +
+          "source=${activityMarkerToken(source)} cameraStackSuppressesParticles=true " +
+          "stopAttempted=true stopSucceeded=false particleLayerVisible=false " +
+          "particleLayerStarted=$particleLayerStarted " +
+          "nativeSurfaceStartRequested=$nativeSurfaceStartRequested " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)}"
+
+  fun nativeSurfaceParticleStoppedMarker(
+      source: String,
+      particleLayerStarted: Boolean,
+      nativeSurfaceStartRequested: Boolean,
+  ): String =
+      "channel=native-surface-particle-layer status=stopped " +
+          "renderPolicy=$RENDER_POLICY source=${activityMarkerToken(source)} " +
+          "particleLayerStarted=$particleLayerStarted " +
+          "nativeSurfaceStartRequested=$nativeSurfaceStartRequested"
+
+  fun nativeSurfaceParticleStopFailedMarker(source: String, error: String, message: String): String =
+      "channel=native-surface-particle-layer status=stop-failed " +
+          "renderPolicy=$RENDER_POLICY source=${activityMarkerToken(source)} " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)}"
 
   fun projectionWidthMeters(targetDistanceMeters: Float): Float =
       (targetDistanceMeters * PARTICLE_LAYER_WIDTH_PER_DISTANCE)
