@@ -341,8 +341,9 @@ Interaction SDK pointer input without native multimodal extension forcing.
   panel z-index/display-role policy, viewer-locked and virtual-wall projection
   plane construction from Activity-observed scene inputs, target-rect math,
   raw-projection startup/swapchain/completion/native-start marker fields,
-  panel-carrier start lifecycle marker fields, target scale, stereo offset,
-  placement-toggle marker fields, stereo marker fields, and receipt constants.
+  projection plane/update marker fields, panel-carrier start lifecycle marker fields,
+  target scale, stereo offset, placement-toggle marker fields, stereo marker
+  fields, and receipt constants.
   It must not query the Spatial scene, create
   Spatial scene objects, start JNI native routes, consume controller input, or
   own camera frames.

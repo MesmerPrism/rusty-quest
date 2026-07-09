@@ -5303,27 +5303,18 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     cameraHwbProjectionMarkerCount += 1
     lastCameraHwbProjectionMarkerMs = now
     marker(
-        "channel=camera-hwb-spatial-probe status=raw-camera-projection-plane-updated " +
-            "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true " +
-            "viewerPoseSource=${CameraHwbProjectionModule.poseSourceToken(plane)} eyeOffsetsSource=Scene.getEyeOffsets " +
-            cameraHwbProjectionMarkerFields(plane) + " " +
-            cameraHwbProjectionStereoMarkerFields() + " " +
-            spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings) + " " +
-            SpatialPublicMultiStack.markerFields() + " " +
-            "viewerPositionM=${activityVectorMarker(plane.viewerPosition)} " +
-            "viewerForward=${activityVectorMarker(plane.forward)} viewerUp=${activityVectorMarker(plane.up)} " +
-            "viewerRight=${activityVectorMarker(plane.right)} planeCenterM=${activityVectorMarker(plane.center)} " +
-            "planeQuaternion=${activityQuaternionMarker(plane.pose.q)} " +
-            "sceneQuadLayerUpdateStatus=${activityMarkerToken(layerUpdateStatus)} " +
-            "scenePanelCarrierUpdateStatus=${activityMarkerToken(panelCarrierUpdateStatus)} " +
-            "nativePanelPoseAuthority=camera-hwb-projection-plane " +
-            "nativePanelPoseUpdateMask=$nativePanelPoseUpdateMask " +
-            "leftEyeOffsetM=${activityVectorMarker(plane.leftEyeOffset)} " +
-            "rightEyeOffsetM=${activityVectorMarker(plane.rightEyeOffset)} " +
-            "outputMode=raw-color-target-rect sampledCameraTexture=see-native-logcat " +
-            "sampledLeftCameraTexture=see-native-logcat sampledRightCameraTexture=see-native-logcat " +
-            "monoDuplicated=false " +
-            "privateShaderStack=false customProjectionStack=false runtimeCrash=false"
+        CameraHwbProjectionModule.rawProjectionPlaneUpdatedMarker(
+            reason = reason,
+            plane = plane,
+            projectionMarkerFields = cameraHwbProjectionMarkerFields(plane),
+            stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
+            videoProjectionMarkerFields =
+                spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings),
+            publicMultiStackMarkerFields = SpatialPublicMultiStack.markerFields(),
+            layerUpdateStatus = layerUpdateStatus,
+            panelCarrierUpdateStatus = panelCarrierUpdateStatus,
+            nativePanelPoseUpdateMask = nativePanelPoseUpdateMask,
+        )
     )
   }
 
@@ -5345,13 +5336,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         }
         .getOrElse { throwable ->
           marker(
-              "channel=camera-hwb-spatial-probe status=raw-camera-projection-layer-update-failed " +
-                  "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true " +
-                  "targetDistanceMeters=${activityMarkerFloat(plane.targetDistanceMeters)} " +
-                  "projectionWidthMeters=${activityMarkerFloat(plane.projectionWidthMeters)} " +
-                  "projectionHeightMeters=${activityMarkerFloat(plane.projectionHeightMeters)} " +
-                  "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                  "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+              CameraHwbProjectionModule.rawProjectionLayerUpdateFailedMarker(
+                  reason = reason,
+                  plane = plane,
+                  error = throwable.javaClass.simpleName,
+                  message = throwable.message ?: "none",
+              )
           )
           "failed-${throwable.javaClass.simpleName}"
         }
@@ -5381,13 +5371,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         }
         .getOrElse { throwable ->
           marker(
-              "channel=camera-hwb-spatial-probe status=scene-panel-carrier-update-failed " +
-                  "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true scenePanelCarrier=true " +
-                  "targetDistanceMeters=${activityMarkerFloat(plane.targetDistanceMeters)} " +
-                  "projectionWidthMeters=${activityMarkerFloat(plane.projectionWidthMeters)} " +
-                  "projectionHeightMeters=${activityMarkerFloat(plane.projectionHeightMeters)} " +
-                  "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                  "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+              CameraHwbProjectionModule.scenePanelCarrierUpdateFailedMarker(
+                  reason = reason,
+                  plane = plane,
+                  error = throwable.javaClass.simpleName,
+                  message = throwable.message ?: "none",
+              )
           )
           "failed-${throwable.javaClass.simpleName}"
         }
@@ -5401,10 +5390,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (!nativeReceiptLibraryLoaded) {
       if (forceLog) {
         marker(
-            "channel=camera-hwb-spatial-probe status=native-panel-pose-update-skipped " +
-                "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true " +
-                "nativePanelPoseAuthority=camera-hwb-projection-plane " +
-                "error=${activityMarkerToken(nativeReceiptLibraryError)}"
+            CameraHwbProjectionModule.nativePanelPoseUpdateSkippedMarker(
+                reason = reason,
+                error = nativeReceiptLibraryError,
+            )
         )
       }
       return 0L
@@ -5430,14 +5419,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         .getOrElse { throwable ->
           if (forceLog) {
             marker(
-                "channel=camera-hwb-spatial-probe status=native-panel-pose-update-failed " +
-                    "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true " +
-                    "nativePanelPoseAuthority=camera-hwb-projection-plane " +
-                    "targetDistanceMeters=${activityMarkerFloat(plane.targetDistanceMeters)} " +
-                    "projectionWidthMeters=${activityMarkerFloat(plane.projectionWidthMeters)} " +
-                    "projectionHeightMeters=${activityMarkerFloat(plane.projectionHeightMeters)} " +
-                    "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                    "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                CameraHwbProjectionModule.nativePanelPoseUpdateFailedMarker(
+                    reason = reason,
+                    plane = plane,
+                    error = throwable.javaClass.simpleName,
+                    message = throwable.message ?: "none",
+                )
             )
           }
           0L

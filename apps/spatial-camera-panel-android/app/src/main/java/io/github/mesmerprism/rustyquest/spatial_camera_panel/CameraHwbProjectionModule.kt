@@ -534,6 +534,88 @@ internal object CameraHwbProjectionModule {
           "monoDuplicated=false " +
           "privateShaderStack=false customProjectionStack=false runtimeCrash=false"
 
+  fun rawProjectionPlaneUpdatedMarker(
+      reason: String,
+      plane: CameraHwbProjectionPlane,
+      projectionMarkerFields: String,
+      stereoMarkerFields: String,
+      videoProjectionMarkerFields: String,
+      publicMultiStackMarkerFields: String,
+      layerUpdateStatus: String,
+      panelCarrierUpdateStatus: String,
+      nativePanelPoseUpdateMask: Long,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=raw-camera-projection-plane-updated " +
+          "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true " +
+          "viewerPoseSource=${poseSourceToken(plane)} eyeOffsetsSource=Scene.getEyeOffsets " +
+          "${projectionMarkerFields.trim()} " +
+          "${stereoMarkerFields.trim()} " +
+          "${videoProjectionMarkerFields.trim()} " +
+          "${publicMultiStackMarkerFields.trim()} " +
+          "viewerPositionM=${activityVectorMarker(plane.viewerPosition)} " +
+          "viewerForward=${activityVectorMarker(plane.forward)} viewerUp=${activityVectorMarker(plane.up)} " +
+          "viewerRight=${activityVectorMarker(plane.right)} planeCenterM=${activityVectorMarker(plane.center)} " +
+          "planeQuaternion=${activityQuaternionMarker(plane.pose.q)} " +
+          "sceneQuadLayerUpdateStatus=${activityMarkerToken(layerUpdateStatus)} " +
+          "scenePanelCarrierUpdateStatus=${activityMarkerToken(panelCarrierUpdateStatus)} " +
+          "nativePanelPoseAuthority=camera-hwb-projection-plane " +
+          "nativePanelPoseUpdateMask=$nativePanelPoseUpdateMask " +
+          "leftEyeOffsetM=${activityVectorMarker(plane.leftEyeOffset)} " +
+          "rightEyeOffsetM=${activityVectorMarker(plane.rightEyeOffset)} " +
+          "outputMode=raw-color-target-rect sampledCameraTexture=see-native-logcat " +
+          "sampledLeftCameraTexture=see-native-logcat sampledRightCameraTexture=see-native-logcat " +
+          "monoDuplicated=false " +
+          "privateShaderStack=false customProjectionStack=false runtimeCrash=false"
+
+  fun rawProjectionLayerUpdateFailedMarker(
+      reason: String,
+      plane: CameraHwbProjectionPlane,
+      error: String,
+      message: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=raw-camera-projection-layer-update-failed " +
+          "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true " +
+          "targetDistanceMeters=${activityMarkerFloat(plane.targetDistanceMeters)} " +
+          "projectionWidthMeters=${activityMarkerFloat(plane.projectionWidthMeters)} " +
+          "projectionHeightMeters=${activityMarkerFloat(plane.projectionHeightMeters)} " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun scenePanelCarrierUpdateFailedMarker(
+      reason: String,
+      plane: CameraHwbProjectionPlane,
+      error: String,
+      message: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=scene-panel-carrier-update-failed " +
+          "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true scenePanelCarrier=true " +
+          "targetDistanceMeters=${activityMarkerFloat(plane.targetDistanceMeters)} " +
+          "projectionWidthMeters=${activityMarkerFloat(plane.projectionWidthMeters)} " +
+          "projectionHeightMeters=${activityMarkerFloat(plane.projectionHeightMeters)} " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun nativePanelPoseUpdateSkippedMarker(reason: String, error: String): String =
+      "channel=camera-hwb-spatial-probe status=native-panel-pose-update-skipped " +
+          "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true " +
+          "nativePanelPoseAuthority=camera-hwb-projection-plane " +
+          "error=${activityMarkerToken(error)}"
+
+  fun nativePanelPoseUpdateFailedMarker(
+      reason: String,
+      plane: CameraHwbProjectionPlane,
+      error: String,
+      message: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=native-panel-pose-update-failed " +
+          "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true " +
+          "nativePanelPoseAuthority=camera-hwb-projection-plane " +
+          "targetDistanceMeters=${activityMarkerFloat(plane.targetDistanceMeters)} " +
+          "projectionWidthMeters=${activityMarkerFloat(plane.projectionWidthMeters)} " +
+          "projectionHeightMeters=${activityMarkerFloat(plane.projectionHeightMeters)} " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
   fun panelCarrierStartSkippedMarker(
       reason: String,
       startMask: Long,
