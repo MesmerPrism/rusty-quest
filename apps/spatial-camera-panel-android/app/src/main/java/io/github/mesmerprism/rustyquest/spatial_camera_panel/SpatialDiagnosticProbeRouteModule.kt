@@ -74,6 +74,27 @@ internal const val PANEL_SURFACE_MATRIX_PROBE_FRAME_COUNT = 90
 internal const val PANEL_SURFACE_MATRIX_PROBE_VARIANT_HOLD_MS = 2_500L
 internal const val PANEL_SURFACE_MATRIX_PROBE_INTER_VARIANT_MS = 500L
 
+internal const val CAMERA_HWB_PROBE_PROPERTY = "debug.rustyquest.spatial.camera_hwb_probe"
+internal const val CAMERA_HWB_PROBE_HOLD_MS_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_probe.hold_ms"
+internal const val CAMERA_HWB_PROBE_FRAME_COUNT_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_probe.frame_count"
+internal const val CAMERA_HWB_PROBE_READER_MAX_IMAGES_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_probe.reader_max_images"
+internal const val CAMERA_HWB_PROBE_WIDTH_PX = 1024
+internal const val CAMERA_HWB_PROBE_HEIGHT_PX = 512
+internal const val CAMERA_HWB_PROBE_WIDTH_METERS = 1.0f
+internal const val CAMERA_HWB_PROBE_HEIGHT_METERS = 0.5f
+internal const val CAMERA_HWB_PROBE_Z_INDEX = 36
+internal const val CAMERA_HWB_PROBE_DEFAULT_HOLD_MS = 10_000L
+internal const val CAMERA_HWB_PROBE_MIN_HOLD_MS = 2_000L
+internal const val CAMERA_HWB_PROBE_MAX_HOLD_MS = 120_000L
+internal const val CAMERA_HWB_PROBE_DEFAULT_FRAME_COUNT = 240
+internal const val CAMERA_HWB_PROBE_MAX_FRAME_COUNT = 1_800
+internal const val CAMERA_HWB_PROBE_DEFAULT_READER_MAX_IMAGES = 4
+internal const val CAMERA_HWB_PROBE_MIN_READER_MAX_IMAGES = 3
+internal const val CAMERA_HWB_PROBE_MAX_READER_MAX_IMAGES = 12
+
 internal object SpatialDiagnosticProbeRouteModule {
   const val MODULE_ID = "spatial-diagnostic-probe-route-policy"
 
@@ -139,6 +160,33 @@ internal object SpatialDiagnosticProbeRouteModule {
 
   fun panelSurfaceMatrixProbeEnabled(): Boolean =
       activityReadOptionalBooleanSystemProperty(PANEL_SURFACE_MATRIX_PROBE_PROPERTY) == true
+
+  fun cameraHwbProbeEnabled(): Boolean =
+      activityReadOptionalBooleanSystemProperty(CAMERA_HWB_PROBE_PROPERTY) == true
+
+  fun cameraHwbProbeHoldMs(): Long =
+      activityReadLongSystemProperty(
+          CAMERA_HWB_PROBE_HOLD_MS_PROPERTY,
+          CAMERA_HWB_PROBE_DEFAULT_HOLD_MS,
+          CAMERA_HWB_PROBE_MIN_HOLD_MS,
+          CAMERA_HWB_PROBE_MAX_HOLD_MS,
+      )
+
+  fun cameraHwbProbeFrameCount(): Int =
+      activityReadIntSystemProperty(
+          CAMERA_HWB_PROBE_FRAME_COUNT_PROPERTY,
+          CAMERA_HWB_PROBE_DEFAULT_FRAME_COUNT,
+          1,
+          CAMERA_HWB_PROBE_MAX_FRAME_COUNT,
+      )
+
+  fun cameraHwbProbeReaderMaxImages(): Int =
+      activityReadIntSystemProperty(
+          CAMERA_HWB_PROBE_READER_MAX_IMAGES_PROPERTY,
+          CAMERA_HWB_PROBE_DEFAULT_READER_MAX_IMAGES,
+          CAMERA_HWB_PROBE_MIN_READER_MAX_IMAGES,
+          CAMERA_HWB_PROBE_MAX_READER_MAX_IMAGES,
+      )
 
   fun explicitOptInMarkerFields(propertyName: String): String =
       "spatialFeatureExplicitOptIn=true " +

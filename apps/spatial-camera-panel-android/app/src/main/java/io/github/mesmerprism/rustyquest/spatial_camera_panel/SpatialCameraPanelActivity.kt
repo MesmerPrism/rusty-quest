@@ -1640,31 +1640,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (activityReadOptionalBooleanSystemProperty(CAMERA_HWB_PROJECTION_PROBE_PROPERTY) == true) {
       return
     }
-    if (activityReadOptionalBooleanSystemProperty(CAMERA_HWB_PROBE_PROPERTY) != true) {
+    if (!SpatialDiagnosticProbeRouteModule.cameraHwbProbeEnabled()) {
       return
     }
     cameraHwbProbeStarted = true
-    val holdMs =
-        activityReadLongSystemProperty(
-            CAMERA_HWB_PROBE_HOLD_MS_PROPERTY,
-            CAMERA_HWB_PROBE_DEFAULT_HOLD_MS,
-            CAMERA_HWB_PROBE_MIN_HOLD_MS,
-            CAMERA_HWB_PROBE_MAX_HOLD_MS,
-        )
-    val frameCount =
-        activityReadIntSystemProperty(
-            CAMERA_HWB_PROBE_FRAME_COUNT_PROPERTY,
-            CAMERA_HWB_PROBE_DEFAULT_FRAME_COUNT,
-            1,
-            CAMERA_HWB_PROBE_MAX_FRAME_COUNT,
-        )
-    val readerMaxImages =
-        activityReadIntSystemProperty(
-            CAMERA_HWB_PROBE_READER_MAX_IMAGES_PROPERTY,
-            CAMERA_HWB_PROBE_DEFAULT_READER_MAX_IMAGES,
-            CAMERA_HWB_PROBE_MIN_READER_MAX_IMAGES,
-            CAMERA_HWB_PROBE_MAX_READER_MAX_IMAGES,
-        )
+    val holdMs = SpatialDiagnosticProbeRouteModule.cameraHwbProbeHoldMs()
+    val frameCount = SpatialDiagnosticProbeRouteModule.cameraHwbProbeFrameCount()
+    val readerMaxImages = SpatialDiagnosticProbeRouteModule.cameraHwbProbeReaderMaxImages()
     marker(
         "channel=camera-hwb-spatial-probe status=start cameraHwbProbe=true " +
             "reason=${activityMarkerToken(reason)} debugProperty=$CAMERA_HWB_PROBE_PROPERTY " +
@@ -1672,7 +1654,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "requestedFrames=$frameCount holdMs=$holdMs readerMaxImages=$readerMaxImages " +
             "cameraPreference=50-then-51 carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
             "outputMode=luma-checker ${SpatialPublicMultiStack.inactiveMarkerFields()} " +
-            "privateShaderStack=false customProjectionStack=false"
+            "privateShaderStack=false customProjectionStack=false " +
+            SpatialDiagnosticProbeRouteModule.explicitOptInMarkerFields(CAMERA_HWB_PROBE_PROPERTY)
     )
     Handler(Looper.getMainLooper()).post { runCameraHwbProbe(holdMs, frameCount, readerMaxImages) }
   }
@@ -8538,26 +8521,5 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         "debug.rustyquest.spatial.panel_shell.visible"
     private const val PANEL_LAUNCHER_VISIBLE_PROPERTY =
         "debug.rustyquest.spatial.panel_launcher.visible"
-    private const val CAMERA_HWB_PROBE_PROPERTY =
-        "debug.rustyquest.spatial.camera_hwb_probe"
-    private const val CAMERA_HWB_PROBE_HOLD_MS_PROPERTY =
-        "debug.rustyquest.spatial.camera_hwb_probe.hold_ms"
-    private const val CAMERA_HWB_PROBE_FRAME_COUNT_PROPERTY =
-        "debug.rustyquest.spatial.camera_hwb_probe.frame_count"
-    private const val CAMERA_HWB_PROBE_READER_MAX_IMAGES_PROPERTY =
-        "debug.rustyquest.spatial.camera_hwb_probe.reader_max_images"
-    private const val CAMERA_HWB_PROBE_WIDTH_PX = 1024
-    private const val CAMERA_HWB_PROBE_HEIGHT_PX = 512
-    private const val CAMERA_HWB_PROBE_WIDTH_METERS = 1.0f
-    private const val CAMERA_HWB_PROBE_HEIGHT_METERS = 0.5f
-    private const val CAMERA_HWB_PROBE_Z_INDEX = 36
-    private const val CAMERA_HWB_PROBE_DEFAULT_HOLD_MS = 10_000L
-    private const val CAMERA_HWB_PROBE_MIN_HOLD_MS = 2_000L
-    private const val CAMERA_HWB_PROBE_MAX_HOLD_MS = 120_000L
-    private const val CAMERA_HWB_PROBE_DEFAULT_FRAME_COUNT = 240
-    private const val CAMERA_HWB_PROBE_MAX_FRAME_COUNT = 1_800
-    private const val CAMERA_HWB_PROBE_DEFAULT_READER_MAX_IMAGES = 4
-    private const val CAMERA_HWB_PROBE_MIN_READER_MAX_IMAGES = 3
-    private const val CAMERA_HWB_PROBE_MAX_READER_MAX_IMAGES = 12
   }
 }

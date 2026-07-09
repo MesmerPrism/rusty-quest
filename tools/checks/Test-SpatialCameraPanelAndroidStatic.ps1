@@ -164,6 +164,7 @@ Assert-Contains "Diagnostic probe route module" $diagnosticProbeRouteModule "deb
 Assert-Contains "Diagnostic probe route module" $diagnosticProbeRouteModule "debug.rustyquest.spatial.sdk_quad_vulkan_probe"
 Assert-Contains "Diagnostic probe route module" $diagnosticProbeRouteModule "debug.rustyquest.spatial.sdk_quad_stereo_alpha_probe"
 Assert-Contains "Diagnostic probe route module" $diagnosticProbeRouteModule "debug.rustyquest.spatial.panel_surface_matrix_probe"
+Assert-Contains "Diagnostic probe route module" $diagnosticProbeRouteModule "debug.rustyquest.spatial.camera_hwb_probe"
 Assert-Contains "Diagnostic probe route module" $diagnosticProbeRouteModule "spatialFeatureOptInRoute=android-system-property"
 Assert-Contains "Diagnostic probe route module" $diagnosticProbeRouteModule "explicitOptInMarkerFields"
 Assert-Contains "Android manifest" $manifest 'com.oculus.feature.RENDER_MODEL'
@@ -178,6 +179,7 @@ Assert-Contains "Activity" $activity "SpatialDiagnosticProbeRouteModule.sdkQuadV
 Assert-Contains "Activity" $activity "SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeEnabled"
 Assert-Contains "Activity" $activity "SpatialDiagnosticProbeRouteModule.panelSurfaceMatrixProbeEnabled"
 Assert-Contains "Activity" $activity "SpatialDiagnosticProbeRouteModule.externalSwapchainProbeEnabled"
+Assert-Contains "Activity" $activity "SpatialDiagnosticProbeRouteModule.cameraHwbProbeEnabled"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "debug.rustyquest.spatial.camera_hwb_projection_probe"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "debug.rustyquest.spatial.camera_hwb_projection_probe.depth.layer_policy"
 Assert-Contains "Kotlin spatial video route module" $kotlinSpatialVideoSettings "debug.rustyquest.spatial.video_projection_probe"
