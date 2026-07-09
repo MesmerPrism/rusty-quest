@@ -357,6 +357,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   parsing, placement clamping, pose/dimension/settings factories, private
   layer `Grabbable(type = PIVOT_Y)` setup, and headlock marker fields. It must
   not mutate Spatial scene entities, consume controller input, or call JNI.
+- `app/src/main/.../PrivateLayerPanelControlModule.kt` owns private-layer
+  control model and evidence policy: layer choices, depth-source choices,
+  depth-alignment clamping, panel-control marker fields, and JNI submission
+  result markers. It must not render Compose UI, mutate Activity state, call
+  JNI, or decide feature opt-in.
+- `app/src/main/.../PrivateLayerControlPanel.kt` owns only the Compose
+  projection of those controls and forwards requests to Activity-owned routes.
 - `app/src/main/.../SpatialControllerRoutingModule.kt` owns controller input
   policy helpers: Spatial VR input-system property parsing, controller route
   timing constants, trigger thresholds, joystick axis normalization,

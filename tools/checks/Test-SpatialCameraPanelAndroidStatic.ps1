@@ -83,6 +83,7 @@ $laneBoundary = Read-RequiredText "apps\spatial-camera-panel-android\app\src\mai
 $publicMultiStack = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPublicMultiStack.kt"
 $panelController = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\ExperimentPanelController.kt"
 $privateLayerPanel = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\PrivateLayerControlPanel.kt"
+$privateLayerPanelControlModule = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\PrivateLayerPanelControlModule.kt"
 $panelModels = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelModels.kt"
 $activityRuntimeHelpers = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelRuntimeHelpers.kt"
 $kotlinSpatialVideoSettings = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialVideoProjectionSettings.kt"
@@ -464,18 +465,51 @@ Assert-Contains "Activity" $activity "nativeUpdatePrivateLayerDepthLayerPolicy"
 Assert-Contains "Activity" $activity "nativeUpdatePrivateLayerDepthAlignment"
 Assert-Contains "Activity" $activity "spatial_private_layer_panel"
 Assert-Contains "Activity" $activity "PrivateLayerControlPanel"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "internal object PrivateLayerPanelControlModule"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "internal object PrivateLayerControls"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "internal data class PrivateLayerDepthAlignment"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "normalizeLayerOverride"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "coerceDepthAlignment"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "layerButtonSelectedMarker"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "layerOverrideUpdateFailedMarker"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "layerOverrideSubmittedMarker"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "depthLayerPolicySelectedMarker"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "depthLayerPolicyUpdateFailedMarker"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "depthLayerPolicySubmittedMarker"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "depthAlignmentUpdateFailedMarker"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "depthAlignmentSubmittedMarker"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=layer-button-selected"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=layer-override-update-failed"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=layer-override-submitted"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=depth-layer-policy-selected"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=depth-layer-policy-update-failed"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=depth-layer-policy-submitted"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=depth-alignment-update-failed"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=depth-alignment-submitted"
+Assert-Contains "Activity" $activity "PrivateLayerPanelControlModule.normalizeLayerOverride"
+Assert-Contains "Activity" $activity "PrivateLayerPanelControlModule.layerButtonSelectedMarker"
+Assert-Contains "Activity" $activity "PrivateLayerPanelControlModule.depthLayerPolicySelectedMarker"
+Assert-Contains "Activity" $activity "PrivateLayerPanelControlModule.depthAlignmentSubmittedMarker"
 Assert-Contains "Panel placement module" $panelPlacementModule "spatial-sdk-private-layer-panel-open"
 Assert-Contains "Activity" $activity "spatialPrivateLayerControlPanel=true"
-Assert-Contains "Activity" $activity "publicMultiStackOpaqueProjectionLayerOverride"
-Assert-Contains "Activity" $activity "layerOverrideAppliesToWallAndFullFov=true"
-Assert-Contains "Activity" $activity "cameraProjectionPlacementIndependentLayerControl=true"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "publicMultiStackOpaqueProjectionLayerOverride"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "layerOverrideAppliesToWallAndFullFov=true"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "cameraProjectionPlacementIndependentLayerControl=true"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "layerOverrideReappliedOnPlacementToggle="
-Assert-Contains "Activity" $activity "publicMultiStackDepthLayerPolicy"
-Assert-Contains "Activity" $activity "publicMultiStackDepthLayerCompareMode"
-Assert-Contains "Activity" $activity "publicMultiStackDepthAlignmentControl=true"
-Assert-Contains "Activity" $activity "publicMultiStackDepthAlignmentLeftOffsetUv="
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "publicMultiStackDepthLayerPolicy"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "publicMultiStackDepthLayerCompareMode"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "publicMultiStackDepthAlignmentControl=true"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "publicMultiStackDepthAlignmentLeftOffsetUv="
 Assert-Contains "Activity" $activity "panelRenderOrder=spatial-sdk-quad-layer-z-index"
 Assert-Contains "Activity" $activity "panelOpensInFrontOfCameraVideo="
+Assert-NotContains "Activity" $activity "status=layer-button-selected"
+Assert-NotContains "Activity" $activity "status=layer-override-update-failed"
+Assert-NotContains "Activity" $activity "status=layer-override-submitted"
+Assert-NotContains "Activity" $activity "status=depth-layer-policy-selected"
+Assert-NotContains "Activity" $activity "status=depth-layer-policy-update-failed"
+Assert-NotContains "Activity" $activity "status=depth-layer-policy-submitted"
+Assert-NotContains "Activity" $activity "status=depth-alignment-update-failed"
+Assert-NotContains "Activity" $activity "status=depth-alignment-submitted"
 Assert-Contains "Panel placement module" $panelPlacementModule "type = GrabbableType.PIVOT_Y"
 Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelGrabbable=true"
 Assert-Contains "Panel placement module" $panelPlacementModule "privateLayerPanelGrabType=PIVOT_Y"
@@ -563,7 +597,7 @@ Assert-Contains "Activity" $activity "Hittable(MeshCollision.NoCollision)"
 Assert-Contains "Activity" $activity "updateCameraHwbProjectionFromViewer("
 Assert-Contains "Activity" $activity "controller-primary-toggled-panel"
 Assert-Contains "Activity" $activity "panelToggleAction="
-Assert-Contains "Activity" $activity "layerOverrideForcedProjectionRefresh=true"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "layerOverrideForcedProjectionRefresh=true"
 Assert-Contains "Spatial virtual room module" $spatialVirtualRoomModule "environmentMaterialPolicy=sample-authored-normal-materials"
 Assert-Contains "Build manifest" $buildScript "spatial_private_layer_panel_projection_input_order"
 Assert-Contains "Activity" $activity "privateLayerPanelPoseFromViewer"
@@ -752,19 +786,23 @@ Assert-Contains "Private layer panel" $privateLayerPanel "Depth Source"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth Alignment"
 Assert-Contains "Private layer panel" $privateLayerPanel "PrivateLayerControls.layers"
 Assert-Contains "Private layer panel" $privateLayerPanel "PrivateLayerControls.depthSourcePolicies"
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(0, "Final", "final")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(1, "Opaque analysis 0", "opaque-analysis0-slot")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(2, "Public guide blur", "public-guide-blur")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(3, "Opaque analysis 1", "opaque-analysis1-slot")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(4, "Public post-blur guide", "public-post-blur-guide")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(5, "Opaque projection", "opaque-projection-slot")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerChoice(6, "Public depth diagnostic", "public-depth-diagnostic")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerDepthSourceChoice(depthPolicyMonoLayer0, "Mono 0", "mono-layer0")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerDepthSourceChoice(depthPolicyMonoLayer1, "Mono 1", "mono-layer1")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerDepthSourceChoice(depthPolicyEyeIndex, "Per eye", "eye-index")'
-Assert-Contains "Private layer panel" $privateLayerPanel 'PrivateLayerDepthSourceChoice(depthPolicyCompare, "Compare", "compare")'
 Assert-Contains "Private layer panel" $privateLayerPanel "updateDepthLayerPolicy"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth sample scale"
+Assert-NotContains "Private layer panel" $privateLayerPanel "internal object PrivateLayerControls"
+Assert-NotContains "Private layer panel" $privateLayerPanel "internal data class PrivateLayerDepthAlignment"
+Assert-NotContains "Private layer panel" $privateLayerPanel "status=layer-button-selected"
+Assert-NotContains "Private layer panel" $privateLayerPanel "status=depth-alignment-submitted"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(0, "Final", "final")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(1, "Opaque analysis 0", "opaque-analysis0-slot")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(2, "Public guide blur", "public-guide-blur")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(3, "Opaque analysis 1", "opaque-analysis1-slot")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(4, "Public post-blur guide", "public-post-blur-guide")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(5, "Opaque projection", "opaque-projection-slot")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(6, "Public depth diagnostic", "public-depth-diagnostic")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerDepthSourceChoice(depthPolicyMonoLayer0, "Mono 0", "mono-layer0")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerDepthSourceChoice(depthPolicyMonoLayer1, "Mono 1", "mono-layer1")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerDepthSourceChoice(depthPolicyEyeIndex, "Per eye", "eye-index")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerDepthSourceChoice(depthPolicyCompare, "Compare", "compare")'
 $privateLayerLabelNeedles = @(
   ("Raw " + "brightness"),
   ("Pre" + "blur brightness"),
@@ -777,7 +815,7 @@ foreach ($needle in $privateLayerLabelNeedles) {
   Assert-NotContains "Private layer panel" $privateLayerPanel $needle
 }
 Assert-NotContains "Activity" $activity ("1:" + "raw" + "-brightness")
-Assert-Contains "Activity" $activity "publicMultiStackLayerManifest=0:final,1:opaque-analysis0-slot,2:public-guide-blur,3:opaque-analysis1-slot,4:public-post-blur-guide,5:opaque-projection-slot,6:public-depth-diagnostic"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "publicMultiStackLayerManifest=0:final,1:opaque-analysis0-slot,2:public-guide-blur,3:opaque-analysis1-slot,4:public-post-blur-guide,5:opaque-projection-slot,6:public-depth-diagnostic"
 Assert-Contains "Activity" $activity "nativeResolveSurfaceParticleAliasParameter"
 Assert-Contains "Activity" $activity '"particle-alias-control"'
 Assert-Contains "Activity" $activity '"particle-panel-distance"'
@@ -2137,6 +2175,9 @@ Assert-Contains "README" $readme "target scale,"
 Assert-Contains "README" $readme "placement-toggle marker fields"
 Assert-Contains "README" $readme "viewer-locked and virtual-wall projection"
 Assert-Contains "README" $readme "SpatialPanelPlacementModule.kt"
+Assert-Contains "README" $readme "PrivateLayerPanelControlModule.kt"
+Assert-Contains "README" $readme "PrivateLayerControlPanel.kt"
+Assert-Contains "README" $readme "It must not render Compose UI, mutate Activity state, call"
 Assert-Contains "README" $readme "SpatialControllerRoutingModule.kt"
 Assert-Contains "README" $readme "SpatialOpenXrRouteModule.kt"
 Assert-Contains "README" $readme "native passthrough and"
@@ -2211,6 +2252,8 @@ Assert-Contains "Implementation notes" $notes 'manual custom-mesh `PanelSceneObj
 Assert-Contains "Implementation notes" $notes "placement-toggle marker fields"
 Assert-Contains "Implementation notes" $notes "placement-plane construction"
 Assert-Contains "Implementation notes" $notes "SpatialPanelPlacementModule.kt"
+Assert-Contains "Implementation notes" $notes "PrivateLayerPanelControlModule.kt"
+Assert-Contains "Implementation notes" $notes "PrivateLayerControlPanel.kt"
 Assert-Contains "Implementation notes" $notes "SpatialControllerRoutingModule.kt"
 Assert-Contains "Implementation notes" $notes "SpatialOpenXrRouteModule.kt"
 Assert-Contains "Implementation notes" $notes "native passthrough/environment-depth"

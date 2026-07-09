@@ -210,6 +210,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `CameraHwbProjectionPanelCarrierModule.kt`;
 - package private layer panel placement/input policy in
   `SpatialPanelPlacementModule.kt`;
+- package private-layer control choices, depth alignment clamping, panel-control
+  marker fields, and JNI submission result marker fields in
+  `PrivateLayerPanelControlModule.kt`;
+- keep `PrivateLayerControlPanel.kt` as the Compose-only projection of those
+  controls;
 - package controller shortcut routing policy in
   `SpatialControllerRoutingModule.kt`;
 - package OpenXR extension policy, explicit opt-in multimodal input defaults,

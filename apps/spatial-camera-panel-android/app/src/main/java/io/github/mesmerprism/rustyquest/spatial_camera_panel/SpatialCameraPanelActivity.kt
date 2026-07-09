@@ -5939,53 +5939,40 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ): Float {
     val previousOverride = privateLayerOverride
     val updatedOverride =
-        if (requestedLayerOverride < 0.0f) {
-          PrivateLayerControls.cycleOverride
-        } else {
-          requestedLayerOverride.coerceIn(0.0f, 6.0f).toInt().toFloat()
-        }
+        PrivateLayerPanelControlModule.normalizeLayerOverride(requestedLayerOverride)
     marker(
-        "channel=private-layer-panel status=layer-button-selected " +
-            "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
-            "privateLayerPanelInputButtons=button-a+trigger-l+trigger-r " +
-            "privateLayerPanelTriggerSelectEnabled=true " +
-            "requestedPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(requestedLayerOverride)} " +
-            "previousPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(previousOverride)} " +
-            "publicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(updatedOverride)} " +
-            "publicMultiStackOpaqueProjectionLayerLabel=${activityMarkerToken(PrivateLayerControls.labelForOverride(updatedOverride))} " +
-            "projectionPlacementMode=${cameraHwbProjectionPlacementMode.markerToken} " +
-            "layerOverrideAppliesToWallAndFullFov=true " +
-            "cameraProjectionPlacementIndependentLayerControl=true " +
-            "runtimeCrash=false"
+        PrivateLayerPanelControlModule.layerButtonSelectedMarker(
+            source = source,
+            requestedLayerOverride = requestedLayerOverride,
+            previousOverride = previousOverride,
+            updatedOverride = updatedOverride,
+            placementMode = cameraHwbProjectionPlacementMode,
+        )
     )
     privateLayerOverride = updatedOverride
     val updateMask =
         runCatching { nativeUpdatePrivateLayerOverride(updatedOverride) }
             .getOrElse { throwable ->
               marker(
-                  "channel=private-layer-panel status=layer-override-update-failed " +
-                      "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
-                      "requestedPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(requestedLayerOverride)} " +
-                      "publicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(updatedOverride)} " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  PrivateLayerPanelControlModule.layerOverrideUpdateFailedMarker(
+                      source = source,
+                      requestedLayerOverride = requestedLayerOverride,
+                      updatedOverride = updatedOverride,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               0L
             }
     marker(
-        "channel=private-layer-panel status=layer-override-submitted " +
-            "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
-            "transport=jni-live-queue publicMultiStackLayerControl=true updateMask=$updateMask " +
-            "previousPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(previousOverride)} " +
-            "publicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(updatedOverride)} " +
-            "publicMultiStackOpaqueProjectionLayerLabel=${activityMarkerToken(PrivateLayerControls.labelForOverride(updatedOverride))} " +
-            "projectionPlacementMode=${cameraHwbProjectionPlacementMode.markerToken} " +
-            "layerOverrideAppliesToWallAndFullFov=true " +
-            "cameraProjectionPlacementIndependentLayerControl=true " +
-            "publicMultiStackLayerManifest=0:final,1:opaque-analysis0-slot,2:public-guide-blur,3:opaque-analysis1-slot,4:public-post-blur-guide,5:opaque-projection-slot,6:public-depth-diagnostic " +
-            "projectionTargetLiveScale=${activityMarkerFloat(currentCameraHwbProjectionTargetScale())} " +
-            "layerOverrideForcedProjectionRefresh=true " +
-            "panelRenderOrder=spatial-sdk-quad-layer-z-index runtimeCrash=false"
+        PrivateLayerPanelControlModule.layerOverrideSubmittedMarker(
+            source = source,
+            updateMask = updateMask,
+            previousOverride = previousOverride,
+            updatedOverride = updatedOverride,
+            placementMode = cameraHwbProjectionPlacementMode,
+            projectionTargetScale = currentCameraHwbProjectionTargetScale(),
+        )
     )
     updateCameraHwbProjectionFromViewer(reason = "private-layer-override-panel", forceLog = true)
     return updatedOverride
@@ -5996,47 +5983,36 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       source: String,
   ): Int {
     val previousPolicy = privateLayerDepthLayerPolicy
-    val updatedPolicy = PrivateLayerControls.normalizeDepthLayerPolicy(requestedPolicy)
+    val updatedPolicy = PrivateLayerPanelControlModule.normalizeDepthLayerPolicy(requestedPolicy)
     privateLayerDepthLayerPolicy = updatedPolicy
-    val policyToken = PrivateLayerControls.tokenForDepthLayerPolicy(updatedPolicy)
-    val compareMode =
-        if (updatedPolicy == PrivateLayerControls.depthPolicyCompare) {
-          "visual-shader"
-        } else {
-          "off"
-        }
     marker(
-        "channel=private-layer-panel status=depth-layer-policy-selected " +
-            "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
-            "requestedPublicMultiStackDepthLayerPolicyCode=$requestedPolicy " +
-            "previousPublicMultiStackDepthLayerPolicy=${activityMarkerToken(PrivateLayerControls.tokenForDepthLayerPolicy(previousPolicy))} " +
-            "publicMultiStackDepthLayerPolicy=${activityMarkerToken(policyToken)} " +
-            "publicMultiStackDepthLayerCompareMode=${activityMarkerToken(compareMode)} " +
-            "publicMultiStackDepthLayerPolicyProperty=$CAMERA_HWB_PROJECTION_DEPTH_LAYER_POLICY_PROPERTY " +
-            "runtimeCrash=false"
+        PrivateLayerPanelControlModule.depthLayerPolicySelectedMarker(
+            source = source,
+            requestedPolicy = requestedPolicy,
+            previousPolicy = previousPolicy,
+            updatedPolicy = updatedPolicy,
+        )
     )
     val updateMask =
         runCatching { nativeUpdatePrivateLayerDepthLayerPolicy(updatedPolicy) }
             .getOrElse { throwable ->
               marker(
-                  "channel=private-layer-panel status=depth-layer-policy-update-failed " +
-                      "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
-                      "publicMultiStackDepthLayerPolicy=${activityMarkerToken(policyToken)} " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  PrivateLayerPanelControlModule.depthLayerPolicyUpdateFailedMarker(
+                      source = source,
+                      updatedPolicy = updatedPolicy,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               0L
             }
     marker(
-        "channel=private-layer-panel status=depth-layer-policy-submitted " +
-            "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
-            "transport=jni-live-queue publicMultiStackDepthLayerPolicyControl=true updateMask=$updateMask " +
-            "previousPublicMultiStackDepthLayerPolicy=${activityMarkerToken(PrivateLayerControls.tokenForDepthLayerPolicy(previousPolicy))} " +
-            "publicMultiStackDepthLayerPolicy=${activityMarkerToken(policyToken)} " +
-            "publicMultiStackDepthLayerCompareMode=${activityMarkerToken(compareMode)} " +
-            "publicMultiStackDepthLayerCompareEvidence=${activityMarkerToken(if (compareMode == "visual-shader") "shader-samples-layer0-and-layer1-at-same-depth-uv" else "inactive")} " +
-            "publicMultiStackDepthLayerPolicyManifest=0:mono-layer0,1:mono-layer1,2:eye-index,3:compare " +
-            "panelRenderOrder=spatial-sdk-quad-layer-z-index runtimeCrash=false"
+        PrivateLayerPanelControlModule.depthLayerPolicySubmittedMarker(
+            source = source,
+            updateMask = updateMask,
+            previousPolicy = previousPolicy,
+            updatedPolicy = updatedPolicy,
+        )
     )
     return updatedPolicy
   }
@@ -6046,14 +6022,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       source: String,
   ): PrivateLayerDepthAlignment {
     val previousAlignment = privateLayerDepthAlignment
-    val updatedAlignment =
-        PrivateLayerDepthAlignment(
-            leftX = requestedAlignment.leftX.coerceIn(-0.25f, 0.25f),
-            leftY = requestedAlignment.leftY.coerceIn(-0.25f, 0.25f),
-            rightX = requestedAlignment.rightX.coerceIn(-0.25f, 0.25f),
-            rightY = requestedAlignment.rightY.coerceIn(-0.25f, 0.25f),
-            sampleScale = requestedAlignment.sampleScale.coerceIn(0.25f, 3.0f),
-        )
+    val updatedAlignment = PrivateLayerPanelControlModule.coerceDepthAlignment(requestedAlignment)
     privateLayerDepthAlignment = updatedAlignment
     val updateMask =
         runCatching {
@@ -6067,27 +6036,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             }
             .getOrElse { throwable ->
               marker(
-                  "channel=private-layer-panel status=depth-alignment-update-failed " +
-                      "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
-                      "publicMultiStackDepthAlignmentLeftOffsetUv=${activityMarkerFloat6(updatedAlignment.leftX)},${activityMarkerFloat6(updatedAlignment.leftY)} " +
-                      "publicMultiStackDepthAlignmentRightOffsetUv=${activityMarkerFloat6(updatedAlignment.rightX)},${activityMarkerFloat6(updatedAlignment.rightY)} " +
-                      "publicMultiStackDepthAlignmentSampleScale=${activityMarkerFloat(updatedAlignment.sampleScale)} " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  PrivateLayerPanelControlModule.depthAlignmentUpdateFailedMarker(
+                      source = source,
+                      updatedAlignment = updatedAlignment,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               0L
             }
     marker(
-        "channel=private-layer-panel status=depth-alignment-submitted " +
-            "source=${activityMarkerToken(source)} spatialPrivateLayerControlPanel=true " +
-            "transport=jni-live-queue publicMultiStackDepthAlignmentControl=true updateMask=$updateMask " +
-            "previousPublicMultiStackDepthAlignmentLeftOffsetUv=${activityMarkerFloat6(previousAlignment.leftX)},${activityMarkerFloat6(previousAlignment.leftY)} " +
-            "previousPublicMultiStackDepthAlignmentRightOffsetUv=${activityMarkerFloat6(previousAlignment.rightX)},${activityMarkerFloat6(previousAlignment.rightY)} " +
-            "previousPublicMultiStackDepthAlignmentSampleScale=${activityMarkerFloat(previousAlignment.sampleScale)} " +
-            "publicMultiStackDepthAlignmentLeftOffsetUv=${activityMarkerFloat6(updatedAlignment.leftX)},${activityMarkerFloat6(updatedAlignment.leftY)} " +
-            "publicMultiStackDepthAlignmentRightOffsetUv=${activityMarkerFloat6(updatedAlignment.rightX)},${activityMarkerFloat6(updatedAlignment.rightY)} " +
-            "publicMultiStackDepthAlignmentSampleScale=${activityMarkerFloat(updatedAlignment.sampleScale)} " +
-            "panelRenderOrder=spatial-sdk-quad-layer-z-index runtimeCrash=false"
+        PrivateLayerPanelControlModule.depthAlignmentSubmittedMarker(
+            source = source,
+            updateMask = updateMask,
+            previousAlignment = previousAlignment,
+            updatedAlignment = updatedAlignment,
+        )
     )
     return updatedAlignment
   }
