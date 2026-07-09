@@ -547,6 +547,65 @@ internal object SpatialSurfaceParticleRouteModule {
           "parameterId=${activityMarkerToken(parameterId)} " +
           "error=${activityMarkerToken(error)}"
 
+  fun nativeSurfaceParticleSurfaceConsumerCalledMarker(
+      surfaceValid: Boolean,
+      carrier: String,
+      placementMarkerFields: String,
+      stereoMarkerFields: String,
+  ): String =
+      "channel=native-surface-particle-layer status=surface-consumer-called " +
+          "renderPolicy=$RENDER_POLICY surfaceValid=$surfaceValid " +
+          "surfaceParticleProjectionCarrier=${activityMarkerToken(carrier)} " +
+          placementMarkerFields + " " +
+          stereoMarkerFields
+
+  fun nativeSurfaceParticleSurfacePanelReadyMarker(
+      panelHandle: Long,
+      layerUpdateStatus: String,
+      surfaceValid: Boolean,
+      carrier: String,
+      placementMarkerFields: String,
+      stereoMarkerFields: String,
+  ): String =
+      "channel=native-surface-particle-layer status=surface-panel-ready " +
+          "renderPolicy=$RENDER_POLICY panelHandle=$panelHandle " +
+          "particleLayerPanelLayerUpdateStatus=${activityMarkerToken(layerUpdateStatus)} " +
+          "surfaceValid=$surfaceValid " +
+          "surfaceParticleProjectionCarrier=${activityMarkerToken(carrier)} " +
+          placementMarkerFields + " " +
+          stereoMarkerFields
+
+  fun nativeSurfaceParticlePanelRegistrationSuppressedMarker(
+      source: String,
+      nativeSurfaceParticleLayerEnabled: Boolean,
+      privateSpatialEcsParticleRendererEnabled: Boolean,
+      carrier: String,
+      manualPanelSceneObjectCustomMesh: Boolean,
+  ): String =
+      "channel=native-surface-particle-layer status=panel-registration-suppressed " +
+          "renderPolicy=$RENDER_POLICY source=${activityMarkerToken(source)} " +
+          "nativeSurfaceParticleLayerEnabled=$nativeSurfaceParticleLayerEnabled " +
+          "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
+          "privateSpatialEcsParticleRendererEnabled=$privateSpatialEcsParticleRendererEnabled " +
+          "privateSpatialEcsParticleRendererEnabledProperty=$PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY " +
+          "surfaceParticleProjectionCarrier=${activityMarkerToken(carrier)} " +
+          "manualPanelSceneObjectCustomMesh=$manualPanelSceneObjectCustomMesh"
+
+  fun nativeSurfaceParticlePanelRegistrationsCreatedMarker(
+      panelRegistrationCount: Int,
+      particlePanelRegistrationId: String,
+      carrier: String,
+      nativeSurfaceParticleLayerEnabled: Boolean,
+  ): String =
+      "channel=native-surface-particle-layer status=panel-registrations-created " +
+          "renderPolicy=$RENDER_POLICY panelRegistrationCount=$panelRegistrationCount " +
+          "workflowPanelRegistrationId=spatial_camera_panel " +
+          "launcherPanelRegistrationId=spatial_camera_panel_launcher " +
+          "projectionPanelRegistrationId=spatial_camera_projection_surface_panel " +
+          "particlePanelRegistrationId=${activityMarkerToken(particlePanelRegistrationId)} " +
+          "surfaceParticleProjectionCarrier=${activityMarkerToken(carrier)} " +
+          "nativeSurfaceParticleLayerEnabled=$nativeSurfaceParticleLayerEnabled"
+
   fun nativeSurfaceParticleRecenterIgnoredMarker(
       inputSource: String,
       detail: String,

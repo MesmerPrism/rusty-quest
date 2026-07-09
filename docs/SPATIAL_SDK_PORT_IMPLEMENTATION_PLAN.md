@@ -232,8 +232,8 @@ Apply that model here when a lane grows beyond a narrow facade method:
 - package surface-particle route policy, carrier parsing, dimensions, media
   settings, route lifecycle marker fields, parameter/alias marker fields,
   projection update marker fields, panel-layer marker fields, recenter marker fields,
-  and camera-stack particle suppression marker fields in
-  `SpatialSurfaceParticleRouteModule.kt`.
+  panel registration marker fields, and camera-stack particle suppression marker
+  fields in `SpatialSurfaceParticleRouteModule.kt`.
 - package native surface-particle manual panel carrier construction,
   custom-mesh `PanelSceneObject` creation, create/surface/add failure markers,
   and readiness marker fields in `SpatialSurfaceParticlePanelCarrierModule.kt`.

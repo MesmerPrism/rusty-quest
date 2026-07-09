@@ -781,11 +781,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 particleSurfaceConsumerCalled = true
                 particleSurfaceConsumerSurfaceValid = surface.isValid
                 marker(
-                    "channel=native-surface-particle-layer status=surface-consumer-called " +
-                        "renderPolicy=native-vulkan-wsi-surface-panel surfaceValid=${surface.isValid} " +
-                        "surfaceParticleProjectionCarrier=${activityMarkerToken(particleLayerCarrierToken())} " +
-                        particleLayerPlacementMarkerFields() + " " +
-                        particleLayerStereoMarkerFields()
+                    SpatialSurfaceParticleRouteModule.nativeSurfaceParticleSurfaceConsumerCalledMarker(
+                        surfaceValid = surface.isValid,
+                        carrier = particleLayerCarrierToken(),
+                        placementMarkerFields = particleLayerPlacementMarkerFields(),
+                        stereoMarkerFields = particleLayerStereoMarkerFields(),
+                    )
                 )
                 startNativeSurfaceParticleLayer(surface)
               },
@@ -796,42 +797,46 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 val layerUpdateStatus =
                     updateParticleLayerPanelLayer("panel-setup", forceLog = false)
                 marker(
-                    "channel=native-surface-particle-layer status=surface-panel-ready " +
-                        "renderPolicy=native-vulkan-wsi-surface-panel panelHandle=${panel.handle} " +
-                        "particleLayerPanelLayerUpdateStatus=${activityMarkerToken(layerUpdateStatus)} " +
-                        "surfaceValid=${panel.surface.isValid} " +
-                        "surfaceParticleProjectionCarrier=${activityMarkerToken(particleLayerCarrierToken())} " +
-                        particleLayerPlacementMarkerFields() + " " +
-                        particleLayerStereoMarkerFields()
+                    SpatialSurfaceParticleRouteModule.nativeSurfaceParticleSurfacePanelReadyMarker(
+                        panelHandle = panel.handle,
+                        layerUpdateStatus = layerUpdateStatus,
+                        surfaceValid = panel.surface.isValid,
+                        carrier = particleLayerCarrierToken(),
+                        placementMarkerFields = particleLayerPlacementMarkerFields(),
+                        stereoMarkerFields = particleLayerStereoMarkerFields(),
+                    )
                 )
               },
           )
         } else {
           val manualCarrier = particleLayerManualCustomMeshCarrierEnabled()
           marker(
-              "channel=native-surface-particle-layer status=panel-registration-suppressed " +
-                  "renderPolicy=native-vulkan-wsi-surface-panel " +
-                  "source=${if (manualCarrier) "manual-scene-object-carrier" else nativeSurfaceParticleLayerSuppressionSource()} " +
-                  "nativeSurfaceParticleLayerEnabled=${nativeSurfaceParticleLayerEnabled()} " +
-                  "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
-                  "privateSpatialEcsParticleRendererEnabled=${privateSpatialEcsParticleRendererEnabled()} " +
-                  "privateSpatialEcsParticleRendererEnabledProperty=$PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY " +
-                  "surfaceParticleProjectionCarrier=${activityMarkerToken(particleLayerCarrierToken())} " +
-                  "manualPanelSceneObjectCustomMesh=$manualCarrier"
+              SpatialSurfaceParticleRouteModule.nativeSurfaceParticlePanelRegistrationSuppressedMarker(
+                  source =
+                      if (manualCarrier) "manual-scene-object-carrier"
+                      else nativeSurfaceParticleLayerSuppressionSource(),
+                  nativeSurfaceParticleLayerEnabled = nativeSurfaceParticleLayerEnabled(),
+                  privateSpatialEcsParticleRendererEnabled = privateSpatialEcsParticleRendererEnabled(),
+                  carrier = particleLayerCarrierToken(),
+                  manualPanelSceneObjectCustomMesh = manualCarrier,
+              )
           )
           null
         },
     )
     panelRegistrationCount = panels.size
     marker(
-        "channel=native-surface-particle-layer status=panel-registrations-created " +
-            "renderPolicy=native-vulkan-wsi-surface-panel panelRegistrationCount=$panelRegistrationCount " +
-            "workflowPanelRegistrationId=spatial_camera_panel " +
-            "launcherPanelRegistrationId=spatial_camera_panel_launcher " +
-            "projectionPanelRegistrationId=spatial_camera_projection_surface_panel " +
-            "particlePanelRegistrationId=${if (nativeSurfaceParticleLayerEnabled() && !particleLayerManualCustomMeshCarrierEnabled()) "spatial_camera_surface_panel" else "manual-scene-object"} " +
-            "surfaceParticleProjectionCarrier=${activityMarkerToken(particleLayerCarrierToken())} " +
-            "nativeSurfaceParticleLayerEnabled=${nativeSurfaceParticleLayerEnabled()}"
+        SpatialSurfaceParticleRouteModule.nativeSurfaceParticlePanelRegistrationsCreatedMarker(
+            panelRegistrationCount = panelRegistrationCount,
+            particlePanelRegistrationId =
+                if (nativeSurfaceParticleLayerEnabled() && !particleLayerManualCustomMeshCarrierEnabled()) {
+                  "spatial_camera_surface_panel"
+                } else {
+                  "manual-scene-object"
+                },
+            carrier = particleLayerCarrierToken(),
+            nativeSurfaceParticleLayerEnabled = nativeSurfaceParticleLayerEnabled(),
+        )
     )
     scheduleParticleLayerLifecycleDiagnostics("register-panels")
     return panels

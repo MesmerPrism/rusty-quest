@@ -393,9 +393,9 @@ Interaction SDK pointer input without native multimodal extension forcing.
   carrier token parsing, panel dimensions, projection-surface math, media
   settings, route lifecycle marker fields, parameter/alias marker fields,
   projection update marker fields, panel-layer marker fields, recenter marker fields,
-  and camera-stack particle suppression marker fields. It must not
-  create scene objects, read runtime properties, call JNI, or mutate Activity
-  state.
+  panel registration marker fields, and camera-stack particle suppression marker
+  fields. It must not create scene objects, read runtime properties, call JNI,
+  or mutate Activity state.
 - `app/src/main/.../SpatialSurfaceParticlePanelCarrierModule.kt` owns native
   surface-particle manual panel carrier construction: the manual custom-mesh
   `PanelSceneObject`, create/surface/add failure markers, and readiness marker
