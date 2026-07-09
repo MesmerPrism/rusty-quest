@@ -4597,14 +4597,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           }
           if (forceLog || layerConfigChanged || opacityChanged) {
             marker(
-                "channel=native-surface-particle-layer status=particle-panel-layer-updated " +
-                    "renderPolicy=native-vulkan-wsi-surface-panel reason=${activityMarkerToken(reason)} " +
-                    "particleLayerPanelAlphaBlendApplied=true " +
-                    "particleLayerPanelColorScaleAlphaApplied=true " +
-                    "particleLayerPanelLayerConfigCached=true " +
-                    "particleLayerPanelOpacity=${activityMarkerFloat(opacity)} " +
-                    "particleLayerPanelOpacityProperty=$PARTICLE_LAYER_PANEL_OPACITY_PROPERTY " +
-                    "particleLayerZIndex=$PARTICLE_LAYER_Z_INDEX runtimeCrash=false"
+                SpatialSurfaceParticleRouteModule.nativeSurfaceParticlePanelLayerUpdatedMarker(
+                    reason,
+                    opacity,
+                )
             )
           }
           if (layerConfigChanged || opacityChanged) {
@@ -4616,12 +4612,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         .getOrElse { throwable ->
           if (forceLog) {
             marker(
-                "channel=native-surface-particle-layer status=particle-panel-layer-update-failed " +
-                    "renderPolicy=native-vulkan-wsi-surface-panel reason=${activityMarkerToken(reason)} " +
-                    "particleLayerPanelOpacity=${activityMarkerFloat(opacity)} " +
-                    "particleLayerPanelOpacityProperty=$PARTICLE_LAYER_PANEL_OPACITY_PROPERTY " +
-                    "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                    "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                SpatialSurfaceParticleRouteModule.nativeSurfaceParticlePanelLayerUpdateFailedMarker(
+                    reason,
+                    opacity,
+                    throwable.javaClass.simpleName,
+                    throwable.message ?: "none",
+                )
             )
           }
           "failed-${throwable.javaClass.simpleName}"

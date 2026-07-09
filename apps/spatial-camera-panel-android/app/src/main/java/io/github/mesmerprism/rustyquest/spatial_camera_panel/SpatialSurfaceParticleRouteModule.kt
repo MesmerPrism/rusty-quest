@@ -246,6 +246,29 @@ internal object SpatialSurfaceParticleRouteModule {
           "reason=${activityMarkerToken(reason)} cameraStackSuppressesParticles=true " +
           "particleLayerVisible=false nativePanelPoseAuthority=camera-hwb-projection-plane"
 
+  fun nativeSurfaceParticlePanelLayerUpdatedMarker(reason: String, opacity: Float): String =
+      "channel=native-surface-particle-layer status=particle-panel-layer-updated " +
+          "renderPolicy=$RENDER_POLICY reason=${activityMarkerToken(reason)} " +
+          "particleLayerPanelAlphaBlendApplied=true " +
+          "particleLayerPanelColorScaleAlphaApplied=true " +
+          "particleLayerPanelLayerConfigCached=true " +
+          "particleLayerPanelOpacity=${activityMarkerFloat(opacity)} " +
+          "particleLayerPanelOpacityProperty=$PARTICLE_LAYER_PANEL_OPACITY_PROPERTY " +
+          "particleLayerZIndex=$PARTICLE_LAYER_Z_INDEX runtimeCrash=false"
+
+  fun nativeSurfaceParticlePanelLayerUpdateFailedMarker(
+      reason: String,
+      opacity: Float,
+      error: String,
+      message: String,
+  ): String =
+      "channel=native-surface-particle-layer status=particle-panel-layer-update-failed " +
+          "renderPolicy=$RENDER_POLICY reason=${activityMarkerToken(reason)} " +
+          "particleLayerPanelOpacity=${activityMarkerFloat(opacity)} " +
+          "particleLayerPanelOpacityProperty=$PARTICLE_LAYER_PANEL_OPACITY_PROPERTY " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
   fun nativeSurfaceParticleProjectionPlaneUpdateSkippedMarker(
       reason: String,
       error: String,
