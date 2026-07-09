@@ -113,6 +113,8 @@ foreach ($requiredWorkflowNeedle in @(
     "Every native OpenXR/Vulkan feature is explicit opt-in",
     "must not change APK manifest",
     "or marker expectations until an app-build spec requests it",
+    "Source modules may",
+    "remain inert until",
     "deny known-nearby feature families"
 )) {
     if ($workflowText -notmatch [regex]::Escape($requiredWorkflowNeedle)) {

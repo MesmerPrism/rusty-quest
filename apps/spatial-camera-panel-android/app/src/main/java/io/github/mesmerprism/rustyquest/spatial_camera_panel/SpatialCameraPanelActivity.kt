@@ -924,38 +924,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           )
         }
     val nativeReceipt = recordNativeInteropReceipt(probe, surfaceProbe)
+    marker(SpatialOpenXrRouteModule.nativeInteropProbeMarker(phase, probe, surfaceProbe))
     marker(
-        "channel=native-interop-probe status=observed phase=$phase renderPolicy=${probe.renderPolicy} " +
-            "runtimeName=${activityMarkerToken(probe.runtimeName)} " +
-            "openXrInstanceHandleNonZero=${probe.openXrInstanceHandleNonZero} " +
-            "openXrSessionHandleNonZero=${probe.openXrSessionHandleNonZero} " +
-            "openXrGetInstanceProcAddrHandleNonZero=${probe.openXrGetInstanceProcAddrHandleNonZero} " +
-            "surfaceCapability=${surfaceProbe.capability} surfaceProbeStatus=${surfaceProbe.status} " +
-            "surfaceValid=${surfaceProbe.surfaceValid} surfaceError=${activityMarkerToken(surfaceProbe.error)}"
-    )
-    marker(
-        "channel=native-interop-receipt status=${nativeReceipt.status} phase=$phase renderPolicy=no-render " +
-            "libraryLoaded=$nativeReceiptLibraryLoaded nativeReceiptMask=${nativeReceipt.mask} " +
-            "nativeReceiptOpenXrInstanceHandleNonZero=${nativeReceipt.openXrInstanceHandleNonZero} " +
-            "nativeReceiptOpenXrSessionHandleNonZero=${nativeReceipt.openXrSessionHandleNonZero} " +
-            "nativeReceiptOpenXrGetInstanceProcAddrHandleNonZero=${nativeReceipt.openXrGetInstanceProcAddrHandleNonZero} " +
-            "nativeReceiptOpenXrGetInstanceProcAddrCallable=${nativeReceipt.openXrGetInstanceProcAddrCallable} " +
-            "nativeReceiptXrGetInstancePropertiesResolved=${nativeReceipt.xrGetInstancePropertiesResolved} " +
-            "nativeReceiptXrGetInstancePropertiesSucceeded=${nativeReceipt.xrGetInstancePropertiesSucceeded} " +
-            "nativeReceiptXrGetSystemResolved=${nativeReceipt.xrGetSystemResolved} " +
-            "nativeReceiptXrGetSystemSucceeded=${nativeReceipt.xrGetSystemSucceeded} " +
-            "nativeReceiptXrVulkanGraphicsRequirements2Resolved=${nativeReceipt.xrVulkanGraphicsRequirements2Resolved} " +
-            "nativeReceiptXrVulkanGraphicsRequirements2Succeeded=${nativeReceipt.xrVulkanGraphicsRequirements2Succeeded} " +
-            "nativeReceiptXrCreateVulkanInstanceResolved=${nativeReceipt.xrCreateVulkanInstanceResolved} " +
-            "nativeReceiptXrGetVulkanGraphicsDevice2Resolved=${nativeReceipt.xrGetVulkanGraphicsDevice2Resolved} " +
-            "nativeReceiptXrCreateVulkanDeviceResolved=${nativeReceipt.xrCreateVulkanDeviceResolved} " +
-            "nativeReceiptVkInstanceCreated=${nativeReceipt.vkInstanceCreated} " +
-            "nativeReceiptVkGraphicsDeviceObtained=${nativeReceipt.vkGraphicsDeviceObtained} " +
-            "nativeReceiptVkGraphicsComputeQueueFound=${nativeReceipt.vkGraphicsComputeQueueFound} " +
-            "nativeReceiptVkDeviceCreated=${nativeReceipt.vkDeviceCreated} " +
-            "nativeReceiptVkQueueObtained=${nativeReceipt.vkQueueObtained} " +
-            "nativeReceiptVkObjectsDestroyed=${nativeReceipt.vkObjectsDestroyed} " +
-            "nativeReceiptSurfaceValid=${nativeReceipt.surfaceValid} error=${activityMarkerToken(nativeReceipt.error)}"
+        SpatialOpenXrRouteModule.nativeInteropReceiptMarker(
+            phase,
+            nativeReceiptLibraryLoaded,
+            nativeReceipt,
+        )
     )
     requestSpatialMultimodalInputIfReady(probe, phase)
     startNativeSpatialControllerActionsIfReady(probe, phase)
@@ -1151,13 +1126,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val enabled = spatialMultimodalInputEnabled()
     if (!enabled) {
       spatialMultimodalInputRequested = true
-      marker(
-          "channel=spatial-multimodal-input status=disabled-by-property phase=$phase " +
-              "spatialMultimodalInputRequest=false " +
-              "spatialMultimodalRequiredOpenXrExtensions=none " +
-              "spatialRequiredOpenXrExtensions=${spatialRequiredOpenXrExtensionMarker()} " +
-              "property=$SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY"
-      )
+      marker(SpatialOpenXrRouteModule.spatialMultimodalInputDisabledMarker(phase))
       return
     }
     if (
@@ -1165,11 +1134,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             !probe.openXrSessionHandleNonZero ||
             !probe.openXrGetInstanceProcAddrHandleNonZero
     ) {
-      marker(
-          "channel=spatial-multimodal-input status=request-deferred phase=$phase " +
-              "spatialMultimodalInputRequest=true openXrHandlesReady=false " +
-              "spatialRequiredOpenXrExtensions=${spatialRequiredOpenXrExtensionMarker()}"
-      )
+      marker(SpatialOpenXrRouteModule.spatialMultimodalInputDeferredMarker(phase))
       return
     }
     val requestMask =
@@ -1182,26 +1147,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             }
             .getOrElse { throwable ->
               marker(
-                  "channel=spatial-multimodal-input status=request-error phase=$phase " +
-                      "spatialMultimodalInputRequest=true " +
-                      "spatialRequiredOpenXrExtensions=${spatialRequiredOpenXrExtensionMarker()} " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")}"
+                  SpatialOpenXrRouteModule.spatialMultimodalInputErrorMarker(
+                      phase,
+                      throwable.javaClass.simpleName,
+                      throwable.message ?: "none",
+                  )
               )
               0L
             }
     spatialMultimodalInputRequested = true
     spatialMultimodalInputRequestMask = requestMask
-    marker(
-        "channel=spatial-multimodal-input status=request-result phase=$phase " +
-            "spatialMultimodalInputRequest=true requestMask=$requestMask " +
-            "supportsSimultaneousHandsAndControllers=${SpatialOpenXrRouteModule.spatialMultimodalInputSupported(requestMask)} " +
-            "resumeFunctionResolved=${SpatialOpenXrRouteModule.spatialMultimodalInputResumeResolved(requestMask)} " +
-            "resumeSucceeded=${SpatialOpenXrRouteModule.spatialMultimodalInputResumeSucceeded(requestMask)} " +
-            "inputOwnership=spatial-sdk-interaction-sdk " +
-            "spatialRequiredOpenXrExtensions=${spatialRequiredOpenXrExtensionMarker()} " +
-            "property=$SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY"
-    )
+    marker(SpatialOpenXrRouteModule.spatialMultimodalInputResultMarker(phase, requestMask))
   }
 
   private fun runSdkQuadSurfaceProbeIfRequested(reason: String) {

@@ -76,6 +76,47 @@ internal object SpatialOpenXrRouteModule {
   fun nativeInteropReceiptCallFailed(error: String): NativeInteropReceiptResult =
       nativeInteropReceiptFailure(status = "call-failed", error = error)
 
+  fun nativeInteropProbeMarker(
+      phase: String,
+      probe: SpatialNativeInteropProbe,
+      surfaceProbe: NativeInteropSurfaceProbeResult,
+  ): String =
+      "channel=native-interop-probe status=observed phase=$phase renderPolicy=${probe.renderPolicy} " +
+          "runtimeName=${activityMarkerToken(probe.runtimeName)} " +
+          "openXrInstanceHandleNonZero=${probe.openXrInstanceHandleNonZero} " +
+          "openXrSessionHandleNonZero=${probe.openXrSessionHandleNonZero} " +
+          "openXrGetInstanceProcAddrHandleNonZero=${probe.openXrGetInstanceProcAddrHandleNonZero} " +
+          "surfaceCapability=${surfaceProbe.capability} surfaceProbeStatus=${surfaceProbe.status} " +
+          "surfaceValid=${surfaceProbe.surfaceValid} surfaceError=${activityMarkerToken(surfaceProbe.error)}"
+
+  fun nativeInteropReceiptMarker(
+      phase: String,
+      libraryLoaded: Boolean,
+      receipt: NativeInteropReceiptResult,
+  ): String =
+      "channel=native-interop-receipt status=${receipt.status} phase=$phase renderPolicy=no-render " +
+          "libraryLoaded=$libraryLoaded nativeReceiptMask=${receipt.mask} " +
+          "nativeReceiptOpenXrInstanceHandleNonZero=${receipt.openXrInstanceHandleNonZero} " +
+          "nativeReceiptOpenXrSessionHandleNonZero=${receipt.openXrSessionHandleNonZero} " +
+          "nativeReceiptOpenXrGetInstanceProcAddrHandleNonZero=${receipt.openXrGetInstanceProcAddrHandleNonZero} " +
+          "nativeReceiptOpenXrGetInstanceProcAddrCallable=${receipt.openXrGetInstanceProcAddrCallable} " +
+          "nativeReceiptXrGetInstancePropertiesResolved=${receipt.xrGetInstancePropertiesResolved} " +
+          "nativeReceiptXrGetInstancePropertiesSucceeded=${receipt.xrGetInstancePropertiesSucceeded} " +
+          "nativeReceiptXrGetSystemResolved=${receipt.xrGetSystemResolved} " +
+          "nativeReceiptXrGetSystemSucceeded=${receipt.xrGetSystemSucceeded} " +
+          "nativeReceiptXrVulkanGraphicsRequirements2Resolved=${receipt.xrVulkanGraphicsRequirements2Resolved} " +
+          "nativeReceiptXrVulkanGraphicsRequirements2Succeeded=${receipt.xrVulkanGraphicsRequirements2Succeeded} " +
+          "nativeReceiptXrCreateVulkanInstanceResolved=${receipt.xrCreateVulkanInstanceResolved} " +
+          "nativeReceiptXrGetVulkanGraphicsDevice2Resolved=${receipt.xrGetVulkanGraphicsDevice2Resolved} " +
+          "nativeReceiptXrCreateVulkanDeviceResolved=${receipt.xrCreateVulkanDeviceResolved} " +
+          "nativeReceiptVkInstanceCreated=${receipt.vkInstanceCreated} " +
+          "nativeReceiptVkGraphicsDeviceObtained=${receipt.vkGraphicsDeviceObtained} " +
+          "nativeReceiptVkGraphicsComputeQueueFound=${receipt.vkGraphicsComputeQueueFound} " +
+          "nativeReceiptVkDeviceCreated=${receipt.vkDeviceCreated} " +
+          "nativeReceiptVkQueueObtained=${receipt.vkQueueObtained} " +
+          "nativeReceiptVkObjectsDestroyed=${receipt.vkObjectsDestroyed} " +
+          "nativeReceiptSurfaceValid=${receipt.surfaceValid} error=${activityMarkerToken(receipt.error)}"
+
   fun nativeInteropReceiptReceived(mask: Long): NativeInteropReceiptResult =
       NativeInteropReceiptResult(
           status = "received",
@@ -134,6 +175,47 @@ internal object SpatialOpenXrRouteModule {
 
   fun spatialMultimodalInputResumeSucceeded(mask: Long): Boolean =
       mask.hasReceiptBit(SPATIAL_MULTIMODAL_INPUT_RESUME_SUCCEEDED_BIT)
+
+  fun spatialMultimodalInputDisabledMarker(phase: String): String =
+      "channel=spatial-multimodal-input status=disabled-by-property phase=$phase " +
+          "spatialMultimodalInputRequest=false " +
+          "spatialMultimodalRequiredOpenXrExtensions=none " +
+          "spatialRequiredOpenXrExtensions=${spatialRequiredOpenXrExtensionMarker(false)} " +
+          "property=$SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY " +
+          spatialMultimodalInputOptInMarkerFields(enabled = false)
+
+  fun spatialMultimodalInputDeferredMarker(phase: String): String =
+      "channel=spatial-multimodal-input status=request-deferred phase=$phase " +
+          "spatialMultimodalInputRequest=true openXrHandlesReady=false " +
+          "spatialRequiredOpenXrExtensions=${spatialRequiredOpenXrExtensionMarker(true)} " +
+          spatialMultimodalInputOptInMarkerFields(enabled = true)
+
+  fun spatialMultimodalInputErrorMarker(
+      phase: String,
+      error: String,
+      message: String,
+  ): String =
+      "channel=spatial-multimodal-input status=request-error phase=$phase " +
+          "spatialMultimodalInputRequest=true " +
+          "spatialRequiredOpenXrExtensions=${spatialRequiredOpenXrExtensionMarker(true)} " +
+          "error=${activityMarkerToken(error)} message=${activityMarkerToken(message)} " +
+          spatialMultimodalInputOptInMarkerFields(enabled = true)
+
+  fun spatialMultimodalInputResultMarker(phase: String, requestMask: Long): String =
+      "channel=spatial-multimodal-input status=request-result phase=$phase " +
+          "spatialMultimodalInputRequest=true requestMask=$requestMask " +
+          "supportsSimultaneousHandsAndControllers=${spatialMultimodalInputSupported(requestMask)} " +
+          "resumeFunctionResolved=${spatialMultimodalInputResumeResolved(requestMask)} " +
+          "resumeSucceeded=${spatialMultimodalInputResumeSucceeded(requestMask)} " +
+          "inputOwnership=spatial-sdk-interaction-sdk " +
+          "spatialRequiredOpenXrExtensions=${spatialRequiredOpenXrExtensionMarker(true)} " +
+          "property=$SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY " +
+          spatialMultimodalInputOptInMarkerFields(enabled = true)
+
+  fun spatialMultimodalInputOptInMarkerFields(enabled: Boolean): String =
+      "spatialFeatureExplicitOptIn=$enabled " +
+          "spatialFeatureOptInRoute=android-system-property " +
+          "featureOptInProperty=$SPATIAL_MULTIMODAL_INPUT_ENABLED_PROPERTY"
 
   private fun nativeInteropReceiptFailure(
       status: String,

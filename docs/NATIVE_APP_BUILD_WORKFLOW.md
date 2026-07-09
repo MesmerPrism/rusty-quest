@@ -5,10 +5,13 @@ Use this workflow when creating a new Rusty Quest native APK profile.
 Every native OpenXR/Vulkan feature is explicit opt-in. A feature descriptor may
 exist in `fixtures/native-app-features/`, but it must not change APK manifest
 entries, runtime properties, packaged assets, build environment, app behavior,
-or marker expectations until an app-build spec requests it. App specs should
-also deny known-nearby feature families when validating a narrow route so
-camera, video, display-composite, hand, particle, SDF, private-layer, UI, LSL,
-Manifold, and legacy Makepad capabilities cannot bleed into unrelated apps.
+or marker expectations until an app-build spec requests it. Source modules may
+be compiled or registered by an app shell only when they remain inert until a
+feature descriptor, runtime profile, app spec, Android property, or intent
+extra enables them for the current run. App specs should also deny known-nearby feature families
+when validating a narrow route so camera, video, display-composite, hand,
+particle, SDF, private-layer, UI, LSL, Manifold, and legacy Makepad capabilities
+cannot bleed into unrelated apps.
 
 1. Choose the smallest required feature IDs from `fixtures/native-app-features/`.
    Browse by module path; particle capabilities are nested below `particles/`.

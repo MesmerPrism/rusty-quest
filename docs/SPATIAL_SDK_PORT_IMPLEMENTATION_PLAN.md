@@ -206,17 +206,19 @@ Apply that model here when a lane grows beyond a narrow facade method:
 - package controller shortcut routing policy in
   `SpatialControllerRoutingModule.kt`;
 - package OpenXR extension policy, explicit opt-in multimodal input defaults,
-  and native receipt bit decoding in `SpatialOpenXrRouteModule.kt`;
+  native interop probe/receipt markers, multimodal opt-in marker fields, and
+  native receipt bit decoding in `SpatialOpenXrRouteModule.kt`;
 - package surface-particle route policy, carrier parsing, dimensions, media
   settings, and marker fields in `SpatialSurfaceParticleRouteModule.kt`.
 
-All Spatial feature modules must stay explicit opt-in. Individual modules can
-be registered or available in source, but they should not create scene objects,
-start native routes, alter input handling, request package/permission behavior,
-or emit active capability markers unless a documented property, profile,
-app-build spec, or intent extra enables that feature for the current run. Keep
-the opt-in default and marker evidence in the owning route module so static
-gates can prove a feature is present in source without being active by default.
+All Spatial feature modules must stay explicit opt-in. Individual modules can be compiled,
+registered, or available in source, but they should not create scene
+objects, start native routes, alter input handling, request package/permission
+behavior, or emit active capability markers unless a documented property,
+profile, app-build spec, or intent extra enables that feature for the current
+run. Keep the opt-in default and marker evidence in the owning route module so
+static gates can prove a feature is present in source without being active by
+default.
 
 This is especially relevant before adding new carrier experiments. Prefer a
 small feature-shaped slice over more growth in `SpatialCameraPanelActivity.kt`.

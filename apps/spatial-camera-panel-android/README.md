@@ -354,6 +354,7 @@ Interaction SDK pointer input without native multimodal extension forcing.
   controllers, emit markers, or call JNI.
 - `app/src/main/.../SpatialOpenXrRouteModule.kt` owns OpenXR route policy:
   required extension lists, the explicit opt-in multimodal input default,
+  native interop probe/receipt marker fields, multimodal opt-in marker fields,
   native receipt bit decoding, and marker-ready native route status helpers.
   It must not load native libraries, call JNI, query the Spatial runtime, or
   mutate Activity state.
@@ -435,13 +436,14 @@ Interaction SDK pointer input without native multimodal extension forcing.
   owners with their own component/system registration, and keep this Activity
   as the registration/orchestration facade instead of adding every room,
   carrier, panel-placement, controller, and marker behavior directly here.
-- Feature modules must be explicit opt-in. Individual modules may be registered
-  or present in source, but they must not create scene objects, start native
-  routes, change input behavior, alter package/permission expectations, or emit
-  active markers unless a documented property, profile, app spec, or intent
-  extra enables that feature for the current run. Route-policy modules should
-  own default-disabled controls and marker fields that identify the opt-in route
-  so static gates can check the feature does not bleed into unrelated app runs.
+- Feature modules must be explicit opt-in. Individual modules may be compiled,
+  registered, or present in source, but they must not create scene objects,
+  start native routes, change input behavior, alter package/permission
+  expectations, or emit active markers unless a documented property, profile,
+  app spec, or intent extra enables that feature for the current run.
+  Route-policy modules should own default-disabled controls and marker fields
+  that identify the opt-in route so static gates can check the feature does not
+  bleed into unrelated app runs.
 - `native-receipt/src/camera_hwb_probe.rs` is the Android JNI facade and
   raw camera probe orchestration entry point.
 - `native-receipt/src/camera_hwb_stream.rs` owns the Android Camera2 /
