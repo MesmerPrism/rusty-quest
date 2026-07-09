@@ -334,8 +334,9 @@ Interaction SDK pointer input without native multimodal extension forcing.
   default-disabled route policy for diagnostic probes: raw Camera2/HWB,
   external OpenXR swapchain wrapping, SDK-owned quad surface/Vulkan probes,
   stereo-alpha probe dimensions/timing, panel-surface matrix variants, and
-  explicit opt-in marker fields. It must not create scene objects, draw
-  surfaces, call JNI, or mutate Activity probe state.
+  explicit opt-in marker fields. It also owns raw Camera2/HWB diagnostic probe
+  marker fields. It must not create scene objects, draw surfaces, call JNI, or
+  mutate Activity probe state.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, viewer-locked and virtual-wall projection

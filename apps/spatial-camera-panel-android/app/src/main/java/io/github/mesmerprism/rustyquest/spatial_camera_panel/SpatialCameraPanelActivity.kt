@@ -1565,14 +1565,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val frameCount = SpatialDiagnosticProbeRouteModule.cameraHwbProbeFrameCount()
     val readerMaxImages = SpatialDiagnosticProbeRouteModule.cameraHwbProbeReaderMaxImages()
     marker(
-        "channel=camera-hwb-spatial-probe status=start cameraHwbProbe=true " +
-            "reason=${activityMarkerToken(reason)} debugProperty=$CAMERA_HWB_PROBE_PROPERTY " +
-            "widthPx=$CAMERA_HWB_PROBE_WIDTH_PX heightPx=$CAMERA_HWB_PROBE_HEIGHT_PX " +
-            "requestedFrames=$frameCount holdMs=$holdMs readerMaxImages=$readerMaxImages " +
-            "cameraPreference=50-then-51 carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
-            "outputMode=luma-checker ${SpatialPublicMultiStack.inactiveMarkerFields()} " +
-            "privateShaderStack=false customProjectionStack=false " +
-            SpatialDiagnosticProbeRouteModule.explicitOptInMarkerFields(CAMERA_HWB_PROBE_PROPERTY)
+        SpatialDiagnosticProbeRouteModule.cameraHwbProbeStartMarker(
+            reason = reason,
+            frameCount = frameCount,
+            holdMs = holdMs,
+            readerMaxImages = readerMaxImages,
+            publicMultiStackMarkerFields = SpatialPublicMultiStack.inactiveMarkerFields(),
+        )
     )
     Handler(Looper.getMainLooper()).post { runCameraHwbProbe(holdMs, frameCount, readerMaxImages) }
   }
@@ -1581,10 +1580,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     cleanupSdkQuadSurfaceProbe("camera-hwb-pre-run")
     if (!nativeReceiptLibraryLoaded) {
       marker(
-          "channel=camera-hwb-spatial-probe status=complete cameraHwbProbe=true " +
-              "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
-              "nativeStartRequested=false sampledCameraTexture=false " +
-              "error=${activityMarkerToken(nativeReceiptLibraryError)} runtimeCrash=false"
+          SpatialDiagnosticProbeRouteModule.cameraHwbProbeCompleteMarker(
+              sdkSwapchainCreated = false,
+              surfaceValid = false,
+              sceneQuadLayerCreated = false,
+              nativeStartRequested = false,
+              sampledCameraTexture = "false",
+              error = nativeReceiptLibraryError,
+          )
       )
       return
     }
@@ -1598,11 +1601,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             }
             .getOrElse { throwable ->
               marker(
-                  "channel=camera-hwb-spatial-probe status=complete cameraHwbProbe=true " +
-                      "sdkSwapchainCreated=false surfaceValid=false sceneQuadLayerCreated=false " +
-                      "nativeStartRequested=false sampledCameraTexture=false " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.cameraHwbProbeCompleteMarker(
+                      sdkSwapchainCreated = false,
+                      surfaceValid = false,
+                      sceneQuadLayerCreated = false,
+                      nativeStartRequested = false,
+                      sampledCameraTexture = "false",
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               return
             }
@@ -1611,29 +1618,38 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         runCatching { sdkSwapchain.getSurface() }
             .getOrElse { throwable ->
               marker(
-                  "channel=camera-hwb-spatial-probe status=get-surface-failed " +
-                      "cameraHwbProbe=true handle=${sdkSwapchain.handle} " +
-                      "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.cameraHwbProbeGetSurfaceFailedMarker(
+                      handle = sdkSwapchain.handle,
+                      nativeHandle = sdkSwapchain.nativeHandle(),
+                      platformHandle = sdkSwapchain.platformHandle(),
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               null
             }
     sdkQuadSurfaceProbeSurface = surface
     val surfaceValid = surface?.isValid == true
     marker(
-        "channel=camera-hwb-spatial-probe status=sdk-swapchain-created cameraHwbProbe=true " +
-            "sdkSwapchainCreated=true handle=${sdkSwapchain.handle} " +
-            "nativeHandle=${sdkSwapchain.nativeHandle()} platformHandle=${sdkSwapchain.platformHandle()} " +
-            "surfaceValid=$surfaceValid widthPx=$CAMERA_HWB_PROBE_WIDTH_PX heightPx=$CAMERA_HWB_PROBE_HEIGHT_PX"
+        SpatialDiagnosticProbeRouteModule.cameraHwbProbeSdkSwapchainCreatedMarker(
+            handle = sdkSwapchain.handle,
+            nativeHandle = sdkSwapchain.nativeHandle(),
+            platformHandle = sdkSwapchain.platformHandle(),
+            surfaceValid = surfaceValid,
+        )
     )
     val renderSurface = surface
     if (!surfaceValid) {
       val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-surface-invalid")
       marker(
-          "channel=camera-hwb-spatial-probe status=complete cameraHwbProbe=true " +
-              "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=false " +
-              "nativeStartRequested=false sampledCameraTexture=false cleanupStatus=$cleanupStatus runtimeCrash=false"
+          SpatialDiagnosticProbeRouteModule.cameraHwbProbeCompleteMarker(
+              sdkSwapchainCreated = true,
+              surfaceValid = surfaceValid,
+              sceneQuadLayerCreated = false,
+              nativeStartRequested = false,
+              sampledCameraTexture = "false",
+              cleanupStatus = cleanupStatus,
+          )
       )
       return
     }
@@ -1642,9 +1658,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (!layerCreated) {
       val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-layer-create-failed")
       marker(
-          "channel=camera-hwb-spatial-probe status=complete cameraHwbProbe=true " +
-              "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=false " +
-              "nativeStartRequested=false sampledCameraTexture=false cleanupStatus=$cleanupStatus runtimeCrash=false"
+          SpatialDiagnosticProbeRouteModule.cameraHwbProbeCompleteMarker(
+              sdkSwapchainCreated = true,
+              surfaceValid = surfaceValid,
+              sceneQuadLayerCreated = false,
+              nativeStartRequested = false,
+              sampledCameraTexture = "false",
+              cleanupStatus = cleanupStatus,
+          )
       )
       return
     }
@@ -1662,22 +1683,28 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             .getOrElse { throwable ->
               val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-start-failed")
               marker(
-                  "channel=camera-hwb-spatial-probe status=complete cameraHwbProbe=true " +
-                      "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
-                      "nativeStartRequested=false sampledCameraTexture=false cleanupStatus=$cleanupStatus " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.cameraHwbProbeCompleteMarker(
+                      sdkSwapchainCreated = true,
+                      surfaceValid = surfaceValid,
+                      sceneQuadLayerCreated = true,
+                      nativeStartRequested = false,
+                      sampledCameraTexture = "false",
+                      cleanupStatus = cleanupStatus,
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               return
             }
     marker(
-        "channel=camera-hwb-spatial-probe status=native-start-requested cameraHwbProbe=true " +
-            "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
-            "nativeStartRequested=true startMask=$startMask requestedFrames=$frameCount " +
-            "readerMaxImages=$readerMaxImages holdMs=$holdMs " +
-            "carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
-            "${SpatialPublicMultiStack.inactiveMarkerFields()} " +
-            "privateShaderStack=false customProjectionStack=false"
+        SpatialDiagnosticProbeRouteModule.cameraHwbProbeNativeStartRequestedMarker(
+            surfaceValid = surfaceValid,
+            startMask = startMask,
+            frameCount = frameCount,
+            readerMaxImages = readerMaxImages,
+            holdMs = holdMs,
+            publicMultiStackMarkerFields = SpatialPublicMultiStack.inactiveMarkerFields(),
+        )
     )
     Handler(Looper.getMainLooper())
         .postDelayed(
@@ -1687,10 +1714,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               }
               val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-hold-complete")
               marker(
-                  "channel=camera-hwb-spatial-probe status=complete cameraHwbProbe=true " +
-                      "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
-                      "nativeStartRequested=true firstCameraFramePresented=see-native-logcat " +
-                      "sampledCameraTexture=see-native-logcat cleanupStatus=$cleanupStatus runtimeCrash=false"
+                  SpatialDiagnosticProbeRouteModule.cameraHwbProbeCompleteMarker(
+                      sdkSwapchainCreated = true,
+                      surfaceValid = surfaceValid,
+                      sceneQuadLayerCreated = true,
+                      nativeStartRequested = true,
+                      sampledCameraTexture = "see-native-logcat",
+                      cleanupStatus = cleanupStatus,
+                      firstCameraFramePresented = "see-native-logcat",
+                  )
               )
             },
             holdMs,

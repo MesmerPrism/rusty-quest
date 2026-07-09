@@ -192,4 +192,93 @@ internal object SpatialDiagnosticProbeRouteModule {
       "spatialFeatureExplicitOptIn=true " +
           "spatialFeatureOptInRoute=android-system-property " +
           "featureOptInProperty=$propertyName"
+
+  fun cameraHwbProbeStartMarker(
+      reason: String,
+      frameCount: Int,
+      holdMs: Long,
+      readerMaxImages: Int,
+      publicMultiStackMarkerFields: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=start cameraHwbProbe=true " +
+          "reason=${activityMarkerToken(reason)} debugProperty=$CAMERA_HWB_PROBE_PROPERTY " +
+          "widthPx=$CAMERA_HWB_PROBE_WIDTH_PX heightPx=$CAMERA_HWB_PROBE_HEIGHT_PX " +
+          "requestedFrames=$frameCount holdMs=$holdMs readerMaxImages=$readerMaxImages " +
+          "cameraPreference=50-then-51 carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+          "outputMode=luma-checker ${publicMultiStackMarkerFields.trim()} " +
+          "privateShaderStack=false customProjectionStack=false " +
+          explicitOptInMarkerFields(CAMERA_HWB_PROBE_PROPERTY)
+
+  fun cameraHwbProbeCompleteMarker(
+      sdkSwapchainCreated: Boolean,
+      surfaceValid: Boolean,
+      sceneQuadLayerCreated: Boolean,
+      nativeStartRequested: Boolean,
+      sampledCameraTexture: String,
+      cleanupStatus: String? = null,
+      error: String? = null,
+      message: String? = null,
+      firstCameraFramePresented: String? = null,
+  ): String =
+      buildString {
+        append("channel=camera-hwb-spatial-probe status=complete cameraHwbProbe=true ")
+        append("sdkSwapchainCreated=$sdkSwapchainCreated surfaceValid=$surfaceValid ")
+        append("sceneQuadLayerCreated=$sceneQuadLayerCreated ")
+        append("nativeStartRequested=$nativeStartRequested ")
+        if (firstCameraFramePresented != null) {
+          append("firstCameraFramePresented=$firstCameraFramePresented ")
+        }
+        append("sampledCameraTexture=$sampledCameraTexture ")
+        if (cleanupStatus != null) {
+          append("cleanupStatus=$cleanupStatus ")
+        }
+        if (error != null) {
+          append("error=${activityMarkerToken(error)} ")
+        }
+        if (message != null) {
+          append("message=${activityMarkerToken(message)} ")
+        }
+        append("runtimeCrash=false")
+      }
+
+  fun cameraHwbProbeGetSurfaceFailedMarker(
+      handle: Long,
+      nativeHandle: Long,
+      platformHandle: Long,
+      error: String,
+      message: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=get-surface-failed " +
+          "cameraHwbProbe=true handle=$handle " +
+          "nativeHandle=$nativeHandle platformHandle=$platformHandle " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun cameraHwbProbeSdkSwapchainCreatedMarker(
+      handle: Long,
+      nativeHandle: Long,
+      platformHandle: Long,
+      surfaceValid: Boolean,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=sdk-swapchain-created cameraHwbProbe=true " +
+          "sdkSwapchainCreated=true handle=$handle " +
+          "nativeHandle=$nativeHandle platformHandle=$platformHandle " +
+          "surfaceValid=$surfaceValid widthPx=$CAMERA_HWB_PROBE_WIDTH_PX " +
+          "heightPx=$CAMERA_HWB_PROBE_HEIGHT_PX"
+
+  fun cameraHwbProbeNativeStartRequestedMarker(
+      surfaceValid: Boolean,
+      startMask: Long,
+      frameCount: Int,
+      readerMaxImages: Int,
+      holdMs: Long,
+      publicMultiStackMarkerFields: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=native-start-requested cameraHwbProbe=true " +
+          "sdkSwapchainCreated=true surfaceValid=$surfaceValid sceneQuadLayerCreated=true " +
+          "nativeStartRequested=true startMask=$startMask requestedFrames=$frameCount " +
+          "readerMaxImages=$readerMaxImages holdMs=$holdMs " +
+          "carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+          "${publicMultiStackMarkerFields.trim()} " +
+          "privateShaderStack=false customProjectionStack=false"
 }
