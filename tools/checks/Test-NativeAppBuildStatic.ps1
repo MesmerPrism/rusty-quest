@@ -102,7 +102,8 @@ foreach ($requiredAgentsNeedle in @(
     "Keep Quest runtime features explicit opt-in",
     "they must not",
     "affect an app package, permissions, runtime profile, scene graph, input route,",
-    "or marker stream unless"
+    "marker stream, media path, or private payload behavior unless",
+    "descriptor, app spec, runtime profile, Android property, or intent extra"
 )) {
     if ($agentsText -notmatch [regex]::Escape($requiredAgentsNeedle)) {
         throw "AGENTS.md is missing native app feature opt-in guardrail: $requiredAgentsNeedle"
@@ -115,6 +116,7 @@ foreach ($requiredWorkflowNeedle in @(
     "or marker expectations until an app-build spec requests it",
     "Source modules may",
     "remain inert until",
+    "feature descriptor, runtime profile, app spec, Android property, or intent",
     "deny known-nearby feature families"
 )) {
     if ($workflowText -notmatch [regex]::Escape($requiredWorkflowNeedle)) {
