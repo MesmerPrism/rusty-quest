@@ -534,6 +534,114 @@ internal object CameraHwbProjectionModule {
           "monoDuplicated=false " +
           "privateShaderStack=false customProjectionStack=false runtimeCrash=false"
 
+  fun panelCarrierStartSkippedMarker(
+      reason: String,
+      startMask: Long,
+      carrier: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=scene-panel-carrier-start-skipped " +
+          "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true scenePanelCarrier=true " +
+          "skipReason=already-started startMask=$startMask " +
+          "carrier=$carrier runtimeCrash=false"
+
+  fun panelCarrierSyntheticVisualStartSkippedMarker(
+      reason: String,
+      carrier: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=synthetic-visual-start-skipped " +
+          "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true " +
+          "syntheticCarrierVisualProbe=true skipReason=already-presented " +
+          "carrier=$carrier runtimeCrash=false"
+
+  fun panelCarrierStartDeferredMarker(
+      reason: String,
+      entityPresent: Boolean,
+      panelReady: Boolean,
+      surfacePresent: Boolean,
+      surfaceValid: Boolean,
+      surfaceConsumerCalled: Boolean,
+      carrier: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=scene-panel-carrier-start-deferred " +
+          "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true scenePanelCarrier=true " +
+          "entityPresent=$entityPresent panelReady=$panelReady " +
+          "surfacePresent=$surfacePresent surfaceValid=$surfaceValid " +
+          "surfaceConsumerCalled=$surfaceConsumerCalled " +
+          "carrier=$carrier runtimeCrash=false"
+
+  fun panelCarrierStartFailedMarker(
+      reason: String,
+      carrier: String,
+      error: String,
+      message: String? = null,
+      panelLayerUpdateStatus: String? = null,
+  ): String =
+      buildString {
+        append("channel=camera-hwb-spatial-probe status=scene-panel-carrier-start-failed ")
+        append("reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true scenePanelCarrier=true ")
+        append("sceneQuadLayerCreated=false nativeStartRequested=false ")
+        if (panelLayerUpdateStatus != null) {
+          append("panelLayerUpdateStatus=${activityMarkerToken(panelLayerUpdateStatus)} ")
+        }
+        append("carrier=$carrier ")
+        append("error=${activityMarkerToken(error)} ")
+        if (message != null) {
+          append("message=${activityMarkerToken(message)} ")
+        }
+        append("runtimeCrash=false")
+      }
+
+  fun panelCarrierSyntheticVisualPresentedMarker(
+      surfaceValid: Boolean,
+      canvasDrawn: Boolean,
+      panelRegistrationId: String,
+      carrier: String,
+      panelLayerUpdateStatus: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=synthetic-visual-presented " +
+          "rawCameraProjectionProbe=true syntheticCarrierVisualProbe=true " +
+          "surfaceValid=$surfaceValid canvasDrawn=$canvasDrawn " +
+          "scenePanelCarrier=true sceneQuadLayerCreated=false nativeStartRequested=false " +
+          "cameraRuntimeStarted=false panelRegistrationId=$panelRegistrationId " +
+          "carrier=$carrier " +
+          "panelLayerUpdateStatus=${activityMarkerToken(panelLayerUpdateStatus)} " +
+          "syntheticVisualPattern=high-contrast-red-green-blue-yellow-checkerboard " +
+          "sampledCameraTexture=false privateShaderStack=false customProjectionStack=false " +
+          "runtimeCrash=false"
+
+  fun panelCarrierNativeStartRequestedMarker(
+      surfaceValid: Boolean,
+      startMask: Long,
+      readerMaxImages: Int,
+      panelRegistrationId: String,
+      carrier: String,
+      panelLayerUpdateStatus: String,
+      projectionMarkerFields: String,
+      stereoMarkerFields: String,
+      videoProjectionMarkerFields: String,
+      publicMultiStackMarkerFields: String,
+      nativePassthroughStartMask: Long,
+      nativeEnvironmentDepthStartMask: Long,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=native-start-requested " +
+          "rawCameraProjectionProbe=true scenePanelCarrier=true sdkSwapchainCreated=false " +
+          "surfaceValid=$surfaceValid sceneQuadLayerCreated=false nativeStartRequested=true " +
+          "startMask=$startMask requestedFrames=0 frameLimit=none " +
+          "readerMaxImages=$readerMaxImages " +
+          "panelRegistrationId=$panelRegistrationId " +
+          "carrier=$carrier " +
+          "panelLayerUpdateStatus=${activityMarkerToken(panelLayerUpdateStatus)} " +
+          "${projectionMarkerFields.trim()} " +
+          "${stereoMarkerFields.trim()} " +
+          "${videoProjectionMarkerFields.trim()} " +
+          "${publicMultiStackMarkerFields.trim()} " +
+          "nativePassthroughStartMask=$nativePassthroughStartMask " +
+          "nativeEnvironmentDepthStartMask=$nativeEnvironmentDepthStartMask " +
+          "outputMode=raw-color-target-rect sampledCameraTexture=see-native-logcat " +
+          "sampledLeftCameraTexture=see-native-logcat sampledRightCameraTexture=see-native-logcat " +
+          "monoDuplicated=false privateShaderStack=false customProjectionStack=false " +
+          "runtimeCrash=false"
+
   fun targetScaleJoystickAdjustedMarker(
       inputSource: String,
       controllerJoystickMapping: String,
