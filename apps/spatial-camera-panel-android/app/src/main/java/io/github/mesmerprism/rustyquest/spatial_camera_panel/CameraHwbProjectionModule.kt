@@ -534,6 +534,74 @@ internal object CameraHwbProjectionModule {
           "monoDuplicated=false " +
           "privateShaderStack=false customProjectionStack=false runtimeCrash=false"
 
+  fun rawProjectionLayerCreatedMarker(
+      sceneObjectHandle: Long,
+      plane: CameraHwbProjectionPlane,
+      layerZIndex: Int,
+      carrier: String,
+      carrierMode: CameraHwbProjectionCarrierMode,
+      projectionMarkerFields: String,
+      stereoMarkerFields: String,
+      videoProjectionMarkerFields: String,
+      publicMultiStackMarkerFields: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=raw-camera-projection-layer-created " +
+          "rawCameraProjectionProbe=true sceneQuadLayerCreated=true " +
+          "anchorMode=generated-single-sided-quad sceneObjectHandle=$sceneObjectHandle " +
+          "widthMeters=${activityMarkerFloat(plane.projectionWidthMeters)} " +
+          "heightMeters=${activityMarkerFloat(plane.projectionHeightMeters)} " +
+          "zIndex=$layerZIndex " +
+          "carrier=$carrier " +
+          "renderSurfaceCarrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+          "projectionCarrierRoomObject=${carrierMode == CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject} " +
+          "projectionAnchorHittable=none-first-room-diagnostic " +
+          "projectionAnchorMaterialRenderOrder=default-first-room-diagnostic " +
+          "${projectionMarkerFields.trim()} " +
+          "${stereoMarkerFields.trim()} " +
+          "${videoProjectionMarkerFields.trim()} " +
+          "${publicMultiStackMarkerFields.trim()} " +
+          "poseSource=${poseSourceToken(plane)} viewerPositionM=${activityVectorMarker(plane.viewerPosition)} " +
+          "viewerForward=${activityVectorMarker(plane.forward)} viewerUp=${activityVectorMarker(plane.up)} " +
+          "viewerRight=${activityVectorMarker(plane.right)} planeCenterM=${activityVectorMarker(plane.center)} " +
+          "planeQuaternion=${activityQuaternionMarker(plane.pose.q)} " +
+          "leftEyeOffsetM=${activityVectorMarker(plane.leftEyeOffset)} " +
+          "rightEyeOffsetM=${activityVectorMarker(plane.rightEyeOffset)} " +
+          "outputMode=raw-color-target-rect sampledCameraTexture=true " +
+          "sampledLeftCameraTexture=true sampledRightCameraTexture=true monoDuplicated=false " +
+          "sampledCameraTextureSource=native-camera-hwb-pending-first-frame " +
+          "privateShaderStack=false " +
+          "customProjectionStack=false runtimeCrash=false"
+
+  fun rawProjectionLayerCreateFailedMarker(error: String, message: String): String =
+      "channel=camera-hwb-spatial-probe status=layer-create-failed " +
+          "rawCameraProjectionProbe=true sceneQuadLayerCreated=false " +
+          "anchorMode=generated-single-sided-quad " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun syntheticVisualDrawSkippedMarker(carrierLabel: String): String =
+      "channel=camera-hwb-spatial-probe status=synthetic-visual-draw-skipped " +
+          "rawCameraProjectionProbe=true syntheticCarrierVisualProbe=true " +
+          "reason=surface-invalid carrierLabel=${activityMarkerToken(carrierLabel)} canvasDrawn=false"
+
+  fun syntheticVisualDrawCompleteMarker(drawn: Boolean, carrierLabel: String): String =
+      "channel=camera-hwb-spatial-probe status=synthetic-visual-draw-complete " +
+          "rawCameraProjectionProbe=true syntheticCarrierVisualProbe=true canvasDrawn=$drawn " +
+          "producer=android-canvas carrierLabel=${activityMarkerToken(carrierLabel)} " +
+          "checkerCells=8 colorBlocks=red-green-blue-yellow textLabel=SPATIAL_SDK " +
+          "widthPx=$CAMERA_HWB_PROJECTION_WIDTH_PX heightPx=$CAMERA_HWB_PROJECTION_HEIGHT_PX"
+
+  fun syntheticVisualDrawFailedMarker(
+      carrierLabel: String,
+      error: String,
+      message: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=synthetic-visual-draw-failed " +
+          "rawCameraProjectionProbe=true syntheticCarrierVisualProbe=true canvasDrawn=false " +
+          "carrierLabel=${activityMarkerToken(carrierLabel)} " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
   fun rawProjectionPlaneUpdatedMarker(
       reason: String,
       plane: CameraHwbProjectionPlane,
@@ -723,6 +791,20 @@ internal object CameraHwbProjectionModule {
           "sampledLeftCameraTexture=see-native-logcat sampledRightCameraTexture=see-native-logcat " +
           "monoDuplicated=false privateShaderStack=false customProjectionStack=false " +
           "runtimeCrash=false"
+
+  fun scenePanelCarrierDestroyedMarker(
+      reason: String,
+      nativeStopped: Boolean,
+      entityDestroyed: Boolean,
+      sceneObjectDestroyed: Boolean,
+      carrier: String,
+      cleanupStatus: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=scene-panel-carrier-destroyed " +
+          "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true scenePanelCarrier=true " +
+          "nativeStopped=$nativeStopped entityDestroyed=$entityDestroyed " +
+          "sceneObjectDestroyed=$sceneObjectDestroyed " +
+          "carrier=$carrier cleanupStatus=$cleanupStatus runtimeCrash=false"
 
   fun targetScaleJoystickAdjustedMarker(
       inputSource: String,

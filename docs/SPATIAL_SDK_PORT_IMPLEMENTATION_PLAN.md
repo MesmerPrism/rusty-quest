@@ -205,12 +205,14 @@ Apply that model here when a lane grows beyond a narrow facade method:
 - package projection carrier selection, placement-plane construction from
   Activity-observed scene inputs, target-rect math, target scale, stereo offset,
   raw-projection startup/swapchain/completion/native-start marker fields,
-  projection plane/update marker fields, panel-carrier start lifecycle marker fields,
-  placement-toggle marker fields, and markers in
+  raw projection layer-create marker fields, synthetic visual draw marker
+  fields, projection plane/update marker fields,
+  panel-carrier start lifecycle marker fields, placement-toggle marker fields, and markers in
   `CameraHwbProjectionModule.kt`;
 - package camera-HWB projection panel carrier construction, the Spatial SDK
-  video-surface panel entity, manual custom-mesh `PanelSceneObject`, and
-  create/surface/add/readiness marker fields in
+  video-surface panel entity, manual custom-mesh `PanelSceneObject`,
+  video-surface panel consumer/ready markers, and create/surface/add/readiness
+  marker fields in
   `CameraHwbProjectionPanelCarrierModule.kt`;
 - package private layer panel placement/input policy in
   `SpatialPanelPlacementModule.kt`;

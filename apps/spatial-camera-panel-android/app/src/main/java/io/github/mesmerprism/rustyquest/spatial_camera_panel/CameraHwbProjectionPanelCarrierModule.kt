@@ -201,6 +201,39 @@ internal object CameraHwbProjectionPanelCarrierModule {
           "viewerRight=${activityVectorMarker(plane.right)} planeCenterM=${activityVectorMarker(plane.center)} " +
           "planeQuaternion=${activityQuaternionMarker(plane.pose.q)} runtimeCrash=false"
 
+  fun scenePanelSurfaceConsumerCalledMarker(
+      surfaceValid: Boolean,
+      projectionMarkerFields: String,
+      stereoMarkerFields: String,
+      videoProjectionMarkerFields: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=scene-panel-surface-consumer-called " +
+          "rawCameraProjectionProbe=true scenePanelCarrier=true " +
+          "surfaceValid=$surfaceValid " +
+          "panelRegistrationId=spatial_camera_projection_surface_panel " +
+          "carrier=video-surface-panel-scene-object " +
+          "${projectionMarkerFields.trim()} " +
+          "${stereoMarkerFields.trim()} " +
+          "${videoProjectionMarkerFields.trim()} runtimeCrash=false"
+
+  fun scenePanelReadyMarker(
+      panelHandle: Long,
+      surfaceValid: Boolean,
+      panelLayerUpdateStatus: String,
+      projectionMarkerFields: String,
+      stereoMarkerFields: String,
+      videoProjectionMarkerFields: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=scene-panel-ready " +
+          "rawCameraProjectionProbe=true scenePanelCarrier=true " +
+          "panelHandle=$panelHandle surfaceValid=$surfaceValid " +
+          "panelRegistrationId=spatial_camera_projection_surface_panel " +
+          "carrier=video-surface-panel-scene-object " +
+          "panelLayerUpdateStatus=${activityMarkerToken(panelLayerUpdateStatus)} " +
+          "${projectionMarkerFields.trim()} " +
+          "${stereoMarkerFields.trim()} " +
+          "${videoProjectionMarkerFields.trim()} runtimeCrash=false"
+
   fun manualPanelCarrierReadyMarker(
       surfaceValid: Boolean,
       panelLayerUpdateStatus: String,

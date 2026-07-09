@@ -742,15 +742,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               cameraHwbProjectionPanelSurfaceConsumerCalled = true
               cameraHwbProjectionPanelSurface = surface
               marker(
-                  "channel=camera-hwb-spatial-probe status=scene-panel-surface-consumer-called " +
-                      "rawCameraProjectionProbe=true scenePanelCarrier=true " +
-                      "surfaceValid=${surface.isValid} " +
-                      "panelRegistrationId=spatial_camera_projection_surface_panel " +
-                      "carrier=video-surface-panel-scene-object " +
-                      cameraHwbProjectionMarkerFields() + " " +
-                      cameraHwbProjectionStereoMarkerFields() + " " +
-                      spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings) +
-                      " runtimeCrash=false"
+                  CameraHwbProjectionPanelCarrierModule.scenePanelSurfaceConsumerCalledMarker(
+                      surfaceValid = surface.isValid,
+                      projectionMarkerFields = cameraHwbProjectionMarkerFields(),
+                      stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
+                      videoProjectionMarkerFields =
+                          spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings),
+                  )
               )
               startCameraHwbProjectionPanelCarrierIfReady("surface-consumer")
             },
@@ -763,16 +761,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               val layerUpdateStatus =
                   updateCameraHwbProjectionPanelCarrierLayer(plane, "panel-setup")
               marker(
-                  "channel=camera-hwb-spatial-probe status=scene-panel-ready " +
-                      "rawCameraProjectionProbe=true scenePanelCarrier=true " +
-                      "panelHandle=${panel.handle} surfaceValid=${panel.surface.isValid} " +
-                      "panelRegistrationId=spatial_camera_projection_surface_panel " +
-                      "carrier=video-surface-panel-scene-object " +
-                      "panelLayerUpdateStatus=${activityMarkerToken(layerUpdateStatus)} " +
-                      cameraHwbProjectionMarkerFields(plane) + " " +
-                      cameraHwbProjectionStereoMarkerFields() + " " +
-                      spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings) +
-                      " runtimeCrash=false"
+                  CameraHwbProjectionPanelCarrierModule.scenePanelReadyMarker(
+                      panelHandle = panel.handle,
+                      surfaceValid = panel.surface.isValid,
+                      panelLayerUpdateStatus = layerUpdateStatus,
+                      projectionMarkerFields = cameraHwbProjectionMarkerFields(plane),
+                      stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
+                      videoProjectionMarkerFields =
+                          spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings),
+                  )
               )
               startCameraHwbProjectionPanelCarrierIfReady("panel-setup")
             },
@@ -3096,43 +3093,28 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             layer.setZIndex(layerZIndex)
             sdkQuadSurfaceProbeLayer = layer
             marker(
-                    "channel=camera-hwb-spatial-probe status=raw-camera-projection-layer-created " +
-                    "rawCameraProjectionProbe=true sceneQuadLayerCreated=true " +
-                    "anchorMode=generated-single-sided-quad sceneObjectHandle=${sceneObject.handle} " +
-                    "widthMeters=${activityMarkerFloat(plane.projectionWidthMeters)} " +
-                    "heightMeters=${activityMarkerFloat(plane.projectionHeightMeters)} " +
-                    "zIndex=$layerZIndex " +
-                    "carrier=${cameraHwbProjectionCarrierToken()} " +
-                    "renderSurfaceCarrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
-                    "projectionCarrierRoomObject=${cameraHwbProjectionCarrierMode == CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject} " +
-                    "projectionAnchorHittable=none-first-room-diagnostic " +
-                    "projectionAnchorMaterialRenderOrder=default-first-room-diagnostic " +
-                    cameraHwbProjectionMarkerFields(plane) + " " +
-                    cameraHwbProjectionStereoMarkerFields() + " " +
-                    spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings) + " " +
-                    SpatialPublicMultiStack.markerFields() + " " +
-                    "poseSource=${CameraHwbProjectionModule.poseSourceToken(plane)} viewerPositionM=${activityVectorMarker(plane.viewerPosition)} " +
-                    "viewerForward=${activityVectorMarker(plane.forward)} viewerUp=${activityVectorMarker(plane.up)} " +
-                    "viewerRight=${activityVectorMarker(plane.right)} planeCenterM=${activityVectorMarker(plane.center)} " +
-                    "planeQuaternion=${activityQuaternionMarker(plane.pose.q)} " +
-                    "leftEyeOffsetM=${activityVectorMarker(plane.leftEyeOffset)} " +
-                    "rightEyeOffsetM=${activityVectorMarker(plane.rightEyeOffset)} " +
-                    "outputMode=raw-color-target-rect sampledCameraTexture=true " +
-                    "sampledLeftCameraTexture=true sampledRightCameraTexture=true monoDuplicated=false " +
-                    "sampledCameraTextureSource=native-camera-hwb-pending-first-frame " +
-                    "privateShaderStack=false " +
-                    "customProjectionStack=false runtimeCrash=false"
+                CameraHwbProjectionModule.rawProjectionLayerCreatedMarker(
+                    sceneObjectHandle = sceneObject.handle,
+                    plane = plane,
+                    layerZIndex = layerZIndex,
+                    carrier = cameraHwbProjectionCarrierToken(),
+                    carrierMode = cameraHwbProjectionCarrierMode,
+                    projectionMarkerFields = cameraHwbProjectionMarkerFields(plane),
+                    stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
+                    videoProjectionMarkerFields =
+                        spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings),
+                    publicMultiStackMarkerFields = SpatialPublicMultiStack.markerFields(),
+                )
             )
             true
           }
           .getOrElse { throwable ->
             cameraHwbProjectionEntity = null
             marker(
-                "channel=camera-hwb-spatial-probe status=layer-create-failed " +
-                    "rawCameraProjectionProbe=true sceneQuadLayerCreated=false " +
-                    "anchorMode=generated-single-sided-quad " +
-                    "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                    "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                CameraHwbProjectionModule.rawProjectionLayerCreateFailedMarker(
+                    error = throwable.javaClass.simpleName,
+                    message = throwable.message ?: "none",
+                )
             )
             false
           }
@@ -3204,9 +3186,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ): Boolean {
     if (!surface.isValid) {
       marker(
-          "channel=camera-hwb-spatial-probe status=synthetic-visual-draw-skipped " +
-              "rawCameraProjectionProbe=true syntheticCarrierVisualProbe=true " +
-              "reason=surface-invalid carrierLabel=${activityMarkerToken(carrierLabel)} canvasDrawn=false"
+          CameraHwbProjectionModule.syntheticVisualDrawSkippedMarker(carrierLabel)
       )
       return false
     }
@@ -3260,11 +3240,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         .onSuccess { drawn ->
           canvas?.let { locked -> runCatching { surface.unlockCanvasAndPost(locked) } }
           marker(
-              "channel=camera-hwb-spatial-probe status=synthetic-visual-draw-complete " +
-                  "rawCameraProjectionProbe=true syntheticCarrierVisualProbe=true canvasDrawn=$drawn " +
-                  "producer=android-canvas carrierLabel=${activityMarkerToken(carrierLabel)} " +
-                  "checkerCells=8 colorBlocks=red-green-blue-yellow textLabel=SPATIAL_SDK " +
-                  "widthPx=$CAMERA_HWB_PROJECTION_WIDTH_PX heightPx=$CAMERA_HWB_PROJECTION_HEIGHT_PX"
+              CameraHwbProjectionModule.syntheticVisualDrawCompleteMarker(drawn, carrierLabel)
           )
         }
         .onFailure { throwable ->
@@ -3272,11 +3248,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             runCatching { surface.unlockCanvasAndPost(locked) }
           }
           marker(
-              "channel=camera-hwb-spatial-probe status=synthetic-visual-draw-failed " +
-                  "rawCameraProjectionProbe=true syntheticCarrierVisualProbe=true canvasDrawn=false " +
-                  "carrierLabel=${activityMarkerToken(carrierLabel)} " +
-                  "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                  "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+              CameraHwbProjectionModule.syntheticVisualDrawFailedMarker(
+                  carrierLabel = carrierLabel,
+                  error = throwable.javaClass.simpleName,
+                  message = throwable.message ?: "none",
+              )
           )
         }
         .getOrDefault(false)
@@ -3413,11 +3389,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             reason != "camera-hwb-projection-pre-run"
     ) {
       marker(
-          "channel=camera-hwb-spatial-probe status=scene-panel-carrier-destroyed " +
-              "reason=${activityMarkerToken(reason)} rawCameraProjectionProbe=true scenePanelCarrier=true " +
-              "nativeStopped=$nativeStopped entityDestroyed=$entityDestroyed " +
-              "sceneObjectDestroyed=$sceneObjectDestroyed " +
-              "carrier=${cameraHwbProjectionCarrierToken()} cleanupStatus=$cleanupStatus runtimeCrash=false"
+          CameraHwbProjectionModule.scenePanelCarrierDestroyedMarker(
+              reason = reason,
+              nativeStopped = nativeStopped,
+              entityDestroyed = entityDestroyed,
+              sceneObjectDestroyed = sceneObjectDestroyed,
+              carrier = cameraHwbProjectionCarrierToken(),
+              cleanupStatus = cleanupStatus,
+          )
       )
     }
     return cleanupStatus

@@ -346,16 +346,18 @@ Interaction SDK pointer input without native multimodal extension forcing.
   panel z-index/display-role policy, viewer-locked and virtual-wall projection
   plane construction from Activity-observed scene inputs, target-rect math,
   raw-projection startup/swapchain/completion/native-start marker fields,
-  projection plane/update marker fields, panel-carrier start lifecycle marker fields,
-  target scale, stereo offset, placement-toggle marker fields, stereo marker
-  fields, and receipt constants.
+  raw projection layer-create marker fields, synthetic visual draw marker
+  fields, projection plane/update marker fields,
+  panel-carrier start lifecycle marker fields, target scale, stereo offset, placement-toggle marker fields,
+  stereo marker fields, and receipt constants.
   It must not query the Spatial scene, create
   Spatial scene objects, start JNI native routes, consume controller input, or
   own camera frames.
 - `app/src/main/.../CameraHwbProjectionPanelCarrierModule.kt` owns camera-HWB
   projection panel carrier construction: the Spatial SDK video-surface panel
   entity, the manual custom-mesh `PanelSceneObject`, carrier create/surface/add
-  failure markers, entity-spawn markers, and manual-carrier readiness markers.
+  failure markers, entity-spawn markers, video-surface panel consumer/ready
+  markers, and manual-carrier readiness markers.
   It must not start JNI native routes, update native projection parameters,
   poll controllers, or decide whether a carrier is enabled for the current run.
 - `app/src/main/.../SpatialPanelPlacementModule.kt` owns workflow/private-layer
