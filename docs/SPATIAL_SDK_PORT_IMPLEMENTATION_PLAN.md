@@ -197,6 +197,7 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `SpatialVideoProjectionSettings.kt`;
 - package raw Camera2/HWB and diagnostic probe route defaults, dimensions,
   durations, Android property opt-ins, opt-in marker fields, raw Camera2/HWB diagnostic probe marker fields,
+  raw Camera2/HWB diagnostic probe layer marker fields,
   SDK-owned quad surface/Vulkan/stereo-alpha probe lifecycle marker fields,
   external OpenXR swapchain wrapping lifecycle marker fields,
   and panel-surface matrix probe lifecycle marker fields in `SpatialDiagnosticProbeRouteModule.kt`;

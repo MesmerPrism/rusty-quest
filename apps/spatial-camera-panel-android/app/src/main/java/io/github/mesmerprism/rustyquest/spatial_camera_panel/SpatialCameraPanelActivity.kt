@@ -3035,22 +3035,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             layer.setZIndex(CAMERA_HWB_PROBE_Z_INDEX)
             sdkQuadSurfaceProbeLayer = layer
             marker(
-                "channel=camera-hwb-spatial-probe status=layer-created cameraHwbProbe=true " +
-                    "sceneQuadLayerCreated=true anchorMode=generated-single-sided-quad " +
-                    "sceneObjectHandle=${sceneObject.handle} widthMeters=$CAMERA_HWB_PROBE_WIDTH_METERS " +
-                    "heightMeters=$CAMERA_HWB_PROBE_HEIGHT_METERS zIndex=$CAMERA_HWB_PROBE_Z_INDEX " +
-                    "stereoMode=None carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
-                    "poseSource=Scene.getViewerPose layerPositionM=${activityVectorMarker(pose.t)} " +
-                    "layerQuaternion=${activityQuaternionMarker(pose.q)}"
+                SpatialDiagnosticProbeRouteModule.cameraHwbProbeLayerCreatedMarker(
+                    sceneObjectHandle = sceneObject.handle,
+                    layerPositionM = activityVectorMarker(pose.t),
+                    layerQuaternion = activityQuaternionMarker(pose.q),
+                )
             )
             true
           }
           .getOrElse { throwable ->
             marker(
-                "channel=camera-hwb-spatial-probe status=layer-create-failed cameraHwbProbe=true " +
-                    "sceneQuadLayerCreated=false anchorMode=generated-single-sided-quad " +
-                    "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                    "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                SpatialDiagnosticProbeRouteModule.cameraHwbProbeLayerCreateFailedMarker(
+                    error = throwable.javaClass.simpleName,
+                    message = throwable.message ?: "none",
+                )
             )
             false
           }

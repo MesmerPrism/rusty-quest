@@ -1005,6 +1005,25 @@ internal object SpatialDiagnosticProbeRouteModule {
           "surfaceValid=$surfaceValid widthPx=$CAMERA_HWB_PROBE_WIDTH_PX " +
           "heightPx=$CAMERA_HWB_PROBE_HEIGHT_PX"
 
+  fun cameraHwbProbeLayerCreatedMarker(
+      sceneObjectHandle: Long,
+      layerPositionM: String,
+      layerQuaternion: String,
+  ): String =
+      "channel=camera-hwb-spatial-probe status=layer-created cameraHwbProbe=true " +
+          "sceneQuadLayerCreated=true anchorMode=generated-single-sided-quad " +
+          "sceneObjectHandle=$sceneObjectHandle widthMeters=$CAMERA_HWB_PROBE_WIDTH_METERS " +
+          "heightMeters=$CAMERA_HWB_PROBE_HEIGHT_METERS zIndex=$CAMERA_HWB_PROBE_Z_INDEX " +
+          "stereoMode=None carrier=scenequadlayer-createAsAndroid-vulkan-wsi " +
+          "poseSource=Scene.getViewerPose layerPositionM=$layerPositionM " +
+          "layerQuaternion=$layerQuaternion"
+
+  fun cameraHwbProbeLayerCreateFailedMarker(error: String, message: String): String =
+      "channel=camera-hwb-spatial-probe status=layer-create-failed cameraHwbProbe=true " +
+          "sceneQuadLayerCreated=false anchorMode=generated-single-sided-quad " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
   fun cameraHwbProbeNativeStartRequestedMarker(
       surfaceValid: Boolean,
       startMask: Long,

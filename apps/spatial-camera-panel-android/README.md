@@ -336,7 +336,8 @@ Interaction SDK pointer input without native multimodal extension forcing.
   external OpenXR swapchain wrapping, SDK-owned quad surface/Vulkan probes,
   stereo-alpha probe dimensions/timing, panel-surface matrix variants, and
   explicit opt-in marker fields. It also owns raw Camera2/HWB diagnostic probe
-  marker fields, SDK-owned quad surface/Vulkan/stereo-alpha probe lifecycle marker fields,
+  marker fields, raw Camera2/HWB diagnostic probe layer marker fields,
+  SDK-owned quad surface/Vulkan/stereo-alpha probe lifecycle marker fields,
   external OpenXR swapchain wrapping lifecycle marker fields, and panel-surface
   matrix probe lifecycle marker fields.
   It must not create scene objects, draw surfaces, call JNI, or mutate Activity
