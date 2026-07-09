@@ -5975,62 +5975,29 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           1.25f,
       )
 
-  private fun cameraHwbProjectionEffectiveTargetRect(
-      baseX: Float,
-      baseY: Float,
-      baseWidth: Float,
-      baseHeight: Float,
-      offsetX: Float,
-  ): FloatArray =
-      CameraHwbProjectionModule.effectiveTargetRect(
-          baseX,
-          baseY,
-          baseWidth,
-          baseHeight,
-          offsetX,
+  private fun cameraHwbProjectionLeftEffectiveTargetRectMarker(): String =
+      CameraHwbProjectionModule.leftEffectiveTargetRectMarker(
           currentCameraHwbProjectionTargetScale(),
-      )
-
-  private fun cameraHwbProjectionLeftEffectiveTargetRect(): FloatArray =
-      cameraHwbProjectionEffectiveTargetRect(
-          CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_X,
-          CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_Y,
-          CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_WIDTH,
-          CAMERA_HWB_PROJECTION_LEFT_TARGET_RECT_HEIGHT,
-          -currentCameraHwbProjectionStereoHorizontalOffsetUv(),
-      )
-
-  private fun cameraHwbProjectionRightEffectiveTargetRect(): FloatArray =
-      cameraHwbProjectionEffectiveTargetRect(
-          CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_X,
-          CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_Y,
-          CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_WIDTH,
-          CAMERA_HWB_PROJECTION_RIGHT_TARGET_RECT_HEIGHT,
           currentCameraHwbProjectionStereoHorizontalOffsetUv(),
       )
 
-  private fun cameraHwbProjectionRectMarker(rect: FloatArray): String =
-      CameraHwbProjectionModule.rectMarker(rect)
-
-  private fun cameraHwbProjectionLeftEffectiveTargetRectMarker(): String =
-      cameraHwbProjectionRectMarker(cameraHwbProjectionLeftEffectiveTargetRect())
-
   private fun cameraHwbProjectionRightEffectiveTargetRectMarker(): String =
-      cameraHwbProjectionRectMarker(cameraHwbProjectionRightEffectiveTargetRect())
+      CameraHwbProjectionModule.rightEffectiveTargetRectMarker(
+          currentCameraHwbProjectionTargetScale(),
+          currentCameraHwbProjectionStereoHorizontalOffsetUv(),
+      )
 
-  private fun cameraHwbProjectionLeftPackedEffectiveTargetRectMarker(): String {
-    val rect = cameraHwbProjectionLeftEffectiveTargetRect()
-    return cameraHwbProjectionRectMarker(
-        floatArrayOf(0.5f * rect[0], rect[1], 0.5f * rect[2], rect[3])
-    )
-  }
+  private fun cameraHwbProjectionLeftPackedEffectiveTargetRectMarker(): String =
+      CameraHwbProjectionModule.leftPackedEffectiveTargetRectMarker(
+          currentCameraHwbProjectionTargetScale(),
+          currentCameraHwbProjectionStereoHorizontalOffsetUv(),
+      )
 
-  private fun cameraHwbProjectionRightPackedEffectiveTargetRectMarker(): String {
-    val rect = cameraHwbProjectionRightEffectiveTargetRect()
-    return cameraHwbProjectionRectMarker(
-        floatArrayOf(0.5f + 0.5f * rect[0], rect[1], 0.5f * rect[2], rect[3])
-    )
-  }
+  private fun cameraHwbProjectionRightPackedEffectiveTargetRectMarker(): String =
+      CameraHwbProjectionModule.rightPackedEffectiveTargetRectMarker(
+          currentCameraHwbProjectionTargetScale(),
+          currentCameraHwbProjectionStereoHorizontalOffsetUv(),
+      )
 
   private fun currentSpatialVrInputSystemToken(): String =
       SpatialControllerRoutingModule.spatialVrInputSystemToken(
