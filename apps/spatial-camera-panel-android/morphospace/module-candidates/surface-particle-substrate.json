@@ -7,7 +7,7 @@
   "proposed_lane": "matter",
   "maturity": "candidate",
   "problem": "The app-local surface-particle implementation mixes reusable particle state and deterministic update concepts with Spatial panel carriers and private payload hooks.",
-  "neutral_contract": "rusty.matter.surface_particle.candidate.v1",
+  "neutral_contract": "rusty.matter.surface_runtime.particle_snapshot.v1",
   "owns": [
     "Particle topology and bounded state descriptors independent of the app shell.",
     "Deterministic CPU reference update fixtures and damaged-input expectations.",
@@ -38,12 +38,20 @@
       "kind": "originating-app",
       "contract_only": false,
       "evidence": "apps/spatial-camera-panel-android/README.md and native-receipt surface-particle tests"
+    },
+    {
+      "consumer_id": "native-renderer-app",
+      "kind": "independent-app",
+      "contract_only": false,
+      "evidence": "Concrete MOD-003 hypothesis: apps/native-renderer-android consumes the same neutral Matter snapshot/render-payload conformance fixture through its separate OpenXR/Vulkan private-particle slot."
     }
   ],
   "evidence": [
     "SpatialSurfaceParticleRouteModule.kt keeps the route explicit opt-in.",
     "native-receipt host tests cover the current surface-particle boundary.",
-    "The workflow feature lock disables the candidate by default."
+    "The workflow feature lock disables the candidate by default.",
+    "Scoped graph S:/Work/migration/coding-graph/morphospace-mod001-particle-20260711 maps the Matter, Lattice, Optics, and Quest pressure surfaces.",
+    "Existing Matter surface-runtime and particle schema IDs are the contract baseline; no parallel app-derived schema is justified."
   ],
   "rollback": {
     "strategy": "Keep the existing app-local implementation and remove only the candidate/extraction adapter if parity fails.",

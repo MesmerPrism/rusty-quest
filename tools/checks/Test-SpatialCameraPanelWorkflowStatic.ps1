@@ -86,10 +86,10 @@ if ($moduleIds -contains "remote-peer-media" -or $featureIds -contains "remote-p
 if (@($lock.features | Where-Object { $_.enabled -eq $true } | ForEach-Object { @($_.permissions) }).Count -ne 0) {
     throw "The enabled base panel shell must not gain permissions through workflow adoption."
 }
-if ($state.current_unit -ne $null -or $state.next_ready_unit -ne "mod-001") {
-    throw "Spatial Camera Panel compact state must expose mod-001 as the only next unit."
+if ($state.current_unit -ne $null -or $state.next_ready_unit -ne "mod-002") {
+    throw "Spatial Camera Panel compact state must expose mod-002 as the only next-ready unit."
 }
-if ($wf003.status -ne "accepted" -or $mod001.status -ne "ready" -or
+if ($wf003.status -ne "accepted" -or $mod001.status -ne "accepted" -or
     @($mod001.prerequisites) -notcontains "wf-003") {
     throw "Spatial Camera Panel iteration-unit state is not resumable."
 }
@@ -103,14 +103,20 @@ if ($receipt.runtime_behavior_changed -ne $false -or $receipt.package_or_permiss
 
 $eventPath = Join-Path $workspaceRoot "iteration-events.jsonl"
 $eventLines = @(Get-Content -LiteralPath $eventPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-if ($eventLines.Count -ne 2) {
-    throw "WF-003 adoption expects its acceptance and coordinated-push projection events."
+if ($eventLines.Count -ne 5) {
+    throw "Spatial workflow expects adoption events plus the complete MOD-001 state sequence."
 }
 $acceptEvent = $eventLines[0] | ConvertFrom-Json
 $pushEvent = $eventLines[1] | ConvertFrom-Json
+$activeEvent = $eventLines[2] | ConvertFrom-Json
+$validatingEvent = $eventLines[3] | ConvertFrom-Json
+$acceptedEvent = $eventLines[4] | ConvertFrom-Json
 if ($acceptEvent.event_id -ne "wf-003-accepted" -or $acceptEvent.unit_id -ne "wf-003" -or
-    $pushEvent.event_id -ne "wf-003-pushed" -or $pushEvent.unit_id -ne "wf-003") {
-    throw "WF-003 local projection event is inconsistent."
+    $pushEvent.event_id -ne "wf-003-pushed" -or $pushEvent.unit_id -ne "wf-003" -or
+    $activeEvent.event_id -ne "mod-001-active" -or $activeEvent.unit_id -ne "mod-001" -or
+    $validatingEvent.event_id -ne "mod-001-validating" -or $validatingEvent.unit_id -ne "mod-001" -or
+    $acceptedEvent.event_id -ne "mod-001-accepted" -or $acceptedEvent.unit_id -ne "mod-001") {
+    throw "Spatial local workflow event sequence is inconsistent."
 }
 
 Write-Host "Spatial Camera Panel workflow static gate passed"

@@ -67,19 +67,19 @@
       "repo_id": "matter",
       "role": "core",
       "path": "<workspace-root>/repos/rusty-matter",
-      "allowed_paths": ["crates/", "docs/", "fixtures/", "schemas/"]
+      "allowed_paths": ["AGENTS.md", "README.md", "crates/", "docs/", "fixtures/", "schemas/", "tools/"]
     },
     {
       "repo_id": "lattice",
       "role": "core",
       "path": "<workspace-root>/repos/rusty-lattice",
-      "allowed_paths": ["crates/", "docs/", "fixtures/", "schemas/"]
+      "allowed_paths": ["AGENTS.md", "README.md", "crates/", "docs/", "fixtures/", "schemas/", "tools/"]
     },
     {
       "repo_id": "optics",
       "role": "core",
       "path": "<workspace-root>/repos/rusty-optics",
-      "allowed_paths": ["crates/", "docs/", "fixtures/", "schemas/"]
+      "allowed_paths": ["AGENTS.md", "README.md", "crates/", "docs/", "fixtures/", "schemas/", "tools/"]
     },
     {
       "repo_id": "manifold",
@@ -124,7 +124,7 @@
       "feature_id": "surface-particle-runtime",
       "lane": "matter",
       "maturity": "candidate",
-      "contract": "rusty.matter.surface_particle.candidate.v1",
+      "contract": "rusty.matter.surface_runtime.particle_snapshot.v1",
       "source_repo": "spatial-app",
       "dependencies": ["spatial-panel-shell"]
     },

@@ -3,7 +3,7 @@
   "schema": "rusty.morphospace.workflow.iteration_unit.v1",
   "unit_id": "mod-001",
   "project_id": "spatial-camera-panel",
-  "status": "ready",
+  "status": "accepted",
   "objective": "Classify the ECS and surface-particle family into app shell, Matter state/simulation, Lattice relation, Optics appearance, and Quest/Spatial adapter responsibilities.",
   "change_categories": ["authority", "module-layout", "validation", "public-private-boundary"],
   "instruction_impact": "update",
@@ -14,7 +14,7 @@
       "owner": "quest-repo",
       "change_reason": "Route the classified app and reusable particle ownership boundaries.",
       "action": "update",
-      "status": "planned",
+      "status": "complete",
       "validation": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check_all.ps1",
       "skill_id": null
     },
@@ -24,7 +24,7 @@
       "owner": "spatial-app",
       "change_reason": "Map app-local carrier behavior against the reusable candidate boundary.",
       "action": "update",
-      "status": "planned",
+      "status": "complete",
       "validation": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Test-SpatialCameraPanelAndroid.ps1",
       "skill_id": null
     },
@@ -34,7 +34,7 @@
       "owner": "quest-repo",
       "change_reason": "Record the accepted particle lane routing.",
       "action": "update",
-      "status": "planned",
+      "status": "complete",
       "validation": "planning roadmap validation",
       "skill_id": "rusty-morphospace-context"
     },
@@ -44,7 +44,7 @@
       "owner": "quest-repo",
       "change_reason": "Record the classified authority and contract boundary.",
       "action": "update",
-      "status": "planned",
+      "status": "complete",
       "validation": "planning roadmap validation",
       "skill_id": "system-engineering"
     },
@@ -54,7 +54,7 @@
       "owner": "quest-repo",
       "change_reason": "Record particle source roots and extraction-impact scan routing.",
       "action": "update",
-      "status": "planned",
+      "status": "complete",
       "validation": "scoped graph snapshot",
       "skill_id": "rust-work-graph"
     }

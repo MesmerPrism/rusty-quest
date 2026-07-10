@@ -47,6 +47,14 @@ adopter of the portable project/module workflow: the panel shell is the only
 workflow-selected baseline, nearby particle/hand/camera/media/asset/room
 families are explicit disabled entries, and unlisted features remain inert.
 
+For the Spatial surface-particle candidate, reuse Matter's existing particle
+and surface-runtime contracts. Matter owns state, simulation, force-source
+selection, deterministic diagnostics, snapshots, and render-neutral payloads;
+Lattice owns situated relation snapshots; Optics owns appearance/projection;
+Quest owns Vulkan/Spatial/Android adapters and effective markers; the app owns
+composition and private policy. Do not create a parallel app-derived particle
+schema or move renderer/platform code into Matter.
+
 ## Agent Board
 
 Read-only source inspection and dry-run profile validation do not require Agent

@@ -31,6 +31,16 @@ powershell -NoProfile -ExecutionPolicy Bypass -File ..\..\tools\checks\Test-Spat
 This workflow metadata does not itself activate a runtime route or add package
 permissions. Existing effective markers remain required.
 
+The accepted `MOD-001` particle classification reuses
+`rusty.matter.surface_runtime.particle_snapshot.v1` and the existing Matter
+particle state/config/diagnostic/render-payload contracts. The Kotlin
+coordinators, native Vulkan/WSI resources, Spatial panel carrier, JNI,
+properties, and effective markers remain Quest/app adapters. Lattice supplies
+reference-space and tracked-view relations; Optics supplies renderer-neutral
+appearance and projection policy. `apps/native-renderer-android` is the planned
+independent consumer because it has a separate OpenXR/Vulkan carrier and can
+prove the same neutral fixture without importing Spatial SDK behavior.
+
 ## Public Scope
 
 - Spatial SDK panel registration, placement, scaling, and headlock controls.
