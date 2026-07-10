@@ -436,9 +436,10 @@ Interaction SDK pointer input without native multimodal extension forcing.
   placement markers. It marks opaque downstream slots inactive in this public
   app.
 - `app/src/main/.../ExperimentPanelController.kt` owns the Compose experiment
-  panel UI and launcher UI. It may request panel visibility changes and
-  low-rate particle-driver scalar updates, but it must not own camera frames,
-  Vulkan WSI, SDK quad layers, or particle buffers.
+  panel UI and launcher UI plus experiment lifecycle and auto-panel marker
+  envelopes. It may request panel visibility changes and low-rate
+  particle-driver scalar updates, but it must not emit markers directly or
+  own camera frames, Vulkan WSI, SDK quad layers, or particle buffers.
 - `app/src/main/.../SpatialCameraPanelModels.kt` owns shared panel placement,
   native-interop receipt, and low-rate control state models used by the
   Activity facade and panel UI.

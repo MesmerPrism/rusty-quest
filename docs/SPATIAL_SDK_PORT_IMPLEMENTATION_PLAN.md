@@ -235,6 +235,9 @@ Apply that model here when a lane grows beyond a narrow facade method:
   UI-command, surface-target activation, remote participant, and Polar
   live-validation marker envelopes plus default validation identifiers, in
   `SpatialValidationCommandModule.kt`;
+- keep the Compose experiment UI plus experiment lifecycle and auto-panel
+  marker envelopes in `ExperimentPanelController.kt`, while the Activity owns
+  store mutation, panel visibility, and marker emission;
 - package surface-particle route policy, carrier parsing, dimensions, media
   settings, route lifecycle marker fields, parameter/alias marker fields,
   projection update marker fields, panel-layer marker fields, recenter marker fields,

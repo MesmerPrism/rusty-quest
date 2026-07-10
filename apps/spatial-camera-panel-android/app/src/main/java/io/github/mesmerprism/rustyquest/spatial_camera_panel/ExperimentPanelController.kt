@@ -53,6 +53,32 @@ internal object ExperimentPanelController {
   const val boundaryId: String = "spatial-sdk-experiment-panel-controller"
   const val authority: String = "low-rate-compose-ui-and-session-requester"
   const val highRatePayloadPolicy: String = "forbidden"
+
+  fun panelFirstLaunchResetMarker(): String =
+      "channel=experiment-panel status=panel-first-launch-reset " +
+          "freshSpatialActivityLaunch=true initialStage=participant " +
+          "validationIntent=false panelFirstExperimentFlow=true"
+
+  fun panelFirstFlowReadyMarker(
+      questionnaireDueReopensPanel: Boolean,
+      particleLayerVisible: Boolean,
+  ): String =
+      "channel=experiment-panel status=panel-first-flow-ready " +
+          "panelFirstExperimentFlow=true blockStartRequiresPanelClose=true " +
+          "questionnaireSubmitAutoStartsNextBlock=false " +
+          "questionnaireDueReopensPanel=$questionnaireDueReopensPanel " +
+          "remoteSurfaceTargetQuestionnaireAutoPanelSuppressed=true " +
+          "particleLayerVisible=$particleLayerVisible " +
+          "icosphereSurfaceAvailable=true rendererAuthority=native-vulkan-wsi-surface-panel"
+
+  fun questionnaireAutoPanelPolicyUpdatedMarker(
+      source: String,
+      questionnaireDueReopensPanel: Boolean,
+  ): String =
+      "channel=experiment-panel status=questionnaire-auto-panel-policy-updated " +
+          "source=${activityMarkerToken(source)} " +
+          "questionnaireDueReopensPanel=$questionnaireDueReopensPanel " +
+          "remoteSurfaceTargetQuestionnaireAutoPanelSuppressed=${!questionnaireDueReopensPanel}"
 }
 
 internal val PanelProbeBackground = Color(0xFFFFF3B0)

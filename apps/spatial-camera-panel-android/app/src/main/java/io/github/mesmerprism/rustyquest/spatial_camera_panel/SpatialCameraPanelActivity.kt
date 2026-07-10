@@ -292,11 +292,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     deactivatePanelShellIfRequested("activity-created")
     if (shouldResetExperimentForPanelFirstLaunch(intent)) {
       store.resetForNewParticipant()
-      marker(
-          "channel=experiment-panel status=panel-first-launch-reset " +
-              "freshSpatialActivityLaunch=true initialStage=participant " +
-              "validationIntent=false panelFirstExperimentFlow=true"
-      )
+      marker(ExperimentPanelController.panelFirstLaunchResetMarker())
     }
     marker(
         "channel=activity status=created package=${BuildConfig.APPLICATION_ID} " +
@@ -463,12 +459,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "panelMode=${panelStateToken()} rendererAuthority=native-vulkan-wsi-surface-panel"
     )
     marker(
-        "channel=experiment-panel status=panel-first-flow-ready " +
-            "panelFirstExperimentFlow=true blockStartRequiresPanelClose=true " +
-            "questionnaireSubmitAutoStartsNextBlock=false questionnaireDueReopensPanel=$questionnaireDueReopensPanel " +
-            "remoteSurfaceTargetQuestionnaireAutoPanelSuppressed=true " +
-            "particleLayerVisible=${particleLayerVisibleForPanelMode()} " +
-            "icosphereSurfaceAvailable=true rendererAuthority=native-vulkan-wsi-surface-panel"
+        ExperimentPanelController.panelFirstFlowReadyMarker(
+            questionnaireDueReopensPanel = questionnaireDueReopensPanel,
+            particleLayerVisible = particleLayerVisibleForPanelMode(),
+        )
     )
     marker(
         SpatialSurfaceParticleRouteModule.nativeSurfaceParticlePanelEntitySpawnedMarker(
@@ -4423,9 +4417,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     questionnaireDueReopensPanel = enabled
     marker(
-        "channel=experiment-panel status=questionnaire-auto-panel-policy-updated " +
-            "source=${activityMarkerToken(source)} questionnaireDueReopensPanel=$enabled " +
-            "remoteSurfaceTargetQuestionnaireAutoPanelSuppressed=${!enabled}"
+        ExperimentPanelController.questionnaireAutoPanelPolicyUpdatedMarker(
+            source = source,
+            questionnaireDueReopensPanel = enabled,
+        )
     )
   }
 
