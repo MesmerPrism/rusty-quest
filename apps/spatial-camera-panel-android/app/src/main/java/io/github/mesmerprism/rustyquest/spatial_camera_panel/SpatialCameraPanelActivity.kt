@@ -107,10 +107,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
   private var nativeReceiptLibraryLoaded = false
   private var nativeReceiptLibraryError = "not-loaded"
-  private var nativeSpatialControllerActionsStarted = false
-  private var nativeSpatialControllerActionsStartMask = 0L
-  private var spatialMultimodalInputRequested = false
-  private var spatialMultimodalInputRequestMask = 0L
   private var panelEntity: Entity? = null
   private var privateLayerPanelEntity: Entity? = null
   private var privateLayerPanelSceneObject: PanelSceneObject? = null
@@ -198,6 +194,18 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
+  private val nativeInputBootstrapCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialNativeInputBootstrapCoordinator(
+        SpatialNativeInputBootstrapBindings(
+            receiptLibraryLoaded = { nativeReceiptLibraryLoaded },
+            multimodalInputEnabled = ::spatialMultimodalInputEnabled,
+            controllerActionsEnabled = ::nativeSpatialControllerActionsEnabled,
+            requestMultimodalInput = ::nativeRequestSpatialMultimodalInput,
+            startControllerActions = ::nativeStartSpatialControllerActions,
+            marker = ::marker,
+        )
+    )
+  }
   private val controllerPollingCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialControllerPollingCoordinator(
         SpatialControllerPollingBindings(
@@ -205,11 +213,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               SpatialNativeControllerPollingState(
                   featureEnabled = nativeSpatialControllerActionsEnabled(),
                   receiptLibraryLoaded = nativeReceiptLibraryLoaded,
-                  actionsStarted = nativeSpatialControllerActionsStarted,
-                  actionStartMask = nativeSpatialControllerActionsStartMask,
+                  actionsStarted = nativeInputBootstrapCoordinator.controllerActionsStarted,
+                  actionStartMask = nativeInputBootstrapCoordinator.controllerActionsStartMask,
               )
             },
-            disableNativeActions = { nativeSpatialControllerActionsStarted = false },
+            disableNativeActions = nativeInputBootstrapCoordinator::disableControllerActions,
             pollNativeLeftThumbstickY = ::nativePollSpatialControllerLeftThumbstickY,
             pollNativeRightThumbstickY = ::nativePollSpatialControllerRightThumbstickY,
             pollNativeRightButtonB = ::nativePollSpatialControllerRightButtonB,
@@ -1353,8 +1361,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             nativeReceipt,
         )
     )
-    requestSpatialMultimodalInputIfReady(probe, phase)
-    startNativeSpatialControllerActionsIfReady(probe, phase)
+    nativeInputBootstrapCoordinator.requestMultimodalInputIfReady(probe, phase)
+    nativeInputBootstrapCoordinator.startControllerActionsIfReady(probe, phase)
   }
 
   private fun loadNativeReceiptLibrary() {
@@ -1414,99 +1422,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         .also {
           panelSurface?.destroy()
         }
-  }
-
-  private fun requestSpatialMultimodalInputIfReady(
-      probe: SpatialNativeInteropProbe,
-      phase: String,
-  ) {
-    if (spatialMultimodalInputRequested || !nativeReceiptLibraryLoaded) {
-      return
-    }
-    val enabled = spatialMultimodalInputEnabled()
-    if (!enabled) {
-      spatialMultimodalInputRequested = true
-      marker(SpatialOpenXrRouteModule.spatialMultimodalInputDisabledMarker(phase))
-      return
-    }
-    if (
-        !probe.openXrInstanceHandleNonZero ||
-            !probe.openXrSessionHandleNonZero ||
-            !probe.openXrGetInstanceProcAddrHandleNonZero
-    ) {
-      marker(SpatialOpenXrRouteModule.spatialMultimodalInputDeferredMarker(phase))
-      return
-    }
-    val requestMask =
-        runCatching {
-              nativeRequestSpatialMultimodalInput(
-                  probe.openXrInstanceHandle,
-                  probe.openXrSessionHandle,
-                  probe.openXrGetInstanceProcAddrHandle,
-              )
-            }
-            .getOrElse { throwable ->
-              marker(
-                  SpatialOpenXrRouteModule.spatialMultimodalInputErrorMarker(
-                      phase,
-                      throwable.javaClass.simpleName,
-                      throwable.message ?: "none",
-                  )
-              )
-              0L
-            }
-    spatialMultimodalInputRequested = true
-    spatialMultimodalInputRequestMask = requestMask
-    marker(SpatialOpenXrRouteModule.spatialMultimodalInputResultMarker(phase, requestMask))
-  }
-
-  private fun startNativeSpatialControllerActionsIfReady(
-      probe: SpatialNativeInteropProbe,
-      phase: String,
-  ) {
-    if (!nativeSpatialControllerActionsEnabled()) {
-      marker(SpatialOpenXrRouteModule.nativeControllerActionsDisabledMarker(phase))
-      return
-    }
-    if (nativeSpatialControllerActionsStarted || !nativeReceiptLibraryLoaded) {
-      return
-    }
-    if (
-        !probe.openXrInstanceHandleNonZero ||
-            !probe.openXrSessionHandleNonZero ||
-            !probe.openXrGetInstanceProcAddrHandleNonZero
-    ) {
-      marker(SpatialOpenXrRouteModule.nativeControllerActionsStartDeferredMarker(phase))
-      return
-    }
-    val startMask =
-        runCatching {
-              nativeStartSpatialControllerActions(
-                  probe.openXrInstanceHandle,
-                  probe.openXrSessionHandle,
-                  probe.openXrGetInstanceProcAddrHandle,
-              )
-            }
-            .getOrElse { throwable ->
-              marker(
-                  SpatialOpenXrRouteModule.nativeControllerActionsStartErrorMarker(
-                      phase,
-                      throwable.javaClass.simpleName,
-                      throwable.message ?: "none",
-                  )
-              )
-              0L
-            }
-    nativeSpatialControllerActionsStartMask = startMask
-    nativeSpatialControllerActionsStarted =
-        SpatialOpenXrRouteModule.nativeSpatialControllerActionSetAttached(startMask)
-    marker(
-        SpatialOpenXrRouteModule.nativeControllerActionsStartResultMarker(
-            phase,
-            startMask,
-            nativeSpatialControllerActionsStarted,
-        )
-    )
   }
 
   private fun runCameraHwbProjectionProbe(

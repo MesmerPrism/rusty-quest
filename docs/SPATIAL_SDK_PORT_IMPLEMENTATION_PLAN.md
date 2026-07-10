@@ -332,6 +332,12 @@ Apply that model here when a lane grows beyond a narrow facade method:
   controller preference, avatar-controller fallback, button/thumb
   normalization, and `SpatialControllerPrimarySnapshot` construction in
   `SpatialControllerSnapshotAdapter.kt`;
+- package the four one-shot multimodal/controller bootstrap fields plus
+  deferred/error/result sequencing in
+  `SpatialNativeInputBootstrapCoordinator.kt`; require Activity-supplied
+  explicit opt-in callbacks for both routes and retain property reads,
+  native-library state, OpenXR probe capture, JNI declarations, and panel/input
+  action authority in the Activity facade;
 - package native and Spatial SDK controller poll sequencing, edge and
   route-telemetry state, marker throttling, and ordered action callback dispatch
   in `SpatialControllerPollingCoordinator.kt`; keep frame cadence, route

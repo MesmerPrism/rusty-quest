@@ -515,6 +515,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   normalization, and `SpatialControllerPrimarySnapshot` construction. It must
   not choose polling cadence, enable input, pin Android controllers, dispatch
   actions, read feature properties, emit markers, or call JNI.
+- `app/src/main/.../SpatialNativeInputBootstrapCoordinator.kt` owns the four
+  one-shot multimodal/controller bootstrap fields and deferred/error/result
+  sequencing. It starts neither route unless the Activity-supplied explicit
+  opt-in callback is true. Activity bindings retain property reads,
+  native-library state, OpenXR probe capture, JNI declarations, and panel/input
+  action authority.
 - `app/src/main/.../SpatialControllerPollingCoordinator.kt` owns native and
   Spatial SDK controller poll sequencing, ten edge/route-telemetry state
   fields, route-marker throttling, and ordered scale, distance, trigger,
