@@ -408,6 +408,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   in `SpatialSurfaceParticleProjectionGeometryCoordinator.kt`; retain
   runtime-property reads and Android `Intent` parsing in Activity bindings so
   geometry updates cannot activate or start the feature.
+- package roll-stable viewer/eye projection math, geometry-change state,
+  panel-layer/native-pose update cadence, and projection receipts in
+  `SpatialSurfaceParticleProjectionUpdateCoordinator.kt`; retain Scene capture,
+  entity mutation, Android clock access, and JNI declarations in Activity
+  adapters so projection updates cannot activate or start the feature.
 - package native surface-particle registered video-surface callback sequencing,
   manual panel carrier construction, custom-mesh `PanelSceneObject` creation,
   create/surface/add failure markers, and readiness marker fields in

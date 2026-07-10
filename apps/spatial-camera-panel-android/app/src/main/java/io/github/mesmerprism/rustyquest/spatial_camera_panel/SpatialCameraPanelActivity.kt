@@ -120,14 +120,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var particleSurfacePanelReady = false
   private var particleSurfaceConsumerCalled = false
   private var particleSurfaceConsumerSurfaceValid = false
-  private var particleLayerProjectionMarkerCount = 0
-  private var lastParticleLayerProjectionMarkerMs = 0L
-  private var lastParticleLayerTargetDistanceMeters: Float? = null
-  private var lastParticleLayerSurfaceOverscanScale: Float? = null
   private var lastParticleLayerPanelOpacity: Float? = null
-  private var lastParticleLayerPanelLayerCheckMs = 0L
   private var particleLayerPanelLayerConfigured = false
-  private var particleLayerSurfaceGeometryApplied = false
   private var polarSensorPanel: PolarSensorPanel? = null
   private var panelHeadlockMarkerCount = 0
   private var lastPanelHeadlockMarkerMs = 0L
@@ -290,6 +284,85 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             },
             carrierMode = ::particleLayerCarrierMode,
             updateProjection = ::updateParticleLayerProjectionFromViewer,
+            marker = ::marker,
+        )
+    )
+  }
+  @OptIn(SpatialSDKExperimentalAPI::class)
+  private val surfaceParticleProjectionUpdateCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialSurfaceParticleProjectionUpdateCoordinator(
+        SpatialSurfaceParticleProjectionUpdateBindings(
+            cameraStackSuppressesParticles = {
+              surfaceParticleRuntimeCoordinator.cameraStackSuppressesParticles
+            },
+            captureViewerState = {
+              val viewerPose = scene.getViewerPose()
+              val eyeOffsets = runCatching { scene.getEyeOffsets() }.getOrNull()
+              SpatialSurfaceParticleViewerProjectionState(
+                  viewerPose = viewerPose,
+                  leftEyeOffset = eyeOffsets?.first,
+                  rightEyeOffset = eyeOffsets?.second,
+              )
+            },
+            currentViewYawDegrees =
+                surfaceParticleProjectionGeometryCoordinator::currentViewYawDegrees,
+            currentTargetDistanceMeters =
+                surfaceParticleProjectionGeometryCoordinator::currentTargetDistanceMeters,
+            projectionWidthMeters =
+                surfaceParticleProjectionGeometryCoordinator::projectionWidthMeters,
+            projectionHeightMeters =
+                surfaceParticleProjectionGeometryCoordinator::projectionHeightMeters,
+            currentSurfaceOverscanScale =
+                surfaceParticleProjectionGeometryCoordinator::currentSurfaceOverscanScale,
+            surfaceWidthMeters = surfaceParticleProjectionGeometryCoordinator::surfaceWidthMeters,
+            surfaceHeightMeters =
+                surfaceParticleProjectionGeometryCoordinator::surfaceHeightMeters,
+            particleLayerVisible = ::particleLayerVisibleForPanelMode,
+            updatePanelLayer = ::updateParticleLayerPanelLayer,
+            receiptLibraryLoaded = { nativeInteropCoordinator.receiptLibraryLoaded },
+            updateNativePanelPose = { update ->
+              nativeUpdateSurfaceParticlePanelPose(
+                  update.center.x,
+                  update.center.y,
+                  update.center.z,
+                  update.right.x,
+                  update.right.y,
+                  update.right.z,
+                  update.up.x,
+                  update.up.y,
+                  update.up.z,
+                  update.surfaceWidthMeters,
+                  update.surfaceHeightMeters,
+                  update.targetDistanceMeters,
+                  update.leftEyeOffsetRightMeters,
+                  update.rightEyeOffsetRightMeters,
+              )
+            },
+            updateNativeViewerEyePose = { update ->
+              nativeUpdateSurfaceParticleViewerEyePose(
+                  update.viewerPosition.x,
+                  update.viewerPosition.y,
+                  update.viewerPosition.z,
+                  update.rawRight.x,
+                  update.rawRight.y,
+                  update.rawRight.z,
+                  update.rawUp.x,
+                  update.rawUp.y,
+                  update.rawUp.z,
+                  update.rawForward.x,
+                  update.rawForward.y,
+                  update.rawForward.z,
+                  update.leftEyeWorld.x,
+                  update.leftEyeWorld.y,
+                  update.leftEyeWorld.z,
+                  update.rightEyeWorld.x,
+                  update.rightEyeWorld.y,
+                  update.rightEyeWorld.z,
+              )
+            },
+            elapsedRealtime = { SystemClock.elapsedRealtime() },
+            placementMarkerFields =
+                surfaceParticleProjectionGeometryCoordinator::placementMarkerFields,
             marker = ::marker,
         )
     )
@@ -2314,218 +2387,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   @OptIn(SpatialSDKExperimentalAPI::class)
   private fun updateParticleLayerProjectionFromViewer(reason: String, forceLog: Boolean) {
     val entity = particleLayerEntity ?: return
-    if (surfaceParticleRuntimeCoordinator.cameraStackSuppressesParticles) {
-      entity.setComponent(Visible(false))
-      if (forceLog) {
-        marker(
-            SpatialSurfaceParticleRouteModule.nativeSurfaceParticleProjectionPlaneUpdateSuppressedMarker(
-                reason
-            )
-        )
-      }
-      return
-    }
-    val viewerPose =
-        runCatching { scene.getViewerPose() }
-            .getOrElse { throwable ->
-              if (forceLog) {
-                marker(
-                    SpatialSurfaceParticleRouteModule.nativeSurfaceParticleProjectionPlaneUpdateSkippedMarker(
-                        reason,
-                        throwable.javaClass.simpleName,
+    surfaceParticleProjectionUpdateCoordinator.update(
+        SpatialSurfaceParticleProjectionUpdateRequest(
+            reason = reason,
+            forceLog = forceLog,
+            hideProjectionEntity = { entity.setComponent(Visible(false)) },
+            applyProjectionEntity = { update ->
+              entity.setComponent(Transform(update.pose))
+              if (update.applySurfaceGeometry) {
+                entity.setComponent(
+                    PanelDimensions(
+                        Vector2(update.surfaceWidthMeters, update.surfaceHeightMeters)
                     )
                 )
               }
-              return
-            }
-    val rawForward = viewerPose.forward().activityNormalizedOr(Vector3(0.0f, 0.0f, -1.0f))
-    val rawUp = viewerPose.up().activityNormalizedOr(Vector3(0.0f, 1.0f, 0.0f))
-    val rawRight = activityCross(rawForward, rawUp).activityNormalizedOr(Vector3(1.0f, 0.0f, 0.0f))
-    val yawDegrees = surfaceParticleProjectionGeometryCoordinator.currentViewYawDegrees()
-    val rollStableBasis = activityRollStableParticleProjectionBasis(rawForward, yawDegrees)
-    val forward = rollStableBasis.first
-    val right = rollStableBasis.second
-    val up = rollStableBasis.third
-    val eyeOffsets = runCatching { scene.getEyeOffsets() }.getOrNull()
-    val leftEyeOffsetRightMeters = activityEyeOffsetRightMeters(eyeOffsets?.first)
-    val rightEyeOffsetRightMeters = activityEyeOffsetRightMeters(eyeOffsets?.second)
-    val leftEyeWorld = viewerPose.t + rawRight * leftEyeOffsetRightMeters
-    val rightEyeWorld = viewerPose.t + rawRight * rightEyeOffsetRightMeters
-    val targetDistanceMeters =
-        surfaceParticleProjectionGeometryCoordinator.currentTargetDistanceMeters()
-    val projectionWidthMeters =
-        surfaceParticleProjectionGeometryCoordinator.projectionWidthMeters(targetDistanceMeters)
-    val projectionHeightMeters =
-        surfaceParticleProjectionGeometryCoordinator.projectionHeightMeters(targetDistanceMeters)
-    val surfaceOverscanScale =
-        surfaceParticleProjectionGeometryCoordinator.currentSurfaceOverscanScale()
-    val surfaceWidthMeters =
-        surfaceParticleProjectionGeometryCoordinator.surfaceWidthMeters(
-            targetDistanceMeters,
-            surfaceOverscanScale,
-        )
-    val surfaceHeightMeters =
-        surfaceParticleProjectionGeometryCoordinator.surfaceHeightMeters(
-            targetDistanceMeters,
-            surfaceOverscanScale,
-        )
-    val projectionSurfaceMarkerFields =
-        SpatialSurfaceParticleRouteModule.projectionSurfaceMarkerFields(
-            projectionWidthMeters,
-            projectionHeightMeters,
-            surfaceWidthMeters,
-            surfaceHeightMeters,
-        )
-    val previousTargetDistanceMeters = lastParticleLayerTargetDistanceMeters
-    val previousSurfaceOverscanScale = lastParticleLayerSurfaceOverscanScale
-    val surfaceGeometryChanged =
-        previousTargetDistanceMeters == null ||
-            abs(previousTargetDistanceMeters - targetDistanceMeters) >= 0.001f ||
-            previousSurfaceOverscanScale == null ||
-            abs(previousSurfaceOverscanScale - surfaceOverscanScale) >= 0.001f
-    if (surfaceGeometryChanged) {
-      lastParticleLayerTargetDistanceMeters = targetDistanceMeters
-      lastParticleLayerSurfaceOverscanScale = surfaceOverscanScale
-      marker(
-          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleSurfaceGeometryHotloadUpdatedMarker(
-              targetDistanceMeters,
-              projectionWidthMeters,
-              projectionHeightMeters,
-              surfaceOverscanScale,
-              surfaceWidthMeters,
-              surfaceHeightMeters,
-              projectionSurfaceMarkerFields,
-          )
-      )
-    }
-    val now = SystemClock.elapsedRealtime()
-    val center = viewerPose.t + forward * targetDistanceMeters
-    val planePose = Pose(center, Quaternion.fromDirection(forward, up))
-    entity.setComponent(Transform(planePose))
-    if (surfaceGeometryChanged || !particleLayerSurfaceGeometryApplied) {
-      entity.setComponent(PanelDimensions(Vector2(surfaceWidthMeters, surfaceHeightMeters)))
-      particleLayerSurfaceGeometryApplied = true
-    }
-    entity.setComponent(Visible(particleLayerVisibleForPanelMode()))
-    if (
-        forceLog ||
-            surfaceGeometryChanged ||
-            now - lastParticleLayerPanelLayerCheckMs >= PARTICLE_LAYER_PANEL_LAYER_CHECK_INTERVAL_MS
-    ) {
-      lastParticleLayerPanelLayerCheckMs = now
-      updateParticleLayerPanelLayer("projection-plane-update", forceLog = false)
-    }
-    val nativePanelPoseUpdateMask =
-        if (nativeInteropCoordinator.receiptLibraryLoaded) {
-          runCatching {
-                nativeUpdateSurfaceParticlePanelPose(
-                    center.x,
-                    center.y,
-                    center.z,
-                    right.x,
-                    right.y,
-                    right.z,
-                    up.x,
-                    up.y,
-                    up.z,
-                    surfaceWidthMeters,
-                    surfaceHeightMeters,
-                    targetDistanceMeters,
-                    leftEyeOffsetRightMeters,
-                    rightEyeOffsetRightMeters,
-                )
-              }
-              .getOrElse { throwable ->
-                if (forceLog) {
-                  marker(
-                      SpatialSurfaceParticleRouteModule.nativeSurfaceParticlePanelPoseNativeUpdateFailedMarker(
-                          reason,
-                          throwable.javaClass.simpleName,
-                      )
-                  )
-                }
-                0L
-              }
-        } else {
-          0L
-        }
-    val nativeViewerEyePoseUpdateMask =
-        if (nativeInteropCoordinator.receiptLibraryLoaded) {
-          runCatching {
-                nativeUpdateSurfaceParticleViewerEyePose(
-                    viewerPose.t.x,
-                    viewerPose.t.y,
-                    viewerPose.t.z,
-                    rawRight.x,
-                    rawRight.y,
-                    rawRight.z,
-                    rawUp.x,
-                    rawUp.y,
-                    rawUp.z,
-                    rawForward.x,
-                    rawForward.y,
-                    rawForward.z,
-                    leftEyeWorld.x,
-                    leftEyeWorld.y,
-                    leftEyeWorld.z,
-                    rightEyeWorld.x,
-                    rightEyeWorld.y,
-                    rightEyeWorld.z,
-                )
-              }
-              .getOrElse { throwable ->
-                if (forceLog) {
-                  marker(
-                      SpatialSurfaceParticleRouteModule.nativeSurfaceParticleViewerEyePoseNativeUpdateFailedMarker(
-                          reason,
-                          throwable.javaClass.simpleName,
-                      )
-                  )
-                }
-                0L
-              }
-        } else {
-          0L
-        }
-    val shouldLog =
-        forceLog ||
-            (particleLayerProjectionMarkerCount < 4 &&
-                now - lastParticleLayerProjectionMarkerMs >=
-                    PARTICLE_LAYER_PROJECTION_MARKER_INTERVAL_MS)
-    if (!shouldLog) {
-      return
-    }
-    particleLayerProjectionMarkerCount += 1
-    lastParticleLayerProjectionMarkerMs = now
-    marker(
-        SpatialSurfaceParticleRouteModule.nativeSurfaceParticleProjectionPlaneUpdatedMarker(
-            reason = reason,
-            placementMarkerFields =
-                surfaceParticleProjectionGeometryCoordinator.placementMarkerFields(),
-            viewYawDegrees = yawDegrees,
-            viewerPositionM = activityVectorMarker(viewerPose.t),
-            viewerForward = activityVectorMarker(rawForward),
-            viewerUp = activityVectorMarker(rawUp),
-            viewerRight = activityVectorMarker(rawRight),
-            panelForward = activityVectorMarker(forward),
-            panelRight = activityVectorMarker(right),
-            panelUp = activityVectorMarker(up),
-            nativePanelPoseUpdateMask = nativePanelPoseUpdateMask,
-            nativeViewerEyePoseUpdateMask = nativeViewerEyePoseUpdateMask,
-            projectionSurfaceMarkerFields = projectionSurfaceMarkerFields,
-            projectionWidthMeters = projectionWidthMeters,
-            projectionHeightMeters = projectionHeightMeters,
-            surfaceOverscanScale = surfaceOverscanScale,
-            surfaceWidthMeters = surfaceWidthMeters,
-            surfaceHeightMeters = surfaceHeightMeters,
-            planeCenterM = activityVectorMarker(center),
-            planeQuaternion = activityQuaternionMarker(planePose.q),
-            leftEyeOffsetM = activityVectorMarker(eyeOffsets?.first ?: Vector3(0.0f)),
-            rightEyeOffsetM = activityVectorMarker(eyeOffsets?.second ?: Vector3(0.0f)),
-            leftEyeWorldM = activityVectorMarker(leftEyeWorld),
-            rightEyeWorldM = activityVectorMarker(rightEyeWorld),
-            leftEyeOffsetRightMeters = leftEyeOffsetRightMeters,
-            rightEyeOffsetRightMeters = rightEyeOffsetRightMeters,
+              entity.setComponent(Visible(update.visible))
+            },
         )
     )
   }

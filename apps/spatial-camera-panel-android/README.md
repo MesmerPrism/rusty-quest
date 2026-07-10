@@ -609,6 +609,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   projection/surface dimensions, placement marker fields, and command
   receipts. Runtime-property reads and Android `Intent` parsing remain
   Activity bindings; geometry updates cannot activate or start the feature.
+- `app/src/main/.../SpatialSurfaceParticleProjectionUpdateCoordinator.kt`
+  owns roll-stable viewer/eye projection math, geometry-change state,
+  panel-layer/native-pose update cadence, and projection receipts. Scene
+  capture, entity mutation, Android clock access, and JNI declarations remain
+  Activity adapters; projection updates cannot activate or start the feature.
 - `app/src/main/.../SpatialSurfaceParticlePanelCarrierModule.kt` owns native
   surface-particle panel carrier construction: registered video-surface callback
   sequencing, the manual custom-mesh `PanelSceneObject`, create/surface/add
