@@ -5,18 +5,13 @@
   "plan_revision": 1,
   "current_unit": null,
   "next_ready_unit": "mod-003",
-  "last_event_id": "mod-002-accepted",
-  "dirty_repositories": ["lattice", "matter", "optics", "quest-repo", "work-environment"],
+  "last_event_id": "mod-002-pushed",
+  "dirty_repositories": [],
   "blockers": [],
   "validation_checkpoint": {
     "tier": "deep",
     "receipt": "<planning-root>/workspaces/morphospace-platform-iteration/morphospace/receipts/mod-002-particle-contracts.json",
     "result": "pass"
   },
-  "pending_push_bundle": {
-    "bundle_id": "particle-contract-batch",
-    "unit_ids": ["mod-001", "mod-002"],
-    "repo_ids": ["lattice", "matter", "optics", "quest-repo", "work-environment"],
-    "ready": true
-  }
+  "pending_push_bundle": null
 }

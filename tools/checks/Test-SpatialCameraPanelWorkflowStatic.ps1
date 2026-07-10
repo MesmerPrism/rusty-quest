@@ -107,8 +107,8 @@ if ($receipt.runtime_behavior_changed -ne $false -or $receipt.package_or_permiss
 
 $eventPath = Join-Path $workspaceRoot "iteration-events.jsonl"
 $eventLines = @(Get-Content -LiteralPath $eventPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-if ($eventLines.Count -ne 7) {
-    throw "Spatial workflow expects adoption through MOD-002 acceptance events."
+if ($eventLines.Count -ne 8) {
+    throw "Spatial workflow expects adoption through the MOD-002 push event."
 }
 $acceptEvent = $eventLines[0] | ConvertFrom-Json
 $pushEvent = $eventLines[1] | ConvertFrom-Json
@@ -117,13 +117,15 @@ $validatingEvent = $eventLines[3] | ConvertFrom-Json
 $acceptedEvent = $eventLines[4] | ConvertFrom-Json
 $mod002ActiveEvent = $eventLines[5] | ConvertFrom-Json
 $mod002AcceptedEvent = $eventLines[6] | ConvertFrom-Json
+$mod002PushEvent = $eventLines[7] | ConvertFrom-Json
 if ($acceptEvent.event_id -ne "wf-003-accepted" -or $acceptEvent.unit_id -ne "wf-003" -or
     $pushEvent.event_id -ne "wf-003-pushed" -or $pushEvent.unit_id -ne "wf-003" -or
     $activeEvent.event_id -ne "mod-001-active" -or $activeEvent.unit_id -ne "mod-001" -or
     $validatingEvent.event_id -ne "mod-001-validating" -or $validatingEvent.unit_id -ne "mod-001" -or
     $acceptedEvent.event_id -ne "mod-001-accepted" -or $acceptedEvent.unit_id -ne "mod-001" -or
     $mod002ActiveEvent.event_id -ne "mod-002-active" -or $mod002ActiveEvent.unit_id -ne "mod-002" -or
-    $mod002AcceptedEvent.event_id -ne "mod-002-accepted" -or $mod002AcceptedEvent.unit_id -ne "mod-002") {
+    $mod002AcceptedEvent.event_id -ne "mod-002-accepted" -or $mod002AcceptedEvent.unit_id -ne "mod-002" -or
+    $mod002PushEvent.event_id -ne "mod-002-pushed" -or $mod002PushEvent.unit_id -ne "mod-002") {
     throw "Spatial local workflow event sequence is inconsistent."
 }
 
