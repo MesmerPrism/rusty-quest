@@ -4,14 +4,19 @@
   "project_id": "spatial-camera-panel",
   "plan_revision": 1,
   "current_unit": null,
-  "next_ready_unit": "mod-002",
-  "last_event_id": "mod-001-accepted",
-  "dirty_repositories": ["spatial-app", "quest-repo"],
+  "next_ready_unit": "mod-003",
+  "last_event_id": "mod-002-accepted",
+  "dirty_repositories": ["lattice", "matter", "optics", "quest-repo", "work-environment"],
   "blockers": [],
   "validation_checkpoint": {
-    "tier": "standard",
-    "receipt": "<planning-root>/workspaces/morphospace-platform-iteration/morphospace/receipts/mod-001-classification.json",
+    "tier": "deep",
+    "receipt": "<planning-root>/workspaces/morphospace-platform-iteration/morphospace/receipts/mod-002-particle-contracts.json",
     "result": "pass"
   },
-  "pending_push_bundle": null
+  "pending_push_bundle": {
+    "bundle_id": "particle-contract-batch",
+    "unit_ids": ["mod-001", "mod-002"],
+    "repo_ids": ["lattice", "matter", "optics", "quest-repo", "work-environment"],
+    "ready": true
+  }
 }

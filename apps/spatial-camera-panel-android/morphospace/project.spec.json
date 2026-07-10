@@ -2,7 +2,7 @@
   "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/project-spec.schema.json",
   "schema": "rusty.morphospace.workflow.project_spec.v1",
   "project_id": "spatial-camera-panel",
-  "revision": 1,
+  "revision": 2,
   "purpose": "Compose the public Spatial Camera Panel from explicit Quest adapters and app-local particle, hand, camera, and media candidates without allowing application behavior to become a reusable-module default.",
   "activation_model": {
     "default": "disabled",
@@ -64,6 +64,12 @@
       "allowed_paths": ["AGENTS.md", "README.md", "docs/", "tools/"]
     },
     {
+      "repo_id": "native-renderer-app",
+      "role": "application",
+      "path": "../../native-renderer-android",
+      "allowed_paths": ["README.md", "app/", "native-receipt/", "morphospace/"]
+    },
+    {
       "repo_id": "matter",
       "role": "core",
       "path": "<workspace-root>/repos/rusty-matter",
@@ -97,7 +103,7 @@
       "repo_id": "installed-skills",
       "role": "tool",
       "path": "<skills-root>",
-      "allowed_paths": ["rusty-morphospace-context/", "system-engineering/", "rust-work-graph/"]
+      "allowed_paths": ["rusty-morphospace-context/", "system-engineering/", "meta-quest-workflow/", "rust-work-graph/"]
     }
   ],
   "modules": [
@@ -185,6 +191,12 @@
       "commands": [
         "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Test-SpatialCameraPanelAndroid.ps1",
         "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check_all.ps1"
+      ]
+    },
+    {
+      "profile_id": "device",
+      "commands": [
+        "Run serial-scoped two-Quest install, launch, effective-feature receipt, visual/runtime evidence, logcat, and cleanup scorecard."
       ]
     }
   ],

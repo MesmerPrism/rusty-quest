@@ -45,6 +45,8 @@ $particle = Read-JsonDocument "module-candidates\surface-particle-substrate.json
 $hand = Read-JsonDocument "module-candidates\tracked-hand-substrate.json"
 $wf003 = Read-JsonDocument "iteration-units\wf-003.json"
 $mod001 = Read-JsonDocument "iteration-units\mod-001.json"
+$mod002 = Read-JsonDocument "iteration-units\mod-002.json"
+$mod003 = Read-JsonDocument "iteration-units\mod-003.json"
 $receipt = Read-JsonDocument "receipts\wf-003-workspace-adoption.json"
 
 if ($spec.schema -ne "rusty.morphospace.workflow.project_spec.v1" -or
@@ -86,11 +88,13 @@ if ($moduleIds -contains "remote-peer-media" -or $featureIds -contains "remote-p
 if (@($lock.features | Where-Object { $_.enabled -eq $true } | ForEach-Object { @($_.permissions) }).Count -ne 0) {
     throw "The enabled base panel shell must not gain permissions through workflow adoption."
 }
-if ($state.current_unit -ne $null -or $state.next_ready_unit -ne "mod-002") {
-    throw "Spatial Camera Panel compact state must expose mod-002 as the only next-ready unit."
+if ($state.current_unit -ne $null -or $state.next_ready_unit -ne "mod-003") {
+    throw "Spatial Camera Panel compact state must expose mod-003 as the only next-ready unit."
 }
 if ($wf003.status -ne "accepted" -or $mod001.status -ne "accepted" -or
-    @($mod001.prerequisites) -notcontains "wf-003") {
+    $mod002.status -ne "accepted" -or $mod003.status -ne "ready" -or
+    @($mod001.prerequisites) -notcontains "wf-003" -or
+    @($mod003.prerequisites) -notcontains "mod-002") {
     throw "Spatial Camera Panel iteration-unit state is not resumable."
 }
 if ($particle.maturity -ne "candidate" -or $particle.proposed_lane -ne "matter" -or
@@ -103,19 +107,23 @@ if ($receipt.runtime_behavior_changed -ne $false -or $receipt.package_or_permiss
 
 $eventPath = Join-Path $workspaceRoot "iteration-events.jsonl"
 $eventLines = @(Get-Content -LiteralPath $eventPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-if ($eventLines.Count -ne 5) {
-    throw "Spatial workflow expects adoption events plus the complete MOD-001 state sequence."
+if ($eventLines.Count -ne 7) {
+    throw "Spatial workflow expects adoption through MOD-002 acceptance events."
 }
 $acceptEvent = $eventLines[0] | ConvertFrom-Json
 $pushEvent = $eventLines[1] | ConvertFrom-Json
 $activeEvent = $eventLines[2] | ConvertFrom-Json
 $validatingEvent = $eventLines[3] | ConvertFrom-Json
 $acceptedEvent = $eventLines[4] | ConvertFrom-Json
+$mod002ActiveEvent = $eventLines[5] | ConvertFrom-Json
+$mod002AcceptedEvent = $eventLines[6] | ConvertFrom-Json
 if ($acceptEvent.event_id -ne "wf-003-accepted" -or $acceptEvent.unit_id -ne "wf-003" -or
     $pushEvent.event_id -ne "wf-003-pushed" -or $pushEvent.unit_id -ne "wf-003" -or
     $activeEvent.event_id -ne "mod-001-active" -or $activeEvent.unit_id -ne "mod-001" -or
     $validatingEvent.event_id -ne "mod-001-validating" -or $validatingEvent.unit_id -ne "mod-001" -or
-    $acceptedEvent.event_id -ne "mod-001-accepted" -or $acceptedEvent.unit_id -ne "mod-001") {
+    $acceptedEvent.event_id -ne "mod-001-accepted" -or $acceptedEvent.unit_id -ne "mod-001" -or
+    $mod002ActiveEvent.event_id -ne "mod-002-active" -or $mod002ActiveEvent.unit_id -ne "mod-002" -or
+    $mod002AcceptedEvent.event_id -ne "mod-002-accepted" -or $mod002AcceptedEvent.unit_id -ne "mod-002") {
     throw "Spatial local workflow event sequence is inconsistent."
 }
 
