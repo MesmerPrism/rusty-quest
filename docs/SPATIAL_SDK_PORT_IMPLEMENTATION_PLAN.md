@@ -288,6 +288,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `SpatialCameraHwbProjectionSyntheticRenderer.kt`; give it no property, route,
   or JNI authority and expose it only as a draw binding to already opted-in raw
   and panel carriers after their synthetic-visual gate passes;
+- package carrier mode, placement mode, secondary-toggle arming/debounce state,
+  carrier policy tokens, guarded placement toggling, private-layer reapply, and
+  receipts in `SpatialCameraHwbProjectionCarrierStateCoordinator.kt`; keep
+  property/intent reads and JNI in Activity bindings and return toggle mutation
+  inert unless the camera projection launch is explicitly active;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, placement-plane construction from

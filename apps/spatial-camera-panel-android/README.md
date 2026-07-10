@@ -452,6 +452,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   It has no property, route, or JNI authority and cannot activate itself; only
   the already opted-in raw and panel carrier coordinators receive its draw
   binding after their synthetic-visual gate passes.
+- `app/src/main/.../SpatialCameraHwbProjectionCarrierStateCoordinator.kt` is
+  the single carrier mode, placement mode, secondary-toggle arming, and debounce
+  state owner. It resolves carrier mode through an Activity property/intent
+  binding, exposes carrier policy tokens, and sequences guarded placement
+  toggles plus private-layer reapply receipts. Toggle mutation returns inert
+  unless the camera projection launch is explicitly active; JNI remains an
+  Activity callback.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, viewer-locked and virtual-wall projection
