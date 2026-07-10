@@ -76,6 +76,15 @@ internal object SpatialOpenXrRouteModule {
   fun nativeInteropReceiptCallFailed(error: String): NativeInteropReceiptResult =
       nativeInteropReceiptFailure(status = "call-failed", error = error)
 
+  fun nativeReceiptLibraryLoadMarker(
+      library: String,
+      loaded: Boolean,
+      error: String,
+  ): String =
+      "channel=native-interop-receipt status=library-load " +
+          "library=${activityMarkerToken(library)} loaded=$loaded " +
+          "error=${activityMarkerToken(error)}"
+
   fun nativeInteropProbeMarker(
       phase: String,
       probe: SpatialNativeInteropProbe,

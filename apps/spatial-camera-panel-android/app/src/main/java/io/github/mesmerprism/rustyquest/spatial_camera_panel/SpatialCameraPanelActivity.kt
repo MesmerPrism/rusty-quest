@@ -930,8 +930,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     nativeReceiptLibraryLoaded = result.isSuccess
     nativeReceiptLibraryError = result.exceptionOrNull()?.javaClass?.simpleName ?: "none"
     marker(
-        "channel=native-interop-receipt status=library-load library=$NATIVE_RECEIPT_LIBRARY " +
-            "loaded=$nativeReceiptLibraryLoaded error=${activityMarkerToken(nativeReceiptLibraryError)}"
+        SpatialOpenXrRouteModule.nativeReceiptLibraryLoadMarker(
+            library = NATIVE_RECEIPT_LIBRARY,
+            loaded = nativeReceiptLibraryLoaded,
+            error = nativeReceiptLibraryError,
+        )
     )
   }
 
