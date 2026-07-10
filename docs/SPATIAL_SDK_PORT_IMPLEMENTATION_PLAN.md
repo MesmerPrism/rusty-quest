@@ -226,6 +226,12 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `PrivateLayerPanelControlModule.kt`;
 - keep `PrivateLayerControlPanel.kt` as the Compose-only projection of those
   controls;
+- package read-only Spatial SDK controller/avatar ECS observation, local-right
+  controller preference, avatar-controller fallback, button/thumb
+  normalization, and `SpatialControllerPrimarySnapshot` construction in
+  `SpatialControllerSnapshotAdapter.kt`; keep polling cadence, route enablement,
+  edge state, action dispatch, marker emission, feature opt-in, and JNI in the
+  Activity facade;
 - package controller shortcut routing policy and controller marker envelopes in
   `SpatialControllerRoutingModule.kt`;
 - package OpenXR extension policy, explicit opt-in multimodal input defaults,

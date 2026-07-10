@@ -70,6 +70,7 @@ $manifest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\An
 $ids = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\res\values\ids.xml"
 $activity = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelActivity.kt"
 $panelPlacementModule = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPanelPlacementModule.kt"
+$controllerSnapshotAdapter = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialControllerSnapshotAdapter.kt"
 $controllerRoutingModule = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialControllerRoutingModule.kt"
 $openXrRouteModule = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialOpenXrRouteModule.kt"
 $validationCommandModule = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialValidationCommandModule.kt"
@@ -541,7 +542,7 @@ Assert-Contains "Activity" $activity 'suppressParticleLayerIfCameraProjectionReq
 Assert-Contains "Activity" $activity 'suppressParticleLayerForCameraStack("camera-hwb-projection-probe")'
 Assert-Contains "Activity" $activity "applyCameraHwbProjectionScaleJoystickInput"
 Assert-Contains "Activity" $activity "toggleCameraHwbProjectionPlacementMode"
-Assert-Contains "Activity" $activity "ButtonBits.ButtonB"
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter "ButtonBits.ButtonB"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "controllerInput=right-secondary-button"
 Assert-Contains "Activity" $activity "nativePollSpatialControllerRightButtonB"
 Assert-Contains "Controller routing module" $controllerRoutingModule "rightControllerInactiveButtonStateAccepted=true"
@@ -947,12 +948,35 @@ Assert-Contains "Activity" $activity '"private-layer-panel-close" -> setPrivateL
 Assert-Contains "Surface particle route module" $surfaceParticleRouteModule "nativePanelPoseAuthority=camera-hwb-projection-plane"
 Assert-Contains "Surface particle route module" $surfaceParticleRouteModule "projection-plane-update-suppressed"
 Assert-Contains "Activity" $activity "updateNativePanelProjectionFromCameraPlane"
-Assert-Contains "Activity" $activity "ButtonThumbLU"
-Assert-Contains "Activity" $activity "ButtonThumbLD"
-Assert-Contains "Activity" $activity "ButtonThumbRU"
-Assert-Contains "Activity" $activity "ButtonThumbRD"
-Assert-Contains "Activity" $activity "ButtonTriggerR"
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter "ButtonThumbLU"
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter "ButtonThumbLD"
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter "ButtonThumbRU"
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter "ButtonThumbRD"
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter "ButtonTriggerR"
 Assert-Contains "Controller routing module" $controllerRoutingModule "internal object SpatialControllerRoutingModule"
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter "internal object SpatialControllerSnapshotAdapter"
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter 'MODULE_ID = "spatial-controller-snapshot-adapter"'
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter "fun capture(scene: Scene): SpatialControllerPrimarySnapshot"
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter "scene.spatialInterface.dataModel"
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter "Query.where { has(Controller.id) }"
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter "Query.where { has(AvatarBody.id) }"
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter "tryGetComponent<AvatarAttachment>()"
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter 'attachmentType == "right_controller"'
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter '"spatial-sdk-controller-component"'
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter '"spatial-sdk-avatar-body-controller"'
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter '"spatial-sdk-controller-component-fallback"'
+Assert-Contains "Controller snapshot adapter" $controllerSnapshotAdapter "SpatialControllerPrimarySnapshot("
+Assert-NotContains "Controller snapshot adapter" $controllerSnapshotAdapter "marker("
+Assert-NotContains "Controller snapshot adapter" $controllerSnapshotAdapter "enableInput("
+Assert-NotContains "Controller snapshot adapter" $controllerSnapshotAdapter "pinGameController("
+Assert-NotContains "Controller snapshot adapter" $controllerSnapshotAdapter "System.getProperty"
+Assert-NotContains "Controller snapshot adapter" $controllerSnapshotAdapter "nativePoll"
+Assert-NotContains "Controller snapshot adapter" $controllerSnapshotAdapter "System.loadLibrary"
+Assert-Contains "Activity" $activity "SpatialControllerSnapshotAdapter.capture(scene)"
+Assert-NotContains "Activity" $activity "Query.where { has(Controller.id) }"
+Assert-NotContains "Activity" $activity "Query.where { has(AvatarBody.id) }"
+Assert-NotContains "Activity" $activity "tryGetComponent<AvatarAttachment>()"
+Assert-NotContains "Activity" $activity "SpatialControllerPrimarySnapshot("
 Assert-Contains "Controller routing module" $controllerRoutingModule "internal enum class SpatialControllerPanelToggleAction"
 Assert-Contains "Controller routing module" $controllerRoutingModule 'SPATIAL_VR_INPUT_SYSTEM_DEFAULT_TOKEN = "interaction_sdk"'
 Assert-Contains "Controller routing module" $controllerRoutingModule "SPATIAL_SHOULD_CONSUME_LEFT_RIGHT_INPUT_DEFAULT = false"
@@ -2993,5 +3017,11 @@ foreach ($root in $scanRoots) {
         }
     }
 }
+
+Assert-Contains "README" $readme "SpatialControllerSnapshotAdapter.kt"
+Assert-Contains "README" $readme "read-only Spatial"
+Assert-Contains "README" $readme "player-avatar hand-controller fallback"
+Assert-Contains "Implementation notes" $notes "SpatialControllerSnapshotAdapter.kt"
+Assert-Contains "Implementation notes" $notes "read-only Spatial SDK controller/avatar ECS observation"
 
 Write-Host "Spatial Camera Panel Android static gate passed"

@@ -382,6 +382,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   JNI, or decide feature opt-in.
 - `app/src/main/.../PrivateLayerControlPanel.kt` owns only the Compose
   projection of those controls and forwards requests to Activity-owned routes.
+- `app/src/main/.../SpatialControllerSnapshotAdapter.kt` owns read-only Spatial
+  SDK ECS observation for controller components, local right-controller
+  preference, player-avatar hand-controller fallback, button/thumb bit
+  normalization, and `SpatialControllerPrimarySnapshot` construction. It must
+  not choose polling cadence, enable input, pin Android controllers, dispatch
+  actions, read feature properties, emit markers, or call JNI.
 - `app/src/main/.../SpatialControllerRoutingModule.kt` owns controller input
   policy helpers: Spatial VR input-system property parsing, controller route
   timing constants, trigger thresholds, joystick axis normalization,
