@@ -652,6 +652,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   visibility transitions; the Activity exposes read-only facade views and
   retains pose capture, entities, markers, persistence, properties, and SDK
   mutation. Placement state cannot register or activate a feature.
+- `app/src/main/.../SpatialPanelPoseCoordinator.kt` owns pure workflow
+  headlock, private-layer viewer-pose, and entity-pose-to-placement geometry.
+  The Activity captures `Scene.getViewerPose`, reads/writes entity transforms,
+  and adopts any coerced placement through the placement state owner. Pose
+  geometry cannot read properties, emit markers, call JNI, or activate features.
 - `app/src/main/.../SpatialPanelPersistenceCoordinator.kt` owns the exact
   headlock-tuning JSON schema, key ordering, output filename, and panel-state
   persistence failure receipts. The Activity supplies typed placement

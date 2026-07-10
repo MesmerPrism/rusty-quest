@@ -449,6 +449,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   in `SpatialPanelPlacementStateCoordinator.kt`; expose read-only Activity
   facade views, retain pose capture/entity/marker/persistence/property/SDK
   mutation adapters in Activity, and prohibit feature registration or activation.
+- package workflow headlock, private-layer viewer-pose, and
+  entity-pose-to-placement geometry in `SpatialPanelPoseCoordinator.kt`; retain
+  `Scene.getViewerPose`, entity transform capture/mutation, and corrected-state
+  adoption in Activity bindings, and prohibit property reads, marker emission,
+  JNI, or feature activation in pose geometry.
 - package the exact headlock-tuning JSON schema/key order/output filename and
   panel-state persistence failure receipts in
   `SpatialPanelPersistenceCoordinator.kt`; retain typed placement snapshots,

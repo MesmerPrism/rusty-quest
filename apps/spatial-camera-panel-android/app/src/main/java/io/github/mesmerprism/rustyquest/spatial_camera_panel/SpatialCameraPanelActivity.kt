@@ -90,7 +90,6 @@ import com.meta.spatial.vr.VRFeature
 import com.meta.spatial.vr.VrInputSystemType
 import java.io.File
 import kotlin.math.abs
-import kotlin.math.sqrt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import org.json.JSONArray
@@ -115,6 +114,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     get() = panelPlacementStateCoordinator.privateLayerPlacement
   private val privateLayerPanelVisible: Boolean
     get() = panelPlacementStateCoordinator.privateLayerVisible
+  private val panelPoseCoordinator = SpatialPanelPoseCoordinator()
   private var questionnaireDueReopensPanel by mutableStateOf(true)
   private var particleLayerEntity: Entity? = null
   private var particleLayerManualPanelSurface: AndroidSurface? = null
@@ -2123,23 +2123,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun syncPrivateLayerPanelPlacementFromEntity(reason: String): Boolean {
     val pose = privateLayerPanelEntity?.tryGetComponent<Transform>()?.transform ?: return false
     val viewerPose = runCatching { scene.getViewerPose() }.getOrNull() ?: return false
-    val forward = viewerPose.forward().activityNormalizedOr(Vector3(0.0f, 0.0f, -1.0f))
-    val viewerUp = viewerPose.up().activityNormalizedOr(Vector3(0.0f, 1.0f, 0.0f))
-    val right = activityCross(forward, viewerUp).activityNormalizedOr(Vector3(1.0f, 0.0f, 0.0f))
-    val up = activityCross(right, forward).activityNormalizedOr(viewerUp)
-    val offset = activityVectorSubtract(pose.t, viewerPose.t)
-    val distance =
-        activityVectorLength(offset)
-            .coerceIn(PRIVATE_LAYER_PANEL_DISTANCE_MIN_METERS, PANEL_HEADLOCK_DISTANCE_MAX_METERS)
     val previous = privateLayerPanelPlacement
     panelPlacementStateCoordinator.replacePrivateLayerPlacement(
-        coercePrivateLayerPanelPlacement(
-            privateLayerPanelPlacement.copy(
-                xMeters = activityDot(offset, right),
-                yMeters = activityDot(offset, up),
-                zMeters = distance,
-                visible = privateLayerPanelVisible,
-            )
+        panelPoseCoordinator.privateLayerPlacementFromEntity(
+            panelPose = pose,
+            viewerPose = viewerPose,
+            currentPlacement = privateLayerPanelPlacement,
+            privateLayerVisible = privateLayerPanelVisible,
         )
     )
     if (!previous.headlockEquivalent(privateLayerPanelPlacement)) {
@@ -2183,41 +2173,25 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   @OptIn(SpatialSDKExperimentalAPI::class)
   private fun headlockedPanelPoseFromViewer(): Pose? {
     val viewerPose = runCatching { scene.getViewerPose() }.getOrNull() ?: return null
-    val rawForward = viewerPose.forward().activityNormalizedOr(Vector3(0.0f, 0.0f, -1.0f))
-    val rawUp = viewerPose.up().activityNormalizedOr(Vector3(0.0f, 1.0f, 0.0f))
-    val rawRight = activityCross(rawForward, rawUp).activityNormalizedOr(Vector3(1.0f, 0.0f, 0.0f))
-    val yawDegrees = surfaceParticleProjectionGeometryCoordinator.currentViewYawDegrees()
-    val rollStableBasis = activityRollStableParticleProjectionBasis(rawForward, yawDegrees)
-    val forward = rollStableBasis.first
-    val right = rollStableBasis.second
-    val up = rollStableBasis.third
-    val center =
-        viewerPose.t +
-            right * panelPlacement.xMeters +
-            up * panelPlacement.yMeters +
-            forward * panelPlacement.zMeters
-    return Pose(center, Quaternion.fromDirection(forward, up))
+    return panelPoseCoordinator.headlockedWorkflowPose(
+        viewerPose = viewerPose,
+        placement = panelPlacement,
+        yawDegrees = surfaceParticleProjectionGeometryCoordinator.currentViewYawDegrees(),
+    )
   }
 
   @OptIn(SpatialSDKExperimentalAPI::class)
   private fun privateLayerPanelPoseFromViewer(): Pose? {
     val viewerPose = runCatching { scene.getViewerPose() }.getOrNull() ?: return null
-    val forward = viewerPose.forward().activityNormalizedOr(Vector3(0.0f, 0.0f, -1.0f))
-    val viewerUp = viewerPose.up().activityNormalizedOr(Vector3(0.0f, 1.0f, 0.0f))
-    val right = activityCross(forward, viewerUp).activityNormalizedOr(Vector3(1.0f, 0.0f, 0.0f))
-    val up = activityCross(right, forward).activityNormalizedOr(viewerUp)
-    val placement = coercePrivateLayerPanelPlacement(privateLayerPanelPlacement)
-    if (placement != privateLayerPanelPlacement) {
-      panelPlacementStateCoordinator.replacePrivateLayerPlacement(placement)
+    val result =
+        panelPoseCoordinator.privateLayerPoseFromViewer(
+            viewerPose = viewerPose,
+            currentPlacement = privateLayerPanelPlacement,
+        )
+    if (result.placement != privateLayerPanelPlacement) {
+      panelPlacementStateCoordinator.replacePrivateLayerPlacement(result.placement)
     }
-    val distance = placement.zMeters.coerceIn(PRIVATE_LAYER_PANEL_DISTANCE_MIN_METERS, PANEL_HEADLOCK_DISTANCE_MAX_METERS)
-    val lateralSquared = placement.xMeters * placement.xMeters + placement.yMeters * placement.yMeters
-    val forwardMeters = sqrt((distance * distance - lateralSquared).coerceAtLeast(0.0f).toDouble()).toFloat()
-    val offset = right * placement.xMeters + up * placement.yMeters + forward * forwardMeters
-    val direction = offset.activityNormalizedOr(forward)
-    val panelUp = (up + direction * -activityDot(up, direction)).activityNormalizedOr(up)
-    val center = viewerPose.t + direction * distance
-    return Pose(center, Quaternion.fromDirection(direction, panelUp))
+    return result.pose
   }
 
   private fun updateWorkflowPanelHeadlockFromViewer(reason: String, forceLog: Boolean) {
