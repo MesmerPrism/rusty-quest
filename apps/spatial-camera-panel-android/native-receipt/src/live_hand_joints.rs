@@ -16,8 +16,10 @@ use crate::{android_log_info, bool_token, marker_token};
 pub(crate) const LIVE_HAND_COUNT: usize = 2;
 pub(crate) const LIVE_HAND_JOINT_COUNT: usize = openxr_sys::HAND_JOINT_COUNT_EXT;
 pub(crate) const LIVE_HAND_ROW_COUNT: usize = LIVE_HAND_COUNT * LIVE_HAND_JOINT_COUNT;
+pub(crate) const LIVE_HAND_VIEW_DIAGNOSTIC_FLOAT_COUNT: usize = 18;
 
 const LIVE_HAND_MIN_JOINT_RADIUS_METERS: f32 = 0.0075;
+const LIVE_HAND_MIN_INITIALIZED_SPATIAL_VIEWER_ORIGIN_METERS: f32 = 0.01;
 const LIVE_HAND_COMPACT_RUNTIME_OPENXR_JOINTS: [usize; 21] = [
     0, 1, 2, 3, 4, 6, 7, 8, 9, 11, 12, 13, 14, 16, 17, 18, 19, 21, 22, 23, 24,
 ];
@@ -60,10 +62,13 @@ static LIVE_HAND_BASIS_MODE_BITS: AtomicU32 = AtomicU32::new(LIVE_HAND_BASIS_MOD
 const LIVE_HAND_BASIS_MODE_DISABLED: u32 = 0;
 const LIVE_HAND_BASIS_MODE_VIEWER_RELATIVE_PANEL: u32 = 1;
 const LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD: u32 = 2;
+const LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD_MIRROR_X: u32 = 3;
 const LIVE_HAND_COORDINATE_MAPPING_VIEWER_PANEL: &str =
     "viewer-relative-openxr-to-spatial-sdk-panel-basis";
 const LIVE_HAND_COORDINATE_MAPPING_SPATIAL_VIEWER_WORLD: &str =
     "openxr-local-floor-to-spatial-sdk-viewer-world-registration";
+const LIVE_HAND_COORDINATE_MAPPING_SPATIAL_VIEWER_WORLD_MIRROR_X: &str =
+    "openxr-local-floor-to-spatial-sdk-mirror-x-origin-registration";
 const LIVE_HAND_COORDINATE_MAPPING_RAW_SCENE: &str =
     "raw-openxr-local-floor-to-spatial-sdk-scene-fallback";
 
@@ -112,6 +117,18 @@ pub(crate) struct LiveHandJointRow {
     pub(crate) position_radius: [f32; 4],
     pub(crate) status: [f32; 4],
     pub(crate) orientation_xyzw: [f32; 4],
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LiveHandViewDiagnostic {
+    pub(crate) valid: bool,
+    pub(crate) mapping_mode: u32,
+    pub(crate) raw_position: [f32; 3],
+    pub(crate) raw_orientation_xyzw: [f32; 4],
+    pub(crate) mapped_position: [f32; 3],
+    pub(crate) mapped_orientation_xyzw: [f32; 4],
+    pub(crate) view_count: u32,
+    pub(crate) registration_ready: bool,
 }
 
 impl Default for LiveHandJointRow {
@@ -189,6 +206,8 @@ impl LiveHandJointStatus {
             panel_basis_source,
             camera_realign_each_frame,
             correct_position_size_proof,
+            coordinate_basis_determinant,
+            orientation_component_mapping,
         ) = match self.coordinate_mapping {
             LIVE_HAND_COORDINATE_MAPPING_VIEWER_PANEL => (
                 "viewer-relative-openxr-to-spatial-sdk-panel-plane",
@@ -196,6 +215,8 @@ impl LiveHandJointStatus {
                 "Scene.getViewerPose-panel-plane",
                 true,
                 "spatial-sdk-panel-plane-projection",
+                "+1",
+                "basis-derived-quaternion",
             ),
             LIVE_HAND_COORDINATE_MAPPING_SPATIAL_VIEWER_WORLD => (
                 "openxr-local-floor-to-spatial-sdk-viewer-world",
@@ -203,6 +224,17 @@ impl LiveHandJointStatus {
                 "Scene.getViewerPose-spatial-world-basis",
                 false,
                 "spatial-sdk-world-space-joint-rows-fixed-view-registration",
+                "+1",
+                "basis-derived-quaternion",
+            ),
+            LIVE_HAND_COORDINATE_MAPPING_SPATIAL_VIEWER_WORLD_MIRROR_X => (
+                "openxr-local-floor-to-spatial-sdk-mirror-x-origin-registration",
+                "xrLocateViews+Scene.getViewerPose-mirror-x-origin-registration",
+                "Scene.getViewerPose-spatial-world-origin",
+                false,
+                "spatial-sdk-world-space-joint-rows-mirror-x-live-fit",
+                "-1",
+                "spatial-xyzw-from-openxr-z-w-x-y",
             ),
             _ => (
                 "raw-openxr-local-floor-to-spatial-sdk-scene",
@@ -210,16 +242,20 @@ impl LiveHandJointStatus {
                 "disabled-fixed-raw-scene-transform",
                 false,
                 "spatial-sdk-world-space-joint-rows-raw-scene-fallback",
+                "configurable",
+                "scene-transform-yaw-quaternion",
             ),
         };
         format!(
-            "liveHandJointInputReady={} liveHandJointFrameReady={} liveHandJointFrameSource=XR_EXT_hand_tracking liveHandJointBufferPath=host-visible-storage-buffer liveHandJointGpuInputPath=recorded-compatible-compact-joint-pose-gpu-skinning liveHandCompactUploadEquivalent=true liveHandCompactFrameGate=native-equivalent-21-runtime-5-tip liveHandRuntimeJointPoseCount={} liveHandTipLengthCount={} liveHandJointPlacementMode={} liveHandCoordinateTransform={} liveHandSceneTransformSource=runtime-hotload-android-property liveHandSceneOffsetProperties={};{};{} liveHandSceneYawProperty={} liveHandSceneHorizontalSignProperty={} liveHandSceneOffsetDefaultM=0.000;0.000;2.000 liveHandSceneYawDefaultDegrees=180.000 liveHandSceneHorizontalSignDefault=-1.000 liveHandViewPoseSource={} liveHandPanelBasisSource={} liveHandCameraRealignEachFrame={} liveHandCorrectPositionSizeProof={} liveHandReferenceSpaceType={} liveHandPoseOrientationUpload=true liveHandJointStatusX=position-valid liveHandJointStatusY=pose-valid liveHandJointStatusW=position-tracked liveHandSkinningValidityPolicy=native-compact-frame-gate-trust-all-weights liveHandTimeSource={} liveHandTimespecConverterResolved={} liveHandExtensionFunctionsResolved={} liveHandTrackingSystemSupported={} liveHandReferenceSpaceReady={} liveHandTrackerReady={} liveHandViewPoseReady={} liveHandViewLocateStatus={} liveHandLeftActive={} liveHandRightActive={} liveHandUsingBoth={} liveHandActiveHandCount={} liveHandVisualizableJointCount={} liveHandFrameIndex={} liveHandTimestampNs={} liveHandLeftLocateStatus={} liveHandRightLocateStatus={} liveHandFallbackToReplay={} liveHandFallbackReason={}",
+            "liveHandJointInputReady={} liveHandJointFrameReady={} liveHandJointFrameSource=XR_EXT_hand_tracking liveHandJointBufferPath=host-visible-storage-buffer liveHandJointGpuInputPath=recorded-compatible-compact-joint-pose-gpu-skinning liveHandCompactUploadEquivalent=true liveHandCompactFrameGate=native-equivalent-21-runtime-5-tip liveHandRuntimeJointPoseCount={} liveHandTipLengthCount={} liveHandJointPlacementMode={} liveHandCoordinateTransform={} liveHandCoordinateBasisDeterminant={} liveHandOrientationComponentMapping={} liveHandSceneTransformSource=runtime-hotload-android-property liveHandSceneOffsetProperties={};{};{} liveHandSceneYawProperty={} liveHandSceneHorizontalSignProperty={} liveHandSceneOffsetDefaultM=0.000;0.000;2.000 liveHandSceneYawDefaultDegrees=180.000 liveHandSceneHorizontalSignDefault=-1.000 liveHandViewPoseSource={} liveHandPanelBasisSource={} liveHandCameraRealignEachFrame={} liveHandCorrectPositionSizeProof={} liveHandReferenceSpaceType={} liveHandPoseOrientationUpload=true liveHandJointStatusX=position-valid liveHandJointStatusY=pose-valid liveHandJointStatusW=position-tracked liveHandSkinningValidityPolicy=native-compact-frame-gate-trust-all-weights liveHandTimeSource={} liveHandTimespecConverterResolved={} liveHandExtensionFunctionsResolved={} liveHandTrackingSystemSupported={} liveHandReferenceSpaceReady={} liveHandTrackerReady={} liveHandViewPoseReady={} liveHandViewLocateStatus={} liveHandLeftActive={} liveHandRightActive={} liveHandUsingBoth={} liveHandActiveHandCount={} liveHandVisualizableJointCount={} liveHandFrameIndex={} liveHandTimestampNs={} liveHandLeftLocateStatus={} liveHandRightLocateStatus={} liveHandFallbackToReplay={} liveHandFallbackReason={}",
             bool_token(self.input_ready),
             bool_token(self.frame_ready),
             self.compact_runtime_joint_pose_count,
             self.compact_tip_length_count,
             placement_mode,
             self.coordinate_mapping,
+            coordinate_basis_determinant,
+            orientation_component_mapping,
             LIVE_HAND_SCENE_OFFSET_X_PROPERTY,
             LIVE_HAND_SCENE_OFFSET_Y_PROPERTY,
             LIVE_HAND_SCENE_OFFSET_Z_PROPERTY,
@@ -514,6 +550,53 @@ impl LiveHandJointInput {
         rows
     }
 
+    pub(crate) fn view_diagnostic(&mut self) -> Option<LiveHandViewDiagnostic> {
+        if self.local_space == openxr_sys::Space::NULL {
+            return None;
+        }
+        let xr_time = self.current_xr_time()?;
+        self.locate_view_diagnostic(xr_time)
+    }
+
+    fn resolve_viewer_world_registration(
+        &mut self,
+        panel_basis: LiveHandPanelBasis,
+        raw_origin: [f32; 3],
+        raw_right: [f32; 3],
+        raw_up: [f32; 3],
+        raw_forward: [f32; 3],
+        map_orientation: [f32; 4],
+    ) -> (LiveHandWorldRegistration, &'static str) {
+        if let Some(registration) = self.viewer_world_registration {
+            let recapture_live_spatial_origin =
+                registration_needs_live_spatial_origin_recapture(registration, panel_basis);
+            if registration.basis_mode == panel_basis.mode && !recapture_live_spatial_origin {
+                return (registration, "registration-ready");
+            }
+        }
+        let status = match self.viewer_world_registration {
+            Some(registration) if registration.basis_mode == panel_basis.mode => {
+                "registration-recaptured-live-spatial-origin"
+            }
+            Some(_) => "registration-recaptured-mode-change",
+            None => "registration-captured",
+        };
+        let registration = LiveHandWorldRegistration {
+            basis_mode: panel_basis.mode,
+            raw_origin,
+            raw_right,
+            raw_up,
+            raw_forward,
+            scene_origin: panel_basis.center,
+            scene_right: panel_basis.right,
+            scene_up: panel_basis.up,
+            scene_forward: panel_basis.forward,
+            map_orientation,
+        };
+        self.viewer_world_registration = Some(registration);
+        (registration, status)
+    }
+
     fn current_view_panel_mapping(
         &mut self,
         time: openxr_sys::Time,
@@ -606,34 +689,27 @@ impl LiveHandJointInput {
         );
         let map_orientation =
             multiply_quat_xyzw(panel_orientation, inverse_quat_xyzw(view_orientation));
-        if panel_basis.mode == LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD {
-            let (registration, registration_status) =
-                if let Some(registration) = self.viewer_world_registration {
-                    (registration, "registration-ready")
-                } else {
-                    let registration = LiveHandWorldRegistration {
-                        raw_origin: view_position,
-                        raw_right,
-                        raw_up,
-                        raw_forward,
-                        scene_origin: panel_basis.center,
-                        scene_right: panel_basis.right,
-                        scene_up: panel_basis.up,
-                        scene_forward: panel_basis.forward,
-                        map_orientation,
-                    };
-                    self.viewer_world_registration = Some(registration);
-                    (registration, "registration-captured")
-                };
+        if is_spatial_viewer_world_mode(panel_basis.mode) {
+            let (registration, registration_status) = self.resolve_viewer_world_registration(
+                panel_basis,
+                view_position,
+                raw_right,
+                raw_up,
+                raw_forward,
+                map_orientation,
+            );
             self.status.view_locate_status = format!(
-                "ready-view-count-{}-spatial-viewer-world-{}",
-                view_count_usize, registration_status
+                "ready-view-count-{}-spatial-viewer-world-{}-{}",
+                view_count_usize,
+                spatial_viewer_basis_mode_token(panel_basis.mode),
+                registration_status,
             );
             return Some(registration.as_mapping());
         }
         self.status.view_locate_status =
             format!("ready-view-count-{}-panel-basis-ready", view_count_usize);
         Some(LiveHandViewPanelMapping {
+            mapping_kind: LiveHandViewMappingKind::BasisRegistration,
             coordinate_mapping: LIVE_HAND_COORDINATE_MAPPING_VIEWER_PANEL,
             view_position,
             raw_right,
@@ -648,6 +724,128 @@ impl LiveHandJointInput {
             panel_up: panel_basis.up,
             panel_forward: panel_basis.forward,
             map_orientation,
+        })
+    }
+
+    fn locate_view_diagnostic(&mut self, time: openxr_sys::Time) -> Option<LiveHandViewDiagnostic> {
+        let locate_views = self.locate_views?;
+        let panel_basis = current_live_hand_panel_basis()?;
+        let locate_info = openxr_sys::ViewLocateInfo {
+            ty: openxr_sys::ViewLocateInfo::TYPE,
+            next: ptr::null(),
+            view_configuration_type: openxr_sys::ViewConfigurationType::PRIMARY_STEREO,
+            display_time: time,
+            space: self.local_space,
+        };
+        let mut view_state = openxr_sys::ViewState {
+            ty: openxr_sys::ViewState::TYPE,
+            next: ptr::null_mut(),
+            view_state_flags: openxr_sys::ViewStateFlags::from_raw(0),
+        };
+        let mut views = [default_view(), default_view()];
+        let mut view_count = 0_u32;
+        let result = unsafe {
+            locate_views(
+                self.session,
+                &locate_info,
+                &mut view_state,
+                views.len() as u32,
+                &mut view_count,
+                views.as_mut_ptr(),
+            )
+        };
+        if result != openxr_sys::Result::SUCCESS || view_count < 1 {
+            return None;
+        }
+        if !view_state
+            .view_state_flags
+            .contains(openxr_sys::ViewStateFlags::POSITION_VALID)
+            || !view_state
+                .view_state_flags
+                .contains(openxr_sys::ViewStateFlags::ORIENTATION_VALID)
+        {
+            return None;
+        }
+        let view_count_usize = (view_count as usize).min(views.len());
+        let mut raw_position = [0.0_f32; 3];
+        for view in views.iter().take(view_count_usize) {
+            raw_position[0] += view.pose.position.x;
+            raw_position[1] += view.pose.position.y;
+            raw_position[2] += view.pose.position.z;
+        }
+        let inv_view_count = 1.0 / view_count_usize.max(1) as f32;
+        raw_position[0] *= inv_view_count;
+        raw_position[1] *= inv_view_count;
+        raw_position[2] *= inv_view_count;
+        let (raw_orientation, well_formed) = normalize_orientation_or_identity([
+            views[0].pose.orientation.x,
+            views[0].pose.orientation.y,
+            views[0].pose.orientation.z,
+            views[0].pose.orientation.w,
+        ]);
+        if !well_formed {
+            return None;
+        }
+        let raw_right = rotate_vector_by_quat(raw_orientation, [1.0, 0.0, 0.0]);
+        let raw_up = rotate_vector_by_quat(raw_orientation, [0.0, 1.0, 0.0]);
+        let raw_forward = rotate_vector_by_quat(raw_orientation, [0.0, 0.0, -1.0]);
+        let panel_orientation = quat_from_basis(
+            panel_basis.right,
+            panel_basis.up,
+            [
+                -panel_basis.forward[0],
+                -panel_basis.forward[1],
+                -panel_basis.forward[2],
+            ],
+        );
+        let map_orientation =
+            multiply_quat_xyzw(panel_orientation, inverse_quat_xyzw(raw_orientation));
+        let (mapping, registration_ready) = if is_spatial_viewer_world_mode(panel_basis.mode) {
+            let (registration, _) = self.resolve_viewer_world_registration(
+                panel_basis,
+                raw_position,
+                raw_right,
+                raw_up,
+                raw_forward,
+                map_orientation,
+            );
+            (registration.as_mapping(), true)
+        } else {
+            (
+                LiveHandViewPanelMapping {
+                    mapping_kind: LiveHandViewMappingKind::BasisRegistration,
+                    coordinate_mapping: LIVE_HAND_COORDINATE_MAPPING_VIEWER_PANEL,
+                    view_position: raw_position,
+                    raw_right,
+                    raw_up,
+                    raw_forward,
+                    scene_eye_position: [
+                        panel_basis.center[0]
+                            - panel_basis.forward[0] * panel_basis.target_distance_meters,
+                        panel_basis.center[1]
+                            - panel_basis.forward[1] * panel_basis.target_distance_meters,
+                        panel_basis.center[2]
+                            - panel_basis.forward[2] * panel_basis.target_distance_meters,
+                    ],
+                    panel_right: panel_basis.right,
+                    panel_up: panel_basis.up,
+                    panel_forward: panel_basis.forward,
+                    map_orientation,
+                },
+                false,
+            )
+        };
+        let (mapped_position, mapped_orientation) =
+            apply_live_hand_view_panel_mapping(raw_position, raw_orientation, mapping);
+        Some(LiveHandViewDiagnostic {
+            valid: true,
+            mapping_mode: panel_basis.mode,
+            raw_position,
+            raw_orientation_xyzw: raw_orientation,
+            mapped_position,
+            mapped_orientation_xyzw: mapped_orientation,
+            view_count: view_count_usize as u32,
+            registration_ready,
         })
     }
 
@@ -975,8 +1173,15 @@ struct LiveHandPanelBasis {
     mode: u32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LiveHandViewMappingKind {
+    BasisRegistration,
+    MirrorXOriginRegistration,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct LiveHandViewPanelMapping {
+    mapping_kind: LiveHandViewMappingKind,
     coordinate_mapping: &'static str,
     view_position: [f32; 3],
     raw_right: [f32; 3],
@@ -991,6 +1196,7 @@ struct LiveHandViewPanelMapping {
 
 #[derive(Clone, Copy, Debug)]
 struct LiveHandWorldRegistration {
+    basis_mode: u32,
     raw_origin: [f32; 3],
     raw_right: [f32; 3],
     raw_up: [f32; 3],
@@ -1004,8 +1210,18 @@ struct LiveHandWorldRegistration {
 
 impl LiveHandWorldRegistration {
     fn as_mapping(self) -> LiveHandViewPanelMapping {
+        let mirror_x = self.basis_mode == LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD_MIRROR_X;
         LiveHandViewPanelMapping {
-            coordinate_mapping: LIVE_HAND_COORDINATE_MAPPING_SPATIAL_VIEWER_WORLD,
+            mapping_kind: if mirror_x {
+                LiveHandViewMappingKind::MirrorXOriginRegistration
+            } else {
+                LiveHandViewMappingKind::BasisRegistration
+            },
+            coordinate_mapping: if mirror_x {
+                LIVE_HAND_COORDINATE_MAPPING_SPATIAL_VIEWER_WORLD_MIRROR_X
+            } else {
+                LIVE_HAND_COORDINATE_MAPPING_SPATIAL_VIEWER_WORLD
+            },
             view_position: self.raw_origin,
             raw_right: self.raw_right,
             raw_up: self.raw_up,
@@ -1016,6 +1232,35 @@ impl LiveHandWorldRegistration {
             panel_forward: self.scene_forward,
             map_orientation: self.map_orientation,
         }
+    }
+}
+
+fn registration_needs_live_spatial_origin_recapture(
+    registration: LiveHandWorldRegistration,
+    panel_basis: LiveHandPanelBasis,
+) -> bool {
+    registration.basis_mode == panel_basis.mode
+        && !is_initialized_spatial_viewer_origin(registration.scene_origin)
+        && is_initialized_spatial_viewer_origin(panel_basis.center)
+}
+
+fn is_initialized_spatial_viewer_origin(origin: [f32; 3]) -> bool {
+    origin.iter().all(|component| component.is_finite())
+        && dot_vec3(origin, origin)
+            >= LIVE_HAND_MIN_INITIALIZED_SPATIAL_VIEWER_ORIGIN_METERS
+                * LIVE_HAND_MIN_INITIALIZED_SPATIAL_VIEWER_ORIGIN_METERS
+}
+
+fn is_spatial_viewer_world_mode(mode: u32) -> bool {
+    mode == LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD
+        || mode == LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD_MIRROR_X
+}
+
+fn spatial_viewer_basis_mode_token(mode: u32) -> &'static str {
+    if mode == LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD_MIRROR_X {
+        "mirror-x-origin-registration"
+    } else {
+        "viewer-world-basis-registration"
     }
 }
 
@@ -1060,6 +1305,7 @@ pub(crate) fn store_live_hand_spatial_viewer_basis(
     center: [f32; 3],
     right: [f32; 3],
     up: [f32; 3],
+    mapping_mode: u32,
     valid: bool,
 ) {
     let right = normalize_vec3_or(right, [1.0, 0.0, 0.0]);
@@ -1080,7 +1326,11 @@ pub(crate) fn store_live_hand_spatial_viewer_basis(
     LIVE_HAND_PANEL_TARGET_DISTANCE_BITS.store(0.0_f32.to_bits(), Ordering::Relaxed);
     LIVE_HAND_BASIS_MODE_BITS.store(
         if valid {
-            LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD
+            if mapping_mode == LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD_MIRROR_X {
+                LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD_MIRROR_X
+            } else {
+                LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD
+            }
         } else {
             LIVE_HAND_BASIS_MODE_DISABLED
         },
@@ -1265,6 +1515,16 @@ fn apply_live_hand_view_panel_mapping(
         position[1] - mapping.view_position[1],
         position[2] - mapping.view_position[2],
     ];
+    if mapping.mapping_kind == LiveHandViewMappingKind::MirrorXOriginRegistration {
+        return (
+            [
+                mapping.scene_eye_position[0] - rel[0],
+                mapping.scene_eye_position[1] + rel[1],
+                mapping.scene_eye_position[2] + rel[2],
+            ],
+            map_openxr_to_spatial_mirror_x_orientation(orientation_xyzw),
+        );
+    }
     let rel_right = dot_vec3(rel, mapping.raw_right);
     let rel_up = dot_vec3(rel, mapping.raw_up);
     let rel_forward = dot_vec3(rel, mapping.raw_forward);
@@ -1287,6 +1547,16 @@ fn apply_live_hand_view_panel_mapping(
         orientation_xyzw,
     ));
     (scene_position, scene_orientation)
+}
+
+fn map_openxr_to_spatial_mirror_x_orientation(orientation_xyzw: [f32; 4]) -> [f32; 4] {
+    normalize_orientation_or_identity([
+        orientation_xyzw[2],
+        orientation_xyzw[3],
+        orientation_xyzw[0],
+        orientation_xyzw[1],
+    ])
+    .0
 }
 
 fn default_view() -> openxr_sys::View {
@@ -1529,5 +1799,152 @@ fn xr_result_token(result: openxr_sys::Result) -> String {
         "success".to_string()
     } else {
         format!("code_{}", result.into_raw())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_vec_close(actual: &[f32], expected: &[f32]) {
+        assert_eq!(actual.len(), expected.len());
+        for (index, (actual, expected)) in actual.iter().zip(expected.iter()).enumerate() {
+            assert!(
+                (actual - expected).abs() <= 0.00001,
+                "component {index}: expected {expected}, got {actual}"
+            );
+        }
+    }
+
+    fn mapping(
+        mapping_kind: LiveHandViewMappingKind,
+        coordinate_mapping: &'static str,
+        view_position: [f32; 3],
+        scene_eye_position: [f32; 3],
+    ) -> LiveHandViewPanelMapping {
+        LiveHandViewPanelMapping {
+            mapping_kind,
+            coordinate_mapping,
+            view_position,
+            raw_right: [1.0, 0.0, 0.0],
+            raw_up: [0.0, 1.0, 0.0],
+            raw_forward: [0.0, 0.0, -1.0],
+            scene_eye_position,
+            panel_right: [1.0, 0.0, 0.0],
+            panel_up: [0.0, 1.0, 0.0],
+            panel_forward: [0.0, 0.0, -1.0],
+            map_orientation: [0.0, 0.0, 0.0, 1.0],
+        }
+    }
+
+    #[test]
+    fn accepted_basis_registration_remains_identity_for_matching_bases() {
+        let mapping = mapping(
+            LiveHandViewMappingKind::BasisRegistration,
+            LIVE_HAND_COORDINATE_MAPPING_SPATIAL_VIEWER_WORLD,
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+        );
+        let (position, orientation) =
+            apply_live_hand_view_panel_mapping([1.0, 2.0, -3.0], [0.0, 0.0, 0.0, 1.0], mapping);
+        assert_vec_close(&position, &[1.0, 2.0, -3.0]);
+        assert_vec_close(&orientation, &[0.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn mirror_x_origin_registration_captures_translation_without_hard_coding_it() {
+        let mapping = mapping(
+            LiveHandViewMappingKind::MirrorXOriginRegistration,
+            LIVE_HAND_COORDINATE_MAPPING_SPATIAL_VIEWER_WORLD_MIRROR_X,
+            [0.25, 1.10, 0.05],
+            [-0.25, 1.10, 2.05],
+        );
+        let (position, _) =
+            apply_live_hand_view_panel_mapping([0.40, 1.20, 0.20], [0.0, 0.0, 0.0, 1.0], mapping);
+        assert_vec_close(&position, &[-0.40, 1.20, 2.20]);
+    }
+
+    #[test]
+    fn mirror_x_orientation_uses_measured_openxr_to_spatial_component_order() {
+        let input = normalize_orientation_or_identity([0.10, 0.20, 0.30, 0.90]).0;
+        let expected = normalize_orientation_or_identity([0.30, 0.90, 0.10, 0.20]).0;
+        let actual = map_openxr_to_spatial_mirror_x_orientation(input);
+        assert_vec_close(&actual, &expected);
+    }
+
+    #[test]
+    fn registration_mode_preserves_accepted_rollback_and_experimental_tokens() {
+        let base = LiveHandWorldRegistration {
+            basis_mode: LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD,
+            raw_origin: [0.0; 3],
+            raw_right: [1.0, 0.0, 0.0],
+            raw_up: [0.0, 1.0, 0.0],
+            raw_forward: [0.0, 0.0, -1.0],
+            scene_origin: [0.0; 3],
+            scene_right: [1.0, 0.0, 0.0],
+            scene_up: [0.0, 1.0, 0.0],
+            scene_forward: [0.0, 0.0, -1.0],
+            map_orientation: [0.0, 0.0, 0.0, 1.0],
+        };
+        let accepted = base.as_mapping();
+        assert_eq!(
+            accepted.coordinate_mapping,
+            LIVE_HAND_COORDINATE_MAPPING_SPATIAL_VIEWER_WORLD
+        );
+        assert_eq!(
+            accepted.mapping_kind,
+            LiveHandViewMappingKind::BasisRegistration
+        );
+
+        let experimental = LiveHandWorldRegistration {
+            basis_mode: LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD_MIRROR_X,
+            ..base
+        }
+        .as_mapping();
+        assert_eq!(
+            experimental.coordinate_mapping,
+            LIVE_HAND_COORDINATE_MAPPING_SPATIAL_VIEWER_WORLD_MIRROR_X
+        );
+        assert_eq!(
+            experimental.mapping_kind,
+            LiveHandViewMappingKind::MirrorXOriginRegistration
+        );
+    }
+
+    #[test]
+    fn registration_recaptures_once_zero_spatial_origin_becomes_live() {
+        let provisional = LiveHandWorldRegistration {
+            basis_mode: LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD_MIRROR_X,
+            raw_origin: [0.1, 1.0, -0.2],
+            raw_right: [1.0, 0.0, 0.0],
+            raw_up: [0.0, 1.0, 0.0],
+            raw_forward: [0.0, 0.0, -1.0],
+            scene_origin: [0.0; 3],
+            scene_right: [1.0, 0.0, 0.0],
+            scene_up: [0.0, 1.0, 0.0],
+            scene_forward: [0.0, 0.0, -1.0],
+            map_orientation: [0.0, 0.0, 0.0, 1.0],
+        };
+        let live_basis = LiveHandPanelBasis {
+            center: [0.2, 1.1, 1.8],
+            right: [1.0, 0.0, 0.0],
+            up: [0.0, 1.0, 0.0],
+            forward: [0.0, 0.0, -1.0],
+            target_distance_meters: 0.72,
+            mode: LIVE_HAND_BASIS_MODE_SPATIAL_VIEWER_WORLD_MIRROR_X,
+        };
+
+        assert!(registration_needs_live_spatial_origin_recapture(
+            provisional,
+            live_basis
+        ));
+
+        let committed = LiveHandWorldRegistration {
+            scene_origin: live_basis.center,
+            ..provisional
+        };
+        assert!(!registration_needs_live_spatial_origin_recapture(
+            committed, live_basis
+        ));
     }
 }

@@ -12,7 +12,7 @@ use std::{
     },
 };
 
-use jni::sys::{jclass, jint, jobject, JNIEnv};
+use jni::sys::{jclass, jint, jlong, jobject, JNIEnv};
 
 use crate::{
     acamera_sys::{
@@ -33,6 +33,18 @@ static SPATIAL_VIDEO_PROJECTION_STREAM: Mutex<Option<NativeSpatialVideoProjectio
     Mutex::new(None);
 static SPATIAL_VIDEO_PROJECTION_LATEST_FRAME: Mutex<Option<SpatialVideoProjectionFrame>> =
     Mutex::new(None);
+static SPATIAL_VIDEO_PROJECTION_PACKED_PAIR: Mutex<Option<SpatialPackedPairMetadata>> =
+    Mutex::new(None);
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SpatialPackedPairMetadata {
+    pub(crate) pair_id: u64,
+    pub(crate) left_source_frame: u64,
+    pub(crate) right_source_frame: u64,
+    pub(crate) left_sensor_timestamp_ns: i64,
+    pub(crate) right_sensor_timestamp_ns: i64,
+    pub(crate) pair_delta_ns: u64,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct SpatialVideoProjectionFrame {
@@ -47,6 +59,7 @@ pub(crate) struct SpatialVideoProjectionFrame {
     pub(crate) fps_cap: i32,
     pub(crate) dropped_frames: u64,
     pub(crate) buffer_removed_count: u64,
+    pub(crate) packed_pair: Option<SpatialPackedPairMetadata>,
 }
 
 pub(crate) fn latest_spatial_video_projection_frame() -> Option<SpatialVideoProjectionFrame> {
@@ -54,6 +67,39 @@ pub(crate) fn latest_spatial_video_projection_frame() -> Option<SpatialVideoProj
         .lock()
         .ok()
         .and_then(|guard| guard.as_ref().cloned())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialPackedStereoBrokerPlayback_nativeSetPackedStereoPairMetadata(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    pair_id: jlong,
+    left_source_frame: jlong,
+    right_source_frame: jlong,
+    left_sensor_timestamp_ns: jlong,
+    right_sensor_timestamp_ns: jlong,
+    pair_delta_ns: jlong,
+) {
+    if pair_id <= 0
+        || left_source_frame <= 0
+        || right_source_frame <= 0
+        || left_sensor_timestamp_ns <= 0
+        || right_sensor_timestamp_ns <= 0
+        || pair_delta_ns < 0
+    {
+        log_marker("status=packed-pair-rejected reason=invalid-pair-metadata".to_string());
+        return;
+    }
+    if let Ok(mut metadata) = SPATIAL_VIDEO_PROJECTION_PACKED_PAIR.lock() {
+        *metadata = Some(SpatialPackedPairMetadata {
+            pair_id: pair_id as u64,
+            left_source_frame: left_source_frame as u64,
+            right_source_frame: right_source_frame as u64,
+            left_sensor_timestamp_ns,
+            right_sensor_timestamp_ns,
+            pair_delta_ns: pair_delta_ns as u64,
+        });
+    }
 }
 
 struct NativeSpatialVideoProjectionStream {
@@ -119,6 +165,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     max_images: jint,
     fps_cap: jint,
 ) -> jobject {
+    if let Ok(mut pair) = SPATIAL_VIDEO_PROJECTION_PACKED_PAIR.lock() {
+        *pair = None;
+    }
     if env.is_null() {
         log_marker(
             "status=error reason=null-jni-env nativeImageReader=true javaHardwareBufferBridge=false"
@@ -174,6 +223,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     _env: *mut JNIEnv,
     _class: jclass,
 ) {
+    if let Ok(mut pair) = SPATIAL_VIDEO_PROJECTION_PACKED_PAIR.lock() {
+        *pair = None;
+    }
     if let Ok(mut guard) = SPATIAL_VIDEO_PROJECTION_STREAM.lock() {
         let had_stream = guard.take().is_some();
         if let Ok(mut latest) = SPATIAL_VIDEO_PROJECTION_LATEST_FRAME.lock() {
@@ -410,6 +462,10 @@ unsafe extern "C" fn spatial_video_projection_on_image_available(
         + 1;
     let dropped = reader_context.dropped_frames.load(Ordering::Relaxed);
     let buffer_removed_count = reader_context.buffer_removed_count.load(Ordering::Relaxed);
+    let packed_pair = SPATIAL_VIDEO_PROJECTION_PACKED_PAIR
+        .lock()
+        .ok()
+        .and_then(|pair| *pair);
     let frame = SpatialVideoProjectionFrame {
         hardware_buffer,
         descriptor,
@@ -422,12 +478,13 @@ unsafe extern "C" fn spatial_video_projection_on_image_available(
         fps_cap: reader_context.fps_cap,
         dropped_frames: dropped,
         buffer_removed_count,
+        packed_pair,
     };
     if let Ok(mut latest) = SPATIAL_VIDEO_PROJECTION_LATEST_FRAME.lock() {
         *latest = Some(frame.clone());
     }
     log_marker(format!(
-        "status=decoded-frame-acquired stream=stereo_video frameIndex={} importSequence={} timestampNs={} descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} hardwareBufferId={} hardwareBufferIdStatus={} configuredWidth={} configuredHeight={} maxImages={} fpsCap={} droppedFrames={} bufferRemovedCount={} imageAcquireApi=AImageReader_acquireLatestImage imageReleaseApi=AImage_delete descriptorShape=android-hardware-buffer-private sourceAuthority=android-mediacodec-surface-decoder rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false highRateJsonPayload=false nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false ahbHandleRetained=true latestFramePublished=true videoProjectionGpuImportReady=false videoProjectionGpuAdoptionPath=android-mediacodec-surface-aimage-reader-ahardwarebuffer-to-vulkan-sampled-image",
+        "status=decoded-frame-acquired stream=stereo_video frameIndex={} importSequence={} timestampNs={} descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} hardwareBufferId={} hardwareBufferIdStatus={} configuredWidth={} configuredHeight={} maxImages={} fpsCap={} droppedFrames={} bufferRemovedCount={} packedStereo={} stereoPairId={} leftSourceFrame={} rightSourceFrame={} leftSensorTimestampNs={} rightSensorTimestampNs={} pairDeltaNs={} imageAcquireApi=AImageReader_acquireLatestImage imageReleaseApi=AImage_delete descriptorShape=android-hardware-buffer-private sourceAuthority=android-mediacodec-surface-decoder rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false highRateJsonPayload=false nativeImageReader=true nativeImageReaderCount=1 javaHardwareBufferBridge=false cpuPixelCopy=false ahbHandleRetained=true latestFramePublished=true videoProjectionGpuImportReady=false videoProjectionGpuAdoptionPath=android-mediacodec-surface-aimage-reader-ahardwarebuffer-to-vulkan-sampled-image",
         frame_index,
         import_sequence,
         timestamp_ns,
@@ -445,6 +502,13 @@ unsafe extern "C" fn spatial_video_projection_on_image_available(
         reader_context.fps_cap,
         dropped,
         buffer_removed_count
+        ,packed_pair.is_some()
+        ,packed_pair.map(|pair| pair.pair_id).unwrap_or(0)
+        ,packed_pair.map(|pair| pair.left_source_frame).unwrap_or(0)
+        ,packed_pair.map(|pair| pair.right_source_frame).unwrap_or(0)
+        ,packed_pair.map(|pair| pair.left_sensor_timestamp_ns).unwrap_or(0)
+        ,packed_pair.map(|pair| pair.right_sensor_timestamp_ns).unwrap_or(0)
+        ,packed_pair.map(|pair| pair.pair_delta_ns).unwrap_or(0)
     ));
     AImage_delete(image);
 }

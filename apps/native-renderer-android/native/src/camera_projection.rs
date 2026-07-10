@@ -41,6 +41,10 @@ pub(crate) struct CameraProjectionFrameStats {
     pub(crate) right_capture_result: NativeCameraCaptureResultCorrelation,
     pub(crate) pair_delta_ns: u64,
     pub(crate) stereo_pairing_policy: &'static str,
+    pub(crate) source_layout: &'static str,
+    pub(crate) left_source_uv_rect: TargetRect,
+    pub(crate) right_source_uv_rect: TargetRect,
+    pub(crate) packed_source_visual_equivalence_ready: bool,
     pub(crate) import_cache_hits: u64,
     pub(crate) import_cache_misses: u64,
     pub(crate) luma_diagnostic: CameraLumaDiagnosticFrameStats,
@@ -142,6 +146,10 @@ pub(crate) struct PreparedCameraProjection {
     pub(crate) pipeline: vk::Pipeline,
     left_image_view: vk::ImageView,
     right_image_view: vk::ImageView,
+    left_source_uv_rect: TargetRect,
+    right_source_uv_rect: TargetRect,
+    left_source_dimensions: [u32; 2],
+    right_source_dimensions: [u32; 2],
     pub(crate) stats: CameraProjectionFrameStats,
 }
 
@@ -364,6 +372,8 @@ impl CameraProjectionRenderer {
                 0,
                 0,
             ],
+            left_source_uv_rect: target_rect_array(prepared.left_source_uv_rect),
+            right_source_uv_rect: target_rect_array(prepared.right_source_uv_rect),
         };
         let push_bytes = std::slice::from_raw_parts(
             (&push as *const CameraLumaDiagnosticPush).cast::<u8>(),
@@ -532,6 +542,24 @@ impl CameraProjectionRenderer {
             frame.left.hardware_buffer_id,
             frame.right.hardware_buffer_id,
         ];
+        let left_source_uv_rect = frame.source_layout.source_uv_rect_for_eye(0);
+        let right_source_uv_rect = frame.source_layout.source_uv_rect_for_eye(1);
+        let packed_source_visual_equivalence_ready = if frame.source_layout.is_packed() {
+            if frame.left.hardware_buffer_id == 0
+                || frame.left.hardware_buffer_id != frame.right.hardware_buffer_id
+                || frame.left.width != frame.right.width
+                || frame.left.height != frame.right.height
+                || frame.left.width % 2 != 0
+            {
+                return Err(
+                    "packed SBS camera projection requires one even-width AHardwareBuffer shared by both logical eyes"
+                        .to_string(),
+                );
+            }
+            true
+        } else {
+            false
+        };
         let cache_limits = CameraProjectionCacheLimits::for_frame(frame);
         let left = self.prepare_frame_inner(
             device,
@@ -618,6 +646,10 @@ impl CameraProjectionRenderer {
             pipeline,
             left_image_view: left.image_view,
             right_image_view: right.image_view,
+            left_source_uv_rect,
+            right_source_uv_rect,
+            left_source_dimensions: [frame.left.width.max(1), frame.left.height.max(1)],
+            right_source_dimensions: [frame.right.width.max(1), frame.right.height.max(1)],
             stats: CameraProjectionFrameStats {
                 rendered: true,
                 left_source_frame: frame.left.source_frame,
@@ -636,6 +668,10 @@ impl CameraProjectionRenderer {
                 right_capture_result: frame.right.capture_result.clone(),
                 pair_delta_ns: frame.pair_delta_ns,
                 stereo_pairing_policy: frame.pairing_policy,
+                source_layout: frame.source_layout.marker_value(),
+                left_source_uv_rect,
+                right_source_uv_rect,
+                packed_source_visual_equivalence_ready,
                 import_cache_hits: self.import_cache_hits,
                 import_cache_misses: self.import_cache_misses,
                 luma_diagnostic: self.last_luma_diagnostic.clone(),
@@ -873,6 +909,16 @@ pub(crate) unsafe fn record_camera_projection_eye(
     direct_border_opacity: f32,
 ) {
     let target_rect = projection_metadata.rect_for_eye(eye_index);
+    let source_uv_rect = if eye_index == 0 {
+        prepared.left_source_uv_rect
+    } else {
+        prepared.right_source_uv_rect
+    };
+    let source_dimensions = if eye_index == 0 {
+        prepared.left_source_dimensions
+    } else {
+        prepared.right_source_dimensions
+    };
     let viewport = [vk::Viewport {
         x: 0.0,
         y: 0.0,
@@ -906,7 +952,13 @@ pub(crate) unsafe fn record_camera_projection_eye(
             target_rect.width,
             target_rect.height,
         ],
-        params2: [direct_border_opacity.clamp(0.0, 1.0), 0.0, 0.0, 0.0],
+        source_uv_rect: target_rect_array(source_uv_rect),
+        params2: [
+            direct_border_opacity.clamp(0.0, 1.0),
+            1.0 / source_dimensions[0].max(1) as f32,
+            1.0 / source_dimensions[1].max(1) as f32,
+            0.0,
+        ],
     };
     let push_bytes = std::slice::from_raw_parts(
         (&push as *const CameraProjectionPush).cast::<u8>(),
@@ -1274,6 +1326,7 @@ fn format_feature_flags_marker(flags: vk::FormatFeatureFlags) -> String {
 struct CameraProjectionPush {
     params0: [f32; 4],
     target_rect: [f32; 4],
+    source_uv_rect: [f32; 4],
     params2: [f32; 4],
 }
 
@@ -1281,6 +1334,12 @@ struct CameraProjectionPush {
 #[derive(Clone, Copy)]
 struct CameraLumaDiagnosticPush {
     params0: [u32; 4],
+    left_source_uv_rect: [f32; 4],
+    right_source_uv_rect: [f32; 4],
+}
+
+fn target_rect_array(rect: TargetRect) -> [f32; 4] {
+    [rect.x, rect.y, rect.width, rect.height]
 }
 
 fn target_rect_to_scissor(extent: vk::Extent2D, rect: TargetRect) -> vk::Rect2D {

@@ -4,10 +4,14 @@
 //! operator frontends. It is data-only: it does not open ADB, WebSocket, UDP,
 //! LSL, or app-private transports.
 
+mod ble_rendezvous;
+mod direct_p2p_socket_authority;
 mod model;
 mod validation;
 mod wifi_direct_lifecycle;
 
+pub use ble_rendezvous::*;
+pub use direct_p2p_socket_authority::*;
 pub use model::*;
 pub use validation::validate_device_link_report;
 pub use wifi_direct_lifecycle::*;

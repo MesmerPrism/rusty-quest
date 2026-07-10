@@ -403,10 +403,12 @@ function Summarize-NativeRendererLog {
     $remoteBrokerActiveMarker = Select-LastLineContaining -Lines $lines -Needle "remoteBrokerCameraProjectionActive=true"
     $leftHeader = Select-LastLineContaining -Lines $lines -Needle "channel=remote-camera-broker-inlet status=stream-header side=left"
     $rightHeader = Select-LastLineContaining -Lines $lines -Needle "channel=remote-camera-broker-inlet status=stream-header side=right"
+    $packedHeader = Select-LastLineContaining -Lines $lines -Needle "channel=remote-camera-broker-inlet status=stream-header side=stereo"
     $leftInletFrame = Select-LastLineContaining -Lines $lines -Needle "channel=remote-camera-broker-inlet status=frame side=left"
     $rightInletFrame = Select-LastLineContaining -Lines $lines -Needle "channel=remote-camera-broker-inlet status=frame side=right"
     $leftAhbFrame = Select-LastLineContaining -Lines $lines -Needle "channel=remote-camera-broker-ahardware-buffer status=frame side=left"
     $rightAhbFrame = Select-LastLineContaining -Lines $lines -Needle "channel=remote-camera-broker-ahardware-buffer status=frame side=right"
+    $packedAhbFrame = Select-LastLineContaining -Lines $lines -Needle "channel=remote-camera-broker-ahardware-buffer status=frame side=stereo"
     $leftProjectionImport = Select-LastLineContaining -Lines $lines -Needle "channel=camera-projection-import status=ok side=left"
     $rightProjectionImport = Select-LastLineContaining -Lines $lines -Needle "channel=camera-projection-import status=ok side=right"
     $projectionScorecards = @($lines | Where-Object { $_ -like "*channel=camera-projection-scorecard*" })
@@ -436,6 +438,11 @@ function Summarize-NativeRendererLog {
     $projectionReady = (Get-MarkerValue -Line $scorecardForReadiness -Key "projectionReady") -eq "true"
     $leftFrameFreshness = Get-RemoteFrameFreshness -Lines $lines -Needle "channel=remote-camera-broker-ahardware-buffer status=frame side=left" -FinalScorecardLine $scorecardForReadiness
     $rightFrameFreshness = Get-RemoteFrameFreshness -Lines $lines -Needle "channel=remote-camera-broker-ahardware-buffer status=frame side=right" -FinalScorecardLine $scorecardForReadiness
+    $packedFrameFreshness = Get-RemoteFrameFreshness -Lines $lines -Needle "channel=remote-camera-broker-ahardware-buffer status=frame side=stereo" -FinalScorecardLine $scorecardForReadiness
+    if ($packedMediaLayout) {
+        $leftFrameFreshness = $packedFrameFreshness
+        $rightFrameFreshness = $packedFrameFreshness
+    }
     $leftScorecardFreshness = Get-ScorecardFrameFreshness -Lines $lines -SourceFrameKey "leftSourceFrame" -FinalScorecardLine $scorecardForReadiness
     $rightScorecardFreshness = Get-ScorecardFrameFreshness -Lines $lines -SourceFrameKey "rightSourceFrame" -FinalScorecardLine $scorecardForReadiness
     if ($LaneMode -eq "left-only") {
@@ -452,25 +459,35 @@ function Summarize-NativeRendererLog {
         $videoConfig -like "*videoProjectionSource=broker-rmanvid1*" -or
         $sourceAuthority -or
         $leftAhbFrame -or
-        $rightAhbFrame
+        $rightAhbFrame -or
+        $packedAhbFrame
     )
     $remoteBrokerProjectionActive = [bool](
         $remoteBrokerActiveMarker -or
         $leftAhbFrame -or
         $rightAhbFrame -or
+        $packedAhbFrame -or
         $lastRemoteProjectionScorecard -or
         $lastRemoteScorecard
     )
     $leftLaneRequired = [bool]($LaneMode -ne "right-only")
     $rightLaneRequired = [bool]($LaneMode -ne "left-only")
-    $requiredAhbFramesReady = [bool](
-        ((-not $leftLaneRequired) -or $leftAhbFrame) -and
-        ((-not $rightLaneRequired) -or $rightAhbFrame)
-    )
-    $requiredProjectionImportsReady = [bool](
-        ((-not $leftLaneRequired) -or $leftProjectionImport) -and
-        ((-not $rightLaneRequired) -or $rightProjectionImport)
-    )
+    $requiredAhbFramesReady = if ($packedMediaLayout) {
+        [bool]$packedAhbFrame
+    } else {
+        [bool](
+            ((-not $leftLaneRequired) -or $leftAhbFrame) -and
+            ((-not $rightLaneRequired) -or $rightAhbFrame)
+        )
+    }
+    $requiredProjectionImportsReady = if ($packedMediaLayout) {
+        [bool]($packedAhbFrame -and $vulkanReady)
+    } else {
+        [bool](
+            ((-not $leftLaneRequired) -or $leftProjectionImport) -and
+            ((-not $rightLaneRequired) -or $rightProjectionImport)
+        )
+    }
     [ordered]@{
         log_path = $LogPath
         marker_counts = [ordered]@{
@@ -490,10 +507,13 @@ function Summarize-NativeRendererLog {
         remote_broker_camera_projection_active = $remoteBrokerProjectionActive
         left_stream_header_ok = [bool]($null -ne $leftHeader)
         right_stream_header_ok = [bool]($null -ne $rightHeader)
+        packed_stream_header_ok = [bool]($null -ne $packedHeader)
+        packed_media_layout = [bool]$packedMediaLayout
         left_inlet_frame_count = Count-LinesContaining -Lines $lines -Needle "channel=remote-camera-broker-inlet status=frame side=left"
         right_inlet_frame_count = Count-LinesContaining -Lines $lines -Needle "channel=remote-camera-broker-inlet status=frame side=right"
         left_ahb_frame_count = Count-LinesContaining -Lines $lines -Needle "channel=remote-camera-broker-ahardware-buffer status=frame side=left"
         right_ahb_frame_count = Count-LinesContaining -Lines $lines -Needle "channel=remote-camera-broker-ahardware-buffer status=frame side=right"
+        packed_ahb_frame_count = Count-LinesContaining -Lines $lines -Needle "channel=remote-camera-broker-ahardware-buffer status=frame side=stereo"
         left_frame_freshness = $leftFrameFreshness
         right_frame_freshness = $rightFrameFreshness
         stream_fresh_frames = $streamFreshFrames
@@ -524,6 +544,7 @@ function Summarize-NativeRendererLog {
         right_inlet_frame = $rightInletFrame
         left_ahb_frame = $leftAhbFrame
         right_ahb_frame = $rightAhbFrame
+        packed_ahb_frame = $packedAhbFrame
         left_projection_import = $leftProjectionImport
         right_projection_import = $rightProjectionImport
         active_lane_ahb_frames_ready = $requiredAhbFramesReady

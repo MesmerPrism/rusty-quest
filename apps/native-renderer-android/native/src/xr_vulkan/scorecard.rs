@@ -163,7 +163,7 @@ pub(super) fn write_projection_scorecard(
     crate::marker(
         "camera-projection-scorecard",
         format!(
-            "frame={} renderMode={} remoteBrokerCameraProjectionActive={} cameraProjectionReady={} openxrSubmitReady=true vulkanExternalImportReady={} projectionReady={} cameraProjectionPath={} leftCameraId={} rightCameraId={} leftSourceFrame={} rightSourceFrame={} leftHardwareBufferId={} rightHardwareBufferId={} leftImportSequence={} rightImportSequence={} stereoPairDeltaNs={} stereoPairingPolicy={} observedOpenXrFps={:.1} projectionExtent={}x{} sourceAuthority={} nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false",
+            "frame={} renderMode={} remoteBrokerCameraProjectionActive={} cameraProjectionReady={} openxrSubmitReady=true vulkanExternalImportReady={} projectionReady={} cameraProjectionPath={} leftCameraId={} rightCameraId={} leftSourceFrame={} rightSourceFrame={} leftHardwareBufferId={} rightHardwareBufferId={} leftImportSequence={} rightImportSequence={} stereoPairDeltaNs={} stereoPairingPolicy={} sourceLayout={} leftSourceUvRect={} rightSourceUvRect={} packedSourceVisualEquivalenceReady={} observedOpenXrFps={:.1} projectionExtent={}x{} sourceAuthority={} nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false",
             frame_count,
             render_mode.marker_value(),
             remote_broker_camera_projection_active,
@@ -181,6 +181,10 @@ pub(super) fn write_projection_scorecard(
             camera_projection_stats.right_import_sequence,
             camera_projection_stats.pair_delta_ns,
             camera_projection_stats.stereo_pairing_policy,
+            camera_projection_stats.source_layout,
+            camera_projection_stats.left_source_uv_rect.as_xywh_token(),
+            camera_projection_stats.right_source_uv_rect.as_xywh_token(),
+            camera_projection_stats.packed_source_visual_equivalence_ready,
             observed_openxr_fps,
             extent.width,
             extent.height,

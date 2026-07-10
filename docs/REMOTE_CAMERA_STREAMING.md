@@ -58,7 +58,10 @@ The first supported topologies are:
 
 The session schema is `rusty.quest.remote_camera_session.v1`. Plans live under
 `fixtures/remote-camera-sessions/` and are validated by the
-`rusty-quest-remote-camera` crate.
+`rusty-quest-remote-camera` crate. Canonical direct-P2P route fields are adapted
+through the lower `rusty.quest.direct_p2p_socket_route.v1` contract in
+`rusty-quest-device-link`, so camera code does not own generic P2P subnet or
+socket-authority rules.
 
 For a specific Quest endpoint, the crate can derive a
 `rusty.quest.runtime_profile.v1` profile that contains only low-rate launch
@@ -107,6 +110,45 @@ properties use compact low-rate strings. For example, sender media profiles use
 `left:quest-b.local:9079;right:quest-b.local:9080`. The broker runtime also
 accepts the earlier verbose parser shape for compatibility with command-message
 overrides.
+
+## Transport Authority
+
+Transport selection is modeled independently from media framing and command
+authority. The canonical direct Wi-Fi route uses:
+
+```text
+route_kind=direct_p2p_tcp
+socket_authority=rusty_direct_p2p_socket_authority
+local_bind_host=<observed local p2p IPv4>
+connect_host=<peer p2p IPv4>
+```
+
+The generated Android profile keeps route, socket authority, and local bind in
+separate low-rate properties so each value stays under Android's property-size
+limit. Command payloads use the same fields. The broker retains the old
+five-field authority-as-route input for compatibility, but new builders do not
+emit it.
+
+The standalone lower-contract validator is:
+
+```powershell
+cargo run --quiet -p rusty-quest-device-link --bin validate_direct_p2p_socket_route -- fixtures\device-link\direct-p2p-socket-route.pass.json
+```
+
+Its damaged fixtures fail closed on infrastructure-WLAN fallback and claims
+that an Android `Network` replaces the scoped Rusty socket authority.
+
+`rusty_direct_p2p_socket_authority` applies only to Rusty-owned sockets. It
+does not create an Android `ConnectivityManager.Network` or satisfy a library
+that requires one. The adapter first prefers a route-matched Android P2P
+`Network`; otherwise it binds the observed local address before connect. Both
+paths fail closed unless the connected socket reports a P2P interface and a
+local address on the peer `/24`. Receiver listeners likewise bind the explicit
+local P2P address rather than `0.0.0.0` for a direct route.
+
+Authority configuration is not promotion evidence. Acceptance still requires
+receiver-observed bytes, payload integrity where applicable, bounded queues,
+runtime freshness, fatal-free logs, lifecycle stability, and final cleanup.
 
 ## Boundaries
 
@@ -219,10 +261,21 @@ it does not make unbound shell or Termux reachability an acceptance signal.
 
 The shared PowerShell helper
 `tools/qcl100_native_projection/DirectP2pMediaAuthority.ps1` builds the receiver
-and sender parameter sets used by both the native QCL100 runner and the Makepad
-QCL099 direct-broker mode. That keeps the route vocabulary, local bind
+and sender parameter sets used by the native QCL100 runner and by the legacy
+QCL099 direct-broker compatibility surface when explicitly requested. That keeps
+the route vocabulary, local bind
 selection, direct-p2p address refresh, and authority summary in one place rather
 than duplicating the socket model in each projection variant.
+
+The Android socket adapter fails closed before connect: an explicit or
+interface-discovered local address is accepted only when its actual interface
+is P2P and its IPv4 is on the peer `/24`; an app-visible Android P2P `Network`
+is accepted only when its `LinkProperties` route matches the peer. Runtime
+status reports the connected socket's real local address and interface rather
+than using the selection-strategy token as an interface name. The QCL100 sender
+reducer requires `peer_socket_local_interface=p2p0`, same-subnet evidence, and
+`peer_socket_direct_p2p_ready=true`, so WLAN or stale/off-subnet fallback is a
+pre-media failure rather than merely a post-run warning.
 
 The accepted evidence split is:
 
@@ -232,14 +285,128 @@ The accepted evidence split is:
 - native OpenXR media: a directional owner-to-client run has proved broker
   Camera2/H.264 bytes consumed by the native custom stereo projection path with
   a fresh final-window renderer scorecard;
-- Makepad media: a both-headset QCL099 direct-broker diagnostic has proved
-  direct-p2p receiver-observed bytes, direct sender socket authority, Makepad
-  projection readiness on both headsets, clean cleanup, and zero Makepad fatal
-  counts; it is a pass candidate, not QCL099 promotion;
+- legacy Makepad media: prior QCL099 direct-broker diagnostics are historical
+  compatibility evidence only and are excluded from the current default
+  promotion/test path unless Makepad compatibility is explicitly requested;
 - simultaneous duplex: same-group two-way native render parity remains
   unpromoted until both directions produce receiver-observed media bytes,
   final-window renderer adoption, clean address refresh, cleanup, and zero
   native/system fatal lines in the same measured run.
+
+The QCL100 reducer now recognizes `rusty_direct_p2p_socket_authority` as a
+first-class same-group media topology instead of treating broker-owned media as
+having no classifiable topology. The classification is fail-closed: each active
+direction must have an accepted sender authority, fresh receiver-observed bytes,
+and a receiver transport listener whose runtime status reports the exact
+QCL041-observed local address on `p2p0`. A full QCL100 duplex claim additionally
+requires `direction=duplex` and `lane_mode=stereo`; `left-only` and `right-only`
+simultaneous runs remain bounded diagnostics. The child native summary can
+report same-epoch media/render topology evidence, but keeps
+`promotion_claimed=false`; monitored cleanup and final route-clear acceptance
+remain separate promotion gates.
+
+The guarded run
+`qcl100-native-simultaneous-left-direct-p2p-diagnostic-20260710T0940Z`
+passed that bounded one-lane classification in both directions: both sender
+authorities, both receiver listeners bound to their observed `p2p0` addresses,
+both receiver byte counters, and both native renderer freshness windows passed.
+The W-ending headset retained its boot count and `system_server` PID with no
+fatal marker. The Q-ending headset became unavailable to ADB and Windows USB
+after its final broker-status and QCL041 artifact reads had already passed, so
+post-run Q lifecycle and cleanup are unproven. Windows Kernel-PnP event 1010 at
+`2026-07-10T09:40:47.4900597Z` records the Q composite device as surprise
+removed because it was missing on the USB bus, 342 ms before the orchestration
+failure artifact was generated. That proves host-side USB removal, but it does
+not distinguish cable/port/power loss from a headset USB-stack or OS reset and
+does not identify a reboot, system-server crash, or Rusty app crash. The run is
+therefore a same-epoch left-lane diagnostic pass, not full stereo and not
+promotion.
+
+`Invoke-Qcl100QuestToQuestNativeStereoProjectionWifiDirectMonitored.ps1`
+owns final promotion authority. A full-stereo candidate uses
+`-Direction duplex -LaneMode stereo -RunFinalRouteClear`; the monitor invokes a
+Settings-fenced, preflight-only route-clear recovery against the addresses
+actually observed by the media run. Its
+`rusty.quest.qcl100_monitored_promotion_acceptance.v1` reducer requires two
+accepted end-to-end Rusty direct-P2P direction paths. Each direction aggregates
+two accepted stereo sender lanes, two `p2p0`-bound receiver lanes, fresh
+receiver-observed bytes, and sustained renderer scorecards on each headset. It
+also requires zero native/system fatals, stable boot count/uptime/`system_server`
+PID on both devices, readable QCL041 artifacts, Settings-fence receipts for both
+devices, clean cleanup readback, and accepted final candidate-route clearance.
+Only that reducer may emit
+`promotion_claimed=true`; any missing gate reports a normalized blocker and
+fails closed. `-PromotionSelfTest` exercises the accepted fixture and damaged
+left-only, lifecycle, receiver-authority, Settings-fence, route-clear, and child
+promotion-claim cases without touching hardware.
+
+The first accepted live run is
+`qcl100-native-stereo-promotion-candidate-20260710T1236Z`. It promoted
+same-group full-stereo duplex with `rusty_direct_p2p_socket_authority`: both
+direction paths and all eight sender/receiver stereo lane authorities passed,
+the owner/client receivers observed 5,061,939 and 5,686,872 bytes, both native
+renderers sustained fresh stream and scorecard windows, and native/system fatal
+counts were zero. Boot IDs, boot counts, and `system_server` PIDs remained stable
+on both devices through final route clear; cleanup left infrastructure Wi-Fi
+disconnected, `p2p0` IPv4 clear, and candidate Wi-Fi Direct routes clear. This
+supersedes the earlier left-only non-promotion conclusion without changing the
+scope of its historical evidence.
+
+## Packed Side-By-Side QCL100 Profile
+
+Run `qcl100-packed-sbs-duplex45-20260710T155638Z` separately promoted the
+packed native OpenXR profile. The topology still has two simultaneous
+end-to-end directions, but each direction has exactly one logical `stereo`
+lane: Camera2 `50` and `51` frames are capture-result correlated, paired by
+bounded nearest sensor timestamp, GPU-composited side-by-side, encoded once,
+carried by one RMANVID v4/H.264 stream over one Rusty-owned direct-P2P socket,
+decoded once, and imported as one packed `AHardwareBuffer`. The renderer samples
+the left and right halves with the same AHB and source-pair metadata. No Android
+`Network`, WLAN route, CPU pixel copy, or stale-eye reuse is accepted.
+
+The 45-second run accepted both directions. Owner/client sources accepted
+773/784 pairs with 1 microsecond p95 pair skew and 3/2 microsecond maximum
+skew; they sent 1,602,578/1,475,395 bytes and received 1,443,627/1,669,045
+bytes. Owner/client receivers projected 704/725 packed AHB frames through one
+hardware decoder each, sustained roughly 90 FPS OpenXR scorecards, and reported
+zero native/system fatals. Both device lifecycle checks, cleanup readback, and
+strict final route clear passed.
+
+Packed SBS is now the recommended explicit QCL100 native profile, while
+`separate-eye-streams` remains the implementation default and the independently
+promoted dual-lane route remains available for rollback, compatibility, and
+differential diagnosis. Select packed mode explicitly with
+`-MediaLayout side-by-side-left-right` on the QCL100 runner. Use
+`tools/Invoke-Qcl100PackedStereoLocalLoopback.ps1` for synthetic or Camera2
+local qualification and `tools/Test-Qcl100PackedStereoRun.ps1` to reduce a
+one-way or duplex artifact set. A one-way reducer result may pass prerequisites
+but cannot promote. The Spatial Camera Panel `broker-rmanvid1` adapter consumes
+the same layout explicitly; it is build/static qualified and not part of this
+native OpenXR hardware promotion.
+
+The live end-to-end entry point is
+`Invoke-Qcl100NativeStereoPromotionCandidate.ps1`. It keeps both Agent Board
+leases across one guarded pre-route clear, a fresh owner-role QCL041 local-bind
+gate (UDP, TCP, and sustained bidirectional TCP with CRC), and the monitored
+duplex stereo run with final route clear:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-Qcl100NativeStereoPromotionCandidate.ps1 `
+  -OwnerLeaseId <owner-lease-id> -ClientLeaseId <client-lease-id> `
+  -InfrastructureWifiSsid <infrastructure-ssid>
+```
+
+The full-stereo phase rechecks infrastructure disconnect state. When the
+pre-route phase already disconnected a headset, that check uses only
+`cmd wifi status` and does not reopen Settings; UIAutomation is entered again
+only if the headset has autojoined the explicit target SSID. The wrapper never
+promotes from the QCL041 child result or native child summary. It accepts only
+the final monitored promotion reducer and writes
+`qcl100-promotion-candidate-plan.json`; `-DryRun` exercises the complete command
+plan without ADB or headset access. Its pre-route child uses the explicit
+`PromotionCandidatePreRouteClear` scope, which authorizes only the parent
+orchestrator's QCL041-then-monitored-media sequence under the same leases. A
+standalone route-clear recovery retains its human-review-before-media policy.
 
 Live direct-p2p media runs must use the monitored QCL099/QCL100 wrappers with
 regular progress artifacts and hard budgets. A missing final summary, stale
@@ -351,6 +518,52 @@ performs a passive SensorLock preflight and writes
 `com.oculus.os.vrlockscreen/.SensorLockActivity` UI is active, the wrapper
 records `blocked_sensorlock` before QCL041 preclear, monitor execution, broker
 hello, media, or native renderer launch.
+
+The W-ending headset crash diagnosis identified an external Meta VR Wi-Fi
+Settings scan-surface failure, not a Rusty broker/media socket failure:
+`com.oculus.os.vrwifi.ConnectionProbe.updateMatchedScanResults` can crash
+`system_server` while Settings is foreground after Wi-Fi cleanup. Future
+reverse QCL041/QCL100 work that follows Settings `Disconnect` must fence that
+surface before group formation. The monitored QCL100 runner exposes
+`-FenceSettingsBeforeRun`, `-SettingsFenceTarget owner|client|both`, and
+`-ClearLogcatAfterSettingsFence`; the fence force-stops
+`com.oculus.panelapp.settings` and `com.android.settings`, sends HOME, records
+foreground focus in `*-settings-fence.json`, and fails closed when Settings is
+still foreground unless `-AllowSettingsForegroundAfterFence` is explicitly set.
+The monitored wrapper also records pre/post `boot_count`, `/proc/uptime`, and
+`system_server` PID snapshots. A boot-count change, uptime regression, or
+silent `system_server` PID replacement now yields
+`blocked_system_lifecycle_changed` even when no matching fatal line survives in
+the filtered log window. The monitor now captures a readable boot count, Linux
+boot ID, `/proc/uptime`, and `system_server` PID before entering Settings and
+again immediately after the fence. Any unreadable baseline blocks before UI
+mutation, while a boot or `system_server` change in the risky Settings window
+reports `blocked_settings_lifecycle_changed` before QCL041 or media starts. The
+final lifecycle comparison spans from that pre-Settings baseline through final
+route clear. Post-run cleanup readback also requires successful ADB
+status probes, no remaining `p2p0` IPv4, and infrastructure Wi-Fi still
+disconnected when the run required an air gap; otherwise the monitor reports
+`blocked_cleanup_readback_not_clean`.
+`Invoke-Qcl100RouteClearRecovery.ps1` enables the fence by default before
+QCL041 preclear. This is crash mitigation and preflight evidence only; it does
+not promote QCL100/QCL099, launch media, prove duplex, or replace route-clear
+requirements. With `-FinalPromotionRouteClear`, it still performs no media or
+promotion action; it records strict post-media route evidence for the enclosing
+QCL100 monitored promotion reducer and checks the effective peer addresses
+forwarded by that run.
+
+When infrastructure Wi-Fi autojoin must be corrected immediately before a
+native QCL100 run, the same monitor can perform the documented guarded
+UIAutomation disconnect with
+`-DisconnectInfrastructureWifiBeforeRun`,
+`-InfrastructureWifiDisconnectTarget owner|client|both`, and an explicit
+`-InfrastructureWifiSsid`. This runs `settingsWifiDisconnectProbe` in dry-probe
+mode before the mutation probe, records `*-infrastructure-wifi-disconnect.json`
+receipts plus before/after `cmd wifi status`, never targets `Forget`, and
+requires `-FenceSettingsBeforeRun` so Settings is closed before QCL041/QCL100
+group formation. This is route setup hygiene and crash mitigation evidence; it
+is not part of the Rusty direct-p2p socket authority and does not promote media
+or duplex claims by itself.
 
 Route-clear recovery `qcl100-route-clear-recovery-live-20260707T2312Z` ran
 through the lease-gated wrapper and stopped at `blocked_preflight` before

@@ -52,7 +52,9 @@ use crate::{
         AIMAGE_FORMAT_PRIVATE,
     },
     android_hardware_buffer::AndroidHardwareBufferHandle,
-    android_log_error, marker,
+    android_log_error,
+    camera_projection_metadata::CameraProjectionSourceLayout,
+    marker,
     native_camera_profiles::CameraRequestTemplate,
     native_camera_reader_selection::{
         select_reader_size, CameraCapabilities, PrivateOutputMinFrameDuration,
@@ -267,6 +269,7 @@ pub(crate) struct NativeStereoCameraFrame {
     pub(crate) right: NativeCameraFrame,
     pub(crate) pair_delta_ns: u64,
     pub(crate) pairing_policy: &'static str,
+    pub(crate) source_layout: CameraProjectionSourceLayout,
 }
 
 pub(crate) struct NativeCameraImageLease {
@@ -1301,6 +1304,7 @@ impl NativeCameraCounters {
             right,
             pair_delta_ns,
             pairing_policy: policy.marker_value(),
+            source_layout: CameraProjectionSourceLayout::SeparateEyeTextures,
         })
     }
 
@@ -1329,6 +1333,7 @@ impl NativeCameraCounters {
                 right,
                 pair_delta_ns,
                 pairing_policy: policy.marker_value(),
+                source_layout: CameraProjectionSourceLayout::SeparateEyeTextures,
             });
         }
         self.latest_stereo_frame(policy)

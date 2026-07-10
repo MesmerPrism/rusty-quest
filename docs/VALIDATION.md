@@ -6,6 +6,38 @@ Run:
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 ```
 
+The default gate targets native OpenXR/Vulkan and Meta Spatial SDK surfaces.
+It skips the legacy Makepad runtime profile and QCL099 runner; use
+`-IncludeLegacyMakepad` only for an explicitly requested compatibility or
+historical replay pass. QCL100 validation includes the hardware-free one-command
+native stereo promotion-candidate gate. The current accepted live baseline is
+`qcl100-native-stereo-promotion-candidate-20260710T1236Z`, promoted through the
+monitored reducer only after full-stereo duplex, both-device lifecycle, and final
+route-clear acceptance passed.
+
+The packed SBS profile has an independent promoted baseline:
+`qcl100-packed-sbs-duplex45-20260710T155638Z`. Its acceptance requires two
+simultaneous directions and, per device, exactly one `stereo` sender lane, one
+Rusty-owned `p2p0` receiver lane, one GPU compositor/encoder, bounded unique
+Camera2 sensor-timestamp pairs, one hardware decoder, fresh packed
+`AHardwareBuffer` projection, and the same AHB sampled as both eye views. Local
+synthetic and real-Camera2 loopbacks plus one-way direct-P2P are prerequisites,
+not promotion substitutes. Run the focused static gate and reducer with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-Qcl100PackedStereoStatic.ps1 -RepoRoot .
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-Qcl100PackedStereoRun.ps1 `
+  -RunDir .\target\qcl100-packed-sbs-duplex45-20260710T155638Z -Direction duplex `
+  -SyntheticLocalSummaryPath .\target\qcl100-packed-sbs-local-synthetic-20260710T153420Z\packed-stereo-local-summary.json `
+  -Camera2LocalSummaryPath .\target\qcl100-packed-sbs-local-camera2-20260710T153456Z\packed-stereo-local-summary.json `
+  -Qcl041SummaryPath .\target\qcl100-packed-sbs-qcl041-gate-20260710T153634Z\summary.json `
+  -DualLaneFallbackPromotionPath .\target\qcl100-native-stereo-promotion-candidate-20260710T1236Z\qcl100-promotion-candidate-plan.json
+```
+
+The compatibility default remains `separate-eye-streams`; packed validation is
+activated only by `media_layout=side-by-side-left-right`. The previously
+promoted two-lane state remains valid fallback evidence.
+
 The runtime profile validation path is dry-run only. It validates runtime profile
 fixtures and generates a deterministic property write plan without touching a
 headset or ADB server. The native renderer profiles are the public validation
@@ -88,6 +120,34 @@ Spatial SDK public APIs expose `AvatarBody` hand/head transforms and built-in
 capture manifest therefore marks `spatial_public_mesh_topology_available=false`
 and records `spatial_poses.jsonl` plus OpenXR joint-bridge clips when the
 Spatial app has OpenXR handles.
+
+For OpenXR-to-Spatial world alignment, prepare a clean diagnostic view instead
+of the billboard fallback:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Prepare -ShowAvatarHands $true -DisableBillboardWireframe -EnableAlignmentDiagnostic -DisableNativeSurfaceParticleLayer
+```
+
+The clean rollback profile is `viewer-world-basis-registration`. The
+headset-accepted Spatial hand-lab mapping is selected explicitly:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Prepare -ShowAvatarHands $true -DisableBillboardWireframe -EnableAlignmentDiagnostic -AlignmentMappingProfile mirror-x-origin-registration -DisableNativeSurfaceParticleLayer
+```
+
+The mirror-X profile captures translation from the current OpenXR and
+Spatial viewer origins, maps position as `(-x, y, z)`, and converts OpenXR
+`xyzw` orientation to Spatial `xyzw` as `(z, w, x, y)`. If startup supplies an
+all-zero Spatial viewer pose, the bridge recaptures the registration once a
+live origin arrives. The 2026-07-10 headset run reduced viewer error from a
+reproduced 1.108 m floor offset to 0.0000 m / 0.0000 degrees and visually
+confirmed that the OpenXR joint markers overlay the built-in Meta hands.
+
+This renders one app-owned marker per OpenXR hand joint, larger Spatial SDK
+hand-anchor markers, bone lines, anchor-to-palm/wrist delta lines, and logs
+`spatial-openxr-hand-alignment` samples comparing `AvatarBody` hand anchors,
+OpenXR `palm_ext`/`wrist_ext`, `Scene.getViewerPose`, and the bridge-mapped
+OpenXR view pose.
 
 For the public Spatial world-hand billboard flock, the high-density carrier
 property is `debug.rustyquest.spatial.hand_billboard_flock.carrier`. The
@@ -553,6 +613,33 @@ quest lease serials, missing bounded TCP socket counters, and cleanup that did
 not complete. These are source-contract checks only; a live Hostess promotion
 still needs the corresponding leased peer-harness run and QCL-082 product
 media receiver evidence.
+
+The device-link test also validates the protocol-neutral direct-P2P socket
+route and BLE rendezvous contracts. Their agent-addressable validators are:
+
+```powershell
+cargo run --quiet -p rusty-quest-device-link --bin validate_direct_p2p_socket_route -- fixtures\device-link\direct-p2p-socket-route.pass.json
+cargo run --quiet -p rusty-quest-device-link --bin validate_ble_rendezvous -- message fixtures\device-link\ble-rendezvous-offer.pass.json
+cargo run --quiet -p rusty-quest-device-link --bin validate_ble_rendezvous -- receipt fixtures\device-link\ble-rendezvous-server-ready.receipt.json
+cargo run --quiet -p rusty-quest-device-link --bin validate_ble_rendezvous -- pair fixtures\device-link\ble-rendezvous-pair.pass.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-PeerRendezvousAndroid.ps1
+```
+
+Damaged direct-P2P fixtures reject WLAN fallback and claims that a
+`ConnectivityManager.Network` substitutes for the scoped Rusty socket
+authority. The Android BLE gate enforces explicit opt-in, bounded GATT,
+credential/address redaction, zero media bytes, zero Wi-Fi mutations, zero
+Manifold command execution, and cleanup. A one-device advertiser receipt with
+`status=ready` proves adapter readiness only; `status=pass` requires an actual
+authenticated bidirectional peer exchange. Full pair acceptance uses
+`Invoke-PeerRendezvousAndroidPair.ps1`, reverses the GATT roles, requires an
+authenticated reconnect in both phases, scans artifacts for raw Bluetooth
+addresses and the ephemeral secret, verifies stable Bluetooth/`p2p0` state,
+force-stops both packages, and runs the Rust pair validator over the summary.
+ADB still launches the evidence run and supplies the ephemeral test secret;
+autonomous enrollment and launch are outside this scoped promotion.
+The accepted two-Quest baseline is `ble-pair-20260710T132305Z`, whose summary
+also embeds a passing independent `pair` validation result.
 
 Native Quest renderer plans are source-only validation:
 

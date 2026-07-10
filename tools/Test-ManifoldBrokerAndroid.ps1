@@ -185,8 +185,17 @@ if ($remoteCameraRuntime -notmatch 'transport_stream_copy_error_after_bytes') {
 if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.transport_routes') {
     throw "RemoteCameraSessionRuntime does not read the peer transport route runtime property."
 }
+if ($remoteCameraRuntime -notmatch 'parts\.length\s*==\s*5\s*\|\|\s*parts\.length\s*==\s*6') {
+    throw "RemoteCameraSessionRuntime must accept canonical six-field authority routes while retaining five-field compatibility."
+}
+if ($remoteCameraRuntime -notmatch 'socket_authority') {
+    throw "RemoteCameraSessionRuntime must preserve socket authority separately from route kind."
+}
 if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.transport_bind_local_address') {
     throw "RemoteCameraSessionRuntime does not read the explicit Wi-Fi Direct local bind address property."
+}
+if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.transport_socket_authority') {
+    throw "RemoteCameraSessionRuntime must read socket authority independently from the route kind."
 }
 if ($remoteCameraRuntime -notmatch 'optJSONObject\("params"\)') {
     throw "RemoteCameraSessionRuntime does not read Hostess bridge-command params."
@@ -218,17 +227,47 @@ if ($remoteCameraRuntime -notmatch 'getSocketFactory\(\)\.createSocket') {
 if ($remoteCameraDirectP2pSocketAuthority -notmatch 'NetworkInterface\.getNetworkInterfaces') {
     throw "RemoteCameraSessionRuntime does not fall back to Wi-Fi Direct local address binding."
 }
+if ($remoteCameraDirectP2pSocketAuthority -notmatch 'p2pInterface\s*&&\s*sameSubnet') {
+    throw "RemoteCameraDirectP2pSocketAuthority must reject WLAN and off-subnet fallback addresses."
+}
+if ($remoteCameraDirectP2pSocketAuthority -notmatch 'isP2pInterfaceName') {
+    throw "RemoteCameraDirectP2pSocketAuthority must centralize P2P interface classification."
+}
 if ($remoteCameraDirectP2pSocketAuthority -notmatch 'findInterfaceNameForAddress') {
     throw "RemoteCameraDirectP2pSocketAuthority does not expose interface-name diagnostics for bound receiver sockets."
 }
 if ($remoteCameraDirectP2pSocketAuthority -notmatch 'rusty_direct_p2p_socket_authority') {
     throw "RemoteCameraDirectP2pSocketAuthority does not name the Rusty direct p2p socket authority."
 }
+if ($remoteCameraDirectP2pSocketAuthority -notmatch 'direct_p2p_tcp') {
+    throw "RemoteCameraDirectP2pSocketAuthority does not name the canonical direct P2P TCP route kind."
+}
+if ($remoteCameraDirectP2pSocketAuthority -notmatch 'isValidRouteAuthorityContract') {
+    throw "RemoteCameraDirectP2pSocketAuthority must reject a canonical direct P2P route with the wrong socket authority."
+}
 if ($remoteCameraRuntime -notmatch 'peer_socket_authority') {
     throw "RemoteCameraSessionRuntime does not report the peer socket authority in lane evidence."
 }
 if ($remoteCameraRuntime -notmatch 'RemoteCameraDirectP2pSocketAuthority\.requiresDirectP2pSocket') {
     throw "RemoteCameraSessionRuntime does not delegate direct p2p socket selection to the shared authority."
+}
+if ($remoteCameraRuntime -notmatch 'hasDirectP2pLocalAddressBinding') {
+    throw "RemoteCameraSessionRuntime must fail closed unless the local source is on a P2P interface and peer subnet."
+}
+if ($remoteCameraRuntime -notmatch 'hasDirectP2pNetworkBinding') {
+    throw "RemoteCameraSessionRuntime must require a route-matched Android P2P Network."
+}
+if ($remoteCameraRuntime -notmatch 'explicit_local_bind_rejected_not_p2p_peer_subnet') {
+    throw "RemoteCameraSessionRuntime must reject explicit WLAN or off-subnet direct-P2P binds."
+}
+if ($remoteCameraRuntime -notmatch 'p2p_interface_route_match') {
+    throw "RemoteCameraSessionRuntime must select Android P2P Networks only when their route matches the peer."
+}
+if ($remoteCameraRuntime -notmatch 'notePeerSocketConnected') {
+    throw "RemoteCameraSessionRuntime must record the actual connected peer socket source address and interface."
+}
+if ($remoteCameraRuntime -notmatch 'peer_socket_direct_p2p_ready') {
+    throw "RemoteCameraSessionRuntime must report fail-closed direct-P2P socket readiness."
 }
 if ($remoteCameraRuntime -notmatch 'debug\.rustyquest\.remote_camera\.sender_source_kind') {
     throw "RemoteCameraSessionRuntime does not read the sender source kind runtime property."

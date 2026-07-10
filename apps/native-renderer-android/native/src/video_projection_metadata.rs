@@ -192,6 +192,7 @@ mod tests {
                 broker_left_port: 8979,
                 broker_right_port: 8980,
                 broker_connect_timeout_ms: 5000,
+                broker_media_layout: crate::native_renderer_video_projection_options::NativeBrokerMediaLayout::SeparateEyeStreams,
                 stereo_layout: NativeVideoProjectionStereoLayout::SideBySideLeftRight,
                 width: 3840,
                 height: 1920,

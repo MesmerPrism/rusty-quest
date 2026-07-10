@@ -2,6 +2,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use rusty_quest_device_link::{
+    validate_direct_p2p_socket_route, DirectP2pSocketRoute, DIRECT_P2P_SOCKET_ROUTE_SCHEMA,
+    QUEST_DIRECT_P2P_INTERFACE, RUSTY_OWNED_SOCKET_SCOPE,
+};
+
 use crate::model::*;
 
 /// Validate a remote camera session plan.
@@ -32,6 +37,7 @@ pub fn validate_remote_camera_session(
         &runtime_endpoints,
         &mut errors,
     );
+    validate_media_layout(plan, &mut errors);
     validate_topology(plan, &devices, &mut errors);
     validate_observability(&plan.observability, &mut errors);
 
@@ -391,7 +397,7 @@ fn validate_port_bindings(
     let mut seen_ports = BTreeSet::new();
     for binding in bindings {
         validate_required_text("runtime_endpoint.port.eye", &binding.eye, errors);
-        if !matches!(binding.eye.as_str(), "left" | "right" | "mono") {
+        if !matches!(binding.eye.as_str(), "left" | "right" | "mono" | "stereo") {
             errors.push(ValidationError::new(format!(
                 "runtime endpoint {device_id} {field} has unsupported eye {}",
                 binding.eye
@@ -470,6 +476,7 @@ fn validate_transport_routes(
         .map(|lane| (lane.lane_id.as_str(), lane))
         .collect::<BTreeMap<_, _>>();
     let mut seen = BTreeSet::new();
+    let mut direct_p2p_local_bind_by_source = BTreeMap::new();
     for route in routes {
         validate_required_text("transport_route.lane_id", &route.lane_id, errors);
         validate_required_text(
@@ -489,6 +496,14 @@ fn validate_transport_routes(
         validate_route_token("transport_route.eye", &route.eye, errors);
         validate_route_token("transport_route.route_kind", &route.route_kind, errors);
         validate_route_token("transport_route.connect_host", &route.connect_host, errors);
+        if let Some(socket_authority) = route.socket_authority.as_deref() {
+            validate_required_text("transport_route.socket_authority", socket_authority, errors);
+            validate_route_token("transport_route.socket_authority", socket_authority, errors);
+        }
+        if let Some(local_bind_host) = route.local_bind_host.as_deref() {
+            validate_required_text("transport_route.local_bind_host", local_bind_host, errors);
+            validate_route_token("transport_route.local_bind_host", local_bind_host, errors);
+        }
         if route.connect_port == 0 {
             errors.push(ValidationError::new(format!(
                 "transport route {} connect_port must be nonzero",
@@ -503,7 +518,7 @@ fn validate_transport_routes(
         }
         if !matches!(
             route.route_kind.as_str(),
-            "direct_tcp_connect" | "relay_tls_client"
+            ROUTE_KIND_DIRECT_TCP_CONNECT | ROUTE_KIND_DIRECT_P2P_TCP | ROUTE_KIND_RELAY_TLS_CLIENT
         ) {
             errors.push(ValidationError::new(format!(
                 "transport route {} has unsupported route_kind {}",
@@ -527,10 +542,10 @@ fn validate_transport_routes(
             )));
         }
         match route.route_kind.as_str() {
-            "direct_tcp_connect" => {
+            ROUTE_KIND_DIRECT_TCP_CONNECT | ROUTE_KIND_DIRECT_P2P_TCP => {
                 if lane.transport.transport_kind != "lan_tcp" || lane.transport.relay_required {
                     errors.push(ValidationError::new(format!(
-                        "transport route {} direct_tcp_connect requires a non-relay lan_tcp lane",
+                        "transport route {} direct TCP requires a non-relay lan_tcp lane",
                         route.lane_id
                     )));
                 }
@@ -550,8 +565,33 @@ fn validate_transport_routes(
                         route.lane_id, route.sink_device_id
                     ))),
                 }
+                if is_direct_p2p_route(route) {
+                    validate_direct_p2p_route(
+                        route,
+                        runtime_endpoints,
+                        &mut direct_p2p_local_bind_by_source,
+                        errors,
+                    );
+                } else {
+                    if route
+                        .socket_authority
+                        .as_deref()
+                        .is_some_and(|authority| authority != SOCKET_AUTHORITY_PLATFORM_DEFAULT)
+                    {
+                        errors.push(ValidationError::new(format!(
+                            "transport route {} direct_tcp_connect has unsupported socket_authority",
+                            route.lane_id
+                        )));
+                    }
+                    if route.local_bind_host.is_some() {
+                        errors.push(ValidationError::new(format!(
+                            "transport route {} local_bind_host is reserved for direct_p2p_tcp",
+                            route.lane_id
+                        )));
+                    }
+                }
             }
-            "relay_tls_client" => {
+            ROUTE_KIND_RELAY_TLS_CLIENT => {
                 if lane.transport.transport_kind != "relay_tls"
                     || !lane.transport.relay_required
                     || !lane.transport.encryption_required
@@ -599,6 +639,70 @@ fn validate_transport_routes(
     }
 }
 
+fn is_direct_p2p_route(route: &RemoteCameraTransportRoute) -> bool {
+    route.route_kind == ROUTE_KIND_DIRECT_P2P_TCP
+}
+
+fn validate_direct_p2p_route<'a>(
+    route: &'a RemoteCameraTransportRoute,
+    runtime_endpoints: &BTreeMap<&str, &RemoteCameraRuntimeEndpoint>,
+    local_bind_by_source: &mut BTreeMap<&'a str, &'a str>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let shared_route = DirectP2pSocketRoute {
+        schema: DIRECT_P2P_SOCKET_ROUTE_SCHEMA.to_string(),
+        route_id: route.lane_id.clone(),
+        route_kind: route.route_kind.clone(),
+        socket_authority: route.socket_authority.clone().unwrap_or_default(),
+        socket_scope: RUSTY_OWNED_SOCKET_SCOPE.to_string(),
+        expected_interface: QUEST_DIRECT_P2P_INTERFACE.to_string(),
+        local_bind_host: route.local_bind_host.clone().unwrap_or_default(),
+        peer_host: route.connect_host.clone(),
+        peer_port: route.connect_port,
+        android_network_required: false,
+    };
+    if let Err(route_errors) = validate_direct_p2p_socket_route(&shared_route) {
+        errors.extend(
+            route_errors
+                .into_iter()
+                .map(|error| ValidationError::new(error.message)),
+        );
+    }
+
+    let Some(local_bind_host) = route
+        .local_bind_host
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    else {
+        errors.push(ValidationError::new(format!(
+            "transport route {} direct_p2p_tcp requires local_bind_host",
+            route.lane_id
+        )));
+        return;
+    };
+
+    if let Some(previous) = local_bind_by_source.insert(&route.source_device_id, local_bind_host) {
+        if previous != local_bind_host {
+            errors.push(ValidationError::new(format!(
+                "transport routes for source {} must use one direct P2P local_bind_host",
+                route.source_device_id
+            )));
+        }
+    }
+
+    match runtime_endpoints.get(route.source_device_id.as_str()) {
+        Some(endpoint) if endpoint.transport_bind_host == local_bind_host => {}
+        Some(_) => errors.push(ValidationError::new(format!(
+            "transport route {} local_bind_host must match source transport_bind_host",
+            route.lane_id
+        ))),
+        None => errors.push(ValidationError::new(format!(
+            "transport route {} source {} has no runtime endpoint",
+            route.lane_id, route.source_device_id
+        ))),
+    }
+}
+
 fn validate_route_token(label: &str, value: &str, errors: &mut Vec<ValidationError>) {
     if value.contains('|') || value.contains(';') {
         errors.push(ValidationError::new(format!(
@@ -626,7 +730,7 @@ fn validate_media(
     );
     validate_route_token("media.eye", &media.eye, errors);
     validate_route_token("media.stream_framing", &media.stream_framing, errors);
-    if !matches!(media.eye.as_str(), "left" | "right" | "mono") {
+    if !matches!(media.eye.as_str(), "left" | "right" | "mono" | "stereo") {
         errors.push(ValidationError::new(format!(
             "lane {lane_id} has unsupported eye {}",
             media.eye
@@ -657,9 +761,15 @@ fn validate_media(
             "lane {lane_id} media dimensions must be nonzero"
         )));
     }
-    if media.width > 1_920 || media.height > 1_920 {
+    let packed_sbs = media
+        .frame_layout
+        .as_ref()
+        .map(|layout| layout.kind == FRAME_LAYOUT_SIDE_BY_SIDE_LEFT_RIGHT)
+        .unwrap_or(false);
+    let max_width = if packed_sbs { 4_096 } else { 1_920 };
+    if media.width > max_width || media.height > 1_920 {
         errors.push(ValidationError::new(format!(
-            "lane {lane_id} first remote-camera slice must stay at or below 1920 pixels per axis"
+            "lane {lane_id} first remote-camera slice must stay at or below {max_width}x1920 pixels"
         )));
     }
     if media.frame_rate_hz == 0 || media.frame_rate_hz > 90 {
@@ -670,6 +780,221 @@ fn validate_media(
     if media.bitrate_bps == 0 {
         errors.push(ValidationError::new(format!(
             "lane {lane_id} bitrate_bps must be nonzero"
+        )));
+    }
+    if let Some(layout) = media.frame_layout.as_ref() {
+        validate_frame_layout(lane_id, media, layout, errors);
+    } else if media.eye == "stereo" {
+        errors.push(ValidationError::new(format!(
+            "lane {lane_id} stereo media requires a validated frame_layout"
+        )));
+    }
+}
+
+fn validate_media_layout(plan: &RemoteCameraSessionPlan, errors: &mut Vec<ValidationError>) {
+    match plan.media_layout.as_str() {
+        MEDIA_LAYOUT_SEPARATE_EYE_STREAMS => {
+            for lane in &plan.lanes {
+                if lane.media.eye == "stereo" || lane.media.frame_layout.is_some() {
+                    errors.push(ValidationError::new(format!(
+                        "lane {} packed stereo fields require media_layout={MEDIA_LAYOUT_SIDE_BY_SIDE_LEFT_RIGHT}",
+                        lane.lane_id
+                    )));
+                }
+            }
+        }
+        MEDIA_LAYOUT_SIDE_BY_SIDE_LEFT_RIGHT => validate_packed_sbs_plan(plan, errors),
+        _ => errors.push(ValidationError::new(format!(
+            "unsupported media_layout {}",
+            plan.media_layout
+        ))),
+    }
+}
+
+fn validate_packed_sbs_plan(plan: &RemoteCameraSessionPlan, errors: &mut Vec<ValidationError>) {
+    if plan.lanes.iter().any(|lane| lane.media.eye != "stereo") {
+        errors.push(ValidationError::new(
+            "side-by-side-left-right requires every direction to use one stereo lane",
+        ));
+    }
+
+    let mut directions = BTreeSet::new();
+    for lane in &plan.lanes {
+        if !directions.insert((lane.source_device_id.as_str(), lane.sink_device_id.as_str())) {
+            errors.push(ValidationError::new(format!(
+                "packed direction {} -> {} must contain exactly one stereo lane",
+                lane.source_device_id, lane.sink_device_id
+            )));
+        }
+    }
+
+    for endpoint in &plan.runtime_endpoints {
+        let outgoing = plan
+            .lanes
+            .iter()
+            .any(|lane| lane.source_device_id == endpoint.device_id);
+        let incoming = plan
+            .lanes
+            .iter()
+            .any(|lane| lane.sink_device_id == endpoint.device_id);
+        if outgoing {
+            validate_single_packed_port(
+                &endpoint.device_id,
+                "sender_source_ports",
+                &endpoint.sender_source_ports,
+                errors,
+            );
+            if endpoint.sender_source_kind != SENDER_SOURCE_CAMERA2_MEDIACODEC_SURFACE
+                && endpoint.sender_source_kind != SENDER_SOURCE_DIAGNOSTIC_SYNTHETIC_SURFACE
+            {
+                errors.push(ValidationError::new(format!(
+                    "runtime endpoint {} packed sender requires a GPU surface source",
+                    endpoint.device_id
+                )));
+            }
+            let bindings = endpoint
+                .sender_camera_ids
+                .iter()
+                .map(|binding| (binding.eye.as_str(), binding.camera_id.as_str()))
+                .collect::<BTreeMap<_, _>>();
+            if bindings.len() != 2
+                || bindings.get("left") != Some(&QUEST_OUTSIDE_LEFT_CAMERA_ID)
+                || bindings.get("right") != Some(&QUEST_OUTSIDE_RIGHT_CAMERA_ID)
+            {
+                errors.push(ValidationError::new(format!(
+                    "runtime endpoint {} packed Quest sender requires exactly left={} and right={} camera bindings",
+                    endpoint.device_id,
+                    QUEST_OUTSIDE_LEFT_CAMERA_ID,
+                    QUEST_OUTSIDE_RIGHT_CAMERA_ID
+                )));
+            }
+            if bindings.get("left").is_some() && bindings.get("left") == bindings.get("right") {
+                errors.push(ValidationError::new(format!(
+                    "runtime endpoint {} packed camera bindings must use distinct camera ids",
+                    endpoint.device_id
+                )));
+            }
+        }
+        if incoming {
+            validate_single_packed_port(
+                &endpoint.device_id,
+                "receiver_ports",
+                &endpoint.receiver_ports,
+                errors,
+            );
+            validate_single_packed_port(
+                &endpoint.device_id,
+                "transport_receive_ports",
+                &endpoint.transport_receive_ports,
+                errors,
+            );
+        }
+    }
+
+    for required in [
+        "pairs_accepted",
+        "pair_delta_p95_ns",
+        "left_frames_dropped_unmatched",
+        "right_frames_dropped_unmatched",
+        "stale_eye_reuse_count",
+        "gpu_compositor_active",
+        "cpu_pixel_copy",
+    ] {
+        if !plan
+            .observability
+            .required_counters
+            .iter()
+            .any(|counter| counter == required)
+        {
+            errors.push(ValidationError::new(format!(
+                "packed observability must require counter {required}"
+            )));
+        }
+    }
+}
+
+fn validate_single_packed_port(
+    device_id: &str,
+    field: &str,
+    bindings: &[RemoteCameraPortBinding],
+    errors: &mut Vec<ValidationError>,
+) {
+    if bindings.len() != 1
+        || bindings
+            .first()
+            .is_none_or(|binding| binding.eye != "stereo")
+    {
+        errors.push(ValidationError::new(format!(
+            "runtime endpoint {device_id} packed {field} must contain exactly one stereo port"
+        )));
+    }
+}
+
+fn validate_frame_layout(
+    lane_id: &str,
+    media: &RemoteCameraMediaConfig,
+    layout: &RemoteCameraFrameLayout,
+    errors: &mut Vec<ValidationError>,
+) {
+    if layout.schema != PACKED_FRAME_LAYOUT_SCHEMA {
+        errors.push(ValidationError::new(format!(
+            "lane {lane_id} has unsupported frame_layout schema {}",
+            layout.schema
+        )));
+    }
+    if layout.kind != FRAME_LAYOUT_SIDE_BY_SIDE_LEFT_RIGHT {
+        errors.push(ValidationError::new(format!(
+            "lane {lane_id} has unsupported packed frame_layout kind {}",
+            layout.kind
+        )));
+    }
+    if layout.eye_order != ["left", "right"] {
+        errors.push(ValidationError::new(format!(
+            "lane {lane_id} packed eye_order must be exactly left then right"
+        )));
+    }
+    if layout.per_eye_width == 0 || layout.per_eye_height == 0 {
+        errors.push(ValidationError::new(format!(
+            "lane {lane_id} packed per-eye dimensions must be nonzero"
+        )));
+    }
+    if layout.per_eye_width > 1_920 || layout.per_eye_height > 1_920 {
+        errors.push(ValidationError::new(format!(
+            "lane {lane_id} packed per-eye dimensions must stay at or below 1920x1920"
+        )));
+    }
+    if layout.packed_width != layout.per_eye_width.saturating_mul(2)
+        || layout.packed_height != layout.per_eye_height
+        || media.width != layout.packed_width
+        || media.height != layout.packed_height
+    {
+        errors.push(ValidationError::new(format!(
+            "lane {lane_id} packed dimensions must equal two per-eye widths by one per-eye height and match media dimensions"
+        )));
+    }
+    if layout.pair_timestamp_authority != PAIR_TIMESTAMP_CAMERA2_SENSOR {
+        errors.push(ValidationError::new(format!(
+            "lane {lane_id} packed pairing requires camera2_sensor_timestamp authority"
+        )));
+    }
+    if layout.pairing_policy != PAIRING_POLICY_NEAREST_TIMESTAMP_BOUNDED {
+        errors.push(ValidationError::new(format!(
+            "lane {lane_id} packed pairing requires nearest_timestamp_bounded policy"
+        )));
+    }
+    if layout.max_pair_delta_ns == 0 || layout.max_pair_delta_ns > 1_000_000_000 {
+        errors.push(ValidationError::new(format!(
+            "lane {lane_id} max_pair_delta_ns must be 1..=1000000000"
+        )));
+    }
+    if layout.stale_eye_reuse_allowed {
+        errors.push(ValidationError::new(format!(
+            "lane {lane_id} packed promotion layout must disable stale-eye reuse"
+        )));
+    }
+    if layout.cpu_pixel_copy {
+        errors.push(ValidationError::new(format!(
+            "lane {lane_id} packed promotion layout must require cpu_pixel_copy=false"
         )));
     }
 }

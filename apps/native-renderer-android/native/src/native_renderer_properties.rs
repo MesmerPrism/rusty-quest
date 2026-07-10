@@ -61,6 +61,8 @@ pub(crate) const PROP_VIDEO_PROJECTION_BROKER_RIGHT_PORT: &str =
     "debug.rustyquest.native_renderer.video_projection.broker.right_port";
 pub(crate) const PROP_VIDEO_PROJECTION_BROKER_CONNECT_TIMEOUT_MS: &str =
     "debug.rustyquest.native_renderer.video_projection.broker.connect_timeout_ms";
+pub(crate) const PROP_VIDEO_PROJECTION_BROKER_MEDIA_LAYOUT: &str =
+    "debug.rustyquest.native_renderer.video_projection.broker.media_layout";
 pub(crate) const PROP_VIDEO_PROJECTION_STEREO_LAYOUT: &str =
     "debug.rustyquest.native_renderer.video_projection.stereo_layout";
 pub(crate) const PROP_VIDEO_PROJECTION_WIDTH: &str =

@@ -24,6 +24,27 @@ live evidence tier, concrete source run and harness identity, an Agent Board
 formation, bounded TCP socket exchange, and cleanup before Hostess can promote
 direct-Wi-Fi topology.
 
+The device-link crate also owns the reusable
+`rusty.quest.direct_p2p_socket_route.v1` contract. It validates the canonical
+`direct_p2p_tcp` route kind, `rusty_direct_p2p_socket_authority`, Rusty-owned
+socket scope, `p2p0`, an explicit local bind, a supported peer address on the
+same `/24`, and the rule that a bindable Android `Network` is optional rather
+than required. Camera, telemetry, and later binary stream adapters consume
+this lower contract instead of cloning P2P address or authority rules.
+
+`rusty.quest.ble_rendezvous_sidecar_receipt.v1` and the compact `rqrv` wire
+contract provide an explicit opt-in BLE/GATT bootstrap lane. BLE may exchange
+authenticated role proposals, capabilities, and already-observed P2P/broker
+hints; it does not form Wi-Fi Direct groups, execute Manifold commands, carry
+media, or become connection authority. A one-headset advertiser run may report
+`ready`; pair acceptance requires two authenticated peer phases with reversed
+GATT roles and an authenticated reconnect in each phase. The pair artifact is
+validated independently through the data-only device-link crate.
+The current live baseline is `ble-pair-20260710T132305Z`; it passed both role
+layouts, artifact redaction, boundary-state stability, and package cleanup.
+ADB-based launch and ephemeral test-secret injection remain evidence
+orchestration, not an autonomous provisioning claim.
+
 `apps/qcl041-wifi-direct-harness-android` is the Quest-side producer for the
 Windows peer route. It does not need an Android phone: the live path pairs the
 Quest APK with the Hostess Windows Wi-Fi Direct helper, records actual
@@ -452,6 +473,35 @@ stay on a binary media plane, while session plans, safety requirements, queue
 policy, local runtime endpoint bindings, peer transport routes, and
 observability gates remain low-rate data.
 
+The same contract models direct Wi-Fi as two independent decisions:
+`direct_p2p_tcp` is the route kind, while
+`rusty_direct_p2p_socket_authority` names the scoped Rusty-owned socket
+authority. A direct-P2P plan must also provide the source `local_bind_host`;
+the Android adapter then proves the actual bound address, P2P interface, peer
+subnet, receiver-observed bytes, and cleanup instead of inferring authority
+from a destination address alone.
+The route-level authority and P2P address checks are delegated to the shared
+`rusty-quest-device-link` contract; camera-specific lane/source/sink and runtime
+profile checks remain in `rusty-quest-remote-camera`.
+
+QCL100 is live-promoted for native OpenXR same-group full-stereo duplex by run
+`qcl100-native-stereo-promotion-candidate-20260710T1236Z`. The accepted topology
+uses two end-to-end direction paths, each with two validated sender and receiver
+stereo lanes bound through `p2p0`; no app-visible Android Wi-Fi Direct `Network`
+was required or claimed. QCL099/Makepad remains an explicit legacy compatibility
+lane and is not part of this promotion.
+
+Packed side-by-side stereo is separately promoted by
+`qcl100-packed-sbs-duplex45-20260710T155638Z`. It preserves the two duplex
+direction paths but reduces each direction to one Camera2 `50`/`51`
+source-timestamp pairer, one GPU SBS compositor, one H.264/RMANVID v4 stream,
+one Rusty-owned `p2p0` socket, one hardware decoder, and one packed
+`AHardwareBuffer` sampled through the existing left/right UV halves. Packed SBS
+is the recommended explicit QCL100 native OpenXR profile. The runtime default
+remains `separate-eye-streams` for compatibility, so adopting packed SBS still
+requires `media_layout=side-by-side-left-right`; the earlier two-lane promotion
+remains the rollback and differential-diagnosis authority.
+
 See `docs/REMOTE_CAMERA_STREAMING.md`.
 
 ## Android Broker Package
@@ -497,8 +547,10 @@ evidence remain later validation work.
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeAppBuildProfile.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-device-link"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo run --quiet -p rusty-quest-device-link --bin validate_direct_p2p_socket_route -- fixtures\device-link\direct-p2p-socket-route.pass.json"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-native-renderer"
 powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-remote-camera"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-PeerRendezvousAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
@@ -507,6 +559,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendere
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial>
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1
 ```
+
+The default `check_all.ps1` lane excludes legacy Makepad and QCL099 checks and
+focuses on native OpenXR/Vulkan plus Meta Spatial SDK surfaces. Pass
+`-IncludeLegacyMakepad` only for explicit compatibility or historical replay.
 
 `check_all.ps1` also dry-runs the environment-depth surface-support profiles:
 local surfels, global surfaces, and hybrid surfaces. These validate the

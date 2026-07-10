@@ -6,8 +6,9 @@
 use crate::{
     native_renderer_properties::{
         PROP_VIDEO_PROJECTION_BROKER_CONNECT_TIMEOUT_MS, PROP_VIDEO_PROJECTION_BROKER_HOST,
-        PROP_VIDEO_PROJECTION_BROKER_LEFT_PORT, PROP_VIDEO_PROJECTION_BROKER_RIGHT_PORT,
-        PROP_VIDEO_PROJECTION_ENABLED, PROP_VIDEO_PROJECTION_FPS_CAP, PROP_VIDEO_PROJECTION_HEIGHT,
+        PROP_VIDEO_PROJECTION_BROKER_LEFT_PORT, PROP_VIDEO_PROJECTION_BROKER_MEDIA_LAYOUT,
+        PROP_VIDEO_PROJECTION_BROKER_RIGHT_PORT, PROP_VIDEO_PROJECTION_ENABLED,
+        PROP_VIDEO_PROJECTION_FPS_CAP, PROP_VIDEO_PROJECTION_HEIGHT,
         PROP_VIDEO_PROJECTION_HIGH_RATE_JSON_PAYLOAD, PROP_VIDEO_PROJECTION_LOOPING,
         PROP_VIDEO_PROJECTION_MAX_IMAGES, PROP_VIDEO_PROJECTION_OPACITY,
         PROP_VIDEO_PROJECTION_PATH, PROP_VIDEO_PROJECTION_SOURCE,
@@ -31,6 +32,7 @@ pub(crate) struct NativeVideoProjectionSettings {
     pub(crate) broker_left_port: u32,
     pub(crate) broker_right_port: u32,
     pub(crate) broker_connect_timeout_ms: u32,
+    pub(crate) broker_media_layout: NativeBrokerMediaLayout,
     pub(crate) stereo_layout: NativeVideoProjectionStereoLayout,
     pub(crate) width: u32,
     pub(crate) height: u32,
@@ -77,6 +79,9 @@ impl NativeVideoProjectionSettings {
                 100,
                 60000,
             ),
+            broker_media_layout: NativeBrokerMediaLayout::from_property(lookup(
+                PROP_VIDEO_PROJECTION_BROKER_MEDIA_LAYOUT,
+            )),
             stereo_layout: NativeVideoProjectionStereoLayout::from_property(lookup(
                 PROP_VIDEO_PROJECTION_STEREO_LAYOUT,
             )),
@@ -103,7 +108,14 @@ impl NativeVideoProjectionSettings {
                 NativeVideoProjectionSource::AppPrivateFile => !self.path.trim().is_empty(),
                 NativeVideoProjectionSource::BrokerRmanvid1 => {
                     !self.broker_host.trim().is_empty()
-                        && (self.broker_left_port > 0 || self.broker_right_port > 0)
+                        && match self.broker_media_layout {
+                            NativeBrokerMediaLayout::SeparateEyeStreams => {
+                                self.broker_left_port > 0 || self.broker_right_port > 0
+                            }
+                            NativeBrokerMediaLayout::SideBySideLeftRight => {
+                                self.broker_left_port > 0 && self.broker_right_port == 0
+                            }
+                        }
                 }
             }
     }
@@ -120,7 +132,7 @@ impl NativeVideoProjectionSettings {
         let left_uv = self.stereo_layout.source_uv_rect_for_eye(0);
         let right_uv = self.stereo_layout.source_uv_rect_for_eye(1);
         format!(
-            "videoProjectionEnabled={} videoProjectionSource={} videoProjectionPath={} videoProjectionBrokerHost={} videoProjectionBrokerLeftPort={} videoProjectionBrokerRightPort={} videoProjectionBrokerConnectTimeoutMs={} videoProjectionWidth={} videoProjectionHeight={} videoProjectionMaxImages={} videoProjectionFpsCap={} videoProjectionLooping={} videoProjectionStereoLayout={} videoProjectionTarget={} videoProjectionOpacity={:.3} videoProjectionHighRateJsonPayload={} videoProjectionStream={} videoProjectionSourceAuthority={} videoProjectionTransport={} videoProjectionFramePlane=media-data-plane videoProjectionControlPlane=android-property-profile videoProjectionDecodePath={} videoProjectionFormat=private videoProjectionLeftSourceUvRect={} videoProjectionRightSourceUvRect={} remoteBrokerCameraProjectionActive={} nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false highRateJsonPayload={} rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false",
+            "videoProjectionEnabled={} videoProjectionSource={} videoProjectionPath={} videoProjectionBrokerHost={} videoProjectionBrokerLeftPort={} videoProjectionBrokerRightPort={} videoProjectionBrokerConnectTimeoutMs={} videoProjectionBrokerMediaLayout={} videoProjectionWidth={} videoProjectionHeight={} videoProjectionMaxImages={} videoProjectionFpsCap={} videoProjectionLooping={} videoProjectionStereoLayout={} videoProjectionTarget={} videoProjectionOpacity={:.3} videoProjectionHighRateJsonPayload={} videoProjectionStream={} videoProjectionSourceAuthority={} videoProjectionTransport={} videoProjectionFramePlane=media-data-plane videoProjectionControlPlane=android-property-profile videoProjectionDecodePath={} videoProjectionFormat=private videoProjectionLeftSourceUvRect={} videoProjectionRightSourceUvRect={} remoteBrokerCameraProjectionActive={} nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false highRateJsonPayload={} rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false",
             self.enabled,
             self.source.marker_value(),
             marker_token(&self.path),
@@ -128,6 +140,7 @@ impl NativeVideoProjectionSettings {
             self.broker_left_port,
             self.broker_right_port,
             self.broker_connect_timeout_ms,
+            self.broker_media_layout.marker_value(),
             self.width,
             self.height,
             self.max_images,
@@ -146,6 +159,29 @@ impl NativeVideoProjectionSettings {
             self.remote_broker_camera_projection_active(),
             self.high_rate_json_payload
         )
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NativeBrokerMediaLayout {
+    SeparateEyeStreams,
+    SideBySideLeftRight,
+}
+
+impl NativeBrokerMediaLayout {
+    fn from_property(value: Option<String>) -> Self {
+        match normalized_property(value).as_str() {
+            "side-by-side-left-right" | "packed-sbs" | "sbs" => Self::SideBySideLeftRight,
+            "separate-eye-streams" | "separate" | "" => Self::SeparateEyeStreams,
+            _ => Self::SeparateEyeStreams,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::SeparateEyeStreams => "separate-eye-streams",
+            Self::SideBySideLeftRight => "side-by-side-left-right",
+        }
     }
 }
 

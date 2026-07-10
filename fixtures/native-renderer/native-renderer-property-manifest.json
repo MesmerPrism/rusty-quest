@@ -17,7 +17,7 @@
     "apps/native-renderer-android/native/src/manifold_scalar_driver_bridge.rs",
     "apps/native-renderer-android/native/src/lsl_transport_bridge.rs"
   ],
-  "property_count": 255,
+  "property_count": 256,
   "properties": [
     {
       "name": "debug.rustyquest.native_renderer.camera.direct_border.opacity",
@@ -4475,6 +4475,25 @@
       ]
     },
     {
+      "name": "debug.rustyquest.native_renderer.video_projection.broker.media_layout",
+      "family": "video_projection",
+      "runtime_owner": "native_renderer_video_projection_options",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": [
+        "separate-eye-streams",
+        "side-by-side-left-right"
+      ],
+      "validators": [
+        "runtime-parser",
+        "profile-matrix",
+        "rusty-quest-profile",
+        "Apply-RuntimeProfile.ps1"
+      ]
+    },
+    {
       "name": "debug.rustyquest.native_renderer.video_projection.broker.right_port",
       "family": "video_projection",
       "runtime_owner": "native_renderer_video_projection_options",
@@ -4483,7 +4502,7 @@
       "default_behavior": "runtime-owner-default-when-unset",
       "value_kind": "u32",
       "range": {
-        "min": 1,
+        "min": 0,
         "max": 65535
       },
       "validators": [

@@ -82,7 +82,9 @@ final class RemoteCameraSourceRuntime {
             String cameraIds,
             String cameraFacing,
             String qualityProfile,
-            String permissionPolicy) throws Exception {
+            String permissionPolicy,
+            String mediaLayout,
+            String frameLayout) throws Exception {
         String normalizedKind = normalizeSourceKind(sourceKind);
         JSONObject permissionStatus = permissionStatus(context);
         if (SOURCE_EXTERNAL_H264_SOCKET.equals(normalizedKind)) {
@@ -118,6 +120,19 @@ final class RemoteCameraSourceRuntime {
                         permissionPolicy,
                         permissionStatus);
             }
+        }
+
+        if (RemoteCameraPackedStreamMetadata.MEDIA_LAYOUT.equals(cleanOptional(mediaLayout))) {
+            return RemoteCameraPackedStereoSourceRuntime.ensureStarted(
+                    context,
+                    sessionId,
+                    normalizedKind,
+                    sourceHost,
+                    sourcePorts,
+                    mediaProfiles,
+                    cameraIds,
+                    mediaLayout,
+                    frameLayout);
         }
 
         List<SourcePort> ports = parsePorts(sourcePorts, parseProfiles(mediaProfiles));
@@ -247,6 +262,13 @@ final class RemoteCameraSourceRuntime {
 
     static JSONObject stop(String sessionId, String reason) throws Exception {
         JSONArray stopped = new JSONArray();
+        JSONObject packedStopped = RemoteCameraPackedStereoSourceRuntime.stop(sessionId, reason);
+        JSONArray packedSources = packedStopped.optJSONArray("sources");
+        if (packedSources != null) {
+            for (int index = 0; index < packedSources.length(); index++) {
+                stopped.put(packedSources.get(index));
+            }
+        }
         synchronized (LOCK) {
             List<String> keys = new ArrayList<>();
             for (Map.Entry<String, SourceGroup> entry : GROUPS.entrySet()) {
@@ -272,6 +294,13 @@ final class RemoteCameraSourceRuntime {
 
     static JSONObject statusForSession(String sessionId) throws Exception {
         JSONArray sources = new JSONArray();
+        JSONObject packedStatus = RemoteCameraPackedStereoSourceRuntime.statusForSession(sessionId);
+        JSONArray packedSources = packedStatus.optJSONArray("sources");
+        if (packedSources != null) {
+            for (int index = 0; index < packedSources.length(); index++) {
+                sources.put(packedSources.get(index));
+            }
+        }
         synchronized (LOCK) {
             for (SourceGroup group : GROUPS.values()) {
                 if (group.sessionId.equals(sessionId)) {

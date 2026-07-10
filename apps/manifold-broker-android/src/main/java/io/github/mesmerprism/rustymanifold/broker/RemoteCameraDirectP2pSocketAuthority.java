@@ -9,6 +9,7 @@ import java.util.Locale;
 
 final class RemoteCameraDirectP2pSocketAuthority {
     static final String AUTHORITY = "rusty_direct_p2p_socket_authority";
+    static final String PLATFORM_DEFAULT_AUTHORITY = "platform_default_socket_authority";
     static final String ROUTE_KIND = "rusty_direct_p2p_socket_authority";
     static final String ROUTE_KIND_DIRECT_TCP = "direct_p2p_tcp";
     static final String EXPLICIT_LOCAL_BIND_SELECTION = "rusty_direct_p2p_explicit_local_bind_address";
@@ -17,8 +18,13 @@ final class RemoteCameraDirectP2pSocketAuthority {
     private RemoteCameraDirectP2pSocketAuthority() {
     }
 
-    static boolean requiresDirectP2pSocket(String routeKind, InetAddress peerAddress) {
-        return isDirectP2pRouteKind(routeKind) || isLikelyWifiDirectPeerAddress(peerAddress);
+    static boolean requiresDirectP2pSocket(
+            String routeKind,
+            String socketAuthority,
+            InetAddress peerAddress) {
+        return isDirectP2pRouteKind(routeKind)
+                || isDirectP2pSocketAuthority(socketAuthority)
+                || isLikelyWifiDirectPeerAddress(peerAddress);
     }
 
     static boolean isDirectP2pRouteKind(String routeKind) {
@@ -27,6 +33,20 @@ final class RemoteCameraDirectP2pSocketAuthority {
         }
         String normalized = routeKind.trim().toLowerCase(Locale.US);
         return ROUTE_KIND.equals(normalized) || ROUTE_KIND_DIRECT_TCP.equals(normalized);
+    }
+
+    static boolean isDirectP2pSocketAuthority(String socketAuthority) {
+        return socketAuthority != null
+                && AUTHORITY.equals(socketAuthority.trim().toLowerCase(Locale.US));
+    }
+
+    static String defaultSocketAuthority(String routeKind) {
+        return isDirectP2pRouteKind(routeKind) ? AUTHORITY : PLATFORM_DEFAULT_AUTHORITY;
+    }
+
+    static boolean isValidRouteAuthorityContract(String routeKind, String socketAuthority) {
+        return !isDirectP2pRouteKind(routeKind)
+                || isDirectP2pSocketAuthority(socketAuthority);
     }
 
     static boolean isLikelyWifiDirectPeerAddress(InetAddress peerAddress) {
@@ -40,12 +60,20 @@ final class RemoteCameraDirectP2pSocketAuthority {
         return first == 192 && second == 168 && (third == 137 || third == 49);
     }
 
+    static boolean isP2pInterfaceName(String interfaceName) {
+        return interfaceName != null
+                && interfaceName.trim().toLowerCase(Locale.US).contains("p2p");
+    }
+
     static LocalAddressCandidate findLocalAddressCandidate(InetAddress peerAddress) throws SocketException {
         Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+        if (interfaces == null) {
+            return null;
+        }
         while (interfaces.hasMoreElements()) {
             NetworkInterface networkInterface = interfaces.nextElement();
             String name = networkInterface.getName();
-            boolean p2pInterface = name != null && name.toLowerCase(Locale.US).contains("p2p");
+            boolean p2pInterface = isP2pInterfaceName(name);
             Enumeration<InetAddress> addresses = networkInterface.getInetAddresses();
             while (addresses.hasMoreElements()) {
                 InetAddress address = addresses.nextElement();
@@ -53,7 +81,7 @@ final class RemoteCameraDirectP2pSocketAuthority {
                     continue;
                 }
                 boolean sameSubnet = sameIpv4Slash24(address, peerAddress);
-                if (p2pInterface || sameSubnet) {
+                if (p2pInterface && sameSubnet) {
                     return new LocalAddressCandidate(
                             address,
                             name == null ? "" : name,
@@ -70,6 +98,9 @@ final class RemoteCameraDirectP2pSocketAuthority {
             return "";
         }
         Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
+        if (interfaces == null) {
+            return "";
+        }
         while (interfaces.hasMoreElements()) {
             NetworkInterface networkInterface = interfaces.nextElement();
             Enumeration<InetAddress> addresses = networkInterface.getInetAddresses();

@@ -2,6 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
+pub use rusty_quest_device_link::{
+    DIRECT_P2P_ROUTE_KIND as ROUTE_KIND_DIRECT_P2P_TCP,
+    DIRECT_TCP_ROUTE_KIND as ROUTE_KIND_DIRECT_TCP_CONNECT,
+    PLATFORM_DEFAULT_SOCKET_AUTHORITY as SOCKET_AUTHORITY_PLATFORM_DEFAULT,
+    RUSTY_DIRECT_P2P_SOCKET_AUTHORITY as SOCKET_AUTHORITY_RUSTY_DIRECT_P2P,
+};
+
 /// Remote camera session schema id.
 pub const REMOTE_CAMERA_SESSION_SCHEMA: &str = "rusty.quest.remote_camera_session.v1";
 
@@ -16,6 +23,27 @@ pub const PRIVACY_E2EE_CANDIDATE: &str = "untrusted_relay_end_to_end_encrypted_c
 
 /// Binary media payload plane token.
 pub const PAYLOAD_PLANE_BINARY_MEDIA: &str = "binary-media";
+
+/// Existing independent left/right eye stream layout.
+pub const MEDIA_LAYOUT_SEPARATE_EYE_STREAMS: &str = "separate-eye-streams";
+
+/// Packed side-by-side layout with the left eye in the first half.
+pub const MEDIA_LAYOUT_SIDE_BY_SIDE_LEFT_RIGHT: &str = "side-by-side-left-right";
+
+/// Versioned packed-frame layout contract.
+pub const PACKED_FRAME_LAYOUT_SCHEMA: &str = "rusty.quest.remote_camera.frame_layout.v1";
+
+/// Packed side-by-side frame-layout kind.
+pub const FRAME_LAYOUT_SIDE_BY_SIDE_LEFT_RIGHT: &str = "side_by_side_left_right";
+
+/// Camera2 sensor timestamps are the physical source-pairing authority.
+pub const PAIR_TIMESTAMP_CAMERA2_SENSOR: &str = "camera2_sensor_timestamp";
+
+/// Bounded nearest-timestamp pairing policy.
+pub const PAIRING_POLICY_NEAREST_TIMESTAMP_BOUNDED: &str = "nearest_timestamp_bounded";
+
+/// Encrypted relay client route.
+pub const ROUTE_KIND_RELAY_TLS_CLIENT: &str = "relay_tls_client";
 
 /// H.264 codec token.
 pub const VIDEO_CODEC_H264: &str = "h264";
@@ -85,6 +113,13 @@ pub(crate) const PROP_TRANSPORT_BIND_HOST: &str =
 pub(crate) const PROP_TRANSPORT_RECEIVE_PORTS: &str =
     "debug.rustyquest.remote_camera.transport_receive_ports";
 pub(crate) const PROP_TRANSPORT_ROUTES: &str = "debug.rustyquest.remote_camera.transport_routes";
+pub(crate) const PROP_TRANSPORT_BIND_LOCAL_ADDRESS: &str =
+    "debug.rustyquest.remote_camera.transport_bind_local_address";
+pub(crate) const PROP_TRANSPORT_SOCKET_AUTHORITY: &str =
+    "debug.rustyquest.remote_camera.transport_socket_authority";
+pub(crate) const PROP_MEDIA_LAYOUT: &str = "debug.rustyquest.remote_camera.media_layout";
+pub(crate) const PROP_SENDER_FRAME_LAYOUT: &str =
+    "debug.rustyquest.remote_camera.sender_frame_layout";
 
 /// Remote camera session plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,6 +132,10 @@ pub struct RemoteCameraSessionPlan {
     pub topology_id: String,
     /// Privacy tier.
     pub privacy_tier: String,
+    /// Explicit media layout. Existing plans deserialize as
+    /// `separate-eye-streams`; packed stereo is never enabled implicitly.
+    #[serde(default = "default_media_layout")]
+    pub media_layout: String,
     /// Participating devices or relays.
     pub devices: Vec<RemoteCameraDevice>,
     /// Media lanes in deterministic order.
@@ -176,6 +215,39 @@ pub struct RemoteCameraMediaConfig {
     pub timestamp_domain: String,
     /// Required payload plane. High-rate media must be `binary-media`.
     pub high_rate_payload_plane: String,
+    /// Optional validated packed-frame layout. This must be absent for the
+    /// existing separate-eye lane model and present for a `stereo` lane.
+    #[serde(default)]
+    pub frame_layout: Option<RemoteCameraFrameLayout>,
+}
+
+/// One validated packed-frame layout and source-pairing policy.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteCameraFrameLayout {
+    /// Layout schema id.
+    pub schema: String,
+    /// Packed layout kind.
+    pub kind: String,
+    /// Eye order in the packed raster.
+    pub eye_order: Vec<String>,
+    /// Packed raster width.
+    pub packed_width: u32,
+    /// Packed raster height.
+    pub packed_height: u32,
+    /// Width of one eye region.
+    pub per_eye_width: u32,
+    /// Height of one eye region.
+    pub per_eye_height: u32,
+    /// Physical source timestamp authority.
+    pub pair_timestamp_authority: String,
+    /// Pair selection policy.
+    pub pairing_policy: String,
+    /// Maximum accepted absolute source-timestamp skew.
+    pub max_pair_delta_ns: u64,
+    /// Promotion mode must not reuse a stale eye.
+    pub stale_eye_reuse_allowed: bool,
+    /// Promotion mode requires a GPU-only compositor path.
+    pub cpu_pixel_copy: bool,
 }
 
 /// Transport config for a lane.
@@ -266,13 +338,21 @@ pub struct RemoteCameraTransportRoute {
     pub sink_device_id: String,
     /// Eye/layout role. Must match the lane media eye.
     pub eye: String,
-    /// Route kind: `direct_tcp_connect` or `relay_tls_client`.
+    /// Route kind: `direct_tcp_connect`, `direct_p2p_tcp`, or `relay_tls_client`.
     pub route_kind: String,
     /// Host to connect for this route. For direct LAN this is the peer ingress
     /// host; for relay routes this is the relay host.
     pub connect_host: String,
     /// TCP port to connect.
     pub connect_port: u16,
+    /// Optional socket authority. `direct_p2p_tcp` requires
+    /// `rusty_direct_p2p_socket_authority`.
+    #[serde(default)]
+    pub socket_authority: Option<String>,
+    /// Optional source address to bind before connecting. Direct P2P routes
+    /// require a concrete IPv4 address on the peer subnet.
+    #[serde(default)]
+    pub local_bind_host: Option<String>,
     /// Relay channel, if a relay route is used.
     #[serde(default)]
     pub relay_channel: Option<String>,
@@ -345,6 +425,10 @@ impl std::error::Error for ValidationError {}
 
 fn default_sender_source_kind() -> String {
     SENDER_SOURCE_EXTERNAL_H264_SOCKET.to_string()
+}
+
+fn default_media_layout() -> String {
+    MEDIA_LAYOUT_SEPARATE_EYE_STREAMS.to_string()
 }
 
 fn default_camera_permission_policy() -> String {

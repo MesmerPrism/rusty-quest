@@ -1,0 +1,38 @@
+{
+  "metadata": {
+    "schema": "rusty.quest.remote_camera.packed_stereo_stream_metadata.v1",
+    "rmanvid_schema_version": 4,
+    "frame_layout": "side_by_side_left_right",
+    "eye_order": ["left", "right"],
+    "packed_width": 2560,
+    "packed_height": 1280,
+    "per_eye_width": 1280,
+    "per_eye_height": 1280,
+    "left_camera_id": "50",
+    "right_camera_id": "51",
+    "pair_timestamp_source": "camera2_sensor_timestamp",
+    "pairing_policy": "nearest_timestamp_bounded",
+    "max_pair_delta_ns": 20000000,
+    "cpu_pixel_copy": false
+  },
+  "header_width": 2560,
+  "header_height": 1280,
+  "pair_sequence": [
+    {
+      "stereo_pair_id": 1,
+      "left_source_frame": 101,
+      "right_source_frame": 201,
+      "left_sensor_timestamp_ns": 1000000000,
+      "right_sensor_timestamp_ns": 1004000000,
+      "pair_delta_ns": 4000000
+    },
+    {
+      "stereo_pair_id": 2,
+      "left_source_frame": 102,
+      "right_source_frame": 202,
+      "left_sensor_timestamp_ns": 1066666666,
+      "right_sensor_timestamp_ns": 1070666666,
+      "pair_delta_ns": 4000000
+    }
+  ]
+}

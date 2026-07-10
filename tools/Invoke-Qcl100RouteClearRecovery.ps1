@@ -12,6 +12,19 @@ param(
     [int]$PollSeconds = 15,
     [int]$OverallTimeoutSeconds = 240,
     [int]$PhaseStallTimeoutSeconds = 90,
+    [ValidateSet("owner", "client", "both")]
+    [string]$SettingsFenceTarget = "owner",
+    [switch]$DisconnectInfrastructureWifiBeforeRun,
+    [ValidateSet("owner", "client", "both")]
+    [string]$InfrastructureWifiDisconnectTarget = "both",
+    [string]$InfrastructureWifiSsid = "",
+    [int]$InfrastructureWifiDisconnectPostClickWaitMs = 2500,
+    [string]$OwnerWifiDirectAddress = "192.168.49.1",
+    [string]$ClientWifiDirectAddress = "192.168.49.46",
+    [switch]$SkipSettingsFence,
+    [switch]$ClearLogcatAfterSettingsFence,
+    [switch]$PromotionCandidatePreRouteClear,
+    [switch]$FinalPromotionRouteClear,
     [switch]$DryRun
 )
 
@@ -28,6 +41,20 @@ if ([string]::IsNullOrWhiteSpace($MonitorPath)) {
 }
 if ([string]::IsNullOrWhiteSpace($RunnerPath)) {
     $RunnerPath = Join-Path $PSScriptRoot "Invoke-Qcl100QuestToQuestNativeStereoProjectionWifiDirect.ps1"
+}
+if ($InfrastructureWifiDisconnectPostClickWaitMs -lt 500) {
+    throw "InfrastructureWifiDisconnectPostClickWaitMs must be at least 500."
+}
+if ($DisconnectInfrastructureWifiBeforeRun) {
+    if ([string]::IsNullOrWhiteSpace($InfrastructureWifiSsid)) {
+        throw "DisconnectInfrastructureWifiBeforeRun requires InfrastructureWifiSsid."
+    }
+    if ($SkipSettingsFence) {
+        throw "DisconnectInfrastructureWifiBeforeRun requires the Settings fence; remove -SkipSettingsFence."
+    }
+}
+if ($PromotionCandidatePreRouteClear -and $FinalPromotionRouteClear) {
+    throw "PromotionCandidatePreRouteClear and FinalPromotionRouteClear are mutually exclusive scopes."
 }
 
 $MonitorPath = (Resolve-Path -LiteralPath $MonitorPath).Path
@@ -100,13 +127,26 @@ $policy = [ordered]@{
     owner_lease_id = $OwnerLeaseId
     client_lease_id = $ClientLeaseId
     lease_ids_supplied = [bool](-not [string]::IsNullOrWhiteSpace($OwnerLeaseId) -and -not [string]::IsNullOrWhiteSpace($ClientLeaseId))
-    purpose = "route_cleanup_preflight_only_after_qcl100_crash_relaunch_watch"
+    purpose = if ($FinalPromotionRouteClear) {
+        "final_route_clear_before_qcl100_monitored_promotion_acceptance"
+    } elseif ($PromotionCandidatePreRouteClear) {
+        "pre_route_clear_for_guarded_qcl100_native_stereo_promotion_candidate"
+    } else {
+        "route_cleanup_preflight_only_after_qcl100_crash_relaunch_watch"
+    }
+    promotion_candidate_pre_route_clear = [bool]$PromotionCandidatePreRouteClear
+    final_promotion_route_clear = [bool]$FinalPromotionRouteClear
     crash_watch_policy = [ordered]@{
         live_qcl100_qcl099_media_paused = $true
         non_media_broker_hello_allowed = $false
         promotion_allowed = $false
-        allowed_next_slice = "route_cleanup_preflight_only"
-        requires_human_review_before_media = $true
+        allowed_next_slice = if ($PromotionCandidatePreRouteClear) {
+            "qcl041_local_bind_gate_then_monitored_full_stereo_under_same_leases"
+        } else {
+            "route_cleanup_preflight_only"
+        }
+        promotion_candidate_parent_authorized = [bool]$PromotionCandidatePreRouteClear
+        requires_human_review_before_media = [bool](-not $PromotionCandidatePreRouteClear)
     }
     requested_runner_flags = [ordered]@{
         PreflightOnly = $true
@@ -115,6 +155,13 @@ $policy = [ordered]@{
         RequireP2p0Ipv4Cleared = $true
         RequireCandidateWifiDirectRoutesClear = $true
         SkipWakePrep = $true
+        FenceSettingsBeforeRun = [bool](-not $SkipSettingsFence)
+        SettingsFenceTarget = $SettingsFenceTarget
+        DisconnectInfrastructureWifiBeforeRun = [bool]$DisconnectInfrastructureWifiBeforeRun
+        InfrastructureWifiDisconnectTarget = $InfrastructureWifiDisconnectTarget
+        InfrastructureWifiSsid = $InfrastructureWifiSsid
+        OwnerWifiDirectAddress = $OwnerWifiDirectAddress
+        ClientWifiDirectAddress = $ClientWifiDirectAddress
     }
     forbidden_live_actions = @(
         "command.remote_camera.start_receiver",
@@ -130,6 +177,13 @@ $policy = [ordered]@{
     final_summary_path = $finalSummaryPath
     sensorlock_preflight_required = $true
     sensorlock_preflight_artifact = Join-Path $OutDir "qcl100-route-clear-sensorlock-preflight.json"
+    settings_fence_required = [bool](-not $SkipSettingsFence)
+    settings_fence_target = $SettingsFenceTarget
+    settings_fence_purpose = "force_stop_settings_surfaces_before_qcl041_preclear"
+    infrastructure_wifi_disconnect_requested = [bool]$DisconnectInfrastructureWifiBeforeRun
+    infrastructure_wifi_disconnect_target = $InfrastructureWifiDisconnectTarget
+    infrastructure_wifi_disconnect_target_ssid = $InfrastructureWifiSsid
+    infrastructure_wifi_disconnect_purpose = "guarded_settings_disconnect_before_route_clear_preflight"
     dry_run = [bool]$DryRun
 }
 Write-JsonFile -Value $policy -Path $policyPath
@@ -194,6 +248,21 @@ $monitorParams = @{
     RequireP2p0Ipv4Cleared = $true
     RequireCandidateWifiDirectRoutesClear = $true
     SkipWakePrep = $true
+    OwnerWifiDirectAddress = $OwnerWifiDirectAddress
+    ClientWifiDirectAddress = $ClientWifiDirectAddress
+}
+if (-not $SkipSettingsFence) {
+    $monitorParams.FenceSettingsBeforeRun = $true
+    $monitorParams.SettingsFenceTarget = $SettingsFenceTarget
+}
+if ($ClearLogcatAfterSettingsFence) {
+    $monitorParams.ClearLogcatAfterSettingsFence = $true
+}
+if ($DisconnectInfrastructureWifiBeforeRun) {
+    $monitorParams.DisconnectInfrastructureWifiBeforeRun = $true
+    $monitorParams.InfrastructureWifiDisconnectTarget = $InfrastructureWifiDisconnectTarget
+    $monitorParams.InfrastructureWifiSsid = $InfrastructureWifiSsid
+    $monitorParams.InfrastructureWifiDisconnectPostClickWaitMs = $InfrastructureWifiDisconnectPostClickWaitMs
 }
 if ($DryRun) {
     $monitorParams.DryRun = $true

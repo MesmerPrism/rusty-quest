@@ -48,6 +48,7 @@
     "debug.rustyquest.native_renderer.video_projection.broker.host",
     "debug.rustyquest.native_renderer.video_projection.broker.left_port",
     "debug.rustyquest.native_renderer.video_projection.broker.right_port",
+    "debug.rustyquest.native_renderer.video_projection.broker.media_layout",
     "debug.rustyquest.native_renderer.video_projection.broker.connect_timeout_ms"
   ],
   "set_properties": [
@@ -277,6 +278,11 @@
       "source_setting_id": "native_renderer.video_projection.broker.right_port"
     },
     {
+      "name": "debug.rustyquest.native_renderer.video_projection.broker.media_layout",
+      "value": "separate-eye-streams",
+      "source_setting_id": "native_renderer.video_projection.broker.media_layout"
+    },
+    {
       "name": "debug.rustyquest.native_renderer.video_projection.broker.connect_timeout_ms",
       "value": "60000",
       "source_setting_id": "native_renderer.video_projection.broker.connect_timeout_ms"
@@ -296,6 +302,7 @@
     "videoProjectionBrokerHost=127.0.0.1",
     "videoProjectionBrokerLeftPort=8979",
     "videoProjectionBrokerRightPort=8980",
+    "videoProjectionBrokerMediaLayout=separate-eye-streams",
     "videoProjectionSourceAuthority=manifold-broker-rmanvid1-camera2-h264",
     "videoProjectionTransport=rmanvid1-tcp-to-mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer",
     "videoProjectionDecodePath=RMANVID1-to-MediaCodec-to-Surface",

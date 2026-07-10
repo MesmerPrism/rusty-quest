@@ -581,7 +581,8 @@ function Get-TransportRouteSpec {
         -RightLaneActive:$rightLaneActive `
         -LeftTransportPort $LeftTransportPort `
         -RightTransportPort $RightTransportPort `
-        -LanePrefix "qcl100-native"
+        -LanePrefix "qcl100-native" `
+        -PackedStereo:$packedMediaLayout
 }
 
 function New-SenderParams {
@@ -596,5 +597,7 @@ function New-SenderParams {
         -CameraIds $effectiveCameraIds `
         -QualityProfile "qcl100-native-stereo-direct-wifi" `
         -TransportRoutes $TransportRoutes `
-        -TransportBindLocalAddress $TransportBindLocalAddress
+        -TransportBindLocalAddress $TransportBindLocalAddress `
+        -MediaLayout $MediaLayout `
+        -SenderFrameLayout $SenderFrameLayout
 }

@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 
 public final class SpatialStereoVideoPlayback {
+    private static final String SOURCE_BROKER_RMANVID1 = "broker-rmanvid1";
     private static final int EVENT_START_REQUESTED = 1;
     private static final int EVENT_STARTED = 2;
     private static final int EVENT_STOPPED = 3;
@@ -40,18 +41,24 @@ public final class SpatialStereoVideoPlayback {
 
     public static void start(
         Context context,
+        String source,
         String path,
         int width,
         int height,
         int maxImages,
         int fpsCap,
-        boolean looping
+        boolean looping,
+        String brokerHost,
+        int brokerPort,
+        int brokerConnectTimeoutMs,
+        String mediaLayout
     ) {
         int requestedWidth = clamp(width, 320, 4096);
         int requestedHeight = clamp(height, 240, 4096);
         int requestedMaxImages = clamp(maxImages, 2, 6);
         int requestedFpsCap = clamp(fpsCap, 1, 90);
         String resolvedPath = resolvePath(context, path);
+        boolean brokerSource = SOURCE_BROKER_RMANVID1.equals(source);
 
         synchronized (LOCK) {
             stopLocked();
@@ -72,7 +79,7 @@ public final class SpatialStereoVideoPlayback {
         if (!nativeBridgeLoaded) {
             return;
         }
-        if (resolvedPath.isEmpty() || !new File(resolvedPath).isFile()) {
+        if (!brokerSource && (resolvedPath.isEmpty() || !new File(resolvedPath).isFile())) {
             nativeStereoVideoLifecycleEvent(
                 EVENT_ERROR,
                 -2,
@@ -108,15 +115,29 @@ public final class SpatialStereoVideoPlayback {
             new Runnable() {
                 @Override
                 public void run() {
-                    runPlayback(
-                        resolvedPath,
-                        surface,
-                        requestedWidth,
-                        requestedHeight,
-                        requestedMaxImages,
-                        requestedFpsCap,
-                        looping
-                    );
+                    if (brokerSource) {
+                        runBrokerPlayback(
+                            brokerHost,
+                            brokerPort,
+                            brokerConnectTimeoutMs,
+                            mediaLayout,
+                            surface,
+                            requestedWidth,
+                            requestedHeight,
+                            requestedMaxImages,
+                            requestedFpsCap
+                        );
+                    } else {
+                        runPlayback(
+                            resolvedPath,
+                            surface,
+                            requestedWidth,
+                            requestedHeight,
+                            requestedMaxImages,
+                            requestedFpsCap,
+                            looping
+                        );
+                    }
                 }
             },
             "RQSpatialStereoVideo"
@@ -212,6 +233,50 @@ public final class SpatialStereoVideoPlayback {
             }
             surface.release();
         }
+    }
+
+    private static void runBrokerPlayback(
+        String host,
+        int port,
+        int connectTimeoutMs,
+        String mediaLayout,
+        Surface surface,
+        int width,
+        int height,
+        int maxImages,
+        int fpsCap
+    ) {
+        try {
+            nativeStereoVideoLifecycleEvent(EVENT_STARTED, 0, width, height, maxImages, fpsCap, 0);
+            SpatialPackedStereoBrokerPlayback.run(
+                host,
+                port,
+                connectTimeoutMs,
+                mediaLayout,
+                surface,
+                width,
+                height,
+                maxImages,
+                fpsCap
+            );
+            nativeStereoVideoLifecycleEvent(EVENT_STOPPED, 0, width, height, maxImages, fpsCap, 0);
+        } catch (RuntimeException | IOException error) {
+            nativeStereoVideoLifecycleEvent(EVENT_ERROR, -1, width, height, maxImages, fpsCap, 0);
+        } finally {
+            synchronized (LOCK) {
+                if (playbackSurface == surface) {
+                    playbackSurface = null;
+                }
+                if (playbackThread == Thread.currentThread()) {
+                    playbackThread = null;
+                }
+            }
+            surface.release();
+        }
+    }
+
+    static boolean isStopRequested() {
+        return stopRequested;
     }
 
     private static void decodeOnce(

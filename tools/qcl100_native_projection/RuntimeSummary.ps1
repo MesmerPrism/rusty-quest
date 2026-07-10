@@ -42,15 +42,30 @@ function Summarize-BrokerRuntime {
                         peer_socket_bound_to_wifi_direct_network = $_.peer_socket_bound_to_wifi_direct_network
                         peer_socket_network_route_matches_peer = $_.peer_socket_network_route_matches_peer
                         peer_socket_network_wifi_transport = $_.peer_socket_network_wifi_transport
+                        peer_socket_network_direct_p2p_ready = $_.peer_socket_network_direct_p2p_ready
                         peer_socket_wifi_direct_bind_required = $_.peer_socket_wifi_direct_bind_required
                         peer_socket_wifi_direct_bind_attempts = $_.peer_socket_wifi_direct_bind_attempts
                         peer_socket_network_interface = $_.peer_socket_network_interface
                         peer_socket_network_selection = $_.peer_socket_network_selection
-                peer_socket_local_interface = $_.peer_socket_local_interface
-                peer_socket_bound_local_address = $_.peer_socket_bound_local_address
-                peer_socket_local_address_same_subnet = $_.peer_socket_local_address_same_subnet
-                peer_socket_bind_local_address_error = $_.peer_socket_bind_local_address_error
-                peer_socket_local_address_error = $_.peer_socket_local_address_error
+                        peer_socket_local_interface = $_.peer_socket_local_interface
+                        peer_socket_local_interface_is_p2p = $_.peer_socket_local_interface_is_p2p
+                        peer_socket_bound_local_address = $_.peer_socket_bound_local_address
+                        peer_socket_local_address_same_subnet = $_.peer_socket_local_address_same_subnet
+                        peer_socket_local_address_direct_p2p_ready = $_.peer_socket_local_address_direct_p2p_ready
+                        peer_socket_direct_p2p_ready = $_.peer_socket_direct_p2p_ready
+                        peer_socket_bind_local_address_error = $_.peer_socket_bind_local_address_error
+                        peer_socket_local_address_error = $_.peer_socket_local_address_error
+                        transport_host = $_.transport_host
+                        transport_server_socket_open = $_.transport_server_socket_open
+                        transport_server_bind_attempt_unix_ms = $_.transport_server_bind_attempt_unix_ms
+                        transport_server_bound_unix_ms = $_.transport_server_bound_unix_ms
+                        transport_server_bound_address = $_.transport_server_bound_address
+                        transport_server_bound_port = $_.transport_server_bound_port
+                        transport_server_bound_interface = $_.transport_server_bound_interface
+                        transport_server_bind_error = $_.transport_server_bind_error
+                        receiver_ready = $_.receiver_ready
+                        receiver_transport_ready = $_.receiver_transport_ready
+                        receiver_local_ready = $_.receiver_local_ready
             }
         })
         sender_source_runtime = if ($null -eq $sourceRuntime) {
@@ -84,6 +99,18 @@ function Summarize-BrokerRuntime {
     }
 }
 
+function Get-Qcl100ActiveMediaEyes {
+    if ($packedMediaLayout) {
+        return "stereo"
+    }
+    if ($leftLaneActive) {
+        Write-Output "left"
+    }
+    if ($rightLaneActive) {
+        Write-Output "right"
+    }
+}
+
 function Get-BrokerReceiverObservedFreshness {
     param($BrokerStatus)
     $receiverLanes = @()
@@ -91,13 +118,7 @@ function Get-BrokerReceiverObservedFreshness {
         $receiverLanes = @($BrokerStatus.lanes | Where-Object { $_.role -eq "receiver" })
     }
     $records = @()
-    $eyes = @()
-    if ($leftLaneActive) {
-        $eyes += "left"
-    }
-    if ($rightLaneActive) {
-        $eyes += "right"
-    }
+    $eyes = @(Get-Qcl100ActiveMediaEyes)
     foreach ($eye in $eyes) {
         $lane = @($receiverLanes | Where-Object { $_.eye -eq $eye } | Select-Object -First 1)[0]
         $bytesReceived = ConvertTo-LongSafe $lane.bytes_received
@@ -154,13 +175,7 @@ function Get-Qcl100DirectP2pSenderAuthority {
         $senderLanes = @($BrokerStatus.lanes | Where-Object { $_.role -eq "sender" })
     }
     $records = @()
-    $eyes = @()
-    if ($leftLaneActive) {
-        $eyes += "left"
-    }
-    if ($rightLaneActive) {
-        $eyes += "right"
-    }
+    $eyes = @(Get-Qcl100ActiveMediaEyes)
     foreach ($eye in $eyes) {
         $lane = @($senderLanes | Where-Object { $_.eye -eq $eye } | Select-Object -First 1)[0]
         $bytesSent = ConvertTo-LongSafe $lane.bytes_sent
@@ -174,14 +189,23 @@ function Get-Qcl100DirectP2pSenderAuthority {
             peer_socket_local_interface = $lane.peer_socket_local_interface
             peer_socket_network_interface = $lane.peer_socket_network_interface
             peer_socket_network_selection = $lane.peer_socket_network_selection
+            peer_socket_bound_to_wifi_direct_network = $lane.peer_socket_bound_to_wifi_direct_network
+            peer_socket_network_route_matches_peer = $lane.peer_socket_network_route_matches_peer
+            peer_socket_network_direct_p2p_ready = $lane.peer_socket_network_direct_p2p_ready
+            peer_socket_local_interface_is_p2p = $lane.peer_socket_local_interface_is_p2p
+            peer_socket_local_address_direct_p2p_ready = $lane.peer_socket_local_address_direct_p2p_ready
+            peer_socket_direct_p2p_ready = $lane.peer_socket_direct_p2p_ready
             peer_socket_wifi_direct_bind_required = $lane.peer_socket_wifi_direct_bind_required
             peer_socket_wifi_direct_bind_attempts = ConvertTo-LongSafe $lane.peer_socket_wifi_direct_bind_attempts
             peer_socket_local_address_same_subnet = $lane.peer_socket_local_address_same_subnet
             direct_p2p_sender_authority_accepted = [bool](
                 $lane.peer_socket_authority -eq "rusty_direct_p2p_socket_authority" -and
                 -not [string]::IsNullOrWhiteSpace([string]$lane.peer_socket_bound_local_address) -and
+                [string]$lane.peer_socket_local_interface -eq "p2p0" -and
                 (Test-Qcl100Truthy $lane.peer_socket_wifi_direct_bind_required) -and
                 (Test-Qcl100Truthy $lane.peer_socket_local_address_same_subnet) -and
+                (Test-Qcl100Truthy $lane.peer_socket_local_interface_is_p2p) -and
+                (Test-Qcl100Truthy $lane.peer_socket_direct_p2p_ready) -and
                 $bytesSent -gt 0L)
         }
     }
@@ -194,6 +218,169 @@ function Get-Qcl100DirectP2pSenderAuthority {
         accepted_lane_count = $acceptedRecords.Count
         lanes = $records
         accepted = [bool]((-not $Required) -or ($records.Count -eq $activeLaneCount -and $acceptedRecords.Count -eq $records.Count))
+    }
+}
+
+function Get-Qcl100DirectP2pReceiverAuthority {
+    param(
+        $BrokerStatus,
+        [string]$ExpectedLocalAddress,
+        [bool]$Required = $true
+    )
+    $receiverLanes = @()
+    if ($null -ne $BrokerStatus -and $null -ne $BrokerStatus.lanes) {
+        $receiverLanes = @($BrokerStatus.lanes | Where-Object { $_.role -eq "receiver" })
+    }
+    $records = @()
+    $eyes = @(Get-Qcl100ActiveMediaEyes)
+    foreach ($eye in $eyes) {
+        $lane = @($receiverLanes | Where-Object { $_.eye -eq $eye } | Select-Object -First 1)[0]
+        $transportPort = ConvertTo-LongSafe (Get-Qcl100SummaryProperty -Object $lane -Name "transport_port")
+        $boundPort = ConvertTo-LongSafe (Get-Qcl100SummaryProperty -Object $lane -Name "transport_server_bound_port")
+        $transportHost = [string](Get-Qcl100SummaryProperty -Object $lane -Name "transport_host")
+        $boundAddress = [string](Get-Qcl100SummaryProperty -Object $lane -Name "transport_server_bound_address")
+        $boundInterface = [string](Get-Qcl100SummaryProperty -Object $lane -Name "transport_server_bound_interface")
+        $socketOpen = Test-Qcl100Truthy (Get-Qcl100SummaryProperty -Object $lane -Name "transport_server_socket_open")
+        $receiverReady = Test-Qcl100Truthy (Get-Qcl100SummaryProperty -Object $lane -Name "receiver_ready")
+        $receiverTransportReady = Test-Qcl100Truthy (Get-Qcl100SummaryProperty -Object $lane -Name "receiver_transport_ready")
+        $bindAccepted = [bool](
+            -not [string]::IsNullOrWhiteSpace($ExpectedLocalAddress) -and
+            $transportHost -eq $ExpectedLocalAddress -and
+            $socketOpen -and
+            $receiverReady -and
+            $receiverTransportReady -and
+            $boundAddress -eq $ExpectedLocalAddress -and
+            $boundInterface -eq "p2p0" -and
+            $transportPort -gt 0L -and
+            $boundPort -eq $transportPort
+        )
+        $records += [ordered]@{
+            eye = $eye
+            state = Get-Qcl100SummaryProperty -Object $lane -Name "state"
+            expected_local_address = $ExpectedLocalAddress
+            transport_host = $transportHost
+            transport_port = $transportPort
+            transport_server_socket_open = $socketOpen
+            transport_server_bound_address = $boundAddress
+            transport_server_bound_port = $boundPort
+            transport_server_bound_interface = $boundInterface
+            transport_server_bind_error = Get-Qcl100SummaryProperty -Object $lane -Name "transport_server_bind_error"
+            receiver_ready = $receiverReady
+            receiver_transport_ready = $receiverTransportReady
+            direct_p2p_receiver_authority_accepted = $bindAccepted
+        }
+    }
+    $acceptedRecords = @($records | Where-Object { $_.direct_p2p_receiver_authority_accepted })
+    [ordered]@{
+        required = "broker receiver transport listeners must be runtime-bound to the QCL041-observed local p2p0 address and interface"
+        required_by_direction = [bool]$Required
+        expected_local_address = $ExpectedLocalAddress
+        expected_lane_count = if ($Required) { $activeLaneCount } else { 0 }
+        lane_count = $records.Count
+        accepted_lane_count = $acceptedRecords.Count
+        lanes = $records
+        accepted = [bool]((-not $Required) -or ($records.Count -eq $activeLaneCount -and $acceptedRecords.Count -eq $records.Count))
+    }
+}
+
+function New-Qcl100DirectP2pTopologyPath {
+    param(
+        [string]$Name,
+        $SenderAuthority,
+        $ReceiverAuthority,
+        $ReceiverFreshness,
+        [bool]$Required
+    )
+    if (-not $Required) {
+        return $null
+    }
+    $issues = @()
+    if (-not (Test-Qcl100Truthy (Get-Qcl100SummaryProperty -Object $SenderAuthority -Name "accepted"))) {
+        $issues += "sender_authority_not_accepted"
+    }
+    if (-not (Test-Qcl100Truthy (Get-Qcl100SummaryProperty -Object $ReceiverAuthority -Name "accepted"))) {
+        $issues += "receiver_authority_not_accepted"
+    }
+    if (-not (Test-Qcl100Truthy (Get-Qcl100SummaryProperty -Object $ReceiverFreshness -Name "fresh"))) {
+        $issues += "receiver_observed_bytes_not_fresh"
+    }
+    [ordered]@{
+        name = $Name
+        mode = "rusty_direct_p2p_socket_authority"
+        sender_authority_accepted = [bool]($issues -notcontains "sender_authority_not_accepted")
+        receiver_authority_accepted = [bool]($issues -notcontains "receiver_authority_not_accepted")
+        receiver_observed_bytes_fresh = [bool]($issues -notcontains "receiver_observed_bytes_not_fresh")
+        issue = if ($issues.Count -gt 0) { $issues[0] } else { "" }
+        issues = $issues
+        accepted = [bool]($issues.Count -eq 0)
+    }
+}
+
+function Get-Qcl100DirectP2pMediaTopologyAcceptance {
+    param(
+        [bool]$Required,
+        [string]$LowerGateAuthority,
+        [string]$MediaAuthority,
+        $AddressRefresh,
+        $OwnerSenderAuthority,
+        $ClientSenderAuthority,
+        $OwnerReceiverAuthority,
+        $ClientReceiverAuthority,
+        $OwnerReceiverFreshness,
+        $ClientReceiverFreshness,
+        [bool]$OwnerSends,
+        [bool]$ClientSends,
+        [bool]$OwnerReceives,
+        [bool]$ClientReceives
+    )
+    $authorityAccepted = [bool](
+        $LowerGateAuthority -eq "rusty_direct_p2p_socket_authority" -and
+        $MediaAuthority -eq "rusty_direct_p2p_socket_authority"
+    )
+    $addressRefreshAccepted = Test-Qcl100Truthy (Get-Qcl100SummaryProperty -Object $AddressRefresh -Name "ready")
+    $paths = @(@(
+        New-Qcl100DirectP2pTopologyPath `
+            -Name "owner_to_client" `
+            -SenderAuthority $OwnerSenderAuthority `
+            -ReceiverAuthority $ClientReceiverAuthority `
+            -ReceiverFreshness $ClientReceiverFreshness `
+            -Required:([bool]($OwnerSends -and $ClientReceives))
+        New-Qcl100DirectP2pTopologyPath `
+            -Name "client_to_owner" `
+            -SenderAuthority $ClientSenderAuthority `
+            -ReceiverAuthority $OwnerReceiverAuthority `
+            -ReceiverFreshness $OwnerReceiverFreshness `
+            -Required:([bool]($ClientSends -and $OwnerReceives))
+    ) | Where-Object { $null -ne $_ })
+    $acceptedPaths = @($paths | Where-Object { $_.accepted })
+    $issues = @()
+    if ($Required -and -not $authorityAccepted) {
+        $issues += "rusty_direct_p2p_socket_authority_not_selected"
+    }
+    if ($Required -and -not $addressRefreshAccepted) {
+        $issues += "direct_p2p_address_refresh_not_ready"
+    }
+    $issues += @($paths | Where-Object { -not $_.accepted } | ForEach-Object { $_.name + ":" + $_.issue })
+    if ($Required -and $paths.Count -eq 0) {
+        $issues += "direct_p2p_active_direction_path_missing"
+    }
+    [ordered]@{
+        required = "active broker media directions must use Rusty direct p2p sender sockets, p2p0-bound receiver listeners, fresh receiver-observed bytes, and current QCL041 addresses"
+        required_by_transport_owner = [bool]$Required
+        required_transport_topology = "rusty_direct_p2p_socket_authority"
+        lower_gate_authority = $LowerGateAuthority
+        media_authority = $MediaAuthority
+        authority_accepted = $authorityAccepted
+        address_refresh_accepted = $addressRefreshAccepted
+        required_path_count = $paths.Count
+        accepted_path_count = $acceptedPaths.Count
+        rejected_path_count = $paths.Count - $acceptedPaths.Count
+        direct_p2p_socket_authority_path_count = $paths.Count
+        accepted_modes = if ($acceptedPaths.Count -gt 0) { @("rusty_direct_p2p_socket_authority") } else { @() }
+        first_issue = if ($issues.Count -gt 0) { $issues[0] } else { "" }
+        issues = $issues
+        paths = $paths
+        accepted = [bool]((-not $Required) -or ($authorityAccepted -and $addressRefreshAccepted -and $paths.Count -gt 0 -and $acceptedPaths.Count -eq $paths.Count))
     }
 }
 
@@ -681,12 +868,15 @@ function Get-Qcl100Qcl082MediaTopologyAcceptance {
 function New-Qcl100TransportClaims {
     param(
         [string]$Direction,
+        [string]$LaneMode = "stereo",
         $FreshnessAcceptance,
         $MediaTopologyAcceptance,
+        $DirectP2pMediaTopologyAcceptance = $null,
         [bool]$MediaTopologyRequired = $true
     )
     $passed = Test-Qcl100Truthy (Get-Qcl100SummaryProperty -Object $FreshnessAcceptance -Name "passed")
     $duplexDirection = [bool]($Direction -eq "duplex")
+    $stereoLaneMode = [bool]($LaneMode -eq "stereo")
     $activeDirectionStreamRenderClaimed = [bool]$passed
     $requiredPathCount = ConvertTo-LongSafe (Get-Qcl100SummaryProperty -Object $MediaTopologyAcceptance -Name "required_path_count")
     $acceptedPathCount = ConvertTo-LongSafe (Get-Qcl100SummaryProperty -Object $MediaTopologyAcceptance -Name "accepted_path_count")
@@ -696,8 +886,17 @@ function New-Qcl100TransportClaims {
     $acceptedModes = @(Get-Qcl100SummaryProperty -Object $MediaTopologyAcceptance -Name "accepted_modes" | Where-Object {
         -not [string]::IsNullOrWhiteSpace([string]$_)
     })
+    $directP2pRequired = Test-Qcl100Truthy (Get-Qcl100SummaryProperty -Object $DirectP2pMediaTopologyAcceptance -Name "required_by_transport_owner")
+    $directP2pAccepted = Test-Qcl100Truthy (Get-Qcl100SummaryProperty -Object $DirectP2pMediaTopologyAcceptance -Name "accepted")
+    $directP2pRequiredPathCount = ConvertTo-LongSafe (Get-Qcl100SummaryProperty -Object $DirectP2pMediaTopologyAcceptance -Name "required_path_count")
+    $directP2pAcceptedPathCount = ConvertTo-LongSafe (Get-Qcl100SummaryProperty -Object $DirectP2pMediaTopologyAcceptance -Name "accepted_path_count")
+    $directP2pPathCount = ConvertTo-LongSafe (Get-Qcl100SummaryProperty -Object $DirectP2pMediaTopologyAcceptance -Name "direct_p2p_socket_authority_path_count")
+    $directP2pAcceptedModes = @(Get-Qcl100SummaryProperty -Object $DirectP2pMediaTopologyAcceptance -Name "accepted_modes" | Where-Object {
+        -not [string]::IsNullOrWhiteSpace([string]$_)
+    })
     $pureAppBoundUdpDuplex = [bool](
         $duplexDirection -and
+        $stereoLaneMode -and
         $passed -and
         $mediaTopologyAccepted -and
         $requiredPathCount -gt 0L -and
@@ -705,6 +904,7 @@ function New-Qcl100TransportClaims {
     )
     $pureControlTcpAlternate = [bool](
         $duplexDirection -and
+        $stereoLaneMode -and
         $passed -and
         $mediaTopologyAccepted -and
         $requiredPathCount -gt 0L -and
@@ -712,6 +912,7 @@ function New-Qcl100TransportClaims {
     )
     $mixedAcceptedAlternate = [bool](
         $duplexDirection -and
+        $stereoLaneMode -and
         $passed -and
         $mediaTopologyAccepted -and
         $requiredPathCount -gt 0L -and
@@ -720,17 +921,38 @@ function New-Qcl100TransportClaims {
         -not $pureControlTcpAlternate -and
         $controlTcpPathCount -gt 0L
     )
-    $recognizedSameGroupDuplexTopology = [bool]($pureAppBoundUdpDuplex -or $pureControlTcpAlternate -or $mixedAcceptedAlternate)
+    $pureRustyDirectP2pSocketAuthority = [bool](
+        $duplexDirection -and
+        $stereoLaneMode -and
+        $passed -and
+        $directP2pRequired -and
+        $directP2pAccepted -and
+        $directP2pRequiredPathCount -eq 2L -and
+        $directP2pAcceptedPathCount -eq 2L -and
+        $directP2pPathCount -eq 2L
+    )
+    $recognizedSameGroupDuplexTopology = [bool](
+        $pureRustyDirectP2pSocketAuthority -or
+        $pureAppBoundUdpDuplex -or
+        $pureControlTcpAlternate -or
+        $mixedAcceptedAlternate
+    )
     $status = if (-not $passed) {
         "blocked_until_same_epoch_bidirectional_media_and_renderer_freshness_pass"
     } elseif (-not $duplexDirection) {
         "active_direction_stream_render_proven"
+    } elseif (-not $stereoLaneMode) {
+        "same_group_duplex_diagnostic_lane_only_not_full_stereo"
+    } elseif ($pureRustyDirectP2pSocketAuthority) {
+        "same_group_duplex_proven_with_rusty_direct_p2p_socket_authority"
     } elseif ($pureAppBoundUdpDuplex) {
         "same_group_app_bound_udp_duplex_proven"
     } elseif ($pureControlTcpAlternate) {
         "same_group_duplex_proven_with_justified_control_tcp_alternate"
     } elseif ($mixedAcceptedAlternate) {
         "same_group_duplex_proven_with_mixed_accepted_topology"
+    } elseif ($directP2pRequired -and -not $directP2pAccepted) {
+        "same_group_direct_p2p_topology_not_accepted"
     } elseif (-not $MediaTopologyRequired) {
         "same_group_duplex_topology_not_required_for_broker_direct_media_no_duplex_claim"
     } elseif (-not $mediaTopologyAccepted) {
@@ -739,18 +961,31 @@ function New-Qcl100TransportClaims {
         "same_group_duplex_topology_unclassified"
     }
     [ordered]@{
-        required = "QCL100 may claim same-group duplex only after active directions prove receiver-observed QCL082 bytes plus final-window native renderer scorecards; app-bound UDP and justified control-tcp alternates are reported separately"
+        required = "QCL100 may claim same-group duplex only after both active directions prove accepted media topology, receiver-observed bytes, p2p0 socket authority where selected, and final-window native renderer scorecards"
         direction = $Direction
+        lane_mode = $LaneMode
+        full_stereo_required_for_qcl100_promotion = $true
         active_direction_stream_render_claimed = $activeDirectionStreamRenderClaimed
         same_group_duplex_claimed = $recognizedSameGroupDuplexTopology
         same_group_simultaneous_duplex = $recognizedSameGroupDuplexTopology
+        same_group_rusty_direct_p2p_socket_authority_duplex_claimed = $pureRustyDirectP2pSocketAuthority
         same_group_app_bound_udp_duplex_claimed = $pureAppBoundUdpDuplex
         justified_alternate_topology_claimed = [bool]($pureControlTcpAlternate -or $mixedAcceptedAlternate)
         justified_alternate_topology = if ($pureControlTcpAlternate) { "control_tcp_media_carrier" } elseif ($mixedAcceptedAlternate) { "mixed_control_tcp_and_app_bound_udp_media" } else { "" }
         blocked_until_same_epoch_bidirectional_media_and_renderer_freshness_pass = [bool]($duplexDirection -and -not $recognizedSameGroupDuplexTopology)
         status = $status
-        required_transport_topology = Get-Qcl100SummaryProperty -Object $MediaTopologyAcceptance -Name "required_transport_topology"
-        accepted_modes = $acceptedModes
+        required_transport_topology = if ($directP2pRequired) {
+            Get-Qcl100SummaryProperty -Object $DirectP2pMediaTopologyAcceptance -Name "required_transport_topology"
+        } else {
+            Get-Qcl100SummaryProperty -Object $MediaTopologyAcceptance -Name "required_transport_topology"
+        }
+        accepted_modes = @($acceptedModes + $directP2pAcceptedModes | Sort-Object -Unique)
+        direct_p2p_media_topology_required = $directP2pRequired
+        direct_p2p_media_topology_accepted = $directP2pAccepted
+        direct_p2p_media_topology_required_path_count = $directP2pRequiredPathCount
+        direct_p2p_media_topology_accepted_path_count = $directP2pAcceptedPathCount
+        direct_p2p_media_topology_rejected_path_count = ConvertTo-LongSafe (Get-Qcl100SummaryProperty -Object $DirectP2pMediaTopologyAcceptance -Name "rejected_path_count")
+        direct_p2p_media_topology_first_issue = Get-Qcl100SummaryProperty -Object $DirectP2pMediaTopologyAcceptance -Name "first_issue"
         qcl082_media_topology_required = [bool]$MediaTopologyRequired
         qcl082_media_topology_accepted = $mediaTopologyAccepted
         qcl082_media_topology_required_path_count = $requiredPathCount
@@ -916,6 +1151,7 @@ function Assert-Qcl100TransportClaims {
         [string]$Name,
         $Claims,
         [bool]$ExpectedSameGroupDuplexClaimed,
+        [bool]$ExpectedRustyDirectP2pDuplexClaimed = $false,
         [bool]$ExpectedAppBoundUdpDuplexClaimed,
         [bool]$ExpectedJustifiedAlternateClaimed,
         [string]$ExpectedStatus
@@ -925,6 +1161,9 @@ function Assert-Qcl100TransportClaims {
     }
     if ([bool]$Claims.same_group_app_bound_udp_duplex_claimed -ne $ExpectedAppBoundUdpDuplexClaimed) {
         throw "QCL100 transport-claims self-test '$Name' expected same_group_app_bound_udp_duplex_claimed=$ExpectedAppBoundUdpDuplexClaimed but got $($Claims.same_group_app_bound_udp_duplex_claimed)."
+    }
+    if ([bool]$Claims.same_group_rusty_direct_p2p_socket_authority_duplex_claimed -ne $ExpectedRustyDirectP2pDuplexClaimed) {
+        throw "QCL100 transport-claims self-test '$Name' expected same_group_rusty_direct_p2p_socket_authority_duplex_claimed=$ExpectedRustyDirectP2pDuplexClaimed but got $($Claims.same_group_rusty_direct_p2p_socket_authority_duplex_claimed)."
     }
     if ([bool]$Claims.justified_alternate_topology_claimed -ne $ExpectedJustifiedAlternateClaimed) {
         throw "QCL100 transport-claims self-test '$Name' expected justified_alternate_topology_claimed=$ExpectedJustifiedAlternateClaimed but got $($Claims.justified_alternate_topology_claimed)."
@@ -936,6 +1175,7 @@ function Assert-Qcl100TransportClaims {
         name = $Name
         same_group_duplex_claimed = [bool]$Claims.same_group_duplex_claimed
         same_group_simultaneous_duplex = [bool]$Claims.same_group_simultaneous_duplex
+        same_group_rusty_direct_p2p_socket_authority_duplex_claimed = [bool]$Claims.same_group_rusty_direct_p2p_socket_authority_duplex_claimed
         same_group_app_bound_udp_duplex_claimed = [bool]$Claims.same_group_app_bound_udp_duplex_claimed
         justified_alternate_topology_claimed = [bool]$Claims.justified_alternate_topology_claimed
         justified_alternate_topology = $Claims.justified_alternate_topology
@@ -1002,6 +1242,65 @@ function Assert-Qcl100DirectP2pSenderAuthority {
         lane_count = $Authority.lane_count
         accepted_lane_count = $Authority.accepted_lane_count
         lanes = $Authority.lanes
+    }
+}
+
+function Assert-Qcl100DirectP2pReceiverAuthority {
+    param(
+        [string]$Name,
+        $Authority,
+        [bool]$ExpectedAccepted,
+        [int]$ExpectedLaneCount,
+        [int]$ExpectedAcceptedLaneCount
+    )
+    if ([bool]$Authority.accepted -ne $ExpectedAccepted) {
+        throw "QCL100 direct-p2p receiver authority self-test '$Name' expected accepted=$ExpectedAccepted but got $($Authority.accepted)."
+    }
+    if ((ConvertTo-LongSafe $Authority.lane_count) -ne $ExpectedLaneCount) {
+        throw "QCL100 direct-p2p receiver authority self-test '$Name' expected lane count=$ExpectedLaneCount but got $($Authority.lane_count)."
+    }
+    if ((ConvertTo-LongSafe $Authority.accepted_lane_count) -ne $ExpectedAcceptedLaneCount) {
+        throw "QCL100 direct-p2p receiver authority self-test '$Name' expected accepted lanes=$ExpectedAcceptedLaneCount but got $($Authority.accepted_lane_count)."
+    }
+    [ordered]@{
+        name = $Name
+        expected_accepted = $ExpectedAccepted
+        accepted = [bool]$Authority.accepted
+        lane_count = $Authority.lane_count
+        accepted_lane_count = $Authority.accepted_lane_count
+        lanes = $Authority.lanes
+    }
+}
+
+function Assert-Qcl100DirectP2pMediaTopologyAcceptance {
+    param(
+        [string]$Name,
+        $Topology,
+        [bool]$ExpectedAccepted,
+        [int]$ExpectedRequiredPathCount,
+        [int]$ExpectedAcceptedPathCount,
+        [string]$ExpectedFirstIssue = ""
+    )
+    if ([bool]$Topology.accepted -ne $ExpectedAccepted) {
+        throw "QCL100 direct-p2p media topology self-test '$Name' expected accepted=$ExpectedAccepted but got $($Topology.accepted)."
+    }
+    if ((ConvertTo-LongSafe $Topology.required_path_count) -ne $ExpectedRequiredPathCount) {
+        throw "QCL100 direct-p2p media topology self-test '$Name' expected required paths=$ExpectedRequiredPathCount but got $($Topology.required_path_count)."
+    }
+    if ((ConvertTo-LongSafe $Topology.accepted_path_count) -ne $ExpectedAcceptedPathCount) {
+        throw "QCL100 direct-p2p media topology self-test '$Name' expected accepted paths=$ExpectedAcceptedPathCount but got $($Topology.accepted_path_count)."
+    }
+    if ([string]$Topology.first_issue -ne $ExpectedFirstIssue) {
+        throw "QCL100 direct-p2p media topology self-test '$Name' expected first issue '$ExpectedFirstIssue' but got '$($Topology.first_issue)'."
+    }
+    [ordered]@{
+        name = $Name
+        expected_accepted = $ExpectedAccepted
+        accepted = [bool]$Topology.accepted
+        required_path_count = $Topology.required_path_count
+        accepted_path_count = $Topology.accepted_path_count
+        first_issue = $Topology.first_issue
+        paths = $Topology.paths
     }
 }
 
@@ -1158,6 +1457,14 @@ function Invoke-Qcl100RuntimeSummarySelfTest {
                 copy_last_write_age_ms = 800
                 transport_accept_count = 1
                 local_client_accept_count = 1
+                transport_host = "192.168.49.102"
+                transport_port = 9079
+                transport_server_socket_open = $true
+                transport_server_bound_address = "192.168.49.102"
+                transport_server_bound_port = 9079
+                transport_server_bound_interface = "p2p0"
+                receiver_ready = $true
+                receiver_transport_ready = $true
             },
             [pscustomobject]@{
                 role = "receiver"
@@ -1172,6 +1479,14 @@ function Invoke-Qcl100RuntimeSummarySelfTest {
                 copy_last_write_age_ms = 650
                 transport_accept_count = 1
                 local_client_accept_count = 1
+                transport_host = "192.168.49.102"
+                transport_port = 9080
+                transport_server_socket_open = $true
+                transport_server_bound_address = "192.168.49.102"
+                transport_server_bound_port = 9080
+                transport_server_bound_interface = "p2p0"
+                receiver_ready = $true
+                receiver_transport_ready = $true
             }
         )
     }
@@ -1222,8 +1537,14 @@ function Invoke-Qcl100RuntimeSummarySelfTest {
                 }
                 peer_socket_authority = "rusty_direct_p2p_socket_authority"
                 peer_socket_bound_local_address = "192.168.49.1"
-                peer_socket_local_interface = "rusty_direct_p2p_explicit_local_bind_address"
+                peer_socket_local_interface = "p2p0"
                 peer_socket_network_selection = "rusty_direct_p2p_explicit_local_bind_address"
+                peer_socket_bound_to_wifi_direct_network = $false
+                peer_socket_network_route_matches_peer = $false
+                peer_socket_network_direct_p2p_ready = $false
+                peer_socket_local_interface_is_p2p = $true
+                peer_socket_local_address_direct_p2p_ready = $true
+                peer_socket_direct_p2p_ready = $true
                 peer_socket_wifi_direct_bind_required = $true
                 peer_socket_wifi_direct_bind_attempts = 1
                 peer_socket_local_address_same_subnet = $true
@@ -1241,14 +1562,37 @@ function Invoke-Qcl100RuntimeSummarySelfTest {
                 }
                 peer_socket_authority = "rusty_direct_p2p_socket_authority"
                 peer_socket_bound_local_address = "192.168.49.1"
-                peer_socket_local_interface = "rusty_direct_p2p_explicit_local_bind_address"
+                peer_socket_local_interface = "p2p0"
                 peer_socket_network_selection = "rusty_direct_p2p_explicit_local_bind_address"
+                peer_socket_bound_to_wifi_direct_network = $false
+                peer_socket_network_route_matches_peer = $false
+                peer_socket_network_direct_p2p_ready = $false
+                peer_socket_local_interface_is_p2p = $true
+                peer_socket_local_address_direct_p2p_ready = $true
+                peer_socket_direct_p2p_ready = $true
                 peer_socket_wifi_direct_bind_required = $true
                 peer_socket_wifi_direct_bind_attempts = 1
                 peer_socket_local_address_same_subnet = $true
             }
         )
     }
+    $wrongInterfaceSenderBrokerStatus = $directSenderBrokerStatus |
+        ConvertTo-Json -Depth 16 |
+        ConvertFrom-Json
+    $wrongInterfaceSenderBrokerStatus.lanes[0].peer_socket_local_interface = "wlan0"
+    $wrongInterfaceSenderBrokerStatus.lanes[0].peer_socket_local_interface_is_p2p = $false
+    $wrongInterfaceSenderBrokerStatus.lanes[0].peer_socket_local_address_direct_p2p_ready = $false
+    $wrongInterfaceSenderBrokerStatus.lanes[0].peer_socket_direct_p2p_ready = $false
+    $summarizedDirectSenderBrokerStatus = Summarize-BrokerRuntime ([pscustomobject]@{
+        schema = "rusty.quest.remote_camera.android_runtime_status.v1"
+        session_id = "runtime-summary-self-test"
+        active_count = 2
+        created_count = 2
+        failed_count = 0
+        matched_count = 2
+        lanes = $directSenderBrokerStatus.lanes
+        sender_source_runtime = $null
+    })
     $wrongAuthoritySenderBrokerStatus = [pscustomobject]@{
         lanes = @(
             [pscustomobject]@{
@@ -1269,6 +1613,10 @@ function Invoke-Qcl100RuntimeSummarySelfTest {
                 bytes_sent = 8192
                 peer_socket_authority = "rusty_direct_p2p_socket_authority"
                 peer_socket_bound_local_address = "192.168.49.1"
+                peer_socket_local_interface = "p2p0"
+                peer_socket_local_interface_is_p2p = $true
+                peer_socket_local_address_direct_p2p_ready = $true
+                peer_socket_direct_p2p_ready = $true
                 peer_socket_wifi_direct_bind_required = $true
                 peer_socket_wifi_direct_bind_attempts = 1
                 peer_socket_local_address_same_subnet = $true
@@ -1318,8 +1666,49 @@ function Invoke-Qcl100RuntimeSummarySelfTest {
     $receiverObservedFreshness = Get-BrokerReceiverObservedFreshness -BrokerStatus $receiverBrokerStatus
     $staleReceiverObservedFreshness = Get-BrokerReceiverObservedFreshness -BrokerStatus $staleReceiverBrokerStatus
     $directSenderAuthority = Get-Qcl100DirectP2pSenderAuthority -BrokerStatus $directSenderBrokerStatus -Required:$true
+    $summarizedDirectSenderAuthority = Get-Qcl100DirectP2pSenderAuthority -BrokerStatus $summarizedDirectSenderBrokerStatus -Required:$true
+    $wrongInterfaceSenderAuthority = Get-Qcl100DirectP2pSenderAuthority -BrokerStatus $wrongInterfaceSenderBrokerStatus -Required:$true
     $wrongAuthoritySenderAuthority = Get-Qcl100DirectP2pSenderAuthority -BrokerStatus $wrongAuthoritySenderBrokerStatus -Required:$true
     $notRequiredSenderAuthority = Get-Qcl100DirectP2pSenderAuthority -BrokerStatus $wrongAuthoritySenderBrokerStatus -Required:$false
+    $directReceiverAuthority = Get-Qcl100DirectP2pReceiverAuthority `
+        -BrokerStatus $receiverBrokerStatus `
+        -ExpectedLocalAddress "192.168.49.102" `
+        -Required:$true
+    $wrongAddressReceiverAuthority = Get-Qcl100DirectP2pReceiverAuthority `
+        -BrokerStatus $receiverBrokerStatus `
+        -ExpectedLocalAddress "192.168.49.1" `
+        -Required:$true
+    $directP2pAddressRefresh = [pscustomobject]@{ ready = $true }
+    $directP2pDuplexTopology = Get-Qcl100DirectP2pMediaTopologyAcceptance `
+        -Required:$true `
+        -LowerGateAuthority "rusty_direct_p2p_socket_authority" `
+        -MediaAuthority "rusty_direct_p2p_socket_authority" `
+        -AddressRefresh $directP2pAddressRefresh `
+        -OwnerSenderAuthority $directSenderAuthority `
+        -ClientSenderAuthority $directSenderAuthority `
+        -OwnerReceiverAuthority $directReceiverAuthority `
+        -ClientReceiverAuthority $directReceiverAuthority `
+        -OwnerReceiverFreshness $receiverObservedFreshness `
+        -ClientReceiverFreshness $receiverObservedFreshness `
+        -OwnerSends:$true `
+        -ClientSends:$true `
+        -OwnerReceives:$true `
+        -ClientReceives:$true
+    $directP2pWrongReceiverTopology = Get-Qcl100DirectP2pMediaTopologyAcceptance `
+        -Required:$true `
+        -LowerGateAuthority "rusty_direct_p2p_socket_authority" `
+        -MediaAuthority "rusty_direct_p2p_socket_authority" `
+        -AddressRefresh $directP2pAddressRefresh `
+        -OwnerSenderAuthority $directSenderAuthority `
+        -ClientSenderAuthority $directSenderAuthority `
+        -OwnerReceiverAuthority $wrongAddressReceiverAuthority `
+        -ClientReceiverAuthority $wrongAddressReceiverAuthority `
+        -OwnerReceiverFreshness $receiverObservedFreshness `
+        -ClientReceiverFreshness $receiverObservedFreshness `
+        -OwnerSends:$true `
+        -ClientSends:$true `
+        -OwnerReceives:$true `
+        -ClientReceives:$true
     $controlTcpTopology = Get-Qcl100Qcl082MediaTopologyAcceptance `
         -OwnerRelayFreshness $relayFreshness `
         -ClientRelayFreshness $relayFreshness `
@@ -1489,6 +1878,18 @@ function Invoke-Qcl100RuntimeSummarySelfTest {
             -ExpectedLaneCount 2 `
             -ExpectedAcceptedLaneCount 2
         Assert-Qcl100DirectP2pSenderAuthority `
+            -Name "direct-p2p-sender-authority-survives-runtime-summary-projection" `
+            -Authority $summarizedDirectSenderAuthority `
+            -ExpectedAccepted $true `
+            -ExpectedLaneCount 2 `
+            -ExpectedAcceptedLaneCount 2
+        Assert-Qcl100DirectP2pSenderAuthority `
+            -Name "direct-p2p-sender-authority-rejects-wlan-interface" `
+            -Authority $wrongInterfaceSenderAuthority `
+            -ExpectedAccepted $false `
+            -ExpectedLaneCount 2 `
+            -ExpectedAcceptedLaneCount 1
+        Assert-Qcl100DirectP2pSenderAuthority `
             -Name "direct-p2p-sender-authority-rejects-wrong-authority" `
             -Authority $wrongAuthoritySenderAuthority `
             -ExpectedAccepted $false `
@@ -1500,6 +1901,53 @@ function Invoke-Qcl100RuntimeSummarySelfTest {
             -ExpectedAccepted $true `
             -ExpectedLaneCount 2 `
             -ExpectedAcceptedLaneCount 1
+        Assert-Qcl100DirectP2pReceiverAuthority `
+            -Name "direct-p2p-receiver-authority-accepted" `
+            -Authority $directReceiverAuthority `
+            -ExpectedAccepted $true `
+            -ExpectedLaneCount 2 `
+            -ExpectedAcceptedLaneCount 2
+        Assert-Qcl100DirectP2pReceiverAuthority `
+            -Name "direct-p2p-receiver-authority-rejects-wrong-bind-address" `
+            -Authority $wrongAddressReceiverAuthority `
+            -ExpectedAccepted $false `
+            -ExpectedLaneCount 2 `
+            -ExpectedAcceptedLaneCount 0
+        Assert-Qcl100DirectP2pMediaTopologyAcceptance `
+            -Name "direct-p2p-duplex-topology-accepted" `
+            -Topology $directP2pDuplexTopology `
+            -ExpectedAccepted $true `
+            -ExpectedRequiredPathCount 2 `
+            -ExpectedAcceptedPathCount 2
+        Assert-Qcl100DirectP2pMediaTopologyAcceptance `
+            -Name "direct-p2p-duplex-topology-rejects-wrong-receiver-bind" `
+            -Topology $directP2pWrongReceiverTopology `
+            -ExpectedAccepted $false `
+            -ExpectedRequiredPathCount 2 `
+            -ExpectedAcceptedPathCount 0 `
+            -ExpectedFirstIssue "owner_to_client:receiver_authority_not_accepted"
+        Assert-Qcl100TransportClaims `
+            -Name "transport-claims-rusty-direct-p2p-duplex" `
+            -Claims (New-Qcl100TransportClaims -Direction "duplex" -FreshnessAcceptance $passedAcceptance -MediaTopologyAcceptance $unacceptedTopologyWithAppBoundCounts -DirectP2pMediaTopologyAcceptance $directP2pDuplexTopology -MediaTopologyRequired:$false) `
+            -ExpectedSameGroupDuplexClaimed $true `
+            -ExpectedRustyDirectP2pDuplexClaimed $true `
+            -ExpectedAppBoundUdpDuplexClaimed $false `
+            -ExpectedJustifiedAlternateClaimed $false `
+            -ExpectedStatus "same_group_duplex_proven_with_rusty_direct_p2p_socket_authority"
+        Assert-Qcl100TransportClaims `
+            -Name "transport-claims-rusty-direct-p2p-left-only-diagnostic-does-not-claim-full-duplex" `
+            -Claims (New-Qcl100TransportClaims -Direction "duplex" -LaneMode "left-only" -FreshnessAcceptance $passedAcceptance -MediaTopologyAcceptance $unacceptedTopologyWithAppBoundCounts -DirectP2pMediaTopologyAcceptance $directP2pDuplexTopology -MediaTopologyRequired:$false) `
+            -ExpectedSameGroupDuplexClaimed $false `
+            -ExpectedAppBoundUdpDuplexClaimed $false `
+            -ExpectedJustifiedAlternateClaimed $false `
+            -ExpectedStatus "same_group_duplex_diagnostic_lane_only_not_full_stereo"
+        Assert-Qcl100TransportClaims `
+            -Name "transport-claims-rusty-direct-p2p-wrong-receiver-bind-does-not-claim-duplex" `
+            -Claims (New-Qcl100TransportClaims -Direction "duplex" -FreshnessAcceptance $passedAcceptance -MediaTopologyAcceptance $unacceptedTopologyWithAppBoundCounts -DirectP2pMediaTopologyAcceptance $directP2pWrongReceiverTopology -MediaTopologyRequired:$false) `
+            -ExpectedSameGroupDuplexClaimed $false `
+            -ExpectedAppBoundUdpDuplexClaimed $false `
+            -ExpectedJustifiedAlternateClaimed $false `
+            -ExpectedStatus "same_group_direct_p2p_topology_not_accepted"
         Assert-Qcl100TransportClaims `
             -Name "transport-claims-control-tcp-duplex-justified-alternate" `
             -Claims (New-Qcl100TransportClaims -Direction "duplex" -FreshnessAcceptance $passedAcceptance -MediaTopologyAcceptance $controlTcpTopology) `
@@ -1545,7 +1993,7 @@ function Invoke-Qcl100RuntimeSummarySelfTest {
     )
     Write-JsonFile -Value ([ordered]@{
         schema = "rusty.quest.qcl100_runtime_summary_self_test.v1"
-        required = "qcl082_freshness_preserves_control_tcp_carrier_counts_reports_udp_binding_requires_app_bound_udp_or_control_tcp_topology_requires_broker_receiver_observed_bytes_and_keeps_same_group_duplex_transport_claims_evidence_gated"
+        required = "qcl082_freshness_preserves_control_tcp_carrier_counts_reports_udp_binding_requires_app_bound_udp_or_control_tcp_topology_and_rusty_direct_p2p_duplex_requires_runtime_p2p0_receiver_bind_sender_authority_receiver_bytes_and_same_epoch_native_freshness"
         cases = $results
     }) -Path (Join-Path $OutDir "qcl100-runtime-summary-self-test.json")
     Write-Output "QCL100 runtime summary self-test passed."

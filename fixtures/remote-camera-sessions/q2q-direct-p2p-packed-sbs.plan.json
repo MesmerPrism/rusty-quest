@@ -1,0 +1,159 @@
+{
+  "schema": "rusty.quest.remote_camera_session.v1",
+  "session_id": "session.remote_camera.q2q_direct_p2p_packed_sbs",
+  "topology_id": "quest_to_quest_two_way",
+  "privacy_tier": "local_lan_diagnostic",
+  "media_layout": "side-by-side-left-right",
+  "devices": [
+    { "device_id": "quest-a", "device_kind": "quest", "role": "sender_receiver" },
+    { "device_id": "quest-b", "device_kind": "quest", "role": "sender_receiver" }
+  ],
+  "lanes": [
+    {
+      "lane_id": "quest-a-stereo-to-quest-b",
+      "direction": "outgoing",
+      "source_device_id": "quest-a",
+      "sink_device_id": "quest-b",
+      "source_family": "quest-camera2",
+      "media": {
+        "track_id": "quest-a.stereo.h264",
+        "eye": "stereo",
+        "track_kind": "video",
+        "codec": "h264",
+        "stream_framing": "rmanvid-v4-packed-stereo",
+        "width": 2560,
+        "height": 1280,
+        "frame_rate_hz": 15,
+        "bitrate_bps": 12000000,
+        "metadata_transport": "stream-header-and-binary-pair-extension",
+        "timestamp_domain": "android-camera-sensor-time",
+        "high_rate_payload_plane": "binary-media",
+        "frame_layout": {
+          "schema": "rusty.quest.remote_camera.frame_layout.v1",
+          "kind": "side_by_side_left_right",
+          "eye_order": ["left", "right"],
+          "packed_width": 2560,
+          "packed_height": 1280,
+          "per_eye_width": 1280,
+          "per_eye_height": 1280,
+          "pair_timestamp_authority": "camera2_sensor_timestamp",
+          "pairing_policy": "nearest_timestamp_bounded",
+          "max_pair_delta_ns": 20000000,
+          "stale_eye_reuse_allowed": false,
+          "cpu_pixel_copy": false
+        }
+      },
+      "transport": { "transport_kind": "lan_tcp", "relay_required": false, "encryption_required": false },
+      "queue": { "max_buffered_packets": 32, "max_buffered_bytes": 4194304, "drop_policy": "drop-oldest-complete-frame", "slow_peer_close": true },
+      "receiver_first_required": true
+    },
+    {
+      "lane_id": "quest-b-stereo-to-quest-a",
+      "direction": "outgoing",
+      "source_device_id": "quest-b",
+      "sink_device_id": "quest-a",
+      "source_family": "quest-camera2",
+      "media": {
+        "track_id": "quest-b.stereo.h264",
+        "eye": "stereo",
+        "track_kind": "video",
+        "codec": "h264",
+        "stream_framing": "rmanvid-v4-packed-stereo",
+        "width": 2560,
+        "height": 1280,
+        "frame_rate_hz": 15,
+        "bitrate_bps": 12000000,
+        "metadata_transport": "stream-header-and-binary-pair-extension",
+        "timestamp_domain": "android-camera-sensor-time",
+        "high_rate_payload_plane": "binary-media",
+        "frame_layout": {
+          "schema": "rusty.quest.remote_camera.frame_layout.v1",
+          "kind": "side_by_side_left_right",
+          "eye_order": ["left", "right"],
+          "packed_width": 2560,
+          "packed_height": 1280,
+          "per_eye_width": 1280,
+          "per_eye_height": 1280,
+          "pair_timestamp_authority": "camera2_sensor_timestamp",
+          "pairing_policy": "nearest_timestamp_bounded",
+          "max_pair_delta_ns": 20000000,
+          "stale_eye_reuse_allowed": false,
+          "cpu_pixel_copy": false
+        }
+      },
+      "transport": { "transport_kind": "lan_tcp", "relay_required": false, "encryption_required": false },
+      "queue": { "max_buffered_packets": 32, "max_buffered_bytes": 4194304, "drop_policy": "drop-oldest-complete-frame", "slow_peer_close": true },
+      "receiver_first_required": true
+    }
+  ],
+  "runtime_endpoints": [
+    {
+      "device_id": "quest-a",
+      "adapter_kind": "quest_manifold_broker_android",
+      "sender_source_kind": "camera2_mediacodec_surface",
+      "sender_source_host": "127.0.0.1",
+      "sender_source_ports": [{ "eye": "stereo", "port": 8879 }],
+      "sender_camera_ids": [{ "eye": "left", "camera_id": "50" }, { "eye": "right", "camera_id": "51" }],
+      "sender_camera_facing": "external",
+      "sender_quality_profile": "qcl100-packed-sbs",
+      "camera_permission_policy": "camera_permission_required",
+      "receiver_bind_host": "127.0.0.1",
+      "receiver_ports": [{ "eye": "stereo", "port": 8979 }],
+      "transport_bind_host": "192.168.49.1",
+      "transport_receive_ports": [{ "eye": "stereo", "port": 9079 }]
+    },
+    {
+      "device_id": "quest-b",
+      "adapter_kind": "quest_manifold_broker_android",
+      "sender_source_kind": "camera2_mediacodec_surface",
+      "sender_source_host": "127.0.0.1",
+      "sender_source_ports": [{ "eye": "stereo", "port": 8879 }],
+      "sender_camera_ids": [{ "eye": "left", "camera_id": "50" }, { "eye": "right", "camera_id": "51" }],
+      "sender_camera_facing": "external",
+      "sender_quality_profile": "qcl100-packed-sbs",
+      "camera_permission_policy": "camera_permission_required",
+      "receiver_bind_host": "127.0.0.1",
+      "receiver_ports": [{ "eye": "stereo", "port": 8979 }],
+      "transport_bind_host": "192.168.49.2",
+      "transport_receive_ports": [{ "eye": "stereo", "port": 9079 }]
+    }
+  ],
+  "transport_routes": [
+    {
+      "lane_id": "quest-a-stereo-to-quest-b",
+      "source_device_id": "quest-a",
+      "sink_device_id": "quest-b",
+      "eye": "stereo",
+      "route_kind": "direct_p2p_tcp",
+      "connect_host": "192.168.49.2",
+      "connect_port": 9079,
+      "socket_authority": "rusty_direct_p2p_socket_authority",
+      "local_bind_host": "192.168.49.1"
+    },
+    {
+      "lane_id": "quest-b-stereo-to-quest-a",
+      "source_device_id": "quest-b",
+      "sink_device_id": "quest-a",
+      "eye": "stereo",
+      "route_kind": "direct_p2p_tcp",
+      "connect_host": "192.168.49.1",
+      "connect_port": 9079,
+      "socket_authority": "rusty_direct_p2p_socket_authority",
+      "local_bind_host": "192.168.49.2"
+    }
+  ],
+  "security": {
+    "visible_streaming_indicator": true,
+    "explicit_pairing_required": true,
+    "immediate_stop_command": "remote_camera.stop",
+    "raw_media_logging": false
+  },
+  "observability": {
+    "required_markers": ["remote-camera-session-started", "receiver-armed", "sender-started", "projection-active", "lane-closed"],
+    "required_counters": [
+      "bytes_sent", "bytes_received", "media_packets", "codec_config_packets", "keyframes", "queue_drops", "close_reason",
+      "pairs_accepted", "pair_delta_p95_ns", "left_frames_dropped_unmatched", "right_frames_dropped_unmatched",
+      "stale_eye_reuse_count", "gpu_compositor_active", "cpu_pixel_copy"
+    ]
+  }
+}

@@ -8,6 +8,12 @@ pub(crate) struct TargetRect {
     pub(crate) height: f32,
 }
 
+impl Default for TargetRect {
+    fn default() -> Self {
+        Self::UNIT
+    }
+}
+
 impl TargetRect {
     pub(crate) const UNIT: Self = Self {
         x: 0.0,

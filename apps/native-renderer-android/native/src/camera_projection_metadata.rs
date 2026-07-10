@@ -33,6 +33,33 @@ const PROP_GEOMETRY_PROFILE: &str =
     "debug.rustyquest.native_renderer.camera.projection.geometry.profile";
 const PROP_SOURCE_SAMPLE_Y_FLIP: &str = "debug.rustyquest.native_renderer.source.sample.y.flip";
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CameraProjectionSourceLayout {
+    SeparateEyeTextures,
+    PackedSideBySideLeftRight,
+}
+
+impl CameraProjectionSourceLayout {
+    pub(crate) fn source_uv_rect_for_eye(self, eye_index: usize) -> TargetRect {
+        match (self, eye_index) {
+            (Self::PackedSideBySideLeftRight, 0) => TargetRect::new(0.0, 0.0, 0.5, 1.0),
+            (Self::PackedSideBySideLeftRight, _) => TargetRect::new(0.5, 0.0, 0.5, 1.0),
+            (Self::SeparateEyeTextures, _) => TargetRect::UNIT,
+        }
+    }
+
+    pub(crate) fn marker_value(self) -> &'static str {
+        match self {
+            Self::SeparateEyeTextures => "separate-eye-textures",
+            Self::PackedSideBySideLeftRight => "packed-side-by-side-left-right",
+        }
+    }
+
+    pub(crate) fn is_packed(self) -> bool {
+        matches!(self, Self::PackedSideBySideLeftRight)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct CameraProjectionMetadata {
     pub(crate) projection_geometry_profile: String,
@@ -163,12 +190,39 @@ fn marker_token(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_bool_float;
+    use super::{parse_bool_float, CameraProjectionSourceLayout};
 
     #[test]
     fn parses_flip_values_as_metadata() {
         assert_eq!(parse_bool_float("true"), Some(1.0));
         assert_eq!(parse_bool_float("identity"), Some(0.0));
         assert_eq!(parse_bool_float("0.25"), Some(0.25));
+    }
+
+    #[test]
+    fn separate_eye_textures_sample_each_texture_in_full() {
+        let layout = CameraProjectionSourceLayout::SeparateEyeTextures;
+        assert_eq!(
+            layout.source_uv_rect_for_eye(0).as_xywh_token(),
+            "0.000000,0.000000,1.000000,1.000000"
+        );
+        assert_eq!(
+            layout.source_uv_rect_for_eye(1).as_xywh_token(),
+            "0.000000,0.000000,1.000000,1.000000"
+        );
+    }
+
+    #[test]
+    fn packed_sbs_maps_one_half_to_each_eye() {
+        let layout = CameraProjectionSourceLayout::PackedSideBySideLeftRight;
+        assert_eq!(
+            layout.source_uv_rect_for_eye(0).as_xywh_token(),
+            "0.000000,0.000000,0.500000,1.000000"
+        );
+        assert_eq!(
+            layout.source_uv_rect_for_eye(1).as_xywh_token(),
+            "0.500000,0.000000,0.500000,1.000000"
+        );
+        assert!(layout.is_packed());
     }
 }

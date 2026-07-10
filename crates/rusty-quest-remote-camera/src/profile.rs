@@ -64,7 +64,7 @@ pub fn build_endpoint_runtime_profile(
     };
     let transport_kind = endpoint_transport_kind(&endpoint_lanes);
 
-    let owned_android_properties = vec![
+    let mut owned_android_properties = vec![
         PROP_ENABLED.to_string(),
         PROP_SESSION_ID.to_string(),
         PROP_TOPOLOGY_ID.to_string(),
@@ -92,7 +92,17 @@ pub fn build_endpoint_runtime_profile(
         PROP_TRANSPORT_RECEIVE_PORTS.to_string(),
         PROP_TRANSPORT_ROUTES.to_string(),
     ];
-    let set_properties = vec![
+    let direct_p2p_local_bind = direct_p2p_local_bind_host(plan, endpoint_device_id);
+    if direct_p2p_local_bind.is_some() {
+        owned_android_properties.push(PROP_TRANSPORT_BIND_LOCAL_ADDRESS.to_string());
+        owned_android_properties.push(PROP_TRANSPORT_SOCKET_AUTHORITY.to_string());
+    }
+    let packed_frame_layout = endpoint_packed_frame_layout(plan, endpoint_device_id);
+    if packed_frame_layout.is_some() {
+        owned_android_properties.push(PROP_MEDIA_LAYOUT.to_string());
+        owned_android_properties.push(PROP_SENDER_FRAME_LAYOUT.to_string());
+    }
+    let mut set_properties = vec![
         property_value(PROP_ENABLED, "true", "quest.remote_camera.enabled"),
         property_value(
             PROP_SESSION_ID,
@@ -246,6 +256,30 @@ pub fn build_endpoint_runtime_profile(
             "quest.remote_camera.transport_routes",
         ),
     ];
+    if let Some(local_bind_host) = direct_p2p_local_bind {
+        set_properties.push(property_value(
+            PROP_TRANSPORT_BIND_LOCAL_ADDRESS,
+            local_bind_host,
+            "quest.remote_camera.transport_bind_local_address",
+        ));
+        set_properties.push(property_value(
+            PROP_TRANSPORT_SOCKET_AUTHORITY,
+            SOCKET_AUTHORITY_RUSTY_DIRECT_P2P,
+            "quest.remote_camera.transport_socket_authority",
+        ));
+    }
+    if let Some(layout) = packed_frame_layout {
+        set_properties.push(property_value(
+            PROP_MEDIA_LAYOUT,
+            MEDIA_LAYOUT_SIDE_BY_SIDE_LEFT_RIGHT,
+            "quest.remote_camera.media_layout",
+        ));
+        set_properties.push(property_value(
+            PROP_SENDER_FRAME_LAYOUT,
+            &format_packed_frame_layout(layout),
+            "quest.remote_camera.sender_frame_layout",
+        ));
+    }
     let profile = RuntimeProfile {
         schema: rusty_quest_profile::RUNTIME_PROFILE_SCHEMA.to_string(),
         profile_id: profile_id.into(),
@@ -350,12 +384,15 @@ fn format_transport_routes_for_endpoint(
         .iter()
         .filter(|route| route.source_device_id == endpoint_device_id)
         .map(|route| {
-            if route.route_kind == "direct_tcp_connect" {
+            if route.route_kind == ROUTE_KIND_DIRECT_TCP_CONNECT
+                && route.socket_authority.is_none()
+                && route.local_bind_host.is_none()
+            {
                 format!(
                     "{}:{}:{}",
                     route.eye, route.connect_host, route.connect_port
                 )
-            } else {
+            } else if route.route_kind == ROUTE_KIND_DIRECT_P2P_TCP {
                 format!(
                     "{}|{}|{}|{}|{}",
                     route.lane_id,
@@ -363,6 +400,28 @@ fn format_transport_routes_for_endpoint(
                     route.route_kind,
                     route.connect_host,
                     route.connect_port
+                )
+            } else if route.socket_authority.is_none() {
+                format!(
+                    "{}|{}|{}|{}|{}",
+                    route.lane_id,
+                    route.eye,
+                    route.route_kind,
+                    route.connect_host,
+                    route.connect_port
+                )
+            } else {
+                format!(
+                    "{}|{}|{}|{}|{}|{}",
+                    route.lane_id,
+                    route.eye,
+                    route.route_kind,
+                    route.connect_host,
+                    route.connect_port,
+                    route
+                        .socket_authority
+                        .as_deref()
+                        .unwrap_or(SOCKET_AUTHORITY_PLATFORM_DEFAULT)
                 )
             }
         })
@@ -372,4 +431,41 @@ fn format_transport_routes_for_endpoint(
     } else {
         routes.join(";")
     }
+}
+
+fn direct_p2p_local_bind_host<'a>(
+    plan: &'a RemoteCameraSessionPlan,
+    endpoint_device_id: &str,
+) -> Option<&'a str> {
+    plan.transport_routes
+        .iter()
+        .filter(|route| {
+            route.source_device_id == endpoint_device_id
+                && route.route_kind == ROUTE_KIND_DIRECT_P2P_TCP
+        })
+        .find_map(|route| route.local_bind_host.as_deref())
+}
+
+fn endpoint_packed_frame_layout<'a>(
+    plan: &'a RemoteCameraSessionPlan,
+    endpoint_device_id: &str,
+) -> Option<&'a RemoteCameraFrameLayout> {
+    if plan.media_layout != MEDIA_LAYOUT_SIDE_BY_SIDE_LEFT_RIGHT {
+        return None;
+    }
+    plan.lanes
+        .iter()
+        .filter(|lane| lane.source_device_id == endpoint_device_id)
+        .find_map(|lane| lane.media.frame_layout.as_ref())
+}
+
+fn format_packed_frame_layout(layout: &RemoteCameraFrameLayout) -> String {
+    format!(
+        "sbs-lr|{}x{}|{}x{}|c2sensor|nearest|{}|gpu|nostale",
+        layout.packed_width,
+        layout.packed_height,
+        layout.per_eye_width,
+        layout.per_eye_height,
+        layout.max_pair_delta_ns
+    )
 }

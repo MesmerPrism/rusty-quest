@@ -1,0 +1,11 @@
+[
+  { "id": "wrong-packed-width", "expected_error": "packed dimensions" },
+  { "id": "wrong-eye-order", "expected_error": "eye_order" },
+  { "id": "missing-camera-binding", "expected_error": "requires exactly left=50 and right=51" },
+  { "id": "duplicate-camera-id", "expected_error": "requires exactly left=50 and right=51" },
+  { "id": "more-than-one-packed-port", "expected_error": "exactly one stereo port" },
+  { "id": "non-binary-high-rate-payload", "expected_error": "binary-media payload plane" },
+  { "id": "wrong-direct-p2p-socket-authority", "expected_error": "requires socket_authority" },
+  { "id": "wlan-local-bind-fallback", "expected_error": "supported P2P IPv4 address" },
+  { "id": "android-network-substitution", "expected_error": "requires socket_authority" }
+]

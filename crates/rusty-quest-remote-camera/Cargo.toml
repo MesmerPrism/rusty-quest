@@ -7,6 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+rusty-quest-device-link = { path = "../rusty-quest-device-link" }
 rusty-quest-profile = { path = "../rusty-quest-profile" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

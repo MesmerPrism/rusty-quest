@@ -84,6 +84,16 @@ the full Wi-Fi Direct lifecycle from feature/permission checks through peer
 discovery, group formation, bounded TCP probe, and cleanup. Template artifacts
 or raw feature checks are not promotion evidence.
 
+It also owns the protocol-neutral direct-P2P socket route and BLE rendezvous
+contracts. `rusty.quest.direct_p2p_socket_route.v1` is the reusable lower
+boundary for route kind, scoped socket authority, interface, local bind, peer
+endpoint, supported subnet, and Android-`Network` non-requirement. It is
+data-only and opens no sockets. The compact BLE/GATT `rqrv` contract may carry
+authenticated low-rate proposals and already-observed endpoint hints, but the
+BLE adapter may not mutate Wi-Fi Direct state, execute Manifold commands, or
+carry media. Manifold or a platform lifecycle owner decides whether to act on
+an accepted proposal.
+
 ## Native Quest Renderer Contracts
 
 `crates/rusty-quest-native-renderer` owns
@@ -127,6 +137,14 @@ objects, avoiding per-particle ECS component writes. The retained
 `ecs-entities` carrier remains a comparison path. Neither carrier contains
 downstream coupling kernels, tuned profiles, private replay payloads, or study
 semantics.
+
+OpenXR joint diagnostics in the Spatial lane keep coordinate mappings
+profiled and reversible. `mirror-x-origin-registration` is the headset-accepted
+Spatial hand-lab mapping; `viewer-world-basis-registration` remains the clean
+rollback profile. A registration captured from an all-zero startup viewer pose
+is provisional and is recaptured once a live Spatial viewer origin arrives.
+Every profile emits its mapping token and determinant and retains fixture plus
+live-headset acceptance evidence.
 
 The lane deliberately stays outside `apps/native-renderer-android`. It does
 not link the Rust native renderer, does not request camera or hand-tracking
@@ -562,6 +580,41 @@ The crate validates endpoint roles, receiver-first startup, H.264 lane shape,
 binary high-rate payload planes, bounded queues, local runtime endpoint
 bindings, sender source kind and camera-permission policy, the Quest stereo
 outside eye camera map, peer transport routes, privacy tiers, and operator
-safety requirements. Manifold owns live command/session authority, Quest
-Makepad owns the Quest-specific Makepad app adapter and projection surface, and
-settings JSON remains a low-rate control plane.
+safety requirements. Manifold owns live command/session authority, native
+OpenXR/Vulkan or Meta Spatial SDK adapters own render adoption for their
+explicitly enabled app, and settings JSON remains a low-rate control plane.
+Legacy Makepad projection remains an explicit compatibility lane only.
+
+The optional packed stereo layout adds a stricter contract without changing
+the default two-lane layout. Both Camera2 surfaces are correlated to capture
+results and paired by bounded nearest `SENSOR_TIMESTAMP`; a unique accepted
+pair is GPU-composited left-then-right into one MediaCodec input surface. The
+wire path carries one H.264 lane with an RMANVID v4 pair extension, and the
+receiver requires one hardware decoder plus one native `AImageReader`. Native
+OpenXR imports the packed `AHardwareBuffer` once and projects its two UV halves
+as logical eye views with the same source-pair identity. Stale-eye reuse,
+unpaired encoded packets, CPU pixel copies, extra packed lanes, and RMANVID
+layout/dimension mismatches fail closed. The Meta Spatial SDK adapter consumes
+the same explicit layout and wire contract, but remains a separate opt-in app
+surface and was compile/static qualified rather than included in the native
+OpenXR hardware promotion.
+
+Direct Wi-Fi does not introduce a second media stack. The remote-camera
+contract separates six concerns that every transport adapter must preserve:
+
+1. route/topology kind;
+2. socket authority;
+3. explicit local bind and peer endpoint;
+4. low-rate control versus binary media payload plane;
+5. platform execution adapter;
+6. runtime and promotion evidence.
+
+The canonical direct-Wi-Fi route is `direct_p2p_tcp` with
+`socket_authority=rusty_direct_p2p_socket_authority`. Its local and peer IPv4
+addresses must be concrete, supported P2P addresses on one `/24`, the local
+address must match the source endpoint's transport listener, and the runtime
+must report the actual P2P interface. Legacy compact route strings remain
+parser compatibility only; they are not a second authority model.
+The generic route/address/authority invariants are implemented once in
+`rusty-quest-device-link`; the remote-camera crate adapts its unchanged route
+fields into that contract and adds only lane, endpoint, and profile checks.

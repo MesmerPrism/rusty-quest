@@ -70,6 +70,12 @@ final class RemoteCameraSessionRuntime {
             "debug.rustyquest.remote_camera.transport_routes";
     private static final String PROP_TRANSPORT_BIND_LOCAL_ADDRESS =
             "debug.rustyquest.remote_camera.transport_bind_local_address";
+    private static final String PROP_TRANSPORT_SOCKET_AUTHORITY =
+            "debug.rustyquest.remote_camera.transport_socket_authority";
+    private static final String PROP_MEDIA_LAYOUT =
+            "debug.rustyquest.remote_camera.media_layout";
+    private static final String PROP_SENDER_FRAME_LAYOUT =
+            "debug.rustyquest.remote_camera.sender_frame_layout";
     private static final int CONNECT_TIMEOUT_MS = 15000;
     private static final int WIFI_DIRECT_PEER_BIND_WAIT_MS = 12000;
     private static final int WIFI_DIRECT_PEER_BIND_RETRY_SLEEP_MS = 250;
@@ -208,7 +214,17 @@ final class RemoteCameraSessionRuntime {
                 "transport_bind_local_address",
                 "transport_local_bind_host",
                 "sender_transport_bind_local_address");
-        List<PeerRoute> routes = parsePeerRoutes(routeOverride(message), transportBindLocalAddress);
+        String transportSocketAuthority = configString(
+                message,
+                PROP_TRANSPORT_SOCKET_AUTHORITY,
+                "",
+                "transport_socket_authority",
+                "socket_authority",
+                "peer_socket_authority");
+        List<PeerRoute> routes = parsePeerRoutes(
+                routeOverride(message),
+                transportBindLocalAddress,
+                transportSocketAuthority);
         JSONObject sourceRuntime = RemoteCameraSourceRuntime.ensureStarted(
                 context,
                 sessionId,
@@ -224,7 +240,18 @@ final class RemoteCameraSessionRuntime {
                         message,
                         PROP_CAMERA_PERMISSION_POLICY,
                         "no_camera_permission_required",
-                        "camera_permission_policy"));
+                        "camera_permission_policy"),
+                configString(
+                        message,
+                        PROP_MEDIA_LAYOUT,
+                        "separate-eye-streams",
+                        "media_layout"),
+                configString(
+                        message,
+                        PROP_SENDER_FRAME_LAYOUT,
+                        "none",
+                        "sender_frame_layout",
+                        "frame_layout"));
         boolean sourceAvailable = sourceRuntime.optBoolean("source_available", true);
         JSONArray lanes = new JSONArray();
         int modeledRoutes = 0;
@@ -506,7 +533,10 @@ final class RemoteCameraSessionRuntime {
         return bindings;
     }
 
-    private static List<PeerRoute> parsePeerRoutes(String value, String localBindHost) {
+    private static List<PeerRoute> parsePeerRoutes(
+            String value,
+            String localBindHost,
+            String defaultSocketAuthority) {
         List<PeerRoute> routes = new ArrayList<>();
         if (value == null || value.trim().length() == 0 || "none".equals(value.trim())) {
             return routes;
@@ -514,17 +544,28 @@ final class RemoteCameraSessionRuntime {
         String[] entries = value.split(";");
         for (String entry : entries) {
             String[] parts = entry.trim().split("\\|");
-            if (parts.length == 5) {
+            if (parts.length == 5 || parts.length == 6) {
                 try {
                     int port = Integer.parseInt(parts[4].trim());
-                    if (port > 0 && port <= 65535) {
+                    String routeKind = parts[2].trim();
+                    String socketAuthority = parts.length == 6
+                            ? parts[5].trim()
+                            : defaultSocketAuthority == null || defaultSocketAuthority.trim().length() == 0
+                                    ? RemoteCameraDirectP2pSocketAuthority.defaultSocketAuthority(routeKind)
+                                    : defaultSocketAuthority.trim();
+                    if (port > 0
+                            && port <= 65535
+                            && RemoteCameraDirectP2pSocketAuthority.isValidRouteAuthorityContract(
+                                    routeKind,
+                                    socketAuthority)) {
                         routes.add(new PeerRoute(
                                 parts[0].trim(),
                                 parts[1].trim(),
-                                parts[2].trim(),
+                                routeKind,
                                 parts[3].trim(),
                                 port,
-                                localBindHost));
+                                localBindHost,
+                                socketAuthority));
                     }
                 } catch (NumberFormatException ignored) {
                     // Invalid route properties are ignored and surfaced as pending lanes in status.
@@ -542,7 +583,10 @@ final class RemoteCameraSessionRuntime {
                                 "direct_tcp_connect",
                                 parts[1].trim(),
                                 port,
-                                localBindHost));
+                                localBindHost,
+                                defaultSocketAuthority == null || defaultSocketAuthority.trim().length() == 0
+                                        ? RemoteCameraDirectP2pSocketAuthority.PLATFORM_DEFAULT_AUTHORITY
+                                        : defaultSocketAuthority.trim()));
                     }
                 } catch (NumberFormatException ignored) {
                     // Invalid route properties are ignored and surfaced as pending lanes in status.
@@ -610,6 +654,7 @@ final class RemoteCameraSessionRuntime {
         boolean wifiDirectPeerRequired =
                 RemoteCameraDirectP2pSocketAuthority.requiresDirectP2pSocket(
                         peerRoute.routeKind,
+                        peerRoute.socketAuthority,
                         peerAddress);
         lane.peerSocketWifiDirectBindRequired = wifiDirectPeerRequired;
         long deadlineMs = System.currentTimeMillis() + WIFI_DIRECT_PEER_BIND_WAIT_MS;
@@ -618,8 +663,8 @@ final class RemoteCameraSessionRuntime {
             lane.peerSocketWifiDirectBindAttempts++;
             resetPeerSocketBindingDiagnostics(lane);
             Socket socket = createTransportPeerSocketOnce(context, peerRoute, peerAddress, lane);
-            boolean wifiDirectSocketReady = lane.peerSocketBoundToWifiDirectNetwork
-                    || lane.peerSocketBoundLocalAddress.length() > 0;
+            boolean wifiDirectSocketReady = hasDirectP2pNetworkBinding(lane)
+                    || hasDirectP2pLocalAddressBinding(lane);
             if (!wifiDirectPeerRequired || wifiDirectSocketReady) {
                 return socket;
             }
@@ -643,6 +688,20 @@ final class RemoteCameraSessionRuntime {
         } while (true);
     }
 
+    private static boolean hasDirectP2pNetworkBinding(RuntimeLane lane) {
+        return lane.peerSocketBoundToWifiDirectNetwork
+                && lane.peerSocketNetworkRouteMatchesPeer
+                && RemoteCameraDirectP2pSocketAuthority.isP2pInterfaceName(
+                        lane.peerSocketNetworkInterface);
+    }
+
+    private static boolean hasDirectP2pLocalAddressBinding(RuntimeLane lane) {
+        return lane.peerSocketBoundLocalAddress.length() > 0
+                && lane.peerSocketLocalAddressSameSubnet
+                && RemoteCameraDirectP2pSocketAuthority.isP2pInterfaceName(
+                        lane.peerSocketLocalInterface);
+    }
+
     private static Socket createTransportPeerSocketOnce(
             Context context,
             PeerRoute peerRoute,
@@ -660,7 +719,15 @@ final class RemoteCameraSessionRuntime {
             lane.peerSocketBoundToWifiDirectNetwork = false;
         }
         if (peerRoute.localBindHost.length() > 0) {
-            bindSocketToExplicitLocalAddress(socket, peerRoute.localBindHost, peerAddress, lane);
+            bindSocketToExplicitLocalAddress(
+                    socket,
+                    peerRoute.localBindHost,
+                    peerAddress,
+                    RemoteCameraDirectP2pSocketAuthority.requiresDirectP2pSocket(
+                            peerRoute.routeKind,
+                            peerRoute.socketAuthority,
+                            peerAddress),
+                    lane);
             if (lane.peerSocketBoundLocalAddress.length() > 0) {
                 return socket;
             }
@@ -673,15 +740,32 @@ final class RemoteCameraSessionRuntime {
             Socket socket,
             String localBindHost,
             InetAddress peerAddress,
+            boolean wifiDirectPeerRequired,
             RuntimeLane lane) {
         try {
             InetAddress localAddress = InetAddress.getByName(localBindHost);
-            socket.bind(new InetSocketAddress(localAddress, 0));
-            lane.peerSocketLocalInterface =
-                    RemoteCameraDirectP2pSocketAuthority.EXPLICIT_LOCAL_BIND_SELECTION;
-            lane.peerSocketBoundLocalAddress = localAddress.getHostAddress();
-            lane.peerSocketLocalAddressSameSubnet =
+            String localInterface =
+                    RemoteCameraDirectP2pSocketAuthority.findInterfaceNameForAddress(localAddress);
+            boolean sameSubnet =
                     RemoteCameraDirectP2pSocketAuthority.sameIpv4Slash24(localAddress, peerAddress);
+            lane.peerSocketLocalInterface = localInterface;
+            lane.peerSocketLocalAddressSameSubnet = sameSubnet;
+            if (wifiDirectPeerRequired
+                    && (!sameSubnet
+                            || !RemoteCameraDirectP2pSocketAuthority.isP2pInterfaceName(
+                                    localInterface))) {
+                lane.peerSocketNetworkSelection = "explicit_local_bind_rejected_not_p2p_peer_subnet";
+                lane.peerSocketBindLocalAddressError = "local_address="
+                        + localAddress.getHostAddress()
+                        + " interface="
+                        + localInterface
+                        + " same_subnet="
+                        + sameSubnet;
+                return;
+            }
+            socket.bind(new InetSocketAddress(localAddress, 0));
+            lane.peerSocketBindLocalAddressError = "";
+            lane.peerSocketBoundLocalAddress = localAddress.getHostAddress();
             lane.peerSocketNetworkSelection =
                     RemoteCameraDirectP2pSocketAuthority.EXPLICIT_LOCAL_BIND_SELECTION;
         } catch (Exception ex) {
@@ -744,11 +828,16 @@ final class RemoteCameraSessionRuntime {
                 lane.peerSocketNetworkInterface = interfaceName == null ? "" : interfaceName;
                 lane.peerSocketNetworkRouteMatchesPeer = routeMatches;
                 lane.peerSocketNetworkWifiTransport = wifiTransport;
-                lane.peerSocketNetworkSelection = "p2p_interface";
-                return network;
+                if (routeMatches) {
+                    lane.peerSocketNetworkSelection = "p2p_interface_route_match";
+                    return network;
+                }
+                lane.peerSocketNetworkSelection = "p2p_interface_route_mismatch";
             }
         }
-        lane.peerSocketNetworkSelection = "p2p_network_not_found";
+        if (lane.peerSocketNetworkInterface.length() == 0) {
+            lane.peerSocketNetworkSelection = "p2p_network_not_found";
+        }
         return null;
     }
 
@@ -762,7 +851,10 @@ final class RemoteCameraSessionRuntime {
         }
         try {
             socket.bind(new InetSocketAddress(localAddress, 0));
+            lane.peerSocketBindLocalAddressError = "";
             lane.peerSocketBoundLocalAddress = localAddress.getHostAddress();
+            lane.peerSocketNetworkSelection =
+                    RemoteCameraDirectP2pSocketAuthority.INTERFACE_FALLBACK_SELECTION;
         } catch (Exception ex) {
             lane.peerSocketBindLocalAddressError = ex.getClass().getSimpleName() + ": " + safeMessage(ex);
         }
@@ -869,6 +961,7 @@ final class RemoteCameraSessionRuntime {
         final String connectHost;
         final int connectPort;
         final String localBindHost;
+        final String socketAuthority;
 
         PeerRoute(
                 String laneId,
@@ -876,13 +969,17 @@ final class RemoteCameraSessionRuntime {
                 String routeKind,
                 String connectHost,
                 int connectPort,
-                String localBindHost) {
+                String localBindHost,
+                String socketAuthority) {
             this.laneId = laneId;
             this.eye = eye;
             this.routeKind = routeKind;
             this.connectHost = connectHost;
             this.connectPort = connectPort;
             this.localBindHost = localBindHost == null ? "" : localBindHost.trim();
+            this.socketAuthority = socketAuthority == null
+                    ? RemoteCameraDirectP2pSocketAuthority.PLATFORM_DEFAULT_AUTHORITY
+                    : socketAuthority.trim();
         }
 
         JSONObject toJson() throws Exception {
@@ -892,6 +989,7 @@ final class RemoteCameraSessionRuntime {
             json.put("route_kind", routeKind);
             json.put("connect_host", connectHost);
             json.put("connect_port", connectPort);
+            json.put("socket_authority", socketAuthority);
             if (localBindHost.length() > 0) {
                 json.put("local_bind_host", localBindHost);
             }
@@ -901,10 +999,7 @@ final class RemoteCameraSessionRuntime {
         }
 
         String socketAuthority() {
-            if (RemoteCameraDirectP2pSocketAuthority.isDirectP2pRouteKind(routeKind)) {
-                return RemoteCameraDirectP2pSocketAuthority.AUTHORITY;
-            }
-            return "android_connectivitymanager_network_or_rusty_direct_p2p_fallback";
+            return socketAuthority;
         }
     }
 
@@ -1223,6 +1318,21 @@ final class RemoteCameraSessionRuntime {
             localReceiverBoundInterface = findInterfaceName(address.getAddress());
         }
 
+        void notePeerSocketConnected(Socket socket) throws IOException {
+            if (!(socket.getLocalSocketAddress() instanceof InetSocketAddress)
+                    || !(socket.getRemoteSocketAddress() instanceof InetSocketAddress)) {
+                throw new IOException("Connected peer socket did not expose Internet socket addresses");
+            }
+            InetSocketAddress localAddress = (InetSocketAddress) socket.getLocalSocketAddress();
+            InetSocketAddress remoteAddress = (InetSocketAddress) socket.getRemoteSocketAddress();
+            peerSocketBoundLocalAddress = localAddress.getAddress().getHostAddress();
+            peerSocketLocalInterface = findInterfaceName(localAddress.getAddress());
+            peerSocketLocalAddressSameSubnet =
+                    RemoteCameraDirectP2pSocketAuthority.sameIpv4Slash24(
+                            localAddress.getAddress(),
+                            remoteAddress.getAddress());
+        }
+
         String findInterfaceName(InetAddress address) {
             try {
                 return RemoteCameraDirectP2pSocketAuthority.findInterfaceNameForAddress(address);
@@ -1243,8 +1353,17 @@ final class RemoteCameraSessionRuntime {
                 state = "connecting_transport_peer";
                 peer = createTransportPeerSocket(context, peerRoute, this);
                 peer.setTcpNoDelay(true);
-                peer.connect(new InetSocketAddress(peerRoute.connectHost, peerRoute.connectPort), CONNECT_TIMEOUT_MS);
                 peerSocket = peer;
+                peer.connect(new InetSocketAddress(peerRoute.connectHost, peerRoute.connectPort), CONNECT_TIMEOUT_MS);
+                notePeerSocketConnected(peer);
+                if (RemoteCameraDirectP2pSocketAuthority.requiresDirectP2pSocket(
+                                peerRoute.routeKind,
+                                peerRoute.socketAuthority,
+                                InetAddress.getByName(peerRoute.connectHost))
+                        && !hasDirectP2pNetworkBinding(this)
+                        && !hasDirectP2pLocalAddressBinding(this)) {
+                    throw new IOException("Connected peer socket did not retain direct P2P authority");
+                }
                 state = "transport_peer_connected_streaming_from_local_source";
                 copyStream(source.getInputStream(), peer.getOutputStream(), true);
                 if (!stopRequested) {
@@ -1413,6 +1532,14 @@ final class RemoteCameraSessionRuntime {
                 json.put("peer_socket_network_route_matches_peer", peerSocketNetworkRouteMatchesPeer);
                 json.put("peer_socket_network_wifi_transport", peerSocketNetworkWifiTransport);
                 json.put("peer_socket_local_address_same_subnet", peerSocketLocalAddressSameSubnet);
+                json.put("peer_socket_network_direct_p2p_ready", hasDirectP2pNetworkBinding(this));
+                json.put("peer_socket_local_interface_is_p2p",
+                        RemoteCameraDirectP2pSocketAuthority.isP2pInterfaceName(
+                                peerSocketLocalInterface));
+                json.put("peer_socket_local_address_direct_p2p_ready",
+                        hasDirectP2pLocalAddressBinding(this));
+                json.put("peer_socket_direct_p2p_ready",
+                        hasDirectP2pNetworkBinding(this) || hasDirectP2pLocalAddressBinding(this));
                 json.put("peer_socket_wifi_direct_bind_required", peerSocketWifiDirectBindRequired);
                 json.put("peer_socket_wifi_direct_bind_attempts", peerSocketWifiDirectBindAttempts);
                 if (peerSocketNetworkInterface.length() > 0) {

@@ -20,7 +20,16 @@ function Invoke-External {
 
 function Invoke-AdbBestEffort {
     param([string]$Serial, [string[]]$Arguments)
-    & $Adb -s $Serial @Arguments 2>&1 | Out-Null
+    try {
+        # Cleanup probes such as `forward --remove` legitimately return a
+        # non-zero status when no stale route exists. Keep native stderr out
+        # of PowerShell's error pipeline so ErrorActionPreference=Stop does
+        # not turn that expected absence into a terminating error.
+        & $Adb -s $Serial @Arguments 1>$null 2>$null
+    } catch {
+        # This helper is intentionally best-effort; checked ADB operations use
+        # Invoke-AdbChecked and retain their fail-closed behavior.
+    }
 }
 
 function Invoke-AdbChecked {

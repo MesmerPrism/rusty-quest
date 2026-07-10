@@ -18,6 +18,8 @@ param(
     [string]$Qcl041GroupOwnerLabelOverride = "",
     [ValidateSet("stereo", "left-only", "right-only")]
     [string]$LaneMode = "stereo",
+    [ValidateSet("separate-eye-streams", "side-by-side-left-right")]
+    [string]$MediaLayout = "separate-eye-streams",
     [ValidateSet("qcl041", "broker")]
     [string]$TransportOwner = "qcl041",
     [int]$ProjectionSeconds = 30,
@@ -37,6 +39,10 @@ param(
     [int]$RightSourcePort = 8880,
     [string]$CameraIds = "left:50,right:51",
     [string]$MediaProfiles = "left:320x240@15:500000;right:320x240@15:500000",
+    [int]$PackedPerEyeWidth = 1280,
+    [int]$PackedPerEyeHeight = 1280,
+    [int]$PackedFps = 15,
+    [int]$PackedBitrate = 12000000,
     [int]$RelayTimeoutSeconds = 95,
     [int]$RelayMaxBytes = 128000000,
     [int]$Qcl082RelayStartDelayMs = 5000,
@@ -109,6 +115,23 @@ if ($Qcl041Q2qPassphrase -notmatch '^[\x20-\x7e]{8,63}$') {
 }
 if ($LiveBridgeCommandTimeoutSeconds -lt 15) {
     throw "LiveBridgeCommandTimeoutSeconds must be at least 15 seconds so bridge commands have a bounded but useful live window."
+}
+$packedMediaLayout = [bool]($MediaLayout -eq "side-by-side-left-right")
+$packedWidth = $PackedPerEyeWidth * 2
+$packedHeight = $PackedPerEyeHeight
+if ($packedMediaLayout -and $LaneMode -ne "stereo") {
+    throw "Packed side-by-side media requires LaneMode=stereo because both source eyes are carried by one packed lane."
+}
+if ($packedMediaLayout -and $TransportOwner -ne "broker") {
+    throw "Packed side-by-side media requires TransportOwner=broker so exactly one Rusty-owned direct-P2P socket carries each direction."
+}
+if ($packedMediaLayout -and (
+    $PackedPerEyeWidth -lt 64 -or $PackedPerEyeWidth -gt 2048 -or
+    $PackedPerEyeHeight -lt 64 -or $PackedPerEyeHeight -gt 2048 -or
+    $PackedFps -lt 1 -or $PackedFps -gt 60 -or
+    $PackedBitrate -lt 100000
+)) {
+    throw "Packed dimensions/rate are invalid; expected 64..2048 pixels per eye, 1..60 fps, and bitrate >= 100000."
 }
 
 $MediaDir = Join-Path $OutDir "media"
@@ -220,7 +243,12 @@ $ownerDeferredReceiverTargetWaitMs = if ($ownerDeferredReceiverTargetRequired) {
 $clientDeferredReceiverTargetWaitMs = if ($clientDeferredReceiverTargetRequired) { 90000 } else { 0 }
 $leftLaneActive = [bool]($LaneMode -ne "right-only")
 $rightLaneActive = [bool]($LaneMode -ne "left-only")
-$activeLaneCount = @(@($leftLaneActive, $rightLaneActive) | Where-Object { $_ }).Count
+$activeLaneCount = if ($packedMediaLayout) { 1 } else { @(@($leftLaneActive, $rightLaneActive) | Where-Object { $_ }).Count }
+$SenderFrameLayout = if ($packedMediaLayout) {
+    "sbs-lr|${packedWidth}x${packedHeight}|${PackedPerEyeWidth}x${PackedPerEyeHeight}|c2sensor|nearest|20000000|gpu|nostale"
+} else {
+    ""
+}
 $qcl100AirgapPreflight = $null
 $qcl041PreflightPreclear = [ordered]@{
     schema = "rusty.quest.qcl100_qcl041_preflight_preclear.v1"
@@ -1617,14 +1645,21 @@ $effectiveMediaProfileSpecs = @()
 $effectiveCameraIdSpecs = @()
 $leftBrokerTransportReceivePort = if ($TransportOwner -eq "qcl041") { $LeftTransportProxyTargetPort } else { $LeftTransportPort }
 $rightBrokerTransportReceivePort = if ($TransportOwner -eq "qcl041") { $RightTransportProxyTargetPort } else { $RightTransportPort }
-if ($leftLaneActive) {
+if ($packedMediaLayout) {
+    $receiverPortSpecs += "stereo:$LeftReceiverPort"
+    $transportReceivePortSpecs += "stereo:$leftBrokerTransportReceivePort"
+    $senderSourcePortSpecs += "stereo:$LeftSourcePort"
+    $effectiveMediaProfileSpecs += "stereo:${packedWidth}x${packedHeight}@${PackedFps}:${PackedBitrate}"
+    $effectiveCameraIdSpecs += if ($cameraIdByEye.ContainsKey("left")) { $cameraIdByEye["left"] } else { "left:50" }
+    $effectiveCameraIdSpecs += if ($cameraIdByEye.ContainsKey("right")) { $cameraIdByEye["right"] } else { "right:51" }
+} elseif ($leftLaneActive) {
     $receiverPortSpecs += "left:$LeftReceiverPort"
     $transportReceivePortSpecs += "left:$leftBrokerTransportReceivePort"
     $senderSourcePortSpecs += "left:$LeftSourcePort"
     $effectiveMediaProfileSpecs += if ($mediaProfileByEye.ContainsKey("left")) { $mediaProfileByEye["left"] } else { "left:320x240@15:500000" }
     $effectiveCameraIdSpecs += if ($cameraIdByEye.ContainsKey("left")) { $cameraIdByEye["left"] } else { "left:50" }
 }
-if ($rightLaneActive) {
+if (-not $packedMediaLayout -and $rightLaneActive) {
     $receiverPortSpecs += "right:$RightReceiverPort"
     $transportReceivePortSpecs += "right:$rightBrokerTransportReceivePort"
     $senderSourcePortSpecs += "right:$RightSourcePort"
@@ -1963,6 +1998,29 @@ $ownerDirectP2pSenderAuthority = Get-Qcl100DirectP2pSenderAuthority `
 $clientDirectP2pSenderAuthority = Get-Qcl100DirectP2pSenderAuthority `
     -BrokerStatus $clientBrokerStatus `
     -Required:([bool]($TransportOwner -eq "broker" -and $clientSends))
+$ownerDirectP2pReceiverAuthority = Get-Qcl100DirectP2pReceiverAuthority `
+    -BrokerStatus $ownerBrokerStatus `
+    -ExpectedLocalAddress ([string]$directP2pAuthoritySummary.owner_receiver_transport_bind_host) `
+    -Required:([bool]($TransportOwner -eq "broker" -and $ownerReceives))
+$clientDirectP2pReceiverAuthority = Get-Qcl100DirectP2pReceiverAuthority `
+    -BrokerStatus $clientBrokerStatus `
+    -ExpectedLocalAddress ([string]$directP2pAuthoritySummary.client_receiver_transport_bind_host) `
+    -Required:([bool]($TransportOwner -eq "broker" -and $clientReceives))
+$directP2pMediaTopologyAcceptance = Get-Qcl100DirectP2pMediaTopologyAcceptance `
+    -Required:([bool]($TransportOwner -eq "broker")) `
+    -LowerGateAuthority $Qcl100LowerGateAuthority `
+    -MediaAuthority ([string]$directP2pAuthoritySummary.authority) `
+    -AddressRefresh $directP2pAddressRefresh `
+    -OwnerSenderAuthority $ownerDirectP2pSenderAuthority `
+    -ClientSenderAuthority $clientDirectP2pSenderAuthority `
+    -OwnerReceiverAuthority $ownerDirectP2pReceiverAuthority `
+    -ClientReceiverAuthority $clientDirectP2pReceiverAuthority `
+    -OwnerReceiverFreshness $ownerBrokerReceiverObservedFreshness `
+    -ClientReceiverFreshness $clientBrokerReceiverObservedFreshness `
+    -OwnerSends:$ownerSends `
+    -ClientSends:$clientSends `
+    -OwnerReceives:$ownerReceives `
+    -ClientReceives:$clientReceives
 $qcl082MediaTopologyAcceptance = Get-Qcl100Qcl082MediaTopologyAcceptance `
     -OwnerRelayFreshness $ownerRelayFreshness `
     -ClientRelayFreshness $clientRelayFreshness `
@@ -1992,10 +2050,13 @@ $clientCameraSourceFreshness = Resolve-Qcl100CameraSourceFreshness `
 $summary = [ordered]@{
     schema = "rusty.quest.qcl100_quest_to_quest_native_stereo_projection_wifi_direct_run.v1"
     run_id = $RunId
+    promotion_claimed = $false
+    promotion_scope = "media_render_transport_evidence_only_until_monitored_cleanup_and_final_route_clear_acceptance"
     owner_serial = $OwnerSerial
     client_serial = $ClientSerial
     direction = $Direction
     lane_mode = $LaneMode
+    media_layout = $MediaLayout
     qcl041_group_owner_label = $qcl041GroupOwnerLabel
     qcl041_roles = [ordered]@{
         owner = $ownerQcl041Role
@@ -2063,7 +2124,7 @@ $summary = [ordered]@{
         relay = if ($TransportOwner -eq "qcl041") { "qcl041_outbound_relay_to_qcl041_receive_proxy" } else { "manifold_broker_direct_tcp_sender_bridge_after_qcl041_group_hold" }
         receiver_consumer = "native-rusty-quest-renderer"
         renderer_profile = $NativeRendererProfile
-        source_ports = "left:$LeftSourcePort,right:$RightSourcePort"
+        source_ports = $effectiveSenderSourcePorts
         receiver_ports = $effectiveReceiverPorts
         qcl041_receive_proxy_listen_ports = "left:$LeftTransportPort,right:$RightTransportPort"
         qcl041_receive_proxy_target_ports = "left:$LeftTransportProxyTargetPort,right:$RightTransportProxyTargetPort"
@@ -2086,6 +2147,7 @@ $summary = [ordered]@{
             left_lane_active = $leftLaneActive
             right_lane_active = $rightLaneActive
             active_lane_count = $activeLaneCount
+            packed_stereo = [bool]$packedMediaLayout
         }
     }
     direct_p2p_address_refresh = $directP2pAddressRefresh
@@ -2120,6 +2182,9 @@ $summary = [ordered]@{
     client_broker_receiver_observed_freshness = $clientBrokerReceiverObservedFreshness
     owner_direct_p2p_sender_authority = $ownerDirectP2pSenderAuthority
     client_direct_p2p_sender_authority = $clientDirectP2pSenderAuthority
+    owner_direct_p2p_receiver_authority = $ownerDirectP2pReceiverAuthority
+    client_direct_p2p_receiver_authority = $clientDirectP2pReceiverAuthority
+    direct_p2p_media_topology_acceptance = $directP2pMediaTopologyAcceptance
     qcl082_media_topology_acceptance = $qcl082MediaTopologyAcceptance
     qcl082_media_topology_required = [bool]$qcl082MediaTopologyRequired
     owner_native_renderer_projection = $ownerNativeRenderer
@@ -2201,8 +2266,11 @@ $summary["direct_p2p_media_ready"] = [bool](
     $TransportOwner -eq "broker" -and
     ((-not $ownerSends) -or $ownerDirectP2pSenderAuthority.accepted) -and
     ((-not $clientSends) -or $clientDirectP2pSenderAuthority.accepted) -and
+    ((-not $ownerReceives) -or $ownerDirectP2pReceiverAuthority.accepted) -and
+    ((-not $clientReceives) -or $clientDirectP2pReceiverAuthority.accepted) -and
     ((-not $ownerReceives) -or $ownerBrokerReceiverObservedFreshness.fresh) -and
-    ((-not $clientReceives) -or $clientBrokerReceiverObservedFreshness.fresh)
+    ((-not $clientReceives) -or $clientBrokerReceiverObservedFreshness.fresh) -and
+    $directP2pMediaTopologyAcceptance.accepted
 )
 $summary["direct_p2p_native_projection_ready"] = [bool](
     $summary["direct_p2p_media_ready"] -and
@@ -2237,6 +2305,9 @@ $summary["freshness_acceptance"] = [ordered]@{
     client_broker_receiver_observed_required = [bool]$clientReceives
     owner_direct_p2p_sender_authority_required = [bool]($TransportOwner -eq "broker" -and $ownerSends)
     client_direct_p2p_sender_authority_required = [bool]($TransportOwner -eq "broker" -and $clientSends)
+    owner_direct_p2p_receiver_authority_required = [bool]($TransportOwner -eq "broker" -and $ownerReceives)
+    client_direct_p2p_receiver_authority_required = [bool]($TransportOwner -eq "broker" -and $clientReceives)
+    direct_p2p_media_topology_required = [bool]($TransportOwner -eq "broker")
     owner_stream_required = [bool]$ownerRendererRequired
     client_stream_required = [bool]$clientRendererRequired
     native_log_system_fatal_count = ([int]$ownerNativeRenderer.system_fatal_count + [int]$clientNativeRenderer.system_fatal_count)
@@ -2259,6 +2330,14 @@ $summary["freshness_acceptance"] = [ordered]@{
     client_direct_p2p_sender_authority_accepted = [bool]$clientDirectP2pSenderAuthority.accepted
     owner_direct_p2p_sender_authority_accepted_lane_count = $ownerDirectP2pSenderAuthority.accepted_lane_count
     client_direct_p2p_sender_authority_accepted_lane_count = $clientDirectP2pSenderAuthority.accepted_lane_count
+    owner_direct_p2p_receiver_authority_accepted = [bool]$ownerDirectP2pReceiverAuthority.accepted
+    client_direct_p2p_receiver_authority_accepted = [bool]$clientDirectP2pReceiverAuthority.accepted
+    owner_direct_p2p_receiver_authority_accepted_lane_count = $ownerDirectP2pReceiverAuthority.accepted_lane_count
+    client_direct_p2p_receiver_authority_accepted_lane_count = $clientDirectP2pReceiverAuthority.accepted_lane_count
+    direct_p2p_media_topology_accepted = [bool]$directP2pMediaTopologyAcceptance.accepted
+    direct_p2p_media_topology_required_path_count = $directP2pMediaTopologyAcceptance.required_path_count
+    direct_p2p_media_topology_accepted_path_count = $directP2pMediaTopologyAcceptance.accepted_path_count
+    direct_p2p_media_topology_first_issue = $directP2pMediaTopologyAcceptance.first_issue
     owner_relay_transport_protocols = $ownerRelayFreshness.transport_protocols
     client_relay_transport_protocols = $clientRelayFreshness.transport_protocols
     owner_receive_proxy_transport_protocols = $ownerReceiveProxyFreshness.transport_protocols
@@ -2331,6 +2410,9 @@ $summary["freshness_acceptance"] = [ordered]@{
     client_broker_receiver_observed_passed = [bool]((-not $clientReceives) -or $clientBrokerReceiverObservedFreshness.fresh)
     owner_direct_p2p_sender_authority_passed = [bool]((-not ($TransportOwner -eq "broker" -and $ownerSends)) -or $ownerDirectP2pSenderAuthority.accepted)
     client_direct_p2p_sender_authority_passed = [bool]((-not ($TransportOwner -eq "broker" -and $clientSends)) -or $clientDirectP2pSenderAuthority.accepted)
+    owner_direct_p2p_receiver_authority_passed = [bool]((-not ($TransportOwner -eq "broker" -and $ownerReceives)) -or $ownerDirectP2pReceiverAuthority.accepted)
+    client_direct_p2p_receiver_authority_passed = [bool]((-not ($TransportOwner -eq "broker" -and $clientReceives)) -or $clientDirectP2pReceiverAuthority.accepted)
+    direct_p2p_media_topology_passed = [bool](($TransportOwner -ne "broker") -or $directP2pMediaTopologyAcceptance.accepted)
     qcl082_media_topology_passed = [bool]((-not $qcl082MediaTopologyRequired) -or $qcl082MediaTopologyAcceptance.accepted)
     native_log_passed = [bool](([int]$ownerNativeRenderer.system_fatal_count + [int]$clientNativeRenderer.system_fatal_count + [int]$ownerNativeRenderer.fatal_count + [int]$clientNativeRenderer.fatal_count) -eq 0)
     owner_stream_passed = [bool]((-not $ownerRendererRequired) -or $ownerNativeRenderer.stream_fresh_frames)
@@ -2347,6 +2429,9 @@ $summary["freshness_acceptance"] = [ordered]@{
     client_broker_receiver_observed = $clientBrokerReceiverObservedFreshness
     owner_direct_p2p_sender_authority = $ownerDirectP2pSenderAuthority
     client_direct_p2p_sender_authority = $clientDirectP2pSenderAuthority
+    owner_direct_p2p_receiver_authority = $ownerDirectP2pReceiverAuthority
+    client_direct_p2p_receiver_authority = $clientDirectP2pReceiverAuthority
+    direct_p2p_media_topology = $directP2pMediaTopologyAcceptance
     qcl082_media_topology = $qcl082MediaTopologyAcceptance
     owner_left = $ownerNativeRenderer.left_frame_freshness
     owner_right = $ownerNativeRenderer.right_frame_freshness
@@ -2368,6 +2453,9 @@ $summary["freshness_acceptance"] = [ordered]@{
         ((-not $clientReceives) -or $clientBrokerReceiverObservedFreshness.fresh) -and
         ((-not ($TransportOwner -eq "broker" -and $ownerSends)) -or $ownerDirectP2pSenderAuthority.accepted) -and
         ((-not ($TransportOwner -eq "broker" -and $clientSends)) -or $clientDirectP2pSenderAuthority.accepted) -and
+        ((-not ($TransportOwner -eq "broker" -and $ownerReceives)) -or $ownerDirectP2pReceiverAuthority.accepted) -and
+        ((-not ($TransportOwner -eq "broker" -and $clientReceives)) -or $clientDirectP2pReceiverAuthority.accepted) -and
+        (($TransportOwner -ne "broker") -or $directP2pMediaTopologyAcceptance.accepted) -and
         ((-not $qcl082MediaTopologyRequired) -or $qcl082MediaTopologyAcceptance.accepted) -and
         ([int]$ownerNativeRenderer.system_fatal_count + [int]$clientNativeRenderer.system_fatal_count + [int]$ownerNativeRenderer.fatal_count + [int]$clientNativeRenderer.fatal_count) -eq 0 -and
         ((-not $ownerRendererRequired) -or $ownerNativeRenderer.stream_fresh_frames) -and
@@ -2378,8 +2466,10 @@ $summary["freshness_acceptance"] = [ordered]@{
 }
 $summary["transport_claims"] = New-Qcl100TransportClaims `
     -Direction $Direction `
+    -LaneMode $LaneMode `
     -FreshnessAcceptance $summary["freshness_acceptance"] `
     -MediaTopologyAcceptance $qcl082MediaTopologyAcceptance `
+    -DirectP2pMediaTopologyAcceptance $directP2pMediaTopologyAcceptance `
     -MediaTopologyRequired:$qcl082MediaTopologyRequired
 $summary["same_group_duplex_claimed"] = [bool]$summary["transport_claims"]["same_group_duplex_claimed"]
 $qcl100ParityBlockers = [System.Collections.ArrayList]::new()
@@ -2466,6 +2556,43 @@ Add-Qcl100ParityBlocker `
         accepted_lane_count = $clientDirectP2pSenderAuthority.accepted_lane_count
         lane_count = $clientDirectP2pSenderAuthority.lane_count
         lanes = $clientDirectP2pSenderAuthority.lanes
+    })
+Add-Qcl100ParityBlocker `
+    -Blockers $qcl100ParityBlockers `
+    -Gate "owner_direct_p2p_receiver_authority" `
+    -Required ([bool]($TransportOwner -eq "broker" -and $ownerReceives)) `
+    -Passed ([bool]$ownerDirectP2pReceiverAuthority.accepted) `
+    -Reason "owner_direct_p2p_receiver_authority_not_accepted" `
+    -Details ([ordered]@{
+        expected_local_address = $ownerDirectP2pReceiverAuthority.expected_local_address
+        accepted_lane_count = $ownerDirectP2pReceiverAuthority.accepted_lane_count
+        lane_count = $ownerDirectP2pReceiverAuthority.lane_count
+        lanes = $ownerDirectP2pReceiverAuthority.lanes
+    })
+Add-Qcl100ParityBlocker `
+    -Blockers $qcl100ParityBlockers `
+    -Gate "client_direct_p2p_receiver_authority" `
+    -Required ([bool]($TransportOwner -eq "broker" -and $clientReceives)) `
+    -Passed ([bool]$clientDirectP2pReceiverAuthority.accepted) `
+    -Reason "client_direct_p2p_receiver_authority_not_accepted" `
+    -Details ([ordered]@{
+        expected_local_address = $clientDirectP2pReceiverAuthority.expected_local_address
+        accepted_lane_count = $clientDirectP2pReceiverAuthority.accepted_lane_count
+        lane_count = $clientDirectP2pReceiverAuthority.lane_count
+        lanes = $clientDirectP2pReceiverAuthority.lanes
+    })
+Add-Qcl100ParityBlocker `
+    -Blockers $qcl100ParityBlockers `
+    -Gate "direct_p2p_media_topology" `
+    -Required ([bool]($TransportOwner -eq "broker")) `
+    -Passed ([bool](($TransportOwner -ne "broker") -or $directP2pMediaTopologyAcceptance.accepted)) `
+    -Reason "direct_p2p_media_topology_not_accepted" `
+    -Details ([ordered]@{
+        required_path_count = $directP2pMediaTopologyAcceptance.required_path_count
+        accepted_path_count = $directP2pMediaTopologyAcceptance.accepted_path_count
+        rejected_path_count = $directP2pMediaTopologyAcceptance.rejected_path_count
+        issues = $directP2pMediaTopologyAcceptance.issues
+        paths = $directP2pMediaTopologyAcceptance.paths
     })
 Add-Qcl100ParityBlocker `
     -Blockers $qcl100ParityBlockers `

@@ -10,6 +10,9 @@ import android.media.MediaFormat;
 import android.os.SystemClock;
 import android.util.Log;
 import android.view.Surface;
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
 import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.File;
@@ -19,6 +22,8 @@ import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -35,6 +40,7 @@ public final class StereoVideoPlayback {
     private static final int SIDE_MONO_OR_FILE = 0;
     private static final int SIDE_LEFT = 1;
     private static final int SIDE_RIGHT = 2;
+    private static final int SIDE_STEREO = 3;
     private static final int EVENT_START_REQUESTED = 1;
     private static final int EVENT_STARTED = 2;
     private static final int EVENT_STOPPED = 3;
@@ -94,7 +100,8 @@ public final class StereoVideoPlayback {
         String brokerHost,
         int brokerLeftPort,
         int brokerRightPort,
-        int brokerConnectTimeoutMs
+        int brokerConnectTimeoutMs,
+        String brokerMediaLayout
     ) {
         int requestedWidth = clamp(width, 320, 4096);
         int requestedHeight = clamp(height, 240, 4096);
@@ -106,9 +113,10 @@ public final class StereoVideoPlayback {
         String resolvedSource = normalizeSource(source);
         String resolvedBrokerHost = normalizeBrokerHost(brokerHost);
         String resolvedPath = resolvePath(context, path);
+        String resolvedBrokerMediaLayout = normalizeBrokerMediaLayout(brokerMediaLayout);
         Log.i(LOG_TAG, String.format(
             Locale.US,
-            "RUSTY_QUEST_NATIVE_RENDERER channel=video-projection-playback status=start-dispatch source=%s brokerRmanvid1=%s brokerHost=%s brokerLeftPort=%d brokerRightPort=%d brokerConnectTimeoutMs=%d streamReadTimeoutMs=%d width=%d height=%d maxImages=%d fpsCap=%d nativeBridgeLoaded=%s",
+            "RUSTY_QUEST_NATIVE_RENDERER channel=video-projection-playback status=start-dispatch source=%s brokerRmanvid1=%s brokerHost=%s brokerLeftPort=%d brokerRightPort=%d brokerConnectTimeoutMs=%d streamReadTimeoutMs=%d brokerMediaLayout=%s width=%d height=%d maxImages=%d fpsCap=%d nativeBridgeLoaded=%s",
             resolvedSource,
             SOURCE_BROKER_RMANVID1.equals(resolvedSource),
             resolvedBrokerHost,
@@ -116,6 +124,7 @@ public final class StereoVideoPlayback {
             requestedBrokerRightPort,
             requestedBrokerConnectTimeoutMs,
             requestedBrokerConnectTimeoutMs,
+            resolvedBrokerMediaLayout,
             requestedWidth,
             requestedHeight,
             requestedMaxImages,
@@ -150,7 +159,8 @@ public final class StereoVideoPlayback {
                 requestedWidth,
                 requestedHeight,
                 requestedMaxImages,
-                requestedFpsCap
+                requestedFpsCap,
+                resolvedBrokerMediaLayout
             );
             return;
         }
@@ -482,8 +492,23 @@ public final class StereoVideoPlayback {
         int width,
         int height,
         int maxImages,
-        int fpsCap
+        int fpsCap,
+        String mediaLayout
     ) {
+        boolean packed = "side-by-side-left-right".equals(mediaLayout);
+        if (packed) {
+            startPackedBrokerRmanvid1(
+                host,
+                leftPort,
+                rightPort,
+                connectTimeoutMs,
+                width,
+                height,
+                maxImages,
+                fpsCap
+            );
+            return;
+        }
         boolean leftEnabled = leftPort > 0;
         boolean rightEnabled = rightPort > 0;
         if (!leftEnabled && !rightEnabled) {
@@ -554,6 +579,94 @@ public final class StereoVideoPlayback {
         if (rightThread != null) {
             rightThread.start();
         }
+    }
+
+    private static void startPackedBrokerRmanvid1(
+        String host,
+        int packedPort,
+        int rejectedSecondPort,
+        int connectTimeoutMs,
+        int width,
+        int height,
+        int maxImages,
+        int fpsCap
+    ) {
+        if (packedPort <= 0 || rejectedSecondPort != 0) {
+            Log.e(LOG_TAG, String.format(
+                Locale.US,
+                "RUSTY_QUEST_NATIVE_RENDERER channel=remote-camera-broker-inlet status=error side=stereo reason=packed-layout-requires-exactly-one-port packedPort=%d rejectedSecondPort=%d brokerMediaLayout=side-by-side-left-right",
+                packedPort,
+                rejectedSecondPort));
+            nativeRemoteCameraLifecycleEvent(
+                EVENT_ERROR,
+                SIDE_STEREO,
+                -4,
+                width,
+                height,
+                maxImages,
+                fpsCap,
+                packedPort
+            );
+            return;
+        }
+        Surface packedSurface = nativeCreateRemoteCameraSurface(
+            SIDE_STEREO,
+            width,
+            height,
+            maxImages,
+            fpsCap
+        );
+        if (packedSurface == null) {
+            nativeRemoteCameraLifecycleEvent(
+                EVENT_ERROR,
+                SIDE_STEREO,
+                -3,
+                width,
+                height,
+                maxImages,
+                fpsCap,
+                packedPort
+            );
+            return;
+        }
+        Log.i(LOG_TAG, String.format(
+            Locale.US,
+            "RUSTY_QUEST_NATIVE_RENDERER channel=remote-camera-broker-inlet status=start-packed-thread host=%s packedPort=%d brokerMediaLayout=side-by-side-left-right packedSocketCount=1 decoderInstanceCount=1 nativeImageReaderCount=1 connectTimeoutMs=%d width=%d height=%d maxImages=%d fpsCap=%d cpuPixelCopy=false",
+            host,
+            packedPort,
+            connectTimeoutMs,
+            width,
+            height,
+            maxImages,
+            fpsCap));
+        Thread packedThread = new Thread(
+            new Runnable() {
+                @Override
+                public void run() {
+                    runBrokerLane(
+                        SIDE_STEREO,
+                        "stereo",
+                        host,
+                        packedPort,
+                        connectTimeoutMs,
+                        packedSurface,
+                        width,
+                        height,
+                        maxImages,
+                        fpsCap
+                    );
+                }
+            },
+            "RustyQuestBrokerVideoPackedStereo"
+        );
+        packedThread.setPriority(Math.min(Thread.MAX_PRIORITY, Thread.NORM_PRIORITY + 1));
+        synchronized (LOCK) {
+            leftBrokerSurface = packedSurface;
+            rightBrokerSurface = null;
+            leftBrokerThread = packedThread;
+            rightBrokerThread = null;
+        }
+        packedThread.start();
     }
 
     private static void runBrokerLane(
@@ -714,11 +827,17 @@ public final class StereoVideoPlayback {
             if (header.codecId != CODEC_H264) {
                 throw new IOException("unsupported broker codec id " + header.codecId);
             }
+            boolean packedStream = header.packedMetadata != null;
+            if ((sideCode == SIDE_STEREO) != packedStream) {
+                throw new IOException(
+                    "receiver media layout disagrees with RMANVID stream schema"
+                );
+            }
             int streamWidth = clamp(header.width, 1, 4096);
             int streamHeight = clamp(header.height, 1, 4096);
             Log.i(LOG_TAG, String.format(
                 Locale.US,
-                "RUSTY_QUEST_NATIVE_RENDERER channel=remote-camera-broker-inlet status=stream-header side=%s magic=%s schema=%d codecId=%d width=%d height=%d packetCount=%d metadataBytes=%d extendedPacketTimestamps=%s brokerHost=%s brokerPort=%d streamReadTimeoutMs=%d stream=remote_camera_broker_stereo sourceAuthority=manifold-broker-rmanvid1-camera2-h264 highRateJsonPayload=false",
+                "RUSTY_QUEST_NATIVE_RENDERER channel=remote-camera-broker-inlet status=stream-header side=%s magic=%s schema=%d codecId=%d width=%d height=%d packetCount=%d metadataBytes=%d extendedPacketTimestamps=%s packedStereo=%s brokerMediaLayout=%s brokerHost=%s brokerPort=%d streamReadTimeoutMs=%d stream=remote_camera_broker_stereo sourceAuthority=manifold-broker-rmanvid1-camera2-h264 highRateJsonPayload=false cpuPixelCopy=false",
                 side,
                 header.magic,
                 header.schemaVersion,
@@ -728,6 +847,8 @@ public final class StereoVideoPlayback {
                 header.packetCount,
                 header.metadataBytes,
                 header.extendedPacketTimestamps,
+                packedStream,
+                packedStream ? "side-by-side-left-right" : "separate-eye-streams",
                 host,
                 port,
                 streamReadTimeoutMs));
@@ -742,7 +863,7 @@ public final class StereoVideoPlayback {
                 port
             );
 
-            codec = createBrokerDecoder(surface, streamWidth, streamHeight);
+            codec = createBrokerDecoder(surface, streamWidth, streamHeight, packedStream);
             nativeRemoteCameraLifecycleEvent(EVENT_STARTED, sideCode, 0, streamWidth, streamHeight, maxImages, fpsCap, port);
 
             BlockingQueue<BrokerPacket> packetQueue =
@@ -754,6 +875,7 @@ public final class StereoVideoPlayback {
             AtomicLong packetReaderLastPacketElapsedMs = new AtomicLong(SystemClock.elapsedRealtime());
             AtomicLong packetReaderLastPacketSize = new AtomicLong(0L);
             AtomicLong packetReaderLastPacketPtsUs = new AtomicLong(-1L);
+            PackedPairSequence packedPairSequence = new PackedPairSequence();
             packetReaderThread = new Thread(
                 new Runnable() {
                     @Override
@@ -764,6 +886,7 @@ public final class StereoVideoPlayback {
                         try {
                             while (!stopRequested && !Thread.currentThread().isInterrupted()) {
                                 BrokerPacket packet = readBrokerPacket(input, header);
+                                packedPairSequence.validate(packet);
                                 if (!packetQueue.offer(packet)) {
                                     BrokerPacket dropped = packetQueue.poll();
                                     if (dropped != null) {
@@ -846,12 +969,30 @@ public final class StereoVideoPlayback {
             long lastStallWarnElapsedMs = 0L;
             long lastInputStallWarnElapsedMs = 0L;
             long lastFlushElapsedMs = 0L;
+            Map<Long, PackedPairRecord> queuedPackedPairs = new TreeMap<>();
             while (!stopRequested) {
                 int outputIndex;
                 do {
                     outputIndex = codec.dequeueOutputBuffer(info, DEQUEUE_TIMEOUT_US);
                     if (outputIndex >= 0) {
                         boolean render = info.size != 0;
+                        PackedPairRecord renderedPair = null;
+                        if (render && packedStream) {
+                            renderedPair = queuedPackedPairs.remove(info.presentationTimeUs);
+                            if (renderedPair == null) {
+                                throw new IOException(
+                                    "decoded packed frame has no matching source-pair metadata"
+                                );
+                            }
+                            nativeSetPackedStereoPairMetadata(
+                                renderedPair.pairId,
+                                renderedPair.leftSourceFrame,
+                                renderedPair.rightSourceFrame,
+                                renderedPair.leftSensorTimestampNs,
+                                renderedPair.rightSensorTimestampNs,
+                                renderedPair.pairDeltaNs
+                            );
+                        }
                         codec.releaseOutputBuffer(outputIndex, render);
                         if (render) {
                             remotePumpLastResult = nativePumpRemoteCameraImage(sideCode);
@@ -865,14 +1006,19 @@ public final class StereoVideoPlayback {
                             if (renderedFrames == 1L || renderedFrames % 15L == 0L) {
                                 Log.i(LOG_TAG, String.format(
                                     Locale.US,
-                                    "RUSTY_QUEST_NATIVE_RENDERER channel=remote-camera-broker-inlet status=frame side=%s renderedFrames=%d queuedPackets=%d queuedBytes=%d packetPtsUs=%d brokerPort=%d decoderFlushes=%d stream=remote_camera_broker_stereo sourceAuthority=manifold-broker-rmanvid1-camera2-h264",
+                                    "RUSTY_QUEST_NATIVE_RENDERER channel=remote-camera-broker-inlet status=frame side=%s renderedFrames=%d queuedPackets=%d queuedBytes=%d packetPtsUs=%d stereoPairId=%d leftSourceFrame=%d rightSourceFrame=%d pairDeltaNs=%d brokerPort=%d decoderFlushes=%d packedStereo=%s stream=remote_camera_broker_stereo sourceAuthority=manifold-broker-rmanvid1-camera2-h264",
                                     side,
                                     renderedFrames,
                                     queuedPackets,
                                     queuedBytes,
                                     info.presentationTimeUs,
+                                    renderedPair != null ? renderedPair.pairId : 0L,
+                                    renderedPair != null ? renderedPair.leftSourceFrame : 0L,
+                                    renderedPair != null ? renderedPair.rightSourceFrame : 0L,
+                                    renderedPair != null ? renderedPair.pairDeltaNs : 0L,
                                     port,
-                                    decoderFlushes));
+                                    decoderFlushes,
+                                    packedStream));
                                 nativeRemoteCameraLifecycleEvent(
                                     EVENT_FRAME,
                                     sideCode,
@@ -945,6 +1091,9 @@ public final class StereoVideoPlayback {
                         ptsUs = lastQueuedPtsUs + frameDurationUs;
                     }
                     lastQueuedPtsUs = ptsUs;
+                    if (packedStream && !isCodecConfigPacket(packet)) {
+                        queuedPackedPairs.put(ptsUs, packet.packedPair);
+                    }
                     codec.queueInputBuffer(inputIndex, 0, packet.payload.length, ptsUs, packet.flags);
                     queuedPackets += 1L;
                     queuedSinceFlush += 1L;
@@ -1069,10 +1218,11 @@ public final class StereoVideoPlayback {
                         decoderRestarts,
                         port));
                     packetQueue.clear();
+                    queuedPackedPairs.clear();
                     MediaCodec oldCodec = codec;
                     codec = null;
                     releaseBrokerDecoder(oldCodec);
-                    codec = createBrokerDecoder(surface, streamWidth, streamHeight);
+                    codec = createBrokerDecoder(surface, streamWidth, streamHeight, packedStream);
                     decoderRestarts += 1L;
                     queuedSinceFlush = 0L;
                     renderedSinceFlush = 0L;
@@ -1116,11 +1266,22 @@ public final class StereoVideoPlayback {
         }
     }
 
-    private static MediaCodec createBrokerDecoder(Surface surface, int streamWidth, int streamHeight)
+    private static MediaCodec createBrokerDecoder(
+        Surface surface,
+        int streamWidth,
+        int streamHeight,
+        boolean requireHardware
+    )
         throws IOException {
         MediaFormat format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, streamWidth, streamHeight);
         format.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, MAX_PACKET_BYTES);
-        BrokerDecoderChoice decoderChoice = chooseBrokerDecoder(MediaFormat.MIMETYPE_VIDEO_AVC);
+        BrokerDecoderChoice decoderChoice = chooseBrokerDecoder(
+            MediaFormat.MIMETYPE_VIDEO_AVC,
+            requireHardware
+        );
+        if (requireHardware && (decoderChoice.name == null || decoderChoice.software)) {
+            throw new IOException("packed stereo requires an explicit hardware H.264 decoder");
+        }
         MediaCodec codec = decoderChoice.name == null
             ? MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
             : MediaCodec.createByCodecName(decoderChoice.name);
@@ -1129,10 +1290,11 @@ public final class StereoVideoPlayback {
             codec.start();
             Log.i(LOG_TAG, String.format(
                 Locale.US,
-                "RUSTY_QUEST_NATIVE_RENDERER channel=remote-camera-broker-inlet status=decoder-created decoderName=%s decoderSoftware=%s decoderSelection=%s streamWidth=%d streamHeight=%d stream=remote_camera_broker_stereo sourceAuthority=manifold-broker-rmanvid1-camera2-h264",
+                "RUSTY_QUEST_NATIVE_RENDERER channel=remote-camera-broker-inlet status=decoder-created decoderName=%s decoderSoftware=%s decoderSelection=%s requireHardware=%s streamWidth=%d streamHeight=%d stream=remote_camera_broker_stereo sourceAuthority=manifold-broker-rmanvid1-camera2-h264",
                 decoderChoice.name == null ? "createDecoderByType" : decoderChoice.name,
                 decoderChoice.software,
                 decoderChoice.selection,
+                requireHardware,
                 streamWidth,
                 streamHeight));
             return codec;
@@ -1156,7 +1318,7 @@ public final class StereoVideoPlayback {
         }
     }
 
-    private static BrokerDecoderChoice chooseBrokerDecoder(String mimeType) {
+    private static BrokerDecoderChoice chooseBrokerDecoder(String mimeType, boolean requireHardware) {
         BrokerDecoderChoice fallback = null;
         try {
             MediaCodecList codecList = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
@@ -1166,8 +1328,14 @@ public final class StereoVideoPlayback {
                 }
                 String name = info.getName();
                 boolean software = isSoftwareDecoder(info, name);
+                if (requireHardware && !software) {
+                    return new BrokerDecoderChoice(name, false, "hardware-required");
+                }
                 if (software) {
-                    return new BrokerDecoderChoice(name, true, "software-preferred");
+                    if (!requireHardware) {
+                        return new BrokerDecoderChoice(name, true, "software-preferred");
+                    }
+                    continue;
                 }
                 if (fallback == null) {
                     fallback = new BrokerDecoderChoice(name, false, "hardware-fallback");
@@ -1218,8 +1386,11 @@ public final class StereoVideoPlayback {
         int height = input.readInt();
         int packetCount = input.readInt();
         int metadataBytes = input.readInt();
-        if (schemaVersion < 1 || schemaVersion > 3) {
+        if (schemaVersion < 1 || schemaVersion > 4) {
             throw new IOException("unsupported broker stream schema " + schemaVersion);
+        }
+        if (schemaVersion == 4 && !STREAM_MAGIC.equals(magic)) {
+            throw new IOException("RMANVID v4 packed stream requires RMANVID1 magic");
         }
         if (packetCount < 0 || packetCount > MAX_STREAM_PACKETS) {
             throw new IOException("broker packet count out of range " + packetCount);
@@ -1227,10 +1398,15 @@ public final class StereoVideoPlayback {
         if (metadataBytes < 0 || metadataBytes > MAX_STREAM_HEADER_METADATA_BYTES) {
             throw new IOException("broker metadata bytes out of range " + metadataBytes);
         }
+        String metadataJson = "";
         if (metadataBytes > 0) {
             byte[] metadata = new byte[metadataBytes];
             input.readFully(metadata);
+            metadataJson = new String(metadata, StandardCharsets.UTF_8);
         }
+        PackedHeaderMetadata packedMetadata = schemaVersion == 4
+            ? PackedHeaderMetadata.parse(metadataJson, width, height)
+            : null;
         return new BrokerStreamHeader(
             magic,
             schemaVersion,
@@ -1239,7 +1415,9 @@ public final class StereoVideoPlayback {
             height,
             packetCount,
             metadataBytes,
-            STREAM_MAGIC.equals(magic) || schemaVersion >= 2
+            STREAM_MAGIC.equals(magic) || schemaVersion >= 2,
+            metadataJson,
+            packedMetadata
         );
     }
 
@@ -1257,9 +1435,12 @@ public final class StereoVideoPlayback {
             sourceElapsedNs = input.readLong();
             sourceUnixNs = input.readLong();
         }
+        PackedPairRecord pair = header.packedMetadata != null
+            ? PackedPairRecord.read(input, flags, header.packedMetadata.maxPairDeltaNs)
+            : null;
         byte[] payload = new byte[size];
         input.readFully(payload);
-        return new BrokerPacket(ptsUs, flags, sourceElapsedNs, sourceUnixNs, payload);
+        return new BrokerPacket(ptsUs, flags, sourceElapsedNs, sourceUnixNs, pair, payload);
     }
 
     private static boolean isCodecConfigPacket(BrokerPacket packet) {
@@ -1333,6 +1514,16 @@ public final class StereoVideoPlayback {
         return clamp(port, 1, 65535);
     }
 
+    private static String normalizeBrokerMediaLayout(String layout) {
+        String normalized = layout == null ? "" : layout.trim().toLowerCase(Locale.US);
+        if ("side-by-side-left-right".equals(normalized)
+                || "packed-sbs".equals(normalized)
+                || "sbs".equals(normalized)) {
+            return "side-by-side-left-right";
+        }
+        return "separate-eye-streams";
+    }
+
     private static String safeMessage(Throwable ex) {
         String message = ex.getMessage();
         return message != null ? message : ex.getClass().getSimpleName();
@@ -1351,6 +1542,8 @@ public final class StereoVideoPlayback {
         final int packetCount;
         final int metadataBytes;
         final boolean extendedPacketTimestamps;
+        final String metadataJson;
+        final PackedHeaderMetadata packedMetadata;
 
         BrokerStreamHeader(
             String magic,
@@ -1360,7 +1553,9 @@ public final class StereoVideoPlayback {
             int height,
             int packetCount,
             int metadataBytes,
-            boolean extendedPacketTimestamps
+            boolean extendedPacketTimestamps,
+            String metadataJson,
+            PackedHeaderMetadata packedMetadata
         ) {
             this.magic = magic;
             this.schemaVersion = schemaVersion;
@@ -1370,6 +1565,8 @@ public final class StereoVideoPlayback {
             this.packetCount = packetCount;
             this.metadataBytes = metadataBytes;
             this.extendedPacketTimestamps = extendedPacketTimestamps;
+            this.metadataJson = metadataJson;
+            this.packedMetadata = packedMetadata;
         }
     }
 
@@ -1378,14 +1575,189 @@ public final class StereoVideoPlayback {
         final int flags;
         final long sourceElapsedNs;
         final long sourceUnixNs;
+        final PackedPairRecord packedPair;
         final byte[] payload;
 
-        BrokerPacket(long ptsUs, int flags, long sourceElapsedNs, long sourceUnixNs, byte[] payload) {
+        BrokerPacket(
+            long ptsUs,
+            int flags,
+            long sourceElapsedNs,
+            long sourceUnixNs,
+            PackedPairRecord packedPair,
+            byte[] payload
+        ) {
             this.ptsUs = ptsUs;
             this.flags = flags;
             this.sourceElapsedNs = sourceElapsedNs;
             this.sourceUnixNs = sourceUnixNs;
+            this.packedPair = packedPair;
             this.payload = payload;
+        }
+    }
+
+    private static final class PackedHeaderMetadata {
+        final int packedWidth;
+        final int packedHeight;
+        final int perEyeWidth;
+        final int perEyeHeight;
+        final String leftCameraId;
+        final String rightCameraId;
+        final long maxPairDeltaNs;
+
+        PackedHeaderMetadata(
+            int packedWidth,
+            int packedHeight,
+            int perEyeWidth,
+            int perEyeHeight,
+            String leftCameraId,
+            String rightCameraId,
+            long maxPairDeltaNs
+        ) {
+            this.packedWidth = packedWidth;
+            this.packedHeight = packedHeight;
+            this.perEyeWidth = perEyeWidth;
+            this.perEyeHeight = perEyeHeight;
+            this.leftCameraId = leftCameraId;
+            this.rightCameraId = rightCameraId;
+            this.maxPairDeltaNs = maxPairDeltaNs;
+        }
+
+        static PackedHeaderMetadata parse(String json, int headerWidth, int headerHeight)
+            throws IOException {
+            try {
+                JSONObject metadata = new JSONObject(json);
+                JSONArray eyeOrder = metadata.optJSONArray("eye_order");
+                int packedWidth = metadata.optInt("packed_width", 0);
+                int packedHeight = metadata.optInt("packed_height", 0);
+                int perEyeWidth = metadata.optInt("per_eye_width", 0);
+                int perEyeHeight = metadata.optInt("per_eye_height", 0);
+                String leftCameraId = metadata.optString("left_camera_id", "");
+                String rightCameraId = metadata.optString("right_camera_id", "");
+                long maxPairDeltaNs = metadata.optLong("max_pair_delta_ns", 0L);
+                boolean valid = "rusty.quest.remote_camera.packed_stereo_stream_metadata.v1".equals(
+                        metadata.optString("schema", ""))
+                    && metadata.optInt("rmanvid_schema_version", 0) == 4
+                    && "side_by_side_left_right".equals(metadata.optString("frame_layout", ""))
+                    && eyeOrder != null
+                    && eyeOrder.length() == 2
+                    && "left".equals(eyeOrder.optString(0))
+                    && "right".equals(eyeOrder.optString(1))
+                    && packedWidth == headerWidth
+                    && packedHeight == headerHeight
+                    && packedWidth == perEyeWidth * 2
+                    && packedHeight == perEyeHeight
+                    && perEyeWidth > 0
+                    && perEyeHeight > 0
+                    && !leftCameraId.isEmpty()
+                    && !rightCameraId.isEmpty()
+                    && !leftCameraId.equals(rightCameraId)
+                    && "camera2_sensor_timestamp".equals(
+                        metadata.optString("pair_timestamp_source", ""))
+                    && "nearest_timestamp_bounded".equals(
+                        metadata.optString("pairing_policy", ""))
+                    && maxPairDeltaNs > 0L
+                    && maxPairDeltaNs <= 1_000_000_000L
+                    && !metadata.optBoolean("cpu_pixel_copy", true)
+                    && metadata.optBoolean("gpu_compositor_active", false)
+                    && !metadata.optBoolean("high_rate_json_payload", true);
+                if (!valid) {
+                    throw new IOException("packed RMANVID v4 stream metadata failed closed");
+                }
+                return new PackedHeaderMetadata(
+                    packedWidth,
+                    packedHeight,
+                    perEyeWidth,
+                    perEyeHeight,
+                    leftCameraId,
+                    rightCameraId,
+                    maxPairDeltaNs
+                );
+            } catch (JSONException error) {
+                throw new IOException("malformed packed RMANVID v4 metadata", error);
+            }
+        }
+    }
+
+    private static final class PackedPairRecord {
+        final long pairId;
+        final long leftSourceFrame;
+        final long rightSourceFrame;
+        final long leftSensorTimestampNs;
+        final long rightSensorTimestampNs;
+        final long pairDeltaNs;
+
+        PackedPairRecord(
+            long pairId,
+            long leftSourceFrame,
+            long rightSourceFrame,
+            long leftSensorTimestampNs,
+            long rightSensorTimestampNs,
+            long pairDeltaNs
+        ) {
+            this.pairId = pairId;
+            this.leftSourceFrame = leftSourceFrame;
+            this.rightSourceFrame = rightSourceFrame;
+            this.leftSensorTimestampNs = leftSensorTimestampNs;
+            this.rightSensorTimestampNs = rightSensorTimestampNs;
+            this.pairDeltaNs = pairDeltaNs;
+        }
+
+        static PackedPairRecord read(DataInputStream input, int flags, long maxPairDeltaNs)
+            throws IOException {
+            PackedPairRecord record = new PackedPairRecord(
+                input.readLong(),
+                input.readLong(),
+                input.readLong(),
+                input.readLong(),
+                input.readLong(),
+                input.readLong()
+            );
+            boolean codecConfig = (flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0;
+            if (codecConfig) {
+                if (record.pairId != 0L
+                    || record.leftSourceFrame != 0L
+                    || record.rightSourceFrame != 0L
+                    || record.leftSensorTimestampNs != 0L
+                    || record.rightSensorTimestampNs != 0L
+                    || record.pairDeltaNs != 0L) {
+                    throw new IOException("packed codec-config pair extension is not zero");
+                }
+                return record;
+            }
+            long measured = record.leftSensorTimestampNs >= record.rightSensorTimestampNs
+                ? record.leftSensorTimestampNs - record.rightSensorTimestampNs
+                : record.rightSensorTimestampNs - record.leftSensorTimestampNs;
+            if (record.pairId <= 0L
+                || record.leftSourceFrame <= 0L
+                || record.rightSourceFrame <= 0L
+                || record.leftSensorTimestampNs <= 0L
+                || record.rightSensorTimestampNs <= 0L
+                || record.pairDeltaNs != measured
+                || record.pairDeltaNs > maxPairDeltaNs) {
+                throw new IOException("invalid packed RMANVID v4 pair extension");
+            }
+            return record;
+        }
+    }
+
+    private static final class PackedPairSequence {
+        long lastPairId;
+        long lastLeftSourceFrame;
+        long lastRightSourceFrame;
+
+        void validate(BrokerPacket packet) throws IOException {
+            PackedPairRecord pair = packet.packedPair;
+            if (pair == null || isCodecConfigPacket(packet)) {
+                return;
+            }
+            if (pair.pairId <= lastPairId
+                || pair.leftSourceFrame <= lastLeftSourceFrame
+                || pair.rightSourceFrame <= lastRightSourceFrame) {
+                throw new IOException("packed pair/source frame ids were duplicated or reused");
+            }
+            lastPairId = pair.pairId;
+            lastLeftSourceFrame = pair.leftSourceFrame;
+            lastRightSourceFrame = pair.rightSourceFrame;
         }
     }
 
@@ -1421,6 +1793,15 @@ public final class StereoVideoPlayback {
     private static native void nativeStopRemoteCameraStream();
 
     private static native int nativePumpRemoteCameraImage(int sideCode);
+
+    private static native void nativeSetPackedStereoPairMetadata(
+        long pairId,
+        long leftSourceFrame,
+        long rightSourceFrame,
+        long leftSensorTimestampNs,
+        long rightSensorTimestampNs,
+        long pairDeltaNs
+    );
 
     private static native void nativeStereoVideoLifecycleEvent(
         int eventCode,

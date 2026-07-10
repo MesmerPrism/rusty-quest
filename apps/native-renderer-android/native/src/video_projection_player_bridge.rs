@@ -90,10 +90,11 @@ fn start_impl(
         let source = env.new_string(settings.source.marker_value())?;
         let path = env.new_string(settings.path.as_str())?;
         let broker_host = env.new_string(settings.broker_host.as_str())?;
+        let broker_media_layout = env.new_string(settings.broker_media_layout.marker_value())?;
         env.call_static_method(
             playback_class,
             jni_str!("start"),
-            jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;IIIIZLjava/lang/String;III)V"),
+            jni_sig!("(Landroid/content/Context;Ljava/lang/String;Ljava/lang/String;IIIIZLjava/lang/String;IIILjava/lang/String;)V"),
             &[
                 JValue::Object(&activity),
                 JValue::Object(&JObject::from(source)),
@@ -107,6 +108,7 @@ fn start_impl(
                 JValue::Int(settings.broker_left_port as i32),
                 JValue::Int(settings.broker_right_port as i32),
                 JValue::Int(settings.broker_connect_timeout_ms as i32),
+                JValue::Object(&JObject::from(broker_media_layout)),
             ],
         )?;
         Ok(())

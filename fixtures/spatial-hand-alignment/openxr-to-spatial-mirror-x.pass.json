@@ -1,0 +1,42 @@
+{
+  "schema": "rusty.quest.spatial_openxr_hand_alignment_mapping_fixture.v1",
+  "accepted_default": {
+    "profile": "viewer-world-basis-registration",
+    "mode_code": 2,
+    "coordinate_mapping": "openxr-local-floor-to-spatial-sdk-viewer-world-registration",
+    "rollback_target": true
+  },
+  "experimental_candidate": {
+    "profile": "mirror-x-origin-registration",
+    "mode_code": 3,
+    "coordinate_mapping": "openxr-local-floor-to-spatial-sdk-mirror-x-origin-registration",
+    "position_basis": [
+      [-1.0, 0.0, 0.0],
+      [0.0, 1.0, 0.0],
+      [0.0, 0.0, 1.0]
+    ],
+    "position_translation": "capture-spatial-viewer-origin-minus-mapped-openxr-viewer-origin",
+    "basis_determinant": -1.0,
+    "openxr_quaternion_order": "xyzw",
+    "spatial_quaternion_constructor_order": "wxyz",
+    "spatial_xyzw_from_openxr_xyzw": ["z", "w", "x", "y"],
+    "live_acceptance_required": false,
+    "live_acceptance_status": "accepted-for-spatial-hand-lab"
+  },
+  "sanitized_live_fit": {
+    "sample_count": 120,
+    "position_rms_error_m": 0.000369,
+    "position_max_error_m": 0.001456,
+    "orientation_mean_error_degrees": 0.068716,
+    "orientation_max_error_degrees": 0.958528
+  },
+  "headset_acceptance": {
+    "date_utc": "2026-07-10",
+    "startup_zero_origin_failure_reproduced": true,
+    "post_recapture_viewer_delta_m": 0.0,
+    "post_recapture_viewer_rotation_delta_degrees": 0.0,
+    "visual_joint_overlay": "accepted",
+    "startup_policy": "recapture-once-when-zero-spatial-viewer-origin-becomes-live"
+  },
+  "rollback_rule": "Keep viewer-world-basis-registration selectable as the clean rollback profile while mirror-x-origin-registration is the headset-accepted Spatial hand-lab mapping."
+}

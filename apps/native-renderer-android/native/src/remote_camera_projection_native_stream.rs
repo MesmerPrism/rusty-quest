@@ -13,7 +13,7 @@ use std::{
     },
 };
 
-use jni::sys::{jclass, jint, jobject, JNIEnv};
+use jni::sys::{jclass, jint, jlong, jobject, JNIEnv};
 
 use crate::{
     acamera_sys::{
@@ -26,6 +26,7 @@ use crate::{
         AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, AIMAGE_FORMAT_PRIVATE,
     },
     android_hardware_buffer::AndroidHardwareBufferHandle,
+    camera_projection_metadata::CameraProjectionSourceLayout,
     marker,
     native_camera::{NativeCameraFrame, NativeStereoCameraFrame},
     native_camera_metadata::NativeCameraCaptureResultCorrelation,
@@ -34,13 +35,26 @@ use crate::{
 static REMOTE_STREAM: Mutex<RemoteCameraBrokerStream> = Mutex::new(RemoteCameraBrokerStream {
     left: None,
     right: None,
+    packed: None,
 });
 static REMOTE_LATEST_LEFT: Mutex<Option<NativeCameraFrame>> = Mutex::new(None);
 static REMOTE_LATEST_RIGHT: Mutex<Option<NativeCameraFrame>> = Mutex::new(None);
 static REMOTE_LATEST_QUERY_COUNT: AtomicU64 = AtomicU64::new(0);
+static REMOTE_PACKED_PAIR_METADATA: Mutex<Option<PackedPairMetadata>> = Mutex::new(None);
 
 const SIDE_LEFT: i32 = 1;
 const SIDE_RIGHT: i32 = 2;
+const SIDE_STEREO: i32 = 3;
+
+#[derive(Clone, Copy)]
+struct PackedPairMetadata {
+    pair_id: u64,
+    left_source_frame: u64,
+    right_source_frame: u64,
+    left_sensor_timestamp_ns: i64,
+    right_sensor_timestamp_ns: i64,
+    pair_delta_ns: u64,
+}
 
 const EVENT_START_REQUESTED: i32 = 1;
 const EVENT_STOPPED: i32 = 3;
@@ -51,9 +65,13 @@ const EVENT_STREAM_HEADER: i32 = 9;
 pub(crate) fn latest_remote_stereo_frame() -> Option<NativeStereoCameraFrame> {
     let query_count = REMOTE_LATEST_QUERY_COUNT.fetch_add(1, Ordering::Relaxed) + 1;
     let should_log = query_count == 1 || query_count % 120 == 0;
-    let (left_configured, right_configured) = {
+    let (left_configured, right_configured, packed_configured) = {
         let stream = REMOTE_STREAM.lock().ok()?;
-        (stream.left.is_some(), stream.right.is_some())
+        (
+            stream.left.is_some() || stream.packed.is_some(),
+            stream.right.is_some() || stream.packed.is_some(),
+            stream.packed.is_some(),
+        )
     };
     let left_latest = REMOTE_LATEST_LEFT.lock().ok()?.as_ref().cloned();
     let right_latest = REMOTE_LATEST_RIGHT.lock().ok()?.as_ref().cloned();
@@ -76,6 +94,9 @@ pub(crate) fn latest_remote_stereo_frame() -> Option<NativeStereoCameraFrame> {
     // Stale inactive lane bookkeeping must not block intentional single-lane
     // diagnostics; the real stereo pair wins as soon as both sides publish.
     let (left, right, pairing_policy) = match (left_latest, right_latest) {
+        (Some(left), Some(right)) if packed_configured => {
+            (left, right, "remote-broker-packed-sbs-source-timestamp")
+        }
         (Some(left), Some(right)) => (left, right, "remote-broker-latest-latest"),
         (Some(left), None) if left_configured => {
             let mut mirrored_right = left.clone();
@@ -142,12 +163,18 @@ pub(crate) fn latest_remote_stereo_frame() -> Option<NativeStereoCameraFrame> {
         right,
         pair_delta_ns,
         pairing_policy,
+        source_layout: if packed_configured {
+            CameraProjectionSourceLayout::PackedSideBySideLeftRight
+        } else {
+            CameraProjectionSourceLayout::SeparateEyeTextures
+        },
     })
 }
 
 struct RemoteCameraBrokerStream {
     left: Option<RemoteCameraLaneStream>,
     right: Option<RemoteCameraLaneStream>,
+    packed: Option<RemoteCameraLaneStream>,
 }
 
 impl RemoteCameraBrokerStream {
@@ -155,6 +182,7 @@ impl RemoteCameraBrokerStream {
         match side {
             RemoteCameraSide::Left => self.left = Some(stream),
             RemoteCameraSide::Right => self.right = Some(stream),
+            RemoteCameraSide::Packed => self.packed = Some(stream),
         }
     }
 
@@ -162,6 +190,7 @@ impl RemoteCameraBrokerStream {
         let stream = match side {
             RemoteCameraSide::Left => self.left.as_ref(),
             RemoteCameraSide::Right => self.right.as_ref(),
+            RemoteCameraSide::Packed => self.packed.as_ref(),
         };
         stream
             .map(|stream| {
@@ -180,12 +209,17 @@ impl RemoteCameraBrokerStream {
     }
 
     fn stop(&mut self) -> bool {
-        let had_stream = self.left.take().is_some() || self.right.take().is_some();
+        let had_stream = self.left.take().is_some()
+            || self.right.take().is_some()
+            || self.packed.take().is_some();
         if let Ok(mut left) = REMOTE_LATEST_LEFT.lock() {
             *left = None;
         }
         if let Ok(mut right) = REMOTE_LATEST_RIGHT.lock() {
             *right = None;
+        }
+        if let Ok(mut pair) = REMOTE_PACKED_PAIR_METADATA.lock() {
+            *pair = None;
         }
         had_stream
     }
@@ -247,6 +281,7 @@ struct RemoteCameraReaderContext {
 enum RemoteCameraSide {
     Left,
     Right,
+    Packed,
 }
 
 impl RemoteCameraSide {
@@ -254,6 +289,7 @@ impl RemoteCameraSide {
         match side_code {
             SIDE_LEFT => Some(Self::Left),
             SIDE_RIGHT => Some(Self::Right),
+            SIDE_STEREO => Some(Self::Packed),
             _ => None,
         }
     }
@@ -262,6 +298,7 @@ impl RemoteCameraSide {
         match self {
             Self::Left => "left",
             Self::Right => "right",
+            Self::Packed => "stereo",
         }
     }
 
@@ -269,6 +306,7 @@ impl RemoteCameraSide {
         match self {
             Self::Left => "remote-broker-left",
             Self::Right => "remote-broker-right",
+            Self::Packed => "remote-broker-packed-stereo",
         }
     }
 }
@@ -277,6 +315,20 @@ fn clear_latest_for_side(side: RemoteCameraSide) -> bool {
     let target = match side {
         RemoteCameraSide::Left => &REMOTE_LATEST_LEFT,
         RemoteCameraSide::Right => &REMOTE_LATEST_RIGHT,
+        RemoteCameraSide::Packed => {
+            let left = REMOTE_LATEST_LEFT
+                .lock()
+                .map(|mut latest| latest.take().is_some())
+                .unwrap_or(false);
+            let right = REMOTE_LATEST_RIGHT
+                .lock()
+                .map(|mut latest| latest.take().is_some())
+                .unwrap_or(false);
+            if let Ok(mut pair) = REMOTE_PACKED_PAIR_METADATA.lock() {
+                *pair = None;
+            }
+            return left || right;
+        }
     };
     target
         .lock()
@@ -394,6 +446,52 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_St
         return unsafe { guard.pump_lane(side) };
     }
     -3
+}
+
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_native_1renderer_StereoVideoPlayback_nativeSetPackedStereoPairMetadata(
+    _env: *mut JNIEnv,
+    _class: jclass,
+    pair_id: jlong,
+    left_source_frame: jlong,
+    right_source_frame: jlong,
+    left_sensor_timestamp_ns: jlong,
+    right_sensor_timestamp_ns: jlong,
+    pair_delta_ns: jlong,
+) {
+    let measured_delta = left_sensor_timestamp_ns.abs_diff(right_sensor_timestamp_ns);
+    let valid = pair_id > 0
+        && left_source_frame > 0
+        && right_source_frame > 0
+        && left_sensor_timestamp_ns > 0
+        && right_sensor_timestamp_ns > 0
+        && pair_delta_ns >= 0
+        && pair_delta_ns as u64 == measured_delta;
+    if !valid {
+        marker(
+            "remote-camera-broker-packed-pair",
+            format!(
+                "status=rejected pairId={} leftSourceFrame={} rightSourceFrame={} leftSensorTimestampNs={} rightSensorTimestampNs={} pairDeltaNs={} reason=invalid-pair-metadata",
+                pair_id,
+                left_source_frame,
+                right_source_frame,
+                left_sensor_timestamp_ns,
+                right_sensor_timestamp_ns,
+                pair_delta_ns
+            ),
+        );
+        return;
+    }
+    if let Ok(mut metadata) = REMOTE_PACKED_PAIR_METADATA.lock() {
+        *metadata = Some(PackedPairMetadata {
+            pair_id: pair_id as u64,
+            left_source_frame: left_source_frame as u64,
+            right_source_frame: right_source_frame as u64,
+            left_sensor_timestamp_ns,
+            right_sensor_timestamp_ns,
+            pair_delta_ns: pair_delta_ns as u64,
+        });
+    }
 }
 
 #[no_mangle]
@@ -692,6 +790,10 @@ unsafe fn acquire_remote_camera_image(
         image_lease: None,
         capture_result: NativeCameraCaptureResultCorrelation::unavailable(),
     };
+    let mut marker_pair_id = 0_u64;
+    let mut marker_left_source_frame = 0_u64;
+    let mut marker_right_source_frame = 0_u64;
+    let mut marker_pair_delta_ns = 0_u64;
     match reader_context.side {
         RemoteCameraSide::Left => {
             if let Ok(mut latest) = REMOTE_LATEST_LEFT.lock() {
@@ -703,15 +805,57 @@ unsafe fn acquire_remote_camera_image(
                 *latest = Some(frame);
             }
         }
+        RemoteCameraSide::Packed => {
+            let pair = REMOTE_PACKED_PAIR_METADATA
+                .lock()
+                .ok()
+                .and_then(|metadata| *metadata);
+            let Some(pair) = pair else {
+                marker(
+                    "remote-camera-broker-packed-pair",
+                    format!(
+                        "status=rejected reason=missing-pair-metadata decodedTimestampNs={} sourceFrame={} latestFramePublished=false",
+                        timestamp_ns, frame_index
+                    ),
+                );
+                AImage_delete(image);
+                return false;
+            };
+            let mut left = frame.clone();
+            left.side = "left";
+            left.camera_id = "remote-broker-packed-left-50".to_string();
+            left.timestamp_ns = pair.left_sensor_timestamp_ns;
+            left.source_frame = pair.left_source_frame;
+            let mut right = frame;
+            right.side = "right";
+            right.camera_id = "remote-broker-packed-right-51".to_string();
+            right.timestamp_ns = pair.right_sensor_timestamp_ns;
+            right.source_frame = pair.right_source_frame;
+            if let Ok(mut latest) = REMOTE_LATEST_LEFT.lock() {
+                *latest = Some(left);
+            }
+            if let Ok(mut latest) = REMOTE_LATEST_RIGHT.lock() {
+                *latest = Some(right);
+            }
+            marker_pair_id = pair.pair_id;
+            marker_left_source_frame = pair.left_source_frame;
+            marker_right_source_frame = pair.right_source_frame;
+            marker_pair_delta_ns = pair.pair_delta_ns;
+        }
     }
     marker(
         "remote-camera-broker-ahardware-buffer",
         format!(
-            "status=frame side={} stream=remote_camera_broker_stereo sourceFrame={} importSequence={} timestampNs={} descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} hardwareBufferId={} hardwareBufferIdStatus={} configuredWidth={} configuredHeight={} maxImages={} fpsCap={} droppedFrames={} bufferRemovedCount={} imageAcquireApi=AImageReader_acquireLatestImage imageReleaseApi=AImage_delete descriptorShape=android-hardware-buffer-private sourceAuthority=manifold-broker-rmanvid1-camera2-h264 rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false highRateJsonPayload=false nativeImageReader=true javaHardwareBufferBridge=false cpuPixelCopy=false ahbHandleRetained=true latestFramePublished=true cameraProjectionGpuImportReady=false remoteBrokerCameraProjectionActive=true remoteCameraGpuAdoptionPath=rmanvid1-mediacodec-surface-aimage-reader-ahardwarebuffer-to-vulkan-camera-projection",
+            "status=frame side={} stream=remote_camera_broker_stereo sourceFrame={} importSequence={} timestampNs={} stereoPairId={} leftSourceFrame={} rightSourceFrame={} pairDeltaNs={} packedStereo={} descriptorWidth={} descriptorHeight={} descriptorLayers={} descriptorFormat={} descriptorUsage={} descriptorStride={} hardwareBufferId={} hardwareBufferIdStatus={} configuredWidth={} configuredHeight={} maxImages={} fpsCap={} droppedFrames={} bufferRemovedCount={} imageAcquireApi=AImageReader_acquireLatestImage imageReleaseApi=AImage_delete descriptorShape=android-hardware-buffer-private sourceAuthority=manifold-broker-rmanvid1-camera2-h264 rawCamera=false passthroughTexture=false environmentDepth=false geometryWitness=false highRateJsonPayload=false nativeImageReader=true nativeImageReaderCount=1 javaHardwareBufferBridge=false cpuPixelCopy=false ahbHandleRetained=true latestFramePublished=true cameraProjectionGpuImportReady=false remoteBrokerCameraProjectionActive=true remoteCameraGpuAdoptionPath=rmanvid1-mediacodec-surface-aimage-reader-ahardwarebuffer-to-vulkan-camera-projection",
             reader_context.side.stable_id(),
             frame_index,
             import_sequence,
             timestamp_ns,
+            marker_pair_id,
+            marker_left_source_frame,
+            marker_right_source_frame,
+            marker_pair_delta_ns,
+            matches!(reader_context.side, RemoteCameraSide::Packed),
             descriptor.width,
             descriptor.height,
             descriptor.layers,

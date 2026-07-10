@@ -420,6 +420,7 @@ dependencies = [
 name = "rusty-quest-remote-camera"
 version = "0.1.0"
 dependencies = [
+ "rusty-quest-device-link",
  "rusty-quest-profile",
  "serde",
  "serde_json",

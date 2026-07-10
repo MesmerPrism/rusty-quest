@@ -1,0 +1,12 @@
+{
+  "schema": "rusty.quest.direct_p2p_socket_route.v1",
+  "route_id": "stream-a-to-stream-b",
+  "route_kind": "direct_p2p_tcp",
+  "socket_authority": "rusty_direct_p2p_socket_authority",
+  "socket_scope": "rusty_owned_sockets_only",
+  "expected_interface": "p2p0",
+  "local_bind_host": "10.0.0.5",
+  "peer_host": "192.168.49.2",
+  "peer_port": 9079,
+  "android_network_required": false
+}

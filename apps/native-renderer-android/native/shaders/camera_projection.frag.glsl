@@ -6,6 +6,7 @@ layout(set = 0, binding = 1) uniform sampler2D u_camera_right;
 layout(push_constant) uniform CameraProjectionPush {
     vec4 params0;
     vec4 target_rect;
+    vec4 source_uv_rect;
     vec4 params2;
 } pc;
 
@@ -21,7 +22,12 @@ void main() {
     }
 
     float flip_y = step(0.5, pc.params0.y);
-    vec2 uv = vec2(local_uv.x, mix(local_uv.y, 1.0 - local_uv.y, flip_y));
+    vec2 oriented_uv = vec2(local_uv.x, mix(local_uv.y, 1.0 - local_uv.y, flip_y));
+    vec2 uv = pc.source_uv_rect.xy + oriented_uv * pc.source_uv_rect.zw;
+    vec2 half_texel = 0.5 * max(pc.params2.yz, vec2(0.0000001));
+    vec2 source_min = pc.source_uv_rect.xy + half_texel;
+    vec2 source_max = pc.source_uv_rect.xy + pc.source_uv_rect.zw - half_texel;
+    uv = clamp(uv, source_min, source_max);
     vec4 sample_color = eye == 0 ? texture(u_camera_left, uv) : texture(u_camera_right, uv);
     vec3 border_color = eye == 0 ? vec3(0.0, 1.0, 0.82) : vec3(1.0, 0.72, 0.05);
     float edge = min(min(local_uv.x, 1.0 - local_uv.x), min(local_uv.y, 1.0 - local_uv.y));

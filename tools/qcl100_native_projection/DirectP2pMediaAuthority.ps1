@@ -99,9 +99,13 @@ function Get-RustyQuestDirectP2pTransportRouteSpec {
         [bool]$RightLaneActive = $true,
         [int]$LeftTransportPort = 9079,
         [int]$RightTransportPort = 9080,
-        [string]$RouteKind = "rusty_direct_p2p_socket_authority",
-        [string]$LanePrefix = "remote-camera"
+        [string]$RouteKind = "direct_p2p_tcp",
+        [string]$LanePrefix = "remote-camera",
+        [switch]$PackedStereo
     )
+    if ($PackedStereo) {
+        return "${LanePrefix}-stereo|stereo|${RouteKind}|${PeerHost}|${LeftTransportPort}"
+    }
     $routes = @()
     if ($LeftLaneActive) {
         $routes += "${LanePrefix}-left|left|${RouteKind}|${PeerHost}|${LeftTransportPort}"
@@ -138,9 +142,12 @@ function New-RustyQuestRemoteCameraSenderParams {
         [Parameter(Mandatory=$true)][string]$QualityProfile,
         [string]$TransportRoutes = "none",
         [string]$TransportBindLocalAddress = "",
+        [string]$TransportSocketAuthority = "rusty_direct_p2p_socket_authority",
         [string]$SourceHost = "127.0.0.1",
         [string]$SourceKind = "camera2_mediacodec_surface",
-        [string]$CameraPermissionPolicy = "camera_permission_required"
+        [string]$CameraPermissionPolicy = "camera_permission_required",
+        [string]$MediaLayout = "separate-eye-streams",
+        [string]$SenderFrameLayout = ""
     )
     $params = [ordered]@{
         session_id = $SessionId
@@ -153,10 +160,17 @@ function New-RustyQuestRemoteCameraSenderParams {
         sender_camera_facing = "none"
         sender_quality_profile = $QualityProfile
         camera_permission_policy = $CameraPermissionPolicy
+        media_layout = $MediaLayout
         transport_routes = $TransportRoutes
+    }
+    if (-not [string]::IsNullOrWhiteSpace($SenderFrameLayout)) {
+        $params.sender_frame_layout = $SenderFrameLayout
     }
     if (-not [string]::IsNullOrWhiteSpace($TransportBindLocalAddress)) {
         $params.transport_bind_local_address = $TransportBindLocalAddress
+    }
+    if ($TransportRoutes -ne "none" -and -not [string]::IsNullOrWhiteSpace($TransportSocketAuthority)) {
+        $params.transport_socket_authority = $TransportSocketAuthority
     }
     return $params
 }

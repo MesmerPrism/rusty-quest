@@ -11,6 +11,16 @@ private const val CAMERA_HWB_PROJECTION_VIDEO_ENABLED_PROPERTY =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.video.enabled"
 private const val CAMERA_HWB_PROJECTION_VIDEO_PATH_PROPERTY =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.video.path"
+private const val CAMERA_HWB_PROJECTION_VIDEO_SOURCE_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.video.source"
+private const val CAMERA_HWB_PROJECTION_VIDEO_BROKER_HOST_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.video.broker.host"
+private const val CAMERA_HWB_PROJECTION_VIDEO_BROKER_PORT_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.video.broker.port"
+private const val CAMERA_HWB_PROJECTION_VIDEO_BROKER_CONNECT_TIMEOUT_MS_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.video.broker.connect_timeout_ms"
+private const val CAMERA_HWB_PROJECTION_VIDEO_MEDIA_LAYOUT_PROPERTY =
+    "debug.rustyquest.spatial.camera_hwb_projection_probe.video.media_layout"
 private const val CAMERA_HWB_PROJECTION_VIDEO_STEREO_LAYOUT_PROPERTY =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.video.stereo_layout"
 private const val CAMERA_HWB_PROJECTION_VIDEO_WIDTH_PROPERTY =
@@ -32,6 +42,16 @@ private const val EXTRA_VIDEO_PROJECTION_ENABLED =
     "rustyquest.spatial.camera_hwb_projection_probe.video.enabled"
 private const val EXTRA_VIDEO_PROJECTION_PATH =
     "rustyquest.spatial.camera_hwb_projection_probe.video.path"
+private const val EXTRA_VIDEO_PROJECTION_SOURCE =
+    "rustyquest.spatial.camera_hwb_projection_probe.video.source"
+private const val EXTRA_VIDEO_PROJECTION_BROKER_HOST =
+    "rustyquest.spatial.camera_hwb_projection_probe.video.broker.host"
+private const val EXTRA_VIDEO_PROJECTION_BROKER_PORT =
+    "rustyquest.spatial.camera_hwb_projection_probe.video.broker.port"
+private const val EXTRA_VIDEO_PROJECTION_BROKER_CONNECT_TIMEOUT_MS =
+    "rustyquest.spatial.camera_hwb_projection_probe.video.broker.connect_timeout_ms"
+private const val EXTRA_VIDEO_PROJECTION_MEDIA_LAYOUT =
+    "rustyquest.spatial.camera_hwb_projection_probe.video.media_layout"
 private const val EXTRA_VIDEO_PROJECTION_STEREO_LAYOUT =
     "rustyquest.spatial.camera_hwb_projection_probe.video.stereo_layout"
 private const val EXTRA_VIDEO_PROJECTION_WIDTH =
@@ -50,6 +70,11 @@ private const val EXTRA_VIDEO_PROJECTION_HIGH_RATE_JSON_PAYLOAD =
     "rustyquest.spatial.camera_hwb_projection_probe.video.high_rate_json_payload"
 
 private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_ENABLED = false
+private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_SOURCE = "app-private-file"
+private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_BROKER_HOST = "127.0.0.1"
+private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_BROKER_PORT = 0
+private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_BROKER_CONNECT_TIMEOUT_MS = 60000
+private const val CAMERA_HWB_PROJECTION_VIDEO_PACKED_MEDIA_LAYOUT = "side-by-side-left-right"
 private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_STEREO_LAYOUT =
     "side-by-side-left-right"
 private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_WIDTH_PX = 3840
@@ -70,7 +95,12 @@ private const val CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_HIGH_RATE_JSON_PAYLOAD = f
 
 internal data class SpatialVideoProjectionSettings(
     val enabled: Boolean,
+    val source: String,
     val path: String,
+    val brokerHost: String,
+    val brokerPort: Int,
+    val brokerConnectTimeoutMs: Int,
+    val mediaLayout: String,
     val stereoLayout: String,
     val width: Int,
     val height: Int,
@@ -81,13 +111,18 @@ internal data class SpatialVideoProjectionSettings(
     val highRateJsonPayload: Boolean,
 ) {
   val active: Boolean
-    get() = enabled && path.isNotBlank()
+    get() = enabled && (if (source == "broker-rmanvid1") brokerPort > 0 else path.isNotBlank())
 
   companion object {
     fun disabled(): SpatialVideoProjectionSettings =
         SpatialVideoProjectionSettings(
             enabled = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_ENABLED,
+            source = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_SOURCE,
             path = "",
+            brokerHost = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_BROKER_HOST,
+            brokerPort = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_BROKER_PORT,
+            brokerConnectTimeoutMs = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_BROKER_CONNECT_TIMEOUT_MS,
+            mediaLayout = CAMERA_HWB_PROJECTION_VIDEO_PACKED_MEDIA_LAYOUT,
             stereoLayout = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_STEREO_LAYOUT,
             width = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_WIDTH_PX,
             height = CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_HEIGHT_PX,
@@ -115,6 +150,42 @@ internal object SpatialVideoProjectionRouteModule {
     val path =
         activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_PATH)
             ?: activityReadSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_PATH_PROPERTY)
+    val source =
+        normalizeSource(
+            activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_SOURCE)
+                ?: activityReadSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_SOURCE_PROPERTY)
+        )
+    val brokerHost =
+        (activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_BROKER_HOST)
+                ?: activityReadSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_BROKER_HOST_PROPERTY))
+            .trim()
+            .ifBlank { CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_BROKER_HOST }
+    val brokerPort =
+        activityReadOptionalIntIntentExtra(intent, EXTRA_VIDEO_PROJECTION_BROKER_PORT, 0, 65535)
+            ?: activityReadIntSystemProperty(
+                CAMERA_HWB_PROJECTION_VIDEO_BROKER_PORT_PROPERTY,
+                CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_BROKER_PORT,
+                0,
+                65535,
+            )
+    val brokerConnectTimeoutMs =
+        activityReadOptionalIntIntentExtra(
+            intent,
+            EXTRA_VIDEO_PROJECTION_BROKER_CONNECT_TIMEOUT_MS,
+            100,
+            60000,
+        )
+            ?: activityReadIntSystemProperty(
+                CAMERA_HWB_PROJECTION_VIDEO_BROKER_CONNECT_TIMEOUT_MS_PROPERTY,
+                CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_BROKER_CONNECT_TIMEOUT_MS,
+                100,
+                60000,
+            )
+    val mediaLayout =
+        normalizeMediaLayout(
+            activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_MEDIA_LAYOUT)
+                ?: activityReadSystemProperty(CAMERA_HWB_PROJECTION_VIDEO_MEDIA_LAYOUT_PROPERTY)
+        )
     val stereoLayout =
         normalizeStereoLayout(
             activityReadOptionalStringIntentExtra(intent, EXTRA_VIDEO_PROJECTION_STEREO_LAYOUT)
@@ -197,7 +268,12 @@ internal object SpatialVideoProjectionRouteModule {
             ?: CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_HIGH_RATE_JSON_PAYLOAD
     return SpatialVideoProjectionSettings(
         enabled = enabled,
+        source = source,
         path = path.trim(),
+        brokerHost = brokerHost,
+        brokerPort = brokerPort,
+        brokerConnectTimeoutMs = brokerConnectTimeoutMs,
+        mediaLayout = mediaLayout,
         stereoLayout = stereoLayout,
         width = width,
         height = height,
@@ -217,6 +293,19 @@ internal object SpatialVideoProjectionRouteModule {
         else -> CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_STEREO_LAYOUT
       }
 
+  fun normalizeSource(value: String): String =
+      when (value.trim().lowercase(Locale.US).replace("_", "-")) {
+        "broker-rmanvid1", "rmanvid1" -> "broker-rmanvid1"
+        else -> CAMERA_HWB_PROJECTION_VIDEO_DEFAULT_SOURCE
+      }
+
+  fun normalizeMediaLayout(value: String): String =
+      when (value.trim().lowercase(Locale.US).replace("_", "-")) {
+        "side-by-side", "sbs", "left-right", "side-by-side-left-right" ->
+            CAMERA_HWB_PROJECTION_VIDEO_PACKED_MEDIA_LAYOUT
+        else -> CAMERA_HWB_PROJECTION_VIDEO_PACKED_MEDIA_LAYOUT
+      }
+
   fun markerFields(settings: SpatialVideoProjectionSettings): String =
       "videoProjectionEnabled=${settings.enabled} " +
           "spatialVideoProjectionEnabled=${settings.enabled} " +
@@ -231,6 +320,11 @@ internal object SpatialVideoProjectionRouteModule {
           "videoProjectionEnabledProperty=$CAMERA_HWB_PROJECTION_VIDEO_ENABLED_PROPERTY " +
           "videoProjectionEnabledIntentExtra=$EXTRA_VIDEO_PROJECTION_ENABLED " +
           "videoProjectionPathIntentExtra=$EXTRA_VIDEO_PROJECTION_PATH " +
+          "videoProjectionSource=${settings.source} " +
+          "videoProjectionMediaLayout=${settings.mediaLayout} " +
+          "videoProjectionBrokerHost=${activityMarkerToken(settings.brokerHost)} " +
+          "videoProjectionBrokerPort=${settings.brokerPort} " +
+          "videoProjectionBrokerConnectTimeoutMs=${settings.brokerConnectTimeoutMs} " +
           "videoProjectionWidth=${settings.width} videoProjectionHeight=${settings.height} " +
           "videoProjectionMaxImages=${settings.maxImages} videoProjectionFpsCap=${settings.fpsCap} " +
           "videoProjectionLooping=${settings.looping} " +
@@ -239,8 +333,7 @@ internal object SpatialVideoProjectionRouteModule {
           "videoProjectionOpacity=${activityMarkerFloat(settings.opacity)} " +
           "videoProjectionHighRateJsonPayload=${settings.highRateJsonPayload} " +
           "videoProjectionStream=stereo_video " +
-          "videoProjectionSource=app-private-or-device-local-file " +
-          "videoProjectionSourceAuthority=android-mediacodec-surface-decoder " +
+          "videoProjectionSourceAuthority=${if (settings.source == "broker-rmanvid1") "manifold-broker-rmanvid1-packed-camera2-h264" else "android-mediacodec-surface-decoder"} " +
           "videoProjectionTransport=mediacodec-surface-to-ndk-aimage-reader-ahardwarebuffer " +
           "videoProjectionControlPlane=spatial-activity-runtime-property-or-intent-extra " +
           "videoProjectionDecodePath=MediaCodec-to-Surface " +

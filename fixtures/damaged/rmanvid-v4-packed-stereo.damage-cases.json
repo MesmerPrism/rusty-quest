@@ -1,0 +1,10 @@
+[
+  { "id": "unknown-rmanvid-schema", "expected_error": "RMANVID schema version 4" },
+  { "id": "truncated-pair-extension", "expected_error": "exactly 48 bytes" },
+  { "id": "impossible-pair-delta", "expected_error": "disagrees with source sensor timestamps" },
+  { "id": "excessive-source-timestamp-skew", "expected_error": "exceeds the configured bound" },
+  { "id": "duplicate-reused-source-frame", "expected_error": "reuses or does not monotonically advance" },
+  { "id": "cpu-compositor-fallback", "expected_error": "cpu_pixel_copy=false" },
+  { "id": "receiver-metadata-dimension-mismatch", "expected_error": "dimensions disagree" },
+  { "id": "codec-config-with-video-pair", "expected_error": "zero/not-applicable" }
+]

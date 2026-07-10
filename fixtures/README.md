@@ -1,5 +1,9 @@
 # Rusty Quest Fixtures
 
+- `spatial-hand-alignment/`: sanitized OpenXR-to-Spatial SDK mapping fixtures.
+  The accepted viewer-world basis registration remains the rollback default;
+  mirror/reflection candidates stay explicit until a separate live headset
+  run validates viewer, hand-anchor, and joint-marker placement.
 - `native-app-features/`: source-only native APK feature descriptors used by
   `tools/Resolve-NativeAppBuild.ps1`. Each descriptor names dependencies,
   incompatibilities, manifest surface, runtime-profile property ownership,
@@ -292,11 +296,29 @@
   They require live evidence tier, source run and harness identity, matching
   Agent Board quest lease, peer discovery, group formation, bounded TCP socket
   exchange, and cleanup before Hostess may promote direct-Wi-Fi topology.
+  `direct-p2p-socket-route.pass.json` is the protocol-neutral
+  `rusty.quest.direct_p2p_socket_route.v1` fixture shared by camera and future
+  binary stream adapters. `ble-rendezvous-offer.pass.json` and
+  `ble-rendezvous-server-ready.receipt.json` cover the compact authenticated
+  BLE proposal and one-headset adapter-readiness receipt without claiming peer
+  exchange or Wi-Fi authority. `ble-rendezvous-pair.pass.json` covers the
+  two-device role swap, authenticated reconnect in each phase, exact device
+  correlation, redaction, boundary-state stability, and cleanup contract.
 - `remote-camera-sessions/`: valid remote camera session plans for
   Quest-to-Quest and Quest-to-Android phone diagnostic streaming, including
   low-rate runtime endpoint bindings for sender source kind, sender media
   profiles, camera permission policy, local receiver ports, peer transport
-  ingress, and outgoing transport route adapters.
+  ingress, and outgoing transport route adapters. The
+  `q2q-direct-p2p-mono.plan.json` fixture proves that direct-P2P route kind,
+  scoped socket authority, explicit local bind, peer subnet, and binary media
+  plane remain separate validated fields.
+  `q2q-direct-p2p-packed-sbs.plan.json` is the explicit packed-stereo variant:
+  each direction owns one `stereo` lane, Camera2 `50`/`51`, a bounded
+  sensor-timestamp pairing policy, GPU-only left/right composition, one
+  direct-P2P route, and no stale-eye reuse. The separate
+  `rmanvid-v4-packed-stereo.pass.json` fixture covers the exact 48-byte pair
+  extension, packed/per-eye dimensions, eye order, pair sequence, and source
+  timestamps. The ordinary two-eye fixtures remain the default/fallback lane.
 - `damaged/`: invalid runtime profile, remote-camera, and native-renderer
   examples that must be rejected, including runtime evidence logs where replay
   markers exist but the visual mesh was not actually reported visible, and a
@@ -312,3 +334,8 @@
   receipt stage evidence. Wi-Fi Direct lifecycle damaged fixtures reject
   template/source-identity gaps, lease serial mismatch, missing bounded TCP
   socket counters, and cleanup that did not complete.
+  Direct-P2P socket-route damaged fixtures reject infrastructure-WLAN addresses
+  and Android-`Network` substitution claims.
+  Packed-stereo damage cases reject extra/missing lanes, incorrect camera or
+  layout identity, CPU composition, stale-eye reuse, excessive pair skew, and
+  malformed RMANVID v4 pair metadata.

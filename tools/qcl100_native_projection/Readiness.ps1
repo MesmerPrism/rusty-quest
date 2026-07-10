@@ -189,8 +189,8 @@ function Apply-NativeRendererProfile {
 
 function Apply-NativeRendererLaneModeOverride {
     param([string]$Serial, [string]$Label)
-    $leftPort = if ($leftLaneActive) { $LeftReceiverPort } else { 0 }
-    $rightPort = if ($rightLaneActive) { $RightReceiverPort } else { 0 }
+    $leftPort = if ($packedMediaLayout -or $leftLaneActive) { $LeftReceiverPort } else { 0 }
+    $rightPort = if ($packedMediaLayout) { 0 } elseif ($rightLaneActive) { $RightReceiverPort } else { 0 }
     Invoke-AdbChecked -Serial $Serial -Arguments @(
         "shell", "setprop",
         "debug.rustyquest.native_renderer.video_projection.broker.left_port",
@@ -206,15 +206,38 @@ function Apply-NativeRendererLaneModeOverride {
         "debug.rustyquest.native_renderer.video_projection.broker.connect_timeout_ms",
         $NativeRendererBrokerConnectTimeoutMs.ToString()
     ) -Name "$Label native renderer broker socket timeout override"
+    Invoke-AdbChecked -Serial $Serial -Arguments @(
+        "shell", "setprop",
+        "debug.rustyquest.native_renderer.video_projection.broker.media_layout",
+        $MediaLayout
+    ) -Name "$Label native renderer broker media layout override"
+    if ($packedMediaLayout) {
+        Invoke-AdbChecked -Serial $Serial -Arguments @(
+            "shell", "setprop",
+            "debug.rustyquest.native_renderer.video_projection.width",
+            $packedWidth.ToString()
+        ) -Name "$Label packed renderer width override"
+        Invoke-AdbChecked -Serial $Serial -Arguments @(
+            "shell", "setprop",
+            "debug.rustyquest.native_renderer.video_projection.height",
+            $packedHeight.ToString()
+        ) -Name "$Label packed renderer height override"
+    }
     $receipt = [ordered]@{
         schema = "rusty.quest.qcl100_native_renderer_lane_mode_override.v1"
         serial = $Serial
         label = $Label
         lane_mode = $LaneMode
+        media_layout = $MediaLayout
+        packed_stereo = [bool]$packedMediaLayout
         left_lane_active = $leftLaneActive
         right_lane_active = $rightLaneActive
         left_broker_port = $leftPort
         right_broker_port = $rightPort
+        packed_width = if ($packedMediaLayout) { $packedWidth } else { 0 }
+        packed_height = if ($packedMediaLayout) { $packedHeight } else { 0 }
+        per_eye_width = if ($packedMediaLayout) { $PackedPerEyeWidth } else { 0 }
+        per_eye_height = if ($packedMediaLayout) { $PackedPerEyeHeight } else { 0 }
         broker_connect_timeout_ms = $NativeRendererBrokerConnectTimeoutMs
         broker_stream_read_timeout_ms = $NativeRendererBrokerConnectTimeoutMs
     }

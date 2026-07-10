@@ -20,12 +20,21 @@ param(
     [int]$BillboardCount = 64,
     [double]$BillboardWireframeWidthMeters = 0.0035,
     [ValidateSet("spatial-sdk-joint-proxy", "openxr-fb-mesh", "custom-mesh", "avatar-system-public-mesh-probe")]
-    [string]$BillboardWireframeSource = "spatial-sdk-joint-proxy"
+    [string]$BillboardWireframeSource = "spatial-sdk-joint-proxy",
+    [switch]$EnableAlignmentDiagnostic,
+    [switch]$DisableAlignmentDiagnostic,
+    [ValidateSet("viewer-world-basis-registration", "mirror-x-origin-registration")]
+    [string]$AlignmentMappingProfile = "viewer-world-basis-registration",
+    [int]$AlignmentSamplePeriodFrames = 15,
+    [double]$AlignmentJointMarkerMeters = 0.017,
+    [double]$AlignmentLineWidthMeters = 0.0040,
+    [switch]$DisableNativeSurfaceParticleLayer
 )
 
 $ErrorActionPreference = "Stop"
 $AvatarHandProbeEnabled = [bool]$EnableAvatarHandProbe -or (-not [bool]$DisableAvatarHandProbe)
 $BillboardWireframeEnabled = [bool]$EnableBillboardWireframe -or (-not [bool]$DisableBillboardWireframe)
+$AlignmentDiagnosticEnabled = [bool]$EnableAlignmentDiagnostic -and (-not [bool]$DisableAlignmentDiagnostic)
 
 $ControlSchema = "rusty.quest.spatial.hand_capture_control.v1"
 $RemoteFilesRoot = "/sdcard/Android/data/$PackageName/files"
@@ -116,6 +125,12 @@ function Write-ControlFile {
         app_owned_wireframe_resolved_source = "spatial-sdk-joint-proxy"
         openxr_fb_mesh_wireframe_supported = $false
         custom_hand_mesh_wireframe_supported = $false
+        spatial_openxr_hand_alignment_enabled = [bool]$AlignmentDiagnosticEnabled
+        spatial_openxr_hand_alignment_schema = "rusty.quest.spatial.openxr_hand_alignment.v1"
+        spatial_openxr_hand_alignment_provider = "openxr-joint-bridge-plus-spatial-avatarbody-anchors"
+        spatial_openxr_hand_alignment_mapping_profile = $AlignmentMappingProfile
+        spatial_openxr_hand_alignment_rollback_profile = "viewer-world-basis-registration"
+        spatial_openxr_hand_alignment_experimental_profile = "mirror-x-origin-registration"
     }
     $tempPath = Join-Path ([System.IO.Path]::GetTempPath()) ("rusty-quest-spatial-hand-capture-{0}.json" -f ([Guid]::NewGuid().ToString("N")))
     [System.IO.File]::WriteAllText($tempPath, ($control | ConvertTo-Json -Depth 8), (New-Object System.Text.UTF8Encoding($false)))
@@ -198,9 +213,18 @@ switch ($Action) {
         Set-SpatialProperty "debug.rustyquest.spatial.hand_billboard_flock.wireframe.source" $BillboardWireframeSource
         Set-SpatialProperty "debug.rustyquest.spatial.hand_billboard_flock.count" ([Math]::Max(1, [Math]::Min(2048, $BillboardCount)).ToString())
         Set-SpatialProperty "debug.rustyquest.spatial.hand_billboard_flock.wireframe.width_m" ("{0:0.####}" -f ([Math]::Max(0.00075, [Math]::Min(0.020, $BillboardWireframeWidthMeters))))
+        Set-SpatialProperty "debug.rustyquest.spatial.hand_alignment.enabled" ($(if ($AlignmentDiagnosticEnabled) { "true" } else { "false" }))
+        Set-SpatialProperty "debug.rustyquest.spatial.hand_alignment.render" "true"
+        Set-SpatialProperty "debug.rustyquest.spatial.hand_alignment.mapping_profile" $AlignmentMappingProfile
+        Set-SpatialProperty "debug.rustyquest.spatial.hand_alignment.sample_period_frames" ([Math]::Max(1, [Math]::Min(600, $AlignmentSamplePeriodFrames)).ToString())
+        Set-SpatialProperty "debug.rustyquest.spatial.hand_alignment.joint_marker_m" ("{0:0.####}" -f ([Math]::Max(0.004, [Math]::Min(0.080, $AlignmentJointMarkerMeters))))
+        Set-SpatialProperty "debug.rustyquest.spatial.hand_alignment.line_width_m" ("{0:0.####}" -f ([Math]::Max(0.00075, [Math]::Min(0.030, $AlignmentLineWidthMeters))))
+        if ($DisableNativeSurfaceParticleLayer -or $AlignmentDiagnosticEnabled) {
+            Set-SpatialProperty "debug.rustyquest.spatial.native_surface_particle_layer.enabled" "false"
+        }
         $preparedSession = if ([string]::IsNullOrWhiteSpace($SessionId)) { New-DefaultSessionId } else { $SessionId }
         Write-ControlFile -Enabled $false -CaptureSessionId $preparedSession | Out-Null
-        Write-Host "Prepared Spatial hand capture/probe for next app launch. session_hint=$preparedSession avatarHandProbe=$AvatarHandProbeEnabled wireframeSource=$BillboardWireframeSource controlFile=$RemoteControlPath"
+        Write-Host "Prepared Spatial hand capture/probe for next app launch. session_hint=$preparedSession avatarHandProbe=$AvatarHandProbeEnabled wireframeSource=$BillboardWireframeSource alignmentDiagnostic=$AlignmentDiagnosticEnabled alignmentMappingProfile=$AlignmentMappingProfile controlFile=$RemoteControlPath"
     }
     "Start" {
         $startedSession = Write-ControlFile -Enabled $true -CaptureSessionId $SessionId

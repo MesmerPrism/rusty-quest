@@ -8,8 +8,13 @@ object SpatialLiveHandJointBridge {
   const val ROW_COUNT: Int = 52
   const val FLOATS_PER_ROW: Int = 12
   const val EXPECTED_FLOAT_COUNT: Int = ROW_COUNT * FLOATS_PER_ROW
+  const val VIEW_DIAGNOSTIC_FLOAT_COUNT: Int = 18
+  const val VIEWER_WORLD_MAPPING_PROFILE_ACCEPTED = "viewer-world-basis-registration"
+  const val VIEWER_WORLD_MAPPING_PROFILE_MIRROR_X = "mirror-x-origin-registration"
 
   private const val NATIVE_RECEIPT_LIBRARY = "spatial_camera_panel_native_receipt"
+  private const val VIEWER_WORLD_MAPPING_MODE_ACCEPTED = 2
+  private const val VIEWER_WORLD_MAPPING_MODE_MIRROR_X = 3
 
   private var loadAttempted = false
   private var loaded = false
@@ -76,7 +81,10 @@ object SpatialLiveHandJointBridge {
     )
   }
 
-  fun updateSpatialViewerWorldBasis(viewerPose: Pose): Long {
+  fun updateSpatialViewerWorldBasis(
+      viewerPose: Pose,
+      mappingProfile: String = VIEWER_WORLD_MAPPING_PROFILE_ACCEPTED,
+  ): Long {
     if (!ensureLoaded()) {
       return 0L
     }
@@ -93,9 +101,22 @@ object SpatialLiveHandJointBridge {
         up.x,
         up.y,
         up.z,
+        if (normalizeViewerWorldMappingProfile(mappingProfile) ==
+            VIEWER_WORLD_MAPPING_PROFILE_MIRROR_X) {
+          VIEWER_WORLD_MAPPING_MODE_MIRROR_X
+        } else {
+          VIEWER_WORLD_MAPPING_MODE_ACCEPTED
+        },
         true,
     )
   }
+
+  fun normalizeViewerWorldMappingProfile(value: String?): String =
+      if (value?.trim()?.lowercase() == VIEWER_WORLD_MAPPING_PROFILE_MIRROR_X) {
+        VIEWER_WORLD_MAPPING_PROFILE_MIRROR_X
+      } else {
+        VIEWER_WORLD_MAPPING_PROFILE_ACCEPTED
+      }
 
   fun pollRows(): FloatArray? {
     if (!ensureLoaded()) {
@@ -103,6 +124,14 @@ object SpatialLiveHandJointBridge {
     }
     val rows = nativePollLiveHandJointRows() ?: return null
     return rows.takeIf { it.size == EXPECTED_FLOAT_COUNT }
+  }
+
+  fun pollViewDiagnostics(): FloatArray? {
+    if (!ensureLoaded()) {
+      return null
+    }
+    val values = nativePollLiveHandViewDiagnostics() ?: return null
+    return values.takeIf { it.size == VIEW_DIAGNOSTIC_FLOAT_COUNT }
   }
 
   fun stop() {
@@ -161,10 +190,13 @@ object SpatialLiveHandJointBridge {
       upX: Float,
       upY: Float,
       upZ: Float,
+      mappingMode: Int,
       valid: Boolean,
   ): Long
 
   @JvmStatic private external fun nativePollLiveHandJointRows(): FloatArray?
+
+  @JvmStatic private external fun nativePollLiveHandViewDiagnostics(): FloatArray?
 
   @JvmStatic private external fun nativeStopLiveHandJoints(): Long
 }

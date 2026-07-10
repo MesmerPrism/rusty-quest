@@ -11,6 +11,8 @@ layout(std430, set = 0, binding = 2) buffer LumaDiagnosticOut {
 
 layout(push_constant) uniform LumaDiagnosticPush {
     uvec4 params0;
+    vec4 left_source_uv_rect;
+    vec4 right_source_uv_rect;
 } pc;
 
 uint quantized_luma(vec3 rgb) {
@@ -25,17 +27,20 @@ void main() {
         return;
     }
 
-    vec2 uv = (vec2(gid.xy) + vec2(0.5)) / vec2(sample_axis);
+    vec2 unit_uv = (vec2(gid.xy) + vec2(0.5)) / vec2(sample_axis);
+    vec4 source_uv_rect = gid.z == 0u ? pc.left_source_uv_rect : pc.right_source_uv_rect;
+    vec2 uv = source_uv_rect.xy + unit_uv * source_uv_rect.zw;
     vec4 center = gid.z == 0u ? texture(u_camera_left, uv) : texture(u_camera_right, uv);
     uint y = quantized_luma(center.rgb);
     atomicAdd(out_stats.eye_stats[gid.z].x, y);
     atomicMax(out_stats.eye_stats[gid.z].y, 255u - y);
     atomicMax(out_stats.eye_stats[gid.z].z, y);
 
-    vec2 step_uv = vec2(1.0 / float(sample_axis), 0.0);
+    vec2 step_uv = vec2(source_uv_rect.z / float(sample_axis), 0.0);
+    vec2 source_max = source_uv_rect.xy + source_uv_rect.zw;
     vec4 neighbor = gid.z == 0u
-        ? texture(u_camera_left, min(uv + step_uv, vec2(1.0)))
-        : texture(u_camera_right, min(uv + step_uv, vec2(1.0)));
+        ? texture(u_camera_left, min(uv + step_uv, source_max))
+        : texture(u_camera_right, min(uv + step_uv, source_max));
     uint neighbor_y = quantized_luma(neighbor.rgb);
     if (abs(int(y) - int(neighbor_y)) >= int(pc.params0.y)) {
         atomicAdd(out_stats.eye_stats[gid.z].w, 1u);
