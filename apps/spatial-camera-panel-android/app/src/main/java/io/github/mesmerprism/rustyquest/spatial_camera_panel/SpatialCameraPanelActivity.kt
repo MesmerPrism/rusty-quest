@@ -4311,9 +4311,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     applyPanelPlacement()
     persistPanelHeadlockTuning("compose-placement-buttons")
     marker(
-        "channel=spatial-panel status=placement-updated " +
-            panelHeadlockMarkerFields() + " " +
-            "panelMode=${panelStateToken()} particleLayerRenderContinuity=kept-running"
+        SpatialPanelPlacementModule.workflowPlacementUpdatedMarker(
+            panelMode = panelStateToken(),
+            headlockMarkerFields = panelHeadlockMarkerFields(),
+        )
     )
     return panelPlacement
   }
@@ -4324,9 +4325,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     applyPanelPlacement()
     persistPanelHeadlockTuning("compose-panel-resize")
     marker(
-        "channel=spatial-panel status=size-updated panelWidth=${activityMarkerFloat(panelPlacement.widthMeters)} " +
-            "panelHeight=${activityMarkerFloat(panelPlacement.heightMeters)} panelMode=${panelStateToken()} " +
-            "particleLayerRenderContinuity=kept-running"
+        SpatialPanelPlacementModule.workflowPanelSizeUpdatedMarker(
+            widthMeters = panelPlacement.widthMeters,
+            heightMeters = panelPlacement.heightMeters,
+            panelMode = panelStateToken(),
+        )
     )
     return panelPlacement
   }
@@ -4339,9 +4342,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     persistPanelHeadlockTuning("compose-panel-reset")
     recordPanelState("compose-panel-reset")
     marker(
-        "channel=spatial-panel status=placement-reset panelMode=${panelStateToken()} " +
-            panelHeadlockMarkerFields() + " " +
-            "particleLayerRenderContinuity=kept-running"
+        SpatialPanelPlacementModule.workflowPlacementResetMarker(
+            panelMode = panelStateToken(),
+            headlockMarkerFields = panelHeadlockMarkerFields(),
+        )
     )
     return panelPlacement
   }
@@ -4351,9 +4355,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     applyPanelPlacement()
     persistPanelHeadlockTuning(source)
     marker(
-        "channel=spatial-panel status=headlock-mode-updated source=${activityMarkerToken(source)} " +
-            panelHeadlockMarkerFields() + " " +
-            "rendererAuthority=native-vulkan-wsi-surface-panel uiAuthority=spatial-sdk-compose-panel"
+        SpatialPanelPlacementModule.workflowHeadlockModeUpdatedMarker(
+            source = source,
+            headlockMarkerFields = panelHeadlockMarkerFields(),
+        )
     )
     return panelPlacement
   }
@@ -4738,10 +4743,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     if (!previous.headlockEquivalent(privateLayerPanelPlacement)) {
       marker(
-          "channel=private-layer-panel status=placement-synced-from-sdk-transform " +
-              "reason=${activityMarkerToken(reason)} privateLayerPanelTransformAuthority=spatial-sdk-grabbable " +
-              "composeDragPanelMovement=false previousDistanceMeters=${activityMarkerFloat(previous.zMeters)} " +
-              panelHeadlockMarkerFields()
+          SpatialPanelPlacementModule.privateLayerPlacementSyncedFromSdkTransformMarker(
+              reason = reason,
+              previousDistanceMeters = previous.zMeters,
+              headlockMarkerFields = panelHeadlockMarkerFields(),
+          )
       )
     }
     return true
@@ -4762,17 +4768,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     lastPrivateLayerPanelGrabbableState = grabbed
     lastPrivateLayerPanelGrabbableMarkerMs = now
     marker(
-        "channel=private-layer-panel status=sdk-grabbable-state " +
-            "reason=${activityMarkerToken(reason)} privateLayerPanelGrabbable=true " +
-            "privateLayerPanelGrabType=PIVOT_Y privateLayerPanelIsGrabbed=$grabbed " +
-            "privateLayerPanelGrabMinHeightMeters=${activityMarkerFloat(PRIVATE_LAYER_PANEL_GRAB_MIN_HEIGHT_METERS)} " +
-            "privateLayerPanelGrabMaxHeightMeters=${activityMarkerFloat(PRIVATE_LAYER_PANEL_GRAB_MAX_HEIGHT_METERS)} " +
-            "privateLayerPanelTransformAuthority=app-stored-placement-unless-grabbed " +
-            "privateLayerPanelForcedDistanceDisabled=false " +
-            "privateLayerPanelDistanceControl=left-stick-y-private-panel-free-transform-distance " +
-            "rightStickSideFlickPanelMoveDisabled=true " +
-            "composeDragPanelMovement=false panelHeaderGrabHandleVisualOnly=true " +
-            panelHeadlockMarkerFields()
+        SpatialPanelPlacementModule.privateLayerGrabbableStateMarker(
+            reason = reason,
+            grabbed = grabbed,
+            headlockMarkerFields = panelHeadlockMarkerFields(),
+        )
     )
   }
 
@@ -4828,11 +4828,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           headlockedPanelPoseFromViewer()
               ?: run {
                 if (forceLog && panelPlacement.visible) {
-                  marker(
-                      "channel=spatial-panel status=headlocked-pose-update-skipped " +
-                          "reason=${activityMarkerToken(reason)} headlockedPanelEnabled=true " +
-                          "viewerPoseSource=Scene.getViewerPose error=unavailable"
-                  )
+                  marker(SpatialPanelPlacementModule.headlockedPoseUpdateSkippedMarker(reason))
                 }
                 null
               }
@@ -4879,12 +4875,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     panelHeadlockMarkerCount += 1
     lastPanelHeadlockMarkerMs = now
     marker(
-        "channel=spatial-panel status=headlocked-pose-updated " +
-            "reason=${activityMarkerToken(reason)} viewerPoseSource=Scene.getViewerPose " +
-            "panelPoseSource=${if (privateLayerPanelVisible) "stored-placement-unless-grabbed" else "headlocked-viewer-relative"} " +
-            panelHeadlockMarkerFields() + " " +
-            "panelPositionM=${activityVectorMarker((privatePose ?: workflowPose)?.t ?: Vector3(0.0f))} " +
-            "panelQuaternion=${activityQuaternionMarker((privatePose ?: workflowPose)?.q ?: Quaternion(1.0f, 0.0f, 0.0f, 0.0f))}"
+        SpatialPanelPlacementModule.headlockedPoseUpdatedMarker(
+            reason = reason,
+            privateLayerPanelVisible = privateLayerPanelVisible,
+            headlockMarkerFields = panelHeadlockMarkerFields(),
+            panelPositionM = activityVectorMarker((privatePose ?: workflowPose)?.t ?: Vector3(0.0f)),
+            panelQuaternion =
+                activityQuaternionMarker(
+                    (privatePose ?: workflowPose)?.q ?: Quaternion(1.0f, 0.0f, 0.0f, 0.0f)
+                ),
+        )
     )
   }
 
@@ -4899,11 +4899,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (token != lastPanelHeadlockHotloadToken) {
       lastPanelHeadlockHotloadToken = token
       marker(
-          "channel=spatial-panel status=headlock-hotload-updated " +
-              "reason=${activityMarkerToken(reason)} " +
-              "headlockedPanelHotloadSource=runtime-hotload-android-property " +
-              panelHeadlockPropertyMarkerFields() + " " +
-              token
+          SpatialPanelPlacementModule.headlockHotloadUpdatedMarker(
+              reason = reason,
+              headlockMarkerFields = token,
+          )
       )
     }
   }
@@ -4963,8 +4962,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         }
         .getOrElse { throwable ->
           marker(
-              "channel=spatial-panel status=headlock-tuning-persist-failed " +
-                  "source=${activityMarkerToken(source)} error=${activityMarkerToken(throwable.javaClass.simpleName)}"
+              SpatialPanelPlacementModule.headlockTuningPersistFailedMarker(
+                  source = source,
+                  error = throwable.javaClass.simpleName,
+              )
           )
         }
   }

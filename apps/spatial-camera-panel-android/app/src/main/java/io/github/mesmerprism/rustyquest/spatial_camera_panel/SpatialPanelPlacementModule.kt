@@ -438,4 +438,88 @@ internal object SpatialPanelPlacementModule {
           "headlockedPanelJoystickTranslateRateProperty=$PANEL_HEADLOCK_JOYSTICK_TRANSLATE_RATE_PROPERTY " +
           "headlockedPanelJoystickDistanceRateProperty=$PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_PROPERTY " +
           "headlockedPanelJoystickScaleRateProperty=$PANEL_HEADLOCK_JOYSTICK_SCALE_RATE_PROPERTY"
+
+  fun workflowPlacementUpdatedMarker(panelMode: String, headlockMarkerFields: String): String =
+      "channel=spatial-panel status=placement-updated " +
+          headlockMarkerFields + " " +
+          "panelMode=$panelMode particleLayerRenderContinuity=kept-running"
+
+  fun workflowPanelSizeUpdatedMarker(
+      widthMeters: Float,
+      heightMeters: Float,
+      panelMode: String,
+  ): String =
+      "channel=spatial-panel status=size-updated panelWidth=${activityMarkerFloat(widthMeters)} " +
+          "panelHeight=${activityMarkerFloat(heightMeters)} panelMode=$panelMode " +
+          "particleLayerRenderContinuity=kept-running"
+
+  fun workflowPlacementResetMarker(panelMode: String, headlockMarkerFields: String): String =
+      "channel=spatial-panel status=placement-reset panelMode=$panelMode " +
+          headlockMarkerFields + " " +
+          "particleLayerRenderContinuity=kept-running"
+
+  fun workflowHeadlockModeUpdatedMarker(source: String, headlockMarkerFields: String): String =
+      "channel=spatial-panel status=headlock-mode-updated source=${activityMarkerToken(source)} " +
+          headlockMarkerFields + " " +
+          "rendererAuthority=native-vulkan-wsi-surface-panel uiAuthority=spatial-sdk-compose-panel"
+
+  fun privateLayerPlacementSyncedFromSdkTransformMarker(
+      reason: String,
+      previousDistanceMeters: Float,
+      headlockMarkerFields: String,
+  ): String =
+      "channel=private-layer-panel status=placement-synced-from-sdk-transform " +
+          "reason=${activityMarkerToken(reason)} privateLayerPanelTransformAuthority=spatial-sdk-grabbable " +
+          "composeDragPanelMovement=false previousDistanceMeters=${activityMarkerFloat(previousDistanceMeters)} " +
+          headlockMarkerFields
+
+  fun privateLayerGrabbableStateMarker(
+      reason: String,
+      grabbed: Boolean,
+      headlockMarkerFields: String,
+  ): String =
+      "channel=private-layer-panel status=sdk-grabbable-state " +
+          "reason=${activityMarkerToken(reason)} privateLayerPanelGrabbable=true " +
+          "privateLayerPanelGrabType=PIVOT_Y privateLayerPanelIsGrabbed=$grabbed " +
+          "privateLayerPanelGrabMinHeightMeters=${activityMarkerFloat(PRIVATE_LAYER_PANEL_GRAB_MIN_HEIGHT_METERS)} " +
+          "privateLayerPanelGrabMaxHeightMeters=${activityMarkerFloat(PRIVATE_LAYER_PANEL_GRAB_MAX_HEIGHT_METERS)} " +
+          "privateLayerPanelTransformAuthority=app-stored-placement-unless-grabbed " +
+          "privateLayerPanelForcedDistanceDisabled=false " +
+          "privateLayerPanelDistanceControl=left-stick-y-private-panel-free-transform-distance " +
+          "rightStickSideFlickPanelMoveDisabled=true " +
+          "composeDragPanelMovement=false panelHeaderGrabHandleVisualOnly=true " +
+          headlockMarkerFields
+
+  fun headlockedPoseUpdateSkippedMarker(reason: String): String =
+      "channel=spatial-panel status=headlocked-pose-update-skipped " +
+          "reason=${activityMarkerToken(reason)} headlockedPanelEnabled=true " +
+          "viewerPoseSource=Scene.getViewerPose error=unavailable"
+
+  fun headlockedPoseUpdatedMarker(
+      reason: String,
+      privateLayerPanelVisible: Boolean,
+      headlockMarkerFields: String,
+      panelPositionM: String,
+      panelQuaternion: String,
+  ): String =
+      "channel=spatial-panel status=headlocked-pose-updated " +
+          "reason=${activityMarkerToken(reason)} viewerPoseSource=Scene.getViewerPose " +
+          "panelPoseSource=${if (privateLayerPanelVisible) "stored-placement-unless-grabbed" else "headlocked-viewer-relative"} " +
+          headlockMarkerFields + " " +
+          "panelPositionM=$panelPositionM " +
+          "panelQuaternion=$panelQuaternion"
+
+  fun headlockHotloadUpdatedMarker(reason: String, headlockMarkerFields: String): String =
+      "channel=spatial-panel status=headlock-hotload-updated " +
+          "reason=${activityMarkerToken(reason)} " +
+          "headlockedPanelHotloadSource=runtime-hotload-android-property " +
+          headlockPropertyMarkerFields() + " " +
+          headlockMarkerFields
+
+  fun headlockTuningPersistFailedMarker(
+      source: String,
+      error: String,
+  ): String =
+      "channel=spatial-panel status=headlock-tuning-persist-failed " +
+          "source=${activityMarkerToken(source)} error=${activityMarkerToken(error)}"
 }
