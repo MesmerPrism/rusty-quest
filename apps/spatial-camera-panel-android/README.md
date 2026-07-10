@@ -459,6 +459,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   toggles plus private-layer reapply receipts. Toggle mutation returns inert
   unless the camera projection launch is explicitly active; JNI remains an
   Activity callback.
+- `app/src/main/.../SpatialCameraHwbProjectionGeometryCoordinator.kt` owns the
+  read-only projection-plane construction, target-distance and input-clearance
+  policy, projection marker composition, and panel media settings. It observes
+  Scene viewer/eye geometry through an Activity binding but has no activation,
+  property, JNI, or entity-mutation authority.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, viewer-locked and virtual-wall projection

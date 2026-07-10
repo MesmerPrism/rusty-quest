@@ -70,25 +70,19 @@ import com.meta.spatial.runtime.PanelSurface
 import com.meta.spatial.runtime.ReferenceSpace
 import com.meta.spatial.runtime.SamplerConfig
 import com.meta.spatial.runtime.Scene
-import com.meta.spatial.runtime.StereoMode
 import com.meta.spatial.toolkit.AppSystemActivity
 import com.meta.spatial.toolkit.AvatarSystem
 import com.meta.spatial.toolkit.Grabbable
 import com.meta.spatial.toolkit.GrabbableType
 import com.meta.spatial.toolkit.Hittable
 import com.meta.spatial.toolkit.Material
-import com.meta.spatial.toolkit.MediaPanelDisplayOptions
-import com.meta.spatial.toolkit.MediaPanelRenderOptions
 import com.meta.spatial.toolkit.MediaPanelSettings
 import com.meta.spatial.toolkit.Mesh
 import com.meta.spatial.toolkit.MeshCollision
-import com.meta.spatial.toolkit.PanelInputOptions
 import com.meta.spatial.toolkit.PanelDimensions
 import com.meta.spatial.toolkit.PanelRegistration
 import com.meta.spatial.toolkit.PanelRenderMode
 import com.meta.spatial.toolkit.PanelSettings
-import com.meta.spatial.toolkit.PanelStyleOptions
-import com.meta.spatial.toolkit.QuadShapeOptions
 import com.meta.spatial.toolkit.Scale
 import com.meta.spatial.toolkit.SceneObjectSystem
 import com.meta.spatial.toolkit.Transform
@@ -484,8 +478,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
             },
             resolveSettings = { spatialVideoProjectionRuntimeCoordinator.resolveSettings(intent) },
-            projectionMarkerFields = ::cameraHwbProjectionMarkerFields,
-            stereoMarkerFields = ::cameraHwbProjectionStereoMarkerFields,
+            projectionMarkerFields = cameraHwbProjectionGeometryCoordinator::markerFields,
+            stereoMarkerFields = cameraHwbProjectionGeometryCoordinator::stereoMarkerFields,
             cleanup = ::cleanupSdkQuadSurfaceProbe,
             prepare = { videoSettings ->
               spatialVideoProjectionRuntimeCoordinator.adoptSettings(videoSettings)
@@ -542,10 +536,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   videoSettings = spatialVideoProjectionRuntimeCoordinator.resolveSettings(intent),
               )
             },
-            startGateToken = ::cameraHwbProjectionStartGateToken,
-            carrierToken = ::cameraHwbProjectionCarrierToken,
-            projectionMarkerFields = ::cameraHwbProjectionMarkerFields,
-            stereoMarkerFields = ::cameraHwbProjectionStereoMarkerFields,
+            startGateToken = cameraHwbProjectionCarrierStateCoordinator::startGateToken,
+            carrierToken = cameraHwbProjectionCarrierStateCoordinator::carrierToken,
+            projectionMarkerFields = cameraHwbProjectionGeometryCoordinator::markerFields,
+            stereoMarkerFields = cameraHwbProjectionGeometryCoordinator::stereoMarkerFields,
             videoProjectionMarkerFields = spatialVideoProjectionRuntimeCoordinator::markerFields,
             launch = { request ->
               runCameraHwbProjectionProbe(request.readerMaxImages, request.videoSettings)
@@ -566,7 +560,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             resources = sdkQuadResourceCoordinator,
             routeEnabled = {
               cameraHwbProjectionLaunchCoordinator.started &&
-                  !cameraHwbProjectionScenePanelCarrierEnabled()
+                  !cameraHwbProjectionCarrierStateCoordinator.scenePanelCarrierEnabled()
             },
             nativeState = {
               SpatialCameraHwbProjectionRawNativeState(
@@ -575,13 +569,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
             },
             cleanup = ::cleanupSdkQuadSurfaceProbe,
-            projectionPlane = ::cameraHwbProjectionPlaneForPlacement,
+            projectionPlane = cameraHwbProjectionGeometryCoordinator::planeForPlacement,
             setProjectionEntity = { entity -> cameraHwbProjectionEntity = entity },
-            layerZIndex = ::cameraHwbProjectionZIndexForPlacement,
+            layerZIndex = cameraHwbProjectionCarrierStateCoordinator::zIndexForPlacement,
             carrierMode = cameraHwbProjectionCarrierStateCoordinator::carrierMode,
-            carrierToken = ::cameraHwbProjectionCarrierToken,
-            projectionMarkerFields = { plane -> cameraHwbProjectionMarkerFields(plane) },
-            stereoMarkerFields = ::cameraHwbProjectionStereoMarkerFields,
+            carrierToken = cameraHwbProjectionCarrierStateCoordinator::carrierToken,
+            projectionMarkerFields = cameraHwbProjectionGeometryCoordinator::markerFields,
+            stereoMarkerFields = cameraHwbProjectionGeometryCoordinator::stereoMarkerFields,
             videoProjectionMarkerFields = spatialVideoProjectionRuntimeCoordinator::markerFields,
             syntheticVisualEnabled = ::cameraHwbProjectionSyntheticVisualProbeEnabled,
             drawSyntheticVisual = cameraHwbProjectionSyntheticRenderer::draw,
@@ -615,24 +609,25 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             sceneObjectSystem = { systemManager.findSystem<SceneObjectSystem>() },
             routeEnabled = {
               cameraHwbProjectionLaunchCoordinator.started &&
-                  cameraHwbProjectionScenePanelCarrierEnabled()
+                  cameraHwbProjectionCarrierStateCoordinator.scenePanelCarrierEnabled()
             },
-            manualCustomMeshEnabled = ::cameraHwbProjectionManualCustomMeshCarrierEnabled,
+            manualCustomMeshEnabled =
+                cameraHwbProjectionCarrierStateCoordinator::manualCustomMeshCarrierEnabled,
             nativeState = {
               SpatialCameraHwbProjectionPanelNativeState(
                   receiptLibraryLoaded = nativeReceiptLibraryLoaded,
                   receiptLibraryError = nativeReceiptLibraryError,
               )
             },
-            panelMediaSettings = ::cameraHwbProjectionPanelMediaSettings,
-            projectionPlane = ::cameraHwbProjectionPlaneForPlacement,
+            panelMediaSettings = cameraHwbProjectionGeometryCoordinator::panelMediaSettings,
+            projectionPlane = cameraHwbProjectionGeometryCoordinator::planeForPlacement,
             projectionEntity = { cameraHwbProjectionEntity },
             setProjectionEntity = { entity -> cameraHwbProjectionEntity = entity },
-            layerZIndex = ::cameraHwbProjectionZIndexForPlacement,
-            carrierToken = ::cameraHwbProjectionCarrierToken,
-            panelRegistrationId = ::cameraHwbProjectionPanelRegistrationId,
-            projectionMarkerFields = { plane -> cameraHwbProjectionMarkerFields(plane) },
-            stereoMarkerFields = ::cameraHwbProjectionStereoMarkerFields,
+            layerZIndex = cameraHwbProjectionCarrierStateCoordinator::zIndexForPlacement,
+            carrierToken = cameraHwbProjectionCarrierStateCoordinator::carrierToken,
+            panelRegistrationId = cameraHwbProjectionCarrierStateCoordinator::panelRegistrationId,
+            projectionMarkerFields = cameraHwbProjectionGeometryCoordinator::markerFields,
+            stereoMarkerFields = cameraHwbProjectionGeometryCoordinator::stereoMarkerFields,
             videoSettings = { spatialVideoProjectionRuntimeCoordinator.settings },
             videoProjectionMarkerFields = spatialVideoProjectionRuntimeCoordinator::markerFields,
             syntheticVisualEnabled = ::cameraHwbProjectionSyntheticVisualProbeEnabled,
@@ -671,12 +666,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   spatialVideoProjectionRuntimeCoordinator.started
             },
             projectionEntity = { cameraHwbProjectionEntity },
-            scenePanelCarrierEnabled = ::cameraHwbProjectionScenePanelCarrierEnabled,
-            projectionPlane = ::cameraHwbProjectionPlaneForPlacement,
+            scenePanelCarrierEnabled =
+                cameraHwbProjectionCarrierStateCoordinator::scenePanelCarrierEnabled,
+            projectionPlane = cameraHwbProjectionGeometryCoordinator::planeForPlacement,
             updatePanelCarrierLayer = { plane, reason ->
               cameraHwbProjectionPanelCarrierCoordinator.updateLayer(plane, reason)
             },
-            layerZIndex = ::cameraHwbProjectionZIndexForPlacement,
+            layerZIndex = cameraHwbProjectionCarrierStateCoordinator::zIndexForPlacement,
             nativeState = {
               SpatialCameraHwbProjectionPlacementNativeState(
                   receiptLibraryLoaded = nativeReceiptLibraryLoaded,
@@ -701,8 +697,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   activityEyeOffsetRightMeters(plane.rightEyeOffset),
               )
             },
-            projectionMarkerFields = { plane -> cameraHwbProjectionMarkerFields(plane) },
-            stereoMarkerFields = ::cameraHwbProjectionStereoMarkerFields,
+            projectionMarkerFields = cameraHwbProjectionGeometryCoordinator::markerFields,
+            stereoMarkerFields = cameraHwbProjectionGeometryCoordinator::stereoMarkerFields,
             videoProjectionMarkerFields = {
               spatialVideoProjectionRuntimeCoordinator.markerFields(
                   spatialVideoProjectionRuntimeCoordinator.settings
@@ -736,7 +732,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   1.25f,
               )
             },
-            targetDistanceMeters = ::currentCameraHwbProjectionTargetDistanceMeters,
+            targetDistanceMeters = {
+              cameraHwbProjectionGeometryCoordinator.targetDistanceMeters()
+            },
             updatePlacement = { reason, forceLog ->
               cameraHwbProjectionPlacementUpdateCoordinator.update(reason, forceLog)
             },
@@ -781,6 +779,21 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
+  private val cameraHwbProjectionGeometryCoordinator:
+      SpatialCameraHwbProjectionGeometryCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialCameraHwbProjectionGeometryCoordinator(
+        SpatialCameraHwbProjectionGeometryBindings(
+            scene = scene,
+            carrierState = cameraHwbProjectionCarrierStateCoordinator,
+            tuning = cameraHwbProjectionTuningCoordinator,
+            virtualRoomEnabled = ::spatialVirtualRoomEnabled,
+            projectionWidthMeters = ::particleLayerProjectionWidthMeters,
+            projectionHeightMeters = ::particleLayerProjectionHeightMeters,
+            legacyLauncherPanelSuppressed = ::legacyLauncherPanelSuppressedForCameraStack,
+            privateLayerPanelZ = { privateLayerPanelPlacement.zMeters },
+        )
+    )
+  }
   private val stagedAssetModule = SpatialStagedAssetModule(::marker)
   private val activityScope = CoroutineScope(Dispatchers.Main)
   private val spatialVirtualRoomModule: SpatialVirtualRoomModule by lazy(LazyThreadSafetyMode.NONE) {
@@ -812,6 +825,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         SpatialAvatarHandVisualFeature(::marker),
         SpatialAvatarHandInvestigationFeature(::marker),
         SpatialHandBillboardFlockFeature(::marker) { store.snapshot().surfaceTargetId },
+
         SpatialHandCaptureRecorderFeature(this, ::marker) {
           SpatialNativeInteropProbe.capture(scene)
         },
@@ -848,6 +862,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "spatialSdk3dAssetModule=${SpatialStagedAssetModule.MODULE_ID} " +
             "spatialWorldHandBillboardFlock=spatial-sdk-world-hand-billboard-flock " +
             "spatialWorldHandBillboardFlockEnabledProperty=debug.rustyquest.spatial.hand_billboard_flock.enabled " +
+
             "spatialPrivateFeatureLoader=optional-reflection-source-set " +
             "spatialPrivateFeatureSourceEnv=RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR " +
             "spatialPrivateFeatureResourceEnv=RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR " +
@@ -1147,7 +1162,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                           SpatialPanelPlacementModule.privateLayerPanelLayerReadyMarker(
                               layerUpdateStatus = layerUpdateStatus,
                               cameraVideoProjectionLayerZIndex =
-                                  cameraHwbProjectionZIndexForPlacement(
+                                  cameraHwbProjectionCarrierStateCoordinator.zIndexForPlacement(
                                       cameraHwbProjectionCarrierStateCoordinator.placementMode()
                                   ),
                           )
@@ -1278,9 +1293,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       SpatialVirtualRoomProjectionState(
           placementModeToken =
               cameraHwbProjectionCarrierStateCoordinator.placementMode().markerToken,
-          carrierToken = cameraHwbProjectionCarrierToken(),
+          carrierToken = cameraHwbProjectionCarrierStateCoordinator.carrierToken(),
           carrierProperty = CAMERA_HWB_PROJECTION_CARRIER_PROPERTY,
-          roomRenderOrderToken = cameraHwbProjectionRoomRenderOrderToken(),
+          roomRenderOrderToken =
+              cameraHwbProjectionCarrierStateCoordinator.roomRenderOrderToken(),
       )
 
   private fun destroySpatialVirtualRoom(reason: String) = spatialVirtualRoomModule.destroy(reason)
@@ -1578,7 +1594,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     suppressParticleLayerForCameraStack("camera-hwb-projection-probe")
     privateLayerPanelVisible = false
     setWorkflowPanelVisible(false, focus = false, source = "camera-hwb-projection-probe")
-    if (cameraHwbProjectionScenePanelCarrierEnabled()) {
+    if (cameraHwbProjectionCarrierStateCoordinator.scenePanelCarrierEnabled()) {
       cameraHwbProjectionPanelCarrierCoordinator.run(readerMaxImages, videoSettings)
       return
     }
@@ -2251,7 +2267,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 particleLayerVisible = particleLayerVisibleForPanelMode(),
                 privateLayerPanelLayerUpdateStatus = privateLayerPanelLayerUpdateStatus,
                 cameraVideoProjectionLayerZIndex =
-                    cameraHwbProjectionZIndexForPlacement(
+                    cameraHwbProjectionCarrierStateCoordinator.zIndexForPlacement(
                         cameraHwbProjectionCarrierStateCoordinator.placementMode()
                     ),
                 leftStickYPanelDistanceEnabled = currentLeftStickPanelDistanceEnabled(),
@@ -2260,13 +2276,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 inputForegroundActive = inputForegroundActive,
                 inputForegroundDistanceMeters = inputForegroundDistanceMeters,
                 inputForegroundScale = inputForegroundScale,
-                projectionPanelHittable = cameraHwbProjectionPanelHittableToken(),
+                projectionPanelHittable =
+                    cameraHwbProjectionCarrierStateCoordinator.panelHittableToken(),
                 projectionPanelInputClearanceActive =
-                    cameraHwbProjectionPrivatePanelInputClearanceActive(),
+                    cameraHwbProjectionGeometryCoordinator.privatePanelInputClearanceActive(),
                 projectionPanelInputBehindPrivateLayerPanel =
-                    cameraHwbProjectionInputCarrierBehindPrivatePanel(),
+                    cameraHwbProjectionGeometryCoordinator.inputCarrierBehindPrivatePanel(),
                 projectionPanelInputTargetDistanceMeters =
-                    currentCameraHwbProjectionTargetDistanceMeters(),
+                    cameraHwbProjectionGeometryCoordinator.targetDistanceMeters(),
                 privateLayerOverride = privateLayerOverride,
                 headlockMarkerFields = panelHeadlockMarkerFields(),
             )
@@ -3030,144 +3047,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ): PanelDimensions =
       SpatialSurfaceParticleRouteModule.surfacePanelDimensions(targetDistanceMeters, overscanScale)
 
-  @OptIn(SpatialSDKExperimentalAPI::class)
-  private fun cameraHwbProjectionPlaneForPlacement(): CameraHwbProjectionPlane =
-      when (cameraHwbProjectionCarrierStateCoordinator.placementMode()) {
-        CameraHwbProjectionPlacementMode.ViewerLocked -> cameraHwbProjectionPlaneFromViewer()
-        CameraHwbProjectionPlacementMode.VirtualRoomWall -> cameraHwbProjectionPlaneOnVirtualWall()
-      }
-
-  @OptIn(SpatialSDKExperimentalAPI::class)
-  private fun cameraHwbProjectionPlaneFromViewer(): CameraHwbProjectionPlane {
-    val viewerPose = runCatching { scene.getViewerPose() }.getOrNull()
-    val targetDistanceMeters = currentCameraHwbProjectionTargetDistanceMeters()
-    return CameraHwbProjectionModule.viewerLockedProjectionPlane(
-        viewerPosition = viewerPose?.t,
-        viewerForward = viewerPose?.forward(),
-        viewerUp = viewerPose?.up(),
-        eyeOffsets = runCatching { scene.getEyeOffsets() }.getOrNull(),
-        targetDistanceMeters = targetDistanceMeters,
-        projectionWidthMeters = cameraHwbProjectionWidthMeters(targetDistanceMeters),
-        projectionHeightMeters = cameraHwbProjectionHeightMeters(targetDistanceMeters),
-    )
-  }
-
-  @OptIn(SpatialSDKExperimentalAPI::class)
-  private fun cameraHwbProjectionPlaneOnVirtualWall(): CameraHwbProjectionPlane {
-    val viewerPose = runCatching { scene.getViewerPose() }.getOrNull()
-    return CameraHwbProjectionModule.virtualWallProjectionPlane(
-        viewerPosition = viewerPose?.t,
-        eyeOffsets = runCatching { scene.getEyeOffsets() }.getOrNull(),
-    )
-  }
-
-  private fun cameraHwbProjectionZIndexForPlacement(
-      placementMode: CameraHwbProjectionPlacementMode,
-  ): Int = cameraHwbProjectionCarrierStateCoordinator.zIndexForPlacement(placementMode)
-
-  private fun cameraHwbProjectionDisplayRoleForPlacement(
-      placementMode: CameraHwbProjectionPlacementMode,
-  ): String = cameraHwbProjectionCarrierStateCoordinator.displayRoleForPlacement(placementMode)
-
-  private fun cameraHwbProjectionScenePanelCarrierEnabled(): Boolean =
-      cameraHwbProjectionCarrierStateCoordinator.scenePanelCarrierEnabled()
-
-  private fun cameraHwbProjectionManualCustomMeshCarrierEnabled(): Boolean =
-      cameraHwbProjectionCarrierStateCoordinator.manualCustomMeshCarrierEnabled()
-
-  private fun cameraHwbProjectionPanelRegistrationId(): String =
-      cameraHwbProjectionCarrierStateCoordinator.panelRegistrationId()
-
   private fun cameraHwbProjectionSyntheticVisualProbeEnabled(): Boolean =
       activityReadOptionalBooleanSystemProperty(CAMERA_HWB_PROJECTION_SYNTHETIC_VISUAL_PROPERTY) == true
-
-  private fun cameraHwbProjectionCarrierToken(): String =
-      cameraHwbProjectionCarrierStateCoordinator.carrierToken()
-
-  private fun cameraHwbProjectionRoomRenderOrderToken(): String =
-      cameraHwbProjectionCarrierStateCoordinator.roomRenderOrderToken()
-
-  private fun cameraHwbProjectionStartGateToken(): String =
-      cameraHwbProjectionCarrierStateCoordinator.startGateToken()
-
-  private fun cameraHwbProjectionCarrierTransportToken(): String =
-      cameraHwbProjectionCarrierStateCoordinator.carrierTransportToken()
-
-  private fun cameraHwbProjectionPanelHittableToken(): String =
-      cameraHwbProjectionCarrierStateCoordinator.panelHittableToken()
-
-  private fun cameraHwbProjectionMarkerFields(plane: CameraHwbProjectionPlane? = null): String {
-    val targetScale = cameraHwbProjectionTuningCoordinator.targetScale()
-    val stereoHorizontalOffsetUv =
-        cameraHwbProjectionTuningCoordinator.stereoHorizontalOffsetUv()
-    val placementMode =
-        plane?.placementMode ?: cameraHwbProjectionCarrierStateCoordinator.placementMode()
-    val targetDistanceMeters = plane?.targetDistanceMeters ?: currentCameraHwbProjectionTargetDistanceMeters()
-    val projectionWidthMeters =
-        plane?.projectionWidthMeters ?: cameraHwbProjectionWidthMeters(targetDistanceMeters)
-    val projectionHeightMeters =
-        plane?.projectionHeightMeters ?: cameraHwbProjectionHeightMeters(targetDistanceMeters)
-    return CameraHwbProjectionModule.markerFields(
-        CameraHwbProjectionMarkerInput(
-            carrierMode = cameraHwbProjectionCarrierStateCoordinator.carrierMode(),
-            placementMode = placementMode,
-            carrierTransportToken = cameraHwbProjectionCarrierTransportToken(),
-            startGateToken = cameraHwbProjectionStartGateToken(),
-            roomRenderOrderToken = cameraHwbProjectionRoomRenderOrderToken(),
-            targetDistanceMeters = targetDistanceMeters,
-            projectionWidthMeters = projectionWidthMeters,
-            projectionHeightMeters = projectionHeightMeters,
-            targetScale = targetScale,
-            stereoHorizontalOffsetUv = stereoHorizontalOffsetUv,
-            targetScaleJoystickRatePerSecond =
-                cameraHwbProjectionTuningCoordinator.targetScaleJoystickRate(),
-            legacyLauncherPanelSuppressed = legacyLauncherPanelSuppressedForCameraStack(),
-            targetDistanceSource = cameraHwbProjectionTargetDistanceSource(),
-            virtualRoomForegroundDistanceActive =
-                cameraHwbProjectionVirtualRoomForegroundDistanceActive(placementMode),
-            privatePanelInputClearanceActive =
-                cameraHwbProjectionPrivatePanelInputClearanceActive(placementMode),
-            inputCarrierBehindPrivatePanel =
-                cameraHwbProjectionInputCarrierBehindPrivatePanel(placementMode, targetDistanceMeters),
-            privatePanelInputClearanceTargetDistanceMeters =
-                cameraHwbProjectionPrivatePanelInputClearanceDistanceMeters(),
-            targetCoordinateSpace = PARTICLE_LAYER_TARGET_COORDINATE_SPACE,
-            targetProjectionSpace = PARTICLE_LAYER_TARGET_PROJECTION_SPACE,
-        )
-    )
-  }
-
-  private fun cameraHwbProjectionStereoMarkerFields(): String =
-      CameraHwbProjectionModule.stereoMarkerFields()
-
-  private fun currentCameraHwbProjectionTargetDistanceMeters(): Float {
-    val requestedDistance =
-        if (cameraHwbProjectionVirtualRoomForegroundDistanceActive()) {
-          CAMERA_HWB_PROJECTION_ROOM_FOREGROUND_TARGET_DISTANCE_METERS
-        } else {
-          CAMERA_HWB_PROJECTION_TARGET_DISTANCE_METERS
-        }
-    return requestedDistance.coerceIn(
-        PARTICLE_LAYER_TARGET_DISTANCE_MIN_METERS,
-        PARTICLE_LAYER_TARGET_DISTANCE_MAX_METERS,
-    )
-  }
-
-  private fun cameraHwbProjectionTargetDistanceSource(): String =
-      if (cameraHwbProjectionVirtualRoomForegroundDistanceActive()) {
-        "virtual-room-viewer-locked-foreground"
-      } else {
-        "fixed-camera-projection-default"
-      }
-
-  private fun cameraHwbProjectionPrivatePanelInputClearanceActive(
-      placementMode: CameraHwbProjectionPlacementMode =
-          cameraHwbProjectionCarrierStateCoordinator.placementMode(),
-  ): Boolean =
-      false
-
-  private fun cameraHwbProjectionPrivatePanelInputClearanceDistanceMeters(): Float =
-      currentCameraHwbProjectionTargetDistanceMeters()
 
   private fun privateLayerPanelInputForegroundDistanceMeters(): Float =
       (CAMERA_HWB_PROJECTION_ROOM_FOREGROUND_TARGET_DISTANCE_METERS -
@@ -3180,30 +3061,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun privateLayerPanelInputForegroundScale(distanceMeters: Float): Float =
       (PRIVATE_LAYER_PANEL_SCALE * (distanceMeters / PRIVATE_LAYER_PANEL_DISTANCE_METERS))
           .coerceIn(PRIVATE_LAYER_PANEL_SCALE_MIN, PANEL_HEADLOCK_SCALE_MAX)
-
-  private fun cameraHwbProjectionInputCarrierBehindPrivatePanel(
-      placementMode: CameraHwbProjectionPlacementMode =
-          cameraHwbProjectionCarrierStateCoordinator.placementMode(),
-      targetDistanceMeters: Float = currentCameraHwbProjectionTargetDistanceMeters(),
-  ): Boolean =
-      cameraHwbProjectionPrivatePanelInputClearanceActive(placementMode) &&
-          targetDistanceMeters > privateLayerPanelPlacement.zMeters
-
-  private fun cameraHwbProjectionVirtualRoomForegroundDistanceActive(
-      placementMode: CameraHwbProjectionPlacementMode =
-          cameraHwbProjectionCarrierStateCoordinator.placementMode(),
-  ): Boolean =
-      CameraHwbProjectionModule.virtualRoomForegroundDistanceActive(
-          placementMode,
-          spatialVirtualRoomEnabled(),
-          cameraHwbProjectionScenePanelCarrierEnabled(),
-      )
-
-  private fun cameraHwbProjectionWidthMeters(targetDistanceMeters: Float): Float =
-      particleLayerProjectionWidthMeters(targetDistanceMeters)
-
-  private fun cameraHwbProjectionHeightMeters(targetDistanceMeters: Float): Float =
-      particleLayerProjectionHeightMeters(targetDistanceMeters)
 
   private fun initialPrivateLayerDepthLayerPolicy(): Int =
       PrivateLayerControls.depthLayerPolicyForToken(
@@ -3228,11 +3085,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         SpatialPanelHeadlockMarkerInput(
             activePlacement = activeHeadlockedPanelPlacement(),
             privateLayerPanelVisible = privateLayerPanelVisible,
-            cameraTargetDistanceMeters = currentCameraHwbProjectionTargetDistanceMeters(),
-            projectionInputClearanceActive = cameraHwbProjectionPrivatePanelInputClearanceActive(),
-            projectionInputCarrierBehindPrivatePanel = cameraHwbProjectionInputCarrierBehindPrivatePanel(),
+            cameraTargetDistanceMeters = cameraHwbProjectionGeometryCoordinator.targetDistanceMeters(),
+            projectionInputClearanceActive =
+                cameraHwbProjectionGeometryCoordinator.privatePanelInputClearanceActive(),
+            projectionInputCarrierBehindPrivatePanel =
+                cameraHwbProjectionGeometryCoordinator.inputCarrierBehindPrivatePanel(),
             cameraProjectionLayerZIndex =
-                cameraHwbProjectionZIndexForPlacement(
+                cameraHwbProjectionCarrierStateCoordinator.zIndexForPlacement(
                     cameraHwbProjectionCarrierStateCoordinator.placementMode()
                 ),
         )
@@ -3864,29 +3723,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun particleLayerStereoMarkerFields(): String =
       SpatialSurfaceParticleRouteModule.stereoMarkerFields()
-
-  @OptIn(SpatialSDKExperimentalAPI::class)
-  private fun cameraHwbProjectionPanelMediaSettings(): MediaPanelSettings {
-    val plane = cameraHwbProjectionPlaneForPlacement()
-    return MediaPanelSettings(
-        shape = QuadShapeOptions(plane.projectionWidthMeters, plane.projectionHeightMeters),
-        display =
-            FixedMediaPanelDisplayOptions(
-                widthPx = CAMERA_HWB_PROJECTION_WIDTH_PX,
-                heightPx = CAMERA_HWB_PROJECTION_HEIGHT_PX,
-            ),
-        rendering =
-            MediaPanelRenderOptions(
-                false,
-                StereoMode.LeftRight,
-                SamplerConfig(),
-                0,
-                cameraHwbProjectionZIndexForPlacement(plane.placementMode),
-            ),
-        style = PanelStyleOptions(themeResourceId = R.style.PanelAppThemeOpaqueProbe),
-        input = PanelInputOptions(0),
-    )
-  }
 
   private fun particleLayerMediaSettings(): MediaPanelSettings =
       SpatialSurfaceParticleRouteModule.mediaSettings()

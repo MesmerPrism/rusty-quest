@@ -293,6 +293,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   receipts in `SpatialCameraHwbProjectionCarrierStateCoordinator.kt`; keep
   property/intent reads and JNI in Activity bindings and return toggle mutation
   inert unless the camera projection launch is explicitly active;
+- package read-only projection-plane construction, target-distance and
+  input-clearance policy, projection marker composition, and panel media
+  settings in `SpatialCameraHwbProjectionGeometryCoordinator.kt`; retain Scene
+  observation as an Activity binding and give the coordinator no activation,
+  property, JNI, or entity-mutation authority;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, placement-plane construction from
