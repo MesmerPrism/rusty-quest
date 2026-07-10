@@ -416,6 +416,15 @@ Interaction SDK pointer input without native multimodal extension forcing.
   marker envelopes plus default validation identifiers. It must not mutate the
   store, operate panels, schedule handlers, call Polar APIs, or start native
   routes.
+- `app/src/main/.../SpatialValidationWorkflowCoordinator.kt` owns the four
+  exact-action intent opt-ins, validation command parsing, store/session
+  sequencing, remote UI command dispatch, and delayed self-test/Polar
+  automation. Ordinary launches are inert: no store provider, panel callback,
+  Polar callback, or diagnostic callback is invoked unless the intent action
+  matches a declared validation route. The Activity supplies typed panel,
+  particle, Polar, diagnostics, marker, and error-reporting bindings; the
+  coordinator must not register features, mutate Spatial scene entities, read
+  runtime properties, or call JNI.
 - `app/src/main/.../SpatialSurfaceParticleRouteModule.kt` owns the
   surface-particle route policy: native-layer opt-in/suppression defaults,
   carrier token parsing, panel dimensions, projection-surface math, media

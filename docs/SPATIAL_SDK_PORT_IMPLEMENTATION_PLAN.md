@@ -249,6 +249,12 @@ Apply that model here when a lane grows beyond a narrow facade method:
   UI-command, surface-target activation, remote participant, and Polar
   live-validation marker envelopes plus default validation identifiers, in
   `SpatialValidationCommandModule.kt`;
+- package the four exact-action validation intent opt-ins, command parsing,
+  store/session sequencing, remote UI dispatch, and delayed self-test/Polar
+  automation in `SpatialValidationWorkflowCoordinator.kt`; keep ordinary
+  launches inert and retain scene mutation, feature registration, runtime
+  properties, and JNI behind Activity-supplied callbacks or outside this
+  coordinator;
 - keep the Compose experiment UI plus experiment lifecycle and auto-panel
   marker envelopes in `ExperimentPanelController.kt`, while the Activity owns
   store mutation, panel visibility, and marker emission;

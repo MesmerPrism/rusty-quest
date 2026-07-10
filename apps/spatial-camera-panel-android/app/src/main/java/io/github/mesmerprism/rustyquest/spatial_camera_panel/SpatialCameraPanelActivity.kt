@@ -192,6 +192,68 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         openPrimary = ::openWorkflowPanelFromController,
     )
   }
+  private val validationWorkflowCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialValidationWorkflowCoordinator(
+        SpatialValidationWorkflowBindings(
+            store = { store },
+            marker = ::marker,
+            scheduleParticleLayerLifecycleDiagnostics =
+                ::scheduleParticleLayerLifecycleDiagnostics,
+            logParticleLayerLifecycleStatus = ::logParticleLayerLifecycleStatus,
+            setWorkflowPanelVisible = { visible, focus, source ->
+              setWorkflowPanelVisible(visible, focus, source)
+              Unit
+            },
+            setPrivateLayerPanelVisible = { visible, focus, source ->
+              setPrivateLayerPanelVisible(visible, focus, source)
+              Unit
+            },
+            resetWorkflowPanelPlacement = {
+              resetWorkflowPanelPlacement()
+              Unit
+            },
+            setPanelHeadlocked = { enabled, source ->
+              setPanelHeadlocked(enabled, source)
+              Unit
+            },
+            panelHeadlocked = { panelPlacement.headlocked },
+            adjustPanelPlacement = { deltaX, deltaY, deltaZ, deltaScale ->
+              adjustPanelPlacement(deltaX, deltaY, deltaZ, deltaScale)
+              Unit
+            },
+            resizeWorkflowPanel = { deltaWidth, deltaHeight ->
+              resizeWorkflowPanel(deltaWidth, deltaHeight)
+              Unit
+            },
+            currentParticleControls = { particleControls },
+            updateSurfaceParticleControls = { controls, source ->
+              updateSurfaceParticleControls(controls, source)
+              Unit
+            },
+            applyRemoteParticleLayerTargetDistance =
+                ::applyRemoteParticleLayerTargetDistance,
+            applyRemoteParticleLayerViewYaw = ::applyRemoteParticleLayerViewYaw,
+            recenterSurfaceParticleSphere = { inputSource, detail ->
+              recenterSurfaceParticleSphereOnViewer(
+                  inputSource = inputSource,
+                  detail = detail,
+                  requireParticleView = false,
+              )
+              Unit
+            },
+            resolveSurfaceParticleAliasControl = ::resolveSurfaceParticleAliasControl,
+            applyDriverProfileToParticleControls = { block, source ->
+              applyDriverProfileToParticleControls(block, source)
+              Unit
+            },
+            setQuestionnaireDueReopensPanel = ::setQuestionnaireDueReopensPanel,
+            panelStateToken = ::panelStateToken,
+            workflowPanelVisible = { panelPlacement.visible },
+            ensurePolarSensorPanel = ::ensurePolarSensorPanel,
+            logError = { message, throwable -> Log.e(TAG, message, throwable) },
+        )
+    )
+  }
   private var externalSwapchainProbeStarted = false
   private var externalSwapchainProbeLayer: SceneQuadLayer? = null
   private var externalSwapchainProbeSceneObject: SceneObject? = null
@@ -336,10 +398,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     )
     runSpatialVirtualRoomIfRequested("activity-created")
     scheduleParticleLayerLifecycleDiagnostics("activity-created")
-    runValidationWorkflowIfRequested(intent)
-    runPolarLiveValidationIfRequested(intent)
-    runUiCommandIfRequested(intent)
-    runSurfaceTargetActivationIfRequested(intent)
+    validationWorkflowCoordinator.dispatchIfRequested(intent)
   }
 
   override fun onNewIntent(intent: Intent) {
@@ -348,10 +407,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     suppressParticleLayerIfCameraProjectionRequested("new-intent")
     deactivateLegacyWorkflowPanelsForCameraStack("new-intent")
     deactivatePanelShellIfRequested("new-intent")
-    runValidationWorkflowIfRequested(intent)
-    runPolarLiveValidationIfRequested(intent)
-    runUiCommandIfRequested(intent)
-    runSurfaceTargetActivationIfRequested(intent)
+    validationWorkflowCoordinator.dispatchIfRequested(intent)
     runSpatialStagedAssetIfRequested(intent, "new-intent")
     runSpatialVirtualRoomIfRequested("new-intent")
   }
@@ -3977,12 +4033,19 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun resolveSurfaceParticleAliasControl(intent: Intent, source: String) {
     val parameterId =
-        intent.getStringExtra(EXTRA_PARTICLE_ALIAS_PARAMETER_ID)?.trim()?.takeIf { it.isNotBlank() }
+        intent
+            .getStringExtra(SpatialValidationWorkflowCoordinator.EXTRA_PARTICLE_ALIAS_PARAMETER_ID)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
             ?: ""
-    val requestedValue = intent.getFloatExtra(EXTRA_PARTICLE_ALIAS_VALUE, 0.0f)
+    val requestedValue =
+        intent.getFloatExtra(SpatialValidationWorkflowCoordinator.EXTRA_PARTICLE_ALIAS_VALUE, 0.0f)
     val activationProfile =
         intent
-            .getStringExtra(EXTRA_PARTICLE_ALIAS_VISUAL_DRIVER_ACTIVATION_PROFILE)
+            .getStringExtra(
+                SpatialValidationWorkflowCoordinator
+                    .EXTRA_PARTICLE_ALIAS_VISUAL_DRIVER_ACTIVATION_PROFILE
+            )
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: "default"
@@ -5085,7 +5148,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun applyRemoteParticleLayerTargetDistance(intent: Intent, source: String) {
     val requested =
         intent.getFloatExtra(
-            EXTRA_PARTICLE_LAYER_TARGET_DISTANCE_METERS,
+            SpatialValidationWorkflowCoordinator.EXTRA_PARTICLE_LAYER_TARGET_DISTANCE_METERS,
             currentParticleLayerTargetDistanceMeters(),
         )
     val clamped =
@@ -5110,7 +5173,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun applyRemoteParticleLayerViewYaw(intent: Intent, source: String) {
     val requested =
         intent.getFloatExtra(
-            EXTRA_PARTICLE_LAYER_VIEW_YAW_DEGREES,
+            SpatialValidationWorkflowCoordinator.EXTRA_PARTICLE_LAYER_VIEW_YAW_DEGREES,
             currentParticleLayerViewYawDegrees(),
         )
     val clamped =
@@ -7058,389 +7121,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     stagedAssetModule.startIfRequested(intent, reason)
   }
 
-  private fun runValidationWorkflowIfRequested(intent: Intent?) {
-    if (intent?.action != ACTION_RUN_WORKFLOW_SELF_TEST) {
-      return
-    }
-    val participantId =
-        intent.getStringExtra(EXTRA_PARTICIPANT_ID)?.trim()?.takeIf { it.isNotBlank() }
-            ?: SpatialValidationCommandModule.DEFAULT_SELF_TEST_PARTICIPANT_ID
-    val surfaceTargetId =
-        intent.getStringExtra(EXTRA_SURFACE_TARGET_ID)?.trim()?.takeIf { it.isNotBlank() }
-            ?: SpatialValidationCommandModule.DEFAULT_SURFACE_TARGET_ID
-
-    marker(SpatialValidationCommandModule.selfTestStartMarker(participantId, surfaceTargetId))
-    scheduleParticleLayerLifecycleDiagnostics("self-test-start")
-    try {
-      store.resetForNewParticipant()
-      store.beginParticipant(participantId)
-      store.savePolarSetup(
-          runLabel = "headset-self-test",
-          operatorId = "codex",
-          notes = "Meta Spatial SDK validation intent",
-      )
-      store.selectSurface(surfaceTargetId)
-      store.prioritizeConditionForValidation(VALIDATION_DRIVER_PROFILE_ID)
-      setWorkflowPanelVisible(false, focus = false, source = "self-test-particle-view")
-      val block = store.startNextBlock()
-      if (block != null) {
-        applyDriverProfileToParticleControls(block, "self-test-driver-profile-start")
-      }
-      Handler(Looper.getMainLooper())
-          .postDelayed(
-              { setWorkflowPanelVisible(true, focus = true, source = "self-test-workflow-panel") },
-              1500L,
-          )
-      marker(
-          SpatialValidationCommandModule.selfTestBlockStartedMarker(
-              participantId,
-              surfaceTargetId,
-              VALIDATION_DRIVER_PROFILE_ID,
-          )
-      )
-      Handler(Looper.getMainLooper())
-          .postDelayed(
-              {
-                try {
-                  logParticleLayerLifecycleStatus("self-test-before-questionnaire")
-                  store.syncElapsedBlock()
-                  store.submitQuestionnaire(
-                      comfortRating = 4,
-                      intensityRating = 4,
-                      engagementRating = 4,
-                      notes = "Codex headset validation self-test",
-                      signature = emptySignatureJson(),
-                  )
-                  marker(
-                      SpatialValidationCommandModule.selfTestCompleteMarker(
-                          participantId,
-                          surfaceTargetId,
-                          VALIDATION_DRIVER_PROFILE_ID,
-                      )
-                  )
-                } catch (throwable: Throwable) {
-                  marker(
-                      SpatialValidationCommandModule.selfTestFailedMarker(
-                          SpatialValidationCommandModule.throwableErrorToken(throwable)
-                      )
-                  )
-                  Log.e(TAG, "Spatial Camera Panel validation workflow failed", throwable)
-                }
-              },
-              SpatialCameraPanelStore.DEFAULT_BLOCK_DURATION_MS + 750L,
-          )
-    } catch (throwable: Throwable) {
-      marker(
-          SpatialValidationCommandModule.selfTestFailedMarker(
-              SpatialValidationCommandModule.throwableErrorToken(throwable)
-          )
-      )
-      Log.e(TAG, "Spatial Camera Panel validation workflow failed", throwable)
-    }
-  }
-
-  private fun runUiCommandIfRequested(intent: Intent?) {
-    if (intent?.action != ACTION_RUN_UI_COMMAND) {
-      return
-    }
-    val uiAction =
-        intent.getStringExtra(EXTRA_UI_ACTION)?.trim()?.takeIf { it.isNotBlank() }
-            ?: "panel-open"
-    val source = SpatialValidationCommandModule.remoteUiCommandSource(uiAction)
-    marker(SpatialValidationCommandModule.uiCommandStartMarker(uiAction))
-    try {
-      when (uiAction) {
-        "panel-open" -> setWorkflowPanelVisible(true, focus = true, source = source)
-        "panel-close" -> setWorkflowPanelVisible(false, focus = false, source = source)
-        "private-layer-panel-open" -> setPrivateLayerPanelVisible(true, focus = true, source = source)
-        "private-layer-panel-close" -> setPrivateLayerPanelVisible(false, focus = false, source = source)
-        "panel-reset" -> resetWorkflowPanelPlacement()
-        "panel-headlock-on" -> setPanelHeadlocked(true, source)
-        "panel-headlock-off" -> setPanelHeadlocked(false, source)
-        "panel-headlock-toggle" -> setPanelHeadlocked(!panelPlacement.headlocked, source)
-        "panel-adjust" ->
-            adjustPanelPlacement(
-                intent.getFloatExtra(EXTRA_DELTA_X, 0.0f),
-                intent.getFloatExtra(EXTRA_DELTA_Y, 0.0f),
-                intent.getFloatExtra(EXTRA_DELTA_Z, 0.0f),
-                intent.getFloatExtra(EXTRA_DELTA_SCALE, 0.0f),
-            )
-        "panel-resize" ->
-            resizeWorkflowPanel(
-                intent.getFloatExtra(EXTRA_DELTA_WIDTH, 0.0f),
-                intent.getFloatExtra(EXTRA_DELTA_HEIGHT, 0.0f),
-            )
-        "particle-controls" ->
-            updateSurfaceParticleControls(
-                particleControls.copy(
-                    driver0Value01 = intent.getFloatExtra(EXTRA_DRIVER0, particleControls.driver0Value01),
-                    driver1Value01 = intent.getFloatExtra(EXTRA_DRIVER1, particleControls.driver1Value01),
-                    driver2Value01 = intent.getFloatExtra(EXTRA_DRIVER2, particleControls.driver2Value01),
-                    driver3Value01 = intent.getFloatExtra(EXTRA_DRIVER3, particleControls.driver3Value01),
-                    driver4Value01 = intent.getFloatExtra(EXTRA_DRIVER4, particleControls.driver4Value01),
-                    driver5Value01 = intent.getFloatExtra(EXTRA_DRIVER5, particleControls.driver5Value01),
-                    driver6Value01 = intent.getFloatExtra(EXTRA_DRIVER6, particleControls.driver6Value01),
-                    driver7Value01 = intent.getFloatExtra(EXTRA_DRIVER7, particleControls.driver7Value01),
-                    pointScale = intent.getFloatExtra(EXTRA_POINT_SCALE, particleControls.pointScale),
-                    tracerDrawSlotsPerOscillator =
-                        intent.getFloatExtra(
-                            EXTRA_TRACER_DRAW_SLOTS,
-                            particleControls.tracerDrawSlotsPerOscillator,
-                        ),
-                    tracerLifetimeSeconds =
-                        intent.getFloatExtra(
-                            EXTRA_TRACER_LIFETIME_SECONDS,
-                            particleControls.tracerLifetimeSeconds,
-                        ),
-                    tracerCopiesPerSecond =
-                        intent.getFloatExtra(
-                            EXTRA_TRACER_COPIES_PER_SECOND,
-                            particleControls.tracerCopiesPerSecond,
-                        ),
-                    transparencyOpacity =
-                        intent.getFloatExtra(EXTRA_TRANSPARENCY_OPACITY, particleControls.transparencyOpacity),
-                    projectionWorldScale =
-                        intent.getFloatExtra(EXTRA_PROJECTION_WORLD_SCALE, particleControls.projectionWorldScale),
-                ),
-                source,
-            )
-        "particle-panel-distance" -> applyRemoteParticleLayerTargetDistance(intent, source)
-        "particle-panel-view-yaw" -> applyRemoteParticleLayerViewYaw(intent, source)
-        "particle-recenter" ->
-            recenterSurfaceParticleSphereOnViewer(
-                inputSource = source,
-                detail = "remoteUiAction=particle-recenter controllerInputRequired=false",
-                requireParticleView = false,
-            )
-        "particle-alias-control" -> resolveSurfaceParticleAliasControl(intent, source)
-        "participant-reset" -> {
-          store.resetForNewParticipant()
-          setWorkflowPanelVisible(true, focus = true, source = source)
-        }
-        "participant-begin" -> {
-          store.beginParticipant(remoteParticipantId(intent))
-          setWorkflowPanelVisible(true, focus = true, source = source)
-        }
-        "polar-setup-save" -> {
-          ensureRemoteParticipant(intent, source)
-          store.savePolarSetup(
-              runLabel = intent.getStringExtra(EXTRA_RUN_LABEL) ?: "remote-ui-command",
-              operatorId = intent.getStringExtra(EXTRA_OPERATOR_ID) ?: "codex",
-              notes = intent.getStringExtra(EXTRA_NOTES) ?: "Remote UI command",
-          )
-          setWorkflowPanelVisible(true, focus = true, source = source)
-        }
-        "surface-select" -> {
-          ensureRemoteParticipantAndPolarSetup(intent, source)
-          store.selectSurface(remoteSurfaceTargetId(intent))
-          setWorkflowPanelVisible(true, focus = true, source = source)
-        }
-        "start-block" -> startRemoteSurfaceBlock(intent, source, resetSession = false)
-        "surface-target-activate" -> startRemoteSurfaceBlock(intent, source, resetSession = true)
-        "questionnaire-submit" -> {
-          store.submitQuestionnaire(
-              comfortRating = intent.getIntExtra(EXTRA_COMFORT_RATING, 4),
-              intensityRating = intent.getIntExtra(EXTRA_INTENSITY_RATING, 4),
-              engagementRating = intent.getIntExtra(EXTRA_ENGAGEMENT_RATING, 4),
-              notes = intent.getStringExtra(EXTRA_NOTES) ?: "Remote UI command questionnaire",
-              signature = emptySignatureJson(),
-          )
-          setWorkflowPanelVisible(true, focus = true, source = source)
-        }
-        else -> error("unknown_ui_action_$uiAction")
-      }
-      marker(
-          SpatialValidationCommandModule.uiCommandCompleteMarker(
-              uiAction,
-              panelStateToken(),
-              panelPlacement.visible,
-              store.snapshot().surfaceTargetId,
-          )
-      )
-    } catch (throwable: Throwable) {
-      marker(
-          SpatialValidationCommandModule.uiCommandFailedMarker(
-              uiAction,
-              SpatialValidationCommandModule.throwableErrorToken(throwable),
-          )
-      )
-      Log.e(TAG, "Spatial Camera Panel UI command failed", throwable)
-    }
-  }
-
-  private fun runSurfaceTargetActivationIfRequested(intent: Intent?) {
-    if (intent?.action != ACTION_RUN_SURFACE_TARGET) {
-      return
-    }
-    val participantId =
-        intent.getStringExtra(EXTRA_PARTICIPANT_ID)?.trim()?.takeIf { it.isNotBlank() }
-            ?: SpatialValidationCommandModule.DEFAULT_SURFACE_TARGET_PARTICIPANT_ID
-    val surfaceTargetId =
-        intent.getStringExtra(EXTRA_SURFACE_TARGET_ID)?.trim()?.takeIf { it.isNotBlank() }
-            ?: SpatialValidationCommandModule.DEFAULT_SURFACE_TARGET_ID
-
-    try {
-      startRemoteSurfaceBlock(intent, "surface-target-activation", resetSession = true)
-      marker(
-          SpatialValidationCommandModule.surfaceTargetActivatedMarker(
-              participantId,
-              surfaceTargetId,
-              VALIDATION_DRIVER_PROFILE_ID,
-              panelStateToken(),
-          )
-      )
-    } catch (throwable: Throwable) {
-      marker(
-          SpatialValidationCommandModule.surfaceTargetActivationFailedMarker(
-              surfaceTargetId,
-              SpatialValidationCommandModule.throwableErrorToken(throwable),
-          )
-      )
-      Log.e(TAG, "Spatial Camera Panel surface target activation failed", throwable)
-    }
-  }
-
-  private fun startRemoteSurfaceBlock(
-      intent: Intent,
-      source: String,
-      resetSession: Boolean,
-  ): ActiveBlockSnapshot? {
-    marker(
-        SpatialValidationCommandModule.surfaceTargetActivationStartMarker(
-            remoteParticipantId(intent),
-            remoteSurfaceTargetId(intent),
-            source,
-        )
-    )
-    scheduleParticleLayerLifecycleDiagnostics(source)
-    if (resetSession) {
-      store.resetForNewParticipant()
-    }
-    ensureRemoteParticipantAndPolarSetup(intent, source)
-    store.selectSurface(remoteSurfaceTargetId(intent))
-    store.prioritizeConditionForValidation(VALIDATION_DRIVER_PROFILE_ID)
-    setQuestionnaireDueReopensPanel(false, source)
-    setWorkflowPanelVisible(false, focus = false, source = "$source-particle-view")
-    val block = store.startNextBlock()
-    if (block != null) {
-      applyDriverProfileToParticleControls(block, "$source-block-start")
-    }
-    return block
-  }
-
-  private fun ensureRemoteParticipantAndPolarSetup(intent: Intent, source: String) {
-    ensureRemoteParticipant(intent, source)
-    val snapshot = store.snapshot()
-    if (snapshot.stage == "polar_setup") {
-      store.savePolarSetup(
-          runLabel = intent.getStringExtra(EXTRA_RUN_LABEL) ?: source,
-          operatorId = intent.getStringExtra(EXTRA_OPERATOR_ID) ?: "codex",
-          notes = intent.getStringExtra(EXTRA_NOTES) ?: "Remote UI command",
-      )
-    }
-  }
-
-  private fun ensureRemoteParticipant(intent: Intent, source: String) {
-    val snapshot = store.snapshot()
-    if (snapshot.sessionId.isBlank() || snapshot.stage == "participant") {
-      store.beginParticipant(remoteParticipantId(intent))
-      marker(
-          SpatialValidationCommandModule.remoteParticipantCreatedMarker(
-              source,
-              remoteParticipantId(intent),
-          )
-      )
-    }
-  }
-
-  private fun remoteParticipantId(intent: Intent): String =
-      intent.getStringExtra(EXTRA_PARTICIPANT_ID)?.trim()?.takeIf { it.isNotBlank() }
-          ?: SpatialValidationCommandModule.DEFAULT_UI_COMMAND_PARTICIPANT_ID
-
-  private fun remoteSurfaceTargetId(intent: Intent): String =
-      intent.getStringExtra(EXTRA_SURFACE_TARGET_ID)?.trim()?.takeIf { it.isNotBlank() }
-          ?: SpatialValidationCommandModule.DEFAULT_SURFACE_TARGET_ID
-
-  private fun runPolarLiveValidationIfRequested(intent: Intent?) {
-    if (intent?.action != ACTION_RUN_POLAR_LIVE_VALIDATION) {
-      return
-    }
-    val participantId =
-        intent.getStringExtra(EXTRA_PARTICIPANT_ID)?.trim()?.takeIf { it.isNotBlank() }
-            ?: SpatialValidationCommandModule.DEFAULT_POLAR_LIVE_PARTICIPANT_ID
-    val surfaceTargetId =
-        intent.getStringExtra(EXTRA_SURFACE_TARGET_ID)?.trim()?.takeIf { it.isNotBlank() }
-            ?: SpatialValidationCommandModule.DEFAULT_SURFACE_TARGET_ID
-    val scanDelayMs =
-        intent.getIntExtra(EXTRA_POLAR_SCAN_SECONDS, 16).coerceIn(3, 60) * 1000L
-    val connectDelayMs =
-        intent.getIntExtra(EXTRA_POLAR_CONNECT_DELAY_SECONDS, 10).coerceIn(3, 60) * 1000L
-    val ecgRunMs =
-        intent.getIntExtra(EXTRA_POLAR_ECG_SECONDS, 14).coerceIn(3, 180) * 1000L
-    val mainHandler = Handler(Looper.getMainLooper())
-
-    marker(
-        SpatialValidationCommandModule.polarLiveStartMarker(
-            participantId,
-            surfaceTargetId,
-            scanDelayMs / 1000L,
-            connectDelayMs / 1000L,
-            ecgRunMs / 1000L,
-        )
-    )
-    scheduleParticleLayerLifecycleDiagnostics("polar-live-validation-start")
-    try {
-      store.resetForNewParticipant()
-      store.beginParticipant(participantId)
-      store.savePolarSetup(
-          runLabel = "polar-live-validation",
-          operatorId = "codex",
-          notes = "Meta Spatial SDK Polar H10 live validation intent",
-      )
-      store.selectSurface(surfaceTargetId)
-      setWorkflowPanelVisible(true, focus = true, source = "polar-live-validation")
-      val panel = ensurePolarSensorPanel()
-      panel.buildView()
-      marker(SpatialValidationCommandModule.polarPanelAutomationReadyMarker(participantId))
-      panel.handleCommand("select_ecg")
-      panel.handleCommand("scan")
-      marker(SpatialValidationCommandModule.polarScanCommandIssuedMarker(participantId))
-      mainHandler.postDelayed(
-          {
-            marker(SpatialValidationCommandModule.polarConnectRequestedMarker(panel.discoveredDeviceCount()))
-            panel.connectBestDiscovered("ecg")
-          },
-          scanDelayMs,
-      )
-      mainHandler.postDelayed(
-          {
-            marker(SpatialValidationCommandModule.polarStartEcgRequestedMarker(panel.discoveredDeviceCount()))
-            panel.handleCommand("start_ecg")
-          },
-          scanDelayMs + connectDelayMs,
-      )
-      mainHandler.postDelayed(
-          {
-            val ecgReceiving = panel.isEcgReceiving()
-            marker(
-                SpatialValidationCommandModule.polarCompleteMarker(
-                    ecgReceiving,
-                    panel.discoveredDeviceCount(),
-                    panel.ecgExperimentStatusLine(true),
-                )
-            )
-          },
-          scanDelayMs + connectDelayMs + ecgRunMs,
-      )
-    } catch (throwable: Throwable) {
-      marker(
-          SpatialValidationCommandModule.polarFailedMarker(
-              SpatialValidationCommandModule.throwableErrorToken(throwable)
-          )
-      )
-      Log.e(TAG, "Spatial Camera Panel Polar live validation failed", throwable)
-    }
-  }
 
   private fun scheduleParticleLayerLifecycleDiagnostics(reason: String) {
     val mainHandler = Handler(Looper.getMainLooper())
@@ -7488,54 +7168,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     private const val TAG = "RQSpatialCameraPanel"
     private const val MARKER_PREFIX = "RUSTY_QUEST_SPATIAL_CAMERA_PANEL"
     private const val ACTIVITY_MARKERS_FILE = "spatial_camera_panel_activity_markers.log"
-    private const val VALIDATION_DRIVER_PROFILE_ID = "profile-b"
-    private const val ACTION_RUN_WORKFLOW_SELF_TEST =
-        "io.github.mesmerprism.rustyquest.spatial_camera_panel.action.RUN_WORKFLOW_SELF_TEST"
-    private const val ACTION_RUN_POLAR_LIVE_VALIDATION =
-        "io.github.mesmerprism.rustyquest.spatial_camera_panel.action.RUN_POLAR_LIVE_VALIDATION"
-    private const val ACTION_RUN_UI_COMMAND =
-        "io.github.mesmerprism.rustyquest.spatial_camera_panel.action.RUN_UI_COMMAND"
-    private const val ACTION_RUN_SURFACE_TARGET =
-        "io.github.mesmerprism.rustyquest.spatial_camera_panel.action.RUN_SURFACE_TARGET"
-    private const val EXTRA_PARTICIPANT_ID = "participant_id"
-    private const val EXTRA_SURFACE_TARGET_ID = "surface_target_id"
-    private const val EXTRA_UI_ACTION = "ui_action"
-    private const val EXTRA_DELTA_X = "delta_x"
-    private const val EXTRA_DELTA_Y = "delta_y"
-    private const val EXTRA_DELTA_Z = "delta_z"
-    private const val EXTRA_DELTA_SCALE = "delta_scale"
-    private const val EXTRA_DELTA_WIDTH = "delta_width"
-    private const val EXTRA_DELTA_HEIGHT = "delta_height"
-    private const val EXTRA_DRIVER0 = "driver0"
-    private const val EXTRA_DRIVER1 = "driver1"
-    private const val EXTRA_DRIVER2 = "driver2"
-    private const val EXTRA_DRIVER3 = "driver3"
-    private const val EXTRA_DRIVER4 = "driver4"
-    private const val EXTRA_DRIVER5 = "driver5"
-    private const val EXTRA_DRIVER6 = "driver6"
-    private const val EXTRA_DRIVER7 = "driver7"
-    private const val EXTRA_PARTICLE_ALIAS_PARAMETER_ID = "parameter_id"
-    private const val EXTRA_PARTICLE_ALIAS_VALUE = "value"
-    private const val EXTRA_PARTICLE_ALIAS_VISUAL_DRIVER_ACTIVATION_PROFILE =
-        "visual_driver_activation_profile"
-    private const val EXTRA_POINT_SCALE = "point_scale"
-    private const val EXTRA_TRACER_DRAW_SLOTS = "tracer_draw_slots_per_oscillator"
-    private const val EXTRA_TRACER_LIFETIME_SECONDS = "tracer_lifetime_seconds"
-    private const val EXTRA_TRACER_COPIES_PER_SECOND = "tracer_copies_per_second"
-    private const val EXTRA_TRANSPARENCY_OPACITY = "transparency_opacity"
-    private const val EXTRA_PROJECTION_WORLD_SCALE = "projection_world_scale"
-    private const val EXTRA_PARTICLE_LAYER_TARGET_DISTANCE_METERS =
-        "particle_layer_target_distance_meters"
-    private const val EXTRA_PARTICLE_LAYER_VIEW_YAW_DEGREES = "particle_layer_view_yaw_degrees"
-    private const val EXTRA_RUN_LABEL = "run_label"
-    private const val EXTRA_OPERATOR_ID = "operator_id"
-    private const val EXTRA_NOTES = "notes"
-    private const val EXTRA_COMFORT_RATING = "comfort_rating"
-    private const val EXTRA_INTENSITY_RATING = "intensity_rating"
-    private const val EXTRA_ENGAGEMENT_RATING = "engagement_rating"
-    private const val EXTRA_POLAR_SCAN_SECONDS = "polar_scan_seconds"
-    private const val EXTRA_POLAR_CONNECT_DELAY_SECONDS = "polar_connect_delay_seconds"
-    private const val EXTRA_POLAR_ECG_SECONDS = "polar_ecg_seconds"
     private const val PANEL_SHELL_VISIBLE_PROPERTY =
         "debug.rustyquest.spatial.panel_shell.visible"
     private const val PANEL_LAUNCHER_VISIBLE_PROPERTY =
