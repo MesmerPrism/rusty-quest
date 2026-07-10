@@ -606,6 +606,31 @@ internal object SpatialSurfaceParticleRouteModule {
           "surfaceParticleProjectionCarrier=${activityMarkerToken(carrier)} " +
           "nativeSurfaceParticleLayerEnabled=$nativeSurfaceParticleLayerEnabled"
 
+  fun nativeSurfaceParticlePanelEntityCreateFailedMarker(error: String, message: String): String =
+      "channel=native-surface-particle-layer status=panel-entity-create-failed " +
+          "renderPolicy=$RENDER_POLICY error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)}"
+
+  fun nativeSurfaceParticlePanelEntitySuppressedMarker(
+      source: String,
+      privateSpatialEcsParticleRendererEnabled: Boolean,
+  ): String =
+      "channel=native-surface-particle-layer status=panel-entity-suppressed " +
+          "renderPolicy=$RENDER_POLICY source=${activityMarkerToken(source)} " +
+          "nativeSurfaceParticleLayerEnabled=false " +
+          "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
+          "privateSpatialEcsParticleRendererEnabled=$privateSpatialEcsParticleRendererEnabled " +
+          "privateSpatialEcsParticleRendererEnabledProperty=$PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY"
+
+  fun nativeSurfaceParticlePanelEntitySpawnedMarker(
+      placementMarkerFields: String,
+      stereoMarkerFields: String,
+  ): String =
+      "channel=native-surface-particle-layer status=panel-entity-spawned " +
+          "renderPolicy=$RENDER_POLICY panelRegistrationId=spatial_camera_surface_panel " +
+          placementMarkerFields + " " +
+          stereoMarkerFields
+
   fun nativeSurfaceParticleRecenterIgnoredMarker(
       inputSource: String,
       detail: String,

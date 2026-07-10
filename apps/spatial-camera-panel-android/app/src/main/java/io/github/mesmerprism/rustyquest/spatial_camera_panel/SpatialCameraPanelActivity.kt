@@ -426,21 +426,21 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 }
                 .getOrElse { throwable ->
                   marker(
-                      "channel=native-surface-particle-layer status=panel-entity-create-failed " +
-                          "renderPolicy=native-vulkan-wsi-surface-panel error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                          "message=${activityMarkerToken(throwable.message ?: "none")}"
+                      SpatialSurfaceParticleRouteModule.nativeSurfaceParticlePanelEntityCreateFailedMarker(
+                          error = throwable.javaClass.simpleName,
+                          message = throwable.message ?: "none",
+                      )
                   )
                   null
                 }
           }
         } else {
           marker(
-              "channel=native-surface-particle-layer status=panel-entity-suppressed " +
-                  "renderPolicy=native-vulkan-wsi-surface-panel source=${nativeSurfaceParticleLayerSuppressionSource()} " +
-                  "nativeSurfaceParticleLayerEnabled=false " +
-                  "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
-                  "privateSpatialEcsParticleRendererEnabled=${privateSpatialEcsParticleRendererEnabled()} " +
-                  "privateSpatialEcsParticleRendererEnabledProperty=$PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY"
+              SpatialSurfaceParticleRouteModule.nativeSurfaceParticlePanelEntitySuppressedMarker(
+                  source = nativeSurfaceParticleLayerSuppressionSource(),
+                  privateSpatialEcsParticleRendererEnabled =
+                      privateSpatialEcsParticleRendererEnabled(),
+              )
           )
           null
         }
@@ -471,10 +471,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "icosphereSurfaceAvailable=true rendererAuthority=native-vulkan-wsi-surface-panel"
     )
     marker(
-        "channel=native-surface-particle-layer status=panel-entity-spawned " +
-            "renderPolicy=native-vulkan-wsi-surface-panel panelRegistrationId=spatial_camera_surface_panel " +
-            particleLayerPlacementMarkerFields() + " " +
-            particleLayerStereoMarkerFields()
+        SpatialSurfaceParticleRouteModule.nativeSurfaceParticlePanelEntitySpawnedMarker(
+            placementMarkerFields = particleLayerPlacementMarkerFields(),
+            stereoMarkerFields = particleLayerStereoMarkerFields(),
+        )
     )
     scheduleParticleLayerLifecycleDiagnostics("scene-ready")
     runSpatialVideoProjectionProbeIfRequested("scene-ready")
