@@ -332,8 +332,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
-  private var sdkQuadStereoAlphaProbeStarted = false
-  private var sdkQuadStereoAlphaProbeZIndexChanged = false
   private var panelSurfaceMatrixProbeStarted = false
   private var cameraHwbProbeStarted = false
   private var cameraHwbProjectionProbeStarted = false
@@ -375,6 +373,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             },
             startNative = ::nativeStartSdkQuadVulkanProbe,
             stopNative = ::nativeStopSdkQuadVulkanProbe,
+            marker = ::marker,
+        )
+    )
+  }
+  private val sdkQuadStereoAlphaProbeCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialSdkQuadStereoAlphaProbeCoordinator(
+        SpatialSdkQuadStereoAlphaProbeBindings(
+            scene = scene,
+            resources = sdkQuadResourceCoordinator,
+            cleanup = ::cleanupSdkQuadSurfaceProbe,
             marker = ::marker,
         )
     )
@@ -628,7 +636,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     externalSwapchainProbeCoordinator.runIfRequested("vr-ready")
     sdkQuadSurfaceProbeCoordinator.runIfRequested("vr-ready")
     sdkQuadVulkanProbeCoordinator.runIfRequested("vr-ready")
-    runSdkQuadStereoAlphaProbeIfRequested("vr-ready")
+    sdkQuadStereoAlphaProbeCoordinator.runIfRequested("vr-ready")
     runPanelSurfaceMatrixProbeIfRequested("vr-ready")
     runSpatialVideoProjectionProbeIfRequested("vr-ready")
     runCameraHwbProjectionProbeIfRequested("vr-ready")
@@ -1154,24 +1162,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     spatialMultimodalInputRequested = true
     spatialMultimodalInputRequestMask = requestMask
     marker(SpatialOpenXrRouteModule.spatialMultimodalInputResultMarker(phase, requestMask))
-  }
-
-  private fun runSdkQuadStereoAlphaProbeIfRequested(reason: String) {
-    if (sdkQuadStereoAlphaProbeStarted) {
-      return
-    }
-    if (!SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeEnabled()) {
-      return
-    }
-    sdkQuadStereoAlphaProbeStarted = true
-    val holdMs = SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeHoldMs()
-    marker(
-        SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeStartMarker(
-            reason = reason,
-            holdMs = holdMs,
-        )
-    )
-    Handler(Looper.getMainLooper()).post { runSdkQuadStereoAlphaProbe(holdMs) }
   }
 
   private fun runPanelSurfaceMatrixProbeIfRequested(reason: String) {
@@ -2270,375 +2260,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         reason = "raw-projection-panel-carrier-start",
         forceLog = true,
     )
-  }
-
-  private fun runSdkQuadStereoAlphaProbe(holdMs: Long) {
-    cleanupSdkQuadSurfaceProbe("stereo-alpha-pre-run")
-    sdkQuadStereoAlphaProbeZIndexChanged = false
-    val sdkSwapchain =
-        runCatching {
-              SceneSwapchain.createAsAndroid(
-                  SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_PX,
-                  SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_PX,
-                  false,
-              )
-            }
-            .getOrElse { throwable ->
-              marker(
-                  SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeCompleteMarker(
-                      sdkSwapchainCreated = false,
-                      surfaceValid = false,
-                      canvasDrawn = false,
-                      sceneQuadLayerCreated = false,
-                      setClipApplied = false,
-                      alphaBlendApplied = false,
-                      zIndexChanged = false,
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              return
-            }
-    sdkQuadResourceCoordinator.adoptSwapchain(sdkSwapchain)
-    val surface =
-        runCatching { sdkSwapchain.getSurface() }
-            .getOrElse { throwable ->
-              marker(
-                  SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeGetSurfaceFailedMarker(
-                      handle = sdkSwapchain.handle,
-                      nativeHandle = sdkSwapchain.nativeHandle(),
-                      platformHandle = sdkSwapchain.platformHandle(),
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              null
-            }
-    sdkQuadResourceCoordinator.adoptSurface(surface)
-    val surfaceValid = surface?.isValid == true
-    marker(
-        SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeSdkSwapchainCreatedMarker(
-            handle = sdkSwapchain.handle,
-            nativeHandle = sdkSwapchain.nativeHandle(),
-            platformHandle = sdkSwapchain.platformHandle(),
-            surfaceValid = surfaceValid,
-        )
-    )
-    if (!surfaceValid) {
-      val cleanupStatus = cleanupSdkQuadSurfaceProbe("stereo-alpha-surface-invalid")
-      marker(
-          SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeCompleteMarker(
-              sdkSwapchainCreated = true,
-              surfaceValid = surfaceValid,
-              canvasDrawn = false,
-              sceneQuadLayerCreated = false,
-              setClipApplied = false,
-              alphaBlendApplied = false,
-              zIndexChanged = false,
-              cleanupStatus = cleanupStatus,
-          )
-      )
-      return
-    }
-
-    val canvasDrawn = drawSdkQuadStereoAlphaPattern(surface)
-    val layerCreated =
-        createSdkQuadStereoAlphaProbeLayer(
-            sdkSwapchain = sdkSwapchain,
-            canvasDrawn = canvasDrawn,
-        )
-    val viable = surfaceValid && canvasDrawn && layerCreated
-    marker(
-        SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeVisibleWindowMarker(
-            surfaceValid = surfaceValid,
-            canvasDrawn = canvasDrawn,
-            sceneQuadLayerCreated = layerCreated,
-            manualSceneQuadLayerViable = viable,
-            holdMs = holdMs,
-        )
-    )
-    if (!layerCreated) {
-      val cleanupStatus = cleanupSdkQuadSurfaceProbe("stereo-alpha-layer-create-failed")
-      marker(
-          SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeCompleteMarker(
-              sdkSwapchainCreated = true,
-              surfaceValid = surfaceValid,
-              canvasDrawn = canvasDrawn,
-              sceneQuadLayerCreated = false,
-              setClipApplied = false,
-              alphaBlendApplied = false,
-              zIndexChanged = false,
-              cleanupStatus = cleanupStatus,
-          )
-      )
-      return
-    }
-    Handler(Looper.getMainLooper())
-        .postDelayed(
-            {
-              sdkQuadResourceCoordinator.withLayer { layer ->
-                runCatching {
-                      layer.setZIndex(SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_HIGH)
-                    }
-                    .onSuccess {
-                      sdkQuadStereoAlphaProbeZIndexChanged = true
-                      marker(SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeZIndexUpdatedMarker())
-                    }
-                    .onFailure { throwable ->
-                      marker(
-                          SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeZIndexUpdateFailedMarker(
-                              error = throwable.javaClass.simpleName,
-                              message = throwable.message ?: "none",
-                          )
-                      )
-                    }
-              }
-            },
-            SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_CHANGE_MS,
-        )
-    Handler(Looper.getMainLooper())
-        .postDelayed(
-            {
-              sdkQuadResourceCoordinator.withLayer { layer ->
-                runCatching {
-                      layer.setColorScaleBias(
-                          Vector4(1.0f, 1.0f, 1.0f, SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_LOW),
-                          Vector4(0.0f),
-                      )
-                    }
-                    .onSuccess {
-                      marker(SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeAlphaUpdatedMarker())
-                    }
-                    .onFailure { throwable ->
-                      marker(
-                          SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeAlphaUpdateFailedMarker(
-                              error = throwable.javaClass.simpleName
-                          )
-                      )
-                    }
-              }
-            },
-            SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_CHANGE_MS,
-        )
-    Handler(Looper.getMainLooper())
-        .postDelayed(
-            {
-              sdkQuadResourceCoordinator.withLayer { layer ->
-                runCatching {
-                      layer.setColorScaleBias(Vector4(1.0f), Vector4(0.0f))
-                    }
-                    .onSuccess {
-                      marker(SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeAlphaRestoredMarker())
-                    }
-                    .onFailure { throwable ->
-                      marker(
-                          SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeAlphaRestoreFailedMarker(
-                              error = throwable.javaClass.simpleName
-                          )
-                      )
-                    }
-              }
-            },
-            SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_RESTORE_MS,
-        )
-    Handler(Looper.getMainLooper())
-        .postDelayed(
-            {
-              val cleanupStatus = cleanupSdkQuadSurfaceProbe("stereo-alpha-hold-complete")
-              marker(
-                  SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeCompleteMarker(
-                      sdkSwapchainCreated = true,
-                      surfaceValid = surfaceValid,
-                      canvasDrawn = canvasDrawn,
-                      sceneQuadLayerCreated = layerCreated,
-                      setClipApplied = true,
-                      alphaBlendApplied = true,
-                      zIndexChanged = sdkQuadStereoAlphaProbeZIndexChanged,
-                      manualSceneQuadLayerViable = viable,
-                      colorScaleAlphaApplied = true,
-                      cleanupStatus = cleanupStatus,
-                      includeOperatorChecks = true,
-                  )
-              )
-            },
-            holdMs,
-        )
-  }
-
-  private fun createSdkQuadStereoAlphaProbeLayer(
-      sdkSwapchain: SceneSwapchain,
-      canvasDrawn: Boolean,
-  ): Boolean =
-      runCatching {
-            val pose = sdkQuadResourceCoordinator.poseFromViewer(SDK_QUAD_SURFACE_PROBE_DISTANCE_METERS)
-            val entity = Entity.create(Transform(pose), Scale(Vector3(1.0f, 1.0f, 1.0f)), Visible(true))
-            val material = SceneMaterial.passthrough()
-            val mesh =
-                SceneMesh.singleSidedQuad(
-                    SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_METERS,
-                    SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_METERS,
-                    material,
-                )
-            sdkQuadResourceCoordinator.registerAnchor(material, mesh)
-            val sceneObject = SceneObject(scene, mesh, "sdk_quad_stereo_alpha_probe_anchor", entity)
-            scene.addObject(sceneObject)
-            sdkQuadResourceCoordinator.registerSceneObject(sceneObject)
-            val layer =
-                SceneQuadLayer(
-                    scene,
-                    sdkSwapchain,
-                    SDK_QUAD_STEREO_ALPHA_PROBE_WIDTH_METERS,
-                    SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_METERS,
-                    0.5f,
-                    0.5f,
-                    StereoMode.LeftRight,
-                    sceneObject,
-                )
-            layer.setZIndex(SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_LOW)
-            layer.setClip(
-                Vector2(0.04f, 0.04f),
-                Vector2(0.96f, 0.04f),
-                Vector2(0.96f, 0.96f),
-                Vector2(0.04f, 0.96f),
-            )
-            layer.setAlphaBlend(
-                LayerAlphaBlend(
-                    BlendFactor.SOURCE_ALPHA,
-                    BlendFactor.ONE_MINUS_SOURCE_ALPHA,
-                    BlendFactor.ONE,
-                    BlendFactor.ONE_MINUS_SOURCE_ALPHA,
-                )
-            )
-            layer.setColorScaleBias(
-                Vector4(1.0f, 1.0f, 1.0f, SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_HIGH),
-                Vector4(0.0f),
-            )
-            sdkQuadResourceCoordinator.registerLayer(layer)
-            marker(
-                SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeLayerCreatedMarker(
-                    canvasDrawn = canvasDrawn,
-                    sceneObjectHandle = sceneObject.handle,
-                    layerPositionM = activityVectorMarker(pose.t),
-                    layerQuaternion = activityQuaternionMarker(pose.q),
-                )
-            )
-            true
-          }
-          .getOrElse { throwable ->
-            marker(
-                SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeLayerCreateFailedMarker(
-                    canvasDrawn = canvasDrawn,
-                    error = throwable.javaClass.simpleName,
-                    message = throwable.message ?: "none",
-                )
-            )
-            false
-          }
-
-  private fun drawSdkQuadStereoAlphaPattern(surface: AndroidSurface): Boolean {
-    if (!surface.isValid) {
-      marker(SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeCanvasDrawSkippedMarker())
-      return false
-    }
-    var canvas: android.graphics.Canvas? = null
-    return runCatching {
-          canvas = surface.lockCanvas(null)
-          val lockedCanvas = canvas ?: return@runCatching false
-          lockedCanvas.drawColor(AndroidColor.TRANSPARENT, PorterDuff.Mode.CLEAR)
-          val paint = AndroidPaint().apply { isAntiAlias = true }
-          val left = android.graphics.RectF(0f, 0f, lockedCanvas.width / 2f, lockedCanvas.height.toFloat())
-          val right =
-              android.graphics.RectF(
-                  lockedCanvas.width / 2f,
-                  0f,
-                  lockedCanvas.width.toFloat(),
-                  lockedCanvas.height.toFloat(),
-              )
-          paint.style = AndroidPaint.Style.FILL
-          paint.color = AndroidColor.argb(230, 220, 24, 24)
-          lockedCanvas.drawRect(left, paint)
-          paint.color = AndroidColor.argb(230, 30, 90, 235)
-          lockedCanvas.drawRect(right, paint)
-
-          drawStereoGrid(
-              lockedCanvas,
-              paint,
-              left.left,
-              left.top,
-              left.width(),
-              left.height(),
-              AndroidColor.WHITE,
-              AndroidColor.YELLOW,
-              "LEFT RED",
-          )
-          drawStereoGrid(
-              lockedCanvas,
-              paint,
-              right.left,
-              right.top,
-              right.width(),
-              right.height(),
-              AndroidColor.WHITE,
-              AndroidColor.CYAN,
-              "RIGHT BLUE",
-          )
-          true
-        }
-        .onSuccess { drawn ->
-          canvas?.let { locked -> runCatching { surface.unlockCanvasAndPost(locked) } }
-          marker(
-              SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeCanvasDrawCompleteMarker(
-                  drawn = drawn
-              )
-          )
-        }
-        .onFailure { throwable ->
-          canvas?.let { locked ->
-            runCatching { surface.unlockCanvasAndPost(locked) }
-          }
-          marker(
-              SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeCanvasDrawFailedMarker(
-                  error = throwable.javaClass.simpleName,
-                  message = throwable.message ?: "none",
-              )
-          )
-        }
-        .getOrDefault(false)
-  }
-
-  private fun drawStereoGrid(
-      canvas: android.graphics.Canvas,
-      paint: AndroidPaint,
-      x: Float,
-      y: Float,
-      width: Float,
-      height: Float,
-      gridColor: Int,
-      accentColor: Int,
-      label: String,
-  ) {
-    val cells = 8
-    paint.style = AndroidPaint.Style.STROKE
-    paint.strokeWidth = 3.0f
-    paint.color = gridColor
-    for (index in 0..cells) {
-      val px = x + width * index / cells
-      val py = y + height * index / cells
-      canvas.drawLine(px, y, px, y + height, paint)
-      canvas.drawLine(x, py, x + width, py, paint)
-    }
-    paint.strokeWidth = 8.0f
-    paint.color = accentColor
-    canvas.drawRect(x + 36f, y + 36f, x + width - 36f, y + height - 36f, paint)
-    canvas.drawLine(x + width * 0.20f, y + height * 0.50f, x + width * 0.80f, y + height * 0.50f, paint)
-    canvas.drawLine(x + width * 0.80f, y + height * 0.50f, x + width * 0.68f, y + height * 0.38f, paint)
-    canvas.drawLine(x + width * 0.80f, y + height * 0.50f, x + width * 0.68f, y + height * 0.62f, paint)
-    paint.style = AndroidPaint.Style.FILL
-    paint.textSize = height * 0.075f
-    paint.color = AndroidColor.WHITE
-    canvas.drawText(label, x + width * 0.24f, y + height * 0.22f, paint)
-    paint.textSize = height * 0.045f
-    canvas.drawText("UV 0,0 -> top-left", x + width * 0.08f, y + height * 0.91f, paint)
   }
 
   private fun createCameraHwbProbeLayer(sdkSwapchain: SceneSwapchain): Boolean =

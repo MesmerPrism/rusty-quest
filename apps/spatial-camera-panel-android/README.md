@@ -378,6 +378,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   hold timer, stop, cleanup, and completion receipts. The Activity supplies
   JNI start/stop callbacks and dynamic native-library state; the panel-matrix
   route retains its independent opt-in and direct JNI orchestration.
+- `app/src/main/.../SpatialSdkQuadStereoAlphaProbeCoordinator.kt` owns the
+  default-disabled stereo-alpha diagnostic lifecycle: its exact property gate,
+  two state fields, stereo pattern drawing, clip/blend/color setup, generated
+  anchor and layer creation, delayed z-index and alpha mutations, cleanup, and
+  operator-check completion receipt. It uses only the shared resource owner,
+  Activity-supplied `Scene`, cleanup callback, and marker sink; it has no JNI
+  or unrelated feature-property authority.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, viewer-locked and virtual-wall projection

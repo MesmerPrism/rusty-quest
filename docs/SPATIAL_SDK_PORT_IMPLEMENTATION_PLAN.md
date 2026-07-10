@@ -223,6 +223,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   generated-anchor layer request, native producer start/stop, hold timer, and
   completion receipts in `SpatialSdkQuadVulkanProbeCoordinator.kt`; retain JNI
   declarations and panel-matrix orchestration in Activity-supplied bindings;
+- package the default-disabled stereo-alpha probe gate, two state fields,
+  stereo pattern drawing, clip/blend/color setup, generated anchor/layer
+  creation, delayed z-index and alpha mutations, cleanup, and operator-check
+  completion receipt in `SpatialSdkQuadStereoAlphaProbeCoordinator.kt`; keep
+  JNI and unrelated property authority out of this coordinator;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, placement-plane construction from
