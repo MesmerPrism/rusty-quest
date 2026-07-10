@@ -103,11 +103,13 @@ if ($receipt.runtime_behavior_changed -ne $false -or $receipt.package_or_permiss
 
 $eventPath = Join-Path $workspaceRoot "iteration-events.jsonl"
 $eventLines = @(Get-Content -LiteralPath $eventPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-if ($eventLines.Count -ne 1) {
-    throw "WF-003 adoption expects exactly one local projection event."
+if ($eventLines.Count -ne 2) {
+    throw "WF-003 adoption expects its acceptance and coordinated-push projection events."
 }
-$event = $eventLines[0] | ConvertFrom-Json
-if ($event.event_id -ne "wf-003-accepted" -or $event.unit_id -ne "wf-003") {
+$acceptEvent = $eventLines[0] | ConvertFrom-Json
+$pushEvent = $eventLines[1] | ConvertFrom-Json
+if ($acceptEvent.event_id -ne "wf-003-accepted" -or $acceptEvent.unit_id -ne "wf-003" -or
+    $pushEvent.event_id -ne "wf-003-pushed" -or $pushEvent.unit_id -ne "wf-003") {
     throw "WF-003 local projection event is inconsistent."
 }
 

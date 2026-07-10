@@ -17,6 +17,13 @@
   "runtime_behavior_changed": false,
   "package_or_permission_changed": false,
   "next_ready_unit": "mod-001",
+  "commit": "e819339",
+  "push": {
+    "feature_branch": "pushed",
+    "main": "pushed",
+    "dev": "pushed",
+    "atomic": true
+  },
   "validation": [
     "workflow static gate passed",
     "portable semantic validator passed",

@@ -6,17 +6,12 @@
   "current_unit": null,
   "next_ready_unit": "mod-001",
   "last_event_id": "wf-003-accepted",
-  "dirty_repositories": ["spatial-app", "quest-repo"],
+  "dirty_repositories": [],
   "blockers": [],
   "validation_checkpoint": {
     "tier": "standard",
     "receipt": "receipts/wf-003-workspace-adoption.json",
     "result": "pass"
   },
-  "pending_push_bundle": {
-    "bundle_id": "workspace-adoption-20260711",
-    "unit_ids": ["wf-003"],
-    "repo_ids": ["spatial-app", "quest-repo"],
-    "ready": true
-  }
+  "pending_push_bundle": null
 }
