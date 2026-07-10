@@ -1,0 +1,202 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/project-spec.schema.json",
+  "schema": "rusty.morphospace.workflow.project_spec.v1",
+  "project_id": "spatial-camera-panel",
+  "revision": 1,
+  "purpose": "Compose the public Spatial Camera Panel from explicit Quest adapters and app-local particle, hand, camera, and media candidates without allowing application behavior to become a reusable-module default.",
+  "activation_model": {
+    "default": "disabled",
+    "unlisted_modules": "inert"
+  },
+  "authority_map": [
+    {
+      "parameter": "app.composition",
+      "owner": "spatial-app",
+      "adapters": []
+    },
+    {
+      "parameter": "app.session-workflow",
+      "owner": "spatial-app",
+      "adapters": []
+    },
+    {
+      "parameter": "quest.package-permissions",
+      "owner": "quest-repo",
+      "adapters": ["spatial-app"]
+    },
+    {
+      "parameter": "particle.simulation",
+      "owner": "matter",
+      "adapters": ["spatial-app"]
+    },
+    {
+      "parameter": "hand.tracked-relations",
+      "owner": "lattice",
+      "adapters": ["spatial-app"]
+    },
+    {
+      "parameter": "hand.geometry-skinning",
+      "owner": "matter",
+      "adapters": ["spatial-app"]
+    },
+    {
+      "parameter": "hand.appearance",
+      "owner": "optics",
+      "adapters": ["spatial-app"]
+    },
+    {
+      "parameter": "stream.session",
+      "owner": "manifold",
+      "adapters": ["spatial-app"]
+    }
+  ],
+  "repositories": [
+    {
+      "repo_id": "spatial-app",
+      "role": "application",
+      "path": "..",
+      "allowed_paths": ["README.md", "app/", "native-receipt/", "morphospace/"]
+    },
+    {
+      "repo_id": "quest-repo",
+      "role": "adapter",
+      "path": "../../..",
+      "allowed_paths": ["AGENTS.md", "README.md", "docs/", "tools/"]
+    },
+    {
+      "repo_id": "matter",
+      "role": "core",
+      "path": "<workspace-root>/repos/rusty-matter",
+      "allowed_paths": ["crates/", "docs/", "fixtures/", "schemas/"]
+    },
+    {
+      "repo_id": "lattice",
+      "role": "core",
+      "path": "<workspace-root>/repos/rusty-lattice",
+      "allowed_paths": ["crates/", "docs/", "fixtures/", "schemas/"]
+    },
+    {
+      "repo_id": "optics",
+      "role": "core",
+      "path": "<workspace-root>/repos/rusty-optics",
+      "allowed_paths": ["crates/", "docs/", "fixtures/", "schemas/"]
+    },
+    {
+      "repo_id": "manifold",
+      "role": "core",
+      "path": "<workspace-root>/repos/rusty-manifold",
+      "allowed_paths": ["crates/", "docs/", "fixtures/", "schemas/"]
+    },
+    {
+      "repo_id": "work-environment",
+      "role": "tool",
+      "path": "<workspace-root>/repos/rusty-morphospace-work-environment",
+      "allowed_paths": ["AGENTS.md", "README.md", "skills/"]
+    },
+    {
+      "repo_id": "installed-skills",
+      "role": "tool",
+      "path": "<skills-root>",
+      "allowed_paths": ["rusty-morphospace-context/", "system-engineering/", "rust-work-graph/"]
+    }
+  ],
+  "modules": [
+    {
+      "module_id": "spatial-panel-shell",
+      "feature_id": "spatial-panel-shell",
+      "lane": "quest",
+      "maturity": "app-local",
+      "contract": "rusty.quest.spatial_camera_panel.shell.v1",
+      "source_repo": "spatial-app",
+      "dependencies": []
+    },
+    {
+      "module_id": "camera-hwb-projection",
+      "feature_id": "camera-hwb-projection",
+      "lane": "quest",
+      "maturity": "app-local",
+      "contract": "rusty.quest.camera_hwb_projection.v1",
+      "source_repo": "spatial-app",
+      "dependencies": ["spatial-panel-shell"]
+    },
+    {
+      "module_id": "surface-particle-runtime",
+      "feature_id": "surface-particle-runtime",
+      "lane": "matter",
+      "maturity": "candidate",
+      "contract": "rusty.matter.surface_particle.candidate.v1",
+      "source_repo": "spatial-app",
+      "dependencies": ["spatial-panel-shell"]
+    },
+    {
+      "module_id": "tracked-hand-surface",
+      "feature_id": "tracked-hand-surface",
+      "lane": "lattice",
+      "maturity": "candidate",
+      "contract": "rusty.lattice.tracked_hand_surface.candidate.v1",
+      "source_repo": "spatial-app",
+      "dependencies": ["spatial-panel-shell"]
+    },
+    {
+      "module_id": "spatial-stereo-video",
+      "feature_id": "spatial-stereo-video",
+      "lane": "quest",
+      "maturity": "app-local",
+      "contract": "rusty.quest.spatial_stereo_video.v1",
+      "source_repo": "spatial-app",
+      "dependencies": ["spatial-panel-shell"]
+    },
+    {
+      "module_id": "spatial-asset-model",
+      "feature_id": "spatial-asset-model",
+      "lane": "quest",
+      "maturity": "app-local",
+      "contract": "rusty.quest.spatial_asset_model.v1",
+      "source_repo": "spatial-app",
+      "dependencies": ["spatial-panel-shell"]
+    },
+    {
+      "module_id": "spatial-virtual-room",
+      "feature_id": "spatial-virtual-room",
+      "lane": "quest",
+      "maturity": "app-local",
+      "contract": "rusty.quest.spatial_virtual_room.v1",
+      "source_repo": "spatial-app",
+      "dependencies": ["spatial-panel-shell"]
+    }
+  ],
+  "non_scope": [
+    "Private study semantics, participant policy, tuned effect formulas, and downstream payloads.",
+    "Remote peer media, Wi-Fi Direct, BLE rendezvous, and broker authority in the panel app.",
+    "High-rate camera, hand, particle, pose, or media payloads in JSON control paths.",
+    "Treating Spatial SDK carrier code as Matter, Lattice, Optics, or Manifold authority.",
+    "Activating any module or permission because nearby source exists."
+  ],
+  "validation_profiles": [
+    {
+      "profile_id": "quick",
+      "commands": [
+        "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1 -RepoRoot .",
+        "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-SpatialCameraPanelAndroidStatic.ps1 -RepoRoot ."
+      ]
+    },
+    {
+      "profile_id": "standard",
+      "commands": [
+        "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Test-SpatialCameraPanelAndroid.ps1",
+        "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check_all.ps1"
+      ]
+    }
+  ],
+  "public_boundary": {
+    "mode": "public",
+    "private_overlay": "<project-root>/local",
+    "prohibited_evidence": [
+      "device serials",
+      "private package identities",
+      "raw logs and captures",
+      "signing and pairing material",
+      "private effect formulas and payloads"
+    ]
+  }
+}

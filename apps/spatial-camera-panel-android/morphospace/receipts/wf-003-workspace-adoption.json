@@ -1,0 +1,29 @@
+{
+  "schema": "rusty.morphospace.workflow.workspace_adoption_receipt.v1",
+  "receipt_id": "wf-003-workspace-adoption",
+  "roadmap_unit": "WF-003",
+  "project_unit": "wf-003",
+  "selected_application": "apps/spatial-camera-panel-android",
+  "selected_features": ["spatial-panel-shell"],
+  "explicitly_disabled_features": [
+    "camera-hwb-projection",
+    "surface-particle-runtime",
+    "tracked-hand-surface",
+    "spatial-stereo-video",
+    "spatial-asset-model",
+    "spatial-virtual-room"
+  ],
+  "omitted_inert_feature": "remote-peer-media",
+  "runtime_behavior_changed": false,
+  "package_or_permission_changed": false,
+  "next_ready_unit": "mod-001",
+  "validation": [
+    "workflow static gate passed",
+    "portable semantic validator passed",
+    "existing Spatial Camera Panel validation passed with 30 focused native receipt tests",
+    "Rusty Quest check_all passed",
+    "work-environment self-test and public-boundary checks passed",
+    "instruction phrase and git diff checks passed"
+  ],
+  "result": "pass"
+}

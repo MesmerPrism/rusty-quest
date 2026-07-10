@@ -106,6 +106,13 @@ particle payloads through Java/Kotlin JSON, and keeps hand visuals explicit:
 the Spatial SDK avatar hand visual and the public ECS hand-billboard flock are
 both opt-in comparison surfaces.
 
+The app also carries a public `morphospace/` composition workspace. It selects
+only the panel shell as its workflow baseline, records nearby optional feature
+families as disabled, keeps remote peer media absent, and tracks particle and
+hand extraction candidates without changing runtime behavior. Run
+`tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1` before the broader
+Spatial static ledger when changing that app's composition or module map.
+
 The same lane now has two generic Spatial SDK asset/environment hooks. The
 Spatial SDK staged 3D asset path accepts only explicit GLB/GLTF `Mesh` URIs at
 runtime, usually staged by `Stage-SpatialCameraPanelAsset.ps1` or by

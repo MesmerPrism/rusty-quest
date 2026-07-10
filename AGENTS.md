@@ -40,6 +40,13 @@ native Quest path.
 3. `docs/VALIDATION.md`
 4. `fixtures/README.md`
 
+For work in `apps/spatial-camera-panel-android`, then read its
+`morphospace/project.spec.json`, `feature.lock.json`, `workspace.state.json`,
+and the current iteration unit before source. That app is the first downstream
+adopter of the portable project/module workflow: the panel shell is the only
+workflow-selected baseline, nearby particle/hand/camera/media/asset/room
+families are explicit disabled entries, and unlisted features remain inert.
+
 ## Agent Board
 
 Read-only source inspection and dry-run profile validation do not require Agent
@@ -90,4 +97,11 @@ Run:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
+```
+
+The Spatial Camera Panel wrapper runs its focused workflow gate before the
+large legacy static ledger:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-SpatialCameraPanelWorkflowStatic.ps1 -RepoRoot .
 ```

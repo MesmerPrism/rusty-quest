@@ -24,9 +24,13 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 }
 $repoRootPath = Resolve-Path $RepoRoot
+$workflowCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelWorkflowStatic.ps1"
 $staticCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelAndroidStatic.ps1"
 $buildPath = Join-Path $PSScriptRoot "Build-SpatialCameraPanelAndroid.ps1"
 
+if (-not (Test-Path -LiteralPath $workflowCheckPath)) {
+    throw "Missing Spatial Camera Panel workflow check: $workflowCheckPath"
+}
 if (-not (Test-Path -LiteralPath $staticCheckPath)) {
     throw "Missing Spatial Camera Panel static check: $staticCheckPath"
 }
@@ -34,6 +38,7 @@ if (-not (Test-Path -LiteralPath $buildPath)) {
     throw "Missing Spatial Camera Panel build wrapper: $buildPath"
 }
 
+& $workflowCheckPath -RepoRoot $repoRootPath
 & $staticCheckPath -RepoRoot $repoRootPath
 Push-Location -LiteralPath $repoRootPath
 try {

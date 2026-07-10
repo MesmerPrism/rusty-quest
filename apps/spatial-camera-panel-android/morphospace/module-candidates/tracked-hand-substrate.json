@@ -1,0 +1,53 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/module-candidate.schema.json",
+  "schema": "rusty.morphospace.workflow.module_candidate.v1",
+  "candidate_id": "tracked-hand-substrate",
+  "module_id": "tracked-hand-surface",
+  "source_project": "spatial-camera-panel",
+  "proposed_lane": "lattice",
+  "maturity": "candidate",
+  "problem": "Native OpenXR and Spatial consumers need one neutral tracked-hand relation contract before mesh skinning, sampling, and appearance are divided among Matter, Lattice, and Optics.",
+  "neutral_contract": "rusty.lattice.tracked_hand_surface.candidate.v1",
+  "owns": [
+    "Handed tracked-joint relation snapshots with validity, confidence, reference space, and time.",
+    "Provider-neutral topology identity and mapping metadata references.",
+    "Cross-provider fixtures for missing, stale, and partially valid hands."
+  ],
+  "does_not_own": [
+    "Mesh skinning, barycentric sampling, particle generation, or GPU buffers.",
+    "Hand material, wireframe appearance, or renderer composition.",
+    "Spatial SDK avatar internals or Quest app activation."
+  ],
+  "app_specific_exclusions": [
+    "Mirror-X Spatial registration policy and debug marker layout.",
+    "Billboard flock counts, colors, controller shortcuts, and panel behavior.",
+    "Private recorded rig assets and visual acceptance screenshots."
+  ],
+  "dependencies": [],
+  "provenance": [
+    {
+      "source": "Rusty Quest native OpenXR and Spatial hand-lab adapters",
+      "license": "AGPL-3.0-or-later",
+      "lesson": "Share tracked relation and topology identities while keeping provider adapters and visual consumers separate.",
+      "rejected_overreach": "Do not make Lattice own Matter skinning, Optics appearance, Spatial SDK resources, or app controls."
+    }
+  ],
+  "consumers": [
+    {
+      "consumer_id": "spatial-camera-panel",
+      "kind": "originating-app",
+      "contract_only": false,
+      "evidence": "SpatialLiveHandJointBridge.kt and SpatialLiveSkinnedHandSurface.kt"
+    }
+  ],
+  "evidence": [
+    "OpenXR-to-Spatial mapping fixtures already keep transforms explicit and reversible.",
+    "Spatial public APIs do not expose the built-in avatar hand topology.",
+    "The workflow feature lock disables the candidate by default."
+  ],
+  "rollback": {
+    "strategy": "Keep provider-specific app adapters and remove the shared contract adapter if cross-provider parity is not proven.",
+    "acceptance": "Native and Spatial focused tests pass using their existing provider-specific paths with no shared contract dependency."
+  },
+  "promotion_target": "contract-ready"
+}

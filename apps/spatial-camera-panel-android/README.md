@@ -4,6 +4,33 @@ This app is a public Meta Spatial SDK lane for headset panel validation and
 low-rate driver-profile control. It packages a Spatial SDK/Compose panel under
 `io.github.mesmerprism.rustyquest.spatial_camera_panel`.
 
+## Project Composition Workspace
+
+Before changing this app, read `morphospace/project.spec.json`,
+`morphospace/feature.lock.json`, `morphospace/workspace.state.json`, and the
+current unit under `morphospace/iteration-units/`. This is the app-local
+composition and extraction control surface; runtime modules keep their own
+authority.
+
+The adopted baseline selects only `spatial-panel-shell`. Camera/HWB
+projection, native surface particles, tracked-hand surfaces, stereo video,
+staged assets, and the virtual room are explicit disabled workflow entries and
+still require their existing property/profile/app-spec opt-ins. Remote peer
+media is intentionally absent from the composition, so nearby broker or QCL
+work cannot bleed into this app. The first candidates are recorded under
+`morphospace/module-candidates/`: Matter is the proposed particle substrate
+lane, while the hand candidate starts with Lattice tracked relations and keeps
+Matter skinning plus Optics appearance as separate owners.
+
+Validate the closed-world composition with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File ..\..\tools\checks\Test-SpatialCameraPanelWorkflowStatic.ps1 -RepoRoot ..\..
+```
+
+This workflow metadata does not itself activate a runtime route or add package
+permissions. Existing effective markers remain required.
+
 ## Public Scope
 
 - Spatial SDK panel registration, placement, scaling, and headlock controls.

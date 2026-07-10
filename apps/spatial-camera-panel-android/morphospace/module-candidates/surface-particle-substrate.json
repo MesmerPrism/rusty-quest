@@ -1,0 +1,53 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/module-candidate.schema.json",
+  "schema": "rusty.morphospace.workflow.module_candidate.v1",
+  "candidate_id": "surface-particle-substrate",
+  "module_id": "surface-particle-runtime",
+  "source_project": "spatial-camera-panel",
+  "proposed_lane": "matter",
+  "maturity": "candidate",
+  "problem": "The app-local surface-particle implementation mixes reusable particle state and deterministic update concepts with Spatial panel carriers and private payload hooks.",
+  "neutral_contract": "rusty.matter.surface_particle.candidate.v1",
+  "owns": [
+    "Particle topology and bounded state descriptors independent of the app shell.",
+    "Deterministic CPU reference update fixtures and damaged-input expectations.",
+    "Neutral driver-bank inputs with no application semantics."
+  ],
+  "does_not_own": [
+    "Spatial SDK panels, Android surfaces, Vulkan WSI, or JNI lifecycle.",
+    "Private shader payloads, effect formulas, tuned profiles, or study behavior.",
+    "Quest packaging, permissions, or runtime feature activation."
+  ],
+  "app_specific_exclusions": [
+    "Surface target names and questionnaire workflow.",
+    "Private icosphere payload and marker vocabulary.",
+    "Spatial panel placement, recenter controls, and app-specific presentation."
+  ],
+  "dependencies": [],
+  "provenance": [
+    {
+      "source": "Rusty Quest Spatial Camera Panel app-local surface-particle modules",
+      "license": "AGPL-3.0-or-later",
+      "lesson": "Separate deterministic particle contracts from the platform carrier and application workflow.",
+      "rejected_overreach": "Do not copy Spatial SDK, JNI, Vulkan WSI, or private downstream payload behavior into Matter."
+    }
+  ],
+  "consumers": [
+    {
+      "consumer_id": "spatial-camera-panel",
+      "kind": "originating-app",
+      "contract_only": false,
+      "evidence": "apps/spatial-camera-panel-android/README.md and native-receipt surface-particle tests"
+    }
+  ],
+  "evidence": [
+    "SpatialSurfaceParticleRouteModule.kt keeps the route explicit opt-in.",
+    "native-receipt host tests cover the current surface-particle boundary.",
+    "The workflow feature lock disables the candidate by default."
+  ],
+  "rollback": {
+    "strategy": "Keep the existing app-local implementation and remove only the candidate/extraction adapter if parity fails.",
+    "acceptance": "The app static and native receipt tests return to their pre-extraction results with the feature still explicit opt-in."
+  },
+  "promotion_target": "contract-ready"
+}
