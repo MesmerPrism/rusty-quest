@@ -425,7 +425,8 @@ Interaction SDK pointer input without native multimodal extension forcing.
   separate consumers of that carrier.
 - `app/src/main/.../SpatialStagedAssetModule.kt` owns the generic Spatial SDK
   staged 3D asset path. It creates a runtime `Mesh` entity from an explicit
-  GLB/GLTF URI and marks raw FBX URIs as conversion-required.
+  GLB/GLTF URI, marks raw FBX URIs as conversion-required, and owns
+  deferred-start marker fields when the packaged virtual room has not loaded.
 - The Activity remains the facade for the generic packaged virtual room path.
   It delegates room and skybox behavior to `SpatialVirtualRoomModule.kt`, then
   starts dependent staged-asset, video, and camera probes only after the module

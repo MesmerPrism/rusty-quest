@@ -224,6 +224,12 @@ internal class SpatialStagedAssetModule(private val marker: (String) -> Unit) {
     private const val MIN_SCALE = 0.001f
     private const val MAX_SCALE = 10.0f
 
+    fun startDeferredMarker(reason: String): String =
+        "channel=spatial-sdk-asset-model status=start-deferred " +
+            "module=$MODULE_ID reason=${markerToken(reason)} " +
+            "deferredUntil=virtual-room-loaded spatialVirtualRoomLoaded=false " +
+            "privateSourceAssetPackaged=false highRateJsonPayload=false"
+
     private fun readString(intent: Intent?, extraName: String, propertyName: String): String {
       val extraValue = intent?.getStringExtra(extraName)?.trim().orEmpty()
       if (extraValue.isNotBlank()) {

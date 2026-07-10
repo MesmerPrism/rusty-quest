@@ -471,7 +471,7 @@ Assert-Contains "Activity" $activity "runSpatialVirtualRoomIfRequested"
 Assert-Contains "Spatial virtual room module" $spatialVirtualRoomModule 'SCENE_URI = "apk:///scenes/Composition.glxf"'
 Assert-Contains "Spatial virtual room module" $spatialVirtualRoomModule "channel=spatial-virtual-room status=loaded"
 Assert-Contains "Activity" $activity "spatialVirtualRoomLoaded()"
-Assert-Contains "Activity" $activity "deferredUntil=virtual-room-loaded"
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "deferredUntil=virtual-room-loaded"
 Assert-Contains "Activity" $activity 'runSpatialStagedAssetIfRequested(intent, "virtual-room-loaded")'
 Assert-Contains "Activity" $activity 'runCameraHwbProjectionProbeIfRequested("virtual-room-loaded")'
 Assert-Contains "Spatial virtual room module" $spatialVirtualRoomModule "roomAssetSource=packaged-glxf"
@@ -1204,6 +1204,11 @@ Assert-Contains "Spatial staged asset module" $stagedAssetModule "Grabbable(type
 Assert-Contains "Spatial staged asset module" $stagedAssetModule "fbxConversionRequired=true"
 Assert-Contains "Spatial staged asset module" $stagedAssetModule "privateSourceAssetPackaged=false"
 Assert-Contains "Spatial staged asset module" $stagedAssetModule "highRateJsonPayload=false"
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "startDeferredMarker"
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "status=start-deferred"
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "deferredUntil=virtual-room-loaded"
+Assert-Contains "Activity" $activity "SpatialStagedAssetModule.startDeferredMarker"
+Assert-NotContains "Activity" $activity "channel=spatial-sdk-asset-model status=start-deferred"
 Assert-Contains "Public multi-stack" $publicMultiStack 'rusty.quest.spatial_camera_panel.public_multistack.v1'
 Assert-Contains "Public multi-stack" $publicMultiStack 'publicMultiStackLayerCount=$LAYER_COUNT'
 Assert-Contains "Public multi-stack" $publicMultiStack 'publicMultiStackGuidePasses=$GUIDE_PASS_COUNT'

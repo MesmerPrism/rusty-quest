@@ -7530,12 +7530,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun runSpatialStagedAssetIfRequested(intent: Intent?, reason: String) {
     if (spatialVirtualRoomEnabled() && !spatialVirtualRoomLoaded()) {
-      marker(
-          "channel=spatial-sdk-asset-model status=start-deferred " +
-              "module=${SpatialStagedAssetModule.MODULE_ID} reason=${activityMarkerToken(reason)} " +
-              "deferredUntil=virtual-room-loaded spatialVirtualRoomLoaded=false " +
-              "privateSourceAssetPackaged=false highRateJsonPayload=false"
-      )
+      marker(SpatialStagedAssetModule.startDeferredMarker(reason))
       return
     }
     stagedAssetModule.startIfRequested(intent, reason)

@@ -364,8 +364,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCamera
 ```
 
 This records `channel=spatial-sdk-asset-model status=entity-created` only after
-the app receives an SDK-loadable mesh URI. Raw FBX paths are conversion-required
-source markers and are not SDK-loadable runtime mesh URIs.
+the app receives an SDK-loadable mesh URI. The staged asset module also owns the
+`start-deferred` marker emitted while a requested packaged virtual room is still
+loading. Raw FBX paths are conversion-required source markers and are not
+SDK-loadable runtime mesh URIs.
 The virtual room flags require `channel=spatial-virtual-room status=loaded` and
 `status=scene-configured`; the actual GLXF room files may come from a local
 Meta Spatial Editor sample export and should be treated separately from the
