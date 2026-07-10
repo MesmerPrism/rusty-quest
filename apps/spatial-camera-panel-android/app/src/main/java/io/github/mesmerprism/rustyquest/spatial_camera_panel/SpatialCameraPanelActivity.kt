@@ -327,8 +327,45 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
-  private var spatialVideoProjectionSettings = SpatialVideoProjectionSettings.disabled()
-  private var spatialVideoProjectionStarted = false
+  private val spatialVideoProjectionRuntimeCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialVideoProjectionRuntimeCoordinator(
+        SpatialVideoProjectionRuntimeBindings(
+            nativeState = {
+              SpatialVideoProjectionRuntimeNativeState(
+                  receiptLibraryLoaded = nativeReceiptLibraryLoaded
+              )
+            },
+            configureNative = { settings ->
+              nativeConfigureSpatialVideoProjection(
+                  settings.enabled,
+                  settings.path,
+                  settings.stereoLayout,
+                  settings.width,
+                  settings.height,
+                  settings.maxImages,
+                  settings.fpsCap,
+                  settings.looping,
+                  settings.opacity,
+                  settings.highRateJsonPayload,
+              )
+            },
+            startPlayback = { settings ->
+              SpatialStereoVideoPlayback.start(
+                  this,
+                  settings.path,
+                  settings.width,
+                  settings.height,
+                  settings.maxImages,
+                  settings.fpsCap,
+                  settings.looping,
+              )
+            },
+            stopPlayback = { SpatialStereoVideoPlayback.stop() },
+            stopNativeProbe = ::nativeStopSpatialVideoProjectionProbe,
+            marker = ::marker,
+        )
+    )
+  }
   private var nativeSpatialEnvironmentDepthStartMask = 0L
   private var cameraHwbProjectionEntity: Entity? = null
   private val sdkQuadResourceCoordinator by lazy(LazyThreadSafetyMode.NONE) {
@@ -434,12 +471,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   receiptLibraryError = nativeReceiptLibraryError,
               )
             },
-            resolveSettings = { currentSpatialVideoProjectionSettings(intent) },
+            resolveSettings = { spatialVideoProjectionRuntimeCoordinator.resolveSettings(intent) },
             projectionMarkerFields = ::cameraHwbProjectionMarkerFields,
             stereoMarkerFields = ::cameraHwbProjectionStereoMarkerFields,
             cleanup = ::cleanupSdkQuadSurfaceProbe,
             prepare = { videoSettings ->
-              spatialVideoProjectionSettings = videoSettings
+              spatialVideoProjectionRuntimeCoordinator.adoptSettings(videoSettings)
               cameraHwbProjectionEntity = null
               cameraHwbProjectionStereoHorizontalOffsetUv =
                   CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV
@@ -452,12 +489,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   source = "spatial-video-projection-probe",
               )
             },
-            configureNative = ::configureNativeSpatialVideoProjection,
-            startProjection = ::startSpatialVideoProjection,
+            configureNative = spatialVideoProjectionRuntimeCoordinator::configure,
+            startProjection = spatialVideoProjectionRuntimeCoordinator::start,
             createLayer = { swapchain ->
               cameraHwbProjectionRawCarrierCoordinator.createLayer(
                   swapchain,
-                  spatialVideoProjectionSettings,
+                  spatialVideoProjectionRuntimeCoordinator.settings,
               )
             },
             startNative = ::nativeStartSpatialVideoProjectionProbe,
@@ -492,14 +529,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                           CAMERA_HWB_PROJECTION_MIN_READER_MAX_IMAGES,
                           CAMERA_HWB_PROJECTION_MAX_READER_MAX_IMAGES,
                       ),
-                  videoSettings = currentSpatialVideoProjectionSettings(intent),
+                  videoSettings = spatialVideoProjectionRuntimeCoordinator.resolveSettings(intent),
               )
             },
             startGateToken = ::cameraHwbProjectionStartGateToken,
             carrierToken = ::cameraHwbProjectionCarrierToken,
             projectionMarkerFields = ::cameraHwbProjectionMarkerFields,
             stereoMarkerFields = ::cameraHwbProjectionStereoMarkerFields,
-            videoProjectionMarkerFields = ::spatialVideoProjectionMarkerFields,
+            videoProjectionMarkerFields = spatialVideoProjectionRuntimeCoordinator::markerFields,
             launch = { request ->
               runCameraHwbProjectionProbe(request.readerMaxImages, request.videoSettings)
             },
@@ -530,7 +567,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             carrierToken = ::cameraHwbProjectionCarrierToken,
             projectionMarkerFields = { plane -> cameraHwbProjectionMarkerFields(plane) },
             stereoMarkerFields = ::cameraHwbProjectionStereoMarkerFields,
-            videoProjectionMarkerFields = ::spatialVideoProjectionMarkerFields,
+            videoProjectionMarkerFields = spatialVideoProjectionRuntimeCoordinator::markerFields,
             syntheticVisualEnabled = ::cameraHwbProjectionSyntheticVisualProbeEnabled,
             drawSyntheticVisual = ::drawCameraHwbProjectionSyntheticVisual,
             startNativePassthrough = ::startSpatialNativePassthroughForDepthPrerequisite,
@@ -542,8 +579,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               updatePrivateLayerDepthLayerPolicyFromPanel(privateLayerDepthLayerPolicy, source)
               updatePrivateLayerDepthAlignmentFromPanel(privateLayerDepthAlignment, source)
             },
-            configureVideoProjection = ::configureNativeSpatialVideoProjection,
-            startVideoProjection = ::startSpatialVideoProjection,
+            configureVideoProjection = spatialVideoProjectionRuntimeCoordinator::configure,
+            startVideoProjection = spatialVideoProjectionRuntimeCoordinator::start,
             startNative = ::nativeStartCameraHwbProjectionProbe,
             updateFromViewer = ::updateCameraHwbProjectionFromViewer,
             marker = ::marker,
@@ -575,8 +612,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             panelRegistrationId = ::cameraHwbProjectionPanelRegistrationId,
             projectionMarkerFields = { plane -> cameraHwbProjectionMarkerFields(plane) },
             stereoMarkerFields = ::cameraHwbProjectionStereoMarkerFields,
-            videoSettings = { spatialVideoProjectionSettings },
-            videoProjectionMarkerFields = ::spatialVideoProjectionMarkerFields,
+            videoSettings = { spatialVideoProjectionRuntimeCoordinator.settings },
+            videoProjectionMarkerFields = spatialVideoProjectionRuntimeCoordinator::markerFields,
             syntheticVisualEnabled = ::cameraHwbProjectionSyntheticVisualProbeEnabled,
             drawSyntheticVisual = ::drawCameraHwbProjectionSyntheticVisual,
             startNativePassthrough = ::startSpatialNativePassthroughForDepthPrerequisite,
@@ -588,8 +625,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               updatePrivateLayerDepthLayerPolicyFromPanel(privateLayerDepthLayerPolicy, source)
               updatePrivateLayerDepthAlignmentFromPanel(privateLayerDepthAlignment, source)
             },
-            configureVideoProjection = ::configureNativeSpatialVideoProjection,
-            startVideoProjection = ::startSpatialVideoProjection,
+            configureVideoProjection = spatialVideoProjectionRuntimeCoordinator::configure,
+            startVideoProjection = spatialVideoProjectionRuntimeCoordinator::start,
             startNative = ::nativeStartCameraHwbProjectionProbe,
             stopNative = ::nativeStopCameraHwbProbe,
             updateFromViewer = ::updateCameraHwbProjectionFromViewer,
@@ -871,7 +908,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       runCatching { nativeStopCameraHwbProbe() }
       runCatching { nativeStopSpatialVideoProjectionProbe() }
     }
-    stopSpatialVideoProjection("activity-destroy")
+    spatialVideoProjectionRuntimeCoordinator.stop("activity-destroy")
     cameraHwbProjectionPanelCarrierCoordinator.cleanup("activity-destroy")
     cleanupSdkQuadSurfaceProbe("activity-destroy")
     externalSwapchainProbeCoordinator.destroy("activity-destroy")
@@ -1392,7 +1429,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ) {
     cleanupSdkQuadSurfaceProbe("camera-hwb-projection-pre-run")
     cameraHwbProjectionPanelCarrierCoordinator.cleanup("camera-hwb-projection-pre-run")
-    spatialVideoProjectionSettings = videoSettings
+    spatialVideoProjectionRuntimeCoordinator.adoptSettings(videoSettings)
     cameraHwbProjectionEntity = null
     cameraHwbProjectionCarrierMode = currentCameraHwbProjectionCarrierMode()
     cameraHwbProjectionTargetScale = initialCameraHwbProjectionTargetScale()
@@ -1492,7 +1529,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun cleanupSdkQuadSurfaceProbe(reason: String): String {
-    stopSpatialVideoProjection("sdk-quad-surface-$reason")
+    spatialVideoProjectionRuntimeCoordinator.stop("sdk-quad-surface-$reason")
     if (nativeReceiptLibraryLoaded) {
       runCatching { nativeStopSpatialEnvironmentDepthProbe() }
       runCatching { nativeStopSpatialNativePassthrough() }
@@ -1859,7 +1896,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       spatialVirtualRoomEnabled() ||
           activityReadOptionalBooleanSystemProperty(CAMERA_HWB_PROJECTION_PROBE_PROPERTY) == true ||
           activityReadOptionalBooleanSystemProperty(SPATIAL_VIDEO_PROJECTION_PROBE_PROPERTY) == true ||
-          currentSpatialVideoProjectionSettings(intent).active
+          spatialVideoProjectionRuntimeCoordinator.resolveSettings(intent).active
 
   private fun deactivateLegacyWorkflowPanelsForCameraStack(source: String) {
     if (!cameraStackOrRoomRequested()) {
@@ -2967,7 +3004,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             projectionMarkerFields = cameraHwbProjectionMarkerFields(plane),
             stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
             videoProjectionMarkerFields =
-                spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings),
+                spatialVideoProjectionRuntimeCoordinator.markerFields(
+                    spatialVideoProjectionRuntimeCoordinator.settings
+                ),
             publicMultiStackMarkerFields = SpatialPublicMultiStack.markerFields(),
             layerUpdateStatus = layerUpdateStatus,
             panelCarrierUpdateStatus = panelCarrierUpdateStatus,
@@ -3130,101 +3169,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       CameraHwbProjectionModule.carrierTransportToken(
           intent?.hasExtra(CAMERA_HWB_PROJECTION_CARRIER_EXTRA) == true
       )
-
-  private fun currentSpatialVideoProjectionSettings(intent: Intent?): SpatialVideoProjectionSettings {
-    return SpatialVideoProjectionRouteModule.currentSettings(intent)
-  }
-
-  private fun spatialVideoProjectionMarkerFields(settings: SpatialVideoProjectionSettings): String =
-      SpatialVideoProjectionRouteModule.markerFields(settings)
-
-  private fun configureNativeSpatialVideoProjection(
-      settings: SpatialVideoProjectionSettings,
-      reason: String,
-  ): Long {
-    if (!nativeReceiptLibraryLoaded) {
-      marker(
-          SpatialVideoProjectionRouteModule.nativeConfigureSkippedMarker(
-              reason,
-              settings,
-          )
-      )
-      return 0L
-    }
-    val mask =
-        runCatching {
-              nativeConfigureSpatialVideoProjection(
-                  settings.enabled,
-                  settings.path,
-                  settings.stereoLayout,
-                  settings.width,
-                  settings.height,
-                  settings.maxImages,
-                  settings.fpsCap,
-                  settings.looping,
-                  settings.opacity,
-                  settings.highRateJsonPayload,
-              )
-            }
-            .getOrElse { throwable ->
-              marker(
-                  SpatialVideoProjectionRouteModule.nativeConfigureFailedMarker(
-                      reason = reason,
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                      settings = settings,
-                  )
-              )
-              return 0L
-            }
-    marker(SpatialVideoProjectionRouteModule.nativeConfiguredMarker(reason, mask, settings))
-    return mask
-  }
-
-  private fun startSpatialVideoProjection(
-      settings: SpatialVideoProjectionSettings,
-      reason: String,
-  ) {
-    marker(SpatialVideoProjectionRouteModule.startRequestedMarker(reason, settings))
-    SpatialStereoVideoPlayback.start(
-        this,
-        settings.path,
-        settings.width,
-        settings.height,
-        settings.maxImages,
-        settings.fpsCap,
-        settings.looping,
-    )
-    spatialVideoProjectionStarted = true
-  }
-
-  private fun stopSpatialVideoProjection(reason: String) {
-    if (!spatialVideoProjectionStarted && !spatialVideoProjectionSettings.enabled) {
-      return
-    }
-    val previousSettings = spatialVideoProjectionSettings
-    runCatching { SpatialStereoVideoPlayback.stop() }
-    if (nativeReceiptLibraryLoaded) {
-      runCatching { nativeStopSpatialVideoProjectionProbe() }
-      runCatching {
-        nativeConfigureSpatialVideoProjection(
-            false,
-            "",
-            previousSettings.stereoLayout,
-            previousSettings.width,
-            previousSettings.height,
-            previousSettings.maxImages,
-            previousSettings.fpsCap,
-            previousSettings.looping,
-            previousSettings.opacity,
-            previousSettings.highRateJsonPayload,
-        )
-      }
-    }
-    spatialVideoProjectionStarted = false
-    spatialVideoProjectionSettings = SpatialVideoProjectionSettings.disabled()
-    marker(SpatialVideoProjectionRouteModule.stoppedMarker(reason, previousSettings))
-  }
 
   private fun cameraHwbProjectionPanelHittableToken(): String =
       CameraHwbProjectionModule.panelHittableToken(cameraHwbProjectionCarrierMode)
@@ -4143,7 +4087,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val opensPrivateLayerPanel =
         cameraStackSuppressesParticles ||
             cameraHwbProjectionLaunchCoordinator.started ||
-            spatialVideoProjectionStarted
+            spatialVideoProjectionRuntimeCoordinator.started
     val panelToggleAction =
         SpatialControllerRoutingModule.panelToggleAction(
             privateLayerPanelVisible = privateLayerPanelVisible,

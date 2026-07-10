@@ -244,6 +244,12 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `SpatialVideoProjectionProbeCoordinator.kt`; retain effective settings,
   native configuration, projection startup, viewer updates, and JNI authority
   in explicit Activity callbacks;
+- package the one effective video-projection settings snapshot, playback
+  started state, native configuration sequence, playback start/stop, and
+  inactive-start fail-closed guard in
+  `SpatialVideoProjectionRuntimeCoordinator.kt`; route video-only, raw, and
+  panel carriers through that authority while retaining Android playback
+  context and JNI declarations in Activity bindings;
 - package the exact camera-HWB projection property opt-in,
   scene/virtual-room deferral, one-shot launch state, launch receipt, and
   main-thread dispatch in `SpatialCameraHwbProjectionLaunchCoordinator.kt`;

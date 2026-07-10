@@ -406,6 +406,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   bindings retain effective settings, camera-panel suppression, native video
   configuration, shared projection startup, viewer updates, and JNI authority;
   the coordinator does not create a second settings source of truth.
+- `app/src/main/.../SpatialVideoProjectionRuntimeCoordinator.kt` is the single
+  effective-settings and playback-state owner shared by video-only, raw, and
+  panel projection routes. It resolves route settings, adopts the effective
+  snapshot, sequences native configuration and playback start/stop, and fails
+  closed when inactive settings reach `start`. Activity bindings retain the
+  Android playback context and JNI declarations; carrier coordinators cannot
+  create parallel settings or started-state authorities.
 - `app/src/main/.../SpatialCameraHwbProjectionLaunchCoordinator.kt` owns the
   exact camera-HWB projection property opt-in, scene/virtual-room deferral,
   one-shot launch state, start receipt, and main-thread dispatch. Activity
