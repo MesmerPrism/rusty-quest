@@ -398,6 +398,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   native-library state, JNI declarations, panel visibility observation, and
   feature activation in Activity bindings so the coordinator cannot start the
   particle runtime.
+- package explicit-opt-in particle lifecycle state and guarded native
+  start/camera-stack suppression/stop sequencing in
+  `SpatialSurfaceParticleRuntimeCoordinator.kt`; retain Android `Surface`
+  access, OpenXR probe capture, scene visibility, runtime-property reads, and
+  JNI declarations in Activity-supplied adapters.
 - package native surface-particle registered video-surface callback sequencing,
   manual panel carrier construction, custom-mesh `PanelSceneObject` creation,
   create/surface/add failure markers, and readiness marker fields in

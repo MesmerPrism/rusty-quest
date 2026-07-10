@@ -598,6 +598,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   calls Activity-supplied JNI adapters. Intent parsing, native-library state,
   JNI declarations, panel visibility observation, and feature activation stay
   in Activity bindings; the coordinator cannot start the particle runtime.
+- `app/src/main/.../SpatialSurfaceParticleRuntimeCoordinator.kt` is the
+  explicit-opt-in native particle lifecycle owner. It owns started,
+  camera-stack-suppressed, start-requested, and last-start-mask state and
+  sequences guarded start, camera-stack suppression, and stop receipts.
+  Android `Surface` access, OpenXR capture, scene visibility, runtime-property
+  reads, and JNI declarations remain Activity-supplied adapters.
 - `app/src/main/.../SpatialSurfaceParticlePanelCarrierModule.kt` owns native
   surface-particle panel carrier construction: registered video-surface callback
   sequencing, the manual custom-mesh `PanelSceneObject`, create/surface/add

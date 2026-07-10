@@ -120,10 +120,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var particleSurfacePanelReady = false
   private var particleSurfaceConsumerCalled = false
   private var particleSurfaceConsumerSurfaceValid = false
-  private var particleLayerStarted = false
-  private var cameraStackSuppressesParticles = false
-  private var nativeSurfaceStartRequested = false
-  private var lastNativeSurfaceStartMask = 0L
   private var particleLayerProjectionMarkerCount = 0
   private var lastParticleLayerProjectionMarkerMs = 0L
   private var lastParticleLayerTargetDistanceMeters: Float? = null
@@ -241,6 +237,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
             },
             resolveNativeAlias = ::nativeResolveSurfaceParticleAliasParameter,
+            marker = ::marker,
+        )
+    )
+  }
+  private val surfaceParticleRuntimeCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialSurfaceParticleRuntimeCoordinator(
+        SpatialSurfaceParticleRuntimeBindings(
+            nativeSurfaceParticleLayerEnabled = ::nativeSurfaceParticleLayerEnabled,
+            suppressionSource = ::nativeSurfaceParticleLayerSuppressionSource,
+            privateRendererEnabled = ::privateSpatialEcsParticleRendererEnabled,
+            receiptLibraryLoaded = { nativeInteropCoordinator.receiptLibraryLoaded },
+            receiptLibraryError = { nativeInteropCoordinator.receiptLibraryError },
+            launcherPanelVisible = ::launcherPanelVisibleForPanelMode,
+            stopNative = ::nativeStopSurfaceParticleLayer,
             marker = ::marker,
         )
     )
@@ -1138,7 +1148,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     polarSensorPanel = null
     stagedAssetModule.destroy("activity-destroy")
     destroySpatialVirtualRoom("activity-destroy")
-    stopNativeSurfaceParticleLayer()
+    surfaceParticleRuntimeCoordinator.stop()
     super.onDestroy()
   }
 
@@ -1454,46 +1464,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun startNativeSurfaceParticleLayer(surface: AndroidSurface) {
-    if (!nativeSurfaceParticleLayerEnabled()) {
-      marker(
-          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStartSuppressedDisabledMarker(
-              suppressionSource = nativeSurfaceParticleLayerSuppressionSource(),
-              privateRendererEnabled = privateSpatialEcsParticleRendererEnabled(),
-              particleLayerStarted = particleLayerStarted,
-              nativeSurfaceStartRequested = nativeSurfaceStartRequested,
-          )
-      )
-      return
-    }
-    if (cameraStackSuppressesParticles) {
-      marker(
-          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStartSuppressedCameraStackMarker(
-              particleLayerStarted = particleLayerStarted,
-              nativeSurfaceStartRequested = nativeSurfaceStartRequested,
-          )
-      )
-      return
-    }
-    if (particleLayerStarted) {
-      marker(SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStartSkippedAlreadyStartedMarker())
-      return
-    }
-    if (!nativeInteropCoordinator.receiptLibraryLoaded) {
-      marker(
-          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleLibraryUnavailableMarker(
-              nativeInteropCoordinator.receiptLibraryError
-          )
-      )
-      return
-    }
-    val surfaceValid = surface.isValid
-    val openXrProbe = SpatialNativeInteropProbe.capture(scene)
-    if (!surfaceValid) {
-      marker(SpatialSurfaceParticleRouteModule.nativeSurfaceParticleSurfaceUnavailableMarker())
-      return
-    }
-    runCatching {
-          val startMask =
+    surfaceParticleRuntimeCoordinator.start(
+        SpatialSurfaceParticleStartRequest(
+            surfaceValid = { surface.isValid },
+            captureOpenXrProbe = { SpatialNativeInteropProbe.capture(scene) },
+            startNative = { openXrProbe ->
               nativeStartSurfaceParticleLayer(
                   surface,
                   PARTICLE_LAYER_WIDTH_PX,
@@ -1504,32 +1479,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   openXrProbe.openXrSessionHandle,
                   openXrProbe.openXrGetInstanceProcAddrHandle,
               )
-          particleLayerStarted = true
-          nativeSurfaceStartRequested = true
-          lastNativeSurfaceStartMask = startMask
-          marker(
-              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStartRequestedMarker(
-                  surfaceValid = surfaceValid,
-                  startMask = startMask,
-                  carrier = particleLayerCarrierToken(),
-                  openXrInstanceHandleNonZero = openXrProbe.openXrInstanceHandleNonZero,
-                  openXrSessionHandleNonZero = openXrProbe.openXrSessionHandleNonZero,
-                  openXrGetInstanceProcAddrHandleNonZero =
-                      openXrProbe.openXrGetInstanceProcAddrHandleNonZero,
-                  placementMarkerFields = particleLayerPlacementMarkerFields(),
-                  stereoMarkerFields = particleLayerStereoMarkerFields(),
-              )
-          )
-          surfaceParticleParameterCoordinator.submit(source = "start")
-        }
-        .getOrElse { throwable ->
-          marker(
-              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStartFailedMarker(
-                  error = throwable.javaClass.simpleName,
-                  message = throwable.message ?: "none",
-              )
-          )
-    }
+            },
+            carrier = ::particleLayerCarrierToken,
+            placementMarkerFields = ::particleLayerPlacementMarkerFields,
+            stereoMarkerFields = ::particleLayerStereoMarkerFields,
+            submitParameters = { surfaceParticleParameterCoordinator.submit(source = "start") },
+        )
+    )
   }
 
   private fun resolveSurfaceParticleAliasControl(intent: Intent, source: String) {
@@ -1559,54 +1515,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun suppressParticleLayerForCameraStack(source: String) {
-    cameraStackSuppressesParticles = true
     particleLayerEntity?.setComponent(Visible(false))
     panelLauncherEntity?.setComponent(Visible(false))
-    val wasStarted = particleLayerStarted
-    val stopAttempted = nativeInteropCoordinator.receiptLibraryLoaded && wasStarted
-    if (stopAttempted) {
-      runCatching { nativeStopSurfaceParticleLayer() }
-          .onSuccess {
-            particleLayerStarted = false
-            nativeSurfaceStartRequested = false
-            marker(
-                SpatialSurfaceParticleRouteModule.cameraStackParticleLayerSuppressedMarker(
-                    source = source,
-                    stopAttempted = true,
-                    stopSucceeded = true,
-                    launcherPanelVisible = launcherPanelVisibleForPanelMode(),
-                    particleLayerStarted = particleLayerStarted,
-                    nativeSurfaceStartRequested = nativeSurfaceStartRequested,
-                )
-            )
-          }
-          .onFailure { throwable ->
-            marker(
-                SpatialSurfaceParticleRouteModule.cameraStackParticleLayerSuppressFailedMarker(
-                    source = source,
-                    particleLayerStarted = particleLayerStarted,
-                    nativeSurfaceStartRequested = nativeSurfaceStartRequested,
-                    error = throwable.javaClass.simpleName,
-                    message = throwable.message ?: "none",
-                )
-            )
-          }
-      return
-    }
-    if (!wasStarted) {
-      particleLayerStarted = false
-      nativeSurfaceStartRequested = false
-    }
-    marker(
-        SpatialSurfaceParticleRouteModule.cameraStackParticleLayerSuppressedMarker(
-            source = source,
-            stopAttempted = stopAttempted,
-            stopSucceeded = true,
-            launcherPanelVisible = launcherPanelVisibleForPanelMode(),
-            particleLayerStarted = particleLayerStarted,
-            nativeSurfaceStartRequested = nativeSurfaceStartRequested,
-        )
-    )
+    surfaceParticleRuntimeCoordinator.suppressForCameraStack(source)
   }
 
   private fun suppressParticleLayerIfCameraProjectionRequested(source: String) {
@@ -1628,7 +1539,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (!cameraStackOrRoomRequested()) {
       return
     }
-    cameraStackSuppressesParticles = true
+    surfaceParticleRuntimeCoordinator.suppressStartsForCameraStack()
     panelPlacement = panelPlacement.copy(visible = false)
     privateLayerPanelVisible = false
     privateLayerPanelPlacement = privateLayerPanelPlacement.copy(visible = false)
@@ -1656,7 +1567,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 source = source,
                 panelShellVisibleProperty = PANEL_SHELL_VISIBLE_PROPERTY,
                 particleLayerVisible = particleLayerVisibleForPanelMode(),
-                cameraStackSuppressesParticles = cameraStackSuppressesParticles,
+                cameraStackSuppressesParticles =
+                    surfaceParticleRuntimeCoordinator.cameraStackSuppressesParticles,
                 nativeSurfaceParticleLayerEnabled = nativeSurfaceParticleLayerEnabled(),
                 privateSpatialEcsParticleRendererEnabled = privateSpatialEcsParticleRendererEnabled(),
                 nativeSurfaceParticleLayerSuppressedByPrivateRenderer =
@@ -1664,35 +1576,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             )
         )
     )
-  }
-
-  private fun stopNativeSurfaceParticleLayer(source: String = "lifecycle") {
-    val wasStarted = particleLayerStarted
-    if (nativeInteropCoordinator.receiptLibraryLoaded && wasStarted) {
-      runCatching { nativeStopSurfaceParticleLayer() }
-          .onSuccess {
-            particleLayerStarted = false
-            nativeSurfaceStartRequested = false
-            marker(
-                SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStoppedMarker(
-                    source = source,
-                    particleLayerStarted = particleLayerStarted,
-                    nativeSurfaceStartRequested = nativeSurfaceStartRequested,
-                )
-            )
-          }
-          .onFailure { throwable ->
-            marker(
-                SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStopFailedMarker(
-                    source = source,
-                    error = throwable.javaClass.simpleName,
-                    message = throwable.message ?: "none",
-                )
-            )
-          }
-    } else if (!wasStarted) {
-      nativeSurfaceStartRequested = false
-    }
   }
 
   private fun adjustPanelPlacement(
@@ -2067,7 +1950,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       SpatialPanelPlacementModule.particleLayerVisibleForPanelMode(
           workflowPanelVisible = panelPlacement.visible,
           privateLayerPanelVisible = privateLayerPanelVisible,
-          cameraStackSuppressesParticles = cameraStackSuppressesParticles,
+          cameraStackSuppressesParticles =
+              surfaceParticleRuntimeCoordinator.cameraStackSuppressesParticles,
           nativeSurfaceParticleLayerEnabled = nativeSurfaceParticleLayerEnabled(),
       )
 
@@ -2077,13 +1961,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           panelLauncherVisible = panelLauncherVisible(),
           workflowPanelVisible = panelPlacement.visible,
           privateLayerPanelVisible = privateLayerPanelVisible,
-          cameraStackSuppressesParticles = cameraStackSuppressesParticles,
+          cameraStackSuppressesParticles =
+              surfaceParticleRuntimeCoordinator.cameraStackSuppressesParticles,
           spatialVirtualRoomEnabled = spatialVirtualRoomEnabled(),
       )
 
   private fun legacyLauncherPanelSuppressedForCameraStack(): Boolean =
       SpatialPanelPlacementModule.legacyLauncherPanelSuppressedForCameraStack(
-          cameraStackSuppressesParticles,
+          surfaceParticleRuntimeCoordinator.cameraStackSuppressesParticles,
           spatialVirtualRoomEnabled(),
       )
 
@@ -2376,7 +2261,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   @OptIn(SpatialSDKExperimentalAPI::class)
   private fun updateParticleLayerProjectionFromViewer(reason: String, forceLog: Boolean) {
     val entity = particleLayerEntity ?: return
-    if (cameraStackSuppressesParticles) {
+    if (surfaceParticleRuntimeCoordinator.cameraStackSuppressesParticles) {
       entity.setComponent(Visible(false))
       if (forceLog) {
         marker(
@@ -3225,7 +3110,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun openWorkflowPanelFromController(inputSource: String, detail: String): Boolean {
     if (!SpatialControllerRoutingModule.isRightPrimaryPanelToggleSource(inputSource)) return false
     val opensPrivateLayerPanel =
-        cameraStackSuppressesParticles ||
+        surfaceParticleRuntimeCoordinator.cameraStackSuppressesParticles ||
             cameraHwbProjectionLaunchCoordinator.started ||
             spatialVideoProjectionRuntimeCoordinator.started
     val panelToggleAction =
@@ -3653,9 +3538,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             particleSurfaceConsumerCalled = particleSurfaceConsumerCalled,
             particleSurfaceConsumerSurfaceValid = particleSurfaceConsumerSurfaceValid,
             nativeSurfaceParticleLayerEnabled = nativeSurfaceParticleLayerEnabled(),
-            particleLayerStarted = particleLayerStarted,
-            nativeSurfaceStartRequested = nativeSurfaceStartRequested,
-            lastNativeSurfaceStartMask = lastNativeSurfaceStartMask,
+            particleLayerStarted = surfaceParticleRuntimeCoordinator.particleLayerStarted,
+            nativeSurfaceStartRequested =
+                surfaceParticleRuntimeCoordinator.nativeSurfaceStartRequested,
+            lastNativeSurfaceStartMask =
+                surfaceParticleRuntimeCoordinator.lastNativeSurfaceStartMask,
             nativeReceiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded,
             nativeReceiptLibraryError = nativeInteropCoordinator.receiptLibraryError,
             openXrInstanceHandleNonZero = probe.openXrInstanceHandleNonZero,
