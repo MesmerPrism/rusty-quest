@@ -233,6 +233,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   attempt, timed cleanup, variant gap, and final receipt in
   `SpatialPanelSurfaceMatrixProbeCoordinator.kt`; retain JNI declarations and
   dynamic native-library state in Activity-supplied bindings;
+- package the default-disabled raw camera-HWB probe gate, projection-route
+  exclusion, start state, native-library branch, Android swapchain/surface and
+  generated layer lifecycle, native producer start/stop, hold timer, cleanup,
+  and receipts in `SpatialCameraHwbProbeCoordinator.kt`; keep property reads,
+  JNI declarations, and camera-projection authority in Activity bindings;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, placement-plane construction from

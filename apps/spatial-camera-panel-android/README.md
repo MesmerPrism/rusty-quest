@@ -392,6 +392,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   and final completion receipt. The Activity supplies `Scene`, native state,
   Vulkan callbacks, cleanup, and markers; no other diagnostic is enabled by
   this coordinator.
+- `app/src/main/.../SpatialCameraHwbProbeCoordinator.kt` owns the
+  default-disabled raw camera-HWB diagnostic: its exact property gate,
+  projection-route exclusion, start state, native-library branch, Android
+  swapchain/surface and generated layer lifecycle, native camera producer
+  start/stop, hold timer, cleanup, and receipts. The Activity supplies the
+  projection-property adapter, dynamic native state, JNI callbacks, shared
+  resources, and marker sink; camera projection retains separate authority.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, viewer-locked and virtual-wall projection
