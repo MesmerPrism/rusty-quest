@@ -1,8 +1,6 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
 import android.content.Intent
-import android.graphics.Color as AndroidColor
-import android.graphics.Paint as AndroidPaint
 import android.graphics.PorterDuff
 import android.os.Bundle
 import android.os.Handler
@@ -547,6 +545,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
+  private val cameraHwbProjectionSyntheticRenderer by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialCameraHwbProjectionSyntheticRenderer(
+        SpatialCameraHwbProjectionSyntheticRendererBindings(marker = ::marker)
+    )
+  }
   private val cameraHwbProjectionRawCarrierCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialCameraHwbProjectionRawCarrierCoordinator(
         SpatialCameraHwbProjectionRawCarrierBindings(
@@ -572,7 +575,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             stereoMarkerFields = ::cameraHwbProjectionStereoMarkerFields,
             videoProjectionMarkerFields = spatialVideoProjectionRuntimeCoordinator::markerFields,
             syntheticVisualEnabled = ::cameraHwbProjectionSyntheticVisualProbeEnabled,
-            drawSyntheticVisual = ::drawCameraHwbProjectionSyntheticVisual,
+            drawSyntheticVisual = cameraHwbProjectionSyntheticRenderer::draw,
             startNativePassthrough = ::startSpatialNativePassthroughForDepthPrerequisite,
             startEnvironmentDepth = ::startSpatialEnvironmentDepthProbe,
             updateNativeStereoOffset = { reason, forceLog ->
@@ -624,7 +627,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             videoSettings = { spatialVideoProjectionRuntimeCoordinator.settings },
             videoProjectionMarkerFields = spatialVideoProjectionRuntimeCoordinator::markerFields,
             syntheticVisualEnabled = ::cameraHwbProjectionSyntheticVisualProbeEnabled,
-            drawSyntheticVisual = ::drawCameraHwbProjectionSyntheticVisual,
+            drawSyntheticVisual = cameraHwbProjectionSyntheticRenderer::draw,
             startNativePassthrough = ::startSpatialNativePassthroughForDepthPrerequisite,
             startEnvironmentDepth = ::startSpatialEnvironmentDepthProbe,
             updateNativeStereoOffset = { reason, forceLog ->
@@ -1541,84 +1544,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     cameraHwbProjectionRawCarrierCoordinator.run(readerMaxImages, videoSettings)
   }
-  private fun drawCameraHwbProjectionSyntheticVisual(
-      surface: AndroidSurface,
-      carrierLabel: String,
-  ): Boolean {
-    if (!surface.isValid) {
-      marker(
-          CameraHwbProjectionModule.syntheticVisualDrawSkippedMarker(carrierLabel)
-      )
-      return false
-    }
-    var canvas: android.graphics.Canvas? = null
-    return runCatching {
-          canvas = surface.lockCanvas(null)
-          val lockedCanvas = canvas ?: return@runCatching false
-          val paint = AndroidPaint()
-          val cellsX = 8
-          val cellsY = 8
-          val cellWidth = lockedCanvas.width / cellsX.toFloat()
-          val cellHeight = lockedCanvas.height / cellsY.toFloat()
-          val colors =
-              intArrayOf(
-                  AndroidColor.rgb(226, 18, 18),
-                  AndroidColor.rgb(18, 210, 58),
-                  AndroidColor.rgb(18, 86, 232),
-                  AndroidColor.rgb(242, 214, 20),
-              )
-          for (y in 0 until cellsY) {
-            for (x in 0 until cellsX) {
-              paint.color = colors[(x + y) % colors.size]
-              lockedCanvas.drawRect(
-                  x * cellWidth,
-                  y * cellHeight,
-                  (x + 1) * cellWidth,
-                  (y + 1) * cellHeight,
-                  paint,
-              )
-            }
-          }
-          paint.isAntiAlias = true
-          paint.color = AndroidColor.BLACK
-          lockedCanvas.drawRect(
-              lockedCanvas.width * 0.18f,
-              lockedCanvas.height * 0.40f,
-              lockedCanvas.width * 0.82f,
-              lockedCanvas.height * 0.60f,
-              paint,
-          )
-          paint.color = AndroidColor.WHITE
-          paint.textSize = lockedCanvas.height * 0.075f
-          lockedCanvas.drawText(
-              "SPATIAL SDK",
-              lockedCanvas.width * 0.24f,
-              lockedCanvas.height * 0.52f,
-              paint,
-          )
-          true
-        }
-        .onSuccess { drawn ->
-          canvas?.let { locked -> runCatching { surface.unlockCanvasAndPost(locked) } }
-          marker(
-              CameraHwbProjectionModule.syntheticVisualDrawCompleteMarker(drawn, carrierLabel)
-          )
-        }
-        .onFailure { throwable ->
-          canvas?.let { locked ->
-            runCatching { surface.unlockCanvasAndPost(locked) }
-          }
-          marker(
-              CameraHwbProjectionModule.syntheticVisualDrawFailedMarker(
-                  carrierLabel = carrierLabel,
-                  error = throwable.javaClass.simpleName,
-                  message = throwable.message ?: "none",
-              )
-          )
-        }
-        .getOrDefault(false)
-  }
-
   private fun cleanupSdkQuadSurfaceProbe(reason: String): String {
     spatialVideoProjectionRuntimeCoordinator.stop("sdk-quad-surface-$reason")
     if (nativeReceiptLibraryLoaded) {

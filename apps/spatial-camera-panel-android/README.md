@@ -447,6 +447,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   Input mutations fail closed unless the explicitly launched projection entity
   exists. Activity bindings retain property reads, MotionEvent axis extraction,
   placement refresh, and JNI declarations.
+- `app/src/main/.../SpatialCameraHwbProjectionSyntheticRenderer.kt` owns the
+  Android Canvas checkerboard/text visual and its draw/skip/failure receipts.
+  It has no property, route, or JNI authority and cannot activate itself; only
+  the already opted-in raw and panel carrier coordinators receive its draw
+  binding after their synthetic-visual gate passes.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, viewer-locked and virtual-wall projection

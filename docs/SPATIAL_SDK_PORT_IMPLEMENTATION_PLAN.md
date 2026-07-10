@@ -283,6 +283,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   unless the explicitly launched projection entity exists, while retaining
   property reads, MotionEvent axis extraction, placement refresh, and JNI
   declarations in Activity bindings;
+- package the Android Canvas synthetic checkerboard/text draw path and its
+  draw/skip/failure receipts in
+  `SpatialCameraHwbProjectionSyntheticRenderer.kt`; give it no property, route,
+  or JNI authority and expose it only as a draw binding to already opted-in raw
+  and panel carriers after their synthetic-visual gate passes;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, placement-plane construction from
