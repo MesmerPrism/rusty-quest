@@ -413,6 +413,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   carrier selection, marker-field composition, and projection execution; the
   coordinator cannot activate raw or panel carriers without that explicit
   launch gate.
+- `app/src/main/.../SpatialCameraHwbProjectionRawCarrierCoordinator.kt` owns
+  the raw SceneQuadLayer projection execution path: Android swapchain/surface
+  acquisition, generated stereo layer construction, synthetic-preview branch,
+  native prerequisite ordering, producer start, cleanup, and receipts. Its run
+  route fails closed unless the launch coordinator is active and raw carrier
+  mode is selected. Activity bindings retain effective settings, entity state,
+  placement inputs, private-layer policy, video startup, and JNI authority.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, viewer-locked and virtual-wall projection

@@ -72,11 +72,6 @@ import com.meta.spatial.runtime.PanelSurface
 import com.meta.spatial.runtime.ReferenceSpace
 import com.meta.spatial.runtime.SamplerConfig
 import com.meta.spatial.runtime.Scene
-import com.meta.spatial.runtime.SceneMaterial
-import com.meta.spatial.runtime.SceneMesh
-import com.meta.spatial.runtime.SceneObject
-import com.meta.spatial.runtime.SceneQuadLayer
-import com.meta.spatial.runtime.SceneSwapchain
 import com.meta.spatial.runtime.StereoMode
 import com.meta.spatial.toolkit.AppSystemActivity
 import com.meta.spatial.toolkit.AvatarSystem
@@ -459,7 +454,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             },
             configureNative = ::configureNativeSpatialVideoProjection,
             startProjection = ::startSpatialVideoProjection,
-            createLayer = ::createCameraHwbProjectionLayer,
+            createLayer = { swapchain ->
+              cameraHwbProjectionRawCarrierCoordinator.createLayer(
+                  swapchain,
+                  spatialVideoProjectionSettings,
+              )
+            },
             startNative = ::nativeStartSpatialVideoProjectionProbe,
             updateFromViewer = { reason, forceLog ->
               updateCameraHwbProjectionFromViewer(reason, forceLog)
@@ -503,6 +503,52 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             launch = { request ->
               runCameraHwbProjectionProbe(request.readerMaxImages, request.videoSettings)
             },
+            marker = ::marker,
+        )
+    )
+  }
+  private val cameraHwbProjectionRawCarrierCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialCameraHwbProjectionRawCarrierCoordinator(
+        SpatialCameraHwbProjectionRawCarrierBindings(
+            scene = scene,
+            resources = sdkQuadResourceCoordinator,
+            routeEnabled = {
+              cameraHwbProjectionLaunchCoordinator.started &&
+                  !cameraHwbProjectionScenePanelCarrierEnabled()
+            },
+            nativeState = {
+              SpatialCameraHwbProjectionRawNativeState(
+                  receiptLibraryLoaded = nativeReceiptLibraryLoaded,
+                  receiptLibraryError = nativeReceiptLibraryError,
+              )
+            },
+            cleanup = ::cleanupSdkQuadSurfaceProbe,
+            projectionPlane = ::cameraHwbProjectionPlaneForPlacement,
+            setProjectionEntity = { entity -> cameraHwbProjectionEntity = entity },
+            layerZIndex = ::cameraHwbProjectionZIndexForPlacement,
+            carrierMode = { cameraHwbProjectionCarrierMode },
+            carrierToken = ::cameraHwbProjectionCarrierToken,
+            projectionMarkerFields = { plane -> cameraHwbProjectionMarkerFields(plane) },
+            stereoMarkerFields = ::cameraHwbProjectionStereoMarkerFields,
+            videoProjectionMarkerFields = ::spatialVideoProjectionMarkerFields,
+            syntheticVisualEnabled = ::cameraHwbProjectionSyntheticVisualProbeEnabled,
+            drawSyntheticVisual = ::drawCameraHwbProjectionSyntheticVisual,
+            setSyntheticVisualPresented = { presented ->
+              cameraHwbProjectionSyntheticVisualPresented = presented
+            },
+            startNativePassthrough = ::startSpatialNativePassthroughForDepthPrerequisite,
+            startEnvironmentDepth = ::startSpatialEnvironmentDepthProbe,
+            updateNativeStereoOffset = ::updateNativeCameraHwbProjectionStereoOffset,
+            updateNativeTargetScale = ::updateNativeCameraHwbProjectionTargetScale,
+            applyPrivateLayerConfiguration = { source ->
+              updatePrivateLayerOverrideFromPanel(privateLayerOverride, source)
+              updatePrivateLayerDepthLayerPolicyFromPanel(privateLayerDepthLayerPolicy, source)
+              updatePrivateLayerDepthAlignmentFromPanel(privateLayerDepthAlignment, source)
+            },
+            configureVideoProjection = ::configureNativeSpatialVideoProjection,
+            startVideoProjection = ::startSpatialVideoProjection,
+            startNative = ::nativeStartCameraHwbProjectionProbe,
+            updateFromViewer = ::updateCameraHwbProjectionFromViewer,
             marker = ::marker,
         )
     )
@@ -1356,186 +1402,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     suppressParticleLayerForCameraStack("camera-hwb-projection-probe")
     privateLayerPanelVisible = false
     setWorkflowPanelVisible(false, focus = false, source = "camera-hwb-projection-probe")
-    if (!nativeReceiptLibraryLoaded) {
-      marker(
-          CameraHwbProjectionModule.rawProjectionCompleteBeforeSwapchainMarker(
-              nativeReceiptLibraryError
-          )
-      )
-      return
-    }
     if (cameraHwbProjectionScenePanelCarrierEnabled()) {
+      if (!nativeReceiptLibraryLoaded) {
+        marker(
+            CameraHwbProjectionModule.rawProjectionCompleteBeforeSwapchainMarker(
+                nativeReceiptLibraryError
+            )
+        )
+        return
+      }
       runCameraHwbProjectionPanelCarrier(readerMaxImages, videoSettings)
       return
     }
-    val sdkSwapchain =
-        runCatching {
-              SceneSwapchain.createAsAndroid(
-                  CAMERA_HWB_PROJECTION_WIDTH_PX,
-                  CAMERA_HWB_PROJECTION_HEIGHT_PX,
-                  false,
-              )
-            }
-            .getOrElse { throwable ->
-              marker(
-                  CameraHwbProjectionModule.rawProjectionCompleteBeforeSwapchainMarker(
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              return
-            }
-    sdkQuadResourceCoordinator.adoptSwapchain(sdkSwapchain)
-    val surface =
-        runCatching { sdkSwapchain.getSurface() }
-            .getOrElse { throwable ->
-              marker(
-                  CameraHwbProjectionModule.rawProjectionGetSurfaceFailedMarker(
-                      handle = sdkSwapchain.handle,
-                      nativeHandle = sdkSwapchain.nativeHandle(),
-                      platformHandle = sdkSwapchain.platformHandle(),
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              null
-            }
-    sdkQuadResourceCoordinator.adoptSurface(surface)
-    val surfaceValid = surface?.isValid == true
-    marker(
-        CameraHwbProjectionModule.rawProjectionSdkSwapchainCreatedMarker(
-            handle = sdkSwapchain.handle,
-            nativeHandle = sdkSwapchain.nativeHandle(),
-            platformHandle = sdkSwapchain.platformHandle(),
-            surfaceValid = surfaceValid,
-            carrier = cameraHwbProjectionCarrierToken(),
-            stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
-            publicMultiStackMarkerFields = SpatialPublicMultiStack.markerFields(),
-        )
-    )
-    val renderSurface = surface
-    if (!surfaceValid) {
-      val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-projection-surface-invalid")
-      marker(
-          CameraHwbProjectionModule.rawProjectionCompleteAfterCleanupMarker(
-              surfaceValid = surfaceValid,
-              sceneQuadLayerCreated = false,
-              cleanupStatus = cleanupStatus,
-          )
-      )
-      return
-    }
-
-    val layerCreated = createCameraHwbProjectionLayer(sdkSwapchain)
-    if (!layerCreated) {
-      val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-projection-layer-create-failed")
-      marker(
-          CameraHwbProjectionModule.rawProjectionCompleteAfterCleanupMarker(
-              surfaceValid = surfaceValid,
-              sceneQuadLayerCreated = false,
-              cleanupStatus = cleanupStatus,
-          )
-      )
-      return
-    }
-
-    if (cameraHwbProjectionSyntheticVisualProbeEnabled()) {
-      val canvasDrawn =
-          drawCameraHwbProjectionSyntheticVisual(
-              renderSurface,
-              "SceneQuadLayer",
-      )
-      cameraHwbProjectionSyntheticVisualPresented = canvasDrawn
-      marker(
-          CameraHwbProjectionModule.rawProjectionSyntheticVisualPresentedMarker(
-              surfaceValid = surfaceValid,
-              canvasDrawn = canvasDrawn,
-              carrier = cameraHwbProjectionCarrierToken(),
-          )
-      )
-      updateCameraHwbProjectionFromViewer(reason = "synthetic-visual-start", forceLog = true)
-      return
-    }
-
-    val nativePassthroughStartMask =
-        startSpatialNativePassthroughForDepthPrerequisite("raw-projection-start")
-    val nativePassthroughLayerActive =
-        SpatialOpenXrRouteModule.nativePassthroughLayerActive(nativePassthroughStartMask)
-    val nativeEnvironmentDepthStartMask =
-        startSpatialEnvironmentDepthProbe("raw-projection-start")
-    val nativeEnvironmentDepthProviderBound =
-        SpatialOpenXrRouteModule.spatialEnvironmentDepthProviderStarted(
-            nativeEnvironmentDepthStartMask
-        )
-    updateNativeCameraHwbProjectionStereoOffset(
-        reason = "raw-projection-start",
-        forceLog = true,
-    )
-    updateNativeCameraHwbProjectionTargetScale(
-        reason = "raw-projection-start",
-        forceLog = true,
-    )
-    updatePrivateLayerOverrideFromPanel(
-        privateLayerOverride,
-        source = "raw-projection-start",
-    )
-    updatePrivateLayerDepthLayerPolicyFromPanel(
-        privateLayerDepthLayerPolicy,
-        source = "raw-projection-start",
-    )
-    updatePrivateLayerDepthAlignmentFromPanel(
-        privateLayerDepthAlignment,
-        source = "raw-projection-start",
-    )
-    configureNativeSpatialVideoProjection(videoSettings, "raw-projection-start")
-    if (videoSettings.active) {
-      startSpatialVideoProjection(videoSettings, "raw-projection-start")
-    }
-    val startMask =
-        runCatching {
-              nativeStartCameraHwbProjectionProbe(
-                  renderSurface,
-                  CAMERA_HWB_PROJECTION_WIDTH_PX,
-                  CAMERA_HWB_PROJECTION_HEIGHT_PX,
-                  CAMERA_HWB_PROJECTION_FRAME_COUNT_UNBOUNDED,
-                  readerMaxImages,
-              )
-            }
-            .getOrElse { throwable ->
-              val cleanupStatus = cleanupSdkQuadSurfaceProbe("camera-hwb-projection-start-failed")
-              marker(
-                  CameraHwbProjectionModule.rawProjectionCompleteAfterCleanupMarker(
-                      surfaceValid = surfaceValid,
-                      sceneQuadLayerCreated = true,
-                      cleanupStatus = cleanupStatus,
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              return
-            }
-    marker(
-        CameraHwbProjectionModule.rawProjectionNativeStartRequestedMarker(
-            surfaceValid = surfaceValid,
-            startMask = startMask,
-            readerMaxImages = readerMaxImages,
-            carrier = cameraHwbProjectionCarrierToken(),
-            projectionMarkerFields = cameraHwbProjectionMarkerFields(),
-            stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
-            videoProjectionMarkerFields = spatialVideoProjectionMarkerFields(videoSettings),
-            publicMultiStackMarkerFields =
-                SpatialPublicMultiStack.markerFields(
-                    nativePassthroughLayerActive = nativePassthroughLayerActive,
-                    nativeEnvironmentDepthProviderRequested = true,
-                    nativeEnvironmentDepthProviderBound = nativeEnvironmentDepthProviderBound,
-                ),
-            nativePassthroughStartMask = nativePassthroughStartMask,
-            nativeEnvironmentDepthStartMask = nativeEnvironmentDepthStartMask,
-        )
-    )
-    updateCameraHwbProjectionFromViewer(reason = "raw-projection-start", forceLog = true)
+    cameraHwbProjectionRawCarrierCoordinator.run(readerMaxImages, videoSettings)
   }
-
   @OptIn(SpatialSDKExperimentalAPI::class)
   private fun runCameraHwbProjectionPanelCarrier(
       readerMaxImages: Int,
@@ -1808,69 +1688,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         forceLog = true,
     )
   }
-
-  @OptIn(SpatialSDKExperimentalAPI::class)
-  private fun createCameraHwbProjectionLayer(sdkSwapchain: SceneSwapchain): Boolean =
-      runCatching {
-            val plane = cameraHwbProjectionPlaneForPlacement()
-            val entity =
-                Entity.create(
-                    Transform(plane.pose),
-                    Scale(Vector3(1.0f, 1.0f, 1.0f)),
-                    Visible(true),
-                )
-            cameraHwbProjectionEntity = entity
-            val material = SceneMaterial.passthrough()
-            val mesh =
-                SceneMesh.singleSidedQuad(
-                    plane.projectionWidthMeters,
-                    plane.projectionHeightMeters,
-                    material,
-                )
-            sdkQuadResourceCoordinator.registerAnchor(material, mesh)
-            val sceneObject = SceneObject(scene, mesh, "camera_hwb_projection_anchor", entity)
-            scene.addObject(sceneObject)
-            sdkQuadResourceCoordinator.registerSceneObject(sceneObject)
-            val layer =
-                SceneQuadLayer(
-                    scene,
-                    sdkSwapchain,
-                    plane.projectionWidthMeters,
-                    plane.projectionHeightMeters,
-                    0.5f,
-                    0.5f,
-                    StereoMode.LeftRight,
-                    sceneObject,
-                )
-            val layerZIndex = cameraHwbProjectionZIndexForPlacement(plane.placementMode)
-            layer.setZIndex(layerZIndex)
-            sdkQuadResourceCoordinator.registerLayer(layer)
-            marker(
-                CameraHwbProjectionModule.rawProjectionLayerCreatedMarker(
-                    sceneObjectHandle = sceneObject.handle,
-                    plane = plane,
-                    layerZIndex = layerZIndex,
-                    carrier = cameraHwbProjectionCarrierToken(),
-                    carrierMode = cameraHwbProjectionCarrierMode,
-                    projectionMarkerFields = cameraHwbProjectionMarkerFields(plane),
-                    stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
-                    videoProjectionMarkerFields =
-                        spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings),
-                    publicMultiStackMarkerFields = SpatialPublicMultiStack.markerFields(),
-                )
-            )
-            true
-          }
-          .getOrElse { throwable ->
-            cameraHwbProjectionEntity = null
-            marker(
-                CameraHwbProjectionModule.rawProjectionLayerCreateFailedMarker(
-                    error = throwable.javaClass.simpleName,
-                    message = throwable.message ?: "none",
-                )
-            )
-            false
-          }
 
   private fun drawCameraHwbProjectionSyntheticVisual(
       surface: AndroidSurface,

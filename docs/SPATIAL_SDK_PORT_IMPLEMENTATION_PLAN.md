@@ -250,6 +250,13 @@ Apply that model here when a lane grows beyond a narrow facade method:
   retain property reads, reader-limit resolution, effective video settings,
   carrier selection, marker composition, and raw/panel execution in explicit
   Activity bindings;
+- package raw SceneQuadLayer projection execution, swapchain/surface ownership,
+  generated stereo layer construction, synthetic-preview branching, native
+  prerequisite ordering, producer startup, cleanup, and receipts in
+  `SpatialCameraHwbProjectionRawCarrierCoordinator.kt`; fail closed unless the
+  launch coordinator is active and raw carrier mode is selected, while keeping
+  effective settings, placement inputs, private-layer policy, video startup,
+  and JNI authority in Activity bindings;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, placement-plane construction from
