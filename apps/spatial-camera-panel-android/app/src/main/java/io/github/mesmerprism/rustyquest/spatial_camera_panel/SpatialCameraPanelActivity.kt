@@ -165,9 +165,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var lastPanelHeadlockJoystickMarkerMs = 0L
   private var lastPrivateLayerPanelGrabbableState: Boolean? = null
   private var lastPrivateLayerPanelGrabbableMarkerMs = 0L
-  private val pinnedSpatialGameControllerIds = mutableSetOf<Int>()
-  private var lastSpatialInputRouteMarkerMs = 0L
   private var lastSpatialJoystickArbitrationMarkerMs = 0L
+  private val controllerInputRouteSpec =
+      SpatialControllerInputRouteSpec(
+          enabled = true,
+          source = "spatial-camera-panel-app-spec",
+      )
   private val androidControllerEventRouter by lazy(LazyThreadSafetyMode.NONE) {
     SpatialControllerAndroidEventRouter(
         armSecondaryToggle = ::armCameraHwbProjectionSecondaryToggle,
@@ -180,6 +183,28 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           )
         },
         openPrimary = ::openWorkflowPanelFromController,
+    )
+  }
+  private val controllerInputRouteCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialControllerInputRouteCoordinator(
+        SpatialControllerInputRouteBindings(
+            routeSpec = { controllerInputRouteSpec },
+            enableSpatialInput = {
+              scene.spatialInterface.enableInput(true)
+              true
+            },
+            gameControllerDeviceIds = { getGameControllerDeviceIds().toList() },
+            pinGameController = { deviceId, listener ->
+              pinGameController(deviceId) { motionEvent, keyEvent ->
+                listener(motionEvent, keyEvent)
+              }
+            },
+            dispatchKeyEvent = androidControllerEventRouter::dispatchKeyEvent,
+            dispatchMotionButtonEvent =
+                androidControllerEventRouter::dispatchMotionButtonEvent,
+            dispatchJoystickMotion = ::handleSpatialJoystickMotion,
+            marker = ::marker,
+        )
     )
   }
   private val controllerPollingCoordinator by lazy(LazyThreadSafetyMode.NONE) {
@@ -464,7 +489,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     deactivateLegacyWorkflowPanelsForCameraStack("scene-ready")
     deactivatePanelShellIfRequested("scene-ready")
     configureSpatialVirtualRoomScene("scene-ready")
-    enableSpatialControllerInputRoute("scene-ready", forceLog = true)
+    controllerInputRouteCoordinator.ensureEnabled("scene-ready", forceLog = true)
     runSpatialStagedAssetIfRequested(intent, "scene-ready")
     panelEntity =
         Entity.createPanelEntity(
@@ -558,7 +583,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onVRReady() {
     super.onVRReady()
-    enableSpatialControllerInputRoute("vr-ready", forceLog = true)
+    controllerInputRouteCoordinator.ensureEnabled("vr-ready", forceLog = true)
     updateWorkflowPanelHeadlockFromViewer(reason = "vr-ready", forceLog = true)
     updateParticleLayerProjectionFromViewer(reason = "vr-ready", forceLog = true)
     logNativeInteropProbe(phase = "vr-ready", probeSurface = true)
@@ -577,7 +602,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     updateWorkflowPanelHeadlockFromViewer(reason = "scene-tick", forceLog = false)
     updateParticleLayerProjectionFromViewer(reason = "scene-tick", forceLog = false)
     updateCameraHwbProjectionFromViewer(reason = "scene-tick", forceLog = false)
-    enableSpatialControllerInputRoute("scene-tick", forceLog = false)
+    controllerInputRouteCoordinator.ensureEnabled("scene-tick", forceLog = false)
     controllerPollingCoordinator.pollNativeInput()
   }
 
@@ -6346,49 +6371,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     return true
   }
-
-  private fun enableSpatialControllerInputRoute(reason: String, forceLog: Boolean) {
-    val now = SystemClock.elapsedRealtime()
-    val enableResult =
-        runCatching {
-              scene.spatialInterface.enableInput(true)
-              true
-            }
-            .getOrElse { false }
-    var newlyPinned = 0
-    val gameControllerIds = getGameControllerDeviceIds().toList()
-        gameControllerIds.forEach { deviceId ->
-      if (pinnedSpatialGameControllerIds.add(deviceId)) {
-        pinGameController(deviceId) { motionEvent: MotionEvent?, keyEvent: KeyEvent? ->
-          keyEvent?.let(androidControllerEventRouter::dispatchKeyEvent)
-          motionEvent?.let { event ->
-            if (!androidControllerEventRouter.dispatchMotionButtonEvent(event)) {
-              handleSpatialJoystickMotion(event, "pinned-android-game-controller")
-            }
-          }
-        }
-        newlyPinned += 1
-      }
-    }
-
-    if (
-        forceLog ||
-            newlyPinned > 0 ||
-            now - lastSpatialInputRouteMarkerMs >= SPATIAL_CONTROLLER_ROUTE_MARKER_INTERVAL_MS
-    ) {
-      lastSpatialInputRouteMarkerMs = now
-      marker(
-          SpatialControllerRoutingModule.spatialInputEnabledMarker(
-              reason = reason,
-              spatialInterfaceEnableInput = enableResult,
-              gameControllerDeviceCount = gameControllerIds.size,
-              pinnedGameControllerCount = pinnedSpatialGameControllerIds.size,
-              newlyPinnedGameControllerCount = newlyPinned,
-          )
-      )
-    }
-  }
-
 
   private fun recenterSurfaceParticleSphereOnViewer(
       inputSource: String,

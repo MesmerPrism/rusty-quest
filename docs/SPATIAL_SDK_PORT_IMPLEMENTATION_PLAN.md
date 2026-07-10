@@ -235,6 +235,12 @@ Apply that model here when a lane grows beyond a narrow facade method:
   in `SpatialControllerPollingCoordinator.kt`; keep frame cadence, route
   enablement, controller pinning, feature/property selection, scene capture,
   action implementations, and JNI in the Activity facade;
+- package the typed controller-route app-spec gate, idempotent Android
+  controller pin registry, pinned-event fallback ordering, and route-marker
+  throttling in `SpatialControllerInputRouteCoordinator.kt`; explicitly enable
+  it from the Spatial Camera Panel app spec while retaining Spatial input
+  enablement, controller enumeration/pinning, event handlers, and marker sink as
+  Activity-supplied platform callbacks;
 - package Android key/gamepad button recognition, key-versus-motion edge state,
   trigger-axis thresholding, source/detail normalization, and ordered callback
   dispatch in `SpatialControllerAndroidEventRouter.kt`; keep input enablement,

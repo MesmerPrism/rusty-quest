@@ -396,6 +396,16 @@ Interaction SDK pointer input without native multimodal extension forcing.
   library loaded, and native actions started. The Activity retains frame
   cadence, feature/property selection, input enablement and controller pinning,
   Spatial scene capture, action implementations, and JNI calls.
+- `app/src/main/.../SpatialControllerInputRouteCoordinator.kt` owns the typed
+  controller-route app-spec gate, idempotent Android game-controller pin
+  registry, pinned-event fallback ordering, and input-route marker throttling.
+  The Spatial Camera Panel Activity explicitly opts in with
+  `SpatialControllerInputRouteSpec(enabled=true,
+  source=spatial-camera-panel-app-spec)` and supplies callbacks for Spatial
+  input enablement, controller enumeration/pinning, Android event routing, and
+  marker emission. The module remains inert for a disabled or unnamed spec and
+  must not query the Spatial scene, read runtime properties, mutate app/store
+  state, or call JNI.
 - `app/src/main/.../SpatialControllerAndroidEventRouter.kt` owns Android
   key/gamepad button recognition, key-versus-motion edge state, trigger-axis
   thresholding, source/detail normalization, and ordered secondary/trigger/
