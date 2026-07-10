@@ -128,8 +128,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var lastParticleLayerPanelLayerCheckMs = 0L
   private var particleLayerPanelLayerConfigured = false
   private var particleLayerSurfaceGeometryApplied = false
-  private var remoteParticleLayerTargetDistanceMeters: Float? = null
-  private var remoteParticleLayerViewYawDegrees: Float? = null
   private var polarSensorPanel: PolarSensorPanel? = null
   private var panelHeadlockMarkerCount = 0
   private var lastPanelHeadlockMarkerMs = 0L
@@ -251,6 +249,47 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             receiptLibraryError = { nativeInteropCoordinator.receiptLibraryError },
             launcherPanelVisible = ::launcherPanelVisibleForPanelMode,
             stopNative = ::nativeStopSurfaceParticleLayer,
+            marker = ::marker,
+        )
+    )
+  }
+  private val surfaceParticleProjectionGeometryCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialSurfaceParticleProjectionGeometryCoordinator(
+        SpatialSurfaceParticleProjectionGeometryBindings(
+            configuredTargetDistanceMeters = {
+              activityReadFloatSystemProperty(
+                  PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY,
+                  PARTICLE_LAYER_TARGET_DISTANCE_METERS,
+                  PARTICLE_LAYER_TARGET_DISTANCE_MIN_METERS,
+                  PARTICLE_LAYER_TARGET_DISTANCE_MAX_METERS,
+              )
+            },
+            configuredViewYawDegrees = {
+              activityReadFloatSystemProperty(
+                  PARTICLE_LAYER_VIEW_YAW_PROPERTY,
+                  PARTICLE_LAYER_VIEW_YAW_DEGREES,
+                  PARTICLE_LAYER_VIEW_YAW_MIN_DEGREES,
+                  PARTICLE_LAYER_VIEW_YAW_MAX_DEGREES,
+              )
+            },
+            panelOpacity = {
+              activityReadFloatSystemProperty(
+                  PARTICLE_LAYER_PANEL_OPACITY_PROPERTY,
+                  PARTICLE_LAYER_PANEL_OPACITY,
+                  PARTICLE_LAYER_PANEL_OPACITY_MIN,
+                  PARTICLE_LAYER_PANEL_OPACITY_MAX,
+              )
+            },
+            surfaceOverscanScale = {
+              activityReadFloatSystemProperty(
+                  PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY,
+                  PARTICLE_LAYER_SURFACE_OVERSCAN_SCALE,
+                  PARTICLE_LAYER_SURFACE_OVERSCAN_MIN_SCALE,
+                  PARTICLE_LAYER_SURFACE_OVERSCAN_MAX_SCALE,
+              )
+            },
+            carrierMode = ::particleLayerCarrierMode,
+            updateProjection = ::updateParticleLayerProjectionFromViewer,
             marker = ::marker,
         )
     )
@@ -869,8 +908,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             carrierState = cameraHwbProjectionCarrierStateCoordinator,
             tuning = cameraHwbProjectionTuningCoordinator,
             virtualRoomEnabled = ::spatialVirtualRoomEnabled,
-            projectionWidthMeters = ::particleLayerProjectionWidthMeters,
-            projectionHeightMeters = ::particleLayerProjectionHeightMeters,
+            projectionWidthMeters =
+                surfaceParticleProjectionGeometryCoordinator::projectionWidthMeters,
+            projectionHeightMeters =
+                surfaceParticleProjectionGeometryCoordinator::projectionHeightMeters,
             legacyLauncherPanelSuppressed = ::legacyLauncherPanelSuppressedForCameraStack,
             privateLayerPanelZ = { privateLayerPanelPlacement.zMeters },
         )
@@ -1038,7 +1079,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   Entity.createPanelEntity(
                       R.id.spatial_camera_surface_panel,
                       Transform(particleLayerPose()),
-                      particleLayerSurfacePanelDimensions(),
+                      surfaceParticleProjectionGeometryCoordinator.surfacePanelDimensions(),
                       Visible(particleLayerVisibleForPanelMode()),
                   )
                 }
@@ -1088,7 +1129,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     )
     marker(
         SpatialSurfaceParticleRouteModule.nativeSurfaceParticlePanelEntitySpawnedMarker(
-            placementMarkerFields = particleLayerPlacementMarkerFields(),
+            placementMarkerFields =
+                surfaceParticleProjectionGeometryCoordinator.placementMarkerFields(),
             stereoMarkerFields = particleLayerStereoMarkerFields(),
         )
     )
@@ -1306,7 +1348,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           },
           settings = { _ -> particleLayerMediaSettings() },
           carrier = ::particleLayerCarrierToken,
-          placementMarkerFields = ::particleLayerPlacementMarkerFields,
+          placementMarkerFields =
+              surfaceParticleProjectionGeometryCoordinator::placementMarkerFields,
           stereoMarkerFields = ::particleLayerStereoMarkerFields,
           startLayer = ::startNativeSurfaceParticleLayer,
           adoptPanel = { panel ->
@@ -1418,12 +1461,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   @OptIn(SpatialSDKExperimentalAPI::class)
   private fun createManualSurfaceParticleLayerPanel(reason: String): Entity? {
-    val targetDistanceMeters = currentParticleLayerTargetDistanceMeters()
-    val surfaceOverscanScale = currentParticleLayerSurfaceOverscanScale()
+    val targetDistanceMeters =
+        surfaceParticleProjectionGeometryCoordinator.currentTargetDistanceMeters()
+    val surfaceOverscanScale =
+        surfaceParticleProjectionGeometryCoordinator.currentSurfaceOverscanScale()
     val surfaceWidthMeters =
-        particleLayerSurfaceWidthMeters(targetDistanceMeters, surfaceOverscanScale)
+        surfaceParticleProjectionGeometryCoordinator.surfaceWidthMeters(
+            targetDistanceMeters,
+            surfaceOverscanScale,
+        )
     val surfaceHeightMeters =
-        particleLayerSurfaceHeightMeters(targetDistanceMeters, surfaceOverscanScale)
+        surfaceParticleProjectionGeometryCoordinator.surfaceHeightMeters(
+            targetDistanceMeters,
+            surfaceOverscanScale,
+        )
     val carrierResult =
         SpatialSurfaceParticlePanelCarrierModule.createManualCustomMeshPanel(
             scene = scene,
@@ -1455,7 +1506,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             carrier = particleLayerCarrierToken(),
             surfaceValid = readyCarrier.surface.isValid,
             layerUpdateStatus = layerUpdateStatus,
-            placementMarkerFields = particleLayerPlacementMarkerFields(),
+            placementMarkerFields =
+                surfaceParticleProjectionGeometryCoordinator.placementMarkerFields(),
             stereoMarkerFields = particleLayerStereoMarkerFields(),
         )
     )
@@ -1481,7 +1533,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
             },
             carrier = ::particleLayerCarrierToken,
-            placementMarkerFields = ::particleLayerPlacementMarkerFields,
+            placementMarkerFields =
+                surfaceParticleProjectionGeometryCoordinator::placementMarkerFields,
             stereoMarkerFields = ::particleLayerStereoMarkerFields,
             submitParameters = { surfaceParticleParameterCoordinator.submit(source = "start") },
         )
@@ -1863,7 +1916,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       forceLog: Boolean = true,
   ): String {
     val panel = particleLayerPanelSceneObject ?: return "panel-scene-object-missing"
-    val opacity = currentParticleLayerPanelOpacity()
+    val opacity = surfaceParticleProjectionGeometryCoordinator.currentPanelOpacity()
     return runCatching {
           val layer = panel.layer ?: return "panel-layer-missing"
           val previousOpacity = lastParticleLayerPanelOpacity
@@ -2068,7 +2121,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val rawForward = viewerPose.forward().activityNormalizedOr(Vector3(0.0f, 0.0f, -1.0f))
     val rawUp = viewerPose.up().activityNormalizedOr(Vector3(0.0f, 1.0f, 0.0f))
     val rawRight = activityCross(rawForward, rawUp).activityNormalizedOr(Vector3(1.0f, 0.0f, 0.0f))
-    val yawDegrees = currentParticleLayerViewYawDegrees()
+    val yawDegrees = surfaceParticleProjectionGeometryCoordinator.currentViewYawDegrees()
     val rollStableBasis = activityRollStableParticleProjectionBasis(rawForward, yawDegrees)
     val forward = rollStableBasis.first
     val right = rollStableBasis.second
@@ -2288,7 +2341,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val rawForward = viewerPose.forward().activityNormalizedOr(Vector3(0.0f, 0.0f, -1.0f))
     val rawUp = viewerPose.up().activityNormalizedOr(Vector3(0.0f, 1.0f, 0.0f))
     val rawRight = activityCross(rawForward, rawUp).activityNormalizedOr(Vector3(1.0f, 0.0f, 0.0f))
-    val yawDegrees = currentParticleLayerViewYawDegrees()
+    val yawDegrees = surfaceParticleProjectionGeometryCoordinator.currentViewYawDegrees()
     val rollStableBasis = activityRollStableParticleProjectionBasis(rawForward, yawDegrees)
     val forward = rollStableBasis.first
     val right = rollStableBasis.second
@@ -2298,14 +2351,24 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val rightEyeOffsetRightMeters = activityEyeOffsetRightMeters(eyeOffsets?.second)
     val leftEyeWorld = viewerPose.t + rawRight * leftEyeOffsetRightMeters
     val rightEyeWorld = viewerPose.t + rawRight * rightEyeOffsetRightMeters
-    val targetDistanceMeters = currentParticleLayerTargetDistanceMeters()
-    val projectionWidthMeters = particleLayerProjectionWidthMeters(targetDistanceMeters)
-    val projectionHeightMeters = particleLayerProjectionHeightMeters(targetDistanceMeters)
-    val surfaceOverscanScale = currentParticleLayerSurfaceOverscanScale()
+    val targetDistanceMeters =
+        surfaceParticleProjectionGeometryCoordinator.currentTargetDistanceMeters()
+    val projectionWidthMeters =
+        surfaceParticleProjectionGeometryCoordinator.projectionWidthMeters(targetDistanceMeters)
+    val projectionHeightMeters =
+        surfaceParticleProjectionGeometryCoordinator.projectionHeightMeters(targetDistanceMeters)
+    val surfaceOverscanScale =
+        surfaceParticleProjectionGeometryCoordinator.currentSurfaceOverscanScale()
     val surfaceWidthMeters =
-        particleLayerSurfaceWidthMeters(targetDistanceMeters, surfaceOverscanScale)
+        surfaceParticleProjectionGeometryCoordinator.surfaceWidthMeters(
+            targetDistanceMeters,
+            surfaceOverscanScale,
+        )
     val surfaceHeightMeters =
-        particleLayerSurfaceHeightMeters(targetDistanceMeters, surfaceOverscanScale)
+        surfaceParticleProjectionGeometryCoordinator.surfaceHeightMeters(
+            targetDistanceMeters,
+            surfaceOverscanScale,
+        )
     val projectionSurfaceMarkerFields =
         SpatialSurfaceParticleRouteModule.projectionSurfaceMarkerFields(
             projectionWidthMeters,
@@ -2437,7 +2500,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     marker(
         SpatialSurfaceParticleRouteModule.nativeSurfaceParticleProjectionPlaneUpdatedMarker(
             reason = reason,
-            placementMarkerFields = particleLayerPlacementMarkerFields(),
+            placementMarkerFields =
+                surfaceParticleProjectionGeometryCoordinator.placementMarkerFields(),
             viewYawDegrees = yawDegrees,
             viewerPositionM = activityVectorMarker(viewerPose.t),
             viewerForward = activityVectorMarker(rawForward),
@@ -2466,125 +2530,23 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     )
   }
 
-  private fun particleLayerPlacementMarkerFields(): String {
-    val targetDistanceMeters = currentParticleLayerTargetDistanceMeters()
-    val surfaceOverscanScale = currentParticleLayerSurfaceOverscanScale()
-    return SpatialSurfaceParticleRouteModule.placementMarkerFields(
-        carrierMode = particleLayerCarrierMode(),
-        targetDistanceMeters = targetDistanceMeters,
-        viewYawDegrees = currentParticleLayerViewYawDegrees(),
-        surfaceOverscanScale = surfaceOverscanScale,
-        panelOpacity = currentParticleLayerPanelOpacity(),
-    )
-  }
-
-  private fun currentParticleLayerTargetDistanceMeters(): Float =
-      remoteParticleLayerTargetDistanceMeters
-          ?: activityReadFloatSystemProperty(
-              PARTICLE_LAYER_TARGET_DISTANCE_PROPERTY,
-              PARTICLE_LAYER_TARGET_DISTANCE_METERS,
-              PARTICLE_LAYER_TARGET_DISTANCE_MIN_METERS,
-              PARTICLE_LAYER_TARGET_DISTANCE_MAX_METERS,
-          )
-
-  private fun currentParticleLayerViewYawDegrees(): Float =
-      remoteParticleLayerViewYawDegrees
-          ?: activityReadFloatSystemProperty(
-              PARTICLE_LAYER_VIEW_YAW_PROPERTY,
-              PARTICLE_LAYER_VIEW_YAW_DEGREES,
-              PARTICLE_LAYER_VIEW_YAW_MIN_DEGREES,
-              PARTICLE_LAYER_VIEW_YAW_MAX_DEGREES,
-          )
-
-  private fun currentParticleLayerPanelOpacity(): Float =
-      activityReadFloatSystemProperty(
-          PARTICLE_LAYER_PANEL_OPACITY_PROPERTY,
-          PARTICLE_LAYER_PANEL_OPACITY,
-          PARTICLE_LAYER_PANEL_OPACITY_MIN,
-          PARTICLE_LAYER_PANEL_OPACITY_MAX,
-      )
-
   private fun applyRemoteParticleLayerTargetDistance(intent: Intent, source: String) {
     val requested =
         intent.getFloatExtra(
             SpatialValidationWorkflowCoordinator.EXTRA_PARTICLE_LAYER_TARGET_DISTANCE_METERS,
-            currentParticleLayerTargetDistanceMeters(),
+            surfaceParticleProjectionGeometryCoordinator.currentTargetDistanceMeters(),
         )
-    val clamped =
-        requested.coerceIn(
-            PARTICLE_LAYER_TARGET_DISTANCE_MIN_METERS,
-            PARTICLE_LAYER_TARGET_DISTANCE_MAX_METERS,
-        )
-    remoteParticleLayerTargetDistanceMeters = clamped
-    updateParticleLayerProjectionFromViewer(
-        reason = "$source-particle-panel-distance",
-        forceLog = true,
-    )
-    marker(
-        SpatialSurfaceParticleRouteModule.particleLayerTargetDistanceCommandAppliedMarker(
-            source,
-            requested,
-            clamped,
-        )
-    )
+    surfaceParticleProjectionGeometryCoordinator.applyTargetDistance(requested, source)
   }
 
   private fun applyRemoteParticleLayerViewYaw(intent: Intent, source: String) {
     val requested =
         intent.getFloatExtra(
             SpatialValidationWorkflowCoordinator.EXTRA_PARTICLE_LAYER_VIEW_YAW_DEGREES,
-            currentParticleLayerViewYawDegrees(),
+            surfaceParticleProjectionGeometryCoordinator.currentViewYawDegrees(),
         )
-    val clamped =
-        requested.coerceIn(
-            PARTICLE_LAYER_VIEW_YAW_MIN_DEGREES,
-            PARTICLE_LAYER_VIEW_YAW_MAX_DEGREES,
-        )
-    remoteParticleLayerViewYawDegrees = clamped
-    updateParticleLayerProjectionFromViewer(
-        reason = "$source-particle-panel-view-yaw",
-        forceLog = true,
-    )
-    marker(
-        SpatialSurfaceParticleRouteModule.particleLayerViewYawCommandAppliedMarker(
-            source,
-            requested,
-            clamped,
-        )
-    )
+    surfaceParticleProjectionGeometryCoordinator.applyViewYaw(requested, source)
   }
-
-  private fun currentParticleLayerSurfaceOverscanScale(): Float =
-      activityReadFloatSystemProperty(
-          PARTICLE_LAYER_SURFACE_OVERSCAN_PROPERTY,
-          PARTICLE_LAYER_SURFACE_OVERSCAN_SCALE,
-          PARTICLE_LAYER_SURFACE_OVERSCAN_MIN_SCALE,
-          PARTICLE_LAYER_SURFACE_OVERSCAN_MAX_SCALE,
-      )
-
-  private fun particleLayerProjectionWidthMeters(targetDistanceMeters: Float): Float =
-      SpatialSurfaceParticleRouteModule.projectionWidthMeters(targetDistanceMeters)
-
-  private fun particleLayerProjectionHeightMeters(targetDistanceMeters: Float): Float =
-      SpatialSurfaceParticleRouteModule.projectionHeightMeters(targetDistanceMeters)
-
-  private fun particleLayerSurfaceWidthMeters(
-      targetDistanceMeters: Float,
-      overscanScale: Float = currentParticleLayerSurfaceOverscanScale(),
-  ): Float =
-      SpatialSurfaceParticleRouteModule.surfaceWidthMeters(targetDistanceMeters, overscanScale)
-
-  private fun particleLayerSurfaceHeightMeters(
-      targetDistanceMeters: Float,
-      overscanScale: Float = currentParticleLayerSurfaceOverscanScale(),
-  ): Float =
-      SpatialSurfaceParticleRouteModule.surfaceHeightMeters(targetDistanceMeters, overscanScale)
-
-  private fun particleLayerSurfacePanelDimensions(
-      targetDistanceMeters: Float = currentParticleLayerTargetDistanceMeters(),
-      overscanScale: Float = currentParticleLayerSurfaceOverscanScale(),
-  ): PanelDimensions =
-      SpatialSurfaceParticleRouteModule.surfacePanelDimensions(targetDistanceMeters, overscanScale)
 
   private fun cameraHwbProjectionSyntheticVisualProbeEnabled(): Boolean =
       activityReadOptionalBooleanSystemProperty(CAMERA_HWB_PROJECTION_SYNTHETIC_VISUAL_PROPERTY) == true
@@ -3550,7 +3512,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             openXrGetInstanceProcAddrHandleNonZero = probe.openXrGetInstanceProcAddrHandleNonZero,
             currentDriverProfileId = snapshot?.currentConditionId ?: "none",
             currentProfileId = snapshot?.currentProfileId ?: "none",
-            placementMarkerFields = particleLayerPlacementMarkerFields(),
+            placementMarkerFields =
+                surfaceParticleProjectionGeometryCoordinator.placementMarkerFields(),
             stereoMarkerFields = particleLayerStereoMarkerFields(),
         )
     )

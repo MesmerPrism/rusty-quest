@@ -403,6 +403,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `SpatialSurfaceParticleRuntimeCoordinator.kt`; retain Android `Surface`
   access, OpenXR probe capture, scene visibility, runtime-property reads, and
   JNI declarations in Activity-supplied adapters.
+- package effective particle target distance/view yaw, remote overrides,
+  projection/surface dimensions, placement marker fields, and command receipts
+  in `SpatialSurfaceParticleProjectionGeometryCoordinator.kt`; retain
+  runtime-property reads and Android `Intent` parsing in Activity bindings so
+  geometry updates cannot activate or start the feature.
 - package native surface-particle registered video-surface callback sequencing,
   manual panel carrier construction, custom-mesh `PanelSceneObject` creation,
   create/surface/add failure markers, and readiness marker fields in
