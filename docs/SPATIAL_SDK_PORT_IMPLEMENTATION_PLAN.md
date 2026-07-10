@@ -413,6 +413,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `SpatialSurfaceParticleProjectionUpdateCoordinator.kt`; retain Scene capture,
   entity mutation, Android clock access, and JNI declarations in Activity
   adapters so projection updates cannot activate or start the feature.
+- package panel-layer configured/opacity state, change detection, result status,
+  and update/failure receipts in
+  `SpatialSurfaceParticlePanelLayerCoordinator.kt`; retain the concrete Spatial
+  SDK layer handle and z-index, blend, and color mutation in an Activity callback
+  so the coordinator cannot create a panel or activate the particle feature.
 - package native surface-particle registered video-surface callback sequencing,
   manual panel carrier construction, custom-mesh `PanelSceneObject` creation,
   create/surface/add failure markers, and readiness marker fields in

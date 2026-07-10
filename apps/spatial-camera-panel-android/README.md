@@ -614,6 +614,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   panel-layer/native-pose update cadence, and projection receipts. Scene
   capture, entity mutation, Android clock access, and JNI declarations remain
   Activity adapters; projection updates cannot activate or start the feature.
+- `app/src/main/.../SpatialSurfaceParticlePanelLayerCoordinator.kt` owns
+  panel-layer configured/opacity state, change detection, result status, and
+  update/failure receipts. The concrete Spatial SDK layer handle and z-index,
+  blend, and color mutation remain an Activity callback; the coordinator cannot
+  create a panel or activate the particle feature.
 - `app/src/main/.../SpatialSurfaceParticlePanelCarrierModule.kt` owns native
   surface-particle panel carrier construction: registered video-surface callback
   sequencing, the manual custom-mesh `PanelSceneObject`, create/surface/add

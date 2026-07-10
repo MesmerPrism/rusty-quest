@@ -120,8 +120,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var particleSurfacePanelReady = false
   private var particleSurfaceConsumerCalled = false
   private var particleSurfaceConsumerSurfaceValid = false
-  private var lastParticleLayerPanelOpacity: Float? = null
-  private var particleLayerPanelLayerConfigured = false
   private var polarSensorPanel: PolarSensorPanel? = null
   private var panelHeadlockMarkerCount = 0
   private var lastPanelHeadlockMarkerMs = 0L
@@ -365,6 +363,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 surfaceParticleProjectionGeometryCoordinator::placementMarkerFields,
             marker = ::marker,
         )
+    )
+  }
+  private val surfaceParticlePanelLayerCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialSurfaceParticlePanelLayerCoordinator(
+        SpatialSurfaceParticlePanelLayerBindings(marker = ::marker)
     )
   }
   private val controllerPollingCoordinator by lazy(LazyThreadSafetyMode.NONE) {
@@ -1990,54 +1993,34 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ): String {
     val panel = particleLayerPanelSceneObject ?: return "panel-scene-object-missing"
     val opacity = surfaceParticleProjectionGeometryCoordinator.currentPanelOpacity()
-    return runCatching {
-          val layer = panel.layer ?: return "panel-layer-missing"
-          val previousOpacity = lastParticleLayerPanelOpacity
-          val opacityChanged = previousOpacity == null || abs(previousOpacity - opacity) >= 0.001f
-          val layerConfigChanged = forceLog || !particleLayerPanelLayerConfigured
-          if (layerConfigChanged) {
-            layer.setZIndex(PARTICLE_LAYER_Z_INDEX)
-            layer.setAlphaBlend(
-                LayerAlphaBlend(
-                    BlendFactor.SOURCE_ALPHA,
-                    BlendFactor.ONE_MINUS_SOURCE_ALPHA,
-                    BlendFactor.ONE,
-                    BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+    return surfaceParticlePanelLayerCoordinator.update(
+        SpatialSurfaceParticlePanelLayerUpdateRequest(
+            reason = reason,
+            forceLog = forceLog,
+            opacity = opacity,
+            applyLayerChanges = apply@{ configureLayer, updateOpacity, requestedOpacity ->
+              val layer = panel.layer ?: return@apply false
+              if (configureLayer) {
+                layer.setZIndex(PARTICLE_LAYER_Z_INDEX)
+                layer.setAlphaBlend(
+                    LayerAlphaBlend(
+                        BlendFactor.SOURCE_ALPHA,
+                        BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+                        BlendFactor.ONE,
+                        BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+                    )
                 )
-            )
-            particleLayerPanelLayerConfigured = true
-          }
-          if (opacityChanged) {
-            layer.setColorScaleBias(Vector4(1.0f, 1.0f, 1.0f, opacity), Vector4(0.0f))
-            lastParticleLayerPanelOpacity = opacity
-          }
-          if (forceLog || layerConfigChanged || opacityChanged) {
-            marker(
-                SpatialSurfaceParticleRouteModule.nativeSurfaceParticlePanelLayerUpdatedMarker(
-                    reason,
-                    opacity,
+              }
+              if (updateOpacity) {
+                layer.setColorScaleBias(
+                    Vector4(1.0f, 1.0f, 1.0f, requestedOpacity),
+                    Vector4(0.0f),
                 )
-            )
-          }
-          if (layerConfigChanged || opacityChanged) {
-            "updated-particle-layer-panel-alpha"
-          } else {
-            "unchanged-particle-layer-panel-alpha"
-          }
-        }
-        .getOrElse { throwable ->
-          if (forceLog) {
-            marker(
-                SpatialSurfaceParticleRouteModule.nativeSurfaceParticlePanelLayerUpdateFailedMarker(
-                    reason,
-                    opacity,
-                    throwable.javaClass.simpleName,
-                    throwable.message ?: "none",
-                )
-            )
-          }
-          "failed-${throwable.javaClass.simpleName}"
-        }
+              }
+              true
+            },
+        )
+    )
   }
 
   private fun applyPanelPlacement(updatePrivateLayerPanelTransform: Boolean = false) {
