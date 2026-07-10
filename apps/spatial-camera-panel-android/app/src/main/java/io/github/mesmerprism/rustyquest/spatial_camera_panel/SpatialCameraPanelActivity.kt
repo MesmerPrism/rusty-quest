@@ -332,7 +332,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
-  private var sdkQuadSurfaceProbeStarted = false
   private var sdkQuadVulkanProbeStarted = false
   private var sdkQuadStereoAlphaProbeStarted = false
   private var sdkQuadStereoAlphaProbeZIndexChanged = false
@@ -350,6 +349,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             scene = scene,
             marker = ::marker,
             onSceneResourcesCleared = { cameraHwbProjectionEntity = null },
+        )
+    )
+  }
+  private val sdkQuadSurfaceProbeCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialSdkQuadSurfaceProbeCoordinator(
+        SpatialSdkQuadSurfaceProbeBindings(
+            scene = scene,
+            resources = sdkQuadResourceCoordinator,
+            cleanup = ::cleanupSdkQuadSurfaceProbe,
+            marker = ::marker,
         )
     )
   }
@@ -600,7 +609,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     updateParticleLayerProjectionFromViewer(reason = "vr-ready", forceLog = true)
     logNativeInteropProbe(phase = "vr-ready", probeSurface = true)
     externalSwapchainProbeCoordinator.runIfRequested("vr-ready")
-    runSdkQuadSurfaceProbeIfRequested("vr-ready")
+    sdkQuadSurfaceProbeCoordinator.runIfRequested("vr-ready")
     runSdkQuadVulkanProbeIfRequested("vr-ready")
     runSdkQuadStereoAlphaProbeIfRequested("vr-ready")
     runPanelSurfaceMatrixProbeIfRequested("vr-ready")
@@ -1130,24 +1139,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     marker(SpatialOpenXrRouteModule.spatialMultimodalInputResultMarker(phase, requestMask))
   }
 
-  private fun runSdkQuadSurfaceProbeIfRequested(reason: String) {
-    if (sdkQuadSurfaceProbeStarted) {
-      return
-    }
-    if (!SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeEnabled()) {
-      return
-    }
-    sdkQuadSurfaceProbeStarted = true
-    val holdMs = SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeHoldMs()
-    marker(
-        SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeStartMarker(
-            reason = reason,
-            holdMs = holdMs,
-        )
-    )
-    Handler(Looper.getMainLooper()).post { runSdkQuadSurfaceProbe(holdMs) }
-  }
-
   private fun runSdkQuadVulkanProbeIfRequested(reason: String) {
     if (sdkQuadVulkanProbeStarted) {
       return
@@ -1253,7 +1244,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
 
     val layerCreated =
-        createSdkQuadSurfaceProbeLayer(
+        sdkQuadSurfaceProbeCoordinator.createLayer(
             sdkSwapchain = sdkSwapchain,
             canvasDrawn = false,
             anchorMode = "generated-single-sided-quad",
@@ -1480,7 +1471,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
     val layerCreated =
         if (swapchain != null) {
-          createSdkQuadSurfaceProbeLayer(
+        sdkQuadSurfaceProbeCoordinator.createLayer(
               sdkSwapchain = swapchain,
               canvasDrawn = false,
               anchorMode = "generated-single-sided-quad",
@@ -2819,197 +2810,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     canvas.drawText("UV 0,0 -> top-left", x + width * 0.08f, y + height * 0.91f, paint)
   }
 
-  private fun runSdkQuadSurfaceProbe(holdMs: Long) {
-    cleanupSdkQuadSurfaceProbe("pre-run")
-    val sdkSwapchain =
-        runCatching {
-              SceneSwapchain.createAsAndroid(
-                  SDK_QUAD_SURFACE_PROBE_WIDTH_PX,
-                  SDK_QUAD_SURFACE_PROBE_HEIGHT_PX,
-                  false,
-              )
-            }
-            .getOrElse { throwable ->
-              marker(
-                  SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeCompleteMarker(
-                      sdkSwapchainCreated = false,
-                      surfaceValid = false,
-                      canvasDrawn = false,
-                      sceneQuadLayerCreated = false,
-                      manualSceneQuadLayerViable = false,
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              return
-            }
-    sdkQuadResourceCoordinator.adoptSwapchain(sdkSwapchain)
-    val surface =
-        runCatching { sdkSwapchain.getSurface() }
-            .getOrElse { throwable ->
-              marker(
-                  SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeGetSurfaceFailedMarker(
-                      handle = sdkSwapchain.handle,
-                      nativeHandle = sdkSwapchain.nativeHandle(),
-                      platformHandle = sdkSwapchain.platformHandle(),
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              null
-            }
-    sdkQuadResourceCoordinator.adoptSurface(surface)
-    val surfaceValid = surface?.isValid == true
-    marker(
-        SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeSdkSwapchainCreatedMarker(
-            handle = sdkSwapchain.handle,
-            nativeHandle = sdkSwapchain.nativeHandle(),
-            platformHandle = sdkSwapchain.platformHandle(),
-            surfaceValid = surfaceValid,
-        )
-    )
-
-    val canvasDrawn = surface?.let { drawSdkQuadSurfaceCheckerboard(it) } ?: false
-    val plainEntityLayerCreated =
-        createSdkQuadSurfaceProbeLayer(
-            sdkSwapchain = sdkSwapchain,
-            canvasDrawn = canvasDrawn,
-            anchorMode = "plain-entity",
-        )
-    val layerCreated =
-        if (plainEntityLayerCreated) {
-          true
-        } else {
-          sdkQuadResourceCoordinator.cleanupSceneOnly("plain-entity-retry")
-          createSdkQuadSurfaceProbeLayer(
-              sdkSwapchain = sdkSwapchain,
-              canvasDrawn = canvasDrawn,
-              anchorMode = "generated-single-sided-quad",
-          )
-        }
-    val anchorMode =
-        if (plainEntityLayerCreated) {
-          "plain-entity"
-        } else if (layerCreated) {
-          "generated-single-sided-quad"
-        } else {
-          "none"
-        }
-
-    val viable = surfaceValid && canvasDrawn && layerCreated
-    marker(
-        SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeVisibleWindowMarker(
-            surfaceValid = surfaceValid,
-            canvasDrawn = canvasDrawn,
-            sceneQuadLayerCreated = layerCreated,
-            manualSceneQuadLayerViable = viable,
-            plainEntitySceneObjectLayerCreated = plainEntityLayerCreated,
-            anchorMode = anchorMode,
-            holdMs = holdMs,
-        )
-    )
-    if (!layerCreated) {
-      val cleanupStatus = cleanupSdkQuadSurfaceProbe("layer-create-failed")
-      marker(
-          SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeCompleteMarker(
-              sdkSwapchainCreated = true,
-              surfaceValid = surfaceValid,
-              canvasDrawn = canvasDrawn,
-              sceneQuadLayerCreated = false,
-              manualSceneQuadLayerViable = false,
-              cleanupStatus = cleanupStatus,
-              plainEntitySceneObjectLayerCreated = plainEntityLayerCreated,
-              anchorMode = anchorMode,
-              nativeVulkanProducer = false,
-              visiblePatternConfirmed = false,
-          )
-      )
-      return
-    }
-    Handler(Looper.getMainLooper())
-        .postDelayed(
-            {
-              val cleanupStatus = cleanupSdkQuadSurfaceProbe("hold-complete")
-              marker(
-                  SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeCompleteMarker(
-                      sdkSwapchainCreated = true,
-                      surfaceValid = surfaceValid,
-                      canvasDrawn = canvasDrawn,
-                      sceneQuadLayerCreated = layerCreated,
-                      manualSceneQuadLayerViable = viable,
-                      cleanupStatus = cleanupStatus,
-                      plainEntitySceneObjectLayerCreated = plainEntityLayerCreated,
-                      anchorMode = anchorMode,
-                      nativeVulkanProducer = false,
-                      visiblePatternConfirmed = false,
-                      humanVisiblePatternCheckRequired = true,
-                  )
-              )
-            },
-            holdMs,
-        )
-  }
-
-  private fun createSdkQuadSurfaceProbeLayer(
-      sdkSwapchain: SceneSwapchain,
-      canvasDrawn: Boolean,
-      anchorMode: String,
-  ): Boolean =
-      runCatching {
-            val pose = sdkQuadResourceCoordinator.poseFromViewer(SDK_QUAD_SURFACE_PROBE_DISTANCE_METERS)
-            val entity = Entity.create(Transform(pose), Scale(Vector3(1.0f, 1.0f, 1.0f)), Visible(true))
-            val sceneObject =
-                if (anchorMode == "generated-single-sided-quad") {
-                  val material = SceneMaterial.passthrough()
-                  val mesh =
-                      SceneMesh.singleSidedQuad(
-                          SDK_QUAD_SURFACE_PROBE_WIDTH_METERS,
-                          SDK_QUAD_SURFACE_PROBE_HEIGHT_METERS,
-                          material,
-                      )
-            sdkQuadResourceCoordinator.registerAnchor(material, mesh)
-                  SceneObject(scene, mesh, "sdk_quad_surface_probe_anchor", entity)
-                } else {
-                  SceneObject(scene, entity)
-                }
-            scene.addObject(sceneObject)
-            sdkQuadResourceCoordinator.registerSceneObject(sceneObject)
-            val layer =
-                SceneQuadLayer(
-                    scene,
-                    sdkSwapchain,
-                    SDK_QUAD_SURFACE_PROBE_WIDTH_METERS,
-                    SDK_QUAD_SURFACE_PROBE_HEIGHT_METERS,
-                    0.5f,
-                    0.5f,
-                    StereoMode.None,
-                    sceneObject,
-                )
-            layer.setZIndex(SDK_QUAD_SURFACE_PROBE_Z_INDEX)
-            sdkQuadResourceCoordinator.registerLayer(layer)
-            marker(
-                SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeLayerCreatedMarker(
-                    canvasDrawn = canvasDrawn,
-                    anchorMode = anchorMode,
-                    sceneObjectHandle = sceneObject.handle,
-                    layerPositionM = activityVectorMarker(pose.t),
-                    layerQuaternion = activityQuaternionMarker(pose.q),
-                )
-            )
-            true
-          }
-          .getOrElse { throwable ->
-            marker(
-                SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeLayerCreateFailedMarker(
-                    canvasDrawn = canvasDrawn,
-                    anchorMode = anchorMode,
-                    error = throwable.javaClass.simpleName,
-                    message = throwable.message ?: "none",
-                )
-            )
-            false
-          }
-
   private fun createCameraHwbProbeLayer(sdkSwapchain: SceneSwapchain): Boolean =
       runCatching {
             val pose = sdkQuadResourceCoordinator.poseFromViewer(SDK_QUAD_SURFACE_PROBE_DISTANCE_METERS)
@@ -3119,59 +2919,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             )
             false
           }
-
-  private fun drawSdkQuadSurfaceCheckerboard(surface: AndroidSurface): Boolean {
-    if (!surface.isValid) {
-      marker(SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeCanvasDrawSkippedMarker())
-      return false
-    }
-    var canvas: android.graphics.Canvas? = null
-    return runCatching {
-          canvas = surface.lockCanvas(null)
-          val lockedCanvas = canvas ?: return@runCatching false
-          val paint = AndroidPaint()
-          val cellWidth = lockedCanvas.width / SDK_QUAD_SURFACE_PROBE_CHECKER_CELLS.toFloat()
-          val cellHeight = lockedCanvas.height / SDK_QUAD_SURFACE_PROBE_CHECKER_CELLS.toFloat()
-          for (y in 0 until SDK_QUAD_SURFACE_PROBE_CHECKER_CELLS) {
-            for (x in 0 until SDK_QUAD_SURFACE_PROBE_CHECKER_CELLS) {
-              paint.color =
-                  if ((x + y) % 2 == 0) {
-                    AndroidColor.rgb(218, 24, 24)
-                  } else {
-                    AndroidColor.rgb(20, 190, 70)
-                  }
-              lockedCanvas.drawRect(
-                  x * cellWidth,
-                  y * cellHeight,
-                  (x + 1) * cellWidth,
-                  (y + 1) * cellHeight,
-                  paint,
-              )
-            }
-          }
-          paint.color = AndroidColor.WHITE
-          paint.textSize = lockedCanvas.height * 0.075f
-          paint.isAntiAlias = true
-          lockedCanvas.drawText("SDK Canvas", lockedCanvas.width * 0.18f, lockedCanvas.height * 0.52f, paint)
-          true
-        }
-        .onSuccess { drawn ->
-          canvas?.let { locked -> runCatching { surface.unlockCanvasAndPost(locked) } }
-          marker(SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeCanvasDrawCompleteMarker(drawn))
-        }
-        .onFailure { throwable ->
-          canvas?.let { locked ->
-            runCatching { surface.unlockCanvasAndPost(locked) }
-          }
-          marker(
-              SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeCanvasDrawFailedMarker(
-                  error = throwable.javaClass.simpleName,
-                  message = throwable.message ?: "none",
-              )
-          )
-        }
-        .getOrDefault(false)
-  }
 
   private fun drawCameraHwbProjectionSyntheticVisual(
       surface: AndroidSurface,

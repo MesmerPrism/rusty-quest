@@ -362,6 +362,15 @@ Interaction SDK pointer input without native multimodal extension forcing.
   properties, starts no JNI route, and suppresses cleanup markers when no
   resources were adopted. The Activity remains the facade for feature gates,
   native stop callbacks, and route-specific marker composition.
+- `app/src/main/.../SpatialSdkQuadSurfaceProbeCoordinator.kt` owns the
+  default-disabled SDK canvas surface probe: its exact property gate, start
+  state, main-thread scheduling, Android swapchain/surface acquisition,
+  checkerboard draw, plain-entity to generated-mesh fallback, visible-window
+  receipt, and delayed cleanup/completion markers. Its layer factory is also
+  called by Vulkan and panel-matrix routes only after those routes pass their
+  own explicit opt-ins. The Activity supplies the shared resource owner,
+  cleanup callback, `Scene`, and marker sink; the coordinator declares no JNI
+  methods and cannot enable another route.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, viewer-locked and virtual-wall projection

@@ -212,6 +212,12 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `SpatialSdkQuadResourceCoordinator.kt`; keep each route's exact opt-in gate,
   JNI start/stop authority, and feature-specific marker composition outside
   this inert resource owner;
+- package the default-disabled SDK canvas surface probe gate, start state,
+  scheduling, Android swapchain/surface acquisition, checkerboard draw,
+  plain-entity/generated-mesh layer fallback, and completion lifecycle in
+  `SpatialSdkQuadSurfaceProbeCoordinator.kt`; allow explicitly enabled Vulkan
+  and panel-matrix callers to reuse its layer factory without enabling the
+  surface probe itself;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, placement-plane construction from
