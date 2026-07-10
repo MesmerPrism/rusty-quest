@@ -230,6 +230,10 @@ Apply that model here when a lane grows beyond a narrow facade method:
   native interop probe/receipt markers, native passthrough/environment-depth
   start markers, native controller-action start markers, and multimodal opt-in marker fields
   plus native receipt bit decoding in `SpatialOpenXrRouteModule.kt`;
+- package validation and remote UI command marker policy, including self-test,
+  UI-command, surface-target activation, remote participant, and Polar
+  live-validation marker envelopes plus default validation identifiers, in
+  `SpatialValidationCommandModule.kt`;
 - package surface-particle route policy, carrier parsing, dimensions, media
   settings, route lifecycle marker fields, parameter/alias marker fields,
   projection update marker fields, panel-layer marker fields, recenter marker fields,

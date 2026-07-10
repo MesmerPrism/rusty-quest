@@ -7553,15 +7553,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     val participantId =
         intent.getStringExtra(EXTRA_PARTICIPANT_ID)?.trim()?.takeIf { it.isNotBlank() }
-            ?: "codex-spatial-sdk-validation"
+            ?: SpatialValidationCommandModule.DEFAULT_SELF_TEST_PARTICIPANT_ID
     val surfaceTargetId =
         intent.getStringExtra(EXTRA_SURFACE_TARGET_ID)?.trim()?.takeIf { it.isNotBlank() }
-            ?: "real-hands"
+            ?: SpatialValidationCommandModule.DEFAULT_SURFACE_TARGET_ID
 
-    marker(
-        "channel=validation status=self-test-start participantId=${activityMarkerToken(participantId)} " +
-            "surfaceTargetId=${activityMarkerToken(surfaceTargetId)}"
-    )
+    marker(SpatialValidationCommandModule.selfTestStartMarker(participantId, surfaceTargetId))
     scheduleParticleLayerLifecycleDiagnostics("self-test-start")
     try {
       store.resetForNewParticipant()
@@ -7584,8 +7581,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               1500L,
           )
       marker(
-          "channel=validation status=self-test-block-started participantId=${activityMarkerToken(participantId)} " +
-              "surfaceTargetId=${activityMarkerToken(surfaceTargetId)} validationDriverProfileId=$VALIDATION_DRIVER_PROFILE_ID"
+          SpatialValidationCommandModule.selfTestBlockStartedMarker(
+              participantId,
+              surfaceTargetId,
+              VALIDATION_DRIVER_PROFILE_ID,
+          )
       )
       Handler(Looper.getMainLooper())
           .postDelayed(
@@ -7601,18 +7601,29 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       signature = emptySignatureJson(),
                   )
                   marker(
-                      "channel=validation status=self-test-complete participantId=${activityMarkerToken(participantId)} " +
-                          "surfaceTargetId=${activityMarkerToken(surfaceTargetId)} validationDriverProfileId=$VALIDATION_DRIVER_PROFILE_ID"
+                      SpatialValidationCommandModule.selfTestCompleteMarker(
+                          participantId,
+                          surfaceTargetId,
+                          VALIDATION_DRIVER_PROFILE_ID,
+                      )
                   )
                 } catch (throwable: Throwable) {
-                  marker("channel=validation status=self-test-failed error=${activityMarkerToken(throwable.message ?: throwable.javaClass.simpleName)}")
+                  marker(
+                      SpatialValidationCommandModule.selfTestFailedMarker(
+                          SpatialValidationCommandModule.throwableErrorToken(throwable)
+                      )
+                  )
                   Log.e(TAG, "Spatial Camera Panel validation workflow failed", throwable)
                 }
               },
               SpatialCameraPanelStore.DEFAULT_BLOCK_DURATION_MS + 750L,
           )
     } catch (throwable: Throwable) {
-      marker("channel=validation status=self-test-failed error=${activityMarkerToken(throwable.message ?: throwable.javaClass.simpleName)}")
+      marker(
+          SpatialValidationCommandModule.selfTestFailedMarker(
+              SpatialValidationCommandModule.throwableErrorToken(throwable)
+          )
+      )
       Log.e(TAG, "Spatial Camera Panel validation workflow failed", throwable)
     }
   }
@@ -7624,11 +7635,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val uiAction =
         intent.getStringExtra(EXTRA_UI_ACTION)?.trim()?.takeIf { it.isNotBlank() }
             ?: "panel-open"
-    val source = "remote-ui-command-$uiAction"
-    marker(
-        "channel=validation status=ui-command-start uiAction=${activityMarkerToken(uiAction)} " +
-            "rendererAuthority=native-vulkan-wsi-surface-panel uiAuthority=spatial-sdk-compose-panel"
-    )
+    val source = SpatialValidationCommandModule.remoteUiCommandSource(uiAction)
+    marker(SpatialValidationCommandModule.uiCommandStartMarker(uiAction))
     try {
       when (uiAction) {
         "panel-open" -> setWorkflowPanelVisible(true, focus = true, source = source)
@@ -7731,14 +7739,19 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         else -> error("unknown_ui_action_$uiAction")
       }
       marker(
-          "channel=validation status=ui-command-complete uiAction=${activityMarkerToken(uiAction)} " +
-              "panelMode=${panelStateToken()} workflowPanelVisible=${panelPlacement.visible} " +
-              "surfaceTargetId=${activityMarkerToken(store.snapshot().surfaceTargetId)}"
+          SpatialValidationCommandModule.uiCommandCompleteMarker(
+              uiAction,
+              panelStateToken(),
+              panelPlacement.visible,
+              store.snapshot().surfaceTargetId,
+          )
       )
     } catch (throwable: Throwable) {
       marker(
-          "channel=validation status=ui-command-failed uiAction=${activityMarkerToken(uiAction)} " +
-              "error=${activityMarkerToken(throwable.message ?: throwable.javaClass.simpleName)}"
+          SpatialValidationCommandModule.uiCommandFailedMarker(
+              uiAction,
+              SpatialValidationCommandModule.throwableErrorToken(throwable),
+          )
       )
       Log.e(TAG, "Spatial Camera Panel UI command failed", throwable)
     }
@@ -7750,23 +7763,27 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     val participantId =
         intent.getStringExtra(EXTRA_PARTICIPANT_ID)?.trim()?.takeIf { it.isNotBlank() }
-            ?: "codex-spatial-surface-target"
+            ?: SpatialValidationCommandModule.DEFAULT_SURFACE_TARGET_PARTICIPANT_ID
     val surfaceTargetId =
         intent.getStringExtra(EXTRA_SURFACE_TARGET_ID)?.trim()?.takeIf { it.isNotBlank() }
-            ?: "real-hands"
+            ?: SpatialValidationCommandModule.DEFAULT_SURFACE_TARGET_ID
 
     try {
       startRemoteSurfaceBlock(intent, "surface-target-activation", resetSession = true)
       marker(
-          "channel=validation status=surface-target-activated " +
-              "participantId=${activityMarkerToken(participantId)} surfaceTargetId=${activityMarkerToken(surfaceTargetId)} " +
-              "validationDriverProfileId=$VALIDATION_DRIVER_PROFILE_ID panelMode=${panelStateToken()} " +
-              "leftInParticleView=true"
+          SpatialValidationCommandModule.surfaceTargetActivatedMarker(
+              participantId,
+              surfaceTargetId,
+              VALIDATION_DRIVER_PROFILE_ID,
+              panelStateToken(),
+          )
       )
     } catch (throwable: Throwable) {
       marker(
-          "channel=validation status=surface-target-activation-failed " +
-              "surfaceTargetId=${activityMarkerToken(surfaceTargetId)} error=${activityMarkerToken(throwable.message ?: throwable.javaClass.simpleName)}"
+          SpatialValidationCommandModule.surfaceTargetActivationFailedMarker(
+              surfaceTargetId,
+              SpatialValidationCommandModule.throwableErrorToken(throwable),
+          )
       )
       Log.e(TAG, "Spatial Camera Panel surface target activation failed", throwable)
     }
@@ -7778,10 +7795,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       resetSession: Boolean,
   ): ActiveBlockSnapshot? {
     marker(
-        "channel=validation status=surface-target-activation-start " +
-            "participantId=${activityMarkerToken(remoteParticipantId(intent))} " +
-            "surfaceTargetId=${activityMarkerToken(remoteSurfaceTargetId(intent))} source=${activityMarkerToken(source)} " +
-            "rendererAuthority=native-vulkan-wsi-surface-panel uiAuthority=spatial-sdk-compose-panel"
+        SpatialValidationCommandModule.surfaceTargetActivationStartMarker(
+            remoteParticipantId(intent),
+            remoteSurfaceTargetId(intent),
+            source,
+        )
     )
     scheduleParticleLayerLifecycleDiagnostics(source)
     if (resetSession) {
@@ -7816,19 +7834,21 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (snapshot.sessionId.isBlank() || snapshot.stage == "participant") {
       store.beginParticipant(remoteParticipantId(intent))
       marker(
-          "channel=validation status=remote-participant-created " +
-              "source=${activityMarkerToken(source)} participantId=${activityMarkerToken(remoteParticipantId(intent))}"
+          SpatialValidationCommandModule.remoteParticipantCreatedMarker(
+              source,
+              remoteParticipantId(intent),
+          )
       )
     }
   }
 
   private fun remoteParticipantId(intent: Intent): String =
       intent.getStringExtra(EXTRA_PARTICIPANT_ID)?.trim()?.takeIf { it.isNotBlank() }
-          ?: "codex-spatial-ui-command"
+          ?: SpatialValidationCommandModule.DEFAULT_UI_COMMAND_PARTICIPANT_ID
 
   private fun remoteSurfaceTargetId(intent: Intent): String =
       intent.getStringExtra(EXTRA_SURFACE_TARGET_ID)?.trim()?.takeIf { it.isNotBlank() }
-          ?: "real-hands"
+          ?: SpatialValidationCommandModule.DEFAULT_SURFACE_TARGET_ID
 
   private fun runPolarLiveValidationIfRequested(intent: Intent?) {
     if (intent?.action != ACTION_RUN_POLAR_LIVE_VALIDATION) {
@@ -7836,10 +7856,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     val participantId =
         intent.getStringExtra(EXTRA_PARTICIPANT_ID)?.trim()?.takeIf { it.isNotBlank() }
-            ?: "codex-spatial-polar-live-validation"
+            ?: SpatialValidationCommandModule.DEFAULT_POLAR_LIVE_PARTICIPANT_ID
     val surfaceTargetId =
         intent.getStringExtra(EXTRA_SURFACE_TARGET_ID)?.trim()?.takeIf { it.isNotBlank() }
-            ?: "real-hands"
+            ?: SpatialValidationCommandModule.DEFAULT_SURFACE_TARGET_ID
     val scanDelayMs =
         intent.getIntExtra(EXTRA_POLAR_SCAN_SECONDS, 16).coerceIn(3, 60) * 1000L
     val connectDelayMs =
@@ -7849,10 +7869,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val mainHandler = Handler(Looper.getMainLooper())
 
     marker(
-        "channel=polar-live-validation status=start participantId=${activityMarkerToken(participantId)} " +
-            "surfaceTargetId=${activityMarkerToken(surfaceTargetId)} scanSeconds=${scanDelayMs / 1000L} " +
-            "connectDelaySeconds=${connectDelayMs / 1000L} ecgSeconds=${ecgRunMs / 1000L} " +
-            "rendererAuthority=native-vulkan-wsi-surface-panel uiAuthority=spatial-sdk-compose-panel"
+        SpatialValidationCommandModule.polarLiveStartMarker(
+            participantId,
+            surfaceTargetId,
+            scanDelayMs / 1000L,
+            connectDelayMs / 1000L,
+            ecgRunMs / 1000L,
+        )
     )
     scheduleParticleLayerLifecycleDiagnostics("polar-live-validation-start")
     try {
@@ -7867,32 +7890,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       setWorkflowPanelVisible(true, focus = true, source = "polar-live-validation")
       val panel = ensurePolarSensorPanel()
       panel.buildView()
-      marker(
-          "channel=polar-live-validation status=polar-panel-automation-ready " +
-              "participantId=${activityMarkerToken(participantId)}"
-      )
+      marker(SpatialValidationCommandModule.polarPanelAutomationReadyMarker(participantId))
       panel.handleCommand("select_ecg")
       panel.handleCommand("scan")
-      marker(
-          "channel=polar-live-validation status=scan-command-issued " +
-              "participantId=${activityMarkerToken(participantId)}"
-      )
+      marker(SpatialValidationCommandModule.polarScanCommandIssuedMarker(participantId))
       mainHandler.postDelayed(
           {
-            marker(
-                "channel=polar-live-validation status=connect-requested " +
-                    "discoveredDeviceCount=${panel.discoveredDeviceCount()}"
-            )
+            marker(SpatialValidationCommandModule.polarConnectRequestedMarker(panel.discoveredDeviceCount()))
             panel.connectBestDiscovered("ecg")
           },
           scanDelayMs,
       )
       mainHandler.postDelayed(
           {
-            marker(
-                "channel=polar-live-validation status=start-ecg-requested " +
-                    "discoveredDeviceCount=${panel.discoveredDeviceCount()}"
-            )
+            marker(SpatialValidationCommandModule.polarStartEcgRequestedMarker(panel.discoveredDeviceCount()))
             panel.handleCommand("start_ecg")
           },
           scanDelayMs + connectDelayMs,
@@ -7901,15 +7912,21 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           {
             val ecgReceiving = panel.isEcgReceiving()
             marker(
-                "channel=polar-live-validation status=complete ecgReceiving=$ecgReceiving " +
-                    "discoveredDeviceCount=${panel.discoveredDeviceCount()} " +
-                    "ecgStatus=${activityMarkerToken(panel.ecgExperimentStatusLine(true))}"
+                SpatialValidationCommandModule.polarCompleteMarker(
+                    ecgReceiving,
+                    panel.discoveredDeviceCount(),
+                    panel.ecgExperimentStatusLine(true),
+                )
             )
           },
           scanDelayMs + connectDelayMs + ecgRunMs,
       )
     } catch (throwable: Throwable) {
-      marker("channel=polar-live-validation status=failed error=${activityMarkerToken(throwable.message ?: throwable.javaClass.simpleName)}")
+      marker(
+          SpatialValidationCommandModule.polarFailedMarker(
+              SpatialValidationCommandModule.throwableErrorToken(throwable)
+          )
+      )
       Log.e(TAG, "Spatial Camera Panel Polar live validation failed", throwable)
     }
   }

@@ -391,6 +391,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   marker-ready native route status helpers.
   It must not load native libraries, call JNI, query the Spatial runtime, or
   mutate Activity state.
+- `app/src/main/.../SpatialValidationCommandModule.kt` owns validation and
+  remote UI command route marker policy: self-test, remote UI command, surface
+  target activation, remote participant creation, and Polar live-validation
+  marker envelopes plus default validation identifiers. It must not mutate the
+  store, operate panels, schedule handlers, call Polar APIs, or start native
+  routes.
 - `app/src/main/.../SpatialSurfaceParticleRouteModule.kt` owns the
   surface-particle route policy: native-layer opt-in/suppression defaults,
   carrier token parsing, panel dimensions, projection-surface math, media
