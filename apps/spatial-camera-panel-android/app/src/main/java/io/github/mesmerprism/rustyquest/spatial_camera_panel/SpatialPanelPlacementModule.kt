@@ -102,6 +102,50 @@ internal data class SpatialPanelHeadlockMarkerInput(
     val cameraProjectionLayerZIndex: Int,
 )
 
+internal data class SpatialPanelShellHiddenMarkerInput(
+    val source: String,
+    val panelShellVisibleProperty: String,
+    val particleLayerVisible: Boolean,
+    val cameraStackSuppressesParticles: Boolean,
+    val nativeSurfaceParticleLayerEnabled: Boolean,
+    val privateSpatialEcsParticleRendererEnabled: Boolean,
+    val nativeSurfaceParticleLayerSuppressedByPrivateRenderer: Boolean,
+)
+
+internal data class SpatialPanelModeMarkerInput(
+    val source: String,
+    val panelMode: String,
+    val workflowPanelVisible: Boolean,
+    val privateLayerPanelVisible: Boolean,
+    val launcherPanelVisible: Boolean,
+    val legacyLauncherPanelSuppressed: Boolean,
+    val particleLayerVisible: Boolean,
+    val headlockMarkerFields: String,
+)
+
+internal data class SpatialPrivateLayerPanelModeMarkerInput(
+    val source: String,
+    val panelMode: String,
+    val workflowPanelVisible: Boolean,
+    val privateLayerPanelVisible: Boolean,
+    val launcherPanelVisible: Boolean,
+    val legacyLauncherPanelSuppressed: Boolean,
+    val particleLayerVisible: Boolean,
+    val privateLayerPanelLayerUpdateStatus: String,
+    val cameraVideoProjectionLayerZIndex: Int,
+    val leftStickYPanelDistanceEnabled: Boolean,
+    val panelOpensInFrontOfCameraVideo: Boolean,
+    val inputForegroundActive: Boolean,
+    val inputForegroundDistanceMeters: Float,
+    val inputForegroundScale: Float,
+    val projectionPanelHittable: String,
+    val projectionPanelInputClearanceActive: Boolean,
+    val projectionPanelInputBehindPrivateLayerPanel: Boolean,
+    val projectionPanelInputTargetDistanceMeters: Float,
+    val privateLayerOverride: Float,
+    val headlockMarkerFields: String,
+)
+
 internal object SpatialPanelPlacementModule {
   fun initialPrivateLayerPlacement(): PanelPlacement =
       PanelPlacement(
@@ -438,6 +482,99 @@ internal object SpatialPanelPlacementModule {
           "headlockedPanelJoystickTranslateRateProperty=$PANEL_HEADLOCK_JOYSTICK_TRANSLATE_RATE_PROPERTY " +
           "headlockedPanelJoystickDistanceRateProperty=$PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_PROPERTY " +
           "headlockedPanelJoystickScaleRateProperty=$PANEL_HEADLOCK_JOYSTICK_SCALE_RATE_PROPERTY"
+
+  fun legacyWorkflowPanelsDeactivatedMarker(source: String): String =
+      "channel=spatial-panel status=legacy-workflow-panels-deactivated " +
+          "source=${activityMarkerToken(source)} roomCameraStackLaunch=true " +
+          "workflowPanelVisible=false legacyWorkflowPanelVisible=false " +
+          "launcherPanelVisible=false legacyLauncherPanelSuppressed=true " +
+          "particleLayerVisible=false cameraStackSuppressesParticles=true " +
+          "onlyRightPrimaryPrivateLayerPanel=true runtimeCrash=false"
+
+  fun panelShellHiddenMarker(input: SpatialPanelShellHiddenMarkerInput): String =
+      "channel=spatial-panel status=panel-shell-hidden " +
+          "source=${activityMarkerToken(input.source)} panelShellVisible=false " +
+          "panelShellVisibleProperty=${input.panelShellVisibleProperty} " +
+          "workflowPanelVisible=false privateLayerPanelVisible=false launcherPanelVisible=false " +
+          "particleLayerVisible=${input.particleLayerVisible} " +
+          "cameraStackSuppressesParticles=${input.cameraStackSuppressesParticles} " +
+          "nativeSurfaceParticleLayerSuppressed=${!input.nativeSurfaceParticleLayerEnabled} " +
+          "privateSpatialEcsParticleRendererEnabled=${input.privateSpatialEcsParticleRendererEnabled} " +
+          "rendererAuthority=${if (input.nativeSurfaceParticleLayerSuppressedByPrivateRenderer) "private-spatial-ecs-particle-renderer" else "native-vulkan-wsi-surface-panel"}"
+
+  fun panelModeUpdateSuppressedMarker(
+      channel: String,
+      source: String,
+      requestedPanel: String,
+      panelShellVisibleProperty: String,
+      particleLayerVisible: Boolean,
+      spatialPrivateLayerControlPanel: Boolean? = null,
+  ): String {
+    val privateLayerField =
+        spatialPrivateLayerControlPanel?.let { " spatialPrivateLayerControlPanel=$it" } ?: ""
+    return "channel=$channel status=mode-update-suppressed " +
+        "source=${activityMarkerToken(source)} requestedPanel=${activityMarkerToken(requestedPanel)} " +
+        "panelShellVisible=false panelShellVisibleProperty=$panelShellVisibleProperty " +
+        "workflowPanelVisible=false privateLayerPanelVisible=false launcherPanelVisible=false " +
+        "particleLayerVisible=$particleLayerVisible" +
+        privateLayerField
+  }
+
+  fun workflowPanelModeUpdatedMarker(input: SpatialPanelModeMarkerInput): String =
+      "channel=spatial-panel status=mode-updated source=${activityMarkerToken(input.source)} " +
+          "panelMode=${input.panelMode} workflowPanelVisible=${input.workflowPanelVisible} " +
+          "privateLayerPanelVisible=${input.privateLayerPanelVisible} " +
+          "launcherPanelVisible=${input.launcherPanelVisible} " +
+          "legacyLauncherPanelSuppressed=${input.legacyLauncherPanelSuppressed} " +
+          "particleLayerVisible=${input.particleLayerVisible} " +
+          "particleLayerRenderContinuity=kept-running rendererAuthority=native-vulkan-wsi-surface-panel " +
+          "uiAuthority=spatial-sdk-compose-panel " +
+          input.headlockMarkerFields
+
+  fun privateLayerPanelModeUpdatedMarker(input: SpatialPrivateLayerPanelModeMarkerInput): String =
+      "channel=private-layer-panel status=mode-updated source=${activityMarkerToken(input.source)} " +
+          "panelMode=${input.panelMode} workflowPanelVisible=${input.workflowPanelVisible} " +
+          "privateLayerPanelVisible=${input.privateLayerPanelVisible} " +
+          "launcherPanelVisible=${input.launcherPanelVisible} " +
+          "legacyLauncherPanelSuppressed=${input.legacyLauncherPanelSuppressed} " +
+          "particleLayerVisible=${input.particleLayerVisible} " +
+          "rendererAuthority=native-vulkan-wsi-surface-panel uiAuthority=spatial-sdk-compose-panel " +
+          "spatialPrivateLayerControlPanel=true " +
+          "privateLayerPanelRenderMode=spatial-sdk-layer " +
+          "privateLayerPanelLayerConfig=enabled " +
+          "privateLayerPanelLayerUpdateStatus=${activityMarkerToken(input.privateLayerPanelLayerUpdateStatus)} " +
+          "privateLayerPanelLayerZIndex=$PRIVATE_LAYER_PANEL_LAYER_Z_INDEX " +
+          "cameraVideoProjectionLayerZIndex=${input.cameraVideoProjectionLayerZIndex} " +
+          "privateLayerPanelAboveCameraProjectionLayer=quad-layer-z-index " +
+          "privateLayerPanelWorldSpace=true " +
+          "privateLayerPanelGrabbable=true " +
+          "privateLayerPanelGrabType=PIVOT_Y " +
+          "privateLayerPanelTransformAuthority=app-stored-placement-unless-grabbed " +
+          "composeDragPanelMovement=false " +
+          "privateLayerPanelPoseSource=initial-headset-facing-world-space-then-stored-placement-unless-grabbed " +
+          "privateLayerPanelDistanceMode=left-stick-stored-placement " +
+          "privateLayerPanelForcedDistanceDisabled=false " +
+          "privateLayerPanelDistanceControl=left-stick-y-private-panel-free-transform-distance " +
+          "privateLayerPanelDistancePersistsAcrossToggle=true " +
+          "rightStickSideFlickPanelMoveDisabled=true " +
+          "leftStickYPanelDistanceEnabled=${input.leftStickYPanelDistanceEnabled} " +
+          "privateLayerPanelInputButtons=button-a+trigger-l+trigger-r " +
+          "privateLayerPanelTriggerSelectEnabled=true " +
+          "privateLayerPanelGrabButton=controller-squeeze " +
+          "panelOpensInFrontOfCameraVideo=${input.panelOpensInFrontOfCameraVideo} " +
+          "privateLayerPanelInputForegroundActive=${input.inputForegroundActive} " +
+          "privateLayerPanelInputForegroundDistanceMeters=${activityMarkerFloat(input.inputForegroundDistanceMeters)} " +
+          "privateLayerPanelInputForegroundScale=${activityMarkerFloat(input.inputForegroundScale)} " +
+          "privateLayerPanelDefaultReachDistancePreserved=true " +
+          "privateLayerPanelScaleAdjustedForForeground=false " +
+          "projectionPanelInputPassThrough=true " +
+          "projectionPanelHittable=${input.projectionPanelHittable} " +
+          "projectionPanelInputClearanceActive=${input.projectionPanelInputClearanceActive} " +
+          "projectionPanelInputBehindPrivateLayerPanel=${input.projectionPanelInputBehindPrivateLayerPanel} " +
+          "projectionPanelInputClearanceMeters=${activityMarkerFloat(CAMERA_HWB_PROJECTION_PRIVATE_PANEL_INPUT_CLEARANCE_METERS)} " +
+          "projectionPanelInputTargetDistanceMeters=${activityMarkerFloat(input.projectionPanelInputTargetDistanceMeters)} " +
+          "publicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(input.privateLayerOverride)} " +
+          input.headlockMarkerFields
 
   fun workflowPlacementUpdatedMarker(panelMode: String, headlockMarkerFields: String): String =
       "channel=spatial-panel status=placement-updated " +

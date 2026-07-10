@@ -4231,14 +4231,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     privateLayerPanelEntity?.setComponent(Visible(false))
     panelLauncherEntity?.setComponent(Visible(false))
     particleLayerEntity?.setComponent(Visible(false))
-    marker(
-        "channel=spatial-panel status=legacy-workflow-panels-deactivated " +
-            "source=${activityMarkerToken(source)} roomCameraStackLaunch=true " +
-            "workflowPanelVisible=false legacyWorkflowPanelVisible=false " +
-            "launcherPanelVisible=false legacyLauncherPanelSuppressed=true " +
-            "particleLayerVisible=false cameraStackSuppressesParticles=true " +
-            "onlyRightPrimaryPrivateLayerPanel=true runtimeCrash=false"
-    )
+    marker(SpatialPanelPlacementModule.legacyWorkflowPanelsDeactivatedMarker(source))
   }
 
   private fun deactivatePanelShellIfRequested(source: String) {
@@ -4253,15 +4246,18 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     panelLauncherEntity?.setComponent(Visible(false))
     particleLayerEntity?.setComponent(Visible(particleLayerVisibleForPanelMode()))
     marker(
-        "channel=spatial-panel status=panel-shell-hidden " +
-            "source=${activityMarkerToken(source)} panelShellVisible=false " +
-            "panelShellVisibleProperty=$PANEL_SHELL_VISIBLE_PROPERTY " +
-            "workflowPanelVisible=false privateLayerPanelVisible=false launcherPanelVisible=false " +
-            "particleLayerVisible=${particleLayerVisibleForPanelMode()} " +
-            "cameraStackSuppressesParticles=$cameraStackSuppressesParticles " +
-            "nativeSurfaceParticleLayerSuppressed=${!nativeSurfaceParticleLayerEnabled()} " +
-            "privateSpatialEcsParticleRendererEnabled=${privateSpatialEcsParticleRendererEnabled()} " +
-            "rendererAuthority=${if (nativeSurfaceParticleLayerSuppressedByPrivateRenderer()) "private-spatial-ecs-particle-renderer" else "native-vulkan-wsi-surface-panel"}"
+        SpatialPanelPlacementModule.panelShellHiddenMarker(
+            SpatialPanelShellHiddenMarkerInput(
+                source = source,
+                panelShellVisibleProperty = PANEL_SHELL_VISIBLE_PROPERTY,
+                particleLayerVisible = particleLayerVisibleForPanelMode(),
+                cameraStackSuppressesParticles = cameraStackSuppressesParticles,
+                nativeSurfaceParticleLayerEnabled = nativeSurfaceParticleLayerEnabled(),
+                privateSpatialEcsParticleRendererEnabled = privateSpatialEcsParticleRendererEnabled(),
+                nativeSurfaceParticleLayerSuppressedByPrivateRenderer =
+                    nativeSurfaceParticleLayerSuppressedByPrivateRenderer(),
+            )
+        )
     )
   }
 
@@ -4371,11 +4367,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (visible && !panelShellVisible()) {
       deactivatePanelShellIfRequested(source)
       marker(
-          "channel=spatial-panel status=mode-update-suppressed " +
-              "source=${activityMarkerToken(source)} requestedPanel=workflow-panel " +
-              "panelShellVisible=false panelShellVisibleProperty=$PANEL_SHELL_VISIBLE_PROPERTY " +
-              "workflowPanelVisible=false privateLayerPanelVisible=false launcherPanelVisible=false " +
-              "particleLayerVisible=${particleLayerVisibleForPanelMode()}"
+          SpatialPanelPlacementModule.panelModeUpdateSuppressedMarker(
+              channel = "spatial-panel",
+              source = source,
+              requestedPanel = "workflow-panel",
+              panelShellVisibleProperty = PANEL_SHELL_VISIBLE_PROPERTY,
+              particleLayerVisible = particleLayerVisibleForPanelMode(),
+          )
       )
       return panelPlacement
     }
@@ -4407,15 +4405,18 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     applyPanelPlacement()
     recordPanelState(source)
     marker(
-        "channel=spatial-panel status=mode-updated source=${activityMarkerToken(source)} " +
-            "panelMode=${panelStateToken()} workflowPanelVisible=${panelPlacement.visible} " +
-            "privateLayerPanelVisible=$privateLayerPanelVisible " +
-            "launcherPanelVisible=${launcherPanelVisibleForPanelMode()} " +
-            "legacyLauncherPanelSuppressed=${legacyLauncherPanelSuppressedForCameraStack()} " +
-            "particleLayerVisible=${particleLayerVisibleForPanelMode()} " +
-            "particleLayerRenderContinuity=kept-running rendererAuthority=native-vulkan-wsi-surface-panel " +
-            "uiAuthority=spatial-sdk-compose-panel " +
-            panelHeadlockMarkerFields()
+        SpatialPanelPlacementModule.workflowPanelModeUpdatedMarker(
+            SpatialPanelModeMarkerInput(
+                source = source,
+                panelMode = panelStateToken(),
+                workflowPanelVisible = panelPlacement.visible,
+                privateLayerPanelVisible = privateLayerPanelVisible,
+                launcherPanelVisible = launcherPanelVisibleForPanelMode(),
+                legacyLauncherPanelSuppressed = legacyLauncherPanelSuppressedForCameraStack(),
+                particleLayerVisible = particleLayerVisibleForPanelMode(),
+                headlockMarkerFields = panelHeadlockMarkerFields(),
+            )
+        )
     )
     return panelPlacement
   }
@@ -4440,11 +4441,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (visible && !panelShellVisible()) {
       deactivatePanelShellIfRequested(source)
       marker(
-          "channel=private-layer-panel status=mode-update-suppressed " +
-              "source=${activityMarkerToken(source)} requestedPanel=private-layer-panel " +
-              "panelShellVisible=false panelShellVisibleProperty=$PANEL_SHELL_VISIBLE_PROPERTY " +
-              "workflowPanelVisible=false privateLayerPanelVisible=false launcherPanelVisible=false " +
-              "particleLayerVisible=${particleLayerVisibleForPanelMode()} spatialPrivateLayerControlPanel=false"
+          SpatialPanelPlacementModule.panelModeUpdateSuppressedMarker(
+              channel = "private-layer-panel",
+              source = source,
+              requestedPanel = "private-layer-panel",
+              panelShellVisibleProperty = PANEL_SHELL_VISIBLE_PROPERTY,
+              particleLayerVisible = particleLayerVisibleForPanelMode(),
+              spatialPrivateLayerControlPanel = false,
+          )
       )
       return panelPlacement
     }
@@ -4500,49 +4504,35 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         forceLog = true,
     )
     marker(
-        "channel=private-layer-panel status=mode-updated source=${activityMarkerToken(source)} " +
-            "panelMode=${panelStateToken()} workflowPanelVisible=${panelPlacement.visible} " +
-            "privateLayerPanelVisible=$privateLayerPanelVisible " +
-            "launcherPanelVisible=${launcherPanelVisibleForPanelMode()} " +
-            "legacyLauncherPanelSuppressed=${legacyLauncherPanelSuppressedForCameraStack()} " +
-            "particleLayerVisible=${particleLayerVisibleForPanelMode()} " +
-            "rendererAuthority=native-vulkan-wsi-surface-panel uiAuthority=spatial-sdk-compose-panel " +
-            "spatialPrivateLayerControlPanel=true " +
-            "privateLayerPanelRenderMode=spatial-sdk-layer " +
-            "privateLayerPanelLayerConfig=enabled " +
-            "privateLayerPanelLayerUpdateStatus=${activityMarkerToken(privateLayerPanelLayerUpdateStatus)} " +
-            "privateLayerPanelLayerZIndex=$PRIVATE_LAYER_PANEL_LAYER_Z_INDEX " +
-            "cameraVideoProjectionLayerZIndex=${cameraHwbProjectionZIndexForPlacement(cameraHwbProjectionPlacementMode)} " +
-            "privateLayerPanelAboveCameraProjectionLayer=quad-layer-z-index " +
-            "privateLayerPanelWorldSpace=true " +
-            "privateLayerPanelGrabbable=true " +
-            "privateLayerPanelGrabType=PIVOT_Y " +
-            "privateLayerPanelTransformAuthority=app-stored-placement-unless-grabbed " +
-            "composeDragPanelMovement=false " +
-            "privateLayerPanelPoseSource=initial-headset-facing-world-space-then-stored-placement-unless-grabbed " +
-            "privateLayerPanelDistanceMode=left-stick-stored-placement " +
-            "privateLayerPanelForcedDistanceDisabled=false " +
-            "privateLayerPanelDistanceControl=left-stick-y-private-panel-free-transform-distance " +
-            "privateLayerPanelDistancePersistsAcrossToggle=true " +
-            "rightStickSideFlickPanelMoveDisabled=true " +
-            "leftStickYPanelDistanceEnabled=${currentLeftStickPanelDistanceEnabled()} " +
-            "privateLayerPanelInputButtons=button-a+trigger-l+trigger-r " +
-            "privateLayerPanelTriggerSelectEnabled=true " +
-            "privateLayerPanelGrabButton=controller-squeeze " +
-            "panelOpensInFrontOfCameraVideo=${privateLayerPanelPlacement.zMeters < CAMERA_HWB_PROJECTION_TARGET_DISTANCE_METERS} " +
-            "privateLayerPanelInputForegroundActive=$inputForegroundActive " +
-            "privateLayerPanelInputForegroundDistanceMeters=${activityMarkerFloat(inputForegroundDistanceMeters)} " +
-            "privateLayerPanelInputForegroundScale=${activityMarkerFloat(inputForegroundScale)} " +
-            "privateLayerPanelDefaultReachDistancePreserved=true " +
-            "privateLayerPanelScaleAdjustedForForeground=false " +
-            "projectionPanelInputPassThrough=true " +
-            "projectionPanelHittable=${cameraHwbProjectionPanelHittableToken()} " +
-            "projectionPanelInputClearanceActive=${cameraHwbProjectionPrivatePanelInputClearanceActive()} " +
-            "projectionPanelInputBehindPrivateLayerPanel=${cameraHwbProjectionInputCarrierBehindPrivatePanel()} " +
-            "projectionPanelInputClearanceMeters=${activityMarkerFloat(CAMERA_HWB_PROJECTION_PRIVATE_PANEL_INPUT_CLEARANCE_METERS)} " +
-            "projectionPanelInputTargetDistanceMeters=${activityMarkerFloat(currentCameraHwbProjectionTargetDistanceMeters())} " +
-            "publicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(privateLayerOverride)} " +
-            panelHeadlockMarkerFields()
+        SpatialPanelPlacementModule.privateLayerPanelModeUpdatedMarker(
+            SpatialPrivateLayerPanelModeMarkerInput(
+                source = source,
+                panelMode = panelStateToken(),
+                workflowPanelVisible = panelPlacement.visible,
+                privateLayerPanelVisible = privateLayerPanelVisible,
+                launcherPanelVisible = launcherPanelVisibleForPanelMode(),
+                legacyLauncherPanelSuppressed = legacyLauncherPanelSuppressedForCameraStack(),
+                particleLayerVisible = particleLayerVisibleForPanelMode(),
+                privateLayerPanelLayerUpdateStatus = privateLayerPanelLayerUpdateStatus,
+                cameraVideoProjectionLayerZIndex =
+                    cameraHwbProjectionZIndexForPlacement(cameraHwbProjectionPlacementMode),
+                leftStickYPanelDistanceEnabled = currentLeftStickPanelDistanceEnabled(),
+                panelOpensInFrontOfCameraVideo =
+                    privateLayerPanelPlacement.zMeters < CAMERA_HWB_PROJECTION_TARGET_DISTANCE_METERS,
+                inputForegroundActive = inputForegroundActive,
+                inputForegroundDistanceMeters = inputForegroundDistanceMeters,
+                inputForegroundScale = inputForegroundScale,
+                projectionPanelHittable = cameraHwbProjectionPanelHittableToken(),
+                projectionPanelInputClearanceActive =
+                    cameraHwbProjectionPrivatePanelInputClearanceActive(),
+                projectionPanelInputBehindPrivateLayerPanel =
+                    cameraHwbProjectionInputCarrierBehindPrivatePanel(),
+                projectionPanelInputTargetDistanceMeters =
+                    currentCameraHwbProjectionTargetDistanceMeters(),
+                privateLayerOverride = privateLayerOverride,
+                headlockMarkerFields = panelHeadlockMarkerFields(),
+            )
+        )
     )
     return panelPlacement
   }
