@@ -1,5 +1,6 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
+import android.content.Context
 import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.os.SystemClock
@@ -40,16 +41,27 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 internal class SpatialHandBillboardFlockFeature(
+    private val context: Context,
     private val marker: (String) -> Unit,
     private val surfaceTargetProvider: () -> String = { "" },
+    private val probeProvider: () -> SpatialNativeInteropProbe,
 ) : SpatialFeature {
   override fun lateSystemsToRegister(): List<SystemBase> =
-      listOf(SpatialHandBillboardFlockSystem(marker, surfaceTargetProvider))
+      listOf(
+          SpatialHandBillboardFlockSystem(
+              context.applicationContext,
+              marker,
+              surfaceTargetProvider,
+              probeProvider,
+          )
+      )
 }
 
 private class SpatialHandBillboardFlockSystem(
+    private val context: Context,
     private val marker: (String) -> Unit,
     private val surfaceTargetProvider: () -> String,
+    private val probeProvider: () -> SpatialNativeInteropProbe,
 ) : SystemBase() {
   private val entities = mutableListOf<Entity>()
   private var batchedCloud: SpatialBatchedBillboardCloud? = null
@@ -60,8 +72,15 @@ private class SpatialHandBillboardFlockSystem(
   private var lastStatusMs = 0L
   private var disabledLogged = false
   private var lastDisabledReason = ""
+  private var liveSurface: SpatialLiveSkinnedHandSurface? = null
+  private var liveSurfaceLoadAttempted = false
+  private var liveSurfaceLoadStatus = "not-attempted"
+  private var bridgeStartMask = 0L
+  private var bridgeStartAttemptFrame = 0
+  private var frameIndex = 0
 
   override fun execute() {
+    frameIndex += 1
     val config = SpatialHandBillboardFlockConfig.read()
     val surfaceTargetId = currentSurfaceTargetId()
     val suppressedForIcosphere = surfaceTargetId == "icosphere"
@@ -110,17 +129,181 @@ private class SpatialHandBillboardFlockSystem(
     lastFrameNanos = nowNanos
 
     val viewerPose = runCatching { scene.getViewerPose() }.getOrNull() ?: Pose(Vector3(0.0f))
-    val anchors = findHandAnchors(viewerPose)
-    val visible = anchors.poses.isNotEmpty()
-    val frameStats =
-        when (config.carrierMode) {
-          SpatialHandBillboardCarrierMode.BatchedSceneMesh ->
-              updateBatchedCarrier(config, anchors, viewerPose, dtSeconds, visible)
-          SpatialHandBillboardCarrierMode.EcsEntities ->
-              updateEntityCarrier(config, anchors, viewerPose, dtSeconds, visible)
-        }
+    if (config.source == SpatialHandBillboardSource.OpenXrLiveCustomMesh) {
+      val sourceFrame = updateLiveSurfaceInput(config, viewerPose)
+      val visible = sourceFrame != null && sourceFrame.activeHandCount > 0
+      val frameStats =
+          when (config.carrierMode) {
+            SpatialHandBillboardCarrierMode.BatchedSceneMesh ->
+                updateBatchedLiveSurfaceCarrier(config, sourceFrame, viewerPose, visible)
+            SpatialHandBillboardCarrierMode.EcsEntities ->
+                updateEntityLiveSurfaceCarrier(config, sourceFrame, viewerPose, visible)
+          }
+      maybeLogStatus(
+          config = config,
+          source =
+              if (sourceFrame == null) "openxr-live-custom-mesh-unavailable"
+              else "openxr-live-custom-mesh",
+          activeHandCount = sourceFrame?.activeHandCount ?: 0,
+          visible = visible,
+          frameStats = frameStats,
+          sourceMarkerFields =
+              listOfNotNull(
+                      "provider=XR_EXT_hand_tracking coordinateMapping=${markerToken(config.mappingProfile)} " +
+                          "rowOrder=openxr-left-right meshPairing=asset-handedness " +
+                          "orientationCorrection=none worldAnchorCorrection=false " +
+                          "customCpuSkinning=true customGpuSkinning=false " +
+                          "surfaceAnchors=triangle-barycentric replayFallbackActive=false " +
+                          "liveSurfaceLoadStatus=${markerToken(liveSurfaceLoadStatus)} " +
+                          "handMeshRigPackaged=${BuildConfig.HAND_MESH_RIG_PACKAGED}",
+                      liveSurface?.markerFields(),
+                      sourceFrame?.markerFields(),
+                  )
+                  .joinToString(" "),
+      )
+    } else {
+      val anchors = findHandAnchors(viewerPose)
+      val visible = anchors.poses.isNotEmpty()
+      val frameStats =
+          when (config.carrierMode) {
+            SpatialHandBillboardCarrierMode.BatchedSceneMesh ->
+                updateBatchedCarrier(config, anchors, viewerPose, dtSeconds, visible)
+            SpatialHandBillboardCarrierMode.EcsEntities ->
+                updateEntityCarrier(config, anchors, viewerPose, dtSeconds, visible)
+          }
+      maybeLogStatus(
+          config,
+          anchors.source,
+          anchors.activeHandCount,
+          visible,
+          frameStats,
+          "customCpuSkinning=false surfaceAnchors=anchor-offsets",
+      )
+    }
+  }
 
-    maybeLogStatus(config, anchors.source, anchors.activeHandCount, visible, frameStats)
+  private fun updateLiveSurfaceInput(
+      config: SpatialHandBillboardFlockConfig,
+      viewerPose: Pose,
+  ): SpatialLiveHandSurfaceFrame? {
+    SpatialLiveHandJointBridge.updateSpatialViewerWorldBasis(viewerPose, config.mappingProfile)
+    maybeStartBridge()
+    if (!liveSurfaceLoadAttempted) {
+      liveSurfaceLoadAttempted = true
+      runCatching { SpatialLiveSkinnedHandSurface.load(context) }
+          .onSuccess { surface ->
+            liveSurface = surface
+            liveSurfaceLoadStatus = "loaded"
+            marker(
+                "channel=spatial-hand-billboard-flock status=live-skinning-assets-loaded " +
+                    "module=$MODULE_ID source=openxr-live-custom-mesh " +
+                    "handMeshRigPackaged=${BuildConfig.HAND_MESH_RIG_PACKAGED} " +
+                    "handMeshRigAssetRoot=${SpatialLiveSkinnedHandSurface.ASSET_ROOT} " +
+                    "${surface.markerFields()} couplingDynamics=false highRateJsonPayload=false"
+            )
+          }
+          .onFailure { throwable ->
+            liveSurfaceLoadStatus = "missing-${markerToken(throwable.javaClass.simpleName)}"
+            marker(
+                "channel=spatial-hand-billboard-flock status=live-skinning-assets-unavailable " +
+                    "module=$MODULE_ID source=openxr-live-custom-mesh " +
+                    "handMeshRigPackaged=${BuildConfig.HAND_MESH_RIG_PACKAGED} " +
+                    "handMeshRigAssetRoot=${SpatialLiveSkinnedHandSurface.ASSET_ROOT} " +
+                    "fallback=joint-visuals-only error=${markerToken(throwable.javaClass.simpleName)} " +
+                    "couplingDynamics=false highRateJsonPayload=false"
+            )
+          }
+    }
+    val rows = SpatialLiveHandJointBridge.pollRows() ?: return null
+    return liveSurface?.snapshot(rows, config.count, config.normalOffsetMeters)
+  }
+
+  private fun maybeStartBridge() {
+    if (bridgeStartMask != 0L && frameIndex - bridgeStartAttemptFrame < 120) return
+    bridgeStartAttemptFrame = frameIndex
+    val probe = runCatching { probeProvider() }.getOrNull() ?: return
+    if (!probe.openXrInstanceHandleNonZero ||
+        !probe.openXrSessionHandleNonZero ||
+        !probe.openXrGetInstanceProcAddrHandleNonZero) {
+      return
+    }
+    bridgeStartMask = SpatialLiveHandJointBridge.ensureStarted(probe)
+  }
+
+  private fun updateEntityLiveSurfaceCarrier(
+      config: SpatialHandBillboardFlockConfig,
+      frame: SpatialLiveHandSurfaceFrame?,
+      viewerPose: Pose,
+      visible: Boolean,
+  ): SpatialHandBillboardFrameStats {
+    var entityIndex = 0
+    var transformWrites = 0
+    var visibleWrites = 0
+    for (handIndex in 0 until PUBLIC_BILLBOARD_CARRIER_COUNT) {
+      val hand = frame?.hands?.getOrNull(handIndex) ?: continue
+      for (position in hand.positions) {
+        val entity = entities.getOrNull(entityIndex) ?: break
+        entity.setComponent(Transform(Pose(position, viewerPose.q)))
+        entity.setComponent(
+            Scale(Vector3(config.billboardMeters, config.billboardMeters, config.billboardMeters))
+        )
+        entity.setComponent(Visible(visible))
+        entityIndex += 1
+        transformWrites += 1
+        visibleWrites += 1
+      }
+    }
+    while (entityIndex < entities.size) {
+      entities[entityIndex].setComponent(Visible(false))
+      entityIndex += 1
+      visibleWrites += 1
+    }
+    return SpatialHandBillboardFrameStats(
+        transformWrites = transformWrites,
+        visibleWrites = visibleWrites,
+        carrierEntityCount = entities.size,
+    )
+  }
+
+  private fun updateBatchedLiveSurfaceCarrier(
+      config: SpatialHandBillboardFlockConfig,
+      frame: SpatialLiveHandSurfaceFrame?,
+      viewerPose: Pose,
+      visible: Boolean,
+  ): SpatialHandBillboardFrameStats {
+    val cloud = batchedCloud ?: return SpatialHandBillboardFrameStats.empty()
+    val forward = viewerPose.forward().normalizedOr(Vector3(0.0f, 0.0f, -1.0f))
+    val up = viewerPose.up().normalizedOr(Vector3(0.0f, 1.0f, 0.0f))
+    val right = forward.cross(up).normalizedOr(Vector3(1.0f, 0.0f, 0.0f))
+    val billboardNormal = forward * -1.0f
+    val halfSize = config.billboardMeters * 0.5f
+    val counts = IntArray(cloud.carrierEntityCount)
+    var globalIndex = 0
+    cloud.beginFrame()
+    for (handIndex in 0 until cloud.carrierEntityCount) {
+      val hand = frame?.hands?.getOrNull(handIndex) ?: continue
+      counts[handIndex] = hand.positions.size
+      for (particleIndex in hand.positions.indices) {
+        cloud.setParticle(
+            handIndex = handIndex,
+            particleIndex = particleIndex,
+            center = hand.positions[particleIndex],
+            billboardNormal = billboardNormal,
+            right = right,
+            up = up,
+            halfSize = halfSize,
+            color = publicBillboardColor(globalIndex, config.count, phases[globalIndex]),
+        )
+        globalIndex += 1
+      }
+    }
+    val submitStats = cloud.submit(counts, visible)
+    return SpatialHandBillboardFrameStats(
+        carrierEntityCount = cloud.carrierEntityCount,
+        meshGeometryUpdates = submitStats.geometryUpdates,
+        meshPrimitiveUpdates = submitStats.primitiveUpdates,
+        sceneObjectVisibleWrites = submitStats.sceneObjectVisibleWrites,
+    )
   }
 
   private fun updateEntityCarrier(
@@ -240,7 +423,9 @@ private class SpatialHandBillboardFlockSystem(
     marker(
         "channel=spatial-hand-billboard-flock status=pool-created " +
             "module=$MODULE_ID entityCount=${config.count} visualParticleCount=${config.count} " +
+            "requestedSource=${config.source.id} " +
             "carrier=${config.carrierMode.id} carrierEntityCount=$carrierEntityCount " +
+            "depthTest=${config.depthTestMode.id} depthWrite=false " +
             "mesh=${config.carrierMode.meshMarker} collision=none unlit=true " +
             "visualMode=${config.visualMode.id} wireframeEnabled=${config.visualMode.wireframeEnabled} " +
             "wireframeWidthMeters=${formatFloat(config.wireframeWidthMeters)} " +
@@ -329,6 +514,7 @@ private class SpatialHandBillboardFlockSystem(
       activeHandCount: Int,
       visible: Boolean,
       frameStats: SpatialHandBillboardFrameStats,
+      sourceMarkerFields: String,
   ) {
     val nowMs = SystemClock.elapsedRealtime()
     if (nowMs - lastStatusMs < STATUS_INTERVAL_MS) {
@@ -336,14 +522,16 @@ private class SpatialHandBillboardFlockSystem(
     }
     lastStatusMs = nowMs
     marker(
-        "channel=spatial-hand-billboard-flock status=world-space-updated " +
-            "module=$MODULE_ID source=${markerToken(source)} activeHandCount=$activeHandCount " +
+            "channel=spatial-hand-billboard-flock status=world-space-updated " +
+            "module=$MODULE_ID source=${markerToken(source)} requestedSource=${config.source.id} " +
+            "activeHandCount=$activeHandCount " +
             "entityCount=${config.count} visualParticleCount=${config.count} " +
             "carrier=${config.carrierMode.id} carrierEntityCount=${frameStats.carrierEntityCount} " +
             "transformWrites=${frameStats.transformWrites} visibleWrites=${frameStats.visibleWrites} " +
             "meshGeometryUpdates=${frameStats.meshGeometryUpdates} " +
             "meshPrimitiveUpdates=${frameStats.meshPrimitiveUpdates} " +
             "sceneObjectVisibleWrites=${frameStats.sceneObjectVisibleWrites} visible=$visible " +
+            "depthTest=${config.depthTestMode.id} depthWrite=false " +
             "visualMode=${config.visualMode.id} wireframeEnabled=${config.visualMode.wireframeEnabled} " +
             "wireframeWidthMeters=${formatFloat(config.wireframeWidthMeters)} " +
             "${config.wireframeSourceMarkerFields()} " +
@@ -351,7 +539,7 @@ private class SpatialHandBillboardFlockSystem(
             "spatialAvatarHandMeshWireframeSupported=false " +
             "sharedBillboardRotation=true perEntityLookAt=false directWorldSpace=true " +
             "projectionPlane=false customGpuSkinning=false couplingDynamics=false " +
-            "highRateJsonPayload=false"
+            "highRateJsonPayload=false $sourceMarkerFields"
     )
   }
 
@@ -453,7 +641,7 @@ private class SpatialBatchedBillboardCloud private constructor(
             setSidedness(MaterialSidedness.DOUBLE_SIDED)
             setBlendMode(BlendMode.TRANSLUCENT)
             setDepthWrite(DepthWrite.DISABLE)
-            setDepthTest(DepthTest.LESS_OR_EQUAL)
+            setDepthTest(config.depthTestMode.depthTest)
             setSortOrder(SortOrder.TRANSLUCENT)
             setRenderOrder(PUBLIC_BILLBOARD_RENDER_ORDER)
           }
@@ -686,18 +874,22 @@ private data class HandAnchorSnapshot(
 
 private data class SpatialHandBillboardFlockConfig(
     val enabled: Boolean,
+    val source: SpatialHandBillboardSource,
     val count: Int,
     val billboardMeters: Float,
     val wireframeWidthMeters: Float,
+    val normalOffsetMeters: Float,
     val spreadMeters: Float,
     val driftMeters: Float,
     val driftHz: Float,
+    val mappingProfile: String,
+    val depthTestMode: SpatialHandBillboardDepthTestMode,
     val carrierMode: SpatialHandBillboardCarrierMode,
     val visualMode: SpatialHandBillboardVisualMode,
     val wireframeSource: SpatialHandBillboardWireframeSource,
 ) {
   fun poolIdentityKey(): String =
-      "${count}|${formatFloat(billboardMeters)}|${formatFloat(wireframeWidthMeters)}|${formatFloat(spreadMeters)}|${carrierMode.id}|${visualMode.id}|${wireframeSource.id}"
+      "${source.id}|${count}|${formatFloat(billboardMeters)}|${formatFloat(wireframeWidthMeters)}|${formatFloat(normalOffsetMeters)}|${formatFloat(spreadMeters)}|${depthTestMode.id}|${carrierMode.id}|${visualMode.id}|${wireframeSource.id}"
 
   fun wireframeSourceMarkerFields(): String =
       "wireframeSourceProperty=$PROPERTY_WIREFRAME_SOURCE " +
@@ -710,6 +902,7 @@ private data class SpatialHandBillboardFlockConfig(
 
   companion object {
     const val PROPERTY_ENABLED = "debug.rustyquest.spatial.hand_billboard_flock.enabled"
+    private const val PROPERTY_SOURCE = "debug.rustyquest.spatial.hand_billboard_flock.source"
     private const val PROPERTY_CARRIER = "debug.rustyquest.spatial.hand_billboard_flock.carrier"
     private const val PROPERTY_VISUAL_MODE = "debug.rustyquest.spatial.hand_billboard_flock.visual_mode"
     private const val PROPERTY_WIREFRAME_SOURCE =
@@ -719,40 +912,116 @@ private data class SpatialHandBillboardFlockConfig(
         "debug.rustyquest.spatial.hand_billboard_flock.billboard_meters"
     private const val PROPERTY_WIREFRAME_WIDTH_METERS =
         "debug.rustyquest.spatial.hand_billboard_flock.wireframe.width_m"
+    private const val PROPERTY_NORMAL_OFFSET_METERS =
+        "debug.rustyquest.spatial.hand_billboard_flock.normal_offset_m"
     private const val PROPERTY_SPREAD_METERS =
         "debug.rustyquest.spatial.hand_billboard_flock.spread_meters"
     private const val PROPERTY_DRIFT_METERS =
         "debug.rustyquest.spatial.hand_billboard_flock.drift_meters"
     private const val PROPERTY_DRIFT_HZ = "debug.rustyquest.spatial.hand_billboard_flock.drift_hz"
+    private const val PROPERTY_MAPPING_PROFILE =
+        "debug.rustyquest.spatial.hand_alignment.mapping_profile"
+    private const val PROPERTY_DEPTH_TEST =
+        "debug.rustyquest.spatial.hand_billboard_flock.render.depth_test"
 
     fun disabled(): SpatialHandBillboardFlockConfig =
         SpatialHandBillboardFlockConfig(
             false,
+            SpatialHandBillboardSource.SpatialSdkAnchorFlock,
             64,
             0.022f,
             0.0035f,
+            0.0f,
             0.085f,
             0.008f,
             0.42f,
+            SpatialLiveHandJointBridge.VIEWER_WORLD_MAPPING_PROFILE_ACCEPTED,
+            SpatialHandBillboardDepthTestMode.LessOrEqual,
             SpatialHandBillboardCarrierMode.BatchedSceneMesh,
             SpatialHandBillboardVisualMode.FilledBillboards,
             SpatialHandBillboardWireframeSource.SpatialSdkJointProxy,
         )
 
-    fun read(): SpatialHandBillboardFlockConfig =
-        SpatialHandBillboardFlockConfig(
-            enabled = readBooleanSystemProperty(PROPERTY_ENABLED, false),
-            count = readIntSystemProperty(PROPERTY_COUNT, 64, 1, 2048),
-            billboardMeters = readFloatSystemProperty(PROPERTY_BILLBOARD_METERS, 0.022f, 0.004f, 0.08f),
+    fun read(): SpatialHandBillboardFlockConfig {
+      val source =
+          SpatialHandBillboardSource.parse(
+              readSystemProperty(PROPERTY_SOURCE).ifBlank {
+                BuildConfig.HAND_BILLBOARD_SOURCE_DEFAULT
+              }
+          )
+      return SpatialHandBillboardFlockConfig(
+            enabled =
+                readBooleanSystemProperty(
+                    PROPERTY_ENABLED,
+                    BuildConfig.HAND_BILLBOARD_FLOCK_ENABLED_DEFAULT,
+                ),
+            source = source,
+            count =
+                readIntSystemProperty(
+                    PROPERTY_COUNT,
+                    if (source == SpatialHandBillboardSource.OpenXrLiveCustomMesh) 2048 else 64,
+                    1,
+                    2048,
+                ),
+            billboardMeters =
+                readFloatSystemProperty(
+                    PROPERTY_BILLBOARD_METERS,
+                    if (source == SpatialHandBillboardSource.OpenXrLiveCustomMesh) 0.008f else 0.022f,
+                    0.003f,
+                    0.08f,
+                ),
             wireframeWidthMeters = readFloatSystemProperty(PROPERTY_WIREFRAME_WIDTH_METERS, 0.0035f, 0.00075f, 0.020f),
+            normalOffsetMeters =
+                readFloatSystemProperty(PROPERTY_NORMAL_OFFSET_METERS, 0.0f, -0.03f, 0.03f),
             spreadMeters = readFloatSystemProperty(PROPERTY_SPREAD_METERS, 0.085f, 0.0f, 0.35f),
             driftMeters = readFloatSystemProperty(PROPERTY_DRIFT_METERS, 0.008f, 0.0f, 0.08f),
             driftHz = readFloatSystemProperty(PROPERTY_DRIFT_HZ, 0.42f, 0.0f, 8.0f),
+            mappingProfile =
+                SpatialLiveHandJointBridge.normalizeViewerWorldMappingProfile(
+                    readSystemProperty(PROPERTY_MAPPING_PROFILE).ifBlank {
+                      BuildConfig.HAND_ALIGNMENT_MAPPING_PROFILE_DEFAULT
+                    }
+                ),
+            depthTestMode =
+                SpatialHandBillboardDepthTestMode.parse(
+                    readSystemProperty(PROPERTY_DEPTH_TEST),
+                    source,
+                ),
             carrierMode = SpatialHandBillboardCarrierMode.parse(readSystemProperty(PROPERTY_CARRIER)),
             visualMode = SpatialHandBillboardVisualMode.parse(readSystemProperty(PROPERTY_VISUAL_MODE)),
             wireframeSource =
                 SpatialHandBillboardWireframeSource.parse(readSystemProperty(PROPERTY_WIREFRAME_SOURCE)),
         )
+    }
+  }
+}
+
+private enum class SpatialHandBillboardDepthTestMode(val id: String, val depthTest: DepthTest) {
+  LessOrEqual("less-or-equal", DepthTest.LESS_OR_EQUAL),
+  Always("always", DepthTest.ALWAYS);
+
+  companion object {
+    fun parse(value: String, source: SpatialHandBillboardSource): SpatialHandBillboardDepthTestMode =
+        when (value.trim().lowercase(Locale.US)) {
+          "less", "less-or-equal", "less_or_equal", "depth" -> LessOrEqual
+          "always", "off", "disabled", "none" -> Always
+          else ->
+              if (source == SpatialHandBillboardSource.OpenXrLiveCustomMesh) Always else LessOrEqual
+        }
+  }
+}
+
+private enum class SpatialHandBillboardSource(val id: String) {
+  SpatialSdkAnchorFlock("spatial-sdk-anchor-flock"),
+  OpenXrLiveCustomMesh("openxr-live-custom-mesh");
+
+  companion object {
+    fun parse(value: String): SpatialHandBillboardSource =
+        when (value.trim().lowercase(Locale.US)) {
+          "openxr-live-custom-mesh", "openxr-custom-mesh", "live-custom-mesh", "mesh", "live" ->
+              OpenXrLiveCustomMesh
+          else -> SpatialSdkAnchorFlock
+        }
   }
 }
 

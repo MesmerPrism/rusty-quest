@@ -25,6 +25,32 @@ val spatialPanelLauncherVisibleDefault =
   providers.environmentVariable("RUSTY_QUEST_SPATIAL_PANEL_LAUNCHER_VISIBLE_DEFAULT")
     .orElse("true")
 
+val spatialHandAlignmentEnabledDefault =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_ENABLED_DEFAULT")
+    .orElse("false")
+
+val spatialHandAlignmentViewerMarkersEnabledDefault =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_VIEWER_MARKERS_ENABLED_DEFAULT")
+    .orElse("false")
+
+val spatialHandAlignmentMappingProfileDefault =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_MAPPING_PROFILE_DEFAULT")
+    .orElse("mirror-x-origin-registration")
+
+val spatialHandBillboardFlockEnabledDefault =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_FLOCK_ENABLED_DEFAULT")
+    .orElse("false")
+
+val spatialHandBillboardSourceDefault =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_SOURCE_DEFAULT")
+    .orElse("spatial-sdk-anchor-flock")
+
+val spatialHandMeshRigAssetDir =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR")
+
+val spatialHandMeshRigPackaged =
+  spatialHandMeshRigAssetDir.map { it.isNotBlank().toString() }.orElse("false")
+
 fun buildConfigString(value: String): String =
   "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
@@ -54,6 +80,36 @@ android {
       "PANEL_LAUNCHER_VISIBLE_DEFAULT",
       buildConfigString(spatialPanelLauncherVisibleDefault.get()),
     )
+    buildConfigField(
+      "boolean",
+      "HAND_ALIGNMENT_ENABLED_DEFAULT",
+      spatialHandAlignmentEnabledDefault.get(),
+    )
+    buildConfigField(
+      "boolean",
+      "HAND_ALIGNMENT_VIEWER_MARKERS_ENABLED_DEFAULT",
+      spatialHandAlignmentViewerMarkersEnabledDefault.get(),
+    )
+    buildConfigField(
+      "String",
+      "HAND_ALIGNMENT_MAPPING_PROFILE_DEFAULT",
+      buildConfigString(spatialHandAlignmentMappingProfileDefault.get()),
+    )
+    buildConfigField(
+      "boolean",
+      "HAND_BILLBOARD_FLOCK_ENABLED_DEFAULT",
+      spatialHandBillboardFlockEnabledDefault.get(),
+    )
+    buildConfigField(
+      "String",
+      "HAND_BILLBOARD_SOURCE_DEFAULT",
+      buildConfigString(spatialHandBillboardSourceDefault.get()),
+    )
+    buildConfigField(
+      "boolean",
+      "HAND_MESH_RIG_PACKAGED",
+      spatialHandMeshRigPackaged.get(),
+    )
   }
 
   packaging {
@@ -80,6 +136,9 @@ android {
         ?.takeIf { it.isNotBlank() }
         ?.let { java.srcDir(it) }
       providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_ASSET_DIR").orNull
+        ?.takeIf { it.isNotBlank() }
+        ?.let { assets.srcDir(it) }
+      spatialHandMeshRigAssetDir.orNull
         ?.takeIf { it.isNotBlank() }
         ?.let { assets.srcDir(it) }
       providers.environmentVariable("RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR").orNull

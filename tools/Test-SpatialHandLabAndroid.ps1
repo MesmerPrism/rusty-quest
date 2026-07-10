@@ -11,6 +11,7 @@ param(
     [string]$PrivateSurfaceParticleShader = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER,
     [string]$PrivateSurfaceParticlePayloadDir = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR,
     [string]$PrivateSurfaceParticleMarkerPrefix = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX,
+    [string]$HandMeshRigAssetDir = $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR,
     [string]$OutDir = ""
 )
 
@@ -31,7 +32,13 @@ $envNames = @(
     "RUSTY_QUEST_SPATIAL_APK_FILE_NAME",
     "RUSTY_QUEST_SPATIAL_START_IN_PARTICLE_VIEW_DEFAULT",
     "RUSTY_QUEST_SPATIAL_PANEL_LAUNCHER_VISIBLE_DEFAULT",
-    "RUSTY_QUEST_SPATIAL_PARTICLE_LAYER_CARRIER_DEFAULT"
+    "RUSTY_QUEST_SPATIAL_PARTICLE_LAYER_CARRIER_DEFAULT",
+    "RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_ENABLED_DEFAULT",
+    "RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_VIEWER_MARKERS_ENABLED_DEFAULT",
+    "RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_MAPPING_PROFILE_DEFAULT",
+    "RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_FLOCK_ENABLED_DEFAULT",
+    "RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_SOURCE_DEFAULT",
+    "RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR"
 )
 $previousEnv = @{}
 foreach ($name in $envNames) {
@@ -45,6 +52,19 @@ try {
     $env:RUSTY_QUEST_SPATIAL_START_IN_PARTICLE_VIEW_DEFAULT = "true"
     $env:RUSTY_QUEST_SPATIAL_PANEL_LAUNCHER_VISIBLE_DEFAULT = "false"
     $env:RUSTY_QUEST_SPATIAL_PARTICLE_LAYER_CARRIER_DEFAULT = "manual-panel-scene-object-custom-mesh"
+    $env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_ENABLED_DEFAULT = "true"
+    $env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_VIEWER_MARKERS_ENABLED_DEFAULT = "false"
+    $env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_MAPPING_PROFILE_DEFAULT = "mirror-x-origin-registration"
+    $env:RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_FLOCK_ENABLED_DEFAULT = "true"
+    $env:RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_SOURCE_DEFAULT = "openxr-live-custom-mesh"
+    if ([string]::IsNullOrWhiteSpace($HandMeshRigAssetDir)) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR -ErrorAction SilentlyContinue
+    } else {
+        if (-not (Test-Path -LiteralPath $HandMeshRigAssetDir -PathType Container)) {
+            throw "Hand mesh rig asset directory not found: $HandMeshRigAssetDir"
+        }
+        $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR = (Resolve-Path -LiteralPath $HandMeshRigAssetDir).Path
+    }
 
     $delegateArgs = @{
         RepoRoot = $repoRootPath
@@ -58,6 +78,7 @@ try {
         PrivateSurfaceParticleShader = $PrivateSurfaceParticleShader
         PrivateSurfaceParticlePayloadDir = $PrivateSurfaceParticlePayloadDir
         PrivateSurfaceParticleMarkerPrefix = $PrivateSurfaceParticleMarkerPrefix
+        HandMeshRigAssetDir = $HandMeshRigAssetDir
         AppId = $env:RUSTY_QUEST_SPATIAL_APP_ID
         AppLabel = $env:RUSTY_QUEST_SPATIAL_APP_LABEL
         ApkFileName = $env:RUSTY_QUEST_SPATIAL_APK_FILE_NAME

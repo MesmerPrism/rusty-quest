@@ -60,14 +60,43 @@ That wrapper sets:
 - APK name `rusty-quest-spatial-hand-lab.apk`
 - particle view as the default start view
 - launcher panel hidden by default
+- OpenXR/Spatial joint diagnostics enabled with the headset-accepted
+  `mirror-x-origin-registration` mapping
+- viewer/headset marker spheres disabled while joint and hand-anchor markers
+  remain visible
+- ECS particle hands enabled with source `openxr-live-custom-mesh`
 
 The built-in Meta avatar hand visual is controlled by
 `debug.rustyquest.spatial.avatar_hands.visible`. The default is `false`, which
 preserves the existing public/custom-only visual policy. Set it to `true` on a
 headset when the run needs the SDK's `AvatarSystem` hand visual for comparison.
 
-The public ECS hand billboard path remains separate and opt-in through
-`debug.rustyquest.spatial.hand_billboard_flock.enabled=true`.
+The public ECS hand billboard path remains opt-in in the general camera-panel
+build and is enabled by default only in the dedicated hand-lab variant. Set
+`debug.rustyquest.spatial.hand_billboard_flock.source=openxr-live-custom-mesh`
+to drive the app-owned recorded rig from the validated mapped OpenXR rows. The
+renderer performs CPU linear-blend skinning, then resolves stable surface
+positions from triangle indices plus barycentric coordinates. It deliberately
+does not apply the older `flip-x + local-y`, final world mirror, orientation
+half-turn, or `AvatarBody` world-anchor correction. The rollback proxy remains
+`spatial-sdk-anchor-flock`.
+
+The rig implementation is public, but the recorded rig pack is supplied as an
+explicit build input and is not committed to Rusty Quest:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialHandLabAndroid.ps1 `
+  -Build `
+  -HandMeshRigAssetDir <asset-root-containing-spatial-ecs-replay>
+```
+
+The runtime must report `liveCpuSkinnedMesh=true`,
+`surfaceAnchors=triangle-barycentric`, `rowOrder=openxr-left-right`,
+`meshPairing=asset-handedness`, `orientationCorrection=none`, and
+`worldAnchorCorrection=false`. If the asset pack is absent, the particle
+source stays hidden and reports `fallback=joint-visuals-only`; active joint
+markers provide the intentional diagnostic fallback.
+
 Its app-owned `TriangleMesh` carrier can render filled billboard quads or
 wireframe edge quads:
 
@@ -80,9 +109,9 @@ This Spatial wireframe mode applies only to Rusty Quest app-owned
 `TriangleMesh` geometry. The built-in `AvatarSystem` hand mesh remains
 SDK-owned; runtime markers report `spatialAvatarHandMeshWireframeSupported=false`
 so the comparison path cannot be mistaken for custom hand topology access.
-When `wireframe.source` is hotloaded to `openxr-fb-mesh` or `custom-mesh`, the
-Spatial markers report that the requested exact source is unavailable and that
-the resolved visual remains the app-owned Spatial joint proxy.
+The edge-quad mode outlines each particle billboard. It is not the topology
+wireframe of either the SDK-owned `AvatarSystem` hand or the recorded custom
+mesh; those exact mesh-wireframe paths remain separate visual features.
 
 For the Spatial SDK hand-mesh investigation APK, also enable the read-only
 Avatar hand probe:
@@ -103,7 +132,7 @@ Use:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialHandLabAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialHandLabAndroid.ps1 -Build
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialHandLabAndroid.ps1 -Build -HandMeshRigAssetDir <asset-root-containing-spatial-ecs-replay>
 adb shell setprop debug.rustyquest.spatial.avatar_hands.visible true
 ```
 

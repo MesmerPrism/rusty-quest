@@ -9,8 +9,9 @@ object SpatialLiveHandJointBridge {
   const val FLOATS_PER_ROW: Int = 12
   const val EXPECTED_FLOAT_COUNT: Int = ROW_COUNT * FLOATS_PER_ROW
   const val VIEW_DIAGNOSTIC_FLOAT_COUNT: Int = 18
-  const val VIEWER_WORLD_MAPPING_PROFILE_ACCEPTED = "viewer-world-basis-registration"
   const val VIEWER_WORLD_MAPPING_PROFILE_MIRROR_X = "mirror-x-origin-registration"
+  const val VIEWER_WORLD_MAPPING_PROFILE_ROLLBACK = "viewer-world-basis-registration"
+  const val VIEWER_WORLD_MAPPING_PROFILE_ACCEPTED = VIEWER_WORLD_MAPPING_PROFILE_MIRROR_X
 
   private const val NATIVE_RECEIPT_LIBRARY = "spatial_camera_panel_native_receipt"
   private const val VIEWER_WORLD_MAPPING_MODE_ACCEPTED = 2
@@ -112,10 +113,9 @@ object SpatialLiveHandJointBridge {
   }
 
   fun normalizeViewerWorldMappingProfile(value: String?): String =
-      if (value?.trim()?.lowercase() == VIEWER_WORLD_MAPPING_PROFILE_MIRROR_X) {
-        VIEWER_WORLD_MAPPING_PROFILE_MIRROR_X
-      } else {
-        VIEWER_WORLD_MAPPING_PROFILE_ACCEPTED
+      when (value?.trim()?.lowercase()) {
+        VIEWER_WORLD_MAPPING_PROFILE_ROLLBACK -> VIEWER_WORLD_MAPPING_PROFILE_ROLLBACK
+        else -> VIEWER_WORLD_MAPPING_PROFILE_ACCEPTED
       }
 
   fun pollRows(): FloatArray? {

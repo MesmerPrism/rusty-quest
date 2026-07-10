@@ -74,8 +74,8 @@ private class SpatialOpenXrHandAlignmentSystem(
               "openXrAnchorComparison=palm_ext+wrist_ext " +
               "viewerComparison=Scene.getViewerPose-vs-xrLocateViews-mapped-by-bridge " +
               "acceptedMappingProfile=${SpatialLiveHandJointBridge.VIEWER_WORLD_MAPPING_PROFILE_ACCEPTED} " +
-              "experimentalMappingProfile=${SpatialLiveHandJointBridge.VIEWER_WORLD_MAPPING_PROFILE_MIRROR_X} " +
-              "rollbackDefaultMappingProfile=${SpatialLiveHandJointBridge.VIEWER_WORLD_MAPPING_PROFILE_ACCEPTED} " +
+              "rollbackMappingProfile=${SpatialLiveHandJointBridge.VIEWER_WORLD_MAPPING_PROFILE_ROLLBACK} " +
+              "viewerMarkersEnabled=${config.viewerMarkersEnabled} " +
               "publicSpatialSdkHandMeshTopologyAvailable=false " +
               "comparisonRule=move-head-and-hands-delta-should-stay-constant"
       )
@@ -244,6 +244,10 @@ private class SpatialOpenXrHandAlignmentSystem(
       viewDiagnostic: FloatArray?,
       config: SpatialOpenXrHandAlignmentConfig,
   ) {
+    if (!config.viewerMarkersEnabled) {
+      viewerEntities.forEach { entity -> entity.setComponent(Visible(false)) }
+      return
+    }
     viewerEntities.getOrNull(0)?.let { entity ->
       entity.setComponent(Transform(Pose(viewerPose.t, viewerPose.q)))
       entity.setComponent(Scale(Vector3(config.viewerMarkerMeters)))
@@ -373,6 +377,7 @@ private data class SpatialOpenXrHandAlignmentConfig(
     val jointMarkerMeters: Float,
     val anchorMarkerMeters: Float,
     val viewerMarkerMeters: Float,
+    val viewerMarkersEnabled: Boolean,
 ) {
   companion object {
     const val PROPERTY_ENABLED = "debug.rustyquest.spatial.hand_alignment.enabled"
@@ -389,14 +394,19 @@ private data class SpatialOpenXrHandAlignmentConfig(
         "debug.rustyquest.spatial.hand_alignment.anchor_marker_m"
     private const val PROPERTY_VIEWER_MARKER_M =
         "debug.rustyquest.spatial.hand_alignment.viewer_marker_m"
+    private const val PROPERTY_VIEWER_MARKERS_ENABLED =
+        "debug.rustyquest.spatial.hand_alignment.viewer_markers.enabled"
 
     fun read(): SpatialOpenXrHandAlignmentConfig =
         SpatialOpenXrHandAlignmentConfig(
-            enabled = readBooleanSystemProperty(PROPERTY_ENABLED) ?: false,
+            enabled =
+                readBooleanSystemProperty(PROPERTY_ENABLED)
+                    ?: BuildConfig.HAND_ALIGNMENT_ENABLED_DEFAULT,
             render = readBooleanSystemProperty(PROPERTY_RENDER) ?: true,
             mappingProfile =
                 SpatialLiveHandJointBridge.normalizeViewerWorldMappingProfile(
                     readStringSystemProperty(PROPERTY_MAPPING_PROFILE)
+                        ?: BuildConfig.HAND_ALIGNMENT_MAPPING_PROFILE_DEFAULT
                 ),
             samplePeriodFrames =
                 readIntSystemProperty(PROPERTY_SAMPLE_PERIOD_FRAMES, 15).coerceIn(1, 600),
@@ -412,6 +422,9 @@ private data class SpatialOpenXrHandAlignmentConfig(
             viewerMarkerMeters =
                 readFloatSystemProperty(PROPERTY_VIEWER_MARKER_M, 0.050f)
                     .coerceIn(0.010f, 0.200f),
+            viewerMarkersEnabled =
+                readBooleanSystemProperty(PROPERTY_VIEWER_MARKERS_ENABLED)
+                    ?: BuildConfig.HAND_ALIGNMENT_VIEWER_MARKERS_ENABLED_DEFAULT,
         )
   }
 }
