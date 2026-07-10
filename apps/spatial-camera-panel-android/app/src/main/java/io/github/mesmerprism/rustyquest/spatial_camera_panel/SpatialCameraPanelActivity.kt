@@ -103,10 +103,18 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var panelEntity: Entity? = null
   private var privateLayerPanelEntity: Entity? = null
   private var privateLayerPanelSceneObject: PanelSceneObject? = null
-  private var privateLayerPanelVisible = false
   private var panelLauncherEntity: Entity? = null
-  private var panelPlacement = PanelPlacement(visible = !startInParticleView())
-  private var privateLayerPanelPlacement = SpatialPanelPlacementModule.initialPrivateLayerPlacement()
+  private val panelPlacementStateCoordinator =
+      SpatialPanelPlacementStateCoordinator(
+          initialWorkflowPlacement = PanelPlacement(visible = !startInParticleView()),
+          initialPrivateLayerPlacement = SpatialPanelPlacementModule.initialPrivateLayerPlacement(),
+      )
+  private val panelPlacement: PanelPlacement
+    get() = panelPlacementStateCoordinator.workflowPlacement
+  private val privateLayerPanelPlacement: PanelPlacement
+    get() = panelPlacementStateCoordinator.privateLayerPlacement
+  private val privateLayerPanelVisible: Boolean
+    get() = panelPlacementStateCoordinator.privateLayerVisible
   private var questionnaireDueReopensPanel by mutableStateOf(true)
   private var particleLayerEntity: Entity? = null
   private var particleLayerManualPanelSurface: AndroidSurface? = null
@@ -1600,7 +1608,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     )
     cameraHwbProjectionPlacementUpdateCoordinator.resetMarkerCadence()
     suppressParticleLayerForCameraStack("camera-hwb-projection-probe")
-    privateLayerPanelVisible = false
+    panelPlacementStateCoordinator.setPrivateLayerVisibleFlag(false)
     setWorkflowPanelVisible(false, focus = false, source = "camera-hwb-projection-probe")
     if (cameraHwbProjectionCarrierStateCoordinator.scenePanelCarrierEnabled()) {
       cameraHwbProjectionPanelCarrierCoordinator.run(readerMaxImages, videoSettings)
@@ -1749,9 +1757,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       return
     }
     surfaceParticleRuntimeCoordinator.suppressStartsForCameraStack()
-    panelPlacement = panelPlacement.copy(visible = false)
-    privateLayerPanelVisible = false
-    privateLayerPanelPlacement = privateLayerPanelPlacement.copy(visible = false)
+    panelPlacementStateCoordinator.hideAllPanels()
     panelEntity?.setComponent(Visible(false))
     privateLayerPanelEntity?.setComponent(Visible(false))
     panelLauncherEntity?.setComponent(Visible(false))
@@ -1763,9 +1769,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (panelShellVisible()) {
       return
     }
-    panelPlacement = panelPlacement.copy(visible = false)
-    privateLayerPanelVisible = false
-    privateLayerPanelPlacement = privateLayerPanelPlacement.copy(visible = false)
+    panelPlacementStateCoordinator.hideAllPanels()
     panelEntity?.setComponent(Visible(false))
     privateLayerPanelEntity?.setComponent(Visible(false))
     panelLauncherEntity?.setComponent(Visible(false))
@@ -1793,14 +1797,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       deltaZ: Float,
       deltaScale: Float,
   ): PanelPlacement {
-    panelPlacement =
-        SpatialPanelPlacementModule.adjustWorkflowPlacement(
-            panelPlacement,
-            deltaX,
-            deltaY,
-            deltaZ,
-            deltaScale,
-        )
+    panelPlacementStateCoordinator.adjustWorkflowPlacement(deltaX, deltaY, deltaZ, deltaScale)
     applyPanelPlacement()
     panelPersistenceCoordinator.persistHeadlockTuning("compose-placement-buttons")
     marker(
@@ -1813,8 +1810,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun resizeWorkflowPanel(deltaWidth: Float, deltaHeight: Float): PanelPlacement {
-    panelPlacement =
-        SpatialPanelPlacementModule.resizeWorkflowPanel(panelPlacement, deltaWidth, deltaHeight)
+    panelPlacementStateCoordinator.resizeWorkflowPanel(deltaWidth, deltaHeight)
     applyPanelPlacement()
     panelPersistenceCoordinator.persistHeadlockTuning("compose-panel-resize")
     marker(
@@ -1828,9 +1824,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun resetWorkflowPanelPlacement(): PanelPlacement {
-    privateLayerPanelVisible = false
-    privateLayerPanelPlacement = privateLayerPanelPlacement.copy(visible = false)
-    panelPlacement = SpatialPanelPlacementModule.resetWorkflowPanelPlacement(panelPlacement)
+    panelPlacementStateCoordinator.resetWorkflowPanelPlacement()
     applyPanelPlacement()
     panelPersistenceCoordinator.persistHeadlockTuning("compose-panel-reset")
     panelPersistenceCoordinator.recordPanelState("compose-panel-reset")
@@ -1844,7 +1838,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun setPanelHeadlocked(enabled: Boolean, source: String): PanelPlacement {
-    panelPlacement = SpatialPanelPlacementModule.setWorkflowHeadlocked(panelPlacement, enabled)
+    panelPlacementStateCoordinator.setWorkflowHeadlocked(enabled)
     applyPanelPlacement()
     panelPersistenceCoordinator.persistHeadlockTuning(source)
     marker(
@@ -1874,31 +1868,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       )
       return panelPlacement
     }
-    if (visible) {
-      privateLayerPanelVisible = false
-      privateLayerPanelPlacement = privateLayerPanelPlacement.copy(visible = false)
-    }
-    panelPlacement =
-        if (visible && focus) {
-          if (panelPlacement.headlocked) {
-            panelPlacement.copy(
-                visible = true,
-                xMeters = PANEL_HEADLOCK_OFFSET_X_METERS,
-                yMeters = PANEL_HEADLOCK_OFFSET_Y_METERS,
-                zMeters = PANEL_FRONT_OF_CAMERA_VIDEO_DISTANCE_METERS,
-                scale = PANEL_FRONT_OF_CAMERA_VIDEO_SCALE,
-            )
-          } else {
-            panelPlacement.copy(
-                visible = true,
-                yMeters = PANEL_FOCUS_Y_METERS,
-                zMeters = PANEL_FOCUS_Z_METERS,
-                scale = 1.0f,
-            )
-          }
-        } else {
-          panelPlacement.copy(visible = visible)
-        }
+    panelPlacementStateCoordinator.setWorkflowPanelVisible(visible, focus)
     applyPanelPlacement()
     panelPersistenceCoordinator.recordPanelState(source)
     marker(
@@ -1953,7 +1923,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (!visible && !PRIVATE_LAYER_PANEL_SDK_FREE_TRANSFORM) {
       syncPrivateLayerPanelPlacementFromEntity("private-layer-panel-close")
     }
-    privateLayerPanelVisible = visible
     val inputForegroundActive = false
     val inputForegroundDistanceMeters =
         privateLayerPanelPlacement.zMeters.coerceIn(
@@ -1961,32 +1930,19 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             PANEL_HEADLOCK_DISTANCE_MAX_METERS,
         )
     val inputForegroundScale = PRIVATE_LAYER_PANEL_SCALE
-    privateLayerPanelPlacement =
-        if (visible && focus) {
-          coercePrivateLayerPanelPlacement(
-              privateLayerPanelPlacement.copy(
-                  visible = true,
-                  headlocked = true,
-                  zMeters = inputForegroundDistanceMeters,
-                  scale = inputForegroundScale,
-                  widthMeters = PANEL_WIDTH_METERS,
-                  heightMeters = PANEL_HEIGHT_METERS,
-              )
-          )
-        } else {
-          privateLayerPanelPlacement.copy(visible = false)
-        }
+    panelPlacementStateCoordinator.setPrivateLayerPanelVisible(
+        visible = visible,
+        focus = focus,
+        inputForegroundDistanceMeters = inputForegroundDistanceMeters,
+        inputForegroundScale = inputForegroundScale,
+        freeTransform = PRIVATE_LAYER_PANEL_SDK_FREE_TRANSFORM,
+    )
     val privateLayerPanelSeedPose =
         if (visible && focus) {
           privateLayerPanelPoseFromViewer() ?: privateLayerPanelWorldPose()
         } else {
           null
         }
-    if (visible && focus && PRIVATE_LAYER_PANEL_SDK_FREE_TRANSFORM) {
-      privateLayerPanelPlacement = privateLayerPanelPlacement.copy(headlocked = false)
-    }
-    panelPlacement =
-        panelPlacement.copy(visible = false)
     applyPanelPlacement(
         updatePrivateLayerPanelTransform =
             visible && focus && !PRIVATE_LAYER_PANEL_SDK_FREE_TRANSFORM
@@ -2176,7 +2132,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         activityVectorLength(offset)
             .coerceIn(PRIVATE_LAYER_PANEL_DISTANCE_MIN_METERS, PANEL_HEADLOCK_DISTANCE_MAX_METERS)
     val previous = privateLayerPanelPlacement
-    privateLayerPanelPlacement =
+    panelPlacementStateCoordinator.replacePrivateLayerPlacement(
         coercePrivateLayerPanelPlacement(
             privateLayerPanelPlacement.copy(
                 xMeters = activityDot(offset, right),
@@ -2185,6 +2141,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 visible = privateLayerPanelVisible,
             )
         )
+    )
     if (!previous.headlockEquivalent(privateLayerPanelPlacement)) {
       marker(
           SpatialPanelPlacementModule.privateLayerPlacementSyncedFromSdkTransformMarker(
@@ -2251,7 +2208,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val up = activityCross(right, forward).activityNormalizedOr(viewerUp)
     val placement = coercePrivateLayerPanelPlacement(privateLayerPanelPlacement)
     if (placement != privateLayerPanelPlacement) {
-      privateLayerPanelPlacement = placement
+      panelPlacementStateCoordinator.replacePrivateLayerPlacement(placement)
     }
     val distance = placement.zMeters.coerceIn(PRIVATE_LAYER_PANEL_DISTANCE_MIN_METERS, PANEL_HEADLOCK_DISTANCE_MAX_METERS)
     val lateralSquared = placement.xMeters * placement.xMeters + placement.yMeters * placement.yMeters
@@ -2333,7 +2290,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun pollPanelHeadlockHotload(reason: String) {
     val updated = SpatialPanelPlacementModule.hotloadedWorkflowPlacement(panelPlacement)
     if (!panelPlacement.headlockEquivalent(updated)) {
-      panelPlacement = updated
+      panelPlacementStateCoordinator.replaceWorkflowPlacement(updated)
       applyPanelPlacement()
       panelPersistenceCoordinator.persistHeadlockTuning("runtime-hotload-android-property")
     }
@@ -2610,10 +2567,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       return true
     }
     if (privateLayerPanelVisible) {
-      privateLayerPanelPlacement =
-          coercePrivateLayerPanelPlacement(privateLayerPanelPlacement.copy(zMeters = updatedDistance))
+      panelPlacementStateCoordinator.replacePrivateLayerPlacement(
+          coercePrivateLayerPanelPlacement(
+              privateLayerPanelPlacement.copy(zMeters = updatedDistance)
+          )
+      )
     } else {
-      panelPlacement = panelPlacement.copy(zMeters = updatedDistance)
+      panelPlacementStateCoordinator.replaceWorkflowPlacement(
+          panelPlacement.copy(zMeters = updatedDistance)
+      )
     }
     applyPanelPlacement(updatePrivateLayerPanelTransform = privateLayerPanelVisible)
     panelPersistenceCoordinator.persistHeadlockTuning("controller-joystick-distance")
@@ -2688,7 +2650,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (abs(updatedDistance - previousDistance) < 0.00001f) {
       return true
     }
-    privateLayerPanelPlacement =
+    panelPlacementStateCoordinator.replacePrivateLayerPlacement(
         coercePrivateLayerPanelPlacement(
             privateLayerPanelPlacement.copy(
                 visible = true,
@@ -2696,6 +2658,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 zMeters = updatedDistance,
             )
         )
+    )
     val updatedPose = privateLayerPanelPoseFromViewer() ?: privateLayerPanelWorldPose()
     entity.setComponent(Transform(updatedPose))
     panelPersistenceCoordinator.persistHeadlockTuning(

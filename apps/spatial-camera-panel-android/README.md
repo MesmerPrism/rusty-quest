@@ -646,6 +646,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   joystick delta/cadence, and private-layer grabbable cadence. The Activity
   retains panel placement, property reads, entity access, and marker
   construction; this coordinator cannot activate or mutate a Spatial feature.
+- `app/src/main/.../SpatialPanelPlacementStateCoordinator.kt` is the single
+  mutable owner for workflow placement, private-layer placement, and
+  private-layer visibility. It owns only pure adjust/resize/reset/headlock/
+  visibility transitions; the Activity exposes read-only facade views and
+  retains pose capture, entities, markers, persistence, properties, and SDK
+  mutation. Placement state cannot register or activate a feature.
 - `app/src/main/.../SpatialPanelPersistenceCoordinator.kt` owns the exact
   headlock-tuning JSON schema, key ordering, output filename, and panel-state
   persistence failure receipts. The Activity supplies typed placement
