@@ -738,12 +738,19 @@ Interaction SDK pointer input without native multimodal extension forcing.
   `spatialAvatarHandMeshWireframeSupported=false` unless a supported public
   topology path exists.
 - `app/src/main/.../SpatialHandBillboardFlockFeature.kt` owns the opt-in
-  public ECS world-space hand billboard flock. Enable it with
-  `debug.rustyquest.spatial.hand_billboard_flock.enabled=true`; the default is
-  disabled so existing projection and panel validations do not change. Its
-  app-owned `TriangleMesh` carrier supports
+  public ECS world-space hand billboard renderer. The general camera-panel
+  build keeps it disabled, while the dedicated Spatial Hand Lab enables it.
+  Hotload `debug.rustyquest.spatial.hand_billboard_flock.enabled=true` to
+  enable it in another explicit diagnostic run. Select its input with
+  `debug.rustyquest.spatial.hand_billboard_flock.source`: use
+  `openxr-live-custom-mesh` for triangle/barycentric surface samples from an
+  app-owned rig CPU-skinned by the mapped OpenXR joint rows, or
+  `spatial-sdk-anchor-flock` for the older loose anchor proxy. The live custom
+  mesh path preserves `openxr-left-right` row order, asset handedness, and no
+  post-skinning orientation or `AvatarBody` anchor correction. Its app-owned
+  `TriangleMesh` carrier supports
   `debug.rustyquest.spatial.hand_billboard_flock.visual_mode=wireframe-edges`
-  for edge-quad wire inspection. Select
+  for billboard edge-quad inspection. Select
   `debug.rustyquest.spatial.hand_billboard_flock.wireframe.source=spatial-sdk-joint-proxy`
   for the supported app-owned proxy. Requests for `openxr-fb-mesh` or
   `custom-mesh`, and the Spatial-specific
@@ -751,6 +758,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   markers, but they resolve back to the Spatial proxy unless the read-only
   probe observes a supported public topology path for the SDK-owned
   `AvatarSystem` hand mesh.
+- `app/src/main/.../SpatialLiveSkinnedHandSurface.kt` owns the reusable CPU
+  reference skinner and stable triangle/barycentric surface sampler. The code
+  is public; recorded rig assets are explicit build inputs through
+  `RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR=<asset-dir>` and are not copied
+  into the public source tree. If the pack is absent, the live mesh source
+  reports `fallback=joint-visuals-only` instead of silently returning to the
+  loose anchor sphere.
 - `app/src/main/.../SpatialPrivateFeatureLoader.kt` owns the optional private
   SpatialFeature extension point. Build with
   `RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR=<kotlin-source-dir>` to include

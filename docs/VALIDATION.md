@@ -125,14 +125,14 @@ For OpenXR-to-Spatial world alignment, prepare a clean diagnostic view instead
 of the billboard fallback:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Prepare -ShowAvatarHands $true -DisableBillboardWireframe -EnableAlignmentDiagnostic -DisableNativeSurfaceParticleLayer
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Prepare -ShowAvatarHands $true -DisableBillboardWireframe -DisableNativeSurfaceParticleLayer
 ```
 
 The clean rollback profile is `viewer-world-basis-registration`. The
 headset-accepted Spatial hand-lab mapping is selected explicitly:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Prepare -ShowAvatarHands $true -DisableBillboardWireframe -EnableAlignmentDiagnostic -AlignmentMappingProfile mirror-x-origin-registration -DisableNativeSurfaceParticleLayer
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Prepare -ShowAvatarHands $true -DisableBillboardWireframe -BillboardParticleSource openxr-live-custom-mesh -AlignmentMappingProfile mirror-x-origin-registration -DisableNativeSurfaceParticleLayer
 ```
 
 The mirror-X profile captures translation from the current OpenXR and
@@ -142,6 +142,9 @@ all-zero Spatial viewer pose, the bridge recaptures the registration once a
 live origin arrives. The 2026-07-10 headset run reduced viewer error from a
 reproduced 1.108 m floor offset to 0.0000 m / 0.0000 degrees and visually
 confirmed that the OpenXR joint markers overlay the built-in Meta hands.
+Viewer marker spheres default to disabled through
+`debug.rustyquest.spatial.hand_alignment.viewer_markers.enabled=false`; set it
+to `true` only when re-running viewer-pose registration diagnostics.
 
 This renders one app-owned marker per OpenXR hand joint, larger Spatial SDK
 hand-anchor markers, bone lines, anchor-to-palm/wrist delta lines, and logs
@@ -155,6 +158,12 @@ default `batched-scene-mesh` mode should report
 `carrier=batched-scene-mesh`, `carrierEntityCount=2`, and
 `transformWrites=0`; `ecs-entities` is retained only as the old per-particle
 entity baseline.
+The dedicated hand lab defaults to 2048 app-owned billboards (1024 per hand)
+at the established 8 mm live/replay particle size, sampled from the
+recorded custom mesh and CPU-skinned from the mapped OpenXR joints. Hotload
+`debug.rustyquest.spatial.hand_billboard_flock.source=spatial-sdk-anchor-flock`
+to return to the loose `AvatarBody` hand-anchor proxy, or
+`openxr-live-custom-mesh` to return to the accepted mesh-surface path.
 Set `debug.rustyquest.spatial.hand_billboard_flock.visual_mode=wireframe-edges`
 to replace each app-owned billboard mesh item with edge quads. This is not a
 wireframe of the Spatial SDK built-in avatar hands; those remain

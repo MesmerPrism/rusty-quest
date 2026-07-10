@@ -14,6 +14,7 @@ param(
     [string]$PrivateSurfaceParticleShader = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER,
     [string]$PrivateSurfaceParticlePayloadDir = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR,
     [string]$PrivateSurfaceParticleMarkerPrefix = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX,
+    [string]$HandMeshRigAssetDir = $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR,
     [string]$AppId = $env:RUSTY_QUEST_SPATIAL_APP_ID,
     [string]$AppLabel = $env:RUSTY_QUEST_SPATIAL_APP_LABEL,
     [string]$ApkFileName = $env:RUSTY_QUEST_SPATIAL_APK_FILE_NAME,
@@ -141,6 +142,58 @@ function Resolve-OptionalDirectoryPath {
         throw "$Label not found: $Path"
     }
     return (Resolve-Path -LiteralPath $Path).Path
+}
+
+function Test-HandMeshRigAssetPack {
+    param([string]$Path)
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return [pscustomobject]@{ ready = $false; asset_id = ""; file_count = 0 }
+    }
+    $root = Join-Path $Path "spatial-ecs-replay"
+    $manifestPath = Join-Path $root "spatial-ecs-replay-manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "Hand mesh rig manifest not found: $manifestPath"
+    }
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    if ([string]::IsNullOrWhiteSpace([string]$manifest.asset_id)) {
+        throw "Hand mesh rig manifest must declare asset_id: $manifestPath"
+    }
+    if ([string]$manifest.coordinate_anchor -ne "triangle-index-plus-barycentric") {
+        throw "Hand mesh rig coordinate_anchor must be triangle-index-plus-barycentric"
+    }
+    if ([int]$manifest.live_skinning.openxr_joint_row_count_per_hand -ne 26) {
+        throw "Hand mesh rig must declare 26 OpenXR joint rows per hand"
+    }
+    $prefixes = @("recorded-meta-quest-hand", "recorded-meta-quest-right-hand")
+    $suffixes = @(
+        "mesh-triangles.u32.bin",
+        "skinning-bind-vertices.f32.bin",
+        "skinning-bind-normals.f32.bin",
+        "skinning-vertex-joint-indices.u32.bin",
+        "skinning-vertex-joint-weights.f32.bin",
+        "skinning-bind-joint-poses.f32.bin",
+        "skinning-bind-joint-sources.u32.bin",
+        "samples-512-coordinate-triangles.u32.bin",
+        "samples-512-coordinate-barycentric.f32.bin",
+        "samples-1024-coordinate-triangles.u32.bin",
+        "samples-1024-coordinate-barycentric.f32.bin"
+    )
+    foreach ($prefix in $prefixes) {
+        foreach ($suffix in $suffixes) {
+            $file = Join-Path $root "$prefix-$suffix"
+            if (-not (Test-Path -LiteralPath $file -PathType Leaf)) {
+                throw "Hand mesh rig file missing: $file"
+            }
+            if (((Get-Item -LiteralPath $file).Length % 4) -ne 0) {
+                throw "Hand mesh rig binary length is not divisible by four: $file"
+            }
+        }
+    }
+    return [pscustomobject]@{
+        ready = $true
+        asset_id = [string]$manifest.asset_id
+        file_count = @(Get-ChildItem -LiteralPath $root -File).Count
+    }
 }
 
 function Test-PrivateSurfaceParticleProfile {
@@ -333,6 +386,8 @@ $resolvedPrivateSurfaceParticleProfilePath = Resolve-OptionalFilePath -Path $Pri
 $resolvedPrivateSurfaceParticleShader = Resolve-OptionalFilePath -Path $PrivateSurfaceParticleShader -Label "Private surface-particle shader"
 $resolvedPrivateSurfaceParticlePayloadDir = Resolve-OptionalDirectoryPath -Path $PrivateSurfaceParticlePayloadDir -Label "Private surface-particle payload directory"
 $resolvedPrivateSurfaceParticleMarkerPrefix = Test-MarkerPrefix -Value $PrivateSurfaceParticleMarkerPrefix
+$resolvedHandMeshRigAssetDir = Resolve-OptionalDirectoryPath -Path $HandMeshRigAssetDir -Label "Hand mesh rig asset directory"
+$handMeshRigAssetInfo = Test-HandMeshRigAssetPack -Path $resolvedHandMeshRigAssetDir
 $resolvedAppId = Resolve-SpatialAppId -Value $AppId
 $resolvedAppLabel = Resolve-SpatialAppLabel -Value $AppLabel
 $resolvedApkFileName = Resolve-ApkFileName -Value $ApkFileName -ResolvedAppId $resolvedAppId
@@ -610,12 +665,18 @@ $previousJavaHome = $env:JAVA_HOME
 $previousGradleUserHome = $env:GRADLE_USER_HOME
 $previousSpatialAppId = $env:RUSTY_QUEST_SPATIAL_APP_ID
 $previousSpatialAppLabel = $env:RUSTY_QUEST_SPATIAL_APP_LABEL
+$previousHandMeshRigAssetDir = $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR
 try {
     $env:ANDROID_HOME = $AndroidHome
     $env:JAVA_HOME = $JavaHome
     $env:GRADLE_USER_HOME = $gradleUserHome
     $env:RUSTY_QUEST_SPATIAL_APP_ID = $resolvedAppId
     $env:RUSTY_QUEST_SPATIAL_APP_LABEL = $resolvedAppLabel
+    if ([string]::IsNullOrWhiteSpace($resolvedHandMeshRigAssetDir)) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR = $resolvedHandMeshRigAssetDir
+    }
     Invoke-Checked "Spatial Camera Panel Gradle build" $gradleBat @(
         "--no-daemon",
         "--console=plain",
@@ -639,6 +700,11 @@ try {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_APP_LABEL -ErrorAction SilentlyContinue
     } else {
         $env:RUSTY_QUEST_SPATIAL_APP_LABEL = $previousSpatialAppLabel
+    }
+    if ($null -eq $previousHandMeshRigAssetDir) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR = $previousHandMeshRigAssetDir
     }
 }
 
@@ -682,6 +748,20 @@ $manifest = [ordered]@{
     native_spatial_controller_actions_default_enabled = $false
     spatial_controller_launch_policy = "app-owned-readiness-prompt-if-no-active-avatarbody-controller"
     spatial_sdk_version = "0.13.1"
+    spatial_hand_mesh_rig_packaged = $handMeshRigAssetInfo.ready
+    spatial_hand_mesh_rig_asset_id = $handMeshRigAssetInfo.asset_id
+    spatial_hand_mesh_rig_asset_file_count = $handMeshRigAssetInfo.file_count
+    spatial_hand_mesh_rig_asset_root = "spatial-ecs-replay"
+    spatial_hand_mesh_rig_asset_hash = $(if ([string]::IsNullOrWhiteSpace($resolvedHandMeshRigAssetDir)) { "" } else { Get-DirectorySha256 -Path $resolvedHandMeshRigAssetDir })
+    spatial_hand_mesh_rig_build_env = "RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR"
+    spatial_hand_mesh_rig_runtime_source = "XR_EXT_hand_tracking-mapped-world-joints"
+    spatial_hand_mesh_rig_skinning = "cpu-linear-blend-four-influences"
+    spatial_hand_mesh_rig_surface_anchors = "triangle-index-plus-barycentric"
+    spatial_hand_alignment_enabled_default = ($env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_ENABLED_DEFAULT -eq "true")
+    spatial_hand_alignment_viewer_markers_enabled_default = ($env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_VIEWER_MARKERS_ENABLED_DEFAULT -eq "true")
+    spatial_hand_alignment_mapping_profile_default = $env:RUSTY_QUEST_SPATIAL_HAND_ALIGNMENT_MAPPING_PROFILE_DEFAULT
+    spatial_hand_billboard_flock_enabled_default = ($env:RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_FLOCK_ENABLED_DEFAULT -eq "true")
+    spatial_hand_billboard_source_default = $env:RUSTY_QUEST_SPATIAL_HAND_BILLBOARD_SOURCE_DEFAULT
     spatial_sdk_3d_asset_module = "spatial-sdk-staged-3d-asset"
     spatial_sdk_3d_asset_module_mesh_uri_transport = "runtime-property-or-intent-extra"
     spatial_sdk_3d_asset_module_source_policy = "no-source-model-packaged-or-committed"

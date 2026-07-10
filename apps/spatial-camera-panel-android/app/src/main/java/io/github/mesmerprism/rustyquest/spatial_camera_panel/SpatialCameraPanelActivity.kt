@@ -1198,7 +1198,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         ),
         SpatialAvatarHandVisualFeature(::marker),
         SpatialAvatarHandInvestigationFeature(::marker),
-        SpatialHandBillboardFlockFeature(::marker) { store.snapshot().surfaceTargetId },
+        SpatialHandBillboardFlockFeature(
+            this,
+            ::marker,
+            { store.snapshot().surfaceTargetId },
+            { SpatialNativeInteropProbe.capture(scene) },
+        ),
         SpatialOpenXrHandAlignmentFeature(::marker) {
           SpatialNativeInteropProbe.capture(scene)
         },

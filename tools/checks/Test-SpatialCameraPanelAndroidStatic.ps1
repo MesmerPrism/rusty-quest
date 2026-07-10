@@ -134,6 +134,7 @@ $cameraHwbProjectionGeometryCoordinator = Read-RequiredText "apps\spatial-camera
 $avatarFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAvatarHandVisualFeature.kt"
 $avatarProbeFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAvatarHandInvestigationFeature.kt"
 $handBillboardFeature = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialHandBillboardFlockFeature.kt"
+$liveSkinnedHandSurface = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialLiveSkinnedHandSurface.kt"
 $spatialHandAlignment = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialOpenXrHandAlignmentFeature.kt"
 $spatialHandCapture = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialHandCaptureRecorderFeature.kt"
 $liveHandBridge = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialLiveHandJointBridge.kt"
@@ -636,7 +637,7 @@ Assert-Contains "Camera HWB projection module" $cameraProjectionModule "debug.ru
 Assert-Contains "Kotlin spatial video route module" $kotlinSpatialVideoSettings "debug.rustyquest.spatial.video_projection_probe"
 Assert-Contains "Activity" $activity "stagedAssetModule = SpatialStagedAssetModule(::marker)"
 Assert-Contains "Activity" $activity "SpatialAvatarHandInvestigationFeature(::marker)"
-Assert-Contains "Activity" $activity "SpatialHandBillboardFlockFeature(::marker)"
+Assert-Contains "Activity" $activity "SpatialHandBillboardFlockFeature("
 Assert-Contains "Activity" $activity "SpatialOpenXrHandAlignmentFeature(::marker)"
 Assert-Contains "Activity" $activity "{ store.snapshot().surfaceTargetId }"
 Assert-Contains "Activity" $activity "SpatialPrivateFeatureLoader.load(::marker, this)"
@@ -1525,6 +1526,7 @@ Assert-Contains "Hand billboard feature" $handBillboardFeature "Mesh(Uri.parse(`
 Assert-Contains "Hand billboard feature" $handBillboardFeature "SpatialHandBillboardCarrierMode"
 Assert-Contains "Hand billboard feature" $handBillboardFeature "SpatialHandBillboardVisualMode"
 Assert-Contains "Hand billboard feature" $handBillboardFeature "debug.rustyquest.spatial.hand_billboard_flock.carrier"
+Assert-Contains "Hand billboard feature" $handBillboardFeature "debug.rustyquest.spatial.hand_billboard_flock.source"
 Assert-Contains "Hand billboard feature" $handBillboardFeature "debug.rustyquest.spatial.hand_billboard_flock.visual_mode"
 Assert-Contains "Hand billboard feature" $handBillboardFeature "debug.rustyquest.spatial.hand_billboard_flock.wireframe.source"
 Assert-Contains "Hand billboard feature" $handBillboardFeature "debug.rustyquest.spatial.hand_billboard_flock.wireframe.width_m"
@@ -1548,6 +1550,18 @@ Assert-Contains "Hand billboard feature" $handBillboardFeature "spatialBuiltInHa
 Assert-Contains "Hand billboard feature" $handBillboardFeature "visualParticleCount="
 Assert-Contains "Hand billboard feature" $handBillboardFeature "carrierEntityCount="
 Assert-Contains "Hand billboard feature" $handBillboardFeature "meshGeometryUpdates="
+Assert-Contains "Hand billboard feature" $handBillboardFeature 'OpenXrLiveCustomMesh("openxr-live-custom-mesh")'
+Assert-Contains "Hand billboard feature" $handBillboardFeature "SpatialLiveHandJointBridge.updateSpatialViewerWorldBasis"
+Assert-Contains "Hand billboard feature" $handBillboardFeature "SpatialLiveSkinnedHandSurface.load"
+Assert-Contains "Hand billboard feature" $handBillboardFeature "surfaceAnchors=triangle-barycentric"
+Assert-Contains "Hand billboard feature" $handBillboardFeature "orientationCorrection=none"
+Assert-Contains "Hand billboard feature" $handBillboardFeature "worldAnchorCorrection=false"
+Assert-Contains "Live skinned hand surface" $liveSkinnedHandSurface "class SpatialLiveSkinnedHandSurface"
+Assert-Contains "Live skinned hand surface" $liveSkinnedHandSurface "cpu-linear-blend-four-influences"
+Assert-Contains "Live skinned hand surface" $liveSkinnedHandSurface "triangle-index-plus-barycentric"
+Assert-Contains "Live skinned hand surface" $liveSkinnedHandSurface "recorded-meta-quest-right-hand"
+Assert-Contains "Live skinned hand surface" $liveSkinnedHandSurface "openXrJointForRuntime"
+Assert-Contains "Live skinned hand surface" $liveSkinnedHandSurface "ROW_CACHE_HOLD_FRAMES"
 Assert-Contains "Hand billboard feature" $handBillboardFeature "persistentCarriers=true"
 Assert-Contains "Hand billboard feature" $handBillboardFeature "projectionPlane=false"
 Assert-Contains "Hand billboard feature" $handBillboardFeature "customGpuSkinning=false"
@@ -3105,6 +3119,7 @@ Assert-Contains "Spatial OpenXR hand alignment" $spatialHandAlignment "internal 
 Assert-Contains "Spatial OpenXR hand alignment" $spatialHandAlignment "rusty.quest.spatial.openxr_hand_alignment.v1"
 Assert-Contains "Spatial OpenXR hand alignment" $spatialHandAlignment "debug.rustyquest.spatial.hand_alignment.enabled"
 Assert-Contains "Spatial OpenXR hand alignment" $spatialHandAlignment "debug.rustyquest.spatial.hand_alignment.mapping_profile"
+Assert-Contains "Spatial OpenXR hand alignment" $spatialHandAlignment "debug.rustyquest.spatial.hand_alignment.viewer_markers.enabled"
 Assert-Contains "Spatial OpenXR hand alignment" $spatialHandAlignment "SpatialLiveHandJointBridge.pollRows"
 Assert-Contains "Spatial OpenXR hand alignment" $spatialHandAlignment "SpatialLiveHandJointBridge.pollViewDiagnostics"
 Assert-Contains "Spatial OpenXR hand alignment" $spatialHandAlignment "Sphere()"
@@ -3117,6 +3132,7 @@ Assert-Contains "Live hand bridge" $liveHandBridge "VIEW_DIAGNOSTIC_FLOAT_COUNT"
 Assert-Contains "Live hand bridge" $liveHandBridge "nativePollLiveHandViewDiagnostics"
 Assert-Contains "Live hand bridge" $liveHandBridge "VIEWER_WORLD_MAPPING_PROFILE_ACCEPTED"
 Assert-Contains "Live hand bridge" $liveHandBridge "VIEWER_WORLD_MAPPING_PROFILE_MIRROR_X"
+Assert-Contains "Live hand bridge" $liveHandBridge "VIEWER_WORLD_MAPPING_PROFILE_ROLLBACK"
 Assert-Contains "Live hand bridge" $liveHandBridge "normalizeViewerWorldMappingProfile"
 Assert-Contains "Spatial hand alignment mapping fixture" $spatialHandAlignmentMappingFixture "rusty.quest.spatial_openxr_hand_alignment_mapping_fixture.v1"
 Assert-Contains "Spatial hand alignment mapping fixture" $spatialHandAlignmentMappingFixture '"profile": "viewer-world-basis-registration"'
@@ -3149,6 +3165,8 @@ Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "avatar_hand_
 Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "rusty.quest.spatial.avatar_hand_investigation.v1"
 Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "EnableBillboardWireframe"
 Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "debug.rustyquest.spatial.hand_billboard_flock.enabled"
+Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "debug.rustyquest.spatial.hand_billboard_flock.source"
+Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "openxr-live-custom-mesh"
 Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "debug.rustyquest.spatial.hand_billboard_flock.visual_mode"
 Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "debug.rustyquest.spatial.hand_billboard_flock.wireframe.source"
 Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "debug.rustyquest.spatial.hand_billboard_flock.wireframe.width_m"
@@ -3159,8 +3177,12 @@ Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "EnableAlignm
 Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "debug.rustyquest.spatial.hand_alignment.enabled"
 Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "AlignmentMappingProfile"
 Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "debug.rustyquest.spatial.hand_alignment.mapping_profile"
+Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "debug.rustyquest.spatial.hand_alignment.viewer_markers.enabled"
 Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "spatial_openxr_hand_alignment_enabled"
 Assert-Contains "Spatial hand capture CLI" $spatialHandCaptureTool "debug.rustyquest.spatial.native_surface_particle_layer.enabled"
+Assert-Contains "App Gradle" $appGradle "RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR"
+Assert-Contains "App Gradle" $appGradle "HAND_MESH_RIG_PACKAGED"
+Assert-Contains "App Gradle" $appGradle "HAND_ALIGNMENT_VIEWER_MARKERS_ENABLED_DEFAULT"
 Assert-Contains "Store" $store 'SESSION_SCHEMA = "rusty.quest.spatial_camera_panel.session.v1"'
 Assert-Contains "Store" $store 'EVENT_SCHEMA = "rusty.quest.spatial_camera_panel.event.v1"'
 Assert-Contains "Store" $store 'QUESTIONNAIRE_SCHEMA = "rusty.quest.spatial_camera_panel.questionnaire.v1"'
@@ -3980,6 +4002,14 @@ Assert-Contains "Build script" $buildScript '$PrivateLayerProfilePath = $env:RUS
 Assert-Contains "Build script" $buildScript '$OpaqueGuideShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER'
 Assert-Contains "Build script" $buildScript '$OpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER'
 Assert-Contains "Build script" $buildScript '$OpaqueProjectionEffect = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT'
+Assert-Contains "Build script" $buildScript '$HandMeshRigAssetDir = $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR'
+Assert-Contains "Build script" $buildScript 'function Test-HandMeshRigAssetPack'
+Assert-Contains "Build script" $buildScript 'openxr_joint_row_count_per_hand'
+Assert-Contains "Build script" $buildScript 'spatial_hand_mesh_rig_packaged = '
+Assert-Contains "Build script" $buildScript 'spatial_hand_mesh_rig_skinning = "cpu-linear-blend-four-influences"'
+Assert-Contains "Build script" $buildScript 'spatial_hand_mesh_rig_surface_anchors = "triangle-index-plus-barycentric"'
+Assert-Contains "Build script" $buildScript 'spatial_hand_alignment_viewer_markers_enabled_default = '
+Assert-Contains "Build script" $buildScript 'spatial_hand_billboard_source_default = '
 Assert-Contains "Build script" $buildScript '$PrivateSurfaceParticleProfilePath = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE'
 Assert-Contains "Build script" $buildScript '$PrivateSurfaceParticleShader = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER'
 Assert-Contains "Build script" $buildScript '$PrivateSurfaceParticlePayloadDir = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR'

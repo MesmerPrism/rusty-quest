@@ -11,6 +11,7 @@ param(
     [string]$PrivateSurfaceParticleShader = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER,
     [string]$PrivateSurfaceParticlePayloadDir = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR,
     [string]$PrivateSurfaceParticleMarkerPrefix = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX,
+    [string]$HandMeshRigAssetDir = $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR,
     [string]$AppId = $env:RUSTY_QUEST_SPATIAL_APP_ID,
     [string]$AppLabel = $env:RUSTY_QUEST_SPATIAL_APP_LABEL,
     [string]$ApkFileName = $env:RUSTY_QUEST_SPATIAL_APK_FILE_NAME,
@@ -54,6 +55,7 @@ if ($Build) {
         -PrivateSurfaceParticleShader $PrivateSurfaceParticleShader `
         -PrivateSurfaceParticlePayloadDir $PrivateSurfaceParticlePayloadDir `
         -PrivateSurfaceParticleMarkerPrefix $PrivateSurfaceParticleMarkerPrefix `
+        -HandMeshRigAssetDir $HandMeshRigAssetDir `
         -AppId $AppId `
         -AppLabel $AppLabel `
         -ApkFileName $ApkFileName `
