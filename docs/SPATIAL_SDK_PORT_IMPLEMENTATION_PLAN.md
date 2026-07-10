@@ -217,7 +217,8 @@ Apply that model here when a lane grows beyond a narrow facade method:
   marker fields in
   `CameraHwbProjectionPanelCarrierModule.kt`;
 - package private layer panel placement/input policy, placement/headlock marker
-  envelopes, panel shell/mode marker envelopes, private-layer panel layer
+  envelopes, panel shell/mode marker envelopes, the panel-state persistence
+  failure marker envelope, private-layer panel layer
   readiness/failure marker envelopes, and private-layer grabbable/sync evidence in
   `SpatialPanelPlacementModule.kt`;
 - package private-layer control choices, depth alignment clamping, panel-control

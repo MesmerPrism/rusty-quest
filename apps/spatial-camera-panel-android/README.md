@@ -367,6 +367,7 @@ Interaction SDK pointer input without native multimodal extension forcing.
   parsing, placement clamping, pose/dimension/settings factories, private
   layer `Grabbable(type = PIVOT_Y)` setup, headlock marker fields,
   placement/headlock marker envelopes, panel shell/mode marker envelopes,
+  panel-state persistence failure marker envelope,
   private-layer panel layer readiness/failure marker envelopes, and
   private-layer grabbable/sync evidence.
   It must

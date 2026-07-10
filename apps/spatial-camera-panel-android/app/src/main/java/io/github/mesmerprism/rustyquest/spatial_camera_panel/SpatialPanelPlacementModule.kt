@@ -502,6 +502,10 @@ internal object SpatialPanelPlacementModule {
           "privateSpatialEcsParticleRendererEnabled=${input.privateSpatialEcsParticleRendererEnabled} " +
           "rendererAuthority=${if (input.nativeSurfaceParticleLayerSuppressedByPrivateRenderer) "private-spatial-ecs-particle-renderer" else "native-vulkan-wsi-surface-panel"}"
 
+  fun panelStateRecordFailedMarker(source: String, error: String): String =
+      "channel=spatial-panel status=panel-state-record-failed " +
+          "source=${activityMarkerToken(source)} error=${activityMarkerToken(error)}"
+
   fun panelModeUpdateSuppressedMarker(
       channel: String,
       source: String,

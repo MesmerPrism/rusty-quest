@@ -7311,8 +7311,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     runCatching { store.recordPanelForegroundState(panelStateToken(), source) }
         .getOrElse { throwable ->
           marker(
-              "channel=spatial-panel status=panel-state-record-failed source=${activityMarkerToken(source)} " +
-                  "error=${activityMarkerToken(throwable.javaClass.simpleName)}"
+              SpatialPanelPlacementModule.panelStateRecordFailedMarker(
+                  source = source,
+                  error = throwable.javaClass.simpleName,
+              )
           )
         }
   }
