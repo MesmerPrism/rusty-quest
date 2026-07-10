@@ -651,6 +651,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   persistence failure receipts. The Activity supplies typed placement
   snapshots, output directory, store adapter, and marker sink; persistence
   cannot read runtime properties, mutate scene entities, or activate features.
+- `app/src/main/.../SpatialPrivateLayerPanelLayerCoordinator.kt` owns
+  private-layer panel layer eligibility, missing-resource outcomes, z-index
+  update sequencing, and failure receipts. The Activity retains the concrete
+  `PanelSceneObject`, SDK layer mutation, and app-spec enablement binding; this
+  coordinator cannot register, show, or activate the panel feature.
 - `app/src/main/.../SpatialSurfaceParticlePanelCarrierModule.kt` owns native
   surface-particle panel carrier construction: registered video-surface callback
   sequencing, the manual custom-mesh `PanelSceneObject`, create/surface/add

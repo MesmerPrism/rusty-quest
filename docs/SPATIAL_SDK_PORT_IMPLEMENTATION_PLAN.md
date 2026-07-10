@@ -449,6 +449,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `SpatialPanelPersistenceCoordinator.kt`; retain typed placement snapshots,
   output-directory and store adapters, and marker routing in Activity, and
   prohibit property reads, scene mutation, or feature activation in persistence.
+- package private-layer panel layer eligibility, missing-resource outcomes,
+  z-index update sequencing, and failure receipts in
+  `SpatialPrivateLayerPanelLayerCoordinator.kt`; retain the concrete
+  `PanelSceneObject`, SDK layer mutation, and app-spec enablement binding in
+  Activity, and prohibit panel registration, visibility, or activation.
 - package native surface-particle registered video-surface callback sequencing,
   manual panel carrier construction, custom-mesh `PanelSceneObject` creation,
   create/surface/add failure markers, and readiness marker fields in

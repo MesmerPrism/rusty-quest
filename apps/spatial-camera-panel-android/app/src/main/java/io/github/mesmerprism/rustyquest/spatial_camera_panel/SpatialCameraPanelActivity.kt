@@ -158,6 +158,21 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             )
         )
       }
+  private val privateLayerPanelLayerCoordinator: SpatialPrivateLayerPanelLayerCoordinator by
+      lazy(LazyThreadSafetyMode.NONE) {
+        SpatialPrivateLayerPanelLayerCoordinator(
+            SpatialPrivateLayerPanelLayerBindings(
+                layerConfigEnabled = { true },
+                panelAvailable = { privateLayerPanelSceneObject != null },
+                applyLayerZIndex = apply@{
+                  val layer = privateLayerPanelSceneObject?.layer ?: return@apply false
+                  layer.setZIndex(PRIVATE_LAYER_PANEL_LAYER_Z_INDEX)
+                  true
+                },
+                marker = ::marker,
+            )
+        )
+      }
   private var lastSpatialJoystickArbitrationMarkerMs = 0L
   private val controllerInputRouteSpec =
       SpatialControllerInputRouteSpec(
@@ -1422,7 +1437,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     onPanelSetup = { panel ->
                       privateLayerPanelSceneObject = panel
                       val layerUpdateStatus =
-                          updatePrivateLayerPanelLayer("panel-setup", forceLog = false)
+                          privateLayerPanelLayerCoordinator.update(
+                              "panel-setup",
+                              forceLog = false,
+                          )
                       marker(
                           SpatialPanelPlacementModule.privateLayerPanelLayerReadyMarker(
                               layerUpdateStatus = layerUpdateStatus,
@@ -1978,7 +1996,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     privateLayerPanelEntity?.setComponent(privateLayerPanelGrabbable(enabled = visible))
     val privateLayerPanelLayerUpdateStatus =
-        updatePrivateLayerPanelLayer("private-layer-panel-visibility")
+        privateLayerPanelLayerCoordinator.update("private-layer-panel-visibility")
     cameraHwbProjectionPlacementUpdateCoordinator.update(
         "private-layer-panel-visibility",
         true,
@@ -2018,35 +2036,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
     return panelPlacement
-  }
-
-  private fun privateLayerPanelLayerConfigEnabled(): Boolean = true
-
-  private fun updatePrivateLayerPanelLayer(
-      reason: String,
-      forceLog: Boolean = true,
-  ): String {
-    if (!privateLayerPanelLayerConfigEnabled()) {
-      return "disabled-mesh-render-mode"
-    }
-    val panel = privateLayerPanelSceneObject ?: return "panel-scene-object-missing"
-    return runCatching {
-          panel.layer?.setZIndex(PRIVATE_LAYER_PANEL_LAYER_Z_INDEX)
-              ?: return "panel-layer-missing"
-          "updated-private-layer-panel-z-index"
-        }
-        .getOrElse { throwable ->
-          if (forceLog) {
-            marker(
-                SpatialPanelPlacementModule.privateLayerPanelLayerUpdateFailedMarker(
-                    reason = reason,
-                    error = throwable.javaClass.simpleName,
-                    message = throwable.message ?: "none",
-                )
-            )
-          }
-          "failed-${throwable.javaClass.simpleName}"
-        }
   }
 
   private fun updateParticleLayerPanelLayer(
