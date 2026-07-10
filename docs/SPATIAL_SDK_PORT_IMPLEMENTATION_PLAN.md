@@ -216,8 +216,9 @@ Apply that model here when a lane grows beyond a narrow facade method:
   video-surface panel consumer/ready markers, and create/surface/add/readiness
   marker fields in
   `CameraHwbProjectionPanelCarrierModule.kt`;
-- package private layer panel placement/input policy, placement/headlock and
-  panel shell/mode marker envelopes, and private-layer grabbable/sync evidence in
+- package private layer panel placement/input policy, placement/headlock marker
+  envelopes, panel shell/mode marker envelopes, private-layer panel layer
+  readiness/failure marker envelopes, and private-layer grabbable/sync evidence in
   `SpatialPanelPlacementModule.kt`;
 - package private-layer control choices, depth alignment clamping, panel-control
   marker fields, and JNI submission result marker fields in

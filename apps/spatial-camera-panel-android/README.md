@@ -366,7 +366,9 @@ Interaction SDK pointer input without native multimodal extension forcing.
   panel placement policy: default distances and sizes, headlock property
   parsing, placement clamping, pose/dimension/settings factories, private
   layer `Grabbable(type = PIVOT_Y)` setup, headlock marker fields,
-  placement/headlock and panel shell/mode marker envelopes, and private-layer grabbable/sync evidence.
+  placement/headlock marker envelopes, panel shell/mode marker envelopes,
+  private-layer panel layer readiness/failure marker envelopes, and
+  private-layer grabbable/sync evidence.
   It must
   not mutate Spatial scene entities, consume controller input, or call JNI.
 - `app/src/main/.../PrivateLayerPanelControlModule.kt` owns private-layer

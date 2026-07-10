@@ -685,15 +685,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               val layerUpdateStatus =
                   updatePrivateLayerPanelLayer("panel-setup", forceLog = false)
               marker(
-                      "channel=private-layer-panel status=panel-layer-ready " +
-                      "spatialPrivateLayerControlPanel=true " +
-                      "privateLayerPanelRenderMode=spatial-sdk-layer " +
-                      "privateLayerPanelLayerConfig=enabled " +
-                      "privateLayerPanelLayerUpdateStatus=${activityMarkerToken(layerUpdateStatus)} " +
-                      "privateLayerPanelLayerZIndex=$PRIVATE_LAYER_PANEL_LAYER_Z_INDEX " +
-                      "cameraVideoProjectionLayerZIndex=${cameraHwbProjectionZIndexForPlacement(cameraHwbProjectionPlacementMode)} " +
-                      "privateLayerPanelAboveCameraProjectionLayer=quad-layer-z-index " +
-                      "panelRenderOrder=spatial-sdk-quad-layer-z-index runtimeCrash=false"
+                  SpatialPanelPlacementModule.privateLayerPanelLayerReadyMarker(
+                      layerUpdateStatus = layerUpdateStatus,
+                      cameraVideoProjectionLayerZIndex =
+                          cameraHwbProjectionZIndexForPlacement(cameraHwbProjectionPlacementMode),
+                  )
               )
             },
         ),
@@ -4555,13 +4551,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         .getOrElse { throwable ->
           if (forceLog) {
             marker(
-                    "channel=private-layer-panel status=panel-layer-update-failed " +
-                    "reason=${activityMarkerToken(reason)} spatialPrivateLayerControlPanel=true " +
-                    "privateLayerPanelRenderMode=spatial-sdk-layer " +
-                    "privateLayerPanelLayerConfig=enabled " +
-                    "privateLayerPanelLayerZIndex=$PRIVATE_LAYER_PANEL_LAYER_Z_INDEX " +
-                    "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                    "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                SpatialPanelPlacementModule.privateLayerPanelLayerUpdateFailedMarker(
+                    reason = reason,
+                    error = throwable.javaClass.simpleName,
+                    message = throwable.message ?: "none",
+                )
             )
           }
           "failed-${throwable.javaClass.simpleName}"
@@ -7024,12 +7018,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           runCatching { nativeUpdatePrivateLayerOverride(privateLayerOverride) }
               .getOrElse { throwable ->
                 marker(
-                    "channel=private-layer-panel status=layer-override-reapply-failed " +
-                        "source=projection-placement-toggle spatialPrivateLayerControlPanel=true " +
-                        "projectionPlacementMode=${cameraHwbProjectionPlacementMode.markerToken} " +
-                        "publicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(privateLayerOverride)} " +
-                        "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                        "message=${activityMarkerToken(throwable.message ?: "none")} runtimeCrash=false"
+                    SpatialPanelPlacementModule.privateLayerPanelLayerOverrideReapplyFailedMarker(
+                        placementMode = cameraHwbProjectionPlacementMode,
+                        privateLayerOverride = privateLayerOverride,
+                        error = throwable.javaClass.simpleName,
+                        message = throwable.message ?: "none",
+                    )
                 )
                 0L
               }

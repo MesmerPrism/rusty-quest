@@ -576,6 +576,46 @@ internal object SpatialPanelPlacementModule {
           "publicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(input.privateLayerOverride)} " +
           input.headlockMarkerFields
 
+  fun privateLayerPanelLayerReadyMarker(
+      layerUpdateStatus: String,
+      cameraVideoProjectionLayerZIndex: Int,
+  ): String =
+      "channel=private-layer-panel status=panel-layer-ready " +
+          "spatialPrivateLayerControlPanel=true " +
+          "privateLayerPanelRenderMode=spatial-sdk-layer " +
+          "privateLayerPanelLayerConfig=enabled " +
+          "privateLayerPanelLayerUpdateStatus=${activityMarkerToken(layerUpdateStatus)} " +
+          "privateLayerPanelLayerZIndex=$PRIVATE_LAYER_PANEL_LAYER_Z_INDEX " +
+          "cameraVideoProjectionLayerZIndex=$cameraVideoProjectionLayerZIndex " +
+          "privateLayerPanelAboveCameraProjectionLayer=quad-layer-z-index " +
+          "panelRenderOrder=spatial-sdk-quad-layer-z-index runtimeCrash=false"
+
+  fun privateLayerPanelLayerUpdateFailedMarker(
+      reason: String,
+      error: String,
+      message: String,
+  ): String =
+      "channel=private-layer-panel status=panel-layer-update-failed " +
+          "reason=${activityMarkerToken(reason)} spatialPrivateLayerControlPanel=true " +
+          "privateLayerPanelRenderMode=spatial-sdk-layer " +
+          "privateLayerPanelLayerConfig=enabled " +
+          "privateLayerPanelLayerZIndex=$PRIVATE_LAYER_PANEL_LAYER_Z_INDEX " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
+  fun privateLayerPanelLayerOverrideReapplyFailedMarker(
+      placementMode: CameraHwbProjectionPlacementMode,
+      privateLayerOverride: Float,
+      error: String,
+      message: String,
+  ): String =
+      "channel=private-layer-panel status=layer-override-reapply-failed " +
+          "source=projection-placement-toggle spatialPrivateLayerControlPanel=true " +
+          "projectionPlacementMode=${placementMode.markerToken} " +
+          "publicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(privateLayerOverride)} " +
+          "error=${activityMarkerToken(error)} " +
+          "message=${activityMarkerToken(message)} runtimeCrash=false"
+
   fun workflowPlacementUpdatedMarker(panelMode: String, headlockMarkerFields: String): String =
       "channel=spatial-panel status=placement-updated " +
           headlockMarkerFields + " " +
