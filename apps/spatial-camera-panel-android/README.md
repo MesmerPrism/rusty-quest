@@ -592,6 +592,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   lifecycle-check marker fields, and camera-stack particle suppression marker fields. It must
   not create scene objects, read runtime properties, call JNI, or mutate
   Activity state.
+- `app/src/main/.../SpatialSurfaceParticleParameterCoordinator.kt` is the
+  single bounded control-state and parameter/alias submission owner. It clamps
+  the low-rate control packet, sequences driver-profile handoff receipts, and
+  calls Activity-supplied JNI adapters. Intent parsing, native-library state,
+  JNI declarations, panel visibility observation, and feature activation stay
+  in Activity bindings; the coordinator cannot start the particle runtime.
 - `app/src/main/.../SpatialSurfaceParticlePanelCarrierModule.kt` owns native
   surface-particle panel carrier construction: registered video-surface callback
   sequencing, the manual custom-mesh `PanelSceneObject`, create/surface/add

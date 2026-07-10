@@ -91,7 +91,6 @@ import com.meta.spatial.vr.LocomotionControls
 import com.meta.spatial.vr.VRFeature
 import com.meta.spatial.vr.VrInputSystemType
 import java.io.File
-import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.sqrt
 import kotlinx.coroutines.CoroutineScope
@@ -113,7 +112,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var panelLauncherEntity: Entity? = null
   private var panelPlacement = PanelPlacement(visible = !startInParticleView())
   private var privateLayerPanelPlacement = SpatialPanelPlacementModule.initialPrivateLayerPlacement()
-  private var particleControls = SurfaceParticleControlState()
   private var questionnaireDueReopensPanel by mutableStateOf(true)
   private var particleLayerEntity: Entity? = null
   private var particleLayerPanelSceneObject: PanelSceneObject? = null
@@ -219,6 +217,34 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
+  private val surfaceParticleParameterCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialSurfaceParticleParameterCoordinator(
+        SpatialSurfaceParticleParameterBindings(
+            receiptLibraryLoaded = { nativeInteropCoordinator.receiptLibraryLoaded },
+            workflowPanelVisible = { panelPlacement.visible },
+            submitNativeParameters = { controls ->
+              nativeUpdateSurfaceParticleParameters(
+                  controls.driver0Value01,
+                  controls.driver1Value01,
+                  controls.pointScale,
+                  controls.driver2Value01,
+                  controls.driver3Value01,
+                  controls.driver4Value01,
+                  controls.driver5Value01,
+                  controls.driver6Value01,
+                  controls.driver7Value01,
+                  controls.tracerDrawSlotsPerOscillator,
+                  controls.tracerLifetimeSeconds,
+                  controls.tracerCopiesPerSecond,
+                  controls.transparencyOpacity,
+                  controls.projectionWorldScale,
+              )
+            },
+            resolveNativeAlias = ::nativeResolveSurfaceParticleAliasParameter,
+            marker = ::marker,
+        )
+    )
+  }
   private val controllerPollingCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialControllerPollingCoordinator(
         SpatialControllerPollingBindings(
@@ -309,9 +335,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               resizeWorkflowPanel(deltaWidth, deltaHeight)
               Unit
             },
-            currentParticleControls = { particleControls },
+            currentParticleControls = { surfaceParticleParameterCoordinator.controls },
             updateSurfaceParticleControls = { controls, source ->
-              updateSurfaceParticleControls(controls, source)
+              surfaceParticleParameterCoordinator.updateControls(controls, source)
               Unit
             },
             applyRemoteParticleLayerTargetDistance =
@@ -327,7 +353,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             },
             resolveSurfaceParticleAliasControl = ::resolveSurfaceParticleAliasControl,
             applyDriverProfileToParticleControls = { block, source ->
-              applyDriverProfileToParticleControls(block, source)
+              surfaceParticleParameterCoordinator.applyDriverProfile(block, source)
               Unit
             },
             setQuestionnaireDueReopensPanel = ::setQuestionnaireDueReopensPanel,
@@ -1142,7 +1168,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 SpatialWorkflowPanelRegistrationBindings(
                     store = store,
                     placement = panelPlacement,
-                    particleControls = particleControls,
+                    particleControls = surfaceParticleParameterCoordinator.controls,
                     polarPanel = ensurePolarSensorPanel(),
                     questionnaireDueReopensPanel = questionnaireDueReopensPanel,
                     setWorkflowPanelVisible = { visible, focus, source ->
@@ -1159,10 +1185,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     },
                     resetPlacement = { resetWorkflowPanelPlacement() },
                     updateParticleControls = { controls ->
-                      updateSurfaceParticleControls(controls)
+                      surfaceParticleParameterCoordinator.updateControls(controls)
                     },
                     applyDriverProfile = { block, source ->
-                      applyDriverProfileToParticleControls(block, source)
+                      surfaceParticleParameterCoordinator.applyDriverProfile(block, source)
                     },
                     setQuestionnaireDueReopensPanel = { enabled, source ->
                       setQuestionnaireDueReopensPanel(enabled, source)
@@ -1494,7 +1520,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   stereoMarkerFields = particleLayerStereoMarkerFields(),
               )
           )
-          submitNativeSurfaceParticleParameters(source = "start")
+          surfaceParticleParameterCoordinator.submit(source = "start")
         }
         .getOrElse { throwable ->
           marker(
@@ -1504,118 +1530,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
           )
     }
-  }
-
-  private fun updateSurfaceParticleControls(
-      driver0Value01: Float,
-      driver1Value01: Float,
-      pointScale: Float,
-      source: String = "panel",
-  ): SurfaceParticleControlState =
-      updateSurfaceParticleControls(
-          particleControls.copy(
-              driver0Value01 = driver0Value01,
-              driver1Value01 = driver1Value01,
-              pointScale = pointScale,
-          ),
-          source,
-      )
-
-  private fun updateSurfaceParticleControls(
-      controls: SurfaceParticleControlState,
-      source: String = "panel",
-  ): SurfaceParticleControlState {
-    particleControls =
-        controls.copy(
-            driver0Value01 = controls.driver0Value01.coerceIn(0.0f, 1.0f),
-            driver1Value01 = controls.driver1Value01.coerceIn(0.0f, 1.0f),
-            driver2Value01 = controls.driver2Value01.coerceIn(0.0f, 1.0f),
-            driver3Value01 = controls.driver3Value01.coerceIn(0.0f, 1.0f),
-            driver4Value01 = controls.driver4Value01.coerceIn(0.0f, 1.0f),
-            driver5Value01 = controls.driver5Value01.coerceIn(0.0f, 1.0f),
-            driver6Value01 = controls.driver6Value01.coerceIn(0.0f, 1.0f),
-            driver7Value01 = controls.driver7Value01.coerceIn(0.0f, 1.0f),
-            pointScale = controls.pointScale.coerceIn(0.35f, 2.25f),
-            tracerDrawSlotsPerOscillator =
-                controls.tracerDrawSlotsPerOscillator.coerceIn(0.0f, 7.0f),
-            tracerLifetimeSeconds = controls.tracerLifetimeSeconds.coerceIn(0.0f, 0.5f),
-            tracerCopiesPerSecond = controls.tracerCopiesPerSecond.coerceIn(0.0f, 14.0f),
-            transparencyOpacity = controls.transparencyOpacity.coerceIn(0.0f, 1.0f),
-            projectionWorldScale = controls.projectionWorldScale.coerceIn(0.5f, 2.0f),
-        )
-    submitNativeSurfaceParticleParameters(source = source)
-    return particleControls
-  }
-
-  private fun applyDriverProfileToParticleControls(
-      block: ActiveBlockSnapshot,
-      source: String,
-  ): SurfaceParticleControlState {
-    val updated =
-        updateSurfaceParticleControls(
-            block.driver0Value01.toFloat(),
-            block.driver1Value01.toFloat(),
-            particleControls.pointScale,
-            source = source,
-        )
-    marker(
-        "channel=spatial-camera-panel status=driver-profile-parameter-handoff " +
-            "rendererAuthority=native-vulkan-wsi-surface-panel transport=jni-live-queue " +
-            "panelMustNotBeAuthority=true highRatePayloadsAllowed=false " +
-            "source=${activityMarkerToken(source)} driverProfileId=${activityMarkerToken(block.conditionId)} " +
-            "profileId=${activityMarkerToken(block.profileId)} " +
-            "workflowPanelVisibleAtHandoff=${panelPlacement.visible} " +
-            "panelClosedBeforeHandoff=${!panelPlacement.visible} " +
-            "profileDriver0Value01=${String.format(Locale.US, "%.3f", block.driver0Value01)} " +
-            "profileDriver1Value01=${String.format(Locale.US, "%.3f", block.driver1Value01)} " +
-            "driver0Value01=${activityMarkerFloat(updated.driver0Value01)} " +
-            "driver1Value01=${activityMarkerFloat(updated.driver1Value01)} " +
-            "pointScale=${activityMarkerFloat(updated.pointScale)}"
-    )
-    return updated
-  }
-
-  private fun submitNativeSurfaceParticleParameters(source: String) {
-    if (!nativeInteropCoordinator.receiptLibraryLoaded) {
-      marker(
-          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleParameterSubmitSkippedMarker(source)
-      )
-      return
-    }
-    runCatching {
-          val mask =
-              nativeUpdateSurfaceParticleParameters(
-                  particleControls.driver0Value01,
-                  particleControls.driver1Value01,
-                  particleControls.pointScale,
-                  particleControls.driver2Value01,
-                  particleControls.driver3Value01,
-                  particleControls.driver4Value01,
-                  particleControls.driver5Value01,
-                  particleControls.driver6Value01,
-                  particleControls.driver7Value01,
-                  particleControls.tracerDrawSlotsPerOscillator,
-                  particleControls.tracerLifetimeSeconds,
-                  particleControls.tracerCopiesPerSecond,
-                  particleControls.transparencyOpacity,
-                  particleControls.projectionWorldScale,
-              )
-          marker(
-              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleParametersSubmittedMarker(
-                  source,
-                  mask,
-                  particleControls,
-              )
-          )
-        }
-        .getOrElse { throwable ->
-          marker(
-              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleParameterSubmitFailedMarker(
-                  source,
-                  throwable.javaClass.simpleName,
-              )
-          )
-        }
   }
 
   private fun resolveSurfaceParticleAliasControl(intent: Intent, source: String) {
@@ -1636,42 +1550,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: "default"
-    if (!nativeInteropCoordinator.receiptLibraryLoaded) {
-      marker(
-          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleAliasSubmitSkippedMarker(
-              source,
-              parameterId,
-              activationProfile,
-          )
-      )
-      return
-    }
-    runCatching {
-          val mask =
-              nativeResolveSurfaceParticleAliasParameter(
-                  parameterId,
-                  requestedValue,
-                  activationProfile,
-              )
-          marker(
-              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleAliasSubmittedMarker(
-                  source,
-                  parameterId,
-                  activationProfile,
-                  requestedValue,
-                  mask,
-              )
-          )
-        }
-        .getOrElse { throwable ->
-          marker(
-              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleAliasSubmitFailedMarker(
-                  source,
-                  parameterId,
-                  throwable.javaClass.simpleName,
-              )
-          )
-        }
+    surfaceParticleParameterCoordinator.resolveAlias(
+        source,
+        parameterId,
+        requestedValue,
+        activationProfile,
+    )
   }
 
   private fun suppressParticleLayerForCameraStack(source: String) {
