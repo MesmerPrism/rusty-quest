@@ -3,8 +3,6 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel
 import android.content.Intent
 import android.graphics.PorterDuff
 import android.os.Bundle
-import android.os.Handler
-import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
@@ -386,6 +384,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
+  private val surfaceParticleLifecycleDiagnosticsCoordinator by
+      lazy(LazyThreadSafetyMode.NONE) {
+        SpatialSurfaceParticleLifecycleDiagnosticsCoordinator(
+            SpatialSurfaceParticleLifecycleDiagnosticsBindings(
+                featureEnabled = ::nativeSurfaceParticleLayerEnabled,
+                activityMarkersFile = ACTIVITY_MARKERS_FILE,
+                snapshot = ::surfaceParticleLifecycleDiagnosticSnapshot,
+                marker = ::marker,
+            )
+        )
+      }
   private val controllerPollingCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialControllerPollingCoordinator(
         SpatialControllerPollingBindings(
@@ -450,9 +459,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         SpatialValidationWorkflowBindings(
             store = { store },
             marker = ::marker,
-            scheduleParticleLayerLifecycleDiagnostics =
-                ::scheduleParticleLayerLifecycleDiagnostics,
-            logParticleLayerLifecycleStatus = ::logParticleLayerLifecycleStatus,
+            scheduleParticleLayerLifecycleDiagnostics = { reason ->
+              surfaceParticleLifecycleDiagnosticsCoordinator.schedule(
+                  reason,
+                  explicitRequest = true,
+              )
+              Unit
+            },
+            logParticleLayerLifecycleStatus = { phase ->
+              surfaceParticleLifecycleDiagnosticsCoordinator.log(
+                  phase,
+                  explicitRequest = true,
+              )
+              Unit
+            },
             setWorkflowPanelVisible = { visible, focus, source ->
               setWorkflowPanelVisible(visible, focus, source)
               Unit
@@ -1112,7 +1132,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "spatialSdkLaneBoundaries=${SpatialSdkLaneBoundaries.summaryToken()}"
     )
     runSpatialVirtualRoomIfRequested("activity-created")
-    scheduleParticleLayerLifecycleDiagnostics("activity-created")
+    surfaceParticleLifecycleDiagnosticsCoordinator.schedule("activity-created")
     validationWorkflowCoordinator.dispatchIfRequested(intent)
   }
 
@@ -1230,7 +1250,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             stereoMarkerFields = particleLayerStereoMarkerFields(),
         )
     )
-    scheduleParticleLayerLifecycleDiagnostics("scene-ready")
+    surfaceParticleLifecycleDiagnosticsCoordinator.schedule("scene-ready")
     spatialVideoProjectionProbeCoordinator.runIfRequested("scene-ready")
     cameraHwbProjectionLaunchCoordinator.runIfRequested("scene-ready")
   }
@@ -1430,7 +1450,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         carrier = particleLayerCarrierToken(),
         nativeSurfaceParticleLayerEnabled = nativeSurfaceParticleLayerEnabled(),
     )
-    scheduleParticleLayerLifecycleDiagnostics("register-panels")
+    surfaceParticleLifecycleDiagnosticsCoordinator.schedule("register-panels")
     return panels
   }
 
@@ -3288,51 +3308,37 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     stagedAssetModule.startIfRequested(intent, reason)
   }
 
-
-  private fun scheduleParticleLayerLifecycleDiagnostics(reason: String) {
-    val mainHandler = Handler(Looper.getMainLooper())
-    listOf(750L, 2500L, 6500L, 14000L).forEach { delayMs ->
-      mainHandler.postDelayed({ logParticleLayerLifecycleStatus("$reason-$delayMs") }, delayMs)
-    }
-  }
-
-  private fun logParticleLayerLifecycleStatus(phase: String) {
+  private fun surfaceParticleLifecycleDiagnosticSnapshot():
+      SpatialSurfaceParticleLifecycleDiagnosticSnapshot {
     val probe =
         runCatching { SpatialNativeInteropProbe.capture(scene) }
             .getOrElse { SpatialNativeInteropProbe(runtimeName = "unavailable", 0L, 0L, 0L) }
     val snapshot = runCatching { store.snapshot() }.getOrNull()
     val presentationSnapshot = surfaceParticlePresentationStateCoordinator.snapshot()
-    marker(
-        SpatialSurfaceParticleRouteModule.nativeSurfaceParticleLifecycleCheckMarker(
-            phase = phase,
-            activityMarkersFile = ACTIVITY_MARKERS_FILE,
-            panelRegistrationCount = presentationSnapshot.panelRegistrationCount,
-            panelMode = panelStateToken(),
-            workflowPanelVisible = panelPlacement.visible,
-            launcherPanelVisible = launcherPanelVisibleForPanelMode(),
-            legacyLauncherPanelSuppressed = legacyLauncherPanelSuppressedForCameraStack(),
-            particleLayerEntityCreated = particleLayerEntity != null,
-            particleSurfacePanelReady = presentationSnapshot.panelReady,
-            particleSurfaceConsumerCalled = presentationSnapshot.surfaceConsumerCalled,
-            particleSurfaceConsumerSurfaceValid =
-                presentationSnapshot.surfaceConsumerSurfaceValid,
-            nativeSurfaceParticleLayerEnabled = nativeSurfaceParticleLayerEnabled(),
-            particleLayerStarted = surfaceParticleRuntimeCoordinator.particleLayerStarted,
-            nativeSurfaceStartRequested =
-                surfaceParticleRuntimeCoordinator.nativeSurfaceStartRequested,
-            lastNativeSurfaceStartMask =
-                surfaceParticleRuntimeCoordinator.lastNativeSurfaceStartMask,
-            nativeReceiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded,
-            nativeReceiptLibraryError = nativeInteropCoordinator.receiptLibraryError,
-            openXrInstanceHandleNonZero = probe.openXrInstanceHandleNonZero,
-            openXrSessionHandleNonZero = probe.openXrSessionHandleNonZero,
-            openXrGetInstanceProcAddrHandleNonZero = probe.openXrGetInstanceProcAddrHandleNonZero,
-            currentDriverProfileId = snapshot?.currentConditionId ?: "none",
-            currentProfileId = snapshot?.currentProfileId ?: "none",
-            placementMarkerFields =
-                surfaceParticleProjectionGeometryCoordinator.placementMarkerFields(),
-            stereoMarkerFields = particleLayerStereoMarkerFields(),
-        )
+    return SpatialSurfaceParticleLifecycleDiagnosticSnapshot(
+        panelRegistrationCount = presentationSnapshot.panelRegistrationCount,
+        panelMode = panelStateToken(),
+        workflowPanelVisible = panelPlacement.visible,
+        launcherPanelVisible = launcherPanelVisibleForPanelMode(),
+        legacyLauncherPanelSuppressed = legacyLauncherPanelSuppressedForCameraStack(),
+        particleLayerEntityCreated = particleLayerEntity != null,
+        particleSurfacePanelReady = presentationSnapshot.panelReady,
+        particleSurfaceConsumerCalled = presentationSnapshot.surfaceConsumerCalled,
+        particleSurfaceConsumerSurfaceValid = presentationSnapshot.surfaceConsumerSurfaceValid,
+        nativeSurfaceParticleLayerEnabled = nativeSurfaceParticleLayerEnabled(),
+        particleLayerStarted = surfaceParticleRuntimeCoordinator.particleLayerStarted,
+        nativeSurfaceStartRequested =
+            surfaceParticleRuntimeCoordinator.nativeSurfaceStartRequested,
+        lastNativeSurfaceStartMask = surfaceParticleRuntimeCoordinator.lastNativeSurfaceStartMask,
+        nativeReceiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded,
+        nativeReceiptLibraryError = nativeInteropCoordinator.receiptLibraryError,
+        openXrInstanceHandleNonZero = probe.openXrInstanceHandleNonZero,
+        openXrSessionHandleNonZero = probe.openXrSessionHandleNonZero,
+        openXrGetInstanceProcAddrHandleNonZero = probe.openXrGetInstanceProcAddrHandleNonZero,
+        currentDriverProfileId = snapshot?.currentConditionId ?: "none",
+        currentProfileId = snapshot?.currentProfileId ?: "none",
+        placementMarkerFields = surfaceParticleProjectionGeometryCoordinator.placementMarkerFields(),
+        stereoMarkerFields = particleLayerStereoMarkerFields(),
     )
   }
 

@@ -629,6 +629,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   command receipts. It fails closed before JNI unless the Activity-supplied
   particle feature opt-in is enabled; property reads and JNI declarations stay
   in Activity bindings.
+- `app/src/main/.../SpatialSurfaceParticleLifecycleDiagnosticsCoordinator.kt`
+  owns delayed lifecycle-check scheduling and read-only marker projection. It
+  fails closed for ordinary lifecycle callbacks when the particle feature is
+  disabled; exact validation intents can opt in explicitly. The Activity
+  supplies scene, store, panel, runtime, receipt, and presentation snapshots,
+  so diagnostics cannot create entities or activate the particle runtime.
 - `app/src/main/.../SpatialSurfaceParticlePanelCarrierModule.kt` owns native
   surface-particle panel carrier construction: registered video-surface callback
   sequencing, the manual custom-mesh `PanelSceneObject`, create/surface/add
