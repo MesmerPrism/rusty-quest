@@ -238,6 +238,12 @@ Apply that model here when a lane grows beyond a narrow facade method:
   generated layer lifecycle, native producer start/stop, hold timer, cleanup,
   and receipts in `SpatialCameraHwbProbeCoordinator.kt`; keep property reads,
   JNI declarations, and camera-projection authority in Activity bindings;
+- package video-projection probe opt-in, scene/virtual-room deferral, start
+  state, settings resolution, Android swapchain/surface lifecycle, shared
+  projection-layer request, native probe start, and route receipts in
+  `SpatialVideoProjectionProbeCoordinator.kt`; retain effective settings,
+  native configuration, projection startup, viewer updates, and JNI authority
+  in explicit Activity callbacks;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, placement-plane construction from

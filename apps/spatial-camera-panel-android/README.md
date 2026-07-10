@@ -399,6 +399,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   start/stop, hold timer, cleanup, and receipts. The Activity supplies the
   projection-property adapter, dynamic native state, JNI callbacks, shared
   resources, and marker sink; camera projection retains separate authority.
+- `app/src/main/.../SpatialVideoProjectionProbeCoordinator.kt` owns the
+  explicit video-projection probe opt-in, scene/virtual-room deferral, start
+  state, settings resolution, Android swapchain/surface lifecycle, shared
+  projection-layer request, native probe start, and route receipts. Activity
+  bindings retain effective settings, camera-panel suppression, native video
+  configuration, shared projection startup, viewer updates, and JNI authority;
+  the coordinator does not create a second settings source of truth.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, viewer-locked and virtual-wall projection

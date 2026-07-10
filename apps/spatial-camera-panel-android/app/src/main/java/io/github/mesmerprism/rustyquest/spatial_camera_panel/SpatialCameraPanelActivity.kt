@@ -333,7 +333,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     )
   }
   private var cameraHwbProjectionProbeStarted = false
-  private var spatialVideoProjectionProbeStarted = false
   private var spatialVideoProjectionSettings = SpatialVideoProjectionSettings.disabled()
   private var spatialVideoProjectionStarted = false
   private var nativeSpatialEnvironmentDepthStartMask = 0L
@@ -420,6 +419,52 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             },
             startNative = ::nativeStartCameraHwbProbe,
             stopNative = ::nativeStopCameraHwbProbe,
+            marker = ::marker,
+        )
+    )
+  }
+  private val spatialVideoProjectionProbeCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialVideoProjectionProbeCoordinator(
+        SpatialVideoProjectionProbeBindings(
+            resources = sdkQuadResourceCoordinator,
+            state = {
+              SpatialVideoProjectionProbeState(
+                  enabled =
+                      activityReadOptionalBooleanSystemProperty(
+                          SPATIAL_VIDEO_PROJECTION_PROBE_PROPERTY
+                      ) == true,
+                  sceneReady = spatialSceneReady,
+                  virtualRoomEnabled = spatialVirtualRoomEnabled(),
+                  virtualRoomLoaded = spatialVirtualRoomLoaded(),
+                  receiptLibraryLoaded = nativeReceiptLibraryLoaded,
+                  receiptLibraryError = nativeReceiptLibraryError,
+              )
+            },
+            resolveSettings = { currentSpatialVideoProjectionSettings(intent) },
+            projectionMarkerFields = ::cameraHwbProjectionMarkerFields,
+            stereoMarkerFields = ::cameraHwbProjectionStereoMarkerFields,
+            cleanup = ::cleanupSdkQuadSurfaceProbe,
+            prepare = { videoSettings ->
+              spatialVideoProjectionSettings = videoSettings
+              cameraHwbProjectionEntity = null
+              cameraHwbProjectionStereoHorizontalOffsetUv =
+                  CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV
+              cameraHwbProjectionMarkerCount = 0
+              lastCameraHwbProjectionMarkerMs = 0L
+              suppressParticleLayerForCameraStack("spatial-video-projection-probe")
+              setWorkflowPanelVisible(
+                  false,
+                  focus = false,
+                  source = "spatial-video-projection-probe",
+              )
+            },
+            configureNative = ::configureNativeSpatialVideoProjection,
+            startProjection = ::startSpatialVideoProjection,
+            createLayer = ::createCameraHwbProjectionLayer,
+            startNative = ::nativeStartSpatialVideoProjectionProbe,
+            updateFromViewer = { reason, forceLog ->
+              updateCameraHwbProjectionFromViewer(reason, forceLog)
+            },
             marker = ::marker,
         )
     )
@@ -660,7 +705,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
     scheduleParticleLayerLifecycleDiagnostics("scene-ready")
-    runSpatialVideoProjectionProbeIfRequested("scene-ready")
+    spatialVideoProjectionProbeCoordinator.runIfRequested("scene-ready")
     runCameraHwbProjectionProbeIfRequested("scene-ready")
   }
 
@@ -675,7 +720,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     sdkQuadVulkanProbeCoordinator.runIfRequested("vr-ready")
     sdkQuadStereoAlphaProbeCoordinator.runIfRequested("vr-ready")
     panelSurfaceMatrixProbeCoordinator.runIfRequested("vr-ready")
-    runSpatialVideoProjectionProbeIfRequested("vr-ready")
+    spatialVideoProjectionProbeCoordinator.runIfRequested("vr-ready")
     runCameraHwbProjectionProbeIfRequested("vr-ready")
     cameraHwbProbeCoordinator.runIfRequested("vr-ready")
   }
@@ -948,7 +993,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         projectionState = spatialVirtualRoomProjectionState(),
         onLoaded = {
           runSpatialStagedAssetIfRequested(intent, "virtual-room-loaded")
-          runSpatialVideoProjectionProbeIfRequested("virtual-room-loaded")
+          spatialVideoProjectionProbeCoordinator.runIfRequested("virtual-room-loaded")
           runCameraHwbProjectionProbeIfRequested("virtual-room-loaded")
         },
     )
@@ -1248,176 +1293,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             nativeSpatialControllerActionsStarted,
         )
     )
-  }
-
-  private fun runSpatialVideoProjectionProbeIfRequested(reason: String) {
-    if (spatialVideoProjectionProbeStarted) {
-      return
-    }
-    if (activityReadOptionalBooleanSystemProperty(SPATIAL_VIDEO_PROJECTION_PROBE_PROPERTY) != true) {
-      return
-    }
-    if (!spatialSceneReady) {
-      marker(SpatialVideoProjectionRouteModule.startDeferredForSceneMarker(reason))
-      return
-    }
-    if (spatialVirtualRoomEnabled() && !spatialVirtualRoomLoaded()) {
-      marker(
-          SpatialVideoProjectionRouteModule.startDeferredForVirtualRoomMarker(
-              reason,
-              spatialSceneReady,
-          )
-      )
-      return
-    }
-    spatialVideoProjectionProbeStarted = true
-    val videoSettings = currentSpatialVideoProjectionSettings(intent)
-    marker(
-        SpatialVideoProjectionRouteModule.startMarker(
-            reason = reason,
-            widthPx = CAMERA_HWB_PROJECTION_WIDTH_PX,
-            heightPx = CAMERA_HWB_PROJECTION_HEIGHT_PX,
-            projectionMarkerFields = cameraHwbProjectionMarkerFields(),
-            stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
-            settings = videoSettings,
-        )
-    )
-    Handler(Looper.getMainLooper()).post { runSpatialVideoProjectionProbe(videoSettings) }
-  }
-
-  private fun runSpatialVideoProjectionProbe(videoSettings: SpatialVideoProjectionSettings) {
-    cleanupSdkQuadSurfaceProbe("spatial-video-projection-pre-run")
-    spatialVideoProjectionSettings = videoSettings
-    cameraHwbProjectionEntity = null
-    cameraHwbProjectionStereoHorizontalOffsetUv =
-        CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV
-    cameraHwbProjectionMarkerCount = 0
-    lastCameraHwbProjectionMarkerMs = 0L
-    suppressParticleLayerForCameraStack("spatial-video-projection-probe")
-    setWorkflowPanelVisible(false, focus = false, source = "spatial-video-projection-probe")
-    if (!videoSettings.active) {
-      configureNativeSpatialVideoProjection(videoSettings, "video-only-inactive")
-      marker(SpatialVideoProjectionRouteModule.inactiveCompleteMarker(videoSettings))
-      return
-    }
-    if (!nativeReceiptLibraryLoaded) {
-      marker(
-          SpatialVideoProjectionRouteModule.nativeReceiptUnavailableCompleteMarker(
-              nativeReceiptLibraryError
-          )
-      )
-      return
-    }
-    val sdkSwapchain =
-        runCatching {
-              SceneSwapchain.createAsAndroid(
-                  CAMERA_HWB_PROJECTION_WIDTH_PX,
-                  CAMERA_HWB_PROJECTION_HEIGHT_PX,
-                  false,
-              )
-            }
-            .getOrElse { throwable ->
-              marker(
-                  SpatialVideoProjectionRouteModule.sdkSwapchainCreateFailedCompleteMarker(
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              return
-            }
-    sdkQuadResourceCoordinator.adoptSwapchain(sdkSwapchain)
-    val surface =
-        runCatching { sdkSwapchain.getSurface() }
-            .getOrElse { throwable ->
-              marker(
-                  SpatialVideoProjectionRouteModule.getSurfaceFailedMarker(
-                      handle = sdkSwapchain.handle,
-                      nativeHandle = sdkSwapchain.nativeHandle(),
-                      platformHandle = sdkSwapchain.platformHandle(),
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              null
-            }
-    sdkQuadResourceCoordinator.adoptSurface(surface)
-    val surfaceValid = surface?.isValid == true
-    marker(
-        SpatialVideoProjectionRouteModule.sdkSwapchainCreatedMarker(
-            handle = sdkSwapchain.handle,
-            nativeHandle = sdkSwapchain.nativeHandle(),
-            platformHandle = sdkSwapchain.platformHandle(),
-            surfaceValid = surfaceValid,
-            widthPx = CAMERA_HWB_PROJECTION_WIDTH_PX,
-            heightPx = CAMERA_HWB_PROJECTION_HEIGHT_PX,
-            stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
-            settings = videoSettings,
-        )
-    )
-    val renderSurface = surface
-    if (!surfaceValid) {
-      val cleanupStatus = cleanupSdkQuadSurfaceProbe("spatial-video-projection-surface-invalid")
-      marker(
-          SpatialVideoProjectionRouteModule.completeMarker(
-              sdkSwapchainCreated = true,
-              surfaceValid = surfaceValid,
-              sceneQuadLayerCreated = false,
-              nativeStartRequested = false,
-              cleanupStatus = cleanupStatus,
-          )
-      )
-      return
-    }
-
-    val layerCreated = createCameraHwbProjectionLayer(sdkSwapchain)
-    if (!layerCreated) {
-      val cleanupStatus = cleanupSdkQuadSurfaceProbe("spatial-video-projection-layer-create-failed")
-      marker(
-          SpatialVideoProjectionRouteModule.completeMarker(
-              sdkSwapchainCreated = true,
-              surfaceValid = surfaceValid,
-              sceneQuadLayerCreated = false,
-              nativeStartRequested = false,
-              cleanupStatus = cleanupStatus,
-          )
-      )
-      return
-    }
-
-    configureNativeSpatialVideoProjection(videoSettings, "video-only-start")
-    startSpatialVideoProjection(videoSettings, "video-only-start")
-    val startMask =
-        runCatching {
-              nativeStartSpatialVideoProjectionProbe(
-                  renderSurface,
-                  CAMERA_HWB_PROJECTION_WIDTH_PX,
-                  CAMERA_HWB_PROJECTION_HEIGHT_PX,
-                  SPATIAL_VIDEO_PROJECTION_FRAME_COUNT_UNBOUNDED,
-              )
-            }
-            .getOrElse { throwable ->
-              val cleanupStatus = cleanupSdkQuadSurfaceProbe("spatial-video-projection-start-failed")
-              marker(
-                  SpatialVideoProjectionRouteModule.completeMarker(
-                      sdkSwapchainCreated = true,
-                      surfaceValid = surfaceValid,
-                      sceneQuadLayerCreated = true,
-                      nativeStartRequested = false,
-                      cleanupStatus = cleanupStatus,
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              return
-            }
-    marker(
-        SpatialVideoProjectionRouteModule.nativeStartRequestedMarker(
-            surfaceValid = surfaceValid,
-            startMask = startMask,
-            settings = videoSettings,
-        )
-    )
-    updateCameraHwbProjectionFromViewer(reason = "video-only-start", forceLog = true)
   }
 
   private fun runCameraHwbProjectionProbeIfRequested(reason: String) {
