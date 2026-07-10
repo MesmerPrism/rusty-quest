@@ -35,7 +35,6 @@ internal data class SpatialCameraHwbProjectionRawCarrierBindings(
     val videoProjectionMarkerFields: (SpatialVideoProjectionSettings) -> String,
     val syntheticVisualEnabled: () -> Boolean,
     val drawSyntheticVisual: (AndroidSurface, String) -> Boolean,
-    val setSyntheticVisualPresented: (Boolean) -> Unit,
     val startNativePassthrough: (String) -> Long,
     val startEnvironmentDepth: (String) -> Long,
     val updateNativeStereoOffset: (String, Boolean) -> Unit,
@@ -137,7 +136,6 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
 
     if (bindings.syntheticVisualEnabled()) {
       val canvasDrawn = bindings.drawSyntheticVisual(renderSurface, "SceneQuadLayer")
-      bindings.setSyntheticVisualPresented(canvasDrawn)
       bindings.marker(
           CameraHwbProjectionModule.rawProjectionSyntheticVisualPresentedMarker(
               surfaceValid = surfaceValid,

@@ -420,6 +420,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   route fails closed unless the launch coordinator is active and raw carrier
   mode is selected. Activity bindings retain effective settings, entity state,
   placement inputs, private-layer policy, video startup, and JNI authority.
+- `app/src/main/.../SpatialCameraHwbProjectionPanelCarrierCoordinator.kt`
+  owns the panel-carrier lifecycle state, video-panel callback adoption, SDK
+  and manual carrier construction, readiness/start sequencing, layer updates,
+  synthetic-preview branch, native producer start, and ordered cleanup. It
+  fails closed unless the launch coordinator is active and panel carrier mode
+  is selected. Activity bindings retain effective settings, placement and
+  private-layer policy, shared projection entity state, and JNI authority.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, viewer-locked and virtual-wall projection
