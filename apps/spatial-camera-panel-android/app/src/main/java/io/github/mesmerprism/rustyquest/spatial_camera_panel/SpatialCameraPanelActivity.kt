@@ -104,9 +104,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var privateLayerPanelEntity: Entity? = null
   private var privateLayerPanelSceneObject: PanelSceneObject? = null
   private var privateLayerPanelVisible = false
-  private var privateLayerOverride = PrivateLayerControls.cycleOverride
-  private var privateLayerDepthLayerPolicy = PrivateLayerControls.defaultDepthLayerPolicy
-  private var privateLayerDepthAlignment = PrivateLayerDepthAlignment()
   private var panelLauncherEntity: Entity? = null
   private var panelPlacement = PanelPlacement(visible = !startInParticleView())
   private var privateLayerPanelPlacement = SpatialPanelPlacementModule.initialPrivateLayerPlacement()
@@ -115,6 +112,32 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var particleLayerManualPanelSurface: AndroidSurface? = null
   private var polarSensorPanel: PolarSensorPanel? = null
   private val panelInteractionStateCoordinator = SpatialPanelInteractionStateCoordinator()
+  private val privateLayerControlCoordinator: SpatialPrivateLayerControlCoordinator by
+      lazy(LazyThreadSafetyMode.NONE) {
+        SpatialPrivateLayerControlCoordinator(
+            SpatialPrivateLayerControlBindings(
+                routeActive = {
+                  cameraHwbProjectionLaunchCoordinator.started ||
+                      spatialVideoProjectionRuntimeCoordinator.started
+                },
+                placementMode = cameraHwbProjectionCarrierStateCoordinator::placementMode,
+                projectionTargetScale = cameraHwbProjectionTuningCoordinator::targetScale,
+                updatePlacement = cameraHwbProjectionPlacementUpdateCoordinator::update,
+                updateLayerOverrideNative = ::nativeUpdatePrivateLayerOverride,
+                updateDepthLayerPolicyNative = ::nativeUpdatePrivateLayerDepthLayerPolicy,
+                updateDepthAlignmentNative = { alignment ->
+                  nativeUpdatePrivateLayerDepthAlignment(
+                      alignment.leftX,
+                      alignment.leftY,
+                      alignment.rightX,
+                      alignment.rightY,
+                      alignment.sampleScale,
+                  )
+                },
+                marker = ::marker,
+            )
+        )
+      }
   private var lastSpatialJoystickArbitrationMarkerMs = 0L
   private val controllerInputRouteSpec =
       SpatialControllerInputRouteSpec(
@@ -816,11 +839,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             updateNativeTargetScale = { reason, forceLog ->
               cameraHwbProjectionTuningCoordinator.updateNativeTargetScale(reason, forceLog)
             },
-            applyPrivateLayerConfiguration = { source ->
-              updatePrivateLayerOverrideFromPanel(privateLayerOverride, source)
-              updatePrivateLayerDepthLayerPolicyFromPanel(privateLayerDepthLayerPolicy, source)
-              updatePrivateLayerDepthAlignmentFromPanel(privateLayerDepthAlignment, source)
-            },
+            applyPrivateLayerConfiguration =
+                privateLayerControlCoordinator::applyCurrentConfiguration,
             configureVideoProjection = spatialVideoProjectionRuntimeCoordinator::configure,
             startVideoProjection = spatialVideoProjectionRuntimeCoordinator::start,
             startNative = ::nativeStartCameraHwbProjectionProbe,
@@ -871,11 +891,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             updateNativeTargetScale = { reason, forceLog ->
               cameraHwbProjectionTuningCoordinator.updateNativeTargetScale(reason, forceLog)
             },
-            applyPrivateLayerConfiguration = { source ->
-              updatePrivateLayerOverrideFromPanel(privateLayerOverride, source)
-              updatePrivateLayerDepthLayerPolicyFromPanel(privateLayerDepthLayerPolicy, source)
-              updatePrivateLayerDepthAlignmentFromPanel(privateLayerDepthAlignment, source)
-            },
+            applyPrivateLayerConfiguration =
+                privateLayerControlCoordinator::applyCurrentConfiguration,
             configureVideoProjection = spatialVideoProjectionRuntimeCoordinator::configure,
             startVideoProjection = spatialVideoProjectionRuntimeCoordinator::start,
             startNative = ::nativeStartCameraHwbProjectionProbe,
@@ -1004,7 +1021,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   receiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded
               )
             },
-            privateLayerOverride = { privateLayerOverride },
+            privateLayerOverride = { privateLayerControlCoordinator.layerOverride },
             reapplyPrivateLayerOverride = ::nativeUpdatePrivateLayerOverride,
             marker = ::marker,
         )
@@ -1358,27 +1375,22 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 ),
             privateLayer =
                 SpatialPrivateLayerPanelRegistrationBindings(
-                    layerOverride = privateLayerOverride,
+                    layerOverride = privateLayerControlCoordinator.layerOverride,
                     projectionScale = cameraHwbProjectionTuningCoordinator.targetScale(),
                     projectionScaleRange =
                         CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE..CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE,
-                    depthLayerPolicy = privateLayerDepthLayerPolicy,
-                    depthAlignment = privateLayerDepthAlignment,
-                    setLayerOverride = { override, source ->
-                      updatePrivateLayerOverrideFromPanel(override, source)
-                    },
+                    depthLayerPolicy = privateLayerControlCoordinator.depthLayerPolicy,
+                    depthAlignment = privateLayerControlCoordinator.depthAlignment,
+                    setLayerOverride = privateLayerControlCoordinator::updateLayerOverride,
                     updateProjectionScale = { scale, source ->
                       cameraHwbProjectionTuningCoordinator.updateTargetScaleFromPanel(
                           scale,
                           source,
                       )
                     },
-                    updateDepthLayerPolicy = { policy, source ->
-                      updatePrivateLayerDepthLayerPolicyFromPanel(policy, source)
-                    },
-                    updateDepthAlignment = { alignment, source ->
-                      updatePrivateLayerDepthAlignmentFromPanel(alignment, source)
-                    },
+                    updateDepthLayerPolicy =
+                        privateLayerControlCoordinator::updateDepthLayerPolicy,
+                    updateDepthAlignment = privateLayerControlCoordinator::updateDepthAlignment,
                     closePanel = {
                       setPrivateLayerPanelVisible(
                           false,
@@ -1545,7 +1557,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     cameraHwbProjectionEntity = null
     cameraHwbProjectionCarrierStateCoordinator.resetForLaunch()
     cameraHwbProjectionTuningCoordinator.resetForLaunch()
-    privateLayerDepthLayerPolicy = initialPrivateLayerDepthLayerPolicy()
+    privateLayerControlCoordinator.initializeDepthLayerPolicy(
+        initialPrivateLayerDepthLayerPolicy()
+    )
     cameraHwbProjectionPlacementUpdateCoordinator.resetMarkerCadence()
     suppressParticleLayerForCameraStack("camera-hwb-projection-probe")
     privateLayerPanelVisible = false
@@ -1978,7 +1992,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     cameraHwbProjectionGeometryCoordinator.inputCarrierBehindPrivatePanel(),
                 projectionPanelInputTargetDistanceMeters =
                     cameraHwbProjectionGeometryCoordinator.targetDistanceMeters(),
-                privateLayerOverride = privateLayerOverride,
+                privateLayerOverride = privateLayerControlCoordinator.layerOverride,
                 headlockMarkerFields = panelHeadlockMarkerFields(),
             )
         )
@@ -2500,129 +2514,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         controllerJoystickMapping = "right-stick-y-projection-target-scale",
         detail = "rightStickY=${activityMarkerFloat(rightY)}",
     )
-  }
-
-  private fun updatePrivateLayerOverrideFromPanel(
-      requestedLayerOverride: Float,
-      source: String,
-  ): Float {
-    val previousOverride = privateLayerOverride
-    val updatedOverride =
-        PrivateLayerPanelControlModule.normalizeLayerOverride(requestedLayerOverride)
-    marker(
-        PrivateLayerPanelControlModule.layerButtonSelectedMarker(
-            source = source,
-            requestedLayerOverride = requestedLayerOverride,
-            previousOverride = previousOverride,
-            updatedOverride = updatedOverride,
-            placementMode = cameraHwbProjectionCarrierStateCoordinator.placementMode(),
-        )
-    )
-    privateLayerOverride = updatedOverride
-    val updateMask =
-        runCatching { nativeUpdatePrivateLayerOverride(updatedOverride) }
-            .getOrElse { throwable ->
-              marker(
-                  PrivateLayerPanelControlModule.layerOverrideUpdateFailedMarker(
-                      source = source,
-                      requestedLayerOverride = requestedLayerOverride,
-                      updatedOverride = updatedOverride,
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              0L
-            }
-    marker(
-        PrivateLayerPanelControlModule.layerOverrideSubmittedMarker(
-            source = source,
-            updateMask = updateMask,
-            previousOverride = previousOverride,
-            updatedOverride = updatedOverride,
-            placementMode = cameraHwbProjectionCarrierStateCoordinator.placementMode(),
-            projectionTargetScale = cameraHwbProjectionTuningCoordinator.targetScale(),
-        )
-    )
-    cameraHwbProjectionPlacementUpdateCoordinator.update("private-layer-override-panel", true)
-    return updatedOverride
-  }
-
-  private fun updatePrivateLayerDepthLayerPolicyFromPanel(
-      requestedPolicy: Int,
-      source: String,
-  ): Int {
-    val previousPolicy = privateLayerDepthLayerPolicy
-    val updatedPolicy = PrivateLayerPanelControlModule.normalizeDepthLayerPolicy(requestedPolicy)
-    privateLayerDepthLayerPolicy = updatedPolicy
-    marker(
-        PrivateLayerPanelControlModule.depthLayerPolicySelectedMarker(
-            source = source,
-            requestedPolicy = requestedPolicy,
-            previousPolicy = previousPolicy,
-            updatedPolicy = updatedPolicy,
-        )
-    )
-    val updateMask =
-        runCatching { nativeUpdatePrivateLayerDepthLayerPolicy(updatedPolicy) }
-            .getOrElse { throwable ->
-              marker(
-                  PrivateLayerPanelControlModule.depthLayerPolicyUpdateFailedMarker(
-                      source = source,
-                      updatedPolicy = updatedPolicy,
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              0L
-            }
-    marker(
-        PrivateLayerPanelControlModule.depthLayerPolicySubmittedMarker(
-            source = source,
-            updateMask = updateMask,
-            previousPolicy = previousPolicy,
-            updatedPolicy = updatedPolicy,
-        )
-    )
-    return updatedPolicy
-  }
-
-  private fun updatePrivateLayerDepthAlignmentFromPanel(
-      requestedAlignment: PrivateLayerDepthAlignment,
-      source: String,
-  ): PrivateLayerDepthAlignment {
-    val previousAlignment = privateLayerDepthAlignment
-    val updatedAlignment = PrivateLayerPanelControlModule.coerceDepthAlignment(requestedAlignment)
-    privateLayerDepthAlignment = updatedAlignment
-    val updateMask =
-        runCatching {
-              nativeUpdatePrivateLayerDepthAlignment(
-                  updatedAlignment.leftX,
-                  updatedAlignment.leftY,
-                  updatedAlignment.rightX,
-                  updatedAlignment.rightY,
-                  updatedAlignment.sampleScale,
-              )
-            }
-            .getOrElse { throwable ->
-              marker(
-                  PrivateLayerPanelControlModule.depthAlignmentUpdateFailedMarker(
-                      source = source,
-                      updatedAlignment = updatedAlignment,
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              0L
-            }
-    marker(
-        PrivateLayerPanelControlModule.depthAlignmentSubmittedMarker(
-            source = source,
-            updateMask = updateMask,
-            previousAlignment = previousAlignment,
-            updatedAlignment = updatedAlignment,
-        )
-    )
-    return updatedAlignment
   }
 
   private fun handleSpatialJoystickMotion(event: MotionEvent, inputSource: String): Boolean {

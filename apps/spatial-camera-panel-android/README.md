@@ -507,6 +507,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   depth-alignment clamping, panel-control marker fields, and JNI submission
   result markers. It must not render Compose UI, mutate Activity state, call
   JNI, or decide feature opt-in.
+- `app/src/main/.../SpatialPrivateLayerControlCoordinator.kt` is the single
+  mutable owner for layer override, depth-source policy, and depth alignment.
+  It fails closed before state mutation or native submission unless the
+  Activity-supplied camera/video projection route is active. The Activity
+  retains property reads, exact route state, placement refresh, and JNI
+  declarations through typed bindings; the coordinator cannot activate a route.
 - `app/src/main/.../PrivateLayerControlPanel.kt` owns only the Compose
   projection of those controls and forwards requests to Activity-owned routes.
 - `app/src/main/.../SpatialControllerSnapshotAdapter.kt` owns read-only Spatial

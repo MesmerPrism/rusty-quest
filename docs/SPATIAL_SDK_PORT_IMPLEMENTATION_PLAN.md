@@ -326,6 +326,12 @@ Apply that model here when a lane grows beyond a narrow facade method:
 - package private-layer control choices, depth alignment clamping, panel-control
   marker fields, and JNI submission result marker fields in
   `PrivateLayerPanelControlModule.kt`;
+- package layer-override, depth-source, and depth-alignment mutable state plus
+  guarded native submission sequencing in
+  `SpatialPrivateLayerControlCoordinator.kt`; fail closed before mutation or
+  native submission unless the Activity-supplied camera/video projection route
+  is active, and retain property reads, route state, placement refresh, and JNI
+  declarations in typed Activity bindings;
 - keep `PrivateLayerControlPanel.kt` as the Compose-only projection of those
   controls;
 - package read-only Spatial SDK controller/avatar ECS observation, local-right
