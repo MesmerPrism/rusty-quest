@@ -480,8 +480,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               cameraHwbProjectionEntity = null
               cameraHwbProjectionStereoHorizontalOffsetUv =
                   CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV
-              cameraHwbProjectionMarkerCount = 0
-              lastCameraHwbProjectionMarkerMs = 0L
+              cameraHwbProjectionPlacementUpdateCoordinator.resetMarkerCadence()
               suppressParticleLayerForCameraStack("spatial-video-projection-probe")
               setWorkflowPanelVisible(
                   false,
@@ -499,7 +498,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             },
             startNative = ::nativeStartSpatialVideoProjectionProbe,
             updateFromViewer = { reason, forceLog ->
-              updateCameraHwbProjectionFromViewer(reason, forceLog)
+              cameraHwbProjectionPlacementUpdateCoordinator.update(reason, forceLog)
             },
             marker = ::marker,
         )
@@ -582,7 +581,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             configureVideoProjection = spatialVideoProjectionRuntimeCoordinator::configure,
             startVideoProjection = spatialVideoProjectionRuntimeCoordinator::start,
             startNative = ::nativeStartCameraHwbProjectionProbe,
-            updateFromViewer = ::updateCameraHwbProjectionFromViewer,
+            updateFromViewer = { reason, forceLog ->
+              cameraHwbProjectionPlacementUpdateCoordinator.update(reason, forceLog)
+            },
             marker = ::marker,
         )
     )
@@ -629,7 +630,60 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             startVideoProjection = spatialVideoProjectionRuntimeCoordinator::start,
             startNative = ::nativeStartCameraHwbProjectionProbe,
             stopNative = ::nativeStopCameraHwbProbe,
-            updateFromViewer = ::updateCameraHwbProjectionFromViewer,
+            updateFromViewer = { reason, forceLog ->
+              cameraHwbProjectionPlacementUpdateCoordinator.update(reason, forceLog)
+            },
+            marker = ::marker,
+        )
+    )
+  }
+  private val cameraHwbProjectionPlacementUpdateCoordinator:
+      SpatialCameraHwbProjectionPlacementUpdateCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialCameraHwbProjectionPlacementUpdateCoordinator(
+        SpatialCameraHwbProjectionPlacementUpdateBindings(
+            resources = sdkQuadResourceCoordinator,
+            routeActive = {
+              cameraHwbProjectionLaunchCoordinator.started ||
+                  spatialVideoProjectionRuntimeCoordinator.started
+            },
+            projectionEntity = { cameraHwbProjectionEntity },
+            scenePanelCarrierEnabled = ::cameraHwbProjectionScenePanelCarrierEnabled,
+            projectionPlane = ::cameraHwbProjectionPlaneForPlacement,
+            updatePanelCarrierLayer = { plane, reason ->
+              cameraHwbProjectionPanelCarrierCoordinator.updateLayer(plane, reason)
+            },
+            layerZIndex = ::cameraHwbProjectionZIndexForPlacement,
+            nativeState = {
+              SpatialCameraHwbProjectionPlacementNativeState(
+                  receiptLibraryLoaded = nativeReceiptLibraryLoaded,
+                  receiptLibraryError = nativeReceiptLibraryError,
+              )
+            },
+            updateNativePanelPose = { plane ->
+              nativeUpdateSurfaceParticlePanelPose(
+                  plane.center.x,
+                  plane.center.y,
+                  plane.center.z,
+                  plane.right.x,
+                  plane.right.y,
+                  plane.right.z,
+                  plane.up.x,
+                  plane.up.y,
+                  plane.up.z,
+                  plane.projectionWidthMeters,
+                  plane.projectionHeightMeters,
+                  plane.targetDistanceMeters,
+                  activityEyeOffsetRightMeters(plane.leftEyeOffset),
+                  activityEyeOffsetRightMeters(plane.rightEyeOffset),
+              )
+            },
+            projectionMarkerFields = { plane -> cameraHwbProjectionMarkerFields(plane) },
+            stereoMarkerFields = ::cameraHwbProjectionStereoMarkerFields,
+            videoProjectionMarkerFields = {
+              spatialVideoProjectionRuntimeCoordinator.markerFields(
+                  spatialVideoProjectionRuntimeCoordinator.settings
+              )
+            },
             marker = ::marker,
         )
     )
@@ -641,8 +695,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var cameraHwbProjectionCarrierMode = CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject
   private var lastCameraHwbProjectionPlacementToggleMs = 0L
   private var cameraHwbProjectionSecondaryToggleArmed = false
-  private var cameraHwbProjectionMarkerCount = 0
-  private var lastCameraHwbProjectionMarkerMs = 0L
   private var lastCameraHwbProjectionScaleJoystickMs = 0L
   private var lastCameraHwbProjectionScaleJoystickMarkerMs = 0L
   private val stagedAssetModule = SpatialStagedAssetModule(::marker)
@@ -884,7 +936,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     super.onSceneTick()
     updateWorkflowPanelHeadlockFromViewer(reason = "scene-tick", forceLog = false)
     updateParticleLayerProjectionFromViewer(reason = "scene-tick", forceLog = false)
-    updateCameraHwbProjectionFromViewer(reason = "scene-tick", forceLog = false)
+    cameraHwbProjectionPlacementUpdateCoordinator.update("scene-tick", false)
     controllerInputRouteCoordinator.ensureEnabled("scene-tick", forceLog = false)
     controllerPollingCoordinator.pollNativeInput()
   }
@@ -1436,8 +1488,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     cameraHwbProjectionStereoHorizontalOffsetUv =
         CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV
     privateLayerDepthLayerPolicy = initialPrivateLayerDepthLayerPolicy()
-    cameraHwbProjectionMarkerCount = 0
-    lastCameraHwbProjectionMarkerMs = 0L
+    cameraHwbProjectionPlacementUpdateCoordinator.resetMarkerCadence()
     lastCameraHwbProjectionScaleJoystickMs = 0L
     lastCameraHwbProjectionScaleJoystickMarkerMs = 0L
     cameraHwbProjectionSecondaryToggleArmed = false
@@ -2179,9 +2230,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     privateLayerPanelEntity?.setComponent(privateLayerPanelGrabbable(enabled = visible))
     val privateLayerPanelLayerUpdateStatus =
         updatePrivateLayerPanelLayer("private-layer-panel-visibility")
-    updateCameraHwbProjectionFromViewer(
-        reason = "private-layer-panel-visibility",
-        forceLog = true,
+    cameraHwbProjectionPlacementUpdateCoordinator.update(
+        "private-layer-panel-visibility",
+        true,
     )
     marker(
         SpatialPanelPlacementModule.privateLayerPanelModeUpdatedMarker(
@@ -2973,129 +3024,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       SpatialSurfaceParticleRouteModule.surfacePanelDimensions(targetDistanceMeters, overscanScale)
 
   @OptIn(SpatialSDKExperimentalAPI::class)
-  private fun updateCameraHwbProjectionFromViewer(reason: String, forceLog: Boolean) {
-    val entity = cameraHwbProjectionEntity ?: return
-    val plane = cameraHwbProjectionPlaneForPlacement()
-    entity.setComponent(Transform(plane.pose))
-    if (cameraHwbProjectionScenePanelCarrierEnabled()) {
-      entity.setComponent(PanelDimensions(Vector2(plane.projectionWidthMeters, plane.projectionHeightMeters)))
-      entity.setComponent(Hittable(MeshCollision.NoCollision))
-    }
-    entity.setComponent(Visible(true))
-    val layerUpdateStatus = updateCameraHwbProjectionLayer(plane, reason)
-    val panelCarrierUpdateStatus =
-        cameraHwbProjectionPanelCarrierCoordinator.updateLayer(plane, reason)
-    val nativePanelPoseUpdateMask = updateNativePanelProjectionFromCameraPlane(plane, reason, forceLog)
-    val now = SystemClock.elapsedRealtime()
-    val shouldLog =
-        forceLog ||
-            (cameraHwbProjectionMarkerCount < 4 &&
-                now - lastCameraHwbProjectionMarkerMs >=
-                    CAMERA_HWB_PROJECTION_MARKER_INTERVAL_MS)
-    if (!shouldLog) {
-      return
-    }
-    cameraHwbProjectionMarkerCount += 1
-    lastCameraHwbProjectionMarkerMs = now
-    marker(
-        CameraHwbProjectionModule.rawProjectionPlaneUpdatedMarker(
-            reason = reason,
-            plane = plane,
-            projectionMarkerFields = cameraHwbProjectionMarkerFields(plane),
-            stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
-            videoProjectionMarkerFields =
-                spatialVideoProjectionRuntimeCoordinator.markerFields(
-                    spatialVideoProjectionRuntimeCoordinator.settings
-                ),
-            publicMultiStackMarkerFields = SpatialPublicMultiStack.markerFields(),
-            layerUpdateStatus = layerUpdateStatus,
-            panelCarrierUpdateStatus = panelCarrierUpdateStatus,
-            nativePanelPoseUpdateMask = nativePanelPoseUpdateMask,
-        )
-    )
-  }
-
-  private fun updateCameraHwbProjectionLayer(
-      plane: CameraHwbProjectionPlane,
-      reason: String,
-  ): String {
-    return sdkQuadResourceCoordinator.withLayer { layer ->
-          runCatching {
-                layer.updateLayer(
-                    plane.projectionWidthMeters,
-                    plane.projectionHeightMeters,
-                    0.5f,
-                    0.5f,
-                    StereoMode.LeftRight.ordinal,
-                )
-                layer.setZIndex(cameraHwbProjectionZIndexForPlacement(plane.placementMode))
-                "updated-existing-scene-anchor"
-              }
-              .getOrElse { throwable ->
-                marker(
-                    CameraHwbProjectionModule.rawProjectionLayerUpdateFailedMarker(
-                        reason = reason,
-                        plane = plane,
-                        error = throwable.javaClass.simpleName,
-                        message = throwable.message ?: "none",
-                    )
-                )
-                "failed-${throwable.javaClass.simpleName}"
-              }
-        }
-        ?: "layer-missing"
-  }
-
-  private fun updateNativePanelProjectionFromCameraPlane(
-      plane: CameraHwbProjectionPlane,
-      reason: String,
-      forceLog: Boolean,
-  ): Long {
-    if (!nativeReceiptLibraryLoaded) {
-      if (forceLog) {
-        marker(
-            CameraHwbProjectionModule.nativePanelPoseUpdateSkippedMarker(
-                reason = reason,
-                error = nativeReceiptLibraryError,
-            )
-        )
-      }
-      return 0L
-    }
-    return runCatching {
-          nativeUpdateSurfaceParticlePanelPose(
-              plane.center.x,
-              plane.center.y,
-              plane.center.z,
-              plane.right.x,
-              plane.right.y,
-              plane.right.z,
-              plane.up.x,
-              plane.up.y,
-              plane.up.z,
-              plane.projectionWidthMeters,
-              plane.projectionHeightMeters,
-              plane.targetDistanceMeters,
-              activityEyeOffsetRightMeters(plane.leftEyeOffset),
-              activityEyeOffsetRightMeters(plane.rightEyeOffset),
-          )
-        }
-        .getOrElse { throwable ->
-          if (forceLog) {
-            marker(
-                CameraHwbProjectionModule.nativePanelPoseUpdateFailedMarker(
-                    reason = reason,
-                    plane = plane,
-                    error = throwable.javaClass.simpleName,
-                    message = throwable.message ?: "none",
-                )
-            )
-          }
-          0L
-        }
-  }
-
-  @OptIn(SpatialSDKExperimentalAPI::class)
   private fun cameraHwbProjectionPlaneForPlacement(): CameraHwbProjectionPlane =
       when (cameraHwbProjectionPlacementMode) {
         CameraHwbProjectionPlacementMode.ViewerLocked -> cameraHwbProjectionPlaneFromViewer()
@@ -3430,7 +3358,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         reason = "right-stick-projection-target-scale",
         forceLog = false,
     )
-    updateCameraHwbProjectionFromViewer(reason = "right-stick-projection-target-scale", forceLog = false)
+    cameraHwbProjectionPlacementUpdateCoordinator.update(
+        "right-stick-projection-target-scale",
+        false,
+    )
 
     if (
         now - lastCameraHwbProjectionScaleJoystickMarkerMs >=
@@ -3467,7 +3398,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     val updatedScale = currentCameraHwbProjectionTargetScale()
     updateNativeCameraHwbProjectionTargetScale(reason = source, forceLog = false)
-    updateCameraHwbProjectionFromViewer(reason = source, forceLog = false)
+    cameraHwbProjectionPlacementUpdateCoordinator.update(source, false)
     marker(
         CameraHwbProjectionModule.targetScalePanelAdjustedMarker(
             source = source,
@@ -3520,7 +3451,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             projectionTargetScale = currentCameraHwbProjectionTargetScale(),
         )
     )
-    updateCameraHwbProjectionFromViewer(reason = "private-layer-override-panel", forceLog = true)
+    cameraHwbProjectionPlacementUpdateCoordinator.update("private-layer-override-panel", true)
     return updatedOverride
   }
 
@@ -4036,8 +3967,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           CameraHwbProjectionPlacementMode.VirtualRoomWall ->
               CameraHwbProjectionPlacementMode.ViewerLocked
         }
-    cameraHwbProjectionMarkerCount = 0
-    updateCameraHwbProjectionFromViewer(reason = "controller-secondary-toggle", forceLog = true)
+    cameraHwbProjectionPlacementUpdateCoordinator.resetMarkerCadence()
+    cameraHwbProjectionPlacementUpdateCoordinator.update("controller-secondary-toggle", true)
     val layerOverrideReapplyMask =
         if (nativeReceiptLibraryLoaded) {
           runCatching { nativeUpdatePrivateLayerOverride(privateLayerOverride) }

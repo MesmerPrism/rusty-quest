@@ -270,6 +270,12 @@ Apply that model here when a lane grows beyond a narrow facade method:
   the launch coordinator is active and panel carrier mode is selected, while
   keeping effective settings, placement/private-layer policy, shared entity
   state, and JNI authority in Activity bindings;
+- package the active projection entity/layer update loop, raw and panel layer
+  projection, native panel-pose update sequencing, two marker-throttle fields,
+  and plane-update receipts in
+  `SpatialCameraHwbProjectionPlacementUpdateCoordinator.kt`; fail closed unless
+  an explicit camera launch or video runtime is active, while retaining plane
+  calculation and the JNI primitive adapter in Activity bindings;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, placement-plane construction from
