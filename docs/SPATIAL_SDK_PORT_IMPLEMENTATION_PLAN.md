@@ -423,6 +423,10 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `SpatialSurfaceParticlePresentationStateCoordinator.kt`; retain the scene
   entity and manual Android `Surface` lifetime in Activity so the state owner
   cannot create or activate a panel.
+- package recenter eligibility, native availability, acceptance-mask handling,
+  and command receipts in `SpatialSurfaceParticleRecenterCoordinator.kt`; fail closed before JNI
+  unless the Activity-supplied particle feature opt-in is enabled, and retain property reads plus
+  JNI declarations in Activity bindings.
 - package native surface-particle registered video-surface callback sequencing,
   manual panel carrier construction, custom-mesh `PanelSceneObject` creation,
   create/surface/add failure markers, and readiness marker fields in

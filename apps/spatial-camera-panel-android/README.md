@@ -624,6 +624,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   and the lifecycle-diagnostic presentation snapshot across video-surface and
   manual-carrier paths. The scene entity and retained manual Android `Surface`
   remain Activity resources; this state owner cannot create or activate a panel.
+- `app/src/main/.../SpatialSurfaceParticleRecenterCoordinator.kt` owns
+  recenter eligibility, native availability, acceptance-mask handling, and
+  command receipts. It fails closed before JNI unless the Activity-supplied
+  particle feature opt-in is enabled; property reads and JNI declarations stay
+  in Activity bindings.
 - `app/src/main/.../SpatialSurfaceParticlePanelCarrierModule.kt` owns native
   surface-particle panel carrier construction: registered video-surface callback
   sequencing, the manual custom-mesh `PanelSceneObject`, create/surface/add

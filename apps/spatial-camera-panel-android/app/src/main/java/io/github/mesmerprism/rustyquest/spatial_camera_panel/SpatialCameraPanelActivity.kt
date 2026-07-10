@@ -138,10 +138,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           cameraHwbProjectionCarrierStateCoordinator.togglePlacementMode(inputSource, detail)
         },
         recenterTrigger = { inputSource, detail ->
-          recenterSurfaceParticleSphereOnViewer(
-              inputSource = inputSource,
-              detail = detail,
-              requireParticleView = true,
+          surfaceParticleRecenterCoordinator.recenter(
+              SpatialSurfaceParticleRecenterRequest(
+                  inputSource = inputSource,
+                  detail = detail,
+                  requireParticleView = true,
+              )
           )
         },
         openPrimary = ::openWorkflowPanelFromController,
@@ -370,6 +372,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         SpatialSurfaceParticlePresentationStateBindings(marker = ::marker)
     )
   }
+  private val surfaceParticleRecenterCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialSurfaceParticleRecenterCoordinator(
+        SpatialSurfaceParticleRecenterBindings(
+            featureEnabled = ::nativeSurfaceParticleLayerEnabled,
+            surfaceTargetId = { store.snapshot().surfaceTargetId },
+            particleLayerVisible = ::particleLayerVisibleForPanelMode,
+            workflowPanelVisible = { panelPlacement.visible },
+            privateLayerPanelVisible = { privateLayerPanelVisible },
+            receiptLibraryLoaded = { nativeInteropCoordinator.receiptLibraryLoaded },
+            recenterNative = ::nativeRecenterSurfaceParticleSphereOnViewer,
+            marker = ::marker,
+        )
+    )
+  }
   private val controllerPollingCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialControllerPollingCoordinator(
         SpatialControllerPollingBindings(
@@ -403,10 +419,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               Unit
             },
             recenterParticleSphere = { inputSource, detail ->
-              recenterSurfaceParticleSphereOnViewer(
-                  inputSource = inputSource,
-                  detail = detail,
-                  requireParticleView = true,
+              surfaceParticleRecenterCoordinator.recenter(
+                  SpatialSurfaceParticleRecenterRequest(
+                      inputSource = inputSource,
+                      detail = detail,
+                      requireParticleView = true,
+                  )
               )
             },
             armSecondaryToggle = { inputSource ->
@@ -469,10 +487,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 ::applyRemoteParticleLayerTargetDistance,
             applyRemoteParticleLayerViewYaw = ::applyRemoteParticleLayerViewYaw,
             recenterSurfaceParticleSphere = { inputSource, detail ->
-              recenterSurfaceParticleSphereOnViewer(
-                  inputSource = inputSource,
-                  detail = detail,
-                  requireParticleView = false,
+              surfaceParticleRecenterCoordinator.recenter(
+                  SpatialSurfaceParticleRecenterRequest(
+                      inputSource = inputSource,
+                      detail = detail,
+                      requireParticleView = false,
+                  )
               )
               Unit
             },
@@ -2862,67 +2882,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       )
     }
     return true
-  }
-
-  private fun recenterSurfaceParticleSphereOnViewer(
-      inputSource: String,
-      detail: String,
-      requireParticleView: Boolean,
-  ): Boolean {
-    val surfaceTargetId = store.snapshot().surfaceTargetId
-    val particleViewVisible = particleLayerVisibleForPanelMode()
-    if (surfaceTargetId != "icosphere" || (requireParticleView && !particleViewVisible)) {
-      marker(
-          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleRecenterIgnoredMarker(
-              inputSource = inputSource,
-              detail = detail,
-              surfaceTargetId = surfaceTargetId,
-              particleLayerVisible = particleViewVisible,
-              requireParticleView = requireParticleView,
-              workflowPanelVisible = panelPlacement.visible,
-              privateLayerPanelVisible = privateLayerPanelVisible,
-          )
-      )
-      return false
-    }
-    if (!nativeInteropCoordinator.receiptLibraryLoaded) {
-      marker(
-          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleRecenterNativeUnavailableMarker(
-              inputSource = inputSource,
-              detail = detail,
-              surfaceTargetId = surfaceTargetId,
-          )
-      )
-      return true
-    }
-    return runCatching {
-          val mask = nativeRecenterSurfaceParticleSphereOnViewer()
-          val accepted = (mask and SURFACE_PARTICLE_RECENTER_ACCEPTED_BIT) != 0L
-          marker(
-              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleRecenterRequestedMarker(
-                  inputSource = inputSource,
-                  detail = detail,
-                  surfaceTargetId = surfaceTargetId,
-                  particleLayerVisible = particleViewVisible,
-                  requireParticleView = requireParticleView,
-                  nativeRecenterMask = mask,
-                  nativeRecenterAccepted = accepted,
-              )
-          )
-          true
-        }
-        .getOrElse { throwable ->
-          marker(
-              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleRecenterFailedMarker(
-                  inputSource = inputSource,
-                  detail = detail,
-                  surfaceTargetId = surfaceTargetId,
-                  error = throwable.javaClass.simpleName,
-                  message = throwable.message ?: "none",
-              )
-          )
-          true
-        }
   }
 
   private fun openWorkflowPanelFromController(inputSource: String, detail: String): Boolean {
