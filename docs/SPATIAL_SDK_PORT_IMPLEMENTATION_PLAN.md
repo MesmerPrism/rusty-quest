@@ -229,9 +229,12 @@ Apply that model here when a lane grows beyond a narrow facade method:
 - package read-only Spatial SDK controller/avatar ECS observation, local-right
   controller preference, avatar-controller fallback, button/thumb
   normalization, and `SpatialControllerPrimarySnapshot` construction in
-  `SpatialControllerSnapshotAdapter.kt`; keep polling cadence, route enablement,
-  edge state, action dispatch, marker emission, feature opt-in, and JNI in the
-  Activity facade;
+  `SpatialControllerSnapshotAdapter.kt`;
+- package native and Spatial SDK controller poll sequencing, edge and
+  route-telemetry state, marker throttling, and ordered action callback dispatch
+  in `SpatialControllerPollingCoordinator.kt`; keep frame cadence, route
+  enablement, controller pinning, feature/property selection, scene capture,
+  action implementations, and JNI in the Activity facade;
 - package Android key/gamepad button recognition, key-versus-motion edge state,
   trigger-axis thresholding, source/detail normalization, and ordered callback
   dispatch in `SpatialControllerAndroidEventRouter.kt`; keep input enablement,

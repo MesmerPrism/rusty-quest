@@ -165,16 +165,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var lastPanelHeadlockJoystickMarkerMs = 0L
   private var lastPrivateLayerPanelGrabbableState: Boolean? = null
   private var lastPrivateLayerPanelGrabbableMarkerMs = 0L
-  private var spatialControllerPrimaryDown = false
-  private var spatialControllerRouteLogged = false
-  private var lastSpatialControllerRouteMarkerMs = 0L
-  private var lastSpatialControllerComponentCount = -1
-  private var lastSpatialControllerActiveCount = -1
-  private var lastSpatialControllerControllerTypeCount = -1
-  private var lastSpatialControllerAllButtonState = -1
-  private var spatialControllerSecondaryDown = false
-  private var spatialControllerRightTriggerDown = false
-  private var nativeControllerSecondaryDown = false
   private val pinnedSpatialGameControllerIds = mutableSetOf<Int>()
   private var lastSpatialInputRouteMarkerMs = 0L
   private var lastSpatialJoystickArbitrationMarkerMs = 0L
@@ -190,6 +180,53 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           )
         },
         openPrimary = ::openWorkflowPanelFromController,
+    )
+  }
+  private val controllerPollingCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialControllerPollingCoordinator(
+        SpatialControllerPollingBindings(
+            nativeState = {
+              SpatialNativeControllerPollingState(
+                  featureEnabled = nativeSpatialControllerActionsEnabled(),
+                  receiptLibraryLoaded = nativeReceiptLibraryLoaded,
+                  actionsStarted = nativeSpatialControllerActionsStarted,
+                  actionStartMask = nativeSpatialControllerActionsStartMask,
+              )
+            },
+            disableNativeActions = { nativeSpatialControllerActionsStarted = false },
+            pollNativeLeftThumbstickY = ::nativePollSpatialControllerLeftThumbstickY,
+            pollNativeRightThumbstickY = ::nativePollSpatialControllerRightThumbstickY,
+            pollNativeRightButtonB = ::nativePollSpatialControllerRightButtonB,
+            captureSpatialSnapshot = { SpatialControllerSnapshotAdapter.capture(scene) },
+            currentLeftStickPanelDistanceMapping = ::currentLeftStickPanelDistanceMapping,
+            currentLeftStickPanelDistanceEnabled = ::currentLeftStickPanelDistanceEnabled,
+            currentSpatialVrInputSystemToken = ::currentSpatialVrInputSystemToken,
+            applyProjectionScale = { value, inputSource, mapping, detail ->
+              applyCameraHwbProjectionScaleInput(value, inputSource, mapping, detail)
+              Unit
+            },
+            applyPanelDistance = { value, inputSource, mapping, detail ->
+              applyPanelHeadlockDistanceInput(value, inputSource, mapping, detail)
+              Unit
+            },
+            recenterParticleSphere = { inputSource, detail ->
+              recenterSurfaceParticleSphereOnViewer(
+                  inputSource = inputSource,
+                  detail = detail,
+                  requireParticleView = true,
+              )
+            },
+            armSecondaryToggle = ::armCameraHwbProjectionSecondaryToggle,
+            toggleSecondary = { inputSource, detail ->
+              toggleCameraHwbProjectionPlacementMode(inputSource, detail)
+              Unit
+            },
+            openPrimary = { inputSource, detail ->
+              openWorkflowPanelFromController(inputSource, detail)
+              Unit
+            },
+            marker = ::marker,
+        )
     )
   }
   private val validationWorkflowCoordinator by lazy(LazyThreadSafetyMode.NONE) {
@@ -334,7 +371,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         SpatialHandCaptureRecorderFeature(this, ::marker) {
           SpatialNativeInteropProbe.capture(scene)
         },
-        SpatialControllerInputLateFeature(::pollSpatialControllerInput),
+        SpatialControllerInputLateFeature(controllerPollingCoordinator::pollSpatialInput),
     ) + SpatialPrivateFeatureLoader.load(::marker, this) + listOf(
         ComposeFeature(),
     )
@@ -541,7 +578,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     updateParticleLayerProjectionFromViewer(reason = "scene-tick", forceLog = false)
     updateCameraHwbProjectionFromViewer(reason = "scene-tick", forceLog = false)
     enableSpatialControllerInputRoute("scene-tick", forceLog = false)
-    pollNativeSpatialControllerProjectionScaleInput()
+    controllerPollingCoordinator.pollNativeInput()
   }
 
   override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
@@ -6352,197 +6389,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
   }
 
-  private fun pollNativeSpatialControllerProjectionScaleInput() {
-    if (
-        !nativeSpatialControllerActionsEnabled() ||
-            !nativeReceiptLibraryLoaded ||
-            !nativeSpatialControllerActionsStarted
-    ) {
-      return
-    }
-    val leftY =
-        runCatching { nativePollSpatialControllerLeftThumbstickY() }
-            .getOrElse { throwable ->
-              nativeSpatialControllerActionsStarted = false
-              marker(
-                  SpatialControllerRoutingModule.nativeControllerActionPollErrorMarker(
-                      controllerInput = "left-thumbstick-y",
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              Float.NaN
-            }
-    if (leftY.isFinite() && abs(leftY) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE) {
-      applyPanelHeadlockDistanceInput(
-          leftY = leftY,
-          inputSource = "native-openxr-action",
-          controllerJoystickMapping = currentLeftStickPanelDistanceMapping(),
-          detail =
-              "leftThumbstickY=${activityMarkerFloat(leftY)} " +
-                  "nativeControllerActionStartMask=$nativeSpatialControllerActionsStartMask",
-      )
-    }
-
-    val rightY =
-        runCatching { nativePollSpatialControllerRightThumbstickY() }
-            .getOrElse { throwable ->
-              nativeSpatialControllerActionsStarted = false
-              marker(
-                  SpatialControllerRoutingModule.nativeControllerActionPollErrorMarker(
-                      controllerInput = "right-thumbstick-y",
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              Float.NaN
-            }
-    if (rightY.isFinite() && abs(rightY) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE) {
-      applyCameraHwbProjectionScaleInput(
-          rightY = rightY,
-          inputSource = "native-openxr-action",
-          controllerJoystickMapping = "right-thumbstick-y-projection-target-scale",
-          detail =
-              "rightThumbstickY=${activityMarkerFloat(rightY)} " +
-                  "nativeControllerActionStartMask=$nativeSpatialControllerActionsStartMask",
-      )
-    }
-
-    val rightButtonBDown =
-        runCatching { nativePollSpatialControllerRightButtonB() }
-            .getOrElse { throwable ->
-              nativeSpatialControllerActionsStarted = false
-              nativeControllerSecondaryDown = false
-              marker(
-                  SpatialControllerRoutingModule.nativeControllerActionPollErrorMarker(
-                      controllerInput = "right-button-b",
-                      error = throwable.javaClass.simpleName,
-                      message = throwable.message ?: "none",
-                  )
-              )
-              false
-            }
-    val rightButtonBPressedEdge = rightButtonBDown && !nativeControllerSecondaryDown
-    nativeControllerSecondaryDown = rightButtonBDown
-    if (!rightButtonBDown) {
-      armCameraHwbProjectionSecondaryToggle("native-openxr-action")
-    }
-    if (rightButtonBPressedEdge) {
-      toggleCameraHwbProjectionPlacementMode(
-          inputSource = "native-openxr-action",
-          detail =
-              "rightButtonBDown=true nativeRightButtonBAction=true " +
-                  "nativeControllerActionStartMask=$nativeSpatialControllerActionsStartMask",
-      )
-    }
-  }
-
-  private fun pollSpatialControllerInput() {
-    val now = SystemClock.elapsedRealtime()
-    val snapshot =
-        runCatching {
-              SpatialControllerSnapshotAdapter.capture(scene)
-            }
-            .getOrElse { throwable ->
-              spatialControllerPrimaryDown = false
-              spatialControllerSecondaryDown = false
-              spatialControllerRightTriggerDown = false
-              if (
-                  !spatialControllerRouteLogged ||
-                      now - lastSpatialControllerRouteMarkerMs >= SPATIAL_CONTROLLER_ROUTE_MARKER_INTERVAL_MS
-              ) {
-                spatialControllerRouteLogged = true
-                lastSpatialControllerRouteMarkerMs = now
-                marker(
-                    SpatialControllerRoutingModule.controllerInputRouteErrorMarker(
-                        error = throwable.javaClass.simpleName,
-                        message = throwable.message ?: "none",
-                    )
-                )
-              }
-              return
-            }
-
-    val shouldLogRoute =
-        !spatialControllerRouteLogged ||
-            snapshot.componentCount != lastSpatialControllerComponentCount ||
-            snapshot.activeCount != lastSpatialControllerActiveCount ||
-            snapshot.controllerTypeCount != lastSpatialControllerControllerTypeCount ||
-            snapshot.allControllerButtonState != lastSpatialControllerAllButtonState ||
-            now - lastSpatialControllerRouteMarkerMs >= SPATIAL_CONTROLLER_ROUTE_MARKER_INTERVAL_MS
-    if (shouldLogRoute) {
-      spatialControllerRouteLogged = true
-      lastSpatialControllerRouteMarkerMs = now
-      lastSpatialControllerComponentCount = snapshot.componentCount
-      lastSpatialControllerActiveCount = snapshot.activeCount
-      lastSpatialControllerControllerTypeCount = snapshot.controllerTypeCount
-      lastSpatialControllerAllButtonState = snapshot.allControllerButtonState
-      marker(
-          SpatialControllerRoutingModule.controllerInputRouteReadyMarker(
-              snapshot = snapshot,
-              leftStickPanelDistanceMapping = currentLeftStickPanelDistanceMapping(),
-              leftStickYPanelDistanceEnabled = currentLeftStickPanelDistanceEnabled(),
-              spatialVrInputSystem = currentSpatialVrInputSystemToken(),
-          )
-      )
-    }
-
-    if (snapshot.rightThumbY != 0.0f) {
-      applyCameraHwbProjectionScaleInput(
-          rightY = snapshot.rightThumbY,
-          inputSource = snapshot.rightInputSource,
-          controllerJoystickMapping = "right-thumb-up-down-projection-target-scale",
-          detail = SpatialControllerRoutingModule.rightThumbProjectionScaleDetail(snapshot),
-      )
-    }
-    if (snapshot.leftThumbY != 0.0f) {
-      applyPanelHeadlockDistanceInput(
-          leftY = snapshot.leftThumbY,
-          inputSource = "spatial-sdk-avatar-body-controller",
-          controllerJoystickMapping = currentLeftStickPanelDistanceMapping(),
-          detail = SpatialControllerRoutingModule.leftThumbPanelDistanceDetail(snapshot),
-      )
-    }
-
-    val triggerPressedEdge =
-        snapshot.triggerPressed || (snapshot.triggerDown && !spatialControllerRightTriggerDown)
-    spatialControllerRightTriggerDown = snapshot.triggerDown
-    if (triggerPressedEdge) {
-      if (
-          recenterSurfaceParticleSphereOnViewer(
-              inputSource = snapshot.rightInputSource,
-              detail = SpatialControllerRoutingModule.rightTriggerParticleRecenterDetail(snapshot),
-              requireParticleView = true,
-          )
-      ) {
-        return
-      }
-    }
-
-    val secondaryPressedEdge =
-        snapshot.secondaryPressed || (snapshot.secondaryDown && !spatialControllerSecondaryDown)
-    spatialControllerSecondaryDown = snapshot.secondaryDown
-    if (!snapshot.secondaryDown) {
-      armCameraHwbProjectionSecondaryToggle(snapshot.rightInputSource)
-    }
-    if (secondaryPressedEdge) {
-      toggleCameraHwbProjectionPlacementMode(
-          inputSource = snapshot.rightInputSource,
-          detail = SpatialControllerRoutingModule.rightSecondaryPlacementToggleDetail(snapshot),
-      )
-      return
-    }
-
-    val pressedEdge = snapshot.pressed || (snapshot.down && !spatialControllerPrimaryDown)
-    spatialControllerPrimaryDown = snapshot.down
-    if (!pressedEdge) {
-      return
-    }
-    openWorkflowPanelFromController(
-        inputSource = snapshot.rightInputSource,
-        detail = SpatialControllerRoutingModule.rightPrimaryPanelToggleDetail(snapshot),
-    )
-  }
 
   private fun recenterSurfaceParticleSphereOnViewer(
       inputSource: String,
