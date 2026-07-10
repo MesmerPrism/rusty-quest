@@ -385,6 +385,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   operator-check completion receipt. It uses only the shared resource owner,
   Activity-supplied `Scene`, cleanup callback, and marker sink; it has no JNI
   or unrelated feature-property authority.
+- `app/src/main/.../SpatialPanelSurfaceMatrixProbeCoordinator.kt` owns the
+  default-disabled two-variant `PanelSurface` matrix diagnostic: its exact
+  property gate, start state, swapchain/texture variant construction, shared
+  layer-factory request, native producer attempt, timed cleanup, variant gap,
+  and final completion receipt. The Activity supplies `Scene`, native state,
+  Vulkan callbacks, cleanup, and markers; no other diagnostic is enabled by
+  this coordinator.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, viewer-locked and virtual-wall projection

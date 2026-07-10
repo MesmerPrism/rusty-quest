@@ -228,6 +228,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   creation, delayed z-index and alpha mutations, cleanup, and operator-check
   completion receipt in `SpatialSdkQuadStereoAlphaProbeCoordinator.kt`; keep
   JNI and unrelated property authority out of this coordinator;
+- package the default-disabled two-variant `PanelSurface` matrix gate, start
+  state, swapchain/texture construction, shared layer request, native producer
+  attempt, timed cleanup, variant gap, and final receipt in
+  `SpatialPanelSurfaceMatrixProbeCoordinator.kt`; retain JNI declarations and
+  dynamic native-library state in Activity-supplied bindings;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, placement-plane construction from
