@@ -202,6 +202,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   SDK-owned quad surface/Vulkan/stereo-alpha probe lifecycle marker fields,
   external OpenXR swapchain wrapping lifecycle marker fields,
   and panel-surface matrix probe lifecycle marker fields in `SpatialDiagnosticProbeRouteModule.kt`;
+- package the default-disabled external OpenXR swapchain execution lifecycle,
+  dedicated wrapper/scene state, cycle scheduling, SDK-handle wrapping checks,
+  native-handle wrapper retention, destroy-ownership classification, and
+  cleanup in `SpatialExternalSwapchainProbeCoordinator.kt`; keep JNI
+  declarations and native-library state in Activity-supplied bindings;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, placement-plane construction from

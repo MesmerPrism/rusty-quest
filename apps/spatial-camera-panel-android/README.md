@@ -343,6 +343,15 @@ Interaction SDK pointer input without native multimodal extension forcing.
   matrix probe lifecycle marker fields.
   It must not create scene objects, draw surfaces, call JNI, or mutate Activity
   probe state.
+- `app/src/main/.../SpatialExternalSwapchainProbeCoordinator.kt` owns the
+  default-disabled external OpenXR swapchain probe lifecycle: seven dedicated
+  state/retainer fields, SDK-handle wrapping checks, native-handle wrapping,
+  Spatial scene object and quad-layer lifetime, cycle scheduling, destroy
+  ownership classification, and cleanup markers. It checks the existing
+  explicit property opt-in before touching bindings. The Activity supplies the
+  Spatial `Scene`, native-library state, marker sink, and JNI create/destroy
+  callbacks; the coordinator does not declare JNI methods or read unrelated
+  feature properties.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, viewer-locked and virtual-wall projection
