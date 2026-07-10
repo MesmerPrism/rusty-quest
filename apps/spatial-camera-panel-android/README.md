@@ -561,6 +561,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   native receipt bit decoding, and marker-ready native route status helpers.
   It must not load native libraries, call JNI, query the Spatial runtime, or
   mutate Activity state.
+- `app/src/main/.../SpatialNativeInteropCoordinator.kt` owns native receipt
+  library load state, Scene/OpenXR probe capture, the temporary no-render
+  `PanelSurface`, receipt-call sequencing, and probe/receipt marker dispatch.
+  It runs only when invoked by Activity lifecycle callbacks. The Activity
+  retains the JNI declaration and forwards explicit multimodal/controller
+  bootstrap callbacks; the coordinator has no feature-property or panel-action
+  authority.
 - `app/src/main/.../SpatialValidationCommandModule.kt` owns validation and
   remote UI command route marker policy: self-test, remote UI command, surface
   target activation, remote participant creation, and Polar live-validation

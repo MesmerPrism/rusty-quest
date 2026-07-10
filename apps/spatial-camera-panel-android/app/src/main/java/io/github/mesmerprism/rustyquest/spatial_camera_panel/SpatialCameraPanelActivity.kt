@@ -66,9 +66,7 @@ import com.meta.spatial.runtime.BlendFactor
 import com.meta.spatial.runtime.LayerAlphaBlend
 import com.meta.spatial.runtime.LayerFilters
 import com.meta.spatial.runtime.PanelSceneObject
-import com.meta.spatial.runtime.PanelSurface
 import com.meta.spatial.runtime.ReferenceSpace
-import com.meta.spatial.runtime.SamplerConfig
 import com.meta.spatial.runtime.Scene
 import com.meta.spatial.toolkit.AppSystemActivity
 import com.meta.spatial.toolkit.AvatarSystem
@@ -105,8 +103,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private val store: SpatialCameraPanelStore by lazy(LazyThreadSafetyMode.NONE) {
     SpatialCameraPanelStore(this)
   }
-  private var nativeReceiptLibraryLoaded = false
-  private var nativeReceiptLibraryError = "not-loaded"
   private var panelEntity: Entity? = null
   private var privateLayerPanelEntity: Entity? = null
   private var privateLayerPanelSceneObject: PanelSceneObject? = null
@@ -194,14 +190,31 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
-  private val nativeInputBootstrapCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+  private val nativeInputBootstrapCoordinator:
+      SpatialNativeInputBootstrapCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialNativeInputBootstrapCoordinator(
         SpatialNativeInputBootstrapBindings(
-            receiptLibraryLoaded = { nativeReceiptLibraryLoaded },
+            receiptLibraryLoaded = { nativeInteropCoordinator.receiptLibraryLoaded },
             multimodalInputEnabled = ::spatialMultimodalInputEnabled,
             controllerActionsEnabled = ::nativeSpatialControllerActionsEnabled,
             requestMultimodalInput = ::nativeRequestSpatialMultimodalInput,
             startControllerActions = ::nativeStartSpatialControllerActions,
+            marker = ::marker,
+        )
+    )
+  }
+  private val nativeInteropCoordinator:
+      SpatialNativeInteropCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialNativeInteropCoordinator(
+        SpatialNativeInteropBindings(
+            scene = scene,
+            recordNoRenderReceipt = ::nativeRecordNoRenderInteropReceipt,
+            requestMultimodalInput = { probe, phase ->
+              nativeInputBootstrapCoordinator.requestMultimodalInputIfReady(probe, phase)
+            },
+            startControllerActions = { probe, phase ->
+              nativeInputBootstrapCoordinator.startControllerActionsIfReady(probe, phase)
+            },
             marker = ::marker,
         )
     )
@@ -212,7 +225,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             nativeState = {
               SpatialNativeControllerPollingState(
                   featureEnabled = nativeSpatialControllerActionsEnabled(),
-                  receiptLibraryLoaded = nativeReceiptLibraryLoaded,
+                  receiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded,
                   actionsStarted = nativeInputBootstrapCoordinator.controllerActionsStarted,
                   actionStartMask = nativeInputBootstrapCoordinator.controllerActionsStartMask,
               )
@@ -331,8 +344,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             scene = scene,
             nativeState = {
               SpatialExternalSwapchainProbeNativeState(
-                  receiptLibraryLoaded = nativeReceiptLibraryLoaded,
-                  receiptLibraryError = nativeReceiptLibraryError,
+                  receiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded,
+                  receiptLibraryError = nativeInteropCoordinator.receiptLibraryError,
               )
             },
             createExternalSwapchain = ::nativeCreateExternalOpenXrSwapchain,
@@ -346,7 +359,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         SpatialVideoProjectionRuntimeBindings(
             nativeState = {
               SpatialVideoProjectionRuntimeNativeState(
-                  receiptLibraryLoaded = nativeReceiptLibraryLoaded
+                  receiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded
               )
             },
             configureNative = { settings ->
@@ -408,8 +421,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             cleanup = ::cleanupSdkQuadSurfaceProbe,
             nativeState = {
               SpatialSdkQuadVulkanNativeState(
-                  receiptLibraryLoaded = nativeReceiptLibraryLoaded,
-                  receiptLibraryError = nativeReceiptLibraryError,
+                  receiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded,
+                  receiptLibraryError = nativeInteropCoordinator.receiptLibraryError,
               )
             },
             startNative = ::nativeStartSdkQuadVulkanProbe,
@@ -436,7 +449,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             cleanup = ::cleanupSdkQuadSurfaceProbe,
             nativeState = {
               SpatialPanelSurfaceMatrixNativeState(
-                  receiptLibraryLoaded = nativeReceiptLibraryLoaded
+                  receiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded
               )
             },
             startNative = ::nativeStartSdkQuadVulkanProbe,
@@ -457,8 +470,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             },
             nativeState = {
               SpatialCameraHwbNativeState(
-                  receiptLibraryLoaded = nativeReceiptLibraryLoaded,
-                  receiptLibraryError = nativeReceiptLibraryError,
+                  receiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded,
+                  receiptLibraryError = nativeInteropCoordinator.receiptLibraryError,
               )
             },
             startNative = ::nativeStartCameraHwbProbe,
@@ -480,8 +493,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   sceneReady = spatialSceneReady,
                   virtualRoomEnabled = spatialVirtualRoomEnabled(),
                   virtualRoomLoaded = spatialVirtualRoomLoaded(),
-                  receiptLibraryLoaded = nativeReceiptLibraryLoaded,
-                  receiptLibraryError = nativeReceiptLibraryError,
+                  receiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded,
+                  receiptLibraryError = nativeInteropCoordinator.receiptLibraryError,
               )
             },
             resolveSettings = { spatialVideoProjectionRuntimeCoordinator.resolveSettings(intent) },
@@ -567,8 +580,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             routeActive = { cameraHwbProjectionLaunchCoordinator.started },
             nativeState = {
               SpatialCameraHwbProjectionDepthPrerequisiteNativeState(
-                  receiptLibraryLoaded = nativeReceiptLibraryLoaded,
-                  receiptLibraryError = nativeReceiptLibraryError,
+                  receiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded,
+                  receiptLibraryError = nativeInteropCoordinator.receiptLibraryError,
               )
             },
             captureInteropProbe = { SpatialNativeInteropProbe.capture(scene) },
@@ -593,8 +606,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             },
             nativeState = {
               SpatialCameraHwbProjectionRawNativeState(
-                  receiptLibraryLoaded = nativeReceiptLibraryLoaded,
-                  receiptLibraryError = nativeReceiptLibraryError,
+                  receiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded,
+                  receiptLibraryError = nativeInteropCoordinator.receiptLibraryError,
               )
             },
             cleanup = ::cleanupSdkQuadSurfaceProbe,
@@ -646,8 +659,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 cameraHwbProjectionCarrierStateCoordinator::manualCustomMeshCarrierEnabled,
             nativeState = {
               SpatialCameraHwbProjectionPanelNativeState(
-                  receiptLibraryLoaded = nativeReceiptLibraryLoaded,
-                  receiptLibraryError = nativeReceiptLibraryError,
+                  receiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded,
+                  receiptLibraryError = nativeInteropCoordinator.receiptLibraryError,
               )
             },
             panelMediaSettings = cameraHwbProjectionGeometryCoordinator::panelMediaSettings,
@@ -708,8 +721,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             layerZIndex = cameraHwbProjectionCarrierStateCoordinator::zIndexForPlacement,
             nativeState = {
               SpatialCameraHwbProjectionPlacementNativeState(
-                  receiptLibraryLoaded = nativeReceiptLibraryLoaded,
-                  receiptLibraryError = nativeReceiptLibraryError,
+                  receiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded,
+                  receiptLibraryError = nativeInteropCoordinator.receiptLibraryError,
               )
             },
             updateNativePanelPose = { plane ->
@@ -803,7 +816,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             },
             nativeState = {
               SpatialCameraHwbProjectionCarrierNativeState(
-                  receiptLibraryLoaded = nativeReceiptLibraryLoaded
+                  receiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded
               )
             },
             privateLayerOverride = { privateLayerOverride },
@@ -870,7 +883,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    loadNativeReceiptLibrary()
+    nativeInteropCoordinator.loadReceiptLibrary()
     suppressParticleLayerIfCameraProjectionRequested("activity-created")
     deactivateLegacyWorkflowPanelsForCameraStack("activity-created")
     deactivatePanelShellIfRequested("activity-created")
@@ -1016,7 +1029,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     applyPanelPlacement()
     updateWorkflowPanelHeadlockFromViewer(reason = "scene-ready", forceLog = true)
     updateParticleLayerProjectionFromViewer(reason = "scene-ready", forceLog = true)
-    logNativeInteropProbe(phase = "scene-ready", probeSurface = false)
+    nativeInteropCoordinator.logProbe(phase = "scene-ready", probeSurface = false)
     marker(
         "channel=spatial-panel status=spawned panelRegistrationId=spatial_camera_panel " +
             "privateLayerPanelRegistrationId=spatial_private_layer_panel " +
@@ -1053,7 +1066,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     controllerInputRouteCoordinator.ensureEnabled("vr-ready", forceLog = true)
     updateWorkflowPanelHeadlockFromViewer(reason = "vr-ready", forceLog = true)
     updateParticleLayerProjectionFromViewer(reason = "vr-ready", forceLog = true)
-    logNativeInteropProbe(phase = "vr-ready", probeSurface = true)
+    nativeInteropCoordinator.logProbe(phase = "vr-ready", probeSurface = true)
     externalSwapchainProbeCoordinator.runIfRequested("vr-ready")
     sdkQuadSurfaceProbeCoordinator.runIfRequested("vr-ready")
     sdkQuadVulkanProbeCoordinator.runIfRequested("vr-ready")
@@ -1084,7 +1097,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun onDestroy() {
-    if (nativeReceiptLibraryLoaded) {
+    if (nativeInteropCoordinator.receiptLibraryLoaded) {
       runCatching { nativeStopSpatialControllerActions() }
       cameraHwbProjectionDepthPrerequisiteCoordinator.stop()
       runCatching { nativeStopSdkQuadVulkanProbe() }
@@ -1339,91 +1352,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun spatialSkyboxEnabled(): Boolean = spatialVirtualRoomModule.skyboxEnabled()
 
-  private fun logNativeInteropProbe(phase: String, probeSurface: Boolean) {
-    val probe = SpatialNativeInteropProbe.capture(scene)
-    val surfaceProbe =
-        if (probeSurface) {
-          createNoRenderSurfaceProbe()
-        } else {
-          NativeInteropSurfaceProbeResult(
-              capability = "PanelSurface",
-              status = "deferred-until-vr-ready",
-              surfaceValid = false,
-              error = "none",
-          )
-        }
-    val nativeReceipt = recordNativeInteropReceipt(probe, surfaceProbe)
-    marker(SpatialOpenXrRouteModule.nativeInteropProbeMarker(phase, probe, surfaceProbe))
-    marker(
-        SpatialOpenXrRouteModule.nativeInteropReceiptMarker(
-            phase,
-            nativeReceiptLibraryLoaded,
-            nativeReceipt,
-        )
-    )
-    nativeInputBootstrapCoordinator.requestMultimodalInputIfReady(probe, phase)
-    nativeInputBootstrapCoordinator.startControllerActionsIfReady(probe, phase)
-  }
-
-  private fun loadNativeReceiptLibrary() {
-    val result = runCatching { System.loadLibrary(NATIVE_RECEIPT_LIBRARY) }
-    nativeReceiptLibraryLoaded = result.isSuccess
-    nativeReceiptLibraryError = result.exceptionOrNull()?.javaClass?.simpleName ?: "none"
-    marker(
-        SpatialOpenXrRouteModule.nativeReceiptLibraryLoadMarker(
-            library = NATIVE_RECEIPT_LIBRARY,
-            loaded = nativeReceiptLibraryLoaded,
-            error = nativeReceiptLibraryError,
-        )
-    )
-  }
-
-  private fun recordNativeInteropReceipt(
-      probe: SpatialNativeInteropProbe,
-      surfaceProbe: NativeInteropSurfaceProbeResult,
-  ): NativeInteropReceiptResult {
-    if (!nativeReceiptLibraryLoaded) {
-      return SpatialOpenXrRouteModule.nativeInteropReceiptUnavailable(nativeReceiptLibraryError)
-    }
-    return runCatching {
-          val mask =
-              nativeRecordNoRenderInteropReceipt(
-                  probe.openXrInstanceHandle,
-                  probe.openXrSessionHandle,
-                  probe.openXrGetInstanceProcAddrHandle,
-                  surfaceProbe.surfaceValid,
-              )
-          SpatialOpenXrRouteModule.nativeInteropReceiptReceived(mask)
-        }
-            .getOrElse { throwable ->
-              SpatialOpenXrRouteModule.nativeInteropReceiptCallFailed(throwable.javaClass.simpleName)
-            }
-  }
-
-  private fun createNoRenderSurfaceProbe(): NativeInteropSurfaceProbeResult {
-    var panelSurface: PanelSurface? = null
-    return runCatching {
-          panelSurface = PanelSurface(scene, 64, 64, 1, SamplerConfig(), true, false, "", false)
-          NativeInteropSurfaceProbeResult(
-              capability = "PanelSurface",
-              status = "created-destroyed-no-render",
-              surfaceValid = panelSurface?.surface?.isValid == true,
-              error = "none",
-          )
-        }
-        .getOrElse { throwable ->
-          NativeInteropSurfaceProbeResult(
-              capability = "PanelSurface",
-              status = "unavailable",
-              surfaceValid = false,
-              error = throwable.javaClass.simpleName,
-          )
-        }
-        .also {
-          panelSurface?.destroy()
-        }
-  }
-
   private fun runCameraHwbProjectionProbe(
       readerMaxImages: Int,
       videoSettings: SpatialVideoProjectionSettings,
@@ -1524,10 +1452,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       marker(SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStartSkippedAlreadyStartedMarker())
       return
     }
-    if (!nativeReceiptLibraryLoaded) {
+    if (!nativeInteropCoordinator.receiptLibraryLoaded) {
       marker(
           SpatialSurfaceParticleRouteModule.nativeSurfaceParticleLibraryUnavailableMarker(
-              nativeReceiptLibraryError
+              nativeInteropCoordinator.receiptLibraryError
           )
       )
       return
@@ -1648,7 +1576,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun submitNativeSurfaceParticleParameters(source: String) {
-    if (!nativeReceiptLibraryLoaded) {
+    if (!nativeInteropCoordinator.receiptLibraryLoaded) {
       marker(
           SpatialSurfaceParticleRouteModule.nativeSurfaceParticleParameterSubmitSkippedMarker(source)
       )
@@ -1708,7 +1636,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: "default"
-    if (!nativeReceiptLibraryLoaded) {
+    if (!nativeInteropCoordinator.receiptLibraryLoaded) {
       marker(
           SpatialSurfaceParticleRouteModule.nativeSurfaceParticleAliasSubmitSkippedMarker(
               source,
@@ -1751,7 +1679,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     particleLayerEntity?.setComponent(Visible(false))
     panelLauncherEntity?.setComponent(Visible(false))
     val wasStarted = particleLayerStarted
-    val stopAttempted = nativeReceiptLibraryLoaded && wasStarted
+    val stopAttempted = nativeInteropCoordinator.receiptLibraryLoaded && wasStarted
     if (stopAttempted) {
       runCatching { nativeStopSurfaceParticleLayer() }
           .onSuccess {
@@ -1856,7 +1784,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun stopNativeSurfaceParticleLayer(source: String = "lifecycle") {
     val wasStarted = particleLayerStarted
-    if (nativeReceiptLibraryLoaded && wasStarted) {
+    if (nativeInteropCoordinator.receiptLibraryLoaded && wasStarted) {
       runCatching { nativeStopSurfaceParticleLayer() }
           .onSuccess {
             particleLayerStarted = false
@@ -2656,7 +2584,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       updateParticleLayerPanelLayer("projection-plane-update", forceLog = false)
     }
     val nativePanelPoseUpdateMask =
-        if (nativeReceiptLibraryLoaded) {
+        if (nativeInteropCoordinator.receiptLibraryLoaded) {
           runCatching {
                 nativeUpdateSurfaceParticlePanelPose(
                     center.x,
@@ -2690,7 +2618,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           0L
         }
     val nativeViewerEyePoseUpdateMask =
-        if (nativeReceiptLibraryLoaded) {
+        if (nativeInteropCoordinator.receiptLibraryLoaded) {
           runCatching {
                 nativeUpdateSurfaceParticleViewerEyePose(
                     viewerPose.t.x,
@@ -3370,7 +3298,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       )
       return false
     }
-    if (!nativeReceiptLibraryLoaded) {
+    if (!nativeInteropCoordinator.receiptLibraryLoaded) {
       marker(
           SpatialSurfaceParticleRouteModule.nativeSurfaceParticleRecenterNativeUnavailableMarker(
               inputSource = inputSource,
@@ -3844,8 +3772,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             particleLayerStarted = particleLayerStarted,
             nativeSurfaceStartRequested = nativeSurfaceStartRequested,
             lastNativeSurfaceStartMask = lastNativeSurfaceStartMask,
-            nativeReceiptLibraryLoaded = nativeReceiptLibraryLoaded,
-            nativeReceiptLibraryError = nativeReceiptLibraryError,
+            nativeReceiptLibraryLoaded = nativeInteropCoordinator.receiptLibraryLoaded,
+            nativeReceiptLibraryError = nativeInteropCoordinator.receiptLibraryError,
             openXrInstanceHandleNonZero = probe.openXrInstanceHandleNonZero,
             openXrSessionHandleNonZero = probe.openXrSessionHandleNonZero,
             openXrGetInstanceProcAddrHandleNonZero = probe.openXrGetInstanceProcAddrHandleNonZero,

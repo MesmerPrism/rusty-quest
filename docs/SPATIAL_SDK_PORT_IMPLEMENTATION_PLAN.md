@@ -362,6 +362,12 @@ Apply that model here when a lane grows beyond a narrow facade method:
   native controller-action start markers, multimodal opt-in marker fields, and
   native receipt bit decoding in
   `SpatialOpenXrRouteModule.kt`;
+- package native receipt library load state, Scene/OpenXR probe capture, the
+  temporary no-render `PanelSurface`, receipt-call sequencing, and
+  probe/receipt marker dispatch in `SpatialNativeInteropCoordinator.kt`; invoke
+  it only from Activity lifecycle callbacks, retain the JNI declaration in the
+  Activity, and forward explicit multimodal/controller bootstrap callbacks
+  without giving the coordinator feature-property or panel-action authority;
 - package validation and remote UI command marker policy, including self-test,
   UI-command, surface-target activation, remote participant, and Polar
   live-validation marker envelopes plus default validation identifiers, in
