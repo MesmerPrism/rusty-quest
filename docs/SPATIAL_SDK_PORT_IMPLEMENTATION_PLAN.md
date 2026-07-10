@@ -241,6 +241,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
 - keep the Compose experiment UI plus experiment lifecycle and auto-panel
   marker envelopes in `ExperimentPanelController.kt`, while the Activity owns
   store mutation, panel visibility, and marker emission;
+- package workflow, private-layer control, and launcher Compose panel
+  construction in `SpatialComposePanelRegistrationModule.kt`; pass state and
+  requester callbacks explicitly while the Activity retains panel lifecycle,
+  scene-object adoption, marker emission, JNI, persistence, and video-surface
+  carrier authority;
 - package surface-particle route policy, carrier parsing, dimensions, media
   settings, route lifecycle marker fields, parameter/alias marker fields,
   projection update marker fields, panel-layer marker fields, recenter marker fields,

@@ -11,7 +11,6 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import android.view.MotionEvent
-import android.view.View
 import android.view.Surface as AndroidSurface
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -32,13 +31,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -53,13 +50,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.meta.spatial.compose.ComposeFeature
-import com.meta.spatial.compose.ComposeViewPanelRegistration
 import com.meta.spatial.core.Entity
 import com.meta.spatial.core.Pose
 import com.meta.spatial.core.Quaternion
@@ -91,7 +86,6 @@ import com.meta.spatial.toolkit.AvatarBody
 import com.meta.spatial.toolkit.AvatarSystem
 import com.meta.spatial.toolkit.Controller
 import com.meta.spatial.toolkit.ControllerType
-import com.meta.spatial.toolkit.DpPerMeterDisplayOptions
 import com.meta.spatial.toolkit.Grabbable
 import com.meta.spatial.toolkit.GrabbableType
 import com.meta.spatial.toolkit.Hittable
@@ -112,7 +106,6 @@ import com.meta.spatial.toolkit.Scale
 import com.meta.spatial.toolkit.SceneObjectSystem
 import com.meta.spatial.toolkit.Transform
 import com.meta.spatial.toolkit.UIPanelRenderOptions
-import com.meta.spatial.toolkit.UIPanelSettings
 import com.meta.spatial.toolkit.Visible
 import com.meta.spatial.toolkit.VideoSurfacePanelRegistration
 import com.meta.spatial.toolkit.createPanelEntity
@@ -557,175 +550,88 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun registerPanels(): List<PanelRegistration> {
+    val composePanels =
+        SpatialComposePanelRegistrationModule.registrations(
+            workflow =
+                SpatialWorkflowPanelRegistrationBindings(
+                    store = store,
+                    placement = panelPlacement,
+                    particleControls = particleControls,
+                    polarPanel = ensurePolarSensorPanel(),
+                    questionnaireDueReopensPanel = questionnaireDueReopensPanel,
+                    setWorkflowPanelVisible = { visible, focus, source ->
+                      setWorkflowPanelVisible(visible, focus, source)
+                    },
+                    adjustPlacement = { dx, dy, dz, scaleDelta ->
+                      adjustPanelPlacement(dx, dy, dz, scaleDelta)
+                    },
+                    setPanelHeadlocked = { enabled, source ->
+                      setPanelHeadlocked(enabled, source)
+                    },
+                    resizePanel = { deltaWidth, deltaHeight ->
+                      resizeWorkflowPanel(deltaWidth, deltaHeight)
+                    },
+                    resetPlacement = { resetWorkflowPanelPlacement() },
+                    updateParticleControls = { controls ->
+                      updateSurfaceParticleControls(controls)
+                    },
+                    applyDriverProfile = { block, source ->
+                      applyDriverProfileToParticleControls(block, source)
+                    },
+                    setQuestionnaireDueReopensPanel = { enabled, source ->
+                      setQuestionnaireDueReopensPanel(enabled, source)
+                    },
+                ),
+            privateLayer =
+                SpatialPrivateLayerPanelRegistrationBindings(
+                    layerOverride = privateLayerOverride,
+                    projectionScale = currentCameraHwbProjectionTargetScale(),
+                    projectionScaleRange =
+                        CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE..CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE,
+                    depthLayerPolicy = privateLayerDepthLayerPolicy,
+                    depthAlignment = privateLayerDepthAlignment,
+                    setLayerOverride = { override, source ->
+                      updatePrivateLayerOverrideFromPanel(override, source)
+                    },
+                    updateProjectionScale = { scale, source ->
+                      updateCameraHwbProjectionTargetScaleFromPanel(scale, source)
+                    },
+                    updateDepthLayerPolicy = { policy, source ->
+                      updatePrivateLayerDepthLayerPolicyFromPanel(policy, source)
+                    },
+                    updateDepthAlignment = { alignment, source ->
+                      updatePrivateLayerDepthAlignmentFromPanel(alignment, source)
+                    },
+                    closePanel = {
+                      setPrivateLayerPanelVisible(
+                          false,
+                          focus = false,
+                          source = "private-layer-panel-close",
+                      )
+                    },
+                    settings = { _ -> privateLayerPanelSettings() },
+                    onPanelSetup = { panel ->
+                      privateLayerPanelSceneObject = panel
+                      val layerUpdateStatus =
+                          updatePrivateLayerPanelLayer("panel-setup", forceLog = false)
+                      marker(
+                          SpatialPanelPlacementModule.privateLayerPanelLayerReadyMarker(
+                              layerUpdateStatus = layerUpdateStatus,
+                              cameraVideoProjectionLayerZIndex =
+                                  cameraHwbProjectionZIndexForPlacement(
+                                      cameraHwbProjectionPlacementMode
+                                  ),
+                          )
+                      )
+                    },
+                ),
+            openWorkflowPanel = {
+              setWorkflowPanelVisible(true, focus = true, source = "launcher-panel")
+            },
+        )
     val panels =
-        listOfNotNull(
-        ComposeViewPanelRegistration(
-            R.id.spatial_camera_panel,
-            composeViewCreator = { _, context ->
-              ComposeView(context).apply {
-                setBackgroundColor(android.graphics.Color.rgb(255, 243, 176))
-                alpha = 1.0f
-                setWillNotDraw(false)
-                setLayerType(View.LAYER_TYPE_HARDWARE, null)
-                setContent {
-                  MaterialTheme(
-                      colorScheme =
-                          lightColorScheme(
-                              primary = PanelProbeHeader,
-                              onPrimary = Color.White,
-                              background = PanelProbeBackground,
-                              onBackground = PanelProbeInk,
-                              surface = PanelProbeBackground,
-                              onSurface = PanelProbeInk,
-                          )
-                  ) {
-                    SpatialCameraPanel(
-                        store = store,
-                        placement = panelPlacement,
-                        particleControls = particleControls,
-                        setWorkflowPanelVisible = { visible, focus, source ->
-                          setWorkflowPanelVisible(visible, focus, source = source)
-                        },
-                        adjustPlacement = { dx, dy, dz, scaleDelta ->
-                          adjustPanelPlacement(dx, dy, dz, scaleDelta)
-                        },
-                        setPanelHeadlocked = { enabled, source ->
-                          setPanelHeadlocked(enabled, source)
-                        },
-                        resizePanel = { deltaWidth, deltaHeight ->
-                          resizeWorkflowPanel(deltaWidth, deltaHeight)
-                        },
-                        resetPlacement = { resetWorkflowPanelPlacement() },
-                        updateParticleControls = { controls ->
-                          updateSurfaceParticleControls(controls)
-                        },
-                        applyDriverProfile = { block, source ->
-                          applyDriverProfileToParticleControls(block, source)
-                        },
-                        questionnaireDueReopensPanel = questionnaireDueReopensPanel,
-                        setQuestionnaireDueReopensPanel = { enabled, source ->
-                          setQuestionnaireDueReopensPanel(enabled, source)
-                        },
-                        polarPanel = ensurePolarSensorPanel(),
-                    )
-                  }
-                }
-              }
-            },
-            settingsCreator = {
-              UIPanelSettings(
-                  shape = QuadShapeOptions(width = PANEL_WIDTH_METERS, height = PANEL_HEIGHT_METERS),
-                  style = PanelStyleOptions(themeResourceId = R.style.PanelAppThemeOpaqueProbe),
-                  display = DpPerMeterDisplayOptions(dpPerMeter = PANEL_DP_PER_METER),
-              )
-            },
-        ),
-        ComposeViewPanelRegistration(
-            R.id.spatial_private_layer_panel,
-            composeViewCreator = { _, context ->
-              ComposeView(context).apply {
-                setBackgroundColor(AndroidColor.rgb(20, 24, 32))
-                alpha = 1.0f
-                setWillNotDraw(false)
-                setLayerType(View.LAYER_TYPE_HARDWARE, null)
-                setContent {
-                  MaterialTheme(
-                      colorScheme =
-                          lightColorScheme(
-                              primary = Color(0xFF63D2FF),
-                              onPrimary = Color(0xFF04111A),
-                              background = Color(0xFF141820),
-                              onBackground = Color(0xFFF4F7FA),
-                              surface = Color(0xFF202634),
-                              onSurface = Color(0xFFF4F7FA),
-                          )
-                  ) {
-                    PrivateLayerControlPanel(
-                        layerOverride = privateLayerOverride,
-                        projectionScale = currentCameraHwbProjectionTargetScale(),
-                        projectionScaleRange =
-                            CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE..CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE,
-                        depthLayerPolicy = privateLayerDepthLayerPolicy,
-                        depthAlignment = privateLayerDepthAlignment,
-                        setLayerOverride = { override, source ->
-                          updatePrivateLayerOverrideFromPanel(override, source)
-                        },
-                        updateProjectionScale = { scale, source ->
-                          updateCameraHwbProjectionTargetScaleFromPanel(scale, source)
-                        },
-                        updateDepthLayerPolicy = { policy, source ->
-                          updatePrivateLayerDepthLayerPolicyFromPanel(policy, source)
-                        },
-                        updateDepthAlignment = { alignment, source ->
-                          updatePrivateLayerDepthAlignmentFromPanel(alignment, source)
-                        },
-                        closePanel = {
-                          setPrivateLayerPanelVisible(
-                              false,
-                              focus = false,
-                              source = "private-layer-panel-close",
-                          )
-                        },
-                    )
-                  }
-                }
-              }
-            },
-            settingsCreator = {
-              privateLayerPanelSettings()
-            },
-            panelSetupWithComposeView = { _, panel, _ ->
-              privateLayerPanelSceneObject = panel
-              val layerUpdateStatus =
-                  updatePrivateLayerPanelLayer("panel-setup", forceLog = false)
-              marker(
-                  SpatialPanelPlacementModule.privateLayerPanelLayerReadyMarker(
-                      layerUpdateStatus = layerUpdateStatus,
-                      cameraVideoProjectionLayerZIndex =
-                          cameraHwbProjectionZIndexForPlacement(cameraHwbProjectionPlacementMode),
-                  )
-              )
-            },
-        ),
-        ComposeViewPanelRegistration(
-            R.id.spatial_camera_panel_launcher,
-            composeViewCreator = { _, context ->
-              ComposeView(context).apply {
-                setBackgroundColor(android.graphics.Color.rgb(15, 95, 111))
-                alpha = 1.0f
-                setWillNotDraw(false)
-                setLayerType(View.LAYER_TYPE_HARDWARE, null)
-                setContent {
-                  MaterialTheme(
-                      colorScheme =
-                          lightColorScheme(
-                              primary = PanelProbeButton,
-                              onPrimary = Color.White,
-                              background = PanelProbeHeader,
-                              onBackground = Color.White,
-                              surface = PanelProbeHeader,
-                              onSurface = Color.White,
-                          )
-                  ) {
-                    SpatialCameraPanelLauncher {
-                      setWorkflowPanelVisible(true, focus = true, source = "launcher-panel")
-                    }
-                  }
-                }
-              }
-            },
-            settingsCreator = {
-              UIPanelSettings(
-                  shape =
-                      QuadShapeOptions(
-                          width = PANEL_LAUNCHER_WIDTH_METERS,
-                          height = PANEL_LAUNCHER_HEIGHT_METERS,
-                      ),
-                  style = PanelStyleOptions(themeResourceId = R.style.PanelAppThemeOpaqueProbe),
-                  display = DpPerMeterDisplayOptions(dpPerMeter = PANEL_LAUNCHER_DP_PER_METER),
-              )
-            },
-        ),
+        composePanels +
+            listOfNotNull(
         VideoSurfacePanelRegistration(
             R.id.spatial_camera_projection_surface_panel,
             surfaceConsumer = { _, surface ->

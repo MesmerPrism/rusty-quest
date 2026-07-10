@@ -441,6 +441,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   envelopes. It may request panel visibility changes and low-rate
   particle-driver scalar updates, but it must not emit markers directly or
   own camera frames, Vulkan WSI, SDK quad layers, or particle buffers.
+- `app/src/main/.../SpatialComposePanelRegistrationModule.kt` owns construction
+  of the workflow, private-layer control, and launcher Compose panel
+  registrations. The Activity supplies explicit state and requester callbacks,
+  and retains panel lifecycle, scene-object adoption, marker emission, JNI,
+  persistence, and video-surface carrier authority.
 - `app/src/main/.../SpatialCameraPanelModels.kt` owns shared panel placement,
   native-interop receipt, and low-rate control state models used by the
   Activity facade and panel UI.
