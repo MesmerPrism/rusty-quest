@@ -635,6 +635,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   disabled; exact validation intents can opt in explicitly. The Activity
   supplies scene, store, panel, runtime, receipt, and presentation snapshots,
   so diagnostics cannot create entities or activate the particle runtime.
+- `app/src/main/.../SpatialPanelInteractionStateCoordinator.kt` is the pure
+  state owner for headlock pose-marker cadence, hotload-token changes,
+  joystick delta/cadence, and private-layer grabbable cadence. The Activity
+  retains panel placement, property reads, entity access, and marker
+  construction; this coordinator cannot activate or mutate a Spatial feature.
 - `app/src/main/.../SpatialSurfaceParticlePanelCarrierModule.kt` owns native
   surface-particle panel carrier construction: registered video-surface callback
   sequencing, the manual custom-mesh `PanelSceneObject`, create/surface/add

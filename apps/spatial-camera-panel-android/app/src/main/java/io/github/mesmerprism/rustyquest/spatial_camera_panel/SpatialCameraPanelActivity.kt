@@ -114,13 +114,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var particleLayerEntity: Entity? = null
   private var particleLayerManualPanelSurface: AndroidSurface? = null
   private var polarSensorPanel: PolarSensorPanel? = null
-  private var panelHeadlockMarkerCount = 0
-  private var lastPanelHeadlockMarkerMs = 0L
-  private var lastPanelHeadlockHotloadToken = ""
-  private var lastPanelHeadlockJoystickMs = 0L
-  private var lastPanelHeadlockJoystickMarkerMs = 0L
-  private var lastPrivateLayerPanelGrabbableState: Boolean? = null
-  private var lastPrivateLayerPanelGrabbableMarkerMs = 0L
+  private val panelInteractionStateCoordinator = SpatialPanelInteractionStateCoordinator()
   private var lastSpatialJoystickArbitrationMarkerMs = 0L
   private val controllerInputRouteSpec =
       SpatialControllerInputRouteSpec(
@@ -2184,16 +2178,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val grabbable = privateLayerPanelEntity?.tryGetComponent<Grabbable>()
     val grabbed = grabbable?.isGrabbed ?: false
     val now = SystemClock.elapsedRealtime()
-    val shouldLog =
-        forceLog ||
-            lastPrivateLayerPanelGrabbableState != grabbed ||
-            now - lastPrivateLayerPanelGrabbableMarkerMs >=
-                PRIVATE_LAYER_PANEL_GRABBABLE_MARKER_INTERVAL_MS
-    if (!shouldLog) {
+    if (
+        !panelInteractionStateCoordinator.shouldEmitPrivateLayerGrabbableMarker(
+            grabbed = grabbed,
+            nowMs = now,
+            forceLog = forceLog,
+        )
+    ) {
       return
     }
-    lastPrivateLayerPanelGrabbableState = grabbed
-    lastPrivateLayerPanelGrabbableMarkerMs = now
     marker(
         SpatialPanelPlacementModule.privateLayerGrabbableStateMarker(
             reason = reason,
@@ -2291,16 +2284,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         }
 
     val now = SystemClock.elapsedRealtime()
-    val shouldLog =
-        forceLog ||
-            ((panelPlacement.visible || privateLayerPanelVisible) &&
-                panelHeadlockMarkerCount < 4 &&
-                now - lastPanelHeadlockMarkerMs >= PANEL_HEADLOCK_MARKER_INTERVAL_MS)
-    if (!shouldLog) {
+    if (
+        !panelInteractionStateCoordinator.shouldEmitHeadlockPoseMarker(
+            nowMs = now,
+            forceLog = forceLog,
+            anyPanelVisible = panelPlacement.visible || privateLayerPanelVisible,
+        )
+    ) {
       return
     }
-    panelHeadlockMarkerCount += 1
-    lastPanelHeadlockMarkerMs = now
     marker(
         SpatialPanelPlacementModule.headlockedPoseUpdatedMarker(
             reason = reason,
@@ -2323,8 +2315,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       persistPanelHeadlockTuning("runtime-hotload-android-property")
     }
     val token = panelHeadlockMarkerFields()
-    if (token != lastPanelHeadlockHotloadToken) {
-      lastPanelHeadlockHotloadToken = token
+    if (panelInteractionStateCoordinator.consumeHeadlockHotloadToken(token)) {
       marker(
           SpatialPanelPlacementModule.headlockHotloadUpdatedMarker(
               reason = reason,
@@ -2756,13 +2747,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
 
     val now = SystemClock.elapsedRealtime()
-    val dtSeconds =
-        if (lastPanelHeadlockJoystickMs <= 0L) {
-          1.0f / 60.0f
-        } else {
-          ((now - lastPanelHeadlockJoystickMs).toFloat() / 1000.0f).coerceIn(0.0f, 0.08f)
-        }
-    lastPanelHeadlockJoystickMs = now
+    val dtSeconds = panelInteractionStateCoordinator.joystickDeltaSeconds(now)
     val distanceRate =
         activityReadFloatSystemProperty(
             PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_PROPERTY,
@@ -2795,8 +2780,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     applyPanelPlacement(updatePrivateLayerPanelTransform = privateLayerPanelVisible)
     persistPanelHeadlockTuning("controller-joystick-distance")
-    if (now - lastPanelHeadlockJoystickMarkerMs >= PANEL_HEADLOCK_JOYSTICK_MARKER_INTERVAL_MS) {
-      lastPanelHeadlockJoystickMarkerMs = now
+    if (panelInteractionStateCoordinator.shouldEmitJoystickMarker(now)) {
       marker(
           SpatialControllerRoutingModule.headlockDistanceJoystickAdjustedMarker(
               inputSource = inputSource,
@@ -2829,8 +2813,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     if (privateLayerPanelIsGrabbed()) {
       val now = SystemClock.elapsedRealtime()
-      if (now - lastPanelHeadlockJoystickMarkerMs >= PANEL_HEADLOCK_JOYSTICK_MARKER_INTERVAL_MS) {
-        lastPanelHeadlockJoystickMarkerMs = now
+      if (panelInteractionStateCoordinator.shouldEmitJoystickMarker(now)) {
         marker(
             SpatialControllerRoutingModule.privateLayerFreeTransformDistanceJoystickSkippedMarker(
                 inputSource = inputSource,
@@ -2848,13 +2831,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         privateLayerPanelPlacement.zMeters
             .coerceIn(PRIVATE_LAYER_PANEL_DISTANCE_MIN_METERS, PANEL_HEADLOCK_DISTANCE_MAX_METERS)
     val now = SystemClock.elapsedRealtime()
-    val dtSeconds =
-        if (lastPanelHeadlockJoystickMs <= 0L) {
-          1.0f / 60.0f
-        } else {
-          ((now - lastPanelHeadlockJoystickMs).toFloat() / 1000.0f).coerceIn(0.0f, 0.08f)
-        }
-    lastPanelHeadlockJoystickMs = now
+    val dtSeconds = panelInteractionStateCoordinator.joystickDeltaSeconds(now)
     val distanceRate =
         activityReadFloatSystemProperty(
             PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_PROPERTY,
@@ -2885,8 +2862,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val updatedPose = privateLayerPanelPoseFromViewer() ?: privateLayerPanelWorldPose()
     entity.setComponent(Transform(updatedPose))
     persistPanelHeadlockTuning("controller-joystick-private-free-transform-distance")
-    if (now - lastPanelHeadlockJoystickMarkerMs >= PANEL_HEADLOCK_JOYSTICK_MARKER_INTERVAL_MS) {
-      lastPanelHeadlockJoystickMarkerMs = now
+    if (panelInteractionStateCoordinator.shouldEmitJoystickMarker(now)) {
       marker(
           SpatialControllerRoutingModule.privateLayerFreeTransformDistanceJoystickAdjustedMarker(
               inputSource = inputSource,

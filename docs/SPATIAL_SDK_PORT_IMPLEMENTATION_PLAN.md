@@ -433,6 +433,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   ordinary lifecycle callbacks when the particle feature is disabled, retain
   scene/store/panel/runtime/receipt/presentation capture in Activity snapshot
   adapters, and prohibit entity creation or particle-runtime activation.
+- package headlock pose-marker cadence, hotload-token change state, joystick
+  delta/cadence, and private-layer grabbable cadence in
+  `SpatialPanelInteractionStateCoordinator.kt`; retain panel placement,
+  runtime-property reads, entity access, and marker construction in Activity,
+  and prohibit feature activation or Spatial state mutation in the coordinator.
 - package native surface-particle registered video-surface callback sequencing,
   manual panel carrier construction, custom-mesh `PanelSceneObject` creation,
   create/surface/add failure markers, and readiness marker fields in
