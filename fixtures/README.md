@@ -1,5 +1,9 @@
 # Rusty Quest Fixtures
 
+- `particle-adapter/`: the closed two-consumer conformance fixture for the
+  Matter/Lattice/Optics-to-Quest particle adapter. Both Spatial Camera Panel
+  and native renderer default disabled; no high-rate JSON or backend payload is
+  admitted.
 - `spatial-hand-alignment/`: sanitized OpenXR-to-Spatial SDK mapping fixtures.
   The accepted viewer-world basis registration remains the rollback default;
   mirror/reflection candidates stay explicit until a separate live headset

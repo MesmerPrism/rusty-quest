@@ -88,11 +88,11 @@ if ($moduleIds -contains "remote-peer-media" -or $featureIds -contains "remote-p
 if (@($lock.features | Where-Object { $_.enabled -eq $true } | ForEach-Object { @($_.permissions) }).Count -ne 0) {
     throw "The enabled base panel shell must not gain permissions through workflow adoption."
 }
-if ($state.current_unit -ne $null -or $state.next_ready_unit -ne "mod-003") {
-    throw "Spatial Camera Panel compact state must expose mod-003 as the only next-ready unit."
+if ($state.current_unit -ne "mod-003" -or $state.next_ready_unit -ne $null) {
+    throw "Spatial Camera Panel compact state must expose mod-003 as the only active unit."
 }
 if ($wf003.status -ne "accepted" -or $mod001.status -ne "accepted" -or
-    $mod002.status -ne "accepted" -or $mod003.status -ne "ready" -or
+    $mod002.status -ne "accepted" -or $mod003.status -ne "active" -or
     @($mod001.prerequisites) -notcontains "wf-003" -or
     @($mod003.prerequisites) -notcontains "mod-002") {
     throw "Spatial Camera Panel iteration-unit state is not resumable."
@@ -107,8 +107,8 @@ if ($receipt.runtime_behavior_changed -ne $false -or $receipt.package_or_permiss
 
 $eventPath = Join-Path $workspaceRoot "iteration-events.jsonl"
 $eventLines = @(Get-Content -LiteralPath $eventPath | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-if ($eventLines.Count -ne 8) {
-    throw "Spatial workflow expects adoption through the MOD-002 push event."
+if ($eventLines.Count -ne 9) {
+    throw "Spatial workflow expects adoption through MOD-003 activation."
 }
 $acceptEvent = $eventLines[0] | ConvertFrom-Json
 $pushEvent = $eventLines[1] | ConvertFrom-Json
@@ -118,6 +118,7 @@ $acceptedEvent = $eventLines[4] | ConvertFrom-Json
 $mod002ActiveEvent = $eventLines[5] | ConvertFrom-Json
 $mod002AcceptedEvent = $eventLines[6] | ConvertFrom-Json
 $mod002PushEvent = $eventLines[7] | ConvertFrom-Json
+$mod003ActiveEvent = $eventLines[8] | ConvertFrom-Json
 if ($acceptEvent.event_id -ne "wf-003-accepted" -or $acceptEvent.unit_id -ne "wf-003" -or
     $pushEvent.event_id -ne "wf-003-pushed" -or $pushEvent.unit_id -ne "wf-003" -or
     $activeEvent.event_id -ne "mod-001-active" -or $activeEvent.unit_id -ne "mod-001" -or
@@ -125,7 +126,8 @@ if ($acceptEvent.event_id -ne "wf-003-accepted" -or $acceptEvent.unit_id -ne "wf
     $acceptedEvent.event_id -ne "mod-001-accepted" -or $acceptedEvent.unit_id -ne "mod-001" -or
     $mod002ActiveEvent.event_id -ne "mod-002-active" -or $mod002ActiveEvent.unit_id -ne "mod-002" -or
     $mod002AcceptedEvent.event_id -ne "mod-002-accepted" -or $mod002AcceptedEvent.unit_id -ne "mod-002" -or
-    $mod002PushEvent.event_id -ne "mod-002-pushed" -or $mod002PushEvent.unit_id -ne "mod-002") {
+    $mod002PushEvent.event_id -ne "mod-002-pushed" -or $mod002PushEvent.unit_id -ne "mod-002" -or
+    $mod003ActiveEvent.event_id -ne "mod-003-active" -or $mod003ActiveEvent.unit_id -ne "mod-003") {
     throw "Spatial local workflow event sequence is inconsistent."
 }
 

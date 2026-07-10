@@ -371,6 +371,68 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 
 [[package]]
+name = "rusty-lattice-model"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "rusty-matter-batch"
+version = "0.1.0"
+
+[[package]]
+name = "rusty-matter-mesh"
+version = "0.1.0"
+dependencies = [
+ "rusty-matter-model",
+]
+
+[[package]]
+name = "rusty-matter-model"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "rusty-matter-particles"
+version = "0.1.0"
+dependencies = [
+ "rusty-matter-batch",
+ "rusty-matter-mesh",
+ "rusty-matter-model",
+ "rusty-matter-sdf",
+ "serde",
+]
+
+[[package]]
+name = "rusty-matter-sdf"
+version = "0.1.0"
+dependencies = [
+ "rusty-matter-batch",
+ "rusty-matter-model",
+ "serde",
+]
+
+[[package]]
+name = "rusty-optics-model"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "rusty-optics-particles"
+version = "0.1.0"
+dependencies = [
+ "rusty-matter-model",
+ "rusty-matter-particles",
+ "rusty-optics-model",
+ "serde",
+]
+
+[[package]]
 name = "rusty-quest-device-link"
 version = "0.1.0"
 dependencies = [
@@ -405,6 +467,20 @@ dependencies = [
  "ndk-sys",
  "openxr",
  "rusty-quest-native-renderer",
+ "rusty-quest-particle-adapter",
+ "serde_json",
+]
+
+[[package]]
+name = "rusty-quest-particle-adapter"
+version = "0.1.0"
+dependencies = [
+ "rusty-lattice-model",
+ "rusty-matter-model",
+ "rusty-matter-particles",
+ "rusty-optics-model",
+ "rusty-optics-particles",
+ "serde",
  "serde_json",
 ]
 
@@ -524,6 +600,7 @@ dependencies = [
  "libc",
  "ndk-sys",
  "openxr-sys",
+ "rusty-quest-particle-adapter",
  "serde_json",
 ]
 

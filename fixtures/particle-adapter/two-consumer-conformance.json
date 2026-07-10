@@ -1,0 +1,40 @@
+{
+  "schema": "rusty.quest.particle_adapter.two_consumer_conformance.v1",
+  "source_contracts": [
+    "rusty.matter.particle.render_payload.v1",
+    "rusty.lattice.situated_anchor.v1",
+    "rusty.optics.particles.visual.frame.v1"
+  ],
+  "adapter_contracts": [
+    "rusty.quest.particle_adapter.descriptor.v1",
+    "rusty.quest.particle_adapter.frame.v1",
+    "rusty.quest.particle_adapter.receipt.v1"
+  ],
+  "consumers": [
+    {
+      "consumer_id": "spatial-camera-panel",
+      "adapter_id": "adapter.quest.spatial-camera-panel.particle",
+      "activation": "explicit-surface-layer-start",
+      "default_enabled": false
+    },
+    {
+      "consumer_id": "native-renderer-android",
+      "adapter_id": "adapter.quest.native-renderer.particle",
+      "activation": "explicit-runtime-profile",
+      "default_enabled": false
+    }
+  ],
+  "rollback": {
+    "profile": "adapter-disabled",
+    "expected_instance_count": 0
+  },
+  "inert_features": [
+    "remote-peer-media",
+    "tracked-hand-surface",
+    "spatial-stereo-video",
+    "spatial-asset-model",
+    "spatial-virtual-room"
+  ],
+  "high_rate_json": false,
+  "backend_payload_in_contract": false
+}

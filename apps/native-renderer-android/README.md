@@ -15,6 +15,13 @@ Makepad runtime in the app.
 
 Runtime routes are selected by profile/property, not by separate APKs:
 
+The reusable particle-contract adapter is independently selectable with
+`quest-native-renderer-particle-adapter-conformance.profile.json`. Its property
+defaults false. When selected, startup emits a `channel=particle-adapter`
+effective receipt proving the native renderer consumes the shared
+Matter/Lattice/Optics handoff without enabling a particle renderer, importing
+backend resources into the contract, or changing other runtime routes.
+
 | Profile | Background | Visible hand content | Camera2/HWB projection |
 | --- | --- | --- | --- |
 | `quest-native-renderer-direct-hwb-camera-quality.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for raw camera inspection | Enabled, forced direct `AHardwareBuffer` sample with Android-suggested YCbCr, UNORM swapchain preference, and clean border |

@@ -3,7 +3,7 @@
   "schema": "rusty.morphospace.workflow.iteration_unit.v1",
   "unit_id": "mod-003",
   "project_id": "spatial-camera-panel",
-  "status": "ready",
+  "status": "active",
   "objective": "Prove explicit opt-in Quest particle adapters against the accepted Matter/Lattice/Optics contracts in the Spatial Camera Panel and native renderer second consumer, with parity, inert-denial, and rollback evidence.",
   "change_categories": ["implementation", "module-layout", "feature-activation", "validation", "device-policy", "public-private-boundary"],
   "instruction_impact": "update",

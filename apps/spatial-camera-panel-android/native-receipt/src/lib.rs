@@ -33,6 +33,7 @@ mod camera_hwb_wsi;
 mod live_hand_joint_bridge;
 #[cfg(any(target_os = "android", test))]
 mod live_hand_joints;
+mod particle_adapter_consumer;
 #[cfg(any(target_os = "android", test))]
 mod replay_hands;
 #[cfg(target_os = "android")]

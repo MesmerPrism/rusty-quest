@@ -1,0 +1,29 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.particle_adapter_conformance",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.particle_adapter.enabled"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.enabled",
+      "value": "true",
+      "source_setting_id": "native_renderer.particle_adapter.enabled"
+    }
+  ],
+  "expected_markers": [
+    "RUSTY_QUEST_NATIVE_RENDERER channel=particle-adapter",
+    "status=accepted",
+    "particleAdapterDescriptorSchema=rusty.quest.particle_adapter.descriptor.v1",
+    "particleAdapterReceiptSchema=rusty.quest.particle_adapter.receipt.v1",
+    "particleAdapterConsumer=native-renderer-android",
+    "particleAdapterEnabled=true",
+    "particleAdapterSourceContracts=matter-render-payload+lattice-situated-anchor+optics-visual-frame",
+    "particleAdapterHighRateJson=false",
+    "particleAdapterBackendPayloadAbsent=true"
+  ],
+  "validation_commands": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-particle-adapter-conformance.profile.json -DryRun -Out local-artifacts/native-renderer-particle-adapter-conformance-property-write-plan.json"
+  ]
+}

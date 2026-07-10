@@ -55,6 +55,13 @@ Quest owns Vulkan/Spatial/Android adapters and effective markers; the app owns
 composition and private policy. Do not create a parallel app-derived particle
 schema or move renderer/platform code into Matter.
 
+`crates/rusty-quest-particle-adapter` is the accepted Quest-side handoff for
+that family. It consumes Matter render payloads, Lattice situated anchors, and
+Optics visual frames, then produces renderer-neutral instance rows and a
+low-rate receipt. Spatial Camera Panel and native renderer are explicit
+consumers; both remain disabled by default, and app policy, Vulkan resources,
+private drivers, and high-rate control stay outside the adapter contract.
+
 ## Agent Board
 
 Read-only source inspection and dry-run profile validation do not require Agent

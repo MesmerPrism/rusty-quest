@@ -104,6 +104,7 @@ mod openxr_environment_depth;
 mod openxr_passthrough_style;
 #[cfg(target_os = "android")]
 mod openxr_stimulus_actions;
+mod particle_adapter_consumer;
 #[cfg(target_os = "android")]
 mod private_extension_slot;
 mod private_particle_breath_state_driver;
@@ -141,6 +142,10 @@ fn android_on_create(_state: &android_activity::OnCreateState) {
     marker(
         "activity-created",
         "entrypoint=NativeActivity rustNativeActivity=true javaPackaged=true panelActivity=ControlPanelActivity",
+    );
+    marker(
+        "particle-adapter",
+        particle_adapter_consumer::load_activation_marker(),
     );
     let runtime_options =
         native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties();

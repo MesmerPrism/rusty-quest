@@ -188,6 +188,16 @@ pure Quest-native OpenXR/Vulkan camera renderer. It models the public AGPL
 HWB import, offscreen guide blur, SDF input hook, private extension ABI slot,
 and detailed timing scorecard required before building a native app scaffold.
 
+`crates/rusty-quest-particle-adapter` is the shared, platform-facing particle
+handoff used by the Spatial Camera Panel and native renderer. It validates the
+accepted Matter render payload, Lattice situated anchor, and Optics visual
+frame together, preserves particle identity/count/bounds, applies only the
+anchor pose, and emits renderer-neutral rows plus a bounded receipt. It owns no
+simulation, appearance policy, backend handles, private driver fields, or
+high-rate JSON. Both consumers are inert until their explicit app route selects
+the adapter; `fixtures/particle-adapter/two-consumer-conformance.json` records
+the closed composition and rollback profile.
+
 See `docs/NATIVE_QUEST_RENDERING.md`.
 The raw native camera quality hardening backlog is tracked as sliced public
 work in `docs/NATIVE_CAMERA_QUALITY_ITERATION_PLAN.md`.

@@ -1421,6 +1421,10 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     let width = width.max(256) as u32;
     let height = height.max(256) as u32;
     let particle_count = particle_count.clamp(128, 16_384) as u32;
+    android_log_info(
+        "RQSpatialCameraPanelNative",
+        &crate::particle_adapter_consumer::activation_marker(true, particle_count as usize),
+    );
     let max_frames = frame_count.max(0) as u32;
     let openxr_handles = LiveHandOpenXrHandles {
         instance_handle: openxr_instance_handle,

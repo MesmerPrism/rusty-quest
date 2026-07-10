@@ -37,9 +37,17 @@ particle state/config/diagnostic/render-payload contracts. The Kotlin
 coordinators, native Vulkan/WSI resources, Spatial panel carrier, JNI,
 properties, and effective markers remain Quest/app adapters. Lattice supplies
 reference-space and tracked-view relations; Optics supplies renderer-neutral
-appearance and projection policy. `apps/native-renderer-android` is the planned
+appearance and projection policy. `apps/native-renderer-android` is the
 independent consumer because it has a separate OpenXR/Vulkan carrier and can
 prove the same neutral fixture without importing Spatial SDK behavior.
+
+`MOD-003` routes that handoff through `rusty-quest-particle-adapter`. The
+Spatial consumer is selected only when the existing native surface-particle
+start route is explicitly invoked; it emits a `channel=particle-adapter`
+effective receipt before high-rate rendering begins. The shared adapter carries
+no Spatial entity, Vulkan handle, app driver, or high-rate JSON field. The
+workflow-disabled profile remains the rollback authority and leaves the adapter
+with zero rows and no runtime effect.
 
 ## Public Scope
 

@@ -1,0 +1,20 @@
+[package]
+name = "rusty-quest-particle-adapter"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Quest platform adapter from Matter/Lattice/Optics particle contracts to renderer-neutral instance rows."
+
+[dependencies]
+rusty-lattice-model = { path = "../../../rusty-lattice/crates/rusty-lattice-model" }
+rusty-matter-model = { path = "../../../rusty-matter/crates/rusty-matter-model" }
+rusty-matter-particles = { path = "../../../rusty-matter/crates/rusty-matter-particles", features = ["serde"] }
+rusty-optics-particles = { path = "../../../rusty-optics/crates/rusty-optics-particles", features = ["serde"] }
+rusty-optics-model = { path = "../../../rusty-optics/crates/rusty-optics-model", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[lints]
+workspace = true
