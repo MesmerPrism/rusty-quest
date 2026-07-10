@@ -406,6 +406,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   bindings retain effective settings, camera-panel suppression, native video
   configuration, shared projection startup, viewer updates, and JNI authority;
   the coordinator does not create a second settings source of truth.
+- `app/src/main/.../SpatialCameraHwbProjectionLaunchCoordinator.kt` owns the
+  exact camera-HWB projection property opt-in, scene/virtual-room deferral,
+  one-shot launch state, start receipt, and main-thread dispatch. Activity
+  bindings retain property reads, reader limits, effective video settings,
+  carrier selection, marker-field composition, and projection execution; the
+  coordinator cannot activate raw or panel carriers without that explicit
+  launch gate.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, viewer-locked and virtual-wall projection

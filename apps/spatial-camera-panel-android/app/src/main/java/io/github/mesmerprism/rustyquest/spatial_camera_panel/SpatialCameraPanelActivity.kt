@@ -332,7 +332,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
-  private var cameraHwbProjectionProbeStarted = false
   private var spatialVideoProjectionSettings = SpatialVideoProjectionSettings.disabled()
   private var spatialVideoProjectionStarted = false
   private var nativeSpatialEnvironmentDepthStartMask = 0L
@@ -464,6 +463,45 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             startNative = ::nativeStartSpatialVideoProjectionProbe,
             updateFromViewer = { reason, forceLog ->
               updateCameraHwbProjectionFromViewer(reason, forceLog)
+            },
+            marker = ::marker,
+        )
+    )
+  }
+  private val cameraHwbProjectionLaunchCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialCameraHwbProjectionLaunchCoordinator(
+        SpatialCameraHwbProjectionLaunchBindings(
+            state = {
+              SpatialCameraHwbProjectionLaunchState(
+                  enabled =
+                      activityReadOptionalBooleanSystemProperty(
+                          CAMERA_HWB_PROJECTION_PROBE_PROPERTY
+                      ) == true,
+                  sceneReady = spatialSceneReady,
+                  virtualRoomEnabled = spatialVirtualRoomEnabled(),
+                  virtualRoomLoaded = spatialVirtualRoomLoaded(),
+              )
+            },
+            prepareRequest = {
+              cameraHwbProjectionCarrierMode = currentCameraHwbProjectionCarrierMode()
+              SpatialCameraHwbProjectionLaunchRequest(
+                  readerMaxImages =
+                      activityReadIntSystemProperty(
+                          CAMERA_HWB_PROJECTION_READER_MAX_IMAGES_PROPERTY,
+                          CAMERA_HWB_PROJECTION_DEFAULT_READER_MAX_IMAGES,
+                          CAMERA_HWB_PROJECTION_MIN_READER_MAX_IMAGES,
+                          CAMERA_HWB_PROJECTION_MAX_READER_MAX_IMAGES,
+                      ),
+                  videoSettings = currentSpatialVideoProjectionSettings(intent),
+              )
+            },
+            startGateToken = ::cameraHwbProjectionStartGateToken,
+            carrierToken = ::cameraHwbProjectionCarrierToken,
+            projectionMarkerFields = ::cameraHwbProjectionMarkerFields,
+            stereoMarkerFields = ::cameraHwbProjectionStereoMarkerFields,
+            videoProjectionMarkerFields = ::spatialVideoProjectionMarkerFields,
+            launch = { request ->
+              runCameraHwbProjectionProbe(request.readerMaxImages, request.videoSettings)
             },
             marker = ::marker,
         )
@@ -706,7 +744,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     )
     scheduleParticleLayerLifecycleDiagnostics("scene-ready")
     spatialVideoProjectionProbeCoordinator.runIfRequested("scene-ready")
-    runCameraHwbProjectionProbeIfRequested("scene-ready")
+    cameraHwbProjectionLaunchCoordinator.runIfRequested("scene-ready")
   }
 
   override fun onVRReady() {
@@ -721,7 +759,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     sdkQuadStereoAlphaProbeCoordinator.runIfRequested("vr-ready")
     panelSurfaceMatrixProbeCoordinator.runIfRequested("vr-ready")
     spatialVideoProjectionProbeCoordinator.runIfRequested("vr-ready")
-    runCameraHwbProjectionProbeIfRequested("vr-ready")
+    cameraHwbProjectionLaunchCoordinator.runIfRequested("vr-ready")
     cameraHwbProbeCoordinator.runIfRequested("vr-ready")
   }
 
@@ -994,7 +1032,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         onLoaded = {
           runSpatialStagedAssetIfRequested(intent, "virtual-room-loaded")
           spatialVideoProjectionProbeCoordinator.runIfRequested("virtual-room-loaded")
-          runCameraHwbProjectionProbeIfRequested("virtual-room-loaded")
+          cameraHwbProjectionLaunchCoordinator.runIfRequested("virtual-room-loaded")
         },
     )
   }
@@ -1293,52 +1331,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             nativeSpatialControllerActionsStarted,
         )
     )
-  }
-
-  private fun runCameraHwbProjectionProbeIfRequested(reason: String) {
-    if (cameraHwbProjectionProbeStarted) {
-      return
-    }
-    if (activityReadOptionalBooleanSystemProperty(CAMERA_HWB_PROJECTION_PROBE_PROPERTY) != true) {
-      return
-    }
-    if (!spatialSceneReady) {
-      marker(CameraHwbProjectionModule.rawProjectionStartDeferredForSceneMarker(reason))
-      return
-    }
-    if (spatialVirtualRoomEnabled() && !spatialVirtualRoomLoaded()) {
-      marker(
-          CameraHwbProjectionModule.rawProjectionStartDeferredForVirtualRoomMarker(
-              reason,
-              spatialSceneReady,
-          )
-      )
-      return
-    }
-    cameraHwbProjectionProbeStarted = true
-    val readerMaxImages =
-        activityReadIntSystemProperty(
-            CAMERA_HWB_PROJECTION_READER_MAX_IMAGES_PROPERTY,
-            CAMERA_HWB_PROJECTION_DEFAULT_READER_MAX_IMAGES,
-            CAMERA_HWB_PROJECTION_MIN_READER_MAX_IMAGES,
-            CAMERA_HWB_PROJECTION_MAX_READER_MAX_IMAGES,
-        )
-    val videoSettings = currentSpatialVideoProjectionSettings(intent)
-    cameraHwbProjectionCarrierMode = currentCameraHwbProjectionCarrierMode()
-    val carrier = cameraHwbProjectionCarrierToken()
-    marker(
-        CameraHwbProjectionModule.rawProjectionStartMarker(
-            reason = reason,
-            startGateToken = cameraHwbProjectionStartGateToken(),
-            readerMaxImages = readerMaxImages,
-            carrier = carrier,
-            projectionMarkerFields = cameraHwbProjectionMarkerFields(),
-            stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
-            videoProjectionMarkerFields = spatialVideoProjectionMarkerFields(videoSettings),
-            publicMultiStackMarkerFields = SpatialPublicMultiStack.markerFields(),
-        )
-    )
-    Handler(Looper.getMainLooper()).post { runCameraHwbProjectionProbe(readerMaxImages, videoSettings) }
   }
 
   private fun runCameraHwbProjectionProbe(
@@ -4002,7 +3994,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (privateLayerPanelVisible) {
       return false
     }
-    if (!cameraHwbProjectionProbeStarted || cameraHwbProjectionEntity == null) {
+    if (!cameraHwbProjectionLaunchCoordinator.started || cameraHwbProjectionEntity == null) {
       return false
     }
 
@@ -4024,7 +4016,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (privateLayerPanelVisible) {
       return false
     }
-    if (!cameraHwbProjectionProbeStarted || cameraHwbProjectionEntity == null) {
+    if (!cameraHwbProjectionLaunchCoordinator.started || cameraHwbProjectionEntity == null) {
       return false
     }
     if (abs(rightY) < PANEL_HEADLOCK_JOYSTICK_DEADZONE) {
@@ -4707,7 +4699,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun cameraHwbProjectionSecondaryToggleEnabled(): Boolean = false
 
   private fun armCameraHwbProjectionSecondaryToggle(inputSource: String) {
-    if (!cameraHwbProjectionProbeStarted || cameraHwbProjectionSecondaryToggleArmed) {
+    if (!cameraHwbProjectionLaunchCoordinator.started || cameraHwbProjectionSecondaryToggleArmed) {
       return
     }
     cameraHwbProjectionSecondaryToggleArmed = true
@@ -4717,7 +4709,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun openWorkflowPanelFromController(inputSource: String, detail: String): Boolean {
     if (!SpatialControllerRoutingModule.isRightPrimaryPanelToggleSource(inputSource)) return false
     val opensPrivateLayerPanel =
-        cameraStackSuppressesParticles || cameraHwbProjectionProbeStarted || spatialVideoProjectionStarted
+        cameraStackSuppressesParticles ||
+            cameraHwbProjectionLaunchCoordinator.started ||
+            spatialVideoProjectionStarted
     val panelToggleAction =
         SpatialControllerRoutingModule.panelToggleAction(
             privateLayerPanelVisible = privateLayerPanelVisible,

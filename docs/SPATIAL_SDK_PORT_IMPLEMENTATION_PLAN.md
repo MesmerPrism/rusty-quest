@@ -244,6 +244,12 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `SpatialVideoProjectionProbeCoordinator.kt`; retain effective settings,
   native configuration, projection startup, viewer updates, and JNI authority
   in explicit Activity callbacks;
+- package the exact camera-HWB projection property opt-in,
+  scene/virtual-room deferral, one-shot launch state, launch receipt, and
+  main-thread dispatch in `SpatialCameraHwbProjectionLaunchCoordinator.kt`;
+  retain property reads, reader-limit resolution, effective video settings,
+  carrier selection, marker composition, and raw/panel execution in explicit
+  Activity bindings;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, placement-plane construction from
