@@ -222,7 +222,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             currentLeftStickPanelDistanceEnabled = ::currentLeftStickPanelDistanceEnabled,
             currentSpatialVrInputSystemToken = ::currentSpatialVrInputSystemToken,
             applyProjectionScale = { value, inputSource, mapping, detail ->
-              applyCameraHwbProjectionScaleInput(value, inputSource, mapping, detail)
+              cameraHwbProjectionTuningCoordinator.applyScaleInput(
+                  value,
+                  inputSource,
+                  mapping,
+                  detail,
+              )
               Unit
             },
             applyPanelDistance = { value, inputSource, mapping, detail ->
@@ -478,8 +483,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             prepare = { videoSettings ->
               spatialVideoProjectionRuntimeCoordinator.adoptSettings(videoSettings)
               cameraHwbProjectionEntity = null
-              cameraHwbProjectionStereoHorizontalOffsetUv =
-                  CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV
+              cameraHwbProjectionTuningCoordinator.resetStereoOffset()
               cameraHwbProjectionPlacementUpdateCoordinator.resetMarkerCadence()
               suppressParticleLayerForCameraStack("spatial-video-projection-probe")
               setWorkflowPanelVisible(
@@ -571,8 +575,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             drawSyntheticVisual = ::drawCameraHwbProjectionSyntheticVisual,
             startNativePassthrough = ::startSpatialNativePassthroughForDepthPrerequisite,
             startEnvironmentDepth = ::startSpatialEnvironmentDepthProbe,
-            updateNativeStereoOffset = ::updateNativeCameraHwbProjectionStereoOffset,
-            updateNativeTargetScale = ::updateNativeCameraHwbProjectionTargetScale,
+            updateNativeStereoOffset = { reason, forceLog ->
+              cameraHwbProjectionTuningCoordinator.updateNativeStereoOffset(reason, forceLog)
+            },
+            updateNativeTargetScale = { reason, forceLog ->
+              cameraHwbProjectionTuningCoordinator.updateNativeTargetScale(reason, forceLog)
+            },
             applyPrivateLayerConfiguration = { source ->
               updatePrivateLayerOverrideFromPanel(privateLayerOverride, source)
               updatePrivateLayerDepthLayerPolicyFromPanel(privateLayerDepthLayerPolicy, source)
@@ -619,8 +627,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             drawSyntheticVisual = ::drawCameraHwbProjectionSyntheticVisual,
             startNativePassthrough = ::startSpatialNativePassthroughForDepthPrerequisite,
             startEnvironmentDepth = ::startSpatialEnvironmentDepthProbe,
-            updateNativeStereoOffset = ::updateNativeCameraHwbProjectionStereoOffset,
-            updateNativeTargetScale = ::updateNativeCameraHwbProjectionTargetScale,
+            updateNativeStereoOffset = { reason, forceLog ->
+              cameraHwbProjectionTuningCoordinator.updateNativeStereoOffset(reason, forceLog)
+            },
+            updateNativeTargetScale = { reason, forceLog ->
+              cameraHwbProjectionTuningCoordinator.updateNativeTargetScale(reason, forceLog)
+            },
             applyPrivateLayerConfiguration = { source ->
               updatePrivateLayerOverrideFromPanel(privateLayerOverride, source)
               updatePrivateLayerDepthLayerPolicyFromPanel(privateLayerDepthLayerPolicy, source)
@@ -688,15 +700,44 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
-  private var cameraHwbProjectionTargetScale = CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE_DEFAULT
-  private var cameraHwbProjectionStereoHorizontalOffsetUv =
-      CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV
+  private val cameraHwbProjectionTuningCoordinator:
+      SpatialCameraHwbProjectionTuningCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialCameraHwbProjectionTuningCoordinator(
+        SpatialCameraHwbProjectionTuningBindings(
+            routeActive = { cameraHwbProjectionLaunchCoordinator.started },
+            projectionEntityPresent = { cameraHwbProjectionEntity != null },
+            privateLayerPanelVisible = { privateLayerPanelVisible },
+            workflowPanelVisible = { panelPlacement.visible },
+            initialTargetScale = {
+              activityReadFloatSystemProperty(
+                  CAMERA_HWB_PROJECTION_TARGET_SCALE_PROPERTY,
+                  CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE_DEFAULT,
+                  CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE,
+                  CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE,
+              )
+            },
+            targetScaleJoystickRate = {
+              activityReadFloatSystemProperty(
+                  CAMERA_HWB_PROJECTION_TARGET_SCALE_JOYSTICK_RATE_PROPERTY,
+                  CAMERA_HWB_PROJECTION_TARGET_SCALE_JOYSTICK_RATE_PER_SECOND,
+                  0.02f,
+                  1.25f,
+              )
+            },
+            targetDistanceMeters = ::currentCameraHwbProjectionTargetDistanceMeters,
+            updatePlacement = { reason, forceLog ->
+              cameraHwbProjectionPlacementUpdateCoordinator.update(reason, forceLog)
+            },
+            submitNativeStereoOffset = ::nativeUpdateCameraHwbProjectionStereoOffsetUv,
+            submitNativeTargetScale = ::nativeUpdateCameraHwbProjectionTargetScale,
+            marker = ::marker,
+        )
+    )
+  }
   private var cameraHwbProjectionPlacementMode = CameraHwbProjectionPlacementMode.ViewerLocked
   private var cameraHwbProjectionCarrierMode = CameraHwbProjectionCarrierMode.SceneQuadLayerRoomObject
   private var lastCameraHwbProjectionPlacementToggleMs = 0L
   private var cameraHwbProjectionSecondaryToggleArmed = false
-  private var lastCameraHwbProjectionScaleJoystickMs = 0L
-  private var lastCameraHwbProjectionScaleJoystickMarkerMs = 0L
   private val stagedAssetModule = SpatialStagedAssetModule(::marker)
   private val activityScope = CoroutineScope(Dispatchers.Main)
   private val spatialVirtualRoomModule: SpatialVirtualRoomModule by lazy(LazyThreadSafetyMode.NONE) {
@@ -1027,7 +1068,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             privateLayer =
                 SpatialPrivateLayerPanelRegistrationBindings(
                     layerOverride = privateLayerOverride,
-                    projectionScale = currentCameraHwbProjectionTargetScale(),
+                    projectionScale = cameraHwbProjectionTuningCoordinator.targetScale(),
                     projectionScaleRange =
                         CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE..CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE,
                     depthLayerPolicy = privateLayerDepthLayerPolicy,
@@ -1036,7 +1077,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       updatePrivateLayerOverrideFromPanel(override, source)
                     },
                     updateProjectionScale = { scale, source ->
-                      updateCameraHwbProjectionTargetScaleFromPanel(scale, source)
+                      cameraHwbProjectionTuningCoordinator.updateTargetScaleFromPanel(
+                          scale,
+                          source,
+                      )
                     },
                     updateDepthLayerPolicy = { policy, source ->
                       updatePrivateLayerDepthLayerPolicyFromPanel(policy, source)
@@ -1484,13 +1528,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     spatialVideoProjectionRuntimeCoordinator.adoptSettings(videoSettings)
     cameraHwbProjectionEntity = null
     cameraHwbProjectionCarrierMode = currentCameraHwbProjectionCarrierMode()
-    cameraHwbProjectionTargetScale = initialCameraHwbProjectionTargetScale()
-    cameraHwbProjectionStereoHorizontalOffsetUv =
-        CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV
+    cameraHwbProjectionTuningCoordinator.resetForLaunch()
     privateLayerDepthLayerPolicy = initialPrivateLayerDepthLayerPolicy()
     cameraHwbProjectionPlacementUpdateCoordinator.resetMarkerCadence()
-    lastCameraHwbProjectionScaleJoystickMs = 0L
-    lastCameraHwbProjectionScaleJoystickMarkerMs = 0L
     cameraHwbProjectionSecondaryToggleArmed = false
     suppressParticleLayerForCameraStack("camera-hwb-projection-probe")
     privateLayerPanelVisible = false
@@ -3102,8 +3142,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       CameraHwbProjectionModule.panelHittableToken(cameraHwbProjectionCarrierMode)
 
   private fun cameraHwbProjectionMarkerFields(plane: CameraHwbProjectionPlane? = null): String {
-    val targetScale = currentCameraHwbProjectionTargetScale()
-    val stereoHorizontalOffsetUv = currentCameraHwbProjectionStereoHorizontalOffsetUv()
+    val targetScale = cameraHwbProjectionTuningCoordinator.targetScale()
+    val stereoHorizontalOffsetUv =
+        cameraHwbProjectionTuningCoordinator.stereoHorizontalOffsetUv()
     val placementMode = plane?.placementMode ?: cameraHwbProjectionPlacementMode
     val targetDistanceMeters = plane?.targetDistanceMeters ?: currentCameraHwbProjectionTargetDistanceMeters()
     val projectionWidthMeters =
@@ -3122,7 +3163,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             projectionHeightMeters = projectionHeightMeters,
             targetScale = targetScale,
             stereoHorizontalOffsetUv = stereoHorizontalOffsetUv,
-            targetScaleJoystickRatePerSecond = currentCameraHwbProjectionTargetScaleJoystickRate(),
+            targetScaleJoystickRatePerSecond =
+                cameraHwbProjectionTuningCoordinator.targetScaleJoystickRate(),
             legacyLauncherPanelSuppressed = legacyLauncherPanelSuppressedForCameraStack(),
             targetDistanceSource = cameraHwbProjectionTargetDistanceSource(),
             virtualRoomForegroundDistanceActive =
@@ -3204,62 +3246,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun cameraHwbProjectionHeightMeters(targetDistanceMeters: Float): Float =
       particleLayerProjectionHeightMeters(targetDistanceMeters)
 
-  private fun currentCameraHwbProjectionStereoHorizontalOffsetUv(): Float =
-      cameraHwbProjectionStereoHorizontalOffsetUv.coerceIn(
-          CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MIN_UV,
-          CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MAX_UV,
-      )
-
-  private fun initialCameraHwbProjectionTargetScale(): Float =
-      activityReadFloatSystemProperty(
-          CAMERA_HWB_PROJECTION_TARGET_SCALE_PROPERTY,
-          CAMERA_HWB_PROJECTION_TARGET_LIVE_SCALE_DEFAULT,
-          CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE,
-          CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE,
-      )
-
   private fun initialPrivateLayerDepthLayerPolicy(): Int =
       PrivateLayerControls.depthLayerPolicyForToken(
           activityReadSystemProperty(CAMERA_HWB_PROJECTION_DEPTH_LAYER_POLICY_PROPERTY)
       ) ?: PrivateLayerControls.defaultDepthLayerPolicy
-
-  private fun currentCameraHwbProjectionTargetScale(): Float =
-      cameraHwbProjectionTargetScale.coerceIn(
-          CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE,
-          CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE,
-      )
-
-  private fun currentCameraHwbProjectionTargetScaleJoystickRate(): Float =
-      activityReadFloatSystemProperty(
-          CAMERA_HWB_PROJECTION_TARGET_SCALE_JOYSTICK_RATE_PROPERTY,
-          CAMERA_HWB_PROJECTION_TARGET_SCALE_JOYSTICK_RATE_PER_SECOND,
-          0.02f,
-          1.25f,
-      )
-
-  private fun cameraHwbProjectionLeftEffectiveTargetRectMarker(): String =
-      CameraHwbProjectionModule.leftEffectiveTargetRectMarker(
-          currentCameraHwbProjectionTargetScale(),
-          currentCameraHwbProjectionStereoHorizontalOffsetUv(),
-      )
-
-  private fun cameraHwbProjectionRightEffectiveTargetRectMarker(): String =
-      CameraHwbProjectionModule.rightEffectiveTargetRectMarker(
-          currentCameraHwbProjectionTargetScale(),
-          currentCameraHwbProjectionStereoHorizontalOffsetUv(),
-      )
-
-  private fun cameraHwbProjectionLeftPackedEffectiveTargetRectMarker(): String =
-      CameraHwbProjectionModule.leftPackedEffectiveTargetRectMarker(
-          currentCameraHwbProjectionTargetScale(),
-          currentCameraHwbProjectionStereoHorizontalOffsetUv(),
-      )
-
-  private fun cameraHwbProjectionRightPackedEffectiveTargetRectMarker(): String =
-      CameraHwbProjectionModule.rightPackedEffectiveTargetRectMarker(
-          currentCameraHwbProjectionTargetScale(),
-          currentCameraHwbProjectionStereoHorizontalOffsetUv(),
-      )
 
   private fun currentSpatialVrInputSystemToken(): String =
       SpatialControllerRoutingModule.spatialVrInputSystemToken(
@@ -3295,119 +3285,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (event.action != MotionEvent.ACTION_MOVE || !isJoystickEvent(event)) {
       return false
     }
-    if (privateLayerPanelVisible) {
-      return false
-    }
-    if (!cameraHwbProjectionLaunchCoordinator.started || cameraHwbProjectionEntity == null) {
-      return false
-    }
-
     val rightY = joystickAxis(event, MotionEvent.AXIS_RY, MotionEvent.AXIS_RZ)
-    return applyCameraHwbProjectionScaleInput(
+    return cameraHwbProjectionTuningCoordinator.applyScaleInput(
         rightY = rightY,
         inputSource = "android-generic-motion-joystick",
         controllerJoystickMapping = "right-stick-y-projection-target-scale",
         detail = "rightStickY=${activityMarkerFloat(rightY)}",
     )
-  }
-
-  private fun applyCameraHwbProjectionScaleInput(
-      rightY: Float,
-      inputSource: String,
-      controllerJoystickMapping: String,
-      detail: String,
-  ): Boolean {
-    if (privateLayerPanelVisible) {
-      return false
-    }
-    if (!cameraHwbProjectionLaunchCoordinator.started || cameraHwbProjectionEntity == null) {
-      return false
-    }
-    if (abs(rightY) < PANEL_HEADLOCK_JOYSTICK_DEADZONE) {
-      return false
-    }
-
-    val now = SystemClock.elapsedRealtime()
-    val dtSeconds =
-        if (lastCameraHwbProjectionScaleJoystickMs <= 0L) {
-          1.0f / 60.0f
-        } else {
-          ((now - lastCameraHwbProjectionScaleJoystickMs).toFloat() / 1000.0f)
-              .coerceIn(0.0f, 0.08f)
-        }
-    lastCameraHwbProjectionScaleJoystickMs = now
-    val scaleRate = currentCameraHwbProjectionTargetScaleJoystickRate()
-    val previousScale = currentCameraHwbProjectionTargetScale()
-    val signedInput =
-        if (rightY > 0.0f) {
-          rightY - PANEL_HEADLOCK_JOYSTICK_DEADZONE
-        } else {
-          rightY + PANEL_HEADLOCK_JOYSTICK_DEADZONE
-        }
-    val updatedScale =
-        (previousScale + signedInput * scaleRate * dtSeconds)
-            .coerceIn(
-                CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE,
-                CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE,
-            )
-    if (abs(updatedScale - previousScale) < 0.00001f) {
-      return false
-    }
-    cameraHwbProjectionTargetScale = updatedScale
-    updateNativeCameraHwbProjectionTargetScale(
-        reason = "right-stick-projection-target-scale",
-        forceLog = false,
-    )
-    cameraHwbProjectionPlacementUpdateCoordinator.update(
-        "right-stick-projection-target-scale",
-        false,
-    )
-
-    if (
-        now - lastCameraHwbProjectionScaleJoystickMarkerMs >=
-            CAMERA_HWB_PROJECTION_TARGET_SCALE_JOYSTICK_MARKER_INTERVAL_MS
-    ) {
-      lastCameraHwbProjectionScaleJoystickMarkerMs = now
-      marker(
-          CameraHwbProjectionModule.targetScaleJoystickAdjustedMarker(
-              inputSource = inputSource,
-              controllerJoystickMapping = controllerJoystickMapping,
-              detail = detail,
-              dtSeconds = dtSeconds,
-              scaleRate = scaleRate,
-              panelVisible = panelPlacement.visible,
-              previousScale = previousScale,
-              updatedScale = updatedScale,
-              targetDistanceMeters = currentCameraHwbProjectionTargetDistanceMeters(),
-              stereoHorizontalOffsetUv = currentCameraHwbProjectionStereoHorizontalOffsetUv(),
-          )
-      )
-    }
-    return true
-  }
-
-  private fun updateCameraHwbProjectionTargetScaleFromPanel(
-      requestedScale: Float,
-      source: String,
-  ): Float {
-    val previousScale = currentCameraHwbProjectionTargetScale()
-    cameraHwbProjectionTargetScale =
-        requestedScale.coerceIn(
-            CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE,
-            CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE,
-        )
-    val updatedScale = currentCameraHwbProjectionTargetScale()
-    updateNativeCameraHwbProjectionTargetScale(reason = source, forceLog = false)
-    cameraHwbProjectionPlacementUpdateCoordinator.update(source, false)
-    marker(
-        CameraHwbProjectionModule.targetScalePanelAdjustedMarker(
-            source = source,
-            previousScale = previousScale,
-            updatedScale = updatedScale,
-            stereoHorizontalOffsetUv = currentCameraHwbProjectionStereoHorizontalOffsetUv(),
-        )
-    )
-    return updatedScale
   }
 
   private fun updatePrivateLayerOverrideFromPanel(
@@ -3448,7 +3332,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             previousOverride = previousOverride,
             updatedOverride = updatedOverride,
             placementMode = cameraHwbProjectionPlacementMode,
-            projectionTargetScale = currentCameraHwbProjectionTargetScale(),
+            projectionTargetScale = cameraHwbProjectionTuningCoordinator.targetScale(),
         )
     )
     cameraHwbProjectionPlacementUpdateCoordinator.update("private-layer-override-panel", true)
@@ -3533,64 +3417,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     return updatedAlignment
   }
 
-  private fun updateNativeCameraHwbProjectionStereoOffset(reason: String, forceLog: Boolean) {
-    val stereoOffsetUv = currentCameraHwbProjectionStereoHorizontalOffsetUv()
-    val updateMask =
-        runCatching { nativeUpdateCameraHwbProjectionStereoOffsetUv(stereoOffsetUv) }
-            .getOrElse { throwable ->
-              if (forceLog) {
-                marker(
-                    CameraHwbProjectionModule.targetStereoHorizontalOffsetUpdateFailedMarker(
-                        reason = reason,
-                        stereoOffsetUv = stereoOffsetUv,
-                        error = throwable.javaClass.simpleName,
-                        message = throwable.message ?: "none",
-                    )
-                )
-              }
-              0L
-            }
-    if (forceLog) {
-      marker(
-          CameraHwbProjectionModule.targetStereoHorizontalOffsetNativeUpdatedMarker(
-              reason = reason,
-              updateMask = updateMask,
-              targetScale = currentCameraHwbProjectionTargetScale(),
-              stereoOffsetUv = stereoOffsetUv,
-          )
-      )
-    }
-  }
-
-  private fun updateNativeCameraHwbProjectionTargetScale(reason: String, forceLog: Boolean) {
-    val targetScale = currentCameraHwbProjectionTargetScale()
-    val updateMask =
-        runCatching { nativeUpdateCameraHwbProjectionTargetScale(targetScale) }
-            .getOrElse { throwable ->
-              if (forceLog) {
-                marker(
-                    CameraHwbProjectionModule.targetScaleUpdateFailedMarker(
-                        reason = reason,
-                        targetScale = targetScale,
-                        error = throwable.javaClass.simpleName,
-                        message = throwable.message ?: "none",
-                    )
-                )
-              }
-              0L
-            }
-    if (forceLog) {
-      marker(
-          CameraHwbProjectionModule.targetScaleNativeUpdatedMarker(
-              reason = reason,
-              updateMask = updateMask,
-              targetScale = targetScale,
-              stereoHorizontalOffsetUv = currentCameraHwbProjectionStereoHorizontalOffsetUv(),
-          )
-      )
-    }
-  }
-
   private fun handleSpatialJoystickMotion(event: MotionEvent, inputSource: String): Boolean {
     if (event.action != MotionEvent.ACTION_MOVE || !isJoystickEvent(event)) {
       return false
@@ -3649,7 +3475,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   leftStickYPanelDistanceEnabled = leftStickPanelDistanceEnabled,
                   privateLayerPanelVisible = privateLayerPanelVisible,
                   panelMode = panelStateToken(),
-                  projectionTargetLiveScale = currentCameraHwbProjectionTargetScale(),
+                  projectionTargetLiveScale = cameraHwbProjectionTuningCoordinator.targetScale(),
                   headlockMarkerFields = panelHeadlockMarkerFields(),
               )
           )

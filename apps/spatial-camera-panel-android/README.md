@@ -440,6 +440,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   native panel-pose projection, and plane-update receipts. Updates fail closed
   unless an explicit camera launch or video runtime is active. Activity
   bindings retain placement-plane calculation and the JNI primitive adapter.
+- `app/src/main/.../SpatialCameraHwbProjectionTuningCoordinator.kt` is the
+  single target-scale/stereo-offset authority. It owns four tuning and joystick
+  timing fields, launch reset, effective target-rect reporting, guarded scale
+  input, panel scale adjustment, native parameter submission, and receipts.
+  Input mutations fail closed unless the explicitly launched projection entity
+  exists. Activity bindings retain property reads, MotionEvent axis extraction,
+  placement refresh, and JNI declarations.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, viewer-locked and virtual-wall projection
