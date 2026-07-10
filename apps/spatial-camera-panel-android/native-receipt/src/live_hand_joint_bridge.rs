@@ -2,11 +2,11 @@ use std::ptr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use jni::sys::{jboolean, jclass, jfloatArray, jlong, JNIEnv};
+use jni::sys::{jboolean, jclass, jfloatArray, jint, jlong, JNIEnv};
 
 use crate::live_hand_joints::{
     store_live_hand_panel_basis, store_live_hand_spatial_viewer_basis, LiveHandJointInput,
-    LiveHandOpenXrHandles, LIVE_HAND_ROW_COUNT,
+    LiveHandOpenXrHandles, LIVE_HAND_ROW_COUNT, LIVE_HAND_VIEW_DIAGNOSTIC_FLOAT_COUNT,
 };
 use crate::{android_log_info, bool_token};
 
@@ -152,6 +152,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     up_x: f32,
     up_y: f32,
     up_z: f32,
+    mapping_mode: jint,
     valid: jboolean,
 ) -> jlong {
     let center = [
@@ -176,7 +177,7 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         [0.0, 1.0, 0.0],
     );
     let valid = valid != 0;
-    store_live_hand_spatial_viewer_basis(center, right, up, valid);
+    store_live_hand_spatial_viewer_basis(center, right, up, mapping_mode as u32, valid);
     1 | ((valid as i64) << 1)
 }
 
@@ -228,6 +229,48 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
                 bool_token(status.right_active),
             ),
         );
+    }
+    array.into_raw()
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialLiveHandJointBridge_nativePollLiveHandViewDiagnostics(
+    env: *mut JNIEnv,
+    _class: jclass,
+) -> jfloatArray {
+    let Some(bridge) = LIVE_HAND_JOINT_BRIDGE.get() else {
+        return ptr::null_mut();
+    };
+    let mut state = match bridge.lock() {
+        Ok(state) => state,
+        Err(_) => return ptr::null_mut(),
+    };
+    let Some(input) = state.input.as_mut() else {
+        return ptr::null_mut();
+    };
+    let Some(diagnostic) = input.view_diagnostic() else {
+        return ptr::null_mut();
+    };
+    let mut values = Vec::with_capacity(LIVE_HAND_VIEW_DIAGNOSTIC_FLOAT_COUNT);
+    values.push(diagnostic.valid as u32 as f32);
+    values.push(diagnostic.mapping_mode as f32);
+    values.extend_from_slice(&diagnostic.raw_position);
+    values.extend_from_slice(&diagnostic.raw_orientation_xyzw);
+    values.extend_from_slice(&diagnostic.mapped_position);
+    values.extend_from_slice(&diagnostic.mapped_orientation_xyzw);
+    values.push(diagnostic.view_count as f32);
+    values.push(diagnostic.registration_ready as u32 as f32);
+
+    let env = match unsafe { jni::JNIEnv::from_raw(env) } {
+        Ok(env) => env,
+        Err(_) => return ptr::null_mut(),
+    };
+    let Ok(array) = env.new_float_array(values.len() as i32) else {
+        return ptr::null_mut();
+    };
+    if env.set_float_array_region(&array, 0, &values).is_err() {
+        return ptr::null_mut();
     }
     array.into_raw()
 }

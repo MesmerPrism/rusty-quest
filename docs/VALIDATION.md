@@ -89,6 +89,34 @@ capture manifest therefore marks `spatial_public_mesh_topology_available=false`
 and records `spatial_poses.jsonl` plus OpenXR joint-bridge clips when the
 Spatial app has OpenXR handles.
 
+For OpenXR-to-Spatial world alignment, prepare a clean diagnostic view instead
+of the billboard fallback:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Prepare -ShowAvatarHands $true -DisableBillboardWireframe -EnableAlignmentDiagnostic -DisableNativeSurfaceParticleLayer
+```
+
+The clean rollback profile is `viewer-world-basis-registration`. The
+headset-accepted Spatial hand-lab mapping is selected explicitly:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Prepare -ShowAvatarHands $true -DisableBillboardWireframe -EnableAlignmentDiagnostic -AlignmentMappingProfile mirror-x-origin-registration -DisableNativeSurfaceParticleLayer
+```
+
+The mirror-X profile captures translation from the current OpenXR and
+Spatial viewer origins, maps position as `(-x, y, z)`, and converts OpenXR
+`xyzw` orientation to Spatial `xyzw` as `(z, w, x, y)`. If startup supplies an
+all-zero Spatial viewer pose, the bridge recaptures the registration once a
+live origin arrives. The 2026-07-10 headset run reduced viewer error from a
+reproduced 1.108 m floor offset to 0.0000 m / 0.0000 degrees and visually
+confirmed that the OpenXR joint markers overlay the built-in Meta hands.
+
+This renders one app-owned marker per OpenXR hand joint, larger Spatial SDK
+hand-anchor markers, bone lines, anchor-to-palm/wrist delta lines, and logs
+`spatial-openxr-hand-alignment` samples comparing `AvatarBody` hand anchors,
+OpenXR `palm_ext`/`wrist_ext`, `Scene.getViewerPose`, and the bridge-mapped
+OpenXR view pose.
+
 For the public Spatial world-hand billboard flock, the high-density carrier
 property is `debug.rustyquest.spatial.hand_billboard_flock.carrier`. The
 default `batched-scene-mesh` mode should report

@@ -128,6 +128,14 @@ objects, avoiding per-particle ECS component writes. The retained
 downstream coupling kernels, tuned profiles, private replay payloads, or study
 semantics.
 
+OpenXR joint diagnostics in the Spatial lane keep coordinate mappings
+profiled and reversible. `mirror-x-origin-registration` is the headset-accepted
+Spatial hand-lab mapping; `viewer-world-basis-registration` remains the clean
+rollback profile. A registration captured from an all-zero startup viewer pose
+is provisional and is recaptured once a live Spatial viewer origin arrives.
+Every profile emits its mapping token and determinant and retains fixture plus
+live-headset acceptance evidence.
+
 The lane deliberately stays outside `apps/native-renderer-android`. It does
 not link the Rust native renderer, does not request camera or hand-tracking
 features, and does not move hand mesh frames, particle arrays, field buffers,

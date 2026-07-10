@@ -1110,7 +1110,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         SpatialAvatarHandVisualFeature(::marker),
         SpatialAvatarHandInvestigationFeature(::marker),
         SpatialHandBillboardFlockFeature(::marker) { store.snapshot().surfaceTargetId },
-
+        SpatialOpenXrHandAlignmentFeature(::marker) {
+          SpatialNativeInteropProbe.capture(scene)
+        },
         SpatialHandCaptureRecorderFeature(this, ::marker) {
           SpatialNativeInteropProbe.capture(scene)
         },
@@ -1147,7 +1149,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             "spatialSdk3dAssetModule=${SpatialStagedAssetModule.MODULE_ID} " +
             "spatialWorldHandBillboardFlock=spatial-sdk-world-hand-billboard-flock " +
             "spatialWorldHandBillboardFlockEnabledProperty=debug.rustyquest.spatial.hand_billboard_flock.enabled " +
-
+            "spatialOpenXrHandAlignment=spatial-openxr-hand-alignment " +
+            "spatialOpenXrHandAlignmentEnabledProperty=debug.rustyquest.spatial.hand_alignment.enabled " +
             "spatialPrivateFeatureLoader=optional-reflection-source-set " +
             "spatialPrivateFeatureSourceEnv=RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_SRC_DIR " +
             "spatialPrivateFeatureResourceEnv=RUSTY_QUEST_SPATIAL_PRIVATE_FEATURE_RES_DIR " +
