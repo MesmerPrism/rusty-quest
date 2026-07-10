@@ -357,9 +357,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   own camera frames.
 - `app/src/main/.../CameraHwbProjectionPanelCarrierModule.kt` owns camera-HWB
   projection panel carrier construction: the Spatial SDK video-surface panel
+  registration and callback sequencing, the Spatial SDK video-surface panel
   entity, the manual custom-mesh `PanelSceneObject`, carrier create/surface/add
   failure markers, entity-spawn markers, video-surface panel consumer/ready
-  markers, and manual-carrier readiness markers.
+  markers, and manual-carrier readiness markers. The Activity supplies explicit
+  state-adoption, settings, marker-sink, placement, layer-update, and JNI-start
+  bindings.
   It must not start JNI native routes, update native projection parameters,
   poll controllers, or decide whether a carrier is enabled for the current run.
 - `app/src/main/.../SpatialPanelPlacementModule.kt` owns workflow/private-layer
@@ -410,10 +413,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   not create scene objects, read runtime properties, call JNI, or mutate
   Activity state.
 - `app/src/main/.../SpatialSurfaceParticlePanelCarrierModule.kt` owns native
-  surface-particle manual panel carrier construction: the manual custom-mesh
-  `PanelSceneObject`, create/surface/add failure markers, and readiness marker
-  fields. It must not decide feature opt-in, start JNI native routes, own
-  particle parameter state, or mutate Activity lifecycle state.
+  surface-particle panel carrier construction: registered video-surface callback
+  sequencing, the manual custom-mesh `PanelSceneObject`, create/surface/add
+  failure markers, and readiness marker fields. The Activity retains the
+  explicit opt-in/manual-carrier decision and supplies state-adoption,
+  settings, marker-sink, layer-update, and JNI-start bindings. The module must
+  not decide feature opt-in, own particle parameter state, or mutate Activity
+  lifecycle state directly.
 - `app/src/main/.../SpatialVirtualRoomModule.kt` owns the explicit opt-in
   packaged virtual room and skybox route: GLXF load, lighting, IBL/skydome
   setup, skybox resources, property parsing, markers, and cleanup. It remains
@@ -445,7 +451,8 @@ Interaction SDK pointer input without native multimodal extension forcing.
   of the workflow, private-layer control, and launcher Compose panel
   registrations. The Activity supplies explicit state and requester callbacks,
   and retains panel lifecycle, scene-object adoption, marker emission, JNI,
-  persistence, and video-surface carrier authority.
+  persistence, and video-surface carrier authority limited to feature selection
+  and adapter binding.
 - `app/src/main/.../SpatialCameraPanelModels.kt` owns shared panel placement,
   native-interop receipt, and low-rate control state models used by the
   Activity facade and panel UI.

@@ -107,7 +107,6 @@ import com.meta.spatial.toolkit.SceneObjectSystem
 import com.meta.spatial.toolkit.Transform
 import com.meta.spatial.toolkit.UIPanelRenderOptions
 import com.meta.spatial.toolkit.Visible
-import com.meta.spatial.toolkit.VideoSurfacePanelRegistration
 import com.meta.spatial.toolkit.createPanelEntity
 import com.meta.spatial.vr.LocomotionControls
 import com.meta.spatial.vr.VRFeature
@@ -632,77 +631,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     val panels =
         composePanels +
             listOfNotNull(
-        VideoSurfacePanelRegistration(
-            R.id.spatial_camera_projection_surface_panel,
-            surfaceConsumer = { _, surface ->
-              cameraHwbProjectionPanelSurfaceConsumerCalled = true
-              cameraHwbProjectionPanelSurface = surface
-              marker(
-                  CameraHwbProjectionPanelCarrierModule.scenePanelSurfaceConsumerCalledMarker(
-                      surfaceValid = surface.isValid,
-                      projectionMarkerFields = cameraHwbProjectionMarkerFields(),
-                      stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
-                      videoProjectionMarkerFields =
-                          spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings),
-                  )
-              )
-              startCameraHwbProjectionPanelCarrierIfReady("surface-consumer")
-            },
-            settingsCreator = { cameraHwbProjectionPanelMediaSettings() },
-            panelSetup = { panel, _ ->
-              cameraHwbProjectionPanelSceneObject = panel
-              cameraHwbProjectionPanelReady = true
-              cameraHwbProjectionPanelSurface = panel.surface
-              val plane = cameraHwbProjectionPlaneForPlacement()
-              val layerUpdateStatus =
-                  updateCameraHwbProjectionPanelCarrierLayer(plane, "panel-setup")
-              marker(
-                  CameraHwbProjectionPanelCarrierModule.scenePanelReadyMarker(
-                      panelHandle = panel.handle,
-                      surfaceValid = panel.surface.isValid,
-                      panelLayerUpdateStatus = layerUpdateStatus,
-                      projectionMarkerFields = cameraHwbProjectionMarkerFields(plane),
-                      stereoMarkerFields = cameraHwbProjectionStereoMarkerFields(),
-                      videoProjectionMarkerFields =
-                          spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings),
-                  )
-              )
-              startCameraHwbProjectionPanelCarrierIfReady("panel-setup")
-            },
+        CameraHwbProjectionPanelCarrierModule.videoSurfacePanelRegistration(
+            cameraHwbProjectionVideoPanelBindings()
         ),
         if (nativeSurfaceParticleLayerEnabled() && !particleLayerManualCustomMeshCarrierEnabled()) {
-          VideoSurfacePanelRegistration(
-              R.id.spatial_camera_surface_panel,
-              surfaceConsumer = { _, surface ->
-                particleSurfaceConsumerCalled = true
-                particleSurfaceConsumerSurfaceValid = surface.isValid
-                marker(
-                    SpatialSurfaceParticleRouteModule.nativeSurfaceParticleSurfaceConsumerCalledMarker(
-                        surfaceValid = surface.isValid,
-                        carrier = particleLayerCarrierToken(),
-                        placementMarkerFields = particleLayerPlacementMarkerFields(),
-                        stereoMarkerFields = particleLayerStereoMarkerFields(),
-                    )
-                )
-                startNativeSurfaceParticleLayer(surface)
-              },
-              settingsCreator = { particleLayerMediaSettings() },
-              panelSetup = { panel, _ ->
-                particleLayerPanelSceneObject = panel
-                particleSurfacePanelReady = true
-                val layerUpdateStatus =
-                    updateParticleLayerPanelLayer("panel-setup", forceLog = false)
-                marker(
-                    SpatialSurfaceParticleRouteModule.nativeSurfaceParticleSurfacePanelReadyMarker(
-                        panelHandle = panel.handle,
-                        layerUpdateStatus = layerUpdateStatus,
-                        surfaceValid = panel.surface.isValid,
-                        carrier = particleLayerCarrierToken(),
-                        placementMarkerFields = particleLayerPlacementMarkerFields(),
-                        stereoMarkerFields = particleLayerStereoMarkerFields(),
-                    )
-                )
-              },
+          SpatialSurfaceParticlePanelCarrierModule.videoSurfacePanelRegistration(
+              particleLayerVideoPanelBindings()
           )
         } else {
           val manualCarrier = particleLayerManualCustomMeshCarrierEnabled()
@@ -737,6 +671,54 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     scheduleParticleLayerLifecycleDiagnostics("register-panels")
     return panels
   }
+
+  private fun cameraHwbProjectionVideoPanelBindings():
+      CameraHwbProjectionVideoPanelBindings =
+      CameraHwbProjectionVideoPanelBindings(
+          adoptSurface = { surface ->
+            cameraHwbProjectionPanelSurfaceConsumerCalled = true
+            cameraHwbProjectionPanelSurface = surface
+          },
+          settings = { _ -> cameraHwbProjectionPanelMediaSettings() },
+          adoptPanel = { panel ->
+            cameraHwbProjectionPanelSceneObject = panel
+            cameraHwbProjectionPanelReady = true
+            cameraHwbProjectionPanelSurface = panel.surface
+          },
+          planeForPlacement = ::cameraHwbProjectionPlaneForPlacement,
+          updateLayer = { plane ->
+            updateCameraHwbProjectionPanelCarrierLayer(plane, "panel-setup")
+          },
+          currentProjectionMarkerFields = { cameraHwbProjectionMarkerFields() },
+          projectionMarkerFields = ::cameraHwbProjectionMarkerFields,
+          stereoMarkerFields = ::cameraHwbProjectionStereoMarkerFields,
+          videoProjectionMarkerFields = {
+            spatialVideoProjectionMarkerFields(spatialVideoProjectionSettings)
+          },
+          startCarrier = ::startCameraHwbProjectionPanelCarrierIfReady,
+          emitMarker = ::marker,
+      )
+
+  private fun particleLayerVideoPanelBindings(): SpatialSurfaceParticleVideoPanelBindings =
+      SpatialSurfaceParticleVideoPanelBindings(
+          adoptSurface = { surface ->
+            particleSurfaceConsumerCalled = true
+            particleSurfaceConsumerSurfaceValid = surface.isValid
+          },
+          settings = { _ -> particleLayerMediaSettings() },
+          carrier = ::particleLayerCarrierToken,
+          placementMarkerFields = ::particleLayerPlacementMarkerFields,
+          stereoMarkerFields = ::particleLayerStereoMarkerFields,
+          startLayer = ::startNativeSurfaceParticleLayer,
+          adoptPanel = { panel ->
+            particleLayerPanelSceneObject = panel
+            particleSurfacePanelReady = true
+          },
+          updateLayer = {
+            updateParticleLayerPanelLayer("panel-setup", forceLog = false)
+          },
+          emitMarker = ::marker,
+      )
 
   private fun ensurePolarSensorPanel(): PolarSensorPanel {
     val existing = polarSensorPanel

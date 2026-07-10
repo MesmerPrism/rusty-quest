@@ -17,10 +17,12 @@ import com.meta.spatial.toolkit.MediaPanelSettings
 import com.meta.spatial.toolkit.MeshCollision
 import com.meta.spatial.toolkit.PanelDimensions
 import com.meta.spatial.toolkit.PanelInputOptions
+import com.meta.spatial.toolkit.PanelRegistration
 import com.meta.spatial.toolkit.QuadShapeOptions
 import com.meta.spatial.toolkit.SceneObjectSystem
 import com.meta.spatial.toolkit.Transform
 import com.meta.spatial.toolkit.Visible
+import com.meta.spatial.toolkit.VideoSurfacePanelRegistration
 import com.meta.spatial.toolkit.createPanelEntity
 import com.meta.spatial.core.SpatialSDKExperimentalAPI
 import java.util.concurrent.CompletableFuture
@@ -41,7 +43,57 @@ internal sealed class CameraHwbProjectionManualPanelCarrierResult {
   data class Failed(val marker: String) : CameraHwbProjectionManualPanelCarrierResult()
 }
 
+internal data class CameraHwbProjectionVideoPanelBindings(
+    val adoptSurface: (AndroidSurface) -> Unit,
+    val settings: (Entity) -> MediaPanelSettings,
+    val adoptPanel: (PanelSceneObject) -> Unit,
+    val planeForPlacement: () -> CameraHwbProjectionPlane,
+    val updateLayer: (CameraHwbProjectionPlane) -> String,
+    val currentProjectionMarkerFields: () -> String,
+    val projectionMarkerFields: (CameraHwbProjectionPlane) -> String,
+    val stereoMarkerFields: () -> String,
+    val videoProjectionMarkerFields: () -> String,
+    val startCarrier: (String) -> Unit,
+    val emitMarker: (String) -> Unit,
+)
+
 internal object CameraHwbProjectionPanelCarrierModule {
+  fun videoSurfacePanelRegistration(
+      bindings: CameraHwbProjectionVideoPanelBindings
+  ): PanelRegistration =
+      VideoSurfacePanelRegistration(
+          R.id.spatial_camera_projection_surface_panel,
+          surfaceConsumer = { _, surface ->
+            bindings.adoptSurface(surface)
+            bindings.emitMarker(
+                scenePanelSurfaceConsumerCalledMarker(
+                    surfaceValid = surface.isValid,
+                    projectionMarkerFields = bindings.currentProjectionMarkerFields(),
+                    stereoMarkerFields = bindings.stereoMarkerFields(),
+                    videoProjectionMarkerFields = bindings.videoProjectionMarkerFields(),
+                )
+            )
+            bindings.startCarrier("surface-consumer")
+          },
+          settingsCreator = bindings.settings,
+          panelSetup = { panel, _ ->
+            bindings.adoptPanel(panel)
+            val plane = bindings.planeForPlacement()
+            val layerUpdateStatus = bindings.updateLayer(plane)
+            bindings.emitMarker(
+                scenePanelReadyMarker(
+                    panelHandle = panel.handle,
+                    surfaceValid = panel.surface.isValid,
+                    panelLayerUpdateStatus = layerUpdateStatus,
+                    projectionMarkerFields = bindings.projectionMarkerFields(plane),
+                    stereoMarkerFields = bindings.stereoMarkerFields(),
+                    videoProjectionMarkerFields = bindings.videoProjectionMarkerFields(),
+                )
+            )
+            bindings.startCarrier("panel-setup")
+          },
+      )
+
   @OptIn(SpatialSDKExperimentalAPI::class)
   fun createVideoSurfacePanelEntity(
       plane: CameraHwbProjectionPlane,

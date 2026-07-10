@@ -212,9 +212,9 @@ Apply that model here when a lane grows beyond a narrow facade method:
   panel-carrier start lifecycle marker fields, placement-toggle marker fields, and markers in
   `CameraHwbProjectionModule.kt`;
 - package camera-HWB projection panel carrier construction, the Spatial SDK
-  video-surface panel entity, manual custom-mesh `PanelSceneObject`,
-  video-surface panel consumer/ready markers, and create/surface/add/readiness
-  marker fields in
+  video-surface panel registration and callback sequencing, registered panel
+  entity, manual custom-mesh `PanelSceneObject`, video-surface panel consumer/ready
+  markers, and create/surface/add/readiness marker fields in
   `CameraHwbProjectionPanelCarrierModule.kt`;
 - package private layer panel placement/input policy, placement/headlock marker
   envelopes, panel shell/mode marker envelopes, the panel-state persistence
@@ -245,16 +245,19 @@ Apply that model here when a lane grows beyond a narrow facade method:
   construction in `SpatialComposePanelRegistrationModule.kt`; pass state and
   requester callbacks explicitly while the Activity retains panel lifecycle,
   scene-object adoption, marker emission, JNI, persistence, and video-surface
-  carrier authority;
+  carrier authority limited to feature selection and adapter binding;
 - package surface-particle route policy, carrier parsing, dimensions, media
   settings, route lifecycle marker fields, parameter/alias marker fields,
   projection update marker fields, panel-layer marker fields, recenter marker fields,
   panel registration marker fields, panel entity marker fields,
   lifecycle-check marker fields, and camera-stack particle suppression marker fields in
   `SpatialSurfaceParticleRouteModule.kt`.
-- package native surface-particle manual panel carrier construction,
-  custom-mesh `PanelSceneObject` creation, create/surface/add failure markers,
-  and readiness marker fields in `SpatialSurfaceParticlePanelCarrierModule.kt`.
+- package native surface-particle registered video-surface callback sequencing,
+  manual panel carrier construction, custom-mesh `PanelSceneObject` creation,
+  create/surface/add failure markers, and readiness marker fields in
+  `SpatialSurfaceParticlePanelCarrierModule.kt`; keep the explicit opt-in versus
+  manual-carrier decision in the Activity facade and pass state/JNI adapters
+  through typed bindings.
 
 All Spatial feature modules must stay explicit opt-in. Individual modules can be compiled,
 registered, or available in source, but they should not create scene

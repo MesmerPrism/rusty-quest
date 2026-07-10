@@ -14,9 +14,12 @@ import com.meta.spatial.runtime.SceneObject
 import com.meta.spatial.runtime.SceneTexture
 import com.meta.spatial.runtime.StereoMode
 import com.meta.spatial.toolkit.PanelDimensions
+import com.meta.spatial.toolkit.MediaPanelSettings
+import com.meta.spatial.toolkit.PanelRegistration
 import com.meta.spatial.toolkit.SceneObjectSystem
 import com.meta.spatial.toolkit.Transform
 import com.meta.spatial.toolkit.Visible
+import com.meta.spatial.toolkit.VideoSurfacePanelRegistration
 import java.util.concurrent.CompletableFuture
 
 internal sealed class SpatialSurfaceParticleManualPanelCarrierResult {
@@ -29,7 +32,53 @@ internal sealed class SpatialSurfaceParticleManualPanelCarrierResult {
   data class Failed(val marker: String) : SpatialSurfaceParticleManualPanelCarrierResult()
 }
 
+internal data class SpatialSurfaceParticleVideoPanelBindings(
+    val adoptSurface: (AndroidSurface) -> Unit,
+    val settings: (Entity) -> MediaPanelSettings,
+    val carrier: () -> String,
+    val placementMarkerFields: () -> String,
+    val stereoMarkerFields: () -> String,
+    val startLayer: (AndroidSurface) -> Unit,
+    val adoptPanel: (PanelSceneObject) -> Unit,
+    val updateLayer: () -> String,
+    val emitMarker: (String) -> Unit,
+)
+
 internal object SpatialSurfaceParticlePanelCarrierModule {
+  fun videoSurfacePanelRegistration(
+      bindings: SpatialSurfaceParticleVideoPanelBindings
+  ): PanelRegistration =
+      VideoSurfacePanelRegistration(
+          R.id.spatial_camera_surface_panel,
+          surfaceConsumer = { _, surface ->
+            bindings.adoptSurface(surface)
+            bindings.emitMarker(
+                SpatialSurfaceParticleRouteModule.nativeSurfaceParticleSurfaceConsumerCalledMarker(
+                    surfaceValid = surface.isValid,
+                    carrier = bindings.carrier(),
+                    placementMarkerFields = bindings.placementMarkerFields(),
+                    stereoMarkerFields = bindings.stereoMarkerFields(),
+                )
+            )
+            bindings.startLayer(surface)
+          },
+          settingsCreator = bindings.settings,
+          panelSetup = { panel, _ ->
+            bindings.adoptPanel(panel)
+            val layerUpdateStatus = bindings.updateLayer()
+            bindings.emitMarker(
+                SpatialSurfaceParticleRouteModule.nativeSurfaceParticleSurfacePanelReadyMarker(
+                    panelHandle = panel.handle,
+                    layerUpdateStatus = layerUpdateStatus,
+                    surfaceValid = panel.surface.isValid,
+                    carrier = bindings.carrier(),
+                    placementMarkerFields = bindings.placementMarkerFields(),
+                    stereoMarkerFields = bindings.stereoMarkerFields(),
+                )
+            )
+          },
+      )
+
   @OptIn(SpatialSDKExperimentalAPI::class)
   fun createManualCustomMeshPanel(
       scene: Scene,
