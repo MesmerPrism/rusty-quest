@@ -256,6 +256,12 @@ Apply that model here when a lane grows beyond a narrow facade method:
   retain property reads, reader-limit resolution, effective video settings,
   carrier selection, marker composition, and raw/panel execution in explicit
   Activity bindings;
+- package request-driven native passthrough and environment-depth startup/stop
+  plus the retained depth-start mask in
+  `SpatialCameraHwbProjectionDepthPrerequisiteCoordinator.kt`; fail both start
+  routes closed unless the camera projection launch is explicitly active and
+  retain Scene/OpenXR capture, extension reporting, native-library state,
+  projection entity observation, and JNI declarations in Activity bindings;
 - package raw SceneQuadLayer projection execution, swapchain/surface ownership,
   generated stereo layer construction, synthetic-preview branching, native
   prerequisite ordering, producer startup, cleanup, and receipts in

@@ -372,7 +372,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
-  private var nativeSpatialEnvironmentDepthStartMask = 0L
   private var cameraHwbProjectionEntity: Entity? = null
   private val sdkQuadResourceCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialSdkQuadResourceCoordinator(
@@ -553,6 +552,28 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         SpatialCameraHwbProjectionSyntheticRendererBindings(marker = ::marker)
     )
   }
+  private val cameraHwbProjectionDepthPrerequisiteCoordinator by
+      lazy(LazyThreadSafetyMode.NONE) {
+    SpatialCameraHwbProjectionDepthPrerequisiteCoordinator(
+        SpatialCameraHwbProjectionDepthPrerequisiteBindings(
+            routeActive = { cameraHwbProjectionLaunchCoordinator.started },
+            nativeState = {
+              SpatialCameraHwbProjectionDepthPrerequisiteNativeState(
+                  receiptLibraryLoaded = nativeReceiptLibraryLoaded,
+                  receiptLibraryError = nativeReceiptLibraryError,
+              )
+            },
+            captureInteropProbe = { SpatialNativeInteropProbe.capture(scene) },
+            requiredOpenXrExtensions = ::spatialRequiredOpenXrExtensionMarker,
+            projectionEntityPresent = { cameraHwbProjectionEntity != null },
+            startNativePassthrough = ::nativeStartSpatialNativePassthrough,
+            stopNativePassthrough = ::nativeStopSpatialNativePassthrough,
+            startNativeEnvironmentDepth = ::nativeStartSpatialEnvironmentDepthProbe,
+            stopNativeEnvironmentDepth = ::nativeStopSpatialEnvironmentDepthProbe,
+            marker = ::marker,
+        )
+    )
+  }
   private val cameraHwbProjectionRawCarrierCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialCameraHwbProjectionRawCarrierCoordinator(
         SpatialCameraHwbProjectionRawCarrierBindings(
@@ -579,8 +600,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             videoProjectionMarkerFields = spatialVideoProjectionRuntimeCoordinator::markerFields,
             syntheticVisualEnabled = ::cameraHwbProjectionSyntheticVisualProbeEnabled,
             drawSyntheticVisual = cameraHwbProjectionSyntheticRenderer::draw,
-            startNativePassthrough = ::startSpatialNativePassthroughForDepthPrerequisite,
-            startEnvironmentDepth = ::startSpatialEnvironmentDepthProbe,
+            startNativePassthrough =
+                cameraHwbProjectionDepthPrerequisiteCoordinator::startPassthrough,
+            startEnvironmentDepth =
+                cameraHwbProjectionDepthPrerequisiteCoordinator::startEnvironmentDepth,
             updateNativeStereoOffset = { reason, forceLog ->
               cameraHwbProjectionTuningCoordinator.updateNativeStereoOffset(reason, forceLog)
             },
@@ -632,8 +655,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             videoProjectionMarkerFields = spatialVideoProjectionRuntimeCoordinator::markerFields,
             syntheticVisualEnabled = ::cameraHwbProjectionSyntheticVisualProbeEnabled,
             drawSyntheticVisual = cameraHwbProjectionSyntheticRenderer::draw,
-            startNativePassthrough = ::startSpatialNativePassthroughForDepthPrerequisite,
-            startEnvironmentDepth = ::startSpatialEnvironmentDepthProbe,
+            startNativePassthrough =
+                cameraHwbProjectionDepthPrerequisiteCoordinator::startPassthrough,
+            startEnvironmentDepth =
+                cameraHwbProjectionDepthPrerequisiteCoordinator::startEnvironmentDepth,
             updateNativeStereoOffset = { reason, forceLog ->
               cameraHwbProjectionTuningCoordinator.updateNativeStereoOffset(reason, forceLog)
             },
@@ -1053,8 +1078,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   override fun onDestroy() {
     if (nativeReceiptLibraryLoaded) {
       runCatching { nativeStopSpatialControllerActions() }
-      runCatching { nativeStopSpatialEnvironmentDepthProbe() }
-      runCatching { nativeStopSpatialNativePassthrough() }
+      cameraHwbProjectionDepthPrerequisiteCoordinator.stop()
       runCatching { nativeStopSdkQuadVulkanProbe() }
       runCatching { nativeStopCameraHwbProbe() }
       runCatching { nativeStopSpatialVideoProjectionProbe() }
@@ -1368,100 +1392,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             }
   }
 
-  private fun startSpatialNativePassthroughForDepthPrerequisite(source: String): Long {
-    if (!nativeReceiptLibraryLoaded) {
-      marker(SpatialOpenXrRouteModule.nativePassthroughLibraryUnavailableMarker(source, nativeReceiptLibraryError))
-      return 0L
-    }
-    val probe =
-        runCatching { SpatialNativeInteropProbe.capture(scene) }
-            .getOrElse { SpatialNativeInteropProbe(runtimeName = "unavailable", 0L, 0L, 0L) }
-    val requiredOpenXrExtensions = spatialRequiredOpenXrExtensionMarker()
-    if (!probe.openXrInstanceHandleNonZero ||
-        !probe.openXrSessionHandleNonZero ||
-        !probe.openXrGetInstanceProcAddrHandleNonZero) {
-      marker(SpatialOpenXrRouteModule.nativePassthroughDeferredMarker(source, probe, requiredOpenXrExtensions))
-      return 0L
-    }
-    val mask =
-        runCatching {
-              nativeStartSpatialNativePassthrough(
-                  probe.openXrInstanceHandle,
-                  probe.openXrSessionHandle,
-                  probe.openXrGetInstanceProcAddrHandle,
-              )
-            }
-            .getOrElse { throwable ->
-              marker(
-                  SpatialOpenXrRouteModule.nativePassthroughStartCallFailedMarker(
-                      source,
-                      throwable.javaClass.simpleName,
-                      throwable.message ?: "none",
-                      requiredOpenXrExtensions,
-                  )
-              )
-              0L
-            }
-    marker(
-        SpatialOpenXrRouteModule.nativePassthroughStartRequestedMarker(
-            source,
-            mask,
-            probe,
-            cameraHwbProjectionEntity != null,
-            requiredOpenXrExtensions,
-        )
-    )
-    return mask
-  }
-
-  private fun startSpatialEnvironmentDepthProbe(source: String): Long {
-    if (!nativeReceiptLibraryLoaded) {
-      marker(SpatialOpenXrRouteModule.spatialEnvironmentDepthLibraryUnavailableMarker(source, nativeReceiptLibraryError))
-      nativeSpatialEnvironmentDepthStartMask = 0L
-      return 0L
-    }
-    val probe =
-        runCatching { SpatialNativeInteropProbe.capture(scene) }
-            .getOrElse { SpatialNativeInteropProbe(runtimeName = "unavailable", 0L, 0L, 0L) }
-    val requiredOpenXrExtensions = spatialRequiredOpenXrExtensionMarker()
-    if (!probe.openXrInstanceHandleNonZero ||
-        !probe.openXrSessionHandleNonZero ||
-        !probe.openXrGetInstanceProcAddrHandleNonZero) {
-      marker(SpatialOpenXrRouteModule.spatialEnvironmentDepthDeferredMarker(source, probe, requiredOpenXrExtensions))
-      nativeSpatialEnvironmentDepthStartMask = 0L
-      return 0L
-    }
-    val mask =
-        runCatching {
-              nativeStartSpatialEnvironmentDepthProbe(
-                  probe.openXrInstanceHandle,
-                  probe.openXrSessionHandle,
-                  probe.openXrGetInstanceProcAddrHandle,
-              )
-            }
-            .getOrElse { throwable ->
-              marker(
-                  SpatialOpenXrRouteModule.spatialEnvironmentDepthStartCallFailedMarker(
-                      source,
-                      throwable.javaClass.simpleName,
-                      throwable.message ?: "none",
-                      requiredOpenXrExtensions,
-                  )
-              )
-              0L
-            }
-    nativeSpatialEnvironmentDepthStartMask = mask
-    marker(
-        SpatialOpenXrRouteModule.spatialEnvironmentDepthStartRequestedMarker(
-            source,
-            mask,
-            probe,
-            requiredOpenXrExtensions,
-        )
-    )
-    return mask
-  }
-
   private fun createNoRenderSurfaceProbe(): NativeInteropSurfaceProbeResult {
     var panelSurface: PanelSurface? = null
     return runCatching {
@@ -1602,10 +1532,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
   private fun cleanupSdkQuadSurfaceProbe(reason: String): String {
     spatialVideoProjectionRuntimeCoordinator.stop("sdk-quad-surface-$reason")
-    if (nativeReceiptLibraryLoaded) {
-      runCatching { nativeStopSpatialEnvironmentDepthProbe() }
-      runCatching { nativeStopSpatialNativePassthrough() }
-    }
+    cameraHwbProjectionDepthPrerequisiteCoordinator.stop()
     return sdkQuadResourceCoordinator.cleanup(reason)
   }
 

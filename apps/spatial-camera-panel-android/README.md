@@ -420,6 +420,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   carrier selection, marker-field composition, and projection execution; the
   coordinator cannot activate raw or panel carriers without that explicit
   launch gate.
+- `app/src/main/.../SpatialCameraHwbProjectionDepthPrerequisiteCoordinator.kt`
+  owns request-driven native passthrough and environment-depth startup/stop
+  plus the retained depth-start mask. Both start routes fail closed unless the
+  camera projection launch is explicitly active. Activity bindings retain
+  Scene/OpenXR capture, extension reporting, native-library state, projection
+  entity observation, and JNI declarations.
 - `app/src/main/.../SpatialCameraHwbProjectionRawCarrierCoordinator.kt` owns
   the raw SceneQuadLayer projection execution path: Android swapchain/surface
   acquisition, generated stereo layer construction, synthetic-preview branch,
