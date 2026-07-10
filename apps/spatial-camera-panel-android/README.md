@@ -352,6 +352,16 @@ Interaction SDK pointer input without native multimodal extension forcing.
   Spatial `Scene`, native-library state, marker sink, and JNI create/destroy
   callbacks; the coordinator does not declare JNI methods or read unrelated
   feature properties.
+- `app/src/main/.../SpatialSdkQuadResourceCoordinator.kt` owns the six shared
+  SDK-quad resource handles used by explicitly enabled surface, Vulkan,
+  stereo-alpha, matrix, camera-HWB, camera-projection, and video-projection
+  routes: swapchain, Android surface, layer, scene object, anchor mesh, and
+  anchor material. It also owns viewer-relative probe pose calculation,
+  scoped layer access, and ordered scene/swapchain cleanup. The coordinator is
+  inert until an already opted-in route adopts resources; it reads no runtime
+  properties, starts no JNI route, and suppresses cleanup markers when no
+  resources were adopted. The Activity remains the facade for feature gates,
+  native stop callbacks, and route-specific marker composition.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, viewer-locked and virtual-wall projection

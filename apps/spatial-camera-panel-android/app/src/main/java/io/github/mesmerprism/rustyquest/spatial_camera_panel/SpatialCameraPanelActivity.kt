@@ -344,6 +344,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var spatialVideoProjectionStarted = false
   private var nativeSpatialEnvironmentDepthStartMask = 0L
   private var cameraHwbProjectionEntity: Entity? = null
+  private val sdkQuadResourceCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialSdkQuadResourceCoordinator(
+        SpatialSdkQuadResourceBindings(
+            scene = scene,
+            marker = ::marker,
+            onSceneResourcesCleared = { cameraHwbProjectionEntity = null },
+        )
+    )
+  }
   private var cameraHwbProjectionPanelEntity: Entity? = null
   private var cameraHwbProjectionPanelSceneObject: PanelSceneObject? = null
   private var cameraHwbProjectionPanelSurface: AndroidSurface? = null
@@ -365,12 +374,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var lastCameraHwbProjectionMarkerMs = 0L
   private var lastCameraHwbProjectionScaleJoystickMs = 0L
   private var lastCameraHwbProjectionScaleJoystickMarkerMs = 0L
-  private var sdkQuadSurfaceProbeLayer: SceneQuadLayer? = null
-  private var sdkQuadSurfaceProbeSceneObject: SceneObject? = null
-  private var sdkQuadSurfaceProbeSwapchain: SceneSwapchain? = null
-  private var sdkQuadSurfaceProbeSurface: AndroidSurface? = null
-  private var sdkQuadSurfaceProbeAnchorMesh: SceneMesh? = null
-  private var sdkQuadSurfaceProbeAnchorMaterial: SceneMaterial? = null
   private val stagedAssetModule = SpatialStagedAssetModule(::marker)
   private val activityScope = CoroutineScope(Dispatchers.Main)
   private val spatialVirtualRoomModule: SpatialVirtualRoomModule by lazy(LazyThreadSafetyMode.NONE) {
@@ -1206,7 +1209,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
               return
             }
-    sdkQuadSurfaceProbeSwapchain = sdkSwapchain
+    sdkQuadResourceCoordinator.adoptSwapchain(sdkSwapchain)
     val surface =
         runCatching { sdkSwapchain.getSurface() }
             .getOrElse { throwable ->
@@ -1221,7 +1224,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
               null
             }
-    sdkQuadSurfaceProbeSurface = surface
+    sdkQuadResourceCoordinator.adoptSurface(surface)
     val surfaceValid = surface?.isValid == true
     marker(
         SpatialDiagnosticProbeRouteModule.sdkQuadVulkanProbeSdkSwapchainCreatedMarker(
@@ -1639,7 +1642,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
               return
             }
-    sdkQuadSurfaceProbeSwapchain = sdkSwapchain
+    sdkQuadResourceCoordinator.adoptSwapchain(sdkSwapchain)
     val surface =
         runCatching { sdkSwapchain.getSurface() }
             .getOrElse { throwable ->
@@ -1654,7 +1657,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
               null
             }
-    sdkQuadSurfaceProbeSurface = surface
+    sdkQuadResourceCoordinator.adoptSurface(surface)
     val surfaceValid = surface?.isValid == true
     marker(
         SpatialDiagnosticProbeRouteModule.cameraHwbProbeSdkSwapchainCreatedMarker(
@@ -1830,7 +1833,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
               return
             }
-    sdkQuadSurfaceProbeSwapchain = sdkSwapchain
+    sdkQuadResourceCoordinator.adoptSwapchain(sdkSwapchain)
     val surface =
         runCatching { sdkSwapchain.getSurface() }
             .getOrElse { throwable ->
@@ -1845,7 +1848,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
               null
             }
-    sdkQuadSurfaceProbeSurface = surface
+    sdkQuadResourceCoordinator.adoptSurface(surface)
     val surfaceValid = surface?.isValid == true
     marker(
         SpatialVideoProjectionRouteModule.sdkSwapchainCreatedMarker(
@@ -2023,7 +2026,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
               return
             }
-    sdkQuadSurfaceProbeSwapchain = sdkSwapchain
+    sdkQuadResourceCoordinator.adoptSwapchain(sdkSwapchain)
     val surface =
         runCatching { sdkSwapchain.getSurface() }
             .getOrElse { throwable ->
@@ -2038,7 +2041,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
               null
             }
-    sdkQuadSurfaceProbeSurface = surface
+    sdkQuadResourceCoordinator.adoptSurface(surface)
     val surfaceValid = surface?.isValid == true
     marker(
         CameraHwbProjectionModule.rawProjectionSdkSwapchainCreatedMarker(
@@ -2474,7 +2477,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
               return
             }
-    sdkQuadSurfaceProbeSwapchain = sdkSwapchain
+    sdkQuadResourceCoordinator.adoptSwapchain(sdkSwapchain)
     val surface =
         runCatching { sdkSwapchain.getSurface() }
             .getOrElse { throwable ->
@@ -2489,7 +2492,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
               null
             }
-    sdkQuadSurfaceProbeSurface = surface
+    sdkQuadResourceCoordinator.adoptSurface(surface)
     val surfaceValid = surface?.isValid == true
     marker(
         SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeSdkSwapchainCreatedMarker(
@@ -2551,7 +2554,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     Handler(Looper.getMainLooper())
         .postDelayed(
             {
-              sdkQuadSurfaceProbeLayer?.let { layer ->
+              sdkQuadResourceCoordinator.withLayer { layer ->
                 runCatching {
                       layer.setZIndex(SDK_QUAD_STEREO_ALPHA_PROBE_Z_INDEX_HIGH)
                     }
@@ -2574,7 +2577,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     Handler(Looper.getMainLooper())
         .postDelayed(
             {
-              sdkQuadSurfaceProbeLayer?.let { layer ->
+              sdkQuadResourceCoordinator.withLayer { layer ->
                 runCatching {
                       layer.setColorScaleBias(
                           Vector4(1.0f, 1.0f, 1.0f, SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_LOW),
@@ -2598,7 +2601,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     Handler(Looper.getMainLooper())
         .postDelayed(
             {
-              sdkQuadSurfaceProbeLayer?.let { layer ->
+              sdkQuadResourceCoordinator.withLayer { layer ->
                 runCatching {
                       layer.setColorScaleBias(Vector4(1.0f), Vector4(0.0f))
                     }
@@ -2645,7 +2648,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       canvasDrawn: Boolean,
   ): Boolean =
       runCatching {
-            val pose = sdkQuadSurfaceProbePoseFromViewer()
+            val pose = sdkQuadResourceCoordinator.poseFromViewer(SDK_QUAD_SURFACE_PROBE_DISTANCE_METERS)
             val entity = Entity.create(Transform(pose), Scale(Vector3(1.0f, 1.0f, 1.0f)), Visible(true))
             val material = SceneMaterial.passthrough()
             val mesh =
@@ -2654,11 +2657,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     SDK_QUAD_STEREO_ALPHA_PROBE_HEIGHT_METERS,
                     material,
                 )
-            sdkQuadSurfaceProbeAnchorMaterial = material
-            sdkQuadSurfaceProbeAnchorMesh = mesh
+            sdkQuadResourceCoordinator.registerAnchor(material, mesh)
             val sceneObject = SceneObject(scene, mesh, "sdk_quad_stereo_alpha_probe_anchor", entity)
             scene.addObject(sceneObject)
-            sdkQuadSurfaceProbeSceneObject = sceneObject
+            sdkQuadResourceCoordinator.registerSceneObject(sceneObject)
             val layer =
                 SceneQuadLayer(
                     scene,
@@ -2689,7 +2691,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 Vector4(1.0f, 1.0f, 1.0f, SDK_QUAD_STEREO_ALPHA_PROBE_ALPHA_HIGH),
                 Vector4(0.0f),
             )
-            sdkQuadSurfaceProbeLayer = layer
+            sdkQuadResourceCoordinator.registerLayer(layer)
             marker(
                 SpatialDiagnosticProbeRouteModule.sdkQuadStereoAlphaProbeLayerCreatedMarker(
                     canvasDrawn = canvasDrawn,
@@ -2841,7 +2843,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
               return
             }
-    sdkQuadSurfaceProbeSwapchain = sdkSwapchain
+    sdkQuadResourceCoordinator.adoptSwapchain(sdkSwapchain)
     val surface =
         runCatching { sdkSwapchain.getSurface() }
             .getOrElse { throwable ->
@@ -2856,7 +2858,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
               null
             }
-    sdkQuadSurfaceProbeSurface = surface
+    sdkQuadResourceCoordinator.adoptSurface(surface)
     val surfaceValid = surface?.isValid == true
     marker(
         SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeSdkSwapchainCreatedMarker(
@@ -2878,7 +2880,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         if (plainEntityLayerCreated) {
           true
         } else {
-          cleanupSdkQuadSurfaceProbeSceneOnly("plain-entity-retry")
+          sdkQuadResourceCoordinator.cleanupSceneOnly("plain-entity-retry")
           createSdkQuadSurfaceProbeLayer(
               sdkSwapchain = sdkSwapchain,
               canvasDrawn = canvasDrawn,
@@ -2954,7 +2956,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       anchorMode: String,
   ): Boolean =
       runCatching {
-            val pose = sdkQuadSurfaceProbePoseFromViewer()
+            val pose = sdkQuadResourceCoordinator.poseFromViewer(SDK_QUAD_SURFACE_PROBE_DISTANCE_METERS)
             val entity = Entity.create(Transform(pose), Scale(Vector3(1.0f, 1.0f, 1.0f)), Visible(true))
             val sceneObject =
                 if (anchorMode == "generated-single-sided-quad") {
@@ -2965,14 +2967,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                           SDK_QUAD_SURFACE_PROBE_HEIGHT_METERS,
                           material,
                       )
-                  sdkQuadSurfaceProbeAnchorMaterial = material
-                  sdkQuadSurfaceProbeAnchorMesh = mesh
+            sdkQuadResourceCoordinator.registerAnchor(material, mesh)
                   SceneObject(scene, mesh, "sdk_quad_surface_probe_anchor", entity)
                 } else {
                   SceneObject(scene, entity)
                 }
             scene.addObject(sceneObject)
-            sdkQuadSurfaceProbeSceneObject = sceneObject
+            sdkQuadResourceCoordinator.registerSceneObject(sceneObject)
             val layer =
                 SceneQuadLayer(
                     scene,
@@ -2985,7 +2986,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     sceneObject,
                 )
             layer.setZIndex(SDK_QUAD_SURFACE_PROBE_Z_INDEX)
-            sdkQuadSurfaceProbeLayer = layer
+            sdkQuadResourceCoordinator.registerLayer(layer)
             marker(
                 SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeLayerCreatedMarker(
                     canvasDrawn = canvasDrawn,
@@ -3011,7 +3012,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun createCameraHwbProbeLayer(sdkSwapchain: SceneSwapchain): Boolean =
       runCatching {
-            val pose = sdkQuadSurfaceProbePoseFromViewer()
+            val pose = sdkQuadResourceCoordinator.poseFromViewer(SDK_QUAD_SURFACE_PROBE_DISTANCE_METERS)
             val entity = Entity.create(Transform(pose), Scale(Vector3(1.0f, 1.0f, 1.0f)), Visible(true))
             val material = SceneMaterial.passthrough()
             val mesh =
@@ -3020,11 +3021,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     CAMERA_HWB_PROBE_HEIGHT_METERS,
                     material,
                 )
-            sdkQuadSurfaceProbeAnchorMaterial = material
-            sdkQuadSurfaceProbeAnchorMesh = mesh
+            sdkQuadResourceCoordinator.registerAnchor(material, mesh)
             val sceneObject = SceneObject(scene, mesh, "camera_hwb_probe_anchor", entity)
             scene.addObject(sceneObject)
-            sdkQuadSurfaceProbeSceneObject = sceneObject
+            sdkQuadResourceCoordinator.registerSceneObject(sceneObject)
             val layer =
                 SceneQuadLayer(
                     scene,
@@ -3037,7 +3037,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     sceneObject,
                 )
             layer.setZIndex(CAMERA_HWB_PROBE_Z_INDEX)
-            sdkQuadSurfaceProbeLayer = layer
+            sdkQuadResourceCoordinator.registerLayer(layer)
             marker(
                 SpatialDiagnosticProbeRouteModule.cameraHwbProbeLayerCreatedMarker(
                     sceneObjectHandle = sceneObject.handle,
@@ -3075,11 +3075,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     plane.projectionHeightMeters,
                     material,
                 )
-            sdkQuadSurfaceProbeAnchorMaterial = material
-            sdkQuadSurfaceProbeAnchorMesh = mesh
+            sdkQuadResourceCoordinator.registerAnchor(material, mesh)
             val sceneObject = SceneObject(scene, mesh, "camera_hwb_projection_anchor", entity)
             scene.addObject(sceneObject)
-            sdkQuadSurfaceProbeSceneObject = sceneObject
+            sdkQuadResourceCoordinator.registerSceneObject(sceneObject)
             val layer =
                 SceneQuadLayer(
                     scene,
@@ -3093,7 +3092,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 )
             val layerZIndex = cameraHwbProjectionZIndexForPlacement(plane.placementMode)
             layer.setZIndex(layerZIndex)
-            sdkQuadSurfaceProbeLayer = layer
+            sdkQuadResourceCoordinator.registerLayer(layer)
             marker(
                 CameraHwbProjectionModule.rawProjectionLayerCreatedMarker(
                     sceneObjectHandle = sceneObject.handle,
@@ -3252,78 +3251,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         .getOrDefault(false)
   }
 
-  private fun cleanupSdkQuadSurfaceProbeSceneOnly(reason: String): String {
-    var layerDestroyed = sdkQuadSurfaceProbeLayer == null
-    var sceneObjectDestroyed = sdkQuadSurfaceProbeSceneObject == null
-    var meshDestroyed = sdkQuadSurfaceProbeAnchorMesh == null
-    var materialDestroyed = sdkQuadSurfaceProbeAnchorMaterial == null
-
-    sdkQuadSurfaceProbeLayer?.let { layer ->
-      layerDestroyed =
-          runCatching {
-                layer.destroy()
-                true
-              }
-              .getOrDefault(false)
-    }
-    sdkQuadSurfaceProbeLayer = null
-
-    sdkQuadSurfaceProbeSceneObject?.let { sceneObject ->
-      sceneObjectDestroyed =
-          runCatching {
-                scene.destroyObject(sceneObject)
-                true
-              }
-              .recoverCatching {
-                sceneObject.destroy()
-                true
-              }
-              .getOrDefault(false)
-    }
-    sdkQuadSurfaceProbeSceneObject = null
-    cameraHwbProjectionEntity = null
-
-    sdkQuadSurfaceProbeAnchorMesh?.let { mesh ->
-      meshDestroyed =
-          runCatching {
-                mesh.destroy()
-                true
-              }
-              .getOrDefault(false)
-    }
-    sdkQuadSurfaceProbeAnchorMesh = null
-
-    sdkQuadSurfaceProbeAnchorMaterial?.let { material ->
-      materialDestroyed =
-          runCatching {
-                material.destroy()
-                true
-              }
-              .getOrDefault(false)
-    }
-    sdkQuadSurfaceProbeAnchorMaterial = null
-
-    val cleanupStatus =
-        if (layerDestroyed && sceneObjectDestroyed && meshDestroyed && materialDestroyed) {
-          "destroyed"
-        } else {
-          "incomplete"
-    }
-    if (!layerDestroyed || !sceneObjectDestroyed || !meshDestroyed || !materialDestroyed) {
-      marker(
-          SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeSceneAnchorDestroyedMarker(
-              reason = reason,
-              layerDestroyed = layerDestroyed,
-              sceneObjectDestroyed = sceneObjectDestroyed,
-              anchorMeshDestroyed = meshDestroyed,
-              anchorMaterialDestroyed = materialDestroyed,
-              cleanupStatus = cleanupStatus,
-          )
-      )
-    }
-    return cleanupStatus
-  }
-
   private fun cleanupCameraHwbProjectionPanelCarrier(reason: String): String {
     var nativeStopped = true
     if (cameraHwbProjectionPanelNativeStarted && nativeReceiptLibraryLoaded) {
@@ -3405,53 +3332,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       runCatching { nativeStopSpatialEnvironmentDepthProbe() }
       runCatching { nativeStopSpatialNativePassthrough() }
     }
-    val sceneCleanupStatus = cleanupSdkQuadSurfaceProbeSceneOnly(reason)
-    val sceneCleanupDestroyed = sceneCleanupStatus == "destroyed"
-    var swapchainDestroyed = sdkQuadSurfaceProbeSwapchain == null
-
-    sdkQuadSurfaceProbeSwapchain?.let { swapchain ->
-      swapchainDestroyed =
-          runCatching {
-                swapchain.destroy()
-                true
-              }
-              .getOrDefault(false)
-    }
-    sdkQuadSurfaceProbeSwapchain = null
-    sdkQuadSurfaceProbeSurface = null
-
-    val cleanupStatus =
-        if (sceneCleanupDestroyed && swapchainDestroyed) {
-          "destroyed"
-        } else {
-          "incomplete"
-    }
-    if (!sceneCleanupDestroyed || !swapchainDestroyed || reason != "pre-run") {
-      marker(
-          SpatialDiagnosticProbeRouteModule.sdkQuadSurfaceProbeDestroyedMarker(
-              reason = reason,
-              sceneCleanupStatus = sceneCleanupStatus,
-              swapchainDestroyed = swapchainDestroyed,
-              cleanupStatus = cleanupStatus,
-          )
-      )
-    }
-    return cleanupStatus
-  }
-
-  @OptIn(SpatialSDKExperimentalAPI::class)
-  private fun sdkQuadSurfaceProbePoseFromViewer(): Pose {
-    val viewerPose = runCatching { scene.getViewerPose() }.getOrNull()
-    if (viewerPose == null) {
-      return Pose(
-          Vector3(0.0f, 1.20f, -SDK_QUAD_SURFACE_PROBE_DISTANCE_METERS),
-          Quaternion.fromDirection(Vector3(0.0f, 0.0f, -1.0f), Vector3(0.0f, 1.0f, 0.0f)),
-      )
-    }
-    val forward = viewerPose.forward().activityNormalizedOr(Vector3(0.0f, 0.0f, -1.0f))
-    val up = viewerPose.up().activityNormalizedOr(Vector3(0.0f, 1.0f, 0.0f))
-    val center = viewerPose.t + forward * SDK_QUAD_SURFACE_PROBE_DISTANCE_METERS
-    return Pose(center, Quaternion.fromDirection(forward, up))
+    return sdkQuadResourceCoordinator.cleanup(reason)
   }
 
 
@@ -4933,29 +4814,31 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       plane: CameraHwbProjectionPlane,
       reason: String,
   ): String {
-    val layer = sdkQuadSurfaceProbeLayer ?: return "layer-missing"
-    return runCatching {
-          layer.updateLayer(
-              plane.projectionWidthMeters,
-              plane.projectionHeightMeters,
-              0.5f,
-              0.5f,
-              StereoMode.LeftRight.ordinal,
-          )
-          layer.setZIndex(cameraHwbProjectionZIndexForPlacement(plane.placementMode))
-          "updated-existing-scene-anchor"
+    return sdkQuadResourceCoordinator.withLayer { layer ->
+          runCatching {
+                layer.updateLayer(
+                    plane.projectionWidthMeters,
+                    plane.projectionHeightMeters,
+                    0.5f,
+                    0.5f,
+                    StereoMode.LeftRight.ordinal,
+                )
+                layer.setZIndex(cameraHwbProjectionZIndexForPlacement(plane.placementMode))
+                "updated-existing-scene-anchor"
+              }
+              .getOrElse { throwable ->
+                marker(
+                    CameraHwbProjectionModule.rawProjectionLayerUpdateFailedMarker(
+                        reason = reason,
+                        plane = plane,
+                        error = throwable.javaClass.simpleName,
+                        message = throwable.message ?: "none",
+                    )
+                )
+                "failed-${throwable.javaClass.simpleName}"
+              }
         }
-        .getOrElse { throwable ->
-          marker(
-              CameraHwbProjectionModule.rawProjectionLayerUpdateFailedMarker(
-                  reason = reason,
-                  plane = plane,
-                  error = throwable.javaClass.simpleName,
-                  message = throwable.message ?: "none",
-              )
-          )
-          "failed-${throwable.javaClass.simpleName}"
-        }
+        ?: "layer-missing"
   }
 
   private fun updateCameraHwbProjectionPanelCarrierLayer(

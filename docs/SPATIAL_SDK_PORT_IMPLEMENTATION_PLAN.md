@@ -207,6 +207,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   native-handle wrapper retention, destroy-ownership classification, and
   cleanup in `SpatialExternalSwapchainProbeCoordinator.kt`; keep JNI
   declarations and native-library state in Activity-supplied bindings;
+- package the six shared SDK-owned quad resource handles, viewer-relative pose
+  calculation, scoped layer access, and ordered scene/swapchain cleanup in
+  `SpatialSdkQuadResourceCoordinator.kt`; keep each route's exact opt-in gate,
+  JNI start/stop authority, and feature-specific marker composition outside
+  this inert resource owner;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, placement-plane construction from
