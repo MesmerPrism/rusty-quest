@@ -449,6 +449,12 @@ Apply that model here when a lane grows beyond a narrow facade method:
   and receipts in `SpatialPanelJoystickArbitrationCoordinator.kt`; retain
   `MotionEvent` gating/axis extraction, property reads, clock access, and
   route-guarded callbacks in Activity, and prohibit input/projection/panel activation.
+- package panel-distance dead-zone/rate integration, normal versus private
+  free-transform routing, placement-update sequencing, persistence, and
+  receipts in `SpatialPanelDistanceActuationCoordinator.kt`; retain explicit
+  route state, runtime-property and clock adapters, state-owner mutation, and
+  concrete entity-pose application in Activity bindings, and prohibit feature
+  registration, visibility changes, or activation in the coordinator.
 - package workflow placement, private-layer placement, private-layer
   visibility, and their pure adjust/resize/reset/headlock/visibility transitions
   in `SpatialPanelPlacementStateCoordinator.kt`; expose read-only Activity

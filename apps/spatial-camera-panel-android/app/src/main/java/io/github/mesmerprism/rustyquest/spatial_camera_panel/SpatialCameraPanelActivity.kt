@@ -89,7 +89,6 @@ import com.meta.spatial.vr.LocomotionControls
 import com.meta.spatial.vr.VRFeature
 import com.meta.spatial.vr.VrInputSystemType
 import java.io.File
-import kotlin.math.abs
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import org.json.JSONArray
@@ -136,6 +135,60 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 recordPanelForegroundState = { panelMode, source ->
                   store.recordPanelForegroundState(panelMode, source)
                 },
+                marker = ::marker,
+            )
+        )
+      }
+  private val panelDistanceActuationCoordinator: SpatialPanelDistanceActuationCoordinator by
+      lazy(LazyThreadSafetyMode.NONE) {
+        SpatialPanelDistanceActuationCoordinator(
+            SpatialPanelDistanceActuationBindings(
+                workflowPlacement = { panelPlacement },
+                privateLayerPlacement = { privateLayerPanelPlacement },
+                privateLayerPanelVisible = { privateLayerPanelVisible },
+                panelHeadlockJoystickEnabled = ::currentPanelHeadlockJoystickEnabled,
+                privateLayerFreeTransform = { PRIVATE_LAYER_PANEL_SDK_FREE_TRANSFORM },
+                privateLayerPanelGrabbed = ::privateLayerPanelIsGrabbed,
+                privateLayerPanelResourceAvailable = { privateLayerPanelEntity != null },
+                syncPrivateLayerPlacement = { reason ->
+                  syncPrivateLayerPanelPlacementFromEntity(reason)
+                  Unit
+                },
+                elapsedRealtimeMs = SystemClock::elapsedRealtime,
+                joystickDeltaSeconds = panelInteractionStateCoordinator::joystickDeltaSeconds,
+                shouldEmitJoystickMarker =
+                    panelInteractionStateCoordinator::shouldEmitJoystickMarker,
+                distanceRateMetersPerSecond = {
+                  activityReadFloatSystemProperty(
+                      PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_PROPERTY,
+                      PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_METERS_PER_SECOND,
+                      0.02f,
+                      0.80f,
+                  )
+                },
+                replaceWorkflowPlacement = { placement ->
+                  panelPlacementStateCoordinator.replaceWorkflowPlacement(placement)
+                  Unit
+                },
+                replacePrivateLayerPlacement = { placement ->
+                  panelPlacementStateCoordinator.replacePrivateLayerPlacement(placement)
+                  Unit
+                },
+                applyPanelPlacement = { updatePrivateLayerPanelTransform ->
+                  applyPanelPlacement(updatePrivateLayerPanelTransform)
+                },
+                applyPrivateLayerPanelPose = {
+                  val entity = privateLayerPanelEntity
+                  if (entity != null) {
+                    val updatedPose =
+                        privateLayerPanelPoseFromViewer() ?: privateLayerPanelWorldPose()
+                    entity.setComponent(Transform(updatedPose))
+                  }
+                },
+                persistHeadlockTuning = panelPersistenceCoordinator::persistHeadlockTuning,
+                leftStickPanelDistanceEnabled = ::currentLeftStickPanelDistanceEnabled,
+                leftStickPanelDistanceMapping = ::currentLeftStickPanelDistanceMapping,
+                headlockMarkerFields = ::panelHeadlockMarkerFields,
                 marker = ::marker,
             )
         )
@@ -506,7 +559,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               Unit
             },
             applyPanelDistance = { value, inputSource, mapping, detail ->
-              applyPanelHeadlockDistanceInput(value, inputSource, mapping, detail)
+              panelDistanceActuationCoordinator.apply(value, inputSource, mapping, detail)
               Unit
             },
             recenterParticleSphere = { inputSource, detail ->
@@ -2423,17 +2476,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       axes: SpatialPanelJoystickAxes,
       inputSource: String,
   ): Boolean {
-    val placement = activeHeadlockedPanelPlacement()
-    val privateFreeTransformDistance =
-        privateLayerPanelVisible && PRIVATE_LAYER_PANEL_SDK_FREE_TRANSFORM
-    if ((!panelPlacement.visible && !privateLayerPanelVisible) || !currentPanelHeadlockJoystickEnabled()) {
-      return false
-    }
-    if (!privateFreeTransformDistance && !placement.headlocked) {
-      return false
-    }
-
-    return applyPanelHeadlockDistanceInput(
+    return panelDistanceActuationCoordinator.apply(
         leftY = axes.leftY,
         inputSource = inputSource,
         controllerJoystickMapping = currentLeftStickPanelDistanceMapping(),
@@ -2443,172 +2486,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 "rightStickXIgnored=true rightStickYPanelDistanceDisabled=true " +
                 "rightStickXPanelScaleDisabled=true",
     )
-  }
-
-  private fun applyPanelHeadlockDistanceInput(
-      leftY: Float,
-      inputSource: String,
-      controllerJoystickMapping: String,
-      detail: String,
-  ): Boolean {
-    if (privateLayerPanelVisible && PRIVATE_LAYER_PANEL_SDK_FREE_TRANSFORM) {
-      return applyPrivateLayerPanelFreeTransformDistanceInput(leftY, inputSource, detail)
-    }
-    if (privateLayerPanelVisible) {
-      syncPrivateLayerPanelPlacementFromEntity("controller-joystick-distance")
-    }
-    val placement = activeHeadlockedPanelPlacement()
-    if (
-        (!panelPlacement.visible && !privateLayerPanelVisible) ||
-            !placement.headlocked ||
-            !currentPanelHeadlockJoystickEnabled()
-    ) {
-      return false
-    }
-    if (abs(leftY) < PANEL_HEADLOCK_JOYSTICK_DEADZONE) {
-      return false
-    }
-
-    val now = SystemClock.elapsedRealtime()
-    val dtSeconds = panelInteractionStateCoordinator.joystickDeltaSeconds(now)
-    val distanceRate =
-        activityReadFloatSystemProperty(
-            PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_PROPERTY,
-            PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_METERS_PER_SECOND,
-            0.02f,
-            0.80f,
-        )
-    val previousDistance = placement.zMeters
-    val signedInput =
-        if (leftY > 0.0f) {
-          leftY - PANEL_HEADLOCK_JOYSTICK_DEADZONE
-        } else {
-          leftY + PANEL_HEADLOCK_JOYSTICK_DEADZONE
-        }
-    val updatedDistance =
-        (previousDistance - signedInput * distanceRate * dtSeconds)
-            .coerceIn(
-                if (privateLayerPanelVisible) PRIVATE_LAYER_PANEL_DISTANCE_MIN_METERS
-                else PANEL_HEADLOCK_DISTANCE_MIN_METERS,
-                PANEL_HEADLOCK_DISTANCE_MAX_METERS,
-            )
-    if (abs(updatedDistance - previousDistance) < 0.00001f) {
-      return true
-    }
-    if (privateLayerPanelVisible) {
-      panelPlacementStateCoordinator.replacePrivateLayerPlacement(
-          coercePrivateLayerPanelPlacement(
-              privateLayerPanelPlacement.copy(zMeters = updatedDistance)
-          )
-      )
-    } else {
-      panelPlacementStateCoordinator.replaceWorkflowPlacement(
-          panelPlacement.copy(zMeters = updatedDistance)
-      )
-    }
-    applyPanelPlacement(updatePrivateLayerPanelTransform = privateLayerPanelVisible)
-    panelPersistenceCoordinator.persistHeadlockTuning("controller-joystick-distance")
-    if (panelInteractionStateCoordinator.shouldEmitJoystickMarker(now)) {
-      marker(
-          SpatialControllerRoutingModule.headlockDistanceJoystickAdjustedMarker(
-              inputSource = inputSource,
-              controllerJoystickMapping = controllerJoystickMapping,
-              detail = detail,
-              leftY = leftY,
-              dtSeconds = dtSeconds,
-              distanceRate = distanceRate,
-              previousDistance = previousDistance,
-              leftStickYPanelDistanceEnabled = currentLeftStickPanelDistanceEnabled(),
-              panelDistanceControl = currentLeftStickPanelDistanceMapping(),
-              headlockMarkerFields = panelHeadlockMarkerFields(),
-          )
-      )
-    }
-    return true
-  }
-
-  @OptIn(SpatialSDKExperimentalAPI::class)
-  private fun applyPrivateLayerPanelFreeTransformDistanceInput(
-      leftY: Float,
-      inputSource: String,
-      detail: String,
-  ): Boolean {
-    if (!privateLayerPanelVisible || !currentPanelHeadlockJoystickEnabled()) {
-      return false
-    }
-    if (abs(leftY) < PANEL_HEADLOCK_JOYSTICK_DEADZONE) {
-      return false
-    }
-    if (privateLayerPanelIsGrabbed()) {
-      val now = SystemClock.elapsedRealtime()
-      if (panelInteractionStateCoordinator.shouldEmitJoystickMarker(now)) {
-        marker(
-            SpatialControllerRoutingModule.privateLayerFreeTransformDistanceJoystickSkippedMarker(
-                inputSource = inputSource,
-                detail = detail,
-                leftY = leftY,
-                headlockMarkerFields = panelHeadlockMarkerFields(),
-            )
-        )
-      }
-      return true
-    }
-
-    val entity = privateLayerPanelEntity ?: return false
-    val previousDistance =
-        privateLayerPanelPlacement.zMeters
-            .coerceIn(PRIVATE_LAYER_PANEL_DISTANCE_MIN_METERS, PANEL_HEADLOCK_DISTANCE_MAX_METERS)
-    val now = SystemClock.elapsedRealtime()
-    val dtSeconds = panelInteractionStateCoordinator.joystickDeltaSeconds(now)
-    val distanceRate =
-        activityReadFloatSystemProperty(
-            PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_PROPERTY,
-            PANEL_HEADLOCK_JOYSTICK_DISTANCE_RATE_METERS_PER_SECOND,
-            0.02f,
-            0.80f,
-        )
-    val signedInput =
-        if (leftY > 0.0f) {
-          leftY - PANEL_HEADLOCK_JOYSTICK_DEADZONE
-        } else {
-          leftY + PANEL_HEADLOCK_JOYSTICK_DEADZONE
-        }
-    val updatedDistance =
-        (previousDistance - signedInput * distanceRate * dtSeconds)
-            .coerceIn(PRIVATE_LAYER_PANEL_DISTANCE_MIN_METERS, PANEL_HEADLOCK_DISTANCE_MAX_METERS)
-    if (abs(updatedDistance - previousDistance) < 0.00001f) {
-      return true
-    }
-    panelPlacementStateCoordinator.replacePrivateLayerPlacement(
-        coercePrivateLayerPanelPlacement(
-            privateLayerPanelPlacement.copy(
-                visible = true,
-                headlocked = false,
-                zMeters = updatedDistance,
-            )
-        )
-    )
-    val updatedPose = privateLayerPanelPoseFromViewer() ?: privateLayerPanelWorldPose()
-    entity.setComponent(Transform(updatedPose))
-    panelPersistenceCoordinator.persistHeadlockTuning(
-        "controller-joystick-private-free-transform-distance"
-    )
-    if (panelInteractionStateCoordinator.shouldEmitJoystickMarker(now)) {
-      marker(
-          SpatialControllerRoutingModule.privateLayerFreeTransformDistanceJoystickAdjustedMarker(
-              inputSource = inputSource,
-              detail = detail,
-              leftY = leftY,
-              dtSeconds = dtSeconds,
-              distanceRate = distanceRate,
-              previousDistance = previousDistance,
-              updatedDistance = updatedDistance,
-              leftStickYPanelDistanceEnabled = currentLeftStickPanelDistanceEnabled(),
-              headlockMarkerFields = panelHeadlockMarkerFields(),
-          )
-      )
-    }
-    return true
   }
 
   private fun openWorkflowPanelFromController(inputSource: String, detail: String): Boolean {

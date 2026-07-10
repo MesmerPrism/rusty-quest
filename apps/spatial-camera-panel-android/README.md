@@ -652,6 +652,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   receipts. The Activity retains `MotionEvent` gating/axis extraction and
   supplies route-guarded callbacks, properties, panel state, and clock access;
   arbitration cannot enable an input, projection, or panel feature.
+- `app/src/main/.../SpatialPanelDistanceActuationCoordinator.kt` owns
+  dead-zone/rate integration, normal versus free-transform distance routing,
+  placement-update sequencing, persistence, and distance receipts. The
+  Activity supplies explicit route state, property/clock/state-owner adapters,
+  and concrete entity-pose application; actuation cannot register, show, or
+  activate an input or panel feature.
 - `app/src/main/.../SpatialPanelPlacementStateCoordinator.kt` is the single
   mutable owner for workflow placement, private-layer placement, and
   private-layer visibility. It owns only pure adjust/resize/reset/headlock/
