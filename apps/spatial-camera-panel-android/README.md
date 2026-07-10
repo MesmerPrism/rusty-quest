@@ -379,9 +379,10 @@ Interaction SDK pointer input without native multimodal extension forcing.
 - `app/src/main/.../SpatialControllerRoutingModule.kt` owns controller input
   policy helpers: Spatial VR input-system property parsing, controller route
   timing constants, trigger thresholds, joystick axis normalization,
-  left-stick panel-distance mapping, and right-primary panel toggle decisions.
+  left-stick panel-distance mapping, right-primary panel toggle decisions, and
+  controller route/joystick marker envelopes.
   It must not query Spatial ECS entities, mutate panel state, pin Android game
-  controllers, emit markers, or call JNI.
+  controllers, emit markers directly, or call JNI.
 - `app/src/main/.../SpatialOpenXrRouteModule.kt` owns OpenXR route policy:
   required extension lists, the explicit opt-in multimodal input default,
   native interop probe/receipt marker fields, native passthrough and

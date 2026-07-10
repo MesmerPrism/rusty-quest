@@ -224,7 +224,7 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `PrivateLayerPanelControlModule.kt`;
 - keep `PrivateLayerControlPanel.kt` as the Compose-only projection of those
   controls;
-- package controller shortcut routing policy in
+- package controller shortcut routing policy and controller marker envelopes in
   `SpatialControllerRoutingModule.kt`;
 - package OpenXR extension policy, explicit opt-in multimodal input defaults,
   native interop probe/receipt markers, native passthrough/environment-depth

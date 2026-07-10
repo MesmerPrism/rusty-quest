@@ -6149,26 +6149,26 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     ) {
       lastSpatialJoystickArbitrationMarkerMs = now
       marker(
-          "channel=spatial-panel status=joystick-input-arbitrated " +
-              "inputSource=${activityMarkerToken(inputSource)} " +
-              "leftStick=${activityMarkerFloat(leftX)};${activityMarkerFloat(leftY)} " +
-              "rightStick=${activityMarkerFloat(rightX)};${activityMarkerFloat(rightY)} " +
-              "projectionScaleHandled=$projectionScaleHandled " +
-              "panelPlacementHandled=$panelPlacementHandled " +
-              "rightStickSwallowedAsIgnored=$rightStickSwallowedAsIgnored " +
-              "leftStickYDeliveredToPanelScroll=$leftStickYDeliveredToPanelScroll " +
-              "leftStickYPanelDistanceObserved=$leftDistanceObserved " +
-              "consumedByActivity=$consumed " +
-              "leftStickYPanelDistanceEnabled=$leftStickPanelDistanceEnabled " +
-              "leftStickYPanelScrollReserved=false " +
-              "leftStickYProjectionHorizontalOffsetDisabled=true " +
-              "rightStickYProjectionScaleEnabled=${!privateLayerPanelVisible} " +
-              "rightStickYProjectionScaleSuppressedByPrivateLayerPanel=$privateLayerPanelVisible " +
-              "rightStickYPanelDistanceDisabled=true " +
-              "rightStickXIgnored=true rightStickXPanelScaleDisabled=true " +
-              "panelMode=${panelStateToken()} " +
-              "projectionTargetLiveScale=${activityMarkerFloat(currentCameraHwbProjectionTargetScale())} " +
-              panelHeadlockMarkerFields()
+          SpatialControllerRoutingModule.joystickArbitrationMarker(
+              SpatialJoystickArbitrationMarkerInput(
+                  inputSource = inputSource,
+                  leftX = leftX,
+                  leftY = leftY,
+                  rightX = rightX,
+                  rightY = rightY,
+                  projectionScaleHandled = projectionScaleHandled,
+                  panelPlacementHandled = panelPlacementHandled,
+                  rightStickSwallowedAsIgnored = rightStickSwallowedAsIgnored,
+                  leftStickYDeliveredToPanelScroll = leftStickYDeliveredToPanelScroll,
+                  leftStickYPanelDistanceObserved = leftDistanceObserved,
+                  consumedByActivity = consumed,
+                  leftStickYPanelDistanceEnabled = leftStickPanelDistanceEnabled,
+                  privateLayerPanelVisible = privateLayerPanelVisible,
+                  panelMode = panelStateToken(),
+                  projectionTargetLiveScale = currentCameraHwbProjectionTargetScale(),
+                  headlockMarkerFields = panelHeadlockMarkerFields(),
+              )
+          )
       )
     }
     return consumed
@@ -6271,19 +6271,18 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (now - lastPanelHeadlockJoystickMarkerMs >= PANEL_HEADLOCK_JOYSTICK_MARKER_INTERVAL_MS) {
       lastPanelHeadlockJoystickMarkerMs = now
       marker(
-          "channel=spatial-panel status=headlock-distance-joystick-adjusted " +
-              "inputSource=${activityMarkerToken(inputSource)} " +
-              "controllerJoystickMapping=${activityMarkerToken(controllerJoystickMapping)} " +
-              "$detail " +
-              "leftThumbY=${activityMarkerFloat(leftY)} " +
-              "dtSeconds=${activityMarkerFloat(dtSeconds)} " +
-              "distanceRateMps=${activityMarkerFloat(distanceRate)} " +
-              "previousHeadlockedPanelDistanceMeters=${activityMarkerFloat(previousDistance)} " +
-              "leftStickUpIncreasesPanelDistance=true leftStickDownDecreasesPanelDistance=true " +
-              "leftStickYPanelDistanceEnabled=${currentLeftStickPanelDistanceEnabled()} leftStickYPanelScrollReserved=false " +
-              "leftStickYProjectionHorizontalOffsetDisabled=true " +
-              "panelDistanceControl=${activityMarkerToken(currentLeftStickPanelDistanceMapping())} " +
-              panelHeadlockMarkerFields()
+          SpatialControllerRoutingModule.headlockDistanceJoystickAdjustedMarker(
+              inputSource = inputSource,
+              controllerJoystickMapping = controllerJoystickMapping,
+              detail = detail,
+              leftY = leftY,
+              dtSeconds = dtSeconds,
+              distanceRate = distanceRate,
+              previousDistance = previousDistance,
+              leftStickYPanelDistanceEnabled = currentLeftStickPanelDistanceEnabled(),
+              panelDistanceControl = currentLeftStickPanelDistanceMapping(),
+              headlockMarkerFields = panelHeadlockMarkerFields(),
+          )
       )
     }
     return true
@@ -6306,14 +6305,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       if (now - lastPanelHeadlockJoystickMarkerMs >= PANEL_HEADLOCK_JOYSTICK_MARKER_INTERVAL_MS) {
         lastPanelHeadlockJoystickMarkerMs = now
         marker(
-            "channel=spatial-panel status=private-layer-free-transform-distance-joystick-skipped " +
-                "inputSource=${activityMarkerToken(inputSource)} " +
-                "$detail " +
-                "leftThumbY=${activityMarkerFloat(leftY)} " +
-                "privateLayerPanelIsGrabbed=true " +
-                "leftStickYPanelDistanceEnabled=false " +
-                "panelDistanceControl=left-stick-y-free-transform-distance " +
-                panelHeadlockMarkerFields()
+            SpatialControllerRoutingModule.privateLayerFreeTransformDistanceJoystickSkippedMarker(
+                inputSource = inputSource,
+                detail = detail,
+                leftY = leftY,
+                headlockMarkerFields = panelHeadlockMarkerFields(),
+            )
         )
       }
       return true
@@ -6364,22 +6361,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (now - lastPanelHeadlockJoystickMarkerMs >= PANEL_HEADLOCK_JOYSTICK_MARKER_INTERVAL_MS) {
       lastPanelHeadlockJoystickMarkerMs = now
       marker(
-          "channel=spatial-panel status=private-layer-free-transform-distance-joystick-adjusted " +
-              "inputSource=${activityMarkerToken(inputSource)} " +
-              "$detail " +
-              "leftThumbY=${activityMarkerFloat(leftY)} " +
-              "dtSeconds=${activityMarkerFloat(dtSeconds)} " +
-              "distanceRateMps=${activityMarkerFloat(distanceRate)} " +
-              "previousHeadlockedPanelDistanceMeters=${activityMarkerFloat(previousDistance)} " +
-              "headlockedPanelDistanceMeters=${activityMarkerFloat(updatedDistance)} " +
-              "leftStickUpIncreasesPanelDistance=true leftStickDownDecreasesPanelDistance=true " +
-              "leftStickYPanelDistanceEnabled=${currentLeftStickPanelDistanceEnabled()} " +
-              "leftStickYPanelScrollReserved=false " +
-              "leftStickYProjectionHorizontalOffsetDisabled=true " +
-              "panelDistanceControl=left-stick-y-free-transform-distance " +
-              "privateLayerPanelDistancePersistsAcrossToggle=true " +
-              "rightStickSideFlickPanelMoveDisabled=true " +
-              panelHeadlockMarkerFields()
+          SpatialControllerRoutingModule.privateLayerFreeTransformDistanceJoystickAdjustedMarker(
+              inputSource = inputSource,
+              detail = detail,
+              leftY = leftY,
+              dtSeconds = dtSeconds,
+              distanceRate = distanceRate,
+              previousDistance = previousDistance,
+              updatedDistance = updatedDistance,
+              leftStickYPanelDistanceEnabled = currentLeftStickPanelDistanceEnabled(),
+              headlockMarkerFields = panelHeadlockMarkerFields(),
+          )
       )
     }
     return true
@@ -6424,12 +6416,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     ) {
       lastSpatialInputRouteMarkerMs = now
       marker(
-          "channel=spatial-panel status=spatial-input-enabled " +
-              "reason=${activityMarkerToken(reason)} spatialInterfaceEnableInput=$enableResult " +
-              "gameControllerDeviceCount=${gameControllerIds.size} " +
-              "pinnedGameControllerCount=${pinnedSpatialGameControllerIds.size} " +
-              "newlyPinnedGameControllerCount=$newlyPinned " +
-              "controllerInputRoutes=spatial-sdk-controller-component+spatial-sdk-avatar-body-controller+interaction-sdk-pointer+pinned-android-game-controller-fallback+native-openxr-diagnostic-opt-in"
+          SpatialControllerRoutingModule.spatialInputEnabledMarker(
+              reason = reason,
+              spatialInterfaceEnableInput = enableResult,
+              gameControllerDeviceCount = gameControllerIds.size,
+              pinnedGameControllerCount = pinnedSpatialGameControllerIds.size,
+              newlyPinnedGameControllerCount = newlyPinned,
+          )
       )
     }
   }
@@ -6447,11 +6440,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             .getOrElse { throwable ->
               nativeSpatialControllerActionsStarted = false
               marker(
-                  "channel=spatial-controller-actions status=poll-error " +
-                      "nativeControllerActionBridge=true controllerInput=left-thumbstick-y " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} " +
-                      "actionSetAttached=false"
+                  SpatialControllerRoutingModule.nativeControllerActionPollErrorMarker(
+                      controllerInput = "left-thumbstick-y",
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               Float.NaN
             }
@@ -6471,11 +6464,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             .getOrElse { throwable ->
               nativeSpatialControllerActionsStarted = false
               marker(
-                  "channel=spatial-controller-actions status=poll-error " +
-                      "nativeControllerActionBridge=true controllerInput=right-thumbstick-y " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} " +
-                      "actionSetAttached=false"
+                  SpatialControllerRoutingModule.nativeControllerActionPollErrorMarker(
+                      controllerInput = "right-thumbstick-y",
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               Float.NaN
             }
@@ -6496,11 +6489,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               nativeSpatialControllerActionsStarted = false
               nativeControllerSecondaryDown = false
               marker(
-                  "channel=spatial-controller-actions status=poll-error " +
-                      "nativeControllerActionBridge=true controllerInput=right-button-b " +
-                      "error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                      "message=${activityMarkerToken(throwable.message ?: "none")} " +
-                      "actionSetAttached=false"
+                  SpatialControllerRoutingModule.nativeControllerActionPollErrorMarker(
+                      controllerInput = "right-button-b",
+                      error = throwable.javaClass.simpleName,
+                      message = throwable.message ?: "none",
+                  )
               )
               false
             }
@@ -6712,10 +6705,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 spatialControllerRouteLogged = true
                 lastSpatialControllerRouteMarkerMs = now
                 marker(
-                    "channel=spatial-panel status=controller-input-route-error " +
-                        "inputSource=spatial-sdk-avatar-body-controller " +
-                        "controllerInput=right-primary-button error=${activityMarkerToken(throwable.javaClass.simpleName)} " +
-                        "message=${activityMarkerToken(throwable.message ?: "none")} debugOnly=true"
+                    SpatialControllerRoutingModule.controllerInputRouteErrorMarker(
+                        error = throwable.javaClass.simpleName,
+                        message = throwable.message ?: "none",
+                    )
                 )
               }
               return
@@ -6736,47 +6729,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       lastSpatialControllerControllerTypeCount = snapshot.controllerTypeCount
       lastSpatialControllerAllButtonState = snapshot.allControllerButtonState
       marker(
-          "channel=spatial-panel status=controller-input-route-ready " +
-              "inputSource=${activityMarkerToken(snapshot.rightInputSource)} " +
-              "controllerInput=right-primary-button+right-secondary-button-wall-toggle+right-trigger-particle-recenter+right-thumb-up-down-projection-scale+${currentLeftStickPanelDistanceMapping()} " +
-              "spatialVrInputSystem=${currentSpatialVrInputSystemToken()} " +
-              "controllerComponentCount=${snapshot.componentCount} " +
-              "controllerTypeComponentCount=${snapshot.controllerTypeCount} " +
-              "activeControllerComponentCount=${snapshot.activeCount} " +
-              "localControllerComponentCount=${snapshot.localControllerCount} " +
-              "localActiveControllerComponentCount=${snapshot.localActiveControllerCount} " +
-              "localRightControllerType=${activityMarkerToken(snapshot.localRightControllerType)} " +
-              "localRightControllerAttachmentType=${activityMarkerToken(snapshot.localRightControllerAttachmentType)} " +
-              "localRightControllerActive=${snapshot.localRightControllerActive} " +
-              "localRightControllerButtonState=${snapshot.localRightControllerButtonState} " +
-              "localRightControllerChangedButtons=${snapshot.localRightControllerChangedButtons} " +
-              "localRightControllerPreferred=${snapshot.rightInputSource == "spatial-sdk-controller-component"} " +
-              "avatarBodyCount=${snapshot.avatarBodyCount} " +
-              "playerAvatarBodyCount=${snapshot.playerAvatarBodyCount} " +
-              "leftAvatarControllerType=${activityMarkerToken(snapshot.leftAvatarControllerType)} " +
-              "leftAvatarControllerActive=${snapshot.leftAvatarControllerActive} " +
-              "leftAvatarButtonState=${snapshot.leftAvatarButtonState} " +
-              "leftAvatarChangedButtons=${snapshot.leftAvatarChangedButtons} " +
-              "rightAvatarControllerType=${activityMarkerToken(snapshot.rightAvatarControllerType)} " +
-              "rightAvatarControllerActive=${snapshot.rightAvatarControllerActive} " +
-              "rightControllerInactiveButtonStateAccepted=true " +
-              "rightAvatarButtonState=${snapshot.rightAvatarButtonState} " +
-              "rightAvatarChangedButtons=${snapshot.rightAvatarChangedButtons} " +
-              "buttonABit=${ButtonBits.ButtonA} buttonADown=${snapshot.down} " +
-              "buttonBBit=${ButtonBits.ButtonB} buttonBDown=${snapshot.secondaryDown} " +
-              "rightTriggerBit=${ButtonBits.ButtonTriggerR} rightTriggerDown=${snapshot.triggerDown} " +
-              "rightTriggerParticleRecenterEnabledForIcosphere=true " +
-              "leftThumbUpBit=${ButtonBits.ButtonThumbLU} leftThumbDownBit=${ButtonBits.ButtonThumbLD} " +
-              "leftThumbUp=${snapshot.leftThumbUp} leftThumbDown=${snapshot.leftThumbDown} " +
-              "leftThumbYPanelDistanceEnabled=${currentLeftStickPanelDistanceEnabled()} leftThumbYPanelScrollReserved=false " +
-              "leftThumbYProjectionHorizontalOffsetDisabled=true " +
-              "rightThumbUpBit=${ButtonBits.ButtonThumbRU} rightThumbDownBit=${ButtonBits.ButtonThumbRD} " +
-              "rightThumbUp=${snapshot.rightThumbUp} rightThumbDown=${snapshot.rightThumbDown} " +
-              "rightThumbY=${activityMarkerFloat(snapshot.rightThumbY)} " +
-              "activeButtonState=${snapshot.buttonState} activeChangedButtons=${snapshot.changedButtons} " +
-              "allControllerButtonState=${snapshot.allControllerButtonState} " +
-              "allControllerChangedButtons=${snapshot.allControllerChangedButtons} " +
-              "debugOnly=true"
+          SpatialControllerRoutingModule.controllerInputRouteReadyMarker(
+              snapshot = snapshot,
+              leftStickPanelDistanceMapping = currentLeftStickPanelDistanceMapping(),
+              leftStickYPanelDistanceEnabled = currentLeftStickPanelDistanceEnabled(),
+              spatialVrInputSystem = currentSpatialVrInputSystemToken(),
+          )
       )
     }
 
@@ -6785,19 +6743,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           rightY = snapshot.rightThumbY,
           inputSource = snapshot.rightInputSource,
           controllerJoystickMapping = "right-thumb-up-down-projection-target-scale",
-          detail =
-              "rightThumbY=${activityMarkerFloat(snapshot.rightThumbY)} " +
-                  "rightThumbUp=${snapshot.rightThumbUp} rightThumbDown=${snapshot.rightThumbDown} " +
-                  "rightThumbUpBit=${ButtonBits.ButtonThumbRU} rightThumbDownBit=${ButtonBits.ButtonThumbRD} " +
-                  "rightAvatarControllerType=${activityMarkerToken(snapshot.rightAvatarControllerType)} " +
-                  "rightAvatarControllerActive=${snapshot.rightAvatarControllerActive} " +
-                  "rightControllerInactiveButtonStateAccepted=true " +
-                  "rightAvatarButtonState=${snapshot.rightAvatarButtonState} " +
-                  "rightAvatarChangedButtons=${snapshot.rightAvatarChangedButtons} " +
-                  "localRightControllerPreferred=${snapshot.rightInputSource == "spatial-sdk-controller-component"} " +
-                  "localRightControllerButtonState=${snapshot.localRightControllerButtonState} " +
-                  "localRightControllerChangedButtons=${snapshot.localRightControllerChangedButtons} " +
-                  "allControllerButtonState=${snapshot.allControllerButtonState}",
+          detail = SpatialControllerRoutingModule.rightThumbProjectionScaleDetail(snapshot),
       )
     }
     if (snapshot.leftThumbY != 0.0f) {
@@ -6805,15 +6751,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           leftY = snapshot.leftThumbY,
           inputSource = "spatial-sdk-avatar-body-controller",
           controllerJoystickMapping = currentLeftStickPanelDistanceMapping(),
-          detail =
-              "leftThumbY=${activityMarkerFloat(snapshot.leftThumbY)} " +
-                  "leftThumbUp=${snapshot.leftThumbUp} leftThumbDown=${snapshot.leftThumbDown} " +
-                  "leftThumbUpBit=${ButtonBits.ButtonThumbLU} leftThumbDownBit=${ButtonBits.ButtonThumbLD} " +
-                  "leftAvatarControllerType=${activityMarkerToken(snapshot.leftAvatarControllerType)} " +
-                  "leftAvatarControllerActive=${snapshot.leftAvatarControllerActive} " +
-                  "leftAvatarButtonState=${snapshot.leftAvatarButtonState} " +
-                  "leftAvatarChangedButtons=${snapshot.leftAvatarChangedButtons} " +
-                  "allControllerButtonState=${snapshot.allControllerButtonState}",
+          detail = SpatialControllerRoutingModule.leftThumbPanelDistanceDetail(snapshot),
       )
     }
 
@@ -6824,21 +6762,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       if (
           recenterSurfaceParticleSphereOnViewer(
               inputSource = snapshot.rightInputSource,
-              detail =
-                  "buttonTriggerRBit=${ButtonBits.ButtonTriggerR} buttonState=${snapshot.buttonState} " +
-                      "changedButtons=${snapshot.changedButtons} " +
-                      "localRightControllerPreferred=${snapshot.rightInputSource == "spatial-sdk-controller-component"} " +
-                      "localRightControllerType=${activityMarkerToken(snapshot.localRightControllerType)} " +
-                      "localRightControllerAttachmentType=${activityMarkerToken(snapshot.localRightControllerAttachmentType)} " +
-                      "localRightControllerActive=${snapshot.localRightControllerActive} " +
-                      "localRightControllerButtonState=${snapshot.localRightControllerButtonState} " +
-                      "localRightControllerChangedButtons=${snapshot.localRightControllerChangedButtons} " +
-                      "rightAvatarControllerType=${activityMarkerToken(snapshot.rightAvatarControllerType)} " +
-                      "rightAvatarControllerActive=${snapshot.rightAvatarControllerActive} " +
-                      "rightAvatarButtonState=${snapshot.rightAvatarButtonState} " +
-                      "rightAvatarChangedButtons=${snapshot.rightAvatarChangedButtons} " +
-                      "controllerComponentCount=${snapshot.componentCount} " +
-                      "activeControllerComponentCount=${snapshot.activeCount}",
+              detail = SpatialControllerRoutingModule.rightTriggerParticleRecenterDetail(snapshot),
               requireParticleView = true,
           )
       ) {
@@ -6855,21 +6779,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (secondaryPressedEdge) {
       toggleCameraHwbProjectionPlacementMode(
           inputSource = snapshot.rightInputSource,
-          detail =
-              "buttonBBit=${ButtonBits.ButtonB} buttonState=${snapshot.buttonState} " +
-                  "changedButtons=${snapshot.changedButtons} " +
-                  "localRightControllerPreferred=${snapshot.rightInputSource == "spatial-sdk-controller-component"} " +
-                  "localRightControllerType=${activityMarkerToken(snapshot.localRightControllerType)} " +
-                  "localRightControllerAttachmentType=${activityMarkerToken(snapshot.localRightControllerAttachmentType)} " +
-                  "localRightControllerActive=${snapshot.localRightControllerActive} " +
-                  "localRightControllerButtonState=${snapshot.localRightControllerButtonState} " +
-                  "localRightControllerChangedButtons=${snapshot.localRightControllerChangedButtons} " +
-                  "rightAvatarControllerType=${activityMarkerToken(snapshot.rightAvatarControllerType)} " +
-                  "rightAvatarControllerActive=${snapshot.rightAvatarControllerActive} " +
-                  "rightAvatarButtonState=${snapshot.rightAvatarButtonState} " +
-                  "rightAvatarChangedButtons=${snapshot.rightAvatarChangedButtons} " +
-                  "controllerComponentCount=${snapshot.componentCount} " +
-                  "activeControllerComponentCount=${snapshot.activeCount}",
+          detail = SpatialControllerRoutingModule.rightSecondaryPlacementToggleDetail(snapshot),
       )
       return
     }
@@ -6881,22 +6791,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     openWorkflowPanelFromController(
         inputSource = snapshot.rightInputSource,
-        detail =
-                "buttonABit=${ButtonBits.ButtonA} buttonState=${snapshot.buttonState} " +
-                "changedButtons=${snapshot.changedButtons} " +
-                "localRightControllerPreferred=${snapshot.rightInputSource == "spatial-sdk-controller-component"} " +
-                "localRightControllerType=${activityMarkerToken(snapshot.localRightControllerType)} " +
-                "localRightControllerAttachmentType=${activityMarkerToken(snapshot.localRightControllerAttachmentType)} " +
-                "localRightControllerActive=${snapshot.localRightControllerActive} " +
-                "localRightControllerButtonState=${snapshot.localRightControllerButtonState} " +
-                "localRightControllerChangedButtons=${snapshot.localRightControllerChangedButtons} " +
-                "rightAvatarControllerType=${activityMarkerToken(snapshot.rightAvatarControllerType)} " +
-                "rightAvatarControllerActive=${snapshot.rightAvatarControllerActive} " +
-                "rightControllerInactiveButtonStateAccepted=true " +
-                "rightAvatarButtonState=${snapshot.rightAvatarButtonState} " +
-                "rightAvatarChangedButtons=${snapshot.rightAvatarChangedButtons} " +
-                "controllerComponentCount=${snapshot.componentCount} " +
-                "activeControllerComponentCount=${snapshot.activeCount}",
+        detail = SpatialControllerRoutingModule.rightPrimaryPanelToggleDetail(snapshot),
     )
   }
 
@@ -7261,15 +7156,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       }
     }
     marker(
-        "channel=spatial-panel status=controller-primary-toggled-panel " +
-            "controllerInput=right-primary-button inputSource=${activityMarkerToken(inputSource)} " +
-            "${detail.trim()} " +
-            "panelToggleAction=${activityMarkerToken(panelToggleAction.markerToken)} " +
-            "panelMode=${panelStateToken()} workflowPanelVisible=${panelPlacement.visible} " +
-            "privateLayerPanelVisible=$privateLayerPanelVisible " +
-            "opensPrivateLayerPanel=$opensPrivateLayerPanel " +
-            "spatialPrivateLayerControlPanel=$opensPrivateLayerPanel " +
-            "debugOnly=true"
+        SpatialControllerRoutingModule.controllerPrimaryToggledPanelMarker(
+            inputSource = inputSource,
+            detail = detail,
+            panelToggleAction = panelToggleAction,
+            panelMode = panelStateToken(),
+            workflowPanelVisible = panelPlacement.visible,
+            privateLayerPanelVisible = privateLayerPanelVisible,
+            opensPrivateLayerPanel = opensPrivateLayerPanel,
+        )
     )
     return true
   }
