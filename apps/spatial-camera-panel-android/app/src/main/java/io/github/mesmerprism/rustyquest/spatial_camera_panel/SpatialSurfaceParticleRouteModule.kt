@@ -631,6 +631,58 @@ internal object SpatialSurfaceParticleRouteModule {
           placementMarkerFields + " " +
           stereoMarkerFields
 
+  fun nativeSurfaceParticleLifecycleCheckMarker(
+      phase: String,
+      activityMarkersFile: String,
+      panelRegistrationCount: Int,
+      panelMode: String,
+      workflowPanelVisible: Boolean,
+      launcherPanelVisible: Boolean,
+      legacyLauncherPanelSuppressed: Boolean,
+      particleLayerEntityCreated: Boolean,
+      particleSurfacePanelReady: Boolean,
+      particleSurfaceConsumerCalled: Boolean,
+      particleSurfaceConsumerSurfaceValid: Boolean,
+      nativeSurfaceParticleLayerEnabled: Boolean,
+      particleLayerStarted: Boolean,
+      nativeSurfaceStartRequested: Boolean,
+      lastNativeSurfaceStartMask: Long,
+      nativeReceiptLibraryLoaded: Boolean,
+      nativeReceiptLibraryError: String,
+      openXrInstanceHandleNonZero: Boolean,
+      openXrSessionHandleNonZero: Boolean,
+      openXrGetInstanceProcAddrHandleNonZero: Boolean,
+      currentDriverProfileId: String,
+      currentProfileId: String,
+      placementMarkerFields: String,
+      stereoMarkerFields: String,
+  ): String =
+      "channel=native-surface-particle-layer status=lifecycle-check " +
+          "phase=${activityMarkerToken(phase)} " +
+          "renderPolicy=$RENDER_POLICY " +
+          "activityMarkerFile=$activityMarkersFile panelRegistrationCount=$panelRegistrationCount " +
+          "panelMode=$panelMode workflowPanelVisible=$workflowPanelVisible " +
+          "launcherPanelVisible=$launcherPanelVisible " +
+          "legacyLauncherPanelSuppressed=$legacyLauncherPanelSuppressed " +
+          "particleLayerEntityCreated=$particleLayerEntityCreated " +
+          "particleSurfacePanelReady=$particleSurfacePanelReady " +
+          "particleSurfaceConsumerCalled=$particleSurfaceConsumerCalled " +
+          "particleSurfaceConsumerSurfaceValid=$particleSurfaceConsumerSurfaceValid " +
+          "nativeSurfaceParticleLayerEnabled=$nativeSurfaceParticleLayerEnabled " +
+          "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
+          "particleLayerStarted=$particleLayerStarted " +
+          "nativeSurfaceStartRequested=$nativeSurfaceStartRequested " +
+          "lastNativeSurfaceStartMask=$lastNativeSurfaceStartMask " +
+          "nativeReceiptLibraryLoaded=$nativeReceiptLibraryLoaded " +
+          "nativeReceiptLibraryError=${activityMarkerToken(nativeReceiptLibraryError)} " +
+          "openXrInstanceHandleNonZero=$openXrInstanceHandleNonZero " +
+          "openXrSessionHandleNonZero=$openXrSessionHandleNonZero " +
+          "openXrGetInstanceProcAddrHandleNonZero=$openXrGetInstanceProcAddrHandleNonZero " +
+          "currentDriverProfileId=${activityMarkerToken(currentDriverProfileId)} " +
+          "currentProfileId=${activityMarkerToken(currentProfileId)} " +
+          placementMarkerFields + " " +
+          stereoMarkerFields
+
   fun nativeSurfaceParticleRecenterIgnoredMarker(
       inputSource: String,
       detail: String,

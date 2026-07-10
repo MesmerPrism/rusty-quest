@@ -8041,27 +8041,32 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             .getOrElse { SpatialNativeInteropProbe(runtimeName = "unavailable", 0L, 0L, 0L) }
     val snapshot = runCatching { store.snapshot() }.getOrNull()
     marker(
-        "channel=native-surface-particle-layer status=lifecycle-check phase=${activityMarkerToken(phase)} " +
-            "renderPolicy=native-vulkan-wsi-surface-panel " +
-            "activityMarkerFile=$ACTIVITY_MARKERS_FILE panelRegistrationCount=$panelRegistrationCount " +
-            "panelMode=${panelStateToken()} workflowPanelVisible=${panelPlacement.visible} " +
-            "launcherPanelVisible=${launcherPanelVisibleForPanelMode()} " +
-            "legacyLauncherPanelSuppressed=${legacyLauncherPanelSuppressedForCameraStack()} " +
-            "particleLayerEntityCreated=${particleLayerEntity != null} particleSurfacePanelReady=$particleSurfacePanelReady " +
-            "particleSurfaceConsumerCalled=$particleSurfaceConsumerCalled " +
-            "particleSurfaceConsumerSurfaceValid=$particleSurfaceConsumerSurfaceValid " +
-            "nativeSurfaceParticleLayerEnabled=${nativeSurfaceParticleLayerEnabled()} " +
-            "nativeSurfaceParticleLayerEnabledProperty=$NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY " +
-            "particleLayerStarted=$particleLayerStarted nativeSurfaceStartRequested=$nativeSurfaceStartRequested " +
-            "lastNativeSurfaceStartMask=$lastNativeSurfaceStartMask " +
-            "nativeReceiptLibraryLoaded=$nativeReceiptLibraryLoaded nativeReceiptLibraryError=${activityMarkerToken(nativeReceiptLibraryError)} " +
-            "openXrInstanceHandleNonZero=${probe.openXrInstanceHandleNonZero} " +
-            "openXrSessionHandleNonZero=${probe.openXrSessionHandleNonZero} " +
-            "openXrGetInstanceProcAddrHandleNonZero=${probe.openXrGetInstanceProcAddrHandleNonZero} " +
-            "currentDriverProfileId=${activityMarkerToken(snapshot?.currentConditionId ?: "none")} " +
-            "currentProfileId=${activityMarkerToken(snapshot?.currentProfileId ?: "none")} " +
-            particleLayerPlacementMarkerFields() + " " +
-            particleLayerStereoMarkerFields()
+        SpatialSurfaceParticleRouteModule.nativeSurfaceParticleLifecycleCheckMarker(
+            phase = phase,
+            activityMarkersFile = ACTIVITY_MARKERS_FILE,
+            panelRegistrationCount = panelRegistrationCount,
+            panelMode = panelStateToken(),
+            workflowPanelVisible = panelPlacement.visible,
+            launcherPanelVisible = launcherPanelVisibleForPanelMode(),
+            legacyLauncherPanelSuppressed = legacyLauncherPanelSuppressedForCameraStack(),
+            particleLayerEntityCreated = particleLayerEntity != null,
+            particleSurfacePanelReady = particleSurfacePanelReady,
+            particleSurfaceConsumerCalled = particleSurfaceConsumerCalled,
+            particleSurfaceConsumerSurfaceValid = particleSurfaceConsumerSurfaceValid,
+            nativeSurfaceParticleLayerEnabled = nativeSurfaceParticleLayerEnabled(),
+            particleLayerStarted = particleLayerStarted,
+            nativeSurfaceStartRequested = nativeSurfaceStartRequested,
+            lastNativeSurfaceStartMask = lastNativeSurfaceStartMask,
+            nativeReceiptLibraryLoaded = nativeReceiptLibraryLoaded,
+            nativeReceiptLibraryError = nativeReceiptLibraryError,
+            openXrInstanceHandleNonZero = probe.openXrInstanceHandleNonZero,
+            openXrSessionHandleNonZero = probe.openXrSessionHandleNonZero,
+            openXrGetInstanceProcAddrHandleNonZero = probe.openXrGetInstanceProcAddrHandleNonZero,
+            currentDriverProfileId = snapshot?.currentConditionId ?: "none",
+            currentProfileId = snapshot?.currentProfileId ?: "none",
+            placementMarkerFields = particleLayerPlacementMarkerFields(),
+            stereoMarkerFields = particleLayerStereoMarkerFields(),
+        )
     )
   }
 
