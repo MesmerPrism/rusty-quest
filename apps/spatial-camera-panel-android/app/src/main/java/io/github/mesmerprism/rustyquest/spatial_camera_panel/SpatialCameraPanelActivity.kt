@@ -112,6 +112,26 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var particleLayerManualPanelSurface: AndroidSurface? = null
   private var polarSensorPanel: PolarSensorPanel? = null
   private val panelInteractionStateCoordinator = SpatialPanelInteractionStateCoordinator()
+  private val panelPersistenceCoordinator: SpatialPanelPersistenceCoordinator by
+      lazy(LazyThreadSafetyMode.NONE) {
+        SpatialPanelPersistenceCoordinator(
+            SpatialPanelPersistenceBindings(
+                outputDirectory = { filesDir },
+                headlockSnapshot = {
+                  SpatialPanelHeadlockTuningSnapshot(
+                      privateLayerPanelVisible = privateLayerPanelVisible,
+                      workflowPlacement = panelPlacement,
+                      privateLayerPlacement = privateLayerPanelPlacement,
+                  )
+                },
+                panelMode = ::panelStateToken,
+                recordPanelForegroundState = { panelMode, source ->
+                  store.recordPanelForegroundState(panelMode, source)
+                },
+                marker = ::marker,
+            )
+        )
+      }
   private val privateLayerControlCoordinator: SpatialPrivateLayerControlCoordinator by
       lazy(LazyThreadSafetyMode.NONE) {
         SpatialPrivateLayerControlCoordinator(
@@ -1764,7 +1784,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             deltaScale,
         )
     applyPanelPlacement()
-    persistPanelHeadlockTuning("compose-placement-buttons")
+    panelPersistenceCoordinator.persistHeadlockTuning("compose-placement-buttons")
     marker(
         SpatialPanelPlacementModule.workflowPlacementUpdatedMarker(
             panelMode = panelStateToken(),
@@ -1778,7 +1798,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     panelPlacement =
         SpatialPanelPlacementModule.resizeWorkflowPanel(panelPlacement, deltaWidth, deltaHeight)
     applyPanelPlacement()
-    persistPanelHeadlockTuning("compose-panel-resize")
+    panelPersistenceCoordinator.persistHeadlockTuning("compose-panel-resize")
     marker(
         SpatialPanelPlacementModule.workflowPanelSizeUpdatedMarker(
             widthMeters = panelPlacement.widthMeters,
@@ -1794,8 +1814,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     privateLayerPanelPlacement = privateLayerPanelPlacement.copy(visible = false)
     panelPlacement = SpatialPanelPlacementModule.resetWorkflowPanelPlacement(panelPlacement)
     applyPanelPlacement()
-    persistPanelHeadlockTuning("compose-panel-reset")
-    recordPanelState("compose-panel-reset")
+    panelPersistenceCoordinator.persistHeadlockTuning("compose-panel-reset")
+    panelPersistenceCoordinator.recordPanelState("compose-panel-reset")
     marker(
         SpatialPanelPlacementModule.workflowPlacementResetMarker(
             panelMode = panelStateToken(),
@@ -1808,7 +1828,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun setPanelHeadlocked(enabled: Boolean, source: String): PanelPlacement {
     panelPlacement = SpatialPanelPlacementModule.setWorkflowHeadlocked(panelPlacement, enabled)
     applyPanelPlacement()
-    persistPanelHeadlockTuning(source)
+    panelPersistenceCoordinator.persistHeadlockTuning(source)
     marker(
         SpatialPanelPlacementModule.workflowHeadlockModeUpdatedMarker(
             source = source,
@@ -1862,7 +1882,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           panelPlacement.copy(visible = visible)
         }
     applyPanelPlacement()
-    recordPanelState(source)
+    panelPersistenceCoordinator.recordPanelState(source)
     marker(
         SpatialPanelPlacementModule.workflowPanelModeUpdatedMarker(
             SpatialPanelModeMarkerInput(
@@ -2326,7 +2346,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     if (!panelPlacement.headlockEquivalent(updated)) {
       panelPlacement = updated
       applyPanelPlacement()
-      persistPanelHeadlockTuning("runtime-hotload-android-property")
+      panelPersistenceCoordinator.persistHeadlockTuning("runtime-hotload-android-property")
     }
     val token = panelHeadlockMarkerFields()
     if (panelInteractionStateCoordinator.consumeHeadlockHotloadToken(token)) {
@@ -2337,69 +2357,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           )
       )
     }
-  }
-
-  private fun persistPanelHeadlockTuning(source: String) {
-    runCatching {
-          val activePlacement = activeHeadlockedPanelPlacement()
-          val row =
-              JSONObject()
-                  .put("schema_id", "rusty.quest.spatial_camera_panel.panel_headlock_tuning.v1")
-                  .put("source", source)
-                  .put("updated_at_unix_ms", System.currentTimeMillis())
-                  .put(
-                      "active_panel",
-                      if (privateLayerPanelVisible) "private-layer-panel" else "workflow-panel",
-                  )
-                  .put("headlocked", activePlacement.headlocked)
-                  .put("offset_x_m", activePlacement.xMeters.toDouble())
-                  .put("offset_y_m", activePlacement.yMeters.toDouble())
-                  .put("distance_m", activePlacement.zMeters.toDouble())
-                  .put(
-                      "distance_mode",
-                      if (privateLayerPanelVisible) "left-stick-stored-placement"
-                      else "viewer-forward-distance",
-                  )
-                  .put("scale", activePlacement.scale.toDouble())
-                  .put("width_m", activePlacement.widthMeters.toDouble())
-                  .put("height_m", activePlacement.heightMeters.toDouble())
-                  .put(
-                      "workflow_panel",
-                      JSONObject()
-                          .put("headlocked", panelPlacement.headlocked)
-                          .put("offset_x_m", panelPlacement.xMeters.toDouble())
-                          .put("offset_y_m", panelPlacement.yMeters.toDouble())
-                          .put("distance_m", panelPlacement.zMeters.toDouble())
-                          .put("distance_mode", "viewer-forward-distance")
-                          .put("scale", panelPlacement.scale.toDouble())
-                          .put("width_m", panelPlacement.widthMeters.toDouble())
-                          .put("height_m", panelPlacement.heightMeters.toDouble()),
-                  )
-                  .put(
-                      "private_layer_panel",
-                      JSONObject()
-                          .put("headlocked", privateLayerPanelPlacement.headlocked)
-                          .put("offset_x_m", privateLayerPanelPlacement.xMeters.toDouble())
-                          .put("offset_y_m", privateLayerPanelPlacement.yMeters.toDouble())
-                          .put("distance_m", privateLayerPanelPlacement.zMeters.toDouble())
-                          .put("distance_mode", "left-stick-stored-placement")
-                          .put("render_mode", "spatial-sdk-mesh")
-                          .put("layer_config", "disabled")
-                          .put("layer_z_index", "none")
-                          .put("scale", privateLayerPanelPlacement.scale.toDouble())
-                          .put("width_m", privateLayerPanelPlacement.widthMeters.toDouble())
-                          .put("height_m", privateLayerPanelPlacement.heightMeters.toDouble()),
-                  )
-          File(filesDir, PANEL_HEADLOCK_TUNING_FILE).writeText(row.toString(2), Charsets.UTF_8)
-        }
-        .getOrElse { throwable ->
-          marker(
-              SpatialPanelPlacementModule.headlockTuningPersistFailedMarker(
-                  source = source,
-                  error = throwable.javaClass.simpleName,
-              )
-          )
-        }
   }
 
   private fun particleLayerPose(): Pose =
@@ -2670,7 +2627,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       panelPlacement = panelPlacement.copy(zMeters = updatedDistance)
     }
     applyPanelPlacement(updatePrivateLayerPanelTransform = privateLayerPanelVisible)
-    persistPanelHeadlockTuning("controller-joystick-distance")
+    panelPersistenceCoordinator.persistHeadlockTuning("controller-joystick-distance")
     if (panelInteractionStateCoordinator.shouldEmitJoystickMarker(now)) {
       marker(
           SpatialControllerRoutingModule.headlockDistanceJoystickAdjustedMarker(
@@ -2752,7 +2709,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     val updatedPose = privateLayerPanelPoseFromViewer() ?: privateLayerPanelWorldPose()
     entity.setComponent(Transform(updatedPose))
-    persistPanelHeadlockTuning("controller-joystick-private-free-transform-distance")
+    panelPersistenceCoordinator.persistHeadlockTuning(
+        "controller-joystick-private-free-transform-distance"
+    )
     if (panelInteractionStateCoordinator.shouldEmitJoystickMarker(now)) {
       marker(
           SpatialControllerRoutingModule.privateLayerFreeTransformDistanceJoystickAdjustedMarker(
@@ -2948,18 +2907,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           privateLayerPanelVisible = privateLayerPanelVisible,
           workflowPanelVisible = panelPlacement.visible,
       )
-
-  private fun recordPanelState(source: String) {
-    runCatching { store.recordPanelForegroundState(panelStateToken(), source) }
-        .getOrElse { throwable ->
-          marker(
-              SpatialPanelPlacementModule.panelStateRecordFailedMarker(
-                  source = source,
-                  error = throwable.javaClass.simpleName,
-              )
-          )
-        }
-  }
 
   private fun marker(detail: String) {
     val line = "$MARKER_PREFIX $detail"

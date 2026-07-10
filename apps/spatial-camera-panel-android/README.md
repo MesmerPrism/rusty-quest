@@ -646,6 +646,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   joystick delta/cadence, and private-layer grabbable cadence. The Activity
   retains panel placement, property reads, entity access, and marker
   construction; this coordinator cannot activate or mutate a Spatial feature.
+- `app/src/main/.../SpatialPanelPersistenceCoordinator.kt` owns the exact
+  headlock-tuning JSON schema, key ordering, output filename, and panel-state
+  persistence failure receipts. The Activity supplies typed placement
+  snapshots, output directory, store adapter, and marker sink; persistence
+  cannot read runtime properties, mutate scene entities, or activate features.
 - `app/src/main/.../SpatialSurfaceParticlePanelCarrierModule.kt` owns native
   surface-particle panel carrier construction: registered video-surface callback
   sequencing, the manual custom-mesh `PanelSceneObject`, create/surface/add
