@@ -218,6 +218,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `SpatialSdkQuadSurfaceProbeCoordinator.kt`; allow explicitly enabled Vulkan
   and panel-matrix callers to reuse its layer factory without enabling the
   surface probe itself;
+- package the default-disabled SDK-quad Vulkan probe gate, start state,
+  native-library availability branch, Android swapchain/surface acquisition,
+  generated-anchor layer request, native producer start/stop, hold timer, and
+  completion receipts in `SpatialSdkQuadVulkanProbeCoordinator.kt`; retain JNI
+  declarations and panel-matrix orchestration in Activity-supplied bindings;
 - package virtual room and skybox behavior in `SpatialVirtualRoomModule.kt`;
 - package staged GLB/GLTF asset behavior as a feature/module;
 - package projection carrier selection, placement-plane construction from

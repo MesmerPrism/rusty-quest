@@ -371,6 +371,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   own explicit opt-ins. The Activity supplies the shared resource owner,
   cleanup callback, `Scene`, and marker sink; the coordinator declares no JNI
   methods and cannot enable another route.
+- `app/src/main/.../SpatialSdkQuadVulkanProbeCoordinator.kt` owns the
+  default-disabled SDK-quad Vulkan diagnostic lifecycle: its exact property
+  gate, start state, native-library availability branch, Android swapchain and
+  surface acquisition, generated-anchor layer request, native producer start,
+  hold timer, stop, cleanup, and completion receipts. The Activity supplies
+  JNI start/stop callbacks and dynamic native-library state; the panel-matrix
+  route retains its independent opt-in and direct JNI orchestration.
 - `app/src/main/.../CameraHwbProjectionModule.kt` owns the Kotlin-side
   camera-HWB projection carrier/config marker surface: carrier token parsing,
   panel z-index/display-role policy, viewer-locked and virtual-wall projection
