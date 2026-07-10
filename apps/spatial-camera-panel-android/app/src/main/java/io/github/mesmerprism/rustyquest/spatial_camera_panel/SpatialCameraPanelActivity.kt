@@ -181,7 +181,29 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             )
         )
       }
-  private var lastSpatialJoystickArbitrationMarkerMs = 0L
+  private val panelJoystickArbitrationCoordinator:
+      SpatialPanelJoystickArbitrationCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+        SpatialPanelJoystickArbitrationCoordinator(
+            SpatialPanelJoystickArbitrationBindings(
+                applyProjectionScale = { rightY ->
+                  cameraHwbProjectionTuningCoordinator.applyScaleInput(
+                      rightY = rightY,
+                      inputSource = "android-generic-motion-joystick",
+                      controllerJoystickMapping = "right-stick-y-projection-target-scale",
+                      detail = "rightStickY=${activityMarkerFloat(rightY)}",
+                  )
+                },
+                applyPanelPlacement = ::applyPanelHeadlockJoystickAxes,
+                leftStickPanelDistanceEnabled = ::currentLeftStickPanelDistanceEnabled,
+                privateLayerPanelVisible = { privateLayerPanelVisible },
+                panelMode = ::panelStateToken,
+                projectionTargetScale = cameraHwbProjectionTuningCoordinator::targetScale,
+                headlockMarkerFields = ::panelHeadlockMarkerFields,
+                elapsedRealtimeMs = SystemClock::elapsedRealtime,
+                marker = ::marker,
+            )
+        )
+      }
   private val controllerInputRouteSpec =
       SpatialControllerInputRouteSpec(
           enabled = true,
@@ -2380,90 +2402,27 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun panelHeadlockPropertyMarkerFields(): String =
       SpatialPanelPlacementModule.headlockPropertyMarkerFields()
 
-  private fun applyCameraHwbProjectionScaleJoystickInput(event: MotionEvent): Boolean {
-    if (event.action != MotionEvent.ACTION_MOVE || !isJoystickEvent(event)) {
-      return false
-    }
-    val rightY = joystickAxis(event, MotionEvent.AXIS_RY, MotionEvent.AXIS_RZ)
-    return cameraHwbProjectionTuningCoordinator.applyScaleInput(
-        rightY = rightY,
-        inputSource = "android-generic-motion-joystick",
-        controllerJoystickMapping = "right-stick-y-projection-target-scale",
-        detail = "rightStickY=${activityMarkerFloat(rightY)}",
-    )
-  }
-
   private fun handleSpatialJoystickMotion(event: MotionEvent, inputSource: String): Boolean {
     if (event.action != MotionEvent.ACTION_MOVE || !isJoystickEvent(event)) {
       return false
     }
 
-    val leftX = joystickAxis(event, MotionEvent.AXIS_X)
-    val leftY = joystickAxis(event, MotionEvent.AXIS_Y)
-    val rightX = joystickAxis(event, MotionEvent.AXIS_RX, MotionEvent.AXIS_Z)
-    val rightY = joystickAxis(event, MotionEvent.AXIS_RY, MotionEvent.AXIS_RZ)
-    val observed =
-        abs(leftX) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE ||
-            abs(leftY) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE ||
-            abs(rightX) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE ||
-            abs(rightY) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE
-    if (!observed) {
-      return false
-    }
-
-    val projectionScaleHandled = applyCameraHwbProjectionScaleJoystickInput(event)
-    val panelPlacementHandled =
-        if (projectionScaleHandled) {
-          false
-        } else {
-          applyPanelHeadlockJoystickInput(event, inputSource)
-        }
-    val rightStickObserved =
-        abs(rightX) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE ||
-            abs(rightY) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE
-    val leftDistanceObserved = abs(leftY) >= PANEL_HEADLOCK_JOYSTICK_DEADZONE
-    val rightStickSwallowedAsIgnored =
-        rightStickObserved && !projectionScaleHandled && !panelPlacementHandled && !leftDistanceObserved
-    val consumed = projectionScaleHandled || panelPlacementHandled || rightStickSwallowedAsIgnored
-    val leftStickPanelDistanceEnabled = currentLeftStickPanelDistanceEnabled()
-    val leftStickYDeliveredToPanelScroll =
-        leftDistanceObserved && privateLayerPanelVisible && !leftStickPanelDistanceEnabled && !consumed
-    val now = SystemClock.elapsedRealtime()
-    if (
-        now - lastSpatialJoystickArbitrationMarkerMs >=
-            SPATIAL_JOYSTICK_ARBITRATION_MARKER_INTERVAL_MS
-    ) {
-      lastSpatialJoystickArbitrationMarkerMs = now
-      marker(
-          SpatialControllerRoutingModule.joystickArbitrationMarker(
-              SpatialJoystickArbitrationMarkerInput(
-                  inputSource = inputSource,
-                  leftX = leftX,
-                  leftY = leftY,
-                  rightX = rightX,
-                  rightY = rightY,
-                  projectionScaleHandled = projectionScaleHandled,
-                  panelPlacementHandled = panelPlacementHandled,
-                  rightStickSwallowedAsIgnored = rightStickSwallowedAsIgnored,
-                  leftStickYDeliveredToPanelScroll = leftStickYDeliveredToPanelScroll,
-                  leftStickYPanelDistanceObserved = leftDistanceObserved,
-                  consumedByActivity = consumed,
-                  leftStickYPanelDistanceEnabled = leftStickPanelDistanceEnabled,
-                  privateLayerPanelVisible = privateLayerPanelVisible,
-                  panelMode = panelStateToken(),
-                  projectionTargetLiveScale = cameraHwbProjectionTuningCoordinator.targetScale(),
-                  headlockMarkerFields = panelHeadlockMarkerFields(),
-              )
-          )
-      )
-    }
-    return consumed
+    return panelJoystickArbitrationCoordinator.handle(
+        axes =
+            SpatialPanelJoystickAxes(
+                leftX = joystickAxis(event, MotionEvent.AXIS_X),
+                leftY = joystickAxis(event, MotionEvent.AXIS_Y),
+                rightX = joystickAxis(event, MotionEvent.AXIS_RX, MotionEvent.AXIS_Z),
+                rightY = joystickAxis(event, MotionEvent.AXIS_RY, MotionEvent.AXIS_RZ),
+            ),
+        inputSource = inputSource,
+    )
   }
 
-  private fun applyPanelHeadlockJoystickInput(event: MotionEvent, inputSource: String): Boolean {
-    if (event.action != MotionEvent.ACTION_MOVE || !isJoystickEvent(event)) {
-      return false
-    }
+  private fun applyPanelHeadlockJoystickAxes(
+      axes: SpatialPanelJoystickAxes,
+      inputSource: String,
+  ): Boolean {
     val placement = activeHeadlockedPanelPlacement()
     val privateFreeTransformDistance =
         privateLayerPanelVisible && PRIVATE_LAYER_PANEL_SDK_FREE_TRANSFORM
@@ -2474,17 +2433,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       return false
     }
 
-    val leftX = joystickAxis(event, MotionEvent.AXIS_X)
-    val leftY = joystickAxis(event, MotionEvent.AXIS_Y)
-    val rightX = joystickAxis(event, MotionEvent.AXIS_RX, MotionEvent.AXIS_Z)
-    val rightY = joystickAxis(event, MotionEvent.AXIS_RY, MotionEvent.AXIS_RZ)
     return applyPanelHeadlockDistanceInput(
-        leftY = leftY,
+        leftY = axes.leftY,
         inputSource = inputSource,
         controllerJoystickMapping = currentLeftStickPanelDistanceMapping(),
         detail =
-            "leftStick=${activityMarkerFloat(leftX)};${activityMarkerFloat(leftY)} " +
-                "rightStick=${activityMarkerFloat(rightX)};${activityMarkerFloat(rightY)} " +
+            "leftStick=${activityMarkerFloat(axes.leftX)};${activityMarkerFloat(axes.leftY)} " +
+                "rightStick=${activityMarkerFloat(axes.rightX)};${activityMarkerFloat(axes.rightY)} " +
                 "rightStickXIgnored=true rightStickYPanelDistanceDisabled=true " +
                 "rightStickXPanelScaleDisabled=true",
     )

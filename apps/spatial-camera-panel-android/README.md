@@ -646,6 +646,12 @@ Interaction SDK pointer input without native multimodal extension forcing.
   joystick delta/cadence, and private-layer grabbable cadence. The Activity
   retains panel placement, property reads, entity access, and marker
   construction; this coordinator cannot activate or mutate a Spatial feature.
+- `app/src/main/.../SpatialPanelJoystickArbitrationCoordinator.kt` owns
+  axis-level projection-scale versus panel-placement route ordering, ignored
+  right-stick consumption compatibility, arbitration marker cadence, and
+  receipts. The Activity retains `MotionEvent` gating/axis extraction and
+  supplies route-guarded callbacks, properties, panel state, and clock access;
+  arbitration cannot enable an input, projection, or panel feature.
 - `app/src/main/.../SpatialPanelPlacementStateCoordinator.kt` is the single
   mutable owner for workflow placement, private-layer placement, and
   private-layer visibility. It owns only pure adjust/resize/reset/headlock/

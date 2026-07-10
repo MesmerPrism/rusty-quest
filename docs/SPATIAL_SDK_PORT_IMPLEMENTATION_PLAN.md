@@ -444,6 +444,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `SpatialPanelInteractionStateCoordinator.kt`; retain panel placement,
   runtime-property reads, entity access, and marker construction in Activity,
   and prohibit feature activation or Spatial state mutation in the coordinator.
+- package axis-level projection-scale versus panel-placement route ordering,
+  ignored-right-stick consumption compatibility, arbitration marker cadence,
+  and receipts in `SpatialPanelJoystickArbitrationCoordinator.kt`; retain
+  `MotionEvent` gating/axis extraction, property reads, clock access, and
+  route-guarded callbacks in Activity, and prohibit input/projection/panel activation.
 - package workflow placement, private-layer placement, private-layer
   visibility, and their pure adjust/resize/reset/headlock/visibility transitions
   in `SpatialPanelPlacementStateCoordinator.kt`; expose read-only Activity
