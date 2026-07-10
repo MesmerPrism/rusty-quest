@@ -619,6 +619,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   update/failure receipts. The concrete Spatial SDK layer handle and z-index,
   blend, and color mutation remain an Activity callback; the coordinator cannot
   create a panel or activate the particle feature.
+- `app/src/main/.../SpatialSurfaceParticlePresentationStateCoordinator.kt`
+  owns panel registration count, adopted panel state, surface-consumer validity,
+  and the lifecycle-diagnostic presentation snapshot across video-surface and
+  manual-carrier paths. The scene entity and retained manual Android `Surface`
+  remain Activity resources; this state owner cannot create or activate a panel.
 - `app/src/main/.../SpatialSurfaceParticlePanelCarrierModule.kt` owns native
   surface-particle panel carrier construction: registered video-surface callback
   sequencing, the manual custom-mesh `PanelSceneObject`, create/surface/add

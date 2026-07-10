@@ -114,12 +114,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private var privateLayerPanelPlacement = SpatialPanelPlacementModule.initialPrivateLayerPlacement()
   private var questionnaireDueReopensPanel by mutableStateOf(true)
   private var particleLayerEntity: Entity? = null
-  private var particleLayerPanelSceneObject: PanelSceneObject? = null
   private var particleLayerManualPanelSurface: AndroidSurface? = null
-  private var panelRegistrationCount = 0
-  private var particleSurfacePanelReady = false
-  private var particleSurfaceConsumerCalled = false
-  private var particleSurfaceConsumerSurfaceValid = false
   private var polarSensorPanel: PolarSensorPanel? = null
   private var panelHeadlockMarkerCount = 0
   private var lastPanelHeadlockMarkerMs = 0L
@@ -368,6 +363,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private val surfaceParticlePanelLayerCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialSurfaceParticlePanelLayerCoordinator(
         SpatialSurfaceParticlePanelLayerBindings(marker = ::marker)
+    )
+  }
+  private val surfaceParticlePresentationStateCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialSurfaceParticlePresentationStateCoordinator(
+        SpatialSurfaceParticlePresentationStateBindings(marker = ::marker)
     )
   }
   private val controllerPollingCoordinator by lazy(LazyThreadSafetyMode.NONE) {
@@ -1398,19 +1398,17 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
           null
         },
     )
-    panelRegistrationCount = panels.size
-    marker(
-        SpatialSurfaceParticleRouteModule.nativeSurfaceParticlePanelRegistrationsCreatedMarker(
-            panelRegistrationCount = panelRegistrationCount,
-            particlePanelRegistrationId =
-                if (nativeSurfaceParticleLayerEnabled() && !particleLayerManualCustomMeshCarrierEnabled()) {
-                  "spatial_camera_surface_panel"
-                } else {
-                  "manual-scene-object"
-                },
-            carrier = particleLayerCarrierToken(),
-            nativeSurfaceParticleLayerEnabled = nativeSurfaceParticleLayerEnabled(),
-        )
+    surfaceParticlePresentationStateCoordinator.recordPanelRegistrations(
+        registrationCount = panels.size,
+        particlePanelRegistrationId =
+            if (nativeSurfaceParticleLayerEnabled() &&
+                !particleLayerManualCustomMeshCarrierEnabled()) {
+              "spatial_camera_surface_panel"
+            } else {
+              "manual-scene-object"
+            },
+        carrier = particleLayerCarrierToken(),
+        nativeSurfaceParticleLayerEnabled = nativeSurfaceParticleLayerEnabled(),
     )
     scheduleParticleLayerLifecycleDiagnostics("register-panels")
     return panels
@@ -1419,8 +1417,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private fun particleLayerVideoPanelBindings(): SpatialSurfaceParticleVideoPanelBindings =
       SpatialSurfaceParticleVideoPanelBindings(
           adoptSurface = { surface ->
-            particleSurfaceConsumerCalled = true
-            particleSurfaceConsumerSurfaceValid = surface.isValid
+            surfaceParticlePresentationStateCoordinator.recordSurfaceConsumer(surface.isValid)
           },
           settings = { _ -> particleLayerMediaSettings() },
           carrier = ::particleLayerCarrierToken,
@@ -1428,10 +1425,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               surfaceParticleProjectionGeometryCoordinator::placementMarkerFields,
           stereoMarkerFields = ::particleLayerStereoMarkerFields,
           startLayer = ::startNativeSurfaceParticleLayer,
-          adoptPanel = { panel ->
-            particleLayerPanelSceneObject = panel
-            particleSurfacePanelReady = true
-          },
+          adoptPanel = surfaceParticlePresentationStateCoordinator::adoptPanel,
           updateLayer = {
             updateParticleLayerPanelLayer("panel-setup", forceLog = false)
           },
@@ -1570,11 +1564,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             return null
           }
         }
-    particleLayerPanelSceneObject = readyCarrier.panelSceneObject
     particleLayerManualPanelSurface = readyCarrier.surface
-    particleSurfacePanelReady = true
-    particleSurfaceConsumerCalled = true
-    particleSurfaceConsumerSurfaceValid = readyCarrier.surface.isValid
+    surfaceParticlePresentationStateCoordinator.adoptManualCarrier(
+        panel = readyCarrier.panelSceneObject,
+        surfaceValid = readyCarrier.surface.isValid,
+    )
     val layerUpdateStatus = updateParticleLayerPanelLayer("manual-custom-mesh-created", false)
     marker(
         SpatialSurfaceParticlePanelCarrierModule.manualPanelCarrierReadyMarker(
@@ -1991,7 +1985,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       reason: String,
       forceLog: Boolean = true,
   ): String {
-    val panel = particleLayerPanelSceneObject ?: return "panel-scene-object-missing"
+    val panel =
+        surfaceParticlePresentationStateCoordinator.panelSceneObject
+            ?: return "panel-scene-object-missing"
     val opacity = surfaceParticleProjectionGeometryCoordinator.currentPanelOpacity()
     return surfaceParticlePanelLayerCoordinator.update(
         SpatialSurfaceParticlePanelLayerUpdateRequest(
@@ -3346,19 +3342,21 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         runCatching { SpatialNativeInteropProbe.capture(scene) }
             .getOrElse { SpatialNativeInteropProbe(runtimeName = "unavailable", 0L, 0L, 0L) }
     val snapshot = runCatching { store.snapshot() }.getOrNull()
+    val presentationSnapshot = surfaceParticlePresentationStateCoordinator.snapshot()
     marker(
         SpatialSurfaceParticleRouteModule.nativeSurfaceParticleLifecycleCheckMarker(
             phase = phase,
             activityMarkersFile = ACTIVITY_MARKERS_FILE,
-            panelRegistrationCount = panelRegistrationCount,
+            panelRegistrationCount = presentationSnapshot.panelRegistrationCount,
             panelMode = panelStateToken(),
             workflowPanelVisible = panelPlacement.visible,
             launcherPanelVisible = launcherPanelVisibleForPanelMode(),
             legacyLauncherPanelSuppressed = legacyLauncherPanelSuppressedForCameraStack(),
             particleLayerEntityCreated = particleLayerEntity != null,
-            particleSurfacePanelReady = particleSurfacePanelReady,
-            particleSurfaceConsumerCalled = particleSurfaceConsumerCalled,
-            particleSurfaceConsumerSurfaceValid = particleSurfaceConsumerSurfaceValid,
+            particleSurfacePanelReady = presentationSnapshot.panelReady,
+            particleSurfaceConsumerCalled = presentationSnapshot.surfaceConsumerCalled,
+            particleSurfaceConsumerSurfaceValid =
+                presentationSnapshot.surfaceConsumerSurfaceValid,
             nativeSurfaceParticleLayerEnabled = nativeSurfaceParticleLayerEnabled(),
             particleLayerStarted = surfaceParticleRuntimeCoordinator.particleLayerStarted,
             nativeSurfaceStartRequested =
