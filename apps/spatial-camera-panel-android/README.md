@@ -388,6 +388,13 @@ Interaction SDK pointer input without native multimodal extension forcing.
   normalization, and `SpatialControllerPrimarySnapshot` construction. It must
   not choose polling cadence, enable input, pin Android controllers, dispatch
   actions, read feature properties, emit markers, or call JNI.
+- `app/src/main/.../SpatialControllerAndroidEventRouter.kt` owns Android
+  key/gamepad button recognition, key-versus-motion edge state, trigger-axis
+  thresholding, source/detail normalization, and ordered secondary/trigger/
+  primary callback dispatch. The Activity supplies the placement-toggle,
+  particle-recenter, panel-toggle, and secondary-arm callbacks. The router must
+  not enable or pin input, choose feature opt-in, mutate scene/store state
+  directly, emit markers, or call JNI.
 - `app/src/main/.../SpatialControllerRoutingModule.kt` owns controller input
   policy helpers: Spatial VR input-system property parsing, controller route
   timing constants, trigger thresholds, joystick axis normalization,

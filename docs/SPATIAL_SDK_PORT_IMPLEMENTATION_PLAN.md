@@ -232,6 +232,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   `SpatialControllerSnapshotAdapter.kt`; keep polling cadence, route enablement,
   edge state, action dispatch, marker emission, feature opt-in, and JNI in the
   Activity facade;
+- package Android key/gamepad button recognition, key-versus-motion edge state,
+  trigger-axis thresholding, source/detail normalization, and ordered callback
+  dispatch in `SpatialControllerAndroidEventRouter.kt`; keep input enablement,
+  controller pinning, action implementation, scene/store mutation, marker
+  emission, feature opt-in, and JNI in the Activity facade;
 - package controller shortcut routing policy and controller marker envelopes in
   `SpatialControllerRoutingModule.kt`;
 - package OpenXR extension policy, explicit opt-in multimodal input defaults,

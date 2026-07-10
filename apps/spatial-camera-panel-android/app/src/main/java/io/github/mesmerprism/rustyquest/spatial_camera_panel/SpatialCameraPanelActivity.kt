@@ -178,12 +178,20 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private val pinnedSpatialGameControllerIds = mutableSetOf<Int>()
   private var lastSpatialInputRouteMarkerMs = 0L
   private var lastSpatialJoystickArbitrationMarkerMs = 0L
-  private var androidControllerPrimaryKeyDown = false
-  private var androidControllerPrimaryMotionDown = false
-  private var androidControllerSecondaryKeyDown = false
-  private var androidControllerSecondaryMotionDown = false
-  private var androidControllerRightTriggerKeyDown = false
-  private var androidControllerRightTriggerMotionDown = false
+  private val androidControllerEventRouter by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialControllerAndroidEventRouter(
+        armSecondaryToggle = ::armCameraHwbProjectionSecondaryToggle,
+        toggleSecondary = ::toggleCameraHwbProjectionPlacementMode,
+        recenterTrigger = { inputSource, detail ->
+          recenterSurfaceParticleSphereOnViewer(
+              inputSource = inputSource,
+              detail = detail,
+              requireParticleView = true,
+          )
+        },
+        openPrimary = ::openWorkflowPanelFromController,
+    )
+  }
   private var externalSwapchainProbeStarted = false
   private var externalSwapchainProbeLayer: SceneQuadLayer? = null
   private var externalSwapchainProbeSceneObject: SceneObject? = null
@@ -349,13 +357,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-    if (handleControllerSecondaryButton(event)) {
-      return true
-    }
-    if (handleControllerTrigger(event)) {
-      return true
-    }
-    if (handleControllerPrimaryButton(event)) {
+    if (androidControllerEventRouter.dispatchKeyEvent(event)) {
       return true
     }
     return super.dispatchKeyEvent(event)
@@ -487,13 +489,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean {
-    if (handleControllerSecondaryButton(event)) {
-      return true
-    }
-    if (handleControllerTrigger(event)) {
-      return true
-    }
-    if (handleControllerPrimaryButton(event)) {
+    if (androidControllerEventRouter.dispatchMotionButtonEvent(event)) {
       return true
     }
     if (handleSpatialJoystickMotion(event, "android-dispatch-generic-motion")) {
@@ -6264,17 +6260,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         gameControllerIds.forEach { deviceId ->
       if (pinnedSpatialGameControllerIds.add(deviceId)) {
         pinGameController(deviceId) { motionEvent: MotionEvent?, keyEvent: KeyEvent? ->
-          keyEvent?.let {
-            if (!handleControllerSecondaryButton(it) && !handleControllerTrigger(it)) {
-              handleControllerPrimaryButton(it)
-            }
-          }
+          keyEvent?.let(androidControllerEventRouter::dispatchKeyEvent)
           motionEvent?.let { event ->
-            if (
-                !handleControllerSecondaryButton(event) &&
-                    !handleControllerTrigger(event) &&
-                    !handleControllerPrimaryButton(event)
-            ) {
+            if (!androidControllerEventRouter.dispatchMotionButtonEvent(event)) {
               handleSpatialJoystickMotion(event, "pinned-android-game-controller")
             }
           }
@@ -6493,122 +6481,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     )
   }
 
-  private fun handleControllerSecondaryButton(event: KeyEvent): Boolean {
-    val rightSecondary =
-        event.keyCode == KeyEvent.KEYCODE_BUTTON_B ||
-            event.keyCode == KeyEvent.KEYCODE_BUTTON_2
-    if (!rightSecondary) {
-      return false
-    }
-    val pressedEdge =
-        when (event.action) {
-          KeyEvent.ACTION_DOWN -> {
-            val firstDown = !androidControllerSecondaryKeyDown && event.repeatCount == 0
-            androidControllerSecondaryKeyDown = true
-            firstDown
-          }
-          KeyEvent.ACTION_UP -> {
-            androidControllerSecondaryKeyDown = false
-            armCameraHwbProjectionSecondaryToggle("android-key-event")
-            false
-          }
-          else -> false
-        }
-    if (!pressedEdge) {
-      return false
-    }
-    return toggleCameraHwbProjectionPlacementMode(
-        inputSource = "android-key-event",
-        detail = "keyCode=${event.keyCode} keyAction=${event.action} repeatCount=${event.repeatCount}",
-    )
-  }
-
-  private fun handleControllerSecondaryButton(event: MotionEvent): Boolean {
-    if (!isJoystickEvent(event)) {
-      return false
-    }
-    val action = event.actionMasked
-    if (
-        action != MotionEvent.ACTION_BUTTON_PRESS &&
-            action != MotionEvent.ACTION_BUTTON_RELEASE &&
-            action != MotionEvent.ACTION_MOVE
-    ) {
-      return false
-    }
-    val secondaryDown = (event.buttonState and MotionEvent.BUTTON_SECONDARY) != 0
-    val pressedEdge = secondaryDown && !androidControllerSecondaryMotionDown
-    androidControllerSecondaryMotionDown = secondaryDown
-    if (!secondaryDown) {
-      armCameraHwbProjectionSecondaryToggle("android-generic-motion-button")
-    }
-    if (!pressedEdge) {
-      return false
-    }
-    return toggleCameraHwbProjectionPlacementMode(
-        inputSource = "android-generic-motion-button",
-        detail =
-            "motionAction=$action motionButtonState=${event.buttonState} " +
-                "motionButtonBit=${MotionEvent.BUTTON_SECONDARY}",
-    )
-  }
-
-  private fun handleControllerTrigger(event: KeyEvent): Boolean {
-    if (event.keyCode != KeyEvent.KEYCODE_BUTTON_R2) {
-      return false
-    }
-    val pressedEdge =
-        when (event.action) {
-          KeyEvent.ACTION_DOWN -> {
-            val firstDown = !androidControllerRightTriggerKeyDown && event.repeatCount == 0
-            androidControllerRightTriggerKeyDown = true
-            firstDown
-          }
-          KeyEvent.ACTION_UP -> {
-            androidControllerRightTriggerKeyDown = false
-            false
-          }
-          else -> false
-        }
-    if (!pressedEdge) {
-      return false
-    }
-    return recenterSurfaceParticleSphereOnViewer(
-        inputSource = "android-key-event",
-        detail = "keyCode=${event.keyCode} keyAction=${event.action} repeatCount=${event.repeatCount}",
-        requireParticleView = true,
-    )
-  }
-
-  private fun handleControllerTrigger(event: MotionEvent): Boolean {
-    if (!isJoystickEvent(event)) {
-      return false
-    }
-    val action = event.actionMasked
-    if (
-        action != MotionEvent.ACTION_BUTTON_PRESS &&
-            action != MotionEvent.ACTION_BUTTON_RELEASE &&
-            action != MotionEvent.ACTION_MOVE
-    ) {
-      return false
-    }
-    val rightTriggerValue =
-        maxOf(event.getAxisValue(MotionEvent.AXIS_RTRIGGER), event.getAxisValue(MotionEvent.AXIS_BRAKE))
-    val triggerDown = rightTriggerValue >= CONTROLLER_TRIGGER_PRESS_THRESHOLD
-    val pressedEdge = triggerDown && !androidControllerRightTriggerMotionDown
-    androidControllerRightTriggerMotionDown = triggerDown
-    if (!pressedEdge) {
-      return false
-    }
-    return recenterSurfaceParticleSphereOnViewer(
-        inputSource = "android-generic-motion-trigger",
-        detail =
-            "motionAction=$action motionButtonState=${event.buttonState} " +
-                "rightTriggerAxis=${activityMarkerFloat(rightTriggerValue)} " +
-                "rightTriggerThreshold=${activityMarkerFloat(CONTROLLER_TRIGGER_PRESS_THRESHOLD)}",
-        requireParticleView = true,
-    )
-  }
-
   private fun recenterSurfaceParticleSphereOnViewer(
       inputSource: String,
       detail: String,
@@ -6759,62 +6631,6 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     cameraHwbProjectionSecondaryToggleArmed = true
     marker(CameraHwbProjectionModule.projectionPlacementToggleArmedMarker(inputSource))
-  }
-
-  private fun handleControllerPrimaryButton(event: KeyEvent): Boolean {
-    val rightPrimary =
-        event.keyCode == KeyEvent.KEYCODE_BUTTON_A ||
-            event.keyCode == KeyEvent.KEYCODE_BUTTON_1
-    if (!rightPrimary) {
-      return false
-    }
-    val pressedEdge =
-        when (event.action) {
-          KeyEvent.ACTION_DOWN -> {
-            val firstDown = !androidControllerPrimaryKeyDown && event.repeatCount == 0
-            androidControllerPrimaryKeyDown = true
-            firstDown
-          }
-          KeyEvent.ACTION_UP -> {
-            val releaseWithoutSeenDown = !androidControllerPrimaryKeyDown
-            androidControllerPrimaryKeyDown = false
-            releaseWithoutSeenDown
-          }
-          else -> false
-        }
-    if (!pressedEdge) {
-      return false
-    }
-    return openWorkflowPanelFromController(
-        inputSource = "android-key-event",
-        detail = "keyCode=${event.keyCode} keyAction=${event.action} repeatCount=${event.repeatCount}",
-    )
-  }
-
-  private fun handleControllerPrimaryButton(event: MotionEvent): Boolean {
-    if (!isJoystickEvent(event)) {
-      return false
-    }
-    val action = event.actionMasked
-    if (
-        action != MotionEvent.ACTION_BUTTON_PRESS &&
-            action != MotionEvent.ACTION_BUTTON_RELEASE &&
-            action != MotionEvent.ACTION_MOVE
-    ) {
-      return false
-    }
-    val primaryDown = (event.buttonState and MotionEvent.BUTTON_PRIMARY) != 0
-    val pressedEdge = primaryDown && !androidControllerPrimaryMotionDown
-    androidControllerPrimaryMotionDown = primaryDown
-    if (!pressedEdge) {
-      return false
-    }
-    return openWorkflowPanelFromController(
-        inputSource = "android-generic-motion-button",
-        detail =
-            "motionAction=$action motionButtonState=${event.buttonState} " +
-                "motionButtonBit=${MotionEvent.BUTTON_PRIMARY}",
-    )
   }
 
   private fun openWorkflowPanelFromController(inputSource: String, detail: String): Boolean {
