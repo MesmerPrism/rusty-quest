@@ -628,11 +628,25 @@ route and BLE rendezvous contracts. Their agent-addressable validators are:
 
 ```powershell
 cargo run --quiet -p rusty-quest-device-link --bin validate_direct_p2p_socket_route -- fixtures\device-link\direct-p2p-socket-route.pass.json
+cargo run --quiet -p rusty-quest-device-link --bin validate_product_wifi_direct_run -- fixtures\device-link\product-wifi-direct-run.pass.json
 cargo run --quiet -p rusty-quest-device-link --bin validate_ble_rendezvous -- message fixtures\device-link\ble-rendezvous-offer.pass.json
 cargo run --quiet -p rusty-quest-device-link --bin validate_ble_rendezvous -- receipt fixtures\device-link\ble-rendezvous-server-ready.receipt.json
 cargo run --quiet -p rusty-quest-device-link --bin validate_ble_rendezvous -- pair fixtures\device-link\ble-rendezvous-pair.pass.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-PeerRendezvousAndroid.ps1
 ```
+
+The clean two-Quest no-media product gate is:
+
+```powershell
+& .\tools\Build-DirectP2pProviderAndroid.ps1
+& .\tools\checks\Test-DirectP2pProviderStatic.ps1
+& .\tools\Invoke-DirectP2pProviderTwoQuest.ps1 -GroupOwnerSerial <serial> -ClientSerial <serial>
+```
+
+Acceptance requires two typed product receipts, explicit Rust `p2p0` binds,
+one bounded request/echo per role, honest Android `Network` availability,
+inactive Wi-Fi P2P state after cleanup, zero package/system fatals, and APK
+removal. Raw device evidence stays private.
 
 Damaged direct-P2P fixtures reject WLAN fallback and claims that a
 `ConnectivityManager.Network` substitutes for the scoped Rusty socket

@@ -45,6 +45,13 @@ layouts, artifact redaction, boundary-state stability, and package cleanup.
 ADB-based launch and ephemeral test-secret injection remain evidence
 orchestration, not an autonomous provisioning claim.
 
+`apps/direct-p2p-provider-android` is the clean product Wi-Fi Direct provider.
+It separates Android group topology, honest Android `Network` availability,
+and Rust-owned direct sockets. On current Quest builds the valid `p2p0` route
+may have no public Android `Network`; the product receipts that as unavailable
+and continues only through an explicit Rust local bind. Run the no-media
+two-headset gate with `tools/Invoke-DirectP2pProviderTwoQuest.ps1`.
+
 `apps/qcl041-wifi-direct-harness-android` is the Quest-side producer for the
 Windows peer route. It does not need an Android phone: the live path pairs the
 Quest APK with the Hostess Windows Wi-Fi Direct helper, records actual

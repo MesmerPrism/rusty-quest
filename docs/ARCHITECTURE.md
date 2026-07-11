@@ -634,6 +634,16 @@ The generic route/address/authority invariants are implemented once in
 `rusty-quest-device-link`; the remote-camera crate adapts its unchanged route
 fields into that contract and adds only lane, endpoint, and profile checks.
 
+`apps/direct-p2p-provider-android` is the product implementation of this
+authority split. `WifiP2pManager` owns temporary credentialed topology,
+`AndroidNetworkBindingProvider` observes whether Android exposes a matching
+public `Network`, and the Rust `cdylib` owns socket creation, explicit local
+bind, bounded control exchange, and close. On current Quest builds `p2p0` may
+be valid while no matching Android `Network` is public; the receipt records
+`network_available=false` and handle `0`. This is not an Android binding and
+does not weaken Rust socket authority. Product receipts exclude media and all
+connectivity-lab identities.
+
 Remote-camera remains the camera-specific compatibility contract. Generic
 display/camera streaming uses `rusty.quest.media_stream_session.v1` as the
 source-neutral language, and `build_media_stream_session_plan` maps existing

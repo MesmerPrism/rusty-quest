@@ -94,6 +94,17 @@ and audit decision. The service must not contain capability/grant policy.
 Device validation requires a same-signer lifecycle, a differently signed
 permission denial, zero package fatals, and uninstall cleanup on every serial.
 
+Product Wi-Fi Direct topology lives in `apps/direct-p2p-provider-android`.
+Android Wi-Fi P2P owns credentialed temporary group formation,
+`AndroidNetworkBindingProvider` reports whether the platform exposes a usable
+`Network`, and the Rust native provider alone owns explicit `p2p0` bind,
+bounded socket exchange, and close. A missing Android `Network` is a truthful
+`network_available=false` receipt, not permission to fabricate a handle or
+substitute Android socket ownership. The product app must not depend on the
+connectivity-lab harness or enable media. Validate with
+`tools/Invoke-DirectP2pProviderTwoQuest.ps1` and require both typed receipts,
+inactive cleanup, and zero package/system fatals.
+
 ## Agent Board
 
 Read-only source inspection and dry-run profile validation do not require Agent

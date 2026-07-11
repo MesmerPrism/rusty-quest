@@ -1,0 +1,11 @@
+{
+  "schema": "rusty.quest.product_wifi_direct_run.v1",
+  "run_id": "net008-product-run",
+  "product_package": "io.github.mesmerprism.rustyquest.directp2p",
+  "role": "group_owner",
+  "topology": { "authority": "android_wifi_direct_topology_provider", "group_formed": true, "local_role": "group_owner", "group_owner_host": "192.168.49.1", "socket_creation_claimed": true },
+  "network_binding": { "authority": "android_network_binding_provider", "network_available": true, "network_handle": 42, "interface_name": "p2p0", "local_host": "192.168.49.1", "route_matches_group_owner": true, "socket_creation_claimed": true },
+  "socket": { "authority": "rust_direct_socket_provider", "local_bind_host": "192.168.49.1", "peer_host": "192.168.49.2", "peer_port": 9079, "local_bind_applied": true, "closed": true, "observed_android_network_handle": 42, "android_network_substituted_socket_authority": true },
+  "exchange": { "exchange_kind": "bounded_control_exchange", "payload_class": "control_probe", "messages_sent": 1, "messages_received": 1, "bytes_sent": 32, "bytes_received": 32, "bounded": true },
+  "cleanup": { "discovery_stopped": true, "group_removed": true, "socket_closed": true }
+}

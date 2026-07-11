@@ -7,12 +7,14 @@
 mod ble_rendezvous;
 mod direct_p2p_socket_authority;
 mod model;
+mod product_wifi_direct;
 mod validation;
 mod wifi_direct_lifecycle;
 
 pub use ble_rendezvous::*;
 pub use direct_p2p_socket_authority::*;
 pub use model::*;
+pub use product_wifi_direct::*;
 pub use validation::validate_device_link_report;
 pub use wifi_direct_lifecycle::*;
 

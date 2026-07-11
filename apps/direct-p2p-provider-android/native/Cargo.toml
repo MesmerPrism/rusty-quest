@@ -1,0 +1,28 @@
+[package]
+name = "rusty-quest-direct-p2p-provider-native"
+description = "Rust-owned bounded sockets for the Quest product Wi-Fi Direct provider."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "rusty_quest_direct_p2p_provider"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde_json = "1"
+socket2 = { version = "0.5", features = ["all"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22"
+
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "allow"
+
+[lints.clippy]
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

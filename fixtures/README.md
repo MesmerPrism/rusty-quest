@@ -301,6 +301,9 @@
   `wifi-direct-lifecycle-qcl040-android-phone.pass.json` fixtures model
   `rusty.quest.connectivity_wifi_direct_lifecycle.v1` source artifacts for
   QCL-041 Windows and QCL-040 Android-phone Wi-Fi Direct lifecycle evidence.
+  `product-wifi-direct-run.pass.json` is the generic no-media product receipt:
+  Android topology and network observation remain separate from Rust-owned
+  direct sockets, bounded exchange, and cleanup.
   They require live evidence tier, source run and harness identity, matching
   Agent Board quest lease, peer discovery, group formation, bounded TCP socket
   exchange, and cleanup before Hostess may promote direct-Wi-Fi topology.
@@ -364,6 +367,8 @@
   socket counters, and cleanup that did not complete.
   Direct-P2P socket-route damaged fixtures reject infrastructure-WLAN addresses
   and Android-`Network` substitution claims.
+  Product Wi-Fi Direct damaged fixtures reject Android socket-authority claims
+  and incomplete cleanup.
   Packed-stereo damage cases reject extra/missing lanes, incorrect camera or
   layout identity, CPU composition, stale-eye reuse, excessive pair skew, and
   malformed RMANVID v4 pair metadata.
