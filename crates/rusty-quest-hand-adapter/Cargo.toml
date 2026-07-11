@@ -1,0 +1,22 @@
+[package]
+name = "rusty-quest-hand-adapter"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Provider-neutral Quest adapter over Lattice, Matter, and Optics hand contracts."
+
+[dependencies]
+rusty-lattice-model = { path = "../../../rusty-lattice/crates/rusty-lattice-model" }
+rusty-matter-mesh = { path = "../../../rusty-matter/crates/rusty-matter-mesh", features = ["serde"] }
+rusty-matter-model = { path = "../../../rusty-matter/crates/rusty-matter-model", features = ["serde"] }
+rusty-optics-model = { path = "../../../rusty-optics/crates/rusty-optics-model", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+serde_json = "1"
+
+[lints]
+workspace = true

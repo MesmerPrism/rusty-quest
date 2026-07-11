@@ -49,6 +49,11 @@ no Spatial entity, Vulkan handle, app driver, or high-rate JSON field. The
 workflow-disabled profile remains the rollback authority and leaves the adapter
 with zero rows and no runtime effect.
 
+The shared hand adapter is selected only when `SpatialLiveHandJointBridge`
+starts with explicit OpenXR handles. It emits a `channel=hand-adapter` receipt;
+Spatial SDK scene mapping, hand rendering, capture, and product policy remain
+app-local. Stopping the bridge is the rollback and leaves the adapter inert.
+
 ## Public Scope
 
 - Spatial SDK panel registration, placement, scaling, and headlock controls.

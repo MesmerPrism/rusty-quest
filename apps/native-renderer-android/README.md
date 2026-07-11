@@ -22,6 +22,12 @@ effective receipt proving the native renderer consumes the shared
 Matter/Lattice/Optics handoff without enabling a particle renderer, importing
 backend resources into the contract, or changing other runtime routes.
 
+The `native_openxr_hand_lab` app build explicitly enables
+`debug.rustyquest.native_renderer.hand_adapter.enabled`. The shared adapter
+validates provider/basis/hand/rig identity and CPU-prepared parity; OpenXR
+acquisition, GPU buffers, shaders, material choice, and hand visibility remain
+native-renderer policy. Setting the property to `false` restores the prior path.
+
 | Profile | Background | Visible hand content | Camera2/HWB projection |
 | --- | --- | --- | --- |
 | `quest-native-renderer-direct-hwb-camera-quality.profile.json` | Custom direct camera projection | Hand/SDF overlays disabled for raw camera inspection | Enabled, forced direct `AHardwareBuffer` sample with Android-suggested YCbCr, UNORM swapchain preference, and clean border |

@@ -1,0 +1,7 @@
+{
+  "schema": "rusty.quest.hand_adapter.damage.v1",
+  "damage_id": "provider-substitution",
+  "expected_provider_id": "generic-tracked-hand-provider",
+  "substitute_provider_id": "different-provider",
+  "expected_result": "identity-mismatch-provider"
+}

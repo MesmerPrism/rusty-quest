@@ -91,6 +91,10 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             status.marker_fields(),
         ),
     );
+    android_log_info(
+        "RQSpatialCameraPanelNative",
+        &crate::hand_adapter_consumer::activation_marker(true),
+    );
     mask
 }
 

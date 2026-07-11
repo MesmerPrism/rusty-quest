@@ -52,6 +52,7 @@
       "debug.rustyquest.native_renderer.environment_depth.high_rate_json_payload": "false",
       "debug.rustyquest.native_renderer.environment_depth.mode": "disabled",
       "debug.rustyquest.native_renderer.hand_anchor_particles.enabled": "false",
+      "debug.rustyquest.native_renderer.hand_adapter.enabled": "true",
       "debug.rustyquest.native_renderer.hand_mesh.graft_copies.scale": "0.85",
       "debug.rustyquest.native_renderer.hand_mesh.real_hands.visible": "true",
       "debug.rustyquest.native_renderer.hand_mesh.visual.diagnostic.enabled": "true",
@@ -101,6 +102,7 @@
       "native_renderer.environment_depth.high_rate_json_payload": "false",
       "native_renderer.environment_depth.mode": "disabled",
       "native_renderer.hand_anchor_particles.enabled": "false",
+      "native_renderer.hand_adapter.enabled": "true",
       "native_renderer.hand_mesh.graft_copies.enabled": "false",
       "native_renderer.hand_mesh.graft_copies.scale": "0.85",
       "native_renderer.hand_mesh.input.source": "live-meta-openxr-hand-tracking",
@@ -187,6 +189,12 @@
       "allowsRecordedFallback=false",
       "solidBlackRealHandMeshVisible=true",
       "RUSTY_QUEST_NATIVE_RENDERER channel=hand-mesh-visual-diagnostic",
+      "RUSTY_QUEST_NATIVE_RENDERER channel=hand-adapter",
+      "handAdapterConsumer=native-openxr-hand-lab",
+      "handAdapterEnabled=true",
+      "handAdapterBothHands=true",
+      "handAdapterCoordinateBasisPreserved=true",
+      "handAdapterCpuPreparedParity=true",
       "handAnchorParticlesEnabled=false"
     ],
     "forbidden": [

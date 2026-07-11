@@ -198,6 +198,12 @@ high-rate JSON. Both consumers are inert until their explicit app route selects
 the adapter; `fixtures/particle-adapter/two-consumer-conformance.json` records
 the closed composition and rollback profile.
 
+`crates/rusty-quest-hand-adapter` consumes the accepted Lattice/Matter/Optics
+hand contracts, maps both hands into a neutral Matter rig, and emits GPU-ready
+rows with Matter CPU-oracle positions. Native OpenXR and Spatial Camera Panel
+remain separate thin consumers with explicit activation and fail-closed
+provider/basis/hand/rig substitution.
+
 See `docs/NATIVE_QUEST_RENDERING.md`.
 The raw native camera quality hardening backlog is tracked as sliced public
 work in `docs/NATIVE_CAMERA_QUALITY_ITERATION_PLAN.md`.

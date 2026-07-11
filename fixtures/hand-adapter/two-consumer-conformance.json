@@ -1,0 +1,18 @@
+{
+  "schema": "rusty.quest.hand_adapter.two_consumer_conformance.v1",
+  "source_contracts": [
+    "rusty.lattice.hand_joint_frame.v1",
+    "rusty.matter.hand.substrate.v1",
+    "rusty.optics.hand.visual_profile.v1"
+  ],
+  "provider_id": "generic-tracked-hand-provider",
+  "coordinate_basis": "right_handed_y_up_negative_z_forward",
+  "hands": ["left", "right"],
+  "parity_tolerance": 0.00001,
+  "consumers": [
+    {"consumer_id": "native-openxr-hand-lab", "activation": "explicit-native-app-profile", "default_enabled": false},
+    {"consumer_id": "spatial-camera-panel", "activation": "explicit-live-hand-bridge-start", "default_enabled": false}
+  ],
+  "high_rate_json": false,
+  "backend_payload_in_contract": false
+}

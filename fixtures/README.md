@@ -4,6 +4,10 @@
   Matter/Lattice/Optics-to-Quest particle adapter. Both Spatial Camera Panel
   and native renderer default disabled; no high-rate JSON or backend payload is
   admitted.
+- `hand-adapter/`: the closed Lattice/Matter/Optics hand conformance fixture
+  for the native OpenXR hand lab and Spatial Camera Panel. It fixes both-hand,
+  coordinate-basis, CPU/prepared parity, default-disabled, and backend-exclusion
+  rules; damaged provider substitution must fail closed.
 - `spatial-hand-alignment/`: sanitized OpenXR-to-Spatial SDK mapping fixtures.
   The accepted viewer-world basis registration remains the rollback default;
   mirror/reflection candidates stay explicit until a separate live headset

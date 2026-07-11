@@ -18,6 +18,7 @@ ash = "0.38"
 libc = "0.2"
 openxr-sys = "0.13.1"
 rusty-quest-particle-adapter = { path = "../../../crates/rusty-quest-particle-adapter" }
+rusty-quest-hand-adapter = { path = "../../../crates/rusty-quest-hand-adapter" }
 serde_json = "1"
 
 [build-dependencies]

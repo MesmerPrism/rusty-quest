@@ -62,6 +62,12 @@ low-rate receipt. Spatial Camera Panel and native renderer are explicit
 consumers; both remain disabled by default, and app policy, Vulkan resources,
 private drivers, and high-rate control stay outside the adapter contract.
 
+`crates/rusty-quest-hand-adapter` is the accepted Quest-side handoff for hand
+substrates. It validates Lattice provider/frame identity, maps joints into the
+Matter rig, checks prepared rows against the Matter CPU oracle, and preserves
+Optics provider/frame/rig/hand identity. Native and Spatial acquisition and app
+policy stay local; provider, basis, hand, rig, or joint substitution fails closed.
+
 ## Agent Board
 
 Read-only source inspection and dry-run profile validation do not require Agent

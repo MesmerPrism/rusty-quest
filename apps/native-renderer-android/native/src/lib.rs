@@ -55,6 +55,7 @@ mod gpu_sdf_field;
 mod gpu_stimulus_volume;
 #[cfg(target_os = "android")]
 mod guide_blur_graph;
+mod hand_adapter_consumer;
 mod hand_mesh_graft;
 #[cfg(target_os = "android")]
 mod live_hand_compact;
@@ -146,6 +147,10 @@ fn android_on_create(_state: &android_activity::OnCreateState) {
     marker(
         "particle-adapter",
         particle_adapter_consumer::load_activation_marker(),
+    );
+    marker(
+        "hand-adapter",
+        hand_adapter_consumer::load_activation_marker(),
     );
     let runtime_options =
         native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties();

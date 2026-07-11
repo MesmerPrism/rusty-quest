@@ -7,6 +7,8 @@ pub(crate) const PROP_ENABLE_SDF_VISUAL: &str =
     "debug.rustyquest.native_renderer.sdf.visual.enabled";
 pub(crate) const PROP_PARTICLE_ADAPTER_ENABLED: &str =
     "debug.rustyquest.native_renderer.particle_adapter.enabled";
+pub(crate) const PROP_HAND_ADAPTER_ENABLED: &str =
+    "debug.rustyquest.native_renderer.hand_adapter.enabled";
 pub(crate) const PROP_SDF_FIELD_VISUAL_ENABLED: &str =
     "debug.rustyquest.native_renderer.sdf.field_visual.enabled";
 pub(crate) const PROP_RENDER_MODE: &str = "debug.rustyquest.native_renderer.render.mode";
