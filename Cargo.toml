@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/rusty-quest-broker-product",
     "apps/spatial-camera-panel-android/native-receipt",
     "apps/native-renderer-android/native",
     "crates/rusty-quest-native-renderer",

@@ -378,6 +378,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusty-manifold-broker-product"
+version = "0.1.0"
+dependencies = [
+ "rusty-manifold-model",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "rusty-manifold-model"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "rusty-matter-batch"
 version = "0.1.0"
 
@@ -431,6 +447,16 @@ dependencies = [
  "rusty-matter-particles",
  "rusty-optics-model",
  "serde",
+]
+
+[[package]]
+name = "rusty-quest-broker-product"
+version = "0.1.0"
+dependencies = [
+ "rusty-manifold-broker-product",
+ "rusty-manifold-model",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

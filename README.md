@@ -529,6 +529,15 @@ See `docs/REMOTE_CAMERA_STREAMING.md`.
 
 ## Android Broker Package
 
+Broker packaging starts from an immutable Manifold product lock, not from a
+hand-maintained permission union. `crates/rusty-quest-broker-product` projects
+the lock's exact permission closure into Android manifest entries and validates
+the committed projections under `fixtures/broker-products/`. The base
+standalone product requests only `INTERNET`; camera, direct-P2P, and BLE are
+independent opt-in products, and each selects exactly one of standalone or
+embedded runtime mode. The static gate rejects manifest drift and requires
+`neverForLocation` on nearby-Wi-Fi and Bluetooth scan permissions.
+
 `apps/manifold-broker-android` is the Quest-owned Android package scaffold for
 the Morphospace Manifold broker identity used by Hostess:
 
@@ -581,6 +590,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendere
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial>
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerProductStatic.ps1 -RepoRoot .
 ```
 
 The default `check_all.ps1` lane excludes legacy Makepad and QCL099 checks and

@@ -45,6 +45,7 @@ try {
     Invoke-Checked "QCL-100 packed stereo static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-Qcl100PackedStereoStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "Quest particle adapter static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestParticleAdapterStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "Quest hand adapter static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestHandAdapterStatic.ps1", "-RepoRoot", ".")
+    Invoke-Checked "Quest broker product static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestBrokerProductStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "Spatial Camera Panel Android static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-SpatialCameraPanelAndroid.ps1", "-RepoRoot", ".")
     Invoke-Checked "Manifold broker Android scaffold" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-ManifoldBrokerAndroid.ps1")
     Invoke-Checked "Peer rendezvous Android scaffold" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-PeerRendezvousAndroid.ps1")

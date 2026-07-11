@@ -335,6 +335,12 @@
   Contract tests also map these fixtures into
   `rusty.quest.media_stream_session.v1` compatibility plans so generic media
   modules can reuse the camera descriptions without changing their schema.
+- `broker-products/`: exact Android manifest projections for the accepted
+  Manifold base, camera, direct-P2P, and BLE product locks. JSON is the typed
+  projection receipt and the paired `AndroidManifest.xml` is the packaging
+  surface checked by `Test-QuestBrokerProductStatic.ps1`. The base profile is
+  intentionally `INTERNET`-only; no fixture is a permission union or a default
+  enablement claim.
 - `damaged/`: invalid runtime profile, remote-camera, and native-renderer
   examples that must be rejected, including runtime evidence logs where replay
   markers exist but the visual mesh was not actually reported visible, and a

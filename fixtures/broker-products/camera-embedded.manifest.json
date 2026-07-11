@@ -1,0 +1,16 @@
+{
+  "$schema": "rusty.quest.broker.android_manifest_projection.v1",
+  "product_id": "broker.camera.embedded",
+  "manifold_lock_fingerprint": "fnv1a64-37ff784c00e39ca3",
+  "runtime_mode": "embedded",
+  "permissions": [
+    {
+      "name": "android.permission.CAMERA",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "android.permission.INTERNET",
+      "uses_permission_flags": []
+    }
+  ]
+}

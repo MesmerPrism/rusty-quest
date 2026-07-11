@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.mesmerprism.rustyquest.broker.ble_embedded">
+  <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
+  <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+  <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+  <uses-permission android:name="android.permission.INTERNET" />
+  <application android:hasCode="true" />
+</manifest>

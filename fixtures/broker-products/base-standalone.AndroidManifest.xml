@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.mesmerprism.rustyquest.broker.base_standalone">
+  <uses-permission android:name="android.permission.INTERNET" />
+  <application android:hasCode="true" />
+</manifest>

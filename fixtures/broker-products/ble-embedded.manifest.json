@@ -1,0 +1,26 @@
+{
+  "$schema": "rusty.quest.broker.android_manifest_projection.v1",
+  "product_id": "broker.ble.embedded",
+  "manifold_lock_fingerprint": "fnv1a64-056f2e2f13964180",
+  "runtime_mode": "embedded",
+  "permissions": [
+    {
+      "name": "android.permission.BLUETOOTH_ADVERTISE",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "android.permission.BLUETOOTH_CONNECT",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "android.permission.BLUETOOTH_SCAN",
+      "uses_permission_flags": [
+        "neverForLocation"
+      ]
+    },
+    {
+      "name": "android.permission.INTERNET",
+      "uses_permission_flags": []
+    }
+  ]
+}

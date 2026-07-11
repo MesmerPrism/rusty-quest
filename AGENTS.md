@@ -68,6 +68,14 @@ Matter rig, checks prepared rows against the Matter CPU oracle, and preserves
 Optics provider/frame/rig/hand identity. Native and Spatial acquisition and app
 policy stay local; provider, basis, hand, rig, or joint substitution fails closed.
 
+`crates/rusty-quest-broker-product` is only the Android projection boundary for
+accepted Manifold broker product locks. Manifold owns product feature resolution,
+runtime mode, commands, streams, modules, and the exact permission closure. Quest
+maps that accepted permission enum into an exact manifest projection; it must not
+union permissions, silently add optional capabilities, or accept a stale lock.
+Camera, direct-P2P, and BLE products remain separate explicit opt-ins, while the
+base broker stays camera/P2P/BLE-free.
+
 ## Agent Board
 
 Read-only source inspection and dry-run profile validation do not require Agent
