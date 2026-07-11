@@ -60,6 +60,13 @@ Manifold topology authorization before initializing `WifiP2pManager`.
 stale, and revoked decisions cannot reach topology mutation, then proves an
 accepted decision can complete the same bounded no-media product exchange.
 
+`crates/rusty-quest-media-stream` provides the generic receiver-first platform
+runtime described in [Generic Media Stream Runtime](docs/MEDIA_STREAM_RUNTIME.md).
+It composes explicit sources, dual-lane/packed/passthrough processors, validated
+route references, and sinks after an accepted Manifold decision. Camera2 and
+display-composite conformance remain independent; remote-camera plans enter
+only through the compatibility adapter.
+
 `apps/qcl041-wifi-direct-harness-android` is the Quest-side producer for the
 Windows peer route. It does not need an Android phone: the live path pairs the
 Quest APK with the Hostess Windows Wi-Fi Direct helper, records actual

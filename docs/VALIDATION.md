@@ -985,11 +985,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-ques
 ```
 
 That gate validates app-consent MediaProjection display-to-PC and lab-only
-shell hidden-display display-to-PC fixtures, rejects high-rate JSON payload
-plans, rejects shell hidden-display routes marked as production candidates, and
-requires display capture metadata for display-derived sources. These tests do
-not touch a headset, ADB server, Android encoder, MediaProjection service, or
-hidden Android API.
+shell hidden-display fixtures, independent display-source conformance,
+dual-lane and packed-SBS processor conformance, a direct-P2P route reference,
+and the receiver-first revisioned runtime through terminal cleanup. It rejects
+high-rate JSON, shell routes marked as production, Android socket-authority
+substitution, premature source start, streaming without sink-observed frames,
+and stop without cleanup. These tests do not touch a headset, ADB server,
+Android encoder, MediaProjection service, or hidden Android API.
 
 The remote-camera crate also validates the compatibility mapping into the
 generic media-stream contract:
@@ -999,8 +1001,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-ques
 ```
 
 Those tests keep the existing remote-camera JSON contract and runtime-profile
-fixture stable while proving the Quest-to-Quest and Quest-to-Android-phone
-camera plans can be expressed as source-neutral media-stream plans.
+fixture stable while proving Camera2 as an independent conforming source and
+mapping direct-P2P mono, independent dual-lane, and packed-SBS plans into the
+generic runtime without changing legacy lane/route counts or taking codec and
+socket authority.
 
 The Manifold broker Android scaffold has two validation levels:
 

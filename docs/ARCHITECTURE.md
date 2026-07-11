@@ -111,6 +111,13 @@ endpoint bindings, peer routes, packet-size expectations, and promotion
 counters without owning Manifold authority, sockets, encoders, decoders, ADB,
 MediaProjection consent, or hidden platform APIs.
 
+Its `MediaStreamSessionRuntime` is the deterministic platform-adoption layer,
+not Manifold accepted-state authority. Runtime specs preserve the accepted
+Manifold decision/revision, select sources/processors/routes/sinks explicitly,
+and advance receiver-first lifecycle only from adapter evidence. Direct-P2P
+bindings consume the existing scoped Rust socket route contract; processors
+do not own codecs, and packed-SBS does not permit CPU pixel copies.
+
 Display-derived sources identify their route explicitly. App-consent
 MediaProjection display composite is the production candidate; shell
 hidden-display mirror remains `lab_developer_only` and must declare its shell

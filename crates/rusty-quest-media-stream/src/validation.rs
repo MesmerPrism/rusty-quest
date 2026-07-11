@@ -170,6 +170,12 @@ fn validate_camera_source(source: &MediaStreamSource, errors: &mut Vec<Validatio
             source.source_id
         )));
     }
+    if source.consent_required || source.display.is_some() {
+        errors.push(ValidationError::new(format!(
+            "camera2 source {} must not inherit display consent or display metadata",
+            source.source_id
+        )));
+    }
     let Some(camera) = source.camera.as_ref() else {
         errors.push(ValidationError::new(format!(
             "camera2_mediacodec_surface source {} requires camera capture metadata",
@@ -178,6 +184,24 @@ fn validate_camera_source(source: &MediaStreamSource, errors: &mut Vec<Validatio
         return;
     };
     validate_required_text("camera.camera_id", &camera.camera_id, errors);
+    if source.track_role == "stereo" {
+        let roles = camera
+            .camera_ids
+            .iter()
+            .map(|binding| binding.track_role.as_str())
+            .collect::<BTreeSet<_>>();
+        let ids = camera
+            .camera_ids
+            .iter()
+            .map(|binding| binding.camera_id.as_str())
+            .collect::<BTreeSet<_>>();
+        if roles != BTreeSet::from(["left", "right"]) || ids.len() != 2 {
+            errors.push(ValidationError::new(format!(
+                "stereo camera source {} requires distinct left and right camera bindings",
+                source.source_id
+            )));
+        }
+    }
     validate_required_text("camera.camera_facing", &camera.camera_facing, errors);
     validate_required_text(
         "camera.permission_policy",
@@ -206,6 +230,12 @@ fn validate_display_composite_source(
     if !source.consent_required {
         errors.push(ValidationError::new(format!(
             "display-composite source {} requires consent_required=true",
+            source.source_id
+        )));
+    }
+    if source.camera.is_some() {
+        errors.push(ValidationError::new(format!(
+            "display-composite source {} must not inherit camera metadata or permission policy",
             source.source_id
         )));
     }
@@ -688,7 +718,7 @@ fn validate_transport_routes(
         }
         if !matches!(
             route.route_kind.as_str(),
-            "direct_tcp_connect" | "relay_tls_client"
+            "direct_tcp_connect" | "direct_p2p_tcp" | "relay_tls_client"
         ) {
             errors.push(ValidationError::new(format!(
                 "transport route {} has unsupported route_kind {}",
@@ -712,10 +742,10 @@ fn validate_transport_routes(
             )));
         }
         match route.route_kind.as_str() {
-            "direct_tcp_connect" => {
+            "direct_tcp_connect" | "direct_p2p_tcp" => {
                 if lane.transport.transport_kind != "lan_tcp" || lane.transport.relay_required {
                     errors.push(ValidationError::new(format!(
-                        "transport route {} direct_tcp_connect requires a non-relay lan_tcp lane",
+                        "transport route {} direct TCP/P2P requires a non-relay lan_tcp lane",
                         route.lane_id
                     )));
                 }
@@ -815,9 +845,19 @@ fn validate_media(
             "lane {lane_id} must use H.264 as the first reusable media stream codec"
         )));
     }
-    if media.stream_framing != STREAM_FRAMING_DIAGNOSTIC_H264 {
+    if !matches!(
+        media.stream_framing.as_str(),
+        STREAM_FRAMING_DIAGNOSTIC_H264 | STREAM_FRAMING_RMANVID_V4_PACKED_STEREO
+    ) {
         errors.push(ValidationError::new(format!(
-            "lane {lane_id} must use diagnostic-h264-packet-stream framing for the first reusable slice"
+            "lane {lane_id} has unsupported reusable H.264 framing"
+        )));
+    }
+    if (media.stream_framing == STREAM_FRAMING_RMANVID_V4_PACKED_STEREO)
+        != (media.track_role == "stereo")
+    {
+        errors.push(ValidationError::new(format!(
+            "lane {lane_id} packed RMANVID framing and stereo role must be selected together"
         )));
     }
     if media.high_rate_payload_plane != PAYLOAD_PLANE_BINARY_MEDIA {
@@ -1099,7 +1139,7 @@ fn validate_observability(
 }
 
 fn validate_track_role(label: &str, value: &str, errors: &mut Vec<ValidationError>) {
-    if !matches!(value, "left" | "right" | "mono" | "display") {
+    if !matches!(value, "left" | "right" | "mono" | "display" | "stereo") {
         errors.push(ValidationError::new(format!(
             "{label} has unsupported track role {value}"
         )));

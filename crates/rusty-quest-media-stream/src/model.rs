@@ -23,6 +23,9 @@ pub const VIDEO_CODEC_H264: &str = "h264";
 /// Diagnostic H.264 stream framing token used by current reference adapters.
 pub const STREAM_FRAMING_DIAGNOSTIC_H264: &str = "diagnostic-h264-packet-stream";
 
+/// Existing RMANVID v4 framing for packed left/right stereo.
+pub const STREAM_FRAMING_RMANVID_V4_PACKED_STEREO: &str = "rmanvid-v4-packed-stereo";
+
 /// Sender source is already exposed as a local H.264 socket by another adapter.
 pub const SOURCE_KIND_EXTERNAL_H264_SOCKET: &str = "external_h264_socket";
 
@@ -183,10 +186,22 @@ pub struct DisplayContentCrop {
 pub struct CameraCaptureDescriptor {
     /// Camera2 id.
     pub camera_id: String,
+    /// Explicit per-track camera bindings for multi-camera sources.
+    #[serde(default)]
+    pub camera_ids: Vec<CameraTrackBinding>,
     /// Requested camera facing label.
     pub camera_facing: String,
     /// Permission policy required by this camera source.
     pub permission_policy: String,
+}
+
+/// Camera id bound to one role in a multi-camera source.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CameraTrackBinding {
+    /// Track role such as `left` or `right`.
+    pub track_role: String,
+    /// Camera2 id.
+    pub camera_id: String,
 }
 
 /// One high-rate media lane.

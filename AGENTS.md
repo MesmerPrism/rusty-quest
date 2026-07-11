@@ -112,6 +112,14 @@ topology contract, and local peer role before initializing Wi-Fi P2P; rejected,
 stale, expired, or revoked receipts must leave topology inactive. Validate the
 decision matrix with `tools/Invoke-PeerSessionDecisionGateTwoQuest.ps1`.
 
+Generic media adoption lives in `rusty-quest-media-stream`. Manifold owns the
+accepted session/stream descriptor; the Quest runtime owns only receiver-first
+platform lifecycle after the accepted decision. Sources, processors, direct-
+P2P route references, and sinks are explicit, independently validated, and
+free of app policy. `rusty-quest-remote-camera` remains a compatibility adapter
+that maps into this runtime; do not copy its properties or defaults into new
+source, processor, or sink descriptors.
+
 ## Agent Board
 
 Read-only source inspection and dry-run profile validation do not require Agent

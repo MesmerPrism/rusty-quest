@@ -2,6 +2,10 @@
 
 use std::collections::BTreeMap;
 
+use rusty_quest_device_link::{
+    DirectP2pSocketRoute, DIRECT_P2P_ROUTE_KIND, DIRECT_P2P_SOCKET_ROUTE_SCHEMA,
+    QUEST_DIRECT_P2P_INTERFACE, RUSTY_DIRECT_P2P_SOCKET_AUTHORITY, RUSTY_OWNED_SOCKET_SCOPE,
+};
 use rusty_quest_media_stream as media;
 
 use crate::model::*;
@@ -159,6 +163,124 @@ pub fn build_media_stream_session_plan(
     Ok(media_plan)
 }
 
+/// Build the explicit generic runtime selected by an accepted Manifold decision.
+///
+/// This compatibility adapter preserves the remote-camera plan and merely
+/// projects it into the generic source/processor/route/sink runtime. It opens
+/// no camera, codec, socket, or sink and is currently restricted to plans that
+/// contain the promoted Rust-owned direct-P2P route contract.
+pub fn build_media_stream_runtime_spec(
+    plan: &RemoteCameraSessionPlan,
+    manifold_decision_id: &str,
+    manifold_session_revision: u64,
+) -> Result<media::MediaStreamRuntimeSpec, Vec<ValidationError>> {
+    let media_plan = build_media_stream_session_plan(plan)?;
+    let roles = plan
+        .lanes
+        .iter()
+        .map(|lane| lane.media.eye.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let processor = if roles.contains("stereo") {
+        media::MediaStreamProcessorDescriptor {
+            processor_id: "processor.remote-camera-compat.packed-sbs".to_string(),
+            processor_kind: "packed_sbs_left_right".to_string(),
+            input_track_roles: vec!["left".to_string(), "right".to_string()],
+            output_track_roles: vec!["stereo".to_string()],
+            owns_codec: false,
+            cpu_pixel_copy: false,
+            application_policy_fields: Vec::new(),
+        }
+    } else if roles.contains("left") && roles.contains("right") {
+        media::MediaStreamProcessorDescriptor {
+            processor_id: "processor.remote-camera-compat.dual-lane".to_string(),
+            processor_kind: "dual_lane_independent".to_string(),
+            input_track_roles: vec!["left".to_string(), "right".to_string()],
+            output_track_roles: vec!["left".to_string(), "right".to_string()],
+            owns_codec: false,
+            cpu_pixel_copy: false,
+            application_policy_fields: Vec::new(),
+        }
+    } else {
+        let role = roles.iter().next().copied().unwrap_or("mono");
+        media::MediaStreamProcessorDescriptor {
+            processor_id: "processor.remote-camera-compat.passthrough".to_string(),
+            processor_kind: "passthrough_h264".to_string(),
+            input_track_roles: vec![role.to_string()],
+            output_track_roles: vec![role.to_string()],
+            owns_codec: false,
+            cpu_pixel_copy: false,
+            application_policy_fields: Vec::new(),
+        }
+    };
+    let processor_id = processor.processor_id.clone();
+    let sinks = plan
+        .lanes
+        .iter()
+        .map(|lane| lane.sink_device_id.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .map(|device_id| media::MediaStreamSinkDescriptor {
+            sink_id: format!("sink.remote-camera-compat.{device_id}"),
+            device_id: device_id.to_string(),
+            sink_kind: "remote_camera_compat_h264_receiver".to_string(),
+            required_permissions: Vec::new(),
+            application_policy_fields: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let lane_bindings = plan
+        .lanes
+        .iter()
+        .map(|lane| media::MediaStreamLaneRuntimeBinding {
+            lane_id: lane.lane_id.clone(),
+            processor_ids: vec![processor_id.clone()],
+            sink_id: format!("sink.remote-camera-compat.{}", lane.sink_device_id),
+        })
+        .collect();
+    let direct_p2p_routes = plan
+        .transport_routes
+        .iter()
+        .filter(|route| route.route_kind == DIRECT_P2P_ROUTE_KIND)
+        .map(|route| media::MediaStreamDirectP2pRouteBinding {
+            lane_id: route.lane_id.clone(),
+            route: DirectP2pSocketRoute {
+                schema: DIRECT_P2P_SOCKET_ROUTE_SCHEMA.to_string(),
+                route_id: route.lane_id.clone(),
+                route_kind: DIRECT_P2P_ROUTE_KIND.to_string(),
+                socket_authority: route
+                    .socket_authority
+                    .clone()
+                    .unwrap_or_else(|| RUSTY_DIRECT_P2P_SOCKET_AUTHORITY.to_string()),
+                socket_scope: RUSTY_OWNED_SOCKET_SCOPE.to_string(),
+                expected_interface: QUEST_DIRECT_P2P_INTERFACE.to_string(),
+                local_bind_host: route.local_bind_host.clone().unwrap_or_default(),
+                peer_host: route.connect_host.clone(),
+                peer_port: route.connect_port,
+                android_network_required: false,
+            },
+        })
+        .collect();
+    let spec = media::MediaStreamRuntimeSpec {
+        schema: media::MEDIA_STREAM_RUNTIME_SPEC_SCHEMA.to_string(),
+        runtime_spec_id: format!("runtime.{}", media_plan.session_id),
+        manifold_decision_id: manifold_decision_id.to_string(),
+        manifold_session_revision,
+        plan: media_plan,
+        processors: vec![processor],
+        sinks,
+        lane_bindings,
+        direct_p2p_routes,
+    };
+    media::validate_media_stream_runtime_spec(&spec).map_err(|errors| {
+        errors
+            .into_iter()
+            .map(|error| {
+                ValidationError::new(format!("media runtime compatibility: {}", error.message))
+            })
+            .collect::<Vec<_>>()
+    })?;
+    Ok(spec)
+}
+
 fn build_source(
     source_id: &str,
     lane: &RemoteCameraLane,
@@ -168,6 +290,14 @@ fn build_source(
     let camera = if source_kind == media::SOURCE_KIND_CAMERA2_MEDIACODEC_SURFACE {
         Some(media::CameraCaptureDescriptor {
             camera_id: camera_id_for_eye(endpoint, &lane.media.eye),
+            camera_ids: endpoint
+                .sender_camera_ids
+                .iter()
+                .map(|binding| media::CameraTrackBinding {
+                    track_role: binding.eye.clone(),
+                    camera_id: binding.camera_id.clone(),
+                })
+                .collect(),
             camera_facing: endpoint
                 .sender_camera_facing
                 .clone()

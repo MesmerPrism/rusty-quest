@@ -610,6 +610,7 @@ dependencies = [
 name = "rusty-quest-media-stream"
 version = "0.1.0"
 dependencies = [
+ "rusty-quest-device-link",
  "serde",
  "serde_json",
 ]

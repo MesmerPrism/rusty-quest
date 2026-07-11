@@ -10,7 +10,7 @@ mod packed_stream;
 mod profile;
 mod validation;
 
-pub use media_stream::build_media_stream_session_plan;
+pub use media_stream::{build_media_stream_runtime_spec, build_media_stream_session_plan};
 pub use model::*;
 pub use packed_stream::*;
 pub use profile::build_endpoint_runtime_profile;
@@ -19,13 +19,17 @@ pub use validation::validate_remote_camera_session;
 #[cfg(test)]
 mod tests {
     use super::{
-        build_endpoint_runtime_profile, build_media_stream_session_plan,
-        decode_packed_pair_metadata, encode_packed_pair_metadata, validate_packed_pair_metadata,
-        validate_packed_pair_sequence, validate_packed_stream_metadata,
-        validate_remote_camera_session, PackedStereoPairMetadata, PackedStereoStreamMetadata,
-        RemoteCameraPortBinding, RemoteCameraSessionPlan, MEDIA_LAYOUT_SEPARATE_EYE_STREAMS,
+        build_endpoint_runtime_profile, build_media_stream_runtime_spec,
+        build_media_stream_session_plan, decode_packed_pair_metadata, encode_packed_pair_metadata,
+        validate_packed_pair_metadata, validate_packed_pair_sequence,
+        validate_packed_stream_metadata, validate_remote_camera_session, PackedStereoPairMetadata,
+        PackedStereoStreamMetadata, RemoteCameraPortBinding, RemoteCameraSessionPlan,
+        MEDIA_LAYOUT_SEPARATE_EYE_STREAMS,
     };
-    use rusty_quest_media_stream::validate_media_stream_session;
+    use rusty_quest_media_stream::{
+        validate_media_stream_session, validate_media_stream_source_conformance,
+        MediaStreamSessionRuntime,
+    };
     use serde::Deserialize;
 
     #[derive(Debug, Deserialize)]
@@ -75,6 +79,54 @@ mod tests {
             .lanes
             .iter()
             .all(|lane| lane.media.high_rate_payload_plane == "binary-media"));
+    }
+
+    #[test]
+    fn camera2_source_is_an_independent_generic_consumer() {
+        let plan = parse_fixture(include_str!(
+            "../../../fixtures/remote-camera-sessions/q2q-two-way-lan.plan.json"
+        ));
+        let media_plan = build_media_stream_session_plan(&plan).expect("compat plan builds");
+        let source_id = media_plan.sources[0].source_id.clone();
+        let receipt = validate_media_stream_source_conformance(&media_plan, &source_id)
+            .expect("Camera2 source conforms");
+        assert!(receipt.camera_permission_required);
+        assert!(!receipt.consent_required);
+        assert!(!receipt.permission_or_profile_bleed);
+    }
+
+    #[test]
+    fn direct_p2p_remote_camera_maps_into_generic_runtime_without_behavior_drift() {
+        let plan = parse_fixture(include_str!(
+            "../../../fixtures/remote-camera-sessions/q2q-direct-p2p-mono.plan.json"
+        ));
+        let spec = build_media_stream_runtime_spec(&plan, "decision.media.compat", 8)
+            .expect("compat runtime builds");
+        assert_eq!(spec.plan.lanes.len(), plan.lanes.len());
+        assert_eq!(
+            spec.plan.transport_routes.len(),
+            plan.transport_routes.len()
+        );
+        assert!(spec
+            .plan
+            .transport_routes
+            .iter()
+            .all(|route| route.route_kind == "direct_p2p_tcp"));
+        assert_eq!(spec.direct_p2p_routes.len(), plan.transport_routes.len());
+        let runtime = MediaStreamSessionRuntime::new(spec).expect("generic runtime constructs");
+        assert_eq!(runtime.spec().manifold_session_revision, 8);
+    }
+
+    #[test]
+    fn packed_remote_camera_maps_to_generic_packed_processor() {
+        let plan = parse_fixture(include_str!(
+            "../../../fixtures/remote-camera-sessions/q2q-direct-p2p-packed-sbs.plan.json"
+        ));
+        let spec = build_media_stream_runtime_spec(&plan, "decision.media.packed", 9)
+            .expect("packed compatibility runtime builds");
+        assert_eq!(spec.processors[0].processor_kind, "packed_sbs_left_right");
+        assert!(!spec.processors[0].owns_codec);
+        assert!(!spec.processors[0].cpu_pixel_copy);
     }
 
     #[test]
