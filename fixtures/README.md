@@ -341,6 +341,12 @@
   surface checked by `Test-QuestBrokerProductStatic.ps1`. The base profile is
   intentionally `INTERNET`-only; no fixture is a permission union or a default
   enablement claim.
+- `broker-authority/`: trusted local standalone/embedded JNI invocations and
+  their Quest response projections. Applied, unknown-command, and missing-lease
+  pairs preserve identical Manifold dispatch/application receipts; only bridge
+  placement, lock fingerprint, and adapter identity differ. Rejected pairs keep
+  revision 1, and every response reports `local_acceptance_rules=false` with
+  `module.runtime.host` as decision owner.
 - `damaged/`: invalid runtime profile, remote-camera, and native-renderer
   examples that must be rejected, including runtime evidence logs where replay
   markers exist but the visual mesh was not actually reported visible, and a

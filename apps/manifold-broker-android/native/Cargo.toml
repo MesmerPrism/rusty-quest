@@ -1,0 +1,27 @@
+[package]
+name = "rusty-quest-manifold-broker-authority-native"
+description = "JNI bridge from the standalone Quest broker process to Manifold authority."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "rusty_quest_manifold_broker_authority"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rusty-quest-broker-authority = { path = "../../../crates/rusty-quest-broker-authority" }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22"
+
+[lints.rust]
+unsafe_code = "allow"
+missing_docs = "allow"
+
+[lints.clippy]
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

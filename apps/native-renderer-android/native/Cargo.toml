@@ -17,6 +17,7 @@ crate-type = ["cdylib", "rlib"]
 rusty-quest-native-renderer-contracts = { package = "rusty-quest-native-renderer", path = "../../../crates/rusty-quest-native-renderer" }
 rusty-quest-particle-adapter = { path = "../../../crates/rusty-quest-particle-adapter" }
 rusty-quest-hand-adapter = { path = "../../../crates/rusty-quest-hand-adapter" }
+rusty-quest-broker-authority = { path = "../../../crates/rusty-quest-broker-authority" }
 serde_json = "1"
 
 [target.'cfg(target_os = "android")'.dependencies]

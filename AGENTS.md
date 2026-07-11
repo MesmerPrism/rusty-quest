@@ -76,6 +76,15 @@ union permissions, silently add optional capabilities, or accept a stale lock.
 Camera, direct-P2P, and BLE products remain separate explicit opt-ins, while the
 base broker stays camera/P2P/BLE-free.
 
+`crates/rusty-quest-broker-authority` is the trusted local process/JNI
+projection over `rusty-manifold-broker-adapter`. Standalone and embedded JNI
+surfaces must pass the full typed invocation to the same Rust evaluator,
+preserve its dispatch/application receipt and next snapshot, report
+`local_acceptance_rules=false`, and name `module.runtime.host` as decision
+owner. Java may validate bridge shape; it must not duplicate command, lease,
+revision, replay, or rejection policy. These product-lock paths remain
+non-default until a selected app package supplies their trusted local state.
+
 ## Agent Board
 
 Read-only source inspection and dry-run profile validation do not require Agent

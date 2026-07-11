@@ -1,0 +1,62 @@
+{
+  "$schema": "rusty.quest.broker.authority_invocation.v1",
+  "bridge_kind": "standalone_process_jni",
+  "adapter_config": {
+    "$schema": "rusty.manifold.broker.adapter_config.v1",
+    "adapter_id": "adapter.broker.standalone",
+    "mode": "standalone",
+    "product_lock_id": "lock.broker.camera.parity",
+    "product_lock_fingerprint": "fnv1a64-ad70739bf6657364",
+    "authority_host_id": "host.broker.parity",
+    "authority_owner_id": "module.runtime.host"
+  },
+  "product_lock": {
+    "$schema": "rusty.manifold.broker.product_lock.v1",
+    "lock_id": "lock.broker.camera.parity",
+    "product_id": "broker.camera.parity",
+    "standalone_enabled": true,
+    "embedded_enabled": false,
+    "features": [
+      "camera_media"
+    ],
+    "command_ids": [
+      "command.media.session.start",
+      "command.media.session.stop",
+      "command.peer.status.get",
+      "command.session.list"
+    ],
+    "stream_ids": [
+      "stream.media.video",
+      "stream.peer.status"
+    ],
+    "module_ids": [
+      "module.media.camera",
+      "module.runtime.host"
+    ],
+    "permissions": [
+      "internet",
+      "camera"
+    ],
+    "spec_fingerprint": "fnv1a64-ad70739bf6657364"
+  },
+  "prior_snapshot": null,
+  "initial_leases": [
+    {
+      "lease_id": "lease.media.session.client",
+      "scope": "lease.media.session",
+      "holder_id": "client.parity",
+      "expires_at_ms": 60000
+    }
+  ],
+  "request": {
+    "$schema": "rusty.manifold.runtime_host.command_request.v1",
+    "request_id": "request.broker.applied",
+    "expected_authority_revision": 1,
+    "requester_id": "client.parity",
+    "command_id": "command.media.session.start",
+    "lease_id": "lease.media.session.client",
+    "issued_at_ms": 1000,
+    "expires_at_ms": 10000
+  },
+  "now_ms": 2000
+}

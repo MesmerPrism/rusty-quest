@@ -30,6 +30,7 @@ mod display_composite_feedback;
 mod display_composite_native_stream;
 mod display_composite_projection_metadata;
 mod embedded_manifold_broker_bridge;
+mod embedded_manifold_runtime_authority_jni;
 mod environment_depth_alignment_state;
 mod environment_depth_geometry;
 mod environment_depth_projection_alignment;

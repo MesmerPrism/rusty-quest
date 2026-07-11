@@ -538,6 +538,15 @@ independent opt-in products, and each selects exactly one of standalone or
 embedded runtime mode. The static gate rejects manifest drift and requires
 `neverForLocation` on nearby-Wi-Fi and Bluetooth scan permissions.
 
+The next product-only authority path is implemented in
+`crates/rusty-quest-broker-authority`. It projects a trusted app-local
+standalone-process or embedded-in-process invocation into the shared Manifold
+broker adapter, then returns the unmodified Runtime Host decision plus its next
+durable snapshot. Both Android JNI surfaces delegate to this crate; their Java
+classes validate schema/authority labels only and contain no command acceptance
+table. The existing broad validation APK remains a compatibility surface until
+a product lock explicitly packages and initializes the native bridge.
+
 `apps/manifold-broker-android` is the Quest-owned Android package scaffold for
 the Morphospace Manifold broker identity used by Hostess:
 
@@ -591,6 +600,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendere
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial>
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerProductStatic.ps1 -RepoRoot .
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAuthorityStatic.ps1 -RepoRoot .
 ```
 
 The default `check_all.ps1` lane excludes legacy Makepad and QCL099 checks and
