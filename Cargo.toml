@@ -2,6 +2,7 @@
 members = [
     "crates/rusty-quest-broker-product",
     "crates/rusty-quest-broker-authority",
+    "crates/rusty-quest-broker-admission",
     "apps/manifold-broker-android/native",
     "apps/spatial-camera-panel-android/native-receipt",
     "apps/native-renderer-android/native",

@@ -11,6 +11,8 @@ $appRoot = Join-Path $repoRoot "apps\manifold-broker-android"
 $manifestPath = Join-Path $appRoot "AndroidManifest.xml"
 $activityPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\BrokerStartActivity.java"
 $servicePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\BrokerStartService.java"
+$admissionServicePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\ManifoldAdmissionService.java"
+$admissionBridgePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\ManifoldAdmissionNativeBridge.java"
 $launchEvidencePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\BrokerLaunchEvidence.java"
 $serverPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\LocalManifoldBrokerServer.java"
 $remoteCameraRuntimePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraSessionRuntime.java"
@@ -19,7 +21,7 @@ $remoteCameraSourceRuntimePath = Join-Path $appRoot "src\main\java\io\github\mes
 $h264MediaStreamWriterPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\H264MediaStreamWriter.java"
 $mediaCodecSurfaceEncoderPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\MediaCodecSurfaceEncoder.java"
 
-foreach ($path in @($manifestPath, $activityPath, $servicePath, $launchEvidencePath, $serverPath, $remoteCameraRuntimePath, $remoteCameraDirectP2pSocketAuthorityPath, $remoteCameraSourceRuntimePath, $h264MediaStreamWriterPath, $mediaCodecSurfaceEncoderPath)) {
+foreach ($path in @($manifestPath, $activityPath, $servicePath, $admissionServicePath, $admissionBridgePath, $launchEvidencePath, $serverPath, $remoteCameraRuntimePath, $remoteCameraDirectP2pSocketAuthorityPath, $remoteCameraSourceRuntimePath, $h264MediaStreamWriterPath, $mediaCodecSurfaceEncoderPath)) {
     if (-not (Test-Path $path)) {
         throw "Missing Manifold broker Android file: $path"
     }
@@ -28,6 +30,8 @@ foreach ($path in @($manifestPath, $activityPath, $servicePath, $launchEvidenceP
 $manifest = Get-Content -Raw -Path $manifestPath
 $activity = Get-Content -Raw -Path $activityPath
 $service = Get-Content -Raw -Path $servicePath
+$admissionService = Get-Content -Raw -Path $admissionServicePath
+$admissionBridge = Get-Content -Raw -Path $admissionBridgePath
 $launchEvidence = Get-Content -Raw -Path $launchEvidencePath
 $server = Get-Content -Raw -Path $serverPath
 $remoteCameraRuntime = Get-Content -Raw -Path $remoteCameraRuntimePath
@@ -71,6 +75,15 @@ if ($manifest -notmatch 'android\.permission\.ACCESS_FINE_LOCATION') {
 }
 if ($manifest -notmatch 'horizonos\.permission\.HEADSET_CAMERA') {
     throw "Manifold broker Android manifest must declare Quest headset camera permission for camera-source mode."
+}
+if ($manifest -notmatch 'BROKER_ADMISSION' -or $manifest -notmatch 'protectionLevel="signature"' -or $manifest -notmatch 'ManifoldAdmissionService') {
+    throw "Manifold broker Android manifest does not expose signature-scoped admission."
+}
+if ($admissionService -notmatch 'message\.sendingUid' -or $admissionService -notmatch 'GET_SIGNING_CERTIFICATES' -or $admissionService -notmatch 'SecureRandom') {
+    throw "ManifoldAdmissionService does not project Binder UID/package/signing identity and entropy."
+}
+if ($admissionBridge -notmatch 'nativeInitialize' -or $admissionBridge -notmatch 'nativeExecute' -or $admissionBridge -notmatch 'rusty\.manifold\.admission') {
+    throw "ManifoldAdmissionNativeBridge does not delegate to Manifold admission."
 }
 if ($manifest -notmatch 'BrokerStartService' -or $manifest -notmatch 'android:exported="true"' -or $manifest -notmatch 'android:foregroundServiceType="dataSync\|camera"' -or $manifest -notmatch 'android:stopWithTask="false"') {
     throw "Manifold broker Android manifest must expose BrokerStartService as a dataSync and camera foreground service for QCL-082 automation."

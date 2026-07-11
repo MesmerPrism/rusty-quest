@@ -85,6 +85,15 @@ owner. Java may validate bridge shape; it must not duplicate command, lease,
 revision, replay, or rejection policy. These product-lock paths remain
 non-default until a selected app package supplies their trusted local state.
 
+Cross-app product admission uses the signature-scoped Binder service in
+`apps/manifold-broker-android` and the thin
+`crates/rusty-quest-broker-admission` projection. Android derives the immediate
+caller UID, package, and signing-certificate SHA-256; Manifold owns the grant,
+256-bit opaque token, capability subset, revision, replay, expiry, revocation,
+and audit decision. The service must not contain capability/grant policy.
+Device validation requires a same-signer lifecycle, a differently signed
+permission denial, zero package fatals, and uninstall cleanup on every serial.
+
 ## Agent Board
 
 Read-only source inspection and dry-run profile validation do not require Agent

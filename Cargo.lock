@@ -378,6 +378,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusty-manifold-admission"
+version = "0.1.0"
+dependencies = [
+ "rusty-manifold-model",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rusty-manifold-broker-adapter"
 version = "0.1.0"
 dependencies = [
@@ -470,6 +479,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusty-quest-broker-admission"
+version = "0.1.0"
+dependencies = [
+ "rusty-manifold-admission",
+ "rusty-manifold-model",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rusty-quest-broker-authority"
 version = "0.1.0"
 dependencies = [
@@ -516,7 +535,9 @@ name = "rusty-quest-manifold-broker-authority-native"
 version = "0.1.0"
 dependencies = [
  "jni 0.22.4",
+ "rusty-quest-broker-admission",
  "rusty-quest-broker-authority",
+ "serde_json",
 ]
 
 [[package]]

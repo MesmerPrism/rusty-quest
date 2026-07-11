@@ -547,6 +547,16 @@ classes validate schema/authority labels only and contain no command acceptance
 table. The existing broad validation APK remains a compatibility surface until
 a product lock explicitly packages and initializes the native bridge.
 
+Secure cross-app product admission is implemented as a signature-protected
+Binder service with a packaged arm64 Rust JNI library. Android projects the
+Binder sending UID, resolved package, and signing-certificate SHA-256;
+`rusty-quest-broker-admission` passes that evidence to
+`rusty-manifold-admission`, which alone owns grants, random short-lived tokens,
+one-time capability uses, revocation, expiry, revisions, and audit. The
+authorized device-test client is signed with the broker key; the unauthorized
+variant uses a different key and must fail at the Android permission boundary.
+See `docs/BROKER_ADMISSION.md`.
+
 `apps/manifold-broker-android` is the Quest-owned Android package scaffold for
 the Morphospace Manifold broker identity used by Hostess:
 
@@ -601,6 +611,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendere
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerProductStatic.ps1 -RepoRoot .
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAuthorityStatic.ps1 -RepoRoot .
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAdmissionStatic.ps1 -RepoRoot .
 ```
 
 The default `check_all.ps1` lane excludes legacy Makepad and QCL099 checks and

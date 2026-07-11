@@ -1,5 +1,7 @@
 //! Standalone Android JNI bridge to the shared Manifold authority evaluator.
 
+mod admission_jni;
+
 /// Host-testable evaluator used by the JNI boundary.
 pub fn evaluate_for_host_test(invocation_json: &str) -> Result<String, String> {
     rusty_quest_broker_authority::evaluate_authority_json(invocation_json)
