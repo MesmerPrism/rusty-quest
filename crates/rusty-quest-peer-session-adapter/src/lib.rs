@@ -1,5 +1,9 @@
 //! Projection of validated Quest BLE pair evidence into Manifold peer sessions.
 
+mod peer_mesh;
+
+pub use peer_mesh::*;
+
 use rusty_manifold_model::{DottedId, Revision, SchemaId};
 use rusty_manifold_peer::{
     review_and_apply_peer_session, revoke_peer_session, ManifoldAcceptedPeer,

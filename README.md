@@ -60,6 +60,12 @@ Manifold topology authorization before initializing `WifiP2pManager`.
 stale, and revoked decisions cannot reach topology mutation, then proves an
 accepted decision can complete the same bounded no-media product exchange.
 
+The same adapter now has an [N-peer projection](docs/N_PEER_MESH.md) that folds
+one authenticated live Quest pair plus a sanitized configured third peer into
+Manifold's bounded mesh authority. Only the live pair contributes a direct
+candidate; Termux/sidecar edges remain advisory. Replay, split brain,
+advisory-to-media substitution, expiry, and revocation are explicit gates.
+
 `crates/rusty-quest-media-stream` provides the generic receiver-first platform
 runtime described in [Generic Media Stream Runtime](docs/MEDIA_STREAM_RUNTIME.md).
 It composes explicit sources, dual-lane/packed/passthrough processors, validated

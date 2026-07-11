@@ -51,7 +51,8 @@ try {
     Invoke-Checked "Quest multi-app broker client static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-MultiAppBrokerClients.ps1", "-RepoRoot", ".")
     Invoke-Checked "Spatial Camera Panel Android static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-SpatialCameraPanelAndroid.ps1", "-RepoRoot", ".")
     Invoke-Checked "Manifold broker Android scaffold" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-ManifoldBrokerAndroid.ps1")
-    Invoke-Checked "Peer rendezvous Android scaffold" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-PeerRendezvousAndroid.ps1")
+Invoke-Checked "Peer rendezvous Android scaffold" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-PeerRendezvousAndroid.ps1")
+Invoke-Checked "N-peer mesh authority and adapter" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-NPeerMesh.ps1")
     Invoke-Checked "Native renderer Android scaffold" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-NativeRendererAndroid.ps1", "-SkipProfileMatrix")
     Invoke-Checked "Quest boundary scan" "python" @("tools\check_quest_boundaries.py")
 } finally {

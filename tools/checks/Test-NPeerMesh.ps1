@@ -1,0 +1,6 @@
+param([string]$RepoRoot=".")
+$ErrorActionPreference="Stop";$repo=(Resolve-Path $RepoRoot).Path;$manifold=Get-Content -Raw -LiteralPath (Join-Path $repo "..\rusty-manifold\crates\rusty-manifold-peer\src\peer_mesh.rs");$adapter=Get-Content -Raw -LiteralPath (Join-Path $repo "crates\rusty-quest-peer-session-adapter\src\peer_mesh.rs");$device=Get-Content -Raw -LiteralPath (Join-Path $repo "tools\Invoke-NPeerMeshTwoQuestConfiguredPeer.ps1")
+foreach($token in @("MIN_MESH_PEERS","SplitBrain","rank_direct_routes","MediaGossipForbidden","expire_peer_mesh_members","revoke_peer_mesh_member","direct_media_lane_eligible")){if($manifold-notmatch[regex]::Escape($token)){throw "Manifold N-peer authority missing $token"}}
+foreach($token in @("termux_source_privacy_only","sidecar_advisory_only","ReplayedProposal","SplitBrain","MediaGossipForbidden","peer.gamma")){if($adapter-notmatch[regex]::Escape($token)){throw "Quest N-peer adapter missing $token"}}
+foreach($token in @("user_authorized_serial_scoped","accepted_member_count","selected_direct_lane_count","system_fatal_count","uninstall","summary.json")){if($device-notmatch[regex]::Escape($token)){throw "N-peer device suite missing $token"}}
+& cargo test -p rusty-quest-peer-session-adapter;if($LASTEXITCODE-ne0){throw "Quest N-peer adapter tests failed"};Write-Host "Rusty Quest N-peer mesh static gate passed"

@@ -123,6 +123,14 @@ topology contract, and local peer role before initializing Wi-Fi P2P; rejected,
 stale, expired, or revoked receipts must leave topology inactive. Validate the
 decision matrix with `tools/Invoke-PeerSessionDecisionGateTwoQuest.ps1`.
 
+The adapter's N-peer projection may combine a live authenticated Quest pair
+with one sanitized configured-peer observation, but remains a proposer.
+Manifold owns membership, coordinator, revision, route ranking, split-brain,
+expiry, revocation, direct-lane eligibility, and audit. Termux and sidecar
+inputs stay source/privacy/advisory only; they never authenticate a direct
+route or carry media. Validate with
+`tools/Invoke-NPeerMeshTwoQuestConfiguredPeer.ps1`.
+
 Generic media adoption lives in `rusty-quest-media-stream`. Manifold owns the
 accepted session/stream descriptor; the Quest runtime owns only receiver-first
 platform lifecycle after the accepted decision. Sources, processors, direct-
