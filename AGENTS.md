@@ -94,6 +94,17 @@ and audit decision. The service must not contain capability/grant policy.
 Device validation requires a same-signer lifecycle, a differently signed
 permission denial, zero package fatals, and uninstall cleanup on every serial.
 
+Independent product apps consume that surface through
+`crates/rusty-quest-broker-client`. Each app must declare a distinct client id,
+package subject, feature lock, marker namespace, and app-local sink capability;
+the shared SDK may carry only the exact peer/media contract families and the
+signature permission. Capability lists are canonical sorted sets. Repeated
+service binding must preserve the live Manifold authority revision. Validate
+native renderer and Spatial Camera Panel together with
+`tools/Invoke-MultiAppBrokerClientTwoQuest.ps1`; require both lifecycles,
+distinct Android app ids, no cross-marker/default/property bleed, zero
+package/system fatals, and complete uninstall cleanup on both serials.
+
 Product Wi-Fi Direct topology lives in `apps/direct-p2p-provider-android`.
 Android Wi-Fi P2P owns credentialed temporary group formation,
 `AndroidNetworkBindingProvider` reports whether the platform exposes a usable

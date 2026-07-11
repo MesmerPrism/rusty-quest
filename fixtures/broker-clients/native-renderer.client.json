@@ -1,0 +1,11 @@
+{
+  "schema":"rusty.quest.broker_client_spec.v1",
+  "client_id":"client.quest.native-renderer",
+  "package_name":"io.github.mesmerprism.rustyquest.native_renderer",
+  "feature_lock_id":"lock.broker-client.native-renderer.v1",
+  "marker_namespace":"RUSTY_QUEST_NATIVE_BROKER_CLIENT",
+  "contract_families":["rusty.manifold.peer.session_descriptor.v1","rusty.manifold.media.session_descriptor.v1"],
+  "capabilities":["capability.command.session.list","capability.media.session.observe","capability.peer.session.observe","capability.sink.native-openxr"],
+  "adapter_permissions":["io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION"],
+  "runtime_properties":[],"application_defaults":[]
+}

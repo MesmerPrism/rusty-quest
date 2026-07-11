@@ -360,6 +360,11 @@ if (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
 
 $sourceFiles = Get-ChildItem -Path (Join-Path $appRoot "src\main\java") -Recurse -Filter *.java |
     ForEach-Object { $_.FullName }
+$sharedBrokerClientJava = Join-Path $repoRoot "crates\rusty-quest-broker-client\android\io\github\mesmerprism\rustyquest\broker_client\BrokerClientProbeActivity.java"
+if (-not (Test-Path -LiteralPath $sharedBrokerClientJava -PathType Leaf)) {
+    throw "Shared broker client Android adapter not found: $sharedBrokerClientJava"
+}
+$sourceFiles = @($sourceFiles) + @($sharedBrokerClientJava)
 if ($sourceFiles.Count -eq 0) {
     throw "No Java sources found under $appRoot"
 }

@@ -579,6 +579,15 @@ authorized device-test client is signed with the broker key; the unauthorized
 variant uses a different key and must fail at the Android permission boundary.
 See `docs/BROKER_ADMISSION.md`.
 
+`crates/rusty-quest-broker-client` is the shared, policy-free consumer SDK for
+real product apps. Native Renderer and Spatial Camera Panel have different
+signature-scoped grants, client identities, feature locks, marker namespaces,
+and sink capabilities while selecting the same accepted Manifold peer-session
+and generic media-session contracts. Their manifests contain no shared app
+defaults or broker-client properties. The two-app device gate is
+`tools/Invoke-MultiAppBrokerClientTwoQuest.ps1`; it also folds the promoted
+QCL100 evidence shape into a QCL-neutral generic media-session receipt.
+
 `apps/manifold-broker-android` is the Quest-owned Android package scaffold for
 the Morphospace Manifold broker identity used by Hostess:
 

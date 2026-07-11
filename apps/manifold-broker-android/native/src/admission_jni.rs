@@ -10,15 +10,19 @@ fn runtime_slot() -> &'static Mutex<Option<QuestBrokerAdmissionRuntime>> {
 }
 
 pub(crate) fn initialize(config_json: &str) -> Result<String, String> {
-    let runtime = QuestBrokerAdmissionRuntime::from_config_json(config_json)
-        .map_err(|error| error.to_string())?;
     let mut slot = runtime_slot()
         .lock()
         .map_err(|_| "admission runtime lock poisoned".to_owned())?;
-    *slot = Some(runtime);
+    let reused = slot.is_some();
+    if !reused {
+        let runtime = QuestBrokerAdmissionRuntime::from_config_json(config_json)
+            .map_err(|error| error.to_string())?;
+        *slot = Some(runtime);
+    }
     Ok(serde_json::json!({
         "$schema": "rusty.quest.broker.admission_native_status.v1",
         "initialized": true,
+        "existing_authority_preserved": reused,
         "decision_owner": "rusty.manifold.admission",
         "local_token_or_grant_policy": false
     })
@@ -136,6 +140,11 @@ mod tests {
         });
         let response = execute(&operation.to_string()).expect("execute");
         assert!(response.contains("\"applied\":true"));
+        assert!(snapshot()
+            .expect("snapshot")
+            .contains("\"authority_revision\":2"));
+        let repeated = initialize(&config.to_string()).expect("repeated initialize");
+        assert!(repeated.contains("\"existing_authority_preserved\":true"));
         assert!(snapshot()
             .expect("snapshot")
             .contains("\"authority_revision\":2"));

@@ -152,17 +152,41 @@ $admissionConfig = [ordered]@{
         '$schema' = "rusty.manifold.admission.snapshot.v1"
         authority_id = "authority.admission.quest"
         authority_revision = 1
-        grants = @([ordered]@{
-            grant_id = "grant.quest.authorized"
-            identity = [ordered]@{
-                client_id = "client.quest.authorized"
-                platform_subject = "io.github.mesmerprism.rustymanifold.admission.client"
-                signing_fingerprint = "sha256:$certificateSha256"
+        grants = @(
+            [ordered]@{
+                grant_id = "grant.quest.authorized"
+                identity = [ordered]@{
+                    client_id = "client.quest.authorized"
+                    platform_subject = "io.github.mesmerprism.rustymanifold.admission.client"
+                    signing_fingerprint = "sha256:$certificateSha256"
+                }
+                capabilities = @("capability.command.session.list")
+                expires_at_ms = 4102444800000
+                revoked = $false
+            },
+            [ordered]@{
+                grant_id = "grant.quest.native-renderer"
+                identity = [ordered]@{
+                    client_id = "client.quest.native-renderer"
+                    platform_subject = "io.github.mesmerprism.rustyquest.native_renderer"
+                    signing_fingerprint = "sha256:$certificateSha256"
+                }
+                capabilities = @("capability.command.session.list","capability.media.session.observe","capability.peer.session.observe","capability.sink.native-openxr")
+                expires_at_ms = 4102444800000
+                revoked = $false
+            },
+            [ordered]@{
+                grant_id = "grant.quest.spatial-camera-panel"
+                identity = [ordered]@{
+                    client_id = "client.quest.spatial-camera-panel"
+                    platform_subject = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
+                    signing_fingerprint = "sha256:$certificateSha256"
+                }
+                capabilities = @("capability.command.session.list","capability.media.session.observe","capability.peer.session.observe","capability.sink.spatial-sdk")
+                expires_at_ms = 4102444800000
+                revoked = $false
             }
-            capabilities = @("capability.command.session.list")
-            expires_at_ms = 4102444800000
-            revoked = $false
-        })
+        )
         active_tokens = @()
         revoked_token_ids = @()
         consumed_request_ids = @()

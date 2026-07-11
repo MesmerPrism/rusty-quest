@@ -53,12 +53,23 @@
         android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <uses-permission android:name="io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION" />
 
     <application
         android:allowBackup="false"
         android:debuggable="true"
         android:label="${spatialAppLabel}"
         android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+        <meta-data android:name="rusty.manifold.client_id" android:value="client.quest.spatial-camera-panel" />
+        <meta-data android:name="rusty.manifold.feature_lock_id" android:value="lock.broker-client.spatial-camera-panel.v1" />
+        <meta-data android:name="rusty.manifold.marker_namespace" android:value="RUSTY_QUEST_SPATIAL_BROKER_CLIENT" />
+        <meta-data android:name="rusty.manifold.contract_families" android:value="peer-session,media-session" />
+        <meta-data android:name="rusty.manifold.capabilities" android:value="capability.command.session.list,capability.media.session.observe,capability.peer.session.observe,capability.sink.spatial-sdk" />
+        <activity
+            android:name="io.github.mesmerprism.rustyquest.broker_client.BrokerClientProbeActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true" />
         <meta-data
             android:name="com.oculus.supportedDevices"
             android:value="quest2|questpro|quest3|quest3s" />

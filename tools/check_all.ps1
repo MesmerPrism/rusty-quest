@@ -48,6 +48,7 @@ try {
     Invoke-Checked "Quest broker product static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestBrokerProductStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "Quest broker authority static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestBrokerAuthorityStatic.ps1", "-RepoRoot", ".")
     Invoke-Checked "Quest broker admission static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestBrokerAdmissionStatic.ps1", "-RepoRoot", ".")
+    Invoke-Checked "Quest multi-app broker client static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-MultiAppBrokerClients.ps1", "-RepoRoot", ".")
     Invoke-Checked "Spatial Camera Panel Android static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-SpatialCameraPanelAndroid.ps1", "-RepoRoot", ".")
     Invoke-Checked "Manifold broker Android scaffold" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-ManifoldBrokerAndroid.ps1")
     Invoke-Checked "Peer rendezvous Android scaffold" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-PeerRendezvousAndroid.ps1")

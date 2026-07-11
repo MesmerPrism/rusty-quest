@@ -26,6 +26,7 @@
     <uses-permission android:name="horizonos.permission.USE_SCENE" />
     <uses-permission android:name="org.khronos.openxr.permission.OPENXR" />
     <uses-permission android:name="org.khronos.openxr.permission.OPENXR_SYSTEM" />
+    <uses-permission android:name="io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION" />
 
     <application
         android:allowBackup="false"
@@ -36,6 +37,11 @@
         android:largeHeap="true"
         android:theme="@android:style/Theme.Material.NoActionBar"
         android:usesCleartextTraffic="false">
+        <meta-data android:name="rusty.manifold.client_id" android:value="client.quest.native-renderer" />
+        <meta-data android:name="rusty.manifold.feature_lock_id" android:value="lock.broker-client.native-renderer.v1" />
+        <meta-data android:name="rusty.manifold.marker_namespace" android:value="RUSTY_QUEST_NATIVE_BROKER_CLIENT" />
+        <meta-data android:name="rusty.manifold.contract_families" android:value="peer-session,media-session" />
+        <meta-data android:name="rusty.manifold.capabilities" android:value="capability.command.session.list,capability.media.session.observe,capability.peer.session.observe,capability.sink.native-openxr" />
         <meta-data
             android:name="com.samsung.android.vr.application.mode"
             android:value="vr_only" />
@@ -85,6 +91,11 @@
                 <category android:name="com.oculus.intent.category.2D" />
             </intent-filter>
         </activity>
+        <activity
+            android:name="io.github.mesmerprism.rustyquest.broker_client.BrokerClientProbeActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true" />
         <service
             android:name=".DisplayCompositeProjectionService"
             android:exported="false"

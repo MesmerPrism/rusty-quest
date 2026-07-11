@@ -1,0 +1,10 @@
+{
+  "validation_profile_ref":"QCL-100-promoted-native-dual-lane",
+  "media_layout":"separate-eye-streams",
+  "socket_authority":"rusty_direct_p2p_socket_authority",
+  "receiver_observed_bytes":1048576,
+  "final_window_submitted_frames":120,
+  "cleanup_complete":true,
+  "package_fatal_count":0,
+  "system_fatal_count":0
+}

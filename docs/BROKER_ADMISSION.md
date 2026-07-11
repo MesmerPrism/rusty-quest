@@ -25,6 +25,22 @@ token use, revocation, and expiry. Every response identifies
 The existing WebSocket compatibility server is not the admission surface and
 does not turn transport acknowledgement into authorization.
 
+## Independent product clients
+
+`crates/rusty-quest-broker-client` validates the product-facing client specs.
+Native Renderer and Spatial Camera Panel intentionally share only the accepted
+`rusty.manifold.peer.session_descriptor.v1` and
+`rusty.manifold.media.session_descriptor.v1` contract families, three common
+observe/list capabilities, and the signature permission. Each retains a
+different package subject, client id, feature lock, marker namespace, and one
+app-specific sink capability. The SDK owns no grants, tokens, Binder policy,
+runtime properties, app defaults, sessions, sockets, codecs, or media.
+
+Grant capability lists and client requests are unique canonical sorted sets.
+The broker JNI initializer is idempotent inside the live broker process so a
+second Android bind cannot reset the Manifold authority revision or erase the
+first client's audit/session state.
+
 ## Build and static validation
 
 ```powershell
@@ -62,3 +78,17 @@ For every serial, acceptance requires:
 
 Raw logcat, package dumps, serials, generated keystores, and device summaries
 remain private local evidence and are not committed.
+
+For the two real app consumers, build the broker, native renderer, and Spatial
+Camera Panel with the same signing identity, then run:
+
+```powershell
+& .\tools\Invoke-MultiAppBrokerClientTwoQuest.ps1 `
+  -Serial @('<serial-a>','<serial-b>')
+```
+
+Acceptance additionally requires distinct Android app ids, exact per-app
+feature-lock and marker projection, shared peer/media contract parity, no
+cross-app marker/default/property bleed, successful lifecycle for both clients,
+zero package/system fatals, generic QCL100 evidence folding, and removal of all
+three test packages on both devices.
