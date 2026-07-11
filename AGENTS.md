@@ -105,6 +105,13 @@ connectivity-lab harness or enable media. Validate with
 `tools/Invoke-DirectP2pProviderTwoQuest.ps1` and require both typed receipts,
 inactive cleanup, and zero package/system fatals.
 
+When peer-session gating is enabled, `rusty-quest-peer-session-adapter` only
+projects authenticated BLE pair evidence into Manifold. The product must
+validate Manifold's fresh topology authorization, exact current revision,
+topology contract, and local peer role before initializing Wi-Fi P2P; rejected,
+stale, expired, or revoked receipts must leave topology inactive. Validate the
+decision matrix with `tools/Invoke-PeerSessionDecisionGateTwoQuest.ps1`.
+
 ## Agent Board
 
 Read-only source inspection and dry-run profile validation do not require Agent

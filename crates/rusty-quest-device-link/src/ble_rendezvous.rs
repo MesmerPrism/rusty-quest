@@ -415,6 +415,17 @@ pub struct BleRendezvousPairCleanup {
 }
 
 /// Two-peer BLE rendezvous role-swap acceptance artifact.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BleRendezvousCoordinationMode {
+    /// Legacy runs coordinated through two Agent Board Quest leases.
+    #[default]
+    AgentBoardLeased,
+    /// User-authorized, serial-scoped ADB run with no daemon lifecycle mutation.
+    UserAuthorizedSerialScoped,
+}
+
+/// Two-peer BLE rendezvous role-swap acceptance artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BleRendezvousPairReceipt {
     /// Pair artifact schema identifier.
@@ -427,10 +438,15 @@ pub struct BleRendezvousPairReceipt {
     pub primary_serial: String,
     /// Serial of the second declared peer.
     pub secondary_serial: String,
-    /// Agent Board Quest lease correlated with the primary peer.
-    pub primary_quest_lease_id: String,
-    /// Agent Board Quest lease correlated with the secondary peer.
-    pub secondary_quest_lease_id: String,
+    /// Coordination authority used for the device-bound run.
+    #[serde(default)]
+    pub coordination_mode: BleRendezvousCoordinationMode,
+    /// Agent Board Quest lease correlated with the primary peer, when leased.
+    #[serde(default)]
+    pub primary_quest_lease_id: Option<String>,
+    /// Agent Board Quest lease correlated with the secondary peer, when leased.
+    #[serde(default)]
+    pub secondary_quest_lease_id: Option<String>,
     /// Whether this is a hardware-free planning run.
     pub dry_run: bool,
     /// Whether acceptance required reversing the GATT roles.
@@ -609,13 +625,28 @@ pub fn validate_ble_rendezvous_pair_receipt(
     if pair.primary_serial.is_empty()
         || pair.secondary_serial.is_empty()
         || pair.primary_serial == pair.secondary_serial
-        || pair.primary_quest_lease_id.is_empty()
-        || pair.secondary_quest_lease_id.is_empty()
-        || pair.primary_quest_lease_id == pair.secondary_quest_lease_id
     {
         errors.push(ValidationError::new(
-            "BLE rendezvous pair requires two distinct devices and lease ids",
+            "BLE rendezvous pair requires two distinct devices",
         ));
+    }
+    match pair.coordination_mode {
+        BleRendezvousCoordinationMode::AgentBoardLeased => {
+            let primary = pair.primary_quest_lease_id.as_deref().unwrap_or_default();
+            let secondary = pair.secondary_quest_lease_id.as_deref().unwrap_or_default();
+            if primary.is_empty() || secondary.is_empty() || primary == secondary {
+                errors.push(ValidationError::new(
+                    "Agent Board coordinated BLE rendezvous requires two distinct Quest lease ids",
+                ));
+            }
+        }
+        BleRendezvousCoordinationMode::UserAuthorizedSerialScoped => {
+            if pair.primary_quest_lease_id.is_some() || pair.secondary_quest_lease_id.is_some() {
+                errors.push(ValidationError::new(
+                    "user-authorized serial-scoped BLE rendezvous must not claim Agent Board leases",
+                ));
+            }
+        }
     }
     if !pair.role_swap_required
         || !pair.role_swap_completed

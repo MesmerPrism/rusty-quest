@@ -40,7 +40,7 @@ media, or become connection authority. A one-headset advertiser run may report
 `ready`; pair acceptance requires two authenticated peer phases with reversed
 GATT roles and an authenticated reconnect in each phase. The pair artifact is
 validated independently through the data-only device-link crate.
-The current live baseline is `ble-pair-20260710T132305Z`; it passed both role
+The current live baseline is `ble-pair-20260711T025453Z`; it passed both role
 layouts, artifact redaction, boundary-state stability, and package cleanup.
 ADB-based launch and ephemeral test-secret injection remain evidence
 orchestration, not an autonomous provisioning claim.
@@ -51,6 +51,14 @@ and Rust-owned direct sockets. On current Quest builds the valid `p2p0` route
 may have no public Android `Network`; the product receipts that as unavailable
 and continues only through an explicit Rust local bind. Run the no-media
 two-headset gate with `tools/Invoke-DirectP2pProviderTwoQuest.ps1`.
+
+`crates/rusty-quest-peer-session-adapter` projects a validated BLE pair into a
+Manifold peer-session proposal; it does not accept the session itself. In
+decision-gated mode the product provider validates a fresh, current-revision
+Manifold topology authorization before initializing `WifiP2pManager`.
+`tools/Invoke-PeerSessionDecisionGateTwoQuest.ps1` proves unauthenticated,
+stale, and revoked decisions cannot reach topology mutation, then proves an
+accepted decision can complete the same bounded no-media product exchange.
 
 `apps/qcl041-wifi-direct-harness-android` is the Quest-side producer for the
 Windows peer route. It does not need an Android phone: the live path pairs the

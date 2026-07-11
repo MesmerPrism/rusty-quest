@@ -15,6 +15,11 @@ final class RustDirectSocketProvider {
         return nativeRunClient(localHost, peerHost, port, runId, networkHandle, timeoutMs);
     }
 
+    static String validateTopologyAuthorization(String receiptJson, String localPeerId, String role, long expectedRevision, long nowMs) {
+        return nativeValidateTopologyAuthorization(receiptJson, localPeerId, role, expectedRevision, nowMs);
+    }
+
     private static native String nativeRunServer(String localHost, int port, long networkHandle, long timeoutMs);
     private static native String nativeRunClient(String localHost, String peerHost, int port, String runId, long networkHandle, long timeoutMs);
+    private static native String nativeValidateTopologyAuthorization(String receiptJson, String localPeerId, String role, long expectedRevision, long nowMs);
 }

@@ -15,6 +15,7 @@ members = [
     "crates/rusty-quest-remote-camera",
     "crates/rusty-quest-particle-adapter",
     "crates/rusty-quest-hand-adapter",
+    "crates/rusty-quest-peer-session-adapter",
 ]
 resolver = "2"
 

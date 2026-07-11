@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$Serial,
-    [Parameter(Mandatory=$true)][string]$QuestLeaseId,
+    [ValidateSet("agent_board_leased", "user_authorized_serial_scoped")][string]$CoordinationMode = "user_authorized_serial_scoped",
+    [string]$QuestLeaseId = "",
     [ValidateSet("server", "client")][string]$Mode = "server",
     [string]$RunId = "",
     [string]$SessionTag = "session-lab-001",
@@ -36,8 +37,11 @@ if ([string]::IsNullOrWhiteSpace($ApkPath)) {
 if ([string]::IsNullOrWhiteSpace($OutDir)) {
     $OutDir = Join-Path $repoRoot "target\peer-rendezvous-runs\$RunId"
 }
-if ([string]::IsNullOrWhiteSpace($QuestLeaseId)) {
-    throw "QuestLeaseId is required for live headset mutation."
+if ($CoordinationMode -eq "agent_board_leased" -and [string]::IsNullOrWhiteSpace($QuestLeaseId)) {
+    throw "Agent Board coordination requires QuestLeaseId for live headset mutation."
+}
+if ($CoordinationMode -eq "user_authorized_serial_scoped" -and -not [string]::IsNullOrWhiteSpace($QuestLeaseId)) {
+    throw "User-authorized serial-scoped coordination must not claim a Quest lease."
 }
 function Test-SafeTag([string]$Value) {
     return $Value.Length -ge 4 -and $Value.Length -le 32 -and $Value -match '^[A-Za-z0-9._-]+$'
@@ -77,7 +81,8 @@ $summary = [ordered]@{
     schema = "rusty.quest.peer_rendezvous_android_smoke.v1"
     run_id = $RunId
     serial = $Serial
-    quest_lease_id = $QuestLeaseId
+    coordination_mode = $CoordinationMode
+    quest_lease_id = if ($CoordinationMode -eq "agent_board_leased") { $QuestLeaseId } else { $null }
     mode = $Mode
     dry_run = [bool]$DryRun
     wifi_mutation_requested = $false

@@ -7,7 +7,58 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
+use rusty_manifold_peer::{
+    ManifoldPeerTopologyAuthorization, PEER_TOPOLOGY_AUTHORIZATION_SCHEMA,
+    PRODUCT_WIFI_DIRECT_TOPOLOGY_CONTRACT,
+};
+
 const MAX_PAYLOAD_BYTES: usize = 4096;
+
+/// Validate a fresh Manifold topology authorization for one local role.
+pub fn validate_topology_authorization(
+    receipt_json: &str,
+    local_peer_id: &str,
+    role: &str,
+    expected_authority_revision: u64,
+    now_ms: u64,
+) -> String {
+    let receipt: ManifoldPeerTopologyAuthorization = match serde_json::from_str(receipt_json) {
+        Ok(value) => value,
+        Err(error) => {
+            return json!({"status":"blocked","reason":format!("invalid_receipt:{error}")})
+                .to_string();
+        }
+    };
+    let reason = if receipt.schema_id.as_str() != PEER_TOPOLOGY_AUTHORIZATION_SCHEMA {
+        Some("schema_mismatch")
+    } else if !receipt.authorized {
+        Some("decision_not_authorized")
+    } else if receipt.authority_revision.get() != expected_authority_revision {
+        Some("stale_authority_revision")
+    } else if receipt.valid_from_ms > now_ms || receipt.expires_at_ms <= now_ms {
+        Some("authorization_not_fresh")
+    } else if receipt.topology_contract_id.as_str() != PRODUCT_WIFI_DIRECT_TOPOLOGY_CONTRACT {
+        Some("topology_contract_mismatch")
+    } else if role == "group_owner" && receipt.group_owner_peer_id.as_str() != local_peer_id {
+        Some("group_owner_peer_mismatch")
+    } else if role == "client" && receipt.client_peer_id.as_str() != local_peer_id {
+        Some("client_peer_mismatch")
+    } else if !matches!(role, "group_owner" | "client") {
+        Some("unsupported_role")
+    } else {
+        None
+    };
+    json!({
+        "status": if reason.is_none() { "accepted" } else { "blocked" },
+        "reason": reason.unwrap_or(""),
+        "decision_id": receipt.decision_id.as_str(),
+        "session_id": receipt.session_id.as_str(),
+        "authority_revision": receipt.authority_revision.get(),
+        "expires_at_ms": receipt.expires_at_ms,
+        "topology_contract_id": receipt.topology_contract_id.as_str()
+    })
+    .to_string()
+}
 
 fn parse_ipv4(value: &str) -> Result<Ipv4Addr, String> {
     value
@@ -270,6 +321,38 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_directp2p_RustDirec
     }
 }
 
+#[cfg(target_os = "android")]
+#[no_mangle]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_directp2p_RustDirectSocketProvider_nativeValidateTopologyAuthorization(
+    mut env: jni::EnvUnowned,
+    _class: jni::objects::JClass,
+    receipt_json: jni::objects::JString,
+    local_peer_id: jni::objects::JString,
+    role: jni::objects::JString,
+    expected_revision: jni::sys::jlong,
+    now_ms: jni::sys::jlong,
+) -> jni::sys::jstring {
+    match env
+        .with_env(|env| -> jni::errors::Result<jni::sys::jstring> {
+            let receipt = receipt_json.try_to_string(env)?;
+            let peer = local_peer_id.try_to_string(env)?;
+            let local_role = role.try_to_string(env)?;
+            let response = validate_topology_authorization(
+                &receipt,
+                &peer,
+                &local_role,
+                expected_revision as u64,
+                now_ms as u64,
+            );
+            env.new_string(response).map(|value| value.into_raw())
+        })
+        .into_outcome()
+    {
+        jni::Outcome::Ok(value) => value,
+        jni::Outcome::Err(_) | jni::Outcome::Panic(_) => std::ptr::null_mut(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,5 +361,19 @@ mod tests {
     fn invalid_client_address_fails_without_opening_a_socket() {
         let receipt = run_client("127.0.0.1", "bad", 9079, "test", 1, 10);
         assert!(receipt.contains("invalid peer host"));
+    }
+
+    #[test]
+    fn topology_authorization_is_revision_and_role_scoped() {
+        let receipt =
+            include_str!("../../../../fixtures/peer-session/topology-authorization.pass.json");
+        let accepted =
+            validate_topology_authorization(receipt, "peer.alpha", "group_owner", 2, 2_000);
+        assert!(accepted.contains("\"status\":\"accepted\""));
+        let stale = validate_topology_authorization(receipt, "peer.alpha", "group_owner", 3, 2_000);
+        assert!(stale.contains("stale_authority_revision"));
+        let wrong_peer =
+            validate_topology_authorization(receipt, "peer.beta", "group_owner", 2, 2_000);
+        assert!(wrong_peer.contains("group_owner_peer_mismatch"));
     }
 }

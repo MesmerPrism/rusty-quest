@@ -94,6 +94,13 @@ BLE adapter may not mutate Wi-Fi Direct state, execute Manifold commands, or
 carry media. Manifold or a platform lifecycle owner decides whether to act on
 an accepted proposal.
 
+The peer-session adapter is the explicit bridge: it validates and digests the
+BLE pair artifact, then submits an authenticated expiring proposal to
+Manifold. Manifold owns accept/reject, replay, peer-change, and revocation
+decisions. The product Wi-Fi Direct provider consumes only a fresh
+`rusty.manifold.peer.topology_authorization.v1` at the current revision and
+checks its assigned local role before Android topology initialization.
+
 ## Reusable Media Stream Contracts
 
 `crates/rusty-quest-media-stream` owns

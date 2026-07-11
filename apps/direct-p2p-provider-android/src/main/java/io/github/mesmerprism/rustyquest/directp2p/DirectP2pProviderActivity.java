@@ -17,12 +17,14 @@ import android.net.wifi.p2p.WifiP2pManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Base64;
 import android.util.Log;
 import android.widget.TextView;
 
 import org.json.JSONObject;
 
 import java.net.InetAddress;
+import java.nio.charset.StandardCharsets;
 
 public final class DirectP2pProviderActivity extends Activity {
     private static final String TAG = "RustyDirectP2p";
@@ -54,6 +56,9 @@ public final class DirectP2pProviderActivity extends Activity {
         port = intent.getIntExtra("port", 9079);
         if (role == null) role = "group_owner";
         if (runId == null || runId.isEmpty()) runId = "product-run";
+        if (!authorizeTopology(intent)) {
+            return;
+        }
         manager = (WifiP2pManager) getSystemService(Context.WIFI_P2P_SERVICE);
         if (manager == null) {
             fail("wifi_p2p_manager_unavailable");
@@ -87,6 +92,38 @@ public final class DirectP2pProviderActivity extends Activity {
             removeStaleGroupThenDiscover();
         } else {
             fail("invalid_role_or_missing_target");
+        }
+    }
+
+    private boolean authorizeTopology(Intent intent) {
+        if (!intent.getBooleanExtra("require_peer_session_authorization", false)) {
+            Log.i(TAG, MARKER + " phase=topology_gate status=not_required run_id=" + runId);
+            return true;
+        }
+        String encoded = intent.getStringExtra("authorization_receipt_base64");
+        String localPeerId = intent.getStringExtra("local_peer_id");
+        long expectedRevision = intent.getLongExtra("peer_session_authority_revision", -1L);
+        if (encoded == null || encoded.isEmpty() || localPeerId == null || localPeerId.isEmpty()
+                || expectedRevision < 0L) {
+            Log.w(TAG, MARKER + " phase=topology_gate status=blocked reason=missing_authorization_inputs run_id=" + runId);
+            return false;
+        }
+        try {
+            String receipt = new String(Base64.decode(encoded, Base64.NO_WRAP), StandardCharsets.UTF_8);
+            String result = RustDirectSocketProvider.validateTopologyAuthorization(
+                    receipt, localPeerId, role, expectedRevision, System.currentTimeMillis());
+            JSONObject parsed = new JSONObject(result);
+            String gateStatus = parsed.optString("status", "blocked");
+            String reason = parsed.optString("reason", "invalid_result");
+            long actualRevision = parsed.optLong("authority_revision", -1L);
+            Log.i(TAG, MARKER + " phase=topology_gate status=" + gateStatus
+                    + " reason=" + reason + " local_peer_id=" + localPeerId
+                    + " expected_revision=" + expectedRevision + " actual_revision=" + actualRevision
+                    + " run_id=" + runId);
+            return "accepted".equals(gateStatus);
+        } catch (Exception error) {
+            Log.w(TAG, MARKER + " phase=topology_gate status=blocked reason=" + safe(error) + " run_id=" + runId);
+            return false;
         }
     }
 

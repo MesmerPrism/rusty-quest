@@ -1,8 +1,9 @@
 param(
     [Parameter(Mandatory=$true)][string]$PrimarySerial,
     [Parameter(Mandatory=$true)][string]$SecondarySerial,
-    [Parameter(Mandatory=$true)][string]$PrimaryQuestLeaseId,
-    [Parameter(Mandatory=$true)][string]$SecondaryQuestLeaseId,
+    [ValidateSet("agent_board_leased", "user_authorized_serial_scoped")][string]$CoordinationMode = "user_authorized_serial_scoped",
+    [string]$PrimaryQuestLeaseId = "",
+    [string]$SecondaryQuestLeaseId = "",
     [ValidateSet("group_owner", "client", "either")][string]$PrimaryRolePreference = "group_owner",
     [ValidateSet("group_owner", "client", "either")][string]$SecondaryRolePreference = "client",
     [string]$PrimaryPeerTag = "peer-primary",
@@ -50,9 +51,16 @@ if ($PrimaryPeerTag -eq $SecondaryPeerTag) {
 if ($PrimarySerial -eq $SecondarySerial) {
     throw "PrimarySerial and SecondarySerial must be distinct."
 }
-if ([string]::IsNullOrWhiteSpace($PrimaryQuestLeaseId) -or
-        [string]::IsNullOrWhiteSpace($SecondaryQuestLeaseId)) {
-    throw "Both Quest lease ids are required."
+if ($CoordinationMode -eq "agent_board_leased" -and
+        ([string]::IsNullOrWhiteSpace($PrimaryQuestLeaseId) -or
+         [string]::IsNullOrWhiteSpace($SecondaryQuestLeaseId) -or
+         $PrimaryQuestLeaseId -eq $SecondaryQuestLeaseId)) {
+    throw "Agent Board coordination requires two distinct Quest lease ids."
+}
+if ($CoordinationMode -eq "user_authorized_serial_scoped" -and
+        (-not [string]::IsNullOrWhiteSpace($PrimaryQuestLeaseId) -or
+         -not [string]::IsNullOrWhiteSpace($SecondaryQuestLeaseId))) {
+    throw "User-authorized serial-scoped coordination must not claim Agent Board leases."
 }
 if ($ServerDurationSeconds -lt 20 -or $ServerDurationSeconds -gt 120 -or
         $ClientDurationSeconds -lt 20 -or $ClientDurationSeconds -gt 120 -or
@@ -85,8 +93,9 @@ $summary = [ordered]@{
     status = "planned"
     primary_serial = $PrimarySerial
     secondary_serial = $SecondarySerial
-    primary_quest_lease_id = $PrimaryQuestLeaseId
-    secondary_quest_lease_id = $SecondaryQuestLeaseId
+    coordination_mode = $CoordinationMode
+    primary_quest_lease_id = if ($CoordinationMode -eq "agent_board_leased") { $PrimaryQuestLeaseId } else { $null }
+    secondary_quest_lease_id = if ($CoordinationMode -eq "agent_board_leased") { $SecondaryQuestLeaseId } else { $null }
     dry_run = [bool]$DryRun
     role_swap_required = $true
     role_swap_completed = $false
@@ -185,6 +194,7 @@ $roleJob = {
         $SmokePath,
         $Serial,
         $LeaseId,
+        $CoordinationMode,
         $Mode,
         $ChildRunId,
         $SessionTag,
@@ -199,7 +209,7 @@ $roleJob = {
     Set-Location $RepoRoot
     $params = @{
         Serial = $Serial
-        QuestLeaseId = $LeaseId
+        CoordinationMode = $CoordinationMode
         Mode = $Mode
         RunId = $ChildRunId
         SessionTag = $SessionTag
@@ -209,6 +219,9 @@ $roleJob = {
         RolePreference = $RolePreference
         ApkPath = $Apk
         OutDir = $ChildOutDir
+    }
+    if ($CoordinationMode -eq "agent_board_leased") {
+        $params["QuestLeaseId"] = $LeaseId
     }
     if ($SkipInstallValue) {
         $params["SkipInstall"] = $true
@@ -241,13 +254,13 @@ function Invoke-PairPhase {
     $clientJob = $null
     try {
         $serverJob = Start-Job -ScriptBlock $roleJob -ArgumentList @(
-            $repoRoot, $smokePath, $ServerSerial, $ServerLeaseId, "server",
+            $repoRoot, $smokePath, $ServerSerial, $ServerLeaseId, $CoordinationMode, "server",
             $serverRunId, $sessionTag, $ServerPeerTag, $SharedSecret,
             $ServerDurationSeconds, $ServerRolePreference, $ApkPath, $serverDir,
             $SkipPhaseInstall)
         Start-Sleep -Seconds 4
         $clientJob = Start-Job -ScriptBlock $roleJob -ArgumentList @(
-            $repoRoot, $smokePath, $ClientSerial, $ClientLeaseId, "client",
+            $repoRoot, $smokePath, $ClientSerial, $ClientLeaseId, $CoordinationMode, "client",
             $clientRunId, $sessionTag, $ClientPeerTag, $SharedSecret,
             $ClientDurationSeconds, $ClientRolePreference, $ApkPath, $clientDir,
             $SkipPhaseInstall)

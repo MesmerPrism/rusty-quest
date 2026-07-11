@@ -1,0 +1,14 @@
+{
+  "$schema": "rusty.manifold.peer.topology_authorization.v1",
+  "decision_id": "decision.peer-session.fixture",
+  "session_id": "session.peer.fixture",
+  "proposal_id": "proposal.peer-session.fixture",
+  "authority_revision": 2,
+  "group_owner_peer_id": "peer.alpha",
+  "client_peer_id": "peer.beta",
+  "topology_contract_id": "rusty.quest.product_wifi_direct_topology.v1",
+  "authorized": true,
+  "valid_from_ms": 1000,
+  "expires_at_ms": 61000,
+  "denial_reason": null
+}

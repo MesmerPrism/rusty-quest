@@ -661,8 +661,21 @@ addresses and the ephemeral secret, verifies stable Bluetooth/`p2p0` state,
 force-stops both packages, and runs the Rust pair validator over the summary.
 ADB still launches the evidence run and supplies the ephemeral test secret;
 autonomous enrollment and launch are outside this scoped promotion.
-The accepted two-Quest baseline is `ble-pair-20260710T132305Z`, whose summary
+The accepted two-Quest baseline is `ble-pair-20260711T025453Z`, whose summary
 also embeds a passing independent `pair` validation result.
+
+The Manifold decision-gated product sequence is:
+
+```powershell
+cargo run --quiet -p rusty-quest-peer-session-adapter --bin evaluate_ble_pair -- <pair-summary.json> <decision-bundle.json> <now-ms>
+& .\tools\Invoke-PeerSessionDecisionGateTwoQuest.ps1 -GroupOwnerSerial <serial> -ClientSerial <serial> -DecisionBundlePath <decision-bundle.json>
+```
+
+Acceptance requires topology to remain non-grouped for unauthenticated,
+stale-after-revocation, and revoked receipts. A fresh accepted revision must
+emit `phase=topology_gate status=accepted` on both peers before the bounded
+product exchange, followed by inactive cleanup, zero package/system fatals,
+and APK removal. Device logs and decision bundles remain private evidence.
 
 Native Quest renderer plans are source-only validation:
 
