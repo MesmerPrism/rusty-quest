@@ -36,7 +36,7 @@ foreach ($token in @("aarch64-linux-android", "librusty_quest_manifold_broker_au
 if ($clientBuild -notmatch 'different_from_broker' -or $clientBuild -notmatch 'same_as_broker') {
     throw "Admission client build does not preserve the signing differential."
 }
-foreach ($token in @("RUSTY_QUEST_BROKER_ADMISSION_CLIENT", 'accepted ? "accepted"', "replayed_request", "token_revoked", "status=unauthorized-rejected", "reason=signature-permission")) {
+foreach ($token in @("RUSTY_QUEST_BROKER_ADMISSION_CLIENT", 'accepted ? "accepted"', "replayed_request", "token_revoked", "status=unauthorized-rejected", "reason=signature-permission", "UUID.randomUUID", "expected_authority_revision", 'requestId("use")')) {
     if ($client -notmatch [regex]::Escape($token)) { throw "Admission device client is missing '$token'." }
 }
 

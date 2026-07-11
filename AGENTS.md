@@ -139,6 +139,17 @@ free of app policy. `rusty-quest-remote-camera` remains a compatibility adapter
 that maps into this runtime; do not copy its properties or defaults into new
 source, processor, or sink descriptors.
 
+For release-candidate broker recovery, distinguish client death from authority
+process death. A stopped client may rebind to the existing authority revision;
+after an explicit broker process stop, clients must rebuild from their exact
+product locks and grants at a fresh authority epoch. In both cases replay and
+post-revocation use must remain rejected, client UIDs and marker namespaces
+must stay distinct, and cleanup must remove all test packages. Validate both
+connected devices with
+`tools/Invoke-BrokerAdmissionDeathRecoveryTwoQuest.ps1`; its dedicated 2D
+clients avoid an unrelated 6DoF launch dependency, and its provider restart is
+a deliberate safe rebuild, not evidence of persisted in-memory authority.
+
 ## Agent Board
 
 Read-only source inspection and dry-run profile validation do not require Agent

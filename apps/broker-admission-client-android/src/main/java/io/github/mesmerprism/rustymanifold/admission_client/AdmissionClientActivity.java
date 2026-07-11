@@ -15,6 +15,8 @@ import android.util.Log;
 
 import org.json.JSONObject;
 
+import java.util.UUID;
+
 /** Device-test client for the signature-scoped admission Binder contract. */
 public final class AdmissionClientActivity extends Activity {
     private static final String TAG = "RustyAdmissionClient";
@@ -23,6 +25,7 @@ public final class AdmissionClientActivity extends Activity {
     private static final int AUTHORIZE_USE = 2;
     private static final int REVOKE_TOKEN = 3;
     private static final String CAPABILITY = "capability.command.session.list";
+    private final String requestNamespace = "request.device." + UUID.randomUUID();
     private final Messenger replyMessenger = new Messenger(new ReplyHandler(Looper.getMainLooper()));
     private Messenger service;
     private int stage;
@@ -32,10 +35,12 @@ public final class AdmissionClientActivity extends Activity {
     private boolean revokeApplied;
     private String replayReason = "missing";
     private String postRevokeReason = "missing";
+    private long initialRevision = 1L;
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
+        initialRevision = getIntent().getLongExtra("expected_authority_revision", 1L);
         String variant = getPackageName().endsWith("untrusted") ? "unauthorized" : "authorized";
         Intent intent = new Intent();
         intent.setComponent(new ComponentName(
@@ -57,7 +62,7 @@ public final class AdmissionClientActivity extends Activity {
         @Override
         public void onServiceConnected(ComponentName name, IBinder binder) {
             service = new Messenger(binder);
-            sendIssue(1);
+            sendIssue(initialRevision);
         }
 
         @Override
@@ -86,11 +91,11 @@ public final class AdmissionClientActivity extends Activity {
                     issueApplied = receipt.optBoolean("applied", false);
                     tokenId = receipt.getJSONObject("token").getString("token_id");
                     stage = 1;
-                    sendUse("request.device.use", revision);
+                    sendUse(requestId("use"), revision);
                 } else if (stage == 1) {
                     useApplied = receipt.optBoolean("applied", false);
                     stage = 2;
-                    sendUse("request.device.use", revision);
+                    sendUse(requestId("use"), revision);
                 } else if (stage == 2) {
                     replayReason = receipt.optString("rejection_reason", "missing");
                     stage = 3;
@@ -98,7 +103,7 @@ public final class AdmissionClientActivity extends Activity {
                 } else if (stage == 3) {
                     revokeApplied = receipt.optBoolean("applied", false);
                     stage = 4;
-                    sendUse("request.device.after-revoke", revision);
+                    sendUse(requestId("after-revoke"), revision);
                 } else if (stage == 4) {
                     postRevokeReason = receipt.optString("rejection_reason", "missing");
                     boolean accepted = issueApplied
@@ -122,7 +127,7 @@ public final class AdmissionClientActivity extends Activity {
 
     private void sendIssue(long revision) {
         Bundle data = new Bundle();
-        data.putString("request_id", "request.device.issue");
+        data.putString("request_id", requestId("issue"));
         data.putLong("expected_authority_revision", revision);
         data.putString("capabilities", CAPABILITY);
         data.putLong("token_ttl_ms", 30_000L);
@@ -140,7 +145,7 @@ public final class AdmissionClientActivity extends Activity {
 
     private void sendRevoke(long revision) {
         Bundle data = new Bundle();
-        data.putString("request_id", "request.device.revoke");
+        data.putString("request_id", requestId("revoke"));
         data.putLong("expected_authority_revision", revision);
         data.putString("token_id", tokenId);
         data.putString("reason", "reason.client.completed");
@@ -156,6 +161,10 @@ public final class AdmissionClientActivity extends Activity {
         } catch (Exception error) {
             marker("status=error stage=send reason=" + error.getClass().getSimpleName());
         }
+    }
+
+    private String requestId(String suffix) {
+        return requestNamespace + "." + suffix;
     }
 
     private static void marker(String fields) {

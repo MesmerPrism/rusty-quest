@@ -649,7 +649,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBroker
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerProductStatic.ps1 -RepoRoot .
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAuthorityStatic.ps1 -RepoRoot .
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAdmissionStatic.ps1 -RepoRoot .
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-BrokerAdmissionDeathRecoveryTwoQuest.ps1 -Serial <quest-serial-a>,<quest-serial-b>
 ```
+
+The two-Quest broker-death suite first proves client death/rebind against the
+live authority, then force-stops the broker and requires an explicit fresh-
+epoch rebuild from each app's exact lock and grant. It rechecks replay,
+revocation, identity separation, marker isolation, package/system fatals, and
+complete uninstall cleanup. Evidence remains outside this public repository.
 
 The default `check_all.ps1` lane excludes legacy Makepad and QCL099 checks and
 focuses on native OpenXR/Vulkan plus Meta Spatial SDK surfaces. Pass
