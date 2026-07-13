@@ -987,9 +987,9 @@ function Invoke-FinalCleanup {
     $processEvidence = @()
     $processesRemaining = @()
     foreach ($package in $packages) {
-        $pid = Invoke-SerialAdb -Device $Device -Arguments @("shell", "pidof", $package) -AllowFailure
-        $pidText = $pid.output.Trim()
-        $processEvidence += "package=$package exit=$($pid.exit_code) pid=$pidText"
+        $pidResult = Invoke-SerialAdb -Device $Device -Arguments @("shell", "pidof", $package) -AllowFailure
+        $pidText = $pidResult.output.Trim()
+        $processEvidence += "package=$package exit=$($pidResult.exit_code) pid=$pidText"
         if (-not [string]::IsNullOrWhiteSpace($pidText)) { $processesRemaining += $package }
     }
     [System.IO.File]::WriteAllLines($processPath, [string[]]$processEvidence, $script:Utf8NoBom)
