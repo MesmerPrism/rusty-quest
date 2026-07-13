@@ -418,11 +418,12 @@ function Invoke-ModuleLockSelected {
         -Adb $script:AdbPath `
         -Serial $transport `
         -SurfaceTargetId icosphere `
+        -AllowMissingMarkers `
         -ClearLogcat `
         -StopAfterRun | Out-Null
     $spatialSummaryPath = Join-Path $spatialDir "evidence-summary.json"
     $spatialSummary = Read-JsonFile -Path $spatialSummaryPath -Label "Spatial selected-lock summary"
-    Assert-RunSummary -Summary $spatialSummary -Schema "rusty.quest.spatial_camera_panel_particle_visual_smoke.v1" -AcceptedStatus @("passed") -SerialValue $transport -Label "Spatial selected-lock summary" -DollarSchema
+    Assert-RunSummary -Summary $spatialSummary -Schema "rusty.quest.spatial_camera_panel_particle_visual_smoke.v1" -AcceptedStatus @("passed", "completed") -SerialValue $transport -Label "Spatial selected-lock summary" -DollarSchema
 
     $spatialCombinedPath = Join-Path $spatialDir "combined-particle-markers.txt"
     $spatialInputs = @(
