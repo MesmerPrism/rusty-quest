@@ -6,6 +6,8 @@ param(
     [string]$AdbServerPort = $env:RUSTY_QUEST_ADB_SERVER_PORT,
     [string]$PackageName = "io.github.mesmerprism.rustyquest.native_renderer",
     [string]$Activity = "io.github.mesmerprism.rustyquest.native_renderer/.ControlPanelActivity",
+    [string]$NativeActivity = "io.github.mesmerprism.rustyquest.native_renderer/android.app.NativeActivity",
+    [int]$NativeLaunchDelaySeconds = 2,
     [int]$RunSeconds = 12,
     [string]$OutDir = "",
     [switch]$SkipInstall,
@@ -196,7 +198,9 @@ $summary = [ordered]@{
     serial = $Serial
     adb_server_port = $script:ResolvedAdbServerPort
     package_name = $PackageName
-    activity = $Activity
+    capture_activity = $Activity
+    native_activity = $NativeActivity
+    native_launch_delay_seconds = [Math]::Max(0, $NativeLaunchDelaySeconds)
     apk_path = (Resolve-Path $resolvedApk).Path
     profile_path = (Resolve-Path $resolvedProfile).Path
     run_seconds = [Math]::Max(1, $RunSeconds)
@@ -261,7 +265,7 @@ try {
         Invoke-AdbCommand -Name "clear logcat" -Arguments @("logcat", "-c") | Out-Null
     }
 
-    $summary.launch_output = (Invoke-AdbCommand -Name "launch display-composite capture request" -Arguments @(
+    $summary.capture_launch_output = (Invoke-AdbCommand -Name "launch display-composite capture request" -Arguments @(
         "shell",
         "am",
         "start",
@@ -269,6 +273,18 @@ try {
         "-a", "io.github.mesmerprism.rustyquest.native_renderer.action.REQUEST_DISPLAY_COMPOSITE_CAPTURE",
         "-n", $Activity,
         "--el", "display_composite_request_token", $requestToken.ToString()
+    )).output
+
+    if ($summary.native_launch_delay_seconds -gt 0) {
+        Start-Sleep -Seconds $summary.native_launch_delay_seconds
+    }
+
+    $summary.native_launch_output = (Invoke-AdbCommand -Name "launch native renderer XR consumer" -Arguments @(
+        "shell",
+        "am",
+        "start",
+        "-W",
+        "-n", $NativeActivity
     )).output
 
     Start-Sleep -Seconds ([Math]::Max(1, $RunSeconds))
