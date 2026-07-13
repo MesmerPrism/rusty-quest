@@ -84,7 +84,7 @@ foreach ($criterion in $criteria) {
     }
 }
 
-if ($text -notmatch '&\s+\$script:AdbPath\s+-s\s+\$Device') {
+if ($text -notmatch '&\s+\$script:AdbPath\s+-s\s+\$transport') {
     throw "Corrected release orchestrator does not centrally enforce adb -s <serial>."
 }
 if ($text -match '\$env:RUSTY_QUEST_SERIAL|\$env:ANDROID_SERIAL|(?im)\badb(?:\.exe)?\s+devices\b') {

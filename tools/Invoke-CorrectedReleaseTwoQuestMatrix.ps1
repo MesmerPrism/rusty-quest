@@ -27,6 +27,7 @@ $script:RunId = ""
 $script:RunStartedAt = [DateTimeOffset]::MinValue
 $script:EvidenceRoot = ""
 $script:PreflightSha256 = ""
+$script:TransportBySerial = @{}
 $script:RequiredCriteria = @(
     "module_lock_selected",
     "module_lock_off_lock",
@@ -197,19 +198,53 @@ function Invoke-SerialAdb {
     )
     $previous = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
+    $transport = $Device
+    if ($script:TransportBySerial.ContainsKey($Device)) {
+        $transport = [string]$script:TransportBySerial[$Device]
+    }
     try {
-        $output = & $script:AdbPath -s $Device @Arguments 2>&1
+        $output = & $script:AdbPath -s $transport @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previous
     }
     if ($exitCode -ne 0 -and -not $AllowFailure) {
-        throw "adb -s $Device $($Arguments -join ' ') failed with exit code $exitCode`: $($output -join ' ')"
+        throw "adb -s $transport $($Arguments -join ' ') failed for $Device with exit code $exitCode`: $($output -join ' ')"
     }
     return [pscustomobject][ordered]@{
         exit_code = $exitCode
         output = ($output -join "`n")
     }
+}
+
+function Resolve-LogicalSerialsFromAdbTransports {
+    param([Parameter(Mandatory = $true)][string[]]$Transports)
+    $resolved = @()
+    $script:TransportBySerial = @{}
+    foreach ($transport in $Transports) {
+        $state = Invoke-SerialAdb -Device $transport -Arguments @("get-state")
+        if ($state.output.Trim() -cne "device") {
+            throw "Quest transport $transport is not ready."
+        }
+        $serial = (Invoke-SerialAdb -Device $transport -Arguments @("shell", "getprop", "ro.serialno")).output.Trim()
+        if ($serial -notmatch '^[A-Za-z0-9._-]+$') {
+            throw "Quest transport $transport returned invalid hardware serial '$serial'."
+        }
+        $resolved += $serial
+        $script:TransportBySerial[$serial] = $transport
+    }
+    if (@($resolved | Sort-Object -Unique).Count -ne $resolved.Count) {
+        throw "ADB transports resolve to duplicate hardware serials."
+    }
+    return $resolved
+}
+
+function Get-AdbTransport {
+    param([Parameter(Mandatory = $true)][string]$Device)
+    if ($script:TransportBySerial.ContainsKey($Device)) {
+        return [string]$script:TransportBySerial[$Device]
+    }
+    return $Device
 }
 
 function Measure-FatalEvidence {
@@ -346,6 +381,7 @@ function New-LiveSource {
 
 function Invoke-ModuleLockSelected {
     param([string]$Device, [string]$Directory)
+    $transport = Get-AdbTransport -Device $Device
     New-Item -ItemType Directory -Force -Path $Directory | Out-Null
     $nativeDir = Join-Path $Directory "native"
     $spatialDir = Join-Path $Directory "spatial"
@@ -358,14 +394,14 @@ function Invoke-ModuleLockSelected {
         -OutDir $nativeDir `
         -RunSeconds $RunSeconds `
         -Adb $script:AdbPath `
-        -Serial $Device `
+        -Serial $transport `
         -AllowFlatScreenshot `
         -AllowPerformanceBudgetMiss `
         -ClearLogcat `
         -StopAfterRun | Out-Null
     $nativeSummaryPath = Join-Path $nativeDir "run-summary.json"
     $nativeSummary = Read-JsonFile -Path $nativeSummaryPath -Label "native selected-lock summary"
-    Assert-RunSummary -Summary $nativeSummary -Schema "rusty.quest.native_renderer_replay_smoke_run.v1" -AcceptedStatus @("passed") -SerialValue $Device -Label "native selected-lock summary"
+    Assert-RunSummary -Summary $nativeSummary -Schema "rusty.quest.native_renderer_replay_smoke_run.v1" -AcceptedStatus @("passed") -SerialValue $transport -Label "native selected-lock summary"
 
     $spatialPlanPath = Join-Path $spatialDir "selected-property-plan.json"
     & (Join-Path $PSScriptRoot "Apply-RuntimeProfile.ps1") `
@@ -373,20 +409,20 @@ function Invoke-ModuleLockSelected {
         -Execute `
         -Out $spatialPlanPath `
         -Adb $script:AdbPath `
-        -Serial $Device | Out-Null
+        -Serial $transport | Out-Null
     & (Join-Path $PSScriptRoot "Invoke-SpatialCameraPanelAndroidParticleVisualSmoke.ps1") `
         -RepoRoot $script:RepoRoot `
         -ApkPath $script:SpatialApkPath `
         -OutDir $spatialDir `
         -RunSeconds $RunSeconds `
         -Adb $script:AdbPath `
-        -Serial $Device `
+        -Serial $transport `
         -SurfaceTargetId icosphere `
         -ClearLogcat `
         -StopAfterRun | Out-Null
     $spatialSummaryPath = Join-Path $spatialDir "evidence-summary.json"
     $spatialSummary = Read-JsonFile -Path $spatialSummaryPath -Label "Spatial selected-lock summary"
-    Assert-RunSummary -Summary $spatialSummary -Schema "rusty.quest.spatial_camera_panel_particle_visual_smoke.v1" -AcceptedStatus @("passed") -SerialValue $Device -Label "Spatial selected-lock summary" -DollarSchema
+    Assert-RunSummary -Summary $spatialSummary -Schema "rusty.quest.spatial_camera_panel_particle_visual_smoke.v1" -AcceptedStatus @("passed") -SerialValue $transport -Label "Spatial selected-lock summary" -DollarSchema
 
     $spatialCombinedPath = Join-Path $spatialDir "combined-particle-markers.txt"
     $spatialInputs = @(
@@ -424,6 +460,7 @@ function Invoke-ModuleLockSelected {
 
 function Invoke-ModuleLockOffLock {
     param([string]$Device, [string]$Directory, $Profiles)
+    $transport = Get-AdbTransport -Device $Device
     New-Item -ItemType Directory -Force -Path $Directory | Out-Null
     $nativeDir = Join-Path $Directory "native"
     $spatialDir = Join-Path $Directory "spatial"
@@ -436,7 +473,7 @@ function Invoke-ModuleLockOffLock {
             -OutDir $nativeDir `
             -RunSeconds $RunSeconds `
             -Adb $script:AdbPath `
-            -Serial $Device `
+            -Serial $transport `
             -AllowFlatScreenshot `
             -AllowPerformanceBudgetMiss `
             -ClearLogcat `
@@ -446,7 +483,7 @@ function Invoke-ModuleLockOffLock {
     }
     $nativeSummaryPath = Join-Path $nativeDir "run-summary.json"
     $nativeSummary = Read-JsonFile -Path $nativeSummaryPath -Label "native off-lock summary"
-    Assert-RunSummary -Summary $nativeSummary -Schema "rusty.quest.native_renderer_replay_smoke_run.v1" -AcceptedStatus @("failed") -SerialValue $Device -Label "native off-lock summary"
+    Assert-RunSummary -Summary $nativeSummary -Schema "rusty.quest.native_renderer_replay_smoke_run.v1" -AcceptedStatus @("failed") -SerialValue $transport -Label "native off-lock summary"
     if (-not $nativeRejected) {
         throw "Native off-lock effect request unexpectedly completed its positive smoke path."
     }
@@ -472,21 +509,21 @@ function Invoke-ModuleLockOffLock {
         -Execute `
         -Out $spatialPlanPath `
         -Adb $script:AdbPath `
-        -Serial $Device | Out-Null
+        -Serial $transport | Out-Null
     & (Join-Path $PSScriptRoot "Invoke-SpatialCameraPanelAndroidParticleVisualSmoke.ps1") `
         -RepoRoot $script:RepoRoot `
         -ApkPath $script:SpatialApkPath `
         -OutDir $spatialDir `
         -RunSeconds $RunSeconds `
         -Adb $script:AdbPath `
-        -Serial $Device `
+        -Serial $transport `
         -SurfaceTargetId icosphere `
         -ClearLogcat `
         -StopAfterRun `
         -AllowMissingMarkers | Out-Null
     $spatialSummaryPath = Join-Path $spatialDir "evidence-summary.json"
     $spatialSummary = Read-JsonFile -Path $spatialSummaryPath -Label "Spatial off-lock summary"
-    Assert-RunSummary -Summary $spatialSummary -Schema "rusty.quest.spatial_camera_panel_particle_visual_smoke.v1" -AcceptedStatus @("completed") -SerialValue $Device -Label "Spatial off-lock summary" -DollarSchema
+    Assert-RunSummary -Summary $spatialSummary -Schema "rusty.quest.spatial_camera_panel_particle_visual_smoke.v1" -AcceptedStatus @("completed") -SerialValue $transport -Label "Spatial off-lock summary" -DollarSchema
     $spatialPaths = @(
         (Join-Path $spatialDir "pid-logcat.txt"),
         (Join-Path $spatialDir "activity-markers.log"),
@@ -554,8 +591,9 @@ function Assert-MultiAppBrokerSummary {
 
 function Invoke-BrokerLifecycle {
     param([string[]]$ExpectedSerials, [string]$Directory)
+    $transportSerials = @($ExpectedSerials | ForEach-Object { Get-AdbTransport -Device $_ })
     & (Join-Path $PSScriptRoot "Invoke-MultiAppBrokerClientTwoQuest.ps1") `
-        -Serial $ExpectedSerials `
+        -Serial $transportSerials `
         -BrokerApk $script:BrokerApkPath `
         -NativeApk $script:NativeApkPath `
         -SpatialApk $script:SpatialApkPath `
@@ -563,10 +601,11 @@ function Invoke-BrokerLifecycle {
         -Adb $script:AdbPath | Out-Null
     $summaryPath = Join-Path $Directory "summary.json"
     $summary = Read-JsonFile -Path $summaryPath -Label "multi-app broker lifecycle summary"
-    Assert-MultiAppBrokerSummary -Summary $summary -ExpectedSerials $ExpectedSerials
+    Assert-MultiAppBrokerSummary -Summary $summary -ExpectedSerials $transportSerials
     $sources = @()
     foreach ($device in $ExpectedSerials) {
-        $row = @($summary.rows | Where-Object { [string]$_.serial -ceq $device })[0]
+        $transport = Get-AdbTransport -Device $device
+        $row = @($summary.rows | Where-Object { [string]$_.serial -ceq $transport })[0]
         $logPath = Join-Path ([string]$row.evidence_dir) "logcat.txt"
         $fatals = Measure-FatalEvidence -Paths @($logPath)
         foreach ($criterion in @("client_lifecycle_native", "client_lifecycle_spatial")) {
@@ -763,17 +802,19 @@ function Assert-PeerAuthoritySummary {
 
 function Invoke-PeerAuthority {
     param([string[]]$ExpectedSerials, [string]$Directory, [string]$Revision, [string]$Provider)
+    $transportSerials = @($ExpectedSerials | ForEach-Object { Get-AdbTransport -Device $_ })
     & $Provider `
-        -Serial $ExpectedSerials `
+        -Serial $transportSerials `
         -EvidenceDir $Directory `
         -Adb $script:AdbPath `
         -RepositoryRevision $Revision | Out-Null
     $summaryPath = Join-Path $Directory "summary.json"
     $summary = Read-JsonFile -Path $summaryPath -Label "Manifold peer-authority two-Quest summary"
-    Assert-PeerAuthoritySummary -Summary $summary -ExpectedSerials $ExpectedSerials -Revision $Revision
+    Assert-PeerAuthoritySummary -Summary $summary -ExpectedSerials $transportSerials -Revision $Revision
     $sources = @()
     foreach ($device in $ExpectedSerials) {
-        $row = @($summary.rows | Where-Object { [string]$_.serial -ceq $device })[0]
+        $transport = Get-AdbTransport -Device $device
+        $row = @($summary.rows | Where-Object { [string]$_.serial -ceq $transport })[0]
         $rawPaths = @($summaryPath)
         $rawPaths += @($row.raw_evidence | ForEach-Object { [string]$_.path })
         $rawPaths += @(
@@ -809,28 +850,41 @@ function Invoke-PeerAuthority {
                 })
         }
     }
+    $logicalSummary = $summary | ConvertTo-Json -Depth 30 | ConvertFrom-Json
+    foreach ($row in @($logicalSummary.rows)) {
+        foreach ($device in $ExpectedSerials) {
+            $transport = Get-AdbTransport -Device $device
+            if ([string]$row.serial -ceq $transport) {
+                $row.serial = $device
+            }
+            if ([string]$row.reciprocal_signed_evidence.peer_serial -ceq $transport) {
+                $row.reciprocal_signed_evidence.peer_serial = $device
+            }
+        }
+    }
     return [pscustomobject]@{
         sources = $sources
-        summary = $summary
+        summary = $logicalSummary
         summary_path = $summaryPath
     }
 }
 
 function Invoke-Camera2Conformance {
     param([string]$Device, [string]$Directory)
+    $transport = Get-AdbTransport -Device $Device
     & (Join-Path $PSScriptRoot "Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1") `
         -RepoRoot $script:RepoRoot `
         -ApkPath $script:SpatialApkPath `
         -OutDir $Directory `
         -RunSeconds $RunSeconds `
         -Adb $script:AdbPath `
-        -Serial $Device `
+        -Serial $transport `
         -ClearLogcat `
         -StopAfterRun `
         -SkipForceStopKnownXrPackages | Out-Null
     $summaryPath = Join-Path $Directory "evidence-summary.json"
     $summary = Read-JsonFile -Path $summaryPath -Label "Camera2 media conformance summary"
-    Assert-RunSummary -Summary $summary -Schema "rusty.quest.spatial_camera_panel.camera_hwb_projection_smoke.v1" -AcceptedStatus @("passed") -SerialValue $Device -Label "Camera2 media conformance summary" -DollarSchema
+    Assert-RunSummary -Summary $summary -Schema "rusty.quest.spatial_camera_panel.camera_hwb_projection_smoke.v1" -AcceptedStatus @("passed") -SerialValue $transport -Label "Camera2 media conformance summary" -DollarSchema
     foreach ($flag in @(
         "foreground_validation_passed",
         "camera_runtime_started",
@@ -865,17 +919,18 @@ function Invoke-Camera2Conformance {
 
 function Invoke-DisplayCompositeConformance {
     param([string]$Device, [string]$Directory)
+    $transport = Get-AdbTransport -Device $Device
     & (Join-Path $PSScriptRoot "Invoke-NativeRendererDisplayCompositeSmoke.ps1") `
         -ApkPath $script:NativeApkPath `
         -OutDir $Directory `
         -RunSeconds $RunSeconds `
         -Adb $script:AdbPath `
-        -Serial $Device `
+        -Serial $transport `
         -ClearLogcat `
         -StopAfterRun | Out-Null
     $summaryPath = Join-Path $Directory "run-summary.json"
     $summary = Read-JsonFile -Path $summaryPath -Label "display-composite media conformance summary"
-    Assert-RunSummary -Summary $summary -Schema "rusty.quest.native_renderer_display_composite_smoke.v1" -AcceptedStatus @("completed") -SerialValue $Device -Label "display-composite media conformance summary"
+    Assert-RunSummary -Summary $summary -Schema "rusty.quest.native_renderer_display_composite_smoke.v1" -AcceptedStatus @("completed") -SerialValue $transport -Label "display-composite media conformance summary"
     if ([string]$summary.marker_validation_status -cne "passed") {
         throw "Display-composite marker validation did not pass for $Device."
     }
@@ -1632,7 +1687,7 @@ function Invoke-SelfTest {
 }
 
 function Invoke-Execute {
-    $serials = Assert-ExplicitSerials -Values $Serial
+    $requestedSerials = Assert-ExplicitSerials -Values $Serial
     if (-not $ConfirmBoundedLogcatClear) {
         throw "Execute requires -ConfirmBoundedLogcatClear so each explicitly scoped release window is intentionally bounded."
     }
@@ -1641,6 +1696,7 @@ function Invoke-Execute {
     }
     $providerPath = Assert-MandatoryPeerProvider -Path (Join-Path $PSScriptRoot "Invoke-ManifoldPeerAuthorityTwoQuest.ps1")
     $script:AdbPath = Resolve-RequiredFile -Path $Adb -Label "ADB executable"
+    $serials = Resolve-LogicalSerialsFromAdbTransports -Transports $requestedSerials
     $script:BrokerApkPath = Resolve-RequiredFile -Path $(if ([string]::IsNullOrWhiteSpace($BrokerApk)) { Join-Path $script:RepoRoot "target\manifold-broker-android\rusty-manifold-broker.apk" } else { $BrokerApk }) -Label "built Manifold broker APK"
     $script:NativeApkPath = Resolve-RequiredFile -Path $(if ([string]::IsNullOrWhiteSpace($NativeApk)) { Join-Path $script:RepoRoot "target\native-renderer-android\rusty-quest-native-renderer.apk" } else { $NativeApk }) -Label "built Native Renderer APK"
     $script:SpatialApkPath = Resolve-RequiredFile -Path $(if ([string]::IsNullOrWhiteSpace($SpatialApk)) { Join-Path $script:RepoRoot "target\spatial-camera-panel-android\rusty-quest-spatial-camera-panel.apk" } else { $SpatialApk }) -Label "built Spatial Camera Panel APK"
@@ -1718,6 +1774,7 @@ function Invoke-Execute {
         repository_revision = $revision
         coordination_mode = "user_authorized_serial_scoped"
         serials = $serials
+        adb_transports = $requestedSerials
         adb = New-FileBinding -Path $script:AdbPath
         apks = @($brokerApk, $nativeApk, $spatialApk)
         peer_provider = New-FileBinding -Path $providerPath
