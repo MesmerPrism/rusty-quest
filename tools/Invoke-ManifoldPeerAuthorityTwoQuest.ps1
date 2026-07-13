@@ -64,6 +64,16 @@ function Write-TextFile {
     [IO.File]::WriteAllText($Path, $Value, $utf8NoBom)
 }
 
+function Get-SafeDeviceDirectoryName {
+    param([string]$Device)
+    $Device -replace '[^A-Za-z0-9_.-]', '_'
+}
+
+function Get-DeviceEvidenceDir {
+    param([string]$Device)
+    Join-Path $EvidenceDir (Get-SafeDeviceDirectoryName -Device $Device)
+}
+
 function Get-Sha256 {
     param([string]$Path)
     $stream = [IO.File]::OpenRead($Path)
@@ -139,7 +149,7 @@ try {
     $identity = @{}
     for ($i = 0; $i -lt 2; $i++) {
         $device = $Serial[$i]
-        $deviceDir = Join-Path $EvidenceDir $device
+        $deviceDir = Get-DeviceEvidenceDir -Device $device
         New-Item -ItemType Directory -Force -Path $deviceDir | Out-Null
         $remoteKey = "$remoteRoot/$($peerIds[$i]).seed"
         $remoteIdentity = "$remoteRoot/$($peerIds[$i]).identity.json"
@@ -173,7 +183,7 @@ try {
         $remoteSignature = "$remoteRoot/$($peerIds[$i]).signature.json"
         Invoke-Adb $device @("push", $contextPath, $remoteContext) | Out-Null
         Invoke-Adb $device @("shell", $remoteHelper, "sign", $runId, $peerIds[$i], $peer, $remoteKey, $remoteContext, $remoteSignature) | Out-Null
-        $signaturePath = Join-Path (Join-Path $EvidenceDir $device) "reciprocal-signature.json"
+        $signaturePath = Join-Path (Get-DeviceEvidenceDir -Device $device) "reciprocal-signature.json"
         Read-RemoteFile -Device $device -RemotePath $remoteSignature -OutPath $signaturePath
         $signature[$device] = Get-Content -Raw -LiteralPath $signaturePath | ConvertFrom-Json
     }
@@ -209,10 +219,10 @@ try {
     for ($i = 0; $i -lt 2; $i++) {
         $device = $Serial[$i]
         $peer = $Serial[1 - $i]
-        $deviceDir = Join-Path $EvidenceDir $device
+        $deviceDir = Get-DeviceEvidenceDir -Device $device
         $identityPath = Join-Path $deviceDir "device-identity.json"
         $signaturePath = Join-Path $deviceDir "reciprocal-signature.json"
-        $peerSignaturePath = Join-Path (Join-Path $EvidenceDir $peer) "reciprocal-signature.json"
+        $peerSignaturePath = Join-Path (Get-DeviceEvidenceDir -Device $peer) "reciprocal-signature.json"
         $directReceiptPath = if ($i -eq 0) { Join-Path $directDir "group-owner-receipt.json" } else { Join-Path $directDir "client-receipt.json" }
         $directReceipt = Get-Content -Raw -LiteralPath $directReceiptPath | ConvertFrom-Json
         $directRow = @($direct.rows | Where-Object { [string]$_.serial -ceq $device })[0]
