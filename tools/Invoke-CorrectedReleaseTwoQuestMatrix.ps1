@@ -997,12 +997,15 @@ function Invoke-FinalCleanup {
     $p2pPath = Join-Path $Directory "wifi-p2p-after.txt"
     $p2pText = (Invoke-SerialAdb -Device $Device -Arguments @("shell", "dumpsys", "wifi", "p2p")).output
     [System.IO.File]::WriteAllText($p2pPath, $p2pText, $script:Utf8NoBom)
-    $routeActive = $p2pText -match '(?i)groupFormed\s*[:=]\s*true|networkInfo[^\r\n]*(?:CONNECTED|CONNECTING)'
-    $routeExplicitlyInactive = $p2pText -match '(?i)groupFormed\s*[:=]\s*false|networkInfo[^\r\n]*(?:DISCONNECTED|DISCONNECTING)'
-
     $interfacePath = Join-Path $Directory "p2p0-interface-after.txt"
     $interface = Invoke-SerialAdb -Device $Device -Arguments @("shell", "ip", "address", "show", "p2p0") -AllowFailure
     [System.IO.File]::WriteAllText($interfacePath, "exit=$($interface.exit_code)`n$($interface.output)", $script:Utf8NoBom)
+    $p2pInterfaceExplicitlyInactive = $interface.output -match '(?im)\bp2p0:.*\bstate\s+DOWN\b' -or
+        $interface.output -match '(?im)\bp2p0:.*<[^>]*NO-CARRIER'
+
+    $routeActive = $p2pText -match '(?i)groupFormed\s*[:=]\s*true|networkInfo[^\r\n]*(?:CONNECTED|CONNECTING)'
+    $routeExplicitlyInactive = $p2pText -match '(?i)groupFormed\s*[:=]\s*false|networkInfo[^\r\n]*(?:DISCONNECTED|DISCONNECTING)' -or
+        $p2pInterfaceExplicitlyInactive
 
     $socketPath = Join-Path $Directory "tcp-sockets-after.txt"
     $socketResult = Invoke-SerialAdb -Device $Device -Arguments @("shell", "cat", "/proc/net/tcp", "/proc/net/tcp6")
@@ -1012,7 +1015,7 @@ function Invoke-FinalCleanup {
 
     if ($remaining.Count -ne 0 -or $processesRemaining.Count -ne 0 -or
         $productSocketsRemaining.Count -ne 0 -or $routeActive -or -not $routeExplicitlyInactive) {
-        throw "Final cleanup failed for $Device; packages=$($remaining -join ','), processes=$($processesRemaining -join ','), sockets=$($productSocketsRemaining -join ','), route_active=$routeActive, route_explicitly_inactive=$routeExplicitlyInactive."
+        throw "Final cleanup failed for $Device; packages=$($remaining -join ','), processes=$($processesRemaining -join ','), sockets=$($productSocketsRemaining -join ','), route_active=$routeActive, route_explicitly_inactive=$routeExplicitlyInactive, p2p_interface_explicitly_inactive=$p2pInterfaceExplicitlyInactive."
     }
     $finalLogcatPath = Join-Path $Directory "bounded-final-logcat.txt"
     $finalLogcat = (Invoke-SerialAdb -Device $Device -Arguments @("logcat", "-d", "-v", "time")).output
@@ -1038,6 +1041,7 @@ function Invoke-FinalCleanup {
         packages_remaining = $remaining
         processes_remaining = $processesRemaining
         product_sockets_remaining = $productSocketsRemaining
+        p2p_interface_explicitly_inactive = $p2pInterfaceExplicitlyInactive
         peer_route_inactive = (-not $routeActive -and $routeExplicitlyInactive)
         cleanup_complete = $true
         package_fatal_count = [int]$fatals.package_fatal_count
