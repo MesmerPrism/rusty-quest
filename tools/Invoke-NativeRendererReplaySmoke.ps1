@@ -391,7 +391,7 @@ try {
     }
     if ($AllowPrivateLayerPayload) {
         $evidenceArgs += "-RequirePrivateSlotPayload"
-    } else {
+    } elseif ($EvidenceMode -ne "PrivateParticleCanary") {
         $evidenceArgs += "-RequirePrivateSlotNoPayload"
     }
     switch ($EvidenceMode) {
