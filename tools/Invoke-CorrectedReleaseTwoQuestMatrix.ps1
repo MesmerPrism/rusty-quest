@@ -335,21 +335,21 @@ function New-OffLockProfiles {
         @("debug.rustyquest.native_renderer.particle_adapter.profile_id", "profile.quest.native_renderer.particle_adapter_conformance", "native_renderer.particle_adapter.profile_id"),
         @("debug.rustyquest.native_renderer.particle_adapter.project_id", "native-renderer", "native_renderer.particle_adapter.project_id"),
         @("debug.rustyquest.native_renderer.particle_adapter.feature_id", "particle-adapter-consumer", "native_renderer.particle_adapter.feature_id"),
-        @("debug.rustyquest.native_renderer.particle_adapter.lock_revision", "1", "native_renderer.particle_adapter.lock_revision"),
-        @("debug.rustyquest.native_renderer.particle_adapter.lock_sha256", $badDigest, "native_renderer.particle_adapter.lock_sha256")
+        @("debug.rustyquest.native_renderer.particle_adapter.lock_revision", "1", "native_renderer.particle_adapter.lock_revision")
     )) {
         Add-OrReplaceProfileProperty -Profile $native -Name $item[0] -Value $item[1] -SourceSettingId $item[2]
     }
-    Add-OrReplaceProfileProperty `
-        -Profile $spatial `
-        -Name "debug.rustyquest.spatial_camera_panel.particle_adapter.lock_sha256" `
-        -Value $badDigest `
-        -SourceSettingId "spatial_camera_panel.particle_adapter.lock_sha256"
     $nativePath = Join-Path $Directory "native-off-lock.profile.json"
     $spatialPath = Join-Path $Directory "spatial-off-lock.profile.json"
     Write-JsonFile -Path $nativePath -Value $native
     Write-JsonFile -Path $spatialPath -Value $spatial
-    return [pscustomobject]@{ native = $nativePath; spatial = $spatialPath }
+    return [pscustomobject]@{
+        native = $nativePath
+        spatial = $spatialPath
+        bad_digest = $badDigest
+        native_lock_property = "debug.rustyquest.native_renderer.particle_adapter.lock_sha256"
+        spatial_lock_property = "debug.rustyquest.spatial_camera_panel.particle_adapter.lock_sha256"
+    }
 }
 
 function New-LiveSource {
@@ -477,6 +477,8 @@ function Invoke-ModuleLockOffLock {
             -Serial $transport `
             -AllowFlatScreenshot `
             -AllowPerformanceBudgetMiss `
+            -PostProfileAndroidPropertyName $Profiles.native_lock_property `
+            -PostProfileAndroidPropertyValue $Profiles.bad_digest `
             -ClearLogcat `
             -StopAfterRun | Out-Null
     } catch {
@@ -511,6 +513,7 @@ function Invoke-ModuleLockOffLock {
         -Out $spatialPlanPath `
         -Adb $script:AdbPath `
         -Serial $transport | Out-Null
+    & $script:AdbPath -s $transport shell setprop $Profiles.spatial_lock_property $Profiles.bad_digest | Out-Null
     & (Join-Path $PSScriptRoot "Invoke-SpatialCameraPanelAndroidParticleVisualSmoke.ps1") `
         -RepoRoot $script:RepoRoot `
         -ApkPath $script:SpatialApkPath `

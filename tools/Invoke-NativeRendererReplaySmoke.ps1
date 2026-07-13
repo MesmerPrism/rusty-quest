@@ -30,6 +30,8 @@ param(
     [double]$EnvironmentDepthCenterToleranceMeters = 0.15,
     [double]$MinimumEnvironmentDepthCenterConfidence = 0.0,
     [int]$MinimumEnvironmentDepthCenterWindowValidCount = 0,
+    [string]$PostProfileAndroidPropertyName = "",
+    [string]$PostProfileAndroidPropertyValue = "",
     [switch]$StopAfterRun
 )
 
@@ -269,6 +271,8 @@ $summary = [ordered]@{
     screenshot_crop_out_dir = $screenshotCropOutDir
     runtime_evidence_summary_path = $evidenceSummaryPath
     validation_command = "Test-NativeRendererRuntimeEvidence.ps1"
+    post_profile_android_property_name = $PostProfileAndroidPropertyName
+    post_profile_android_property_override_requested = (-not [string]::IsNullOrWhiteSpace($PostProfileAndroidPropertyName))
 }
 
 try {
@@ -313,6 +317,12 @@ try {
         $profileArgs += @("-AdbServerPort", $script:ResolvedAdbServerPort)
     }
     $summary.profile_apply_output = Invoke-CheckedPowershell -Name "runtime profile apply" -Arguments $profileArgs
+    if (-not [string]::IsNullOrWhiteSpace($PostProfileAndroidPropertyName)) {
+        if ([string]::IsNullOrWhiteSpace($PostProfileAndroidPropertyValue)) {
+            throw "-PostProfileAndroidPropertyValue is required when -PostProfileAndroidPropertyName is supplied."
+        }
+        $summary.post_profile_property_override_output = (Invoke-AdbCommand -Name "post-profile property override" -Arguments @("shell", "setprop", $PostProfileAndroidPropertyName, $PostProfileAndroidPropertyValue)).output
+    }
 
     if ($ClearLogcat) {
         Invoke-AdbCommand -Name "clear logcat" -Arguments @("logcat", "-c") | Out-Null
