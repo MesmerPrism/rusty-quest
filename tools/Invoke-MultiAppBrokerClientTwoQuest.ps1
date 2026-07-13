@@ -65,6 +65,7 @@ $activity = "io.github.mesmerprism.rustyquest.broker_client.BrokerClientProbeAct
 
 function Write-Text([string]$Path,[string]$Text){[IO.File]::WriteAllText($Path,$Text,$utf8NoBom)}
 function Adb([string]$Device,[string[]]$AdbArgs,[switch]$AllowFailure){$o=& $Adb -s $Device @AdbArgs 2>&1;$c=$LASTEXITCODE;if($c-ne 0-and-not$AllowFailure){throw "adb -s $Device $($AdbArgs -join ' ') failed: $($o -join ' ')"};@($o)}
+function Get-SafeDeviceDirectoryName([string]$Device){$Device -replace '[^A-Za-z0-9_.-]','_'}
 function Wait-Marker([string]$Device,[string]$ClientId,[int]$Seconds){$deadline=(Get-Date).AddSeconds($Seconds);do{$log=(Adb $Device @("logcat","-d","-s","RustyBrokerClient:V","RustyManifoldAdmission:V","AndroidRuntime:E","*:S"))-join"`n";if($log-match("RUSTY_QUEST_BROKER_CLIENT clientId="+[regex]::Escape($ClientId)+"[^`n]*status=accepted")){return $log};if($log-match("RUSTY_QUEST_BROKER_CLIENT clientId="+[regex]::Escape($ClientId)+"[^`n]*status=rejected")){throw "Client rejected on $Device for $ClientId`n$log"};if($log-match"FATAL EXCEPTION"){throw "Client fatal on $Device`n$log"};Start-Sleep -Milliseconds 500}while((Get-Date)-lt$deadline);throw "Timed out waiting for $ClientId on $Device`n$log"}
 function Wait-OldEpochMarker([string]$Device,[string]$ClientId,[int]$Seconds){$deadline=(Get-Date).AddSeconds($Seconds);do{$log=(Adb $Device @("logcat","-d","-s","RustyBrokerClient:V","RustyManifoldAdmission:V","AndroidRuntime:E","*:S"))-join"`n";if($log-match("RUSTY_QUEST_BROKER_CLIENT clientId="+[regex]::Escape($ClientId)+"[^`n]*status=old_epoch_rejected")){return $log};if($log-match"FATAL EXCEPTION"){throw "Client fatal during old-epoch probe on $Device`n$log"};Start-Sleep -Milliseconds 500}while((Get-Date)-lt$deadline);throw "Timed out waiting for old-epoch rejection from $ClientId on $Device"}
 function Sha256([string]$Path){
@@ -390,7 +391,7 @@ if ($hasFullLifecycleEvidence) {
 $rows=@()
 $runtimePairReceipts=@()
 foreach($device in $Serial){
-  $deviceDir=Join-Path $EvidenceDir $device;New-Item -ItemType Directory -Force -Path $deviceDir|Out-Null
+  $deviceDir=Join-Path $EvidenceDir (Get-SafeDeviceDirectoryName $device);New-Item -ItemType Directory -Force -Path $deviceDir|Out-Null
   $issues=@();$cleanup=$false
   $partialLifecycleArtifacts=@()
   $devicePairReceipt=$null
