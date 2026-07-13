@@ -30,6 +30,10 @@ function Adb([string]$Serial, [string[]]$Arguments) {
     @($output)
 }
 
+function Get-SafeDeviceFileStem([string]$Serial) {
+    $Serial -replace '[^A-Za-z0-9_.-]', '_'
+}
+
 function AwaitReceipt([string]$Serial) {
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
@@ -74,10 +78,11 @@ try {
     $rows = @()
     foreach ($serial in $serials) {
         $log = (Adb $serial @("logcat","-d")) -join "`n"
-        $logPath = Join-Path $EvidenceDir ("logcat-" + $serial + ".txt")
+        $safeSerial = Get-SafeDeviceFileStem -Serial $serial
+        $logPath = Join-Path $EvidenceDir ("logcat-" + $safeSerial + ".txt")
         [IO.File]::WriteAllText($logPath, $log, $utf8NoBom)
         $p2p = (Adb $serial @("shell","dumpsys","wifip2p")) -join "`n"
-        $p2pPath = Join-Path $EvidenceDir ("wifip2p-after-" + $serial + ".txt")
+        $p2pPath = Join-Path $EvidenceDir ("wifip2p-after-" + $safeSerial + ".txt")
         [IO.File]::WriteAllText($p2pPath, $p2p, $utf8NoBom)
         $packageFatalCount = ([regex]::Matches($log,"FATAL EXCEPTION:[\s\S]{0,1200}" + [regex]::Escape($package))).Count
         $systemFatalCount = ([regex]::Matches($log,'FATAL EXCEPTION IN SYSTEM PROCESS|Watchdog.*system_server|Fatal signal.*system_server')).Count
