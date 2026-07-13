@@ -390,7 +390,7 @@ function Invoke-ModuleLockSelected {
     & (Join-Path $PSScriptRoot "Invoke-NativeRendererReplaySmoke.ps1") `
         -ApkPath $script:NativeApkPath `
         -ProfilePath $nativeProfile `
-        -EvidenceMode PrivateParticleCanary `
+        -EvidenceMode ParticleAdapterConformance `
         -OutDir $nativeDir `
         -RunSeconds $RunSeconds `
         -Adb $script:AdbPath `

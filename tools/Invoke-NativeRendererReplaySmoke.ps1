@@ -1,7 +1,7 @@
 param(
     [string]$ApkPath = "target\native-renderer-android\rusty-quest-native-renderer.apk",
     [string]$ProfilePath = "",
-    [ValidateSet("ReplayVisualProof", "LiveVisualDiagnosticCaveat", "EnvironmentDepthParticles", "PrivateParticleCanary")]
+    [ValidateSet("ReplayVisualProof", "LiveVisualDiagnosticCaveat", "EnvironmentDepthParticles", "PrivateParticleCanary", "ParticleAdapterConformance")]
     [string]$EvidenceMode = "ReplayVisualProof",
     [string]$OutDir = "",
     [int]$RunSeconds = 12,
@@ -383,6 +383,10 @@ try {
         }
     } elseif ($EvidenceMode -eq "PrivateParticleCanary") {
         $evidenceArgs += "-RequirePrivateParticleSlotNoPayload"
+    } elseif ($EvidenceMode -eq "ParticleAdapterConformance") {
+        # Particle adapter acceptance is reduced by Test-QuestParticleAdapterEvidence.ps1
+        # from the native and Spatial marker logs. Do not require private extension
+        # or private-particle payload markers for this reusable module-lock gate.
     } else {
         $evidenceArgs += @(
             "-RequireCameraProjection",
