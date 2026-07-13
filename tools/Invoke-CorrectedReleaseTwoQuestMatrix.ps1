@@ -498,7 +498,6 @@ function Invoke-ModuleLockOffLock {
         "activationState=rejected",
         "activationRejectReason=runtime-digest-mismatch",
         "channel=adapter-lock-admission",
-        "reason=particle-effects-require-applied-lock",
         "effectsStarted=false",
         "permissionsRequested=false",
         "sceneStarted=false",
