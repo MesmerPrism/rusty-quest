@@ -201,6 +201,7 @@ $summary = [ordered]@{
     capture_activity = $Activity
     native_activity = $NativeActivity
     native_launch_delay_seconds = [Math]::Max(0, $NativeLaunchDelaySeconds)
+    force_stop_before_launch = $true
     apk_path = (Resolve-Path $resolvedApk).Path
     profile_path = (Resolve-Path $resolvedProfile).Path
     run_seconds = [Math]::Max(1, $RunSeconds)
@@ -261,8 +262,22 @@ try {
     }
     $summary.profile_apply_output = Invoke-CheckedPowershell -Name "runtime profile apply" -Arguments $profileArgs
 
+    $summary.force_stop_before_launch_output = (Invoke-AdbCommand -Name "force-stop before native launch" -Arguments @("shell", "am", "force-stop", $PackageName) -AllowFailure).output
+
     if ($ClearLogcat) {
         Invoke-AdbCommand -Name "clear logcat" -Arguments @("logcat", "-c") | Out-Null
+    }
+
+    $summary.native_launch_output = (Invoke-AdbCommand -Name "launch native renderer XR consumer" -Arguments @(
+        "shell",
+        "am",
+        "start",
+        "-W",
+        "-n", $NativeActivity
+    )).output
+
+    if ($summary.native_launch_delay_seconds -gt 0) {
+        Start-Sleep -Seconds $summary.native_launch_delay_seconds
     }
 
     $summary.capture_launch_output = (Invoke-AdbCommand -Name "launch display-composite capture request" -Arguments @(
@@ -273,18 +288,6 @@ try {
         "-a", "io.github.mesmerprism.rustyquest.native_renderer.action.REQUEST_DISPLAY_COMPOSITE_CAPTURE",
         "-n", $Activity,
         "--el", "display_composite_request_token", $requestToken.ToString()
-    )).output
-
-    if ($summary.native_launch_delay_seconds -gt 0) {
-        Start-Sleep -Seconds $summary.native_launch_delay_seconds
-    }
-
-    $summary.native_launch_output = (Invoke-AdbCommand -Name "launch native renderer XR consumer" -Arguments @(
-        "shell",
-        "am",
-        "start",
-        "-W",
-        "-n", $NativeActivity
     )).output
 
     Start-Sleep -Seconds ([Math]::Max(1, $RunSeconds))
