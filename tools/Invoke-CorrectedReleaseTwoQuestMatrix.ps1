@@ -601,6 +601,8 @@ function Invoke-BrokerLifecycle {
         -NativeApk $script:NativeApkPath `
         -SpatialApk $script:SpatialApkPath `
         -EvidenceDir $Directory `
+        -CollectLifecycleArtifactsFromApps `
+        -GenerateLifecycleRecoveryEvidence `
         -Adb $script:AdbPath | Out-Null
     $summaryPath = Join-Path $Directory "summary.json"
     $summary = Read-JsonFile -Path $summaryPath -Label "multi-app broker lifecycle summary"
