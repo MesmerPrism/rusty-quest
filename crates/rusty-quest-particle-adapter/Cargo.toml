@@ -13,6 +13,7 @@ rusty-matter-model = { path = "../../../rusty-matter/crates/rusty-matter-model" 
 rusty-matter-particles = { path = "../../../rusty-matter/crates/rusty-matter-particles", features = ["serde"] }
 rusty-optics-particles = { path = "../../../rusty-optics/crates/rusty-optics-particles", features = ["serde"] }
 rusty-optics-model = { path = "../../../rusty-optics/crates/rusty-optics-model", features = ["serde"] }
+rusty-quest-feature-activation = { path = "../rusty-quest-feature-activation" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

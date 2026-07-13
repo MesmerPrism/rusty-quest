@@ -111,6 +111,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "curve25519-dalek"
+version = "4.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "97fb8b7c4503de7d6ae7b42ab72a5a59857b4c937ec27a3d4539dba95b5ab2be"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "curve25519-dalek-derive",
+ "digest",
+ "fiat-crypto",
+ "rustc_version",
+ "subtle",
+]
+
+[[package]]
+name = "curve25519-dalek-derive"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -121,10 +147,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "ed25519"
+version = "2.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "115531babc129696a58c64a4fef0a8bf9e9698629fb97e9e40767d235cfbcd53"
+dependencies = [
+ "signature",
+]
+
+[[package]]
+name = "ed25519-dalek"
+version = "2.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a3daa8e81a3963a60642bcc1f90a670680bd4a77535faa384e9d1c79d620871"
+dependencies = [
+ "curve25519-dalek",
+ "ed25519",
+ "sha2",
+ "subtle",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
+
+[[package]]
+name = "fiat-crypto"
+version = "0.2.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 
 [[package]]
 name = "find-msvc-tools"
@@ -438,11 +491,13 @@ dependencies = [
 name = "rusty-manifold-broker-adapter"
 version = "0.1.0"
 dependencies = [
+ "rusty-manifold-admission",
  "rusty-manifold-broker-product",
  "rusty-manifold-model",
  "rusty-manifold-runtime-host",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -452,6 +507,18 @@ dependencies = [
  "rusty-manifold-model",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "rusty-manifold-media-session"
+version = "0.1.0"
+dependencies = [
+ "rusty-manifold-admission",
+ "rusty-manifold-model",
+ "rusty-manifold-runtime-host",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -465,8 +532,26 @@ dependencies = [
 name = "rusty-manifold-peer"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek",
+ "rusty-manifold-media-session",
  "rusty-manifold-model",
+ "rusty-manifold-runtime-host",
  "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "rusty-manifold-peer-runtime-host"
+version = "0.1.0"
+dependencies = [
+ "rusty-manifold-broker-adapter",
+ "rusty-manifold-media-session",
+ "rusty-manifold-model",
+ "rusty-manifold-peer",
+ "rusty-manifold-runtime-host",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -548,20 +633,45 @@ dependencies = [
 name = "rusty-quest-broker-authority"
 version = "0.1.0"
 dependencies = [
+ "rusty-manifold-admission",
  "rusty-manifold-broker-adapter",
  "rusty-manifold-broker-product",
+ "rusty-manifold-media-session",
  "rusty-manifold-model",
+ "rusty-manifold-peer-runtime-host",
  "rusty-manifold-runtime-host",
+ "rusty-quest-broker-admission",
+ "rusty-quest-broker-contracts",
+ "rusty-quest-media-stream",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
 name = "rusty-quest-broker-client"
 version = "0.1.0"
 dependencies = [
+ "rusty-manifold-broker-product",
+ "rusty-manifold-media-session",
+ "rusty-manifold-runtime-host",
+ "rusty-quest-broker-contracts",
+ "rusty-quest-media-stream",
  "serde",
  "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "rusty-quest-broker-contracts"
+version = "0.1.0"
+dependencies = [
+ "rusty-manifold-broker-product",
+ "rusty-manifold-media-session",
+ "rusty-quest-media-stream",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -572,6 +682,7 @@ dependencies = [
  "rusty-manifold-model",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -593,6 +704,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rusty-quest-feature-activation"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "rusty-quest-hand-adapter"
 version = "0.1.0"
 dependencies = [
@@ -600,6 +720,8 @@ dependencies = [
  "rusty-matter-mesh",
  "rusty-matter-model",
  "rusty-optics-model",
+ "rusty-quest-feature-activation",
+ "rusty-quest-particle-adapter",
  "serde",
  "serde_json",
 ]
@@ -618,9 +740,13 @@ dependencies = [
 name = "rusty-quest-media-stream"
 version = "0.1.0"
 dependencies = [
+ "rusty-manifold-media-session",
+ "rusty-manifold-model",
+ "rusty-manifold-peer-runtime-host",
  "rusty-quest-device-link",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -657,6 +783,7 @@ dependencies = [
  "rusty-matter-particles",
  "rusty-optics-model",
  "rusty-optics-particles",
+ "rusty-quest-feature-activation",
  "serde",
  "serde_json",
 ]
@@ -665,6 +792,7 @@ dependencies = [
 name = "rusty-quest-peer-session-adapter"
 version = "0.1.0"
 dependencies = [
+ "ed25519-dalek",
  "rusty-manifold-model",
  "rusty-manifold-peer",
  "rusty-quest-device-link",
@@ -687,6 +815,16 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "rusty-quest-qcl-evidence-adapter"
+version = "0.1.0"
+dependencies = [
+ "rusty-quest-broker-client",
+ "serde",
+ "serde_json",
+ "sha2",
 ]
 
 [[package]]
@@ -776,6 +914,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
+name = "signature"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
+
+[[package]]
 name = "simd_cesu8"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -814,6 +958,12 @@ dependencies = [
  "rusty-quest-particle-adapter",
  "serde_json",
 ]
+
+[[package]]
+name = "subtle"
+version = "2.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"

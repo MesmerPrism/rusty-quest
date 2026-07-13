@@ -1,0 +1,38 @@
+﻿{
+    "schema":  "rusty.quest.mod006_lock_bound_adapter_twoquest.v1",
+    "status":  "passed",
+    "native_serial":  "340YC10G7T0JBW",
+    "spatial_serial":  "3487C10H3M017Q",
+    "run_seconds":  8,
+    "apk_inputs":  [
+                       {
+                           "role":  "native",
+                           "path":  "S:\\Work\\repos\\active\\rusty-quest\\target\\mod006-native-source-build-final\\rusty-quest-native-renderer.apk",
+                           "sha256":  "2e7af2d0e728c0d03fc824240688385f976cddb926ad0ad3b24fa1be7ee46824"
+                       },
+                       {
+                           "role":  "spatial",
+                           "path":  "S:\\Work\\repos\\active\\rusty-quest\\target\\mod006-spatial-source-build-final\\rusty-quest-spatial-camera-panel.apk",
+                           "sha256":  "cc5e59337615d82141c041e52fe9d07cc9396c296e22c13bed17ca1098a86d8b"
+                       },
+                       {
+                           "role":  "spatial-hand",
+                           "path":  "S:\\Work\\repos\\active\\rusty-quest\\target\\mod006-spatial-hand-source-build-final\\rusty-quest-spatial-hand-lab.apk",
+                           "sha256":  "c1425b0b02923b8cc45c8e827b25c62aabc7215c289a40c8e8413e11c455bab3"
+                       }
+                   ],
+    "reducers":  {
+                     "particle":  "S:\\Work\\repos\\active\\rusty-quest\\target\\mod006-twoquest-20260713-174814\\particle-adapter-scorecard.json",
+                     "hand":  "S:\\Work\\repos\\active\\rusty-quest\\target\\mod006-twoquest-20260713-174814\\hand-adapter-scorecard.json"
+                 },
+    "off_lock":  {
+                     "particle":  "passed",
+                     "hand":  "passed"
+                 },
+    "cleanup":  {
+                    "native_uninstall_exit_code":  0,
+                    "spatial_uninstall_exit_code":  0,
+                    "spatial_hand_uninstall_exit_code":  0
+                },
+    "completed_at":  "2026-07-13T15:50:11.9478896Z"
+}

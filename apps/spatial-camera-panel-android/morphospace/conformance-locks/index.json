@@ -1,0 +1,30 @@
+{
+  "schema": "rusty.quest.morphospace_lock_index.v1",
+  "project_id": "spatial-camera-panel",
+  "locks": [
+    {
+      "feature_id": "surface-particle-runtime",
+      "path": "particle-adapter.feature.lock.json",
+      "revision": 1,
+      "sha256": "780814BE82C12A54036DE0259C6188E2D41813858C30E6B6C725EB8422F7301B",
+      "expected_effective_marker": "rusty.quest.particle_adapter.effective",
+      "runtime_binding": "source-validated-device-pending"
+    },
+    {
+      "feature_id": "tracked-hand-surface",
+      "path": "hand-adapter.feature.lock.json",
+      "revision": 1,
+      "sha256": "FFB07E39C7290FDE8EBB154EFB94985CF4628CB2E4D098A81A5611849DFD32F1",
+      "expected_effective_marker": "rusty.quest.hand_adapter.effective",
+      "runtime_binding": "source-validated-device-pending"
+    },
+    {
+      "feature_id": "broker-media-client",
+      "path": "broker-media-client.feature.lock.json",
+      "revision": 2,
+      "sha256": "D68952B3CC5EBC8C23D85A1AB610E3005EE6C7197DA0355F61A923809D252D5A",
+      "expected_effective_marker": "rusty.quest.spatial_camera_panel.broker_media_client.effective",
+      "runtime_binding": "project-declared-source-wip-not-promotional"
+    }
+  ]
+}

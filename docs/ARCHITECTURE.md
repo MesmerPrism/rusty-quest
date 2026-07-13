@@ -125,6 +125,16 @@ authority and developer-only requirement.
 
 ## Native Quest Renderer Contracts
 
+### Closed feature activation
+
+`rusty-quest-feature-activation` owns bounded parsing of the portable v1 lock,
+exact application-accepted digest binding, module-ID dependency and feature-ID
+conflict closure, runtime-input comparison, and common rejection markers. Hand
+and particle crates wrap its private decision in different nominal facade types,
+so authority cannot cross module effect gates. App shells own their project,
+feature, module, profile, digest, and all platform effects. See
+[FEATURE_ACTIVATION.md](FEATURE_ACTIVATION.md) for the full anti-drift contract.
+
 `crates/rusty-quest-native-renderer` owns
 `rusty.quest.native_renderer_plan.v1` and
 `rusty.quest.native_renderer_timing_scorecard.v1`. These contracts describe the
@@ -566,6 +576,54 @@ platform adapter that exposes `/manifold/v1/events` and acknowledges
 `rusty.manifold.command.envelope.v1` requests. It deliberately avoids
 synthesizing live stream events; live Polar, controller, and Makepad streams
 must come from their own providers.
+
+The package has no hand-maintained manifest authority. Its build requires an
+exact Manifold product spec and accepted lock, then generates the actual
+manifest, command registry, feature constants, and lock-stamped receipt through
+`rusty-quest-broker-product`. Generic media-session selection is camera-free;
+camera permission requests and the camera foreground-service type are enabled
+only by generated product constants. Direct-P2P and BLE remain dedicated
+provider lanes. The former broad camera/P2P validation package is retained only
+as an explicitly selected legacy compatibility product.
+
+The build also generates one exact `runtime_config.v1` containing the accepted
+lock, adapter binding, initial leases, and signature-derived admission grants.
+Media products additionally require exact canonical Manifold-descriptor and
+Quest-runtime bindings. Runtime Host acceptance prepares a seven-owner media
+action with `platform_effect_completed=false`; only an exact receiver-first or
+cleanup-last completion applied by Rust advances the Quest media lifecycle.
+The generic Java path never enters `RemoteCameraSessionRuntime`. See
+`MEDIA_SESSION_RUNTIME.md`.
+That config includes exact packaged product-spec, accepted-lock, and client-lock
+JSON plus their hashes; grants are the product/client capability intersection,
+not a union. A separately generated canonical config digest is checked by Rust
+at initialization. Base and camera-free products therefore cannot inherit
+camera, peer, or unselected media/sink authority.
+`QuestBrokerRuntimeProvider` retains that config and one
+`ManifoldBrokerRuntime` for the life of the process. Binder `authorize_use`
+creates a one-use permit bound to its opaque token, the caller's
+package/signature-derived client, exact command capability, resulting admission
+revision for that use, expiry, and provider
+epoch. The standalone WebSocket server and embedded server pass the full
+mutation into JNI; Rust consumes the permit and calls the single Runtime Host
+review/apply path before Java may execute a named platform effect.
+Typed platform parameters are canonicalized and digest-bound through both host
+receipts; Java consumes the exact Rust response payload, never the request body.
+
+The embedded Native Renderer does not accept authority config from runtime
+settings. Its build generates the camera-product/native-client closure and
+config digest, while its Java lifecycle derives the installed package and sole
+APK signer from Android before asking Rust to issue and authorize each bounded
+command use. Caller-supplied epoch, token, revision, and requester fields are
+replaced by that authenticated lifecycle.
+
+Same-process service/activity rebinds must present the same config fingerprint
+and preserve both authority revisions. Process restart uses fresh
+`SecureRandom` entropy, derives a new epoch in Rust, and starts from the
+product-owned initial state. Old-epoch, stale, replayed, expired, cross-client,
+capability-substituted, product-unselected, and unleased work fail closed.
+`BrokerStartService` is non-exported; the launcher remains exported and the
+admission service remains exported only behind the signature permission.
 
 The package also owns the Quest-side broker dispatch for the benign Hostess
 Makepad safe probe command `hostess.makepad.bridge_probe.set_marker`. Accepted

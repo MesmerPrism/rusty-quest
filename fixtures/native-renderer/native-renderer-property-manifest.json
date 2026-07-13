@@ -17,7 +17,7 @@
     "apps/native-renderer-android/native/src/manifold_scalar_driver_bridge.rs",
     "apps/native-renderer-android/native/src/lsl_transport_bridge.rs"
   ],
-  "property_count": 258,
+  "property_count": 268,
   "properties": [
     {
       "name": "debug.rustyquest.native_renderer.camera.direct_border.opacity",
@@ -1374,6 +1374,61 @@
       ]
     },
     {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.feature_id",
+      "family": "hand_adapter",
+      "runtime_owner": "hand_adapter_consumer",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": ["hand-adapter-consumer"],
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.lock_revision",
+      "family": "hand_adapter",
+      "runtime_owner": "hand_adapter_consumer",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "u64",
+      "range": {"min": 1, "max": 4294967295},
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.lock_sha256",
+      "family": "hand_adapter",
+      "runtime_owner": "hand_adapter_consumer",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": ["A1391A7EF2C41F072032283E485F5A9EB58CAB3B74681F150CE24CD9262CF91D"],
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.profile_id",
+      "family": "hand_adapter",
+      "runtime_owner": "hand_adapter_consumer",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": ["profile.quest.native_renderer.hand_adapter_conformance"],
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.project_id",
+      "family": "hand_adapter",
+      "runtime_owner": "hand_adapter_consumer",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": ["native-renderer"],
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
       "name": "debug.rustyquest.native_renderer.hand_anchor_particles.dynamics",
       "family": "hand_anchor_particles",
       "runtime_owner": "native_renderer_hand_anchor_particle_options",
@@ -2311,6 +2366,61 @@
         "rusty-quest-profile",
         "Apply-RuntimeProfile.ps1"
       ]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.feature_id",
+      "family": "particle_adapter",
+      "runtime_owner": "particle_adapter_consumer",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": ["particle-adapter-consumer"],
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.lock_revision",
+      "family": "particle_adapter",
+      "runtime_owner": "particle_adapter_consumer",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "u64",
+      "range": {"min": 1, "max": 4294967295},
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.lock_sha256",
+      "family": "particle_adapter",
+      "runtime_owner": "particle_adapter_consumer",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": ["D51D97F6B01663F360E867EB01C3F27A3DB7C3204210F1C1D7634CA52DD276BC"],
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.profile_id",
+      "family": "particle_adapter",
+      "runtime_owner": "particle_adapter_consumer",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": ["profile.quest.native_renderer.particle_adapter_conformance"],
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.project_id",
+      "family": "particle_adapter",
+      "runtime_owner": "particle_adapter_consumer",
+      "lifecycle": "startup-effective",
+      "clear_behavior": "profile-owned-explicit-set",
+      "default_behavior": "runtime-owner-default-when-unset",
+      "value_kind": "token",
+      "allowed_values": ["native-renderer"],
+      "validators": ["runtime-parser", "profile-matrix", "rusty-quest-profile", "Apply-RuntimeProfile.ps1"]
     },
     {
       "name": "debug.rustyquest.native_renderer.passthrough.style.audio_reactive.amplitude",

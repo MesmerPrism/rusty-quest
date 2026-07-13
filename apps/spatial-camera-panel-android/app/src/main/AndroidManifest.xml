@@ -64,7 +64,7 @@
         <meta-data android:name="rusty.manifold.feature_lock_id" android:value="lock.broker-client.spatial-camera-panel.v1" />
         <meta-data android:name="rusty.manifold.marker_namespace" android:value="RUSTY_QUEST_SPATIAL_BROKER_CLIENT" />
         <meta-data android:name="rusty.manifold.contract_families" android:value="peer-session,media-session" />
-        <meta-data android:name="rusty.manifold.capabilities" android:value="capability.command.session.list,capability.media.session.observe,capability.peer.session.observe,capability.sink.spatial-sdk" />
+        <meta-data android:name="rusty.manifold.capabilities" android:value="capability.command.media.session.start,capability.command.media.session.stop,capability.command.session.list,capability.media.session.observe,capability.peer.session.observe,capability.sink.spatial-sdk" />
         <activity
             android:name="io.github.mesmerprism.rustyquest.broker_client.BrokerClientProbeActivity"
             android:exported="true"

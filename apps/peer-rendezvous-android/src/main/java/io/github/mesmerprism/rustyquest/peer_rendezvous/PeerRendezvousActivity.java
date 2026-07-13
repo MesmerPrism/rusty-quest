@@ -32,6 +32,28 @@ public final class PeerRendezvousActivity extends Activity {
     }
 
     private void handleIntent(Intent intent) {
+        if (intent != null && PeerAuthorityIdentity.ACTION_GENERATE.equals(intent.getAction())) {
+            try {
+                String path = PeerAuthorityIdentity.generate(this, intent);
+                Log.i(TAG, "RUSTY_QUEST_PEER_AUTHORITY_IDENTITY status=pass path=" + path);
+                statusView.setText("Authority identity ready");
+            } catch (Exception error) {
+                Log.e(TAG, "RUSTY_QUEST_PEER_AUTHORITY_IDENTITY status=fail issue=" + error.getMessage());
+                statusView.setText("Authority identity failed");
+            }
+            return;
+        }
+        if (intent != null && PeerAuthorityIdentity.ACTION_SIGN.equals(intent.getAction())) {
+            try {
+                String path = PeerAuthorityIdentity.sign(this, intent);
+                Log.i(TAG, "RUSTY_QUEST_PEER_AUTHORITY_SIGNATURE status=pass path=" + path);
+                statusView.setText("Authority signature ready");
+            } catch (Exception error) {
+                Log.e(TAG, "RUSTY_QUEST_PEER_AUTHORITY_SIGNATURE status=fail issue=" + error.getMessage());
+                statusView.setText("Authority signature failed");
+            }
+            return;
+        }
         if (intent != null && PeerRendezvousService.ACTION_STOP.equals(intent.getAction())) {
             stopService(new Intent(this, PeerRendezvousService.class));
             statusView.setText("Stopped");

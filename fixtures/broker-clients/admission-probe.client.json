@@ -1,0 +1,21 @@
+{
+  "schema": "rusty.quest.broker_client_spec.v1",
+  "client_id": "client.quest.authorized",
+  "package_name": "io.github.mesmerprism.rustymanifold.admission.client",
+  "feature_lock_id": "lock.broker-client.admission-probe.v1",
+  "marker_namespace": "RUSTY_QUEST_BROKER_ADMISSION_PROBE",
+  "contract_families": [
+    "rusty.manifold.media.session_descriptor.v1",
+    "rusty.manifold.peer.session_descriptor.v1"
+  ],
+  "capabilities": [
+    "capability.command.media.session.start",
+    "capability.command.media.session.stop",
+    "capability.command.session.list"
+  ],
+  "adapter_permissions": [
+    "io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION"
+  ],
+  "runtime_properties": [],
+  "application_defaults": []
+}

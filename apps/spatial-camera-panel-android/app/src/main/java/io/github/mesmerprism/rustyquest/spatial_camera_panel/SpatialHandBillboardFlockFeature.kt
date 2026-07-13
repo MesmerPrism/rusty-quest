@@ -84,12 +84,22 @@ private class SpatialHandBillboardFlockSystem(
     val config = SpatialHandBillboardFlockConfig.read()
     val surfaceTargetId = currentSurfaceTargetId()
     val suppressedForIcosphere = surfaceTargetId == "icosphere"
-    if (!config.enabled || suppressedForIcosphere) {
-      val disabledReason = if (suppressedForIcosphere) "icosphere-surface-target" else "property-disabled"
+    val adapterDecision = SpatialLiveHandJointBridge.currentHandAdapterActivationDecision()
+    val adapterRejected = config.enabled && !adapterDecision.applied
+    if (!config.enabled || suppressedForIcosphere || adapterRejected) {
+      val disabledReason =
+          when {
+            adapterRejected -> "adapter-lock-rejected"
+            suppressedForIcosphere -> "icosphere-surface-target"
+            else -> "property-disabled"
+          }
       destroyPool(disabledReason)
       if (!disabledLogged || disabledReason != lastDisabledReason) {
         disabledLogged = true
         lastDisabledReason = disabledReason
+        if (adapterRejected) {
+          marker(SpatialLiveHandJointBridge.handAdapterActivationMarker(adapterDecision))
+        }
         marker(
             "channel=spatial-hand-billboard-flock status=disabled " +
                 "reason=$disabledReason surfaceTargetId=${markerToken(surfaceTargetId)} " +

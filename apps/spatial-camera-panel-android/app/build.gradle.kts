@@ -51,6 +51,9 @@ val spatialHandMeshRigAssetDir =
 val spatialHandMeshRigPackaged =
   spatialHandMeshRigAssetDir.map { it.isNotBlank().toString() }.orElse("false")
 
+val spatialSigningKeystore =
+  providers.environmentVariable("RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE")
+
 fun buildConfigString(value: String): String =
   "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
@@ -111,6 +114,17 @@ android {
       spatialHandMeshRigPackaged.get(),
     )
   }
+
+  spatialSigningKeystore.orNull
+    ?.takeIf { it.isNotBlank() }
+    ?.let { keystorePath ->
+      signingConfigs.getByName("debug") {
+        storeFile = file(keystorePath)
+        storePassword = "android"
+        keyAlias = "androiddebugkey"
+        keyPassword = "android"
+      }
+    }
 
   sourceSets.getByName("main").java.srcDir(
     rootProject.file("../../crates/rusty-quest-broker-client/android"),
@@ -173,6 +187,8 @@ dependencies {
   implementation(libs.meta.spatial.sdk.toolkit)
   implementation(libs.meta.spatial.sdk.vr)
   implementation(libs.meta.spatial.sdk.isdk)
+
+  testImplementation(kotlin("test"))
 }
 
 spatial {

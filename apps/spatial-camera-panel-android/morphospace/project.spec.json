@@ -2,7 +2,7 @@
   "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/project-spec.schema.json",
   "schema": "rusty.morphospace.workflow.project_spec.v1",
   "project_id": "spatial-camera-panel",
-  "revision": 2,
+  "revision": 3,
   "purpose": "Compose the public Spatial Camera Panel from explicit Quest adapters and app-local particle, hand, camera, and media candidates without allowing application behavior to become a reusable-module default.",
   "activation_model": {
     "default": "disabled",
@@ -48,6 +48,11 @@
       "parameter": "stream.session",
       "owner": "manifold",
       "adapters": ["spatial-app"]
+    },
+    {
+      "parameter": "render.adoption",
+      "owner": "spatial-app",
+      "adapters": []
     }
   ],
   "repositories": [
@@ -169,11 +174,20 @@
       "contract": "rusty.quest.spatial_virtual_room.v1",
       "source_repo": "spatial-app",
       "dependencies": ["spatial-panel-shell"]
+    },
+    {
+      "module_id": "broker-media-client",
+      "feature_id": "broker-media-client",
+      "lane": "quest",
+      "maturity": "candidate",
+      "contract": "rusty.quest.broker_media_lifecycle_receipt.v1",
+      "source_repo": "quest-repo",
+      "dependencies": ["spatial-panel-shell"]
     }
   ],
   "non_scope": [
     "Private study semantics, participant policy, tuned effect formulas, and downstream payloads.",
-    "Remote peer media, Wi-Fi Direct, BLE rendezvous, and broker authority in the panel app.",
+    "Manifold broker authority, peer topology, Wi-Fi Direct, and BLE rendezvous becoming panel-app authority; the app owns only its explicit client and render adoption.",
     "High-rate camera, hand, particle, pose, or media payloads in JSON control paths.",
     "Treating Spatial SDK carrier code as Matter, Lattice, Optics, or Manifold authority.",
     "Activating any module or permission because nearby source exists."

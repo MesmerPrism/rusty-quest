@@ -16,6 +16,7 @@ public final class BrokerStartService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        initializeAuthority();
         startForegroundCompat(buildNotification());
         LocalManifoldBrokerServer.get().start(getApplicationContext());
         BrokerLaunchEvidence.write(
@@ -25,13 +26,24 @@ public final class BrokerStartService extends Service {
         return START_STICKY;
     }
 
+    private void initializeAuthority() {
+        try {
+            ManifoldRuntimeAuthorityBridge.initialize();
+        } catch (Exception error) {
+            throw new IllegalStateException("Manifold broker authority initialization failed", error);
+        }
+    }
+
     private void startForegroundCompat(Notification notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            int serviceTypes = ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
+            if (GeneratedBrokerProductConfig.CAMERA_MEDIA_ENABLED) {
+                serviceTypes |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
+            }
             startForeground(
                     NOTIFICATION_ID,
                     notification,
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                            | ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA);
+                    serviceTypes);
         } else {
             startForeground(NOTIFICATION_ID, notification);
         }

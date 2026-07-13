@@ -1,0 +1,279 @@
+{
+  "manifold": {
+    "$schema": "rusty.manifold.media.session_product_binding.v1",
+    "descriptor": {
+      "$schema": "rusty.manifold.media.session_descriptor.v1",
+      "session_id": "session.media_stream.quest_camera2_to_pc",
+      "authority_revision": 4,
+      "platform_runtime_spec_id": "runtime.media.quest-camera2",
+      "source_ids": [
+        "quest-a-camera2-main"
+      ],
+      "processor_ids": [
+        "processor.camera2.passthrough"
+      ],
+      "route_ids": [
+        "quest-a-camera2-to-pc-host"
+      ],
+      "sink_ids": [
+        "sink.pc.camera2"
+      ],
+      "stream_ids": [
+        "quest-a.camera2.h264"
+      ],
+      "payload_plane": "binary-media",
+      "inline_media_payloads_allowed": false,
+      "remote_camera_compatibility": false
+    },
+    "descriptor_canonical_sha256": "sha256:cd71586b2729e9ce0ca9887be96c8aa5c8f477018aefeecbf1ee798c0634de1f"
+  },
+  "quest": {
+    "$schema": "rusty.quest.media_stream_runtime_product_binding.v1",
+    "spec": {
+      "schema": "rusty.quest.media_stream_runtime_spec.v1",
+      "runtime_spec_id": "runtime.media.quest-camera2",
+      "manifold_session_revision": 4,
+      "plan": {
+        "schema": "rusty.quest.media_stream_session.v1",
+        "session_id": "session.media_stream.quest_camera2_to_pc",
+        "topology_id": "quest_camera_to_pc",
+        "privacy_tier": "local_lan_diagnostic",
+        "devices": [
+          {
+            "device_id": "quest-a",
+            "device_kind": "quest",
+            "role": "sender"
+          },
+          {
+            "device_id": "pc-host",
+            "device_kind": "windows_pc",
+            "role": "receiver"
+          }
+        ],
+        "sources": [
+          {
+            "source_id": "quest-a-camera2-main",
+            "device_id": "quest-a",
+            "source_family": "quest-camera2",
+            "source_kind": "camera2_mediacodec_surface",
+            "capture_route": "camera2-mediacodec-surface",
+            "capture_authority": "android_camera_permission",
+            "deployment_classification": "production_candidate",
+            "track_role": "camera",
+            "developer_shell_required": false,
+            "consent_required": false,
+            "display": null,
+            "camera": {
+              "camera_id": "50",
+              "camera_ids": [],
+              "camera_facing": "external",
+              "permission_policy": "camera_permission_required"
+            }
+          }
+        ],
+        "lanes": [
+          {
+            "lane_id": "quest-a-camera2-to-pc-host",
+            "direction": "outgoing",
+            "source_id": "quest-a-camera2-main",
+            "source_device_id": "quest-a",
+            "sink_device_id": "pc-host",
+            "media": {
+              "track_id": "quest-a.camera2.h264",
+              "track_role": "camera",
+              "track_kind": "video",
+              "codec": "h264",
+              "stream_framing": "diagnostic-h264-packet-stream",
+              "width": 1920,
+              "height": 1080,
+              "frame_rate_hz": 60,
+              "bitrate_bps": 8000000,
+              "max_packet_bytes": 4194304,
+              "metadata_transport": "stream-header-sidecar-status",
+              "timestamp_domain": "android-camera-sensor-time",
+              "high_rate_payload_plane": "binary-media"
+            },
+            "transport": {
+              "transport_kind": "lan_tcp",
+              "relay_required": false,
+              "encryption_required": false,
+              "relay_session_id": null
+            },
+            "queue": {
+              "max_buffered_packets": 48,
+              "max_buffered_bytes": 16777216,
+              "drop_policy": "drop-oldest-complete-frame",
+              "slow_peer_close": true
+            },
+            "receiver_first_required": true
+          }
+        ],
+        "runtime_endpoints": [
+          {
+            "device_id": "quest-a",
+            "adapter_kind": "quest_manifold_broker_android",
+            "source_bindings": [
+              {
+                "source_id": "quest-a-camera2-main",
+                "track_role": "camera",
+                "source_host": "127.0.0.1",
+                "source_port": 8878
+              }
+            ],
+            "receiver_bind_host": "127.0.0.1",
+            "receiver_ports": [],
+            "transport_bind_host": "0.0.0.0",
+            "transport_receive_ports": []
+          },
+          {
+            "device_id": "pc-host",
+            "adapter_kind": "windows_hostess",
+            "source_bindings": [],
+            "receiver_bind_host": "127.0.0.1",
+            "receiver_ports": [
+              {
+                "track_role": "camera",
+                "port": 8978
+              }
+            ],
+            "transport_bind_host": "0.0.0.0",
+            "transport_receive_ports": [
+              {
+                "track_role": "camera",
+                "port": 9078
+              }
+            ]
+          }
+        ],
+        "transport_routes": [
+          {
+            "lane_id": "quest-a-camera2-to-pc-host",
+            "source_device_id": "quest-a",
+            "sink_device_id": "pc-host",
+            "track_role": "camera",
+            "route_kind": "direct_tcp_connect",
+            "connect_host": "192.168.49.2",
+            "connect_port": 9078,
+            "relay_channel": null,
+            "relay_token_ref": null,
+            "tls_server_name": null
+          }
+        ],
+        "security": {
+          "visible_streaming_indicator": true,
+          "explicit_pairing_required": true,
+          "immediate_stop_command": "media_stream.stop",
+          "raw_media_logging": false
+        },
+        "observability": {
+          "required_markers": [
+            "media-stream-session-started",
+            "receiver-armed",
+            "camera2-source-bound",
+            "sender-started",
+            "frame-painted",
+            "lane-closed"
+          ],
+          "required_counters": [
+            "bytes_sent",
+            "bytes_received",
+            "media_packets",
+            "codec_config_packets",
+            "keyframes",
+            "queue_drops",
+            "close_reason",
+            "capture_to_encode_ms",
+            "encode_to_receive_ms"
+          ]
+        }
+      },
+      "processors": [
+        {
+          "processor_id": "processor.camera2.passthrough",
+          "processor_kind": "passthrough_h264",
+          "input_track_roles": [
+            "camera"
+          ],
+          "output_track_roles": [
+            "camera"
+          ],
+          "owns_codec": false,
+          "cpu_pixel_copy": false,
+          "application_policy_fields": []
+        }
+      ],
+      "sinks": [
+        {
+          "sink_id": "sink.pc.camera2",
+          "device_id": "pc-host",
+          "sink_kind": "hostess_h264_receiver",
+          "required_permissions": [],
+          "application_policy_fields": []
+        }
+      ],
+      "lane_bindings": [
+        {
+          "lane_id": "quest-a-camera2-to-pc-host",
+          "processor_ids": [
+            "processor.camera2.passthrough"
+          ],
+          "sink_id": "sink.pc.camera2"
+        }
+      ],
+      "direct_p2p_routes": [],
+      "owner_selections": [
+        {
+          "owner_kind": "source",
+          "owner_id": "owner.quest.source",
+          "resource_id": "quest-a-camera2-main",
+          "lane_id": "quest-a-camera2-to-pc-host",
+          "provider_kind": "android_camera2_mediacodec_surface"
+        },
+        {
+          "owner_kind": "processor",
+          "owner_id": "owner.rust.processor",
+          "resource_id": "processor.camera2.passthrough",
+          "lane_id": "quest-a-camera2-to-pc-host",
+          "provider_kind": "rust_passthrough_h264"
+        },
+        {
+          "owner_kind": "route",
+          "owner_id": "owner.manifold.route",
+          "resource_id": "quest-a-camera2-to-pc-host",
+          "lane_id": "quest-a-camera2-to-pc-host",
+          "provider_kind": "manifold_accepted_route"
+        },
+        {
+          "owner_kind": "socket",
+          "owner_id": "owner.rust.lan-tcp-socket",
+          "resource_id": "quest-a-camera2-to-pc-host",
+          "lane_id": "quest-a-camera2-to-pc-host",
+          "provider_kind": "rust_lan_tcp_socket"
+        },
+        {
+          "owner_kind": "codec",
+          "owner_id": "owner.android.h264-codec",
+          "resource_id": "quest-a-camera2-to-pc-host",
+          "lane_id": "quest-a-camera2-to-pc-host",
+          "provider_kind": "android_mediacodec_h264"
+        },
+        {
+          "owner_kind": "sink",
+          "owner_id": "owner.hostess.h264-sink",
+          "resource_id": "sink.pc.camera2",
+          "lane_id": "quest-a-camera2-to-pc-host",
+          "provider_kind": "hostess_h264_receiver"
+        },
+        {
+          "owner_kind": "cleanup",
+          "owner_id": "owner.quest.media-cleanup",
+          "resource_id": "runtime.media.quest-camera2",
+          "lane_id": null,
+          "provider_kind": "quest_media_cleanup"
+        }
+      ],
+      "compatibility_adapter_id": null
+    },
+    "runtime_spec_canonical_sha256": "sha256:2e24505ddf8b1a1bdd85ad1ec8ca8ff2ba030c6dfe162432b838ba2761aad8ef"
+  }
+}

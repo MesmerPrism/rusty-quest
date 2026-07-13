@@ -40,8 +40,20 @@ private class SpatialHandCaptureRecorderSystem(
   private var frameIndex = 0
   private var bridgeStartMask = 0L
   private var bridgeStartAttemptFrame = 0
+  private var adapterRejectedLogged = false
 
   override fun execute() {
+    val adapterDecision = SpatialLiveHandJointBridge.currentHandAdapterActivationDecision()
+    if (!adapterDecision.applied) {
+      current?.finish("adapter-lock-rejected")
+      current = null
+      if (!adapterRejectedLogged) {
+        adapterRejectedLogged = true
+        marker(SpatialLiveHandJointBridge.handAdapterActivationMarker(adapterDecision))
+      }
+      return
+    }
+    adapterRejectedLogged = false
     ensureInitialized()
     val controlFile = controlFile ?: return
     val captureRoot = captureRoot ?: return

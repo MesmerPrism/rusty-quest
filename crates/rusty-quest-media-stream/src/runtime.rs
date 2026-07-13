@@ -9,7 +9,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use rusty_quest_device_link::{validate_direct_p2p_socket_route, DirectP2pSocketRoute};
 use serde::{Deserialize, Serialize};
 
-use crate::{validate_media_stream_session, MediaStreamSessionPlan, ValidationError};
+use crate::{
+    product_runtime::validate_media_stream_owner_selections, validate_media_stream_session,
+    MediaStreamOwnerSelection, MediaStreamSessionPlan, ValidationError,
+};
 
 /// Runtime-spec schema.
 pub const MEDIA_STREAM_RUNTIME_SPEC_SCHEMA: &str = "rusty.quest.media_stream_runtime_spec.v1";
@@ -23,13 +26,12 @@ pub const MEDIA_STREAM_RUNTIME_AUTHORITY: &str = "rusty_quest_media_stream_sessi
 
 /// Runtime composition selected after a Manifold session decision.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamRuntimeSpec {
     /// Schema id.
     pub schema: String,
     /// Stable runtime spec id.
     pub runtime_spec_id: String,
-    /// Accepted Manifold decision that authorized adoption.
-    pub manifold_decision_id: String,
     /// Accepted Manifold session authority revision.
     pub manifold_session_revision: u64,
     /// Source-neutral session plan.
@@ -42,10 +44,18 @@ pub struct MediaStreamRuntimeSpec {
     pub lane_bindings: Vec<MediaStreamLaneRuntimeBinding>,
     /// Product-provider direct-P2P route evidence, when selected.
     pub direct_p2p_routes: Vec<MediaStreamDirectP2pRouteBinding>,
+    /// Independently selected source, processor, route, socket, codec, sink,
+    /// and cleanup owners. The vector is a strict canonical sorted set.
+    #[serde(default)]
+    pub owner_selections: Vec<MediaStreamOwnerSelection>,
+    /// Explicit compatibility mapper identity. Generic products leave this absent.
+    #[serde(default)]
+    pub compatibility_adapter_id: Option<String>,
 }
 
 /// Processor descriptor. Processors transform existing frames but do not own codecs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamProcessorDescriptor {
     /// Stable processor id.
     pub processor_id: String,
@@ -66,6 +76,7 @@ pub struct MediaStreamProcessorDescriptor {
 
 /// Sink descriptor selected independently from source/processor defaults.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamSinkDescriptor {
     /// Stable sink id.
     pub sink_id: String,
@@ -83,6 +94,7 @@ pub struct MediaStreamSinkDescriptor {
 
 /// Runtime composition for one plan lane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamLaneRuntimeBinding {
     /// Plan lane id.
     pub lane_id: String,
@@ -94,6 +106,7 @@ pub struct MediaStreamLaneRuntimeBinding {
 
 /// One lane bound to a validated product direct-P2P route contract.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamDirectP2pRouteBinding {
     /// Plan lane id.
     pub lane_id: String,
@@ -228,6 +241,7 @@ pub struct MediaStreamRuntimeDecision {
 }
 
 /// Stateful deterministic lifecycle evaluator.
+#[derive(Clone)]
 pub struct MediaStreamSessionRuntime {
     spec: MediaStreamRuntimeSpec,
     state: MediaStreamRuntimeState,
@@ -284,10 +298,7 @@ pub fn validate_media_stream_runtime_spec(
             "unsupported media runtime spec schema",
         ));
     }
-    if spec.runtime_spec_id.trim().is_empty()
-        || spec.manifold_decision_id.trim().is_empty()
-        || spec.manifold_session_revision == 0
-    {
+    if spec.runtime_spec_id.trim().is_empty() || spec.manifold_session_revision == 0 {
         errors.push(ValidationError::new(
             "runtime spec requires identity and an accepted Manifold decision revision",
         ));
@@ -403,11 +414,7 @@ pub fn validate_media_stream_runtime_spec(
             );
         }
     }
-    if spec.direct_p2p_routes.is_empty() {
-        errors.push(ValidationError::new(
-            "runtime spec requires an explicit direct-P2P route reference",
-        ));
-    }
+    validate_media_stream_owner_selections(spec, &mut errors);
 
     if errors.is_empty() {
         Ok(())

@@ -320,6 +320,11 @@
   lab-only shell hidden-display H.264. They keep frame bytes on
   `binary-media` and declare packet bounds, capture authority, consent,
   protected-content policy, privacy indicators, and receiver-first bindings.
+- `media-runtime-products/`: deterministic cross-repo product bindings for an
+  app-consent display-composite source and an independently selected Camera2
+  source. Each binds canonical Manifold and Quest hashes plus exact source,
+  processor, LAN route/socket, codec, sink, and cleanup owners. Neither fixture
+  selects Direct P2P or inherits remote-camera properties/defaults.
 - `remote-camera-sessions/`: valid remote camera session plans for
   Quest-to-Quest and Quest-to-Android phone diagnostic streaming, including
   low-rate runtime endpoint bindings for sender source kind, sender media
@@ -339,17 +344,33 @@
   `rusty.quest.media_stream_session.v1` compatibility plans so generic media
   modules can reuse the camera descriptions without changing their schema.
 - `broker-products/`: exact Android manifest projections for the accepted
-  Manifold base, camera, direct-P2P, and BLE product locks. JSON is the typed
-  projection receipt and the paired `AndroidManifest.xml` is the packaging
-  surface checked by `Test-QuestBrokerProductStatic.ps1`. The base profile is
-  intentionally `INTERNET`-only; no fixture is a permission union or a default
-  enablement claim.
+  Manifold base, generic media-session, camera, direct-P2P, and BLE product
+  locks. Standalone manifests are byte-stable package inputs generated from
+  their locks; embedded manifests are projection fixtures. The base and generic
+  media-session products contain only network plus notification/background
+  data-sync lifecycle permissions. The broad camera-plus-P2P fixture is
+  explicitly named legacy compatibility; no fixture is an implicit permission
+  union or default enablement claim. Standalone launcher activities are
+  exported, start services are non-exported, and admission services are
+  exported only behind the signature permission.
+- `broker-clients/`: exact per-app client locks for the admission probe, Native
+  Renderer, and Spatial Camera Panel. Packaging hashes the raw files and derives
+  grants only from each client/product intersection; runtime properties and app
+  defaults remain empty so no application policy can bleed through the shared
+  broker SDK.
 - `broker-authority/`: trusted local standalone/embedded JNI invocations and
   their Quest response projections. Applied, unknown-command, and missing-lease
   pairs preserve identical Manifold dispatch/application receipts; only bridge
   placement, lock fingerprint, and adapter identity differ. Rejected pairs keep
   revision 1, and every response reports `local_acceptance_rules=false` with
-  `module.runtime.host` as decision owner.
+  `module.runtime.host` as decision owner. Those files preserve the v1
+  stateless projection contract; the real NET-014 server-entrypoint matrix now
+  executes the process-local provider tests in `rusty-quest-broker-authority`
+  and both JNI crates, covering bounded admission, parity, damage, rebind, and
+  fresh provider epochs. Focused runtime tests additionally cover independent
+  uses across unrelated revisions, token-scoped invalidation, canonical typed
+  effect-parameter binding, packaged-lock/config hashes, and exact grant
+  closure.
 - `damaged/`: invalid runtime profile, remote-camera, and native-renderer
   examples that must be rejected, including runtime evidence logs where replay
   markers exist but the visual mesh was not actually reported visible, and a

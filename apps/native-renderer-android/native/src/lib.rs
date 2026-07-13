@@ -145,16 +145,34 @@ fn android_on_create(_state: &android_activity::OnCreateState) {
         "activity-created",
         "entrypoint=NativeActivity rustNativeActivity=true javaPackaged=true panelActivity=ControlPanelActivity",
     );
+    let particle_adapter_input = particle_adapter_consumer::load_runtime_input();
+    let particle_adapter_decision =
+        particle_adapter_consumer::resolve_activation(&particle_adapter_input);
     marker(
         "particle-adapter",
-        particle_adapter_consumer::load_activation_marker(),
+        particle_adapter_consumer::activation_marker(&particle_adapter_input),
     );
+    let hand_adapter_input = hand_adapter_consumer::load_runtime_input();
+    let hand_adapter_decision = hand_adapter_consumer::resolve_activation(&hand_adapter_input);
     marker(
         "hand-adapter",
-        hand_adapter_consumer::load_activation_marker(),
+        hand_adapter_consumer::activation_marker(&hand_adapter_input),
     );
     let runtime_options =
         native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties();
+    let particle_effect_request = particle_adapter_effect_request(&runtime_options);
+    let hand_effect_request = hand_adapter_effect_request(&runtime_options);
+    if !particle_adapter_consumer::effects_authorized(
+        &particle_adapter_decision,
+        particle_effect_request,
+    ) || !hand_adapter_consumer::effects_authorized(&hand_adapter_decision, hand_effect_request)
+    {
+        marker(
+            "adapter-lock-admission",
+            "status=rejected effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
+        );
+        return;
+    }
     let permissions = runtime_permissions_for_route(&runtime_options);
     let permission_marker = runtime_permission_marker_list(&permissions);
     if permissions.is_empty() {
@@ -196,23 +214,46 @@ fn runtime_permissions_for_route(
     {
         permissions.push("android.permission.CAMERA");
     }
-    if runtime_options
-        .compact_hand_input_source_mode
-        .selects_live_frame()
-        || runtime_options
-            .render_mode
-            .requests_openxr_default_hand_visual()
-        || runtime_options.render_mode.forces_graft_copies()
-        || runtime_options.render_mode.forces_real_hand_meshes()
-        || runtime_options.hand_mesh_graft_copies_enabled
-        || runtime_options.hand_mesh_real_hands_visible
-        || runtime_options.hand_anchor_particle_settings.enabled
-    {
+    if hand_adapter_effect_request(runtime_options).any() {
         permissions.push("com.oculus.permission.HAND_TRACKING");
     }
     permissions.sort_unstable();
     permissions.dedup();
     permissions
+}
+
+#[cfg(target_os = "android")]
+fn particle_adapter_effect_request(
+    runtime_options: &native_renderer_options::NativeRendererRuntimeOptions,
+) -> particle_adapter_consumer::ParticleAdapterEffectRequest {
+    particle_adapter_consumer::ParticleAdapterEffectRequest {
+        environment_depth_particles: runtime_options
+            .environment_depth_settings
+            .mode_draws_particles(),
+        hand_anchor_particles: runtime_options.hand_anchor_particle_settings.enabled,
+        private_particles: runtime_options
+            .render_mode
+            .requests_private_particle_recenter_input(),
+    }
+}
+
+#[cfg(target_os = "android")]
+fn hand_adapter_effect_request(
+    runtime_options: &native_renderer_options::NativeRendererRuntimeOptions,
+) -> hand_adapter_consumer::HandAdapterEffectRequest {
+    hand_adapter_consumer::HandAdapterEffectRequest {
+        live_hand_input: runtime_options
+            .compact_hand_input_source_mode
+            .selects_live_frame(),
+        default_hand_visual: runtime_options
+            .render_mode
+            .requests_openxr_default_hand_visual(),
+        graft_copies: runtime_options.render_mode.forces_graft_copies()
+            || runtime_options.hand_mesh_graft_copies_enabled,
+        real_hand_meshes: runtime_options.render_mode.forces_real_hand_meshes()
+            || runtime_options.hand_mesh_real_hands_visible,
+        hand_anchor_particles: runtime_options.hand_anchor_particle_settings.enabled,
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -268,6 +309,21 @@ fn request_runtime_permissions(
 #[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {
+    let particle_adapter_input = particle_adapter_consumer::load_runtime_input();
+    let particle_adapter_decision =
+        particle_adapter_consumer::resolve_activation(&particle_adapter_input);
+    let hand_adapter_input = hand_adapter_consumer::load_runtime_input();
+    let hand_adapter_decision = hand_adapter_consumer::resolve_activation(&hand_adapter_input);
+    if (particle_adapter_input.enabled && !particle_adapter_decision.is_applied())
+        || (hand_adapter_input.enabled && !hand_adapter_decision.is_applied())
+    {
+        marker(
+            "adapter-lock-admission",
+            "status=rejected effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
+        );
+        keep_activity_alive_after_error(app);
+        return;
+    }
     let plan = match load_public_plan() {
         Ok(plan) => plan,
         Err(error) => {
@@ -297,6 +353,33 @@ fn android_main(app: android_activity::AndroidApp) {
     let native_app_settings =
         native_app_settings::NativeAppSettingsDefaults::load_from_apk_asset(&app);
     marker("native-app-settings", native_app_settings.marker_fields());
+    let runtime_options =
+        native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties_with_defaults(
+            |name| native_app_settings.lookup(name),
+        );
+    let runtime_options =
+        native_renderer_stimulus_panel::apply_app_private_candidate(&app, runtime_options);
+    let particle_effect_request = particle_adapter_effect_request(&runtime_options);
+    let hand_effect_request = hand_adapter_effect_request(&runtime_options);
+    if !particle_adapter_consumer::effects_authorized(
+        &particle_adapter_decision,
+        particle_effect_request,
+    ) {
+        marker(
+            "adapter-lock-admission",
+            "status=rejected reason=particle-effects-require-applied-lock effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
+        );
+        keep_activity_alive_after_error(app);
+        return;
+    }
+    if !hand_adapter_consumer::effects_authorized(&hand_adapter_decision, hand_effect_request) {
+        marker(
+            "adapter-lock-admission",
+            "status=rejected reason=hand-effects-require-applied-lock effectsStarted=false permissionsRequested=false sceneStarted=false inputStarted=false mediaStarted=false",
+        );
+        keep_activity_alive_after_error(app);
+        return;
+    }
     let embedded_manifold_broker_settings =
         embedded_manifold_broker_bridge::EmbeddedManifoldBrokerSettings::load_from_android_properties_with_defaults(
             &native_app_settings,
@@ -311,12 +394,6 @@ fn android_main(app: android_activity::AndroidApp) {
         &lsl_transport_settings,
         &embedded_manifold_broker_settings,
     );
-    let runtime_options =
-        native_renderer_options::NativeRendererRuntimeOptions::load_from_android_properties_with_defaults(
-            |name| native_app_settings.lookup(name),
-        );
-    let runtime_options =
-        native_renderer_stimulus_panel::apply_app_private_candidate(&app, runtime_options);
     let native_passthrough_requested = runtime_options.render_mode.uses_native_passthrough()
         || runtime_options
             .environment_depth_settings

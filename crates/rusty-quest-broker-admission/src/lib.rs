@@ -136,6 +136,12 @@ pub struct QuestBrokerAdmissionResponse {
     pub local_token_or_grant_policy: bool,
     /// Exact Manifold receipt.
     pub receipt: ManifoldAdmissionReceipt,
+    /// Live provider epoch when admission is co-resident with broker authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_epoch_id: Option<DottedId>,
+    /// Current Runtime Host revision when admission is co-resident.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime_host_revision: Option<Revision>,
 }
 
 /// Stateful trusted runtime retained inside the broker process.
@@ -180,7 +186,7 @@ impl QuestBrokerAdmissionRuntime {
             } => {
                 check_operation_schema(&schema_id)?;
                 let now_ms = issued_at_ms;
-                let identity = self.project_identity(&caller);
+                let identity = project_binder_caller(self.authority.snapshot(), &caller);
                 let request = ManifoldAdmissionRequest {
                     schema_id: schema(ADMISSION_REQUEST_SCHEMA),
                     request_id,
@@ -192,7 +198,7 @@ impl QuestBrokerAdmissionRuntime {
                     requested_token_ttl_ms,
                 };
                 self.authority
-                    .issue_token(&request, parse_entropy(&entropy_hex)?, now_ms)
+                    .issue_token(&request, parse_entropy_hex(&entropy_hex)?, now_ms)
             }
             QuestBrokerAdmissionOperation::AuthorizeUse {
                 schema_id,
@@ -210,7 +216,7 @@ impl QuestBrokerAdmissionRuntime {
                     request_id,
                     expected_authority_revision,
                     token_id,
-                    identity: self.project_identity(&caller),
+                    identity: project_binder_caller(self.authority.snapshot(), &caller),
                     capability_id,
                     issued_at_ms,
                     expires_at_ms,
@@ -232,7 +238,7 @@ impl QuestBrokerAdmissionRuntime {
                         request_id,
                         expected_authority_revision,
                         token_id,
-                        identity: self.project_identity(&caller),
+                        identity: project_binder_caller(self.authority.snapshot(), &caller),
                         reason,
                     })
             }
@@ -253,6 +259,8 @@ impl QuestBrokerAdmissionRuntime {
             decision_owner: MANIFOLD_ADMISSION_OWNER.to_owned(),
             local_token_or_grant_policy: false,
             receipt,
+            provider_epoch_id: None,
+            runtime_host_revision: None,
         })
     }
 
@@ -270,27 +278,44 @@ impl QuestBrokerAdmissionRuntime {
             .map_err(QuestAdmissionError::Authority)
     }
 
-    fn project_identity(&self, caller: &QuestAndroidBinderCaller) -> ManifoldClientIdentity {
-        let fingerprint = normalize_fingerprint(&caller.signing_certificate_sha256);
-        if let Some(grant) = self
-            .authority
-            .snapshot()
-            .grants
-            .iter()
-            .find(|grant| grant.identity.platform_subject == caller.package_name)
-        {
-            ManifoldClientIdentity {
-                client_id: grant.identity.client_id.clone(),
-                platform_subject: caller.package_name.clone(),
-                signing_fingerprint: fingerprint,
-            }
-        } else {
-            ManifoldClientIdentity {
-                client_id: DottedId::new(format!("client.android.uid_{}", caller.sending_uid))
-                    .expect("derived client id"),
-                platform_subject: caller.package_name.clone(),
-                signing_fingerprint: fingerprint,
-            }
+    /// Returns the current Manifold admission state.
+    #[must_use]
+    pub const fn snapshot(&self) -> &ManifoldAdmissionSnapshot {
+        self.authority.snapshot()
+    }
+}
+
+/// Projects immediate Binder caller evidence into the exact Manifold client identity.
+///
+/// The platform subject selects only a candidate client id. Manifold still
+/// compares the complete package/signature identity against the grant.
+///
+/// # Panics
+///
+/// Panics only if the static `client.android.uid` namespace cannot be combined
+/// with the platform-provided numeric UID into a dotted identifier.
+#[must_use]
+pub fn project_binder_caller(
+    snapshot: &ManifoldAdmissionSnapshot,
+    caller: &QuestAndroidBinderCaller,
+) -> ManifoldClientIdentity {
+    let fingerprint = normalize_fingerprint(&caller.signing_certificate_sha256);
+    if let Some(grant) = snapshot
+        .grants
+        .iter()
+        .find(|grant| grant.identity.platform_subject == caller.package_name)
+    {
+        ManifoldClientIdentity {
+            client_id: grant.identity.client_id.clone(),
+            platform_subject: caller.package_name.clone(),
+            signing_fingerprint: fingerprint,
+        }
+    } else {
+        ManifoldClientIdentity {
+            client_id: DottedId::new(format!("client.android.uid_{}", caller.sending_uid))
+                .expect("derived client id"),
+            platform_subject: caller.package_name.clone(),
+            signing_fingerprint: fingerprint,
         }
     }
 }
@@ -312,7 +337,12 @@ fn normalize_fingerprint(value: &str) -> String {
     }
 }
 
-fn parse_entropy(value: &str) -> Result<[u8; 32], QuestAdmissionError> {
+/// Parses `SecureRandom`-provided 256-bit lowercase or uppercase hexadecimal entropy.
+///
+/// # Errors
+///
+/// Returns [`QuestAdmissionError::InvalidEntropy`] for any non-256-bit value.
+pub fn parse_entropy_hex(value: &str) -> Result<[u8; 32], QuestAdmissionError> {
     let value = value.trim();
     if value.len() != 64 || !value.as_bytes().iter().all(u8::is_ascii_hexdigit) {
         return Err(QuestAdmissionError::InvalidEntropy);
@@ -334,7 +364,7 @@ fn schema(value: &str) -> SchemaId {
 pub enum QuestAdmissionError {
     /// Config or operation schema mismatch.
     SchemaMismatch,
-    /// SecureRandom entropy was not exactly 256 bits of hex.
+    /// `SecureRandom` entropy was not exactly 256 bits of hex.
     InvalidEntropy,
     /// JSON input decode failed.
     Deserialize(serde_json::Error),

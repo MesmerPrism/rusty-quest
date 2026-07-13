@@ -214,7 +214,7 @@ The broker package also has static and compile validation:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ManifoldBrokerAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 -LegacyCameraP2pCompatibility
 ```
 
 Live headset evidence for the Quest-side direct TCP broker lane was first

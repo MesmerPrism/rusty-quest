@@ -1,0 +1,11 @@
+{
+  "schema":"rusty.quest.mod006_lock_bound_activation_review.v1",
+  "review_id":"mod-006-spatial-lock-bound-activation-readiness",
+  "project_id":"spatial-camera-panel",
+  "unit_id":"mod-006",
+  "decision":"rework",
+  "source_result":"pass",
+  "device_result":"pending",
+  "findings":["Rust/JNI is the sole lock authority and Kotlin verifies native receipt/input parity without owning lock constants.","Applied-to-rejected transitions stop native hand input and running particle layers.","Rejected native particle start masks remain non-applied in Kotlin and suppress parameter/projection/recenter effects.","Historical accepted fixtures remain byte-identical."],
+  "next_gate":"Run fresh selected/off-lock effect, fatal-window, and cleanup validation on both Quests."
+}

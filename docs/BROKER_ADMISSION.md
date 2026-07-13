@@ -11,6 +11,8 @@ custom permission
 
 The service reads `Message.sendingUid`, resolves packages through
 `PackageManager`, and hashes the single APK signing certificate with SHA-256.
+UIDs that map to zero or multiple packages reject; the adapter never chooses
+one package from an ambiguous UID.
 It also supplies 256 bits from `SecureRandom`. Those are platform evidence and
 entropy, not admission decisions.
 
@@ -22,8 +24,22 @@ token use, revocation, and expiry. Every response identifies
 `rusty.manifold.admission` as decision owner and
 `local_token_or_grant_policy=false`.
 
-The existing WebSocket compatibility server is not the admission surface and
-does not turn transport acknowledgement into authorization.
+The WebSocket and embedded servers are transport entrypoints only. A mutation
+must present the successful one-time Binder `authorize_use` request id plus its
+opaque token id, use-creation admission revision, and live provider epoch.
+That revision is the one that created the exact bounded use, not a requirement
+that no unrelated client has advanced global admission state.
+The co-resident Rust runtime checks the token, exact client, and command
+capability, consumes the use, then calls Runtime Host review/application.
+Neither localhost origin, the old
+embedded session token, nor a transport acknowledgement is authorization.
+
+The embedded Native Renderer has no exported Binder hop for its local server.
+It instead derives its own installed package, process UID, and exactly one APK
+signer through Android, verifies the package against the packaged client lock,
+then performs the same Rust issue-token and authorize-use operations for each
+mutation. It replaces caller-supplied epoch, token, revisions, and requester id;
+settings-supplied authority config is rejected.
 
 ## Independent product clients
 
@@ -37,14 +53,26 @@ app-specific sink capability. The SDK owns no grants, tokens, Binder policy,
 runtime properties, app defaults, sessions, sockets, codecs, or media.
 
 Grant capability lists and client requests are unique canonical sorted sets.
+Builds generate each grant as the exact intersection of the accepted product
+lock and one exact client lock. Base excludes all media/sink/peer capabilities;
+camera-free media adds only selected media/sink capabilities; direct-peer
+observe remains absent unless direct-P2P or BLE is explicitly selected.
 The broker JNI initializer is idempotent inside the live broker process so a
 second Android bind cannot reset the Manifold authority revision or erase the
 first client's audit/session state.
+The initializer also fingerprints the exact product/grant config; a drifted
+same-process rebind rejects. Provider process restart derives a fresh epoch
+from new platform entropy and rejects old-epoch mutation requests.
+Each client Activity launch also creates a fresh 128-bit random request-id
+namespace. Only the explicit replay damage step reuses one id, so process or
+provider relaunch cannot collide with a prior request sequence.
 
 ## Build and static validation
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
+  -ProductSpecPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.json `
+  -ProductLockPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.lock.json `
   -AndroidHome S:\Work\tools\Android\windows-sdk `
   -JavaHome S:\Work\tools\Java\temurin-17
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-BrokerAdmissionClients.ps1 `

@@ -100,8 +100,7 @@ mod tests {
         let plan = parse_fixture(include_str!(
             "../../../fixtures/remote-camera-sessions/q2q-direct-p2p-mono.plan.json"
         ));
-        let spec = build_media_stream_runtime_spec(&plan, "decision.media.compat", 8)
-            .expect("compat runtime builds");
+        let spec = build_media_stream_runtime_spec(&plan, 8).expect("compat runtime builds");
         assert_eq!(spec.plan.lanes.len(), plan.lanes.len());
         assert_eq!(
             spec.plan.transport_routes.len(),
@@ -122,8 +121,8 @@ mod tests {
         let plan = parse_fixture(include_str!(
             "../../../fixtures/remote-camera-sessions/q2q-direct-p2p-packed-sbs.plan.json"
         ));
-        let spec = build_media_stream_runtime_spec(&plan, "decision.media.packed", 9)
-            .expect("packed compatibility runtime builds");
+        let spec =
+            build_media_stream_runtime_spec(&plan, 9).expect("packed compatibility runtime builds");
         assert_eq!(spec.processors[0].processor_kind, "packed_sbs_left_right");
         assert!(!spec.processors[0].owns_codec);
         assert!(!spec.processors[0].cpu_pixel_copy);

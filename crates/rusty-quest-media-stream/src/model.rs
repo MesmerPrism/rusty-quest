@@ -76,6 +76,7 @@ pub const CAMERA_PERMISSION_REQUIRED: &str = "camera_permission_required";
 
 /// Media stream session plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamSessionPlan {
     /// Schema id.
     pub schema: String,
@@ -105,6 +106,7 @@ pub struct MediaStreamSessionPlan {
 
 /// Media stream endpoint device.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamDevice {
     /// Stable device id in this plan.
     pub device_id: String,
@@ -116,6 +118,7 @@ pub struct MediaStreamDevice {
 
 /// One media source that can feed an encoded lane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamSource {
     /// Stable source id.
     pub source_id: String,
@@ -149,6 +152,7 @@ pub struct MediaStreamSource {
 
 /// Display capture metadata that travels on the low-rate plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DisplayCaptureDescriptor {
     /// Display id or stable selection token.
     pub display_id: String,
@@ -170,6 +174,7 @@ pub struct DisplayCaptureDescriptor {
 
 /// Pixel crop rectangle for display capture.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct DisplayContentCrop {
     /// Left pixel offset.
     pub left: u32,
@@ -183,6 +188,7 @@ pub struct DisplayContentCrop {
 
 /// Camera capture metadata that travels on the low-rate plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CameraCaptureDescriptor {
     /// Camera2 id.
     pub camera_id: String,
@@ -197,6 +203,7 @@ pub struct CameraCaptureDescriptor {
 
 /// Camera id bound to one role in a multi-camera source.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CameraTrackBinding {
     /// Track role such as `left` or `right`.
     pub track_role: String,
@@ -206,6 +213,7 @@ pub struct CameraTrackBinding {
 
 /// One high-rate media lane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamLane {
     /// Stable lane id.
     pub lane_id: String,
@@ -229,6 +237,7 @@ pub struct MediaStreamLane {
 
 /// Media config for a lane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamMediaConfig {
     /// Stable track id.
     pub track_id: String,
@@ -260,6 +269,7 @@ pub struct MediaStreamMediaConfig {
 
 /// Transport config for a lane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamTransportConfig {
     /// Transport kind such as `lan_tcp` or `relay_tls`.
     pub transport_kind: String,
@@ -274,6 +284,7 @@ pub struct MediaStreamTransportConfig {
 
 /// Low-rate local runtime endpoint configuration for one participating device.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamRuntimeEndpoint {
     /// Device id from `devices`.
     pub device_id: String,
@@ -296,6 +307,7 @@ pub struct MediaStreamRuntimeEndpoint {
 
 /// Local encoded-source socket binding.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamSourceBinding {
     /// Source id from `sources`.
     pub source_id: String,
@@ -309,6 +321,7 @@ pub struct MediaStreamSourceBinding {
 
 /// One local TCP port binding for a media track role.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamPortBinding {
     /// Track role: `left`, `right`, `mono`, or `display`.
     pub track_role: String,
@@ -318,6 +331,7 @@ pub struct MediaStreamPortBinding {
 
 /// One outgoing peer or relay transport route for a media lane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamTransportRoute {
     /// Lane id from `lanes`.
     pub lane_id: String,
@@ -347,6 +361,7 @@ pub struct MediaStreamTransportRoute {
 
 /// Queue and slow-peer policy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamQueuePolicy {
     /// Maximum buffered media packets.
     pub max_buffered_packets: u32,
@@ -360,6 +375,7 @@ pub struct MediaStreamQueuePolicy {
 
 /// Security policy for media streaming.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamSecurityPolicy {
     /// Streaming state must be visible to the operator.
     pub visible_streaming_indicator: bool,
@@ -373,6 +389,7 @@ pub struct MediaStreamSecurityPolicy {
 
 /// Observability policy for promotion gates.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MediaStreamObservabilityPolicy {
     /// Required marker ids or marker phases.
     pub required_markers: Vec<String>,

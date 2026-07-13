@@ -1,7 +1,6 @@
 //! Exports deterministic Quest standalone/embedded authority bridge fixtures.
 
 use rusty_manifold_broker_adapter::{ManifoldBrokerAdapterConfig, ManifoldBrokerAdapterMode};
-use rusty_manifold_broker_product::ManifoldBrokerProductLock;
 use rusty_manifold_model::{DottedId, Revision, SchemaId};
 use rusty_manifold_runtime_host::{
     ManifoldRuntimeCommandRequest, ManifoldRuntimeLease, HOST_COMMAND_REQUEST_SCHEMA,
@@ -54,8 +53,8 @@ fn export_mode(
     };
     let config: ManifoldBrokerAdapterConfig =
         read_json(manifold_fixtures.join(format!("{name}-config.json")))?;
-    let lock: ManifoldBrokerProductLock =
-        read_json(manifold_fixtures.join(format!("{name}-product-lock.json")))?;
+    let product_lock_json =
+        fs::read_to_string(manifold_fixtures.join(format!("{name}-product-lock.json")))?;
     for (suffix, request) in [
         (
             "applied",
@@ -89,7 +88,7 @@ fn export_mode(
                 }
             },
             adapter_config: config.clone(),
-            product_lock: lock.clone(),
+            product_lock_json: product_lock_json.clone(),
             prior_snapshot: None,
             initial_leases: vec![lease()],
             request,
@@ -120,6 +119,7 @@ fn request(
         requester_id: id("client.parity"),
         command_id: id(command_id),
         lease_id: lease_id.map(id),
+        params_digest: None,
         issued_at_ms: 1_000,
         expires_at_ms: 10_000,
     }

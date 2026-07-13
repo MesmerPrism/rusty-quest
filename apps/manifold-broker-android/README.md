@@ -1,41 +1,73 @@
 # Rusty Manifold Broker Android
 
-This app is the Rusty Quest-owned Android package surface for the Morphospace
+This app is the Rusty Quest-owned Android package adapter for the standalone
 Manifold broker identity:
 
 ```text
 io.github.mesmerprism.rustymanifold.broker/.BrokerStartActivity
 ```
 
-It is a platform adapter scaffold, not Manifold core authority. The app starts
-a local WebSocket endpoint at `/manifold/v1/events` on TCP port `8765`,
-accepts `rusty.manifold.command.envelope.v1` command envelopes, and replies
-with command acknowledgements. It intentionally does not synthesize live Polar,
-controller, or Makepad stream events, so live recording cannot pass without
-real providers.
+The app source deliberately has no `AndroidManifest.xml`. Packaging requires an
+explicit Manifold product spec and exact accepted lock. The Quest product
+preparer validates that pair, renders the actual permission-minimal manifest,
+generates a command registry and Java feature constants, and packages the
+accepted lock/registry/projection as APK assets. The build receipt records the
+lock id, closure fingerprint, canonical lock SHA-256, generated artifact hashes,
+and selected feature set.
 
-For remote-camera work, the package can arm local receiver sockets, bind peer
-transport ingress sockets, bridge sender source sockets to modeled peer routes,
-and start broker-owned sender sources. Supported sender source kinds are
-`external_h264_socket`, `diagnostic_synthetic_mediacodec_surface`, and
-`camera2_mediacodec_surface`. Quest stereo Camera2 publishing uses the explicit
-outside eye camera map `left:50,right:51` from
-`debug.rustyquest.remote_camera.sender_camera_ids`; it does not use a single
-fallback `sender_camera_id`. The Camera2 path is gated by runtime camera
-permission evidence and this APK intentionally declares Android, headset, and
-spatial camera permissions. That camera-enabled broker profile is separate from
-camera-free Makepad APK validation.
-
-The 2026-06-12 headset smoke recorded in the local developer evidence archive
-as `remote-camera-broker-20260612-stereo-ids` validated the direct TCP broker
-path on one Quest: command hello, receiver
-start, sender start, live status, binary H.264 bytes on both receiver lanes,
-left camera id `50`, and right camera id `51`. Physical two-Quest,
-Quest-to-Android-phone, relay/TLS, and Makepad projection runs are still
-separate validation gates.
-
-Build:
+The camera-free generic media-session package can be prepared without an
+Android toolchain:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
+  -ProductSpecPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.json `
+  -ProductLockPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.lock.json `
+  -PrepareOnly
 ```
+
+Remove `-PrepareOnly`, add
+`-MediaSessionBindingPath .\fixtures\media-runtime-products\display-composite.binding.json`,
+and provide the documented SDK/JDK roots to build the APK. Generic
+media-session selection contains no camera, P2P, or BLE
+permission. Camera permission requests and the camera foreground-service type
+are guarded by generated feature constants.
+
+The old remote-camera/QCL validation surface is retained only as explicit
+compatibility:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
+  -LegacyCameraP2pCompatibility
+```
+
+That switch selects the committed `broker.legacy_camera_p2p.standalone` spec
+and lock. Direct-P2P and BLE product work should otherwise use their dedicated
+provider apps instead of widening the background broker.
+
+The package exposes `/manifold/v1/events` on local TCP port `8765` and retains
+the historical remote-camera adapter source for compatibility. The build embeds
+an exact runtime config over the accepted lock, adapter, initial leases, and
+signature-derived grants. One process-local Rust provider preserves state
+across activity/service/Binder rebinds; a process restart receives a fresh
+epoch. Every WebSocket mutation must present its opaque token and consume a
+current one-use admission before the Runtime Host can apply it, and Java
+performs platform effects only after
+that Rust-authored receipt. The start service is package-private; admission is
+the only exported service and remains signature-protected.
+
+The runtime config also contains exact product-spec, accepted-lock, and
+per-client lock bytes with hashes. Generated grants are the exact product/client
+intersection, and Rust verifies the canonical config digest before creating the
+provider. Base builds grant no media/sink/peer capability; camera-free media
+adds only its selected media/sink closure. Bound typed effect parameters are
+returned by Rust and are the only values Java platform adapters consume.
+Generic media command acceptance prepares an exact seven-owner action but
+leaves `platform_effect_completed=false`; only an exact owner completion
+applied back through Rust can report completion. Generic media never routes
+through `RemoteCameraSessionRuntime`. See `docs/MEDIA_SESSION_RUNTIME.md`.
+
+Generic media platform-effect adoption remains a separate product gate. The
+Native Renderer now packages and verifies its exact embedded config, client
+lock, signer-derived grant, and Android-authenticated local admission lifecycle.
+Absent capabilities or leases reject rather than restoring former
+unauthenticated compatibility behavior.

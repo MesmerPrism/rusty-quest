@@ -3,13 +3,43 @@
   "profile_id": "profile.quest.native_renderer.particle_adapter_conformance",
   "target_platform": "quest",
   "owned_android_properties": [
-    "debug.rustyquest.native_renderer.particle_adapter.enabled"
+    "debug.rustyquest.native_renderer.particle_adapter.enabled",
+    "debug.rustyquest.native_renderer.particle_adapter.profile_id",
+    "debug.rustyquest.native_renderer.particle_adapter.project_id",
+    "debug.rustyquest.native_renderer.particle_adapter.feature_id",
+    "debug.rustyquest.native_renderer.particle_adapter.lock_revision",
+    "debug.rustyquest.native_renderer.particle_adapter.lock_sha256"
   ],
   "set_properties": [
     {
       "name": "debug.rustyquest.native_renderer.particle_adapter.enabled",
       "value": "true",
       "source_setting_id": "native_renderer.particle_adapter.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.profile_id",
+      "value": "profile.quest.native_renderer.particle_adapter_conformance",
+      "source_setting_id": "native_renderer.particle_adapter.profile_id"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.project_id",
+      "value": "native-renderer",
+      "source_setting_id": "native_renderer.particle_adapter.project_id"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.feature_id",
+      "value": "particle-adapter-consumer",
+      "source_setting_id": "native_renderer.particle_adapter.feature_id"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.lock_revision",
+      "value": "1",
+      "source_setting_id": "native_renderer.particle_adapter.lock_revision"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.lock_sha256",
+      "value": "D51D97F6B01663F360E867EB01C3F27A3DB7C3204210F1C1D7634CA52DD276BC",
+      "source_setting_id": "native_renderer.particle_adapter.lock_sha256"
     }
   ],
   "expected_markers": [
@@ -21,7 +51,15 @@
     "particleAdapterEnabled=true",
     "particleAdapterSourceContracts=matter-render-payload+lattice-situated-anchor+optics-visual-frame",
     "particleAdapterHighRateJson=false",
-    "particleAdapterBackendPayloadAbsent=true"
+    "particleAdapterBackendPayloadAbsent=true",
+    "lockBindingSchema=rusty.quest.lock_bound_activation.v1",
+    "activationState=applied",
+    "projectId=native-renderer",
+    "featureId=particle-adapter-consumer",
+    "conformanceLockRevision=1",
+    "conformanceLockSha256=D51D97F6B01663F360E867EB01C3F27A3DB7C3204210F1C1D7634CA52DD276BC",
+    "runtimeProfileId=profile.quest.native_renderer.particle_adapter_conformance",
+    "activationRejectReason=none"
   ],
   "validation_commands": [
     "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-particle-adapter-conformance.profile.json -DryRun -Out local-artifacts/native-renderer-particle-adapter-conformance-property-write-plan.json"

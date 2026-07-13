@@ -5,12 +5,13 @@ use rusty_manifold_peer::{
     expire_peer_mesh_members, review_and_apply_peer_mesh, revoke_peer_mesh_member,
     ManifoldAcceptedMeshMember, ManifoldAcceptedPeer, ManifoldAcceptedPeerState,
     ManifoldPeerAvailability, ManifoldPeerIdentity, ManifoldPeerMeshDecision,
-    ManifoldPeerMeshMutationReceipt, ManifoldPeerMeshProposal, ManifoldPeerMeshRejectionReason,
-    ManifoldPeerMeshReviewCase, ManifoldPeerMeshRevocation, ManifoldPeerMeshRouteCandidate,
-    ManifoldPeerMeshRouteClass, ManifoldPeerMeshState, ManifoldPeerRole, ManifoldPeerStatus,
-    ADVISORY_STATUS_ROUTE_CONTRACT, DIRECT_P2P_ROUTE_CONTRACT, PEER_IDENTITY_SCHEMA,
-    PEER_MESH_PROPOSAL_SCHEMA, PEER_MESH_REVIEW_SCHEMA, PEER_MESH_STATE_SCHEMA,
-    PEER_SNAPSHOT_SCHEMA, PEER_STATUS_SCHEMA,
+    ManifoldPeerMeshMutationReceipt, ManifoldPeerMeshPairEvidence, ManifoldPeerMeshProposal,
+    ManifoldPeerMeshRejectionReason, ManifoldPeerMeshReviewCase, ManifoldPeerMeshRevocation,
+    ManifoldPeerMeshRouteCandidate, ManifoldPeerMeshRouteClass, ManifoldPeerMeshState,
+    ManifoldPeerRole, ManifoldPeerStatus, ADVISORY_STATUS_ROUTE_CONTRACT,
+    DIRECT_P2P_ROUTE_CONTRACT, PEER_IDENTITY_SCHEMA, PEER_MESH_PROPOSAL_SCHEMA,
+    PEER_MESH_REVIEW_SCHEMA, PEER_MESH_STATE_SCHEMA, PEER_SNAPSHOT_SCHEMA, PEER_STATUS_SCHEMA,
+    PRODUCT_WIFI_DIRECT_TOPOLOGY_CONTRACT,
 };
 use rusty_quest_device_link::{validate_ble_rendezvous_pair_receipt, BleRendezvousPairReceipt};
 use serde::{Deserialize, Serialize};
@@ -142,8 +143,13 @@ pub fn evaluate_configured_n_peer_mesh(
         id("sweep.peer-mesh.configured-expiry")?,
         configured_expiry,
     )?;
-    if expiry_receipt.removed_peer_ids != [config.configured_peer_id.clone()] {
-        return Err("configured peer expiry did not remove exactly the third peer".to_string());
+    if !expiry_receipt
+        .removed_peer_ids
+        .contains(&config.configured_peer_id)
+        || expiry_receipt.mesh_active
+        || !expired_state.members.is_empty()
+    {
+        return Err("configured peer expiry did not close the undersized mesh".to_string());
     }
 
     let (revoked_state, revocation_receipt) = revoke_peer_mesh_member(
@@ -266,6 +272,7 @@ fn review_case(
             ],
             applied_proposal_ids: Vec::new(),
         },
+        accepted_pair_evidence: vec![pair_evidence(config, route_expiry)?],
         current_state: ManifoldPeerMeshState {
             schema_id: schema(PEER_MESH_STATE_SCHEMA),
             authority_revision: Revision::INITIAL,
@@ -293,7 +300,7 @@ fn review_case(
                     target_peer_id: config.candidate_peer_id.clone(),
                     route_class: ManifoldPeerMeshRouteClass::DirectPairwise,
                     route_contract_id: id(DIRECT_P2P_ROUTE_CONTRACT)?,
-                    authenticated: true,
+                    pair_evidence_receipt_id: Some(id("receipt.peer.rendezvous.quest-pair.001")?),
                     observed_latency_ms: config.live_pair_latency_ms,
                     hop_count: 1,
                     evidence_expires_at_ms: route_expiry,
@@ -329,10 +336,33 @@ fn advisory_route(
         target_peer_id: second.clone(),
         route_class: ManifoldPeerMeshRouteClass::AdvisoryStatusOnly,
         route_contract_id: id(ADVISORY_STATUS_ROUTE_CONTRACT)?,
-        authenticated: false,
+        pair_evidence_receipt_id: None,
         observed_latency_ms: 50,
         hop_count: 1,
         evidence_expires_at_ms: expiry,
+    })
+}
+
+fn pair_evidence(
+    config: &QuestPeerMeshProjectionConfig,
+    expires_at_ms: u64,
+) -> Result<ManifoldPeerMeshPairEvidence, String> {
+    let pair = BTreeMembers::new([
+        config.subject_peer_id.clone(),
+        config.candidate_peer_id.clone(),
+    ]);
+    Ok(ManifoldPeerMeshPairEvidence {
+        receipt_id: id("receipt.peer.rendezvous.quest-pair.001")?,
+        peer_ids: pair.values.clone(),
+        signer_key_ids: vec![
+            id("key.quest.peer.primary")?,
+            id("key.quest.peer.secondary")?,
+        ],
+        evidence_sha256: format!("sha256:{}", "ab".repeat(32)),
+        pair_authority_revision: Revision::INITIAL,
+        pair_authority_epoch: 1,
+        topology_contract_id: id(PRODUCT_WIFI_DIRECT_TOPOLOGY_CONTRACT)?,
+        expires_at_ms,
     })
 }
 
@@ -448,10 +478,11 @@ mod tests {
         let accepted = bundle.accepted_decision.accepted_state.expect("state");
         assert_eq!(accepted.members.len(), 3);
         assert_eq!(accepted.selected_routes.len(), 1);
-        assert_eq!(
-            bundle.expiry_receipt.removed_peer_ids,
-            [id("peer.gamma").expect("id")]
-        );
+        assert!(bundle
+            .expiry_receipt
+            .removed_peer_ids
+            .contains(&id("peer.gamma").expect("id")));
+        assert!(!bundle.expiry_receipt.mesh_active);
         assert!(bundle
             .revoked_state
             .revoked_peer_ids

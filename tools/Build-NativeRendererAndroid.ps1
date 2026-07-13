@@ -75,6 +75,55 @@ function Get-FileSha256 {
     }
 }
 
+function Get-ExactClientGrantCapabilities {
+    param(
+        [Parameter(Mandatory=$true)]$ClientLock,
+        [Parameter(Mandatory=$true)]$ProductLock
+    )
+    $allowed = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
+    foreach ($commandId in @($ProductLock.command_ids)) {
+        $suffix = ([string]$commandId) -replace '^command\.', ''
+        [void]$allowed.Add("capability.command.$suffix")
+    }
+    $features = @($ProductLock.features | ForEach-Object { [string]$_ })
+    $commands = @($ProductLock.command_ids | ForEach-Object { [string]$_ })
+    $streams = @($ProductLock.stream_ids | ForEach-Object { [string]$_ })
+    $mediaSelected = $features -contains "media_session"
+    $peerSelected = ($features -contains "direct_p2p") -or
+        ($features -contains "ble_rendezvous") -or
+        ($commands -contains "command.peer.status.get") -or
+        ($streams -contains "stream.peer.status")
+    $result = foreach ($capability in @($ClientLock.capabilities | ForEach-Object { [string]$_ })) {
+        if ($allowed.Contains($capability) -or
+            ($mediaSelected -and ($capability -eq "capability.media.session.observe" -or $capability.StartsWith("capability.sink.", [System.StringComparison]::Ordinal))) -or
+            ($peerSelected -and $capability -eq "capability.peer.session.observe")) {
+            $capability
+        }
+    }
+    return @($result | Sort-Object -Unique)
+}
+
+function Get-RuntimeConfigDigest {
+    param(
+        [Parameter(Mandatory=$true)][string]$RepoRoot,
+        [Parameter(Mandatory=$true)][string]$RuntimeConfigPath
+    )
+    Push-Location $RepoRoot
+    try {
+        $output = @(& cargo run --quiet -p rusty-quest-broker-authority --bin runtime_config_digest -- $RuntimeConfigPath 2>&1)
+        if ($LASTEXITCODE -ne 0) {
+            throw "runtime config digest failed: $($output -join [Environment]::NewLine)"
+        }
+    } finally {
+        Pop-Location
+    }
+    $digest = @($output | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -match '^[0-9a-f]{64}$' }) | Select-Object -Last 1
+    if ([string]::IsNullOrWhiteSpace($digest)) {
+        throw "runtime config digest did not emit one lowercase SHA-256"
+    }
+    return $digest
+}
+
 function Assert-HashMatches {
     param(
         [Parameter(Mandatory=$true)][string]$Label,
@@ -310,6 +359,164 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
 }
 
 New-Item -ItemType Directory -Force -Path $assetsDir, $classesDir, $dexDir, $nativeLibDir | Out-Null
+if (-not (Test-Path $Keystore)) {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Keystore) | Out-Null
+    Invoke-Checked "keytool" $keytool @(
+        "-genkeypair",
+        "-v",
+        "-keystore", $Keystore,
+        "-storepass", "android",
+        "-keypass", "android",
+        "-alias", "androiddebugkey",
+        "-keyalg", "RSA",
+        "-keysize", "2048",
+        "-validity", "10000",
+        "-dname", "CN=Rusty Quest Native Renderer,O=Rusty Quest,C=US"
+    )
+}
+$embeddedBrokerCertificatePath = Join-Path $OutDir "native-renderer-signing-certificate.der"
+Invoke-Checked "keytool certificate export" $keytool @(
+    "-exportcert",
+    "-keystore", $Keystore,
+    "-storepass", "android",
+    "-alias", "androiddebugkey",
+    "-file", $embeddedBrokerCertificatePath
+)
+$embeddedBrokerCertificateSha256 = Get-FileSha256 -Path $embeddedBrokerCertificatePath
+
+$manifoldFixtureRoot = Resolve-Path (Join-Path $repoRoot "..\rusty-manifold\fixtures\broker-product")
+$embeddedProductSpecPath = Join-Path $manifoldFixtureRoot "media-session-embedded.json"
+$embeddedProductLockPath = Join-Path $manifoldFixtureRoot "media-session-embedded.lock.json"
+$embeddedClientLockPath = Join-Path $repoRoot "fixtures\broker-clients\native-renderer.client.json"
+$embeddedMediaBindingPath = Join-Path $repoRoot "fixtures\media-runtime-products\native-renderer-display.binding.json"
+$embeddedMediaLifecyclePath = Join-Path $repoRoot "fixtures\broker-clients\native-renderer.media-lifecycle.json"
+$embeddedAppFeatureLockPath = Join-Path $repoRoot "apps\native-renderer-android\morphospace\conformance-locks\broker-media-client.feature.lock.json"
+foreach ($path in @($embeddedProductSpecPath, $embeddedProductLockPath, $embeddedClientLockPath, $embeddedMediaBindingPath, $embeddedMediaLifecyclePath, $embeddedAppFeatureLockPath)) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Embedded Manifold packaged authority input is missing: $path"
+    }
+}
+$embeddedProductSpecJson = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $embeddedProductSpecPath))
+$embeddedProductLockJson = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $embeddedProductLockPath))
+$embeddedClientLockJson = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $embeddedClientLockPath))
+$embeddedMediaBindingJson = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $embeddedMediaBindingPath))
+$embeddedMediaLifecycleJson = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $embeddedMediaLifecyclePath))
+$embeddedAppFeatureLockJson = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $embeddedAppFeatureLockPath))
+$embeddedProductLock = $embeddedProductLockJson | ConvertFrom-Json
+$embeddedClientLock = $embeddedClientLockJson | ConvertFrom-Json
+$embeddedMediaBinding = $embeddedMediaBindingJson | ConvertFrom-Json
+if ([string]$embeddedClientLock.schema -ne "rusty.quest.broker_client_spec.v1" -or
+    [string]$embeddedClientLock.client_id -ne "client.quest.native-renderer" -or
+    [string]$embeddedClientLock.package_name -ne $packageName -or
+    @($embeddedClientLock.adapter_permissions).Count -ne 1 -or
+    [string]$embeddedClientLock.adapter_permissions[0] -ne "io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION" -or
+    @($embeddedClientLock.runtime_properties).Count -ne 0 -or
+    @($embeddedClientLock.application_defaults).Count -ne 0) {
+    throw "Native renderer broker client lock is not an exact closed signature-scoped binding."
+}
+$embeddedGrantCapabilities = @(Get-ExactClientGrantCapabilities -ClientLock $embeddedClientLock -ProductLock $embeddedProductLock)
+$embeddedRuntimeConfig = [ordered]@{
+    '$schema' = "rusty.quest.broker.runtime_config.v1"
+    bridge_kind = "embedded_in_process_jni"
+    adapter_config = [ordered]@{
+        '$schema' = "rusty.manifold.broker.adapter_config.v2"
+        adapter_id = "adapter.quest.native-renderer.embedded"
+        mode = "embedded"
+        product_lock_id = [string]$embeddedProductLock.lock_id
+        product_lock_fingerprint = [string]$embeddedProductLock.spec_fingerprint
+        product_lock_sha256 = "sha256:$(Get-FileSha256 -Path $embeddedProductLockPath)"
+        authority_host_id = "host.quest.native-renderer"
+        authority_owner_id = "module.runtime.host"
+    }
+    product_lock = $embeddedProductLock
+    packaged_authority = [ordered]@{
+        product_spec_json = $embeddedProductSpecJson
+        product_spec_sha256 = Get-FileSha256 -Path $embeddedProductSpecPath
+        product_lock_json = $embeddedProductLockJson
+        product_lock_sha256 = Get-FileSha256 -Path $embeddedProductLockPath
+        client_locks = @([ordered]@{
+            grant_id = "grant.quest.native-renderer"
+            client_lock_json = $embeddedClientLockJson
+            client_lock_sha256 = Get-FileSha256 -Path $embeddedClientLockPath
+            media_lifecycle_authority = [ordered]@{
+                media_lifecycle_lock_json = $embeddedMediaLifecycleJson
+                media_lifecycle_lock_sha256 = Get-FileSha256 -Path $embeddedMediaLifecyclePath
+                app_feature_lock_json = $embeddedAppFeatureLockJson
+                app_feature_lock_sha256 = Get-FileSha256 -Path $embeddedAppFeatureLockPath
+                media_binding_json = $embeddedMediaBindingJson
+                media_binding_sha256 = Get-FileSha256 -Path $embeddedMediaBindingPath
+            }
+        })
+    }
+    initial_leases = @([ordered]@{
+        lease_id = "lease.broker.media-session.client.quest.native-renderer"
+        scope = "lease.media.session"
+        holder_id = "client.quest.native-renderer"
+        expires_at_ms = 4102444800000
+    })
+    admission = [ordered]@{
+        '$schema' = "rusty.quest.broker.admission_config.v1"
+        snapshot = [ordered]@{
+            '$schema' = "rusty.manifold.admission.snapshot.v2"
+            authority_id = "authority.admission.quest.native-renderer"
+            authority_revision = 1
+            grants = @([ordered]@{
+                grant_id = "grant.quest.native-renderer"
+                client_lock_id = [string]$embeddedClientLock.feature_lock_id
+                client_lock_fingerprint = "sha256:$(Get-FileSha256 -Path $embeddedClientLockPath)"
+                identity = [ordered]@{
+                    client_id = [string]$embeddedClientLock.client_id
+                    platform_subject = [string]$embeddedClientLock.package_name
+                    signing_fingerprint = "sha256:$embeddedBrokerCertificateSha256"
+                }
+                capabilities = $embeddedGrantCapabilities
+                expires_at_ms = 4102444800000
+                revoked = $false
+            })
+            active_tokens = @()
+            revoked_token_ids = @()
+            consumed_request_ids = @()
+            consumed_use_request_ids = @()
+            reviewed_sweep_ids = @()
+            audit_events = @()
+            max_token_ttl_ms = 60000
+        }
+    }
+    media_session = $embeddedMediaBinding
+}
+$embeddedRuntimeConfigPath = Join-Path $OutDir "embedded-manifold-runtime-config.json"
+[System.IO.File]::WriteAllText(
+    $embeddedRuntimeConfigPath,
+    ($embeddedRuntimeConfig | ConvertTo-Json -Depth 30),
+    (New-Object System.Text.UTF8Encoding($false)))
+$embeddedRuntimeConfigSha256 = Get-RuntimeConfigDigest -RepoRoot $repoRoot -RuntimeConfigPath $embeddedRuntimeConfigPath
+$embeddedRuntimeConfigJava = ($embeddedRuntimeConfig | ConvertTo-Json -Depth 30 -Compress).Replace('\', '\\').Replace('"', '\"')
+$embeddedCapabilitiesJava = (@($embeddedGrantCapabilities | ForEach-Object { '"' + ([string]$_).Replace('"', '\"') + '"' }) -join ', ')
+$generatedEmbeddedPackageDir = Join-Path $OutDir "generated\io\github\mesmerprism\rustyquest\native_renderer"
+New-Item -ItemType Directory -Force -Path $generatedEmbeddedPackageDir | Out-Null
+$generatedEmbeddedRuntimeConfigPath = Join-Path $generatedEmbeddedPackageDir "GeneratedEmbeddedManifoldRuntimeConfig.java"
+$generatedEmbeddedRuntimeConfigSource = @"
+package io.github.mesmerprism.rustyquest.native_renderer;
+
+final class GeneratedEmbeddedManifoldRuntimeConfig {
+    static final String JSON = "$embeddedRuntimeConfigJava";
+    static final String SHA256 = "$embeddedRuntimeConfigSha256";
+    static final String CLIENT_ID = "$($embeddedClientLock.client_id)";
+    static final String PACKAGE_NAME = "$($embeddedClientLock.package_name)";
+    static final String[] GRANTED_CAPABILITIES = new String[] {$embeddedCapabilitiesJava};
+    private GeneratedEmbeddedManifoldRuntimeConfig() {}
+}
+"@
+[System.IO.File]::WriteAllText(
+    $generatedEmbeddedRuntimeConfigPath,
+    $generatedEmbeddedRuntimeConfigSource,
+    (New-Object System.Text.UTF8Encoding($false)))
+$embeddedAuthorityAssetDir = Join-Path $assetsDir "manifold"
+New-Item -ItemType Directory -Force -Path $embeddedAuthorityAssetDir | Out-Null
+Copy-Item -LiteralPath $embeddedProductSpecPath -Destination (Join-Path $embeddedAuthorityAssetDir "product-spec.json") -Force
+Copy-Item -LiteralPath $embeddedProductLockPath -Destination (Join-Path $embeddedAuthorityAssetDir "accepted-product-lock.json") -Force
+Copy-Item -LiteralPath $embeddedClientLockPath -Destination (Join-Path $embeddedAuthorityAssetDir "native-renderer.client.json") -Force
+Copy-Item -LiteralPath $embeddedRuntimeConfigPath -Destination (Join-Path $embeddedAuthorityAssetDir "runtime-config.json") -Force
 Copy-Item -LiteralPath (Join-Path $repoRoot "fixtures\native-renderer\native-hwb-blur-sdf-public.plan.json") `
     -Destination (Join-Path $assetsDir "native-hwb-blur-sdf-public.plan.json") `
     -Force
@@ -360,11 +567,13 @@ if (-not [string]::IsNullOrWhiteSpace($RecordedHandCaptureDir)) {
 
 $sourceFiles = Get-ChildItem -Path (Join-Path $appRoot "src\main\java") -Recurse -Filter *.java |
     ForEach-Object { $_.FullName }
-$sharedBrokerClientJava = Join-Path $repoRoot "crates\rusty-quest-broker-client\android\io\github\mesmerprism\rustyquest\broker_client\BrokerClientProbeActivity.java"
-if (-not (Test-Path -LiteralPath $sharedBrokerClientJava -PathType Leaf)) {
-    throw "Shared broker client Android adapter not found: $sharedBrokerClientJava"
+$sharedBrokerClientJavaRoot = Join-Path $repoRoot "crates\rusty-quest-broker-client\android"
+$sharedBrokerClientJava = Get-ChildItem -LiteralPath $sharedBrokerClientJavaRoot -Recurse -Filter *.java |
+    ForEach-Object { $_.FullName }
+if ($sharedBrokerClientJava.Count -lt 2) {
+    throw "Shared broker client Android adapter sources are incomplete: $sharedBrokerClientJavaRoot"
 }
-$sourceFiles = @($sourceFiles) + @($sharedBrokerClientJava)
+$sourceFiles = @($sourceFiles) + @($sharedBrokerClientJava) + @($generatedEmbeddedRuntimeConfigPath)
 if ($sourceFiles.Count -eq 0) {
     throw "No Java sources found under $appRoot"
 }
@@ -508,22 +717,6 @@ Invoke-Checked "jar native lib update" $jar @("uf", $apkUnaligned, "-C", $native
 Invoke-Checked "jar dex update" $jar @("uf", $apkUnaligned, "-C", $dexDir, "classes.dex")
 Invoke-Checked "zipalign" $zipalign @("-f", "4", $apkUnaligned, $apkAligned)
 
-if (-not (Test-Path $Keystore)) {
-    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Keystore) | Out-Null
-    Invoke-Checked "keytool" $keytool @(
-        "-genkeypair",
-        "-v",
-        "-keystore", $Keystore,
-        "-storepass", "android",
-        "-keypass", "android",
-        "-alias", "androiddebugkey",
-        "-keyalg", "RSA",
-        "-keysize", "2048",
-        "-validity", "10000",
-        "-dname", "CN=Rusty Quest Native Renderer,O=Rusty Quest,C=US"
-    )
-}
-
 Invoke-Checked "apksigner" $apksigner @(
     "sign",
     "--ks", $Keystore,
@@ -591,6 +784,13 @@ $manifest = [ordered]@{
     app_build_manifest_input = $manifestInputPath
     app_build_selected_feature_ids = if ($null -eq $appBuildLockObject) { @() } else { @($appBuildLockObject.selected_feature_ids) }
     settings_authority = if ($null -eq $appBuildLockObject) { "" } else { [string]$appBuildLockObject.app_settings.authority }
+    embedded_manifold_runtime_config_sha256 = Get-FileSha256 -Path $embeddedRuntimeConfigPath
+    embedded_manifold_runtime_config_canonical_sha256 = $embeddedRuntimeConfigSha256
+    embedded_manifold_product_spec_sha256 = Get-FileSha256 -Path $embeddedProductSpecPath
+    embedded_manifold_product_lock_sha256 = Get-FileSha256 -Path $embeddedProductLockPath
+    embedded_manifold_client_lock_sha256 = Get-FileSha256 -Path $embeddedClientLockPath
+    embedded_manifold_granted_capabilities = $embeddedGrantCapabilities
+    embedded_manifold_authority_config_source = "packaged-generated-lock-closure"
 }
 $manifestPath = Join-Path $OutDir "build-manifest.json"
 $manifest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -Path $manifestPath

@@ -31,6 +31,8 @@ public final class LocalManifoldBrokerServer {
     public static final int PORT = 8765;
     public static final String EVENTS_PATH = "/manifold/v1/events";
     private static final String COMMAND_SCHEMA = "rusty.manifold.command.envelope.v1";
+    private static final String MUTATION_SCHEMA =
+            "rusty.quest.broker.server_mutation_request.v1";
     private static final String BRIDGE_PROBE_SET_MARKER_COMMAND =
             "hostess.makepad.bridge_probe.set_marker";
     private static final String BRIDGE_COMMAND_REQUEST_SCHEMA =
@@ -162,129 +164,126 @@ public final class LocalManifoldBrokerServer {
         String type = message.optString("type", "");
         if ("hello".equals(type)) {
             JSONObject reply = new JSONObject();
-            reply.put("type", "hello_ack");
-            reply.put("schema", "rusty.manifold.broker.hello_ack.v1");
-            reply.put("accepted", true);
-            reply.put("authority", "rusty.manifold");
+            reply.put("type", "hello_transport_status");
+            reply.put("schema", "rusty.quest.broker.transport_status.v1");
+            reply.put("transport_ready", true);
             reply.put("server_id", "rusty.quest.manifold_broker_android");
             reply.put("endpoint_path", EVENTS_PATH);
+            reply.put("mutation_authority_required", true);
             reply.put("time_utc", Instant.now().toString());
             writeText(session, reply);
             return;
         }
 
-        if ("command".equals(type) || COMMAND_SCHEMA.equals(message.optString("schema", ""))) {
-            JSONObject reply = new JSONObject();
-            String command = message.optString("command_id", message.optString("command", "unknown"));
-            JSONObject params = message.optJSONObject("params");
-            if (params == null) {
-                params = new JSONObject();
-            }
-            if (isSubscribeCommand(command)) {
-                String stream = firstNonEmpty(
-                        params.optString("stream", ""),
-                        params.optString("stream_id", ""),
-                        params.optString("value", ""));
-                if (!stream.isEmpty()) {
-                    session.subscribe(stream);
-                }
-                reply.put("type", "command_ack");
-                reply.put("schema", "rusty.manifold.command.ack.v1");
-                reply.put("request_id", message.optString("request_id", ""));
-                reply.put("command", command);
-                reply.put("accepted", !stream.isEmpty());
-                reply.put("status", stream.isEmpty() ? "missing_stream" : "subscribed");
-                reply.put("authority", "rusty.manifold");
-                reply.put("stream", stream);
-                reply.put("time_utc", Instant.now().toString());
+        if ("command".equals(type)
+                || COMMAND_SCHEMA.equals(message.optString("schema", ""))
+                || MUTATION_SCHEMA.equals(message.optString("$schema", ""))) {
+            JSONObject reply = ManifoldRuntimeAuthorityBridge.evaluateMutation(message);
+            if (!reply.optBoolean("accepted", false)) {
                 writeText(session, reply);
                 return;
             }
-            if (isPublishStreamEventCommand(command)) {
-                JSONObject event = buildStreamEvent(message, params);
-                reply.put("type", "command_ack");
-                reply.put("schema", "rusty.manifold.command.ack.v1");
-                reply.put("request_id", message.optString("request_id", ""));
-                reply.put("command", command);
-                reply.put("accepted", true);
-                reply.put("status", "published");
-                reply.put("authority", "rusty.manifold");
+            JSONObject effectParams = reply.getJSONObject("effect_params");
+            if (!"rusty.quest.broker.effect_params.v1".equals(
+                    effectParams.optString("$schema", ""))) {
+                throw new IllegalStateException("Rust authority returned invalid effect params");
+            }
+            String command = reply.getString("command_id");
+            if (!command.equals(effectParams.optString("command_id", ""))) {
+                throw new IllegalStateException("Rust authority returned command-mismatched params");
+            }
+            JSONObject params = effectParams.getJSONObject("values");
+            String platformEffect = reply.optString("platform_effect", "none");
+            if ("stream_publish".equals(platformEffect)) {
+                JSONObject event = buildStreamEvent(reply, params);
                 reply.put("stream", event.optString("stream", ""));
-                reply.put("stream_event_delivered_count", 0);
+                reply.put("stream_event_delivered_count", publishStreamEvent(event));
+                reply.put("platform_effect_status", "published");
                 reply.put("live_stream_events_synthesized", false);
                 reply.put("time_utc", Instant.now().toString());
                 writeText(session, reply);
-                int delivered = publishStreamEvent(event);
-                reply.put("stream_event_delivered_count", delivered);
                 return;
             }
-            if (isBridgeProbeSetMarkerCommand(command)) {
-                JSONObject event = buildBridgeCommandRequestEvent(message, params);
+            if ("hostess_bridge_dispatch".equals(platformEffect)) {
+                JSONObject event = buildBridgeCommandRequestEvent(reply, params);
                 int delivered = publishStreamEvent(event);
-                reply.put("type", "command_ack");
-                reply.put("schema", "rusty.manifold.command.ack.v1");
-                reply.put("request_id", message.optString("request_id", ""));
-                reply.put("command", command);
-                reply.put("accepted", true);
-                reply.put("status", delivered > 0 ? "dispatched" : "accepted_no_runtime_subscriber");
-                reply.put("authority", "rusty.manifold");
                 reply.put("runtime_dispatch_stream", BRIDGE_COMMAND_REQUEST_STREAM);
                 reply.put("runtime_receipt_stream", BRIDGE_COMMAND_RECEIPT_STREAM);
                 reply.put("runtime_dispatch_delivered_count", delivered);
                 reply.put("runtime_receipt_required", true);
+                reply.put("platform_effect_status",
+                        delivered > 0 ? "dispatched" : "no_runtime_subscriber");
                 reply.put("live_stream_events_synthesized", false);
                 reply.put("high_rate_json_payload", false);
                 reply.put("time_utc", Instant.now().toString());
                 writeText(session, reply);
                 return;
             }
-            JSONObject remoteCameraRuntime = RemoteCameraSessionRuntime.handleCommand(applicationContext, message);
-            reply.put("type", "command_ack");
-            reply.put("schema", "rusty.manifold.command.ack.v1");
-            reply.put("request_id", message.optString("request_id", ""));
-            reply.put("command", command);
-            reply.put("accepted", true);
-            reply.put("status", remoteCameraRuntime != null
-                    ? remoteCameraRuntime.optString("status", "accepted")
-                    : "accepted");
-            reply.put("authority", "rusty.manifold");
-            reply.put("live_stream_events_synthesized", false);
-            if (remoteCameraRuntime != null) {
-                reply.put("remote_camera_runtime", remoteCameraRuntime);
-                if (RemoteCameraSessionRuntime.isMediaStreamCommand(message)
-                        || "media_stream".equals(remoteCameraRuntime.optString("runtime_family", ""))) {
-                    reply.put("media_stream_runtime", remoteCameraRuntime);
-                }
-                reply.put(
-                        "media_socket_runtime_started",
-                        remoteCameraRuntime.optBoolean("media_socket_runtime_started", false));
+            if ("media_session".equals(platformEffect)) {
+                JSONObject genericMedia =
+                        GenericMediaSessionPlatformAdapter.reportPreparedAction(reply);
+                reply.put("generic_media_session_runtime", genericMedia);
+                reply.put("platform_effect_completed",
+                        genericMedia.optBoolean("platform_effect_completed", false));
+                reply.put("platform_effect_status",
+                        genericMedia.optString("status", "platform_action_not_prepared"));
+                reply.put("live_stream_events_synthesized", false);
+                reply.put("time_utc", Instant.now().toString());
+                writeText(session, reply);
+                return;
             }
+            if ("remote_camera_compatibility".equals(platformEffect)) {
+                JSONObject effectRequest = legacyEffectRequest(reply, command, params);
+                JSONObject remoteCameraRuntime =
+                        RemoteCameraSessionRuntime.handleCommand(applicationContext, effectRequest);
+                reply.put("live_stream_events_synthesized", false);
+                if (remoteCameraRuntime != null) {
+                    reply.put("remote_camera_runtime", remoteCameraRuntime);
+                    if (RemoteCameraSessionRuntime.isMediaStreamCommand(effectRequest)
+                            || "media_stream".equals(
+                                    remoteCameraRuntime.optString("runtime_family", ""))) {
+                        reply.put("media_stream_runtime", remoteCameraRuntime);
+                    }
+                    reply.put(
+                            "media_socket_runtime_started",
+                            remoteCameraRuntime.optBoolean("media_socket_runtime_started", false));
+                    reply.put("platform_effect_status",
+                            remoteCameraRuntime.optString("status", "reported"));
+                } else {
+                    reply.put("platform_effect_status", "no_compatible_platform_adapter");
+                }
+                reply.put("time_utc", Instant.now().toString());
+                writeText(session, reply);
+                return;
+            }
+            reply.put("platform_effect_status", "none");
             reply.put("time_utc", Instant.now().toString());
             writeText(session, reply);
             return;
         }
 
         JSONObject reply = new JSONObject();
-        reply.put("type", "message_ack");
-        reply.put("accepted", true);
-        reply.put("authority", "rusty.manifold");
+        reply.put("type", "transport_rejection");
+        reply.put("schema", "rusty.quest.broker.transport_rejection.v1");
+        reply.put("reason", "unsupported_transport_message");
         writeText(session, reply);
     }
 
-    private static boolean isSubscribeCommand(String command) {
-        return "subscribe".equals(command)
-                || "stream.subscribe".equals(command)
-                || "manifold.stream.subscribe".equals(command);
+    private static String requestId(JSONObject authorityResponse) {
+        return authorityResponse.optString("request_id", "");
     }
 
-    private static boolean isPublishStreamEventCommand(String command) {
-        return "publish_stream_event".equals(command)
-                || "stream.publish".equals(command)
-                || "manifold.stream.publish".equals(command);
-    }
-
-    private static boolean isBridgeProbeSetMarkerCommand(String command) {
-        return BRIDGE_PROBE_SET_MARKER_COMMAND.equals(command);
+    private static JSONObject legacyEffectRequest(
+            JSONObject authorityResponse,
+            String command,
+            JSONObject params) throws Exception {
+        JSONObject effect = new JSONObject();
+        effect.put("type", "command");
+        effect.put("schema", COMMAND_SCHEMA);
+        effect.put("request_id", requestId(authorityResponse));
+        effect.put("command_id", command);
+        effect.put("params", new JSONObject(params.toString()));
+        return effect;
     }
 
     private static String firstNonEmpty(String first, String second, String third) {
@@ -300,7 +299,7 @@ public final class LocalManifoldBrokerServer {
         return "";
     }
 
-    private static JSONObject buildStreamEvent(JSONObject message, JSONObject params) throws Exception {
+    private static JSONObject buildStreamEvent(JSONObject authorityResponse, JSONObject params) throws Exception {
         JSONObject payload = params.optJSONObject("payload");
         if (payload == null) {
             payload = new JSONObject();
@@ -320,16 +319,16 @@ public final class LocalManifoldBrokerServer {
         event.put("stream_id", stream);
         event.put("sequence_id", sequenceId);
         event.put("payload", payload);
-        event.put("source_request_id", message.optString("request_id", ""));
+        event.put("source_request_id", requestId(authorityResponse));
         event.put("transport_time_unix_ns", brokerTimeUnixNs);
         event.put("transport_receive_time_unix_ns", brokerTimeUnixNs);
         event.put("time_utc", Instant.now().toString());
         return event;
     }
 
-    private static JSONObject buildBridgeCommandRequestEvent(JSONObject message, JSONObject params) throws Exception {
+    private static JSONObject buildBridgeCommandRequestEvent(JSONObject authorityResponse, JSONObject params) throws Exception {
         JSONObject requestParams = new JSONObject(params.toString());
-        String requestId = message.optString("request_id", "");
+        String requestId = requestId(authorityResponse);
         if (firstNonEmpty(
                 requestParams.optString("probe_token", ""),
                 requestParams.optString("marker", ""),
@@ -346,8 +345,8 @@ public final class LocalManifoldBrokerServer {
         payload.put("$schema", BRIDGE_COMMAND_REQUEST_SCHEMA);
         payload.put("request_id", requestId);
         payload.put("route_id", firstNonEmpty(
-                message.optString("route_id", ""),
                 params.optString("route_id", ""),
+                "",
                 "bridge_route.command.websocket.applied"));
         payload.put("command", BRIDGE_PROBE_SET_MARKER_COMMAND);
         payload.put("params", requestParams);

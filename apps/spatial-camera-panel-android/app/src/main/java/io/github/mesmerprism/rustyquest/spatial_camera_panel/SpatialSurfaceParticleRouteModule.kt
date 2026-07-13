@@ -14,6 +14,16 @@ import kotlin.math.abs
 
 internal const val NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY =
     "debug.rustyquest.spatial.native_surface_particle_layer.enabled"
+internal const val PARTICLE_ADAPTER_PROFILE_ID_PROPERTY =
+    "debug.rustyquest.spatial_camera_panel.particle_adapter.profile_id"
+internal const val PARTICLE_ADAPTER_PROJECT_ID_PROPERTY =
+    "debug.rustyquest.spatial_camera_panel.particle_adapter.project_id"
+internal const val PARTICLE_ADAPTER_FEATURE_ID_PROPERTY =
+    "debug.rustyquest.spatial_camera_panel.particle_adapter.feature_id"
+internal const val PARTICLE_ADAPTER_LOCK_REVISION_PROPERTY =
+    "debug.rustyquest.spatial_camera_panel.particle_adapter.lock_revision"
+internal const val PARTICLE_ADAPTER_LOCK_SHA256_PROPERTY =
+    "debug.rustyquest.spatial_camera_panel.particle_adapter.lock_sha256"
 internal const val PRIVATE_SPATIAL_ECS_PARTICLE_RENDERER_ENABLED_PROPERTY =
     "debug.rustyquest.spatial.viscereality_ecs.enabled"
 internal const val PANEL_START_IN_PARTICLE_VIEW_PROPERTY =
@@ -77,6 +87,7 @@ private const val PARTICLE_LAYER_TARGET_SURFACE_UV_RECT = "0.0;0.0;1.0;1.0"
 private const val PARTICLE_LAYER_VIEW_ORIGIN_METERS = "0.0;0.0;2.0"
 private const val PARTICLE_LAYER_VIEW_ORIGIN_YAW_DEGREES = "180.0"
 internal const val PARTICLE_LAYER_PROJECTION_MARKER_INTERVAL_MS = 900L
+internal const val SURFACE_PARTICLE_RENDER_THREAD_STARTED_BIT = 1L shl 3
 internal const val SURFACE_PARTICLE_RECENTER_ACCEPTED_BIT = 1L shl 5
 
 internal enum class SpatialSurfaceParticleCarrierMode(val markerToken: String) {
@@ -90,9 +101,21 @@ internal object SpatialSurfaceParticleRouteModule {
   private const val RENDER_POLICY = "native-vulkan-wsi-surface-panel"
 
   fun nativeSurfaceParticleLayerEnabled(
-      rawValue: Boolean?,
+      activationDecision: SpatialAdapterLockDecision,
       privateRendererEnabled: Boolean,
-  ): Boolean = (rawValue ?: true) && !privateRendererEnabled
+  ): Boolean = activationDecision.applied && !privateRendererEnabled
+
+  fun nativeSurfaceParticleStartApplied(startMask: Long): Boolean =
+      (startMask and SURFACE_PARTICLE_RENDER_THREAD_STARTED_BIT) != 0L
+
+  fun particleAdapterActivationDecision(
+      input: SpatialAdapterRuntimeInput
+  ): SpatialAdapterLockDecision =
+      SpatialAdapterNativeAuthority.resolveParticle(input)
+
+  fun particleAdapterActivationMarker(decision: SpatialAdapterLockDecision): String =
+      "channel=particle-adapter status=${if (decision.applied) "accepted" else "rejected"} " +
+          "particleAdapterEnabled=${decision.applied} ${decision.markerFields()}"
 
   fun privateSpatialEcsParticleRendererEnabled(rawValue: Boolean?): Boolean = rawValue ?: false
 
@@ -104,7 +127,7 @@ internal object SpatialSurfaceParticleRouteModule {
       if (suppressedByPrivateRenderer) {
         "private-spatial-ecs-particle-renderer"
       } else {
-        "property"
+        "adapter-lock-rejected"
       }
 
   fun startInParticleView(rawValue: Boolean?, buildConfigDefault: Boolean): Boolean =
@@ -467,10 +490,20 @@ internal object SpatialSurfaceParticleRouteModule {
           placementMarkerFields + " " +
           stereoMarkerFields
 
+  fun nativeSurfaceParticleStartRejectedMarker(startMask: Long): String =
+      "channel=native-surface-particle-layer status=start-rejected " +
+          "renderPolicy=$RENDER_POLICY reason=native-start-receipt-not-applied " +
+          "startMask=$startMask particleLayerStarted=false nativeSurfaceStartRequested=false"
+
   fun nativeSurfaceParticleStartFailedMarker(error: String, message: String): String =
       "channel=native-surface-particle-layer status=start-failed " +
           "renderPolicy=$RENDER_POLICY error=${activityMarkerToken(error)} " +
           "message=${activityMarkerToken(message)}"
+
+  fun nativeSurfaceParticleEffectSuppressedMarker(effect: String, source: String): String =
+      "channel=native-surface-particle-layer status=effect-suppressed " +
+          "renderPolicy=$RENDER_POLICY effect=${activityMarkerToken(effect)} " +
+          "source=${activityMarkerToken(source)} adapterAdmissionApplied=false"
 
   fun nativeSurfaceParticleParameterSubmitSkippedMarker(source: String): String =
       "channel=native-surface-particle-layer status=parameter-submit-skipped " +

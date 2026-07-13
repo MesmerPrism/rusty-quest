@@ -33,7 +33,7 @@ final class BrokerLaunchEvidence {
             evidence.put("service", SERVICE_NAME);
             evidence.put("component", componentName);
             evidence.put("launch_surface", launchSurface);
-            evidence.put("authority", "rusty.manifold");
+            evidence.put("runtime_authority", ManifoldRuntimeAuthorityBridge.evidence());
             evidence.put("endpoint_path", LocalManifoldBrokerServer.EVENTS_PATH);
             evidence.put("port", LocalManifoldBrokerServer.PORT);
             evidence.put("started_at_utc", Instant.now().toString());

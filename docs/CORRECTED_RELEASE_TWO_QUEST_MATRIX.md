@@ -1,0 +1,169 @@
+# Corrected Release Two-Quest Matrix
+
+`tools/Invoke-CorrectedReleaseTwoQuestMatrix.ps1` is the fail-closed device
+orchestrator for the corrected Morphospace release gate. It is a reducer over
+live, serial-scoped owner suites; it is not a fixture reducer and it does not
+accept pre-existing summaries as release input.
+
+The only production output schema is exactly:
+
+```text
+rusty.morphospace.corrected_release_device_matrix.v1
+```
+
+The matrix contains exactly one row for each of two explicit serials and each
+of these ten criterion IDs:
+
+1. `module_lock_selected`
+2. `module_lock_off_lock`
+3. `client_lifecycle_native`
+4. `client_lifecycle_spatial`
+5. `enrollment_pair`
+6. `enrollment_revoke`
+7. `media_camera2`
+8. `media_display_composite`
+9. `cleanup`
+10. `bounded_fatal`
+
+Every row binds the exact lowercase Rusty Quest Git revision, a criterion
+receipt and its SHA-256, zero package/app/system fatal counts, and completed
+final cleanup. Criterion receipts are Quest-owned wrappers; owner-produced
+summaries and raw evidence remain unchanged and are referenced by path and
+SHA-256.
+
+## Production invocation
+
+Build the broker, Native Renderer, and Spatial Camera Panel APKs first. Then
+run from a clean exact Rusty Quest tree:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-CorrectedReleaseTwoQuestMatrix.ps1 `
+  -Mode Execute `
+  -Serial <quest-a>,<quest-b> `
+  -ConfirmBoundedLogcatClear `
+  -EvidenceDir <private-evidence-root>\rusty-quest-corrected-release-<run>
+```
+
+`-ConfirmBoundedLogcatClear` is mandatory because release fatal-absence
+evidence must have an intentionally bounded window. Every ADB operation is
+performed as `adb -s <serial>` or by an existing suite receiving the exact
+serial. The runner never discovers a default target, changes the ADB server
+lifecycle, invokes Agent Board, or shuts down/reboots a device or host.
+
+Production preflight rejects, before any ADB call:
+
+- fewer or more than two distinct explicit serials;
+- a missing mandatory peer-authority provider;
+- missing built APKs, ADB, or constituent suite scripts;
+- a dirty Rusty Quest tree or a non-exact Git revision;
+- an unconfirmed bounded-logcat clear.
+
+The generated evidence is private run state and belongs outside this public
+repository.
+
+## Suite composition
+
+The runner composes existing mechanics instead of reimplementing them:
+
+- MOD-006 selected path: the Native particle conformance profile,
+  `Invoke-NativeRendererReplaySmoke.ps1`, the Spatial particle conformance
+  profile, `Invoke-SpatialCameraPanelAndroidParticleVisualSmoke.ps1`, and
+  `Test-QuestParticleAdapterEvidence.ps1` must prove exact lock-bound applied
+  markers for both consumers.
+- MOD-006 off-lock path: run-local wrong-digest profiles are applied with
+  `Apply-RuntimeProfile.ps1`. Native must reject a requested particle effect
+  before permissions, scene, input, or media start; Spatial must emit the
+  matching rejected/inert adapter markers. An accepted marker fails the run.
+- Real independent clients: `Invoke-MultiAppBrokerClientTwoQuest.ps1` must
+  pass Native and Spatial issue/use/replay/revoke lifecycles, identity and
+  marker isolation, revision continuity, fatal absence, and suite cleanup on
+  both devices.
+- Peer authority: the mandatory provider contract below must pass enrollment,
+  signed pair evidence, current revisions, topology authorization, a real
+  direct-lane lease, rotation/revocation/replay negatives, direct exchange,
+  and inactive cleanup.
+- Camera2 media: `Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1`
+  must pass foreground, stereo Camera2 50/51 acquisition, AHardwareBuffer
+  import, and first/raw frame presentation. Unsupported or skipped execution
+  is not reduced to a pass.
+- Display-composite media: `Invoke-NativeRendererDisplayCompositeSmoke.ps1`
+  must complete with its full marker validator passing, including service,
+  AHardwareBuffer, import, projection metadata, and rendered feedback gates.
+- Final cleanup: known release packages plus provider-declared packages are
+  force-stopped/uninstalled and read back absent. The provider must also report
+  its direct route inactive.
+- Bounded fatal: all retained suite logs and the final bounded log are reduced
+  through package, application/native-signal, and system-server fatal filters.
+
+## Mandatory Manifold peer provider
+
+Production execution intentionally fails until this exact file exists:
+
+```text
+tools/Invoke-ManifoldPeerAuthorityTwoQuest.ps1
+```
+
+Calling contract:
+
+```text
+-Serial <exact two-element string array>
+-EvidenceDir <private run directory>
+-Adb <resolved adb executable>
+-RepositoryRevision <lowercase 40-character Rusty Quest revision>
+```
+
+It must write `<EvidenceDir>\summary.json` with exact schema
+`rusty.quest.manifold_peer_authority_two_quest_evidence.v1`, `status=pass`,
+`evidence_tier=live_two_quest`, `provider_execution=true`,
+`synthetic=false`, `fixture_only=false`, and exactly one row for each input
+serial. The two rows must share current enrollment/rendezvous revisions while
+having distinct device-generated Ed25519 key IDs, public keys, and local
+topology roles.
+
+Each row must contain:
+
+- accepted `operator_enrollment` with an operator ID and hash-bound receipt;
+- `device_identity` with `generation=on-device`, a key ID, a 32-byte Ed25519
+  public key encoded as base64, and a hash-bound receipt;
+- accepted `reciprocal_signed_evidence` naming the other exact serial, with
+  both local and peer signature validation true;
+- `revisions` containing positive enrollment/rendezvous revisions and matching
+  current revision fields;
+- accepted `topology_authorization` using
+  `rusty.manifold.peer.topology_authorization.v1`, the current revision, and a
+  non-empty local role;
+- accepted `direct_lane_lease` using
+  `rusty.manifold.peer.direct_lane_lease.v1`, current revision, a non-empty
+  lease ID, and `real_platform_lane=true`;
+- accepted `key_rotation` with the old key rejected and a distinct new key ID;
+- accepted `revocation` with revoked-key use rejected;
+- `replay.status=rejected`;
+- passing `direct_exchange` with Rust-owned sockets, explicit `p2p0` local
+  bind, and positive sent/received byte counts;
+- `route_inactive=true`, `cleanup_complete=true`, provider cleanup package
+  identities, and zero package/app/system fatal counts;
+- hash-bound, non-fixture raw evidence for all nine peer phases above.
+
+Legacy BLE rendezvous, peer-session decision, QCL, Termux, sidecar, or direct
+P2P evidence cannot stand in for this contract. They may be implementation
+inputs only when the new provider independently proves the current Manifold
+authority and direct-lane lease.
+
+## Source-only validation
+
+The source/static route never contacts a headset:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-CorrectedReleaseTwoQuestMatrixStatic.ps1 -RepoRoot .
+```
+
+It parses the orchestrator, checks the exact criteria and suite/provider
+surface, rejects implicit ADB, Agent Board, shutdown, and fixture-reduction
+routes, proves missing-provider preflight occurs before ADB/APK access, and
+runs damaged cases for serial cardinality, provider absence, missing peer
+lease fields, replay acceptance, hash drift, cleanup failure, fatal evidence,
+unknown criteria, and synthetic promotion.
+
+This source pass proves only orchestration and rejection behavior. It does not
+prove the APKs, current headset behavior, peer provider, media paths, cleanup,
+or final release matrix until `-Mode Execute` passes on both explicit devices.

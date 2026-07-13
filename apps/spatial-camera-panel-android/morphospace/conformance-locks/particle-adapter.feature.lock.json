@@ -1,0 +1,37 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/feature-lock.schema.json",
+  "schema": "rusty.morphospace.workflow.feature_lock.v1",
+  "project_id": "spatial-camera-panel",
+  "revision": 1,
+  "default_activation": "disabled",
+  "features": [
+    {
+      "feature_id": "spatial-panel-shell",
+      "module_id": "spatial-panel-shell",
+      "enabled": true,
+      "requested_by": "conformance-profile:particle-adapter",
+      "descriptor": "morphospace/project.spec.json#spatial-panel-shell",
+      "dependencies": [],
+      "conflicts": [],
+      "permissions": [],
+      "routes": ["spatial-panel"],
+      "assets": [],
+      "parameter_authorities": [{"parameter":"app.composition","owner":"spatial-app"}],
+      "activation_receipt": {"required":true,"schema":"rusty.quest.spatial_camera_panel.activation_receipt.v1","effective_marker":"rusty.quest.spatial_camera_panel.shell.effective"}
+    },
+    {
+      "feature_id": "surface-particle-runtime",
+      "module_id": "surface-particle-runtime",
+      "enabled": true,
+      "requested_by": "conformance-profile:particle-adapter",
+      "descriptor": "morphospace/project.spec.json#surface-particle-runtime",
+      "dependencies": ["spatial-panel-shell"],
+      "conflicts": [],
+      "permissions": [],
+      "routes": ["native-surface-particle"],
+      "assets": [],
+      "parameter_authorities": [],
+      "activation_receipt": {"required":true,"schema":"rusty.quest.particle_adapter.receipt.v1","effective_marker":"rusty.quest.particle_adapter.effective"}
+    }
+  ]
+}

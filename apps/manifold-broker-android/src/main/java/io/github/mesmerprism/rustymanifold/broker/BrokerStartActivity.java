@@ -12,6 +12,7 @@ public final class BrokerStartActivity extends Activity {
     @Override
     protected void onCreate(Bundle bundle) {
         super.onCreate(bundle);
+        initializeAuthority();
         requestCameraPermissionIfNeeded();
         LocalManifoldBrokerServer.get().start(getApplicationContext());
         writeLaunchEvidence();
@@ -30,12 +31,24 @@ public final class BrokerStartActivity extends Activity {
     @Override
     protected void onNewIntent(android.content.Intent intent) {
         super.onNewIntent(intent);
+        initializeAuthority();
         requestCameraPermissionIfNeeded();
         LocalManifoldBrokerServer.get().start(getApplicationContext());
         writeLaunchEvidence();
     }
 
+    private void initializeAuthority() {
+        try {
+            ManifoldRuntimeAuthorityBridge.initialize();
+        } catch (Exception error) {
+            throw new IllegalStateException("Manifold broker authority initialization failed", error);
+        }
+    }
+
     private void requestCameraPermissionIfNeeded() {
+        if (!GeneratedBrokerProductConfig.CAMERA_MEDIA_ENABLED) {
+            return;
+        }
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[] { Manifest.permission.CAMERA }, CAMERA_PERMISSION_REQUEST);
         }

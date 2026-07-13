@@ -141,6 +141,13 @@ hand extraction candidates without changing runtime behavior. Run
 `tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1` before the broader
 Spatial static ledger when changing that app's composition or module map.
 
+The paired Native Renderer workspace at
+`apps/native-renderer-android/morphospace/` is independent rather than a
+projection that can promote Spatial. Both workspaces keep particle and hand
+families disabled by default and use separate conformance locks for bounded
+source checks. Their shared static workflow gate proves source consistency only;
+it does not prove a device run, central acceptance, or stable promotion.
+
 The same lane now has two generic Spatial SDK asset/environment hooks. The
 Spatial SDK staged 3D asset path accepts only explicit GLB/GLTF `Mesh` URIs at
 runtime, usually staged by `Stage-SpatialCameraPanelAsset.ps1` or by
@@ -215,6 +222,14 @@ selected.
 pure Quest-native OpenXR/Vulkan camera renderer. It models the public AGPL
 HWB import, offscreen guide blur, SDF input hook, private extension ABI slot,
 and detailed timing scorecard required before building a native app scaffold.
+
+Reusable opt-in modules share the closed engine in
+`crates/rusty-quest-feature-activation`; the ownership and validation contract
+is in [Closed Feature Activation](docs/FEATURE_ACTIVATION.md). The engine binds
+the exact application-accepted lock, while hand and particle facades retain
+different nominal decisions and applications retain their own project,
+feature, module, profile, digest, and effects. This prevents a tool extracted
+while building one app from carrying that app's route or policy into another.
 
 `crates/rusty-quest-particle-adapter` is the shared, platform-facing particle
 handoff used by the Spatial Camera Panel and native renderer. It validates the
@@ -558,22 +573,40 @@ See `docs/REMOTE_CAMERA_STREAMING.md`.
 ## Android Broker Package
 
 Broker packaging starts from an immutable Manifold product lock, not from a
-hand-maintained permission union. `crates/rusty-quest-broker-product` projects
-the lock's exact permission closure into Android manifest entries and validates
-the committed projections under `fixtures/broker-products/`. The base
-standalone product requests only `INTERNET`; camera, direct-P2P, and BLE are
-independent opt-in products, and each selects exactly one of standalone or
-embedded runtime mode. The static gate rejects manifest drift and requires
-`neverForLocation` on nearby-Wi-Fi and Bluetooth scan permissions.
+hand-maintained permission union. `crates/rusty-quest-broker-product` validates
+the exact spec/lock pair, projects its permission closure, renders the actual
+Android manifest, emits the exact command registry, and stamps SHA-256 plus the
+Manifold lock id/fingerprint into a package-input receipt. The standalone base
+contains only network plus notification/background data-sync lifecycle
+permissions. Generic `media_session` adds no camera permission; camera,
+direct-P2P, and BLE remain independent opt-ins. The build packages the accepted
+lock, registry, and projection as APK assets and emits
+`rusty.quest.manifold_broker_android.build_manifest.v2`. There is no ambient
+  app-local `AndroidManifest.xml` fallback. See
+  [Broker Packaging](docs/BROKER_PACKAGING.md).
 
-The next product-only authority path is implemented in
+The same build binds exact packaged product-spec, accepted-lock, and client-lock
+bytes plus their hashes into the runtime config. Grants are generated only from
+the product/client intersection: the base product remains media/sink/peer-free,
+and camera-free media adds media observe plus the app's selected sink without
+adding peer authority. JNI checks the embedded canonical config digest before
+creating the provider.
+
+The product-only authority path is implemented in
 `crates/rusty-quest-broker-authority`. It projects a trusted app-local
-standalone-process or embedded-in-process invocation into the shared Manifold
-broker adapter, then returns the unmodified Runtime Host decision plus its next
-durable snapshot. Both Android JNI surfaces delegate to this crate; their Java
-classes validate schema/authority labels only and contain no command acceptance
-table. The existing broad validation APK remains a compatibility surface until
-a product lock explicitly packages and initializes the native bridge.
+standalone-process or embedded-in-process provider into one stateful
+`ManifoldBrokerRuntime`. Signature-scoped Binder admission creates an
+opaque-token, client/capability/revision-bound one-use permit; the real
+  WebSocket or embedded server
+entrypoint must consume that permit before the shared Runtime Host review/apply
+path can authorize any platform effect. Both JNI surfaces preserve same-process
+  rebind state and create a fresh entropy-derived epoch after provider restart.
+  Each use is bound to its own creation revision, so unrelated client admission
+  advances do not invalidate it; exact-token revocation/expiry removes only
+  derived pending uses.
+Their Java classes project Rust-authored receipts and contain no local
+`accepted=true`, authority label, command table, lease, revision, or replay
+policy. See [Broker Runtime Authority](docs/BROKER_RUNTIME_AUTHORITY.md).
 
 Secure cross-app product admission is implemented as a signature-protected
 Binder service with a packaged arm64 Rust JNI library. Android projects the
@@ -593,6 +626,24 @@ and generic media-session contracts. Their manifests contain no shared app
 defaults or broker-client properties. The two-app device gate is
 `tools/Invoke-MultiAppBrokerClientTwoQuest.ps1`; it also folds the promoted
 QCL100 evidence shape into a QCL-neutral generic media-session receipt.
+The packaged generic runtime binds exact Manifold and Quest descriptor hashes,
+seven independently selected owners, and a receiver-first prepare/apply
+completion protocol; see `docs/MEDIA_SESSION_RUNTIME.md`.
+After Binder `authorize_use`, the SDK's `build_broker_mutation_request` binds
+the exact app client id, provider epoch, current admission/host revisions,
+  one-time use id, command capability, optional lease, and bounded time window.
+  It also wraps low-rate values in `rusty.quest.broker.effect_params.v1`,
+  canonicalizes object keys, enforces the 4096-byte limit, and binds the digest
+  through both Runtime Host receipts. Java reads only the accepted response's
+  exact `effect_params`. Android request ids use a fresh 128-bit launch
+  namespace; only the deliberate replay probe reuses one id.
+
+The embedded Native Renderer build packages the camera product spec/lock,
+native-renderer client lock, derived grant, and canonical runtime-config digest
+in generated code and inspectable APK assets. Settings cannot replace or widen
+that authority. The embedded server derives its package and sole APK signer
+from Android, asks Rust to issue and authorize each exact command use, then
+overwrites all caller-supplied authority fields before mutation.
 
 `apps/manifold-broker-android` is the Quest-owned Android package scaffold for
 the Morphospace Manifold broker identity used by Hostess:
@@ -629,6 +680,16 @@ surface source, and a Camera2-to-MediaCodec source gated by camera permission
 evidence. Android-phone adapter execution and paired headset/phone live-stream
 evidence remain later validation work.
 
+The final proportional two-Quest release gate is routed through
+[Corrected Release Two-Quest Matrix](docs/CORRECTED_RELEASE_TWO_QUEST_MATRIX.md).
+`tools/Invoke-CorrectedReleaseTwoQuestMatrix.ps1` composes the existing MOD-006,
+real Native/Spatial broker-client, peer-authority, Camera2, display-composite,
+cleanup, and bounded-fatal suites into the exact 20-row corrected-release
+matrix. It requires two explicit serials, a clean exact revision, and the new
+live `Invoke-ManifoldPeerAuthorityTwoQuest.ps1` provider; legacy or fixture
+evidence cannot fill that provider contract. The source-only damaged/static
+gate is `tools/checks/Test-CorrectedReleaseTwoQuestMatrixStatic.ps1`.
+
 ## Validation
 
 ```powershell
@@ -645,10 +706,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendere
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererDisplayCompositeSmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial>
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
+  -ProductSpecPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.json `
+  -ProductLockPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.lock.json `
+  -MediaSessionBindingPath .\fixtures\media-runtime-products\display-composite.binding.json
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerProductStatic.ps1 -RepoRoot .
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAuthorityStatic.ps1 -RepoRoot .
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAdmissionStatic.ps1 -RepoRoot .
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-CorrectedReleaseTwoQuestMatrixStatic.ps1 -RepoRoot .
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-BrokerAdmissionDeathRecoveryTwoQuest.ps1 -Serial <quest-serial-a>,<quest-serial-b>
 ```
 

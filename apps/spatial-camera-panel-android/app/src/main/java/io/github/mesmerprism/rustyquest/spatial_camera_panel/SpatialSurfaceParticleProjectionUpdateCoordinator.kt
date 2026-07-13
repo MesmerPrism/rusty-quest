@@ -47,6 +47,7 @@ internal data class SpatialSurfaceParticleProjectionUpdateRequest(
 )
 
 internal data class SpatialSurfaceParticleProjectionUpdateBindings(
+    val featureEnabled: () -> Boolean,
     val cameraStackSuppressesParticles: () -> Boolean,
     val captureViewerState: () -> SpatialSurfaceParticleViewerProjectionState,
     val currentViewYawDegrees: () -> Float,
@@ -77,6 +78,18 @@ internal class SpatialSurfaceParticleProjectionUpdateCoordinator(
   private var surfaceGeometryApplied = false
 
   fun update(request: SpatialSurfaceParticleProjectionUpdateRequest) {
+    if (!bindings.featureEnabled()) {
+      request.hideProjectionEntity()
+      if (request.forceLog) {
+        bindings.marker(
+            SpatialSurfaceParticleRouteModule.nativeSurfaceParticleEffectSuppressedMarker(
+                "projection-update",
+                request.reason,
+            )
+        )
+      }
+      return
+    }
     if (bindings.cameraStackSuppressesParticles()) {
       request.hideProjectionEntity()
       if (request.forceLog) {

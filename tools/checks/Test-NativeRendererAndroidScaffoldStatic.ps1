@@ -49,6 +49,9 @@ $controlPanel = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\m
 $polarPanel = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\PolarSensorPanel.java") "Polar sensor panel"
 $questionnairePanel = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\QuestionnairePanelActivity.java") "questionnaire panel Activity"
 $embeddedManifoldBroker = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\EmbeddedManifoldBrokerServer.java") "embedded Manifold broker server"
+$embeddedWebSocketPolicy = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\EmbeddedWebSocketAuthorityPolicy.java") "embedded WebSocket authority policy"
+$embeddedManifoldAuthorityBridge = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\EmbeddedManifoldRuntimeAuthorityBridge.java") "embedded Manifold Runtime Host authority bridge"
+$embeddedManifoldAdmissionLifecycle = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\EmbeddedManifoldAdmissionLifecycle.java") "embedded platform-authenticated admission lifecycle"
 $nativeAppSettingsReader = Read-RequiredText (Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustyquest\native_renderer\NativeAppSettingsReader.java") "native app settings reader"
 $xrVulkan = Read-RequiredText (Join-Path $srcRoot "xr_vulkan.rs") "xr_vulkan facade"
 $buildScriptText = Read-RequiredText (Join-Path $repoRootPath "tools\Build-NativeRendererAndroid.ps1") "native Android build script"
@@ -250,15 +253,52 @@ Assert-ContainsTokens $embeddedManifoldBroker @(
     'ServerSocket',
     '127.0.0.1',
     '/manifold/v1/events',
-    'hello_ack',
-    'subscribe',
-    'publish_stream_event',
-    'stream_event',
+    'hello_transport_status',
+    'rusty.quest.broker.server_mutation_request.v1',
+    'EmbeddedWebSocketAuthorityPolicy',
+    'mutation_transport',
+    'signature_scoped_binder_or_direct_in_process',
+    'network_identity_delegated',
+    'MAX_READ_ONLY_CLIENTS',
+    'CLIENT_IDLE_TIMEOUT_MS',
+    'authority_runtime_config_json',
+    'authorityConfigSource=packaged',
     'embeddedManifoldBrokerStarted=true',
     'maxFrameBytes',
     'sessionTokenRequired',
     'RUSTY_QUEST_NATIVE_RENDERER'
 ) "Java embedded Manifold broker"
+Assert-ContainsTokens $embeddedWebSocketPolicy @(
+    'final class EmbeddedWebSocketAuthorityPolicy',
+    'embedded-websocket-loopback-read-only',
+    'embedded_websocket_read_only',
+    'allowsNetworkMutation'
+) "Java embedded WebSocket authority policy"
+foreach ($forbidden in @('lifecycle\.mutate', 'admissionLifecycle\s*=', 'publishStreamEvent\(event\)')) {
+    if ($embeddedManifoldBroker -match $forbidden) {
+        throw "Embedded WebSocket retains a network-to-self authority path: $forbidden"
+    }
+}
+
+Assert-ContainsTokens $embeddedManifoldAuthorityBridge @(
+    'GeneratedEmbeddedManifoldRuntimeConfig.JSON',
+    'GeneratedEmbeddedManifoldRuntimeConfig.SHA256',
+    'nativeInitialize',
+    'nativeAdmit',
+    'nativeMutate',
+    'local_acceptance_rules'
+) "embedded Manifold Runtime Host authority bridge"
+
+Assert-ContainsTokens $embeddedManifoldAdmissionLifecycle @(
+    'GET_SIGNING_CERTIFICATES',
+    'EmbeddedCallerIdentityResolver.requireExact',
+    'Process.myUid\(\)',
+    'EmbeddedManifoldRuntimeAuthorityBridge.admit',
+    'issue_token',
+    'authorize_use',
+    'GeneratedEmbeddedManifoldRuntimeConfig.CLIENT_ID',
+    'expected_admission_authority_revision'
+) "embedded platform-authenticated admission lifecycle"
 
 Assert-ContainsTokens $nativeAppSettingsReader @(
     'final class NativeAppSettingsReader',
@@ -379,6 +419,11 @@ Assert-ContainsTokens $buildScriptText @(
     'questionnaire_assets_packaged',
     'maia_spatial_questionnaire',
     'settings_authority',
+    'GeneratedEmbeddedManifoldRuntimeConfig.java',
+    'media-session-embedded.json',
+    'native-renderer.client.json',
+    'packaged_authority',
+    'embedded_manifold_runtime_config_canonical_sha256',
     'RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR',
     'gpu-mesh-boundary',
     'panel_candidate_file',

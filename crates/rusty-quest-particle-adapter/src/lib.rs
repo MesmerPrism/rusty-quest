@@ -10,6 +10,14 @@ use rusty_matter_particles::ParticleRenderPayload;
 use rusty_optics_particles::ParticleVisualFrame;
 use serde::{Deserialize, Serialize};
 
+mod lock_bound_activation;
+
+pub use lock_bound_activation::{
+    resolve_particle_adapter_activation, ParticleAdapterLockActivationDecision,
+    ParticleAdapterLockActivationState, ParticleAdapterLockRejection,
+    ParticleAdapterRuntimeActivationInput, LOCK_BOUND_ACTIVATION_SCHEMA_ID,
+};
+
 /// Adapter descriptor schema.
 pub const PARTICLE_ADAPTER_DESCRIPTOR_SCHEMA_ID: &str =
     "rusty.quest.particle_adapter.descriptor.v1";

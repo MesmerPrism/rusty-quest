@@ -5,6 +5,11 @@
   "runtime_mode": "embedded",
   "permissions": [
     {
+      "name": "android.permission.ACCESS_FINE_LOCATION",
+      "uses_permission_flags": [],
+      "max_sdk_version": 30
+    },
+    {
       "name": "android.permission.BLUETOOTH_ADVERTISE",
       "uses_permission_flags": []
     },

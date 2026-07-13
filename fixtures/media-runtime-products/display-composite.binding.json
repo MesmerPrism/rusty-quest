@@ -1,0 +1,288 @@
+{
+  "manifold": {
+    "$schema": "rusty.manifold.media.session_product_binding.v1",
+    "descriptor": {
+      "$schema": "rusty.manifold.media.session_descriptor.v1",
+      "session_id": "session.media_stream.quest_display_composite_to_pc",
+      "authority_revision": 4,
+      "platform_runtime_spec_id": "runtime.media.quest-display-composite",
+      "source_ids": [
+        "quest-a-display-composite"
+      ],
+      "processor_ids": [
+        "processor.display.passthrough"
+      ],
+      "route_ids": [
+        "quest-a-display-to-pc-host"
+      ],
+      "sink_ids": [
+        "sink.pc.display"
+      ],
+      "stream_ids": [
+        "quest-a.display.h264"
+      ],
+      "payload_plane": "binary-media",
+      "inline_media_payloads_allowed": false,
+      "remote_camera_compatibility": false
+    },
+    "descriptor_canonical_sha256": "sha256:2dcd913d8ece2162e74bba6b14052266b273c20e7079d57f7ff19d0cfeda4b67"
+  },
+  "quest": {
+    "$schema": "rusty.quest.media_stream_runtime_product_binding.v1",
+    "spec": {
+      "schema": "rusty.quest.media_stream_runtime_spec.v1",
+      "runtime_spec_id": "runtime.media.quest-display-composite",
+      "manifold_session_revision": 4,
+      "plan": {
+        "schema": "rusty.quest.media_stream_session.v1",
+        "session_id": "session.media_stream.quest_display_composite_to_pc",
+        "topology_id": "quest_display_to_pc",
+        "privacy_tier": "local_lan_diagnostic",
+        "devices": [
+          {
+            "device_id": "quest-a",
+            "device_kind": "quest",
+            "role": "sender"
+          },
+          {
+            "device_id": "pc-host",
+            "device_kind": "windows_pc",
+            "role": "receiver"
+          }
+        ],
+        "sources": [
+          {
+            "source_id": "quest-a-display-composite",
+            "device_id": "quest-a",
+            "source_family": "quest-display-composite-mediaprojection",
+            "source_kind": "display_composite_mediaprojection_mediacodec_surface",
+            "capture_route": "display-composite",
+            "capture_authority": "android_mediaprojection_consent",
+            "deployment_classification": "production_candidate",
+            "track_role": "display",
+            "developer_shell_required": false,
+            "consent_required": true,
+            "display": {
+              "display_id": "default",
+              "rotation": "runtime-reported",
+              "density_dpi": 320,
+              "content_crop": {
+                "left": 0,
+                "top": 0,
+                "width": 1920,
+                "height": 1080
+              },
+              "protected_content_policy": "omit-protected-content",
+              "consent_state": "android-mediaprojection-consent-required",
+              "privacy_indicator": "system-capture-indicator-required",
+              "foreground_package_reporting": "not-collected"
+            },
+            "camera": null
+          }
+        ],
+        "lanes": [
+          {
+            "lane_id": "quest-a-display-to-pc-host",
+            "direction": "outgoing",
+            "source_id": "quest-a-display-composite",
+            "source_device_id": "quest-a",
+            "sink_device_id": "pc-host",
+            "media": {
+              "track_id": "quest-a.display.h264",
+              "track_role": "display",
+              "track_kind": "video",
+              "codec": "h264",
+              "stream_framing": "diagnostic-h264-packet-stream",
+              "width": 1920,
+              "height": 1080,
+              "frame_rate_hz": 60,
+              "bitrate_bps": 8000000,
+              "max_packet_bytes": 4194304,
+              "metadata_transport": "stream-header-sidecar-status",
+              "timestamp_domain": "android-display-frame-time",
+              "high_rate_payload_plane": "binary-media"
+            },
+            "transport": {
+              "transport_kind": "lan_tcp",
+              "relay_required": false,
+              "encryption_required": false,
+              "relay_session_id": null
+            },
+            "queue": {
+              "max_buffered_packets": 48,
+              "max_buffered_bytes": 16777216,
+              "drop_policy": "drop-oldest-complete-frame",
+              "slow_peer_close": true
+            },
+            "receiver_first_required": true
+          }
+        ],
+        "runtime_endpoints": [
+          {
+            "device_id": "quest-a",
+            "adapter_kind": "quest_manifold_broker_android",
+            "source_bindings": [
+              {
+                "source_id": "quest-a-display-composite",
+                "track_role": "display",
+                "source_host": "127.0.0.1",
+                "source_port": 8879
+              }
+            ],
+            "receiver_bind_host": "127.0.0.1",
+            "receiver_ports": [],
+            "transport_bind_host": "0.0.0.0",
+            "transport_receive_ports": []
+          },
+          {
+            "device_id": "pc-host",
+            "adapter_kind": "windows_hostess",
+            "source_bindings": [],
+            "receiver_bind_host": "127.0.0.1",
+            "receiver_ports": [
+              {
+                "track_role": "display",
+                "port": 8979
+              }
+            ],
+            "transport_bind_host": "0.0.0.0",
+            "transport_receive_ports": [
+              {
+                "track_role": "display",
+                "port": 9079
+              }
+            ]
+          }
+        ],
+        "transport_routes": [
+          {
+            "lane_id": "quest-a-display-to-pc-host",
+            "source_device_id": "quest-a",
+            "sink_device_id": "pc-host",
+            "track_role": "display",
+            "route_kind": "direct_tcp_connect",
+            "connect_host": "192.168.49.2",
+            "connect_port": 9079,
+            "relay_channel": null,
+            "relay_token_ref": null,
+            "tls_server_name": null
+          }
+        ],
+        "security": {
+          "visible_streaming_indicator": true,
+          "explicit_pairing_required": true,
+          "immediate_stop_command": "media_stream.stop",
+          "raw_media_logging": false
+        },
+        "observability": {
+          "required_markers": [
+            "media-stream-session-started",
+            "receiver-armed",
+            "display-source-bound",
+            "sender-started",
+            "frame-painted",
+            "lane-closed"
+          ],
+          "required_counters": [
+            "bytes_sent",
+            "bytes_received",
+            "media_packets",
+            "codec_config_packets",
+            "keyframes",
+            "queue_drops",
+            "close_reason",
+            "capture_to_encode_ms",
+            "encode_to_receive_ms"
+          ]
+        }
+      },
+      "processors": [
+        {
+          "processor_id": "processor.display.passthrough",
+          "processor_kind": "passthrough_h264",
+          "input_track_roles": [
+            "display"
+          ],
+          "output_track_roles": [
+            "display"
+          ],
+          "owns_codec": false,
+          "cpu_pixel_copy": false,
+          "application_policy_fields": []
+        }
+      ],
+      "sinks": [
+        {
+          "sink_id": "sink.pc.display",
+          "device_id": "pc-host",
+          "sink_kind": "hostess_h264_receiver",
+          "required_permissions": [],
+          "application_policy_fields": []
+        }
+      ],
+      "lane_bindings": [
+        {
+          "lane_id": "quest-a-display-to-pc-host",
+          "processor_ids": [
+            "processor.display.passthrough"
+          ],
+          "sink_id": "sink.pc.display"
+        }
+      ],
+      "direct_p2p_routes": [],
+      "owner_selections": [
+        {
+          "owner_kind": "source",
+          "owner_id": "owner.quest.source",
+          "resource_id": "quest-a-display-composite",
+          "lane_id": "quest-a-display-to-pc-host",
+          "provider_kind": "android_mediaprojection_surface"
+        },
+        {
+          "owner_kind": "processor",
+          "owner_id": "owner.rust.processor",
+          "resource_id": "processor.display.passthrough",
+          "lane_id": "quest-a-display-to-pc-host",
+          "provider_kind": "rust_passthrough_h264"
+        },
+        {
+          "owner_kind": "route",
+          "owner_id": "owner.manifold.route",
+          "resource_id": "quest-a-display-to-pc-host",
+          "lane_id": "quest-a-display-to-pc-host",
+          "provider_kind": "manifold_accepted_route"
+        },
+        {
+          "owner_kind": "socket",
+          "owner_id": "owner.rust.lan-tcp-socket",
+          "resource_id": "quest-a-display-to-pc-host",
+          "lane_id": "quest-a-display-to-pc-host",
+          "provider_kind": "rust_lan_tcp_socket"
+        },
+        {
+          "owner_kind": "codec",
+          "owner_id": "owner.android.h264-codec",
+          "resource_id": "quest-a-display-to-pc-host",
+          "lane_id": "quest-a-display-to-pc-host",
+          "provider_kind": "android_mediacodec_h264"
+        },
+        {
+          "owner_kind": "sink",
+          "owner_id": "owner.hostess.h264-sink",
+          "resource_id": "sink.pc.display",
+          "lane_id": "quest-a-display-to-pc-host",
+          "provider_kind": "hostess_h264_receiver"
+        },
+        {
+          "owner_kind": "cleanup",
+          "owner_id": "owner.quest.media-cleanup",
+          "resource_id": "runtime.media.quest-display-composite",
+          "lane_id": null,
+          "provider_kind": "quest_media_cleanup"
+        }
+      ],
+      "compatibility_adapter_id": null
+    },
+    "runtime_spec_canonical_sha256": "sha256:957e201da70aacd480331f2fd18635699d65e03974856b0e0841affeef752fe3"
+  }
+}

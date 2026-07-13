@@ -1,44 +1,17 @@
 {
-  "$schema": "rusty.quest.broker.authority_invocation.v1",
+  "$schema": "rusty.quest.broker.authority_invocation.v2",
   "bridge_kind": "embedded_in_process_jni",
   "adapter_config": {
-    "$schema": "rusty.manifold.broker.adapter_config.v1",
+    "$schema": "rusty.manifold.broker.adapter_config.v2",
     "adapter_id": "adapter.broker.embedded",
     "mode": "embedded",
     "product_lock_id": "lock.broker.camera.parity",
-    "product_lock_fingerprint": "fnv1a64-5c87754f12db8112",
+    "product_lock_fingerprint": "fnv1a64-841ecdbd0ee13058",
+    "product_lock_sha256": "sha256:f6081f1e35e72f5f6adac51e8b9acc9106f364cca5f92f1a2065af2ccbaff961",
     "authority_host_id": "host.broker.parity",
     "authority_owner_id": "module.runtime.host"
   },
-  "product_lock": {
-    "$schema": "rusty.manifold.broker.product_lock.v1",
-    "lock_id": "lock.broker.camera.parity",
-    "product_id": "broker.camera.parity",
-    "standalone_enabled": false,
-    "embedded_enabled": true,
-    "features": [
-      "camera_media"
-    ],
-    "command_ids": [
-      "command.media.session.start",
-      "command.media.session.stop",
-      "command.peer.status.get",
-      "command.session.list"
-    ],
-    "stream_ids": [
-      "stream.media.video",
-      "stream.peer.status"
-    ],
-    "module_ids": [
-      "module.media.camera",
-      "module.runtime.host"
-    ],
-    "permissions": [
-      "internet",
-      "camera"
-    ],
-    "spec_fingerprint": "fnv1a64-5c87754f12db8112"
-  },
+  "product_lock_json": "{\n  \"$schema\": \"rusty.manifold.broker.product_lock.v1\",\n  \"lock_id\": \"lock.broker.camera.parity\",\n  \"product_id\": \"broker.camera.parity\",\n  \"standalone_enabled\": false,\n  \"embedded_enabled\": true,\n  \"features\": [\n    \"media_session\",\n    \"camera_media\"\n  ],\n  \"command_ids\": [\n    \"command.media.session.start\",\n    \"command.media.session.stop\",\n    \"command.peer.status.get\",\n    \"command.session.list\"\n  ],\n  \"stream_ids\": [\n    \"stream.media.video\",\n    \"stream.peer.status\"\n  ],\n  \"module_ids\": [\n    \"module.media.camera\",\n    \"module.media.session\",\n    \"module.runtime.host\"\n  ],\n  \"permissions\": [\n    \"internet\",\n    \"camera\"\n  ],\n  \"spec_fingerprint\": \"fnv1a64-841ecdbd0ee13058\"\n}\n",
   "prior_snapshot": null,
   "initial_leases": [
     {

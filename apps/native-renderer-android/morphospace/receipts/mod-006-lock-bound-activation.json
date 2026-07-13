@@ -1,0 +1,48 @@
+{
+  "schema":"rusty.quest.mod006_lock_bound_activation_receipt.v1",
+  "receipt_id":"mod-006-native-renderer-lock-bound-activation",
+  "project_id":"native-renderer",
+  "unit_id":"mod-006",
+  "canonical_unit_id":"MOD-006",
+  "status":"source-validated-device-pending",
+  "authority":"rusty-quest particle/hand lock resolvers and Native Renderer effect closure",
+  "source_evidence":[
+    "apps/native-renderer-android/native/src/particle_adapter_consumer.rs",
+    "apps/native-renderer-android/native/src/hand_adapter_consumer.rs",
+    "apps/native-renderer-android/native/src/lib.rs",
+    "crates/rusty-quest-particle-adapter/src/lock_bound_activation.rs",
+    "crates/rusty-quest-hand-adapter/src/lock_bound_activation.rs"
+  ],
+  "historical_fixture_hashes":[
+    {"path":"fixtures/particle-adapter/native-renderer-accepted.txt","sha256":"1CD8C5E68BEB4B0391E81BA9216D8200CCE97D6A082A48E0E85BD62EB87B1492"},
+    {"path":"fixtures/hand-adapter/native-hand-accepted.txt","sha256":"31150726693DF65FC5655564A33E44604A31209A119B50183A36BA6B6A0FC2F7"}
+  ],
+  "workflow_reconciliation":{
+    "historical_spatial_state":"mod-003-active-not-accepted",
+    "historical_local_mod004_projection":"absent",
+    "historical_local_mod005_projection":"absent",
+    "corrective_unit":"mod-006",
+    "history_policy":"preserve-exact-prefix-and-add-corrective-evidence",
+    "fabricated_retroactive_acceptance":false,
+    "current_candidate_projections":[
+      {"candidate_id":"surface-particle-substrate","maturity":"cross-consumer-source-validated-device-pending","independent_consumer":"native-renderer"},
+      {"candidate_id":"tracked-hand-substrate","maturity":"cross-consumer-source-validated-device-pending","independent_consumer":"native-renderer"}
+    ]
+  },
+  "validation":{
+    "tier":"deep",
+    "result":"pass",
+    "commands":[
+      "cargo test -p rusty-quest-particle-adapter (7 passed)",
+      "cargo test -p rusty-quest-hand-adapter (6 passed)",
+      "cargo test -p rusty-quest-native-renderer-android-native (168 passed)",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-QuestParticleAdapterStatic.ps1 -RepoRoot . (passed)",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-QuestHandAdapterStatic.ps1 -RepoRoot . (passed)",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Test-NativeRendererAndroid.ps1 -Build (passed; APK produced)",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check_all.ps1 (passed)"
+    ]
+  },
+  "device_gate":{"status":"pending","required_serial_count":2,"requires":["selected-lock applied effects","adapter-enabled-false bypass rejection","off-lock zero effects","bounded zero-fatals","package cleanup"]},
+  "does_not_prove":["Live renderer effects.","Headset cleanup or fatal absence.","Stable module promotion."],
+  "rollback":"Keep both default locks disabled and remove MOD-006 effect admission without changing earlier consumer fixtures or events."
+}

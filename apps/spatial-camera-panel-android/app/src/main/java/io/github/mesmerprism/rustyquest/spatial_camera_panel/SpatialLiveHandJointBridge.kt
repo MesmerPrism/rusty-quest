@@ -12,7 +12,18 @@ object SpatialLiveHandJointBridge {
   const val VIEWER_WORLD_MAPPING_PROFILE_MIRROR_X = "mirror-x-origin-registration"
   const val VIEWER_WORLD_MAPPING_PROFILE_ROLLBACK = "viewer-world-basis-registration"
   const val VIEWER_WORLD_MAPPING_PROFILE_ACCEPTED = VIEWER_WORLD_MAPPING_PROFILE_MIRROR_X
-
+  const val HAND_ADAPTER_ENABLED_PROPERTY =
+      "debug.rustyquest.spatial_camera_panel.hand_adapter.enabled"
+  const val HAND_ADAPTER_PROFILE_ID_PROPERTY =
+      "debug.rustyquest.spatial_camera_panel.hand_adapter.profile_id"
+  const val HAND_ADAPTER_PROJECT_ID_PROPERTY =
+      "debug.rustyquest.spatial_camera_panel.hand_adapter.project_id"
+  const val HAND_ADAPTER_FEATURE_ID_PROPERTY =
+      "debug.rustyquest.spatial_camera_panel.hand_adapter.feature_id"
+  const val HAND_ADAPTER_LOCK_REVISION_PROPERTY =
+      "debug.rustyquest.spatial_camera_panel.hand_adapter.lock_revision"
+  const val HAND_ADAPTER_LOCK_SHA256_PROPERTY =
+      "debug.rustyquest.spatial_camera_panel.hand_adapter.lock_sha256"
   private const val NATIVE_RECEIPT_LIBRARY = "spatial_camera_panel_native_receipt"
   private const val VIEWER_WORLD_MAPPING_MODE_ACCEPTED = 2
   private const val VIEWER_WORLD_MAPPING_MODE_MIRROR_X = 3
@@ -21,19 +32,42 @@ object SpatialLiveHandJointBridge {
   private var loaded = false
   private var startedKey = ""
   private var lastStartMask = 0L
+  private var lastActivationApplied = false
+  private val activationDecisionCache =
+      SpatialAdapterDecisionCache { input -> handAdapterActivationDecision(input) }
 
   fun ensureStarted(probe: SpatialNativeInteropProbe): Long {
+    val activationInput = handAdapterRuntimeInput()
+    val activationDecision = currentHandAdapterActivationDecision()
+    val key =
+        "${probe.openXrInstanceHandle}|${probe.openXrSessionHandle}|" +
+            "${probe.openXrGetInstanceProcAddrHandle}|${activationInput.profileId}|" +
+            "${activationInput.projectId}|${activationInput.featureId}|" +
+            "${activationInput.lockRevision}|${activationInput.lockSha256}|" +
+            activationInput.enabled
+    if (!activationDecision.applied) {
+      if (loaded && lastStartMask != 0L) {
+        nativeStopLiveHandJoints()
+      }
+      startedKey = key
+      lastStartMask = 0L
+      return 0L
+    }
     if (!ensureLoaded()) {
       return 0L
     }
-    val key =
-        "${probe.openXrInstanceHandle}|${probe.openXrSessionHandle}|${probe.openXrGetInstanceProcAddrHandle}"
     if (key != startedKey || lastStartMask == 0L) {
       lastStartMask =
           nativeStartLiveHandJoints(
               probe.openXrInstanceHandle,
               probe.openXrSessionHandle,
               probe.openXrGetInstanceProcAddrHandle,
+              activationInput.enabled,
+              activationInput.profileId,
+              activationInput.projectId,
+              activationInput.featureId,
+              activationInput.lockRevision,
+              activationInput.lockSha256,
           )
       startedKey = key
     }
@@ -41,6 +75,9 @@ object SpatialLiveHandJointBridge {
   }
 
   fun updateViewerBasis(viewerPose: Pose, targetDistanceMeters: Float): Long {
+    if (!currentHandAdapterActivationDecision().applied) {
+      return 0L
+    }
     if (!ensureLoaded()) {
       return 0L
     }
@@ -64,6 +101,9 @@ object SpatialLiveHandJointBridge {
   }
 
   fun clearViewerBasis(): Long {
+    if (!currentHandAdapterActivationDecision().applied) {
+      return 0L
+    }
     if (!ensureLoaded()) {
       return 0L
     }
@@ -86,6 +126,9 @@ object SpatialLiveHandJointBridge {
       viewerPose: Pose,
       mappingProfile: String = VIEWER_WORLD_MAPPING_PROFILE_ACCEPTED,
   ): Long {
+    if (!currentHandAdapterActivationDecision().applied) {
+      return 0L
+    }
     if (!ensureLoaded()) {
       return 0L
     }
@@ -119,6 +162,9 @@ object SpatialLiveHandJointBridge {
       }
 
   fun pollRows(): FloatArray? {
+    if (!currentHandAdapterActivationDecision().applied) {
+      return null
+    }
     if (!ensureLoaded()) {
       return null
     }
@@ -127,6 +173,9 @@ object SpatialLiveHandJointBridge {
   }
 
   fun pollViewDiagnostics(): FloatArray? {
+    if (!currentHandAdapterActivationDecision().applied) {
+      return null
+    }
     if (!ensureLoaded()) {
       return null
     }
@@ -140,11 +189,50 @@ object SpatialLiveHandJointBridge {
     }
     startedKey = ""
     lastStartMask = 0L
+    lastActivationApplied = false
+    activationDecisionCache.clear()
   }
 
   fun loadedMarker(): String =
       "liveHandJointBridgeLoaded=$loaded liveHandJointBridgeLoadAttempted=$loadAttempted " +
           "liveHandJointBridgeStartMask=$lastStartMask"
+
+  internal fun handAdapterRuntimeInput(): SpatialAdapterRuntimeInput =
+      SpatialAdapterRuntimeInput(
+          enabled =
+              activityReadOptionalBooleanSystemProperty(HAND_ADAPTER_ENABLED_PROPERTY) == true,
+          profileId = activityReadSystemProperty(HAND_ADAPTER_PROFILE_ID_PROPERTY),
+          projectId = activityReadSystemProperty(HAND_ADAPTER_PROJECT_ID_PROPERTY),
+          featureId = activityReadSystemProperty(HAND_ADAPTER_FEATURE_ID_PROPERTY),
+          lockRevision =
+              activityReadSystemProperty(HAND_ADAPTER_LOCK_REVISION_PROPERTY).toLongOrNull()
+                  ?: 0L,
+          lockSha256 = activityReadSystemProperty(HAND_ADAPTER_LOCK_SHA256_PROPERTY),
+      )
+
+  internal fun handAdapterActivationDecision(
+      input: SpatialAdapterRuntimeInput
+  ): SpatialAdapterLockDecision =
+      SpatialAdapterNativeAuthority.resolveHand(input)
+
+  @Synchronized
+  internal fun currentHandAdapterActivationDecision(): SpatialAdapterLockDecision {
+    val decision = activationDecisionCache.decisionFor(handAdapterRuntimeInput())
+    if (lastActivationApplied && !decision.applied) {
+      if (loaded && lastStartMask != 0L) {
+        nativeStopLiveHandJoints()
+      }
+      startedKey = ""
+      lastStartMask = 0L
+    }
+    lastActivationApplied = decision.applied
+    return decision
+  }
+
+  internal fun handAdapterActivationMarker(decision: SpatialAdapterLockDecision): String =
+      "channel=hand-adapter status=${if (decision.applied) "accepted" else "rejected"} " +
+          "handAdapterEnabled=${decision.applied} handAdapterRuntimeMode=explicit-live-hand-bridge-start " +
+          decision.markerFields()
 
   private fun ensureLoaded(): Boolean {
     if (loaded) {
@@ -162,6 +250,12 @@ object SpatialLiveHandJointBridge {
       openXrInstanceHandle: Long,
       openXrSessionHandle: Long,
       openXrGetInstanceProcAddrHandle: Long,
+      runtimeEnabled: Boolean,
+      runtimeProfileId: String,
+      runtimeProjectId: String,
+      runtimeFeatureId: String,
+      runtimeLockRevision: Long,
+      runtimeLockSha256: String,
   ): Long
 
   @JvmStatic

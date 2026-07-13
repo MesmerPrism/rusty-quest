@@ -1,0 +1,20 @@
+{
+  "schema": "rusty.morphospace.workflow.repository_map.v1",
+  "repositories": [
+    {
+      "repo_id": "spatial-app",
+      "role": "application",
+      "path": "S:\\Work\\repos\\active\\rusty-quest\\apps\\spatial-camera-panel-android"
+    },
+    {
+      "repo_id": "native-renderer-app",
+      "role": "application",
+      "path": "S:\\Work\\repos\\active\\rusty-quest\\apps\\native-renderer-android"
+    },
+    {
+      "repo_id": "quest-repo",
+      "role": "adapter",
+      "path": "S:\\Work\\repos\\active\\rusty-quest"
+    }
+  ]
+}

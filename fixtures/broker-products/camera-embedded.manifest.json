@@ -1,7 +1,7 @@
 {
   "$schema": "rusty.quest.broker.android_manifest_projection.v1",
   "product_id": "broker.camera.embedded",
-  "manifold_lock_fingerprint": "fnv1a64-37ff784c00e39ca3",
+  "manifold_lock_fingerprint": "fnv1a64-2c8bade54915a255",
   "runtime_mode": "embedded",
   "permissions": [
     {
@@ -10,6 +10,14 @@
     },
     {
       "name": "android.permission.INTERNET",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "horizonos.permission.HEADSET_CAMERA",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "horizonos.permission.SPATIAL_CAMERA",
       "uses_permission_flags": []
     }
   ]

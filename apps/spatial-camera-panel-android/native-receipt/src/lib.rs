@@ -15,6 +15,7 @@ use openxr_sys::Handle;
 #[cfg(target_os = "android")]
 #[path = "../../../native-renderer-android/native/src/acamera_sys.rs"]
 mod acamera_sys;
+mod adapter_lock_authority;
 #[cfg(target_os = "android")]
 #[path = "../../../native-renderer-android/native/src/ahardware_buffer_vulkan.rs"]
 mod ahardware_buffer_vulkan;

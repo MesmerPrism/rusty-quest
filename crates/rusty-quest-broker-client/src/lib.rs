@@ -4,47 +4,33 @@
 //! defaults, or media. Platform clients project these validated specs; Manifold
 //! remains admission and accepted peer/media-session authority.
 
+mod media_lifecycle;
+
+pub use media_lifecycle::*;
+pub use rusty_quest_broker_contracts::{
+    validate_broker_client_spec, validate_media_lifecycle_package, BrokerClientSpec,
+    BrokerMediaLifecycleLock, BrokerMediaLifecyclePackageBinding,
+    BrokerMediaProductBindingDocument, ValidatedBrokerMediaLifecyclePackage,
+    BROKER_ADMISSION_PERMISSION, BROKER_CLIENT_SPEC_SCHEMA, BROKER_MEDIA_LIFECYCLE_LOCK_SCHEMA,
+    BROKER_MEDIA_LIFECYCLE_LOCK_SCHEMA_V1, BROKER_MEDIA_LIFECYCLE_PACKAGE_SCHEMA,
+    MEDIA_SESSION_CONTRACT, PEER_SESSION_CONTRACT,
+};
+
 use std::collections::BTreeSet;
 
+use rusty_manifold_runtime_host::{
+    HOST_TYPED_PARAMS_DIGEST_SCHEMA, MAX_TYPED_PARAMS_CANONICAL_BYTES,
+};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
 
-/// Broker client spec schema.
-pub const BROKER_CLIENT_SPEC_SCHEMA: &str = "rusty.quest.broker_client_spec.v1";
 /// Generic QCL media receipt fold schema.
 pub const GENERIC_MEDIA_RECEIPT_SCHEMA: &str = "rusty.quest.generic_media_session_evidence.v1";
-/// Shared peer-session contract family.
-pub const PEER_SESSION_CONTRACT: &str = "rusty.manifold.peer.session_descriptor.v1";
-/// Shared generic media-session contract family.
-pub const MEDIA_SESSION_CONTRACT: &str = "rusty.manifold.media.session_descriptor.v1";
-/// Signature permission needed by the Android Binder adapter.
-pub const BROKER_ADMISSION_PERMISSION: &str =
-    "io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION";
-
-/// Exact per-application broker client selection.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BrokerClientSpec {
-    /// Schema id.
-    pub schema: String,
-    /// Stable Manifold client id.
-    pub client_id: String,
-    /// Exact Android package subject.
-    pub package_name: String,
-    /// Independent app feature-lock reference.
-    pub feature_lock_id: String,
-    /// Marker namespace owned by this client only.
-    pub marker_namespace: String,
-    /// Shared accepted contract families requested through the SDK.
-    pub contract_families: Vec<String>,
-    /// Exact admitted capabilities.
-    pub capabilities: Vec<String>,
-    /// Permissions introduced by the broker client adapter itself.
-    pub adapter_permissions: Vec<String>,
-    /// Broker-client-owned Android property names; must remain empty.
-    pub runtime_properties: Vec<String>,
-    /// App-specific defaults copied into the shared client; must remain empty.
-    pub application_defaults: Vec<String>,
-}
+/// Admitted real server mutation schema.
+pub const BROKER_SERVER_MUTATION_SCHEMA: &str = "rusty.quest.broker.server_mutation_request.v1";
+/// Typed low-rate effect-parameter schema shared with the Rust authority path.
+pub const BROKER_EFFECT_PARAMS_SCHEMA: &str = "rusty.quest.broker.effect_params.v1";
 
 /// Pair-level differential validation receipt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,28 +51,6 @@ pub struct BrokerClientPairReceipt {
     pub property_and_default_bleed_absent: bool,
 }
 
-/// Generic input distilled from a QCL100 product receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Qcl100MediaEvidenceInput {
-    /// Evidence profile reference only; never runtime API identity.
-    pub validation_profile_ref: String,
-    /// Accepted media layout.
-    pub media_layout: String,
-    /// Scoped socket authority.
-    pub socket_authority: String,
-    /// Receiver-observed bytes.
-    pub receiver_observed_bytes: u64,
-    /// Final-window submitted frames.
-    pub final_window_submitted_frames: u64,
-    /// Cleanup result.
-    pub cleanup_complete: bool,
-    /// Native/package fatal count.
-    pub package_fatal_count: u32,
-    /// System fatal count.
-    pub system_fatal_count: u32,
-}
-
 /// QCL-neutral generic media-session evidence projection.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GenericMediaSessionEvidence {
@@ -100,6 +64,22 @@ pub struct GenericMediaSessionEvidence {
     pub route_contract: String,
     /// Original validation profile remains provenance only.
     pub validation_profile_ref: String,
+    /// Fresh source artifact path retained as provenance.
+    pub artifact_path: String,
+    /// Exact source artifact digest.
+    pub artifact_sha256: String,
+    /// Live provider epoch.
+    pub provider_epoch_id: String,
+    /// Exact accepted session.
+    pub session_id: String,
+    /// Exact accepted stream.
+    pub stream_id: String,
+    /// Exact render sink.
+    pub render_sink_id: String,
+    /// Fresh render evidence path.
+    pub render_evidence_path: String,
+    /// Exact render evidence digest.
+    pub render_evidence_sha256: String,
     /// Layout preserved from the source evidence.
     pub media_layout: String,
     /// Receiver-observed bytes.
@@ -110,78 +90,162 @@ pub struct GenericMediaSessionEvidence {
     pub cleanup_complete: bool,
 }
 
-/// Validate one client spec.
+/// One bounded-use binding returned by the signature-scoped Binder lifecycle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BrokerMutationAdmissionBinding {
+    /// Live provider epoch returned by runtime initialization/status.
+    pub provider_epoch_id: String,
+    /// One-time authorize-use request id.
+    pub admission_use_request_id: String,
+    /// Opaque token id returned by the signature-scoped issue operation.
+    pub token_id: String,
+    /// Resulting current admission authority revision.
+    pub admission_authority_revision: u64,
+    /// Expected current Runtime Host revision.
+    pub runtime_host_revision: u64,
+    /// Optional exact Runtime Host lease.
+    pub lease_id: Option<String>,
+    /// Trusted/platform-projected request issue time.
+    pub issued_at_ms: u64,
+    /// Bounded request expiry.
+    pub expires_at_ms: u64,
+}
+
+/// Build one exact client-bound mutation request after Binder authorize-use.
 ///
 /// # Errors
-/// Returns messages for identity, exact-lock, contract, permission, property,
-/// or app-default bleed.
-pub fn validate_broker_client_spec(spec: &BrokerClientSpec) -> Result<(), Vec<String>> {
-    let mut errors = Vec::new();
-    if spec.schema != BROKER_CLIENT_SPEC_SCHEMA {
-        errors.push("unsupported broker client spec schema".to_string());
+///
+/// Rejects an invalid client spec, ungranted command capability, empty ids,
+/// zero revisions, or an invalid time window.
+pub fn build_broker_mutation_request(
+    spec: &BrokerClientSpec,
+    binding: &BrokerMutationAdmissionBinding,
+    request_id: &str,
+    command_id: &str,
+    params: &Value,
+    embedded: bool,
+) -> Result<serde_json::Value, Vec<String>> {
+    let mut errors = validate_broker_client_spec(spec).err().unwrap_or_default();
+    let capability = command_capability(command_id);
+    if !spec.capabilities.iter().any(|value| value == &capability) {
+        errors.push(format!(
+            "client does not grant exact command capability {capability}"
+        ));
     }
     for (label, value) in [
-        ("client_id", spec.client_id.as_str()),
-        ("package_name", spec.package_name.as_str()),
-        ("feature_lock_id", spec.feature_lock_id.as_str()),
-        ("marker_namespace", spec.marker_namespace.as_str()),
+        ("provider_epoch_id", binding.provider_epoch_id.as_str()),
+        (
+            "admission_use_request_id",
+            binding.admission_use_request_id.as_str(),
+        ),
+        ("token_id", binding.token_id.as_str()),
+        ("request_id", request_id),
+        ("command_id", command_id),
     ] {
         if value.trim().is_empty() {
             errors.push(format!("{label} must not be empty"));
         }
     }
-    let required_contracts = BTreeSet::from([PEER_SESSION_CONTRACT, MEDIA_SESSION_CONTRACT]);
-    let actual_contracts = spec
-        .contract_families
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    if actual_contracts != required_contracts || spec.contract_families.len() != 2 {
-        errors.push(
-            "client must select exactly the shared peer and media session contracts".to_string(),
-        );
+    if binding.admission_authority_revision == 0 || binding.runtime_host_revision == 0 {
+        errors.push("authority revisions must be nonzero".to_string());
     }
-    let capabilities = spec
-        .capabilities
-        .iter()
-        .map(String::as_str)
-        .collect::<BTreeSet<_>>();
-    if capabilities.len() != spec.capabilities.len()
-        || capabilities.iter().copied().collect::<Vec<_>>()
-            != spec
-                .capabilities
-                .iter()
-                .map(String::as_str)
-                .collect::<Vec<_>>()
-    {
-        errors.push("client capabilities must be unique and sorted".to_string());
+    if binding.issued_at_ms >= binding.expires_at_ms {
+        errors.push("mutation time window must be positive".to_string());
     }
-    for required in [
-        "capability.peer.session.observe",
-        "capability.media.session.observe",
-        "capability.command.session.list",
-    ] {
-        if !capabilities.contains(required) {
-            errors.push(format!("client is missing shared capability {required}"));
+    if !params.is_object() {
+        errors.push("effect params must be a JSON object".to_string());
+    }
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    let effect_params = serde_json::json!({
+        "$schema": BROKER_EFFECT_PARAMS_SCHEMA,
+        "command_id": command_id,
+        "values": params
+    });
+    let canonical = canonical_json(&effect_params).map_err(|error| vec![error])?;
+    if canonical.len() > MAX_TYPED_PARAMS_CANONICAL_BYTES as usize {
+        return Err(vec![format!(
+            "effect params exceed {} canonical bytes",
+            MAX_TYPED_PARAMS_CANONICAL_BYTES
+        )]);
+    }
+    let params_sha256 = Sha256::digest(canonical.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(serde_json::json!({
+        "$schema": BROKER_SERVER_MUTATION_SCHEMA,
+        "bridge_kind": if embedded { "embedded_in_process_jni" } else { "standalone_process_jni" },
+        "provider_epoch_id": binding.provider_epoch_id,
+        "admission_use_request_id": binding.admission_use_request_id,
+        "token_id": binding.token_id,
+        "expected_admission_authority_revision": binding.admission_authority_revision,
+        "command": {
+            "$schema": "rusty.manifold.runtime_host.command_request.v1",
+            "request_id": request_id,
+            "expected_authority_revision": binding.runtime_host_revision,
+            "requester_id": spec.client_id,
+            "command_id": command_id,
+            "lease_id": binding.lease_id,
+            "params_digest": {
+                "$schema": HOST_TYPED_PARAMS_DIGEST_SCHEMA,
+                "params_type_id": BROKER_EFFECT_PARAMS_SCHEMA,
+                "canonical_sha256": format!("sha256:{params_sha256}"),
+                "canonical_size_bytes": canonical.len()
+            },
+            "issued_at_ms": binding.issued_at_ms,
+            "expires_at_ms": binding.expires_at_ms
+        },
+        "params": effect_params
+    }))
+}
+
+fn canonical_json(value: &Value) -> Result<String, String> {
+    fn write(value: &Value, output: &mut String) -> Result<(), serde_json::Error> {
+        match value {
+            Value::Null => output.push_str("null"),
+            Value::Bool(value) => output.push_str(if *value { "true" } else { "false" }),
+            Value::Number(value) => output.push_str(&value.to_string()),
+            Value::String(value) => output.push_str(&serde_json::to_string(value)?),
+            Value::Array(values) => {
+                output.push('[');
+                for (index, value) in values.iter().enumerate() {
+                    if index != 0 {
+                        output.push(',');
+                    }
+                    write(value, output)?;
+                }
+                output.push(']');
+            }
+            Value::Object(values) => {
+                output.push('{');
+                let mut keys = values.keys().collect::<Vec<_>>();
+                keys.sort();
+                for (index, key) in keys.into_iter().enumerate() {
+                    if index != 0 {
+                        output.push(',');
+                    }
+                    output.push_str(&serde_json::to_string(key)?);
+                    output.push(':');
+                    write(&values[key], output)?;
+                }
+                output.push('}');
+            }
         }
-    }
-    if spec.adapter_permissions != [BROKER_ADMISSION_PERMISSION] {
-        errors.push(
-            "broker client adapter may introduce only the signature admission permission"
-                .to_string(),
-        );
-    }
-    if !spec.runtime_properties.is_empty() || !spec.application_defaults.is_empty() {
-        errors.push(
-            "broker client spec must not own runtime properties or application defaults"
-                .to_string(),
-        );
-    }
-    if errors.is_empty() {
         Ok(())
-    } else {
-        Err(errors)
     }
+
+    let mut output = String::new();
+    write(value, &mut output)
+        .map_err(|error| format!("effect params canonicalize failed: {error}"))?;
+    Ok(output)
+}
+
+fn command_capability(command_id: &str) -> String {
+    let suffix = command_id.strip_prefix("command.").unwrap_or(command_id);
+    format!("capability.command.{suffix}")
 }
 
 /// Validate two independent applications over one shared SDK contract.
@@ -216,24 +280,20 @@ pub fn validate_broker_client_pair(
         .iter()
         .map(String::as_str)
         .collect::<BTreeSet<_>>();
-    let shared = BTreeSet::from([
-        "capability.peer.session.observe",
-        "capability.media.session.observe",
-        "capability.command.session.list",
-    ]);
-    let first_specific = first_caps
-        .difference(&shared)
+    let first_sinks = first_caps
+        .iter()
+        .filter(|capability| capability.starts_with("capability.sink."))
         .copied()
         .collect::<BTreeSet<_>>();
-    let second_specific = second_caps
-        .difference(&shared)
+    let second_sinks = second_caps
+        .iter()
+        .filter(|capability| capability.starts_with("capability.sink."))
         .copied()
         .collect::<BTreeSet<_>>();
-    let capability_bleed_absent = first_specific.len() == 1
-        && second_specific.len() == 1
-        && first_specific.is_disjoint(&second_specific);
+    let capability_bleed_absent =
+        first_sinks.len() <= 1 && second_sinks.len() <= 1 && first_sinks.is_disjoint(&second_sinks);
     if !capability_bleed_absent {
-        errors.push("each client requires exactly one distinct app capability".to_string());
+        errors.push("app-local sink capability crossed independent client locks".to_string());
     }
     if !errors.is_empty() {
         return Err(errors);
@@ -246,49 +306,6 @@ pub fn validate_broker_client_pair(
         capability_bleed_absent,
         adapter_permission_bleed_absent: true,
         property_and_default_bleed_absent: true,
-    })
-}
-
-/// Fold QCL100 evidence into generic media-session evidence.
-///
-/// # Errors
-/// Rejects missing media/renderer observations, wrong socket authority,
-/// incomplete cleanup, fatals, and unsupported layouts.
-pub fn fold_qcl100_media_evidence(
-    input: &Qcl100MediaEvidenceInput,
-) -> Result<GenericMediaSessionEvidence, Vec<String>> {
-    let mut errors = Vec::new();
-    if input.validation_profile_ref.trim().is_empty() {
-        errors.push("validation profile ref is required".to_string());
-    }
-    if !matches!(
-        input.media_layout.as_str(),
-        "separate-eye-streams" | "side-by-side-left-right"
-    ) {
-        errors.push("unsupported generic media layout".to_string());
-    }
-    if input.socket_authority != "rusty_direct_p2p_socket_authority" {
-        errors.push("wrong socket authority".to_string());
-    }
-    if input.receiver_observed_bytes == 0 || input.final_window_submitted_frames == 0 {
-        errors.push("media and renderer observations are required".to_string());
-    }
-    if !input.cleanup_complete || input.package_fatal_count != 0 || input.system_fatal_count != 0 {
-        errors.push("cleanup/fatal gate failed".to_string());
-    }
-    if !errors.is_empty() {
-        return Err(errors);
-    }
-    Ok(GenericMediaSessionEvidence {
-        schema: GENERIC_MEDIA_RECEIPT_SCHEMA.to_string(),
-        status: "pass".to_string(),
-        media_session_contract: MEDIA_SESSION_CONTRACT.to_string(),
-        route_contract: "rusty.quest.direct_p2p_socket_route.v1".to_string(),
-        validation_profile_ref: input.validation_profile_ref.clone(),
-        media_layout: input.media_layout.clone(),
-        receiver_observed_bytes: input.receiver_observed_bytes,
-        final_window_submitted_frames: input.final_window_submitted_frames,
-        cleanup_complete: true,
     })
 }
 
@@ -323,22 +340,166 @@ mod tests {
             "../../../fixtures/damaged/broker-client-spatial-union.json"
         ));
         let errors = validate_broker_client_pair(&native, &damaged).expect_err("union rejects");
-        assert!(errors
-            .iter()
-            .any(|error| error.contains("distinct app capability")));
+        assert!(errors.iter().any(|error| error.contains("sink capability")));
         assert!(errors
             .iter()
             .any(|error| error.contains("markers must be distinct")));
     }
 
     #[test]
-    fn qcl100_fixture_folds_to_generic_media_evidence() {
-        let input: Qcl100MediaEvidenceInput = serde_json::from_str(include_str!(
-            "../../../fixtures/broker-clients/qcl100-generic-media.pass.json"
-        ))
-        .expect("evidence parses");
-        let receipt = fold_qcl100_media_evidence(&input).expect("evidence folds");
-        assert_eq!(receipt.media_session_contract, MEDIA_SESSION_CONTRACT);
-        assert!(!receipt.validation_profile_ref.starts_with("runtime."));
+    fn peer_only_and_media_observer_clients_do_not_inherit_mutation_or_sink_caps() {
+        let mut peer = spec(include_str!(
+            "../../../fixtures/broker-clients/native-renderer.client.json"
+        ));
+        peer.contract_families = vec![PEER_SESSION_CONTRACT.to_string()];
+        peer.capabilities = vec![
+            "capability.command.session.list".to_string(),
+            "capability.peer.session.observe".to_string(),
+        ];
+        validate_broker_client_spec(&peer).expect("peer-only client");
+
+        let mut observer = peer;
+        observer.contract_families = vec![MEDIA_SESSION_CONTRACT.to_string()];
+        observer.capabilities = vec![
+            "capability.command.session.list".to_string(),
+            "capability.media.session.observe".to_string(),
+        ];
+        validate_broker_client_spec(&observer).expect("media observer client");
+        assert!(!observer
+            .capabilities
+            .iter()
+            .any(|capability| capability.contains("media.session.start")
+                || capability.starts_with("capability.sink.")));
+    }
+
+    #[test]
+    fn mutation_builder_binds_client_epoch_revisions_and_one_time_use() {
+        let native = spec(include_str!(
+            "../../../fixtures/broker-clients/native-renderer.client.json"
+        ));
+        let request = build_broker_mutation_request(
+            &native,
+            &BrokerMutationAdmissionBinding {
+                provider_epoch_id: format!("epoch.provider.{}", "11".repeat(32)),
+                admission_use_request_id: "request.native.use.1".to_string(),
+                token_id: format!("token.session.{}", "22".repeat(32)),
+                admission_authority_revision: 3,
+                runtime_host_revision: 1,
+                lease_id: None,
+                issued_at_ms: 2_000,
+                expires_at_ms: 5_000,
+            },
+            "request.native.command.1",
+            "command.session.list",
+            &serde_json::json!({}),
+            false,
+        )
+        .expect("request");
+        assert_eq!(request["command"]["requester_id"], native.client_id);
+        assert_eq!(request["expected_admission_authority_revision"], 3);
+        assert_eq!(
+            request["token_id"],
+            format!("token.session.{}", "22".repeat(32))
+        );
+        assert_eq!(request["bridge_kind"], "standalone_process_jni");
+        assert_eq!(request["params"]["$schema"], BROKER_EFFECT_PARAMS_SCHEMA);
+        assert_eq!(
+            request["command"]["params_digest"]["canonical_sha256"],
+            format!(
+                "sha256:{}",
+                Sha256::digest(
+                    canonical_json(&request["params"])
+                        .expect("canonical")
+                        .as_bytes()
+                )
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>()
+            )
+        );
+    }
+
+    #[test]
+    fn mutation_builder_rejects_ungranted_command_and_invalid_window() {
+        let native = spec(include_str!(
+            "../../../fixtures/broker-clients/native-renderer.client.json"
+        ));
+        let errors = build_broker_mutation_request(
+            &native,
+            &BrokerMutationAdmissionBinding {
+                provider_epoch_id: "epoch.provider.test".to_string(),
+                admission_use_request_id: "request.native.use.bad".to_string(),
+                token_id: "token.session.test".to_string(),
+                admission_authority_revision: 3,
+                runtime_host_revision: 1,
+                lease_id: None,
+                issued_at_ms: 5_000,
+                expires_at_ms: 5_000,
+            },
+            "request.native.command.bad",
+            "command.peer.session.revoke",
+            &serde_json::json!({}),
+            false,
+        )
+        .expect_err("reject");
+        assert!(errors
+            .iter()
+            .any(|error| error.contains("exact command capability")));
+        assert!(errors.iter().any(|error| error.contains("time window")));
+    }
+
+    #[test]
+    fn mutation_builder_canonicalizes_object_order_and_rejects_oversize_params() {
+        let native = spec(include_str!(
+            "../../../fixtures/broker-clients/native-renderer.client.json"
+        ));
+        let binding = BrokerMutationAdmissionBinding {
+            provider_epoch_id: format!("epoch.provider.{}", "11".repeat(32)),
+            admission_use_request_id: "request.native.use.order".to_string(),
+            token_id: format!("token.session.{}", "22".repeat(32)),
+            admission_authority_revision: 3,
+            runtime_host_revision: 1,
+            lease_id: None,
+            issued_at_ms: 2_000,
+            expires_at_ms: 5_000,
+        };
+        let left: Value =
+            serde_json::from_str(r#"{"z":2,"a":{"y":2,"x":1}}"#).expect("left values");
+        let right: Value =
+            serde_json::from_str(r#"{"a":{"x":1,"y":2},"z":2}"#).expect("right values");
+        let left_request = build_broker_mutation_request(
+            &native,
+            &binding,
+            "request.native.command.order.left",
+            "command.session.list",
+            &left,
+            false,
+        )
+        .expect("left request");
+        let right_request = build_broker_mutation_request(
+            &native,
+            &binding,
+            "request.native.command.order.right",
+            "command.session.list",
+            &right,
+            false,
+        )
+        .expect("right request");
+        assert_eq!(
+            left_request["command"]["params_digest"]["canonical_sha256"],
+            right_request["command"]["params_digest"]["canonical_sha256"]
+        );
+
+        let oversized = serde_json::json!({"blob": "x".repeat(5_000)});
+        let errors = build_broker_mutation_request(
+            &native,
+            &binding,
+            "request.native.command.oversize",
+            "command.session.list",
+            &oversized,
+            false,
+        )
+        .expect_err("oversize rejects");
+        assert!(errors.iter().any(|error| error.contains("canonical bytes")));
     }
 }

@@ -1,0 +1,37 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/feature-lock.schema.json",
+  "schema": "rusty.morphospace.workflow.feature_lock.v1",
+  "project_id": "spatial-camera-panel",
+  "revision": 1,
+  "default_activation": "disabled",
+  "features": [
+    {
+      "feature_id": "spatial-panel-shell",
+      "module_id": "spatial-panel-shell",
+      "enabled": true,
+      "requested_by": "conformance-profile:hand-adapter",
+      "descriptor": "morphospace/project.spec.json#spatial-panel-shell",
+      "dependencies": [],
+      "conflicts": [],
+      "permissions": [],
+      "routes": ["spatial-panel"],
+      "assets": [],
+      "parameter_authorities": [{"parameter":"app.composition","owner":"spatial-app"}],
+      "activation_receipt": {"required":true,"schema":"rusty.quest.spatial_camera_panel.activation_receipt.v1","effective_marker":"rusty.quest.spatial_camera_panel.shell.effective"}
+    },
+    {
+      "feature_id": "tracked-hand-surface",
+      "module_id": "tracked-hand-surface",
+      "enabled": true,
+      "requested_by": "conformance-profile:hand-adapter",
+      "descriptor": "morphospace/project.spec.json#tracked-hand-surface",
+      "dependencies": ["spatial-panel-shell"],
+      "conflicts": [],
+      "permissions": [],
+      "routes": ["spatial-hand-billboard-flock"],
+      "assets": [],
+      "parameter_authorities": [],
+      "activation_receipt": {"required":true,"schema":"rusty.quest.hand_adapter.receipt.v1","effective_marker":"rusty.quest.hand_adapter.effective"}
+    }
+  ]
+}

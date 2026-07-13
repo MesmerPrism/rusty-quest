@@ -18,6 +18,7 @@ param(
     [string]$AppId = $env:RUSTY_QUEST_SPATIAL_APP_ID,
     [string]$AppLabel = $env:RUSTY_QUEST_SPATIAL_APP_LABEL,
     [string]$ApkFileName = $env:RUSTY_QUEST_SPATIAL_APK_FILE_NAME,
+    [string]$Keystore = "",
     [string]$OutDir = ""
 )
 
@@ -470,6 +471,12 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 $repoRoot = Resolve-Path $RepoRoot
 $appRoot = Resolve-Path (Join-Path $repoRoot "apps\spatial-camera-panel-android")
 $targetRoot = Join-Path $repoRoot "target"
+if (-not [string]::IsNullOrWhiteSpace($Keystore)) {
+    if (-not (Test-Path -LiteralPath $Keystore -PathType Leaf)) {
+        throw "Keystore not found: $Keystore"
+    }
+    $Keystore = (Resolve-Path -LiteralPath $Keystore).Path
+}
 if ([string]::IsNullOrWhiteSpace($OutDir)) {
     $OutDir = Join-Path $targetRoot "spatial-camera-panel-android"
 }
@@ -666,6 +673,7 @@ $previousGradleUserHome = $env:GRADLE_USER_HOME
 $previousSpatialAppId = $env:RUSTY_QUEST_SPATIAL_APP_ID
 $previousSpatialAppLabel = $env:RUSTY_QUEST_SPATIAL_APP_LABEL
 $previousHandMeshRigAssetDir = $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR
+$previousSigningKeystore = $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE
 try {
     $env:ANDROID_HOME = $AndroidHome
     $env:JAVA_HOME = $JavaHome
@@ -676,6 +684,11 @@ try {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR -ErrorAction SilentlyContinue
     } else {
         $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR = $resolvedHandMeshRigAssetDir
+    }
+    if ([string]::IsNullOrWhiteSpace($Keystore)) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE = $Keystore
     }
     Invoke-Checked "Spatial Camera Panel Gradle build" $gradleBat @(
         "--no-daemon",
@@ -705,6 +718,11 @@ try {
         Remove-Item Env:\RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR -ErrorAction SilentlyContinue
     } else {
         $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR = $previousHandMeshRigAssetDir
+    }
+    if ($null -eq $previousSigningKeystore) {
+        Remove-Item Env:\RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE -ErrorAction SilentlyContinue
+    } else {
+        $env:RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE = $previousSigningKeystore
     }
 }
 
@@ -1133,6 +1151,7 @@ $manifest = [ordered]@{
     spatial_pointer_input_expected = $true
     apk_path = $apkOut
     apk_sha256 = $sha256
+    signing_keystore = $(if ([string]::IsNullOrWhiteSpace($Keystore)) { "gradle-debug-default" } else { $Keystore })
 }
 $manifestPath = Join-Path $OutDir "build-manifest.json"
 $manifest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -Path $manifestPath

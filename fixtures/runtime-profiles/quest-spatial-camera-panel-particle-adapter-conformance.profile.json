@@ -1,0 +1,38 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.spatial_camera_panel.particle_adapter_conformance",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.spatial.native_surface_particle_layer.enabled",
+    "debug.rustyquest.spatial_camera_panel.particle_adapter.profile_id",
+    "debug.rustyquest.spatial_camera_panel.particle_adapter.project_id",
+    "debug.rustyquest.spatial_camera_panel.particle_adapter.feature_id",
+    "debug.rustyquest.spatial_camera_panel.particle_adapter.lock_revision",
+    "debug.rustyquest.spatial_camera_panel.particle_adapter.lock_sha256"
+  ],
+  "set_properties": [
+    {"name":"debug.rustyquest.spatial.native_surface_particle_layer.enabled","value":"true","source_setting_id":"spatial_camera_panel.particle_adapter.enabled"},
+    {"name":"debug.rustyquest.spatial_camera_panel.particle_adapter.profile_id","value":"profile.quest.spatial_camera_panel.particle_adapter_conformance","source_setting_id":"spatial_camera_panel.particle_adapter.profile_id"},
+    {"name":"debug.rustyquest.spatial_camera_panel.particle_adapter.project_id","value":"spatial-camera-panel","source_setting_id":"spatial_camera_panel.particle_adapter.project_id"},
+    {"name":"debug.rustyquest.spatial_camera_panel.particle_adapter.feature_id","value":"surface-particle-runtime","source_setting_id":"spatial_camera_panel.particle_adapter.feature_id"},
+    {"name":"debug.rustyquest.spatial_camera_panel.particle_adapter.lock_revision","value":"1","source_setting_id":"spatial_camera_panel.particle_adapter.lock_revision"},
+    {"name":"debug.rustyquest.spatial_camera_panel.particle_adapter.lock_sha256","value":"780814BE82C12A54036DE0259C6188E2D41813858C30E6B6C725EB8422F7301B","source_setting_id":"spatial_camera_panel.particle_adapter.lock_sha256"}
+  ],
+  "expected_markers": [
+    "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=particle-adapter",
+    "status=accepted",
+    "particleAdapterConsumer=spatial-camera-panel",
+    "particleAdapterEnabled=true",
+    "lockBindingSchema=rusty.quest.lock_bound_activation.v1",
+    "activationState=applied",
+    "projectId=spatial-camera-panel",
+    "featureId=surface-particle-runtime",
+    "conformanceLockRevision=1",
+    "conformanceLockSha256=780814BE82C12A54036DE0259C6188E2D41813858C30E6B6C725EB8422F7301B",
+    "runtimeProfileId=profile.quest.spatial_camera_panel.particle_adapter_conformance",
+    "activationRejectReason=none"
+  ],
+  "validation_commands": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-spatial-camera-panel-particle-adapter-conformance.profile.json -DryRun -Out local-artifacts/spatial-camera-panel-particle-adapter-conformance-property-write-plan.json"
+  ]
+}

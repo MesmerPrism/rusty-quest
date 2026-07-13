@@ -47,6 +47,22 @@ adopter of the portable project/module workflow: the panel shell is the only
 workflow-selected baseline, nearby particle/hand/camera/media/asset/room
 families are explicit disabled entries, and unlisted features remain inert.
 
+For corrective WF-005 reconciliation, inspect both app-local workspaces:
+`apps/spatial-camera-panel-android/morphospace` and
+`apps/native-renderer-android/morphospace`. Their default locks remain inert;
+particle and hand families may appear only in explicit conformance locks. Run
+`tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1` and its self-test for
+workspace changes. Local MOD-006 source validation is device-pending and must
+not be presented as central promotion or device acceptance.
+
+`crates/rusty-quest-feature-activation` is the sole generic closed-world parser,
+exact-lock digest binder, dependency/conflict checker, and common rejection
+engine for reusable Quest features. Module adapters expose nominal private-inner
+decision types and own only selector/receipt/marker policy; applications own the
+accepted project, feature, module, profile, lock digest, and resulting effects.
+Do not copy the parser or use one adapter family's decision at another effect
+gate. See `docs/FEATURE_ACTIVATION.md` and keep both adapter static gates current.
+
 For the Spatial surface-particle candidate, reuse Matter's existing particle
 and surface-runtime contracts. Matter owns state, simulation, force-source
 selection, deterministic diagnostics, snapshots, and render-neutral payloads;
@@ -73,17 +89,48 @@ accepted Manifold broker product locks. Manifold owns product feature resolution
 runtime mode, commands, streams, modules, and the exact permission closure. Quest
 maps that accepted permission enum into an exact manifest projection; it must not
 union permissions, silently add optional capabilities, or accept a stale lock.
-Camera, direct-P2P, and BLE products remain separate explicit opt-ins, while the
-base broker stays camera/P2P/BLE-free.
+Generic `media_session` remains camera-free. Camera, direct-P2P, and BLE
+products remain separate explicit opt-ins, while the base broker stays
+camera/P2P/BLE-free. `Build-ManifoldBrokerAndroid.ps1` must consume an exact
+spec/lock pair, generate the actual app manifest and command registry, and
+package their lock-stamped receipts; it must never fall back to an ambient app
+manifest. The broad camera/P2P validation surface is legacy compatibility and
+requires its explicit switch.
 
 `crates/rusty-quest-broker-authority` is the trusted local process/JNI
-projection over `rusty-manifold-broker-adapter`. Standalone and embedded JNI
-surfaces must pass the full typed invocation to the same Rust evaluator,
-preserve its dispatch/application receipt and next snapshot, report
-`local_acceptance_rules=false`, and name `module.runtime.host` as decision
-owner. Java may validate bridge shape; it must not duplicate command, lease,
-revision, replay, or rejection policy. These product-lock paths remain
-non-default until a selected app package supplies their trusted local state.
+projection over `ManifoldBrokerRuntime`. Real standalone and embedded JNI
+surfaces retain one process-local provider, exact product lock, admission
+  state, bounded-use permits, and Runtime Host. Every server mutation carries
+  the live provider epoch plus one signature-scoped use id, its opaque token id,
+  and that use's creation revision; Rust binds it to the exact client/command
+  capability, consumes it,
+then performs the single Runtime Host review/apply attempt. Java/WebSocket/JNI
+must not write `accepted`, invent Manifold authority labels, or execute a
+platform effect before the Rust receipt applies. Same-provider rebind preserves
+  state; provider process restart requires a fresh entropy-derived epoch.
+  Unrelated admission revision advances must not invalidate another client's
+  pending use; revocation/expiry invalidates only uses derived from the exact
+  affected token.
+
+  Product runtime config is packaged authority, not a settings payload. Builds
+  embed the exact accepted product spec/lock and exact client locks with their
+  SHA-256 bindings, derive each grant from the product/client intersection, and
+  embed the canonical runtime-config digest consumed by JNI. Base products must
+  not gain media/sink/peer grants; camera-free media may gain only selected
+  media/sink grants. Embedded Native Renderer rejects settings-supplied config
+  and authenticates its own Android package plus single signing certificate
+  before Rust issue/use/mutation.
+
+  A product that selects `media_session` must package exact canonical Manifold
+  descriptor and Quest runtime-spec bindings. The runtime spec must close over
+  independently selected source, processor, route, socket, codec, sink, and
+  cleanup owners; Camera2 and Direct-P2P providers also require those exact
+  product features. Runtime Host command acceptance prepares a receipt-bound
+  action with `platform_effect_completed=false`. Only an exact owner completion
+  applied by Rust may advance receiver-first start or cleanup-last stop state.
+  Generic media must never route through `RemoteCameraSessionRuntime` or inherit
+  its properties, defaults, permissions, or command aliases; that runtime is an
+  explicit compatibility branch only. See `docs/MEDIA_SESSION_RUNTIME.md`.
 
 Cross-app product admission uses the signature-scoped Binder service in
 `apps/manifold-broker-android` and the thin
@@ -99,11 +146,19 @@ Independent product apps consume that surface through
 package subject, feature lock, marker namespace, and app-local sink capability;
 the shared SDK may carry only the exact peer/media contract families and the
 signature permission. Capability lists are canonical sorted sets. Repeated
-service binding must preserve the live Manifold authority revision. Validate
+service binding must preserve the live Manifold admission and Runtime Host
+revisions. Client commands must be built from the Binder use receipt with
+  `build_broker_mutation_request`; ungranted commands, copied client ids, stale
+  revisions, old epochs, and reused use ids fail closed. Validate
 native renderer and Spatial Camera Panel together with
 `tools/Invoke-MultiAppBrokerClientTwoQuest.ps1`; require both lifecycles,
 distinct Android app ids, no cross-marker/default/property bleed, zero
-package/system fatals, and complete uninstall cleanup on both serials.
+  package/system fatals, and complete uninstall cleanup on both serials.
+  Each client process/Activity launch creates a 128-bit `SecureRandom` request
+  namespace; only an explicit replay probe may reuse one request id. Runtime
+  Host requests bind canonical typed effect params (maximum 4096 bytes) through
+  dispatch/application receipts, and Java consumes only Rust-returned
+  `effect_params` after acceptance.
 
 Product Wi-Fi Direct topology lives in `apps/direct-p2p-provider-android`.
 Android Wi-Fi P2P owns credentialed temporary group formation,
@@ -149,6 +204,19 @@ connected devices with
 `tools/Invoke-BrokerAdmissionDeathRecoveryTwoQuest.ps1`; its dedicated 2D
 clients avoid an unrelated 6DoF launch dependency, and its provider restart is
 a deliberate safe rebuild, not evidence of persisted in-memory authority.
+
+For the final proportional two-Quest release matrix, use
+`tools/Invoke-CorrectedReleaseTwoQuestMatrix.ps1` and the focused contract in
+`docs/CORRECTED_RELEASE_TWO_QUEST_MATRIX.md`. Production requires exactly two
+explicit serials, the exact clean Rusty Quest revision, current built broker,
+Native, and Spatial APKs, and the mandatory live
+`tools/Invoke-ManifoldPeerAuthorityTwoQuest.ps1` provider. Do not substitute
+legacy BLE/session/QCL/Termux/sidecar evidence for on-device keys, reciprocal
+signatures, current Manifold enrollment/rendezvous revisions, topology
+authorization, a real direct-lane lease, rotation/revocation/replay negatives,
+direct exchange, inactive cleanup, or zero bounded fatals. Run
+`tools/checks/Test-CorrectedReleaseTwoQuestMatrixStatic.ps1` for source-only
+contract and damaged-input checks; it must not contact a headset.
 
 ## Agent Board
 

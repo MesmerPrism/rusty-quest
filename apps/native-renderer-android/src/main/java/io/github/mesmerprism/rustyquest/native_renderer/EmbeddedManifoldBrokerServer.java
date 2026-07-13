@@ -33,10 +33,14 @@ public final class EmbeddedManifoldBrokerServer {
     private static final String CHANNEL = "manifold-embedded-broker";
     private static final String ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     private static final String COMMAND_SCHEMA = "rusty.manifold.command.envelope.v1";
+    private static final String MUTATION_SCHEMA =
+            "rusty.quest.broker.server_mutation_request.v1";
     private static final String DEFAULT_BIND_HOST = "127.0.0.1";
     private static final int DEFAULT_PORT = 8765;
     private static final String DEFAULT_PATH = "/manifold/v1/events";
     private static final int DEFAULT_MAX_FRAME_BYTES = 65536;
+    private static final int MAX_READ_ONLY_CLIENTS = 4;
+    private static final int CLIENT_IDLE_TIMEOUT_MS = 15000;
     private static final EmbeddedManifoldBrokerServer INSTANCE = new EmbeddedManifoldBrokerServer();
 
     private final Object lifecycleLock = new Object();
@@ -73,12 +77,22 @@ public final class EmbeddedManifoldBrokerServer {
             marker("status=disabled reason=feature-disabled " + parsed.markerFields());
             return;
         }
-        if (!parsed.lanEnabled && !"127.0.0.1".equals(parsed.bindHost)) {
-            marker("status=error reason=lan-disabled-non-loopback-bind " + parsed.markerFields());
+        // This embedded WebSocket is deliberately a loopback-only, read-only
+        // readiness surface. Network callers cannot be projected as the
+        // renderer process and therefore cannot inherit its Binder grants.
+        String networkPolicyRejection = EmbeddedWebSocketAuthorityPolicy.startRejection(
+                parsed.lanEnabled,
+                parsed.bindHost,
+                parsed.sessionTokenRequired,
+                parsed.sessionToken);
+        if (networkPolicyRejection != null) {
+            marker("status=error reason=" + networkPolicyRejection + " " + parsed.markerFields());
             return;
         }
-        if (parsed.lanEnabled && (!parsed.sessionTokenRequired || parsed.sessionToken.isEmpty())) {
-            marker("status=error reason=lan-session-token-required " + parsed.markerFields());
+        try {
+            EmbeddedManifoldRuntimeAuthorityBridge.initialize();
+        } catch (Exception ex) {
+            marker("status=error reason=authority-runtime-initialize " + parsed.markerFields());
             return;
         }
 
@@ -148,6 +162,7 @@ public final class EmbeddedManifoldBrokerServer {
     private void handleClient(Socket client) {
         BrokerSession session = null;
         try (Socket socket = client) {
+            socket.setSoTimeout(CLIENT_IDLE_TIMEOUT_MS);
             InputStream input = socket.getInputStream();
             OutputStream output = socket.getOutputStream();
             Handshake handshake = readHandshake(input);
@@ -158,6 +173,10 @@ public final class EmbeddedManifoldBrokerServer {
             String key = handshake.headers.get("sec-websocket-key");
             if (key == null || key.isEmpty()) {
                 writeHttp(output, "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n");
+                return;
+            }
+            if (activeClientCount() >= MAX_READ_ONLY_CLIENTS) {
+                writeHttp(output, "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n");
                 return;
             }
             writeWebSocketAccept(output, key);
@@ -200,122 +219,48 @@ public final class EmbeddedManifoldBrokerServer {
         String type = message.optString("type", "");
         if ("hello".equals(type)) {
             JSONObject reply = new JSONObject();
-            reply.put("type", "hello_ack");
-            reply.put("schema", "rusty.manifold.broker.hello_ack.v1");
-            reply.put("accepted", true);
-            reply.put("authority", "rusty.manifold");
+            reply.put("type", "hello_transport_status");
+            reply.put("schema", "rusty.quest.broker.transport_status.v1");
+            reply.put("transport_ready", true);
             reply.put("server_id", "rusty.quest.native_renderer.embedded_manifold_broker");
             reply.put("endpoint_path", settings.path);
             reply.put("embedded", true);
+            reply.put("read_only", true);
+            reply.put("mutation_transport", false);
+            reply.put("mutation_route", "signature_scoped_binder_or_direct_in_process");
             reply.put("active_clients", activeClientCount());
-            reply.put("session_token_required", settings.sessionTokenRequired);
             reply.put("time_utc", Instant.now().toString());
             writeText(session, reply);
             return;
         }
 
-        String command = firstNonEmpty(
-                message.optString("command", ""),
-                message.optString("command_id", ""),
-                type);
-        JSONObject params = message.optJSONObject("params");
-        if (params == null) {
-            params = new JSONObject();
-        }
-
-        if (isSubscribeCommand(command) || "subscribe".equals(type)) {
+        if ("command".equals(type)
+                || COMMAND_SCHEMA.equals(message.optString("schema", ""))
+                || MUTATION_SCHEMA.equals(message.optString("$schema", ""))) {
             commandCount += 1;
-            JSONObject reply = commandAck(message, command);
-            if (!sessionTokenAccepted(message, params)) {
-                reply.put("accepted", false);
-                reply.put("status", "session_token_required");
-                writeText(session, reply);
-                return;
-            }
-            String stream = streamFrom(message, params, params.optJSONObject("payload"));
-            if (!stream.isEmpty()) {
-                session.subscribe(stream);
-            }
-            reply.put("accepted", !stream.isEmpty());
-            reply.put("status", stream.isEmpty() ? "missing_stream" : "subscribed");
-            reply.put("stream", stream);
-            reply.put("subscription_count", session.subscriptionCount());
-            writeText(session, reply);
-            marker("status=subscribe stream=" + markerToken(stream) + " commandCount=" + commandCount);
-            return;
-        }
-
-        if (isPublishStreamEventCommand(command) || "publish_stream_event".equals(type)) {
-            commandCount += 1;
-            JSONObject reply = commandAck(message, command);
-            if (!sessionTokenAccepted(message, params)) {
-                reply.put("accepted", false);
-                reply.put("status", "session_token_required");
-                writeText(session, reply);
-                return;
-            }
-            JSONObject event = buildStreamEvent(message, params);
-            int delivered = publishStreamEvent(event);
-            reply.put("accepted", true);
-            reply.put("status", "published");
-            reply.put("stream", event.optString("stream", ""));
-            reply.put("stream_event_delivered_count", delivered);
-            reply.put("stream_events_published", streamEventCount);
-            reply.put("dropped_events", droppedEventCount);
-            writeText(session, reply);
-            return;
-        }
-
-        if ("command".equals(type) || COMMAND_SCHEMA.equals(message.optString("schema", ""))) {
-            commandCount += 1;
-            JSONObject reply = commandAck(message, command);
-            reply.put("accepted", true);
-            reply.put("status", "accepted");
-            reply.put("live_stream_events_synthesized", false);
+            JSONObject reply = new JSONObject();
+            reply.put("type", "transport_rejection");
+            reply.put("schema", "rusty.quest.broker.transport_rejection.v1");
+            reply.put("reason", EmbeddedWebSocketAuthorityPolicy.MUTATION_REJECTION);
+            reply.put("mutation_route", "signature_scoped_binder_or_direct_in_process");
+            reply.put("network_identity_delegated", false);
             writeText(session, reply);
             return;
         }
 
         JSONObject reply = new JSONObject();
-        reply.put("type", "message_ack");
-        reply.put("accepted", true);
-        reply.put("authority", "rusty.manifold");
+        reply.put("type", "transport_rejection");
+        reply.put("schema", "rusty.quest.broker.transport_rejection.v1");
+        reply.put("reason", EmbeddedWebSocketAuthorityPolicy.MUTATION_REJECTION);
         writeText(session, reply);
     }
 
-    private JSONObject commandAck(JSONObject message, String command) throws Exception {
-        JSONObject reply = new JSONObject();
-        reply.put("type", "command_ack");
-        reply.put("schema", "rusty.manifold.command.ack.v1");
-        reply.put("request_id", message.optString("request_id", ""));
-        reply.put("command", command);
-        reply.put("command_id", command);
-        reply.put("authority", "rusty.manifold");
-        reply.put("embedded_broker", true);
-        reply.put("time_utc", Instant.now().toString());
-        return reply;
-    }
-
-    private boolean sessionTokenAccepted(JSONObject message, JSONObject params) {
-        if (!settings.sessionTokenRequired) {
-            return true;
-        }
-        String supplied = firstNonEmpty(
-                message.optString("session_token", ""),
-                params.optString("session_token", ""),
-                "");
-        return !settings.sessionToken.isEmpty() && settings.sessionToken.equals(supplied);
-    }
-
-    private JSONObject buildStreamEvent(JSONObject message, JSONObject params) throws Exception {
+    private JSONObject buildStreamEvent(JSONObject authorityResponse, JSONObject params) throws Exception {
         JSONObject payload = params.optJSONObject("payload");
-        if (payload == null) {
-            payload = message.optJSONObject("payload");
-        }
         if (payload == null) {
             payload = new JSONObject();
         }
-        String stream = streamFrom(message, params, payload);
+        String stream = streamFrom(params, payload);
         if (!payload.has("stream_id")) {
             payload.put("stream_id", stream);
         }
@@ -325,13 +270,11 @@ public final class EmbeddedManifoldBrokerServer {
         if (!payload.has("value01")) {
             if (params.has("value01")) {
                 payload.put("value01", params.optDouble("value01", 0.0));
-            } else if (message.has("value01")) {
-                payload.put("value01", message.optDouble("value01", 0.0));
             }
         }
         long sequenceId = params.has("sequence_id")
                 ? params.optLong("sequence_id", 0L)
-                : message.optLong("sequence_id", payload.optLong("sequence_id", 0L));
+                : payload.optLong("sequence_id", 0L);
         long brokerTimeUnixNs = System.currentTimeMillis() * 1000000L;
         JSONObject event = new JSONObject();
         event.put("type", "stream_event");
@@ -340,7 +283,7 @@ public final class EmbeddedManifoldBrokerServer {
         event.put("stream_id", stream);
         event.put("sequence_id", sequenceId);
         event.put("payload", payload);
-        event.put("source_request_id", message.optString("request_id", ""));
+        event.put("source_request_id", requestId(authorityResponse));
         event.put("transport_time_unix_ns", brokerTimeUnixNs);
         event.put("transport_receive_time_unix_ns", brokerTimeUnixNs);
         event.put("time_utc", Instant.now().toString());
@@ -385,29 +328,19 @@ public final class EmbeddedManifoldBrokerServer {
         }
     }
 
-    private static boolean isSubscribeCommand(String command) {
-        return "subscribe".equals(command)
-                || "stream.subscribe".equals(command)
-                || "manifold.stream.subscribe".equals(command);
+
+    private static String requestId(JSONObject authorityResponse) {
+        return authorityResponse.optString("request_id", "");
     }
 
-    private static boolean isPublishStreamEventCommand(String command) {
-        return "publish_stream_event".equals(command)
-                || "stream.publish".equals(command)
-                || "manifold.stream.publish".equals(command);
-    }
-
-    private static String streamFrom(JSONObject message, JSONObject params, JSONObject payload) {
+    private static String streamFrom(JSONObject params, JSONObject payload) {
         if (payload == null) {
             payload = new JSONObject();
         }
         return firstNonEmpty(
                 params.optString("stream", ""),
                 params.optString("stream_id", ""),
-                firstNonEmpty(
-                        message.optString("stream", ""),
-                        message.optString("stream_id", ""),
-                        firstNonEmpty(payload.optString("stream", ""), payload.optString("stream_id", ""), "")));
+                firstNonEmpty(payload.optString("stream", ""), payload.optString("stream_id", ""), ""));
     }
 
     private static String firstNonEmpty(String first, String second, String third) {
@@ -604,6 +537,9 @@ public final class EmbeddedManifoldBrokerServer {
 
         static Settings fromJson(String settingsJson) throws Exception {
             JSONObject object = new JSONObject(settingsJson == null ? "{}" : settingsJson);
+            if (object.has("authority_runtime_config_json")) {
+                throw new IllegalArgumentException("settings-supplied authority config is forbidden");
+            }
             boolean lanEnabled = object.optBoolean("lan_enabled", false);
             return new Settings(
                     object.optBoolean("enabled", false),
@@ -625,7 +561,8 @@ public final class EmbeddedManifoldBrokerServer {
                     + " path=" + markerToken(path)
                     + " maxFrameBytes=" + maxFrameBytes
                     + " lanEnabled=" + lanEnabled
-                    + " sessionTokenRequired=" + sessionTokenRequired;
+                    + " sessionTokenRequired=" + sessionTokenRequired
+                    + " authorityConfigSource=packaged";
         }
 
         private static String nonEmpty(String value, String fallback) {

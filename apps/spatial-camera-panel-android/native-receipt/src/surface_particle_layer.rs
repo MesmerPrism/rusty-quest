@@ -30,6 +30,19 @@ use crate::surface_particle_projection::{
 };
 use crate::{android_log_info, bool_token, marker_token};
 
+#[cfg(target_os = "android")]
+type RuntimeJBoolean = jni::sys::jboolean;
+#[cfg(not(target_os = "android"))]
+type RuntimeJBoolean = u8;
+#[cfg(target_os = "android")]
+type RuntimeJString = jni::sys::jstring;
+#[cfg(not(target_os = "android"))]
+type RuntimeJString = *mut c_void;
+#[cfg(target_os = "android")]
+type RuntimeJLong = jni::sys::jlong;
+#[cfg(not(target_os = "android"))]
+type RuntimeJLong = i64;
+
 const START_RECEIVED: i64 = 1 << 0;
 const START_SURFACE_NON_NULL: i64 = 1 << 1;
 const START_NATIVE_WINDOW_OBTAINED: i64 = 1 << 2;
@@ -1398,8 +1411,34 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     openxr_instance_handle: i64,
     openxr_session_handle: i64,
     openxr_get_instance_proc_addr_handle: i64,
+    runtime_enabled: RuntimeJBoolean,
+    runtime_profile_id: RuntimeJString,
+    runtime_project_id: RuntimeJString,
+    runtime_feature_id: RuntimeJString,
+    runtime_lock_revision: RuntimeJLong,
+    runtime_lock_sha256: RuntimeJString,
 ) -> i64 {
     let mut mask = START_RECEIVED;
+    let runtime_input = rusty_quest_particle_adapter::ParticleAdapterRuntimeActivationInput {
+        enabled: runtime_enabled != 0,
+        profile_id: runtime_jstring_to_string(env, runtime_profile_id),
+        project_id: runtime_jstring_to_string(env, runtime_project_id),
+        feature_id: runtime_jstring_to_string(env, runtime_feature_id),
+        lock_revision: u64::try_from(runtime_lock_revision).unwrap_or(0),
+        lock_sha256: runtime_jstring_to_string(env, runtime_lock_sha256),
+    };
+    let activation_decision = crate::particle_adapter_consumer::resolve_activation(&runtime_input);
+    android_log_info(
+        "RQSpatialCameraPanelNative",
+        &crate::particle_adapter_consumer::activation_marker(
+            &runtime_input,
+            particle_count.max(0) as usize,
+        ),
+    );
+    if !activation_decision.is_applied() {
+        log_start_receipt(mask, "adapter-lock-rejected");
+        return mask;
+    }
     if !surface.is_null() {
         mask |= START_SURFACE_NON_NULL;
     }
@@ -1421,10 +1460,6 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     let width = width.max(256) as u32;
     let height = height.max(256) as u32;
     let particle_count = particle_count.clamp(128, 16_384) as u32;
-    android_log_info(
-        "RQSpatialCameraPanelNative",
-        &crate::particle_adapter_consumer::activation_marker(true, particle_count as usize),
-    );
     let max_frames = frame_count.max(0) as u32;
     let openxr_handles = LiveHandOpenXrHandles {
         instance_handle: openxr_instance_handle,
@@ -2041,6 +2076,16 @@ fn log_surface_particle_alias_rejection(
             current_surface_particle_renderer_mode().marker_fields(),
         ),
     );
+}
+
+#[cfg(target_os = "android")]
+fn runtime_jstring_to_string(env: *mut c_void, value: RuntimeJString) -> String {
+    jstring_to_string(env.cast::<jni::sys::JNIEnv>(), value)
+}
+
+#[cfg(not(target_os = "android"))]
+fn runtime_jstring_to_string(_env: *mut c_void, _value: RuntimeJString) -> String {
+    String::new()
 }
 
 #[cfg(target_os = "android")]

@@ -1,0 +1,38 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.spatial_camera_panel.hand_adapter_conformance",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.spatial_camera_panel.hand_adapter.enabled",
+    "debug.rustyquest.spatial_camera_panel.hand_adapter.profile_id",
+    "debug.rustyquest.spatial_camera_panel.hand_adapter.project_id",
+    "debug.rustyquest.spatial_camera_panel.hand_adapter.feature_id",
+    "debug.rustyquest.spatial_camera_panel.hand_adapter.lock_revision",
+    "debug.rustyquest.spatial_camera_panel.hand_adapter.lock_sha256"
+  ],
+  "set_properties": [
+    {"name":"debug.rustyquest.spatial_camera_panel.hand_adapter.enabled","value":"true","source_setting_id":"spatial_camera_panel.hand_adapter.enabled"},
+    {"name":"debug.rustyquest.spatial_camera_panel.hand_adapter.profile_id","value":"profile.quest.spatial_camera_panel.hand_adapter_conformance","source_setting_id":"spatial_camera_panel.hand_adapter.profile_id"},
+    {"name":"debug.rustyquest.spatial_camera_panel.hand_adapter.project_id","value":"spatial-camera-panel","source_setting_id":"spatial_camera_panel.hand_adapter.project_id"},
+    {"name":"debug.rustyquest.spatial_camera_panel.hand_adapter.feature_id","value":"tracked-hand-surface","source_setting_id":"spatial_camera_panel.hand_adapter.feature_id"},
+    {"name":"debug.rustyquest.spatial_camera_panel.hand_adapter.lock_revision","value":"1","source_setting_id":"spatial_camera_panel.hand_adapter.lock_revision"},
+    {"name":"debug.rustyquest.spatial_camera_panel.hand_adapter.lock_sha256","value":"FFB07E39C7290FDE8EBB154EFB94985CF4628CB2E4D098A81A5611849DFD32F1","source_setting_id":"spatial_camera_panel.hand_adapter.lock_sha256"}
+  ],
+  "expected_markers": [
+    "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_NATIVE channel=hand-adapter",
+    "status=accepted",
+    "handAdapterConsumer=spatial-camera-panel",
+    "handAdapterEnabled=true",
+    "lockBindingSchema=rusty.quest.lock_bound_activation.v1",
+    "activationState=applied",
+    "projectId=spatial-camera-panel",
+    "featureId=tracked-hand-surface",
+    "conformanceLockRevision=1",
+    "conformanceLockSha256=FFB07E39C7290FDE8EBB154EFB94985CF4628CB2E4D098A81A5611849DFD32F1",
+    "runtimeProfileId=profile.quest.spatial_camera_panel.hand_adapter_conformance",
+    "activationRejectReason=none"
+  ],
+  "validation_commands": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-spatial-camera-panel-hand-adapter-conformance.profile.json -DryRun -Out local-artifacts/spatial-camera-panel-hand-adapter-conformance-property-write-plan.json"
+  ]
+}

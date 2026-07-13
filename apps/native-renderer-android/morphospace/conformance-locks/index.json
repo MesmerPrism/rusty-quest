@@ -1,0 +1,30 @@
+{
+  "schema": "rusty.quest.morphospace_lock_index.v1",
+  "project_id": "native-renderer",
+  "locks": [
+    {
+      "feature_id": "particle-adapter-consumer",
+      "path": "particle-adapter.feature.lock.json",
+      "revision": 1,
+      "sha256": "D51D97F6B01663F360E867EB01C3F27A3DB7C3204210F1C1D7634CA52DD276BC",
+      "expected_effective_marker": "rusty.quest.particle_adapter.effective",
+      "runtime_binding": "source-validated-device-pending"
+    },
+    {
+      "feature_id": "hand-adapter-consumer",
+      "path": "hand-adapter.feature.lock.json",
+      "revision": 1,
+      "sha256": "A1391A7EF2C41F072032283E485F5A9EB58CAB3B74681F150CE24CD9262CF91D",
+      "expected_effective_marker": "rusty.quest.hand_adapter.effective",
+      "runtime_binding": "source-validated-device-pending"
+    },
+    {
+      "feature_id": "broker-media-client",
+      "path": "broker-media-client.feature.lock.json",
+      "revision": 2,
+      "sha256": "C27F769772EC07937A3CA5A02CCDE511B8654B9D6CD541550ED9B2C15748CE77",
+      "expected_effective_marker": "rusty.quest.native_renderer.broker_media_client.effective",
+      "runtime_binding": "project-declared-source-wip-not-promotional"
+    }
+  ]
+}

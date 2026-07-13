@@ -1,0 +1,13 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/workspace-state.schema.json",
+  "schema": "rusty.morphospace.workflow.workspace_state.v1",
+  "project_id": "native-renderer",
+  "plan_revision": 2,
+  "current_unit": "mod-006",
+  "next_ready_unit": null,
+  "last_event_id": "net-016-proposed",
+  "dirty_repositories": ["quest-repo", "native-renderer-app"],
+  "blockers": [],
+  "validation_checkpoint": {"tier":"deep","receipt":"receipts/mod-006-lock-bound-activation.json","result":"pass"},
+  "pending_push_bundle": null
+}

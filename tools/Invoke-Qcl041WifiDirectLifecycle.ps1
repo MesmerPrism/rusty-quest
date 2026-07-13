@@ -1351,7 +1351,7 @@ if ($Build -or -not (Test-Path $apkPath)) {
     $apkPath = & (Join-Path $PSScriptRoot "Build-Qcl041WifiDirectHarnessAndroid.ps1") | Select-Object -Last 1
 }
 if ($RunQcl082ProductMedia -and ($Build -or -not (Test-Path $brokerApkPath))) {
-    $brokerApkPath = & (Join-Path $PSScriptRoot "Build-ManifoldBrokerAndroid.ps1") | Select-Object -Last 1
+    $brokerApkPath = & (Join-Path $PSScriptRoot "Build-ManifoldBrokerAndroid.ps1") -LegacyCameraP2pCompatibility | Select-Object -Last 1
 }
 
 $leaseResource = "quest:$Serial"

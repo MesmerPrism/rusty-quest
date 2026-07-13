@@ -1,44 +1,17 @@
 {
-  "$schema": "rusty.quest.broker.authority_invocation.v1",
+  "$schema": "rusty.quest.broker.authority_invocation.v2",
   "bridge_kind": "standalone_process_jni",
   "adapter_config": {
-    "$schema": "rusty.manifold.broker.adapter_config.v1",
+    "$schema": "rusty.manifold.broker.adapter_config.v2",
     "adapter_id": "adapter.broker.standalone",
     "mode": "standalone",
     "product_lock_id": "lock.broker.camera.parity",
-    "product_lock_fingerprint": "fnv1a64-ad70739bf6657364",
+    "product_lock_fingerprint": "fnv1a64-07ea86443038fb22",
+    "product_lock_sha256": "sha256:2a89431f0fdd3375dd303ae03774bab0ea9a09d0e79d28c7b88c3c14b462a758",
     "authority_host_id": "host.broker.parity",
     "authority_owner_id": "module.runtime.host"
   },
-  "product_lock": {
-    "$schema": "rusty.manifold.broker.product_lock.v1",
-    "lock_id": "lock.broker.camera.parity",
-    "product_id": "broker.camera.parity",
-    "standalone_enabled": true,
-    "embedded_enabled": false,
-    "features": [
-      "camera_media"
-    ],
-    "command_ids": [
-      "command.media.session.start",
-      "command.media.session.stop",
-      "command.peer.status.get",
-      "command.session.list"
-    ],
-    "stream_ids": [
-      "stream.media.video",
-      "stream.peer.status"
-    ],
-    "module_ids": [
-      "module.media.camera",
-      "module.runtime.host"
-    ],
-    "permissions": [
-      "internet",
-      "camera"
-    ],
-    "spec_fingerprint": "fnv1a64-ad70739bf6657364"
-  },
+  "product_lock_json": "{\n  \"$schema\": \"rusty.manifold.broker.product_lock.v1\",\n  \"lock_id\": \"lock.broker.camera.parity\",\n  \"product_id\": \"broker.camera.parity\",\n  \"standalone_enabled\": true,\n  \"embedded_enabled\": false,\n  \"features\": [\n    \"media_session\",\n    \"camera_media\"\n  ],\n  \"command_ids\": [\n    \"command.media.session.start\",\n    \"command.media.session.stop\",\n    \"command.peer.status.get\",\n    \"command.session.list\"\n  ],\n  \"stream_ids\": [\n    \"stream.media.video\",\n    \"stream.peer.status\"\n  ],\n  \"module_ids\": [\n    \"module.media.camera\",\n    \"module.media.session\",\n    \"module.runtime.host\"\n  ],\n  \"permissions\": [\n    \"internet\",\n    \"user_notifications\",\n    \"background_service\",\n    \"background_data_sync\",\n    \"background_camera\",\n    \"camera\"\n  ],\n  \"spec_fingerprint\": \"fnv1a64-07ea86443038fb22\"\n}\n",
   "prior_snapshot": null,
   "initial_leases": [
     {

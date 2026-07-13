@@ -1,0 +1,47 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/project-spec.schema.json",
+  "schema": "rusty.morphospace.workflow.project_spec.v1",
+  "project_id": "native-renderer",
+  "revision": 2,
+  "purpose": "Compose the native OpenXR/Vulkan renderer shell and its explicit particle, hand, and broker-media conformance consumers without importing Spatial application policy or silently enabling optional adapters.",
+  "activation_model": {"default":"disabled","unlisted_modules":"inert"},
+  "authority_map": [
+    {"parameter":"app.composition","owner":"native-renderer-app","adapters":[]},
+    {"parameter":"particle.simulation","owner":"matter","adapters":["native-renderer-app"]},
+    {"parameter":"hand.tracked-relations","owner":"lattice","adapters":["native-renderer-app"]},
+    {"parameter":"hand.geometry-skinning","owner":"matter","adapters":["native-renderer-app"]},
+    {"parameter":"hand.appearance","owner":"optics","adapters":["native-renderer-app"]},
+    {"parameter":"stream.session","owner":"manifold","adapters":["native-renderer-app"]},
+    {"parameter":"render.adoption","owner":"native-renderer-app","adapters":[]}
+  ],
+  "repositories": [
+    {"repo_id":"native-renderer-app","role":"application","path":"..","allowed_paths":["README.md","app/","native/","morphospace/"]},
+    {"repo_id":"quest-repo","role":"adapter","path":"../../..","allowed_paths":["AGENTS.md","README.md","apps/","crates/","docs/","fixtures/","tools/"]},
+    {"repo_id":"matter","role":"core","path":"<workspace-root>/repos/rusty-matter","allowed_paths":["AGENTS.md","README.md","crates/","docs/","fixtures/","schemas/","tools/"]},
+    {"repo_id":"lattice","role":"core","path":"<workspace-root>/repos/rusty-lattice","allowed_paths":["AGENTS.md","README.md","crates/","docs/","fixtures/","schemas/","tools/"]},
+    {"repo_id":"optics","role":"core","path":"<workspace-root>/repos/rusty-optics","allowed_paths":["AGENTS.md","README.md","crates/","docs/","fixtures/","schemas/","tools/"]},
+    {"repo_id":"manifold","role":"core","path":"<workspace-root>/repos/rusty-manifold","allowed_paths":["crates/","docs/","fixtures/","schemas/"]}
+  ],
+  "modules": [
+    {"module_id":"native-renderer-shell","feature_id":"native-renderer-shell","lane":"quest","maturity":"app-local","contract":"rusty.quest.native_renderer.shell.v1","source_repo":"native-renderer-app","dependencies":[]},
+    {"module_id":"particle-adapter-consumer","feature_id":"particle-adapter-consumer","lane":"quest","maturity":"cross-consumer-validated","contract":"rusty.quest.particle_adapter.receipt.v1","source_repo":"quest-repo","dependencies":["native-renderer-shell"]},
+    {"module_id":"hand-adapter-consumer","feature_id":"hand-adapter-consumer","lane":"quest","maturity":"cross-consumer-validated","contract":"rusty.quest.hand_adapter.receipt.v1","source_repo":"quest-repo","dependencies":["native-renderer-shell"]},
+    {"module_id":"broker-media-client","feature_id":"broker-media-client","lane":"quest","maturity":"candidate","contract":"rusty.quest.broker_media_lifecycle_receipt.v1","source_repo":"quest-repo","dependencies":["native-renderer-shell"]}
+  ],
+  "non_scope": [
+    "Spatial SDK carrier behavior or Spatial Camera Panel policy.",
+    "Implicit particle or hand activation in the default application lock.",
+    "Provider acquisition, renderer resources, or high-rate payloads becoming reusable contract authority.",
+    "Private device logs, serials, captures, or package identities."
+  ],
+  "validation_profiles": [
+    {"profile_id":"quick","commands":["powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1 -RepoRoot ."]},
+    {"profile_id":"standard","commands":["powershell -NoProfile -ExecutionPolicy Bypass -File tools/check_all.ps1"]},
+    {"profile_id":"device","commands":["Use a separately selected conformance lock and require an effective adapter marker, bounded fatal window, and cleanup evidence."]}
+  ],
+  "public_boundary": {
+    "mode":"public",
+    "private_overlay":"<project-root>/local",
+    "prohibited_evidence":["device serials","private package identities","raw logs and captures","signing material","private renderer payloads"]
+  }
+}

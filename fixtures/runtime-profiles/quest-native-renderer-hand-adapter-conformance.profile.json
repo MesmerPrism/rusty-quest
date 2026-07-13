@@ -1,0 +1,67 @@
+{
+  "schema": "rusty.quest.runtime_profile.v1",
+  "profile_id": "profile.quest.native_renderer.hand_adapter_conformance",
+  "target_platform": "quest",
+  "owned_android_properties": [
+    "debug.rustyquest.native_renderer.hand_adapter.enabled",
+    "debug.rustyquest.native_renderer.hand_adapter.profile_id",
+    "debug.rustyquest.native_renderer.hand_adapter.project_id",
+    "debug.rustyquest.native_renderer.hand_adapter.feature_id",
+    "debug.rustyquest.native_renderer.hand_adapter.lock_revision",
+    "debug.rustyquest.native_renderer.hand_adapter.lock_sha256"
+  ],
+  "set_properties": [
+    {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.enabled",
+      "value": "true",
+      "source_setting_id": "native_renderer.hand_adapter.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.profile_id",
+      "value": "profile.quest.native_renderer.hand_adapter_conformance",
+      "source_setting_id": "native_renderer.hand_adapter.profile_id"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.project_id",
+      "value": "native-renderer",
+      "source_setting_id": "native_renderer.hand_adapter.project_id"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.feature_id",
+      "value": "hand-adapter-consumer",
+      "source_setting_id": "native_renderer.hand_adapter.feature_id"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.lock_revision",
+      "value": "1",
+      "source_setting_id": "native_renderer.hand_adapter.lock_revision"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.lock_sha256",
+      "value": "A1391A7EF2C41F072032283E485F5A9EB58CAB3B74681F150CE24CD9262CF91D",
+      "source_setting_id": "native_renderer.hand_adapter.lock_sha256"
+    }
+  ],
+  "expected_markers": [
+    "RUSTY_QUEST_NATIVE_RENDERER channel=hand-adapter",
+    "status=accepted",
+    "handAdapterConsumer=native-openxr-hand-lab",
+    "handAdapterEnabled=true",
+    "handAdapterBothHands=true",
+    "handAdapterCoordinateBasisPreserved=true",
+    "handAdapterCpuPreparedParity=true",
+    "handAdapterHighRateJson=false",
+    "handAdapterBackendPayloadAbsent=true",
+    "lockBindingSchema=rusty.quest.lock_bound_activation.v1",
+    "activationState=applied",
+    "projectId=native-renderer",
+    "featureId=hand-adapter-consumer",
+    "conformanceLockRevision=1",
+    "conformanceLockSha256=A1391A7EF2C41F072032283E485F5A9EB58CAB3B74681F150CE24CD9262CF91D",
+    "runtimeProfileId=profile.quest.native_renderer.hand_adapter_conformance",
+    "activationRejectReason=none"
+  ],
+  "validation_commands": [
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath fixtures/runtime-profiles/quest-native-renderer-hand-adapter-conformance.profile.json -DryRun -Out local-artifacts/native-renderer-hand-adapter-conformance-property-write-plan.json"
+  ]
+}

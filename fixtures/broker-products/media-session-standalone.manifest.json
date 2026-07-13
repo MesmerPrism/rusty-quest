@@ -1,0 +1,24 @@
+{
+  "$schema": "rusty.quest.broker.android_manifest_projection.v1",
+  "product_id": "broker.media_session.standalone",
+  "manifold_lock_fingerprint": "fnv1a64-006d1c87d57a0438",
+  "runtime_mode": "standalone",
+  "permissions": [
+    {
+      "name": "android.permission.FOREGROUND_SERVICE",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "android.permission.INTERNET",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "android.permission.POST_NOTIFICATIONS",
+      "uses_permission_flags": []
+    }
+  ]
+}

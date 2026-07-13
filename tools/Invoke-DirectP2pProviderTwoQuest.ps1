@@ -13,6 +13,7 @@ $repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $package = "io.github.mesmerprism.rustyquest.directp2p"
 $component = "$package/.DirectP2pProviderActivity"
 $adb = (Get-Command adb -ErrorAction Stop).Source
+$utf8NoBom = [Text.UTF8Encoding]::new($false)
 if ([string]::IsNullOrWhiteSpace($ApkPath)) {
     $ApkPath = Join-Path $repo "target\direct-p2p-provider-android\rusty-quest-direct-p2p-provider.apk"
 }
@@ -63,8 +64,8 @@ try {
     $clientReceiptText = AwaitReceipt $ClientSerial
     $ownerReceiptPath = Join-Path $EvidenceDir "group-owner-receipt.json"
     $clientReceiptPath = Join-Path $EvidenceDir "client-receipt.json"
-    $ownerReceiptText | Set-Content -Encoding UTF8 -LiteralPath $ownerReceiptPath
-    $clientReceiptText | Set-Content -Encoding UTF8 -LiteralPath $clientReceiptPath
+    [IO.File]::WriteAllText($ownerReceiptPath, $ownerReceiptText, $utf8NoBom)
+    [IO.File]::WriteAllText($clientReceiptPath, $clientReceiptText, $utf8NoBom)
     foreach ($path in @($ownerReceiptPath,$clientReceiptPath)) {
         & cargo run --quiet -p rusty-quest-device-link --bin validate_product_wifi_direct_run -- $path
         if ($LASTEXITCODE -ne 0) { throw "Product receipt validation failed: $path" }
@@ -74,10 +75,10 @@ try {
     foreach ($serial in $serials) {
         $log = (Adb $serial @("logcat","-d")) -join "`n"
         $logPath = Join-Path $EvidenceDir ("logcat-" + $serial + ".txt")
-        $log | Set-Content -Encoding UTF8 -LiteralPath $logPath
+        [IO.File]::WriteAllText($logPath, $log, $utf8NoBom)
         $p2p = (Adb $serial @("shell","dumpsys","wifip2p")) -join "`n"
         $p2pPath = Join-Path $EvidenceDir ("wifip2p-after-" + $serial + ".txt")
-        $p2p | Set-Content -Encoding UTF8 -LiteralPath $p2pPath
+        [IO.File]::WriteAllText($p2pPath, $p2p, $utf8NoBom)
         $packageFatalCount = ([regex]::Matches($log,"FATAL EXCEPTION:[\s\S]{0,1200}" + [regex]::Escape($package))).Count
         $systemFatalCount = ([regex]::Matches($log,'FATAL EXCEPTION IN SYSTEM PROCESS|Watchdog.*system_server|Fatal signal.*system_server')).Count
         $inactive = $p2p -match 'mWifiP2pInfo groupFormed: false' -and $p2p -match 'curState=InactiveState'
@@ -106,7 +107,7 @@ try {
         receipts = @($ownerReceiptPath,$clientReceiptPath)
     }
     $summaryPath = Join-Path $EvidenceDir "summary.json"
-    $summary | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -LiteralPath $summaryPath
+    [IO.File]::WriteAllText($summaryPath, ($summary | ConvertTo-Json -Depth 8), $utf8NoBom)
     Write-Output $summaryPath
 } finally {
     foreach ($serial in $serials) {

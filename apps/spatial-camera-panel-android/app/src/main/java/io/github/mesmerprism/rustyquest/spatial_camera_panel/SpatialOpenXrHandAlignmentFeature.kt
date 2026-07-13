@@ -46,6 +46,7 @@ private class SpatialOpenXrHandAlignmentSystem(
   private var bridgeStartAttemptFrame = 0
   private var capabilityLogged = false
   private var disabledLogged = false
+  private var adapterRejectedLogged = false
   private var lastStatusMs = 0L
 
   override fun execute() {
@@ -63,6 +64,16 @@ private class SpatialOpenXrHandAlignmentSystem(
       }
       return
     }
+    val adapterDecision = SpatialLiveHandJointBridge.currentHandAdapterActivationDecision()
+    if (!adapterDecision.applied) {
+      hideVisuals()
+      if (!adapterRejectedLogged) {
+        adapterRejectedLogged = true
+        marker(SpatialLiveHandJointBridge.handAdapterActivationMarker(adapterDecision))
+      }
+      return
+    }
+    adapterRejectedLogged = false
     disabledLogged = false
     if (!capabilityLogged) {
       capabilityLogged = true

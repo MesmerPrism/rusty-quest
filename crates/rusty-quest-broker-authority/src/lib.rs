@@ -1,10 +1,13 @@
 //! Quest process/JNI projection over the shared Manifold broker adapter path.
 
+mod runtime;
+
+pub use runtime::*;
+
 use rusty_manifold_broker_adapter::{
     ManifoldBrokerAdapter, ManifoldBrokerAdapterConfig, ManifoldBrokerAdapterError,
     ManifoldBrokerAdapterMode, ManifoldBrokerAdapterReceipt, RUNTIME_HOST_AUTHORITY_OWNER,
 };
-use rusty_manifold_broker_product::ManifoldBrokerProductLock;
 use rusty_manifold_model::DottedId;
 use rusty_manifold_runtime_host::{
     ManifoldRuntimeCommandRequest, ManifoldRuntimeHostSnapshot, ManifoldRuntimeLease,
@@ -14,7 +17,7 @@ use std::fmt;
 
 /// Trusted app-local bridge invocation schema.
 pub const QUEST_BROKER_AUTHORITY_INVOCATION_SCHEMA: &str =
-    "rusty.quest.broker.authority_invocation.v1";
+    "rusty.quest.broker.authority_invocation.v2";
 /// Trusted app-local bridge response schema.
 pub const QUEST_BROKER_AUTHORITY_RESPONSE_SCHEMA: &str = "rusty.quest.broker.authority_response.v1";
 
@@ -40,8 +43,8 @@ pub struct QuestBrokerAuthorityInvocation {
     pub bridge_kind: QuestBrokerAuthorityBridgeKind,
     /// Exact Manifold adapter binding.
     pub adapter_config: ManifoldBrokerAdapterConfig,
-    /// Exact accepted Manifold product lock.
-    pub product_lock: ManifoldBrokerProductLock,
+    /// Exact packaged accepted Manifold product-lock JSON bytes.
+    pub product_lock_json: String,
     /// Durable accepted host state, absent only for first initialization.
     pub prior_snapshot: Option<ManifoldRuntimeHostSnapshot>,
     /// Initial accepted leases, used only when no prior snapshot exists.
@@ -83,14 +86,14 @@ pub fn evaluate_authority_invocation(
         let json = serde_json::to_string(snapshot).map_err(QuestBrokerAuthorityError::Serialize)?;
         ManifoldBrokerAdapter::restart_from_json(
             invocation.adapter_config.clone(),
-            invocation.product_lock.clone(),
+            invocation.product_lock_json.as_bytes(),
             &json,
         )
         .map_err(QuestBrokerAuthorityError::Adapter)?
     } else {
         ManifoldBrokerAdapter::new(
             invocation.adapter_config.clone(),
-            invocation.product_lock.clone(),
+            invocation.product_lock_json.as_bytes(),
             invocation.initial_leases.clone(),
         )
         .map_err(QuestBrokerAuthorityError::Adapter)?

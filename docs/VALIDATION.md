@@ -667,15 +667,18 @@ also embeds a passing independent `pair` validation result.
 The Manifold decision-gated product sequence is:
 
 ```powershell
-cargo run --quiet -p rusty-quest-peer-session-adapter --bin evaluate_ble_pair -- <pair-summary.json> <decision-bundle.json> <now-ms>
+cargo run --quiet -p rusty-quest-peer-session-adapter --bin evaluate_ble_pair -- <pair-summary.json> <manifold-authority-evidence.json> <decision-bundle.json> <now-ms>
 & .\tools\Invoke-PeerSessionDecisionGateTwoQuest.ps1 -GroupOwnerSerial <serial> -ClientSerial <serial> -DecisionBundlePath <decision-bundle.json>
 ```
 
 Acceptance requires topology to remain non-grouped for unauthenticated,
 stale-after-revocation, and revoked receipts. A fresh accepted revision must
-emit `phase=topology_gate status=accepted` on both peers before the bounded
-product exchange, followed by inactive cleanup, zero package/system fatals,
-and APK removal. Device logs and decision bundles remain private evidence.
+come from retained Manifold enrollment plus signed-rendezvous authority
+evidence, not from BLE or ADB/config text alone. It must emit
+`phase=topology_gate status=accepted` on both peers before the bounded product
+exchange, followed by inactive cleanup, zero package/system fatals, and APK
+removal. Device logs, authority evidence, and decision bundles remain private
+evidence.
 
 Native Quest renderer plans are source-only validation:
 
@@ -1010,7 +1013,14 @@ The Manifold broker Android scaffold has two validation levels:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ManifoldBrokerAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
+  -ProductSpecPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.json `
+  -ProductLockPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.lock.json `
+  -MediaSessionBindingPath .\fixtures\media-runtime-products\display-composite.binding.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
+  -ProductSpecPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.json `
+  -ProductLockPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.lock.json `
+  -PrepareOnly
 ```
 
 The static test verifies package naming, `/manifold/v1/events`, Manifold
@@ -1026,10 +1036,61 @@ stream and required runtime receipt stream, the high-rate JSON payload ban, and
 absence of legacy Rusty-XR tokens. The build command requires an Android SDK
 and JDK in the current process and writes a debug APK plus build manifest under
 `target/`.
-The camera-source broker APK is expected to declare `android.permission.CAMERA`,
-`horizonos.permission.HEADSET_CAMERA`, and
-`horizonos.permission.SPATIAL_CAMERA`; that expectation is specific to this
-broker adapter and does not change the camera-free Makepad app validation lane.
+The generic media-session APK must not declare Android, headset, or spatial
+camera permissions. The historical camera/P2P validation package is built only
+with `-LegacyCameraP2pCompatibility`; that exact accepted product declares
+`android.permission.CAMERA`, `horizonos.permission.HEADSET_CAMERA`,
+`horizonos.permission.SPATIAL_CAMERA`, and its direct-P2P closure. BLE remains
+a separate product/provider lane.
+
+NET-015 generic media validation additionally runs:
+
+```powershell
+cargo test -p rusty-quest-media-stream
+cargo test -p rusty-quest-broker-authority
+cargo test -p rusty-quest-manifold-broker-authority-native
+cargo run -p rusty-quest-broker-authority --bin export_media_product_bindings -- fixtures\media-runtime-products
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAuthorityStatic.ps1 -RepoRoot .
+```
+
+The committed Camera2 and display-composite bindings must regenerate without
+diff. Tests damage source authority, owner coverage, hashes, revision/epoch,
+receiver order, stop/release order, and cleanup, and prove that generic media
+cannot inherit remote-camera identity or claim Java completion at command
+acceptance.
+
+NET-014 source validation additionally runs:
+
+```powershell
+cargo test -p rusty-quest-broker-authority
+cargo test -p rusty-quest-manifold-broker-authority-native
+cargo test -p rusty-quest-native-renderer-android-native embedded_manifold_runtime_authority_jni
+cargo test -p rusty-quest-broker-client
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAuthorityStatic.ps1 -RepoRoot .
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAdmissionStatic.ps1 -RepoRoot .
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-NativeRendererAndroidScaffoldStatic.ps1 -RepoRoot .
+```
+
+These are real entrypoint tests, not stateless receipt projections. Standalone
+and embedded providers initialize one process-local runtime, issue and consume
+signature-projected admission uses, and call the same Runtime Host. The damage
+matrix covers unknown and product-unselected commands, missing leases, stale
+host/admission revisions, replayed and expired uses, opaque-token,
+cross-client, and capability substitution, wrong provider epoch, same-provider
+rebind
+continuity, and fresh provider restart. Static checks reject Java/WebSocket
+`accepted` or Manifold-authority manufacture and require the standalone start
+service to remain non-exported.
+
+The same matrix now covers independent pending uses across unrelated admission
+revision advances, token-scoped revoke/expiry invalidation, 128-bit per-launch
+request namespaces, ambiguous Binder UID package rejection, canonical typed
+parameter order/tamper/oversize, exact response-bound effect values, packaged
+product/client/config digests, and grant closure for base, camera-free media,
+and embedded camera products. The authority static gate compiles and runs the
+pure Java package/signer damaged tests. Full packaging checks should build both
+base and camera-free standalone APKs plus Native Renderer, then inspect their
+generated runtime configs for absence of unselected capabilities.
 
 The QCL-041 Wi-Fi Direct harness is the no-Android-phone live route for
 Quest-to-Windows Wi-Fi Direct lifecycle evidence:

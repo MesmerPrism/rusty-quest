@@ -13,20 +13,6 @@ public final class ManifoldAdmissionNativeBridge {
     private ManifoldAdmissionNativeBridge() {
     }
 
-    public static JSONObject initialize(String configJson) throws Exception {
-        String result = nativeInitialize(configJson);
-        if (result == null || result.isEmpty()) {
-            throw new IllegalStateException("Manifold admission initialization failed");
-        }
-        JSONObject status = new JSONObject(result);
-        if (!status.optBoolean("initialized", false)
-                || status.optBoolean("local_token_or_grant_policy", true)
-                || !"rusty.manifold.admission".equals(status.optString("decision_owner", ""))) {
-            throw new IllegalStateException("Manifold admission initialization binding mismatch");
-        }
-        return status;
-    }
-
     public static JSONObject execute(JSONObject operation) throws Exception {
         String result = nativeExecute(operation.toString());
         if (result == null || result.isEmpty()) {
@@ -49,7 +35,6 @@ public final class ManifoldAdmissionNativeBridge {
         return new JSONObject(result);
     }
 
-    private static native String nativeInitialize(String configJson);
     private static native String nativeExecute(String operationJson);
     private static native String nativeSnapshot();
 }

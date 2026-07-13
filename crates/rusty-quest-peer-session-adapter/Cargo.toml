@@ -11,6 +11,7 @@ rust-version.workspace = true
 rusty-manifold-model = { path = "../../../rusty-manifold/crates/rusty-manifold-model", features = ["serde"] }
 rusty-manifold-peer = { path = "../../../rusty-manifold/crates/rusty-manifold-peer" }
 rusty-quest-device-link = { path = "../rusty-quest-device-link" }
+ed25519-dalek = { version = "=2.1.1", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"

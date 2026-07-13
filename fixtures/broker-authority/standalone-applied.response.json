@@ -4,16 +4,18 @@
   "local_acceptance_rules": false,
   "decision_owner_id": "module.runtime.host",
   "adapter_receipt": {
-    "$schema": "rusty.manifold.broker.adapter_receipt.v1",
+    "$schema": "rusty.manifold.broker.adapter_receipt.v2",
     "adapter_id": "adapter.broker.standalone",
     "mode": "standalone",
     "adapter_role": "process_transport_adapter",
     "product_lock_id": "lock.broker.camera.parity",
-    "product_lock_fingerprint": "fnv1a64-ad70739bf6657364",
+    "product_lock_fingerprint": "fnv1a64-07ea86443038fb22",
+    "product_lock_sha256": "sha256:2a89431f0fdd3375dd303ae03774bab0ea9a09d0e79d28c7b88c3c14b462a758",
     "authority_host_id": "host.broker.parity",
     "authority_owner_id": "module.runtime.host",
     "dispatch": {
-      "$schema": "rusty.manifold.runtime_host.dispatch_receipt.v1",
+      "$schema": "rusty.manifold.runtime_host.dispatch_receipt.v2",
+      "authority_host_id": "host.broker.parity",
       "dispatch_id": "dispatch.runtime.request.broker.applied",
       "request_id": "request.broker.applied",
       "command_id": "command.media.session.start",
@@ -22,7 +24,8 @@
       "rejection_reason": null
     },
     "application": {
-      "$schema": "rusty.manifold.runtime_host.application_receipt.v1",
+      "$schema": "rusty.manifold.runtime_host.application_receipt.v2",
+      "authority_host_id": "host.broker.parity",
       "receipt_id": "receipt.runtime.request.broker.applied",
       "dispatch_id": "dispatch.runtime.request.broker.applied",
       "request_id": "request.broker.applied",
@@ -33,7 +36,7 @@
     }
   },
   "next_snapshot": {
-    "$schema": "rusty.manifold.runtime_host.snapshot.v1",
+    "$schema": "rusty.manifold.runtime_host.snapshot.v2",
     "host_id": "host.broker.parity",
     "authority_revision": 2,
     "commands": [
@@ -65,10 +68,12 @@
     "applied_request_ids": [
       "request.broker.applied"
     ],
+    "reviewed_sweep_ids": [],
     "audit_events": [
       {
-        "$schema": "rusty.manifold.runtime_host.audit_event.v1",
-        "event_id": "audit.runtime.request.broker.applied",
+        "$schema": "rusty.manifold.runtime_host.audit_event.v2",
+        "sequence": 1,
+        "event_id": "audit.runtime.00000000000000000001",
         "event_kind": "command_application",
         "source_id": "request.broker.applied",
         "prior_authority_revision": 1,

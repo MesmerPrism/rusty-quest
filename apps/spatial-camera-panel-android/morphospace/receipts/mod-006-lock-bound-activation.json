@@ -1,0 +1,65 @@
+{
+  "schema":"rusty.quest.mod006_lock_bound_activation_receipt.v1",
+  "receipt_id":"mod-006-spatial-lock-bound-activation",
+  "project_id":"spatial-camera-panel",
+  "unit_id":"mod-006",
+  "canonical_unit_id":"MOD-006",
+  "status":"source-validated-device-pending",
+  "authority":"rusty-quest particle/hand lock resolvers projected through spatial_camera_panel_native_receipt JNI",
+  "source_evidence":[
+    "apps/spatial-camera-panel-android/native-receipt/src/adapter_lock_authority.rs",
+    "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialAdapterNativeAuthority.kt",
+    "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialAdapterLockBinding.kt",
+    "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialSurfaceParticleRuntimeCoordinator.kt",
+    "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialSurfaceParticleParameterCoordinator.kt",
+    "apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialSurfaceParticleProjectionUpdateCoordinator.kt",
+    "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialAdapterDecisionCacheTest.kt",
+    "apps/spatial-camera-panel-android/app/src/test/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/SpatialSurfaceParticleRuntimeCoordinatorTest.kt",
+    "apps/native-renderer-android/native/src/particle_adapter_consumer.rs",
+    "apps/native-renderer-android/native/src/hand_adapter_consumer.rs",
+    "apps/native-renderer-android/native/src/lib.rs"
+  ],
+  "historical_fixture_hashes":[
+    {"path":"fixtures/particle-adapter/native-renderer-accepted.txt","sha256":"1CD8C5E68BEB4B0391E81BA9216D8200CCE97D6A082A48E0E85BD62EB87B1492"},
+    {"path":"fixtures/particle-adapter/spatial-panel-accepted.txt","sha256":"A10CC0561747F942A64C888AABA2E3BFEF9105E6AA0BD5D85C10A78E7FC1513C"},
+    {"path":"fixtures/hand-adapter/native-hand-accepted.txt","sha256":"31150726693DF65FC5655564A33E44604A31209A119B50183A36BA6B6A0FC2F7"},
+    {"path":"fixtures/hand-adapter/spatial-hand-accepted.txt","sha256":"80BC676E066897527ED4B90542FDB2F12B21AC5737CAF5B0F3A36F23163088B0"}
+  ],
+  "historical_tracked_artifact_hashes":[
+    {"path":"apps/spatial-camera-panel-android/morphospace/iteration-units/mod-003.json","sha256":"4350EE99F1E1F804E7E914B96E0AE971A46F1533DF31535A222D5977D34E92A0","head_blob":"c3d70309c89719a2a402d93d7b04a2ffc3407b24"},
+    {"path":"apps/spatial-camera-panel-android/morphospace/module-candidates/surface-particle-substrate.json","sha256":"FB164FBC7B2E94C56AC4E26C3475D25F317E28BEB4622B8ECA35CBF5DB5F492B","head_blob":"228e281087778a06cd5a5bd829d851f7e158f651"},
+    {"path":"apps/spatial-camera-panel-android/morphospace/module-candidates/tracked-hand-substrate.json","sha256":"B4DDA73382624BB5B24A0EC1C7895C21AA73C72B5046961A2E3CBFB01D7D9C7B","head_blob":"16230656543c6af48be974af03a9ef64117b3d45"},
+    {"path":"apps/spatial-camera-panel-android/morphospace/project.spec.json","sha256":"59F1F6FB3A3E758DF966F7B4C867255B6663100037EA7A72AE449285B86BD17C","head_blob":"4bafbebb28039c0bd80c97cab2d3233f2428f60c"},
+    {"path":"fixtures/particle-adapter/two-consumer-conformance.json","sha256":"80E44DF3B464CE075D8986AD14387D2CC4323F929FF188FF6F5F3948335B52D4","head_blob":"10aacfd4bc7a0c1d4f3d765d60f4f2501697a43d"},
+    {"path":"fixtures/hand-adapter/two-consumer-conformance.json","sha256":"02B7D750BEB7989EE2AE51F0A76DB239FE58AF40828B14041D09C1ED2B66144D","head_blob":"9427218a2c906aca2ae806f0f290d9c90a8fbcaa"}
+  ],
+  "historical_event_prefix":{"path":"apps/spatial-camera-panel-android/morphospace/iteration-events.jsonl","head_blob":"4bd9745f4933350dc8d013cec00f413cdcdf8215","line_count":9,"line_sha256":["966AE4CE8A90EE71296462412B9679C66DC464C16EF91E1F5D7FA8B50000EE97","842BAC09AC0A24A95371399BC80D15BAC0F4C78BAE9F18E938220907FFDE2172","EF9E16DA0373CBB166344F7F7DF4BAFC23BC2FB29FEA65306765006B4EA34860","F4CE6552716C54B5DA3199CA44124D8DF0D86E6BC40A4F3BCC97C1D976E6BA99","F512206652AFE2F009CAC27176C577B230BFE049267384141AE8A00C8496FA50","6375212B38F6C1C499CD67188EFE56D2A6FDB93AAB4B49344032D248B420C72D","4AD0866EC05948D3A448FFE2379991A13AD1C950401D9A2ADD8BF60279255D72","53E43459AC03899F18C422367FD0D28D02A1B96B7A5A98EFA5CE59445D33ED15","99F3944C6A652B4F1093D313ECAE3C3BB878679D489A1D64F933A3F3A63D575C"],"status":"unchanged-prefix-with-mod006-only-append"},
+  "workflow_reconciliation":{
+    "historical_spatial_state":"mod-003-active-not-accepted",
+    "historical_local_mod004_projection":"absent",
+    "historical_local_mod005_projection":"absent",
+    "corrective_unit":"mod-006",
+    "history_policy":"preserve-exact-prefix-and-add-corrective-evidence",
+    "fabricated_retroactive_acceptance":false,
+    "current_candidate_projections":[
+      {"candidate_id":"surface-particle-substrate","maturity":"cross-consumer-source-validated-device-pending","independent_consumer":"native-renderer"},
+      {"candidate_id":"tracked-hand-substrate","maturity":"cross-consumer-source-validated-device-pending","independent_consumer":"native-renderer"}
+    ]
+  },
+  "validation":{
+    "tier":"deep",
+    "result":"pass",
+    "commands":[
+      "cargo test -p spatial-camera-panel-native-receipt (63 passed)",
+      "Gradle testDebugUnitTest (5 passed)",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-SpatialCameraPanelAndroidStatic.ps1 -RepoRoot . (passed)",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-SpatialCameraPanelWorkflowStatic.ps1 -RepoRoot . (passed)",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/checks/Test-SpatialCameraPanelWorkflowStaticSelfTest.ps1 -RepoRoot . (passed)",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Test-SpatialCameraPanelAndroid.ps1 -Build (passed; APK produced)",
+      "powershell -NoProfile -ExecutionPolicy Bypass -File tools/check_all.ps1 (passed)"
+    ]
+  },
+  "device_gate":{"status":"pending","required_serial_count":2,"requires":["selected-lock applied effects","off-lock zero effects","revocation cleanup","bounded zero-fatals","package cleanup"]},
+  "does_not_prove":["Live OpenXR hand input or rendered particle/hand output.","Headset cleanup or fatal absence.","Stable module promotion."],
+  "rollback":"Keep both default locks disabled and remove MOD-006 runtime profiles/effect gates without altering earlier accepted fixtures or events."
+}

@@ -1,0 +1,38 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/iteration-unit.schema.json",
+  "schema": "rusty.morphospace.workflow.iteration_unit.v1",
+  "unit_id": "net-016",
+  "project_id": "spatial-camera-panel",
+  "status": "proposed",
+  "objective": "Adopt the generic Manifold media lifecycle as an explicit Spatial Camera Panel module with its own app feature lock, client identity, lease, selected binding, and Spatial render sink.",
+  "change_categories": ["implementation", "authority", "feature-activation", "validation", "recovery"],
+  "instruction_impact": "update",
+  "instruction_surfaces": [
+    {"surface_kind":"agents","path":"<workspace-root>/repos/rusty-quest/AGENTS.md","owner":"quest","change_reason":"Route explicit app-local broker media adoption.","action":"update","status":"planned","validation":"tools/check_all.ps1","skill_id":null},
+    {"surface_kind":"readme","path":"<workspace-root>/repos/rusty-quest/README.md","owner":"quest","change_reason":"Route Spatial media lifecycle product and evidence.","action":"update","status":"planned","validation":"tools/check_all.ps1","skill_id":null},
+    {"surface_kind":"skill","path":"<skills-root>/rusty-morphospace-context/SKILL.md","owner":"workflow","change_reason":"Route exact per-app media lock and sink ownership.","action":"update","status":"planned","validation":"skill quick validation","skill_id":"rusty-morphospace-context"},
+    {"surface_kind":"skill","path":"<skills-root>/system-engineering/SKILL.md","owner":"workflow","change_reason":"Route per-client lock, lease, lifecycle, and recovery closure.","action":"update","status":"planned","validation":"skill quick validation","skill_id":"system-engineering"}
+  ],
+  "instruction_none_justification": null,
+  "prerequisites": ["mod-006"],
+  "allowed_repositories": [
+    {"repo_id":"spatial-app","allowed_paths":["app/", "native-receipt/", "morphospace/"]},
+    {"repo_id":"quest-repo","allowed_paths":["crates/rusty-quest-broker-client/", "crates/rusty-quest-broker-authority/", "crates/rusty-quest-media-stream/", "fixtures/broker-clients/", "fixtures/media-runtime-products/", "tools/"]},
+    {"repo_id":"manifold","allowed_paths":["crates/rusty-manifold-runtime-host/", "crates/rusty-manifold-peer-runtime-host/", "crates/rusty-manifold-media-session/"]}
+  ],
+  "non_scope": ["Native Renderer policy or sink identity.", "Manifold or peer-topology authority moving into the Spatial app.", "Stable or device promotion before central NET-016 validation."],
+  "acceptance": [
+    {"acceptance_id":"explicit-module","proof":"Project spec, inert default lock, selected conformance lock, and authority map agree on broker-media-client and its shell dependency.","command":"workspace and lock contradiction gate"},
+    {"acceptance_id":"exact-client-product","proof":"The packaged lifecycle binds Spatial package/client, app lock SHA, per-client leases, selected runtime binding, and Spatial SDK sink.","command":"generated runtime-config initialization gate"},
+    {"acceptance_id":"lifecycle-recovery","proof":"Start/stop/release, replay, owner failure, app death, provider restart, cleanup, and revision/epoch evidence derive from current authority.","command":"host lifecycle damage matrix and two-Quest suite"}
+  ],
+  "risk_tier": "deep",
+  "device_requirement": "required",
+  "validation": [
+    {"profile_id":"standard","command":"Spatial workspace, generated runtime config, and broker client lifecycle source gates"},
+    {"profile_id":"device","command":"two-Quest Spatial media lifecycle, recovery, fatal, and cleanup evidence"}
+  ],
+  "outputs": ["Explicit broker-media-client module.", "Closed Spatial media conformance lock.", "Exact app lifecycle/product binding."],
+  "commit_policy": "Keep proposed until MOD-006 is accepted; then claim, validate, and publish with central NET-016.",
+  "push_checkpoint": "integration-batch"
+}

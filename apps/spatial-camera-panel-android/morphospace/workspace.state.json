@@ -1,17 +1,1 @@
-{
-  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/workspace-state.schema.json",
-  "schema": "rusty.morphospace.workflow.workspace_state.v1",
-  "project_id": "spatial-camera-panel",
-  "plan_revision": 2,
-  "current_unit": "mod-003",
-  "next_ready_unit": null,
-  "last_event_id": "mod-003-active",
-  "dirty_repositories": ["quest-repo", "spatial-app"],
-  "blockers": [],
-  "validation_checkpoint": {
-    "tier": "deep",
-    "receipt": "<planning-root>/workspaces/morphospace-platform-iteration/morphospace/receipts/mod-002-particle-contracts.json",
-    "result": "pass"
-  },
-  "pending_push_bundle": null
-}
+{"$schema":"https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/workspace-state.schema.json","blockers":[],"current_unit":null,"dirty_repositories":["native-renderer-app","quest-repo","spatial-app"],"last_event_id":"MOD-006-accepted-0016","next_ready_unit":null,"pending_push_bundle":null,"plan_revision":3,"project_id":"spatial-camera-panel","schema":"rusty.morphospace.workflow.workspace_state.v1","validation_checkpoint":{"receipt":"receipts/mod-006-workflow-validation-twoquest-20260713.json","result":"pass","tier":"deep"}}

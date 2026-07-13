@@ -2,7 +2,7 @@
   "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/feature-lock.schema.json",
   "schema": "rusty.morphospace.workflow.feature_lock.v1",
   "project_id": "spatial-camera-panel",
-  "revision": 1,
+  "revision": 2,
   "default_activation": "disabled",
   "features": [
     {
@@ -134,6 +134,27 @@
         "required": true,
         "schema": "rusty.quest.spatial_virtual_room.activation_receipt.v1",
         "effective_marker": "rusty.quest.spatial_virtual_room.effective"
+      }
+    },
+    {
+      "feature_id": "broker-media-client",
+      "module_id": "broker-media-client",
+      "enabled": false,
+      "requested_by": "",
+      "descriptor": "morphospace/project.spec.json#broker-media-client",
+      "dependencies": ["spatial-panel-shell"],
+      "conflicts": [],
+      "permissions": ["io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION"],
+      "routes": ["manifold-media-session", "spatial-sdk-render-sink"],
+      "assets": [],
+      "parameter_authorities": [
+        {"parameter": "stream.session", "owner": "manifold"},
+        {"parameter": "render.adoption", "owner": "spatial-app"}
+      ],
+      "activation_receipt": {
+        "required": true,
+        "schema": "rusty.quest.broker_media_lifecycle_receipt.v1",
+        "effective_marker": "rusty.quest.spatial_camera_panel.broker_media_client.effective"
       }
     }
   ]

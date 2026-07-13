@@ -171,7 +171,6 @@ pub fn build_media_stream_session_plan(
 /// contain the promoted Rust-owned direct-P2P route contract.
 pub fn build_media_stream_runtime_spec(
     plan: &RemoteCameraSessionPlan,
-    manifold_decision_id: &str,
     manifold_session_revision: u64,
 ) -> Result<media::MediaStreamRuntimeSpec, Vec<ValidationError>> {
     let media_plan = build_media_stream_session_plan(plan)?;
@@ -259,16 +258,80 @@ pub fn build_media_stream_runtime_spec(
             },
         })
         .collect();
+    let mut owner_selections = Vec::new();
+    for source in &media_plan.sources {
+        owner_selections.push(media::MediaStreamOwnerSelection {
+            owner_kind: media::MediaStreamOwnerKind::Source,
+            owner_id: format!("owner.remote_camera.compat.source.{}", source.source_id),
+            resource_id: source.source_id.clone(),
+            lane_id: media_plan
+                .lanes
+                .iter()
+                .find(|lane| lane.source_id == source.source_id)
+                .map(|lane| lane.lane_id.clone()),
+            provider_kind: "remote_camera_compat_source".to_string(),
+        });
+    }
+    owner_selections.push(media::MediaStreamOwnerSelection {
+        owner_kind: media::MediaStreamOwnerKind::Processor,
+        owner_id: "owner.remote_camera.compat.processor".to_string(),
+        resource_id: processor.processor_id.clone(),
+        lane_id: None,
+        provider_kind: "remote_camera_compat_processor".to_string(),
+    });
+    for route in &media_plan.transport_routes {
+        owner_selections.push(media::MediaStreamOwnerSelection {
+            owner_kind: media::MediaStreamOwnerKind::Route,
+            owner_id: format!("owner.remote_camera.compat.route.{}", route.lane_id),
+            resource_id: route.lane_id.clone(),
+            lane_id: Some(route.lane_id.clone()),
+            provider_kind: "remote_camera_compat_route".to_string(),
+        });
+        owner_selections.push(media::MediaStreamOwnerSelection {
+            owner_kind: media::MediaStreamOwnerKind::Socket,
+            owner_id: format!("owner.remote_camera.compat.socket.{}", route.lane_id),
+            resource_id: route.lane_id.clone(),
+            lane_id: Some(route.lane_id.clone()),
+            provider_kind: "remote_camera_compat_socket".to_string(),
+        });
+    }
+    for lane in &media_plan.lanes {
+        owner_selections.push(media::MediaStreamOwnerSelection {
+            owner_kind: media::MediaStreamOwnerKind::Codec,
+            owner_id: format!("owner.remote_camera.compat.codec.{}", lane.lane_id),
+            resource_id: lane.lane_id.clone(),
+            lane_id: Some(lane.lane_id.clone()),
+            provider_kind: "remote_camera_compat_h264_codec".to_string(),
+        });
+    }
+    for sink in &sinks {
+        owner_selections.push(media::MediaStreamOwnerSelection {
+            owner_kind: media::MediaStreamOwnerKind::Sink,
+            owner_id: format!("owner.remote_camera.compat.sink.{}", sink.sink_id),
+            resource_id: sink.sink_id.clone(),
+            lane_id: None,
+            provider_kind: "remote_camera_compat_h264_receiver".to_string(),
+        });
+    }
+    owner_selections.push(media::MediaStreamOwnerSelection {
+        owner_kind: media::MediaStreamOwnerKind::Cleanup,
+        owner_id: "owner.remote_camera.compat.cleanup".to_string(),
+        resource_id: format!("runtime.{}", media_plan.session_id),
+        lane_id: None,
+        provider_kind: "remote_camera_compat_cleanup".to_string(),
+    });
+    owner_selections.sort();
     let spec = media::MediaStreamRuntimeSpec {
         schema: media::MEDIA_STREAM_RUNTIME_SPEC_SCHEMA.to_string(),
         runtime_spec_id: format!("runtime.{}", media_plan.session_id),
-        manifold_decision_id: manifold_decision_id.to_string(),
         manifold_session_revision,
         plan: media_plan,
         processors: vec![processor],
         sinks,
         lane_bindings,
         direct_p2p_routes,
+        owner_selections,
+        compatibility_adapter_id: Some(media::REMOTE_CAMERA_COMPATIBILITY_ADAPTER.to_string()),
     };
     media::validate_media_stream_runtime_spec(&spec).map_err(|errors| {
         errors

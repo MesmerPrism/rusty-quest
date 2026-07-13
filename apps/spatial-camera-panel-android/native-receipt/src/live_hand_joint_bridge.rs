@@ -2,7 +2,7 @@ use std::ptr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
-use jni::sys::{jboolean, jclass, jfloatArray, jint, jlong, JNIEnv};
+use jni::sys::{jboolean, jclass, jfloatArray, jint, jlong, jstring, JNIEnv};
 
 use crate::live_hand_joints::{
     store_live_hand_panel_basis, store_live_hand_spatial_viewer_basis, LiveHandJointInput,
@@ -35,7 +35,29 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     openxr_instance_handle: jlong,
     openxr_session_handle: jlong,
     openxr_get_instance_proc_addr_handle: jlong,
+    runtime_enabled: jboolean,
+    runtime_profile_id: jstring,
+    runtime_project_id: jstring,
+    runtime_feature_id: jstring,
+    runtime_lock_revision: jlong,
+    runtime_lock_sha256: jstring,
 ) -> jlong {
+    let runtime_input = rusty_quest_hand_adapter::HandAdapterRuntimeActivationInput {
+        enabled: runtime_enabled != 0,
+        profile_id: jstring_to_string(_env, runtime_profile_id),
+        project_id: jstring_to_string(_env, runtime_project_id),
+        feature_id: jstring_to_string(_env, runtime_feature_id),
+        lock_revision: u64::try_from(runtime_lock_revision).unwrap_or(0),
+        lock_sha256: jstring_to_string(_env, runtime_lock_sha256),
+    };
+    let activation_decision = crate::hand_adapter_consumer::resolve_activation(&runtime_input);
+    android_log_info(
+        "RQSpatialCameraPanelNative",
+        &crate::hand_adapter_consumer::activation_marker(&runtime_input),
+    );
+    if !activation_decision.is_applied() {
+        return 0;
+    }
     let handles = LiveHandOpenXrHandles {
         instance_handle: openxr_instance_handle,
         session_handle: openxr_session_handle,
@@ -90,10 +112,6 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
             handles.marker_fields(),
             status.marker_fields(),
         ),
-    );
-    android_log_info(
-        "RQSpatialCameraPanelNative",
-        &crate::hand_adapter_consumer::activation_marker(true),
     );
     mask
 }
@@ -316,4 +334,20 @@ fn normalize_or(value: [f32; 3], fallback: [f32; 3]) -> [f32; 3] {
     } else {
         fallback
     }
+}
+
+fn jstring_to_string(env: *mut JNIEnv, value: jstring) -> String {
+    use jni::objects::JString;
+
+    if env.is_null() || value.is_null() {
+        return String::new();
+    }
+    let mut env = match unsafe { jni::JNIEnv::from_raw(env) } {
+        Ok(env) => env,
+        Err(_) => return String::new(),
+    };
+    let value = unsafe { JString::from_raw(value) };
+    env.get_string(&value)
+        .map(|text| text.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }

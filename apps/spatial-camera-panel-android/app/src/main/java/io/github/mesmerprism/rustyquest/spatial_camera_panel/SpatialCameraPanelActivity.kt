@@ -336,6 +336,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private val surfaceParticleParameterCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialSurfaceParticleParameterCoordinator(
         SpatialSurfaceParticleParameterBindings(
+            featureEnabled = {
+              surfaceParticleRuntimeCoordinator.reconcileAdapterAdmission("parameter-effect")
+            },
             receiptLibraryLoaded = { nativeInteropCoordinator.receiptLibraryLoaded },
             workflowPanelVisible = { panelPlacement.visible },
             submitNativeParameters = { controls ->
@@ -420,6 +423,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private val surfaceParticleProjectionUpdateCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialSurfaceParticleProjectionUpdateCoordinator(
         SpatialSurfaceParticleProjectionUpdateBindings(
+            featureEnabled = {
+              surfaceParticleRuntimeCoordinator.reconcileAdapterAdmission("projection-effect")
+            },
             cameraStackSuppressesParticles = {
               surfaceParticleRuntimeCoordinator.cameraStackSuppressesParticles
             },
@@ -508,7 +514,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private val surfaceParticleRecenterCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialSurfaceParticleRecenterCoordinator(
         SpatialSurfaceParticleRecenterBindings(
-            featureEnabled = ::nativeSurfaceParticleLayerEnabled,
+            featureEnabled = {
+              surfaceParticleRuntimeCoordinator.reconcileAdapterAdmission("recenter-effect")
+            },
             surfaceTargetId = { store.snapshot().surfaceTargetId },
             particleLayerVisible = ::particleLayerVisibleForPanelMode,
             workflowPanelVisible = { panelPlacement.visible },
@@ -523,7 +531,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       lazy(LazyThreadSafetyMode.NONE) {
         SpatialSurfaceParticleLifecycleDiagnosticsCoordinator(
             SpatialSurfaceParticleLifecycleDiagnosticsBindings(
-                featureEnabled = ::nativeSurfaceParticleLayerEnabled,
+                featureEnabled = {
+                  surfaceParticleRuntimeCoordinator.reconcileAdapterAdmission(
+                      "lifecycle-diagnostic"
+                  )
+                },
                 activityMarkersFile = ACTIVITY_MARKERS_FILE,
                 snapshot = ::surfaceParticleLifecycleDiagnosticSnapshot,
                 marker = ::marker,
@@ -1353,6 +1365,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 }
           }
         } else {
+          val particleAdapterDecision = particleAdapterActivationDecision()
+          if (!particleAdapterDecision.applied) {
+            marker(
+                SpatialSurfaceParticleRouteModule.particleAdapterActivationMarker(
+                    particleAdapterDecision
+                )
+            )
+          }
           marker(
               SpatialSurfaceParticleRouteModule.nativeSurfaceParticlePanelEntitySuppressedMarker(
                   source = nativeSurfaceParticleLayerSuppressionSource(),
@@ -1769,6 +1789,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   private fun startNativeSurfaceParticleLayer(surface: AndroidSurface) {
+    val activationInput = particleAdapterRuntimeInput()
     surfaceParticleRuntimeCoordinator.start(
         SpatialSurfaceParticleStartRequest(
             surfaceValid = { surface.isValid },
@@ -1783,6 +1804,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                   openXrProbe.openXrInstanceHandle,
                   openXrProbe.openXrSessionHandle,
                   openXrProbe.openXrGetInstanceProcAddrHandle,
+                  activationInput.enabled,
+                  activationInput.profileId,
+                  activationInput.projectId,
+                  activationInput.featureId,
+                  activationInput.lockRevision,
+                  activationInput.lockSha256,
               )
             },
             carrier = ::particleLayerCarrierToken,
@@ -2598,8 +2625,28 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   private fun nativeSurfaceParticleLayerEnabled(): Boolean =
       SpatialSurfaceParticleRouteModule.nativeSurfaceParticleLayerEnabled(
-          activityReadOptionalBooleanSystemProperty(NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY),
+          particleAdapterActivationDecision(),
           privateSpatialEcsParticleRendererEnabled(),
+      )
+
+  private fun particleAdapterRuntimeInput(): SpatialAdapterRuntimeInput =
+      SpatialAdapterRuntimeInput(
+          enabled =
+              activityReadOptionalBooleanSystemProperty(
+                  NATIVE_SURFACE_PARTICLE_LAYER_ENABLED_PROPERTY
+              ) == true,
+          profileId = activityReadSystemProperty(PARTICLE_ADAPTER_PROFILE_ID_PROPERTY),
+          projectId = activityReadSystemProperty(PARTICLE_ADAPTER_PROJECT_ID_PROPERTY),
+          featureId = activityReadSystemProperty(PARTICLE_ADAPTER_FEATURE_ID_PROPERTY),
+          lockRevision =
+              activityReadSystemProperty(PARTICLE_ADAPTER_LOCK_REVISION_PROPERTY).toLongOrNull()
+                  ?: 0L,
+          lockSha256 = activityReadSystemProperty(PARTICLE_ADAPTER_LOCK_SHA256_PROPERTY),
+      )
+
+  private fun particleAdapterActivationDecision(): SpatialAdapterLockDecision =
+      SpatialSurfaceParticleRouteModule.particleAdapterActivationDecision(
+          particleAdapterRuntimeInput()
       )
 
   private fun nativeSurfaceParticleLayerSuppressedByPrivateRenderer(): Boolean =
@@ -2740,6 +2787,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       openXrInstanceHandle: Long,
       openXrSessionHandle: Long,
       openXrGetInstanceProcAddrHandle: Long,
+      runtimeEnabled: Boolean,
+      runtimeProfileId: String,
+      runtimeProjectId: String,
+      runtimeFeatureId: String,
+      runtimeLockRevision: Long,
+      runtimeLockSha256: String,
   ): Long
 
   private external fun nativeStopSurfaceParticleLayer()

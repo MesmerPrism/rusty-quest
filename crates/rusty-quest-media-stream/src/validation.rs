@@ -485,6 +485,8 @@ fn validate_runtime_endpoints<'a>(
                 | "windows_hostess"
                 | "termux_sidecar"
                 | "pc_viewer"
+                | "quest_native_openxr_renderer"
+                | "quest_meta_spatial_sdk_renderer"
         ) {
             errors.push(ValidationError::new(format!(
                 "runtime endpoint {} has unsupported adapter_kind {}",
@@ -1007,13 +1009,73 @@ fn validate_topology(
 ) {
     match plan.topology_id.as_str() {
         "quest_display_to_pc" => validate_quest_display_to_pc(plan, devices, sources, errors),
+        "quest_camera_to_pc" => validate_quest_camera_to_pc(plan, devices, sources, errors),
         "quest_to_quest_two_way" => validate_quest_to_quest_two_way(plan, devices, errors),
+        "quest_display_to_native_renderer"
+        | "quest_display_to_spatial_camera_panel"
+        | "quest_camera_to_spatial_camera_panel" => {
+            validate_quest_app_renderer(plan, devices, sources, errors)
+        }
         "quest_android_phone_duplex" => validate_quest_android_phone_duplex(plan, devices, errors),
         "diagnostic_loopback" => {}
         _ => errors.push(ValidationError::new(format!(
             "unsupported topology_id {}",
             plan.topology_id
         ))),
+    }
+}
+
+fn validate_quest_app_renderer(
+    plan: &MediaStreamSessionPlan,
+    devices: &BTreeMap<&str, &MediaStreamDevice>,
+    sources: &BTreeMap<&str, &MediaStreamSource>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let valid_lanes = plan
+        .lanes
+        .iter()
+        .filter(|lane| {
+            let source = sources.get(lane.source_id.as_str());
+            let source_device = devices.get(lane.source_device_id.as_str());
+            let sink_device = devices.get(lane.sink_device_id.as_str());
+            source.is_some_and(|source| {
+                matches!(
+                    source.capture_route.as_str(),
+                    "display-composite" | "camera2-mediacodec-surface"
+                )
+            }) && source_device.is_some_and(|device| device.device_kind == "quest")
+                && sink_device.is_some_and(|device| device.device_kind == "quest")
+                && lane.source_device_id != lane.sink_device_id
+        })
+        .count();
+    if valid_lanes != plan.lanes.len() || valid_lanes == 0 {
+        errors.push(ValidationError::new(
+            "Quest app-renderer topology requires distinct Quest source and render-sink devices",
+        ));
+    }
+}
+
+fn validate_quest_camera_to_pc(
+    plan: &MediaStreamSessionPlan,
+    devices: &BTreeMap<&str, &MediaStreamDevice>,
+    sources: &BTreeMap<&str, &MediaStreamSource>,
+    errors: &mut Vec<ValidationError>,
+) {
+    let has_camera_lane = plan.lanes.iter().any(|lane| {
+        let source = sources.get(lane.source_id.as_str());
+        let source_device = devices.get(lane.source_device_id.as_str());
+        let sink_device = devices.get(lane.sink_device_id.as_str());
+        matches!(source_device, Some(device) if device.device_kind == "quest")
+            && matches!(sink_device, Some(device) if device.device_kind == "windows_pc")
+            && matches!(
+                source.map(|source| source.source_kind.as_str()),
+                Some(SOURCE_KIND_CAMERA2_MEDIACODEC_SURFACE)
+            )
+    });
+    if !has_camera_lane {
+        errors.push(ValidationError::new(
+            "quest_camera_to_pc requires a Quest Camera2 source lane to a windows_pc sink",
+        ));
     }
 }
 
@@ -1139,7 +1201,10 @@ fn validate_observability(
 }
 
 fn validate_track_role(label: &str, value: &str, errors: &mut Vec<ValidationError>) {
-    if !matches!(value, "left" | "right" | "mono" | "display" | "stereo") {
+    if !matches!(
+        value,
+        "left" | "right" | "mono" | "display" | "camera" | "stereo"
+    ) {
         errors.push(ValidationError::new(format!(
             "{label} has unsupported track role {value}"
         )));

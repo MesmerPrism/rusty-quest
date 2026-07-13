@@ -41,7 +41,7 @@
         <meta-data android:name="rusty.manifold.feature_lock_id" android:value="lock.broker-client.native-renderer.v1" />
         <meta-data android:name="rusty.manifold.marker_namespace" android:value="RUSTY_QUEST_NATIVE_BROKER_CLIENT" />
         <meta-data android:name="rusty.manifold.contract_families" android:value="peer-session,media-session" />
-        <meta-data android:name="rusty.manifold.capabilities" android:value="capability.command.session.list,capability.media.session.observe,capability.peer.session.observe,capability.sink.native-openxr" />
+        <meta-data android:name="rusty.manifold.capabilities" android:value="capability.command.media.session.start,capability.command.media.session.stop,capability.command.session.list,capability.media.session.observe,capability.peer.session.observe,capability.sink.native-openxr" />
         <meta-data
             android:name="com.samsung.android.vr.application.mode"
             android:value="vr_only" />

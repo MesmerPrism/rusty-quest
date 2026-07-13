@@ -8,11 +8,12 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $appRoot = Join-Path $repoRoot "apps\manifold-broker-android"
-$manifestPath = Join-Path $appRoot "AndroidManifest.xml"
+$manifestPath = Join-Path $repoRoot "fixtures\broker-products\legacy-camera-p2p-standalone.AndroidManifest.xml"
 $activityPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\BrokerStartActivity.java"
 $servicePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\BrokerStartService.java"
 $admissionServicePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\ManifoldAdmissionService.java"
 $admissionBridgePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\ManifoldAdmissionNativeBridge.java"
+$authorityBridgePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\ManifoldRuntimeAuthorityBridge.java"
 $launchEvidencePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\BrokerLaunchEvidence.java"
 $serverPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\LocalManifoldBrokerServer.java"
 $remoteCameraRuntimePath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\RemoteCameraSessionRuntime.java"
@@ -21,7 +22,7 @@ $remoteCameraSourceRuntimePath = Join-Path $appRoot "src\main\java\io\github\mes
 $h264MediaStreamWriterPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\H264MediaStreamWriter.java"
 $mediaCodecSurfaceEncoderPath = Join-Path $appRoot "src\main\java\io\github\mesmerprism\rustymanifold\broker\MediaCodecSurfaceEncoder.java"
 
-foreach ($path in @($manifestPath, $activityPath, $servicePath, $admissionServicePath, $admissionBridgePath, $launchEvidencePath, $serverPath, $remoteCameraRuntimePath, $remoteCameraDirectP2pSocketAuthorityPath, $remoteCameraSourceRuntimePath, $h264MediaStreamWriterPath, $mediaCodecSurfaceEncoderPath)) {
+foreach ($path in @($manifestPath, $activityPath, $servicePath, $admissionServicePath, $admissionBridgePath, $authorityBridgePath, $launchEvidencePath, $serverPath, $remoteCameraRuntimePath, $remoteCameraDirectP2pSocketAuthorityPath, $remoteCameraSourceRuntimePath, $h264MediaStreamWriterPath, $mediaCodecSurfaceEncoderPath)) {
     if (-not (Test-Path $path)) {
         throw "Missing Manifold broker Android file: $path"
     }
@@ -32,6 +33,7 @@ $activity = Get-Content -Raw -Path $activityPath
 $service = Get-Content -Raw -Path $servicePath
 $admissionService = Get-Content -Raw -Path $admissionServicePath
 $admissionBridge = Get-Content -Raw -Path $admissionBridgePath
+$authorityBridge = Get-Content -Raw -Path $authorityBridgePath
 $launchEvidence = Get-Content -Raw -Path $launchEvidencePath
 $server = Get-Content -Raw -Path $serverPath
 $remoteCameraRuntime = Get-Content -Raw -Path $remoteCameraRuntimePath
@@ -82,17 +84,35 @@ if ($manifest -notmatch 'BROKER_ADMISSION' -or $manifest -notmatch 'protectionLe
 if ($admissionService -notmatch 'message\.sendingUid' -or $admissionService -notmatch 'GET_SIGNING_CERTIFICATES' -or $admissionService -notmatch 'SecureRandom') {
     throw "ManifoldAdmissionService does not project Binder UID/package/signing identity and entropy."
 }
-if ($admissionBridge -notmatch 'nativeInitialize' -or $admissionBridge -notmatch 'nativeExecute' -or $admissionBridge -notmatch 'rusty\.manifold\.admission') {
+if ($admissionBridge -notmatch 'nativeExecute' -or $admissionBridge -notmatch 'rusty\.manifold\.admission') {
     throw "ManifoldAdmissionNativeBridge does not delegate to Manifold admission."
 }
-if ($manifest -notmatch 'BrokerStartService' -or $manifest -notmatch 'android:exported="true"' -or $manifest -notmatch 'android:foregroundServiceType="dataSync\|camera"' -or $manifest -notmatch 'android:stopWithTask="false"') {
-    throw "Manifold broker Android manifest must expose BrokerStartService as a dataSync and camera foreground service for QCL-082 automation."
+if ($authorityBridge -notmatch 'nativeInitialize' -or $authorityBridge -notmatch 'nativeMutate' -or $authorityBridge -notmatch 'rusty\.quest\.broker\.server_mutation_response\.v1') {
+    throw "ManifoldRuntimeAuthorityBridge does not delegate initialization and mutation to the stateful Rust runtime."
+}
+if ($manifest -notmatch 'android:name="\.BrokerStartService"\s+android:exported="false"' -or $manifest -notmatch 'android:foregroundServiceType="dataSync\|camera"' -or $manifest -notmatch 'android:stopWithTask="false"') {
+    throw "Manifold broker Android manifest must keep BrokerStartService non-exported with dataSync/camera foreground types."
+}
+if ($manifest -notmatch 'android:name="\.ManifoldAdmissionService"\s+android:exported="true"\s+android:permission="io\.github\.mesmerprism\.rustymanifold\.permission\.BROKER_ADMISSION"') {
+    throw "Manifold admission service must be exported only behind the signature permission."
 }
 if ($launchEvidence -notmatch 'rusty\.quest\.manifold_broker_android\.launch_evidence\.v1') {
     throw "BrokerLaunchEvidence does not emit launch evidence schema."
 }
+if ($launchEvidence -notmatch 'ManifoldRuntimeAuthorityBridge\.evidence' -or $launchEvidence -match 'put\("authority"') {
+    throw "BrokerLaunchEvidence must project Rust runtime evidence instead of manufacturing an authority label."
+}
 if ($activity -notmatch 'requestPermissions') {
     throw "BrokerStartActivity does not request runtime camera permission."
+}
+if ($activity -notmatch 'GeneratedBrokerProductConfig\.CAMERA_MEDIA_ENABLED') {
+    throw "BrokerStartActivity does not gate camera permission requests by the accepted product lock."
+}
+if ($activity -notmatch 'ManifoldRuntimeAuthorityBridge\.initialize\(\)' -or
+    $service -notmatch 'ManifoldRuntimeAuthorityBridge\.initialize\(\)' -or
+    $authorityBridge -notmatch 'GeneratedBrokerRuntimeConfig\.JSON' -or
+    $authorityBridge -notmatch 'GeneratedBrokerRuntimeConfig\.SHA256') {
+    throw "Broker launch surfaces do not initialize the exact generated stateful runtime config."
 }
 if ($service -notmatch 'extends Service' -or $service -notmatch 'START_STICKY') {
     throw "BrokerStartService must be a sticky Android Service."
@@ -103,6 +123,9 @@ if ($service -notmatch 'startForeground' -or $service -notmatch 'NotificationCha
 if ($service -notmatch 'FOREGROUND_SERVICE_TYPE_CAMERA' -or $service -notmatch 'FOREGROUND_SERVICE_TYPE_DATA_SYNC') {
     throw "BrokerStartService must start foreground with both camera and dataSync service types."
 }
+if ($service -notmatch 'GeneratedBrokerProductConfig\.CAMERA_MEDIA_ENABLED') {
+    throw "BrokerStartService does not gate the camera foreground-service type by the accepted product lock."
+}
 if ($service -notmatch 'LocalManifoldBrokerServer\.get\(\)\.start') {
     throw "BrokerStartService does not start the local Manifold broker server."
 }
@@ -111,6 +134,15 @@ if ($server -notmatch '/manifold/v1/events') {
 }
 if ($server -notmatch 'rusty\.manifold\.command\.envelope\.v1') {
     throw "Local broker server does not recognize Manifold command envelopes."
+}
+if ($server -notmatch 'ManifoldRuntimeAuthorityBridge\.evaluateMutation' -or
+    $server -match 'put\("accepted"' -or
+    $server -match 'put\("authority"') {
+    throw "Local broker server bypasses Rust mutation authority or manufactures acceptance."
+}
+if ($server -notmatch 'getJSONObject\("effect_params"\)' -or
+    $server -match 'message\.optJSONObject\("params"\)') {
+    throw "Local broker server does not consume only Rust receipt-bound effect params."
 }
 if ($server -notmatch 'live_stream_events_synthesized') {
     throw "Local broker server must explicitly report that it does not synthesize live stream events."
@@ -122,7 +154,7 @@ if ($server -notmatch 'media_stream_runtime') {
     throw "Local broker server does not attach media_stream_runtime command ack status for QCL-082."
 }
 if ($server -notmatch 'hostess\.makepad\.bridge_probe\.set_marker') {
-    throw "Local broker server does not authorize the Hostess Makepad safe bridge probe command."
+    throw "Local broker server does not retain the Hostess Makepad compatibility effect adapter."
 }
 if ($server -notmatch 'rusty\.hostess\.bridge_command\.request\.v1') {
     throw "Local broker server does not dispatch Hostess bridge command request payloads."
@@ -371,7 +403,7 @@ foreach ($token in $legacyTokens) {
 }
 
 if ($Build) {
-    & (Join-Path $PSScriptRoot "Build-ManifoldBrokerAndroid.ps1") -AndroidHome $AndroidHome -JavaHome $JavaHome | Out-Host
+    & (Join-Path $PSScriptRoot "Build-ManifoldBrokerAndroid.ps1") -AndroidHome $AndroidHome -JavaHome $JavaHome -LegacyCameraP2pCompatibility | Out-Host
 }
 
 Write-Output "Rusty Quest Manifold broker Android validation passed"

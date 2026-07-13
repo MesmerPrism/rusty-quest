@@ -7,8 +7,28 @@ pub(crate) const PROP_ENABLE_SDF_VISUAL: &str =
     "debug.rustyquest.native_renderer.sdf.visual.enabled";
 pub(crate) const PROP_PARTICLE_ADAPTER_ENABLED: &str =
     "debug.rustyquest.native_renderer.particle_adapter.enabled";
+pub(crate) const PROP_PARTICLE_ADAPTER_PROFILE_ID: &str =
+    "debug.rustyquest.native_renderer.particle_adapter.profile_id";
+pub(crate) const PROP_PARTICLE_ADAPTER_PROJECT_ID: &str =
+    "debug.rustyquest.native_renderer.particle_adapter.project_id";
+pub(crate) const PROP_PARTICLE_ADAPTER_FEATURE_ID: &str =
+    "debug.rustyquest.native_renderer.particle_adapter.feature_id";
+pub(crate) const PROP_PARTICLE_ADAPTER_LOCK_REVISION: &str =
+    "debug.rustyquest.native_renderer.particle_adapter.lock_revision";
+pub(crate) const PROP_PARTICLE_ADAPTER_LOCK_SHA256: &str =
+    "debug.rustyquest.native_renderer.particle_adapter.lock_sha256";
 pub(crate) const PROP_HAND_ADAPTER_ENABLED: &str =
     "debug.rustyquest.native_renderer.hand_adapter.enabled";
+pub(crate) const PROP_HAND_ADAPTER_PROFILE_ID: &str =
+    "debug.rustyquest.native_renderer.hand_adapter.profile_id";
+pub(crate) const PROP_HAND_ADAPTER_PROJECT_ID: &str =
+    "debug.rustyquest.native_renderer.hand_adapter.project_id";
+pub(crate) const PROP_HAND_ADAPTER_FEATURE_ID: &str =
+    "debug.rustyquest.native_renderer.hand_adapter.feature_id";
+pub(crate) const PROP_HAND_ADAPTER_LOCK_REVISION: &str =
+    "debug.rustyquest.native_renderer.hand_adapter.lock_revision";
+pub(crate) const PROP_HAND_ADAPTER_LOCK_SHA256: &str =
+    "debug.rustyquest.native_renderer.hand_adapter.lock_sha256";
 pub(crate) const PROP_SDF_FIELD_VISUAL_ENABLED: &str =
     "debug.rustyquest.native_renderer.sdf.field_visual.enabled";
 pub(crate) const PROP_RENDER_MODE: &str = "debug.rustyquest.native_renderer.render.mode";

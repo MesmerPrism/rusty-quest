@@ -3,6 +3,7 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel
 import java.util.Locale
 
 internal data class SpatialSurfaceParticleParameterBindings(
+    val featureEnabled: () -> Boolean,
     val receiptLibraryLoaded: () -> Boolean,
     val workflowPanelVisible: () -> Boolean,
     val submitNativeParameters: (SurfaceParticleControlState) -> Long,
@@ -87,6 +88,15 @@ internal class SpatialSurfaceParticleParameterCoordinator(
   }
 
   fun submit(source: String) {
+    if (!bindings.featureEnabled()) {
+      bindings.marker(
+          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleEffectSuppressedMarker(
+              "parameter-submit",
+              source,
+          )
+      )
+      return
+    }
     if (!bindings.receiptLibraryLoaded()) {
       bindings.marker(
           SpatialSurfaceParticleRouteModule.nativeSurfaceParticleParameterSubmitSkippedMarker(
@@ -121,6 +131,15 @@ internal class SpatialSurfaceParticleParameterCoordinator(
       requestedValue: Float,
       activationProfile: String,
   ) {
+    if (!bindings.featureEnabled()) {
+      bindings.marker(
+          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleEffectSuppressedMarker(
+              "alias-parameter-submit",
+              source,
+          )
+      )
+      return
+    }
     if (!bindings.receiptLibraryLoaded()) {
       bindings.marker(
           SpatialSurfaceParticleRouteModule.nativeSurfaceParticleAliasSubmitSkippedMarker(

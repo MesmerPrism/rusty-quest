@@ -20,7 +20,7 @@ $manifest = $manifestText | ConvertFrom-Json
 if ($manifest.schema -ne "rusty.quest.native_renderer_property_manifest.v2") {
     throw "Native renderer property manifest has an unexpected schema."
 }
-$expectedPropertyCount = 258
+$expectedPropertyCount = 268
 if ($manifest.property_count -ne $expectedPropertyCount -or $manifest.properties.Count -ne $expectedPropertyCount) {
     throw "Native renderer property manifest must cover the current $expectedPropertyCount-property runtime surface."
 }
@@ -38,7 +38,17 @@ foreach ($entry in @($manifest.properties)) {
 
 foreach ($token in @(
     'debug.rustyquest.native_renderer.hand_adapter.enabled',
+    'debug.rustyquest.native_renderer.hand_adapter.profile_id',
+    'debug.rustyquest.native_renderer.hand_adapter.project_id',
+    'debug.rustyquest.native_renderer.hand_adapter.feature_id',
+    'debug.rustyquest.native_renderer.hand_adapter.lock_revision',
+    'debug.rustyquest.native_renderer.hand_adapter.lock_sha256',
     'debug.rustyquest.native_renderer.particle_adapter.enabled',
+    'debug.rustyquest.native_renderer.particle_adapter.profile_id',
+    'debug.rustyquest.native_renderer.particle_adapter.project_id',
+    'debug.rustyquest.native_renderer.particle_adapter.feature_id',
+    'debug.rustyquest.native_renderer.particle_adapter.lock_revision',
+    'debug.rustyquest.native_renderer.particle_adapter.lock_sha256',
     'debug.rustyquest.native_renderer.stimulus_volume.central_fov_fraction',
     'debug.rustyquest.native_renderer.environment_depth.surface_support.component_mode',
     'debug.rustyquest.native_renderer.environment_depth.native_passthrough.required',

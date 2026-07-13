@@ -1,46 +1,33 @@
-//! Standalone Android JNI bridge to the shared Manifold authority evaluator.
+//! Standalone Android JNI transport to one stateful Manifold broker runtime.
 
 mod admission_jni;
 
-/// Host-testable evaluator used by the JNI boundary.
-pub fn evaluate_for_host_test(invocation_json: &str) -> Result<String, String> {
-    rusty_quest_broker_authority::evaluate_authority_json(invocation_json)
-        .map_err(|error| error.to_string())
+/// Initializes or rebinds the process-local runtime in host tests.
+pub fn initialize_for_host_test(
+    config_json: &str,
+    expected_config_sha256: &str,
+    epoch_entropy_hex: &str,
+) -> Result<String, String> {
+    admission_jni::initialize(config_json, expected_config_sha256, epoch_entropy_hex)
 }
 
-#[cfg(target_os = "android")]
-#[no_mangle]
-pub extern "system" fn Java_io_github_mesmerprism_rustymanifold_broker_ManifoldRuntimeAuthorityBridge_nativeEvaluate(
-    mut env: jni::EnvUnowned,
-    _class: jni::objects::JClass,
-    invocation_json: jni::objects::JString,
-) -> jni::sys::jstring {
-    match env
-        .with_env(|env| -> jni::errors::Result<jni::sys::jstring> {
-            let invocation_json = invocation_json.try_to_string(env)?;
-            let response = evaluate_for_host_test(&invocation_json).unwrap_or_default();
-            env.new_string(response).map(|value| value.into_raw())
-        })
-        .into_outcome()
-    {
-        jni::Outcome::Ok(value) => value,
-        jni::Outcome::Err(_) | jni::Outcome::Panic(_) => std::ptr::null_mut(),
-    }
+/// Executes signature-scoped admission through the shared runtime in host tests.
+pub fn admit_for_host_test(operation_json: &str) -> Result<String, String> {
+    admission_jni::execute_admission(operation_json)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::evaluate_for_host_test;
+/// Executes one admitted real server mutation in host tests.
+pub fn mutate_for_host_test(mutation_json: &str, now_ms: u64) -> Result<String, String> {
+    admission_jni::mutate(mutation_json, now_ms)
+}
 
-    #[test]
-    fn standalone_native_boundary_preserves_manifold_response() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../..")
-            .join("fixtures/broker-authority/standalone-applied.invocation.json");
-        let invocation = std::fs::read_to_string(path).expect("fixture");
-        let response = evaluate_for_host_test(&invocation).expect("response");
-        assert!(response.contains("rusty.quest.broker.authority_response.v1"));
-        assert!(response.contains("\"decision_owner_id\":\"module.runtime.host\""));
-        assert!(response.contains("\"local_acceptance_rules\":false"));
-    }
+/// Applies exact platform owner completion through Rust in host tests.
+/// Returns integrated runtime evidence in host tests.
+pub fn evidence_for_host_test() -> Result<String, String> {
+    admission_jni::evidence()
+}
+
+/// Returns the accepted admission snapshot in host tests.
+pub fn admission_snapshot_for_host_test() -> Result<String, String> {
+    admission_jni::admission_snapshot()
 }

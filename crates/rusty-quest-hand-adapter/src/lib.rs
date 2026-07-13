@@ -16,6 +16,14 @@ use rusty_matter_model::Vec3 as MatterVec3;
 use rusty_optics_model::{HandSubstrateVisualProfile, HandVisualSide};
 use serde::{Deserialize, Serialize};
 
+mod lock_bound_activation;
+
+pub use lock_bound_activation::{
+    resolve_hand_adapter_activation, HandAdapterLockActivationDecision,
+    HandAdapterLockActivationState, HandAdapterLockRejection, HandAdapterRuntimeActivationInput,
+    LOCK_BOUND_ACTIVATION_SCHEMA_ID,
+};
+
 /// Schema id for explicit Quest hand adapter descriptors.
 pub const HAND_ADAPTER_DESCRIPTOR_SCHEMA_ID: &str = "rusty.quest.hand_adapter.descriptor.v1";
 /// Schema id for prepared Quest hand adapter frames.
@@ -276,16 +284,27 @@ pub fn disabled_receipt(
 }
 
 /// Marker payload used by app-local effective-runtime receipts.
+///
+/// An accepted marker can only be constructed from an applied lock-bound
+/// decision. Rejected decisions remain disabled and carry their failure reason.
 #[must_use]
-pub fn activation_marker(consumer_id: &str, enabled: bool) -> String {
+pub fn activation_marker(
+    consumer_id: &str,
+    decision: &HandAdapterLockActivationDecision,
+) -> String {
+    let enabled = decision.is_applied();
     format!(
-        "status={} handAdapterDescriptorSchema={} handAdapterFrameSchema={} handAdapterReceiptSchema={} handAdapterConsumer={} handAdapterEnabled={} handAdapterSourceContracts=lattice-hand-frame+matter-hand-substrate+optics-hand-visual handAdapterBothHands=true handAdapterCoordinateBasisPreserved=true handAdapterCpuPreparedParity=true handAdapterHighRateJson=false handAdapterBackendPayloadAbsent=true",
-        if enabled { "accepted" } else { "disabled" },
+        "status={} handAdapterDescriptorSchema={} handAdapterFrameSchema={} handAdapterReceiptSchema={} handAdapterConsumer={} handAdapterEnabled={} handAdapterSourceContracts=lattice-hand-frame+matter-hand-substrate+optics-hand-visual handAdapterBothHands={} handAdapterCoordinateBasisPreserved={} handAdapterCpuPreparedParity={} handAdapterHighRateJson=false handAdapterBackendPayloadAbsent=true {}",
+        if enabled { "accepted" } else { "rejected" },
         HAND_ADAPTER_DESCRIPTOR_SCHEMA_ID,
         HAND_ADAPTER_FRAME_SCHEMA_ID,
         HAND_ADAPTER_RECEIPT_SCHEMA_ID,
         consumer_id,
         enabled,
+        enabled,
+        enabled,
+        enabled,
+        decision.marker_fields(),
     )
 }
 

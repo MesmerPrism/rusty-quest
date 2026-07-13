@@ -5,7 +5,7 @@
   "feature_lock_id":"lock.broker-client.spatial-camera-panel.v1",
   "marker_namespace":"RUSTY_QUEST_SPATIAL_BROKER_CLIENT",
   "contract_families":["rusty.manifold.peer.session_descriptor.v1","rusty.manifold.media.session_descriptor.v1"],
-  "capabilities":["capability.command.session.list","capability.media.session.observe","capability.peer.session.observe","capability.sink.spatial-sdk"],
+  "capabilities":["capability.command.media.session.start","capability.command.media.session.stop","capability.command.session.list","capability.media.session.observe","capability.peer.session.observe","capability.sink.spatial-sdk"],
   "adapter_permissions":["io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION"],
   "runtime_properties":[],"application_defaults":[]
 }

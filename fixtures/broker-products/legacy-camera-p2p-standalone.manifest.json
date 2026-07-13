@@ -1,0 +1,63 @@
+{
+  "$schema": "rusty.quest.broker.android_manifest_projection.v1",
+  "product_id": "broker.legacy_camera_p2p.standalone",
+  "manifold_lock_fingerprint": "fnv1a64-f7f04d252038e792",
+  "runtime_mode": "standalone",
+  "permissions": [
+    {
+      "name": "android.permission.ACCESS_FINE_LOCATION",
+      "uses_permission_flags": [],
+      "max_sdk_version": 32
+    },
+    {
+      "name": "android.permission.ACCESS_NETWORK_STATE",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "android.permission.ACCESS_WIFI_STATE",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "android.permission.CAMERA",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "android.permission.CHANGE_WIFI_STATE",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "android.permission.FOREGROUND_SERVICE",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "android.permission.FOREGROUND_SERVICE_CAMERA",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "android.permission.INTERNET",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "android.permission.NEARBY_WIFI_DEVICES",
+      "uses_permission_flags": [
+        "neverForLocation"
+      ]
+    },
+    {
+      "name": "android.permission.POST_NOTIFICATIONS",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "horizonos.permission.HEADSET_CAMERA",
+      "uses_permission_flags": []
+    },
+    {
+      "name": "horizonos.permission.SPATIAL_CAMERA",
+      "uses_permission_flags": []
+    }
+  ]
+}

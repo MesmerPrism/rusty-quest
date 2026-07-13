@@ -18,13 +18,15 @@ import org.json.JSONObject;
 
 import java.security.MessageDigest;
 import java.security.SecureRandom;
-import java.util.Arrays;
 
 /** Signature-scoped Binder projection. Manifold owns every grant/token decision. */
 public final class ManifoldAdmissionService extends Service {
     public static final int MESSAGE_ISSUE_TOKEN = 1;
     public static final int MESSAGE_AUTHORIZE_USE = 2;
     public static final int MESSAGE_REVOKE_TOKEN = 3;
+    public static final int MESSAGE_MUTATE_RUNTIME = 4;
+    public static final int MESSAGE_COMPLETE_MEDIA_ACTION = 5;
+    public static final int MESSAGE_RUNTIME_EVIDENCE = 6;
     public static final String ADMISSION_PERMISSION =
             "io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION";
     private static final String TAG = "RustyManifoldAdmission";
@@ -36,8 +38,12 @@ public final class ManifoldAdmissionService extends Service {
     public void onCreate() {
         super.onCreate();
         try {
-            ManifoldAdmissionNativeBridge.initialize(GeneratedAdmissionConfig.JSON);
-            Log.i(TAG, "status=initialized adapter=android_signature_scoped_binder decisionOwner=rusty.manifold.admission localTokenOrGrantPolicy=false");
+            JSONObject status = ManifoldRuntimeAuthorityBridge.initialize();
+            Log.i(TAG, "status=initialized adapter=android_signature_scoped_binder"
+                    + " providerEpoch=" + status.optString("provider_epoch_id", "missing")
+                    + " existingAuthorityPreserved="
+                    + status.optBoolean("existing_authority_preserved", false)
+                    + " localTokenOrGrantPolicy=false");
         } catch (Exception error) {
             Log.e(TAG, "status=error stage=initialize reason=" + error.getClass().getSimpleName());
             stopSelf();
@@ -59,13 +65,32 @@ public final class ManifoldAdmissionService extends Service {
             try {
                 QuestCaller caller = callerForUid(message.sendingUid);
                 Bundle data = message.getData();
-                JSONObject operation = baseOperation(message.what, caller, data);
-                JSONObject response = ManifoldAdmissionNativeBridge.execute(operation);
+                JSONObject response;
+                JSONObject operation;
+                if (message.what == MESSAGE_MUTATE_RUNTIME) {
+                    operation = new JSONObject(data.getString("mutation_json", "{}"));
+                    response = ManifoldRuntimeAuthorityBridge.evaluateMutation(operation);
+                } else if (message.what == MESSAGE_COMPLETE_MEDIA_ACTION) {
+                    operation = new JSONObject(data.getString("completion_json", "{}"));
+                    response = ManifoldRuntimeAuthorityBridge.completeMediaAction(operation);
+                } else if (message.what == MESSAGE_RUNTIME_EVIDENCE) {
+                    operation = new JSONObject().put("operation", "runtime_evidence");
+                    response = ManifoldRuntimeAuthorityBridge.evidence();
+                } else {
+                    operation = baseOperation(message.what, caller, data);
+                    response = ManifoldAdmissionNativeBridge.execute(operation);
+                }
                 reply(message, response.toString(), null);
-                JSONObject receipt = response.getJSONObject("receipt");
-                Log.i(TAG, "status=receipt operation=" + operation.getString("operation")
-                        + " applied=" + receipt.optBoolean("applied", false)
-                        + " rejection=" + receipt.optString("rejection_reason", "none")
+                JSONObject receipt = response.optJSONObject("receipt");
+                JSONObject mutationReceipt = response.optJSONObject("mutation_receipt");
+                Log.i(TAG, "status=receipt operation=" + operation.optString("operation", "runtime")
+                        + " applied=" + (receipt != null
+                                ? receipt.optBoolean("applied", false)
+                                : response.optBoolean("accepted", false))
+                        + " rejection=" + (receipt != null
+                                ? receipt.optString("rejection_reason", "none")
+                                : response.optString("status", "none"))
+                        + " mutationReceipt=" + (mutationReceipt != null)
                         + " callerPackage=" + caller.packageName
                         + " sendingUid=" + caller.uid);
             } catch (Exception error) {
@@ -110,11 +135,7 @@ public final class ManifoldAdmissionService extends Service {
     private QuestCaller callerForUid(int uid) throws Exception {
         PackageManager packageManager = getPackageManager();
         String[] packages = packageManager.getPackagesForUid(uid);
-        if (packages == null || packages.length == 0) {
-            throw new SecurityException("Binder UID has no package");
-        }
-        Arrays.sort(packages);
-        String packageName = packages[0];
+        String packageName = BinderCallerPackageResolver.requireUnambiguousPackage(packages);
         PackageInfo info = packageManager.getPackageInfo(
                 packageName,
                 PackageManager.GET_SIGNING_CERTIFICATES);

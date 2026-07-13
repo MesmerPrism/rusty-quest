@@ -1,0 +1,11 @@
+{
+  "schema":"rusty.quest.mod006_lock_bound_activation_review.v1",
+  "review_id":"mod-006-native-renderer-lock-bound-activation-readiness",
+  "project_id":"native-renderer",
+  "unit_id":"mod-006",
+  "decision":"rework",
+  "source_result":"pass",
+  "device_result":"pending",
+  "findings":["Adapter-controlled hand and particle effects now derive from applied decisions rather than adapter.enabled.","Guard-disabled negatives cover every Native hand effect family and all environment-depth, hand-anchor, and private-particle requests.","Historical accepted fixtures remain byte-identical."],
+  "next_gate":"Run fresh selected/off-lock effect, fatal-window, and cleanup validation on both Quests."
+}

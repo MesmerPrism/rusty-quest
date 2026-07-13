@@ -36,8 +36,49 @@ internal class SpatialSurfaceParticleRuntimeCoordinator(
   var lastNativeSurfaceStartMask = 0L
     private set
 
+  fun reconcileAdapterAdmission(source: String): Boolean {
+    if (bindings.nativeSurfaceParticleLayerEnabled()) {
+      return true
+    }
+    if (!particleLayerStarted) {
+      return false
+    }
+    if (!bindings.receiptLibraryLoaded()) {
+      bindings.marker(
+          SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStopFailedMarker(
+              source,
+              "native-library-unavailable",
+              "adapter-lock-revoked",
+          )
+      )
+      return false
+    }
+    runCatching { bindings.stopNative() }
+        .onSuccess {
+          particleLayerStarted = false
+          nativeSurfaceStartRequested = false
+          bindings.marker(
+              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStoppedMarker(
+                  source = source,
+                  particleLayerStarted = false,
+                  nativeSurfaceStartRequested = false,
+              )
+          )
+        }
+        .onFailure { throwable ->
+          bindings.marker(
+              SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStopFailedMarker(
+                  source = source,
+                  error = throwable.javaClass.simpleName,
+                  message = throwable.message ?: "adapter-lock-revoked",
+              )
+          )
+        }
+    return false
+  }
+
   fun start(request: SpatialSurfaceParticleStartRequest) {
-    if (!bindings.nativeSurfaceParticleLayerEnabled()) {
+    if (!reconcileAdapterAdmission("start-admission")) {
       bindings.marker(
           SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStartSuppressedDisabledMarker(
               suppressionSource = bindings.suppressionSource(),
@@ -81,9 +122,19 @@ internal class SpatialSurfaceParticleRuntimeCoordinator(
 
     runCatching {
           val startMask = request.startNative(openXrProbe)
+          lastNativeSurfaceStartMask = startMask
+          if (!SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStartApplied(startMask)) {
+            particleLayerStarted = false
+            nativeSurfaceStartRequested = false
+            bindings.marker(
+                SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStartRejectedMarker(
+                    startMask
+                )
+            )
+            return@runCatching
+          }
           particleLayerStarted = true
           nativeSurfaceStartRequested = true
-          lastNativeSurfaceStartMask = startMask
           bindings.marker(
               SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStartRequestedMarker(
                   surfaceValid = surfaceValid,
@@ -100,6 +151,8 @@ internal class SpatialSurfaceParticleRuntimeCoordinator(
           request.submitParameters()
         }
         .getOrElse { throwable ->
+          particleLayerStarted = false
+          nativeSurfaceStartRequested = false
           bindings.marker(
               SpatialSurfaceParticleRouteModule.nativeSurfaceParticleStartFailedMarker(
                   error = throwable.javaClass.simpleName,

@@ -1,0 +1,17 @@
+[package]
+name = "rusty-quest-feature-activation"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Application-neutral closed-world feature-lock activation decisions for Rusty Quest adapters."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+[lints]
+workspace = true

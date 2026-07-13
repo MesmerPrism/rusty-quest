@@ -1,0 +1,39 @@
+{
+  "$schema":"https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/iteration-unit.schema.json",
+  "schema":"rusty.morphospace.workflow.iteration_unit.v1",
+  "unit_id":"mod-006",
+  "project_id":"native-renderer",
+  "status":"validating",
+  "objective":"Require the exact embedded particle/hand conformance lock for every Native Renderer adapter-controlled effect and preserve prior consumer evidence append-only.",
+  "change_categories":["implementation","feature-activation","validation","validation-routing"],
+  "instruction_impact":"update",
+  "instruction_surfaces":[
+    {"surface_kind":"agents","path":"<workspace-root>/repos/rusty-quest/AGENTS.md","owner":"quest","change_reason":"Route lock-bound Native Renderer effects.","action":"update","status":"complete","validation":"tools/check_all.ps1","skill_id":null},
+    {"surface_kind":"readme","path":"<workspace-root>/repos/rusty-quest/README.md","owner":"quest","change_reason":"Route MOD-006 source/device distinction.","action":"update","status":"complete","validation":"tools/check_all.ps1","skill_id":null},
+    {"surface_kind":"skill","path":"<skills-root>/rusty-morphospace-context/SKILL.md","owner":"workflow","change_reason":"Route exact lock-bound cross-consumer activation and current maturity.","action":"update","status":"complete","validation":"skill quick validation","skill_id":"rusty-morphospace-context"},
+    {"surface_kind":"skill","path":"<skills-root>/system-engineering/SKILL.md","owner":"workflow","change_reason":"Route exact lock authority, effect closure, and independent-consumer evidence.","action":"update","status":"complete","validation":"skill quick validation","skill_id":"system-engineering"},
+    {"surface_kind":"skill","path":"<skills-root>/meta-quest-workflow/SKILL.md","owner":"workflow","change_reason":"Route selected/off-lock two-Quest validation and cleanup.","action":"update","status":"complete","validation":"skill quick validation","skill_id":"meta-quest-workflow"}
+  ],
+  "instruction_none_justification":null,
+  "prerequisites":[],
+  "allowed_repositories":[
+    {"repo_id":"native-renderer-app","allowed_paths":["native/","morphospace/"]},
+    {"repo_id":"quest-repo","allowed_paths":["crates/rusty-quest-particle-adapter/","crates/rusty-quest-hand-adapter/","fixtures/particle-adapter/","fixtures/hand-adapter/","fixtures/runtime-profiles/","fixtures/native-app-builds/","tools/checks/"]}
+  ],
+  "non_scope":["Stable promotion.","Broker or networking work.","Git publication or device operation."],
+  "acceptance":[
+    {"acceptance_id":"effect-closure","proof":"Hand input/visuals and every environment-depth, hand-anchor, or private-particle request fail before effects unless the matching exact lock applies, including adapter.enabled=false bypass damage.","command":"cargo test -p rusty-quest-native-renderer-android-native"},
+    {"acceptance_id":"append-only-history","proof":"MOD-003/MOD-005 fixtures and receipts remain historical; MOD-006 alone records new lock authority.","command":"Test-SpatialCameraPanelWorkflowStatic.ps1"},
+    {"acceptance_id":"device-gate","proof":"Fresh applied/rejected effect and cleanup evidence exists on both Quests.","command":"serial-scoped two-Quest validation"}
+  ],
+  "risk_tier":"deep",
+  "device_requirement":"required",
+  "validation":[
+    {"profile_id":"quick","command":"native consumer unit and static negative gates"},
+    {"profile_id":"standard","command":"Native Renderer host/build/profile gates"},
+    {"profile_id":"device","command":"two-Quest selected/off-lock validation"}
+  ],
+  "outputs":["Effect-closure admission gate.","MOD-006 receipt and rework review."],
+  "commit_policy":"Commit only after source and workspace gates pass; push only with remote readback.",
+  "push_checkpoint":"integration-batch"
+}

@@ -8,12 +8,19 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+rusty-manifold-admission = { path = "../../../rusty-manifold/crates/rusty-manifold-admission" }
 rusty-manifold-broker-adapter = { path = "../../../rusty-manifold/crates/rusty-manifold-broker-adapter" }
 rusty-manifold-broker-product = { path = "../../../rusty-manifold/crates/rusty-manifold-broker-product" }
+rusty-manifold-media-session = { path = "../../../rusty-manifold/crates/rusty-manifold-media-session" }
 rusty-manifold-model = { path = "../../../rusty-manifold/crates/rusty-manifold-model", features = ["serde"] }
+rusty-manifold-peer-runtime-host = { path = "../../../rusty-manifold/crates/rusty-manifold-peer-runtime-host" }
 rusty-manifold-runtime-host = { path = "../../../rusty-manifold/crates/rusty-manifold-runtime-host" }
+rusty-quest-broker-admission = { path = "../rusty-quest-broker-admission" }
+rusty-quest-broker-contracts = { path = "../rusty-quest-broker-contracts" }
+rusty-quest-media-stream = { path = "../rusty-quest-media-stream" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 
 [lints]
 workspace = true

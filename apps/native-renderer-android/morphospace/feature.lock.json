@@ -1,0 +1,26 @@
+{
+  "$schema": "https://github.com/MesmerPrism/rusty-morphospace-work-environment/schemas/feature-lock.schema.json",
+  "schema": "rusty.morphospace.workflow.feature_lock.v1",
+  "project_id": "native-renderer",
+  "revision": 2,
+  "default_activation": "disabled",
+  "features": [
+    {
+      "feature_id":"native-renderer-shell","module_id":"native-renderer-shell","enabled":true,"requested_by":"project-spec:native-renderer","descriptor":"morphospace/project.spec.json#native-renderer-shell","dependencies":[],"conflicts":[],"permissions":[],"routes":["native-renderer"],"assets":[],
+      "parameter_authorities":[{"parameter":"app.composition","owner":"native-renderer-app"}],
+      "activation_receipt":{"required":true,"schema":"rusty.quest.native_renderer.activation_receipt.v1","effective_marker":"rusty.quest.native_renderer.shell.effective"}
+    },
+    {
+      "feature_id":"particle-adapter-consumer","module_id":"particle-adapter-consumer","enabled":false,"requested_by":"","descriptor":"morphospace/project.spec.json#particle-adapter-consumer","dependencies":["native-renderer-shell"],"conflicts":[],"permissions":[],"routes":["native-renderer-particle-adapter"],"assets":[],"parameter_authorities":[],
+      "activation_receipt":{"required":true,"schema":"rusty.quest.particle_adapter.receipt.v1","effective_marker":"rusty.quest.particle_adapter.effective"}
+    },
+    {
+      "feature_id":"hand-adapter-consumer","module_id":"hand-adapter-consumer","enabled":false,"requested_by":"","descriptor":"morphospace/project.spec.json#hand-adapter-consumer","dependencies":["native-renderer-shell"],"conflicts":[],"permissions":[],"routes":["native-openxr-hand-lab"],"assets":[],"parameter_authorities":[],
+      "activation_receipt":{"required":true,"schema":"rusty.quest.hand_adapter.receipt.v1","effective_marker":"rusty.quest.hand_adapter.effective"}
+    },
+    {
+      "feature_id":"broker-media-client","module_id":"broker-media-client","enabled":false,"requested_by":"","descriptor":"morphospace/project.spec.json#broker-media-client","dependencies":["native-renderer-shell"],"conflicts":[],"permissions":["io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION"],"routes":["manifold-media-session","native-openxr-render-sink"],"assets":[],"parameter_authorities":[{"parameter":"stream.session","owner":"manifold"},{"parameter":"render.adoption","owner":"native-renderer-app"}],
+      "activation_receipt":{"required":true,"schema":"rusty.quest.broker_media_lifecycle_receipt.v1","effective_marker":"rusty.quest.native_renderer.broker_media_client.effective"}
+    }
+  ]
+}
