@@ -579,6 +579,7 @@ if ($RequireScreenshot) {
     $summary.screenshot_hand_mesh_visual_rects = $handMeshVisualStats
     $summary.screenshot_sdf_visual_rects = $sdfVisualStats
     if (-not [string]::IsNullOrWhiteSpace($ScreenshotCropOutDir)) {
+        New-Item -ItemType Directory -Force -Path $ScreenshotCropOutDir | Out-Null
         $summary.screenshot_crop_out_dir = (Resolve-Path $ScreenshotCropOutDir).Path
         $summary.screenshot_target_crop_artifacts = $targetCropArtifacts
         $summary.screenshot_hand_mesh_visual_crop_artifacts = $handMeshVisualCropArtifacts
