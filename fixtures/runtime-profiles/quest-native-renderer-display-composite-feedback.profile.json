@@ -32,7 +32,19 @@
     "debug.rustyquest.native_renderer.display_composite.fps_cap",
     "debug.rustyquest.native_renderer.display_composite.feedback.enabled",
     "debug.rustyquest.native_renderer.display_composite.feedback.projection",
-    "debug.rustyquest.native_renderer.display_composite.high_rate_json_payload"
+    "debug.rustyquest.native_renderer.display_composite.high_rate_json_payload",
+    "debug.rustyquest.native_renderer.particle_adapter.enabled",
+    "debug.rustyquest.native_renderer.particle_adapter.profile_id",
+    "debug.rustyquest.native_renderer.particle_adapter.project_id",
+    "debug.rustyquest.native_renderer.particle_adapter.feature_id",
+    "debug.rustyquest.native_renderer.particle_adapter.lock_revision",
+    "debug.rustyquest.native_renderer.particle_adapter.lock_sha256",
+    "debug.rustyquest.native_renderer.hand_adapter.enabled",
+    "debug.rustyquest.native_renderer.hand_adapter.profile_id",
+    "debug.rustyquest.native_renderer.hand_adapter.project_id",
+    "debug.rustyquest.native_renderer.hand_adapter.feature_id",
+    "debug.rustyquest.native_renderer.hand_adapter.lock_revision",
+    "debug.rustyquest.native_renderer.hand_adapter.lock_sha256"
   ],
   "set_properties": [
     {
@@ -184,6 +196,66 @@
       "name": "debug.rustyquest.native_renderer.display_composite.high_rate_json_payload",
       "value": "false",
       "source_setting_id": "native_renderer.display_composite.high_rate_json_payload"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.particle_adapter.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.profile_id",
+      "value": "profile.quest.native_renderer.particle_adapter_conformance",
+      "source_setting_id": "native_renderer.particle_adapter.profile_id"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.project_id",
+      "value": "native-renderer",
+      "source_setting_id": "native_renderer.particle_adapter.project_id"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.feature_id",
+      "value": "particle-adapter-consumer",
+      "source_setting_id": "native_renderer.particle_adapter.feature_id"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.lock_revision",
+      "value": "1",
+      "source_setting_id": "native_renderer.particle_adapter.lock_revision"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.particle_adapter.lock_sha256",
+      "value": "D51D97F6B01663F360E867EB01C3F27A3DB7C3204210F1C1D7634CA52DD276BC",
+      "source_setting_id": "native_renderer.particle_adapter.lock_sha256"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.enabled",
+      "value": "false",
+      "source_setting_id": "native_renderer.hand_adapter.enabled"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.profile_id",
+      "value": "profile.quest.native_renderer.hand_adapter_conformance",
+      "source_setting_id": "native_renderer.hand_adapter.profile_id"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.project_id",
+      "value": "native-renderer",
+      "source_setting_id": "native_renderer.hand_adapter.project_id"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.feature_id",
+      "value": "hand-adapter-consumer",
+      "source_setting_id": "native_renderer.hand_adapter.feature_id"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.lock_revision",
+      "value": "1",
+      "source_setting_id": "native_renderer.hand_adapter.lock_revision"
+    },
+    {
+      "name": "debug.rustyquest.native_renderer.hand_adapter.lock_sha256",
+      "value": "A1391A7EF2C41F072032283E485F5A9EB58CAB3B74681F150CE24CD9262CF91D",
+      "source_setting_id": "native_renderer.hand_adapter.lock_sha256"
     }
   ],
   "expected_markers": [
