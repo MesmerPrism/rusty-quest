@@ -24,6 +24,9 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $smokePath = Join-Path $PSScriptRoot "Invoke-PeerRendezvousAndroidSmoke.ps1"
 $package = "io.github.mesmerprism.rustyquest.peer_rendezvous"
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+function Get-SafeDeviceFileStem([string]$Serial) {
+    $Serial -replace '[^A-Za-z0-9_.-]', '_'
+}
 if ([string]::IsNullOrWhiteSpace($RunId)) {
     $RunId = "ble-pair-" + (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
 }
@@ -362,7 +365,7 @@ try {
             "logcat", "-d", "-v", "threadtime", "-s",
             "RustyBleRendezvous:V", "AndroidRuntime:E", "*:S")
         $logcatText = $logcat.output -join "`n"
-        Write-Text (Join-Path $outFull "$serial-logcat.txt") $logcatText
+        Write-Text (Join-Path $outFull "$(Get-SafeDeviceFileStem $serial)-logcat.txt") $logcatText
         $appFatalCount += @($logcat.output | Where-Object {
             [string]$_ -match 'FATAL EXCEPTION|Process:\s+io\.github\.mesmerprism\.rustyquest\.peer_rendezvous'
         }).Count
