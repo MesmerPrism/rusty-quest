@@ -323,7 +323,6 @@ function Get-ScreenshotTargetUvRectTexts {
 
 function Get-ScreenshotMarkerUvRectTexts {
     param(
-        [Parameter(Mandatory=$true)]
         [string]$Line,
         [Parameter(Mandatory=$true)]
         [string[]]$Fields
