@@ -1606,7 +1606,8 @@ function Invoke-ReplayValidate {
     if ($LASTEXITCODE -ne 0) { throw "ReplayValidate could not inspect changed paths between matrix and current revisions." }
     $allowedChangedPaths = @(
         "tools/Invoke-CorrectedReleaseTwoQuestMatrix.ps1",
-        "tools/checks/Test-CorrectedReleaseTwoQuestMatrixStatic.ps1"
+        "tools/checks/Test-CorrectedReleaseTwoQuestMatrixStatic.ps1",
+        "docs/CORRECTED_RELEASE_TWO_QUEST_MATRIX.md"
     )
     $unexpectedChangedPaths = @($changedPaths | Where-Object { $allowedChangedPaths -notcontains [string]$_ })
     if ($unexpectedChangedPaths.Count -ne 0) {

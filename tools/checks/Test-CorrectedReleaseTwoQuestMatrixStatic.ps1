@@ -105,8 +105,9 @@ if ($text -match '(?im)\b(InputSummary|ExistingSummary|ReduceOnly|FixtureSummary
     throw "Corrected release orchestrator exposes a pre-existing/fixture-only reduction mode."
 }
 if ($text -notmatch '"tools/Invoke-CorrectedReleaseTwoQuestMatrix\.ps1"' -or
-    $text -notmatch '"tools/checks/Test-CorrectedReleaseTwoQuestMatrixStatic\.ps1"') {
-    throw "ReplayValidate must be scoped to validator/reducer script and static-check-only changes."
+    $text -notmatch '"tools/checks/Test-CorrectedReleaseTwoQuestMatrixStatic\.ps1"' -or
+    $text -notmatch '"docs/CORRECTED_RELEASE_TWO_QUEST_MATRIX\.md"') {
+    throw "ReplayValidate must be scoped to validator/reducer script, static-check, and release-matrix-doc-only changes."
 }
 
 $providerPreflightIndex = $text.IndexOf('$providerPath = Assert-MandatoryPeerProvider')
