@@ -379,6 +379,38 @@ function New-LiveSource {
     }
 }
 
+function Import-RunnerOwnedEvidence {
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Paths,
+        [Parameter(Mandatory = $true)][string]$ImportDirectory
+    )
+    $root = [IO.Path]::GetFullPath($script:EvidenceRoot).TrimEnd('\', '/')
+    $prefix = $root + [IO.Path]::DirectorySeparatorChar
+    New-Item -ItemType Directory -Force -Path $ImportDirectory | Out-Null
+    $imported = @()
+    foreach ($path in @($Paths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Sort-Object -Unique)) {
+        $full = [IO.Path]::GetFullPath([string]$path)
+        if (-not (Test-Path -LiteralPath $full -PathType Leaf)) {
+            throw "Peer provider raw evidence file is missing: $full"
+        }
+        if ($full.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+            $imported += $full
+            continue
+        }
+        $hash = Get-FileSha256 -Path $full
+        $leaf = [IO.Path]::GetFileName($full)
+        $target = Join-Path $ImportDirectory "$hash-$leaf"
+        if (-not (Test-Path -LiteralPath $target -PathType Leaf)) {
+            Copy-Item -LiteralPath $full -Destination $target
+        }
+        if ((Get-FileSha256 -Path $target) -cne $hash) {
+            throw "Imported peer provider raw evidence hash mismatch: $target"
+        }
+        $imported += $target
+    }
+    return @($imported | Sort-Object -Unique)
+}
+
 function Invoke-ModuleLockSelected {
     param([string]$Device, [string]$Directory)
     $transport = Get-AdbTransport -Device $Device
@@ -833,6 +865,9 @@ function Invoke-PeerAuthority {
             [string]$row.replay.receipt.path,
             [string]$row.direct_exchange.receipt.path
         )
+        $rawPaths = Import-RunnerOwnedEvidence `
+            -Paths $rawPaths `
+            -ImportDirectory (Join-Path $Directory "imported-provider-evidence")
         $counts = [pscustomobject]@{
             package_fatal_count = [int]$row.package_fatal_count
             app_fatal_count = [int]$row.app_fatal_count
