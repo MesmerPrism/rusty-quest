@@ -1365,7 +1365,7 @@ function Assert-CriterionReceiptClosure {
         [bool]$receipt.fixture_only -or -not [bool]$receipt.cleanup_complete) {
         throw "$($Row.serial)/$($Row.criterion_id) criterion receipt closure drifted."
     }
-    Assert-RunTimestamp -Value ([string]$receipt.observed_at) -StartedAt $StartedAt -FinishedAt $FinishedAt -Label "$($Row.serial)/$($Row.criterion_id) receipt"
+    Assert-RunTimestamp -Value $receipt.observed_at -StartedAt $StartedAt -FinishedAt $FinishedAt -Label "$($Row.serial)/$($Row.criterion_id) receipt"
     Assert-ZeroFatals -Counts $receipt -Label "$($Row.serial)/$($Row.criterion_id) criterion receipt"
     $raw = @($receipt.raw_evidence)
     if ($raw.Count -eq 0) { throw "$($Row.serial)/$($Row.criterion_id) has no raw evidence." }
@@ -1386,7 +1386,7 @@ function Assert-CriterionReceiptClosure {
         @($cleanup.product_sockets_remaining).Count -ne 0) {
         throw "$($Row.serial)/$($Row.criterion_id) cleanup receipt closure drifted."
     }
-    Assert-RunTimestamp -Value ([string]$cleanup.observed_at) -StartedAt $StartedAt -FinishedAt $FinishedAt -Label "$($Row.serial)/$($Row.criterion_id) cleanup"
+    Assert-RunTimestamp -Value $cleanup.observed_at -StartedAt $StartedAt -FinishedAt $FinishedAt -Label "$($Row.serial)/$($Row.criterion_id) cleanup"
     Assert-ZeroFatals -Counts $cleanup -Label "$($Row.serial)/$($Row.criterion_id) cleanup receipt"
     foreach ($binding in @($cleanup.evidence)) {
         Assert-FileBinding -Binding $binding -Label "$($Row.serial)/$($Row.criterion_id) cleanup raw evidence" -RejectFixturePath -AllowedRoot $ExpectedRoot
@@ -1430,7 +1430,7 @@ function Assert-FinallyCleanupClosure {
         [bool]$summary.original_run_failed -or @($summary.cleanup).Count -ne 2) {
         throw "Matrix finally cleanup summary is incomplete or belongs to another run."
     }
-    Assert-RunTimestamp -Value ([string]$summary.observed_at) -StartedAt $StartedAt -FinishedAt $FinishedAt -Label "finally cleanup summary"
+    Assert-RunTimestamp -Value $summary.observed_at -StartedAt $StartedAt -FinishedAt $FinishedAt -Label "finally cleanup summary"
     foreach ($device in $ExpectedSerials) {
         $matches = @($summary.cleanup | Where-Object { [string]$_.serial -ceq $device })
         if ($matches.Count -ne 1) { throw "Finally cleanup requires one bound receipt for $device." }
@@ -1445,7 +1445,7 @@ function Assert-FinallyCleanupClosure {
             throw "$device emergency cleanup did not prove a closed platform state."
         }
         Assert-ZeroFatals -Counts $receipt -Label "$device emergency cleanup"
-        Assert-RunTimestamp -Value ([string]$receipt.observed_at) -StartedAt $StartedAt -FinishedAt $FinishedAt -Label "$device emergency cleanup"
+        Assert-RunTimestamp -Value $receipt.observed_at -StartedAt $StartedAt -FinishedAt $FinishedAt -Label "$device emergency cleanup"
         foreach ($field in @("package_list_evidence", "p2p_evidence", "process_evidence", "socket_evidence", "logcat_evidence")) {
             Assert-FileBinding -Binding $receipt.$field -Label "$device emergency $field" -RejectFixturePath -AllowedRoot $ExpectedRoot
         }
@@ -1519,7 +1519,7 @@ function Invoke-Validate {
         -not [bool]$preflight.bounded_logcat_clear_confirmed) {
         throw "Matrix preflight identity/APK/serial closure drifted."
     }
-    Assert-RunTimestamp -Value ([string]$preflight.observed_at) -StartedAt $startedAt -FinishedAt $finishedAt -Label "matrix preflight"
+    Assert-RunTimestamp -Value $preflight.observed_at -StartedAt $startedAt -FinishedAt $finishedAt -Label "matrix preflight"
     Assert-FileBinding -Binding $preflight.adb -Label "preflight ADB"
     Assert-FileBinding -Binding $preflight.peer_provider -Label "preflight peer provider" -RejectFixturePath
     if (@($preflight.logcat_clear_evidence).Count -ne 2) {
