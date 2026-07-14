@@ -1604,7 +1604,10 @@ function Invoke-ReplayValidate {
     }
     $changedPaths = @(& git -C $script:RepoRoot diff --name-only $matrixRevision $currentRevision)
     if ($LASTEXITCODE -ne 0) { throw "ReplayValidate could not inspect changed paths between matrix and current revisions." }
-    $allowedChangedPaths = @("tools/Invoke-CorrectedReleaseTwoQuestMatrix.ps1")
+    $allowedChangedPaths = @(
+        "tools/Invoke-CorrectedReleaseTwoQuestMatrix.ps1",
+        "tools/checks/Test-CorrectedReleaseTwoQuestMatrixStatic.ps1"
+    )
     $unexpectedChangedPaths = @($changedPaths | Where-Object { $allowedChangedPaths -notcontains [string]$_ })
     if ($unexpectedChangedPaths.Count -ne 0) {
         throw "ReplayValidate allows only validator/reducer script changes after matrix revision; unexpected paths: $($unexpectedChangedPaths -join ', ')"

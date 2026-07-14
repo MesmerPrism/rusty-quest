@@ -104,8 +104,9 @@ if ($text -match '(?im)\bStop-Computer\b|\bshutdown(?:\.exe)?\s|\bpoweroff\b|\ba
 if ($text -match '(?im)\b(InputSummary|ExistingSummary|ReduceOnly|FixtureSummary)\b') {
     throw "Corrected release orchestrator exposes a pre-existing/fixture-only reduction mode."
 }
-if ($text -notmatch '\$allowedChangedPaths\s*=\s*@\("tools/Invoke-CorrectedReleaseTwoQuestMatrix\.ps1"\)') {
-    throw "ReplayValidate must be scoped to validator/reducer script-only changes."
+if ($text -notmatch '"tools/Invoke-CorrectedReleaseTwoQuestMatrix\.ps1"' -or
+    $text -notmatch '"tools/checks/Test-CorrectedReleaseTwoQuestMatrixStatic\.ps1"') {
+    throw "ReplayValidate must be scoped to validator/reducer script and static-check-only changes."
 }
 
 $providerPreflightIndex = $text.IndexOf('$providerPath = Assert-MandatoryPeerProvider')
