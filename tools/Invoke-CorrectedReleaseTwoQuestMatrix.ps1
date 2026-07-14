@@ -1130,16 +1130,22 @@ function Invoke-EmergencyCleanup {
     [IO.File]::WriteAllLines($commandPath, [string[]]$commands, $script:Utf8NoBom)
     $packagePath = Join-Path $Directory "installed-packages-after.txt"
     $p2pPath = Join-Path $Directory "wifi-p2p-after.txt"
+    $interfacePath = Join-Path $Directory "p2p0-interface-after.txt"
     $processPath = Join-Path $Directory "package-processes-after.txt"
     $socketPath = Join-Path $Directory "tcp-sockets-after.txt"
     $logcatPath = Join-Path $Directory "bounded-final-logcat.txt"
     $packageText = "adb-unavailable"
     $p2pText = "adb-unavailable"
+    $interfaceText = "adb-unavailable"
     $processText = "adb-unavailable"
     $socketText = "adb-unavailable"
     $logcatText = "adb-unavailable"
     try { $packageText = (Invoke-SerialAdb -Device $Device -Arguments @("shell", "pm", "list", "packages") -AllowFailure).output } catch {}
     try { $p2pText = (Invoke-SerialAdb -Device $Device -Arguments @("shell", "dumpsys", "wifi", "p2p") -AllowFailure).output } catch {}
+    try {
+        $interfaceResult = Invoke-SerialAdb -Device $Device -Arguments @("shell", "ip", "address", "show", "p2p0") -AllowFailure
+        $interfaceText = "exit=$($interfaceResult.exit_code)`n$($interfaceResult.output)"
+    } catch {}
     try {
         $rows = @()
         foreach ($package in $packages) {
@@ -1152,12 +1158,16 @@ function Invoke-EmergencyCleanup {
     try { $logcatText = (Invoke-SerialAdb -Device $Device -Arguments @("logcat", "-d", "-v", "time") -AllowFailure).output } catch {}
     [IO.File]::WriteAllText($packagePath, $packageText, $script:Utf8NoBom)
     [IO.File]::WriteAllText($p2pPath, $p2pText, $script:Utf8NoBom)
+    [IO.File]::WriteAllText($interfacePath, $interfaceText, $script:Utf8NoBom)
     [IO.File]::WriteAllText($processPath, $processText, $script:Utf8NoBom)
     [IO.File]::WriteAllText($socketPath, $socketText, $script:Utf8NoBom)
     [IO.File]::WriteAllText($logcatPath, $logcatText, $script:Utf8NoBom)
     $remaining = @($packages | Where-Object { $packageText -match "(?m)^package:$([regex]::Escape($_))$" })
     $routeActive = $p2pText -match '(?i)groupFormed\s*[:=]\s*true|networkInfo[^\r\n]*CONNECTED'
-    $routeExplicitlyInactive = $p2pText -match '(?i)groupFormed\s*[:=]\s*false|networkInfo[^\r\n]*(?:DISCONNECTED|DISCONNECTING)'
+    $p2pInterfaceExplicitlyInactive = $interfaceText -match '(?im)\bp2p0:.*\bstate\s+DOWN\b' -or
+        $interfaceText -match '(?im)\bp2p0:.*<[^>]*NO-CARRIER'
+    $routeExplicitlyInactive = $p2pText -match '(?i)groupFormed\s*[:=]\s*false|networkInfo[^\r\n]*(?:DISCONNECTED|DISCONNECTING)' -or
+        $p2pInterfaceExplicitlyInactive
     $processesRemaining = @($packages | Where-Object { $processText -match "(?m)^package=$([regex]::Escape($_))[^\r\n]*pid=\s*\d+" })
     $productPortHex = @(8765, 8879, 8979, 9079) | ForEach-Object { ':{0:X4}' -f $_ }
     $productSocketsRemaining = @($productPortHex | Where-Object { $socketText -match [regex]::Escape($_) })
@@ -1183,6 +1193,7 @@ function Invoke-EmergencyCleanup {
         packages_remaining = $remaining
         processes_remaining = $processesRemaining
         product_sockets_remaining = $productSocketsRemaining
+        p2p_interface_explicitly_inactive = $p2pInterfaceExplicitlyInactive
         peer_route_inactive = (-not $routeActive -and $routeExplicitlyInactive)
         package_fatal_count = [int]$fatals.package_fatal_count
         app_fatal_count = [int]$fatals.app_fatal_count
@@ -1191,6 +1202,7 @@ function Invoke-EmergencyCleanup {
             New-FileBinding -Path $commandPath
             New-FileBinding -Path $packagePath
             New-FileBinding -Path $p2pPath
+            New-FileBinding -Path $interfacePath
             New-FileBinding -Path $processPath
             New-FileBinding -Path $socketPath
             New-FileBinding -Path $logcatPath
@@ -1198,6 +1210,7 @@ function Invoke-EmergencyCleanup {
         command_evidence = New-FileBinding -Path $commandPath
         package_list_evidence = New-FileBinding -Path $packagePath
         p2p_evidence = New-FileBinding -Path $p2pPath
+        interface_evidence = New-FileBinding -Path $interfacePath
         process_evidence = New-FileBinding -Path $processPath
         socket_evidence = New-FileBinding -Path $socketPath
         logcat_evidence = New-FileBinding -Path $logcatPath
