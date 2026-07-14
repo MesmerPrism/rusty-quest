@@ -1392,7 +1392,7 @@ function Assert-CriterionReceiptClosure {
         Assert-FileBinding -Binding $binding -Label "$($Row.serial)/$($Row.criterion_id) cleanup raw evidence" -RejectFixturePath -AllowedRoot $ExpectedRoot
     }
 
-    foreach ($field in @("package_list_evidence", "process_evidence", "p2p_evidence", "socket_evidence", "logcat_evidence")) {
+    foreach ($field in @("package_list_evidence", "process_evidence", "p2p_evidence", "interface_evidence", "socket_evidence", "logcat_evidence")) {
         Assert-FileBinding -Binding $cleanup.$field -Label "$($Row.serial)/$($Row.criterion_id) $field" -RejectFixturePath -AllowedRoot $ExpectedRoot
     }
     $packageText = Get-Content -Raw -LiteralPath ([string]$cleanup.package_list_evidence.path)
@@ -1406,9 +1406,12 @@ function Assert-CriterionReceiptClosure {
         throw "$($Row.serial)/$($Row.criterion_id) raw process evidence still contains a product process."
     }
     $p2pText = Get-Content -Raw -LiteralPath ([string]$cleanup.p2p_evidence.path)
+    $interfaceText = Get-Content -Raw -LiteralPath ([string]$cleanup.interface_evidence.path)
     $routeActive = $p2pText -match '(?i)groupFormed\s*[:=]\s*true|networkInfo[^\r\n]*(?:CONNECTED|CONNECTING)'
-    $routeInactive = $p2pText -match '(?i)groupFormed\s*[:=]\s*false|networkInfo[^\r\n]*(?:DISCONNECTED|DISCONNECTING)'
-    if ($routeActive -or -not $routeInactive) {
+    $routeInactive = $p2pText -match '(?i)groupFormed\s*[:=]\s*false|networkInfo[^\r\n]*(?:DISCONNECTED|DISCONNECTING)' -or
+        $interfaceText -match '(?im)\bp2p0:.*\bstate\s+DOWN\b' -or
+        $interfaceText -match '(?im)\bp2p0:.*<[^>]*NO-CARRIER'
+    if ($routeActive -or -not [bool]$cleanup.p2p_interface_explicitly_inactive -or -not $routeInactive) {
         throw "$($Row.serial)/$($Row.criterion_id) raw P2P evidence is active or unknown."
     }
     $socketText = Get-Content -Raw -LiteralPath ([string]$cleanup.socket_evidence.path)
