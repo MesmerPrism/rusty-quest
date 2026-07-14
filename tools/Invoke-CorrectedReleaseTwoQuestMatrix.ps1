@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Execute", "Validate", "SelfTest")]
+    [ValidateSet("Execute", "Validate", "ReplayValidate", "SelfTest")]
     [string]$Mode,
     [string[]]$Serial = @(),
     [string]$BrokerApk = "",
@@ -1481,14 +1481,29 @@ function Assert-FinallyCleanupClosure {
     }
 }
 
-function Invoke-Validate {
-    if ([string]::IsNullOrWhiteSpace($MatrixPath)) { throw "Validate requires -MatrixPath." }
-    $matrix = Read-JsonFile -Path $MatrixPath -Label "corrected release device matrix"
+function Get-CleanRustyQuestRevision {
+    $currentRevision = (& git -C $script:RepoRoot rev-parse --verify HEAD).Trim().ToLowerInvariant()
+    if ($LASTEXITCODE -ne 0) { throw "Unable to resolve current Rusty Quest revision." }
+    Assert-Revision -Revision $currentRevision -Label "current Rusty Quest revision"
+    $dirty = @(& git -C $script:RepoRoot status --porcelain=v1 --untracked-files=all)
+    if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) {
+        throw "Matrix validation requires the exact current Rusty Quest worktree to be clean."
+    }
+    return $currentRevision
+}
+
+function Assert-DeviceMatrixClosure {
+    param(
+        [Parameter(Mandatory = $true)]$Matrix,
+        [Parameter(Mandatory = $true)][string]$MatrixPathValue,
+        [Parameter(Mandatory = $true)][string]$ExpectedRevision
+    )
+    $matrix = $Matrix
     if ([string]$matrix.run_id -cnotmatch '^corrected-release-[0-9a-f]{32}$') {
         throw "Matrix run_id is invalid."
     }
     $root = [IO.Path]::GetFullPath([string]$matrix.evidence_root)
-    $matrixFull = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $MatrixPath).Path)
+    $matrixFull = [IO.Path]::GetFullPath((Resolve-Path -LiteralPath $MatrixPathValue).Path)
     $rootPrefix = $root.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
     if (-not $matrixFull.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Matrix is outside its runner-owned evidence root."
@@ -1500,15 +1515,8 @@ function Invoke-Validate {
         throw "Matrix run window is invalid or stale."
     }
     $serials = Assert-ExplicitSerials -Values @($matrix.serials | ForEach-Object { [string]$_ })
-    $currentRevision = (& git -C $script:RepoRoot rev-parse --verify HEAD).Trim().ToLowerInvariant()
-    if ($LASTEXITCODE -ne 0) { throw "Unable to resolve current Rusty Quest revision." }
-    Assert-Revision -Revision $currentRevision -Label "current Rusty Quest revision"
-    $dirty = @(& git -C $script:RepoRoot status --porcelain=v1 --untracked-files=all)
-    if ($LASTEXITCODE -ne 0 -or $dirty.Count -ne 0) {
-        throw "Matrix validation requires the exact current Rusty Quest worktree to be clean."
-    }
     if ([string]$matrix.repository -cne "rusty-quest" -or
-        [string]$matrix.repository_revision -cne $currentRevision -or
+        [string]$matrix.repository_revision -cne $ExpectedRevision -or
         [string]$matrix.coordination_mode -cne "user_authorized_serial_scoped" -or
         [string]$matrix.evidence_tier -cne "live_two_quest") {
         throw "Matrix is not bound to the exact current live Rusty Quest release surface."
@@ -1520,7 +1528,7 @@ function Invoke-Validate {
         [string]$preflight.status -cne "pass" -or
         [string]$preflight.run_id -cne [string]$matrix.run_id -or
         [string]$preflight.evidence_root -cne $root -or
-        [string]$preflight.repository_revision -cne $currentRevision -or
+        [string]$preflight.repository_revision -cne $ExpectedRevision -or
         (@($preflight.serials) -join "`n") -cne ($serials -join "`n") -or
         @($preflight.apks).Count -ne 3 -or
         -not [bool]$preflight.bounded_logcat_clear_confirmed) {
@@ -1556,10 +1564,81 @@ function Invoke-Validate {
         Assert-FileBinding -Binding $binding -Label "preflight APK" -RejectFixturePath
     }
     foreach ($row in @($matrix.rows)) {
-        Assert-CriterionReceiptClosure -Row $row -ExpectedRevision $currentRevision -ExpectedRunId ([string]$matrix.run_id) -ExpectedRoot $root -StartedAt $startedAt -FinishedAt $finishedAt -ExpectedPreflightSha256 ([string]$matrix.preflight.sha256)
+        Assert-CriterionReceiptClosure -Row $row -ExpectedRevision $ExpectedRevision -ExpectedRunId ([string]$matrix.run_id) -ExpectedRoot $root -StartedAt $startedAt -FinishedAt $finishedAt -ExpectedPreflightSha256 ([string]$matrix.preflight.sha256)
     }
-    Assert-FinallyCleanupClosure -Binding $matrix.finally_cleanup -ExpectedSerials $serials -ExpectedRevision $currentRevision -ExpectedRunId ([string]$matrix.run_id) -ExpectedRoot $root -StartedAt $startedAt -FinishedAt $finishedAt
-    Write-Output (Resolve-Path -LiteralPath $MatrixPath).Path
+    Assert-FinallyCleanupClosure -Binding $matrix.finally_cleanup -ExpectedSerials $serials -ExpectedRevision $ExpectedRevision -ExpectedRunId ([string]$matrix.run_id) -ExpectedRoot $root -StartedAt $startedAt -FinishedAt $finishedAt
+    return [pscustomobject][ordered]@{
+        matrix_path = (Resolve-Path -LiteralPath $MatrixPathValue).Path
+        matrix_sha256 = Get-FileSha256 -Path (Resolve-Path -LiteralPath $MatrixPathValue).Path
+        run_id = [string]$matrix.run_id
+        repository_revision = $ExpectedRevision
+        serials = $serials
+        evidence_root = $root
+        started_at = $startedAt.ToString("o")
+        finished_at = $finishedAt.ToString("o")
+        row_count = @($matrix.rows).Count
+    }
+}
+
+function Invoke-Validate {
+    if ([string]::IsNullOrWhiteSpace($MatrixPath)) { throw "Validate requires -MatrixPath." }
+    $matrix = Read-JsonFile -Path $MatrixPath -Label "corrected release device matrix"
+    $currentRevision = Get-CleanRustyQuestRevision
+    $closure = Assert-DeviceMatrixClosure -Matrix $matrix -MatrixPathValue $MatrixPath -ExpectedRevision $currentRevision
+    Write-Output ([string]$closure.matrix_path)
+}
+
+function Invoke-ReplayValidate {
+    if ([string]::IsNullOrWhiteSpace($MatrixPath)) { throw "ReplayValidate requires -MatrixPath." }
+    if ([string]::IsNullOrWhiteSpace($OutputPath)) { throw "ReplayValidate requires -OutputPath for the replay receipt." }
+    $matrix = Read-JsonFile -Path $MatrixPath -Label "corrected release device matrix"
+    $matrixRevision = ([string]$matrix.repository_revision).ToLowerInvariant()
+    Assert-Revision -Revision $matrixRevision -Label "matrix repository revision"
+    $currentRevision = Get-CleanRustyQuestRevision
+    if ($currentRevision -ceq $matrixRevision) {
+        throw "ReplayValidate is only for validator-only recovery after the current revision advances beyond the matrix revision; use Validate for exact-source matrices."
+    }
+    & git -C $script:RepoRoot merge-base --is-ancestor $matrixRevision $currentRevision
+    if ($LASTEXITCODE -ne 0) {
+        throw "ReplayValidate requires the current revision to descend from the matrix revision."
+    }
+    $changedPaths = @(& git -C $script:RepoRoot diff --name-only $matrixRevision $currentRevision)
+    if ($LASTEXITCODE -ne 0) { throw "ReplayValidate could not inspect changed paths between matrix and current revisions." }
+    $allowedChangedPaths = @("tools/Invoke-CorrectedReleaseTwoQuestMatrix.ps1")
+    $unexpectedChangedPaths = @($changedPaths | Where-Object { $allowedChangedPaths -notcontains [string]$_ })
+    if ($unexpectedChangedPaths.Count -ne 0) {
+        throw "ReplayValidate allows only validator/reducer script changes after matrix revision; unexpected paths: $($unexpectedChangedPaths -join ', ')"
+    }
+    $closure = Assert-DeviceMatrixClosure -Matrix $matrix -MatrixPathValue $MatrixPath -ExpectedRevision $matrixRevision
+    $receipt = [ordered]@{
+        schema = "rusty.quest.corrected_release_replay_validation.v1"
+        status = "pass"
+        validation_kind = "reducer_only_replay"
+        repository = "rusty-quest"
+        matrix_repository_revision = $matrixRevision
+        validator_repository_revision = $currentRevision
+        changed_paths_since_matrix_revision = $changedPaths
+        allowed_changed_paths = $allowedChangedPaths
+        matrix = [ordered]@{
+            path = [string]$closure.matrix_path
+            sha256 = [string]$closure.matrix_sha256
+            run_id = [string]$closure.run_id
+            evidence_root = [string]$closure.evidence_root
+            started_at = [string]$closure.started_at
+            finished_at = [string]$closure.finished_at
+            row_count = [int]$closure.row_count
+            serials = @($closure.serials)
+        }
+        validator_script = New-FileBinding -Path (Join-Path $script:RepoRoot "tools\Invoke-CorrectedReleaseTwoQuestMatrix.ps1")
+        observed_at = [DateTimeOffset]::UtcNow.ToString("o")
+        does_not_prove = @(
+            "a fresh device run at validator_repository_revision",
+            "runtime/APK behavior after matrix_repository_revision",
+            "central REL-003 acceptance or release publication by itself"
+        )
+    }
+    Write-JsonFile -Path $OutputPath -Value $receipt
+    Write-Output (Resolve-Path -LiteralPath $OutputPath).Path
 }
 
 function Assert-Throws {
@@ -2023,6 +2102,7 @@ function Invoke-Execute {
 
 switch ($Mode) {
     "SelfTest" { Invoke-SelfTest }
+    "ReplayValidate" { Invoke-ReplayValidate }
     "Validate" { Invoke-Validate }
     "Execute" { Invoke-Execute }
 }

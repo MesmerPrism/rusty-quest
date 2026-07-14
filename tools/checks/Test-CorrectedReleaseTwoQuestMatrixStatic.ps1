@@ -59,7 +59,12 @@ foreach ($token in @(
     "cleanup_complete",
     "package_fatal_count",
     "app_fatal_count",
-    "system_fatal_count"
+    "system_fatal_count",
+    "ReplayValidate",
+    "rusty.quest.corrected_release_replay_validation.v1",
+    "reducer_only_replay",
+    "changed_paths_since_matrix_revision",
+    "ReplayValidate allows only validator/reducer script changes after matrix revision"
 )) {
     if (-not $text.Contains($token)) {
         throw "Corrected release orchestrator is missing required contract token: $token"
@@ -98,6 +103,9 @@ if ($text -match '(?im)\bStop-Computer\b|\bshutdown(?:\.exe)?\s|\bpoweroff\b|\ba
 }
 if ($text -match '(?im)\b(InputSummary|ExistingSummary|ReduceOnly|FixtureSummary)\b') {
     throw "Corrected release orchestrator exposes a pre-existing/fixture-only reduction mode."
+}
+if ($text -notmatch '\$allowedChangedPaths\s*=\s*@\("tools/Invoke-CorrectedReleaseTwoQuestMatrix\.ps1"\)') {
+    throw "ReplayValidate must be scoped to validator/reducer script-only changes."
 }
 
 $providerPreflightIndex = $text.IndexOf('$providerPath = Assert-MandatoryPeerProvider')
