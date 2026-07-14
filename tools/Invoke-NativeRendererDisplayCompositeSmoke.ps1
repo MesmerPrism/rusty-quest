@@ -290,13 +290,17 @@ try {
         "--el", "display_composite_request_token", $requestToken.ToString()
     )).output
 
-    Start-Sleep -Seconds ([Math]::Max(1, $RunSeconds))
-
-    $pidResult = Invoke-AdbCommand -Name "native renderer pid" -Arguments @("shell", "pidof", $PackageName) -AllowFailure
-    $summary.target_pid = (($pidResult.output -split "\s+") | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1)
+    $summary.target_pid = ""
+    foreach ($attempt in 1..10) {
+        $pidResult = Invoke-AdbCommand -Name "native renderer pid" -Arguments @("shell", "pidof", $PackageName) -AllowFailure
+        $summary.target_pid = (($pidResult.output -split "\s+") | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1)
+        if (-not [string]::IsNullOrWhiteSpace($summary.target_pid)) { break }
+        Start-Sleep -Milliseconds 250
+    }
     if ([string]::IsNullOrWhiteSpace($summary.target_pid)) {
         throw "Native renderer process id was not available after launch; refusing unscoped logcat evidence."
     }
+    Start-Sleep -Seconds ([Math]::Max(1, $RunSeconds))
 
     if ($ClearLogcat) {
         $rawLogcat = (Invoke-AdbCommand -Name "dump cleared marker logcat" -Arguments @("logcat", "-d", "-v", "time")).output

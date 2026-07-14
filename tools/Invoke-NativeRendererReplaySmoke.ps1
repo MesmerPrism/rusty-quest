@@ -328,13 +328,17 @@ try {
         Invoke-AdbCommand -Name "clear logcat" -Arguments @("logcat", "-c") | Out-Null
     }
     $summary.launch_output = (Invoke-AdbCommand -Name "launch native renderer" -Arguments @("shell", "am", "start", "-W", "-n", $Activity)).output
-    Start-Sleep -Seconds ([Math]::Max(1, $RunSeconds))
-
-    $pidResult = Invoke-AdbCommand -Name "native renderer pid" -Arguments @("shell", "pidof", $PackageName) -AllowFailure
-    $summary.target_pid = (($pidResult.output -split "\s+") | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1)
+    $summary.target_pid = ""
+    foreach ($attempt in 1..10) {
+        $pidResult = Invoke-AdbCommand -Name "native renderer pid" -Arguments @("shell", "pidof", $PackageName) -AllowFailure
+        $summary.target_pid = (($pidResult.output -split "\s+") | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -First 1)
+        if (-not [string]::IsNullOrWhiteSpace($summary.target_pid)) { break }
+        Start-Sleep -Milliseconds 250
+    }
     if ([string]::IsNullOrWhiteSpace($summary.target_pid)) {
         throw "Native renderer process id was not available after launch; refusing unscoped logcat evidence."
     }
+    Start-Sleep -Seconds ([Math]::Max(1, $RunSeconds))
 
     $rawLogcat = (Invoke-AdbCommand -Name "dump pid-scoped logcat" -Arguments @("logcat", "-d", "-v", "time", "--pid", $summary.target_pid)).output
     Set-Content -Encoding UTF8 -Path $rawLogcatPath -Value $rawLogcat
