@@ -1466,8 +1466,12 @@ function Assert-FinallyCleanupClosure {
             }
         }
         $p2p = Get-Content -Raw -LiteralPath ([string]$receipt.p2p_evidence.path)
+        $interface = Get-Content -Raw -LiteralPath ([string]$receipt.interface_evidence.path)
+        $rawP2pExplicitlyInactive = $p2p -match '(?i)groupFormed\s*[:=]\s*false|networkInfo[^\r\n]*(?:DISCONNECTED|DISCONNECTING)' -or
+            $interface -match '(?im)\bp2p0:.*\bstate\s+DOWN\b' -or
+            $interface -match '(?im)\bp2p0:.*<[^>]*NO-CARRIER'
         if ($p2p -match '(?i)groupFormed\s*[:=]\s*true|networkInfo[^\r\n]*(?:CONNECTED|CONNECTING)' -or
-            $p2p -notmatch '(?i)groupFormed\s*[:=]\s*false|networkInfo[^\r\n]*(?:DISCONNECTED|DISCONNECTING)') {
+            -not [bool]$receipt.p2p_interface_explicitly_inactive -or -not $rawP2pExplicitlyInactive) {
             throw "$device emergency raw P2P state is active or unknown."
         }
         Assert-ZeroFatals -Counts (Measure-FatalEvidence -Paths @([string]$receipt.logcat_evidence.path)) -Label "$device emergency raw logcat"
