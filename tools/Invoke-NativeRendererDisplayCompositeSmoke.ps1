@@ -66,7 +66,8 @@ function Invoke-AdbCommand {
         [string]$Name,
         [Parameter(Mandatory=$true)]
         [string[]]$Arguments,
-        [switch]$AllowFailure
+        [switch]$AllowFailure,
+        [int]$TimeoutSeconds = 120
     )
 
     $adbArgs = @()
@@ -76,19 +77,34 @@ function Invoke-AdbCommand {
     $adbArgs += @("-s", $script:Serial)
     $adbArgs += $Arguments
 
-    $previousErrorActionPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
+    $stdoutPath = [IO.Path]::GetTempFileName()
+    $stderrPath = [IO.Path]::GetTempFileName()
+    $quotedArgs = @($adbArgs | ForEach-Object {
+        $arg = [string]$_
+        if ($arg -match '[\s"]') { '"' + $arg.Replace('"', '\"') + '"' } else { $arg }
+    })
+    $process = $null
     try {
-        $output = & $script:ResolvedAdb @adbArgs 2>&1
-        $exitCode = $LASTEXITCODE
+        $process = Start-Process -FilePath $script:ResolvedAdb -ArgumentList $quotedArgs -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru -WindowStyle Hidden
+        if (-not $process.WaitForExit([Math]::Max(1, $TimeoutSeconds) * 1000)) {
+            try { $process.Kill($true) } catch {}
+            $exitCode = 124
+            $output = "adb command timed out after $TimeoutSeconds seconds."
+        } else {
+            $stdout = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -Raw -LiteralPath $stdoutPath } else { "" }
+            $stderr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -Raw -LiteralPath $stderrPath } else { "" }
+            $exitCode = $process.ExitCode
+            $output = (@($stdout, $stderr) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "`n"
+        }
     } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
+        if ($null -ne $process) { $process.Dispose() }
+        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
     }
     $result = [ordered]@{
         name = $Name
         arguments = $Arguments
         exit_code = $exitCode
-        output = ($output -join "`n")
+        output = $output
     }
     if ($exitCode -ne 0 -and -not $AllowFailure) {
         throw "$Name failed with exit code $exitCode`n$($result.output)"

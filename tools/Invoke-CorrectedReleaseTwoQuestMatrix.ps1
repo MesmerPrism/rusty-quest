@@ -194,26 +194,43 @@ function Invoke-SerialAdb {
     param(
         [Parameter(Mandatory = $true)][string]$Device,
         [Parameter(Mandatory = $true)][string[]]$Arguments,
-        [switch]$AllowFailure
+        [switch]$AllowFailure,
+        [int]$TimeoutSeconds = 120
     )
-    $previous = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
     $transport = $Device
     if ($script:TransportBySerial.ContainsKey($Device)) {
         $transport = [string]$script:TransportBySerial[$Device]
     }
+    $adbArgs = @("-s", $transport) + $Arguments
+    $stdoutPath = [IO.Path]::GetTempFileName()
+    $stderrPath = [IO.Path]::GetTempFileName()
+    $quotedArgs = @($adbArgs | ForEach-Object {
+        $arg = [string]$_
+        if ($arg -match '[\s"]') { '"' + $arg.Replace('"', '\"') + '"' } else { $arg }
+    })
+    $process = $null
     try {
-        $output = & $script:AdbPath -s $transport @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
+        $process = Start-Process -FilePath $script:AdbPath -ArgumentList $quotedArgs -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru -WindowStyle Hidden
+        if (-not $process.WaitForExit([Math]::Max(1, $TimeoutSeconds) * 1000)) {
+            try { $process.Kill($true) } catch {}
+            $exitCode = 124
+            $output = "adb command timed out after $TimeoutSeconds seconds."
+        } else {
+            $stdout = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -Raw -LiteralPath $stdoutPath } else { "" }
+            $stderr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -Raw -LiteralPath $stderrPath } else { "" }
+            $exitCode = $process.ExitCode
+            $output = (@($stdout, $stderr) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "`n"
+        }
     } finally {
-        $ErrorActionPreference = $previous
+        if ($null -ne $process) { $process.Dispose() }
+        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
     }
     if ($exitCode -ne 0 -and -not $AllowFailure) {
-        throw "adb -s $transport $($Arguments -join ' ') failed for $Device with exit code $exitCode`: $($output -join ' ')"
+        throw "adb -s $transport $($Arguments -join ' ') failed for $Device with exit code $exitCode`: $output"
     }
     return [pscustomobject][ordered]@{
         exit_code = $exitCode
-        output = ($output -join "`n")
+        output = $output
     }
 }
 
