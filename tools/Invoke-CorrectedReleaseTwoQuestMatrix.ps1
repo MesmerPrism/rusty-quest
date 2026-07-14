@@ -1150,8 +1150,8 @@ function Invoke-EmergencyCleanup {
     $rows = @()
     foreach ($package in $packages) {
         try {
-            $pid = Invoke-SerialAdb -Device $Device -Arguments @("shell", "pidof", $package) -AllowFailure
-            $rows += "package=$package exit=$($pid.exit_code) pid=$($pid.output.Trim())"
+            $pidResult = Invoke-SerialAdb -Device $Device -Arguments @("shell", "pidof", $package) -AllowFailure
+            $rows += "package=$package exit=$($pidResult.exit_code) pid=$($pidResult.output.Trim())"
         } catch {
             $processProbeAvailable = $false
             $rows += "package=$package probe_exception=$($_.Exception.Message)"
