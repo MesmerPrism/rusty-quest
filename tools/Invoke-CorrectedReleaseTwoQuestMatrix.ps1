@@ -1146,14 +1146,18 @@ function Invoke-EmergencyCleanup {
         $interfaceResult = Invoke-SerialAdb -Device $Device -Arguments @("shell", "ip", "address", "show", "p2p0") -AllowFailure
         $interfaceText = "exit=$($interfaceResult.exit_code)`n$($interfaceResult.output)"
     } catch {}
-    try {
-        $rows = @()
-        foreach ($package in $packages) {
+    $processProbeAvailable = $true
+    $rows = @()
+    foreach ($package in $packages) {
+        try {
             $pid = Invoke-SerialAdb -Device $Device -Arguments @("shell", "pidof", $package) -AllowFailure
             $rows += "package=$package exit=$($pid.exit_code) pid=$($pid.output.Trim())"
+        } catch {
+            $processProbeAvailable = $false
+            $rows += "package=$package probe_exception=$($_.Exception.Message)"
         }
-        $processText = $rows -join "`n"
-    } catch {}
+    }
+    $processText = $rows -join "`n"
     try { $socketText = (Invoke-SerialAdb -Device $Device -Arguments @("shell", "cat", "/proc/net/tcp", "/proc/net/tcp6") -AllowFailure).output } catch {}
     try { $logcatText = (Invoke-SerialAdb -Device $Device -Arguments @("logcat", "-d", "-v", "time") -AllowFailure).output } catch {}
     [IO.File]::WriteAllText($packagePath, $packageText, $script:Utf8NoBom)
@@ -1178,7 +1182,7 @@ function Invoke-EmergencyCleanup {
         $productSocketsRemaining.Count -eq 0 -and -not $routeActive -and $routeExplicitlyInactive -and
         -not $hasCleanupException -and $zeroFatals -and
         $packageText -cne "adb-unavailable" -and $p2pText -cne "adb-unavailable" -and
-        $processText -cne "adb-unavailable" -and $socketText -cne "adb-unavailable" -and
+        $processProbeAvailable -and $socketText -cne "adb-unavailable" -and
         $logcatText -cne "adb-unavailable"
     $receipt = [ordered]@{
         schema = "rusty.quest.corrected_release_emergency_cleanup.v1"
@@ -1193,6 +1197,16 @@ function Invoke-EmergencyCleanup {
         packages_remaining = $remaining
         processes_remaining = $processesRemaining
         product_sockets_remaining = $productSocketsRemaining
+        process_probe_available = $processProbeAvailable
+        cleanup_exception_count = @($commands | Where-Object { $_ -match 'cleanup_exception=' }).Count
+        adb_unavailable = [ordered]@{
+            packages = ($packageText -ceq "adb-unavailable")
+            p2p = ($p2pText -ceq "adb-unavailable")
+            interface = ($interfaceText -ceq "adb-unavailable")
+            processes = (-not $processProbeAvailable)
+            sockets = ($socketText -ceq "adb-unavailable")
+            logcat = ($logcatText -ceq "adb-unavailable")
+        }
         p2p_interface_explicitly_inactive = $p2pInterfaceExplicitlyInactive
         peer_route_inactive = (-not $routeActive -and $routeExplicitlyInactive)
         package_fatal_count = [int]$fatals.package_fatal_count
