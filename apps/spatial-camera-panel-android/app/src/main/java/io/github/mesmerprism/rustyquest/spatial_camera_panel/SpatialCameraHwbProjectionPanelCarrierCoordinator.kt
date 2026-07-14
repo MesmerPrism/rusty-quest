@@ -6,6 +6,8 @@ import com.meta.spatial.core.SpatialSDKExperimentalAPI
 import com.meta.spatial.core.Vector2
 import com.meta.spatial.core.Vector3
 import com.meta.spatial.runtime.PanelSceneObject
+import com.meta.spatial.runtime.BlendFactor
+import com.meta.spatial.runtime.LayerAlphaBlend
 import com.meta.spatial.runtime.Scene
 import com.meta.spatial.toolkit.Hittable
 import com.meta.spatial.toolkit.MediaPanelSettings
@@ -344,6 +346,14 @@ internal class SpatialCameraHwbProjectionPanelCarrierCoordinator(
   fun updateLayer(plane: CameraHwbProjectionPlane, reason: String): String {
     val panel = panelSceneObject ?: return "panel-scene-object-missing"
     return runCatching {
+          panel.layer?.setAlphaBlend(
+              LayerAlphaBlend(
+                  BlendFactor.SOURCE_ALPHA,
+                  BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+                  BlendFactor.ONE,
+                  BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+              )
+          )
           if (bindings.manualCustomMeshEnabled()) {
             panel.setPosition(plane.center)
             panel.setRotationQuat(plane.pose.q)

@@ -21,7 +21,7 @@ bool local_uv_for_rect(vec2 uv, vec4 rect, out vec2 localUv) {
 
 vec3 fallback_layer_debug(vec3 rgb, vec2 localUv) {
     float layer = pc.params.y;
-    if (layer < -0.5) {
+    if (layer < -0.5 || abs(layer - 8.0) < 0.5) {
         return rgb;
     }
     int layerId = int(clamp(floor(layer + 0.5), 0.0, 6.0));

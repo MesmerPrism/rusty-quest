@@ -47,17 +47,21 @@ private val LayerPanelBorder = Color(0xFF3B465A)
 @Composable
 internal fun PrivateLayerControlPanel(
     layerOverride: Float,
+    projectionPanelEnabled: Boolean,
     projectionScale: Float,
     projectionScaleRange: ClosedFloatingPointRange<Float>,
     depthLayerPolicy: Int,
     depthAlignment: PrivateLayerDepthAlignment,
     setLayerOverride: (Float, String) -> Float,
+    setProjectionPanelEnabled: (Boolean, String) -> Boolean,
     updateProjectionScale: (Float, String) -> Float,
     updateDepthLayerPolicy: (Int, String) -> Int,
     updateDepthAlignment: (PrivateLayerDepthAlignment, String) -> PrivateLayerDepthAlignment,
     closePanel: () -> Unit,
 ) {
   var localLayerOverride by remember(layerOverride) { mutableStateOf(layerOverride) }
+  var localProjectionPanelEnabled by
+      remember(projectionPanelEnabled) { mutableStateOf(projectionPanelEnabled) }
   var localProjectionScale by remember(projectionScale) { mutableStateOf(projectionScale) }
   var localDepthLayerPolicy by remember(depthLayerPolicy) { mutableStateOf(depthLayerPolicy) }
   var localDepthAlignment by remember(depthAlignment) { mutableStateOf(depthAlignment) }
@@ -112,6 +116,41 @@ internal fun PrivateLayerControlPanel(
       }
 
       PreviewBand()
+      Section("Projection Panel Isolation") {
+        Text(
+            if (localProjectionPanelEnabled) {
+              "Projection panel: On — video and custom projection are active."
+            } else {
+              "Projection panel: Off — carrier, video, and custom projection are disabled; passthrough remains on."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = LayerPanelMuted,
+        )
+        Button(
+            modifier = Modifier.fillMaxWidth().height(52.dp),
+            onClick = {
+              localProjectionPanelEnabled =
+                  setProjectionPanelEnabled(
+                      !localProjectionPanelEnabled,
+                      "private-layer-control-panel-projection-toggle",
+                  )
+            },
+            colors =
+                ButtonDefaults.buttonColors(
+                    containerColor =
+                        if (localProjectionPanelEnabled) LayerPanelWarm else LayerPanelAccent,
+                    contentColor = Color(0xFF04111A),
+                ),
+        ) {
+          Text(
+              if (localProjectionPanelEnabled) {
+                "Turn image projection panel off"
+              } else {
+                "Turn image projection panel on"
+              }
+          )
+        }
+      }
       Section("Active Rendering") {
         LayerButtonGrid(
             selectedLayerOverride = localLayerOverride,

@@ -205,6 +205,13 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 projectionTargetScale = cameraHwbProjectionTuningCoordinator::targetScale,
                 updatePlacement = cameraHwbProjectionPlacementUpdateCoordinator::update,
                 updateLayerOverrideNative = ::nativeUpdatePrivateLayerOverride,
+                updateMetaPassthroughStyle = spatialPassthroughLutCoordinator::update,
+                projectionPanelEnabled = { projectionPanelVisibilityCoordinator.enabled },
+                refreshProjectionAfterPassthroughActivation = { source ->
+                  projectionPanelVisibilityCoordinator.setEnabled(false, "$source-refresh-off")
+                  projectionPanelVisibilityCoordinator.setEnabled(true, "$source-refresh-on")
+                  Unit
+                },
                 updateDepthLayerPolicyNative = ::nativeUpdatePrivateLayerDepthLayerPolicy,
                 updateDepthAlignmentNative = { alignment ->
                   nativeUpdatePrivateLayerDepthAlignment(
@@ -217,6 +224,15 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 },
                 marker = ::marker,
             )
+        )
+      }
+  private val spatialPassthroughLutCoordinator: SpatialPassthroughLutCoordinator by
+      lazy(LazyThreadSafetyMode.NONE) {
+        SpatialPassthroughLutCoordinator(
+            scene = scene,
+            scope = activityScope,
+            elapsedRealtimeMs = SystemClock::elapsedRealtime,
+            marker = ::marker,
         )
       }
   private val privateLayerPanelLayerCoordinator: SpatialPrivateLayerPanelLayerCoordinator by
@@ -628,6 +644,14 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               setPrivateLayerPanelVisible(visible, focus, source)
               Unit
             },
+            updatePrivateLayerOverride = { layerOverride, source ->
+              privateLayerControlCoordinator.updateLayerOverride(layerOverride, source)
+              Unit
+            },
+            setProjectionPanelEnabled = { enabled, source ->
+              projectionPanelVisibilityCoordinator.setEnabled(enabled, source)
+              Unit
+            },
             resetWorkflowPanelPlacement = {
               resetWorkflowPanelPlacement()
               Unit
@@ -888,15 +912,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             },
             prepareRequest = {
               cameraHwbProjectionCarrierStateCoordinator.refreshCarrierMode()
-              SpatialCameraHwbProjectionLaunchRequest(
-                  readerMaxImages =
-                      activityReadIntSystemProperty(
-                          CAMERA_HWB_PROJECTION_READER_MAX_IMAGES_PROPERTY,
-                          CAMERA_HWB_PROJECTION_DEFAULT_READER_MAX_IMAGES,
-                          CAMERA_HWB_PROJECTION_MIN_READER_MAX_IMAGES,
-                          CAMERA_HWB_PROJECTION_MAX_READER_MAX_IMAGES,
-                      ),
-                  videoSettings = spatialVideoProjectionRuntimeCoordinator.resolveSettings(intent),
+              currentCameraHwbProjectionLaunchRequest(
+                  spatialVideoProjectionRuntimeCoordinator.resolveSettings(intent)
               )
             },
             startGateToken = cameraHwbProjectionCarrierStateCoordinator::startGateToken,
@@ -906,6 +923,28 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             videoProjectionMarkerFields = spatialVideoProjectionRuntimeCoordinator::markerFields,
             launch = { request ->
               runCameraHwbProjectionProbe(request.readerMaxImages, request.videoSettings)
+            },
+            marker = ::marker,
+        )
+    )
+  }
+  private val projectionPanelVisibilityCoordinator by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialProjectionPanelVisibilityCoordinator(
+        SpatialProjectionPanelVisibilityBindings(
+            projectionLaunchStarted = { cameraHwbProjectionLaunchCoordinator.started },
+            currentVideoSettings = { spatialVideoProjectionRuntimeCoordinator.settings },
+            markProjectionLaunchStopped = cameraHwbProjectionLaunchCoordinator::markStopped,
+            stopProjectionPanel = ::stopCameraHwbProjectionPanel,
+            enableSystemPassthrough = {
+              scene.enablePassthrough(true)
+              scene.isSystemPassthroughEnabled()
+            },
+            restartProjectionPanel = { videoSettings, reason ->
+              cameraHwbProjectionCarrierStateCoordinator.refreshCarrierMode()
+              cameraHwbProjectionLaunchCoordinator.restart(
+                  reason,
+                  currentCameraHwbProjectionLaunchRequest(videoSettings),
+              )
             },
             marker = ::marker,
         )
@@ -1454,6 +1493,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun onDestroy() {
+    spatialPassthroughLutCoordinator.stop("activity-destroy")
     if (nativeInteropCoordinator.receiptLibraryLoaded) {
       runCatching { nativeStopSpatialControllerActions() }
       cameraHwbProjectionDepthPrerequisiteCoordinator.stop()
@@ -1527,13 +1567,16 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                 ),
             privateLayer =
                 SpatialPrivateLayerPanelRegistrationBindings(
-                    layerOverride = privateLayerControlCoordinator.layerOverride,
+                    layerOverride = { privateLayerControlCoordinator.layerOverride },
+                    projectionPanelEnabled = { projectionPanelVisibilityCoordinator.enabled },
                     projectionScale = cameraHwbProjectionTuningCoordinator.targetScale(),
                     projectionScaleRange =
                         CAMERA_HWB_PROJECTION_TARGET_MIN_SCALE..CAMERA_HWB_PROJECTION_TARGET_MAX_SCALE,
                     depthLayerPolicy = privateLayerControlCoordinator.depthLayerPolicy,
                     depthAlignment = privateLayerControlCoordinator.depthAlignment,
                     setLayerOverride = privateLayerControlCoordinator::updateLayerOverride,
+                    setProjectionPanelEnabled =
+                        projectionPanelVisibilityCoordinator::setEnabled,
                     updateProjectionScale = { scale, source ->
                       cameraHwbProjectionTuningCoordinator.updateTargetScaleFromPanel(
                           scale,
@@ -1725,6 +1768,56 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     }
     cameraHwbProjectionRawCarrierCoordinator.run(readerMaxImages, videoSettings)
   }
+
+  private fun currentCameraHwbProjectionLaunchRequest(
+      videoSettings: SpatialVideoProjectionSettings
+  ): SpatialCameraHwbProjectionLaunchRequest =
+      SpatialCameraHwbProjectionLaunchRequest(
+          readerMaxImages =
+              activityReadIntSystemProperty(
+                  CAMERA_HWB_PROJECTION_READER_MAX_IMAGES_PROPERTY,
+                  CAMERA_HWB_PROJECTION_DEFAULT_READER_MAX_IMAGES,
+                  CAMERA_HWB_PROJECTION_MIN_READER_MAX_IMAGES,
+                  CAMERA_HWB_PROJECTION_MAX_READER_MAX_IMAGES,
+              ),
+          videoSettings = videoSettings,
+      )
+
+  private fun stopCameraHwbProjectionPanel(reason: String): SpatialProjectionPanelStopReceipt {
+    val scenePanelCarrier = cameraHwbProjectionCarrierStateCoordinator.scenePanelCarrierEnabled()
+    val panelCleanupStatus =
+        if (scenePanelCarrier) {
+          cameraHwbProjectionPanelCarrierCoordinator.cleanup(reason)
+        } else {
+          "not-active"
+        }
+    val nativeProjectionStopped =
+        if (scenePanelCarrier) {
+          panelCleanupStatus == "destroyed"
+        } else {
+          runCatching {
+                if (nativeInteropCoordinator.receiptLibraryLoaded) {
+                  nativeStopCameraHwbProbe()
+                }
+                true
+              }
+              .getOrDefault(false)
+        }
+    spatialVideoProjectionRuntimeCoordinator.stop(reason)
+    cameraHwbProjectionDepthPrerequisiteCoordinator.stop()
+    val rawCleanupStatus = sdkQuadResourceCoordinator.cleanup(reason)
+    cameraHwbProjectionEntity = null
+    val carrierCleanupStatus =
+        "panel-$panelCleanupStatus-raw-$rawCleanupStatus"
+    return SpatialProjectionPanelStopReceipt(
+        nativeProjectionStopped = nativeProjectionStopped,
+        videoProjectionStopped =
+            !spatialVideoProjectionRuntimeCoordinator.started &&
+                !spatialVideoProjectionRuntimeCoordinator.settings.enabled,
+        carrierCleanupStatus = carrierCleanupStatus,
+    )
+  }
+
   private fun cleanupSdkQuadSurfaceProbe(reason: String): String {
     spatialVideoProjectionRuntimeCoordinator.stop("sdk-quad-surface-$reason")
     cameraHwbProjectionDepthPrerequisiteCoordinator.stop()
@@ -2749,6 +2842,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   ): Long
 
   private external fun nativeStopSpatialNativePassthrough(): Long
+
+  private external fun nativeUpdateSpatialNativePassthroughEdgeStyle(enabled: Boolean): Long
 
   private external fun nativeStartSpatialEnvironmentDepthProbe(
       openXrInstanceHandle: Long,

@@ -294,7 +294,7 @@ function Test-ProjectionEffectValue {
     if ([string]::IsNullOrWhiteSpace($Value)) {
         return $false
     }
-    $parts = $Value.Split(@(",", ";", " "), [System.StringSplitOptions]::RemoveEmptyEntries)
+    $parts = @($Value -split '[,;\s]+' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     if ($parts.Length -ne 4) {
         throw "OpaqueProjectionEffect must contain four floats, found $($parts.Length): $Value"
     }
@@ -471,6 +471,25 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 $repoRoot = Resolve-Path $RepoRoot
 $appRoot = Resolve-Path (Join-Path $repoRoot "apps\spatial-camera-panel-android")
 $targetRoot = Join-Path $repoRoot "target"
+$assetConformanceLockRelativePath = "morphospace/conformance-locks/spatial-asset-model.feature.lock.json"
+$assetConformanceLockPath = Join-Path $appRoot $assetConformanceLockRelativePath
+if (-not (Test-Path -LiteralPath $assetConformanceLockPath -PathType Leaf)) {
+    throw "Spatial asset conformance lock not found: $assetConformanceLockPath"
+}
+$assetConformanceLock = Get-Content -Raw -LiteralPath $assetConformanceLockPath | ConvertFrom-Json
+$assetConformanceFeature = @($assetConformanceLock.features | Where-Object { [string]$_.feature_id -eq "spatial-asset-model" })
+if ([string]$assetConformanceLock.schema -ne "rusty.morphospace.workflow.feature_lock.v1" -or
+    [string]$assetConformanceLock.project_id -ne "spatial-camera-panel" -or
+    [long]$assetConformanceLock.revision -lt 1 -or
+    $assetConformanceFeature.Count -ne 1 -or
+    $assetConformanceFeature[0].enabled -ne $true -or
+    [string]$assetConformanceFeature[0].module_id -ne "spatial-asset-model" -or
+    [string]$assetConformanceFeature[0].requested_by -ne "conformance-profile:spatial-asset-model" -or
+    [string]$assetConformanceFeature[0].activation_receipt.schema -ne "rusty.quest.spatial_asset_model.activation_receipt.v1" -or
+    [string]$assetConformanceFeature[0].activation_receipt.effective_marker -ne "rusty.quest.spatial_asset_model.effective") {
+    throw "Spatial asset conformance lock does not select the accepted spatial-asset-model contract: $assetConformanceLockPath"
+}
+$assetConformanceLockSha256 = Get-FileSha256 -Path $assetConformanceLockPath
 if (-not [string]::IsNullOrWhiteSpace($Keystore)) {
     if (-not (Test-Path -LiteralPath $Keystore -PathType Leaf)) {
         throw "Keystore not found: $Keystore"
@@ -783,6 +802,16 @@ $manifest = [ordered]@{
     spatial_sdk_3d_asset_module = "spatial-sdk-staged-3d-asset"
     spatial_sdk_3d_asset_module_mesh_uri_transport = "runtime-property-or-intent-extra"
     spatial_sdk_3d_asset_module_source_policy = "no-source-model-packaged-or-committed"
+    spatial_sdk_3d_asset_default_activation = "disabled-in-default-workflow-lock"
+    spatial_sdk_3d_asset_activation_policy = "exact-conformance-lock-plus-explicit-runtime-input"
+    spatial_sdk_3d_asset_activation_profile_id = "profile.quest.spatial_camera_panel.spatial_asset_model_conformance"
+    spatial_sdk_3d_asset_activation_project_id = "spatial-camera-panel"
+    spatial_sdk_3d_asset_activation_feature_id = "spatial-asset-model"
+    spatial_sdk_3d_asset_activation_lock_path = $assetConformanceLockRelativePath
+    spatial_sdk_3d_asset_activation_lock_revision = [long]$assetConformanceLock.revision
+    spatial_sdk_3d_asset_activation_lock_sha256 = $assetConformanceLockSha256
+    spatial_sdk_3d_asset_activation_receipt_schema = "rusty.quest.spatial_asset_model.activation_receipt.v1"
+    spatial_sdk_3d_asset_activation_effective_marker = "rusty.quest.spatial_asset_model.effective"
     spatial_sdk_3d_asset_supported_runtime_mesh_formats = @("glb", "gltf")
     spatial_sdk_3d_asset_raw_fbx_policy = "local-source-only-convert-before-staging"
     spatial_sdk_3d_asset_runtime_properties = @(
@@ -793,13 +822,20 @@ $manifest = [ordered]@{
         "debug.rustyquest.spatial.asset_model.position_m",
         "debug.rustyquest.spatial.asset_model.rotation_degrees",
         "debug.rustyquest.spatial.asset_model.scale",
-        "debug.rustyquest.spatial.asset_model.grabbable"
+        "debug.rustyquest.spatial.asset_model.grabbable",
+        "debug.rustyquest.spatial.asset_model.activation.profile_id",
+        "debug.rustyquest.spatial.asset_model.activation.project_id",
+        "debug.rustyquest.spatial.asset_model.activation.feature_id",
+        "debug.rustyquest.spatial.asset_model.activation.lock_revision",
+        "debug.rustyquest.spatial.asset_model.activation.lock_sha256"
     )
     spatial_sdk_virtual_room_module = "spatial-sdk-packaged-virtual-room"
+    spatial_sdk_virtual_room_default_enabled = $false
     spatial_sdk_virtual_room_scene_uri = "apk:///scenes/Composition.glxf"
     spatial_sdk_virtual_room_runtime_property = "debug.rustyquest.spatial.virtual_room.enabled"
     spatial_sdk_virtual_room_asset_policy = "packaged-glxf-local-launch-input"
     spatial_sdk_virtual_room_mruk_policy = "disabled-not-real-room-placement"
+    spatial_sdk_skybox_default_enabled = $false
     android_gradle_plugin_version = "8.11.1"
     kotlin_version = "2.1.0"
     gradle_version = $GradleVersion
@@ -928,7 +964,13 @@ $manifest = [ordered]@{
     native_surface_particle_layer_target_distance_hotload_property = "debug.rustyquest.spatial_camera_panel.particle_layer.target_distance_meters"
     native_surface_particle_layer_target_distance_default_meters = 0.72
     native_surface_particle_layer_target_distance_range_meters = "0.20..1.50"
-    camera_hwb_projection_quad_default_target_distance_meters = 1.0
+    camera_hwb_projection_quad_default_target_distance_meters = 2.0
+    camera_hwb_projection_accepted_no_room_default = $true
+    camera_hwb_projection_default_placement_mode = "viewer-pose-projection-locked-quad"
+    camera_hwb_projection_right_secondary_behavior = "disabled-consumed-no-op"
+    camera_hwb_projection_right_primary_behavior = "open-generic-layer-control-panel"
+    camera_hwb_projection_layer_control_panel_default_distance_meters = 1.0
+    camera_hwb_projection_staged_asset_default_requested = $false
     camera_hwb_projection_quad_target_distance_control = "fixed-default"
     camera_hwb_projection_stereo_horizontal_offset_control = "left-controller-joystick-y"
     camera_hwb_projection_stereo_horizontal_offset_joystick_rate_property = "debug.rustyquest.spatial.camera_hwb_projection_probe.stereo_horizontal_offset.joystick.rate_uvps"

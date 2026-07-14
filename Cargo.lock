@@ -954,6 +954,7 @@ dependencies = [
  "libc",
  "ndk-sys",
  "openxr-sys",
+ "rusty-quest-feature-activation",
  "rusty-quest-hand-adapter",
  "rusty-quest-particle-adapter",
  "serde_json",

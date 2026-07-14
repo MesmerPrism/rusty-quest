@@ -547,7 +547,12 @@ Assert-Workflow ($spatialReviews.Count -eq 0) "Historical candidates must not ga
 $null = Test-ConformanceLock -Root $spatialRoot -DefaultLock $spatialLock -RelativePath "conformance-locks\particle-adapter.feature.lock.json" -ShellFeature "spatial-panel-shell" -TargetFeature "surface-particle-runtime"
 $null = Test-ConformanceLock -Root $spatialRoot -DefaultLock $spatialLock -RelativePath "conformance-locks\hand-adapter.feature.lock.json" -ShellFeature "spatial-panel-shell" -TargetFeature "tracked-hand-surface"
 $null = Test-ConformanceLock -Root $spatialRoot -DefaultLock $spatialLock -RelativePath "conformance-locks\broker-media-client.feature.lock.json" -ShellFeature "spatial-panel-shell" -TargetFeature "broker-media-client"
-$null = Test-ConformanceLockIndex -Root $spatialRoot -DefaultLock $spatialLock -ExpectedFeatures @("surface-particle-runtime", "tracked-hand-surface", "broker-media-client") -RuntimeBindingOverrides @{"broker-media-client"="project-declared-source-wip-not-promotional"}
+$spatialAssetLock = Test-ConformanceLock -Root $spatialRoot -DefaultLock $spatialLock -RelativePath "conformance-locks\spatial-asset-model.feature.lock.json" -ShellFeature "spatial-panel-shell" -TargetFeature "spatial-asset-model"
+$spatialAssetFeature = Get-ById -Items @($spatialAssetLock.features) -Property "feature_id" -Id "spatial-asset-model" -Label "Spatial asset conformance lock"
+Assert-Workflow ([string]$spatialAssetFeature.requested_by -eq "conformance-profile:spatial-asset-model") "Spatial asset conformance lock has the wrong selector."
+Assert-Workflow ([string]$spatialAssetFeature.activation_receipt.schema -eq "rusty.quest.spatial_asset_model.activation_receipt.v1") "Spatial asset conformance lock has the wrong receipt schema."
+Assert-Workflow ([string]$spatialAssetFeature.activation_receipt.effective_marker -eq "rusty.quest.spatial_asset_model.effective") "Spatial asset conformance lock has the wrong effective marker."
+$null = Test-ConformanceLockIndex -Root $spatialRoot -DefaultLock $spatialLock -ExpectedFeatures @("surface-particle-runtime", "tracked-hand-surface", "broker-media-client", "spatial-asset-model") -RuntimeBindingOverrides @{"broker-media-client"="project-declared-source-wip-not-promotional"}
 $spatialEvents = @(Test-ProjectStateAndEvents -Root $spatialRoot -Spec $spatialSpec -State $spatialState -Units $spatialUnits)
 
 Test-Mod006Projection -Root $spatialRoot -ExpectedProjectId "spatial-camera-panel" -Units $spatialUnits

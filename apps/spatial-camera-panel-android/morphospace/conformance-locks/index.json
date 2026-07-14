@@ -25,6 +25,14 @@
       "sha256": "D68952B3CC5EBC8C23D85A1AB610E3005EE6C7197DA0355F61A923809D252D5A",
       "expected_effective_marker": "rusty.quest.spatial_camera_panel.broker_media_client.effective",
       "runtime_binding": "project-declared-source-wip-not-promotional"
+    },
+    {
+      "feature_id": "spatial-asset-model",
+      "path": "spatial-asset-model.feature.lock.json",
+      "revision": 1,
+      "sha256": "DA385EFC37AA4BD8D74B5AEADD7C8A06461E8EE68308B9E20C24BBA64A1C8793",
+      "expected_effective_marker": "rusty.quest.spatial_asset_model.effective",
+      "runtime_binding": "source-validated-device-pending"
     }
   ]
 }

@@ -1,11 +1,18 @@
 package io.github.mesmerprism.rustyquest.spatial_camera_panel
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+
 internal data class SpatialPrivateLayerControlBindings(
     val routeActive: () -> Boolean,
     val placementMode: () -> CameraHwbProjectionPlacementMode,
     val projectionTargetScale: () -> Float,
     val updatePlacement: (String, Boolean) -> Unit,
     val updateLayerOverrideNative: (Float) -> Long,
+    val updateMetaPassthroughStyle: (Boolean, String) -> SpatialPassthroughLutUpdate,
+    val projectionPanelEnabled: () -> Boolean,
+    val refreshProjectionAfterPassthroughActivation: (String) -> Unit,
     val updateDepthLayerPolicyNative: (Int) -> Long,
     val updateDepthAlignmentNative: (PrivateLayerDepthAlignment) -> Long,
     val marker: (String) -> Unit,
@@ -14,7 +21,7 @@ internal data class SpatialPrivateLayerControlBindings(
 internal class SpatialPrivateLayerControlCoordinator(
     private val bindings: SpatialPrivateLayerControlBindings,
 ) {
-  var layerOverride: Float = PrivateLayerControls.cycleOverride
+  var layerOverride: Float by mutableStateOf(PrivateLayerControls.cycleOverride)
     private set
 
   var depthLayerPolicy: Int = PrivateLayerControls.defaultDepthLayerPolicy
@@ -49,6 +56,37 @@ internal class SpatialPrivateLayerControlCoordinator(
         )
     )
     layerOverride = updatedOverride
+    val edgeWindowSelected =
+        PrivateLayerControls.metaPassthroughEdgeWindowSelected(updatedOverride)
+    val enteringEdgeWindow =
+        edgeWindowSelected &&
+            !PrivateLayerControls.metaPassthroughEdgeWindowSelected(previousOverride)
+    // The system passthrough layer and its LUT must be active before the native surface submits
+    // an alpha-zero camera target. Reversing this order can leave the cutout black until the
+    // projection carrier is manually stopped and restarted.
+    val passthroughStyleUpdate =
+        runCatching {
+              bindings.updateMetaPassthroughStyle(
+                  edgeWindowSelected,
+                  "private-layer-${activityMarkerToken(source)}",
+              )
+            }
+            .getOrDefault(
+                SpatialPassthroughLutUpdate(
+                    requested = edgeWindowSelected,
+                    systemPassthroughEnabled = false,
+                    lutApplied = false,
+                    phase = 0.0f,
+                    amplitude = 0.0f,
+                )
+            )
+    bindings.marker(
+        PrivateLayerPanelControlModule.metaPassthroughEdgeWindowSubmittedMarker(
+            source = source,
+            selected = edgeWindowSelected,
+            passthroughStyleUpdate = passthroughStyleUpdate,
+        )
+    )
     val updateMask =
         runCatching { bindings.updateLayerOverrideNative(updatedOverride) }
             .getOrElse { throwable ->
@@ -74,6 +112,24 @@ internal class SpatialPrivateLayerControlCoordinator(
         )
     )
     bindings.updatePlacement("private-layer-override-panel", true)
+    val projectionRefreshRequested = enteringEdgeWindow && bindings.projectionPanelEnabled()
+    bindings.marker(
+        PrivateLayerPanelControlModule.metaPassthroughProjectionRefreshMarker(
+            source = source,
+            requested = projectionRefreshRequested,
+            previousOverride = previousOverride,
+            updatedOverride = updatedOverride,
+        )
+    )
+    if (projectionRefreshRequested) {
+      // Recreate the carrier once after passthrough is styled and the cutout is live. Spatial SDK
+      // otherwise leaves the newly exposed region black until the same off/on cycle is performed
+      // manually. The transition guard prevents a restart loop when raw-projection-start reapplies
+      // the already-selected layer configuration.
+      bindings.refreshProjectionAfterPassthroughActivation(
+          "private-layer-${activityMarkerToken(source)}",
+      )
+    }
     return updatedOverride
   }
 

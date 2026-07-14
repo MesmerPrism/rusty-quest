@@ -3,7 +3,7 @@ const PUBLIC_MULTISTACK_SCHEMA: &str = "rusty.quest.spatial_camera_panel.public_
 #[cfg(test)]
 const PUBLIC_MULTISTACK_CARRIER: &str = "scenequadlayer-createAsAndroid-vulkan-wsi";
 #[cfg(test)]
-const PUBLIC_MULTISTACK_LAYER_COUNT: u32 = 7;
+const PUBLIC_MULTISTACK_LAYER_COUNT: u32 = 9;
 #[cfg(test)]
 const PUBLIC_MULTISTACK_GUIDE_TARGET_COUNT: u32 = 5;
 #[cfg(test)]
@@ -22,7 +22,7 @@ const PUBLIC_MULTISTACK_GUIDE_PASS_MANIFEST: &str =
 const PUBLIC_MULTISTACK_LAYER_MANIFEST: &str =
     "0:final,1:opaque-analysis0-slot,2:public-guide-blur,\
      3:opaque-analysis1-slot,4:public-post-blur-guide,\
-     5:opaque-projection-slot,6:public-depth-diagnostic";
+     5:opaque-projection-slot,6:public-depth-diagnostic,7:meta-passthrough-edge-window,8:raw-custom-projection";
 
 include!(concat!(
     env!("OUT_DIR"),
@@ -37,7 +37,7 @@ const PUBLIC_MULTISTACK_STATIC_MARKER_FIELDS: &str = concat!(
         "publicMultiStackSchema=",
         "rusty.quest.spatial_camera_panel.public_multistack.v1 ",
         "publicMultiStackCarrier=scenequadlayer-createAsAndroid-vulkan-wsi ",
-        "publicMultiStackLayerCount=7 ",
+        "publicMultiStackLayerCount=9 ",
         "publicMultiStackGuideTargets=5 ",
         "publicMultiStackGuidePasses=6 ",
         "publicMultiStackPublicGuidePasses=4 ",
@@ -45,7 +45,16 @@ const PUBLIC_MULTISTACK_STATIC_MARKER_FIELDS: &str = concat!(
         "publicMultiStackOpaqueGuidePasses=2 ",
         "publicMultiStackDownstreamPayloadActive=false ",
         "publicMultiStackOpaqueSlots=1,3,5 ",
-        "publicMultiStackPublicLayers=0,2,4,6 ",
+        "publicMultiStackPublicLayers=0,2,4,6,7,8 ",
+        "metaPassthroughEdgeWindowAvailable=true ",
+        "metaPassthroughEdgeWindowDefaultActive=false ",
+        "metaPassthroughEdgeWindowActivation=explicit-ui-layer-selection ",
+        "metaPassthroughEdgeWindowCutout=packed-stereo-target-alpha-zero ",
+        "metaPassthroughEdgeWindowVideoDecodePolicy=keep-active ",
+        "rawCustomProjectionAvailable=true ",
+        "rawCustomProjectionActivation=explicit-ui-layer-selection ",
+        "rawCustomProjectionSource=camera2-hwb-direct-sample ",
+        "rawCustomProjectionVideoDecodePolicy=keep-active ",
         "publicMultiStackGuideTargetManifest=0:opaque-analysis0-target,1:public-blur-temp,",
         "2:public-preblur-guide,3:opaque-analysis1-target,4:public-postblur-guide ",
         "publicMultiStackGuidePassManifest=0:opaque-analysis0,",
@@ -68,7 +77,8 @@ const PUBLIC_MULTISTACK_STATIC_MARKER_FIELDS: &str = concat!(
         "publicMultiStackPrivateSurfaceParticlePublicDefaultActive=false ",
         "publicMultiStackLayerManifest=0:final,1:opaque-analysis0-slot,2:public-guide-blur,",
         "3:opaque-analysis1-slot,4:public-post-blur-guide,",
-        "5:opaque-projection-slot,6:public-depth-diagnostic"
+        "5:opaque-projection-slot,6:public-depth-diagnostic,7:meta-passthrough-edge-window,",
+        "8:raw-custom-projection"
 );
 
 pub(crate) fn public_multistack_marker_fields() -> String {

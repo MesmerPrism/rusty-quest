@@ -24,14 +24,22 @@ internal class SpatialStagedAssetModule(private val marker: (String) -> Unit) {
 
   fun startIfRequested(intent: Intent?, reason: String): Boolean {
     val config = SpatialStagedAssetConfig.from(intent)
-    if (!config.enabled) {
-      destroy("disabled-$reason")
+    val activationDecision = SpatialAdapterNativeAuthority.resolveAsset(config.activationInput())
+    if (!activationDecision.applied) {
+      destroy("activation-rejected-$reason")
+      marker(
+          "channel=spatial-sdk-asset-model status=activation-rejected module=${MODULE_ID} " +
+              "assetModelEnabled=false requestReason=${markerToken(reason)} " +
+              "activationReceiptSchema=$ACTIVATION_RECEIPT_SCHEMA " +
+              "${activationDecision.markerFields()} highRateJsonPayload=false"
+      )
       return false
     }
     if (config.meshUri.isBlank()) {
       marker(
           "channel=spatial-sdk-asset-model status=skipped reason=missing-mesh-uri " +
-              "module=${MODULE_ID} requestReason=$reason highRateJsonPayload=false"
+              "module=${MODULE_ID} requestReason=${markerToken(reason)} " +
+              "${activationDecision.markerFields()} highRateJsonPayload=false"
       )
       return false
     }
@@ -40,17 +48,20 @@ internal class SpatialStagedAssetModule(private val marker: (String) -> Unit) {
           "channel=spatial-sdk-asset-model status=rejected reason=raw-fbx-uri " +
               "module=${MODULE_ID} sourceFormat=${config.sourceFormatToken()} " +
               "fbxConversionRequired=true sdkLoadableMeshUri=false " +
-              "meshUriScheme=${config.meshUriSchemeToken()} highRateJsonPayload=false"
+              "meshUriScheme=${config.meshUriSchemeToken()} " +
+              "${activationDecision.markerFields()} highRateJsonPayload=false"
       )
       return false
     }
 
-    val key = config.identityKey()
+    val key = "${activationDecision.lockRevision}|${activationDecision.lockSha256}|${config.identityKey()}"
     if (activeEntity != null && activeKey == key) {
       marker(
           "channel=spatial-sdk-asset-model status=already-active module=${MODULE_ID} " +
               "label=${config.labelToken()} meshUriScheme=${config.meshUriSchemeToken()} " +
-              "sourceFormat=${config.sourceFormatToken()} highRateJsonPayload=false"
+              "sourceFormat=${config.sourceFormatToken()} " +
+              "activationEffectiveMarker=$ACTIVATION_EFFECTIVE_MARKER " +
+              "${activationDecision.markerFields()} highRateJsonPayload=false"
       )
       return true
     }
@@ -100,7 +111,10 @@ internal class SpatialStagedAssetModule(private val marker: (String) -> Unit) {
                   "rotationDegrees=${formatFloat(config.rotationXDegrees)};${formatFloat(config.rotationYDegrees)};${formatFloat(config.rotationZDegrees)} " +
                   "grabbable=${config.grabbable} collision=none defaultShader=unlit " +
                   "assetVisibilityBias=headset-visible-test-placement " +
-                  "privateSourceAssetPackaged=false highRateJsonPayload=false"
+                  "privateSourceAssetPackaged=false " +
+                  "activationReceiptSchema=$ACTIVATION_RECEIPT_SCHEMA " +
+                  "activationEffectiveMarker=$ACTIVATION_EFFECTIVE_MARKER " +
+                  "${activationDecision.markerFields()} highRateJsonPayload=false"
           )
           true
         }
@@ -110,7 +124,8 @@ internal class SpatialStagedAssetModule(private val marker: (String) -> Unit) {
           marker(
               "channel=spatial-sdk-asset-model status=entity-create-failed module=${MODULE_ID} " +
                   "meshUriScheme=${config.meshUriSchemeToken()} sourceFormat=${config.sourceFormatToken()} " +
-                  "error=${markerToken(error.javaClass.simpleName)} highRateJsonPayload=false"
+                  "error=${markerToken(error.javaClass.simpleName)} " +
+                  "${activationDecision.markerFields()} highRateJsonPayload=false"
           )
           false
         }
@@ -140,6 +155,11 @@ internal class SpatialStagedAssetModule(private val marker: (String) -> Unit) {
       val rotationZDegrees: Float,
       val scale: Float,
       val grabbable: Boolean,
+      val activationProfileId: String,
+      val activationProjectId: String,
+      val activationFeatureId: String,
+      val activationLockRevision: Long,
+      val activationLockSha256: String,
   ) {
     fun identityKey(): String =
         listOf(
@@ -156,6 +176,16 @@ internal class SpatialStagedAssetModule(private val marker: (String) -> Unit) {
                 grabbable.toString(),
             )
             .joinToString("|")
+
+    fun activationInput(): SpatialAdapterRuntimeInput =
+        SpatialAdapterRuntimeInput(
+            enabled = enabled,
+            profileId = activationProfileId,
+            projectId = activationProjectId,
+            featureId = activationFeatureId,
+            lockRevision = activationLockRevision,
+            lockSha256 = activationLockSha256,
+        )
 
     fun isRawFbxUri(): Boolean {
       val parsed = runCatching { Uri.parse(meshUri) }.getOrNull() ?: return false
@@ -176,7 +206,7 @@ internal class SpatialStagedAssetModule(private val marker: (String) -> Unit) {
       fun from(intent: Intent?): SpatialStagedAssetConfig {
         val meshUri = readString(intent, EXTRA_MESH_URI, PROPERTY_MESH_URI)
         return SpatialStagedAssetConfig(
-            enabled = readBoolean(intent, EXTRA_ENABLED, PROPERTY_ENABLED, meshUri.isNotBlank()),
+            enabled = readBoolean(intent, EXTRA_ENABLED, PROPERTY_ENABLED, false),
             meshUri = meshUri,
             sourceFormat = readString(intent, EXTRA_SOURCE_FORMAT, PROPERTY_SOURCE_FORMAT),
             label = readString(intent, EXTRA_LABEL, PROPERTY_LABEL),
@@ -196,6 +226,16 @@ internal class SpatialStagedAssetModule(private val marker: (String) -> Unit) {
                     MAX_SCALE,
                 ),
             grabbable = readBoolean(intent, EXTRA_GRABBABLE, PROPERTY_GRABBABLE, true),
+            activationProfileId =
+                readString(intent, EXTRA_ACTIVATION_PROFILE_ID, PROPERTY_ACTIVATION_PROFILE_ID),
+            activationProjectId =
+                readString(intent, EXTRA_ACTIVATION_PROJECT_ID, PROPERTY_ACTIVATION_PROJECT_ID),
+            activationFeatureId =
+                readString(intent, EXTRA_ACTIVATION_FEATURE_ID, PROPERTY_ACTIVATION_FEATURE_ID),
+            activationLockRevision =
+                readLong(intent, EXTRA_ACTIVATION_LOCK_REVISION, PROPERTY_ACTIVATION_LOCK_REVISION),
+            activationLockSha256 =
+                readString(intent, EXTRA_ACTIVATION_LOCK_SHA256, PROPERTY_ACTIVATION_LOCK_SHA256),
         )
       }
     }
@@ -211,6 +251,24 @@ internal class SpatialStagedAssetModule(private val marker: (String) -> Unit) {
     const val PROPERTY_ROTATION_DEGREES = "debug.rustyquest.spatial.asset_model.rotation_degrees"
     const val PROPERTY_SCALE = "debug.rustyquest.spatial.asset_model.scale"
     const val PROPERTY_GRABBABLE = "debug.rustyquest.spatial.asset_model.grabbable"
+    const val PROPERTY_ACTIVATION_PROFILE_ID =
+        "debug.rustyquest.spatial.asset_model.activation.profile_id"
+    const val PROPERTY_ACTIVATION_PROJECT_ID =
+        "debug.rustyquest.spatial.asset_model.activation.project_id"
+    const val PROPERTY_ACTIVATION_FEATURE_ID =
+        "debug.rustyquest.spatial.asset_model.activation.feature_id"
+    const val PROPERTY_ACTIVATION_LOCK_REVISION =
+        "debug.rustyquest.spatial.asset_model.activation.lock_revision"
+    const val PROPERTY_ACTIVATION_LOCK_SHA256 =
+        "debug.rustyquest.spatial.asset_model.activation.lock_sha256"
+
+    const val ACTIVATION_PROFILE_ID =
+        "profile.quest.spatial_camera_panel.spatial_asset_model_conformance"
+    const val ACTIVATION_PROJECT_ID = "spatial-camera-panel"
+    const val ACTIVATION_FEATURE_ID = "spatial-asset-model"
+    const val ACTIVATION_RECEIPT_SCHEMA =
+        "rusty.quest.spatial_asset_model.activation_receipt.v1"
+    const val ACTIVATION_EFFECTIVE_MARKER = "rusty.quest.spatial_asset_model.effective"
 
     private const val EXTRA_ENABLED = "rusty.quest.spatial.asset_model.enabled"
     private const val EXTRA_MESH_URI = "rusty.quest.spatial.asset_model.mesh_uri"
@@ -220,6 +278,16 @@ internal class SpatialStagedAssetModule(private val marker: (String) -> Unit) {
     private const val EXTRA_ROTATION_DEGREES = "rusty.quest.spatial.asset_model.rotation_degrees"
     private const val EXTRA_SCALE = "rusty.quest.spatial.asset_model.scale"
     private const val EXTRA_GRABBABLE = "rusty.quest.spatial.asset_model.grabbable"
+    private const val EXTRA_ACTIVATION_PROFILE_ID =
+        "rusty.quest.spatial.asset_model.activation.profile_id"
+    private const val EXTRA_ACTIVATION_PROJECT_ID =
+        "rusty.quest.spatial.asset_model.activation.project_id"
+    private const val EXTRA_ACTIVATION_FEATURE_ID =
+        "rusty.quest.spatial.asset_model.activation.feature_id"
+    private const val EXTRA_ACTIVATION_LOCK_REVISION =
+        "rusty.quest.spatial.asset_model.activation.lock_revision"
+    private const val EXTRA_ACTIVATION_LOCK_SHA256 =
+        "rusty.quest.spatial.asset_model.activation.lock_sha256"
 
     private const val MIN_SCALE = 0.001f
     private const val MAX_SCALE = 10.0f
@@ -265,6 +333,13 @@ internal class SpatialStagedAssetModule(private val marker: (String) -> Unit) {
         return intent.getFloatExtra(extraName, defaultValue)
       }
       return readSystemProperty(propertyName).toFloatOrNull() ?: defaultValue
+    }
+
+    private fun readLong(intent: Intent?, extraName: String, propertyName: String): Long {
+      if (intent?.hasExtra(extraName) == true) {
+        return intent.getLongExtra(extraName, 0L)
+      }
+      return readSystemProperty(propertyName).toLongOrNull() ?: 0L
     }
 
     private fun readVector(

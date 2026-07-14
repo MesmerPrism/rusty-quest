@@ -3,7 +3,7 @@ package io.github.mesmerprism.rustyquest.spatial_camera_panel
 internal object SpatialPublicMultiStack {
   private const val SCHEMA = "rusty.quest.spatial_camera_panel.public_multistack.v1"
   private const val CARRIER = "scenequadlayer-createAsAndroid-vulkan-wsi"
-  private const val LAYER_COUNT = 7
+  private const val LAYER_COUNT = 9
   private const val GUIDE_TARGET_COUNT = 5
   private const val GUIDE_PASS_COUNT = 6
   private const val PUBLIC_BLUR_PASS_COUNT = 4
@@ -16,7 +16,8 @@ internal object SpatialPublicMultiStack {
   private const val LAYER_MANIFEST =
       "0:final,1:opaque-analysis0-slot,2:public-guide-blur," +
           "3:opaque-analysis1-slot,4:public-post-blur-guide," +
-          "5:opaque-projection-slot,6:public-depth-diagnostic"
+          "5:opaque-projection-slot,6:public-depth-diagnostic," +
+          "7:meta-passthrough-edge-window,8:raw-custom-projection"
 
   fun markerFields(
       nativePassthroughLayerActive: Boolean = false,
@@ -52,7 +53,16 @@ internal object SpatialPublicMultiStack {
           "publicMultiStackOpaqueGuidePasses=2 " +
           "publicMultiStackDownstreamPayloadActive=false " +
           "publicMultiStackOpaqueSlots=1,3,5 " +
-          "publicMultiStackPublicLayers=0,2,4,6 " +
+          "publicMultiStackPublicLayers=0,2,4,6,7,8 " +
+          "metaPassthroughEdgeWindowAvailable=true " +
+          "metaPassthroughEdgeWindowDefaultActive=false " +
+          "metaPassthroughEdgeWindowActivation=explicit-ui-layer-selection " +
+          "metaPassthroughEdgeWindowCutout=packed-stereo-target-alpha-zero " +
+          "metaPassthroughEdgeWindowVideoDecodePolicy=keep-active " +
+          "rawCustomProjectionAvailable=true " +
+          "rawCustomProjectionActivation=explicit-ui-layer-selection " +
+          "rawCustomProjectionSource=camera2-hwb-direct-sample " +
+          "rawCustomProjectionVideoDecodePolicy=keep-active " +
           "publicMultiStackGuideTargetManifest=$GUIDE_TARGET_MANIFEST " +
           "publicMultiStackGuidePassManifest=$GUIDE_PASS_MANIFEST " +
           "publicGuideBlurKernel=separable-5tap " +

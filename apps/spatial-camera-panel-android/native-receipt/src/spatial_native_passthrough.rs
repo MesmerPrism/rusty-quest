@@ -20,8 +20,12 @@ const RECEIPT_CREATE_LAYER_SUCCEEDED: i64 = 1 << 8;
 const RECEIPT_LAYER_RESUME_SUCCEEDED: i64 = 1 << 9;
 const RECEIPT_LAYER_ACTIVE: i64 = 1 << 10;
 const RECEIPT_ALREADY_ACTIVE: i64 = 1 << 11;
+const RECEIPT_LAYER_SET_STYLE_RESOLVED: i64 = 1 << 12;
+const RECEIPT_EDGE_STYLE_APPLIED: i64 = 1 << 13;
+const RECEIPT_EDGE_STYLE_ENABLED: i64 = 1 << 14;
 
 static SPATIAL_NATIVE_PASSTHROUGH_ACTIVE: AtomicBool = AtomicBool::new(false);
+static SPATIAL_NATIVE_PASSTHROUGH_EDGE_STYLE_ACTIVE: AtomicBool = AtomicBool::new(false);
 static SPATIAL_NATIVE_PASSTHROUGH: Mutex<Option<SpatialNativePassthroughRuntime>> =
     Mutex::new(None);
 
@@ -31,12 +35,14 @@ struct SpatialNativePassthroughRuntime {
     layer: openxr_sys::PassthroughLayerFB,
     destroy_passthrough: openxr_sys::pfn::DestroyPassthroughFB,
     destroy_layer: openxr_sys::pfn::DestroyPassthroughLayerFB,
+    set_layer_style: Option<openxr_sys::pfn::PassthroughLayerSetStyleFB>,
 }
 
 pub(crate) fn spatial_native_passthrough_marker_fields() -> String {
     format!(
-        "nativePassthroughRequested=true nativePassthroughLayerActive={} nativePassthroughActivationPath=spatial-native-receipt-xr-fb-passthrough nativePassthroughCompositionLayerSubmission=spatial-sdk-owned-end-frame",
-        bool_token(SPATIAL_NATIVE_PASSTHROUGH_ACTIVE.load(Ordering::Relaxed))
+        "nativePassthroughRequested=true nativePassthroughLayerActive={} nativePassthroughEdgeStyleActive={} nativePassthroughEdgeStyleMode=edge-and-opacity nativePassthroughEdgeColorRgba=0.050,0.850,1.000,1.000 nativePassthroughEdgeStyleTarget=app-created-fb-layer nativePassthroughEdgeStyleVisibilityReceipt=pending-device-visual nativePassthroughActivationPath=spatial-native-receipt-xr-fb-passthrough nativePassthroughCompositionLayerSubmission=spatial-sdk-owned-end-frame",
+        bool_token(SPATIAL_NATIVE_PASSTHROUGH_ACTIVE.load(Ordering::Relaxed)),
+        bool_token(SPATIAL_NATIVE_PASSTHROUGH_EDGE_STYLE_ACTIVE.load(Ordering::Relaxed)),
     )
 }
 
@@ -66,6 +72,16 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     _thiz: *mut std::ffi::c_void,
 ) -> i64 {
     stop_spatial_native_passthrough("jni-stop")
+}
+
+#[no_mangle]
+#[allow(non_snake_case)]
+pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialCameraPanelActivity_nativeUpdateSpatialNativePassthroughEdgeStyle(
+    _env: *mut std::ffi::c_void,
+    _thiz: *mut std::ffi::c_void,
+    enabled: u8,
+) -> i64 {
+    update_spatial_native_passthrough_edge_style(enabled != 0)
 }
 
 unsafe fn start_spatial_native_passthrough(
@@ -142,6 +158,11 @@ unsafe fn start_spatial_native_passthrough(
         get_instance_proc_addr,
         "xrPassthroughLayerResumeFB",
     );
+    let set_layer_style_resolution = resolve_openxr_function(
+        instance,
+        get_instance_proc_addr,
+        "xrPassthroughLayerSetStyleFB",
+    );
 
     if create_passthrough_resolution.resolved {
         mask |= RECEIPT_CREATE_PASSTHROUGH_RESOLVED;
@@ -157,6 +178,9 @@ unsafe fn start_spatial_native_passthrough(
     }
     if resume_layer_resolution.resolved {
         mask |= RECEIPT_LAYER_RESUME_RESOLVED;
+    }
+    if set_layer_style_resolution.resolved {
+        mask |= RECEIPT_LAYER_SET_STYLE_RESOLVED;
     }
 
     if !create_passthrough_resolution.resolved
@@ -188,6 +212,13 @@ unsafe fn start_spatial_native_passthrough(
         mem::transmute(destroy_layer_resolution.function.unwrap());
     let resume_layer: openxr_sys::pfn::PassthroughLayerResumeFB =
         mem::transmute(resume_layer_resolution.function.unwrap());
+    let set_layer_style =
+        set_layer_style_resolution.function.map(|function| {
+            mem::transmute::<
+                openxr_sys::pfn::VoidFunction,
+                openxr_sys::pfn::PassthroughLayerSetStyleFB,
+            >(function)
+        });
 
     let create_info = openxr_sys::PassthroughCreateInfoFB {
         ty: openxr_sys::PassthroughCreateInfoFB::TYPE,
@@ -266,11 +297,93 @@ unsafe fn start_spatial_native_passthrough(
         layer,
         destroy_passthrough,
         destroy_layer,
+        set_layer_style,
     });
     SPATIAL_NATIVE_PASSTHROUGH_ACTIVE.store(true, Ordering::Relaxed);
     log_spatial_native_passthrough(format!(
         "status=active nativePassthroughRequested=true nativePassthroughLayerActive=true passthroughExtension=XR_FB_passthrough passthroughPurpose=RECONSTRUCTION passthroughCreateFlags=IS_RUNNING_AT_CREATION passthroughLayerFlags=EMPTY passthroughCompositionLayer=CompositionLayerPassthroughFB passthroughCompositionLayerSubmission=spatial-sdk-owned-end-frame nativeReceiptMask={} spatialSdkOwnsEndFrame=true environmentDepthPassthroughPrerequisite=active",
         mask
+    ));
+    mask
+}
+
+fn update_spatial_native_passthrough_edge_style(enabled: bool) -> i64 {
+    let mut mask = RECEIPT_RECEIVED;
+    let guard = match SPATIAL_NATIVE_PASSTHROUGH.lock() {
+        Ok(guard) => guard,
+        Err(_) => {
+            SPATIAL_NATIVE_PASSTHROUGH_EDGE_STYLE_ACTIVE.store(false, Ordering::Relaxed);
+            log_spatial_native_passthrough(format!(
+                "status=edge-style-error stage=lock reason=poisoned nativePassthroughEdgeStyleRequested={} nativePassthroughEdgeStyleActive=false nativeReceiptMask={}",
+                bool_token(enabled),
+                mask,
+            ));
+            return mask;
+        }
+    };
+    let Some(runtime) = guard.as_ref() else {
+        SPATIAL_NATIVE_PASSTHROUGH_EDGE_STYLE_ACTIVE.store(false, Ordering::Relaxed);
+        log_spatial_native_passthrough(format!(
+            "status=edge-style-unavailable reason=passthrough-layer-not-active nativePassthroughEdgeStyleRequested={} nativePassthroughEdgeStyleActive=false nativeReceiptMask={}",
+            bool_token(enabled),
+            mask,
+        ));
+        return mask;
+    };
+    mask |= RECEIPT_LAYER_ACTIVE;
+    let Some(set_layer_style) = runtime.set_layer_style else {
+        SPATIAL_NATIVE_PASSTHROUGH_EDGE_STYLE_ACTIVE.store(false, Ordering::Relaxed);
+        log_spatial_native_passthrough(format!(
+            "status=edge-style-unavailable reason=xrPassthroughLayerSetStyleFB-unresolved nativePassthroughEdgeStyleRequested={} nativePassthroughEdgeStyleActive=false nativeReceiptMask={}",
+            bool_token(enabled),
+            mask,
+        ));
+        return mask;
+    };
+    mask |= RECEIPT_LAYER_SET_STYLE_RESOLVED;
+    let edge_color = if enabled {
+        openxr_sys::Color4f {
+            r: 0.05,
+            g: 0.85,
+            b: 1.0,
+            a: 1.0,
+        }
+    } else {
+        openxr_sys::Color4f {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.0,
+        }
+    };
+    let style = openxr_sys::PassthroughStyleFB {
+        ty: openxr_sys::PassthroughStyleFB::TYPE,
+        next: ptr::null(),
+        texture_opacity_factor: 1.0,
+        edge_color,
+    };
+    let result = unsafe { set_layer_style(runtime.layer, &style) };
+    if result != openxr_sys::Result::SUCCESS {
+        SPATIAL_NATIVE_PASSTHROUGH_EDGE_STYLE_ACTIVE.store(false, Ordering::Relaxed);
+        log_spatial_native_passthrough(format!(
+            "status=edge-style-error stage=xrPassthroughLayerSetStyleFB reason={} nativePassthroughEdgeStyleRequested={} nativePassthroughEdgeStyleActive=false nativeReceiptMask={}",
+            xr_result_token(result),
+            bool_token(enabled),
+            mask,
+        ));
+        return mask;
+    }
+    mask |= RECEIPT_EDGE_STYLE_APPLIED;
+    if enabled {
+        mask |= RECEIPT_EDGE_STYLE_ENABLED;
+    }
+    SPATIAL_NATIVE_PASSTHROUGH_EDGE_STYLE_ACTIVE.store(enabled, Ordering::Relaxed);
+    log_spatial_native_passthrough(format!(
+        "status=edge-style-applied nativePassthroughEdgeStyleRequested={} nativePassthroughEdgeStyleActive={} nativePassthroughEdgeStyleMode=edge-and-opacity nativePassthroughEdgeColorRgba={} nativePassthroughOpacity=1.000 nativePassthroughEdgeStyleTarget=app-created-fb-layer nativePassthroughEdgeStyleVisibilityReceipt=pending-device-visual xrPassthroughLayerSetStyleFBResult=success nativeReceiptMask={}",
+        bool_token(enabled),
+        bool_token(enabled),
+        if enabled { "0.050,0.850,1.000,1.000" } else { "0.000,0.000,0.000,0.000" },
+        mask,
     ));
     mask
 }
@@ -293,6 +406,7 @@ fn stop_spatial_native_passthrough(reason: &str) -> i64 {
         let destroy_passthrough_result =
             unsafe { (runtime.destroy_passthrough)(runtime.passthrough) };
         SPATIAL_NATIVE_PASSTHROUGH_ACTIVE.store(false, Ordering::Relaxed);
+        SPATIAL_NATIVE_PASSTHROUGH_EDGE_STYLE_ACTIVE.store(false, Ordering::Relaxed);
         log_spatial_native_passthrough(format!(
             "status=stopped stopReason={} nativePassthroughLayerActive=false destroyLayerResult={} destroyPassthroughResult={}",
             marker_token(reason),
@@ -302,6 +416,7 @@ fn stop_spatial_native_passthrough(reason: &str) -> i64 {
         1
     } else {
         SPATIAL_NATIVE_PASSTHROUGH_ACTIVE.store(false, Ordering::Relaxed);
+        SPATIAL_NATIVE_PASSTHROUGH_EDGE_STYLE_ACTIVE.store(false, Ordering::Relaxed);
         log_spatial_native_passthrough(format!(
             "status=already-stopped stopReason={} nativePassthroughLayerActive=false",
             marker_token(reason)

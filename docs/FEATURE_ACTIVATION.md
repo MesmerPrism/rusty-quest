@@ -19,6 +19,13 @@ runtime input.
   lock, accepted runtime profile, package/client identity, and any effects that
   follow an applied decision.
 
+The Spatial Camera Panel staged-asset consumer is the app-local example: its
+native receipt facade embeds the exact `spatial-asset-model` conformance lock,
+uses the shared parser/digest engine, and gates Kotlin `Mesh` creation on the
+returned applied decision. A staged URI, enable property, or conformance lock
+alone is insufficient; the consumer-effective marker is emitted only after the
+entity exists.
+
 The generic crate must not contain application package names, project IDs,
 feature IDs, runtime profiles, permissions, routes, assets, Android properties,
 or app-specific marker namespaces. Adding another consumer should require a

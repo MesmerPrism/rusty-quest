@@ -15,7 +15,10 @@ authority.
 The adopted baseline selects only `spatial-panel-shell`. Camera/HWB
 projection, native surface particles, tracked-hand surfaces, stereo video,
 staged assets, and the virtual room are explicit disabled workflow entries and
-still require their existing property/profile/app-spec opt-ins. Remote peer
+still require their existing property/profile/app-spec opt-ins. The staged
+asset path additionally requires the exact app-owned
+`morphospace/conformance-locks/spatial-asset-model.feature.lock.json`; a mesh
+URI or enable property alone remains inert. Remote peer
 media is intentionally absent from the composition, so nearby broker or QCL
 work cannot bleed into this app. The first candidates are recorded under
 `morphospace/module-candidates/`: Matter is the proposed particle substrate
@@ -75,8 +78,21 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   `debug.rustyquest.spatial.virtual_room.enabled`; the module is generic
   Spatial SDK room support, not MRUK real-room placement and not passthrough
   room capture.
-- Public seven-slot camera guide multi-stack contract, including generic final,
-  guide blur, post-blur guide, and depth diagnostic slots.
+- Public nine-slot camera guide multi-stack contract, including generic final,
+  guide blur, post-blur guide, depth diagnostic, and default-off Meta
+  passthrough edge-window slots. Selecting slot 7 keeps MediaCodec decoding
+  active, clears the custom stereo projection footprint to alpha zero, and
+  applies the animated posterized LUT to the Spatial SDK-owned system
+  passthrough. Its first activation performs one guarded carrier rebind after
+  the system style and native cutout are live. Slot 8 is an explicit raw
+  Camera2/AHardwareBuffer stereo projection over the still-active video; it
+  bypasses the private effect shader and its edge fade.
+- The private layer panel also exposes a separate projection-panel isolation
+  toggle. Turning it off stops MediaCodec playback and native custom projection,
+  destroys the Spatial projection carrier, and explicitly leaves system
+  passthrough enabled. This diagnostic distinguishes a black submitted carrier
+  from an unavailable or unsubmitted passthrough layer; turning it back on
+  rebuilds the same carrier and resumes the captured video settings.
 - Scene-depth permission diagnostics that mirror the native renderer surface:
   `horizonos.permission.USE_SCENE`, OpenXR permissions, and a smoke-wrapper
   `USE_SCENE_DATA` app-op receipt. The public multi-stack keeps a fallback
@@ -565,6 +581,10 @@ Interaction SDK pointer input without native multimodal extension forcing.
   declarations through typed bindings; the coordinator cannot activate a route.
 - `app/src/main/.../PrivateLayerControlPanel.kt` owns only the Compose
   projection of those controls and forwards requests to Activity-owned routes.
+- `app/src/main/.../SpatialProjectionPanelVisibilityCoordinator.kt` owns the
+  low-rate projection carrier isolation state and evidence markers. Activity
+  bindings retain carrier cleanup, MediaCodec/native shutdown, system
+  passthrough enablement, and route restart authority.
 - `app/src/main/.../SpatialControllerSnapshotAdapter.kt` owns read-only Spatial
   SDK ECS observation for controller components, local right-controller
   preference, player-avatar hand-controller fallback, button/thumb bit
@@ -749,13 +769,15 @@ Interaction SDK pointer input without native multimodal extension forcing.
   separate consumers of that carrier.
 - `app/src/main/.../SpatialStagedAssetModule.kt` owns the generic Spatial SDK
   staged 3D asset path. It creates a runtime `Mesh` entity from an explicit
-  GLB/GLTF URI, marks raw FBX URIs as conversion-required, and owns
-  deferred-start marker fields when the packaged virtual room has not loaded.
+  GLB/GLTF URI only after the app-owned lock-bound activation decision applies,
+  emits `rusty.quest.spatial_asset_model.effective` with the entity receipt,
+  marks raw FBX URIs as conversion-required, and owns deferred-start marker
+  fields when the packaged virtual room has not loaded.
 - The Activity remains the facade for the generic packaged virtual room path.
   It delegates room and skybox behavior to `SpatialVirtualRoomModule.kt`, then
   starts dependent staged-asset, video, and camera probes only after the module
   reports the room loaded.
-- `app/src/main/.../SpatialPublicMultiStack.kt` mirrors the public seven-slot
+- `app/src/main/.../SpatialPublicMultiStack.kt` mirrors the public nine-slot
   camera guide multi-stack receipt fields for Kotlin-side start, carrier, and
   placement markers. It marks opaque downstream slots inactive in this public
   app.
@@ -855,9 +877,11 @@ Interaction SDK pointer input without native multimodal extension forcing.
   camera-projection target-rect constants, effective-rect formula,
   side-by-side packed UV rects, raw-color projection push constants, and marker
   field construction. Its host unit tests protect the target-rect behavior
-  without requiring Android system libraries.
+  without requiring Android system libraries. The custom camera target width
+  compensates for the wide `5.40 m x 4.00 m` shared video carrier; it does not
+  resize the carrier's `PanelDimensions` or `QuadShapeOptions`.
 - `native-receipt/src/spatial_public_multistack.rs` owns the native receipt
-  mirror for the public seven-slot camera guide multi-stack contract, including
+  mirror for the public nine-slot camera guide multi-stack contract, including
   guide-target/pass manifests, public guide blur slots, and opaque downstream
   slot markers.
 - `native-receipt/src/spatial_public_multistack_runtime.rs` owns the generic
@@ -874,6 +898,10 @@ Interaction SDK pointer input without native multimodal extension forcing.
   packed-surface viewport state plus per-eye packed target-rect scissors, not a
   resized Spatial quad. It is intentionally separate from camera stream
   orchestration and surface-particle proof modules.
+  Slot 7 is handled as a compositor-window operation after video rendering:
+  `vkCmdClearAttachments` writes transparent black only inside both packed
+  projection target rects, so video decode/import remains live while the
+  Spatial `SceneQuadLayer` reveals passthrough behind that footprint.
 - `app/src/main/.../SpatialStereoVideoPlayback.java` is the optional Spatial
   video decode bridge. It resolves only an explicit runtime path, creates no
   default fixture path, and sends decoded frames to a native-created Surface.
@@ -907,7 +935,9 @@ Interaction SDK pointer input without native multimodal extension forcing.
   path.
 - `tools/Stage-SpatialCameraPanelAsset.ps1` stages a local GLB/GLTF into the
   package-scoped external files directory and emits the runtime mesh URI. If
-  the source is FBX, the script requires a converted GLB/GLTF path first.
+  the source is FBX, the script requires a converted GLB/GLTF path first. Its
+  receipt also records the exact asset conformance-lock revision and SHA-256;
+  staging by itself does not activate the runtime consumer.
 
 ## Spatial SDK Lane Source Map
 
@@ -1085,7 +1115,14 @@ The runtime module is controlled by
 `debug.rustyquest.spatial.asset_model.position_m`,
 `debug.rustyquest.spatial.asset_model.rotation_degrees`,
 `debug.rustyquest.spatial.asset_model.scale`, and
-`debug.rustyquest.spatial.asset_model.grabbable`.
+`debug.rustyquest.spatial.asset_model.grabbable`. These values are runtime
+inputs, not activation authority. The smoke wrapper also supplies the accepted
+profile/project/feature/revision/SHA-256 tuple from
+`morphospace/conformance-locks/spatial-asset-model.feature.lock.json`; the
+native receipt authority verifies the exact embedded lock before a `Mesh`
+entity is created. Required evidence includes `activationState=applied` and
+`activationEffectiveMarker=rusty.quest.spatial_asset_model.effective` on the
+entity-created marker.
 
 To include a packaged virtual room in the same smoke, export a GLXF room into
 the APK assets before building and add the room flags:

@@ -177,9 +177,18 @@ try {
     $damagedSupersession = New-TestRepo -Name "damaged-supersession-event"
     $damagedEventPath = Join-Path $damagedSupersession "apps\spatial-camera-panel-android\morphospace\iteration-events.jsonl"
     $damagedLines = @(Get-Content -LiteralPath $damagedEventPath)
-    $lastEvent = $damagedLines[-1] | ConvertFrom-Json
-    $lastEvent.event_type = "validation"
-    $damagedLines[-1] = $lastEvent | ConvertTo-Json -Compress -Depth 16
+    $damagedIndex = -1
+    for ($index = 0; $index -lt $damagedLines.Count; $index++) {
+        $candidate = $damagedLines[$index] | ConvertFrom-Json
+        if ([string]$candidate.event_id -eq "mod-003-superseded-by-mod-006") {
+            $damagedIndex = $index
+            break
+        }
+    }
+    Assert-SelfTest ($damagedIndex -ge 0) "MOD-003 supersession event is missing from the baseline fixture"
+    $damagedEvent = $damagedLines[$damagedIndex] | ConvertFrom-Json
+    $damagedEvent.event_type = "validation"
+    $damagedLines[$damagedIndex] = $damagedEvent | ConvertTo-Json -Compress -Depth 16
     [System.IO.File]::WriteAllLines($damagedEventPath, $damagedLines, [System.Text.UTF8Encoding]::new($false))
     Assert-SelfTest ((Invoke-Gate -Root $damagedSupersession).exit_code -ne 0) "damaged MOD-003 supersession event was accepted"
 

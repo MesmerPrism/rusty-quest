@@ -38,6 +38,18 @@ internal object SpatialAdapterNativeAuthority {
         )
       }
 
+  fun resolveAsset(input: SpatialAdapterRuntimeInput): SpatialAdapterLockDecision =
+      resolve(input) {
+        nativeResolveAssetModelActivation(
+            input.enabled,
+            input.profileId,
+            input.projectId,
+            input.featureId,
+            input.lockRevision,
+            input.lockSha256,
+        )
+      }
+
   private fun resolve(
       input: SpatialAdapterRuntimeInput,
       nativeResolver: () -> String?,
@@ -61,6 +73,16 @@ internal object SpatialAdapterNativeAuthority {
 
   @JvmStatic
   private external fun nativeResolveParticleAdapterActivation(
+      runtimeEnabled: Boolean,
+      runtimeProfileId: String,
+      runtimeProjectId: String,
+      runtimeFeatureId: String,
+      runtimeLockRevision: Long,
+      runtimeLockSha256: String,
+  ): String?
+
+  @JvmStatic
+  private external fun nativeResolveAssetModelActivation(
       runtimeEnabled: Boolean,
       runtimeProfileId: String,
       runtimeProjectId: String,

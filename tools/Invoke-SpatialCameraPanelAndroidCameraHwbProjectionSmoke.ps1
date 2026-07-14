@@ -26,6 +26,7 @@ param(
     [string]$AssetConvertedMeshPath = $env:RUSTY_QUEST_SPATIAL_ASSET_MODEL_CONVERTED_MESH_PATH,
     [string]$AssetDestinationRelativePath = "spatial-assets/model.glb",
     [string]$AssetSourceFormat = $env:RUSTY_QUEST_SPATIAL_ASSET_MODEL_SOURCE_FORMAT,
+    [string]$AssetConformanceLockPath = "",
     [string]$AssetLabel = "staged-asset",
     [string]$AssetPositionM = "-0.55;1.15;-1.35",
     [string]$AssetRotationDegrees = "0.0;180.0;0.0",
@@ -120,11 +121,14 @@ function Invoke-AdbCommand {
     $process = $null
     try {
         $process = Start-Process -FilePath $script:ResolvedAdb -ArgumentList $quotedArgs -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru -WindowStyle Hidden
+        $process.Handle | Out-Null
         if (-not $process.WaitForExit([Math]::Max(1, $TimeoutSeconds) * 1000)) {
             try { $process.Kill($true) } catch {}
             $exitCode = 124
             $output = "adb command timed out after $TimeoutSeconds seconds."
         } else {
+            $process.WaitForExit()
+            $process.Refresh()
             $stdout = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -Raw -LiteralPath $stdoutPath } else { "" }
             $stderr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -Raw -LiteralPath $stderrPath } else { "" }
             $exitCode = $process.ExitCode
@@ -371,6 +375,35 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 }
 $repoRootPath = Resolve-Path -LiteralPath $RepoRoot
+$assetConformanceLockResolved = if ([string]::IsNullOrWhiteSpace($AssetConformanceLockPath)) {
+    Join-Path $repoRootPath "apps\spatial-camera-panel-android\morphospace\conformance-locks\spatial-asset-model.feature.lock.json"
+} elseif ([System.IO.Path]::IsPathRooted($AssetConformanceLockPath)) {
+    $AssetConformanceLockPath
+} else {
+    Join-Path $repoRootPath $AssetConformanceLockPath
+}
+if (-not (Test-Path -LiteralPath $assetConformanceLockResolved -PathType Leaf)) {
+    throw "Spatial asset conformance lock not found: $assetConformanceLockResolved"
+}
+$assetConformanceLockResolved = (Resolve-Path -LiteralPath $assetConformanceLockResolved).Path
+$assetConformanceLock = Get-Content -Raw -LiteralPath $assetConformanceLockResolved | ConvertFrom-Json
+$assetConformanceFeature = @($assetConformanceLock.features | Where-Object { [string]$_.feature_id -eq "spatial-asset-model" })
+if ([string]$assetConformanceLock.schema -ne "rusty.morphospace.workflow.feature_lock.v1" -or
+    [string]$assetConformanceLock.project_id -ne "spatial-camera-panel" -or
+    [long]$assetConformanceLock.revision -lt 1 -or
+    $assetConformanceFeature.Count -ne 1 -or
+    $assetConformanceFeature[0].enabled -ne $true -or
+    [string]$assetConformanceFeature[0].module_id -ne "spatial-asset-model" -or
+    [string]$assetConformanceFeature[0].requested_by -ne "conformance-profile:spatial-asset-model" -or
+    [string]$assetConformanceFeature[0].activation_receipt.schema -ne "rusty.quest.spatial_asset_model.activation_receipt.v1" -or
+    [string]$assetConformanceFeature[0].activation_receipt.effective_marker -ne "rusty.quest.spatial_asset_model.effective") {
+    throw "Spatial asset conformance lock does not select the accepted spatial-asset-model contract: $assetConformanceLockResolved"
+}
+$assetActivationProfileId = "profile.quest.spatial_camera_panel.spatial_asset_model_conformance"
+$assetActivationProjectId = "spatial-camera-panel"
+$assetActivationFeatureId = "spatial-asset-model"
+$assetActivationLockRevision = [long]$assetConformanceLock.revision
+$assetActivationLockSha256 = Get-FileSha256 -Path $assetConformanceLockResolved
 
 if ([string]::IsNullOrWhiteSpace($Serial)) {
     throw "-Serial or RUSTY_QUEST_SERIAL is required; Spatial SDK headset validation must use adb -s <serial>."
@@ -567,6 +600,14 @@ $summary = [ordered]@{
     spatial_asset_model_module = "spatial-sdk-staged-3d-asset"
     spatial_asset_model_runtime_property_enabled = "debug.rustyquest.spatial.asset_model.enabled"
     spatial_asset_model_runtime_property_mesh_uri = "debug.rustyquest.spatial.asset_model.mesh_uri"
+    spatial_asset_model_activation_profile_id = $assetActivationProfileId
+    spatial_asset_model_activation_project_id = $assetActivationProjectId
+    spatial_asset_model_activation_feature_id = $assetActivationFeatureId
+    spatial_asset_model_activation_lock_path = $assetConformanceLockResolved
+    spatial_asset_model_activation_lock_revision = $assetActivationLockRevision
+    spatial_asset_model_activation_lock_sha256 = $assetActivationLockSha256
+    spatial_asset_model_activation_receipt_schema = "rusty.quest.spatial_asset_model.activation_receipt.v1"
+    spatial_asset_model_activation_effective_marker = "rusty.quest.spatial_asset_model.effective"
     spatial_asset_model_launch_transport = "none"
     public_multistack_depth_layer_policy = $depthLayerPolicyToken
     synthetic_visual_probe = [bool]$SyntheticVisualProbe
@@ -770,6 +811,11 @@ try {
         $setpropResults += Invoke-AdbCommand -Name "set Spatial video opacity" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.video.opacity", $videoOpacityText)
     }
     $setpropResults += Invoke-AdbCommand -Name "configure Spatial staged asset model" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.asset_model.enabled", $(if ($assetModelRequested) { "1" } else { "0" }))
+    $setpropResults += Invoke-AdbCommand -Name "bind Spatial asset activation profile" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.asset_model.activation.profile_id", $assetActivationProfileId)
+    $setpropResults += Invoke-AdbCommand -Name "bind Spatial asset activation project" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.asset_model.activation.project_id", $assetActivationProjectId)
+    $setpropResults += Invoke-AdbCommand -Name "bind Spatial asset activation feature" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.asset_model.activation.feature_id", $assetActivationFeatureId)
+    $setpropResults += Invoke-AdbCommand -Name "bind Spatial asset activation lock revision" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.asset_model.activation.lock_revision", $assetActivationLockRevision.ToString())
+    $setpropResults += Invoke-AdbCommand -Name "bind Spatial asset activation lock digest" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.asset_model.activation.lock_sha256", $assetActivationLockSha256)
     if ($assetModelRequested) {
         $assetScaleText = $assetScaleClamped.ToString("0.###", [System.Globalization.CultureInfo]::InvariantCulture)
         $assetPositionLaunchExtra = $assetPositionTrimmed.Replace(";", ",")
@@ -839,7 +885,12 @@ try {
             "--es", "rusty.quest.spatial.asset_model.position_m", $assetPositionLaunchExtra,
             "--es", "rusty.quest.spatial.asset_model.rotation_degrees", $assetRotationLaunchExtra,
             "--ef", "rusty.quest.spatial.asset_model.scale", $assetScaleText,
-            "--ez", "rusty.quest.spatial.asset_model.grabbable", $(if ($AssetGrabbable) { "true" } else { "false" })
+            "--ez", "rusty.quest.spatial.asset_model.grabbable", $(if ($AssetGrabbable) { "true" } else { "false" }),
+            "--es", "rusty.quest.spatial.asset_model.activation.profile_id", $assetActivationProfileId,
+            "--es", "rusty.quest.spatial.asset_model.activation.project_id", $assetActivationProjectId,
+            "--es", "rusty.quest.spatial.asset_model.activation.feature_id", $assetActivationFeatureId,
+            "--el", "rusty.quest.spatial.asset_model.activation.lock_revision", $assetActivationLockRevision.ToString(),
+            "--es", "rusty.quest.spatial.asset_model.activation.lock_sha256", $assetActivationLockSha256
         )
     }
     $launch = Invoke-AdbCommand -Name "launch raw camera projection probe" -Arguments $launchArgs
@@ -1063,6 +1114,10 @@ try {
         Test-TextContains $evidenceText "sdkLoadableMeshUri=true"
     $summary.spatial_asset_model_private_source_not_packaged =
         Test-TextContains $evidenceText "privateSourceAssetPackaged=false"
+    $summary.spatial_asset_model_activation_applied =
+        ($evidenceText -match "channel=spatial-sdk-asset-model status=(entity-created|already-active)[^\r\n]*activationState=applied")
+    $summary.spatial_asset_model_effective_receipt =
+        ($evidenceText -match "channel=spatial-sdk-asset-model status=(entity-created|already-active)[^\r\n]*activationEffectiveMarker=rusty.quest.spatial_asset_model.effective")
     $summary.spatial_asset_model_raw_fbx_rejected =
         Test-TextContains $evidenceText "status=rejected reason=raw-fbx-uri"
     $summary.spatial_virtual_room_module_declared =
@@ -1286,7 +1341,9 @@ try {
             "spatial_asset_model_module_declared",
             "spatial_asset_model_entity_created",
             "spatial_asset_model_sdk_mesh_uri",
-            "spatial_asset_model_private_source_not_packaged"
+            "spatial_asset_model_private_source_not_packaged",
+            "spatial_asset_model_activation_applied",
+            "spatial_asset_model_effective_receipt"
         )
     }
     if ($effectiveSkyboxEnabled) {

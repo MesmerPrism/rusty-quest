@@ -22,6 +22,8 @@ internal data class PrivateLayerDepthSourceChoice(
 
 internal object PrivateLayerControls {
   const val cycleOverride: Float = -1.0f
+  const val metaPassthroughEdgeWindowOverride: Float = 7.0f
+  const val rawCustomProjectionOverride: Float = 8.0f
   const val depthPolicyMonoLayer0: Int = 0
   const val depthPolicyMonoLayer1: Int = 1
   const val depthPolicyEyeIndex: Int = 2
@@ -37,6 +39,8 @@ internal object PrivateLayerControls {
           PrivateLayerChoice(4, "Public post-blur guide", "public-post-blur-guide"),
           PrivateLayerChoice(5, "Opaque projection", "opaque-projection-slot"),
           PrivateLayerChoice(6, "Public depth diagnostic", "public-depth-diagnostic"),
+          PrivateLayerChoice(7, "Meta poster LUT", "meta-passthrough-edge-window"),
+          PrivateLayerChoice(8, "Raw custom projection", "raw-custom-projection"),
       )
 
   val depthSourcePolicies =
@@ -55,6 +59,9 @@ internal object PrivateLayerControls {
       layers.firstOrNull { it.index == rounded }?.title ?: "Final"
     }
   }
+
+  fun metaPassthroughEdgeWindowSelected(layerOverride: Float): Boolean =
+      layerOverride.toInt() == metaPassthroughEdgeWindowOverride.toInt()
 
   fun normalizeDepthLayerPolicy(policy: Int): Int =
       depthSourcePolicies.firstOrNull { it.code == policy }?.code ?: defaultDepthLayerPolicy
@@ -85,7 +92,10 @@ internal object PrivateLayerPanelControlModule {
       if (requestedLayerOverride < 0.0f) {
         PrivateLayerControls.cycleOverride
       } else {
-        requestedLayerOverride.coerceIn(0.0f, 6.0f).toInt().toFloat()
+        requestedLayerOverride
+            .coerceIn(0.0f, PrivateLayerControls.layers.maxOf { it.index }.toFloat())
+            .toInt()
+            .toFloat()
       }
 
   fun normalizeDepthLayerPolicy(requestedPolicy: Int): Int =
@@ -158,10 +168,43 @@ internal object PrivateLayerPanelControlModule {
           "projectionPlacementMode=${placementMode.markerToken} " +
           "layerOverrideAppliesToWallAndFullFov=true " +
           "cameraProjectionPlacementIndependentLayerControl=true " +
-          "publicMultiStackLayerManifest=0:final,1:opaque-analysis0-slot,2:public-guide-blur,3:opaque-analysis1-slot,4:public-post-blur-guide,5:opaque-projection-slot,6:public-depth-diagnostic " +
+          "publicMultiStackLayerManifest=0:final,1:opaque-analysis0-slot,2:public-guide-blur,3:opaque-analysis1-slot,4:public-post-blur-guide,5:opaque-projection-slot,6:public-depth-diagnostic,7:meta-passthrough-edge-window,8:raw-custom-projection " +
           "projectionTargetLiveScale=${activityMarkerFloat(projectionTargetScale)} " +
           "layerOverrideForcedProjectionRefresh=true " +
           "panelRenderOrder=spatial-sdk-quad-layer-z-index runtimeCrash=false"
+
+  fun metaPassthroughEdgeWindowSubmittedMarker(
+      source: String,
+      selected: Boolean,
+      passthroughStyleUpdate: SpatialPassthroughLutUpdate,
+  ): String =
+      "channel=private-layer-panel status=meta-passthrough-edge-window-submitted " +
+          "source=${activityMarkerToken(source)} metaPassthroughEdgeWindowSelected=$selected " +
+          "metaSystemPassthroughEnabled=${passthroughStyleUpdate.systemPassthroughEnabled} " +
+          "spatialSdkPassthroughLutRequested=${passthroughStyleUpdate.requested} " +
+          "spatialSdkPassthroughLutApplied=${passthroughStyleUpdate.lutApplied} " +
+          "spatialSdkPassthroughLutMode=animated-posterized-mono-to-rgba-gradient " +
+          "spatialSdkPassthroughLutPhase=${activityMarkerFloat(passthroughStyleUpdate.phase)} " +
+          "spatialSdkPassthroughLutAmplitude=${activityMarkerFloat(passthroughStyleUpdate.amplitude)} " +
+          "passthroughStyleOwner=spatial-sdk-system-passthrough " +
+          "passthroughActivationOrder=system-style-before-native-projection-cutout " +
+          "nativePassthroughEdgeStyleRequested=false nativePassthroughEdgeStyleVisualAuthority=false " +
+          "projectionAlphaCutoutRequested=$selected " +
+          "projectionAlphaCutoutValue=0.000 projectionAlphaCutoutPreservesVideoDecode=true " +
+          "runtimeCrash=false"
+
+  fun metaPassthroughProjectionRefreshMarker(
+      source: String,
+      requested: Boolean,
+      previousOverride: Float,
+      updatedOverride: Float,
+  ): String =
+      "channel=private-layer-panel status=meta-passthrough-projection-refresh " +
+          "source=${activityMarkerToken(source)} projectionRefreshRequested=$requested " +
+          "projectionRefreshPolicy=one-shot-carrier-rebind-after-system-style-and-native-cutout " +
+          "previousPublicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(previousOverride)} " +
+          "publicMultiStackOpaqueProjectionLayerOverride=${activityMarkerFloat(updatedOverride)} " +
+          "videoRestartPolicy=resume-active-video runtimeCrash=false"
 
   fun depthLayerPolicySelectedMarker(
       source: String,

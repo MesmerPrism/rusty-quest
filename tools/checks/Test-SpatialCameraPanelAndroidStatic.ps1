@@ -90,6 +90,7 @@ $surfaceParticleRouteModule = Read-RequiredText "apps\spatial-camera-panel-andro
 $adapterLockBinding = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAdapterLockBinding.kt"
 $adapterNativeAuthority = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAdapterNativeAuthority.kt"
 $adapterAuthorityRust = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\adapter_lock_authority.rs"
+$assetModelConsumer = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\asset_model_consumer.rs"
 $adapterDecisionCacheTest = Read-RequiredText "apps\spatial-camera-panel-android\app\src\test\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialAdapterDecisionCacheTest.kt"
 $surfaceParticleParameterCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialSurfaceParticleParameterCoordinator.kt"
 $surfaceParticleRuntimeCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialSurfaceParticleRuntimeCoordinator.kt"
@@ -112,6 +113,7 @@ $composePanelRegistrationModule = Read-RequiredText "apps\spatial-camera-panel-a
 $privateLayerPanel = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\PrivateLayerControlPanel.kt"
 $privateLayerPanelControlModule = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\PrivateLayerPanelControlModule.kt"
 $privateLayerControlCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPrivateLayerControlCoordinator.kt"
+$spatialPassthroughLutModule = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPassthroughLutModule.kt"
 $privateLayerPanelLayerCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialPrivateLayerPanelLayerCoordinator.kt"
 $panelModels = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelModels.kt"
 $activityRuntimeHelpers = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelRuntimeHelpers.kt"
@@ -127,6 +129,7 @@ $cameraHwbProbeCoordinator = Read-RequiredText "apps\spatial-camera-panel-androi
 $videoProjectionProbeCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialVideoProjectionProbeCoordinator.kt"
 $videoProjectionRuntimeCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialVideoProjectionRuntimeCoordinator.kt"
 $cameraHwbProjectionLaunchCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionLaunchCoordinator.kt"
+$projectionPanelVisibilityCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialProjectionPanelVisibilityCoordinator.kt"
 $cameraHwbProjectionDepthPrerequisiteCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionDepthPrerequisiteCoordinator.kt"
 $cameraHwbProjectionRawCarrierCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionRawCarrierCoordinator.kt"
 $cameraHwbProjectionPanelCarrierCoordinator = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionPanelCarrierCoordinator.kt"
@@ -656,8 +659,16 @@ Assert-Contains "Surface particle route module" $surfaceParticleRouteModule "deb
 Assert-Contains "Spatial adapter lock binding" $adapterLockBinding "activationState="
 Assert-Contains "Spatial adapter lock binding" $adapterLockBinding "native-authority-receipt-invalid"
 Assert-Contains "Spatial adapter native authority" $adapterNativeAuthority "nativeResolveParticleAdapterActivation"
+Assert-Contains "Spatial adapter native authority" $adapterNativeAuthority "nativeResolveAssetModelActivation"
 Assert-Contains "Spatial adapter Rust authority" $adapterAuthorityRust "particle_authority_receipt"
+Assert-Contains "Spatial adapter Rust authority" $adapterAuthorityRust "asset_authority_receipt"
 Assert-Contains "Spatial adapter Rust authority" $adapterAuthorityRust "runtime_lock_sha256"
+Assert-Contains "Spatial asset lock consumer" $assetModelConsumer "resolve_lock_bound_activation"
+Assert-Contains "Spatial asset lock consumer" $assetModelConsumer 'include_str!("../../morphospace/conformance-locks/spatial-asset-model.feature.lock.json")'
+Assert-Contains "Spatial asset lock consumer" $assetModelConsumer 'const FEATURE_ID: &str = "spatial-asset-model"'
+Assert-Contains "Spatial asset lock consumer" $assetModelConsumer 'const MODULE_ID: &str = "spatial-asset-model"'
+Assert-Contains "Spatial asset lock consumer" $assetModelConsumer '"profile.quest.spatial_camera_panel.spatial_asset_model_conformance"'
+Assert-Contains "Spatial asset lock consumer" $assetModelConsumer 'effective_marker: EFFECTIVE_MARKER'
 Assert-Contains "Surface particle route module" $surfaceParticleRouteModule "PARTICLE_ADAPTER_LOCK_SHA256_PROPERTY"
 Assert-Contains "Surface particle route module" $surfaceParticleRouteModule "activationDecision.applied"
 Assert-NotContains "Surface particle route module" $surfaceParticleRouteModule "rawValue ?: true"
@@ -2047,6 +2058,10 @@ Assert-NotContains "Activity" $activity "private fun recordPanelState"
 Assert-NotContains "Activity" $activity '"rusty.quest.spatial_camera_panel.panel_headlock_tuning.v1"'
 Assert-Contains "Surface particle route module" $surfaceParticleRouteModule "PARTICLE_LAYER_TARGET_DISTANCE_MAX_METERS = 2.00f"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "CAMERA_HWB_PROJECTION_TARGET_DISTANCE_METERS = 2.0f"
+Assert-Contains "Activity" $activity "surfaceParticleProjectionGeometryCoordinator::projectionWidthMeters"
+Assert-Contains "Activity" $activity "surfaceParticleProjectionGeometryCoordinator::projectionHeightMeters"
+Assert-NotContains "Activity" $activity "CameraHwbProjectionModule::projectionWidthMeters"
+Assert-NotContains "Activity" $activity "CameraHwbProjectionModule::projectionHeightMeters"
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule 'CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER = "2.00"'
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule 'targetDistanceDefaultMeters=$CAMERA_HWB_PROJECTION_TARGET_DISTANCE_MARKER'
 Assert-Contains "Camera HWB projection module" $cameraProjectionModule "targetDistanceJoystickControlsEnabled=false"
@@ -2090,7 +2105,7 @@ Assert-Contains "Private layer panel control module" $privateLayerPanelControlMo
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=depth-alignment-submitted"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "internal data class SpatialPrivateLayerControlBindings"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "internal class SpatialPrivateLayerControlCoordinator"
-Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "var layerOverride: Float = PrivateLayerControls.cycleOverride"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "var layerOverride: Float by mutableStateOf(PrivateLayerControls.cycleOverride)"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "var depthLayerPolicy: Int = PrivateLayerControls.defaultDepthLayerPolicy"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "var depthAlignment: PrivateLayerDepthAlignment = PrivateLayerDepthAlignment()"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "fun initializeDepthLayerPolicy(policy: Int)"
@@ -2104,6 +2119,18 @@ Assert-Contains "Private layer control coordinator" $privateLayerControlCoordina
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "PrivateLayerPanelControlModule.depthLayerPolicySelectedMarker"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "PrivateLayerPanelControlModule.depthAlignmentSubmittedMarker"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "bindings.updateLayerOverrideNative(updatedOverride)"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "PrivateLayerControls.metaPassthroughEdgeWindowSelected(updatedOverride)"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "bindings.updateMetaPassthroughStyle("
+if ($privateLayerControlCoordinator -notmatch '(?s)val passthroughStyleUpdate.*?bindings\.updateLayerOverrideNative\(updatedOverride\)') {
+    throw "Private layer control coordinator must activate and style system passthrough before submitting the native projection cutout."
+}
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "val enteringEdgeWindow ="
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "enteringEdgeWindow && bindings.projectionPanelEnabled()"
+Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "bindings.refreshProjectionAfterPassthroughActivation("
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=meta-passthrough-projection-refresh"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "projectionRefreshPolicy=one-shot-carrier-rebind-after-system-style-and-native-cutout"
+Assert-Contains "Activity" $activity 'projectionPanelVisibilityCoordinator.setEnabled(false, "$source-refresh-off")'
+Assert-Contains "Activity" $activity 'projectionPanelVisibilityCoordinator.setEnabled(true, "$source-refresh-on")'
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "bindings.updateDepthLayerPolicyNative(updatedPolicy)"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator "bindings.updateDepthAlignmentNative(updatedAlignment)"
 Assert-Contains "Private layer control coordinator" $privateLayerControlCoordinator 'const val MODULE_ID = "spatial-private-layer-control-coordinator"'
@@ -2125,6 +2152,7 @@ Assert-Contains "Activity" $activity "SpatialPrivateLayerControlBindings("
 Assert-Contains "Activity" $activity "cameraHwbProjectionLaunchCoordinator.started ||"
 Assert-Contains "Activity" $activity "spatialVideoProjectionRuntimeCoordinator.started"
 Assert-Contains "Activity" $activity "updateLayerOverrideNative = ::nativeUpdatePrivateLayerOverride"
+Assert-Contains "Activity" $activity "updateMetaPassthroughStyle = spatialPassthroughLutCoordinator::update"
 Assert-Contains "Activity" $activity "updateDepthLayerPolicyNative = ::nativeUpdatePrivateLayerDepthLayerPolicy"
 Assert-Contains "Activity" $activity "nativeUpdatePrivateLayerDepthAlignment("
 Assert-Contains "Activity" $activity "privateLayerControlCoordinator::applyCurrentConfiguration"
@@ -2861,6 +2889,20 @@ Assert-Contains "Spatial staged asset module" $stagedAssetModule "Grabbable(type
 Assert-Contains "Spatial staged asset module" $stagedAssetModule "fbxConversionRequired=true"
 Assert-Contains "Spatial staged asset module" $stagedAssetModule "privateSourceAssetPackaged=false"
 Assert-Contains "Spatial staged asset module" $stagedAssetModule "highRateJsonPayload=false"
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "SpatialAdapterNativeAuthority.resolveAsset"
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "status=activation-rejected"
+Assert-Contains "Spatial staged asset module" $stagedAssetModule 'activationEffectiveMarker=$ACTIVATION_EFFECTIVE_MARKER'
+Assert-Contains "Spatial staged asset module" $stagedAssetModule '"rusty.quest.spatial_asset_model.effective"'
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "PROPERTY_ACTIVATION_LOCK_SHA256"
+Assert-Contains "Spatial staged asset module" $stagedAssetModule "readBoolean(intent, EXTRA_ENABLED, PROPERTY_ENABLED, false)"
+Assert-NotContains "Spatial staged asset module" $stagedAssetModule "readBoolean(intent, EXTRA_ENABLED, PROPERTY_ENABLED, meshUri.isNotBlank())"
+$assetActivationRejectedStart = $stagedAssetModule.IndexOf('"channel=spatial-sdk-asset-model status=activation-rejected')
+$assetMissingMeshStart = $stagedAssetModule.IndexOf('"channel=spatial-sdk-asset-model status=skipped reason=missing-mesh-uri')
+if ($assetActivationRejectedStart -lt 0 -or $assetMissingMeshStart -le $assetActivationRejectedStart) {
+    throw "Spatial staged asset activation-rejected marker block could not be isolated."
+}
+$assetActivationRejectedBlock = $stagedAssetModule.Substring($assetActivationRejectedStart, $assetMissingMeshStart - $assetActivationRejectedStart)
+Assert-NotContains "Spatial staged asset rejected marker" $assetActivationRejectedBlock "activationEffectiveMarker="
 Assert-Contains "Spatial staged asset module" $stagedAssetModule "startDeferredMarker"
 Assert-Contains "Spatial staged asset module" $stagedAssetModule "status=start-deferred"
 Assert-Contains "Spatial staged asset module" $stagedAssetModule "deferredUntil=virtual-room-loaded"
@@ -2876,6 +2918,11 @@ Assert-Contains "Public multi-stack" $publicMultiStack "publicGuideBlurShader=pu
 Assert-Contains "Public multi-stack" $publicMultiStack "RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER"
 Assert-Contains "Public multi-stack" $publicMultiStack "public-guide-blur"
 Assert-Contains "Public multi-stack" $publicMultiStack "publicMultiStackDownstreamPayloadActive=false"
+Assert-Contains "Public multi-stack" $publicMultiStack 'private const val LAYER_COUNT = 9'
+Assert-Contains "Public multi-stack" $publicMultiStack "7:meta-passthrough-edge-window"
+Assert-Contains "Public multi-stack" $publicMultiStack "8:raw-custom-projection"
+Assert-Contains "Public multi-stack" $publicMultiStack "rawCustomProjectionSource=camera2-hwb-direct-sample"
+Assert-Contains "Public multi-stack" $publicMultiStack "metaPassthroughEdgeWindowDefaultActive=false"
 Assert-Contains "Experiment panel controller" $panelController "internal object ExperimentPanelController"
 Assert-Contains "Experiment panel controller" $panelController 'highRatePayloadPolicy: String = "forbidden"'
 Assert-Contains "Experiment panel controller" $panelController "panelFirstLaunchResetMarker"
@@ -2901,6 +2948,7 @@ Assert-Contains "Compose panel registration module" $composePanelRegistrationMod
 Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "R.id.spatial_camera_panel_launcher"
 Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "SpatialCameraPanel("
 Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "PrivateLayerControlPanel("
+Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "layerOverride = bindings.layerOverride()"
 Assert-Contains "Compose panel registration module" $composePanelRegistrationModule "SpatialCameraPanelLauncher("
 Assert-NotContains "Compose panel registration module" $composePanelRegistrationModule "nativeStart"
 Assert-NotContains "Compose panel registration module" $composePanelRegistrationModule "marker("
@@ -2914,6 +2962,9 @@ Assert-Contains "Private layer panel" $privateLayerPanel "internal fun PrivateLa
 Assert-Contains "Private layer panel" $privateLayerPanel "Layer Selection Panel"
 Assert-Contains "Private layer panel" $privateLayerPanel "Active Rendering"
 Assert-Contains "Private layer panel" $privateLayerPanel "Projection Area"
+Assert-Contains "Private layer panel" $privateLayerPanel "Projection Panel Isolation"
+Assert-Contains "Private layer panel" $privateLayerPanel "Turn image projection panel off"
+Assert-Contains "Private layer panel" $privateLayerPanel "Turn image projection panel on"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth Source"
 Assert-Contains "Private layer panel" $privateLayerPanel "Depth Alignment"
 Assert-Contains "Private layer panel" $privateLayerPanel "PrivateLayerControls.layers"
@@ -2931,6 +2982,9 @@ Assert-Contains "Private layer panel control module" $privateLayerPanelControlMo
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(4, "Public post-blur guide", "public-post-blur-guide")'
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(5, "Opaque projection", "opaque-projection-slot")'
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(6, "Public depth diagnostic", "public-depth-diagnostic")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(7, "Meta poster LUT", "meta-passthrough-edge-window")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerChoice(8, "Raw custom projection", "raw-custom-projection")'
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'passthroughActivationOrder=system-style-before-native-projection-cutout'
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerDepthSourceChoice(depthPolicyMonoLayer0, "Mono 0", "mono-layer0")'
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerDepthSourceChoice(depthPolicyMonoLayer1, "Mono 1", "mono-layer1")'
 Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule 'PrivateLayerDepthSourceChoice(depthPolicyEyeIndex, "Per eye", "eye-index")'
@@ -2947,7 +3001,28 @@ foreach ($needle in $privateLayerLabelNeedles) {
   Assert-NotContains "Private layer panel" $privateLayerPanel $needle
 }
 Assert-NotContains "Activity" $activity ("1:" + "raw" + "-brightness")
-Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "publicMultiStackLayerManifest=0:final,1:opaque-analysis0-slot,2:public-guide-blur,3:opaque-analysis1-slot,4:public-post-blur-guide,5:opaque-projection-slot,6:public-depth-diagnostic"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "publicMultiStackLayerManifest=0:final,1:opaque-analysis0-slot,2:public-guide-blur,3:opaque-analysis1-slot,4:public-post-blur-guide,5:opaque-projection-slot,6:public-depth-diagnostic,7:meta-passthrough-edge-window,8:raw-custom-projection"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "status=meta-passthrough-edge-window-submitted"
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "spatialSdkPassthroughLutApplied="
+Assert-Contains "Private layer panel control module" $privateLayerPanelControlModule "passthroughStyleOwner=spatial-sdk-system-passthrough"
+Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule 'const val MODULE_ID = "spatial-passthrough-lut"'
+Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "Scene.setPassthroughLUT"
+Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "LUT_DIMENSION = 16"
+Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "passthroughStyleMode=animated-posterized-mono-to-rgba-gradient"
+Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "AMPLITUDE_OSCILLATOR_HZ = 1.35f"
+Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "COLOR_PHASE_HZ = 0.125f"
+Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "BLACK_LEVEL_CUTOFF = 0.055f"
+Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "passthroughColorMapStops=black-green-yellow-red-magenta-blue-cyan"
+Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "passthroughLutRetainedByCoordinator=true"
+Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "activeLut = lut"
+Assert-Contains "Spatial passthrough LUT module" $spatialPassthroughLutModule "scene.setPassthroughLUT(null)"
+Assert-Contains "Activity" $activity "private val spatialPassthroughLutCoordinator: SpatialPassthroughLutCoordinator by"
+Assert-Contains "Activity" $activity 'spatialPassthroughLutCoordinator.stop("activity-destroy")'
+Assert-Contains "Activity" $activity "nativeUpdateSpatialNativePassthroughEdgeStyle"
+Assert-Contains "Activity" $activity "scene.enablePassthrough(true)"
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "LayerAlphaBlend("
+Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "BlendFactor.SOURCE_ALPHA"
+Assert-Contains "Camera HWB projection panel carrier coordinator" $cameraHwbProjectionPanelCarrierCoordinator "LayerAlphaBlend("
 Assert-Contains "Activity" $activity "nativeResolveSurfaceParticleAliasParameter"
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"particle-alias-control"'
 Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"particle-panel-distance"'
@@ -3382,8 +3457,26 @@ Assert-Contains "Camera projection target" $cameraProjectionTarget "update_camer
 Assert-Contains "Camera projection target" $cameraProjectionTarget "projectionTargetStereoHorizontalOffsetUv="
 Assert-Contains "Camera projection target" $cameraProjectionTarget "projectionTargetLiveScale="
 Assert-Contains "Camera projection target" $cameraProjectionTarget "CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV: f32 = 0.046320"
+Assert-Contains "Camera projection target" $cameraProjectionTarget "CAMERA_HWB_PROJECTION_TARGET_ASPECT_COMPENSATION"
+Assert-Contains "Camera projection target" $cameraProjectionTarget "projectionGeometryOwner=custom-camera-target-rect"
+Assert-Contains "Camera projection target" $cameraProjectionTarget "videoCarrierGeometryPreserved=true"
+Assert-Contains "Camera projection target" $cameraProjectionTarget "projectionTargetAspectCompensation={:.6}"
 Assert-Contains "Native public multi-stack" $nativeMultiStack 'rusty.quest.spatial_camera_panel.public_multistack.v1'
-Assert-Contains "Native public multi-stack" $nativeMultiStack "publicMultiStackLayerCount=7"
+Assert-Contains "Native public multi-stack" $nativeMultiStack "publicMultiStackLayerCount=9"
+Assert-Contains "Native public multi-stack" $nativeMultiStack "7:meta-passthrough-edge-window"
+Assert-Contains "Native public multi-stack" $nativeMultiStack "8:raw-custom-projection"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "spatial_public_raw_custom_projection_selected"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "rawCustomProjectionSelected="
+Assert-Contains "Native camera HWB WSI" $cameraWsi "raw_custom_projection_selected"
+Assert-Contains "Camera HWB fragment shader" $cameraRawColorShader "abs(layer - 8.0) < 0.5"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "record_spatial_public_meta_passthrough_edge_window_cutout"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "cmd_clear_attachments"
+Assert-Contains "Native public multi-stack runtime" $nativeMultiStackRuntime "projectionAlphaCutoutPreservesVideoDecode=true"
+Assert-Contains "Camera HWB WSI" $cameraWsi "record_spatial_public_meta_passthrough_edge_window_cutout"
+Assert-Contains "Camera HWB WSI" $cameraWsi "renderer.record_video_eye"
+Assert-Contains "Native passthrough" $nativePassthrough "xrPassthroughLayerSetStyleFB"
+Assert-Contains "Native passthrough" $nativePassthrough "status=edge-style-applied"
+Assert-Contains "Native passthrough" $nativePassthrough "nativePassthroughEdgeStyleMode=edge-and-opacity"
 Assert-Contains "Native public multi-stack" $nativeMultiStack "publicMultiStackGuidePasses=6"
 Assert-Contains "Native public multi-stack" $nativeMultiStack "publicMultiStackPublicBlurPasses=4"
 Assert-Contains "Native public multi-stack" $nativeMultiStack "publicMultiStackGuideTargetManifest"
@@ -4226,6 +4319,10 @@ Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "Enable
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "RequireSpatialVirtualRoom"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "Stage-SpatialCameraPanelAsset.ps1"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "debug.rustyquest.spatial.asset_model.mesh_uri"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial-asset-model.feature.lock.json"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "debug.rustyquest.spatial.asset_model.activation.lock_sha256"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_asset_model_activation_applied"
+Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_asset_model_effective_receipt"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "debug.rustyquest.spatial.virtual_room.enabled"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_asset_model_entity_created"
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "spatial_asset_model_private_source_not_packaged"
@@ -4237,7 +4334,19 @@ Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "camera
 Assert-Contains "Camera projection smoke wrapper" $cameraProjectionSmoke "private_layer_controls_apply_to_wall_and_full_fov"
 Assert-Contains "Build script" $buildScript 'spatial_sdk_3d_asset_module = "spatial-sdk-staged-3d-asset"'
 Assert-Contains "Build script" $buildScript 'spatial_sdk_3d_asset_module_source_policy = "no-source-model-packaged-or-committed"'
+Assert-Contains "Build script" $buildScript 'spatial_sdk_3d_asset_activation_policy = "exact-conformance-lock-plus-explicit-runtime-input"'
+Assert-Contains "Build script" $buildScript 'spatial_sdk_3d_asset_activation_effective_marker = "rusty.quest.spatial_asset_model.effective"'
 Assert-Contains "Build script" $buildScript 'spatial_sdk_3d_asset_supported_runtime_mesh_formats = @("glb", "gltf")'
+Assert-Contains "Build script" $buildScript "`$Value -split '[,;\s]+'"
+Assert-Contains "Build script" $buildScript 'camera_hwb_projection_quad_default_target_distance_meters = 2.0'
+Assert-NotContains "Build script" $buildScript 'camera_hwb_projection_quad_default_target_distance_meters = 1.0'
+Assert-Contains "Build script" $buildScript 'spatial_sdk_virtual_room_default_enabled = $false'
+Assert-Contains "Build script" $buildScript 'spatial_sdk_skybox_default_enabled = $false'
+Assert-Contains "Build script" $buildScript 'camera_hwb_projection_accepted_no_room_default = $true'
+Assert-Contains "Build script" $buildScript 'camera_hwb_projection_right_secondary_behavior = "disabled-consumed-no-op"'
+Assert-Contains "Build script" $buildScript 'camera_hwb_projection_right_primary_behavior = "open-generic-layer-control-panel"'
+Assert-Contains "Build script" $buildScript 'camera_hwb_projection_layer_control_panel_default_distance_meters = 1.0'
+Assert-Contains "Build script" $buildScript 'camera_hwb_projection_staged_asset_default_requested = $false'
 Assert-Contains "Build script" $buildScript 'spatial_sdk_virtual_room_module = "spatial-sdk-packaged-virtual-room"'
 Assert-Contains "Build script" $buildScript 'spatial_sdk_virtual_room_runtime_property = "debug.rustyquest.spatial.virtual_room.enabled"'
 Assert-Contains "Build script" $buildScript 'spatial_sdk_virtual_room_mruk_policy = "disabled-not-real-room-placement"'
@@ -4245,6 +4354,9 @@ Assert-Contains "Stage Spatial asset script" $stageSpatialAsset "rusty.quest.spa
 Assert-Contains "Stage Spatial asset script" $stageSpatialAsset "Raw FBX is a local source format only"
 Assert-Contains "Stage Spatial asset script" $stageSpatialAsset "ConvertedMeshPath"
 Assert-Contains "Stage Spatial asset script" $stageSpatialAsset "sdk_loadable_mesh_uri"
+Assert-Contains "Stage Spatial asset script" $stageSpatialAsset "activation_required = `$true"
+Assert-Contains "Stage Spatial asset script" $stageSpatialAsset "activation_lock_sha256"
+Assert-Contains "Stage Spatial asset script" $stageSpatialAsset "rusty.quest.spatial_asset_model.effective"
 Assert-Contains "Spatial permission pregrant" $spatialPermissionPregrant "rusty.quest.spatial_camera_panel_permission_pregrant.v1"
 Assert-Contains "Spatial permission pregrant" $spatialPermissionPregrant "horizonos.permission.USE_SCENE"
 Assert-Contains "Spatial permission pregrant" $spatialPermissionPregrant "USE_SCENE_DATA"
@@ -4263,6 +4375,27 @@ Assert-Contains "Native public multi-stack" $nativeMultiStack "environmentDepthA
 Assert-Contains "Native public multi-stack" $nativeMultiStack "spatial_native_passthrough_marker_fields"
 Assert-Contains "UI action wrapper" $uiActionWrapper "private-layer-panel-open"
 Assert-Contains "UI action wrapper" $uiActionWrapper "private-layer-panel-close"
+Assert-Contains "UI action wrapper" $uiActionWrapper "private-layer-select"
+Assert-Contains "UI action wrapper" $uiActionWrapper "projection-panel-off"
+Assert-Contains "UI action wrapper" $uiActionWrapper "projection-panel-on"
+Assert-Contains "UI action wrapper" $uiActionWrapper '[double]$PrivateLayerOverride'
+Assert-Contains "UI action wrapper" $uiActionWrapper '[Math]::Min(8.0, $PrivateLayerOverride)'
+Assert-Contains "UI action wrapper" $uiActionWrapper '"private_layer_override"'
+Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"private-layer-select" ->'
+Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"projection-panel-off" -> bindings.setProjectionPanelEnabled(false, source)'
+Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator '"projection-panel-on" -> bindings.setProjectionPanelEnabled(true, source)'
+Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator "internal class SpatialProjectionPanelVisibilityCoordinator"
+Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator "projectionCarrierVisible=false customProjectionEnabled=false"
+Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator 'videoProjectionEnabled=false'
+Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator 'passthroughIsolationDiagnostic=true'
+Assert-Contains "Projection panel visibility coordinator" $projectionPanelVisibilityCoordinator 'const val MODULE_ID = "spatial-projection-panel-visibility-coordinator"'
+Assert-Contains "Activity" $activity "private fun stopCameraHwbProjectionPanel(reason: String): SpatialProjectionPanelStopReceipt"
+Assert-Contains "Activity" $activity "nativeStopCameraHwbProbe()"
+Assert-Contains "Activity" $activity "spatialVideoProjectionRuntimeCoordinator.stop(reason)"
+Assert-Contains "Activity" $activity "sdkQuadResourceCoordinator.cleanup(reason)"
+Assert-Contains "Spatial validation workflow coordinator" $validationWorkflowCoordinator "EXTRA_PRIVATE_LAYER_OVERRIDE"
+Assert-Contains "Activity" $activity "privateLayerControlCoordinator.updateLayerOverride(layerOverride, source)"
+Assert-Contains "Activity" $activity "layerOverride = { privateLayerControlCoordinator.layerOverride }"
 Assert-Contains "UI action wrapper" $uiActionWrapper "particle-recenter"
 Assert-Contains "UI action wrapper" $uiActionWrapper "particle-alias-control"
 Assert-Contains "UI action wrapper" $uiActionWrapper "ParticleAliasParameterId"
@@ -4581,7 +4714,7 @@ Assert-Contains "README" $readme "SpatialVirtualRoomModule.kt"
 Assert-Contains "README" $readme "Feature modules must be explicit opt-in"
 Assert-Contains "README" $readme "Individual modules may be compiled"
 Assert-Contains "README" $readme "multimodal opt-in marker fields"
-Assert-Contains "README" $readme "public seven-slot camera guide multi-stack contract"
+Assert-Contains "README" $readme "public nine-slot camera guide multi-stack contract"
 Assert-Contains "README" $readme "official Spatial SDK panel sample"
 Assert-Contains "README" $readme "normal path is"
 Assert-Contains "README" $readme '`interaction_sdk`'
@@ -4633,7 +4766,7 @@ Assert-Contains "README" $readme "/sdcard/Android/data/io.github.mesmerprism.rus
 Assert-Contains "README" $readme "nativeUpdatePrivateLayerOverride"
 Assert-Contains "README" $readme "nativeUpdatePrivateLayerDepthAlignment"
 Assert-Contains "Implementation notes" $notes "Private effect formulas"
-Assert-Contains "Implementation notes" $notes "Public seven-slot camera guide multi-stack contract"
+Assert-Contains "Implementation notes" $notes "Public nine-slot camera guide multi-stack contract"
 Assert-Contains "Implementation notes" $notes "SpatialCameraPanelRuntimeHelpers.kt"
 Assert-Contains "Implementation notes" $notes "SpatialVideoProjectionSettings.kt"
 Assert-Contains "Implementation notes" $notes "SpatialDiagnosticProbeRouteModule.kt"

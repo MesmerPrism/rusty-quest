@@ -34,6 +34,21 @@ internal class SpatialCameraHwbProjectionLaunchCoordinator(
     private set
 
   fun runIfRequested(reason: String) {
+    runIfReady(reason, requestOverride = null)
+  }
+
+  fun restart(reason: String, request: SpatialCameraHwbProjectionLaunchRequest) {
+    runIfReady(reason, requestOverride = request)
+  }
+
+  fun markStopped() {
+    started = false
+  }
+
+  private fun runIfReady(
+      reason: String,
+      requestOverride: SpatialCameraHwbProjectionLaunchRequest?,
+  ) {
     val state = bindings.state()
     if (started || !state.enabled) {
       return
@@ -52,7 +67,7 @@ internal class SpatialCameraHwbProjectionLaunchCoordinator(
       return
     }
     started = true
-    val request = bindings.prepareRequest()
+    val request = requestOverride ?: bindings.prepareRequest()
     bindings.marker(
         CameraHwbProjectionModule.rawProjectionStartMarker(
             reason = reason,

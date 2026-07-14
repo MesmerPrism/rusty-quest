@@ -153,7 +153,10 @@ Spatial SDK staged 3D asset path accepts only explicit GLB/GLTF `Mesh` URIs at
 runtime, usually staged by `Stage-SpatialCameraPanelAsset.ps1` or by
 `Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1
 -RequireSpatialAssetModel`; raw FBX files are local conversion inputs and are
-not packaged. The packaged virtual room path is opt-in through
+not packaged. The app's default feature lock keeps this lane inert; the smoke
+wrapper binds the exact `spatial-asset-model` conformance lock plus an explicit
+runtime request before the entity consumer emits its effective receipt. The
+packaged virtual room path is opt-in through
 `debug.rustyquest.spatial.virtual_room.enabled` and loads a generic
 `assets/scenes/Composition.glxf` room, such as an exported official Spatial SDK
 panel sample, as a VR environment. That room path is explicitly not MRUK and
@@ -165,7 +168,17 @@ surface at 2m, opens the generic layer-control UI panel at 1m, and consumes
 right secondary/B as a no-op. The legacy launcher panel is suppressed on this
 camera-stack route, and the right primary button opens only the generic
 multi-layer control panel. Its layer buttons keep submitting the active layer
-override. Right-stick Y still controls projection target scale, Left-stick Y
+override. The default-off `Meta poster LUT` button keeps stereo video decode
+active while clearing the custom projection footprint to alpha zero and applies
+an animated, hard-posterized color LUT to the Spatial SDK-owned system
+passthrough. The video carrier keeps its wide refactored dimensions; only the
+custom camera target rectangle applies the square-baseline aspect compensation.
+Passthrough and its LUT are activated before the native cutout is submitted so
+the first selection can perform the required one-shot carrier rebind
+automatically. The adjacent default-off `Raw custom projection` button draws
+the direct Camera2/AHardwareBuffer stereo sample over the still-active video
+without the private effect shader or its inner edge fade.
+Right-stick Y still controls projection target scale, Left-stick Y
 controls workflow/layer-control panel distance, and Right-stick X is
 intentionally ignored.
 

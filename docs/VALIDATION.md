@@ -188,6 +188,14 @@ condition-to-native-parameter handoff, and the high-rate payload ban. The build
 gate writes
 `target\spatial-camera-panel-android\rusty-quest-spatial-camera-panel.apk` plus
 `rusty.quest.spatial_camera_panel_sdk_android.build_manifest.v1`. Live validation
+of a staged GLB/GLTF must use
+`Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1
+-RequireSpatialAssetModel`. The wrapper hashes and binds the app-owned
+`spatial-asset-model.feature.lock.json`; acceptance requires both
+`activationState=applied` and
+`activationEffectiveMarker=rusty.quest.spatial_asset_model.effective` on the
+entity marker. A raw FBX remains a local conversion input, and staging or a
+mesh URI without the exact activation tuple must remain inert. Live validation
 must install and launch that APK with serial-scoped ADB, then confirm the
 participant setup, surface selection, block start/completion, workflow-panel
 transition back to particle view, condition parameter handoff markers,
@@ -372,6 +380,49 @@ shader UV and showed structured per-eye differences. Treat that as visual
 evidence that the two layers are not trivially identical, but not as literal
 byte-for-byte readback proof. General Spatial depth-stack alignment is deferred
 to manual panel calibration and later alignment work.
+
+The same panel exposes a default-off `Meta poster LUT` slot while retaining the
+`meta-passthrough-edge-window` compatibility token. Acceptance
+requires one frame marker with `metaPassthroughEdgeWindowSelected=true`,
+`projectionAlphaCutoutActive=true`, and `videoProjectionRendered=true`, plus a
+successful `Scene.setPassthroughLUT` update receipt and a compositor-aware
+headset capture showing the saturated, posterized color bands through the
+cleared stereo footprint. The LUT must retain a black floor and the public
+green/yellow/red/magenta/blue/cyan stop sequence; a pure system-passthrough
+visual is a failure even if the Kotlin call returned. Selecting any other slot
+must clear the LUT and reset edge alpha to zero. The separately-created raw
+`XR_FB_passthrough` diagnostic layer is not visual authority because Spatial SDK
+does not submit it in its frame layer list.
+The system passthrough layer and LUT must be activated before the native
+alpha-zero camera cutout is submitted. A fresh `Meta poster LUT` selection then
+must issue exactly one guarded projection-carrier off/on rebind and show the
+styled passthrough without any manual panel cycle. The restart must resume the
+active video settings, reapply slot 7, and must not recurse into another rebind.
+If that footprint is black, use the private layer panel's `Turn image projection
+panel off` isolation control (or remote actions `projection-panel-off` and
+`projection-panel-on`). The off receipt must report
+`projectionCarrierVisible=false`, `customProjectionEnabled=false`,
+`videoProjectionEnabled=false`, successful video/native shutdown, destroyed
+carrier resources, and `systemPassthroughEnabled=true`. A headset visual that
+remains black after this receipt rules out the app projection carrier as the
+occluder and moves diagnosis to passthrough submission/composition.
+Projection-aspect acceptance keeps the refactored `5.40 m x 4.00 m` video
+carrier unchanged and applies `4.00 / 5.40 = 0.740741` only to the custom
+camera target rectangle's normalized width. Runtime markers must include
+`projectionGeometryOwner=custom-camera-target-rect` and
+`videoCarrierGeometryPreserved=true`; resizing `PanelDimensions` or
+`QuadShapeOptions` to make the camera look square is a regression.
+The default-off `Raw custom projection` slot must preserve active video decode,
+skip the private multi-pass/effect projection, and draw the direct Camera2/HWB
+sample in the same compensated target rectangle. Its hard opaque edge is the
+control condition for the intentional private-shader inner alpha fade seen in
+slots 0 through 6.
+
+Revisit the custom-projection border blend before accepting it as final. The
+current fade stops the effect payload but still reveals the raw custom camera
+projection inside the blend band, followed by a hard cut to the underlying
+video layer. Future acceptance must prove that the blend transitions directly
+from the effect composite into video, without an intervening raw-camera rim.
 `quest-native-renderer-native-passthrough-meta-environment-depth-particles-layer1.profile.json`
 is the matching layer-1 comparison profile. It switches only
 `environment_depth.layer_policy` to `mono-layer1` and requires

@@ -28,8 +28,9 @@ tracked in `docs/SPATIAL_LAYERING_CARRIER_PROBE_PLAN.md`.
   public app owns optional scene loading, skybox/IBL setup, and a fixed
   virtual-wall camera-quad placement mode; local sample room assets are launch
   inputs, not required public source assets.
-- Public seven-slot camera guide multi-stack contract with generic final,
-  guide blur, post-blur guide, and depth diagnostic slots.
+- Public nine-slot camera guide multi-stack contract with generic final,
+  guide blur, post-blur guide, depth diagnostic, Meta poster LUT, and direct
+  raw custom-projection slots.
 - Public guide-target/pass manifests and generic separable 5-tap guide blur
   shader compilation for future multi-pass Spatial camera routes.
 - Spatial scene-depth diagnostics mirror the native renderer permission and
@@ -334,6 +335,11 @@ Apply that model here when a lane grows beyond a narrow facade method:
   declarations in typed Activity bindings;
 - keep `PrivateLayerControlPanel.kt` as the Compose-only projection of those
   controls;
+- package projection-carrier isolation state, coordinated video/custom
+  projection shutdown, passthrough-preserving receipts, and restart intent in
+  `SpatialProjectionPanelVisibilityCoordinator.kt`; keep actual carrier
+  destruction, decoder/native lifecycle calls, and Scene passthrough authority
+  in typed Activity bindings;
 - package read-only Spatial SDK controller/avatar ECS observation, local-right
   controller preference, avatar-controller fallback, button/thumb
   normalization, and `SpatialControllerPrimarySnapshot` construction in

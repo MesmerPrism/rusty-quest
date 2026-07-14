@@ -20,7 +20,9 @@ const SPATIAL_PUBLIC_ENVIRONMENT_DEPTH_TEXTURE_TRANSFORM_FLAGS: f32 = 8.0;
 const SPATIAL_PUBLIC_DEPTH_FLAG_INFINITE_FAR: u32 = 1;
 const SPATIAL_PUBLIC_PACKED_EYE_COUNT: usize = 2;
 const SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_DEFAULT: f32 = -1.0;
-const SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_MAX: f32 = 6.0;
+const SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_MAX: f32 = 8.0;
+const SPATIAL_PUBLIC_META_PASSTHROUGH_EDGE_WINDOW_LAYER: f32 = 7.0;
+const SPATIAL_PUBLIC_RAW_CUSTOM_PROJECTION_LAYER: f32 = 8.0;
 const SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_PROPERTY: &str =
     "debug.rustyquest.spatial.camera_hwb_projection_probe.projection_layer_override";
 const SPATIAL_PUBLIC_DEPTH_LAYER_POLICY_PROPERTY: &str =
@@ -287,14 +289,19 @@ impl SpatialPublicGuideTargets {
         let left_projection_rect = packed_projection_target_rect(0);
         let right_projection_rect = packed_projection_target_rect(1);
         let layer_override = opaque_projection_layer_override();
+        let edge_window_selected = spatial_public_meta_passthrough_edge_window_selected();
+        let raw_custom_projection_selected = spatial_public_raw_custom_projection_selected();
         let depth_alignment = current_spatial_public_depth_alignment();
         format!(
-            "publicMultiStackProjectionApplied={} publicMultiStackLayerCycleEnabled=true publicMultiStackLayerCycleElapsedSeconds={:.3} publicMultiStackOpaqueProjectionLayerOverride={:.3} publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv publicMultiStackOpaqueProjectionLeftTargetRect={} publicMultiStackOpaqueProjectionRightTargetRect={} {} {} {} {} publicMultiStackDepthAlignmentLeftOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentRightOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentSampleScale={:.4}",
+            "publicMultiStackProjectionApplied={} publicMultiStackLayerCycleEnabled=true publicMultiStackLayerCycleElapsedSeconds={:.3} publicMultiStackOpaqueProjectionLayerOverride={:.3} publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv publicMultiStackOpaqueProjectionLeftTargetRect={} publicMultiStackOpaqueProjectionRightTargetRect={} metaPassthroughEdgeWindowSelected={} rawCustomProjectionSelected={} rawCustomProjectionSource=camera2-hwb-direct-sample rawCustomProjectionVideoDecodePolicy=keep-active projectionAlphaCutoutActive={} projectionAlphaCutoutValue=0.000 projectionAlphaCutoutPreservesVideoDecode=true projectionAlphaCutoutTarget=custom-stereo-projection-rect {} {} {} {} publicMultiStackDepthAlignmentLeftOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentRightOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentSampleScale={:.4}",
             bool_marker(projected_by_public_stack),
             elapsed_seconds.max(0.0),
             layer_override,
             rect_marker(left_projection_rect),
             rect_marker(right_projection_rect),
+            bool_marker(edge_window_selected),
+            bool_marker(raw_custom_projection_selected),
+            bool_marker(edge_window_selected && projected_by_public_stack),
             self.depth_resources.marker_fields(),
             spatial_environment_depth_marker_fields(),
             spatial_native_passthrough_marker_fields(),
@@ -322,6 +329,11 @@ impl SpatialPublicGuideTargets {
         camera_descriptor_set: vk::DescriptorSet,
         elapsed_seconds: f32,
     ) -> Result<bool, String> {
+        if spatial_public_meta_passthrough_edge_window_selected()
+            || spatial_public_raw_custom_projection_selected()
+        {
+            return Ok(false);
+        }
         if !self.guide_pass_execution_available() {
             return Ok(false);
         }
@@ -724,6 +736,53 @@ pub(crate) fn current_spatial_public_opaque_projection_layer_override() -> f32 {
     clamp_projection_layer_override(f32::from_bits(
         SPATIAL_PUBLIC_OPAQUE_PROJECTION_LAYER_OVERRIDE_BITS.load(Ordering::Acquire),
     ))
+}
+
+pub(crate) fn spatial_public_meta_passthrough_edge_window_selected() -> bool {
+    is_meta_passthrough_edge_window_layer(opaque_projection_layer_override())
+}
+
+pub(crate) fn spatial_public_raw_custom_projection_selected() -> bool {
+    is_raw_custom_projection_layer(opaque_projection_layer_override())
+}
+
+fn is_meta_passthrough_edge_window_layer(layer_override: f32) -> bool {
+    (layer_override - SPATIAL_PUBLIC_META_PASSTHROUGH_EDGE_WINDOW_LAYER).abs() < f32::EPSILON
+}
+
+fn is_raw_custom_projection_layer(layer_override: f32) -> bool {
+    (layer_override - SPATIAL_PUBLIC_RAW_CUSTOM_PROJECTION_LAYER).abs() < f32::EPSILON
+}
+
+pub(crate) unsafe fn record_spatial_public_meta_passthrough_edge_window_cutout(
+    device: &ash::Device,
+    command_buffer: vk::CommandBuffer,
+    extent: vk::Extent2D,
+) -> bool {
+    if !spatial_public_meta_passthrough_edge_window_selected() {
+        return false;
+    }
+    let attachments = [vk::ClearAttachment::default()
+        .aspect_mask(vk::ImageAspectFlags::COLOR)
+        .color_attachment(0)
+        .clear_value(vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.0, 0.0, 0.0, 0.0],
+            },
+        })];
+    let clear_rects = (0..SPATIAL_PUBLIC_PACKED_EYE_COUNT)
+        .map(|eye_index| {
+            vk::ClearRect::default()
+                .rect(target_rect_to_scissor(
+                    extent,
+                    packed_projection_target_rect(eye_index),
+                ))
+                .base_array_layer(0)
+                .layer_count(1)
+        })
+        .collect::<Vec<_>>();
+    device.cmd_clear_attachments(command_buffer, &attachments, &clear_rects);
+    true
 }
 
 pub(crate) fn update_spatial_public_depth_layer_policy(
@@ -2681,10 +2740,26 @@ mod tests {
     #[test]
     fn projection_layer_override_parser_accepts_numeric_layer_indices() {
         assert_eq!(parse_projection_layer_override("5.0"), Some(5.0));
-        assert_eq!(parse_projection_layer_override("9.0"), Some(6.0));
+        assert_eq!(parse_projection_layer_override("7.0"), Some(7.0));
+        assert_eq!(parse_projection_layer_override("8.0"), Some(8.0));
+        assert_eq!(parse_projection_layer_override("9.0"), Some(8.0));
         assert_eq!(parse_projection_layer_override("-9.0"), Some(-1.0));
         assert_eq!(parse_projection_layer_override("NaN"), None);
         assert_eq!(parse_projection_layer_override("not-a-layer"), None);
+    }
+
+    #[test]
+    fn passthrough_edge_window_is_an_explicit_layer_override() {
+        assert!(is_meta_passthrough_edge_window_layer(7.0));
+        assert!(!is_meta_passthrough_edge_window_layer(0.0));
+        assert!(!is_meta_passthrough_edge_window_layer(-1.0));
+    }
+
+    #[test]
+    fn raw_custom_projection_is_an_explicit_layer_override() {
+        assert!(is_raw_custom_projection_layer(8.0));
+        assert!(!is_raw_custom_projection_layer(7.0));
+        assert!(!is_raw_custom_projection_layer(0.0));
     }
 
     #[test]
@@ -2753,13 +2828,13 @@ mod tests {
         };
         let left = target_rect_to_scissor(extent, packed_projection_target_rect(0));
         let right = target_rect_to_scissor(extent, packed_projection_target_rect(1));
-        assert_eq!(left.offset.x, 129);
+        assert_eq!(left.offset.x, 228);
         assert_eq!(left.offset.y, 224);
-        assert_eq!(left.extent.width, 768);
+        assert_eq!(left.extent.width, 569);
         assert_eq!(left.extent.height, 672);
-        assert_eq!(right.offset.x, 1151);
+        assert_eq!(right.offset.x, 1251);
         assert_eq!(right.offset.y, 224);
-        assert_eq!(right.extent.width, 768);
+        assert_eq!(right.extent.width, 569);
         assert_eq!(right.extent.height, 688);
         assert!(right.offset.x >= 1024);
         assert!(left.offset.x + left.extent.width as i32 <= 1024);
@@ -2769,11 +2844,11 @@ mod tests {
     fn rect_marker_formats_native_acceptance_tokens() {
         assert_eq!(
             rect_marker(packed_projection_target_rect(0)),
-            "0.062777;0.218750;0.375000;0.656250"
+            "0.111389;0.218750;0.277778;0.656250"
         );
         assert_eq!(
             rect_marker(packed_projection_target_rect(1)),
-            "0.562222;0.218750;0.375000;0.671875"
+            "0.610834;0.218750;0.277778;0.671875"
         );
     }
 

@@ -4,6 +4,8 @@ import android.view.Surface as AndroidSurface
 import com.meta.spatial.core.Entity
 import com.meta.spatial.core.Vector3
 import com.meta.spatial.runtime.Scene
+import com.meta.spatial.runtime.BlendFactor
+import com.meta.spatial.runtime.LayerAlphaBlend
 import com.meta.spatial.runtime.SceneMaterial
 import com.meta.spatial.runtime.SceneMesh
 import com.meta.spatial.runtime.SceneObject
@@ -246,6 +248,14 @@ internal class SpatialCameraHwbProjectionRawCarrierCoordinator(
                 )
             val layerZIndex = bindings.layerZIndex(plane.placementMode)
             layer.setZIndex(layerZIndex)
+            layer.setAlphaBlend(
+                LayerAlphaBlend(
+                    BlendFactor.SOURCE_ALPHA,
+                    BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+                    BlendFactor.ONE,
+                    BlendFactor.ONE_MINUS_SOURCE_ALPHA,
+                )
+            )
             bindings.resources.registerLayer(layer)
             bindings.marker(
                 CameraHwbProjectionModule.rawProjectionLayerCreatedMarker(

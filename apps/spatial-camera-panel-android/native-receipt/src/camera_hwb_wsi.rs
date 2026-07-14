@@ -16,7 +16,11 @@ use crate::camera_hwb_projection_target::{
 };
 use crate::camera_hwb_stream::CameraProbeFrame;
 use crate::spatial_public_multistack::public_multistack_marker_fields;
-use crate::spatial_public_multistack_runtime::SpatialPublicGuideTargets;
+use crate::spatial_public_multistack_runtime::{
+    record_spatial_public_meta_passthrough_edge_window_cutout,
+    spatial_public_meta_passthrough_edge_window_selected,
+    spatial_public_raw_custom_projection_selected, SpatialPublicGuideTargets,
+};
 use crate::spatial_video_projection::{
     SpatialVideoProjectionFrameStats, SpatialVideoProjectionRenderer,
 };
@@ -500,7 +504,11 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     };
 
     let mut public_guide_targets = public_guide_targets;
-    let public_projection_ready = if let Some(targets) = public_guide_targets.as_deref_mut() {
+    let edge_window_selected = spatial_public_meta_passthrough_edge_window_selected();
+    let raw_custom_projection_selected = spatial_public_raw_custom_projection_selected();
+    let public_projection_ready = if edge_window_selected || raw_custom_projection_selected {
+        false
+    } else if let Some(targets) = public_guide_targets.as_deref_mut() {
         targets.record_spatial_public_guide_passes(
             device,
             command_buffer,
@@ -517,7 +525,11 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         renderer.record_video_eye(device, command_buffer, extent, 0, video_settings, prepared);
         renderer.record_video_eye(device, command_buffer, extent, 1, video_settings, prepared);
     }
-    let projected_by_public_stack = if public_projection_ready {
+    let edge_window_cutout_applied =
+        record_spatial_public_meta_passthrough_edge_window_cutout(device, command_buffer, extent);
+    let projected_by_public_stack = if edge_window_cutout_applied {
+        true
+    } else if public_projection_ready {
         public_guide_targets
             .as_deref()
             .ok_or_else(|| "public-guide-targets-missing-after-ready".to_string())?

@@ -33,12 +33,14 @@ internal data class SpatialWorkflowPanelRegistrationBindings(
 )
 
 internal data class SpatialPrivateLayerPanelRegistrationBindings(
-    val layerOverride: Float,
+    val layerOverride: () -> Float,
+    val projectionPanelEnabled: () -> Boolean,
     val projectionScale: Float,
     val projectionScaleRange: ClosedFloatingPointRange<Float>,
     val depthLayerPolicy: Int,
     val depthAlignment: PrivateLayerDepthAlignment,
     val setLayerOverride: (Float, String) -> Float,
+    val setProjectionPanelEnabled: (Boolean, String) -> Boolean,
     val updateProjectionScale: (Float, String) -> Float,
     val updateDepthLayerPolicy: (Int, String) -> Int,
     val updateDepthAlignment:
@@ -137,12 +139,14 @@ internal object SpatialComposePanelRegistrationModule {
                         )
                 ) {
                   PrivateLayerControlPanel(
-                      layerOverride = bindings.layerOverride,
+                      layerOverride = bindings.layerOverride(),
+                      projectionPanelEnabled = bindings.projectionPanelEnabled(),
                       projectionScale = bindings.projectionScale,
                       projectionScaleRange = bindings.projectionScaleRange,
                       depthLayerPolicy = bindings.depthLayerPolicy,
                       depthAlignment = bindings.depthAlignment,
                       setLayerOverride = bindings.setLayerOverride,
+                      setProjectionPanelEnabled = bindings.setProjectionPanelEnabled,
                       updateProjectionScale = bindings.updateProjectionScale,
                       updateDepthLayerPolicy = bindings.updateDepthLayerPolicy,
                       updateDepthAlignment = bindings.updateDepthAlignment,

@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory=$true)][string]$SourcePath,
     [string]$ConvertedMeshPath = "",
+    [string]$RepoRoot = "",
+    [string]$AssetConformanceLockPath = "",
     [string]$Adb = $env:RUSTY_QUEST_ADB,
     [string]$Serial = $env:RUSTY_QUEST_SERIAL,
     [string]$AdbServerPort = $env:RUSTY_QUEST_ADB_SERVER_PORT,
@@ -107,6 +109,35 @@ function Save-Receipt {
     [System.IO.File]::WriteAllText($Out, ($Receipt | ConvertTo-Json -Depth 8), [System.Text.Encoding]::UTF8)
 }
 
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $RepoRoot = Join-Path $PSScriptRoot ".."
+}
+$repoRootPath = (Resolve-Path -LiteralPath $RepoRoot).Path
+$assetConformanceLockResolved = if ([string]::IsNullOrWhiteSpace($AssetConformanceLockPath)) {
+    Join-Path $repoRootPath "apps\spatial-camera-panel-android\morphospace\conformance-locks\spatial-asset-model.feature.lock.json"
+} elseif ([System.IO.Path]::IsPathRooted($AssetConformanceLockPath)) {
+    $AssetConformanceLockPath
+} else {
+    Join-Path $repoRootPath $AssetConformanceLockPath
+}
+if (-not (Test-Path -LiteralPath $assetConformanceLockResolved -PathType Leaf)) {
+    throw "Spatial asset conformance lock not found: $assetConformanceLockResolved"
+}
+$assetConformanceLockResolved = (Resolve-Path -LiteralPath $assetConformanceLockResolved).Path
+$assetConformanceLock = Get-Content -Raw -LiteralPath $assetConformanceLockResolved | ConvertFrom-Json
+$assetConformanceFeature = @($assetConformanceLock.features | Where-Object { [string]$_.feature_id -eq "spatial-asset-model" })
+if ([string]$assetConformanceLock.schema -ne "rusty.morphospace.workflow.feature_lock.v1" -or
+    [string]$assetConformanceLock.project_id -ne "spatial-camera-panel" -or
+    [long]$assetConformanceLock.revision -lt 1 -or
+    $assetConformanceFeature.Count -ne 1 -or
+    $assetConformanceFeature[0].enabled -ne $true -or
+    [string]$assetConformanceFeature[0].module_id -ne "spatial-asset-model" -or
+    [string]$assetConformanceFeature[0].requested_by -ne "conformance-profile:spatial-asset-model") {
+    throw "Spatial asset conformance lock does not select the accepted spatial-asset-model contract: $assetConformanceLockResolved"
+}
+$assetActivationProfileId = "profile.quest.spatial_camera_panel.spatial_asset_model_conformance"
+$assetActivationLockSha256 = Get-FileSha256 -Path $assetConformanceLockResolved
+
 if (-not (Test-Path -LiteralPath $SourcePath)) {
     throw "SourcePath not found: $SourcePath"
 }
@@ -132,6 +163,13 @@ if ($requiresConversion) {
             sdk_loadable_mesh_uri = $false
             fbx_conversion_required = $true
             source_sha256 = Get-FileSha256 -Path $source.FullName
+            activation_required = $true
+            activation_profile_id = $assetActivationProfileId
+            activation_project_id = "spatial-camera-panel"
+            activation_feature_id = "spatial-asset-model"
+            activation_lock_path = $assetConformanceLockResolved
+            activation_lock_revision = [long]$assetConformanceLock.revision
+            activation_lock_sha256 = $assetActivationLockSha256
             note = "Provide -ConvertedMeshPath with a GLB or GLTF export before staging."
         }
         Save-Receipt -Receipt $receipt
@@ -199,6 +237,20 @@ $receipt = [ordered]@{
     runtime_property_enabled = "debug.rustyquest.spatial.asset_model.enabled"
     runtime_property_mesh_uri = "debug.rustyquest.spatial.asset_model.mesh_uri"
     runtime_property_source_format = "debug.rustyquest.spatial.asset_model.source_format"
+    activation_required = $true
+    activation_profile_id = $assetActivationProfileId
+    activation_project_id = "spatial-camera-panel"
+    activation_feature_id = "spatial-asset-model"
+    activation_lock_path = $assetConformanceLockResolved
+    activation_lock_revision = [long]$assetConformanceLock.revision
+    activation_lock_sha256 = $assetActivationLockSha256
+    activation_receipt_schema = "rusty.quest.spatial_asset_model.activation_receipt.v1"
+    activation_effective_marker = "rusty.quest.spatial_asset_model.effective"
+    runtime_property_activation_profile_id = "debug.rustyquest.spatial.asset_model.activation.profile_id"
+    runtime_property_activation_project_id = "debug.rustyquest.spatial.asset_model.activation.project_id"
+    runtime_property_activation_feature_id = "debug.rustyquest.spatial.asset_model.activation.feature_id"
+    runtime_property_activation_lock_revision = "debug.rustyquest.spatial.asset_model.activation.lock_revision"
+    runtime_property_activation_lock_sha256 = "debug.rustyquest.spatial.asset_model.activation.lock_sha256"
     adb_commands = $commands
 }
 

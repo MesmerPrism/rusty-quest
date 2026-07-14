@@ -4,6 +4,9 @@ param(
         "panel-close",
         "private-layer-panel-open",
         "private-layer-panel-close",
+        "private-layer-select",
+        "projection-panel-off",
+        "projection-panel-on",
         "panel-reset",
         "panel-headlock-on",
         "panel-headlock-off",
@@ -27,6 +30,8 @@ param(
 
     [ValidateSet("real-hands", "gpu-replay-hands", "icosphere")]
     [string]$SurfaceTargetId = "real-hands",
+
+    [double]$PrivateLayerOverride = 0.0,
 
     [double]$DeltaX = 0.0,
 
@@ -221,6 +226,9 @@ $intentArguments = @(
     "--es",
     "surface_target_id",
     $SurfaceTargetId,
+    "--ef",
+    "private_layer_override",
+    (Format-InvariantNumber ([Math]::Max(-1.0, [Math]::Min(8.0, $PrivateLayerOverride)))),
     "--es",
     "run_label",
     $RunLabel,

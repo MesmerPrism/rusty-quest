@@ -46,6 +46,10 @@ and the current iteration unit before source. That app is the first downstream
 adopter of the portable project/module workflow: the panel shell is the only
 workflow-selected baseline, nearby particle/hand/camera/media/asset/room
 families are explicit disabled entries, and unlisted features remain inert.
+The staged Spatial asset lane is also lock-bound: a GLB/GLTF URI or legacy
+enable property alone must stay inert unless the app-owned
+`spatial-asset-model.feature.lock.json` and its exact runtime identity tuple
+apply first.
 
 For corrective WF-005 reconciliation, inspect both app-local workspaces:
 `apps/spatial-camera-panel-android/morphospace` and

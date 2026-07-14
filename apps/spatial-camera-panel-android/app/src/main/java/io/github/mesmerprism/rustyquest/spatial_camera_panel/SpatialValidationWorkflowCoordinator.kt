@@ -11,6 +11,8 @@ internal data class SpatialValidationWorkflowBindings(
     val logParticleLayerLifecycleStatus: (String) -> Unit,
     val setWorkflowPanelVisible: (Boolean, Boolean, String) -> Unit,
     val setPrivateLayerPanelVisible: (Boolean, Boolean, String) -> Unit,
+    val updatePrivateLayerOverride: (Float, String) -> Unit,
+    val setProjectionPanelEnabled: (Boolean, String) -> Unit,
     val resetWorkflowPanelPlacement: () -> Unit,
     val setPanelHeadlocked: (Boolean, String) -> Unit,
     val panelHeadlocked: () -> Boolean,
@@ -148,6 +150,13 @@ internal class SpatialValidationWorkflowCoordinator(
         "panel-close" -> bindings.setWorkflowPanelVisible(false, false, source)
         "private-layer-panel-open" -> bindings.setPrivateLayerPanelVisible(true, true, source)
         "private-layer-panel-close" -> bindings.setPrivateLayerPanelVisible(false, false, source)
+        "private-layer-select" ->
+            bindings.updatePrivateLayerOverride(
+                intent.getFloatExtra(EXTRA_PRIVATE_LAYER_OVERRIDE, 0.0f),
+                source,
+            )
+        "projection-panel-off" -> bindings.setProjectionPanelEnabled(false, source)
+        "projection-panel-on" -> bindings.setProjectionPanelEnabled(true, source)
         "panel-reset" -> bindings.resetWorkflowPanelPlacement()
         "panel-headlock-on" -> bindings.setPanelHeadlocked(true, source)
         "panel-headlock-off" -> bindings.setPanelHeadlocked(false, source)
@@ -463,6 +472,7 @@ internal class SpatialValidationWorkflowCoordinator(
     private const val EXTRA_PARTICIPANT_ID = "participant_id"
     private const val EXTRA_SURFACE_TARGET_ID = "surface_target_id"
     private const val EXTRA_UI_ACTION = "ui_action"
+    private const val EXTRA_PRIVATE_LAYER_OVERRIDE = "private_layer_override"
     private const val EXTRA_DELTA_X = "delta_x"
     private const val EXTRA_DELTA_Y = "delta_y"
     private const val EXTRA_DELTA_Z = "delta_z"

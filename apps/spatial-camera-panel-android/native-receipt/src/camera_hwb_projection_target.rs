@@ -44,16 +44,26 @@ const CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_DEFAULT_UV: f32 = 0.046320;
 const CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MIN_UV: f32 = -0.12;
 const CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_MAX_UV: f32 = 0.12;
 const CAMERA_HWB_PROJECTION_BORDER_OPACITY: f32 = 0.0;
+const CAMERA_HWB_PROJECTION_CARRIER_WIDTH_METERS: f32 = 5.40;
+const CAMERA_HWB_PROJECTION_CARRIER_HEIGHT_METERS: f32 = 4.00;
+const CAMERA_HWB_PROJECTION_ACCEPTED_SQUARE_TARGET_WIDTH_UV: f32 = 0.75;
+const CAMERA_HWB_PROJECTION_TARGET_ASPECT_COMPENSATION: f32 =
+    CAMERA_HWB_PROJECTION_CARRIER_HEIGHT_METERS / CAMERA_HWB_PROJECTION_CARRIER_WIDTH_METERS;
+const CAMERA_HWB_PROJECTION_COMPENSATED_TARGET_WIDTH_UV: f32 =
+    CAMERA_HWB_PROJECTION_ACCEPTED_SQUARE_TARGET_WIDTH_UV
+        * CAMERA_HWB_PROJECTION_TARGET_ASPECT_COMPENSATION;
+const CAMERA_HWB_LEFT_TARGET_CENTER_X: f32 = 0.546875;
+const CAMERA_HWB_RIGHT_TARGET_CENTER_X: f32 = 0.453125;
 const CAMERA_HWB_LEFT_TARGET_RECT: CameraTargetRect = CameraTargetRect {
-    x: 0.171875,
+    x: CAMERA_HWB_LEFT_TARGET_CENTER_X - CAMERA_HWB_PROJECTION_COMPENSATED_TARGET_WIDTH_UV * 0.5,
     y: 0.21875,
-    width: 0.75,
+    width: CAMERA_HWB_PROJECTION_COMPENSATED_TARGET_WIDTH_UV,
     height: 0.65625,
 };
 const CAMERA_HWB_RIGHT_TARGET_RECT: CameraTargetRect = CameraTargetRect {
-    x: 0.078125,
+    x: CAMERA_HWB_RIGHT_TARGET_CENTER_X - CAMERA_HWB_PROJECTION_COMPENSATED_TARGET_WIDTH_UV * 0.5,
     y: 0.21875,
-    width: 0.75,
+    width: CAMERA_HWB_PROJECTION_COMPENSATED_TARGET_WIDTH_UV,
     height: 0.671875,
 };
 static CAMERA_HWB_PROJECTION_STEREO_HORIZONTAL_OFFSET_BITS: AtomicU32 =
@@ -166,7 +176,7 @@ pub(crate) fn camera_hwb_projection_marker_fields() -> String {
     let (left_effective, right_effective) =
         effective_target_rects_for_scale_and_stereo_offset(live_scale, stereo_horizontal_offset_uv);
     format!(
-        "stereoSource=camera50-51 leftCameraId={} rightCameraId={} leftTargetScreenUvRect={} rightTargetScreenUvRect={} leftEffectiveTargetScreenUvRect={} rightEffectiveTargetScreenUvRect={} leftPackedEffectiveTargetScreenUvRect={} rightPackedEffectiveTargetScreenUvRect={} projectionTargetControlsEnabled=true projectionTargetLiveScale={:.4} projectionTargetTunedMaxScale={:.4} projectionTargetMinScale={:.4} projectionTargetMaxScale={:.4} projectionTargetOffsetUv={:.6},{:.6} projectionTargetStereoHorizontalOffsetUv={:.6} projectionTargetStereoHorizontalOffsetDefaultUv={:.6} projectionTargetStereoHorizontalOffsetRangeUv={:.6}..{:.6} projectionTargetLeftOffsetUv={:.6},{:.6} projectionTargetRightOffsetUv={:.6},{:.6} projectionTargetStereoHorizontalOffsetSign=positive-increases-separation borderOpacity={:.1} fallbackProjectionLayerOverrideDiagnostic=true fallbackProjectionLayerOverride={:.3} targetClipPolicy=clip-to-visible-eye projectionContentMappingMode=target-local-raster monoDuplicated=false",
+        "stereoSource=camera50-51 leftCameraId={} rightCameraId={} leftTargetScreenUvRect={} rightTargetScreenUvRect={} leftEffectiveTargetScreenUvRect={} rightEffectiveTargetScreenUvRect={} leftPackedEffectiveTargetScreenUvRect={} rightPackedEffectiveTargetScreenUvRect={} projectionTargetControlsEnabled=true projectionTargetLiveScale={:.4} projectionTargetTunedMaxScale={:.4} projectionTargetMinScale={:.4} projectionTargetMaxScale={:.4} projectionTargetOffsetUv={:.6},{:.6} projectionTargetStereoHorizontalOffsetUv={:.6} projectionTargetStereoHorizontalOffsetDefaultUv={:.6} projectionTargetStereoHorizontalOffsetRangeUv={:.6}..{:.6} projectionTargetLeftOffsetUv={:.6},{:.6} projectionTargetRightOffsetUv={:.6},{:.6} projectionTargetStereoHorizontalOffsetSign=positive-increases-separation projectionCarrierWidthMeters={:.2} projectionCarrierHeightMeters={:.2} projectionCarrierAspect={:.6} projectionTargetAcceptedSquareWidthUv={:.6} projectionTargetAspectCompensation={:.6} projectionGeometryOwner=custom-camera-target-rect videoCarrierGeometryPreserved=true borderOpacity={:.1} fallbackProjectionLayerOverrideDiagnostic=true fallbackProjectionLayerOverride={:.3} targetClipPolicy=clip-to-visible-eye projectionContentMappingMode=target-local-raster monoDuplicated=false",
         CAMERA_HWB_LEFT_CAMERA_ID,
         CAMERA_HWB_RIGHT_CAMERA_ID,
         CAMERA_HWB_LEFT_TARGET_RECT.marker_token(),
@@ -189,6 +199,12 @@ pub(crate) fn camera_hwb_projection_marker_fields() -> String {
         CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
         stereo_horizontal_offset_uv,
         CAMERA_HWB_PROJECTION_TARGET_OFFSET_Y,
+        CAMERA_HWB_PROJECTION_CARRIER_WIDTH_METERS,
+        CAMERA_HWB_PROJECTION_CARRIER_HEIGHT_METERS,
+        CAMERA_HWB_PROJECTION_CARRIER_WIDTH_METERS
+            / CAMERA_HWB_PROJECTION_CARRIER_HEIGHT_METERS,
+        CAMERA_HWB_PROJECTION_ACCEPTED_SQUARE_TARGET_WIDTH_UV,
+        CAMERA_HWB_PROJECTION_TARGET_ASPECT_COMPENSATION,
         CAMERA_HWB_PROJECTION_BORDER_OPACITY,
         current_spatial_public_opaque_projection_layer_override(),
     )
@@ -270,18 +286,18 @@ mod tests {
         assert_rect_close(
             left_effective_target_rect(),
             CameraTargetRect {
-                x: 0.125555,
+                x: 0.22277722,
                 y: 0.21875,
-                width: 0.75,
+                width: 0.5555556,
                 height: 0.65625,
             },
         );
         assert_rect_close(
             right_effective_target_rect(),
             CameraTargetRect {
-                x: 0.124445,
+                x: 0.22166723,
                 y: 0.21875,
-                width: 0.75,
+                width: 0.5555556,
                 height: 0.671875,
             },
         );
@@ -292,18 +308,18 @@ mod tests {
         assert_rect_close(
             packed_left_rect(left_effective_target_rect()),
             CameraTargetRect {
-                x: 0.0627775,
+                x: 0.11138861,
                 y: 0.21875,
-                width: 0.375,
+                width: 0.2777778,
                 height: 0.65625,
             },
         );
         assert_rect_close(
             packed_right_rect(right_effective_target_rect()),
             CameraTargetRect {
-                x: 0.5622225,
+                x: 0.61083364,
                 y: 0.21875,
-                width: 0.375,
+                width: 0.2777778,
                 height: 0.671875,
             },
         );
@@ -315,36 +331,36 @@ mod tests {
         assert_rect_close(
             left,
             CameraTargetRect {
-                x: 0.121875,
+                x: 0.2190972,
                 y: 0.21875,
-                width: 0.75,
+                width: 0.5555556,
                 height: 0.65625,
             },
         );
         assert_rect_close(
             right,
             CameraTargetRect {
-                x: 0.128125,
+                x: 0.22534722,
                 y: 0.21875,
-                width: 0.75,
+                width: 0.5555556,
                 height: 0.671875,
             },
         );
         assert_rect_close(
             packed_left_rect(left),
             CameraTargetRect {
-                x: 0.0609375,
+                x: 0.1095486,
                 y: 0.21875,
-                width: 0.375,
+                width: 0.2777778,
                 height: 0.65625,
             },
         );
         assert_rect_close(
             packed_right_rect(right),
             CameraTargetRect {
-                x: 0.5640625,
+                x: 0.61267364,
                 y: 0.21875,
-                width: 0.375,
+                width: 0.2777778,
                 height: 0.671875,
             },
         );
@@ -356,18 +372,18 @@ mod tests {
         assert_rect_close(
             left,
             CameraTargetRect {
-                x: 0.359375,
+                x: 0.4079861,
                 y: 0.3828125,
-                width: 0.375,
+                width: 0.2777778,
                 height: 0.328125,
             },
         );
         assert_rect_close(
             right,
             CameraTargetRect {
-                x: 0.265625,
+                x: 0.3142361,
                 y: 0.38671875,
-                width: 0.375,
+                width: 0.2777778,
                 height: 0.3359375,
             },
         );
@@ -432,6 +448,16 @@ mod tests {
     }
 
     #[test]
+    fn custom_target_compensates_for_wide_video_carrier_without_resizing_it() {
+        let compensated_physical_width = CAMERA_HWB_PROJECTION_COMPENSATED_TARGET_WIDTH_UV
+            * CAMERA_HWB_PROJECTION_CARRIER_WIDTH_METERS;
+        let accepted_square_physical_width = CAMERA_HWB_PROJECTION_ACCEPTED_SQUARE_TARGET_WIDTH_UV
+            * CAMERA_HWB_PROJECTION_CARRIER_HEIGHT_METERS;
+        assert!((compensated_physical_width - accepted_square_physical_width).abs() < 0.000001);
+        assert!((CAMERA_HWB_PROJECTION_COMPENSATED_TARGET_WIDTH_UV - 0.5555556).abs() < 0.000001);
+    }
+
+    #[test]
     fn marker_fields_keep_acceptance_tokens() {
         let fields = camera_hwb_projection_marker_fields();
         let (left_effective, right_effective) = effective_target_rects_for_stereo_offset(
@@ -463,6 +489,11 @@ mod tests {
         assert!(fields.contains("projectionTargetStereoHorizontalOffsetDefaultUv=0.046320"));
         assert!(fields.contains("projectionTargetLeftOffsetUv=-0.046320,0.000000"));
         assert!(fields.contains("projectionTargetRightOffsetUv=0.046320,0.000000"));
+        assert!(fields.contains("projectionCarrierWidthMeters=5.40"));
+        assert!(fields.contains("projectionCarrierHeightMeters=4.00"));
+        assert!(fields.contains("projectionTargetAspectCompensation=0.740741"));
+        assert!(fields.contains("projectionGeometryOwner=custom-camera-target-rect"));
+        assert!(fields.contains("videoCarrierGeometryPreserved=true"));
         assert!(fields.contains("fallbackProjectionLayerOverrideDiagnostic=true"));
         assert!(fields.contains("fallbackProjectionLayerOverride="));
         assert!(fields.contains("targetClipPolicy=clip-to-visible-eye"));

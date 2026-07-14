@@ -22,6 +22,7 @@ mod ahardware_buffer_vulkan;
 #[cfg(target_os = "android")]
 #[path = "../../../native-renderer-android/native/src/android_hardware_buffer.rs"]
 mod android_hardware_buffer;
+mod asset_model_consumer;
 mod camera_hwb_marker;
 #[cfg(target_os = "android")]
 mod camera_hwb_probe;

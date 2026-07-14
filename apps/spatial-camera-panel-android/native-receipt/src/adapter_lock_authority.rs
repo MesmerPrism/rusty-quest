@@ -1,3 +1,6 @@
+use rusty_quest_feature_activation::{
+    LockBoundActivationDecision, LockBoundActivationRuntimeInput,
+};
 use rusty_quest_hand_adapter::{
     HandAdapterLockActivationDecision, HandAdapterRuntimeActivationInput,
 };
@@ -17,6 +20,11 @@ pub(crate) fn particle_authority_receipt(input: &ParticleAdapterRuntimeActivatio
     particle_receipt(&decision)
 }
 
+pub(crate) fn asset_authority_receipt(input: &LockBoundActivationRuntimeInput) -> String {
+    let decision = crate::asset_model_consumer::resolve_activation(input);
+    asset_receipt(&decision)
+}
+
 fn hand_receipt(decision: &HandAdapterLockActivationDecision) -> String {
     authority_receipt(
         decision.is_applied(),
@@ -32,6 +40,20 @@ fn hand_receipt(decision: &HandAdapterLockActivationDecision) -> String {
 }
 
 fn particle_receipt(decision: &ParticleAdapterLockActivationDecision) -> String {
+    authority_receipt(
+        decision.is_applied(),
+        decision.project_id(),
+        decision.feature_id(),
+        decision.lock_revision(),
+        decision.lock_sha256(),
+        decision.runtime_profile_id(),
+        decision
+            .rejection()
+            .map_or("none", |rejection| rejection.marker_token()),
+    )
+}
+
+fn asset_receipt(decision: &LockBoundActivationDecision) -> String {
     authority_receipt(
         decision.is_applied(),
         decision.project_id(),
@@ -94,7 +116,7 @@ mod android_jni {
     use jni::objects::JString;
     use jni::sys::{jboolean, jclass, jlong, jstring, JNIEnv};
 
-    use super::{hand_authority_receipt, particle_authority_receipt};
+    use super::{asset_authority_receipt, hand_authority_receipt, particle_authority_receipt};
 
     #[no_mangle]
     #[allow(non_snake_case)]
@@ -146,6 +168,32 @@ mod android_jni {
             lock_sha256: read_string(&mut env, runtime_lock_sha256),
         };
         write_string(&mut env, &particle_authority_receipt(&input))
+    }
+
+    #[no_mangle]
+    #[allow(non_snake_case)]
+    pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1panel_SpatialAdapterNativeAuthority_nativeResolveAssetModelActivation(
+        env: *mut JNIEnv,
+        _class: jclass,
+        runtime_enabled: jboolean,
+        runtime_profile_id: jstring,
+        runtime_project_id: jstring,
+        runtime_feature_id: jstring,
+        runtime_lock_revision: jlong,
+        runtime_lock_sha256: jstring,
+    ) -> jstring {
+        let Some(mut env) = jni_env(env) else {
+            return ptr::null_mut();
+        };
+        let input = rusty_quest_feature_activation::LockBoundActivationRuntimeInput {
+            enabled: runtime_enabled != 0,
+            profile_id: read_string(&mut env, runtime_profile_id),
+            project_id: read_string(&mut env, runtime_project_id),
+            feature_id: read_string(&mut env, runtime_feature_id),
+            lock_revision: u64::try_from(runtime_lock_revision).unwrap_or(0),
+            lock_sha256: read_string(&mut env, runtime_lock_sha256),
+        };
+        write_string(&mut env, &asset_authority_receipt(&input))
     }
 
     fn jni_env(env: *mut JNIEnv) -> Option<jni::JNIEnv<'static>> {
@@ -208,5 +256,16 @@ mod tests {
         let stale_receipt = particle_authority_receipt(&stale);
         assert!(stale_receipt.contains("\trejected\t"));
         assert!(stale_receipt.ends_with("\truntime-revision-mismatch"));
+
+        let asset = LockBoundActivationRuntimeInput {
+            enabled: true,
+            profile_id: crate::asset_model_consumer::ACCEPTED_PROFILE_ID.to_owned(),
+            project_id: crate::asset_model_consumer::PROJECT_ID.to_owned(),
+            feature_id: crate::asset_model_consumer::FEATURE_ID.to_owned(),
+            lock_revision: 1,
+            lock_sha256: crate::asset_model_consumer::ACCEPTED_LOCK_SHA256.to_owned(),
+        };
+        let asset_receipt = asset_authority_receipt(&asset);
+        assert!(asset_receipt.contains("\tapplied\tspatial-camera-panel\tspatial-asset-model\t1\t"));
     }
 }
