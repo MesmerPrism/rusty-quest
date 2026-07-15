@@ -26,6 +26,7 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
 $repoRootPath = Resolve-Path $RepoRoot
 $workflowCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelWorkflowStatic.ps1"
 $staticCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelAndroidStatic.ps1"
+$cameraLatencyCheckPath = Join-Path $PSScriptRoot "checks\Test-SpatialCameraPanelCameraLatencyDiagnosticStatic.ps1"
 $buildPath = Join-Path $PSScriptRoot "Build-SpatialCameraPanelAndroid.ps1"
 
 if (-not (Test-Path -LiteralPath $workflowCheckPath)) {
@@ -34,15 +35,20 @@ if (-not (Test-Path -LiteralPath $workflowCheckPath)) {
 if (-not (Test-Path -LiteralPath $staticCheckPath)) {
     throw "Missing Spatial Camera Panel static check: $staticCheckPath"
 }
+if (-not (Test-Path -LiteralPath $cameraLatencyCheckPath)) {
+    throw "Missing Spatial Camera Panel camera latency diagnostic check: $cameraLatencyCheckPath"
+}
 if (-not (Test-Path -LiteralPath $buildPath)) {
     throw "Missing Spatial Camera Panel build wrapper: $buildPath"
 }
 
 & $workflowCheckPath -RepoRoot $repoRootPath
 & $staticCheckPath -RepoRoot $repoRootPath
+& $cameraLatencyCheckPath -RepoRoot $repoRootPath
 Push-Location -LiteralPath $repoRootPath
 try {
     cargo test -p spatial-camera-panel-native-receipt surface_particle
+    cargo test -p spatial-camera-panel-native-receipt camera_latency
 } finally {
     Pop-Location
 }

@@ -93,6 +93,57 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   passthrough enabled. This diagnostic distinguishes a black submitted carrier
   from an unavailable or unsubmitted passthrough layer; turning it back on
   rebuilds the same carrier and resumes the captured video settings.
+- Camera-latency diagnosis has a revisioned, serial-scoped A/B control plane in
+  `tools/Set-SpatialCameraPanelCameraLatencyDiagnostic.ps1`. `Baseline`,
+  `FrozenWorld`, `NonBlocking`, `FrozenNonBlocking`, `StrictPair`, `MonoLeft`,
+  `RotationWarp40`, `RotationWarp60`, `RotationWarp80`, `SensorWarp`,
+  `SensorWarpInverse`, `SensorWarp70`, `SensorWarp110`,
+  `SensorWarpInverseRollFree70`, `SensorWarpInverseYawOnly70`,
+  `SensorWarpCameraCalibrated`, and `VerboseFrameLog`
+  hotload while the projection is active. The rotation-warp presets apply only
+  to slot 8's raw projection shader. The original presets associate callback
+  time minus an assumed capture age with a bounded Spatial viewer-pose history.
+  The sensor-warp presets use the image timestamp directly only when its delta
+  from boot-time callback receipt is nonnegative and at most 250 ms; otherwise
+  they fall back to the explicit assumed age. This is an empirical Quest
+  diagnostic for an `UNKNOWN` Camera2 timebase, not a portable timestamp
+  guarantee. `SensorWarpInverse` transposes the rotation as a direction-control
+  A/B, while the 70/110 variants bound FOV sensitivity. All sensor-warp presets
+  also select strict stereo pairing and fence-held images. Cadence summaries report relative source and
+  callback intervals, display-frame hold histograms, and skipped source frames.
+  `Adoption45` is a live-safe A/B mode that leaves the camera producer at its
+  native cadence and adopts the latest camera image every second presented
+  frame. On a 90 Hz surface this gives a deterministic 45 Hz camera-image
+  presentation cadence while the video and effect composition still render at
+  90 Hz.
+  `EarlyDelete` preserves the original `AImage_delete`-after-publish behavior,
+  while `FenceHeld` retains each acquired `AImage` until the serialized Vulkan
+  frame fence has completed. `FenceHeld45` combines that lifetime with the 45
+  Hz adoption control. `ProcessingOffFenceHeld` additionally requests Camera2
+  noise reduction and edge enhancement `OFF`, but only when both request keys
+  and modes are advertised; it requires restart and reports unsupported rather
+  than falling back. `FreezeFrameFenceHeld` latches a complete fence-held
+  stereo frame while callbacks continue, and `OpaqueCameraOnlyFenceHeld`
+  suppresses video/public effects and renders an opaque raw camera composite.
+  `FreshFrameOnlyPulseFenceHeld` preserves the video composition but submits
+  the custom projection only on a display refresh that adopted at least one
+  new camera image; held camera refreshes leave only that custom region
+  transparent. The intentionally dim/stroboscopic result distinguishes
+  repeated 50 Hz image holds on a 90 Hz surface from an artifact already
+  present in one camera frame. These live controls isolate capture temporal
+  processing from render and projection behavior.
+  `Cadence30`, `Cadence45`, `Cadence50`, and `Cadence60` request only an exact supported
+  fixed Camera2 AE range and report unavailable rather than silently selecting
+  another rate. Those presets, `LowQueue`, and `ImmediateLowQueue` require a
+  projection/app restart. Payload properties are written first and the
+  revision property last, so a render loop never adopts a partial transaction.
+  `SensorWarpCameraCalibrated` is the accepted best-current continuation point.
+  It conjugates headset-relative rotation by the gyroscope-referenced Camera2
+  lens pose and derives the ray projection from static focal-length and
+  principal-point metadata. It fails closed if that calibration is unavailable
+  or does not match the selected stream. See the
+  [motion iteration report](../../docs/SPATIAL_CAMERA_MOTION_ITERATION_REPORT.md)
+  for the complete A/B sequence and remaining limitations.
 - Scene-depth permission diagnostics that mirror the native renderer surface:
   `horizonos.permission.USE_SCENE`, OpenXR permissions, and a smoke-wrapper
   `USE_SCENE_DATA` app-op receipt. The public multi-stack keeps a fallback

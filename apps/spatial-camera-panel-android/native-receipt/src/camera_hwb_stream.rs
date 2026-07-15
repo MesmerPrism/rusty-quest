@@ -1,7 +1,7 @@
 use std::ffi::{c_void, CStr, CString};
 use std::os::raw::c_int;
 use std::ptr;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
@@ -15,16 +15,23 @@ use crate::acamera_sys::{
     ACameraManager_openCamera, ACameraMetadata, ACameraMetadataConstEntry, ACameraMetadata_free,
     ACameraMetadata_getConstEntry, ACameraOutputTarget, ACameraOutputTarget_create,
     ACameraOutputTarget_free, ACaptureRequest, ACaptureRequest_addTarget, ACaptureRequest_free,
-    ACaptureRequest_removeTarget, ACaptureSessionOutput, ACaptureSessionOutputContainer,
-    ACaptureSessionOutputContainer_add, ACaptureSessionOutputContainer_create,
-    ACaptureSessionOutputContainer_free, ACaptureSessionOutput_create, ACaptureSessionOutput_free,
-    AImage, AImageReader, AImageReader_ImageListener, AImageReader_acquireLatestImage,
-    AImageReader_delete, AImageReader_getWindow, AImageReader_newWithUsage,
-    AImageReader_setImageListener, AImage_delete, AImage_getHardwareBuffer, AImage_getTimestamp,
-    ANativeWindow, ANativeWindow_acquire as ACameraNativeWindow_acquire,
+    ACaptureRequest_removeTarget, ACaptureRequest_setEntry_i32, ACaptureRequest_setEntry_u8,
+    ACaptureSessionOutput, ACaptureSessionOutputContainer, ACaptureSessionOutputContainer_add,
+    ACaptureSessionOutputContainer_create, ACaptureSessionOutputContainer_free,
+    ACaptureSessionOutput_create, ACaptureSessionOutput_free, AImage, AImageReader,
+    AImageReader_ImageListener, AImageReader_acquireLatestImage, AImageReader_delete,
+    AImageReader_getWindow, AImageReader_newWithUsage, AImageReader_setImageListener,
+    AImage_delete, AImage_getHardwareBuffer, AImage_getTimestamp, ANativeWindow,
+    ANativeWindow_acquire as ACameraNativeWindow_acquire,
     ANativeWindow_release as ACameraNativeWindow_release,
-    ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS, AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE,
-    AIMAGE_FORMAT_PRIVATE, TEMPLATE_PREVIEW,
+    ACAMERA_CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES, ACAMERA_CONTROL_AE_TARGET_FPS_RANGE,
+    ACAMERA_EDGE_AVAILABLE_EDGE_MODES, ACAMERA_EDGE_MODE, ACAMERA_EDGE_MODE_OFF,
+    ACAMERA_LENS_INTRINSIC_CALIBRATION, ACAMERA_LENS_POSE_REFERENCE, ACAMERA_LENS_POSE_ROTATION,
+    ACAMERA_LENS_POSE_TRANSLATION, ACAMERA_NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES,
+    ACAMERA_NOISE_REDUCTION_MODE, ACAMERA_NOISE_REDUCTION_MODE_OFF,
+    ACAMERA_REQUEST_AVAILABLE_REQUEST_KEYS, ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS,
+    ACAMERA_SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE, ACAMERA_SENSOR_INFO_TIMESTAMP_SOURCE,
+    AHARDWAREBUFFER_USAGE_GPU_SAMPLED_IMAGE, AIMAGE_FORMAT_PRIVATE, TEMPLATE_PREVIEW,
 };
 use crate::android_hardware_buffer::{
     AndroidHardwareBufferDescriptor, AndroidHardwareBufferHandle,
@@ -32,6 +39,11 @@ use crate::android_hardware_buffer::{
 use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 use crate::camera_hwb_projection_target::{
     camera_hwb_projection_marker_fields, CAMERA_HWB_LEFT_CAMERA_ID, CAMERA_HWB_RIGHT_CAMERA_ID,
+};
+use crate::camera_latency_diagnostics::{
+    boottime_now_ns, camera_latency_capture_viewer_basis, camera_latency_per_frame_log_enabled,
+    current_camera_latency_settings, update_camera_latency_camera_calibration,
+    CameraLatencyCameraSyncMode, CameraLatencyCaptureProcessing, CameraLatencyViewerBasis,
 };
 use crate::spatial_public_multistack::public_multistack_marker_fields;
 use crate::{bool_token, marker_token};
@@ -60,6 +72,138 @@ pub(crate) struct CameraProbeFrame {
     pub(crate) hardware_buffer: AndroidHardwareBufferHandle,
     pub(crate) descriptor: AndroidHardwareBufferDescriptor,
     pub(crate) timestamp_ns: i64,
+    pub(crate) timestamp_source: CameraTimestampSource,
+    pub(crate) callback_age_ns: Option<u64>,
+    pub(crate) callback_boottime_ns: i64,
+    pub(crate) source_delta_ns: Option<u64>,
+    pub(crate) callback_delta_ns: Option<u64>,
+    pub(crate) capture_viewer_basis: Option<CameraLatencyViewerBasis>,
+    image_lease: Option<Arc<CameraProbeImageLease>>,
+}
+
+impl CameraProbeFrame {
+    pub(crate) fn sensor_age_at_boottime(&self, now_ns: i64) -> Option<u64> {
+        if self.timestamp_source != CameraTimestampSource::Realtime
+            || self.timestamp_ns <= 0
+            || now_ns < self.timestamp_ns
+        {
+            return None;
+        }
+        Some((now_ns - self.timestamp_ns) as u64)
+    }
+
+    pub(crate) fn has_fence_held_image(&self) -> bool {
+        self.image_lease.is_some()
+    }
+}
+
+struct CameraProbeImageLease {
+    image: *mut AImage,
+    side_label: &'static str,
+    camera_id: String,
+    frame_index: u64,
+    hardware_buffer_id: u64,
+    log_retirement: bool,
+}
+
+unsafe impl Send for CameraProbeImageLease {}
+unsafe impl Sync for CameraProbeImageLease {}
+
+impl CameraProbeImageLease {
+    unsafe fn new(
+        image: *mut AImage,
+        side_label: &'static str,
+        camera_id: &str,
+        frame_index: u64,
+        hardware_buffer_id: u64,
+        log_retirement: bool,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            image,
+            side_label,
+            camera_id: camera_id.to_string(),
+            frame_index,
+            hardware_buffer_id,
+            log_retirement,
+        })
+    }
+}
+
+impl Drop for CameraProbeImageLease {
+    fn drop(&mut self) {
+        unsafe {
+            if !self.image.is_null() {
+                AImage_delete(self.image);
+                self.image = ptr::null_mut();
+            }
+        }
+        if self.log_retirement {
+            log_marker(format!(
+                "status=image-lease-retired side={} cameraId={} frameIndex={} hardwareBufferId={} imageReleaseApi=AImage_delete releaseFenceFd=-1 cameraSyncActive=hold-image-until-gpu-fence producerConsumerSync=image-slot-held-until-final-frame-reference-dropped",
+                self.side_label,
+                marker_token(&self.camera_id),
+                self.frame_index,
+                self.hardware_buffer_id,
+            ));
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CameraTimestampSource {
+    Unavailable,
+    Unknown,
+    Realtime,
+}
+
+impl CameraTimestampSource {
+    pub(crate) fn marker_token(self) -> &'static str {
+        match self {
+            Self::Unavailable => "unavailable",
+            Self::Unknown => "unknown-camera-only-timebase",
+            Self::Realtime => "realtime-elapsedRealtimeNanos",
+        }
+    }
+}
+
+struct CameraProbeStaticMetadata {
+    private_output_sizes: Vec<[i32; 2]>,
+    timestamp_source: CameraTimestampSource,
+    lens_pose_translation: Vec<f32>,
+    lens_pose_rotation: Vec<f32>,
+    lens_intrinsic_calibration: Vec<f32>,
+    lens_pose_reference: Option<u8>,
+    pre_correction_active_array: Vec<i32>,
+    ae_fps_ranges: Vec<[i32; 2]>,
+    noise_reduction_modes: Vec<u8>,
+    edge_modes: Vec<u8>,
+    request_keys: Vec<i32>,
+}
+
+impl CameraProbeStaticMetadata {
+    fn marker_fields(&self) -> String {
+        format!(
+            "sensorTimestampSource={} lensPoseTranslation={} lensPoseRotation={} lensIntrinsicCalibration={} lensPoseReference={} preCorrectionActiveArray={} aeAvailableTargetFpsRanges={} aeTargetFpsRequestKeySupported={} noiseReductionAvailableModes={} noiseReductionRequestKeySupported={} edgeAvailableModes={} edgeRequestKeySupported={} lensPoseMetadataLifecycle=static-camera-characteristics dynamicCameraPoseMetadataUsed=false imageTimestampPoseAssociation=selected-by-camera-latency-reprojection-mode captureResultMetadataCallbacks=false",
+            self.timestamp_source.marker_token(),
+            float_values_marker(&self.lens_pose_translation, 3),
+            float_values_marker(&self.lens_pose_rotation, 4),
+            float_values_marker(&self.lens_intrinsic_calibration, 5),
+            lens_pose_reference_marker(self.lens_pose_reference),
+            i32_values_marker(&self.pre_correction_active_array, 4),
+            fps_ranges_marker(&self.ae_fps_ranges),
+            bool_token(
+                self.request_keys
+                    .contains(&(ACAMERA_CONTROL_AE_TARGET_FPS_RANGE as i32))
+            ),
+            u8_modes_marker(&self.noise_reduction_modes),
+            bool_token(
+                self.request_keys
+                    .contains(&(ACAMERA_NOISE_REDUCTION_MODE as i32))
+            ),
+            u8_modes_marker(&self.edge_modes),
+            bool_token(self.request_keys.contains(&(ACAMERA_EDGE_MODE as i32))),
+        )
+    }
 }
 
 pub(crate) struct CameraProbeFrameSet {
@@ -77,8 +221,12 @@ struct CameraProbeContext {
     alive: AtomicBool,
     side_label: &'static str,
     camera_id: String,
+    timestamp_source: CameraTimestampSource,
     frame_counter: AtomicU64,
     import_counter: AtomicU64,
+    previous_timestamp_ns: AtomicI64,
+    previous_callback_boottime_ns: AtomicI64,
+    last_camera_sync_mode: AtomicU32,
     latest_frame: Mutex<Option<CameraProbeFrame>>,
     frame_available: Condvar,
 }
@@ -254,6 +402,20 @@ impl CameraProbeRuntime {
         let right = self.wait_for_right_frame_after(0, remaining)?;
         Some(CameraProbeFrameSet { left, right })
     }
+
+    pub(crate) fn published_frame_counts(&self) -> (u64, u64) {
+        let left = self
+            .left
+            .as_ref()
+            .map(CameraProbeStream::published_frame_count)
+            .unwrap_or(0);
+        let right = self
+            .right
+            .as_ref()
+            .map(CameraProbeStream::published_frame_count)
+            .unwrap_or(left);
+        (left, right)
+    }
 }
 
 impl Drop for CameraProbeRuntime {
@@ -281,8 +443,8 @@ impl CameraProbeStream {
         reader_max_images: c_int,
     ) -> Result<Self, String> {
         let camera_id_c = CString::new(camera_id).map_err(|_| "camera-id-nul".to_string())?;
-        let private_sizes = load_private_output_sizes(manager, camera_id_c.as_ptr());
-        let selected_size = select_private_size(&private_sizes);
+        let static_metadata = load_camera_static_metadata(manager, camera_id_c.as_ptr());
+        let selected_size = select_private_size(&static_metadata.private_output_sizes);
 
         let mut camera_device = ptr::null_mut();
         let mut state_callbacks = ACameraDevice_StateCallbacks {
@@ -308,6 +470,25 @@ impl CameraProbeStream {
             ACameraDevice_close(camera_device);
             return Err("ACameraDevice_createCaptureRequest-failed".to_string());
         }
+        let latency_launch_settings = current_camera_latency_settings();
+        let capture_fps_status = apply_camera_latency_capture_fps(
+            capture_request,
+            &static_metadata,
+            if latency_launch_settings.enabled {
+                latency_launch_settings.capture_fps.requested_fps()
+            } else {
+                None
+            },
+        );
+        let capture_processing_status = apply_camera_latency_capture_processing(
+            capture_request,
+            &static_metadata,
+            if latency_launch_settings.enabled {
+                latency_launch_settings.capture_processing
+            } else {
+                CameraLatencyCaptureProcessing::TemplateDefault
+            },
+        );
 
         let mut reader = ptr::null_mut();
         let reader_status = AImageReader_newWithUsage(
@@ -331,8 +512,12 @@ impl CameraProbeStream {
             alive: AtomicBool::new(true),
             side_label,
             camera_id: camera_id.to_string(),
+            timestamp_source: static_metadata.timestamp_source,
             frame_counter: AtomicU64::new(0),
             import_counter: AtomicU64::new(0),
+            previous_timestamp_ns: AtomicI64::new(0),
+            previous_callback_boottime_ns: AtomicI64::new(0),
+            last_camera_sync_mode: AtomicU32::new(u32::MAX),
             latest_frame: Mutex::new(None),
             frame_available: Condvar::new(),
         });
@@ -455,15 +640,40 @@ impl CameraProbeStream {
             ));
         }
 
+        let camera_latency_calibration_available = if side_label == "left" || side_label == "mono" {
+            update_camera_latency_camera_calibration(
+                camera_id,
+                &static_metadata.lens_pose_rotation,
+                &static_metadata.lens_intrinsic_calibration,
+                static_metadata.lens_pose_reference,
+                &static_metadata.pre_correction_active_array,
+                selected_size,
+            )
+        } else {
+            false
+        };
+
         log_marker(format!(
-            "status=camera-stream-started side={} cameraId={} selectedPrivateSize={}x{} readerMaxImages={} repeatingSequenceId={} privateOutputSizes={}",
+            "status=camera-stream-started side={} cameraId={} selectedPrivateSize={}x{} readerMaxImages={} repeatingSequenceId={} privateOutputSizes={} cameraLatencyCalibrationAvailable={} cameraLatencyCalibrationAuthority={} {} {} {} {}",
             side_label,
             marker_token(camera_id),
             selected_size[0],
             selected_size[1],
             reader_max_images,
             sequence_id,
-            marker_token(&private_sizes_marker(&private_sizes)),
+            marker_token(&private_sizes_marker(&static_metadata.private_output_sizes)),
+            bool_token(camera_latency_calibration_available),
+            if side_label == "right" {
+                "shared-left-camera-static-characteristics"
+            } else if camera_latency_calibration_available {
+                "android-camera2-static-characteristics"
+            } else {
+                "unavailable"
+            },
+            capture_fps_status,
+            capture_processing_status,
+            static_metadata.marker_fields(),
+            latency_launch_settings.marker_fields(),
         ));
 
         Ok(Self {
@@ -488,6 +698,14 @@ impl CameraProbeStream {
 
     fn selected_height(&self) -> i32 {
         self.selected_size[1]
+    }
+
+    fn published_frame_count(&self) -> u64 {
+        if self.context_raw.is_null() {
+            0
+        } else {
+            unsafe { (*self.context_raw).frame_counter.load(Ordering::Acquire) }
+        }
     }
 
     fn wait_for_first_frame(&self, timeout: Duration) -> Option<CameraProbeFrame> {
@@ -622,6 +840,31 @@ unsafe extern "C" fn camera_probe_image_available(context: *mut c_void, reader: 
 
     let mut timestamp_ns = 0_i64;
     let _ = AImage_getTimestamp(image, &mut timestamp_ns);
+    let callback_boottime_ns = boottime_now_ns();
+    let previous_timestamp_ns = context
+        .previous_timestamp_ns
+        .swap(timestamp_ns, Ordering::AcqRel);
+    let source_delta_ns = if timestamp_ns > 0 && previous_timestamp_ns > 0 {
+        Some(timestamp_ns.abs_diff(previous_timestamp_ns))
+    } else {
+        None
+    };
+    let previous_callback_boottime_ns = context
+        .previous_callback_boottime_ns
+        .swap(callback_boottime_ns, Ordering::AcqRel);
+    let callback_delta_ns = if callback_boottime_ns > 0 && previous_callback_boottime_ns > 0 {
+        Some(callback_boottime_ns.abs_diff(previous_callback_boottime_ns))
+    } else {
+        None
+    };
+    let callback_age_ns = if context.timestamp_source == CameraTimestampSource::Realtime
+        && timestamp_ns > 0
+        && callback_boottime_ns >= timestamp_ns
+    {
+        Some((callback_boottime_ns - timestamp_ns) as u64)
+    } else {
+        None
+    };
     let mut hardware_buffer_ptr = ptr::null_mut();
     let hwb_result = AImage_getHardwareBuffer(image, &mut hardware_buffer_ptr);
     if hwb_result != 0 || hardware_buffer_ptr.is_null() {
@@ -650,25 +893,80 @@ unsafe extern "C" fn camera_probe_image_available(context: *mut c_void, reader: 
     let descriptor = hardware_buffer.descriptor();
     let frame_index = context.frame_counter.fetch_add(1, Ordering::Relaxed) + 1;
     let hwb_import_sequence = context.import_counter.fetch_add(1, Ordering::Relaxed) + 1;
-    log_marker(format!(
-        "status=camera-frame-acquired side={} cameraId={} frameIndex={} hardwareBufferId={} timestampNs={} width={} height={} format={} usage=0x{:x} stride={} hwbImportSequence={} imageFormat=PRIVATE usageFlag=GPU_SAMPLED_IMAGE",
-        context.side_label,
-        marker_token(&context.camera_id),
-        frame_index,
-        descriptor.hardware_buffer_id,
-        timestamp_ns,
-        descriptor.width,
-        descriptor.height,
-        descriptor.format,
-        descriptor.usage,
-        descriptor.stride,
-        hwb_import_sequence,
-    ));
+    let latency_settings = current_camera_latency_settings();
+    let capture_viewer_basis =
+        camera_latency_capture_viewer_basis(timestamp_ns, callback_boottime_ns);
+    let camera_sync_active = if latency_settings.enabled {
+        latency_settings.camera_sync_mode
+    } else {
+        CameraLatencyCameraSyncMode::EarlyDeleteAhbRetained
+    };
+    let hold_image_until_gpu_fence =
+        camera_sync_active == CameraLatencyCameraSyncMode::HoldImageUntilGpuFence;
+    let camera_sync_changed = context
+        .last_camera_sync_mode
+        .swap(camera_sync_active as u32, Ordering::AcqRel)
+        != camera_sync_active as u32;
+    let log_frame =
+        frame_index <= 4 || camera_latency_per_frame_log_enabled() || camera_sync_changed;
+    if log_frame {
+        log_marker(format!(
+            "status=camera-frame-acquired side={} cameraId={} frameIndex={} hardwareBufferId={} timestampNs={} sourceDeltaMs={} callbackBoottimeNs={} callbackDeltaMs={} callbackAgeMs={} sensorTimestampSource={} capturePoseAssociation={} capturePoseTargetTimestampNs={} capturePoseAvailable={} width={} height={} format={} usage=0x{:x} stride={} hwbImportSequence={} imageFormat=PRIVATE usageFlag=GPU_SAMPLED_IMAGE perFrameLogEnabled={} cameraSyncTransition={} cameraSyncActive={} imageReleaseApi={} imageLeaseActive={} producerConsumerSync={}",
+            context.side_label,
+            marker_token(&context.camera_id),
+            frame_index,
+            descriptor.hardware_buffer_id,
+            timestamp_ns,
+            optional_ns_ms(source_delta_ns),
+            callback_boottime_ns,
+            optional_ns_ms(callback_delta_ns),
+            optional_ns_ms(callback_age_ns),
+            context.timestamp_source.marker_token(),
+            capture_viewer_basis.association,
+            capture_viewer_basis.target_timestamp_ns,
+            bool_token(capture_viewer_basis.basis.is_some()),
+            descriptor.width,
+            descriptor.height,
+            descriptor.format,
+            descriptor.usage,
+            descriptor.stride,
+            hwb_import_sequence,
+            bool_token(camera_latency_per_frame_log_enabled()),
+            bool_token(camera_sync_changed),
+            camera_sync_active.marker_token(),
+            if hold_image_until_gpu_fence {
+                "AImage_delete-on-frame-lease-drop"
+            } else {
+                "AImage_delete-after-publish"
+            },
+            bool_token(hold_image_until_gpu_fence),
+            if hold_image_until_gpu_fence {
+                "image-slot-held-through-vulkan-frame-fence"
+            } else {
+                "ahb-handle-retained-without-producer-release-fence"
+            },
+        ));
+    }
+
+    let image_lease = if hold_image_until_gpu_fence {
+        Some(CameraProbeImageLease::new(
+            image,
+            context.side_label,
+            &context.camera_id,
+            frame_index,
+            descriptor.hardware_buffer_id,
+            log_frame,
+        ))
+    } else {
+        None
+    };
 
     let mut guard = match context.latest_frame.lock() {
         Ok(guard) => guard,
         Err(_) => {
-            AImage_delete(image);
+            if !hold_image_until_gpu_fence {
+                AImage_delete(image);
+            }
             return;
         }
     };
@@ -680,9 +978,18 @@ unsafe extern "C" fn camera_probe_image_available(context: *mut c_void, reader: 
         hardware_buffer,
         descriptor,
         timestamp_ns,
+        timestamp_source: context.timestamp_source,
+        callback_age_ns,
+        callback_boottime_ns,
+        source_delta_ns,
+        callback_delta_ns,
+        capture_viewer_basis: capture_viewer_basis.basis,
+        image_lease,
     });
     context.frame_available.notify_all();
-    AImage_delete(image);
+    if !hold_image_until_gpu_fence {
+        AImage_delete(image);
+    }
 }
 
 unsafe fn enumerate_camera_ids(manager: *mut ACameraManager) -> Result<Vec<String>, String> {
@@ -713,15 +1020,27 @@ fn select_probe_camera_id(available_ids: &[String]) -> Option<String> {
     }
 }
 
-unsafe fn load_private_output_sizes(
+unsafe fn load_camera_static_metadata(
     manager: *mut ACameraManager,
     camera_id: *const std::os::raw::c_char,
-) -> Vec<[i32; 2]> {
+) -> CameraProbeStaticMetadata {
     let mut metadata: *mut ACameraMetadata = ptr::null_mut();
     if ACameraManager_getCameraCharacteristics(manager, camera_id, &mut metadata) != 0
         || metadata.is_null()
     {
-        return Vec::new();
+        return CameraProbeStaticMetadata {
+            private_output_sizes: Vec::new(),
+            timestamp_source: CameraTimestampSource::Unavailable,
+            lens_pose_translation: Vec::new(),
+            lens_pose_rotation: Vec::new(),
+            lens_intrinsic_calibration: Vec::new(),
+            lens_pose_reference: None,
+            pre_correction_active_array: Vec::new(),
+            ae_fps_ranges: Vec::new(),
+            noise_reduction_modes: Vec::new(),
+            edge_modes: Vec::new(),
+            request_keys: Vec::new(),
+        };
     }
     let stream_configs = read_i32_values(metadata, ACAMERA_SCALER_AVAILABLE_STREAM_CONFIGURATIONS);
     let mut sizes = Vec::new();
@@ -735,8 +1054,183 @@ unsafe fn load_private_output_sizes(
             sizes.push(size);
         }
     }
+    let timestamp_source = match read_u8_values(metadata, ACAMERA_SENSOR_INFO_TIMESTAMP_SOURCE)
+        .first()
+        .copied()
+    {
+        Some(1) => CameraTimestampSource::Realtime,
+        Some(_) => CameraTimestampSource::Unknown,
+        None => CameraTimestampSource::Unavailable,
+    };
+    let lens_pose_translation = read_f32_values(metadata, ACAMERA_LENS_POSE_TRANSLATION);
+    let lens_pose_rotation = read_f32_values(metadata, ACAMERA_LENS_POSE_ROTATION);
+    let lens_intrinsic_calibration = read_f32_values(metadata, ACAMERA_LENS_INTRINSIC_CALIBRATION);
+    let lens_pose_reference = read_u8_values(metadata, ACAMERA_LENS_POSE_REFERENCE)
+        .first()
+        .copied();
+    let pre_correction_active_array = read_i32_values(
+        metadata,
+        ACAMERA_SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE,
+    );
+    let ae_fps_ranges = read_i32_values(metadata, ACAMERA_CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)
+        .chunks_exact(2)
+        .map(|range| [range[0], range[1]])
+        .collect();
+    let noise_reduction_modes = read_u8_values(
+        metadata,
+        ACAMERA_NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES,
+    );
+    let edge_modes = read_u8_values(metadata, ACAMERA_EDGE_AVAILABLE_EDGE_MODES);
+    let request_keys = read_i32_values(metadata, ACAMERA_REQUEST_AVAILABLE_REQUEST_KEYS);
     ACameraMetadata_free(metadata);
-    sizes
+    CameraProbeStaticMetadata {
+        private_output_sizes: sizes,
+        timestamp_source,
+        lens_pose_translation,
+        lens_pose_rotation,
+        lens_intrinsic_calibration,
+        lens_pose_reference,
+        pre_correction_active_array,
+        ae_fps_ranges,
+        noise_reduction_modes,
+        edge_modes,
+        request_keys,
+    }
+}
+
+unsafe fn apply_camera_latency_capture_processing(
+    capture_request: *mut ACaptureRequest,
+    metadata: &CameraProbeStaticMetadata,
+    requested: CameraLatencyCaptureProcessing,
+) -> String {
+    if requested == CameraLatencyCaptureProcessing::TemplateDefault {
+        return "captureProcessingRequested=template-default noiseReductionSelected=default noiseReductionApplyStatus=not-requested edgeSelected=default edgeApplyStatus=not-requested captureProcessingApplyStatus=not-requested".to_string();
+    }
+
+    let noise_request_key = metadata
+        .request_keys
+        .contains(&(ACAMERA_NOISE_REDUCTION_MODE as i32));
+    let noise_mode_supported = metadata
+        .noise_reduction_modes
+        .contains(&ACAMERA_NOISE_REDUCTION_MODE_OFF);
+    let noise_status = if !noise_request_key {
+        "request-key-unsupported".to_string()
+    } else if !noise_mode_supported {
+        "mode-unsupported".to_string()
+    } else {
+        let value = [ACAMERA_NOISE_REDUCTION_MODE_OFF];
+        let status = ACaptureRequest_setEntry_u8(
+            capture_request,
+            ACAMERA_NOISE_REDUCTION_MODE,
+            1,
+            value.as_ptr(),
+        );
+        if status == 0 {
+            "set-supported".to_string()
+        } else {
+            format!("set-error-{status}")
+        }
+    };
+
+    let edge_request_key = metadata.request_keys.contains(&(ACAMERA_EDGE_MODE as i32));
+    let edge_mode_supported = metadata.edge_modes.contains(&ACAMERA_EDGE_MODE_OFF);
+    let edge_status = if !edge_request_key {
+        "request-key-unsupported".to_string()
+    } else if !edge_mode_supported {
+        "mode-unsupported".to_string()
+    } else {
+        let value = [ACAMERA_EDGE_MODE_OFF];
+        let status =
+            ACaptureRequest_setEntry_u8(capture_request, ACAMERA_EDGE_MODE, 1, value.as_ptr());
+        if status == 0 {
+            "set-supported".to_string()
+        } else {
+            format!("set-error-{status}")
+        }
+    };
+
+    let apply_status = if noise_status == "set-supported" && edge_status == "set-supported" {
+        "set-both-supported"
+    } else {
+        "partial-or-unsupported"
+    };
+    format!(
+        "captureProcessingRequested={} noiseReductionAvailableModes={} noiseReductionSelected={} noiseReductionApplyStatus={} edgeAvailableModes={} edgeSelected={} edgeApplyStatus={} captureProcessingApplyStatus={} supportGated=true fallbackApplied=false",
+        requested.marker_token(),
+        u8_modes_marker(&metadata.noise_reduction_modes),
+        if noise_mode_supported { "OFF" } else { "unavailable" },
+        noise_status,
+        u8_modes_marker(&metadata.edge_modes),
+        if edge_mode_supported { "OFF" } else { "unavailable" },
+        edge_status,
+        apply_status,
+    )
+}
+
+unsafe fn apply_camera_latency_capture_fps(
+    capture_request: *mut ACaptureRequest,
+    metadata: &CameraProbeStaticMetadata,
+    requested_fps: Option<i32>,
+) -> String {
+    let Some(requested_fps) = requested_fps else {
+        return "captureFpsRequested=camera-default captureFpsSelected=default captureFpsApplyStatus=not-requested".to_string();
+    };
+    if !metadata
+        .request_keys
+        .contains(&(ACAMERA_CONTROL_AE_TARGET_FPS_RANGE as i32))
+    {
+        return format!(
+            "captureFpsRequested={} captureFpsSelected=unavailable captureFpsApplyStatus=request-key-unsupported",
+            requested_fps
+        );
+    }
+    let exact = [requested_fps, requested_fps];
+    if !metadata.ae_fps_ranges.contains(&exact) {
+        return format!(
+            "captureFpsRequested={} captureFpsSelected=unavailable captureFpsApplyStatus=exact-fixed-range-unsupported",
+            requested_fps
+        );
+    }
+    let status = ACaptureRequest_setEntry_i32(
+        capture_request,
+        ACAMERA_CONTROL_AE_TARGET_FPS_RANGE,
+        2,
+        exact.as_ptr(),
+    );
+    format!(
+        "captureFpsRequested={} captureFpsSelected={};{} captureFpsApplyStatus={}",
+        requested_fps,
+        exact[0],
+        exact[1],
+        if status == 0 {
+            "set-exact-supported".to_string()
+        } else {
+            format!("set-error-{status}")
+        }
+    )
+}
+
+fn fps_ranges_marker(ranges: &[[i32; 2]]) -> String {
+    if ranges.is_empty() {
+        return "unavailable".to_string();
+    }
+    ranges
+        .iter()
+        .map(|range| format!("{}-{}", range[0], range[1]))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+fn u8_modes_marker(modes: &[u8]) -> String {
+    if modes.is_empty() {
+        "unavailable".to_string()
+    } else {
+        modes
+            .iter()
+            .map(u8::to_string)
+            .collect::<Vec<_>>()
+            .join(";")
+    }
 }
 
 fn select_private_size(sizes: &[[i32; 2]]) -> [i32; 2] {
@@ -791,6 +1285,67 @@ unsafe fn read_i32_values(metadata: *const ACameraMetadata, tag: u32) -> Vec<i32
         return Vec::new();
     }
     std::slice::from_raw_parts(entry.data.i32_, entry.count as usize).to_vec()
+}
+
+unsafe fn read_u8_values(metadata: *const ACameraMetadata, tag: u32) -> Vec<u8> {
+    let Some(entry) = metadata_entry(metadata, tag) else {
+        return Vec::new();
+    };
+    if entry.count == 0 || entry.data.u8_.is_null() {
+        return Vec::new();
+    }
+    std::slice::from_raw_parts(entry.data.u8_, entry.count as usize).to_vec()
+}
+
+unsafe fn read_f32_values(metadata: *const ACameraMetadata, tag: u32) -> Vec<f32> {
+    let Some(entry) = metadata_entry(metadata, tag) else {
+        return Vec::new();
+    };
+    if entry.count == 0 || entry.data.f_.is_null() {
+        return Vec::new();
+    }
+    std::slice::from_raw_parts(entry.data.f_, entry.count as usize).to_vec()
+}
+
+fn float_values_marker(values: &[f32], expected_count: usize) -> String {
+    if values.len() < expected_count {
+        return "unavailable".to_string();
+    }
+    values
+        .iter()
+        .take(expected_count)
+        .map(|value| format!("{value:.6}"))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+fn i32_values_marker(values: &[i32], expected_count: usize) -> String {
+    if values.len() < expected_count {
+        return "unavailable".to_string();
+    }
+    values
+        .iter()
+        .take(expected_count)
+        .map(i32::to_string)
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
+fn lens_pose_reference_marker(value: Option<u8>) -> &'static str {
+    match value {
+        Some(0) => "primary-camera",
+        Some(1) => "gyroscope",
+        Some(2) => "undefined",
+        Some(3) => "automotive",
+        Some(_) => "unknown-value",
+        None => "unavailable",
+    }
+}
+
+fn optional_ns_ms(value: Option<u64>) -> String {
+    value
+        .map(|value| format!("{:.3}", value as f64 / 1_000_000.0))
+        .unwrap_or_else(|| "unavailable".to_string())
 }
 
 unsafe fn metadata_entry(

@@ -2,6 +2,7 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
+use crate::camera_latency_diagnostics::CameraLatencyRotationReprojection;
 use crate::spatial_public_multistack_runtime::current_spatial_public_opaque_projection_layer_override;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -31,6 +32,10 @@ pub(crate) struct CameraHwbProjectionPush {
     pub(crate) left_rect: [f32; 4],
     pub(crate) right_rect: [f32; 4],
     pub(crate) params: [f32; 4],
+    pub(crate) reprojection_row0: [f32; 4],
+    pub(crate) reprojection_row1: [f32; 4],
+    pub(crate) reprojection_row2: [f32; 4],
+    pub(crate) reprojection_params: [f32; 4],
 }
 
 pub(crate) const CAMERA_HWB_LEFT_CAMERA_ID: &str = "50";
@@ -154,6 +159,12 @@ pub(crate) fn packed_right_rect(rect: CameraTargetRect) -> CameraTargetRect {
 }
 
 pub(crate) fn camera_hwb_projection_push() -> CameraHwbProjectionPush {
+    camera_hwb_projection_push_with_reprojection(CameraLatencyRotationReprojection::disabled())
+}
+
+pub(crate) fn camera_hwb_projection_push_with_reprojection(
+    reprojection: CameraLatencyRotationReprojection,
+) -> CameraHwbProjectionPush {
     let live_scale = current_camera_hwb_projection_target_live_scale();
     let stereo_horizontal_offset_uv = current_camera_hwb_projection_stereo_horizontal_offset_uv();
     let (left_effective, right_effective) =
@@ -167,6 +178,10 @@ pub(crate) fn camera_hwb_projection_push() -> CameraHwbProjectionPush {
             1.0,
             0.0,
         ],
+        reprojection_row0: reprojection.row0,
+        reprojection_row1: reprojection.row1,
+        reprojection_row2: reprojection.row2,
+        reprojection_params: reprojection.params,
     }
 }
 
@@ -439,7 +454,7 @@ mod tests {
 
     #[test]
     fn push_constant_layout_matches_shader_contract() {
-        assert_eq!(std::mem::size_of::<CameraHwbProjectionPush>(), 48);
+        assert_eq!(std::mem::size_of::<CameraHwbProjectionPush>(), 112);
         let push = camera_hwb_projection_push();
         assert_eq!(push.params[0], 0.0);
         assert!((-1.0..=6.0).contains(&push.params[1]));

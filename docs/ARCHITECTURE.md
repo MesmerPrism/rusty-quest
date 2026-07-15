@@ -169,6 +169,28 @@ particle, or experiment authority. `SpatialSdkLaneBoundary.kt` records that
 layer/panel placement, camera projection, surface particles, experiment panel,
 and debug probes are separate route owners, while static checks reject direct
 camera/particle cross-ownership in the split native modules.
+`SpatialCameraLatencyDiagnosticModule` is an app-local diagnostic control-plane
+owner. It polls only the revision property during normal placement updates,
+parses the complete property transaction after a revision change, routes the
+current-viewer/frozen-world placement comparison, and submits a bounded JNI
+settings packet. When the opt-in raw-layer rotation diagnostic is active, it
+also supplies a bounded timestamped viewer-basis history; native camera
+callbacks select a basis either by callback time minus the operator's assumed
+capture age or by a directly observed sensor timestamp whose callback delta is
+plausible and bounded. The raw shader applies a rotation-only ray warp and can
+transpose it for a direction-control A/B. Direct use of an `UNKNOWN` Camera2
+timebase remains an empirical headset diagnostic rather than a portable clock
+contract. Rust remains the
+data-plane owner for camera acquisition, AHardwareBuffer import, strict/mono
+stereo A/B policies, cadence aggregation, Vulkan WSI, and shader reprojection.
+The best-current calibrated mode keeps the relative headset rotation in the
+viewer/gyroscope basis, then conjugates it by the Camera2 static lens-pose
+rotation before sampling camera-space rays. Static intrinsic focal lengths and
+principal point replace the diagnostic symmetric-FOV assumption. The current
+push contract uses one shared calibration derived from the left camera; exact
+per-eye calibration remains a bounded follow-up rather than an implicit claim.
+Present mode, swapchain image count, and Camera2 AE FPS request are captured at
+route creation and are reported as pending restart when changed live.
 The world-space hand billboard flock uses that substrate as a public carrier
 example. Its high-density `batched-scene-mesh` mode keeps public drift state in
 Kotlin arrays but renders particles through two dynamic `TriangleMesh` scene

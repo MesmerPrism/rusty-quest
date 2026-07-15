@@ -17,6 +17,7 @@ internal data class SpatialCameraHwbProjectionPlacementNativeState(
 
 internal data class SpatialCameraHwbProjectionPlacementUpdateBindings(
     val resources: SpatialSdkQuadResourceCoordinator,
+    val pollLatencyDiagnostics: (String, Boolean) -> Unit,
     val routeActive: () -> Boolean,
     val projectionEntity: () -> Entity?,
     val scenePanelCarrierEnabled: () -> Boolean,
@@ -43,6 +44,7 @@ internal class SpatialCameraHwbProjectionPlacementUpdateCoordinator(
   }
 
   fun update(reason: String, forceLog: Boolean) {
+    bindings.pollLatencyDiagnostics(reason, forceLog)
     if (!bindings.routeActive()) {
       return
     }

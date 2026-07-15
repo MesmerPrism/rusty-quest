@@ -418,6 +418,77 @@ sample in the same compensated target rectangle. Its hard opaque edge is the
 control condition for the intentional private-shader inner alpha fade seen in
 slots 0 through 6.
 
+For camera-motion latency A/B runs, apply one preset with an explicit headset
+serial while the projection is active:
+
+```powershell
+.\tools\Set-SpatialCameraPanelCameraLatencyDiagnostic.ps1 `
+  -Serial <quest-serial> -Preset FrozenNonBlocking
+```
+
+Compare `Baseline`, `FrozenWorld`, `NonBlocking`, and
+`FrozenNonBlocking` without restarting. The native
+`RQSpatialCameraPanelNative` log must emit `status=latency-hotload-applied`,
+then bounded `status=latency-summary` rows containing callback/import, fence,
+swapchain-acquire, submit, present-call, total-loop timing, relative source and
+callback intervals, display-frame hold histograms, and skipped source frames.
+Use `StrictPair` and `MonoLeft` as live stereo-shimmer controls. With UI slot 8
+selected, compare `RotationWarp40`, `RotationWarp60`, and `RotationWarp80` as
+live callback-age rotation-only reprojection approximations. Then compare
+`SensorWarp` and `SensorWarpInverse`; these select strict stereo pairing and
+fence-held images, and differ only in capture-to-current versus transposed
+rotation direction. `SensorWarp70` and `SensorWarp110` bound FOV sensitivity.
+`SensorWarpInverseRollFree70` removes roll while retaining inverse yaw and
+pitch, and `SensorWarpInverseYawOnly70` isolates inverse yaw. After those axis
+controls, `SensorWarpCameraCalibrated` is the accepted best-current baseline:
+it requires a gyroscope-referenced static lens pose, matching stream and
+pre-correction active-array dimensions, valid Camera2 intrinsics, and native
+markers with `cameraExtrinsicApplied=true` and `intrinsicsApplied=true`.
+The complete decision trail is documented in the
+[Spatial Camera Motion Iteration Report](SPATIAL_CAMERA_MOTION_ITERATION_REPORT.md).
+Per-frame camera markers remain off unless `VerboseFrameLog` is selected.
+When enabled, require `capturePoseAssociation`, `capturePoseTargetTimestampNs`,
+and `capturePoseAvailable` on acquired-frame markers. `Adoption45` is live-safe and should
+produce about 45 imported camera images per second on a 90 Hz surface, with a
+display-hold histogram concentrated at two frames while the camera source stays
+near 50 Hz. Run `Cadence30`, `Cadence45`,
+`Cadence50`, or `Cadence60` with `-RestartApp`; the Camera2 marker must report either
+`set-exact-supported` or `exact-fixed-range-unsupported`. Run `LowQueue` or
+`ImmediateLowQueue` with `-RestartApp`; their requested present mode and
+minimum-safe image count are chosen only during swapchain creation, and runtime
+markers must distinguish the requested values from the active values.
+
+For motion-echo isolation, compare `EarlyDelete` and `FenceHeld` first. The
+fence-held run must report `cameraSyncActive=hold-image-until-gpu-fence`,
+`imageLeaseActive=true`, and a fence-retirement marker. Apply
+`ProcessingOffFenceHeld -RestartApp` next and require explicit
+`noiseReductionApplyStatus` and `edgeApplyStatus`; unsupported metadata is a
+valid diagnostic result, not evidence that the override ran. Use
+`FreezeFrameFenceHeld` to verify whether a stationary source frame remains
+stable while rendering continues, then `OpaqueCameraOnlyFenceHeld` to remove
+the video and public-effect composition from the measured surface. The freeze
+mode rejects unless fence-held image lifetime is active.
+
+After a motion-captured frozen frame is visually clean, apply
+`FreshFrameOnlyPulseFenceHeld` without restarting. It keeps video rendering at
+the surface cadence but shows the custom camera projection only on refreshes
+that adopted a new camera image. Expect deliberate dimness or flicker. Require
+`cameraProjectionVisiblePresents` and `cameraProjectionSuppressedPresents` to
+both be nonzero. If the doubled moving edge disappears in this mode, repeated
+display holds are implicated; if it remains, continue at the Spatial
+surface/compositor handoff rather than the Camera2 producer.
+
+Absolute timestamp age is authoritative only when Camera2 reports the
+`REALTIME` sensor timestamp source, which shares Android boot time. For the
+Quest `UNKNOWN` source, the sensor-warp diagnostic may use the image timestamp
+directly only when its observed callback delta is plausible (0 through 250 ms),
+and labels that association explicitly; this is an empirical A/B and not a
+portable timebase claim. Otherwise it falls back to callback time minus the
+configured assumed age. The current route has no capture-result metadata
+callback. `sensorToPresentCallAge` ends at the Vulkan queue-present call, not
+compositor scanout or photons; markers therefore declare
+`presentAgeSemantics=queue-present-call-not-photons`.
+
 Revisit the custom-projection border blend before accepting it as final. The
 current fade stops the effect payload but still reveals the raw custom camera
 projection inside the blend band, followed by a hard cut to the underlying

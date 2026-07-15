@@ -31,6 +31,8 @@ mod camera_hwb_projection_target;
 mod camera_hwb_stream;
 #[cfg(target_os = "android")]
 mod camera_hwb_wsi;
+#[cfg(any(target_os = "android", test))]
+mod camera_latency_diagnostics;
 mod hand_adapter_consumer;
 #[cfg(target_os = "android")]
 mod live_hand_joint_bridge;

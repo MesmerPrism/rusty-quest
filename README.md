@@ -182,6 +182,22 @@ Right-stick Y still controls projection target scale, Left-stick Y
 controls workflow/layer-control panel distance, and Right-stick X is
 intentionally ignored.
 
+The Spatial camera route also includes a public, revisioned latency-diagnostic
+surface. `Set-SpatialCameraPanelCameraLatencyDiagnostic.ps1` hotloads bounded
+pose, camera-wait, stereo-policy, raw-layer rotation-warp, summary, and logging
+A/B presets. Swapchain present mode, image count, and exact Camera2 capture-FPS
+requests use the same transaction but remain restart-required. Native summaries
+keep frame payloads out of Kotlin, report relative source/callback cadence and
+display holds, and label the selected callback-age or direct plausible sensor-
+timestamp viewer-pose association. Direct use of an `UNKNOWN` Camera2 timebase
+is an empirical headset A/B guarded by a bounded callback delta, not a portable
+timestamp guarantee.
+The accepted best-current motion baseline is the Camera2-calibrated sensor-
+timestamp warp, which preserves the unwarped preset as its control. The full
+test sequence, calibration finding, retained invariants, and remaining work are
+recorded in the
+[Spatial Camera Motion Iteration Report](docs/SPATIAL_CAMERA_MOTION_ITERATION_REPORT.md).
+
 The lane records low-rate session, Polar placeholder, ECG placeholder, block,
 and questionnaire JSONL files in app-private storage. Questionnaire rows remain
 joinable by participant, session, block, condition/profile, and surface target.

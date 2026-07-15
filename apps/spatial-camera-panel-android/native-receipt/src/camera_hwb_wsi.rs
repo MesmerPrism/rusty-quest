@@ -12,9 +12,13 @@ use crate::bool_token;
 use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 use crate::camera_hwb_probe::CameraHwbProbeMode;
 use crate::camera_hwb_projection_target::{
-    camera_hwb_projection_marker_fields, camera_hwb_projection_push, CameraHwbProjectionPush,
+    camera_hwb_projection_marker_fields, camera_hwb_projection_push_with_reprojection,
+    CameraHwbProjectionPush,
 };
 use crate::camera_hwb_stream::CameraProbeFrame;
+use crate::camera_latency_diagnostics::{
+    CameraLatencyIsolationMode, CameraLatencyRotationReprojection, CameraLatencySettings,
+};
 use crate::spatial_public_multistack::public_multistack_marker_fields;
 use crate::spatial_public_multistack_runtime::{
     record_spatial_public_meta_passthrough_edge_window_cutout,
@@ -29,6 +33,7 @@ use crate::spatial_video_projection_settings::SpatialVideoProjectionSettings;
 
 pub(crate) struct CameraHwbRecordResult {
     pub(crate) projected_by_public_stack: bool,
+    pub(crate) camera_projection_visible: bool,
     pub(crate) video_stats: SpatialVideoProjectionFrameStats,
 }
 
@@ -446,6 +451,8 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     video_frame: Option<&SpatialVideoProjectionFrame>,
     video_settings: &SpatialVideoProjectionSettings,
     frame_slot: usize,
+    camera_reprojection: CameraLatencyRotationReprojection,
+    latency_settings: CameraLatencySettings,
 ) -> Result<CameraHwbRecordResult, String> {
     device
         .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
@@ -469,16 +476,24 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             );
         }
     }
+    let opaque_camera_only = latency_settings.enabled
+        && latency_settings.isolation_mode == CameraLatencyIsolationMode::OpaqueCameraOnly;
+    let fresh_frame_only_pulse = latency_settings.enabled
+        && latency_settings.isolation_mode == CameraLatencyIsolationMode::FreshFrameOnlyPulse;
+    let camera_projection_visible =
+        !fresh_frame_only_pulse || transition_left_camera_image || transition_right_camera_image;
     let mut video_stats = SpatialVideoProjectionFrameStats::unavailable(
         video_settings,
-        if video_settings.active() {
+        if opaque_camera_only {
+            "camera-only-isolation"
+        } else if video_settings.active() {
             "waiting-for-decoded-frame"
         } else {
             "disabled"
         },
     );
     let prepared_video = match (video_renderer, video_frame) {
-        (Some(renderer), Some(frame)) if video_settings.active() => {
+        (Some(renderer), Some(frame)) if video_settings.active() && !opaque_camera_only => {
             match renderer.prepare_frame(device, command_buffer, frame_slot, frame, video_settings)
             {
                 Ok(Some(prepared)) => {
@@ -506,7 +521,11 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     let mut public_guide_targets = public_guide_targets;
     let edge_window_selected = spatial_public_meta_passthrough_edge_window_selected();
     let raw_custom_projection_selected = spatial_public_raw_custom_projection_selected();
-    let public_projection_ready = if edge_window_selected || raw_custom_projection_selected {
+    let public_projection_ready = if !camera_projection_visible
+        || opaque_camera_only
+        || edge_window_selected
+        || raw_custom_projection_selected
+    {
         false
     } else if let Some(targets) = public_guide_targets.as_deref_mut() {
         targets.record_spatial_public_guide_passes(
@@ -520,14 +539,28 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         false
     };
 
-    begin_camera_hwb_final_render_pass(device, command_buffer, render_pass, framebuffer, extent);
+    begin_camera_hwb_final_render_pass(
+        device,
+        command_buffer,
+        render_pass,
+        framebuffer,
+        extent,
+        opaque_camera_only,
+    );
     if let Some((renderer, prepared)) = prepared_video.as_ref() {
         renderer.record_video_eye(device, command_buffer, extent, 0, video_settings, prepared);
         renderer.record_video_eye(device, command_buffer, extent, 1, video_settings, prepared);
     }
-    let edge_window_cutout_applied =
-        record_spatial_public_meta_passthrough_edge_window_cutout(device, command_buffer, extent);
-    let projected_by_public_stack = if edge_window_cutout_applied {
+    let edge_window_cutout_applied = camera_projection_visible
+        && !opaque_camera_only
+        && record_spatial_public_meta_passthrough_edge_window_cutout(
+            device,
+            command_buffer,
+            extent,
+        );
+    let projected_by_public_stack = if opaque_camera_only {
+        false
+    } else if edge_window_cutout_applied {
         true
     } else if public_projection_ready {
         public_guide_targets
@@ -543,13 +576,14 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     } else {
         false
     };
-    if !projected_by_public_stack {
+    if camera_projection_visible && !projected_by_public_stack {
         record_camera_hwb_fallback_projection(
             device,
             command_buffer,
             extent,
             resources,
             descriptor_set,
+            camera_reprojection,
         );
     }
     device.cmd_end_render_pass(command_buffer);
@@ -558,6 +592,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
         .map_err(|error| format!("end-command-buffer-{error:?}"))?;
     Ok(CameraHwbRecordResult {
         projected_by_public_stack,
+        camera_projection_visible,
         video_stats,
     })
 }
@@ -568,10 +603,11 @@ unsafe fn begin_camera_hwb_final_render_pass(
     render_pass: vk::RenderPass,
     framebuffer: vk::Framebuffer,
     extent: vk::Extent2D,
+    opaque_clear: bool,
 ) {
     let clear_values = [vk::ClearValue {
         color: vk::ClearColorValue {
-            float32: [0.0, 0.0, 0.0, 0.0],
+            float32: [0.0, 0.0, 0.0, if opaque_clear { 1.0 } else { 0.0 }],
         },
     }];
     let render_area = vk::Rect2D {
@@ -596,6 +632,7 @@ unsafe fn record_camera_hwb_fallback_projection(
     extent: vk::Extent2D,
     resources: &CameraHwbProbeResources,
     descriptor_set: vk::DescriptorSet,
+    camera_reprojection: CameraLatencyRotationReprojection,
 ) {
     let viewport = [vk::Viewport {
         x: 0.0,
@@ -624,7 +661,7 @@ unsafe fn record_camera_hwb_fallback_projection(
         &[descriptor_set],
         &[],
     );
-    let projection_push = camera_hwb_projection_push();
+    let projection_push = camera_hwb_projection_push_with_reprojection(camera_reprojection);
     let projection_push_bytes = std::slice::from_raw_parts(
         (&projection_push as *const CameraHwbProjectionPush).cast::<u8>(),
         mem::size_of::<CameraHwbProjectionPush>(),

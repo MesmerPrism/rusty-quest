@@ -847,6 +847,63 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
         )
     )
   }
+  private val cameraLatencyDiagnosticModule by lazy(LazyThreadSafetyMode.NONE) {
+    SpatialCameraLatencyDiagnosticModule(
+        SpatialCameraLatencyDiagnosticBindings(
+            readSystemProperty = ::activityReadSystemProperty,
+            applyNative = { settings ->
+              if (!nativeInteropCoordinator.receiptLibraryLoaded) {
+                marker(
+                    "channel=camera-latency-diagnostic status=native-update-skipped " +
+                        "reason=receipt-library-unavailable error=" +
+                        activityMarkerToken(nativeInteropCoordinator.receiptLibraryError)
+                )
+                0L
+              } else {
+                nativeUpdateCameraLatencyDiagnostics(
+                    settings.enabled,
+                    settings.revision,
+                    settings.poseMode.nativeCode,
+                    settings.frameWaitMs,
+                    settings.summaryIntervalMs,
+                    settings.frameLog,
+                    settings.presentMode.nativeCode,
+                    settings.imageCount.nativeCode,
+                    settings.captureFps.nativeCode,
+                    settings.cameraSyncMode.nativeCode,
+                    settings.captureProcessing.nativeCode,
+                    settings.adoptionCadence.nativeCode,
+                    settings.stereoPolicy.nativeCode,
+                    settings.isolationMode.nativeCode,
+                    settings.freezeFrame,
+                    settings.reprojectionMode.nativeCode,
+                    settings.assumedCaptureAgeMs,
+                    settings.reprojectionFovDegrees,
+                )
+              }
+            },
+            recordViewerPose = { plane, timestampNs ->
+              if (!nativeInteropCoordinator.receiptLibraryLoaded) {
+                0L
+              } else {
+                nativeUpdateCameraLatencyViewerPose(
+                    timestampNs,
+                    plane.right.x,
+                    plane.right.y,
+                    plane.right.z,
+                    plane.up.x,
+                    plane.up.y,
+                    plane.up.z,
+                    plane.forward.x,
+                    plane.forward.y,
+                    plane.forward.z,
+                )
+              }
+            },
+            marker = ::marker,
+        )
+    )
+  }
   private val spatialVideoProjectionProbeCoordinator by lazy(LazyThreadSafetyMode.NONE) {
     SpatialVideoProjectionProbeCoordinator(
         SpatialVideoProjectionProbeBindings(
@@ -993,7 +1050,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
             },
             cleanup = ::cleanupSdkQuadSurfaceProbe,
-            projectionPlane = cameraHwbProjectionGeometryCoordinator::planeForPlacement,
+            projectionPlane = {
+              cameraLatencyDiagnosticModule.projectionPlane(
+                  cameraHwbProjectionGeometryCoordinator::planeForPlacement
+              )
+            },
             setProjectionEntity = { entity -> cameraHwbProjectionEntity = entity },
             layerZIndex = cameraHwbProjectionCarrierStateCoordinator::zIndexForPlacement,
             carrierMode = cameraHwbProjectionCarrierStateCoordinator::carrierMode,
@@ -1043,7 +1104,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               )
             },
             panelMediaSettings = cameraHwbProjectionGeometryCoordinator::panelMediaSettings,
-            projectionPlane = cameraHwbProjectionGeometryCoordinator::planeForPlacement,
+            projectionPlane = {
+              cameraLatencyDiagnosticModule.projectionPlane(
+                  cameraHwbProjectionGeometryCoordinator::planeForPlacement
+              )
+            },
             projectionEntity = { cameraHwbProjectionEntity },
             setProjectionEntity = { entity -> cameraHwbProjectionEntity = entity },
             layerZIndex = cameraHwbProjectionCarrierStateCoordinator::zIndexForPlacement,
@@ -1083,6 +1148,7 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     SpatialCameraHwbProjectionPlacementUpdateCoordinator(
         SpatialCameraHwbProjectionPlacementUpdateBindings(
             resources = sdkQuadResourceCoordinator,
+            pollLatencyDiagnostics = cameraLatencyDiagnosticModule::poll,
             routeActive = {
               cameraHwbProjectionLaunchCoordinator.started ||
                   spatialVideoProjectionRuntimeCoordinator.started
@@ -1090,7 +1156,11 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
             projectionEntity = { cameraHwbProjectionEntity },
             scenePanelCarrierEnabled =
                 cameraHwbProjectionCarrierStateCoordinator::scenePanelCarrierEnabled,
-            projectionPlane = cameraHwbProjectionGeometryCoordinator::planeForPlacement,
+            projectionPlane = {
+              cameraLatencyDiagnosticModule.projectionPlane(
+                  cameraHwbProjectionGeometryCoordinator::planeForPlacement
+              )
+            },
             updatePanelCarrierLayer = { plane, reason ->
               cameraHwbProjectionPanelCarrierCoordinator.updateLayer(plane, reason)
             },
@@ -1749,6 +1819,8 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       readerMaxImages: Int,
       videoSettings: SpatialVideoProjectionSettings,
   ) {
+    cameraLatencyDiagnosticModule.poll("camera-hwb-projection-pre-run", force = true)
+    cameraLatencyDiagnosticModule.resetPoseCapture("camera-hwb-projection-pre-run")
     cleanupSdkQuadSurfaceProbe("camera-hwb-projection-pre-run")
     cameraHwbProjectionPanelCarrierCoordinator.cleanup("camera-hwb-projection-pre-run")
     spatialVideoProjectionRuntimeCoordinator.adoptSettings(videoSettings)
@@ -2924,6 +2996,40 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   private external fun nativeUpdateCameraHwbProjectionStereoOffsetUv(stereoOffsetUv: Float): Long
 
   private external fun nativeUpdateCameraHwbProjectionTargetScale(targetScale: Float): Long
+
+  private external fun nativeUpdateCameraLatencyDiagnostics(
+      enabled: Boolean,
+      revision: Long,
+      poseMode: Int,
+      frameWaitMs: Int,
+      summaryIntervalMs: Int,
+      frameLog: Boolean,
+      presentMode: Int,
+      imageCount: Int,
+      captureFps: Int,
+      cameraSyncMode: Int,
+      captureProcessing: Int,
+      adoptionCadence: Int,
+      stereoPolicy: Int,
+      isolationMode: Int,
+      freezeFrame: Boolean,
+      reprojectionMode: Int,
+      assumedCaptureAgeMs: Int,
+      reprojectionFovDegrees: Int,
+  ): Long
+
+  private external fun nativeUpdateCameraLatencyViewerPose(
+      timestampNs: Long,
+      rightX: Float,
+      rightY: Float,
+      rightZ: Float,
+      upX: Float,
+      upY: Float,
+      upZ: Float,
+      forwardX: Float,
+      forwardY: Float,
+      forwardZ: Float,
+  ): Long
 
   private external fun nativeUpdatePrivateLayerOverride(layerOverride: Float): Long
 

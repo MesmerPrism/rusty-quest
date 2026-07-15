@@ -983,6 +983,70 @@ $manifest = [ordered]@{
     camera_hwb_projection_eye_space_target_rect_policy = "preserve-packed-eye-uv-target-rects-plus-live-opposed-horizontal-offset"
     camera_hwb_projection_native_panel_pose_authority = "camera-hwb-projection-plane"
     camera_hwb_projection_suppresses_particle_panel_pose_authority = $true
+    camera_latency_diagnostic_module = "spatial-camera-latency-diagnostic-module"
+    camera_latency_diagnostic_transport = "android-system-property-revision-last"
+    camera_latency_diagnostic_tool = "tools/Set-SpatialCameraPanelCameraLatencyDiagnostic.ps1"
+    camera_latency_diagnostic_properties = @(
+        "debug.rustyquest.spatial.camera_latency.enabled",
+        "debug.rustyquest.spatial.camera_latency.pose_mode",
+        "debug.rustyquest.spatial.camera_latency.frame_wait_ms",
+        "debug.rustyquest.spatial.camera_latency.summary_ms",
+        "debug.rustyquest.spatial.camera_latency.frame_log",
+        "debug.rustyquest.spatial.camera_latency.present_mode",
+        "debug.rustyquest.spatial.camera_latency.image_count",
+        "debug.rustyquest.spatial.camera_latency.capture_fps",
+        "debug.rustyquest.spatial.camera_latency.camera_sync_mode",
+        "debug.rustyquest.spatial.camera_latency.capture_processing",
+        "debug.rustyquest.spatial.camera_latency.adoption_cadence",
+        "debug.rustyquest.spatial.camera_latency.stereo_policy",
+        "debug.rustyquest.spatial.camera_latency.isolation_mode",
+        "debug.rustyquest.spatial.camera_latency.freeze_frame",
+        "debug.rustyquest.spatial.camera_latency.reprojection_mode",
+        "debug.rustyquest.spatial.camera_latency.assumed_capture_age_ms",
+        "debug.rustyquest.spatial.camera_latency.reprojection_fov_degrees",
+        "debug.rustyquest.spatial.camera_latency.revision"
+    )
+    camera_latency_diagnostic_live_safe_fields = @(
+        "pose-mode",
+        "frame-wait-ms",
+        "summary-ms",
+        "frame-log",
+        "camera-sync-mode",
+        "adoption-cadence",
+        "stereo-policy",
+        "isolation-mode",
+        "freeze-frame",
+        "reprojection-mode",
+        "assumed-capture-age-ms",
+        "reprojection-fov-degrees"
+    )
+    camera_latency_diagnostic_restart_required_fields = @("present-mode", "image-count", "capture-fps", "capture-processing")
+    camera_latency_diagnostic_pose_modes = @("current-viewer", "frozen-world")
+    camera_latency_diagnostic_camera_sync_modes = @("early-delete-ahb-retained", "hold-image-until-gpu-fence")
+    camera_latency_diagnostic_capture_processing_modes = @("template-default", "noise-edge-off")
+    camera_latency_diagnostic_isolation_modes = @("normal-composite", "opaque-camera-only", "fresh-frame-only-pulse")
+    camera_latency_diagnostic_stereo_policies = @("independent-latest", "strict-timestamp-pair", "mono-duplicate-left")
+    camera_latency_diagnostic_reprojection_modes = @(
+        "off",
+        "rotation-only-raw-layer",
+        "rotation-only-sensor-timestamp",
+        "rotation-only-sensor-timestamp-inverse",
+        "rotation-only-sensor-timestamp-inverse-roll-free",
+        "rotation-only-sensor-timestamp-inverse-yaw-only",
+        "rotation-only-sensor-timestamp-camera-calibrated"
+    )
+    camera_latency_camera_calibration_source = "android-camera2-static-lens-pose-intrinsics"
+    camera_latency_camera_calibration_transform = "camera_from_sensor-times-capture_from_current-times-sensor_from_camera"
+    camera_latency_camera_calibration_scope = "shared-left-camera-approximation"
+    camera_latency_diagnostic_capture_fps_requests = @("camera-default", "30", "45", "50", "60")
+    camera_latency_diagnostic_adoption_cadences = @("every-available", "display-aligned-45")
+    camera_latency_display_aligned_45_semantics = "adopt-latest-camera-image-every-two-presented-frames-at-90hz-camera-producer-remains-unchanged"
+    camera_latency_diagnostic_timing_summary = "bounded-per-window-no-high-rate-payload"
+    camera_latency_diagnostic_cadence_summary = "source-and-callback-intervals-display-hold-histograms-skipped-source-frames"
+    camera_latency_diagnostic_present_age_semantics = "queue-present-call-not-photons"
+    camera_latency_dynamic_camera_pose_metadata_used = $false
+    camera_latency_image_timestamp_pose_association = "mode-selected-callback-assumed-age-or-direct-plausible-sensor-timestamp-diagnostic"
+    camera_latency_capture_result_metadata_callbacks = $false
     forced_replay_hand_source_mode = $(if ([string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) { "public-shape-fallback" } else { "external-recorded-capture-build-env" })
     forced_replay_hand_frame_limit = $resolvedRecordedHandFrameLimit
     native_surface_particle_layer_markers = @(

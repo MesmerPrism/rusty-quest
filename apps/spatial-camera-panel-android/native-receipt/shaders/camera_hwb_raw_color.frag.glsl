@@ -7,6 +7,10 @@ layout(push_constant) uniform CameraHwbProjectionPush {
     vec4 leftRect;
     vec4 rightRect;
     vec4 params;
+    vec4 reprojectionRow0;
+    vec4 reprojectionRow1;
+    vec4 reprojectionRow2;
+    vec4 reprojectionParams;
 } pc;
 
 layout(location = 0) in vec2 vUv;
@@ -49,15 +53,41 @@ vec3 fallback_layer_debug(vec3 rgb, vec2 localUv) {
     return mix(vec3(luma), vec3(bands, 1.0 - bands, 0.55), 0.65);
 }
 
+vec2 rotation_reprojected_uv(vec2 localUv) {
+    if (pc.reprojectionParams.x < 0.5) {
+        return localUv;
+    }
+    float tanHalfHorizontalFov = max(pc.reprojectionParams.y, 0.01);
+    float tanHalfVerticalFov = max(pc.reprojectionParams.z, 0.01);
+    vec2 principalPoint = vec2(pc.reprojectionRow0.w, pc.reprojectionRow1.w);
+    vec3 currentRay = vec3(
+        (localUv.x - principalPoint.x) * 2.0 * tanHalfHorizontalFov,
+        (principalPoint.y - localUv.y) * 2.0 * tanHalfVerticalFov,
+        1.0
+    );
+    vec3 captureRay = vec3(
+        dot(pc.reprojectionRow0.xyz, currentRay),
+        dot(pc.reprojectionRow1.xyz, currentRay),
+        dot(pc.reprojectionRow2.xyz, currentRay)
+    );
+    float forward = max(captureRay.z, 0.01);
+    return vec2(
+        principalPoint.x + captureRay.x / (forward * 2.0 * tanHalfHorizontalFov),
+        principalPoint.y - captureRay.y / (forward * 2.0 * tanHalfVerticalFov)
+    );
+}
+
 void main() {
     vec2 localUv = vec2(0.0);
     if (local_uv_for_rect(vUv, pc.leftRect, localUv)) {
-        vec3 rgb = texture(u_camera_left, clamp(localUv, vec2(0.0), vec2(1.0))).rgb;
+        vec2 sampleUv = clamp(rotation_reprojected_uv(localUv), vec2(0.0), vec2(1.0));
+        vec3 rgb = texture(u_camera_left, sampleUv).rgb;
         outColor = vec4(fallback_layer_debug(rgb, localUv), 1.0);
         return;
     }
     if (local_uv_for_rect(vUv, pc.rightRect, localUv)) {
-        vec3 rgb = texture(u_camera_right, clamp(localUv, vec2(0.0), vec2(1.0))).rgb;
+        vec2 sampleUv = clamp(rotation_reprojected_uv(localUv), vec2(0.0), vec2(1.0));
+        vec3 rgb = texture(u_camera_right, sampleUv).rgb;
         outColor = vec4(fallback_layer_debug(rgb, localUv), 1.0);
         return;
     }

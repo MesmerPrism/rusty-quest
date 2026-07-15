@@ -15,13 +15,20 @@ use crate::camera_hwb_projection_target::{
     camera_hwb_projection_marker_fields, update_camera_hwb_projection_stereo_horizontal_offset_uv,
     update_camera_hwb_projection_target_live_scale,
 };
-use crate::camera_hwb_stream::{CameraProbeFrameSet, CameraProbeRuntime, CameraProbeStreamMode};
+use crate::camera_hwb_stream::{
+    CameraProbeFrame, CameraProbeFrameSet, CameraProbeRuntime, CameraProbeStreamMode,
+};
 use crate::camera_hwb_wsi::{
     allocate_camera_hwb_probe_descriptor_set, choose_composite_alpha, choose_extent,
-    choose_image_count, choose_present_mode, choose_surface_format,
-    create_camera_hwb_probe_resources, create_framebuffers, create_image_views, create_render_pass,
-    import_replacement_camera_frame, record_camera_hwb_probe_command_buffer,
-    select_camera_surface_device, update_camera_hwb_probe_descriptor_set,
+    choose_surface_format, create_camera_hwb_probe_resources, create_framebuffers,
+    create_image_views, create_render_pass, import_replacement_camera_frame,
+    record_camera_hwb_probe_command_buffer, select_camera_surface_device,
+    update_camera_hwb_probe_descriptor_set,
+};
+use crate::camera_latency_diagnostics::{
+    boottime_now_ns, current_camera_latency_rotation_reprojection, current_camera_latency_settings,
+    CameraLatencyCameraSyncMode, CameraLatencyFrameTiming, CameraLatencyStereoPolicy,
+    CameraLatencyWindow, CAMERA_LATENCY_STRICT_PAIR_MAX_DELTA_NS,
 };
 use crate::spatial_public_multistack::{
     public_multistack_inactive_marker_fields, public_multistack_marker_fields,
@@ -38,7 +45,6 @@ use crate::{bool_token, marker_token};
 
 const CAMERA_HWB_PROBE_WAIT_FRAME_MS: u64 = 5000;
 const CAMERA_HWB_PROBE_MAX_FRAMES: u32 = 1800;
-const CAMERA_HWB_PROBE_LATEST_FRAME_WAIT_MS: u64 = 2;
 
 static STOP_CAMERA_HWB_PROBE: AtomicBool = AtomicBool::new(false);
 
@@ -114,6 +120,50 @@ impl CameraHwbProbeMode {
             ),
         }
     }
+}
+
+fn camera_probe_frame_order_timestamp(frame: &CameraProbeFrame) -> i64 {
+    if frame.timestamp_ns > 0 {
+        frame.timestamp_ns
+    } else {
+        frame.callback_boottime_ns
+    }
+}
+
+fn camera_probe_pair_delta_ns(left: &CameraProbeFrame, right: &CameraProbeFrame) -> u64 {
+    camera_probe_frame_order_timestamp(left).abs_diff(camera_probe_frame_order_timestamp(right))
+}
+
+fn log_fence_held_frame_retirement(frame: &CameraProbeFrame, side: &str) {
+    if frame.has_fence_held_image()
+        && (frame.frame_index <= 4
+            || crate::camera_latency_diagnostics::camera_latency_per_frame_log_enabled())
+    {
+        log_marker(format!(
+            "status=fence-held-frame-retired-after-gpu-fence side={} cameraId={} frameIndex={} hardwareBufferId={} cameraSyncActive=hold-image-until-gpu-fence frameFenceWaitComplete=true imageReleaseDeferredUntilFinalFrameReferenceDrop=true",
+            side,
+            marker_token(&frame.camera_id),
+            frame.frame_index,
+            frame.descriptor.hardware_buffer_id,
+        ));
+    }
+}
+
+fn log_camera_frame_import_skipped(
+    frame: &CameraProbeFrame,
+    side: &str,
+    mode: CameraHwbProbeMode,
+    error: &str,
+) {
+    log_marker(format!(
+        "status=stream-frame-import-skipped side={} cameraId={} frameIndex={} hwbImportSequence={} error={} sampledCameraTexture=true outputMode={} rawCameraProjectionProbe=true runtimeCrash=false",
+        side,
+        marker_token(&frame.camera_id),
+        frame.frame_index,
+        frame.hwb_import_sequence,
+        marker_token(error),
+        mode.output_mode(),
+    ));
 }
 
 #[link(name = "android")]
@@ -549,9 +599,14 @@ unsafe fn render_camera_hwb_probe(
     let present_modes = surface_loader
         .get_physical_device_surface_present_modes(physical_device, surface)
         .unwrap_or_default();
-    let present_mode = choose_present_mode(&present_modes);
+    let active_latency_launch_settings = current_camera_latency_settings();
+    let present_mode = active_latency_launch_settings
+        .present_mode
+        .choose(&present_modes);
     let extent = choose_extent(&capabilities, requested_width, requested_height);
-    let image_count = choose_image_count(&capabilities);
+    let image_count = active_latency_launch_settings
+        .image_count
+        .choose(&capabilities);
     let composite_alpha = choose_composite_alpha(capabilities.supported_composite_alpha);
     let swapchain_info = vk::SwapchainCreateInfoKHR::default()
         .surface(surface)
@@ -615,12 +670,13 @@ unsafe fn render_camera_hwb_probe(
         .map_err(|error| format!("create-frame-fence-{error:?}"))?;
 
     log_marker(format!(
-        "status=render-loop-ready carrier=scenequadlayer-createAsAndroid-vulkan-wsi producerPath=Camera2-AImageReader-AHardwareBuffer-Vulkan-WSI swapchainImages={} extent={}x{} surfaceFormat={:?} presentMode={:?} compositeAlpha={:?} externalHwbExtensionReady={} samplerYcbcrExtensionReady={} samplerYcbcrFeatureReady={} outputMode={} rawCameraProjectionProbe={} stereoSource={} privateShaderStack=false customProjectionStack=false runtimeCrash=false {}",
+        "status=render-loop-ready carrier=scenequadlayer-createAsAndroid-vulkan-wsi producerPath=Camera2-AImageReader-AHardwareBuffer-Vulkan-WSI swapchainImages={} extent={}x{} surfaceFormat={:?} presentMode={:?} presentModesAvailable={} compositeAlpha={:?} externalHwbExtensionReady={} samplerYcbcrExtensionReady={} samplerYcbcrFeatureReady={} outputMode={} rawCameraProjectionProbe={} stereoSource={} privateShaderStack=false customProjectionStack=false dynamicCameraPoseMetadataUsed=false imageTimestampPoseAssociation=selected-by-camera-latency-reprojection-mode captureResultMetadataCallbacks=false runtimeCrash=false {} {}",
         images.len(),
         extent.width,
         extent.height,
         surface_format.format,
         present_mode,
+        marker_token(&format!("{present_modes:?}")),
         composite_alpha,
         extension_status.external_hwb_extension_ready,
         extension_status.sampler_ycbcr_extension_ready,
@@ -629,6 +685,7 @@ unsafe fn render_camera_hwb_probe(
         mode.raw_projection_token(),
         mode.stereo_source(),
         mode.projection_contract_marker_fields(),
+        active_latency_launch_settings.marker_fields(),
     ));
 
     let camera_runtime = CameraProbeRuntime::start(reader_max_images, mode.stream_mode())?;
@@ -824,106 +881,400 @@ unsafe fn render_camera_hwb_probe(
     let render_started = Instant::now();
     let mut current_left_frame = initial_frames.left;
     let mut current_right_frame = initial_frames.right;
-    let mut current_left_hwb_import_sequence = current_left_frame.hwb_import_sequence;
-    let mut current_right_hwb_import_sequence = current_right_frame.hwb_import_sequence;
+    let mut last_polled_left_hwb_import_sequence = current_left_frame.hwb_import_sequence;
+    let mut last_polled_right_hwb_import_sequence = current_right_frame.hwb_import_sequence;
+    let mut pending_strict_left: Option<CameraProbeFrame> = None;
+    let mut pending_strict_right: Option<CameraProbeFrame> = None;
+    let mut strict_pair_rejections = 0_u64;
+    let mut strict_pair_generation = 0_u64;
     let mut transition_left_camera_image = true;
     let mut transition_right_camera_image = matches!(mode, CameraHwbProbeMode::RawColorProjection);
     let mut frames_presented = 0_u32;
     let mut spatial_video_projection_rendered_marker_logged = false;
+    let mut observed_latency_settings = active_latency_launch_settings;
+    let mut freeze_frame_pending = active_latency_launch_settings.enabled
+        && active_latency_launch_settings.freeze_frame
+        && active_latency_launch_settings.camera_sync_mode
+            == CameraLatencyCameraSyncMode::HoldImageUntilGpuFence;
+    let mut freeze_frame_latched = false;
+    let (initial_left_published_frames, initial_right_published_frames) =
+        camera_runtime.published_frame_counts();
+    let mut latency_window = CameraLatencyWindow::new(
+        current_left_frame.frame_index,
+        current_right_frame.frame_index,
+        initial_left_published_frames,
+        initial_right_published_frames,
+    );
     while (max_frames == 0 || frames_presented < max_frames)
         && !STOP_CAMERA_HWB_PROBE.load(Ordering::Acquire)
     {
+        let loop_started = Instant::now();
+        let requested_latency_settings = current_camera_latency_settings();
+        if requested_latency_settings != observed_latency_settings {
+            let previous_latency_settings = observed_latency_settings;
+            let launch_settings_pending_restart = requested_latency_settings.present_mode
+                != active_latency_launch_settings.present_mode
+                || requested_latency_settings.image_count
+                    != active_latency_launch_settings.image_count
+                || requested_latency_settings.capture_fps
+                    != active_latency_launch_settings.capture_fps
+                || requested_latency_settings.capture_processing
+                    != active_latency_launch_settings.capture_processing;
+            observed_latency_settings = requested_latency_settings;
+            let (left_published_frames, right_published_frames) =
+                camera_runtime.published_frame_counts();
+            latency_window = CameraLatencyWindow::new(
+                current_left_frame.frame_index,
+                current_right_frame.frame_index,
+                left_published_frames,
+                right_published_frames,
+            );
+            pending_strict_left = None;
+            pending_strict_right = None;
+            if !observed_latency_settings.enabled || !observed_latency_settings.freeze_frame {
+                if freeze_frame_latched || freeze_frame_pending {
+                    log_marker(format!(
+                        "status=camera-freeze-released cameraLatencyRevision={} runtimeCrash=false",
+                        observed_latency_settings.revision,
+                    ));
+                }
+                freeze_frame_pending = false;
+                freeze_frame_latched = false;
+            } else if observed_latency_settings.camera_sync_mode
+                != CameraLatencyCameraSyncMode::HoldImageUntilGpuFence
+            {
+                freeze_frame_pending = false;
+                freeze_frame_latched = false;
+                log_marker(format!(
+                    "status=camera-freeze-rejected reason=requires-hold-image-until-gpu-fence cameraLatencyRevision={} cameraSyncRequested={} runtimeCrash=false",
+                    observed_latency_settings.revision,
+                    observed_latency_settings.camera_sync_mode.marker_token(),
+                ));
+            } else if !previous_latency_settings.freeze_frame
+                || previous_latency_settings.camera_sync_mode
+                    != CameraLatencyCameraSyncMode::HoldImageUntilGpuFence
+            {
+                freeze_frame_pending = true;
+                freeze_frame_latched = false;
+                log_marker(format!(
+                    "status=camera-freeze-armed latchPolicy=next-complete-fence-held-stereo-import cameraLatencyRevision={} runtimeCrash=false",
+                    observed_latency_settings.revision,
+                ));
+            }
+            log_marker(format!(
+                "status=latency-settings-observed launchSettingsPendingRestart={} activePresentMode={:?} activeSwapchainImages={} {}",
+                bool_token(launch_settings_pending_restart),
+                present_mode,
+                images.len(),
+                observed_latency_settings.marker_fields(),
+            ));
+        }
+        let mut frame_timing = CameraLatencyFrameTiming::default();
+        let fence_wait_started = Instant::now();
         device
             .wait_for_fences(&[frame_fence], true, u64::MAX)
             .map_err(|error| format!("wait-fence-{error:?}"))?;
         device
             .reset_fences(&[frame_fence])
             .map_err(|error| format!("reset-fence-{error:?}"))?;
+        frame_timing.fence_wait = fence_wait_started.elapsed();
         if let Some(renderer) = video_renderer.as_mut() {
             renderer.retire_completed_frame_handles();
         }
-        if mode.should_stream_latest_frame() {
-            if let Some(next_frame) = camera_runtime.wait_for_left_frame_after(
-                current_left_hwb_import_sequence,
-                Duration::from_millis(CAMERA_HWB_PROBE_LATEST_FRAME_WAIT_MS),
-            ) {
-                match import_replacement_camera_frame(
-                    &device,
-                    &memory_properties,
-                    &ahb_device,
-                    &camera_resources,
-                    format_key,
-                    &next_frame,
-                ) {
-                    Ok(next_sampled_image) => {
-                        update_camera_hwb_probe_descriptor_set(
+        let mut left_imported = false;
+        let mut right_imported = false;
+        if mode.should_stream_latest_frame()
+            && !freeze_frame_latched
+            && observed_latency_settings.should_adopt_camera_image(frames_presented)
+        {
+            let frame_wait =
+                Duration::from_millis(observed_latency_settings.effective_frame_wait_ms() as u64);
+            match observed_latency_settings.stereo_policy {
+                CameraLatencyStereoPolicy::IndependentLatest => {
+                    let left_wait_started = Instant::now();
+                    let next_left_frame = camera_runtime.wait_for_left_frame_after(
+                        last_polled_left_hwb_import_sequence,
+                        frame_wait,
+                    );
+                    frame_timing.camera_wait += left_wait_started.elapsed();
+                    if let Some(next_frame) = next_left_frame {
+                        last_polled_left_hwb_import_sequence = next_frame.hwb_import_sequence;
+                        let import_started = Instant::now();
+                        match import_replacement_camera_frame(
                             &device,
+                            &memory_properties,
+                            &ahb_device,
                             &camera_resources,
-                            descriptor_set,
-                            next_sampled_image.image_view,
-                            sampled_right_image.as_ref().map(|image| image.image_view),
-                            mode,
-                        );
-                        sampled_left_image.destroy(&device);
-                        sampled_left_image = next_sampled_image;
-                        current_left_hwb_import_sequence = next_frame.hwb_import_sequence;
-                        current_left_frame = next_frame;
-                        transition_left_camera_image = true;
+                            format_key,
+                            &next_frame,
+                        ) {
+                            Ok(next_sampled_image) => {
+                                update_camera_hwb_probe_descriptor_set(
+                                    &device,
+                                    &camera_resources,
+                                    descriptor_set,
+                                    next_sampled_image.image_view,
+                                    sampled_right_image.as_ref().map(|image| image.image_view),
+                                    mode,
+                                );
+                                log_fence_held_frame_retirement(&current_left_frame, "left");
+                                sampled_left_image.destroy(&device);
+                                sampled_left_image = next_sampled_image;
+                                current_left_frame = next_frame;
+                                transition_left_camera_image = true;
+                                left_imported = true;
+                            }
+                            Err(error) => {
+                                log_camera_frame_import_skipped(&next_frame, "left", mode, &error)
+                            }
+                        }
+                        frame_timing.camera_import += import_started.elapsed();
                     }
-                    Err(error) => {
-                        log_marker(format!(
-                            "status=stream-frame-import-skipped side=left cameraId={} frameIndex={} hwbImportSequence={} error={} sampledLeftCameraTexture=true outputMode={} rawCameraProjectionProbe=true runtimeCrash=false",
-                            marker_token(&next_frame.camera_id),
-                            next_frame.frame_index,
-                            next_frame.hwb_import_sequence,
-                            marker_token(&error),
-                            mode.output_mode(),
-                        ));
+                    let right_wait_started = Instant::now();
+                    let next_right_frame = camera_runtime.wait_for_right_frame_after(
+                        last_polled_right_hwb_import_sequence,
+                        frame_wait,
+                    );
+                    frame_timing.camera_wait += right_wait_started.elapsed();
+                    if let Some(next_frame) = next_right_frame {
+                        last_polled_right_hwb_import_sequence = next_frame.hwb_import_sequence;
+                        let import_started = Instant::now();
+                        match import_replacement_camera_frame(
+                            &device,
+                            &memory_properties,
+                            &ahb_device,
+                            &camera_resources,
+                            format_key,
+                            &next_frame,
+                        ) {
+                            Ok(next_sampled_image) => {
+                                update_camera_hwb_probe_descriptor_set(
+                                    &device,
+                                    &camera_resources,
+                                    descriptor_set,
+                                    sampled_left_image.image_view,
+                                    Some(next_sampled_image.image_view),
+                                    mode,
+                                );
+                                log_fence_held_frame_retirement(&current_right_frame, "right");
+                                if let Some(previous) = sampled_right_image.take() {
+                                    previous.destroy(&device);
+                                }
+                                sampled_right_image = Some(next_sampled_image);
+                                current_right_frame = next_frame;
+                                transition_right_camera_image = true;
+                                right_imported = true;
+                            }
+                            Err(error) => {
+                                log_camera_frame_import_skipped(&next_frame, "right", mode, &error)
+                            }
+                        }
+                        frame_timing.camera_import += import_started.elapsed();
                     }
                 }
-            }
-            if let Some(next_frame) = camera_runtime.wait_for_right_frame_after(
-                current_right_hwb_import_sequence,
-                Duration::from_millis(CAMERA_HWB_PROBE_LATEST_FRAME_WAIT_MS),
-            ) {
-                match import_replacement_camera_frame(
-                    &device,
-                    &memory_properties,
-                    &ahb_device,
-                    &camera_resources,
-                    format_key,
-                    &next_frame,
-                ) {
-                    Ok(next_sampled_image) => {
-                        update_camera_hwb_probe_descriptor_set(
+                CameraLatencyStereoPolicy::MonoDuplicateLeft => {
+                    let left_wait_started = Instant::now();
+                    let next_left_frame = camera_runtime.wait_for_left_frame_after(
+                        last_polled_left_hwb_import_sequence,
+                        frame_wait,
+                    );
+                    frame_timing.camera_wait += left_wait_started.elapsed();
+                    if let Some(next_frame) = next_left_frame {
+                        last_polled_left_hwb_import_sequence = next_frame.hwb_import_sequence;
+                        let import_started = Instant::now();
+                        match import_replacement_camera_frame(
                             &device,
+                            &memory_properties,
+                            &ahb_device,
                             &camera_resources,
-                            descriptor_set,
-                            sampled_left_image.image_view,
-                            Some(next_sampled_image.image_view),
-                            mode,
-                        );
-                        if let Some(previous) = sampled_right_image.take() {
-                            previous.destroy(&device);
+                            format_key,
+                            &next_frame,
+                        ) {
+                            Ok(next_sampled_image) => {
+                                update_camera_hwb_probe_descriptor_set(
+                                    &device,
+                                    &camera_resources,
+                                    descriptor_set,
+                                    next_sampled_image.image_view,
+                                    None,
+                                    mode,
+                                );
+                                log_fence_held_frame_retirement(
+                                    &current_left_frame,
+                                    "left-mono-source",
+                                );
+                                sampled_left_image.destroy(&device);
+                                sampled_left_image = next_sampled_image;
+                                current_left_frame = next_frame;
+                                current_right_frame = current_left_frame.clone();
+                                transition_left_camera_image = true;
+                                left_imported = true;
+                                right_imported = true;
+                            }
+                            Err(error) => log_camera_frame_import_skipped(
+                                &next_frame,
+                                "left-mono-source",
+                                mode,
+                                &error,
+                            ),
                         }
-                        sampled_right_image = Some(next_sampled_image);
-                        current_right_hwb_import_sequence = next_frame.hwb_import_sequence;
-                        current_right_frame = next_frame;
-                        transition_right_camera_image = true;
+                        frame_timing.camera_import += import_started.elapsed();
                     }
-                    Err(error) => {
-                        log_marker(format!(
-                            "status=stream-frame-import-skipped side=right cameraId={} frameIndex={} hwbImportSequence={} error={} sampledRightCameraTexture=true outputMode={} rawCameraProjectionProbe=true runtimeCrash=false",
-                            marker_token(&next_frame.camera_id),
-                            next_frame.frame_index,
-                            next_frame.hwb_import_sequence,
-                            marker_token(&error),
-                            mode.output_mode(),
-                        ));
+                }
+                CameraLatencyStereoPolicy::StrictTimestampPair => {
+                    if pending_strict_left.is_none() {
+                        let left_wait_started = Instant::now();
+                        pending_strict_left = camera_runtime.wait_for_left_frame_after(
+                            last_polled_left_hwb_import_sequence,
+                            frame_wait,
+                        );
+                        frame_timing.camera_wait += left_wait_started.elapsed();
+                        if let Some(frame) = pending_strict_left.as_ref() {
+                            last_polled_left_hwb_import_sequence = frame.hwb_import_sequence;
+                        }
+                    }
+                    if pending_strict_right.is_none() {
+                        let right_wait_started = Instant::now();
+                        pending_strict_right = camera_runtime.wait_for_right_frame_after(
+                            last_polled_right_hwb_import_sequence,
+                            frame_wait,
+                        );
+                        frame_timing.camera_wait += right_wait_started.elapsed();
+                        if let Some(frame) = pending_strict_right.as_ref() {
+                            last_polled_right_hwb_import_sequence = frame.hwb_import_sequence;
+                        }
+                    }
+                    if let (Some(left), Some(right)) =
+                        (pending_strict_left.as_ref(), pending_strict_right.as_ref())
+                    {
+                        let pair_delta_ns = camera_probe_pair_delta_ns(left, right);
+                        if pair_delta_ns <= CAMERA_LATENCY_STRICT_PAIR_MAX_DELTA_NS {
+                            let next_left = pending_strict_left.take().expect("left checked");
+                            let next_right = pending_strict_right.take().expect("right checked");
+                            let import_started = Instant::now();
+                            let next_left_image = import_replacement_camera_frame(
+                                &device,
+                                &memory_properties,
+                                &ahb_device,
+                                &camera_resources,
+                                format_key,
+                                &next_left,
+                            );
+                            let next_right_image = import_replacement_camera_frame(
+                                &device,
+                                &memory_properties,
+                                &ahb_device,
+                                &camera_resources,
+                                format_key,
+                                &next_right,
+                            );
+                            match (next_left_image, next_right_image) {
+                                (Ok(left_image), Ok(right_image)) => {
+                                    update_camera_hwb_probe_descriptor_set(
+                                        &device,
+                                        &camera_resources,
+                                        descriptor_set,
+                                        left_image.image_view,
+                                        Some(right_image.image_view),
+                                        mode,
+                                    );
+                                    log_fence_held_frame_retirement(
+                                        &current_left_frame,
+                                        "left-strict-pair",
+                                    );
+                                    log_fence_held_frame_retirement(
+                                        &current_right_frame,
+                                        "right-strict-pair",
+                                    );
+                                    sampled_left_image.destroy(&device);
+                                    if let Some(previous) = sampled_right_image.take() {
+                                        previous.destroy(&device);
+                                    }
+                                    sampled_left_image = left_image;
+                                    sampled_right_image = Some(right_image);
+                                    current_left_frame = next_left;
+                                    current_right_frame = next_right;
+                                    transition_left_camera_image = true;
+                                    transition_right_camera_image = true;
+                                    left_imported = true;
+                                    right_imported = true;
+                                    strict_pair_generation =
+                                        strict_pair_generation.saturating_add(1);
+                                }
+                                (Ok(left_image), Err(error)) => {
+                                    left_image.destroy(&device);
+                                    log_camera_frame_import_skipped(
+                                        &next_right,
+                                        "right-strict-pair",
+                                        mode,
+                                        &error,
+                                    );
+                                }
+                                (Err(error), Ok(right_image)) => {
+                                    right_image.destroy(&device);
+                                    log_camera_frame_import_skipped(
+                                        &next_left,
+                                        "left-strict-pair",
+                                        mode,
+                                        &error,
+                                    );
+                                }
+                                (Err(left_error), Err(right_error)) => {
+                                    log_camera_frame_import_skipped(
+                                        &next_left,
+                                        "left-strict-pair",
+                                        mode,
+                                        &left_error,
+                                    );
+                                    log_camera_frame_import_skipped(
+                                        &next_right,
+                                        "right-strict-pair",
+                                        mode,
+                                        &right_error,
+                                    );
+                                }
+                            }
+                            frame_timing.camera_import += import_started.elapsed();
+                        } else {
+                            strict_pair_rejections = strict_pair_rejections.saturating_add(1);
+                            let left_order = camera_probe_frame_order_timestamp(left);
+                            let right_order = camera_probe_frame_order_timestamp(right);
+                            if left_order <= right_order {
+                                pending_strict_left = None;
+                            } else {
+                                pending_strict_right = None;
+                            }
+                            if strict_pair_rejections <= 4
+                                || crate::camera_latency_diagnostics::camera_latency_per_frame_log_enabled()
+                            {
+                                log_marker(format!(
+                                    "status=strict-stereo-pair-rejected pairDeltaMs={:.3} maxPairDeltaMs={:.3} rejectedPairs={} policy=strict-timestamp-pair runtimeCrash=false",
+                                    pair_delta_ns as f64 / 1_000_000.0,
+                                    CAMERA_LATENCY_STRICT_PAIR_MAX_DELTA_NS as f64 / 1_000_000.0,
+                                    strict_pair_rejections,
+                                ));
+                            }
+                        }
                     }
                 }
             }
         }
+        if freeze_frame_pending
+            && current_left_frame.has_fence_held_image()
+            && current_right_frame.has_fence_held_image()
+        {
+            freeze_frame_pending = false;
+            freeze_frame_latched = true;
+            log_marker(format!(
+                "status=camera-freeze-latched cameraLatencyRevision={} leftFrameIndex={} rightFrameIndex={} leftHardwareBufferId={} rightHardwareBufferId={} cameraSyncActive=hold-image-until-gpu-fence latchFenceWaitComplete=true callbacksContinue=true importsPaused=true runtimeCrash=false",
+                observed_latency_settings.revision,
+                current_left_frame.frame_index,
+                current_right_frame.frame_index,
+                current_left_frame.descriptor.hardware_buffer_id,
+                current_right_frame.descriptor.hardware_buffer_id,
+            ));
+        }
+        let acquire_started = Instant::now();
         let image_index = match swapchain_loader.acquire_next_image(
             swapchain,
             u64::MAX,
@@ -934,6 +1285,7 @@ unsafe fn render_camera_hwb_probe(
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => break,
             Err(error) => return Err(format!("acquire-next-image-{error:?}")),
         };
+        frame_timing.acquire_swapchain = acquire_started.elapsed();
         let command_buffer = command_buffers[image_index as usize];
         let public_stack_elapsed_seconds = render_started.elapsed().as_secs_f32();
         let latest_video_frame = if video_settings.active() {
@@ -941,6 +1293,9 @@ unsafe fn render_camera_hwb_probe(
         } else {
             None
         };
+        let record_started = Instant::now();
+        let camera_reprojection =
+            current_camera_latency_rotation_reprojection(current_left_frame.capture_viewer_basis);
         let record_result = record_camera_hwb_probe_command_buffer(
             &device,
             command_buffer,
@@ -959,7 +1314,10 @@ unsafe fn render_camera_hwb_probe(
             latest_video_frame.as_ref(),
             &video_settings,
             image_index as usize,
+            camera_reprojection,
+            observed_latency_settings,
         )?;
+        frame_timing.record = record_started.elapsed();
         let projected_by_public_stack = record_result.projected_by_public_stack;
         transition_left_camera_image = false;
         transition_right_camera_image = false;
@@ -972,21 +1330,80 @@ unsafe fn render_camera_hwb_probe(
             .wait_dst_stage_mask(&wait_stages)
             .command_buffers(&submit_command_buffers)
             .signal_semaphores(&signal_semaphores)];
+        let submit_started = Instant::now();
         device
             .queue_submit(queue, &submit_info, frame_fence)
             .map_err(|error| format!("queue-submit-{error:?}"))?;
+        frame_timing.submit = submit_started.elapsed();
         let swapchains = [swapchain];
         let image_indices = [image_index];
         let present_info = vk::PresentInfoKHR::default()
             .wait_semaphores(&signal_semaphores)
             .swapchains(&swapchains)
             .image_indices(&image_indices);
+        let present_started = Instant::now();
         match swapchain_loader.queue_present(queue, &present_info) {
             Ok(_suboptimal) => {}
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => break,
             Err(error) => return Err(format!("queue-present-{error:?}")),
         }
+        frame_timing.present_call = present_started.elapsed();
         frames_presented = frames_presented.saturating_add(1);
+        frame_timing.loop_total = loop_started.elapsed();
+        if observed_latency_settings.stereo_policy == CameraLatencyStereoPolicy::StrictTimestampPair
+            && left_imported
+            && right_imported
+            && (strict_pair_generation <= 4
+                || crate::camera_latency_diagnostics::camera_latency_per_frame_log_enabled())
+        {
+            log_marker(format!(
+                "status=strict-stereo-pair-presented pairGeneration={} presentOrdinal={} leftFrameIndex={} rightFrameIndex={} leftHwbImportSequence={} rightHwbImportSequence={} leftTimestampNs={} rightTimestampNs={} pairDeltaNs={} maxPairDeltaNs={} bothDescriptorBindingsUpdatedBeforeRecord=true bothCameraImagesTransitionedTogether=true packedEyesRecordedInSingleCommandBuffer=true singleQueuePresent=true runtimeCrash=false",
+                strict_pair_generation,
+                frames_presented,
+                current_left_frame.frame_index,
+                current_right_frame.frame_index,
+                current_left_frame.hwb_import_sequence,
+                current_right_frame.hwb_import_sequence,
+                current_left_frame.timestamp_ns,
+                current_right_frame.timestamp_ns,
+                current_left_frame.timestamp_ns.abs_diff(current_right_frame.timestamp_ns),
+                CAMERA_LATENCY_STRICT_PAIR_MAX_DELTA_NS,
+            ));
+        }
+        let (left_published_frames, right_published_frames) =
+            camera_runtime.published_frame_counts();
+        latency_window.record(
+            frame_timing,
+            left_imported,
+            right_imported,
+            current_left_frame.frame_index,
+            current_right_frame.frame_index,
+            left_published_frames,
+            right_published_frames,
+            current_left_frame.source_delta_ns,
+            current_right_frame.source_delta_ns,
+            current_left_frame.callback_delta_ns,
+            current_right_frame.callback_delta_ns,
+            record_result.camera_projection_visible,
+        );
+        if latency_window.should_emit(observed_latency_settings) {
+            let present_call_boottime_ns = boottime_now_ns();
+            latency_window.emit_and_reset(
+                observed_latency_settings,
+                present_mode,
+                images.len() as u32,
+                active_latency_launch_settings,
+                current_left_frame.timestamp_source.marker_token(),
+                current_right_frame.timestamp_source.marker_token(),
+                current_left_frame.callback_age_ns,
+                current_right_frame.callback_age_ns,
+                current_left_frame.sensor_age_at_boottime(present_call_boottime_ns),
+                current_right_frame.sensor_age_at_boottime(present_call_boottime_ns),
+                current_left_frame
+                    .timestamp_ns
+                    .abs_diff(current_right_frame.timestamp_ns),
+            );
+        }
         if mode.should_stream_latest_frame() && frames_presented <= 4 {
             let public_stack_frame_marker = public_guide_targets
                 .as_ref()
