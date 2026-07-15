@@ -149,6 +149,30 @@ function Test-TextContains {
     return $Text.Contains($Needle)
 }
 
+function Test-LineContainsAll {
+    param(
+        [AllowNull()][string]$Text,
+        [Parameter(Mandatory=$true)][string[]]$Needles
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) {
+        return $false
+    }
+    foreach ($line in ($Text -split "`r?`n")) {
+        $matches = $true
+        foreach ($needle in $Needles) {
+            if (-not $line.Contains($needle)) {
+                $matches = $false
+                break
+            }
+        }
+        if ($matches) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Assert-SummaryFlag {
     param(
         [System.Collections.IDictionary]$Summary,
@@ -205,7 +229,7 @@ $appPrivateDir = Join-Path $OutDir "app-private"
 New-Item -ItemType Directory -Force -Path $appPrivateDir | Out-Null
 
 $summary = [ordered]@{
-    '$schema' = "rusty.quest.spatial_camera_panel_selftest_run.v1"
+    '$schema' = "rusty.quest.spatial_camera_panel_selftest_run.v2"
     started_at = (Get-Date).ToUniversalTime().ToString("o")
     status = "started"
     adb_path = $script:ResolvedAdb
@@ -325,10 +349,18 @@ try {
 
     $summary.condition_handoff_marker = Test-TextContains $pidLogcat "status=driver-profile-parameter-handoff"
     $summary.self_test_condition_handoff_marker = Test-TextContains $pidLogcat "source=self-test-driver-profile-start"
-    $summary.parameter_submit_self_test_marker = (Test-TextContains $pidLogcat "status=parameters-submitted") -and (Test-TextContains $pidLogcat "source=self-test-driver-profile-start")
+    $summary.parameter_submit_self_test_applied = Test-LineContainsAll `
+        -Text $pidLogcat `
+        -Needles @("status=parameters-submitted", "source=self-test-driver-profile-start")
+    $summary.parameter_submit_self_test_suppressed = Test-LineContainsAll `
+        -Text $pidLogcat `
+        -Needles @("status=effect-suppressed", "effect=parameter-submit", "source=self-test-driver-profile-start")
+    $summary.parameter_route_self_test_handled = `
+        [bool]$summary.parameter_submit_self_test_applied -xor `
+        [bool]$summary.parameter_submit_self_test_suppressed
     $summary.panel_closed_for_self_test = (Test-TextContains $pidLogcat "source=self-test-particle-view") -and (Test-TextContains $pidLogcat "spatial-sdk-particle-view-panel-closed")
     $summary.workflow_panel_reopen_marker = (Test-TextContains $pidLogcat "source=self-test-workflow-panel") -and (Test-TextContains $pidLogcat "spatial-sdk-workflow-panel-open")
-    $summary.panel_registration_count_3 = Test-TextContains $pidLogcat "panelRegistrationCount=3"
+    $summary.panel_registration_count_4 = Test-TextContains $pidLogcat "panelRegistrationCount=4"
     $summary.polar_setup_recorded = Test-TextContains $pidLogcat "status=polar-setup-recorded"
     $summary.polar_panel_created = Test-TextContains $pidLogcat "channel=polar-sensor-panel status=created"
     $summary.polar_stream_mirror_registered = Test-TextContains $pidLogcat "streamMirror=spatial-camera-panel-store"
@@ -338,6 +370,34 @@ try {
     $summary.render_loop_ready = Test-TextContains $pidLogcat "status=render-loop-ready"
     $summary.first_frame_presented = Test-TextContains $pidLogcat "status=first-frame-presented"
     $summary.live_hand_markers = Test-TextContains $pidLogcat "liveHand"
+    $summary.particle_inert_marker = `
+        $summary.parameter_submit_self_test_suppressed -and `
+        (Test-TextContains $pidLogcat "nativeSurfaceParticleLayerEnabled=false")
+    $summary.particle_inert_no_runtime_side_effects = `
+        $summary.particle_inert_marker -and `
+        (-not $summary.particle_surface_start_requested) -and `
+        (-not $summary.particle_surface_panel_ready) -and `
+        (-not $summary.lifecycle_particle_layer_started) -and `
+        (-not $summary.render_loop_ready) -and `
+        (-not $summary.first_frame_presented) -and `
+        (-not $summary.live_hand_markers)
+    $particleActiveEvidence = `
+        $summary.parameter_submit_self_test_applied -and `
+        $summary.particle_surface_start_requested -and `
+        $summary.particle_surface_panel_ready -and `
+        $summary.lifecycle_particle_layer_started -and `
+        $summary.render_loop_ready -and `
+        $summary.first_frame_presented -and `
+        $summary.live_hand_markers -and `
+        (-not $summary.parameter_submit_self_test_suppressed)
+    $summary.particle_activation_state = if ($particleActiveEvidence) {
+        "active"
+    } elseif ($summary.particle_inert_no_runtime_side_effects) {
+        "inert"
+    } else {
+        "ambiguous"
+    }
+    $summary.particle_activation_consistent = $summary.particle_activation_state -ne "ambiguous"
     $summary.self_test_complete = Test-TextContains $pidLogcat "status=self-test-complete"
     $summary.block_events_block_started = Test-TextContains $blockEventsText '"event_type":"block_started"'
     $summary.block_events_block_elapsed = Test-TextContains $blockEventsText '"event_type":"block_elapsed"'
@@ -353,18 +413,13 @@ try {
     $requiredFlags = @(
         "condition_handoff_marker",
         "self_test_condition_handoff_marker",
-        "parameter_submit_self_test_marker",
+        "parameter_route_self_test_handled",
         "panel_closed_for_self_test",
         "workflow_panel_reopen_marker",
-        "panel_registration_count_3",
+        "panel_registration_count_4",
         "polar_setup_recorded",
         "polar_stream_mirror_registered",
-        "particle_surface_start_requested",
-        "particle_surface_panel_ready",
-        "lifecycle_particle_layer_started",
-        "render_loop_ready",
-        "first_frame_presented",
-        "live_hand_markers",
+        "particle_activation_consistent",
         "self_test_complete",
         "app_private_session_state",
         "block_events_block_started",
@@ -377,6 +432,23 @@ try {
     )
     if (-not $AllowMissingPolarPanelCreated) {
         $requiredFlags += "polar_panel_created"
+    }
+    if ($summary.particle_activation_state -eq "active") {
+        $requiredFlags += @(
+            "parameter_submit_self_test_applied",
+            "particle_surface_start_requested",
+            "particle_surface_panel_ready",
+            "lifecycle_particle_layer_started",
+            "render_loop_ready",
+            "first_frame_presented",
+            "live_hand_markers"
+        )
+    } elseif ($summary.particle_activation_state -eq "inert") {
+        $requiredFlags += @(
+            "parameter_submit_self_test_suppressed",
+            "particle_inert_marker",
+            "particle_inert_no_runtime_side_effects"
+        )
     }
     foreach ($flag in $requiredFlags) {
         Assert-SummaryFlag -Summary $summary -Name $flag

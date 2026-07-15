@@ -31,7 +31,7 @@
       "failed": 0
     },
     "focused_kotlin_test": "passed",
-    "private_morphovision_tests": {
+    "private_downstream_tests": {
       "passed": 29,
       "failed": 0
     },

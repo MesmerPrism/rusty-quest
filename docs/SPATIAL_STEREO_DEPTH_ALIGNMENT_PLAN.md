@@ -36,7 +36,7 @@ Meta's Passthrough Camera API overview separately confirms left and right RGB ca
 | Render-view estimate | native OpenXR sidecar | `xrLocateViews` at the same estimated display time and LOCAL space |
 | Automatic alignment | native renderer | per-eye FOV + orientation center-Jacobian affine; identity fallback |
 | Residual calibration | panel to JNI to native atomics | per-eye X/Y, X scale, Y scale, roll, auto on/off |
-| Shader sampling | private Morphovision shader | composed 2x3 affine followed by existing depth texture transform |
+| Shader sampling | private downstream shader | composed 2x3 affine followed by existing depth texture transform |
 | Effective-state evidence | native renderer | requested/applied/fallback masks, affine rows, capture/display times, lifecycle warning |
 
 The automatic map converts a render-eye UV into a render FOV ray, rotates that ray through the render and depth poses, projects it into the selected depth FOV, and approximates the projective map with a 2x3 affine around the image center. The panel transform is composed after that map. Pose translation is measured and reported but intentionally not applied: translating a ray requires a sampled depth and a full depth-aware reprojection, so manual residual calibration remains the safe bounded behavior.

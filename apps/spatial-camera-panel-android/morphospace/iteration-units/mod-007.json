@@ -57,7 +57,7 @@
         "shaders/",
         "src/shader_contract.rs"
       ],
-      "repo_id": "morphovision-private"
+      "repo_id": "private-effect-overlay"
     }
   ],
   "change_categories": [
@@ -125,8 +125,8 @@
     {
       "action": "review-no-change",
       "change_reason": "Confirm that private effect sampling consumes the public presentation-reprojection ABI without moving private formulas into the public repo.",
-      "owner": "morphovision-private",
-      "path": "<workspace-root>/repos/Rusty-Symmetric-Morphovision/AGENTS.md",
+      "owner": "private-effect-overlay",
+      "path": "<workspace-root>/repos/<private-effect-repo>/AGENTS.md",
       "skill_id": null,
       "status": "complete",
       "surface_kind": "agents",
@@ -135,8 +135,8 @@
     {
       "action": "update",
       "change_reason": "Document and verify private guide-pass presentation reprojection and resident prewarped camera sampling.",
-      "owner": "morphovision-private",
-      "path": "<workspace-root>/repos/Rusty-Symmetric-Morphovision/README.md",
+      "owner": "private-effect-overlay",
+      "path": "<workspace-root>/repos/<private-effect-repo>/README.md",
       "skill_id": null,
       "status": "complete",
       "surface_kind": "readme",

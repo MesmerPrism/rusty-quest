@@ -113,8 +113,11 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   diagnostic for an `UNKNOWN` Camera2 timebase, not a portable timestamp
   guarantee. `SensorWarpInverse` transposes the rotation as a direction-control
   A/B, while the 70/110 variants bound FOV sensitivity. All sensor-warp presets
-  also select strict stereo pairing and fence-held images. Cadence summaries report relative source and
-  callback intervals, display-frame hold histograms, and skipped source frames.
+  also select strict stereo pairing and fence-held images. Cadence evidence is
+  emitted as Android-safe rows correlated by `windowSequence`: core, stereo,
+  source/callback interval, display-hold, capture/presentation age, render-stage
+  timing, and active-config summaries. An oversized row emits an explicit
+  `latency-summary-overflow` marker instead of relying on truncated logcat text.
   `Adoption45` is a live-safe A/B mode that leaves the camera producer at its
   native cadence and adopts the latest camera image every second presented
   frame. On a 90 Hz surface this gives a deterministic 45 Hz camera-image

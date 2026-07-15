@@ -203,9 +203,13 @@ automatic questionnaire, submit path, and `RUSTY_QUEST_SPATIAL_CAMERA_PANEL` log
 markers.
 Use `tools\Invoke-SpatialCameraPanelAndroidSelfTest.ps1 -Serial <quest-serial>`
 for the repeatable headset lane; it captures PID-scoped logcat, app-private
-session JSONL artifacts, and `evidence-summary.json`, and rejects missing
-panel/particle/condition/Polar-panel markers. Reserve `quest:<serial>` before
-running it.
+session JSONL artifacts, and `evidence-summary.json`. The v2 evidence contract
+requires four panel registrations and evaluates the particle route against its
+closed activation state: an active conformance build must produce the complete
+parameter/start/render marker chain, while the default inert lock must produce
+the explicit parameter-suppression marker and no particle runtime side effects.
+Condition, panel, and Polar-panel evidence remains mandatory in either state.
+Reserve `quest:<serial>` before running it.
 Polar live validation additionally requires headset-side BLE permission
 acceptance plus a nearby Polar H10 scan/connect/start-ECG run, with
 `polar-sensor-panel` markers and app-private `polar_events.jsonl` /
@@ -436,9 +440,16 @@ serial while the projection is active:
 Compare `Baseline`, `FrozenWorld`, `NonBlocking`, and
 `FrozenNonBlocking` without restarting. The native
 `RQSpatialCameraPanelNative` log must emit `status=latency-hotload-applied`,
-then bounded `status=latency-summary` rows containing callback/import, fence,
-swapchain-acquire, submit, present-call, total-loop timing, relative source and
-callback intervals, display-frame hold histograms, and skipped source frames.
+then one correlated bounded marker family per summary window. Join rows by
+`windowSequence`: `status=latency-summary` owns render/callback/import counts,
+`latency-stereo-summary` owns atomic pair evidence, `latency-source-summary`
+owns source/callback intervals and skipped frames, `latency-hold-summary` owns
+display-frame hold histograms, `latency-age-summary` owns callback and
+sensor-to-present-call ages, `latency-stage-summary` owns fence/import/
+swapchain/record/submit/present/loop averages and maxima, and
+`latency-config-summary` owns the active diagnostic configuration. Any row over
+the Android-safe budget must emit `latency-summary-overflow`; silently
+truncated timing evidence is a failed observation window.
 Use `StrictPair` and `MonoLeft` as live stereo-shimmer controls. With UI slot 8
 selected, compare `RotationWarp40`, `RotationWarp60`, and `RotationWarp80` as
 live callback-age rotation-only reprojection approximations. Then compare

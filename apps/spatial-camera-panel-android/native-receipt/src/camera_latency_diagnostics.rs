@@ -2288,6 +2288,7 @@ impl DurationAggregate {
 
 pub(crate) struct CameraLatencyWindow {
     started: Instant,
+    summary_sequence: u64,
     samples: u64,
     left_imports: u64,
     right_imports: u64,
@@ -2326,6 +2327,7 @@ impl CameraLatencyWindow {
     ) -> Self {
         Self {
             started: Instant::now(),
+            summary_sequence: 1,
             samples: 0,
             left_imports: 0,
             right_imports: 0,
@@ -2440,6 +2442,7 @@ impl CameraLatencyWindow {
         stereo_pair_delta_ns: u64,
     ) {
         let elapsed = self.started.elapsed();
+        let next_summary_sequence = self.summary_sequence.saturating_add(1);
         let elapsed_ms = elapsed.as_secs_f64() * 1000.0;
         let samples = self.samples.max(1);
         let fps = if elapsed.as_secs_f64() > 0.0 {
@@ -2460,8 +2463,9 @@ impl CameraLatencyWindow {
             || (self.left_only_import_presents == 0 && self.right_only_import_presents == 0);
         let strict_pair_delta_within_limit = !strict_pair_selected
             || stereo_pair_delta_ns <= CAMERA_LATENCY_STRICT_PAIR_MAX_DELTA_NS;
-        log_marker(format!(
-            "status=latency-stereo-summary windowMs={:.3} presentedFrames={} stereoPolicy={} bothEyeImportPresents={} leftOnlyImportPresents={} rightOnlyImportPresents={} heldPairPresents={} currentPairDeltaMs={:.3} strictPairMaxDeltaMs={:.3} strictPairDeltaWithinLimit={} strictAtomicImportInvariant={} packedStereoSurface=true bothEyesRecordedInSingleCommandBuffer=true singleQueuePresentPerSurfaceFrame=true",
+        log_bounded_latency_summary_marker(self.summary_sequence, "stereo", format!(
+            "status=latency-stereo-summary windowSequence={} windowMs={:.3} presentedFrames={} stereoPolicy={} bothEyeImportPresents={} leftOnlyImportPresents={} rightOnlyImportPresents={} heldPairPresents={} currentPairDeltaMs={:.3} strictPairMaxDeltaMs={:.3} strictPairDeltaWithinLimit={} strictAtomicImportInvariant={} packedStereoSurface=true bothEyesRecordedInSingleCommandBuffer=true singleQueuePresentPerSurfaceFrame=true",
+            self.summary_sequence,
             elapsed_ms,
             self.samples,
             settings.stereo_policy.marker_token(),
@@ -2474,8 +2478,9 @@ impl CameraLatencyWindow {
             bool_token(strict_pair_delta_within_limit),
             bool_token(strict_atomic_import_invariant),
         ));
-        log_marker(format!(
-            "status=latency-summary windowMs={:.3} renderFps={:.3} presentedFrames={} leftAcquiredCallbacks={} rightAcquiredCallbacks={} callbackCounterSemantics=successfully-published-camera-frame leftImportedFrames={} rightImportedFrames={} cameraProjectionVisiblePresents={} cameraProjectionSuppressedPresents={} cameraProjectionVisibilitySemantics=custom-projection-only-video-preserved leftSourceIntervalAvgMs={} leftSourceIntervalMinMs={} leftSourceIntervalMaxMs={} rightSourceIntervalAvgMs={} rightSourceIntervalMinMs={} rightSourceIntervalMaxMs={} leftCallbackIntervalAvgMs={} leftCallbackIntervalMinMs={} leftCallbackIntervalMaxMs={} rightCallbackIntervalAvgMs={} rightCallbackIntervalMinMs={} rightCallbackIntervalMaxMs={} leftDisplayHoldAvgFrames={:.3} rightDisplayHoldAvgFrames={:.3} leftHoldHistogram1_2_3_4plus={};{};{};{} rightHoldHistogram1_2_3_4plus={};{};{};{} leftSkippedSourceFrames={} rightSkippedSourceFrames={} leftCallbackAgeMs={} rightCallbackAgeMs={} leftSensorToPresentCallAgeMs={} rightSensorToPresentCallAgeMs={} stereoPairDeltaMs={:.3} fenceWaitAvgMs={:.3} fenceWaitMaxMs={:.3} cameraWaitAvgMs={:.3} cameraWaitMaxMs={:.3} cameraImportAvgMs={:.3} cameraImportMaxMs={:.3} acquireSwapchainAvgMs={:.3} acquireSwapchainMaxMs={:.3} recordAvgMs={:.3} recordMaxMs={:.3} submitAvgMs={:.3} submitMaxMs={:.3} presentCallAvgMs={:.3} presentCallMaxMs={:.3} loopAvgMs={:.3} loopMaxMs={:.3} leftTimestampSource={} rightTimestampSource={} sourceTimestampIntervalSemantics=relative-valid-even-when-absolute-age-unavailable activePresentMode={:?} activeSwapchainImages={} launchSettingsPendingRestart={} dynamicCameraPoseMetadataUsed=false imageTimestampPoseAssociation=selected-by-camera-latency-reprojection-mode captureResultMetadataCallbacks=false presentAgeSemantics=queue-present-call-not-photons {}",
+        log_bounded_latency_summary_marker(self.summary_sequence, "core", format!(
+            "status=latency-summary windowSequence={} windowMs={:.3} renderFps={:.3} presentedFrames={} leftAcquiredCallbacks={} rightAcquiredCallbacks={} callbackCounterSemantics=successfully-published-camera-frame leftImportedFrames={} rightImportedFrames={} cameraProjectionVisiblePresents={} cameraProjectionSuppressedPresents={} cameraProjectionVisibilitySemantics=custom-projection-only-video-preserved",
+            self.summary_sequence,
             elapsed_ms,
             fps,
             self.samples,
@@ -2487,6 +2492,11 @@ impl CameraLatencyWindow {
             self.right_imports,
             self.camera_projection_visible_presents,
             self.camera_projection_suppressed_presents,
+        ));
+        log_bounded_latency_summary_marker(self.summary_sequence, "source", format!(
+            "status=latency-source-summary windowSequence={} windowMs={:.3} leftSourceIntervalAvgMs={} leftSourceIntervalMinMs={} leftSourceIntervalMaxMs={} rightSourceIntervalAvgMs={} rightSourceIntervalMinMs={} rightSourceIntervalMaxMs={} leftCallbackIntervalAvgMs={} leftCallbackIntervalMinMs={} leftCallbackIntervalMaxMs={} rightCallbackIntervalAvgMs={} rightCallbackIntervalMinMs={} rightCallbackIntervalMaxMs={} leftSkippedSourceFrames={} rightSkippedSourceFrames={} leftTimestampSource={} rightTimestampSource={} sourceTimestampIntervalSemantics=relative-valid-even-when-absolute-age-unavailable",
+            self.summary_sequence,
+            elapsed_ms,
             left_cadence.source_interval.avg_ms(),
             left_cadence.source_interval.min_ms(),
             left_cadence.source_interval.max_ms(),
@@ -2499,6 +2509,15 @@ impl CameraLatencyWindow {
             right_cadence.callback_interval.avg_ms(),
             right_cadence.callback_interval.min_ms(),
             right_cadence.callback_interval.max_ms(),
+            left_cadence.skipped_source_frames,
+            right_cadence.skipped_source_frames,
+            left_timestamp_source,
+            right_timestamp_source,
+        ));
+        log_bounded_latency_summary_marker(self.summary_sequence, "hold", format!(
+            "status=latency-hold-summary windowSequence={} windowMs={:.3} leftDisplayHoldAvgFrames={:.3} rightDisplayHoldAvgFrames={:.3} leftHoldHistogram1_2_3_4plus={};{};{};{} rightHoldHistogram1_2_3_4plus={};{};{};{}",
+            self.summary_sequence,
+            elapsed_ms,
             left_cadence.average_hold_frames(),
             right_cadence.average_hold_frames(),
             left_cadence.hold_one,
@@ -2509,13 +2528,21 @@ impl CameraLatencyWindow {
             right_cadence.hold_two,
             right_cadence.hold_three,
             right_cadence.hold_four_plus,
-            left_cadence.skipped_source_frames,
-            right_cadence.skipped_source_frames,
+        ));
+        log_bounded_latency_summary_marker(self.summary_sequence, "age", format!(
+            "status=latency-age-summary windowSequence={} windowMs={:.3} leftCallbackAgeMs={} rightCallbackAgeMs={} leftSensorToPresentCallAgeMs={} rightSensorToPresentCallAgeMs={} stereoPairDeltaMs={:.3} dynamicCameraPoseMetadataUsed=false imageTimestampPoseAssociation=selected-by-camera-latency-reprojection-mode captureResultMetadataCallbacks=false presentAgeSemantics=queue-present-call-not-photons",
+            self.summary_sequence,
+            elapsed_ms,
             optional_ns_ms(left_callback_age_ns),
             optional_ns_ms(right_callback_age_ns),
             optional_ns_ms(left_present_call_age_ns),
             optional_ns_ms(right_present_call_age_ns),
             stereo_pair_delta_ns as f64 / 1_000_000.0,
+        ));
+        log_bounded_latency_summary_marker(self.summary_sequence, "stage", format!(
+            "status=latency-stage-summary windowSequence={} windowMs={:.3} fenceWaitAvgMs={:.3} fenceWaitMaxMs={:.3} cameraWaitAvgMs={:.3} cameraWaitMaxMs={:.3} cameraImportAvgMs={:.3} cameraImportMaxMs={:.3} acquireSwapchainAvgMs={:.3} acquireSwapchainMaxMs={:.3} recordAvgMs={:.3} recordMaxMs={:.3} submitAvgMs={:.3} submitMaxMs={:.3} presentCallAvgMs={:.3} presentCallMaxMs={:.3} loopAvgMs={:.3} loopMaxMs={:.3} presentAgeSemantics=queue-present-call-not-photons",
+            self.summary_sequence,
+            elapsed_ms,
             self.fence_wait.avg_ms(samples),
             self.fence_wait.max_ms(),
             self.camera_wait.avg_ms(samples),
@@ -2532,8 +2559,11 @@ impl CameraLatencyWindow {
             self.present_call.max_ms(),
             self.loop_total.avg_ms(samples),
             self.loop_total.max_ms(),
-            left_timestamp_source,
-            right_timestamp_source,
+        ));
+        log_bounded_latency_summary_marker(self.summary_sequence, "config", format!(
+            "status=latency-config-summary windowSequence={} windowMs={:.3} activePresentMode={:?} activeSwapchainImages={} launchSettingsPendingRestart={} {}",
+            self.summary_sequence,
+            elapsed_ms,
             active_present_mode,
             active_image_count,
             bool_token(launch_settings_pending_restart),
@@ -2545,6 +2575,27 @@ impl CameraLatencyWindow {
             self.latest_left_published_frame_count,
             self.latest_right_published_frame_count,
         );
+        self.summary_sequence = next_summary_sequence;
+    }
+}
+
+const CAMERA_LATENCY_SUMMARY_MARKER_MAX_BYTES: usize = 3000;
+
+fn latency_summary_marker_within_budget(fields: &str) -> bool {
+    fields.len() <= CAMERA_LATENCY_SUMMARY_MARKER_MAX_BYTES
+}
+
+fn log_bounded_latency_summary_marker(window_sequence: u64, summary_kind: &str, fields: String) {
+    if latency_summary_marker_within_budget(&fields) {
+        log_marker(fields);
+    } else {
+        log_marker(format!(
+            "status=latency-summary-overflow windowSequence={} summaryKind={} markerBytes={} markerMaxBytes={} evidenceComplete=false runtimeCrash=false",
+            window_sequence,
+            summary_kind,
+            fields.len(),
+            CAMERA_LATENCY_SUMMARY_MARKER_MAX_BYTES,
+        ));
     }
 }
 
@@ -2557,6 +2608,16 @@ fn optional_ns_ms(value: Option<u64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn camera_latency_summary_marker_budget_rejects_oversized_rows() {
+        assert!(latency_summary_marker_within_budget(
+            &"x".repeat(CAMERA_LATENCY_SUMMARY_MARKER_MAX_BYTES)
+        ));
+        assert!(!latency_summary_marker_within_budget(
+            &"x".repeat(CAMERA_LATENCY_SUMMARY_MARKER_MAX_BYTES + 1)
+        ));
+    }
 
     fn yaw_basis(timestamp_ns: i64, sequence: u64, yaw_degrees: f32) -> CameraLatencyViewerBasis {
         let half_angle = yaw_degrees.to_radians() * 0.5;

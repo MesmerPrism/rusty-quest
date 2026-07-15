@@ -176,6 +176,7 @@ $surfaceProjection = Read-RequiredText "apps\spatial-camera-panel-android\native
 $liveHandJoints = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\live_hand_joints.rs"
 $replayHands = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\replay_hands.rs"
 $buildScript = Read-RequiredText "tools\Build-SpatialCameraPanelAndroid.ps1"
+$selfTestWrapper = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidSelfTest.ps1"
 $cameraProjectionSmoke = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1"
 $layeringMatrix = Read-RequiredText "tools\Invoke-SpatialCameraPanelAndroidLayeringMatrix.ps1"
 $stageSpatialAsset = Read-RequiredText "tools\Stage-SpatialCameraPanelAsset.ps1"
@@ -2627,6 +2628,14 @@ Assert-NotContains "Activity" $activity "channel=validation status=self-test-sta
 Assert-NotContains "Activity" $activity "channel=validation status=ui-command-complete"
 Assert-NotContains "Activity" $activity "channel=validation status=surface-target-activation-start"
 Assert-NotContains "Activity" $activity "channel=polar-live-validation status=start"
+Assert-Contains "Spatial self-test wrapper" $selfTestWrapper 'rusty.quest.spatial_camera_panel_selftest_run.v2'
+Assert-Contains "Spatial self-test wrapper" $selfTestWrapper 'panel_registration_count_4'
+Assert-Contains "Spatial self-test wrapper" $selfTestWrapper 'parameter_submit_self_test_applied'
+Assert-Contains "Spatial self-test wrapper" $selfTestWrapper 'parameter_submit_self_test_suppressed'
+Assert-Contains "Spatial self-test wrapper" $selfTestWrapper 'particle_activation_state'
+Assert-Contains "Spatial self-test wrapper" $selfTestWrapper 'particle_inert_no_runtime_side_effects'
+Assert-NotContains "Spatial self-test wrapper" $selfTestWrapper 'panel_registration_count_3'
+Assert-NotContains "Spatial self-test wrapper" $selfTestWrapper 'parameter_submit_self_test_marker'
 Assert-Contains "Spatial OpenXR route module" $openXrRouteModule "XR_FB_passthrough"
 Assert-Contains "Spatial OpenXR route module" $openXrRouteModule "XR_META_environment_depth"
 Assert-Contains "Camera HWB projection raw carrier coordinator" $cameraHwbProjectionRawCarrierCoordinator "nativeEnvironmentDepthStartMask"
