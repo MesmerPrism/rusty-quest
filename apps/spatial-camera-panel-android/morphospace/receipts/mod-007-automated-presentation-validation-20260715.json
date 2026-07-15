@@ -1,0 +1,72 @@
+{
+  "schema": "rusty.quest.spatial_camera_panel.mod007_automated_presentation_validation.v1",
+  "unit_id": "mod-007",
+  "status": "automated-pass-human-motion-pending",
+  "completed_at": "2026-07-15T14:18:15Z",
+  "device_class": "Quest 3S",
+  "device_identifier_policy": "redacted-from-checked-in-receipt",
+  "apk": {
+    "sha256": "090df82557ea576de9eb3f78c0fad50cab6dcff456100cba339d418f9b128ad3",
+    "private_profile_configured": true,
+    "artifact_policy": "local-only"
+  },
+  "candidate": {
+    "preset": "PresentationOpenXr11",
+    "render_fps": 90.021,
+    "camera_callbacks_per_second": 50.41,
+    "stereo_imports_per_second": 50.36,
+    "mean_display_hold_frames": 1.785,
+    "smoke_status": "passed",
+    "runtime_crash_free": true,
+    "private_guide_reprojection_ingress": true
+  },
+  "display_aligned_45_control": {
+    "preset": "PresentationOpenXr11Adoption45",
+    "render_fps": 90.022,
+    "camera_callbacks_per_second": 50.41,
+    "stereo_imports_per_second": 44.77,
+    "mean_display_hold_frames": 2.005,
+    "strict_pair_rejections": 4,
+    "unpaired_latest_resets": 2,
+    "smoke_status": "passed",
+    "runtime_crash_free": true
+  },
+  "pose_evidence": {
+    "preset": "PresentationOpenXr11Verbose",
+    "interpolated_capture_pose_associations": 2050,
+    "presentation_records": 1963,
+    "openxr_presentation_records": 1963,
+    "openxr_fallback_records": 0,
+    "effective_lead_ms": 11.0,
+    "stable_scene_pose_age_last_100_average_ms": 7.851,
+    "left_calibration_active": true,
+    "right_calibration_active": true,
+    "left_reprojection_applied_for_all_records": true,
+    "right_reprojection_applied_for_all_records": true
+  },
+  "fixed_45_camera_request": {
+    "left_apply_status": "exact-fixed-range-unsupported",
+    "right_apply_status": "exact-fixed-range-unsupported",
+    "observed_camera_hz": 49.995
+  },
+  "automated_decision": {
+    "adoption_cadence": "every-available",
+    "presentation_pose_mode": "openxr-locate-views",
+    "presentation_lead_ms": 11,
+    "reason": "The source remains near 50 Hz, fixed 45 Hz is unsupported, and display-aligned 45 Hz increases mean frame holds while importing fewer fresh stereo pairs."
+  },
+  "remaining_gate": {
+    "status": "pending-user-presence",
+    "protocol": "controlled yaw, pitch, and lateral movement with candidate lead and 45 Hz control comparison",
+    "does_not_prove": [
+      "human perceptual acceptance",
+      "compositor scanout or photon time",
+      "depth-correct translational reprojection"
+    ]
+  },
+  "cleanup": {
+    "app_stopped": true,
+    "installed_preset": "PresentationOpenXr11",
+    "raw_logs_screenshots_and_apk": "local-only"
+  }
+}

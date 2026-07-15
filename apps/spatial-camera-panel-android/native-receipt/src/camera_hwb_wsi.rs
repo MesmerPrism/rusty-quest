@@ -12,12 +12,11 @@ use crate::bool_token;
 use crate::camera_hwb_marker::log_camera_hwb_marker as log_marker;
 use crate::camera_hwb_probe::CameraHwbProbeMode;
 use crate::camera_hwb_projection_target::{
-    camera_hwb_projection_marker_fields, camera_hwb_projection_push_with_reprojection,
-    CameraHwbProjectionPush,
+    camera_hwb_projection_eye_push, camera_hwb_projection_marker_fields, CameraHwbProjectionEyePush,
 };
 use crate::camera_hwb_stream::CameraProbeFrame;
 use crate::camera_latency_diagnostics::{
-    CameraLatencyIsolationMode, CameraLatencyRotationReprojection, CameraLatencySettings,
+    CameraLatencyIsolationMode, CameraLatencySettings, CameraLatencyStereoReprojection,
 };
 use crate::spatial_public_multistack::public_multistack_marker_fields;
 use crate::spatial_public_multistack_runtime::{
@@ -167,7 +166,7 @@ pub(crate) unsafe fn create_camera_hwb_probe_resources(
     let push_constant_ranges = [vk::PushConstantRange::default()
         .stage_flags(vk::ShaderStageFlags::FRAGMENT)
         .offset(0)
-        .size(mem::size_of::<CameraHwbProjectionPush>() as u32)];
+        .size(mem::size_of::<CameraHwbProjectionEyePush>() as u32)];
     let pipeline_layout = match device.create_pipeline_layout(
         &vk::PipelineLayoutCreateInfo::default()
             .set_layouts(&set_layouts)
@@ -451,7 +450,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     video_frame: Option<&SpatialVideoProjectionFrame>,
     video_settings: &SpatialVideoProjectionSettings,
     frame_slot: usize,
-    camera_reprojection: CameraLatencyRotationReprojection,
+    camera_reprojection: CameraLatencyStereoReprojection,
     latency_settings: CameraLatencySettings,
 ) -> Result<CameraHwbRecordResult, String> {
     device
@@ -521,6 +520,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
     let mut public_guide_targets = public_guide_targets;
     let edge_window_selected = spatial_public_meta_passthrough_edge_window_selected();
     let raw_custom_projection_selected = spatial_public_raw_custom_projection_selected();
+    let projection_footprint_scale = latency_settings.reprojection_footprint_scale();
     let public_projection_ready = if !camera_projection_visible
         || opaque_camera_only
         || edge_window_selected
@@ -533,6 +533,8 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             command_buffer,
             descriptor_set,
             elapsed_seconds,
+            camera_reprojection,
+            latency_settings.reprojection_source_overscan_uv(),
         )?;
         targets.prepare_spatial_public_projection_sampling(device, command_buffer)
     } else {
@@ -557,6 +559,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             device,
             command_buffer,
             extent,
+            projection_footprint_scale,
         );
     let projected_by_public_stack = if opaque_camera_only {
         false
@@ -572,6 +575,7 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
                 extent,
                 descriptor_set,
                 elapsed_seconds,
+                projection_footprint_scale,
             )?
     } else {
         false
@@ -584,6 +588,8 @@ pub(crate) unsafe fn record_camera_hwb_probe_command_buffer(
             resources,
             descriptor_set,
             camera_reprojection,
+            latency_settings.reprojection_source_overscan_uv(),
+            projection_footprint_scale,
         );
     }
     device.cmd_end_render_pass(command_buffer);
@@ -632,7 +638,9 @@ unsafe fn record_camera_hwb_fallback_projection(
     extent: vk::Extent2D,
     resources: &CameraHwbProbeResources,
     descriptor_set: vk::DescriptorSet,
-    camera_reprojection: CameraLatencyRotationReprojection,
+    camera_reprojection: CameraLatencyStereoReprojection,
+    source_overscan_uv: f32,
+    footprint_scale: f32,
 ) {
     let viewport = [vk::Viewport {
         x: 0.0,
@@ -661,19 +669,29 @@ unsafe fn record_camera_hwb_fallback_projection(
         &[descriptor_set],
         &[],
     );
-    let projection_push = camera_hwb_projection_push_with_reprojection(camera_reprojection);
-    let projection_push_bytes = std::slice::from_raw_parts(
-        (&projection_push as *const CameraHwbProjectionPush).cast::<u8>(),
-        mem::size_of::<CameraHwbProjectionPush>(),
-    );
-    device.cmd_push_constants(
-        command_buffer,
-        resources.pipeline_layout,
-        vk::ShaderStageFlags::FRAGMENT,
-        0,
-        projection_push_bytes,
-    );
-    device.cmd_draw(command_buffer, 3, 1, 0, 0);
+    for (eye_index, reprojection) in [camera_reprojection.left, camera_reprojection.right]
+        .into_iter()
+        .enumerate()
+    {
+        let projection_push = camera_hwb_projection_eye_push(
+            eye_index,
+            reprojection,
+            source_overscan_uv,
+            footprint_scale,
+        );
+        let projection_push_bytes = std::slice::from_raw_parts(
+            (&projection_push as *const CameraHwbProjectionEyePush).cast::<u8>(),
+            mem::size_of::<CameraHwbProjectionEyePush>(),
+        );
+        device.cmd_push_constants(
+            command_buffer,
+            resources.pipeline_layout,
+            vk::ShaderStageFlags::FRAGMENT,
+            0,
+            projection_push_bytes,
+        );
+        device.cmd_draw(command_buffer, 3, 1, 0, 0);
+    }
 }
 
 unsafe fn create_shader_module(

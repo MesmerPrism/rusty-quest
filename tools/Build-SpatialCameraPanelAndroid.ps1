@@ -1004,6 +1004,10 @@ $manifest = [ordered]@{
         "debug.rustyquest.spatial.camera_latency.reprojection_mode",
         "debug.rustyquest.spatial.camera_latency.assumed_capture_age_ms",
         "debug.rustyquest.spatial.camera_latency.reprojection_fov_degrees",
+        "debug.rustyquest.spatial.camera_latency.reprojection_source_overscan_percent",
+        "debug.rustyquest.spatial.camera_latency.reprojection_guard_band_mode",
+        "debug.rustyquest.spatial.camera_latency.presentation_pose_mode",
+        "debug.rustyquest.spatial.camera_latency.presentation_lead_ms",
         "debug.rustyquest.spatial.camera_latency.revision"
     )
     camera_latency_diagnostic_live_safe_fields = @(
@@ -1018,7 +1022,11 @@ $manifest = [ordered]@{
         "freeze-frame",
         "reprojection-mode",
         "assumed-capture-age-ms",
-        "reprojection-fov-degrees"
+        "reprojection-fov-degrees",
+        "reprojection-source-overscan-percent",
+        "reprojection-guard-band-mode",
+        "presentation-pose-mode",
+        "presentation-lead-ms"
     )
     camera_latency_diagnostic_restart_required_fields = @("present-mode", "image-count", "capture-fps", "capture-processing")
     camera_latency_diagnostic_pose_modes = @("current-viewer", "frozen-world")
@@ -1037,7 +1045,18 @@ $manifest = [ordered]@{
     )
     camera_latency_camera_calibration_source = "android-camera2-static-lens-pose-intrinsics"
     camera_latency_camera_calibration_transform = "camera_from_sensor-times-capture_from_current-times-sensor_from_camera"
-    camera_latency_camera_calibration_scope = "shared-left-camera-approximation"
+    camera_latency_camera_calibration_scope = "independent-left-right-camera"
+    camera_latency_projection_draw_scope = "one-draw-per-eye"
+    camera_latency_projection_push_constant_bytes_per_eye = 96
+    camera_latency_projection_invalid_uv_policy = "discard-to-underlying-carrier"
+    camera_latency_projection_footprint_policies = @("fixed-target-rect-zoom-to-fill", "reduced-target-rect-preserve-angular-scale")
+    camera_latency_projection_source_overscan_percent_range = "0..20"
+    camera_latency_projection_source_overscan_policy = "central-source-crop-retains-real-camera-pixels"
+    camera_latency_projection_guard_band_modes = @("zoom-to-fill", "reduced-footprint")
+    camera_latency_projection_reduced_footprint_scale = "1-minus-two-times-source-overscan-uv"
+    camera_latency_projection_source_coverage_exhaustion_policy = "discard-to-underlying-carrier"
+    camera_latency_effect_stack_reprojection_ingress = "private-guide-pass0-prewarped-camera-color"
+    camera_latency_effect_stack_guide_push_constant_bytes = 112
     camera_latency_diagnostic_capture_fps_requests = @("camera-default", "30", "45", "50", "60")
     camera_latency_diagnostic_adoption_cadences = @("every-available", "display-aligned-45")
     camera_latency_display_aligned_45_semantics = "adopt-latest-camera-image-every-two-presented-frames-at-90hz-camera-producer-remains-unchanged"
@@ -1045,7 +1064,13 @@ $manifest = [ordered]@{
     camera_latency_diagnostic_cadence_summary = "source-and-callback-intervals-display-hold-histograms-skipped-source-frames"
     camera_latency_diagnostic_present_age_semantics = "queue-present-call-not-photons"
     camera_latency_dynamic_camera_pose_metadata_used = $false
-    camera_latency_image_timestamp_pose_association = "mode-selected-callback-assumed-age-or-direct-plausible-sensor-timestamp-diagnostic"
+    camera_latency_image_timestamp_pose_association = "mode-selected-target-with-exact-interpolated-bracket-or-explicit-fallback"
+    camera_latency_presentation_pose_modes = @("scene-tick-latest", "scene-extrapolated", "openxr-locate-views")
+    camera_latency_presentation_lead_ms_range = "0..30"
+    camera_latency_presentation_target_authority = "sidecar-estimate-not-compositor-predicted-display-time"
+    camera_latency_openxr_frame_loop_authority = "spatial-sdk-only"
+    camera_latency_sidecar_openxr_calls = @("xrLocateViews", "xrConvertTimespecTimeToTimeKHR")
+    camera_latency_sidecar_openxr_frame_loop_calls = @()
     camera_latency_capture_result_metadata_callbacks = $false
     forced_replay_hand_source_mode = $(if ([string]::IsNullOrWhiteSpace($resolvedRecordedHandCaptureDir)) { "public-shape-fallback" } else { "external-recorded-capture-build-env" })
     forced_replay_hand_frame_limit = $resolvedRecordedHandFrameLimit

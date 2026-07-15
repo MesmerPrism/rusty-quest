@@ -32,6 +32,21 @@ param(
         "SensorWarpInverseRollFree70",
         "SensorWarpInverseYawOnly70",
         "SensorWarpCameraCalibrated",
+        "PresentationLatest50",
+        "PresentationSceneExtrapolated8",
+        "PresentationSceneExtrapolated11",
+        "PresentationSceneExtrapolated16",
+        "PresentationOpenXr0",
+        "PresentationOpenXr8",
+        "PresentationOpenXr11",
+        "PresentationOpenXr11Overscan0",
+        "PresentationOpenXr11Overscan10",
+        "PresentationOpenXr11GuardBand10",
+        "PresentationOpenXr16",
+        "PresentationOpenXr22",
+        "PresentationOpenXr11Adoption45",
+        "PresentationOpenXr11Verbose",
+        "PresentationOpenXr11Adoption45Verbose",
         "SensorWarp70",
         "SensorWarp110",
         "VerboseFrameLog",
@@ -72,6 +87,10 @@ $properties = [ordered]@{
     reprojection_mode = "debug.rustyquest.spatial.camera_latency.reprojection_mode"
     assumed_capture_age_ms = "debug.rustyquest.spatial.camera_latency.assumed_capture_age_ms"
     reprojection_fov_degrees = "debug.rustyquest.spatial.camera_latency.reprojection_fov_degrees"
+    reprojection_source_overscan_percent = "debug.rustyquest.spatial.camera_latency.reprojection_source_overscan_percent"
+    reprojection_guard_band_mode = "debug.rustyquest.spatial.camera_latency.reprojection_guard_band_mode"
+    presentation_pose_mode = "debug.rustyquest.spatial.camera_latency.presentation_pose_mode"
+    presentation_lead_ms = "debug.rustyquest.spatial.camera_latency.presentation_lead_ms"
     revision = "debug.rustyquest.spatial.camera_latency.revision"
 }
 
@@ -93,9 +112,28 @@ $settings = [ordered]@{
     reprojection_mode = "off"
     assumed_capture_age_ms = "40"
     reprojection_fov_degrees = "90"
+    reprojection_source_overscan_percent = "0"
+    reprojection_guard_band_mode = "zoom-to-fill"
+    presentation_pose_mode = "scene-tick-latest"
+    presentation_lead_ms = "0"
 }
 
 $presetRequiresRestart = $false
+$setPresentationWarpBaseline = {
+    param(
+        [Parameter(Mandatory = $true)][string]$PoseMode,
+        [Parameter(Mandatory = $true)][int]$LeadMs
+    )
+
+    $settings.frame_wait_ms = "0"
+    $settings.camera_sync_mode = "hold-image-until-gpu-fence"
+    $settings.adoption_cadence = "every-available"
+    $settings.stereo_policy = "strict-timestamp-pair"
+    $settings.reprojection_mode = "rotation-only-sensor-timestamp-camera-calibrated"
+    $settings.reprojection_fov_degrees = "73"
+    $settings.presentation_pose_mode = $PoseMode
+    $settings.presentation_lead_ms = $LeadMs.ToString([Globalization.CultureInfo]::InvariantCulture)
+}
 switch ($Preset) {
     "FrozenWorld" {
         $settings.pose_mode = "frozen-world"
@@ -249,6 +287,62 @@ switch ($Preset) {
         $settings.reprojection_mode = "rotation-only-sensor-timestamp-camera-calibrated"
         $settings.reprojection_fov_degrees = "73"
     }
+    "PresentationLatest50" {
+        & $setPresentationWarpBaseline -PoseMode "scene-tick-latest" -LeadMs 0
+    }
+    "PresentationSceneExtrapolated8" {
+        & $setPresentationWarpBaseline -PoseMode "scene-extrapolated" -LeadMs 8
+    }
+    "PresentationSceneExtrapolated11" {
+        & $setPresentationWarpBaseline -PoseMode "scene-extrapolated" -LeadMs 11
+    }
+    "PresentationSceneExtrapolated16" {
+        & $setPresentationWarpBaseline -PoseMode "scene-extrapolated" -LeadMs 16
+    }
+    "PresentationOpenXr0" {
+        & $setPresentationWarpBaseline -PoseMode "openxr-locate-views" -LeadMs 0
+    }
+    "PresentationOpenXr8" {
+        & $setPresentationWarpBaseline -PoseMode "openxr-locate-views" -LeadMs 8
+    }
+    "PresentationOpenXr11" {
+        & $setPresentationWarpBaseline -PoseMode "openxr-locate-views" -LeadMs 11
+    }
+    "PresentationOpenXr11Overscan0" {
+        & $setPresentationWarpBaseline -PoseMode "openxr-locate-views" -LeadMs 11
+        $settings.reprojection_source_overscan_percent = "0"
+    }
+    "PresentationOpenXr11Overscan10" {
+        & $setPresentationWarpBaseline -PoseMode "openxr-locate-views" -LeadMs 11
+        $settings.reprojection_source_overscan_percent = "10"
+        $settings.reprojection_guard_band_mode = "zoom-to-fill"
+    }
+    "PresentationOpenXr11GuardBand10" {
+        & $setPresentationWarpBaseline -PoseMode "openxr-locate-views" -LeadMs 11
+        $settings.reprojection_source_overscan_percent = "10"
+        $settings.reprojection_guard_band_mode = "reduced-footprint"
+    }
+    "PresentationOpenXr16" {
+        & $setPresentationWarpBaseline -PoseMode "openxr-locate-views" -LeadMs 16
+    }
+    "PresentationOpenXr22" {
+        & $setPresentationWarpBaseline -PoseMode "openxr-locate-views" -LeadMs 22
+    }
+    "PresentationOpenXr11Adoption45" {
+        & $setPresentationWarpBaseline -PoseMode "openxr-locate-views" -LeadMs 11
+        $settings.adoption_cadence = "display-aligned-45"
+    }
+    "PresentationOpenXr11Verbose" {
+        & $setPresentationWarpBaseline -PoseMode "openxr-locate-views" -LeadMs 11
+        $settings.summary_ms = "500"
+        $settings.frame_log = "true"
+    }
+    "PresentationOpenXr11Adoption45Verbose" {
+        & $setPresentationWarpBaseline -PoseMode "openxr-locate-views" -LeadMs 11
+        $settings.adoption_cadence = "display-aligned-45"
+        $settings.summary_ms = "500"
+        $settings.frame_log = "true"
+    }
     "SensorWarp70" {
         $settings.frame_wait_ms = "0"
         $settings.camera_sync_mode = "hold-image-until-gpu-fence"
@@ -297,7 +391,7 @@ $result = [ordered]@{
     dry_run = [bool]$DryRun
     revision = $Revision
     transport = "adb-explicit-serial-system-property-revision-last"
-    live_safe_fields = @("pose_mode", "frame_wait_ms", "summary_ms", "frame_log", "camera_sync_mode", "adoption_cadence", "stereo_policy", "isolation_mode", "freeze_frame", "reprojection_mode", "assumed_capture_age_ms", "reprojection_fov_degrees")
+    live_safe_fields = @("pose_mode", "frame_wait_ms", "summary_ms", "frame_log", "camera_sync_mode", "adoption_cadence", "stereo_policy", "isolation_mode", "freeze_frame", "reprojection_mode", "assumed_capture_age_ms", "reprojection_fov_degrees", "reprojection_source_overscan_percent", "reprojection_guard_band_mode", "presentation_pose_mode", "presentation_lead_ms")
     restart_required_fields = @("present_mode", "image_count", "capture_fps", "capture_processing")
     preset_requires_restart = $presetRequiresRestart
     restart_requested = [bool]$RestartApp

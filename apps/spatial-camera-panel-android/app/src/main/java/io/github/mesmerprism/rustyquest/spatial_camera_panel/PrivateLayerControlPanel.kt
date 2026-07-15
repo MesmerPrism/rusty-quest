@@ -195,6 +195,11 @@ internal fun PrivateLayerControlPanel(
             style = MaterialTheme.typography.bodyMedium,
             color = LayerPanelMuted,
         )
+        Text(
+            "Meta supplies left/right depth layers. Stereo selects the matching layer for each eye; mono and compare remain diagnostics.",
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
         DepthSourceButtonGrid(
             selectedPolicy = localDepthLayerPolicy,
             onSelect = { policy ->
@@ -205,6 +210,33 @@ internal fun PrivateLayerControlPanel(
       }
 
       Section("Depth Alignment") {
+        Text(
+            "Auto uses Meta's per-eye FOV and pose first. These controls apply residual fine tuning for camera crop and headset-specific alignment.",
+            style = MaterialTheme.typography.bodySmall,
+            color = LayerPanelMuted,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+          OperatorButton(
+              if (localDepthAlignment.metadataAutoAlign) "Auto metadata: On" else "Auto metadata: Off"
+          ) {
+            localDepthAlignment =
+                updateDepthAlignment(
+                    localDepthAlignment.copy(
+                        metadataAutoAlign = !localDepthAlignment.metadataAutoAlign,
+                    ),
+                    "private-layer-control-panel-depth-metadata-auto",
+                )
+          }
+          OperatorButton("Reset fine tune") {
+            localDepthAlignment =
+                updateDepthAlignment(
+                    PrivateLayerDepthAlignment(
+                        metadataAutoAlign = localDepthAlignment.metadataAutoAlign,
+                    ),
+                    "private-layer-control-panel-depth-fine-tune-reset",
+                )
+          }
+        }
         DepthSlider("Left depth X", localDepthAlignment.leftX, -0.25f..0.25f) { value ->
           localDepthAlignment =
               updateDepthAlignment(
@@ -233,21 +265,26 @@ internal fun PrivateLayerControlPanel(
                   "private-layer-control-panel-depth-right-y",
               )
         }
-        DepthSlider("Depth sample scale", localDepthAlignment.sampleScale, 0.25f..3.0f) { value ->
+        DepthSlider("Depth X scale", localDepthAlignment.sampleScale, 0.25f..3.0f) { value ->
           localDepthAlignment =
               updateDepthAlignment(
                   localDepthAlignment.copy(sampleScale = value),
-                  "private-layer-control-panel-depth-sample-scale",
+                  "private-layer-control-panel-depth-sample-scale-x",
               )
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-          OperatorButton("Reset Depth") {
-            localDepthAlignment =
-                updateDepthAlignment(
-                    PrivateLayerDepthAlignment(),
-                    "private-layer-control-panel-depth-reset",
-                )
-          }
+        DepthSlider("Depth Y scale", localDepthAlignment.sampleScaleY, 0.25f..3.0f) { value ->
+          localDepthAlignment =
+              updateDepthAlignment(
+                  localDepthAlignment.copy(sampleScaleY = value),
+                  "private-layer-control-panel-depth-sample-scale-y",
+              )
+        }
+        DepthSlider("Depth roll", localDepthAlignment.rollDegrees, -15.0f..15.0f) { value ->
+          localDepthAlignment =
+              updateDepthAlignment(
+                  localDepthAlignment.copy(rollDegrees = value),
+                  "private-layer-control-panel-depth-roll",
+              )
         }
       }
     }

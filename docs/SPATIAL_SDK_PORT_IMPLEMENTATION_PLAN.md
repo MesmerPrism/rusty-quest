@@ -38,7 +38,10 @@ tracked in `docs/SPATIAL_LAYERING_CARRIER_PROBE_PLAN.md`.
   OpenXR permissions; headset smokes pregrant package-declared permissions and
   record the `USE_SCENE_DATA` app-op. The public depth layer keeps a fallback
   descriptor for unbound runs and can now bind real `XR_META_environment_depth`
-  descriptors after the native passthrough prerequisite is active. Current
+  descriptors after the native passthrough prerequisite is active. The route
+  preserves both per-eye depth FOV/pose records and matched render views, uses
+  `eye-index` stereo by default, and composes a metadata-derived affine with
+  panel-owned residual calibration. Current
   headset evidence must distinguish `publicMultiStackDepthCurrentDescriptorSource`
   from fallback readiness and must require `environmentDepthValidData=true`
   plus nonzero valid sample counters before accepting real depth.
@@ -76,7 +79,8 @@ tracked in `docs/SPATIAL_LAYERING_CARRIER_PROBE_PLAN.md`.
   world-space object with a compositor z-index above the
   camera/video projection layer, exposes the seven generic layer choices,
   projection area scale, depth source policy (`mono-layer0`, `mono-layer1`,
-  `eye-index`, or `compare`), and depth-alignment X/Y/scale controls, and
+  `eye-index` stereo by default, or `compare`), and metadata-auto plus residual
+  depth-alignment per-eye X/Y, independent X/Y scale, and roll controls, and
   updates native state through `nativeUpdatePrivateLayerOverride`,
   `nativeUpdatePrivateLayerDepthLayerPolicy`, and
   `nativeUpdatePrivateLayerDepthAlignment`. Movement is owned by the Spatial
@@ -646,5 +650,10 @@ The compare path samples depth layer 0 and layer 1 at the same shader UV and
 renders their difference. The headset/screenshot evidence showed structured
 per-eye differences, so the layers must not be assumed byte-identical. This is
 visual shader evidence only; literal byte-for-byte confirmation would require a
-future GPU readback/statistics pass. General Spatial depth-stack alignment is
-deferred to manual panel calibration and later alignment work.
+future GPU readback/statistics pass. The implemented stereo route now aligns
+each render eye to its selected Meta depth view with a FOV/orientation
+center-Jacobian affine and exposes manual residual controls. The provider still
+runs as a Spatial SDK sidecar and cannot claim the OpenXR acquire call-order
+rule until the SDK exposes a usable frame hook or texture export. The bounded
+contract, markers, and visual protocol are in
+`docs/SPATIAL_STEREO_DEPTH_ALIGNMENT_PLAN.md`.

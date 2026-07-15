@@ -1,0 +1,103 @@
+{
+  "schema": "rusty.quest.spatial_camera_panel.mod007_reduced_footprint_guard_band_validation.v1",
+  "unit_id": "mod-007",
+  "status": "accepted-baseline",
+  "completed_at": "2026-07-15T18:34:45Z",
+  "human_observation": {
+    "zoom_to_fill_real_source_margin_removed_echo": true,
+    "zoom_to_fill_constant_magnification_rejected_as_final": true,
+    "causal_inference": "retained-real-camera-source-coverage-prevents-the-observed-held-frame-echo",
+    "reduced_footprint_visual_acceptance": "accepted-best-state-so-far",
+    "general_echo_present": false,
+    "remaining_observation": "minor-inconsistent-individual-frames-not-general-processing-stack-echo"
+  },
+  "candidate_contract": {
+    "preset": "PresentationOpenXr11GuardBand10",
+    "source_mapping": "central-source-crop-retains-real-camera-pixels",
+    "source_margin_percent_per_edge": 10,
+    "displayed_source_fraction_per_axis": 0.8,
+    "footprint_mode": "reduced-footprint",
+    "footprint_scale_relative_to_current_user_target": 0.8,
+    "eye_center_and_stereo_offset": "preserved",
+    "angular_scale_policy": "preserve-original-source-to-target-scale",
+    "source_exhaustion": "discard-to-underlying-carrier",
+    "unwarped_invalid_region_fallback": false,
+    "camera_adoption_cadence": "every-available"
+  },
+  "ab_controls": {
+    "no_margin": "PresentationOpenXr11Overscan0",
+    "zoom_to_fill_margin": "PresentationOpenXr11Overscan10",
+    "reduced_footprint_margin": "PresentationOpenXr11GuardBand10",
+    "cadence_control": "PresentationOpenXr11Adoption45"
+  },
+  "host_validation": {
+    "spatial_camera_panel_validation": "passed",
+    "camera_latency_native_tests": {
+      "passed": 14,
+      "failed": 0
+    },
+    "projection_geometry_native_tests": {
+      "passed": 9,
+      "failed": 0
+    },
+    "public_multistack_native_tests": {
+      "passed": 18,
+      "failed": 0
+    },
+    "private_morphovision_tests": {
+      "passed": 29,
+      "failed": 0
+    },
+    "private_shader_compile": "passed",
+    "android_debug_build": "passed"
+  },
+  "apk": {
+    "sha256": "05010638377191D074192D07361295311D2C37FD9496D225CD817DC25AFBE9E9",
+    "private_profile_configured": true,
+    "private_guide_shader_configured": true,
+    "private_projection_shader_configured": true,
+    "artifact_policy": "local-only"
+  },
+  "automated_device_validation": {
+    "device_identity": "omitted-public-receipt",
+    "wrapper": "passed",
+    "app_foreground": true,
+    "panel_shell_enabled": true,
+    "video_decode_and_same_surface_composition": true,
+    "public_projection_applied": true,
+    "presentation_pose_source": "openxr-locate-views-estimated-presentation-time",
+    "both_eye_reprojection_applied": true,
+    "source_overscan_mode": "reduced-footprint",
+    "source_overscan_uv": 0.1,
+    "projection_footprint_scale": 0.8,
+    "angular_scale_policy": "preserve-original-source-to-target-scale",
+    "runtime_fatal_count": 0,
+    "raw_logs_and_device_artifacts": "local-only"
+  },
+  "human_motion_acceptance": {
+    "protocol": "repeated normal and fast headset motion on the reduced-footprint candidate",
+    "acceptance_authority": "user-physical-headset-observation",
+    "result": "passed-general-echo-removed-without-constant-zoom",
+    "does_not_prove": [
+      "compositor scanout or photon time",
+      "depth-correct translational reprojection",
+      "absence of rare individual-frame timing outliers"
+    ]
+  },
+  "next_investigation": {
+    "scope": "minor-isolated-frame-inconsistency",
+    "baseline_must_remain": "PresentationOpenXr11GuardBand10",
+    "first_evidence": [
+      "50-hz-camera-holds-on-90-hz-display",
+      "source-and-presentation-age-outliers",
+      "strict-stereo-pair-recovery",
+      "fence-submit-and-queue-present-outliers",
+      "display-aligned-45-adoption-control"
+    ]
+  },
+  "resource_cleanup": {
+    "apk_build_lease_released": true,
+    "headset_lease": "released-after-accepted-visual-validation",
+    "app_left_running": true
+  }
+}

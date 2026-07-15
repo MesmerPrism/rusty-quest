@@ -31,10 +31,14 @@ function Assert-Contains {
 
 $kotlin = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraLatencyDiagnosticModule.kt"
 $activity = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraPanelActivity.kt"
+$openXrRoute = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialOpenXrRouteModule.kt"
 $placement = Read-RequiredText "apps\spatial-camera-panel-android\app\src\main\java\io\github\mesmerprism\rustyquest\spatial_camera_panel\SpatialCameraHwbProjectionPlacementUpdateCoordinator.kt"
 $native = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_latency_diagnostics.rs"
 $probe = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_probe.rs"
 $stream = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_stream.rs"
+$projection = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\camera_hwb_projection_target.rs"
+$projectionShader = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\shaders\camera_hwb_raw_color.frag.glsl"
+$publicMultiStackRuntime = Read-RequiredText "apps\spatial-camera-panel-android\native-receipt\src\spatial_public_multistack_runtime.rs"
 $build = Read-RequiredText "tools\Build-SpatialCameraPanelAndroid.ps1"
 $toolPath = Join-Path $repoRootPath "tools\Set-SpatialCameraPanelCameraLatencyDiagnostic.ps1"
 $tool = Read-RequiredText "tools\Set-SpatialCameraPanelCameraLatencyDiagnostic.ps1"
@@ -51,9 +55,15 @@ Assert-Contains $kotlin "rotation-only-raw-layer" "Kotlin diagnostic module must
 Assert-Contains $kotlin "rotation-only-sensor-timestamp" "Kotlin diagnostic module must expose direct sensor-timestamp rotation reprojection."
 Assert-Contains $kotlin "rotation-only-sensor-timestamp-inverse" "Kotlin diagnostic module must expose the inverse-direction sensor-timestamp A/B."
 Assert-Contains $kotlin "strict-timestamp-pair" "Kotlin diagnostic module must expose strict stereo pairing."
+Assert-Contains $kotlin "openxr-locate-views" "Kotlin diagnostic module must expose estimated presentation-time OpenXR view location."
+Assert-Contains $kotlin "presentation_lead_ms" "Kotlin diagnostic module must expose bounded presentation lead."
+Assert-Contains $kotlin "reprojection_source_overscan_percent" "Kotlin diagnostic module must expose bounded real-source overscan."
+Assert-Contains $kotlin "reprojection_guard_band_mode" "Kotlin diagnostic module must expose the explicit projection-footprint policy."
 Assert-Contains $activity "nativeUpdateCameraLatencyDiagnostics" "Activity must bridge diagnostic settings into native code."
 Assert-Contains $activity "cameraLatencyDiagnosticModule.projectionPlane" "Activity must route projection placement through the pose A/B module."
 Assert-Contains $activity "nativeUpdateCameraLatencyViewerPose" "Activity must feed viewer-pose history to the native diagnostic."
+Assert-Contains $activity "nativeConfigureCameraLatencyOpenXrHandles" "Activity must pass the SDK-owned OpenXR handles to the read-only view locator."
+Assert-Contains $openXrRoute "XR_KHR_convert_timespec_time" "Spatial SDK instance creation must enable the monotonic-to-XrTime conversion extension."
 Assert-Contains $placement "pollLatencyDiagnostics(reason, forceLog)" "Placement updates must poll live diagnostic revisions."
 Assert-Contains $native "status=latency-summary" "Native diagnostics must emit bounded summary windows."
 Assert-Contains $native "presentAgeSemantics=queue-present-call-not-photons" "Native diagnostics must label the present-age limitation."
@@ -66,11 +76,18 @@ Assert-Contains $native "strictAtomicImportInvariant" "Native diagnostics must r
 Assert-Contains $probe "effective_frame_wait_ms" "Render loop must hotload the camera-frame wait."
 Assert-Contains $probe "should_adopt_camera_image(frames_presented)" "Render loop must gate camera-image adoption on display cadence."
 Assert-Contains $probe "StrictTimestampPair" "Render loop must implement strict timestamp pairing."
+Assert-Contains $probe "recoveryPolicy=discard-both-latest-candidates" "Display-aligned strict pairing must recover without chasing alternating one-period-old eye frames."
+Assert-Contains $probe "recoveryPolicy=discard-unpaired-latest-candidate" "Display-aligned strict pairing must not retain a single latest eye across the next 45 Hz poll."
 Assert-Contains $probe "status=strict-stereo-pair-presented" "Render loop must emit pair-generation presentation evidence."
 Assert-Contains $probe "packedEyesRecordedInSingleCommandBuffer=true" "Strict-pair evidence must bind both eyes to one command buffer."
 Assert-Contains $probe "MonoDuplicateLeft" "Render loop must implement the mono duplicate control."
 Assert-Contains $probe "camera_projection_visible" "Render loop must record effective custom-projection pulse visibility."
 Assert-Contains $native "cameraProjectionSuppressedPresents" "Native summaries must report suppressed held-frame presentations."
+Assert-Contains $native "interpolated-bracket" "Capture-pose association must interpolate bracketing Scene samples."
+Assert-Contains $native "openxr-locate-views-estimated-presentation-time" "Presentation pose diagnostics must identify OpenXR view location."
+Assert-Contains $native "xrLocateViews" "Presentation-pose location must use xrLocateViews without owning the frame loop."
+Assert-Contains $probe "status=camera-presentation-pose" "Render loop must bind each submitted frame to presentation-pose evidence."
+Assert-Contains $probe "sidecarXrWaitFrame=false" "Render loop evidence must deny sidecar frame-loop ownership."
 Assert-Contains $stream "AImageReader_acquireLatestImage" "Camera path must retain acquireLatestImage queue dropping."
 Assert-Contains $stream "camera_latency_per_frame_log_enabled()" "High-rate camera markers must be opt-in."
 Assert-Contains $stream "captureFpsApplyStatus" "Camera startup must report the capture-FPS request result."
@@ -78,6 +95,20 @@ Assert-Contains $stream "image-slot-held-through-vulkan-frame-fence" "Camera acq
 Assert-Contains $stream "cameraSyncTransition" "Camera acquisition must log every live camera-sync transition."
 Assert-Contains $stream "captureProcessingApplyStatus" "Camera startup must report support-gated ISP override application."
 Assert-Contains $stream "capturePoseAssociation" "Camera acquisition must report the effective image-to-pose association."
+Assert-Contains $native "calibrationScope=independent-per-eye" "Camera calibration must remain independently scoped to each eye."
+Assert-Contains $projection "CameraHwbProjectionEyePush" "Camera projection must use one bounded push block per eye."
+Assert-Contains $projection "size_of::<CameraHwbProjectionEyePush>() <= 128" "Per-eye camera push constants must fit the portable Vulkan minimum."
+Assert-Contains $projectionShader "discard;" "Reprojection must discard invalid UVs instead of edge clamping."
+Assert-Contains $projectionShader "camera_source_uv_for_presentation" "Reprojection must map the fixed output footprint into a retained central source crop."
+Assert-Contains $projectionShader "sourceOverscanUv" "Reprojection must expose the configured real-camera margin to the shader."
+Assert-Contains $projectionShader "presentationSourceUv" "Rotation reprojection must start from the central source crop."
+Assert-Contains $projection "effective_rect(left_base_effective, footprint_scale" "Projection geometry must scale the retained-source footprint around each existing eye center."
+Assert-Contains $probe "cameraAngularScalePolicy" "Presentation evidence must distinguish zoom-to-fill from preserved angular scale."
+if ($projectionShader.Contains("stable_rotation_reprojected_uv")) {
+    throw "Reprojection must not hide exhausted source coverage with an unwarped fallback image."
+}
+Assert-Contains $publicMultiStackRuntime "cameraPresentationReprojectionGuideIngress=private-guide-pass0-prewarped-camera-color" "The normal effect path must receive the presentation reprojection before private guide generation."
+Assert-Contains $publicMultiStackRuntime "size_of::<OpaqueGuidePush>() <= 128" "The private guide reprojection push must fit the portable Vulkan minimum."
 Assert-Contains $build 'camera_latency_diagnostic_module = "spatial-camera-latency-diagnostic-module"' "Build manifest must identify the diagnostic module."
 Assert-Contains $build 'camera_latency_diagnostic_present_age_semantics = "queue-present-call-not-photons"' "Build manifest must preserve the present-age limitation."
 Assert-Contains $tool "commit-revision-last" "Preset tool must write the revision last."
@@ -113,6 +144,22 @@ $presets = @(
     "SensorWarpInverse110",
     "SensorWarpInverseRollFree70",
     "SensorWarpInverseYawOnly70",
+    "SensorWarpCameraCalibrated",
+    "PresentationLatest50",
+    "PresentationSceneExtrapolated8",
+    "PresentationSceneExtrapolated11",
+    "PresentationSceneExtrapolated16",
+    "PresentationOpenXr0",
+    "PresentationOpenXr8",
+    "PresentationOpenXr11",
+    "PresentationOpenXr11Overscan0",
+    "PresentationOpenXr11Overscan10",
+    "PresentationOpenXr11GuardBand10",
+    "PresentationOpenXr16",
+    "PresentationOpenXr22",
+    "PresentationOpenXr11Adoption45",
+    "PresentationOpenXr11Verbose",
+    "PresentationOpenXr11Adoption45Verbose",
     "SensorWarp70",
     "SensorWarp110",
     "VerboseFrameLog",
@@ -122,8 +169,8 @@ $revision = 9000L
 foreach ($preset in $presets) {
     $json = & $toolPath -Preset $preset -Revision $revision -DryRun
     $plan = $json | ConvertFrom-Json
-    if (@($plan.write_plan).Count -ne 18) {
-        throw "Preset '$preset' must produce seventeen payload writes and one commit write."
+    if (@($plan.write_plan).Count -ne 22) {
+        throw "Preset '$preset' must produce twenty-one payload writes and one commit write."
     }
     $last = @($plan.write_plan)[-1]
     if ($last.transaction_role -ne "commit-revision-last" -or $last.property -notlike "*.revision") {
@@ -231,6 +278,90 @@ if (
     $sensorWarpCameraCalibratedFov[0].value -ne "73"
 ) {
     throw "SensorWarpCameraCalibrated must remain a live-safe Camera2-calibrated reprojection test."
+}
+$presentationOpenXr11 = (& $toolPath -Preset PresentationOpenXr11 -Revision 99957 -DryRun | ConvertFrom-Json)
+$presentationOpenXr11Pose = @($presentationOpenXr11.write_plan | Where-Object { $_.property -like "*.presentation_pose_mode" })
+$presentationOpenXr11Lead = @($presentationOpenXr11.write_plan | Where-Object { $_.property -like "*.presentation_lead_ms" })
+$presentationOpenXr11Cadence = @($presentationOpenXr11.write_plan | Where-Object { $_.property -like "*.adoption_cadence" })
+if (
+    $presentationOpenXr11.preset_requires_restart -or
+    $presentationOpenXr11Pose.Count -ne 1 -or
+    $presentationOpenXr11Pose[0].value -ne "openxr-locate-views" -or
+    $presentationOpenXr11Lead.Count -ne 1 -or
+    $presentationOpenXr11Lead[0].value -ne "11" -or
+    $presentationOpenXr11Cadence.Count -ne 1 -or
+    $presentationOpenXr11Cadence[0].value -ne "every-available"
+) {
+    throw "PresentationOpenXr11 must be a live-safe every-available estimated-presentation-time candidate."
+}
+$presentationOpenXr11Overscan0 = (& $toolPath -Preset PresentationOpenXr11Overscan0 -Revision 999571 -DryRun | ConvertFrom-Json)
+$presentationOpenXr11Overscan10 = (& $toolPath -Preset PresentationOpenXr11Overscan10 -Revision 999572 -DryRun | ConvertFrom-Json)
+$presentationOpenXr11GuardBand10 = (& $toolPath -Preset PresentationOpenXr11GuardBand10 -Revision 999573 -DryRun | ConvertFrom-Json)
+$overscan0Write = @($presentationOpenXr11Overscan0.write_plan | Where-Object { $_.property -like "*.reprojection_source_overscan_percent" })
+$overscan10Write = @($presentationOpenXr11Overscan10.write_plan | Where-Object { $_.property -like "*.reprojection_source_overscan_percent" })
+$overscan10ModeWrite = @($presentationOpenXr11Overscan10.write_plan | Where-Object { $_.property -like "*.reprojection_guard_band_mode" })
+$guardBand10Write = @($presentationOpenXr11GuardBand10.write_plan | Where-Object { $_.property -like "*.reprojection_source_overscan_percent" })
+$guardBand10ModeWrite = @($presentationOpenXr11GuardBand10.write_plan | Where-Object { $_.property -like "*.reprojection_guard_band_mode" })
+if (
+    $presentationOpenXr11Overscan0.preset_requires_restart -or
+    $overscan0Write.Count -ne 1 -or
+    $overscan0Write[0].value -ne "0"
+) {
+    throw "PresentationOpenXr11Overscan0 must remain the live-safe no-margin visual control."
+}
+if (
+    $presentationOpenXr11Overscan10.preset_requires_restart -or
+    $overscan10Write.Count -ne 1 -or
+    $overscan10Write[0].value -ne "10" -or
+    $overscan10ModeWrite.Count -ne 1 -or
+    $overscan10ModeWrite[0].value -ne "zoom-to-fill"
+) {
+    throw "PresentationOpenXr11Overscan10 must remain the live-safe zoom-to-fill real-camera-margin control."
+}
+if (
+    $presentationOpenXr11GuardBand10.preset_requires_restart -or
+    $guardBand10Write.Count -ne 1 -or
+    $guardBand10Write[0].value -ne "10" -or
+    $guardBand10ModeWrite.Count -ne 1 -or
+    $guardBand10ModeWrite[0].value -ne "reduced-footprint"
+) {
+    throw "PresentationOpenXr11GuardBand10 must preserve source scale by coupling ten-percent margins to an eighty-percent target footprint."
+}
+$presentationOpenXr11Adoption45 = (& $toolPath -Preset PresentationOpenXr11Adoption45 -Revision 99958 -DryRun | ConvertFrom-Json)
+$presentationOpenXr11Adoption45Cadence = @($presentationOpenXr11Adoption45.write_plan | Where-Object { $_.property -like "*.adoption_cadence" })
+if (
+    $presentationOpenXr11Adoption45.preset_requires_restart -or
+    $presentationOpenXr11Adoption45Cadence.Count -ne 1 -or
+    $presentationOpenXr11Adoption45Cadence[0].value -ne "display-aligned-45"
+) {
+    throw "PresentationOpenXr11Adoption45 must remain a live-safe 45 Hz image-adoption control."
+}
+$presentationOpenXr11Verbose = (& $toolPath -Preset PresentationOpenXr11Verbose -Revision 999581 -DryRun | ConvertFrom-Json)
+$presentationOpenXr11VerboseFrameLog = @($presentationOpenXr11Verbose.write_plan | Where-Object { $_.property -like "*.frame_log" })
+$presentationOpenXr11VerboseSummary = @($presentationOpenXr11Verbose.write_plan | Where-Object { $_.property -like "*.summary_ms" })
+$presentationOpenXr11VerboseCadence = @($presentationOpenXr11Verbose.write_plan | Where-Object { $_.property -like "*.adoption_cadence" })
+if (
+    $presentationOpenXr11Verbose.preset_requires_restart -or
+    $presentationOpenXr11VerboseFrameLog.Count -ne 1 -or
+    $presentationOpenXr11VerboseFrameLog[0].value -ne "true" -or
+    $presentationOpenXr11VerboseSummary.Count -ne 1 -or
+    $presentationOpenXr11VerboseSummary[0].value -ne "500" -or
+    $presentationOpenXr11VerboseCadence.Count -ne 1 -or
+    $presentationOpenXr11VerboseCadence[0].value -ne "every-available"
+) {
+    throw "PresentationOpenXr11Verbose must preserve the 50 Hz candidate while enabling bounded motion evidence."
+}
+$presentationOpenXr11Adoption45Verbose = (& $toolPath -Preset PresentationOpenXr11Adoption45Verbose -Revision 999582 -DryRun | ConvertFrom-Json)
+$presentationOpenXr11Adoption45VerboseFrameLog = @($presentationOpenXr11Adoption45Verbose.write_plan | Where-Object { $_.property -like "*.frame_log" })
+$presentationOpenXr11Adoption45VerboseCadence = @($presentationOpenXr11Adoption45Verbose.write_plan | Where-Object { $_.property -like "*.adoption_cadence" })
+if (
+    $presentationOpenXr11Adoption45Verbose.preset_requires_restart -or
+    $presentationOpenXr11Adoption45VerboseFrameLog.Count -ne 1 -or
+    $presentationOpenXr11Adoption45VerboseFrameLog[0].value -ne "true" -or
+    $presentationOpenXr11Adoption45VerboseCadence.Count -ne 1 -or
+    $presentationOpenXr11Adoption45VerboseCadence[0].value -ne "display-aligned-45"
+) {
+    throw "PresentationOpenXr11Adoption45Verbose must preserve the 45 Hz control while enabling motion evidence."
 }
 $fenceHeld = (& $toolPath -Preset FenceHeld -Revision 9996 -DryRun | ConvertFrom-Json)
 if ($fenceHeld.preset_requires_restart) {

@@ -640,18 +640,15 @@ impl CameraProbeStream {
             ));
         }
 
-        let camera_latency_calibration_available = if side_label == "left" || side_label == "mono" {
-            update_camera_latency_camera_calibration(
-                camera_id,
-                &static_metadata.lens_pose_rotation,
-                &static_metadata.lens_intrinsic_calibration,
-                static_metadata.lens_pose_reference,
-                &static_metadata.pre_correction_active_array,
-                selected_size,
-            )
-        } else {
-            false
-        };
+        let camera_latency_calibration_available = update_camera_latency_camera_calibration(
+            side_label,
+            camera_id,
+            &static_metadata.lens_pose_rotation,
+            &static_metadata.lens_intrinsic_calibration,
+            static_metadata.lens_pose_reference,
+            &static_metadata.pre_correction_active_array,
+            selected_size,
+        );
 
         log_marker(format!(
             "status=camera-stream-started side={} cameraId={} selectedPrivateSize={}x{} readerMaxImages={} repeatingSequenceId={} privateOutputSizes={} cameraLatencyCalibrationAvailable={} cameraLatencyCalibrationAuthority={} {} {} {} {}",
@@ -663,10 +660,8 @@ impl CameraProbeStream {
             sequence_id,
             marker_token(&private_sizes_marker(&static_metadata.private_output_sizes)),
             bool_token(camera_latency_calibration_available),
-            if side_label == "right" {
-                "shared-left-camera-static-characteristics"
-            } else if camera_latency_calibration_available {
-                "android-camera2-static-characteristics"
+            if camera_latency_calibration_available {
+                "android-camera2-static-characteristics-per-eye"
             } else {
                 "unavailable"
             },
@@ -911,7 +906,7 @@ unsafe extern "C" fn camera_probe_image_available(context: *mut c_void, reader: 
         frame_index <= 4 || camera_latency_per_frame_log_enabled() || camera_sync_changed;
     if log_frame {
         log_marker(format!(
-            "status=camera-frame-acquired side={} cameraId={} frameIndex={} hardwareBufferId={} timestampNs={} sourceDeltaMs={} callbackBoottimeNs={} callbackDeltaMs={} callbackAgeMs={} sensorTimestampSource={} capturePoseAssociation={} capturePoseTargetTimestampNs={} capturePoseAvailable={} width={} height={} format={} usage=0x{:x} stride={} hwbImportSequence={} imageFormat=PRIVATE usageFlag=GPU_SAMPLED_IMAGE perFrameLogEnabled={} cameraSyncTransition={} cameraSyncActive={} imageReleaseApi={} imageLeaseActive={} producerConsumerSync={}",
+            "status=camera-frame-acquired side={} cameraId={} frameIndex={} hardwareBufferId={} timestampNs={} sourceDeltaMs={} callbackBoottimeNs={} callbackDeltaMs={} callbackAgeMs={} sensorTimestampSource={} capturePoseAssociation={} capturePoseSelection={} capturePoseTargetTimestampNs={} capturePosePreviousTimestampNs={} capturePoseNextTimestampNs={} capturePoseInterpolationFraction={:.5} capturePoseAvailable={} width={} height={} format={} usage=0x{:x} stride={} hwbImportSequence={} imageFormat=PRIVATE usageFlag=GPU_SAMPLED_IMAGE perFrameLogEnabled={} cameraSyncTransition={} cameraSyncActive={} imageReleaseApi={} imageLeaseActive={} producerConsumerSync={}",
             context.side_label,
             marker_token(&context.camera_id),
             frame_index,
@@ -923,7 +918,11 @@ unsafe extern "C" fn camera_probe_image_available(context: *mut c_void, reader: 
             optional_ns_ms(callback_age_ns),
             context.timestamp_source.marker_token(),
             capture_viewer_basis.association,
+            capture_viewer_basis.pose_selection,
             capture_viewer_basis.target_timestamp_ns,
+            capture_viewer_basis.previous_timestamp_ns,
+            capture_viewer_basis.next_timestamp_ns,
+            capture_viewer_basis.interpolation_fraction,
             bool_token(capture_viewer_basis.basis.is_some()),
             descriptor.width,
             descriptor.height,

@@ -9,6 +9,7 @@ param(
     [string]$PackageName = "io.github.mesmerprism.rustyquest.spatial_camera_panel",
     [string]$Activity = "io.github.mesmerprism.rustyquest.spatial_camera_panel/.SpatialCameraPanelActivity",
     [int]$ReaderMaxImages = 4,
+    [bool]$PanelShellVisible = $true,
     [string]$VideoPath = $env:RUSTY_QUEST_SPATIAL_VIDEO_PATH,
     [string]$VideoSourcePath = $env:RUSTY_QUEST_SPATIAL_VIDEO_SOURCE_PATH,
     [string]$VideoDestinationRelativePath = "v.mp4",
@@ -554,6 +555,11 @@ $summary = [ordered]@{
     require_spatial_video_projection = [bool]$RequireSpatialVideoProjection
     spatial_video_only_requested = [bool]$VideoOnly
     reader_max_images = $readerMaxImagesClamped
+    panel_shell_visible_requested = [bool]$PanelShellVisible
+    panel_shell_property = "debug.rustyquest.spatial.panel_shell.visible"
+    panel_shell_property_value = ""
+    panel_shell_effective = $false
+    panel_shell_runtime_marker = $false
     spatial_video_projection_requested = $videoProjectionRequested
     spatial_video_projection_path = $videoPathTrimmed
     spatial_video_projection_source_path = $videoSourcePathTrimmed
@@ -790,6 +796,7 @@ try {
     $setpropResults += Invoke-AdbCommand -Name "set raw camera projection reader max images" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.reader_max_images", $readerMaxImagesClamped.ToString())
     $setpropResults += Invoke-AdbCommand -Name "set Spatial depth layer policy" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.depth.layer_policy", $depthLayerPolicyToken)
     $setpropResults += Invoke-AdbCommand -Name "set Spatial projection carrier" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.camera_hwb_projection_probe.carrier", $projectionCarrierToken)
+    $setpropResults += Invoke-AdbCommand -Name "configure Spatial panel shell visibility" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.panel_shell.visible", $(if ($PanelShellVisible) { "1" } else { "0" }))
     $setpropResults += Invoke-AdbCommand -Name "select Spatial SDK interaction pointer input" -Arguments @("shell", "setprop", "debug.rustyquest.spatial_camera_panel.vr_input_system", "interaction_sdk")
     $setpropResults += Invoke-AdbCommand -Name "allow app controller probe to observe left/right input" -Arguments @("shell", "setprop", "debug.rustyquest.spatial_camera_panel.consume_left_right_input", "0")
     $setpropResults += Invoke-AdbCommand -Name "disable Spatial SDK multimodal input" -Arguments @("shell", "setprop", "debug.rustyquest.spatial.multimodal_input.enabled", "0")
@@ -823,6 +830,14 @@ try {
         $summary.spatial_asset_model_launch_transport = "intent-extras"
     }
     Save-Text -Path (Join-Path $OutDir "setprops.json") -Text ($setpropResults | ConvertTo-Json -Depth 6)
+    $panelShellReadback = Invoke-AdbCommand -Name "read Spatial panel shell visibility" -Arguments @("shell", "getprop", "debug.rustyquest.spatial.panel_shell.visible")
+    $summary.panel_shell_property_value = ([string]$panelShellReadback.output).Trim()
+    $expectedPanelShellValue = if ($PanelShellVisible) { "1" } else { "0" }
+    $summary.panel_shell_effective = $summary.panel_shell_property_value -eq $expectedPanelShellValue
+    Save-Text -Path (Join-Path $OutDir "panel-shell-property.json") -Text ($panelShellReadback | ConvertTo-Json -Depth 6)
+    if (-not [bool]$summary.panel_shell_effective) {
+        throw "Spatial panel shell property readback did not match the requested value '$expectedPanelShellValue'; received '$($summary.panel_shell_property_value)'."
+    }
 
     $forceStoppedPackages = @()
     if (-not $SkipForceStopKnownXrPackages) {
@@ -955,6 +970,7 @@ try {
     }
     $evidenceText = "$tagLogcat`n$pidLogcat`n$allLogcat"
     $appScopedEvidenceText = "$tagLogcat`n$pidLogcat"
+    $summary.panel_shell_runtime_marker = Test-TextContains $evidenceText "panelShellVisible=$($PanelShellVisible.ToString().ToLowerInvariant())"
 
     $summary.start = if ($VideoOnly) {
         (Test-TextContains $evidenceText "status=start") -and (Test-TextContains $evidenceText "videoOnlySpatialProjection=true")
@@ -1017,8 +1033,11 @@ try {
     $summary.output_raw_color_target_rect = Test-TextContains $evidenceText "outputMode=raw-color-target-rect"
     $summary.target_clip_policy = Test-TextContains $evidenceText "targetClipPolicy=clip-to-visible-eye"
     $summary.mapping_mode_target_local_raster = Test-TextContains $evidenceText "projectionContentMappingMode=target-local-raster"
-    $summary.native_packed_left_target_rect = Test-TextContains $evidenceText "leftPackedEffectiveTargetScreenUvRect=0.062777;0.218750;0.375000;0.656250"
-    $summary.native_packed_right_target_rect = Test-TextContains $evidenceText "rightPackedEffectiveTargetScreenUvRect=0.562222;0.218750;0.375000;0.671875"
+    $targetRectPattern = "[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+);[-+]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+);(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+);(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)"
+    $summary.native_packed_left_target_rect =
+        $evidenceText -match "leftPackedEffectiveTargetScreenUvRect=$targetRectPattern"
+    $summary.native_packed_right_target_rect =
+        $evidenceText -match "rightPackedEffectiveTargetScreenUvRect=$targetRectPattern"
     $summary.projection_target_default_distance_two_meters = Test-TextContains $evidenceText "targetDistanceDefaultMeters=2.00"
     $summary.projection_target_stereo_horizontal_offset_readback = Test-TextContains $evidenceText "projectionTargetStereoHorizontalOffsetUv="
     $summary.projection_target_stereo_horizontal_offset_default = Test-TextContains $evidenceText "projectionTargetStereoHorizontalOffsetDefaultUv=0.046320"
@@ -1075,6 +1094,8 @@ try {
     $summary.public_multistack_frame_projected = Test-TextContains $evidenceText "status=public-multistack-frame-projected"
     $summary.public_multistack_projection_evidence = Test-TextContains $evidenceText "status=public-multistack-projection-evidence"
     $summary.public_multistack_projection_applied = Test-TextContains $evidenceText "publicMultiStackProjectionApplied=true"
+    $summary.public_multistack_presentation_reprojection_guide_ingress =
+        $evidenceText -match "cameraPresentationReprojectionGuidePushProvided=true[^\r\n]*cameraPresentationReprojectionGuideIngress=private-guide-pass0-prewarped-camera-color[^\r\n]*cameraPresentationReprojectionGuidePushBytes=112"
     $summary.public_multistack_layer_cycle_enabled = Test-TextContains $evidenceText "publicMultiStackLayerCycleEnabled=true"
     $summary.public_multistack_layer_cycle_elapsed = Test-TextContains $evidenceText "publicMultiStackLayerCycleElapsedSeconds="
     $summary.public_multistack_depth_layer_policy_marker =
@@ -1086,8 +1107,10 @@ try {
             Test-TextContains $evidenceText "publicMultiStackDepthLayerCompareMode=off"
         }
     $summary.public_multistack_opaque_projection_target_space = Test-TextContains $evidenceText "publicMultiStackOpaqueProjectionTargetSpace=packed-stereo-surface-uv"
-    $summary.public_multistack_opaque_projection_left_target_rect = Test-TextContains $evidenceText "publicMultiStackOpaqueProjectionLeftTargetRect=0.062777;0.218750;0.375000;0.656250"
-    $summary.public_multistack_opaque_projection_right_target_rect = Test-TextContains $evidenceText "publicMultiStackOpaqueProjectionRightTargetRect=0.562222;0.218750;0.375000;0.671875"
+    $summary.public_multistack_opaque_projection_left_target_rect =
+        $evidenceText -match "publicMultiStackOpaqueProjectionLeftTargetRect=$targetRectPattern"
+    $summary.public_multistack_opaque_projection_right_target_rect =
+        $evidenceText -match "publicMultiStackOpaqueProjectionRightTargetRect=$targetRectPattern"
     $summary.spatial_video_projection_native_configured = Test-TextContains $evidenceText "channel=spatial-video-projection status=native-configured"
     $summary.spatial_video_projection_start_requested = Test-TextContains $evidenceText "channel=spatial-video-projection status=start-requested"
     $summary.spatial_video_projection_surface_created = Test-TextContains $evidenceText "status=surface-created"
@@ -1159,6 +1182,24 @@ try {
         Test-TextContains $evidenceText "projectionDefaultPlacementMode=viewer-pose-projection-locked-quad"
     $summary.camera_projection_start_gate_virtual_room_loaded =
         Test-TextContains $evidenceText "projectionStartGate=virtual-room-loaded"
+    $summary.camera_presentation_pose_evidence =
+        Test-TextContains $evidenceText "status=camera-presentation-pose"
+    $summary.camera_presentation_sdk_frame_loop_authority =
+        $evidenceText -match "status=camera-presentation-pose[^\r\n]*displayFrameLoopAuthority=spatial-sdk"
+    $summary.camera_presentation_no_sidecar_frame_wait =
+        $evidenceText -match "status=camera-presentation-pose[^\r\n]*sidecarXrWaitFrame=false[^\r\n]*sidecarXrBeginFrame=false[^\r\n]*sidecarXrEndFrame=false"
+    $summary.camera_presentation_per_eye_draws =
+        $evidenceText -match "status=camera-presentation-pose[^\r\n]*cameraCalibrationScope=independent-per-eye[^\r\n]*perEyeDraws=true"
+    $summary.camera_presentation_invalid_uv_discard =
+        $evidenceText -match "status=camera-presentation-pose[^\r\n]*outOfRangeUvPolicy=discard"
+    $summary.camera_presentation_projection_footprint_reported =
+        $evidenceText -match "status=camera-presentation-pose[^\r\n]*projectionFootprintPolicy=(fixed|reduced)-target-rect-with-full-surface-scissor"
+    $summary.camera_presentation_real_source_overscan_reported =
+        $evidenceText -match "status=camera-presentation-pose[^\r\n]*sourceOverscanPolicy=central-crop-real-camera-pixels[^\r\n]*sourceOverscanMode=(zoom-to-fill|reduced-footprint)[^\r\n]*sourceOverscanUv=[0-9.]+[^\r\n]*projectionFootprintScale=[0-9.]+"
+    $summary.camera_presentation_source_exhaustion_honest =
+        $evidenceText -match "status=camera-presentation-pose[^\r\n]*sourceCoverageExhaustionPolicy=discard-to-underlying-carrier"
+    $summary.camera_presentation_queue_present_not_photons =
+        $evidenceText -match "status=camera-presentation-pose[^\r\n]*queuePresentTimeAuthority=cpu-call-return-not-photons"
     $summary.camera_projection_room_render_order =
         Test-TextContains $evidenceText "projectionRoomRenderOrder=$expectedRoomRenderOrderToken"
     $summary.private_layer_controls_apply_to_wall_and_full_fov =
@@ -1217,6 +1258,15 @@ try {
             "camera_stack_particle_suppress_failed_false",
             "camera_stack_particle_renderer_ready_false",
             "camera_stack_surface_layer_mode_absent",
+            "camera_presentation_pose_evidence",
+            "camera_presentation_sdk_frame_loop_authority",
+            "camera_presentation_no_sidecar_frame_wait",
+            "camera_presentation_per_eye_draws",
+            "camera_presentation_invalid_uv_discard",
+            "camera_presentation_projection_footprint_reported",
+            "camera_presentation_real_source_overscan_reported",
+            "camera_presentation_source_exhaustion_honest",
+            "camera_presentation_queue_present_not_photons",
             "runtime_crash_false"
         )
     } else {
@@ -1259,6 +1309,9 @@ try {
     }
     if (-not $VideoOnly) {
         $requiredFlags += "spatial_controller_actions_disabled"
+        if ($PanelShellVisible) {
+            $requiredFlags += "panel_shell_runtime_marker"
+        }
     }
     $requiredFlags += @(
         "foreground_validation_passed",
@@ -1295,6 +1348,7 @@ try {
             "public_multistack_frame_projected",
             "public_multistack_projection_evidence",
             "public_multistack_projection_applied",
+            "public_multistack_presentation_reprojection_guide_ingress",
             "public_multistack_layer_cycle_enabled",
             "public_multistack_layer_cycle_elapsed",
             "public_multistack_depth_layer_policy_marker",

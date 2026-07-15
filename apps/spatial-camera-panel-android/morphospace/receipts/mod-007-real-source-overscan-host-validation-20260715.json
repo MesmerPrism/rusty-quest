@@ -1,0 +1,64 @@
+{
+  "schema": "rusty.quest.spatial_camera_panel.mod007_real_source_overscan_host_validation.v1",
+  "unit_id": "mod-007",
+  "status": "host-pass-human-motion-pending",
+  "completed_at": "2026-07-15T17:39:00Z",
+  "observation": {
+    "video_carrier": "head-stable",
+    "custom_projection_border": "temporarily-reveals-more-carrier-during-fast-pitch-then-catches-up",
+    "inference": "rotation reprojection can exhaust camera source coverage while the output carrier remains fixed",
+    "cosmetic_fallback_rejected": true
+  },
+  "candidate_contract": {
+    "output_footprint": "fixed-target-rect-with-full-surface-scissor",
+    "source_mapping": "central-source-crop-retains-real-camera-pixels",
+    "source_overscan_percent_per_edge": 10,
+    "displayed_source_fraction_per_axis": 0.8,
+    "source_exhaustion": "discard-to-underlying-carrier",
+    "unwarped_invalid_region_fallback": false,
+    "camera_adoption_cadence": "every-available"
+  },
+  "ab_presets": {
+    "control": "PresentationOpenXr11Overscan0",
+    "candidate": "PresentationOpenXr11Overscan10",
+    "cadence_control_after_overscan_gate": "PresentationOpenXr11Adoption45"
+  },
+  "host_validation": {
+    "camera_latency_static": "passed",
+    "spatial_android_static": "passed",
+    "focused_native_tests": {
+      "passed": 14,
+      "failed": 0
+    },
+    "focused_kotlin_test": "passed",
+    "private_morphovision_tests": {
+      "passed": 29,
+      "failed": 0
+    },
+    "private_shader_compile": "passed",
+    "android_debug_build": "passed"
+  },
+  "apk": {
+    "sha256": "94eef9e740fae435dc42bf6d67e5e0f30d00f0f885a270c0f16779e162df2768",
+    "private_profile_configured": true,
+    "private_guide_shader_configured": true,
+    "private_projection_shader_configured": true,
+    "artifact_policy": "local-only"
+  },
+  "remaining_gate": {
+    "device_policy": "use-only-the-user-selected-Q-ending-headset",
+    "status": "pending-user-presence-and-device-lease",
+    "protocol": "compare zero and ten percent real-source overscan during repeated fast pitch while watching both the projection border and scene-content echo",
+    "decision": "if border reveal and echo improve together, retained source coverage is causal; if only the border improves, continue pose/timestamp diagnosis",
+    "does_not_prove": [
+      "human perceptual acceptance",
+      "compositor scanout or photon time",
+      "depth-correct translational reprojection"
+    ]
+  },
+  "resource_cleanup": {
+    "apk_build_lease_released": true,
+    "headset_lease_acquired": false,
+    "adb_used": false
+  }
+}
