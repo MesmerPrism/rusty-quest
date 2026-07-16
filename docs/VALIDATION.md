@@ -874,24 +874,28 @@ The Quest-native Android renderer scaffold has static and APK build validation:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererProfileMatrix.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-ApkRunIsolationStatic.ps1 -RepoRoot .
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Resolve-NativeAppBuild.ps1 -AppSpec .\fixtures\native-app-builds\native-openxr-hand-lab.app.json -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1 -AppBuildLock .\local-artifacts\native-app-builds\native_openxr_hand_lab\<resolution-fingerprint>\feature-lock.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ApkRunCapsule.ps1 -Path <content-addressed-output>\run-capsule.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -RunCapsule <content-addressed-output>\run-capsule.json -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererDisplayCompositeSmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -RunCapsule <content-addressed-output>\run-capsule.json -EvidenceMode EnvironmentDepthParticles -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthKnownDistanceProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -TargetDistanceMeters 1.0 -ToleranceMeters 0.15 -RunSeconds 8
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial>
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -ProfilePath fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity.profile.json -ExpectedEnvironmentDepthParticleCount 64 -MinimumEnvironmentDepthHashProbeExhaustedCount 1 -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -RunCapsule <matching-low-capacity-content-addressed-output>\run-capsule.json -EvidenceMode EnvironmentDepthParticles -ExpectedEnvironmentDepthParticleCount 64 -MinimumEnvironmentDepthHashProbeExhaustedCount 1 -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -ProfilePath fixtures\runtime-profiles\quest-native-renderer-envdepth-local-surfels.profile.json -RequireEnvironmentDepthSurfaceSupport -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
 ```
 
 `Invoke-NativeRendererReplaySmoke.ps1` is the no-real-hands device wrapper for
-the recorded replay path. It installs the APK unless `-SkipInstall` is passed,
+the recorded replay path. It validates the run capsule, installs its APK unless
+`-SkipInstall` is passed,
 pregrants the APK-declared camera/hand/scene permissions through
 `tools/Grant-NativeRendererPermissions.ps1`, applies
 `quest-native-renderer-replay-visual-proof.profile.json` through
-`Apply-RuntimeProfile.ps1 -Execute`, launches the NativeActivity, captures
+`Apply-RuntimeProfile.ps1 -PropertyScopeMode CompleteManifest -Execute`, launches the NativeActivity, captures
 logcat plus a screenshot, and then calls
 `Test-NativeRendererRuntimeEvidence.ps1` with screenshot content analysis
 enabled. That checker records whole-screenshot dimensions, sampled unique

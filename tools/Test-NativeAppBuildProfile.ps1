@@ -17,6 +17,17 @@ function Read-Json {
     return Get-Content -Raw -LiteralPath $Path | ConvertFrom-Json
 }
 
+function Get-ContentAddressedResolutionDirectory {
+    param([Parameter(Mandatory=$true)][string]$AppId)
+    $root = Join-Path $repoRootPath "local-artifacts\native-app-builds\$AppId"
+    $directory = Get-ChildItem -LiteralPath $root -Directory |
+        Where-Object { $_.Name -match '^[0-9a-f]{64}$' } |
+        Sort-Object Name |
+        Select-Object -Last 1
+    if ($null -eq $directory) { throw "No content-addressed resolution found for $AppId under $root" }
+    return $directory.FullName
+}
+
 function Assert-SetEquals {
     param(
         [Parameter(Mandatory=$true)][string]$Label,
@@ -55,7 +66,7 @@ foreach ($spec in $validSpecs) {
     Invoke-Resolver -SpecPath $spec.FullName
 }
 
-$canaryDir = Join-Path $repoRootPath "local-artifacts\native-app-builds\private_particle_solid_black_canary"
+$canaryDir = Get-ContentAddressedResolutionDirectory -AppId "private_particle_solid_black_canary"
 $lockPath = Join-Path $canaryDir "feature-lock.json"
 $profilePath = Join-Path $canaryDir "runtime-profile.json"
 $settingsPath = Join-Path $canaryDir "native-app-settings.json"
@@ -223,7 +234,7 @@ if ([string]$settings.values.'native_renderer.render.mode'.value -ne "solid-blac
 if ($null -eq $settings.PSObject.Properties["settings_hotload"]) {
     throw "Generated canary native app settings is missing settings_hotload policy"
 }
-if ([string]$settings.settings_hotload.master_surface -ne "local-artifacts/native-app-builds/private_particle_solid_black_canary/native-app-settings.json") {
+if ([string]$settings.settings_hotload.master_surface -ne ((Resolve-Path -LiteralPath $settingsPath).Path.Substring($repoRootPath.Path.TrimEnd('\').Length + 1).Replace('\', '/'))) {
     throw "Generated canary native app settings hotload policy points at the wrong master surface: $($settings.settings_hotload.master_surface)"
 }
 foreach ($restartBoundary in @("Android manifest permissions", "build inputs", "OpenXR provider")) {
@@ -250,11 +261,11 @@ if ($manifestText -notmatch 'com\.oculus\.permission\.HAND_TRACKING') {
 if ($manifestText -notmatch 'android:name="oculus\.software\.handtracking"\s+android:required="false"') {
     throw "Generated canary manifest must declare optional oculus.software.handtracking"
 }
-if ($manifestText -notmatch 'android:name="\.ControlPanelActivity"') {
+if ($manifestText -notmatch 'android:name="io\.github\.mesmerprism\.rustyquest\.native_renderer\.ControlPanelActivity"') {
     throw "Generated canary manifest must include the same-APK control panel activity"
 }
 
-$stimulusDir = Join-Path $repoRootPath "local-artifacts\native-app-builds\native_stimulus_volume_panel"
+$stimulusDir = Get-ContentAddressedResolutionDirectory -AppId "native_stimulus_volume_panel"
 $stimulusSettingsPath = Join-Path $stimulusDir "native-app-settings.json"
 if (-not (Test-Path -LiteralPath $stimulusSettingsPath)) {
     throw "Expected generated stimulus native app settings artifact is missing: $stimulusSettingsPath"
@@ -269,7 +280,7 @@ foreach ($propertyName in @($stimulusSettings.settings_hotload.accepted_scalar_p
     }
 }
 
-$handLabDir = Join-Path $repoRootPath "local-artifacts\native-app-builds\native_openxr_hand_lab"
+$handLabDir = Get-ContentAddressedResolutionDirectory -AppId "native_openxr_hand_lab"
 $handLabLockPath = Join-Path $handLabDir "feature-lock.json"
 $handLabProfilePath = Join-Path $handLabDir "runtime-profile.json"
 $handLabSettingsPath = Join-Path $handLabDir "native-app-settings.json"

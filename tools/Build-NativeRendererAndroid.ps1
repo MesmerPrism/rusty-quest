@@ -6,12 +6,15 @@ param(
     [string]$OutDir = "",
     [string]$Keystore = "",
     [string]$AppBuildLock = "",
-    [string]$RecordedHandCaptureDir = $env:RUSTY_QUEST_NATIVE_RECORDED_HAND_CAPTURE_DIR,
+    [string]$RecordedHandCaptureDir = "",
     [int]$RecordedHandFrameLimit = 12,
-    [switch]$RequireRecordedHandCapture
+    [switch]$RequireRecordedHandCapture,
+    [switch]$AllowUnlockedDevelopmentBuild,
+    [switch]$ReplaceExistingOutput
 )
 
 $ErrorActionPreference = "Stop"
+$script:BuildUsesLock = $false
 
 function Get-LatestDirectory {
     param(
@@ -150,6 +153,9 @@ function Get-EffectiveBuildEnvValue {
     if ($AppBuildEnvByName.ContainsKey($Name)) {
         return [string]$AppBuildEnvByName[$Name]
     }
+    if ($script:BuildUsesLock) {
+        return $null
+    }
     return [Environment]::GetEnvironmentVariable($Name)
 }
 
@@ -213,9 +219,7 @@ if ([string]::IsNullOrWhiteSpace($NdkHome)) {
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $appRoot = Resolve-Path (Join-Path $repoRoot "apps\native-renderer-android")
 $targetRoot = Join-Path $repoRoot "target"
-if ([string]::IsNullOrWhiteSpace($OutDir)) {
-    $OutDir = Join-Path $targetRoot "native-renderer-android"
-}
+$requestedOutDir = $OutDir
 
 $buildTools = Get-LatestDirectory -Parent (Join-Path $AndroidHome "build-tools") -Pattern "*"
 $platformRoot = Get-LatestDirectory -Parent (Join-Path $AndroidHome "platforms") -Pattern "android-*"
@@ -236,34 +240,6 @@ foreach ($tool in @($platformJar, $aapt2, $d8, $zipalign, $apksigner, $javac, $j
     }
 }
 
-$resolvedOutParent = Split-Path -Parent $OutDir
-New-Item -ItemType Directory -Force -Path $targetRoot, $resolvedOutParent | Out-Null
-$resolvedTargetRoot = (Resolve-Path $targetRoot).Path.TrimEnd("\")
-$resolvedOutFull = [System.IO.Path]::GetFullPath($OutDir).TrimEnd("\")
-if (-not $resolvedOutFull.StartsWith($resolvedTargetRoot + "\", [System.StringComparison]::OrdinalIgnoreCase)) {
-    throw "OutDir must be under the repo target directory: $resolvedOutFull"
-}
-if (Test-Path $OutDir) {
-    $resolvedOutDir = (Resolve-Path $OutDir).Path
-    Remove-Item -LiteralPath $resolvedOutDir -Recurse -Force
-}
-
-$assetsDir = Join-Path $OutDir "assets"
-$classesDir = Join-Path $OutDir "classes"
-$dexDir = Join-Path $OutDir "dex"
-$classesJar = Join-Path $OutDir "classes.jar"
-$nativeStageRoot = Join-Path $OutDir "native"
-$nativeLibDir = Join-Path $nativeStageRoot "lib\arm64-v8a"
-$cargoTargetDir = Join-Path $OutDir "cargo-target"
-$apkUnsigned = Join-Path $OutDir "rusty-quest-native-renderer-unsigned.apk"
-$apkUnaligned = Join-Path $OutDir "rusty-quest-native-renderer-unaligned.apk"
-$apkAligned = Join-Path $OutDir "rusty-quest-native-renderer-aligned.apk"
-$apkSigned = Join-Path $OutDir "rusty-quest-native-renderer.apk"
-$nativeLib = Join-Path $nativeLibDir "librusty_quest_native_renderer.so"
-if ([string]::IsNullOrWhiteSpace($Keystore)) {
-    $Keystore = Join-Path $targetRoot "rusty-quest-native-renderer-debug.keystore"
-}
-
 $appBuildLockObject = $null
 $appBuildLockPath = ""
 $appBuildEnvPath = ""
@@ -274,8 +250,16 @@ $packageName = "io.github.mesmerprism.rustyquest.native_renderer"
 $activityName = "io.github.mesmerprism.rustyquest.native_renderer/android.app.NativeActivity"
 $appBuildEnvEntries = @()
 $appBuildEnvByName = @{}
+$runtimeProfilePath = ""
+$generatedBuildManifestPath = ""
+$appBuildLockSha256 = ""
+if ([string]::IsNullOrWhiteSpace($AppBuildLock) -and -not $AllowUnlockedDevelopmentBuild) {
+    throw "-AppBuildLock is required. Use -AllowUnlockedDevelopmentBuild only for an explicitly loose local compatibility build."
+}
 if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
+    $script:BuildUsesLock = $true
     $appBuildLockPath = Resolve-RepoPath -Path $AppBuildLock -RepoRoot ([string]$repoRoot)
+    $appBuildLockSha256 = Get-FileSha256 -Path $appBuildLockPath
     $appBuildLockObject = Read-JsonFile -Path $appBuildLockPath
     if ([string]$appBuildLockObject.schema -ne "rusty.quest.native_app_feature_lock.v1") {
         throw "Unsupported native app-build feature lock schema: $($appBuildLockObject.schema)"
@@ -285,7 +269,7 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
             throw "Native app-build feature lock is missing required field for APK build: $field"
         }
     }
-    foreach ($field in @("app_spec_path", "app_spec_sha256", "feature_descriptors")) {
+    foreach ($field in @("app_spec_path", "app_spec_sha256", "feature_descriptors", "resolution_fingerprint")) {
         if ($null -eq $appBuildLockObject.PSObject.Properties[$field]) {
             throw "Native app-build feature lock is missing freshness field for APK build: $field"
         }
@@ -311,9 +295,10 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
     $activityName = "$packageName/android.app.NativeActivity"
     $generatedManifestPath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.android_manifest) -RepoRoot ([string]$repoRoot)
     $nativeAppSettingsPath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.native_app_settings) -RepoRoot ([string]$repoRoot)
+    $runtimeProfilePath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.runtime_profile) -RepoRoot ([string]$repoRoot)
     $appBuildEnvPath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.build_env) -RepoRoot ([string]$repoRoot)
     $generatedBuildManifestPath = Resolve-RepoPath -Path ([string]$appBuildLockObject.generated_outputs.build_manifest) -RepoRoot ([string]$repoRoot)
-    foreach ($path in @($generatedManifestPath, $nativeAppSettingsPath, $appBuildEnvPath, $generatedBuildManifestPath)) {
+    foreach ($path in @($generatedManifestPath, $nativeAppSettingsPath, $runtimeProfilePath, $appBuildEnvPath, $generatedBuildManifestPath)) {
         if (-not (Test-Path -LiteralPath $path)) {
             throw "Native app-build generated artifact is missing: $path"
         }
@@ -322,7 +307,7 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
         throw "Native app-build settings hash does not match feature lock app_settings.sha256"
     }
     $generatedBuildManifest = Read-JsonFile -Path $generatedBuildManifestPath
-    foreach ($field in @("feature_lock_sha256", "native_app_settings_sha256", "android_manifest_sha256", "build_env_sha256")) {
+    foreach ($field in @("feature_lock_sha256", "runtime_profile_sha256", "native_app_settings_sha256", "android_manifest_sha256", "build_env_sha256")) {
         if ($null -eq $generatedBuildManifest.PSObject.Properties[$field]) {
             throw "Native app-build generated build manifest is missing hash field: $field"
         }
@@ -331,6 +316,10 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
         -Label "Native app-build feature lock" `
         -ExpectedSha256 ([string]$generatedBuildManifest.feature_lock_sha256) `
         -Path $appBuildLockPath
+    Assert-HashMatches `
+        -Label "Native app-build generated runtime profile" `
+        -ExpectedSha256 ([string]$generatedBuildManifest.runtime_profile_sha256) `
+        -Path $runtimeProfilePath
     Assert-HashMatches `
         -Label "Native app-build generated settings" `
         -ExpectedSha256 ([string]$generatedBuildManifest.native_app_settings_sha256) `
@@ -356,6 +345,70 @@ if (-not [string]::IsNullOrWhiteSpace($AppBuildLock)) {
         }
         $appBuildEnvByName[$name] = if ($null -ne $entry.PSObject.Properties["value"]) { [string]$entry.value } else { "" }
     }
+
+    $undeclaredAmbient = @(Get-ChildItem Env: | Where-Object {
+        $_.Name -like "RUSTY_QUEST_NATIVE_RENDERER_*" -and
+        -not $appBuildEnvByName.ContainsKey([string]$_.Name) -and
+        -not [string]::IsNullOrWhiteSpace([string]$_.Value)
+    } | Select-Object -ExpandProperty Name | Sort-Object -Unique)
+    if ($undeclaredAmbient.Count -gt 0) {
+        throw "Locked native APK build rejected undeclared ambient feature inputs: $($undeclaredAmbient -join ', '). Add them to the app feature lock or clear them."
+    }
+}
+
+Import-Module (Join-Path $PSScriptRoot "lib\SourceComposition.psm1") -Force
+$sourceComposition = Get-QuestBuildSourceComposition `
+    -RepoRoot ([string]$repoRoot) `
+    -PackageName @("rusty-quest-native-renderer-android-native", "rusty-quest-broker-authority")
+$primarySource = @($sourceComposition.repositories | Where-Object { $_.role -eq "primary" })
+if ($primarySource.Count -ne 1) { throw "Native APK source composition did not resolve exactly one primary Rusty Quest repository." }
+$sourceHead = [string]$primarySource[0].commit
+$sourceTree = [string]$primarySource[0].tree
+$sourceDependencies = @($sourceComposition.repositories | Where-Object { $_.role -eq "path-dependency" })
+
+if ([string]::IsNullOrWhiteSpace($requestedOutDir)) {
+    if ($script:BuildUsesLock) {
+        $OutDir = Join-Path $targetRoot ("native-renderer-android\builds\{0}\{1}\{2}" -f ([string]$appBuildLockObject.app_id), $appBuildLockSha256.Substring(0, 24), ([string]$sourceComposition.fingerprint).Substring(0, 16))
+    } else {
+        $OutDir = Join-Path $targetRoot ("native-renderer-android\unlocked-development\{0}" -f ([string]$sourceComposition.fingerprint).Substring(0, 16))
+    }
+} else {
+    $OutDir = $requestedOutDir
+}
+$resolvedOutParent = Split-Path -Parent $OutDir
+New-Item -ItemType Directory -Force -Path $targetRoot, $resolvedOutParent | Out-Null
+$resolvedTargetRoot = (Resolve-Path $targetRoot).Path.TrimEnd("\")
+$resolvedOutFull = [System.IO.Path]::GetFullPath($OutDir).TrimEnd("\")
+if (-not $resolvedOutFull.StartsWith($resolvedTargetRoot + "\", [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "OutDir must be under the repo target directory: $resolvedOutFull"
+}
+if (Test-Path $OutDir) {
+    if (-not $ReplaceExistingOutput) {
+        throw "Content-addressed native APK output already exists: $OutDir. Reuse its run capsule or pass -ReplaceExistingOutput explicitly."
+    }
+    $resolvedOutDir = (Resolve-Path $OutDir).Path
+    Remove-Item -LiteralPath $resolvedOutDir -Recurse -Force
+}
+
+$assetsDir = Join-Path $OutDir "assets"
+$classesDir = Join-Path $OutDir "classes"
+$dexDir = Join-Path $OutDir "dex"
+$classesJar = Join-Path $OutDir "classes.jar"
+$nativeStageRoot = Join-Path $OutDir "native"
+$nativeLibDir = Join-Path $nativeStageRoot "lib\arm64-v8a"
+$intermediateIdentity = if ($script:BuildUsesLock) {
+    "{0}-{1}" -f $appBuildLockSha256.Substring(0, 8), ([string]$sourceComposition.fingerprint).Substring(0, 8)
+} else {
+    "unlocked-{0}" -f ([string]$sourceComposition.fingerprint).Substring(0, 8)
+}
+$cargoTargetDir = Join-Path $targetRoot ("apk-i\n\{0}\cargo" -f $intermediateIdentity)
+$apkUnsigned = Join-Path $OutDir "rusty-quest-native-renderer-unsigned.apk"
+$apkUnaligned = Join-Path $OutDir "rusty-quest-native-renderer-unaligned.apk"
+$apkAligned = Join-Path $OutDir "rusty-quest-native-renderer-aligned.apk"
+$apkSigned = Join-Path $OutDir "rusty-quest-native-renderer.apk"
+$nativeLib = Join-Path $nativeLibDir "librusty_quest_native_renderer.so"
+if ([string]::IsNullOrWhiteSpace($Keystore)) {
+    $Keystore = Join-Path $targetRoot "rusty-quest-native-renderer-debug.keystore"
 }
 
 New-Item -ItemType Directory -Force -Path $assetsDir, $classesDir, $dexDir, $nativeLibDir | Out-Null
@@ -387,45 +440,90 @@ $embeddedBrokerCertificateSha256 = Get-FileSha256 -Path $embeddedBrokerCertifica
 $manifoldFixtureRoot = Resolve-Path (Join-Path $repoRoot "..\rusty-manifold\fixtures\broker-product")
 $embeddedProductSpecPath = Join-Path $manifoldFixtureRoot "media-session-embedded.json"
 $embeddedProductLockPath = Join-Path $manifoldFixtureRoot "media-session-embedded.lock.json"
-$embeddedClientLockPath = Join-Path $repoRoot "fixtures\broker-clients\native-renderer.client.json"
+$embeddedClientLockTemplatePath = Join-Path $repoRoot "fixtures\broker-clients\native-renderer.client.json"
 $embeddedMediaBindingPath = Join-Path $repoRoot "fixtures\media-runtime-products\native-renderer-display.binding.json"
-$embeddedMediaLifecyclePath = Join-Path $repoRoot "fixtures\broker-clients\native-renderer.media-lifecycle.json"
-$embeddedAppFeatureLockPath = Join-Path $repoRoot "apps\native-renderer-android\morphospace\conformance-locks\broker-media-client.feature.lock.json"
-foreach ($path in @($embeddedProductSpecPath, $embeddedProductLockPath, $embeddedClientLockPath, $embeddedMediaBindingPath, $embeddedMediaLifecyclePath, $embeddedAppFeatureLockPath)) {
+$embeddedMediaLifecycleTemplatePath = Join-Path $repoRoot "fixtures\broker-clients\native-renderer.media-lifecycle.json"
+$embeddedAppFeatureLockTemplatePath = Join-Path $repoRoot "apps\native-renderer-android\morphospace\conformance-locks\broker-media-client.feature.lock.json"
+foreach ($path in @($embeddedProductSpecPath, $embeddedProductLockPath, $embeddedClientLockTemplatePath, $embeddedMediaBindingPath, $embeddedMediaLifecycleTemplatePath, $embeddedAppFeatureLockTemplatePath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
         throw "Embedded Manifold packaged authority input is missing: $path"
     }
 }
 $embeddedProductSpecJson = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $embeddedProductSpecPath))
 $embeddedProductLockJson = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $embeddedProductLockPath))
-$embeddedClientLockJson = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $embeddedClientLockPath))
+$embeddedClientLockJson = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $embeddedClientLockTemplatePath))
 $embeddedMediaBindingJson = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $embeddedMediaBindingPath))
-$embeddedMediaLifecycleJson = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $embeddedMediaLifecyclePath))
-$embeddedAppFeatureLockJson = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $embeddedAppFeatureLockPath))
+$embeddedMediaLifecycleJson = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $embeddedMediaLifecycleTemplatePath))
+$embeddedAppFeatureLockJson = [System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $embeddedAppFeatureLockTemplatePath))
 $embeddedProductLock = $embeddedProductLockJson | ConvertFrom-Json
 $embeddedClientLock = $embeddedClientLockJson | ConvertFrom-Json
 $embeddedMediaBinding = $embeddedMediaBindingJson | ConvertFrom-Json
 if ([string]$embeddedClientLock.schema -ne "rusty.quest.broker_client_spec.v1" -or
     [string]$embeddedClientLock.client_id -ne "client.quest.native-renderer" -or
-    [string]$embeddedClientLock.package_name -ne $packageName -or
+    [string]$embeddedClientLock.package_name -ne "io.github.mesmerprism.rustyquest.native_renderer" -or
     @($embeddedClientLock.adapter_permissions).Count -ne 1 -or
     [string]$embeddedClientLock.adapter_permissions[0] -ne "io.github.mesmerprism.rustymanifold.permission.BROKER_ADMISSION" -or
     @($embeddedClientLock.runtime_properties).Count -ne 0 -or
     @($embeddedClientLock.application_defaults).Count -ne 0) {
     throw "Native renderer broker client lock is not an exact closed signature-scoped binding."
 }
+$identitySuffix = if ($null -eq $appBuildLockObject) { "unlocked-development" } else { ([string]$appBuildLockObject.app_id).Replace("_", "-").Replace(".", "-") }
+$markerSuffix = $identitySuffix.ToUpperInvariant().Replace("-", "_")
+$embeddedClientLock.client_id = "client.quest.native-renderer.$identitySuffix"
+$embeddedClientLock.package_name = $packageName
+$embeddedClientLock.feature_lock_id = "lock.broker-client.native-renderer.$identitySuffix.v1"
+$embeddedClientLock.marker_namespace = "RUSTY_QUEST_NATIVE_BROKER_CLIENT_$markerSuffix"
+$embeddedClientLockJson = $embeddedClientLock | ConvertTo-Json -Depth 16 -Compress
+$embeddedClientLockPath = Join-Path $OutDir "generated-native-renderer.client.json"
+[System.IO.File]::WriteAllText($embeddedClientLockPath, $embeddedClientLockJson, (New-Object System.Text.UTF8Encoding($false)))
+
+$embeddedProjectId = "native-renderer-$identitySuffix"
+$embeddedAppFeatureLock = $embeddedAppFeatureLockJson | ConvertFrom-Json
+$embeddedAppFeatureLock.project_id = $embeddedProjectId
+foreach ($feature in @($embeddedAppFeatureLock.features)) {
+    $feature.requested_by = "iteration-unit:apk-build-$identitySuffix"
+    if ([string]$feature.feature_id -eq "broker-media-client") {
+        $feature.activation_receipt.effective_marker = "rusty.quest.native_renderer.$identitySuffix.broker_media_client.effective"
+    } elseif ([string]$feature.feature_id -eq "native-renderer-shell") {
+        $feature.activation_receipt.effective_marker = "rusty.quest.native_renderer.$identitySuffix.shell.effective"
+    }
+}
+$embeddedAppFeatureLockJson = $embeddedAppFeatureLock | ConvertTo-Json -Depth 16 -Compress
+$embeddedAppFeatureLockPath = Join-Path $OutDir "generated-native-renderer.broker-media-client.feature.lock.json"
+[System.IO.File]::WriteAllText($embeddedAppFeatureLockPath, $embeddedAppFeatureLockJson, (New-Object System.Text.UTF8Encoding($false)))
+$embeddedAppFeatureLockSha256 = Get-FileSha256 -Path $embeddedAppFeatureLockPath
+
+$embeddedMediaLifecycle = $embeddedMediaLifecycleJson | ConvertFrom-Json
+$embeddedMediaLifecycle.client_id = [string]$embeddedClientLock.client_id
+$embeddedMediaLifecycle.package_name = $packageName
+$embeddedMediaLifecycle.broker_client_lock_id = [string]$embeddedClientLock.feature_lock_id
+$embeddedMediaLifecycle.marker_namespace = [string]$embeddedClientLock.marker_namespace
+$embeddedMediaLifecycle.project_id = $embeddedProjectId
+$embeddedMediaLifecycle.app_feature_lock_id = "lock.app.native-renderer.$identitySuffix.broker-media-client.v1"
+$embeddedMediaLifecycle.app_feature_lock_path = "generated-native-renderer.broker-media-client.feature.lock.json"
+$embeddedMediaLifecycle.app_feature_lock_fingerprint = "sha256:$embeddedAppFeatureLockSha256"
+$embeddedMediaLifecycle.app_feature_lock_sha256 = "sha256:$embeddedAppFeatureLockSha256"
+$embeddedMediaLifecycle.activation_effective_marker = "rusty.quest.native_renderer.$identitySuffix.broker_media_client.effective"
+$embeddedMediaLifecycle.broker_runtime_lease_id = "lease.broker.media-session.$([string]$embeddedClientLock.client_id)"
+$embeddedMediaLifecycle.media_runtime_lease_id = "lease.media.session.$([string]$embeddedClientLock.client_id)"
+$embeddedMediaLifecycleJson = $embeddedMediaLifecycle | ConvertTo-Json -Depth 16 -Compress
+$embeddedMediaLifecyclePath = Join-Path $OutDir "generated-native-renderer.media-lifecycle.json"
+[System.IO.File]::WriteAllText($embeddedMediaLifecyclePath, $embeddedMediaLifecycleJson, (New-Object System.Text.UTF8Encoding($false)))
+
+$embeddedGrantId = "grant.quest.native-renderer.$identitySuffix"
+$embeddedLeaseId = "lease.broker.media-session.$([string]$embeddedClientLock.client_id)"
 $embeddedGrantCapabilities = @(Get-ExactClientGrantCapabilities -ClientLock $embeddedClientLock -ProductLock $embeddedProductLock)
 $embeddedRuntimeConfig = [ordered]@{
     '$schema' = "rusty.quest.broker.runtime_config.v1"
     bridge_kind = "embedded_in_process_jni"
     adapter_config = [ordered]@{
         '$schema' = "rusty.manifold.broker.adapter_config.v2"
-        adapter_id = "adapter.quest.native-renderer.embedded"
+        adapter_id = "adapter.quest.native-renderer.$identitySuffix.embedded"
         mode = "embedded"
         product_lock_id = [string]$embeddedProductLock.lock_id
         product_lock_fingerprint = [string]$embeddedProductLock.spec_fingerprint
         product_lock_sha256 = "sha256:$(Get-FileSha256 -Path $embeddedProductLockPath)"
-        authority_host_id = "host.quest.native-renderer"
+        authority_host_id = "host.quest.native-renderer.$identitySuffix"
         authority_owner_id = "module.runtime.host"
     }
     product_lock = $embeddedProductLock
@@ -435,33 +533,33 @@ $embeddedRuntimeConfig = [ordered]@{
         product_lock_json = $embeddedProductLockJson
         product_lock_sha256 = Get-FileSha256 -Path $embeddedProductLockPath
         client_locks = @([ordered]@{
-            grant_id = "grant.quest.native-renderer"
+            grant_id = $embeddedGrantId
             client_lock_json = $embeddedClientLockJson
             client_lock_sha256 = Get-FileSha256 -Path $embeddedClientLockPath
             media_lifecycle_authority = [ordered]@{
                 media_lifecycle_lock_json = $embeddedMediaLifecycleJson
                 media_lifecycle_lock_sha256 = Get-FileSha256 -Path $embeddedMediaLifecyclePath
                 app_feature_lock_json = $embeddedAppFeatureLockJson
-                app_feature_lock_sha256 = Get-FileSha256 -Path $embeddedAppFeatureLockPath
+                app_feature_lock_sha256 = $embeddedAppFeatureLockSha256
                 media_binding_json = $embeddedMediaBindingJson
                 media_binding_sha256 = Get-FileSha256 -Path $embeddedMediaBindingPath
             }
         })
     }
     initial_leases = @([ordered]@{
-        lease_id = "lease.broker.media-session.client.quest.native-renderer"
+        lease_id = $embeddedLeaseId
         scope = "lease.media.session"
-        holder_id = "client.quest.native-renderer"
+        holder_id = [string]$embeddedClientLock.client_id
         expires_at_ms = 4102444800000
     })
     admission = [ordered]@{
         '$schema' = "rusty.quest.broker.admission_config.v1"
         snapshot = [ordered]@{
             '$schema' = "rusty.manifold.admission.snapshot.v2"
-            authority_id = "authority.admission.quest.native-renderer"
+            authority_id = "authority.admission.quest.native-renderer.$identitySuffix"
             authority_revision = 1
             grants = @([ordered]@{
-                grant_id = "grant.quest.native-renderer"
+                grant_id = $embeddedGrantId
                 client_lock_id = [string]$embeddedClientLock.feature_lock_id
                 client_lock_fingerprint = "sha256:$(Get-FileSha256 -Path $embeddedClientLockPath)"
                 identity = [ordered]@{
@@ -616,6 +714,7 @@ try {
     Invoke-Checked "native renderer cargo build" $cargoCommand.Source @(
         "build",
         "--manifest-path", (Join-Path $appRoot "native\Cargo.toml"),
+        "--locked",
         "--target", "aarch64-linux-android",
         "--release",
         "--target-dir", $cargoTargetDir
@@ -729,6 +828,7 @@ Invoke-Checked "apksigner" $apksigner @(
 $sha256 = Get-FileSha256 -Path $apkSigned
 $manifest = [ordered]@{
     '$schema' = "rusty.quest.native_renderer_android.build_manifest.v1"
+    app_id = if ($null -eq $appBuildLockObject) { "unlocked-development" } else { [string]$appBuildLockObject.app_id }
     package_name = $packageName
     activity = $activityName
     entrypoint = "android.app.NativeActivity"
@@ -742,7 +842,7 @@ $manifest = [ordered]@{
     marker_prefix = "RUSTY_QUEST_NATIVE_RENDERER"
     rust_native_activity = $true
     java_classes_packaged = $true
-    panel_activity = "io.github.mesmerprism.rustyquest.native_renderer/.ControlPanelActivity"
+    panel_activity = "$packageName/io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity"
     panel_transport = "app-private-file"
     panel_candidate_file = "stimulus_volume_candidate.json"
     panel_status_file = "stimulus_volume_status.json"
@@ -778,7 +878,15 @@ $manifest = [ordered]@{
     recorded_hand_capture_source_dir = $resolvedRecordedHandCaptureDir
     recorded_hand_frame_limit = $RecordedHandFrameLimit
     app_build_lock_path = if ([string]::IsNullOrWhiteSpace($appBuildLockPath)) { "" } else { $appBuildLockPath }
-    app_build_lock_sha256 = if ([string]::IsNullOrWhiteSpace($appBuildLockPath)) { "" } else { Get-FileSha256 -Path $appBuildLockPath }
+    app_build_lock_sha256 = $appBuildLockSha256
+    app_build_resolution_fingerprint = if ($null -eq $appBuildLockObject) { "" } else { [string]$appBuildLockObject.resolution_fingerprint }
+    source_commit = $sourceHead
+    source_tree = $sourceTree
+    source_tracked_worktree_clean = $true
+    source_composition_fingerprint = [string]$sourceComposition.fingerprint
+    source_dependencies = $sourceDependencies
+    output_policy = "content-addressed-app-lock-source-composition"
+    isolated_cargo_target_dir = $cargoTargetDir
     native_app_settings_path = if ([string]::IsNullOrWhiteSpace($nativeAppSettingsPath)) { "" } else { $nativeAppSettingsPath }
     native_app_settings_sha256 = if ([string]::IsNullOrWhiteSpace($nativeAppSettingsPath)) { "" } else { Get-FileSha256 -Path $nativeAppSettingsPath }
     app_build_manifest_input = $manifestInputPath
@@ -789,10 +897,67 @@ $manifest = [ordered]@{
     embedded_manifold_product_spec_sha256 = Get-FileSha256 -Path $embeddedProductSpecPath
     embedded_manifold_product_lock_sha256 = Get-FileSha256 -Path $embeddedProductLockPath
     embedded_manifold_client_lock_sha256 = Get-FileSha256 -Path $embeddedClientLockPath
+    embedded_manifold_app_feature_lock_sha256 = $embeddedAppFeatureLockSha256
+    embedded_manifold_media_lifecycle_sha256 = Get-FileSha256 -Path $embeddedMediaLifecyclePath
+    embedded_manifold_client_id = [string]$embeddedClientLock.client_id
+    embedded_manifold_marker_namespace = [string]$embeddedClientLock.marker_namespace
     embedded_manifold_granted_capabilities = $embeddedGrantCapabilities
     embedded_manifold_authority_config_source = "packaged-generated-lock-closure"
 }
 $manifestPath = Join-Path $OutDir "build-manifest.json"
 $manifest | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -Path $manifestPath
+
+if ($script:BuildUsesLock) {
+    $propertyManifestPath = Join-Path $repoRoot "fixtures\native-renderer\native-renderer-property-manifest.json"
+    $runCapsule = [ordered]@{
+        schema = "rusty.quest.apk_run_capsule.v1"
+        capsule_id = "native-renderer-$([string]$appBuildLockObject.app_id)-$($appBuildLockSha256.Substring(0, 12))-$(([string]$sourceComposition.fingerprint).Substring(0, 12))"
+        app_id = [string]$appBuildLockObject.app_id
+        app_lane = "native-renderer-android"
+        source = [ordered]@{
+            repository = [string]$repoRoot
+            commit = $sourceHead
+            tree = $sourceTree
+            tracked_worktree_clean = $true
+            composition_fingerprint = [string]$sourceComposition.fingerprint
+            packages = @($sourceComposition.packages)
+            dependencies = $sourceDependencies
+        }
+        build_lock = [ordered]@{
+            path = $appBuildLockPath
+            sha256 = $appBuildLockSha256
+            resolution_fingerprint = [string]$appBuildLockObject.resolution_fingerprint
+        }
+        build_manifest = [ordered]@{
+            path = $manifestPath
+            sha256 = Get-FileSha256 -Path $manifestPath
+        }
+        apk = [ordered]@{
+            path = $apkSigned
+            sha256 = $sha256
+        }
+        runtime_profile = [ordered]@{
+            path = $runtimeProfilePath
+            sha256 = Get-FileSha256 -Path $runtimeProfilePath
+        }
+        property_manifest = [ordered]@{
+            path = $propertyManifestPath
+            sha256 = Get-FileSha256 -Path $propertyManifestPath
+            scope = "complete-manifest"
+        }
+        android = [ordered]@{
+            package_name = $packageName
+            activity = $activityName
+        }
+        cleanup = [ordered]@{
+            policy = "always-force-stop-and-restore-exact-property-snapshot"
+            serial_exclusive_mutex = $true
+            restore_on_failure = $true
+        }
+    }
+    $runCapsulePath = Join-Path $OutDir "run-capsule.json"
+    $runCapsule | ConvertTo-Json -Depth 12 | Set-Content -Encoding UTF8 -Path $runCapsulePath
+    Write-Output $runCapsulePath
+}
 
 Write-Output $apkSigned

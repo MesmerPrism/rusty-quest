@@ -40,6 +40,12 @@ native Quest path.
 3. `docs/VALIDATION.md`
 4. `fixtures/README.md`
 
+For APK builds or repeated same-headset runs, also read
+`docs/APK_RUN_ISOLATION.md`. Locked builds use app-specific package/client
+identities, explicit inputs, clean exact source, content-addressed outputs, and
+a hashed run capsule. Launch wrappers serialize per serial, apply complete
+property closure, stop only the target package, and restore exact prior values.
+
 For work in `apps/spatial-camera-panel-android`, then read its
 `morphospace/project.spec.json`, `feature.lock.json`, `workspace.state.json`,
 and the current iteration unit before source. That app is the first downstream
@@ -249,6 +255,10 @@ ordinary serial-scoped ADB work behind a global `adb-server` lease.
   marker stream, media path, or private payload behavior unless a feature
   descriptor, app spec, runtime profile, Android property, or intent extra
   explicitly enables that feature.
+- Do not build or launch a new project from loose APK/profile inputs or shared
+  package defaults. Resolve/build from an exact app lock, validate the run
+  capsule, and keep package, marker, property, staging, and build identities
+  distinct from other projects.
 - After a split, update the nearest distributed file map: this `AGENTS.md`,
   `README.md`, `docs/ARCHITECTURE.md`, fixture docs, validation docs, or the
   planning `agent-state\iteration-events.jsonl`.
@@ -272,6 +282,7 @@ Run:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-ApkRunIsolationStatic.ps1 -RepoRoot .
 ```
 
 The Spatial Camera Panel wrapper runs its focused workflow gate before the

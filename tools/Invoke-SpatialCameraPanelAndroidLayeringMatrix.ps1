@@ -393,6 +393,7 @@ for ($i = 0; $i -lt $cases.Count; $i++) {
         $caseOutDir,
         "-RunSeconds",
         $RunSeconds.ToString(),
+        "-AllowLegacyLooseInputs",
         "-ProjectionCarrier",
         $case.projection_carrier
     )

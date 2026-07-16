@@ -1149,10 +1149,28 @@ world-anchor capture/mapping, nonzero 2562-particle / 17934-tracer draw counts,
 and screenshot dimensions. It does not require
 physical controller input.
 
+Build and launch each project with a distinct package and content-addressed
+output. The builder rejects tracked source drift, ignores ambient
+`RUSTY_QUEST_SPATIAL_*` feature inputs, isolates Gradle/Cargo intermediates,
+and writes a validated run capsule:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-SpatialCameraPanelAndroid.ps1 `
+  -AppId <project-specific-package> `
+  -AppLabel <project-label>
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ApkRunCapsule.ps1 `
+  -Path <content-addressed-output>\run-capsule.json
+```
+
+All camera-projection wrapper examples below require that capsule. The wrapper
+serializes by headset serial, stops only the capsule package, and restores the
+complete pre-run property state. See `docs/APK_RUN_ISOLATION.md`.
+
 Run the raw camera projection headset smoke with:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -RunCapsule <content-addressed-output>\run-capsule.json `
   -Serial <quest-serial> `
   -ClearLogcat
 ```
@@ -1171,6 +1189,7 @@ or under the app-private files directory and pass the path at runtime:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -RunCapsule <content-addressed-output>\run-capsule.json `
   -Serial <quest-serial> `
   -ClearLogcat `
   -VideoPath <device-or-app-private-path> `
@@ -1182,13 +1201,14 @@ storage do not break Android system-property transport:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -RunCapsule <content-addressed-output>\run-capsule.json `
   -Serial <quest-serial> `
   -VideoSourcePath <local-stereo-video.mp4> `
   -RequireSpatialVideoProjection
 ```
 
 This stages the file to the package-scoped external path
-`/sdcard/Android/data/io.github.mesmerprism.rustyquest.spatial_camera_panel/files/v.mp4`,
+`/sdcard/Android/data/<project-specific-package>/files/v.mp4`,
 which is the path used by the successful native-loop Spatial proofs.
 
 To include a generic Spatial SDK staged 3D asset, provide a staged mesh URI or
@@ -1197,6 +1217,7 @@ to GLB/GLTF first; the source model remains local and is not packaged:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -RunCapsule <content-addressed-output>\run-capsule.json `
   -Serial <quest-serial> `
   -AssetSourcePath <local-source-model.fbx> `
   -AssetConvertedMeshPath <converted-model.glb> `
@@ -1224,6 +1245,7 @@ the APK assets before building and add the room flags:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -RunCapsule <content-addressed-output>\run-capsule.json `
   -Serial <quest-serial> `
   -AssetSourcePath <local-source-model.fbx> `
   -AssetConvertedMeshPath <converted-model.glb> `
@@ -1241,6 +1263,7 @@ multi-stack projection proof with:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+  -RunCapsule <content-addressed-output>\run-capsule.json `
   -Serial <quest-serial> `
   -ClearLogcat `
   -StopAfterRun `

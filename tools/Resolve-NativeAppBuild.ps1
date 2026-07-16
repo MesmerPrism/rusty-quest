@@ -82,6 +82,17 @@ function Get-FileSha256 {
     }
 }
 
+function Get-StringSha256 {
+    param([Parameter(Mandatory=$true)][AllowEmptyString()][string]$Value)
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($Value)
+        return ([System.BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
+}
+
 function Get-StringArray {
     param($Value)
     if ($null -eq $Value) {
@@ -555,7 +566,7 @@ function New-GeneratedAndroidManifestText {
     }
     if ($Activities -contains "ControlPanelActivity") {
         [void]$lines.Add('        <activity')
-        [void]$lines.Add('            android:name=".ControlPanelActivity"')
+        [void]$lines.Add('            android:name="io.github.mesmerprism.rustyquest.native_renderer.ControlPanelActivity"')
         [void]$lines.Add('            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode"')
         [void]$lines.Add('            android:exported="true"')
         [void]$lines.Add('            android:hardwareAccelerated="true"')
@@ -577,7 +588,7 @@ function New-GeneratedAndroidManifestText {
     }
     if ($Activities -contains "QuestionnairePanelActivity") {
         [void]$lines.Add('        <activity')
-        [void]$lines.Add('            android:name=".QuestionnairePanelActivity"')
+        [void]$lines.Add('            android:name="io.github.mesmerprism.rustyquest.native_renderer.QuestionnairePanelActivity"')
         [void]$lines.Add('            android:configChanges="screenSize|screenLayout|orientation|keyboardHidden|keyboard|navigation|uiMode"')
         [void]$lines.Add('            android:exported="true"')
         [void]$lines.Add('            android:hardwareAccelerated="true"')
@@ -600,7 +611,7 @@ function New-GeneratedAndroidManifestText {
         [void]$lines.Add('        </activity>')
     }
     if ($Services -contains "DisplayCompositeProjectionService") {
-        [void]$lines.Add('        <service android:name=".DisplayCompositeProjectionService" android:exported="false" android:foregroundServiceType="mediaProjection" />')
+        [void]$lines.Add('        <service android:name="io.github.mesmerprism.rustyquest.native_renderer.DisplayCompositeProjectionService" android:exported="false" android:foregroundServiceType="mediaProjection" />')
     }
     [void]$lines.Add('    </application>')
     if ($Queries.Count -gt 0) {
@@ -941,17 +952,6 @@ foreach ($propertyName in @($runtimeSet.Keys | Sort-Object)) {
     }
 }
 
-$appOutputDir = Join-Path $outputRootPath ([string]$app.app_id)
-$featureLockPath = Join-Path $appOutputDir "feature-lock.json"
-$runtimeProfilePath = Join-Path $appOutputDir "runtime-profile.json"
-$nativeAppSettingsPath = Join-Path $appOutputDir "native-app-settings.json"
-$propertyWritePlanPath = Join-Path $appOutputDir "property-write-plan.json"
-$androidManifestPath = Join-Path $appOutputDir "AndroidManifest.xml"
-$buildEnvPath = Join-Path $appOutputDir "build-env.json"
-$buildManifestPath = Join-Path $appOutputDir "build-manifest.json"
-$auditPath = Join-Path $appOutputDir "app-build-audit.json"
-$permissionPregrantPath = Join-Path $appOutputDir "permission-pregrant.json"
-
 $featureDescriptorRecords = @()
 foreach ($featureId in $selectedFeatureIds) {
     $featureDescriptorRecords += [ordered]@{
@@ -962,6 +962,24 @@ foreach ($featureId in $selectedFeatureIds) {
         sha256 = [string]$features[$featureId].sha256
     }
 }
+$resolutionInputs = [ordered]@{
+    resolver_version = $ResolverVersion
+    app_spec_sha256 = Get-FileSha256 -Path $appSpecPath
+    feature_descriptors = $featureDescriptorRecords
+    build_env = @($envByName.Keys | Sort-Object | ForEach-Object { $envByName[$_] })
+    runtime_set = @($runtimeSet.Keys | Sort-Object | ForEach-Object { [ordered]@{ name = [string]$_; value = [string]$runtimeSet[$_] } })
+}
+$resolutionFingerprint = Get-StringSha256 -Value ($resolutionInputs | ConvertTo-Json -Depth 20 -Compress)
+$appOutputDir = Join-Path (Join-Path $outputRootPath ([string]$app.app_id)) $resolutionFingerprint
+$featureLockPath = Join-Path $appOutputDir "feature-lock.json"
+$runtimeProfilePath = Join-Path $appOutputDir "runtime-profile.json"
+$nativeAppSettingsPath = Join-Path $appOutputDir "native-app-settings.json"
+$propertyWritePlanPath = Join-Path $appOutputDir "property-write-plan.json"
+$androidManifestPath = Join-Path $appOutputDir "AndroidManifest.xml"
+$buildEnvPath = Join-Path $appOutputDir "build-env.json"
+$buildManifestPath = Join-Path $appOutputDir "build-manifest.json"
+$auditPath = Join-Path $appOutputDir "app-build-audit.json"
+$permissionPregrantPath = Join-Path $appOutputDir "permission-pregrant.json"
 
 $dependencyReasons = [ordered]@{}
 foreach ($featureId in $selectedFeatureIds) {
@@ -1106,7 +1124,7 @@ $permissionPregrant = [ordered]@{
 
 $validationCommands = @(
     "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Resolve-NativeAppBuild.ps1 -AppSpec $(Get-RepoRelativePath -RepoRoot $repoRootText -Path $appSpecPath) -DryRun",
-    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath $($generatedOutputs.runtime_profile) -DryRun -Out $($generatedOutputs.property_write_plan)",
+    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath $($generatedOutputs.runtime_profile) -DryRun -PropertyScopeMode CompleteManifest -Out $($generatedOutputs.property_write_plan)",
     "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Test-NativeAppBuildProfile.ps1"
 )
 
@@ -1160,6 +1178,7 @@ $featureLock = [ordered]@{
     schema = $FeatureLockSchema
     app_id = [string]$app.app_id
     resolver_version = $ResolverVersion
+    resolution_fingerprint = $resolutionFingerprint
     app_spec_path = Get-RepoRelativePath -RepoRoot $repoRootText -Path $appSpecPath
     app_spec_sha256 = Get-FileSha256 -Path $appSpecPath
     selected_feature_ids = $selectedFeatureIds
@@ -1215,12 +1234,12 @@ $runtimeProfile = [ordered]@{
     set_properties = $setProperties
     expected_markers = $requiredMarkers
     validation_commands = @(
-        "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath $($generatedOutputs.runtime_profile) -DryRun -Out $($generatedOutputs.property_write_plan)"
+        "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath $($generatedOutputs.runtime_profile) -DryRun -PropertyScopeMode CompleteManifest -Out $($generatedOutputs.property_write_plan)"
     )
 }
 Write-JsonArtifact -Value $runtimeProfile -Path $runtimeProfilePath
 
-& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRootText "tools\Apply-RuntimeProfile.ps1") -ProfilePath $runtimeProfilePath -DryRun -Out $propertyWritePlanPath | Out-Host
+& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRootText "tools\Apply-RuntimeProfile.ps1") -ProfilePath $runtimeProfilePath -DryRun -PropertyScopeMode CompleteManifest -Out $propertyWritePlanPath | Out-Host
 if ($LASTEXITCODE -ne 0) {
     throw "Generated runtime profile failed Apply-RuntimeProfile.ps1 dry-run"
 }
@@ -1242,6 +1261,7 @@ Write-JsonArtifact -Value $buildEnv -Path $buildEnvPath
 $buildManifest = [ordered]@{
     schema = "rusty.quest.native_app_build_manifest.v1"
     app_id = [string]$app.app_id
+    resolution_fingerprint = $resolutionFingerprint
     package_name = [string]$app.package_name
     package_policy = [string]$app.package_policy
     feature_lock_sha256 = Get-FileSha256 -Path $featureLockPath
@@ -1276,5 +1296,6 @@ $audit = [ordered]@{
 Write-JsonArtifact -Value $audit -Path $auditPath
 
 Write-Output "native app-build dry-run accepted: $($app.app_id)"
+Write-Output "resolution fingerprint: $resolutionFingerprint"
 Write-Output "feature lock: $featureLockPath"
 Write-Output "audit report: $auditPath"

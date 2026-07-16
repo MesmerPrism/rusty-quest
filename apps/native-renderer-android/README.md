@@ -558,13 +558,20 @@ slots and are not packaged here.
 Build:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Resolve-NativeAppBuild.ps1 -AppSpec .\fixtures\native-app-builds\native-openxr-hand-lab.app.json -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1 -AppBuildLock .\local-artifacts\native-app-builds\native_openxr_hand_lab\<resolution-fingerprint>\feature-lock.json
 ```
 
-Local full recorded replay build:
+Locked builds require a clean exact source commit/tree, use the app-specific
+package/client identity, and write an immutable content-addressed output with
+`build-manifest.json` and `run-capsule.json`. See
+`docs/APK_RUN_ISOLATION.md`. `-AllowUnlockedDevelopmentBuild` is an explicit
+compatibility escape and is not acceptance evidence.
+
+Explicit unlocked recorded-replay compatibility build (not acceptance):
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1 -RecordedHandCaptureDir <recorded-hand-capture-dir> -RecordedHandFrameLimit 8 -RequireRecordedHandCapture
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1 -AllowUnlockedDevelopmentBuild -RecordedHandCaptureDir <recorded-hand-capture-dir> -RecordedHandFrameLimit 8 -RequireRecordedHandCapture
 ```
 
 Static validation:
@@ -591,12 +598,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile
 Runtime evidence validation for a no-real-hands replay smoke:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ApkRunCapsule.ps1 -Path <content-addressed-output>\run-capsule.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -RunCapsule <content-addressed-output>\run-capsule.json -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
 ```
 
-The wrapper installs the APK unless `-SkipInstall` is passed, applies the
-recorded replay visual-proof profile by default, captures filtered logcat plus a
+The wrapper validates the run capsule, installs its APK unless `-SkipInstall`
+is passed, applies the capsule profile with complete property closure, captures
+filtered logcat plus a
 screenshot, and then calls the checker with non-flat screenshot analysis unless
 `-AllowFlatScreenshot` is passed. The checker treats logcat markers and
 screenshots as acceptance evidence only when the latest dedicated markers prove

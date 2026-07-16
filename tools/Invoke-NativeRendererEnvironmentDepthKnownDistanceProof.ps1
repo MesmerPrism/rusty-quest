@@ -50,6 +50,7 @@ $smokeArgs = @(
     "-RunSeconds", $RunSeconds.ToString(),
     "-AllowFlatScreenshot",
     "-AllowPerformanceBudgetMiss",
+    "-AllowLegacyLooseInputs",
     "-RequireEnvironmentDepthKnownDistance",
     "-ExpectedEnvironmentDepthCenterMeters",
     $TargetDistanceMeters.ToString([System.Globalization.CultureInfo]::InvariantCulture),

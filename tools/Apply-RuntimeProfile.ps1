@@ -6,7 +6,9 @@ param(
     [string]$Out = "local-artifacts\property-write-plan.json",
     [string]$Adb = $env:RUSTY_QUEST_ADB,
     [string]$Serial = $env:RUSTY_QUEST_SERIAL,
-    [string]$AdbServerPort = $env:RUSTY_QUEST_ADB_SERVER_PORT
+    [string]$AdbServerPort = $env:RUSTY_QUEST_ADB_SERVER_PORT,
+    [ValidateSet("ProfileOwned", "CompleteManifest")]
+    [string]$PropertyScopeMode = "ProfileOwned"
 )
 
 $ErrorActionPreference = "Stop"
@@ -966,9 +968,17 @@ foreach ($name in $profile.owned_android_properties) {
         $nativeProjectionTargetProfile = $true
     }
     $owned[$name] = $true
+}
+
+$clearScopeNames = if ($PropertyScopeMode -eq "CompleteManifest") {
+    @($nativeRendererPropertyManifestByName.Keys | Sort-Object)
+} else {
+    @($owned.Keys | Sort-Object)
+}
+foreach ($name in $clearScopeNames) {
     $operations += [ordered]@{
         kind = "clear"
-        name = $name
+        name = [string]$name
         value = " "
         source_setting_id = $null
     }
@@ -1063,6 +1073,9 @@ $plan = [ordered]@{
     schema = "rusty.quest.property_write_plan.v1"
     profile_id = [string]$profile.profile_id
     source_profile_path = [string]$resolvedProfile
+    property_scope_mode = $PropertyScopeMode
+    cleared_property_count = $clearScopeNames.Count
+    complete_manifest_property_count = $nativeRendererPropertyManifestByName.Count
     dry_run = [bool]$DryRun
     device_write_performed = [bool]$Execute
     operations = $operations

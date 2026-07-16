@@ -2,8 +2,8 @@
   "schema": "rusty.quest.native_app_build.v1",
   "app_id": "native_stimulus_volume_panel",
   "owner_repo": "rusty-quest",
-  "package_policy": "native-renderer-dev-package",
-  "package_name": "io.github.mesmerprism.rustyquest.native_renderer",
+  "package_policy": "app-specific-package",
+  "package_name": "io.github.mesmerprism.rustyquest.native_renderer.stimulus_panel",
   "requested_features": [
     "renderer.stimulus_volume"
   ],

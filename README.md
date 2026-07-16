@@ -8,6 +8,11 @@ This repo treats ADB and Android properties as transports. They are generated
 from validated profiles and produce dry-run/readback evidence rather than
 becoming hand-written launch authority.
 
+For concurrent project builds and repeated launches on one headset, use
+[APK Build And Run Isolation](docs/APK_RUN_ISOLATION.md): distinct app/package
+identity, explicit locked inputs, content-addressed outputs, a hashed run
+capsule, and serial-scoped cleanup that restores exact prior properties.
+
 ## Device Link Contracts
 
 `crates/rusty-quest-device-link` defines
@@ -262,7 +267,9 @@ permissions, or build wrapper environment variables. App-build specs under
 `tools/Resolve-NativeAppBuild.ps1 -DryRun`, producing a feature lock, generated
 runtime profile, generated manifest surface, hotload policy, permission
 pregrant plan, build env, build manifest, and audit report under ignored
-`local-artifacts/native-app-builds/`. The committed
+`local-artifacts/native-app-builds/<app-id>/<resolution-fingerprint>/`. Locked
+builds require a clean exact source commit/tree and write a run capsule beside
+the APK in a content-addressed output. The committed
 public-safe canary proves that camera, video, display-composite, stimulus,
 hand-anchor, depth, SDF, Makepad, native passthrough, and private-layer
 features cannot enter a solid-black private-particle app unless explicitly
@@ -751,8 +758,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-ques
 powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-remote-camera"
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-PeerRendezvousAndroid.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Resolve-NativeAppBuild.ps1 -AppSpec .\fixtures\native-app-builds\native-openxr-hand-lab.app.json -DryRun
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1 -AppBuildLock .\local-artifacts\native-app-builds\native_openxr_hand_lab\<resolution-fingerprint>\feature-lock.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ApkRunCapsule.ps1 -Path <content-addressed-output>\run-capsule.json
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -RunCapsule <content-addressed-output>\run-capsule.json -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererDisplayCompositeSmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial>

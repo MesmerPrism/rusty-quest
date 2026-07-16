@@ -36,6 +36,7 @@ $smokeArgs = @(
     "-RunSeconds", $RunSeconds.ToString(),
     "-AllowFlatScreenshot",
     "-AllowPerformanceBudgetMiss",
+    "-AllowLegacyLooseInputs",
     "-MinimumEnvironmentDepthHeadMotionSamples", $MinimumHeadMotionSamples.ToString()
 )
 

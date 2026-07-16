@@ -8,6 +8,7 @@
     "schema",
     "app_id",
     "resolver_version",
+    "resolution_fingerprint",
     "app_spec_path",
     "app_spec_sha256",
     "selected_feature_ids",
@@ -34,6 +35,10 @@
     },
     "resolver_version": {
       "type": "string"
+    },
+    "resolution_fingerprint": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
     },
     "app_spec_path": {
       "type": "string"
