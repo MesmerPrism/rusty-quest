@@ -203,9 +203,13 @@ automatic questionnaire, submit path, and `RUSTY_QUEST_SPATIAL_CAMERA_PANEL` log
 markers.
 Use `tools\Invoke-SpatialCameraPanelAndroidSelfTest.ps1 -Serial <quest-serial>`
 for the repeatable headset lane; it captures PID-scoped logcat, app-private
-session JSONL artifacts, and `evidence-summary.json`, and rejects missing
-panel/particle/condition/Polar-panel markers. Reserve `quest:<serial>` before
-running it.
+session JSONL artifacts, and `evidence-summary.json`. The v2 evidence contract
+requires four panel registrations and evaluates the particle route against its
+closed activation state: an active conformance build must produce the complete
+parameter/start/render marker chain, while the default inert lock must produce
+the explicit parameter-suppression marker and no particle runtime side effects.
+Condition, panel, and Polar-panel evidence remains mandatory in either state.
+Reserve `quest:<serial>` before running it.
 Polar live validation additionally requires headset-side BLE permission
 acceptance plus a nearby Polar H10 scan/connect/start-ECG run, with
 `polar-sensor-panel` markers and app-private `polar_events.jsonl` /
@@ -374,12 +378,19 @@ depth runs require `publicMultiStackDepthRealDescriptorBound=true`,
 `publicMultiStackDepthCurrentDescriptorSource=xr-meta-environment-depth`,
 `environmentDepthValidData=true`, and nonzero valid sample counters.
 The Spatial private-layer panel exposes depth source policy choices for
-`mono-layer0`, `mono-layer1`, `eye-index`, and `compare`. The 2026-06-29
+`eye-index` stereo by default, `mono-layer0`, `mono-layer1`, and `compare`. The 2026-06-29
 `-DepthLayerPolicy compare` smoke rendered layer 0 and layer 1 at the same
 shader UV and showed structured per-eye differences. Treat that as visual
 evidence that the two layers are not trivially identical, but not as literal
-byte-for-byte readback proof. General Spatial depth-stack alignment is deferred
-to manual panel calibration and later alignment work.
+byte-for-byte readback proof. Current stereo acceptance also requires source
+view count `2`, depth/render valid masks `3`, nonzero capture/display times, and
+left/right metadata-alignment-applied markers. The renderer composes a
+FOV/orientation affine before panel residual X/Y, X/Y scale, and roll. Manual-only
+mode must remain an explicit A/B and missing metadata must fall back to identity.
+The Spatial SDK sidecar must continue to report OpenXR acquire call-order
+nonconformance and its error counter until the frame-loop lifecycle is closed.
+See `docs/SPATIAL_STEREO_DEPTH_ALIGNMENT_PLAN.md` for the unattended and visual
+protocol.
 
 The same panel exposes a default-off `Meta poster LUT` slot while retaining the
 `meta-passthrough-edge-window` compatibility token. Acceptance
@@ -429,9 +440,16 @@ serial while the projection is active:
 Compare `Baseline`, `FrozenWorld`, `NonBlocking`, and
 `FrozenNonBlocking` without restarting. The native
 `RQSpatialCameraPanelNative` log must emit `status=latency-hotload-applied`,
-then bounded `status=latency-summary` rows containing callback/import, fence,
-swapchain-acquire, submit, present-call, total-loop timing, relative source and
-callback intervals, display-frame hold histograms, and skipped source frames.
+then one correlated bounded marker family per summary window. Join rows by
+`windowSequence`: `status=latency-summary` owns render/callback/import counts,
+`latency-stereo-summary` owns atomic pair evidence, `latency-source-summary`
+owns source/callback intervals and skipped frames, `latency-hold-summary` owns
+display-frame hold histograms, `latency-age-summary` owns callback and
+sensor-to-present-call ages, `latency-stage-summary` owns fence/import/
+swapchain/record/submit/present/loop averages and maxima, and
+`latency-config-summary` owns the active diagnostic configuration. Any row over
+the Android-safe budget must emit `latency-summary-overflow`; silently
+truncated timing evidence is a failed observation window.
 Use `StrictPair` and `MonoLeft` as live stereo-shimmer controls. With UI slot 8
 selected, compare `RotationWarp40`, `RotationWarp60`, and `RotationWarp80` as
 live callback-age rotation-only reprojection approximations. Then compare
@@ -440,12 +458,44 @@ fence-held images, and differ only in capture-to-current versus transposed
 rotation direction. `SensorWarp70` and `SensorWarp110` bound FOV sensitivity.
 `SensorWarpInverseRollFree70` removes roll while retaining inverse yaw and
 pitch, and `SensorWarpInverseYawOnly70` isolates inverse yaw. After those axis
-controls, `SensorWarpCameraCalibrated` is the accepted best-current baseline:
+controls, `SensorWarpCameraCalibrated` is the prediction-off rollback baseline:
 it requires a gyroscope-referenced static lens pose, matching stream and
 pre-correction active-array dimensions, valid Camera2 intrinsics, and native
 markers with `cameraExtrinsicApplied=true` and `intrinsicsApplied=true`.
 The complete decision trail is documented in the
 [Spatial Camera Motion Iteration Report](SPATIAL_CAMERA_MOTION_ITERATION_REPORT.md).
+For the presentation-time pass, select slot 8 and compare
+`PresentationLatest50`, `PresentationSceneExtrapolated8`,
+`PresentationSceneExtrapolated11`, `PresentationSceneExtrapolated16`, then
+`PresentationOpenXr0`, `PresentationOpenXr8`, `PresentationOpenXr11`,
+`PresentationOpenXr16`, and `PresentationOpenXr22`. Require a
+`status=camera-presentation-pose` row that identifies the requested source,
+fallback, requested/effective lead, latest Scene-pose age, both capture pose
+  sequences, independent per-eye draws, an explicit fixed or reduced target
+  rectangle within the full-surface scissor,
+real-source overscan, honest invalid-UV discard after source exhaustion, Spatial SDK frame-loop
+authority, and queue-present-not-photons boundary. An OpenXR candidate only
+counts as such when its source is
+`openxr-locate-views-estimated-presentation-time`; a logged Scene fallback is
+still valid runtime behavior but not evidence that OpenXR future location ran.
+Compare the best every-available candidate to
+`PresentationOpenXr11Adoption45`, changing the lead if a different OpenXR lead
+wins. Do not promote 45 Hz merely because it divides 90. The controlled motion
+and decision rule are in the
+[Spatial Camera Presentation-Time Remediation Plan](SPATIAL_CAMERA_PRESENTATION_TIME_PLAN.md).
+Before the cadence comparison, retain `PresentationOpenXr11Overscan0` and
+`PresentationOpenXr11Overscan10` as the no-margin and zoom-to-fill causal
+controls, then run `PresentationOpenXr11GuardBand10` during the same fast pitch.
+The video carrier must remain the reference. The zoom-to-fill control has
+already removed the scene-content echo but is expected to be 1.25x magnified.
+The guard-band candidate must report `sourceOverscanMode=reduced-footprint`,
+`sourceOverscanUv=0.100`, `projectionFootprintScale=0.800`, and
+`cameraAngularScalePolicy=preserve-original-source-to-target-scale`. Confirm
+that it retains the echo fix while restoring the original apparent camera
+scale and exposing more underlying video around the smaller custom footprint.
+Both 10-percent modes must use
+real captured pixels outside the displayed central crop; an unwarped fallback,
+edge clamp, or replacement visual is a failed test even if it hides the border.
 Per-frame camera markers remain off unless `VerboseFrameLog` is selected.
 When enabled, require `capturePoseAssociation`, `capturePoseTargetTimestampNs`,
 and `capturePoseAvailable` on acquired-frame markers. `Adoption45` is live-safe and should
@@ -488,6 +538,13 @@ configured assumed age. The current route has no capture-result metadata
 callback. `sensorToPresentCallAge` ends at the Vulkan queue-present call, not
 compositor scanout or photons; markers therefore declare
 `presentAgeSemantics=queue-present-call-not-photons`.
+
+Presentation-time acceptance requires physical headset movement after the
+automated smoke is clean: slow and normal yaw, a comfortable faster yaw
+reversal, normal pitch, and a 10-15 cm lateral translation. Classify each
+preset as `clean`, `drag`, `overshoot/wobble`, or `uncertain`. Yaw and pitch
+decide the rotation correction; lateral residual is recorded separately
+because rotation-only reprojection cannot synthesize depth parallax.
 
 Revisit the custom-projection border blend before accepting it as final. The
 current fade stops the effect payload but still reveals the raw custom camera

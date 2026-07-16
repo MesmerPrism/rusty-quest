@@ -35,6 +35,10 @@ const RECEIPT_REFERENCE_SPACE_CREATED: i64 = 1 << 21;
 const RECEIPT_PROVIDER_STARTED: i64 = 1 << 22;
 const RECEIPT_ACQUIRE_THREAD_STARTED: i64 = 1 << 23;
 const RECEIPT_ALREADY_ACTIVE: i64 = 1 << 24;
+const ENVIRONMENT_DEPTH_ESTIMATED_PRESENTATION_LEAD_NS: i64 = 11_000_000;
+const ENVIRONMENT_DEPTH_POST_SUCCESS_DELAY_MS: u64 = 32;
+const ENVIRONMENT_DEPTH_CALL_ORDER_RETRY_DELAY_MS: u64 = 1;
+const ENVIRONMENT_DEPTH_NOT_AVAILABLE_RETRY_DELAY_MS: u64 = 4;
 
 static SPATIAL_ENVIRONMENT_DEPTH_REQUESTED: AtomicBool = AtomicBool::new(false);
 static SPATIAL_ENVIRONMENT_DEPTH_PROVIDER_BOUND: AtomicBool = AtomicBool::new(false);
@@ -46,8 +50,57 @@ static SPATIAL_ENVIRONMENT_DEPTH_WIDTH: AtomicU32 = AtomicU32::new(0);
 static SPATIAL_ENVIRONMENT_DEPTH_HEIGHT: AtomicU32 = AtomicU32::new(0);
 static SPATIAL_ENVIRONMENT_DEPTH_NEAR_Z_BITS: AtomicU32 = AtomicU32::new(0.001f32.to_bits());
 static SPATIAL_ENVIRONMENT_DEPTH_FAR_Z_BITS: AtomicU32 = AtomicU32::new(4.0f32.to_bits());
+static SPATIAL_ENVIRONMENT_DEPTH_CALL_ORDER_ERROR_COUNT: AtomicU64 = AtomicU64::new(0);
+static SPATIAL_ENVIRONMENT_DEPTH_FRAME_METADATA: Mutex<
+    Option<SpatialEnvironmentDepthFrameMetadata>,
+> = Mutex::new(None);
 static SPATIAL_ENVIRONMENT_DEPTH_RUNTIME: Mutex<Option<SpatialEnvironmentDepthRuntime>> =
     Mutex::new(None);
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SpatialEnvironmentDepthFovSnapshot {
+    pub(crate) angle_left: f32,
+    pub(crate) angle_right: f32,
+    pub(crate) angle_up: f32,
+    pub(crate) angle_down: f32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SpatialEnvironmentDepthPoseSnapshot {
+    pub(crate) orientation: [f32; 4],
+    pub(crate) position: [f32; 3],
+}
+
+impl Default for SpatialEnvironmentDepthPoseSnapshot {
+    fn default() -> Self {
+        Self {
+            orientation: [0.0, 0.0, 0.0, 1.0],
+            position: [0.0; 3],
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SpatialEnvironmentDepthViewSnapshot {
+    pub(crate) fov: SpatialEnvironmentDepthFovSnapshot,
+    pub(crate) pose: SpatialEnvironmentDepthPoseSnapshot,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SpatialEnvironmentDepthFrameMetadata {
+    swapchain_index: u32,
+    width: u32,
+    height: u32,
+    near_z: f32,
+    far_z: f32,
+    acquired_frame_count: u64,
+    capture_time_ns: i64,
+    acquire_display_time_ns: i64,
+    depth_views: [SpatialEnvironmentDepthViewSnapshot; 2],
+    render_views: [SpatialEnvironmentDepthViewSnapshot; 2],
+    depth_view_valid_mask: u32,
+    render_view_valid_mask: u32,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct SpatialEnvironmentDepthFrameSnapshot {
@@ -58,6 +111,12 @@ pub(crate) struct SpatialEnvironmentDepthFrameSnapshot {
     pub(crate) near_z: f32,
     pub(crate) far_z: f32,
     pub(crate) acquired_frame_count: u64,
+    pub(crate) capture_time_ns: i64,
+    pub(crate) acquire_display_time_ns: i64,
+    pub(crate) depth_views: [SpatialEnvironmentDepthViewSnapshot; 2],
+    pub(crate) render_views: [SpatialEnvironmentDepthViewSnapshot; 2],
+    pub(crate) depth_view_valid_mask: u32,
+    pub(crate) render_view_valid_mask: u32,
 }
 
 struct SpatialEnvironmentDepthRuntime {
@@ -81,20 +140,17 @@ pub(crate) fn spatial_environment_depth_frame_snapshot(
     {
         return None;
     }
-    let swapchain_index = SPATIAL_ENVIRONMENT_DEPTH_LAST_SWAPCHAIN_INDEX.load(Ordering::Acquire);
-    if swapchain_index == u32::MAX {
-        return None;
-    }
-    let acquired_frame_count = SPATIAL_ENVIRONMENT_DEPTH_TOTAL_ACQUIRED.load(Ordering::Acquire);
-    if acquired_frame_count == 0 {
-        return None;
-    }
+    let metadata = SPATIAL_ENVIRONMENT_DEPTH_FRAME_METADATA
+        .lock()
+        .ok()?
+        .as_ref()
+        .copied()?;
     let image_handles = {
         let guard = SPATIAL_ENVIRONMENT_DEPTH_RUNTIME.lock().ok()?;
         guard.as_ref()?.image_handles.clone()
     };
     if image_handles
-        .get(swapchain_index as usize)
+        .get(metadata.swapchain_index as usize)
         .copied()
         .unwrap_or(0)
         == 0
@@ -103,12 +159,18 @@ pub(crate) fn spatial_environment_depth_frame_snapshot(
     }
     Some(SpatialEnvironmentDepthFrameSnapshot {
         image_handles,
-        swapchain_index,
-        width: SPATIAL_ENVIRONMENT_DEPTH_WIDTH.load(Ordering::Acquire),
-        height: SPATIAL_ENVIRONMENT_DEPTH_HEIGHT.load(Ordering::Acquire),
-        near_z: f32::from_bits(SPATIAL_ENVIRONMENT_DEPTH_NEAR_Z_BITS.load(Ordering::Acquire)),
-        far_z: f32::from_bits(SPATIAL_ENVIRONMENT_DEPTH_FAR_Z_BITS.load(Ordering::Acquire)),
-        acquired_frame_count,
+        swapchain_index: metadata.swapchain_index,
+        width: metadata.width,
+        height: metadata.height,
+        near_z: metadata.near_z,
+        far_z: metadata.far_z,
+        acquired_frame_count: metadata.acquired_frame_count,
+        capture_time_ns: metadata.capture_time_ns,
+        acquire_display_time_ns: metadata.acquire_display_time_ns,
+        depth_views: metadata.depth_views,
+        render_views: metadata.render_views,
+        depth_view_valid_mask: metadata.depth_view_valid_mask,
+        render_view_valid_mask: metadata.render_view_valid_mask,
     })
 }
 
@@ -117,6 +179,23 @@ pub(crate) fn spatial_environment_depth_marker_fields() -> String {
     let valid_data = SPATIAL_ENVIRONMENT_DEPTH_VALID_DATA.load(Ordering::Relaxed);
     let valid_sample_count = SPATIAL_ENVIRONMENT_DEPTH_VALID_SAMPLE_COUNT.load(Ordering::Relaxed);
     let total_acquired = SPATIAL_ENVIRONMENT_DEPTH_TOTAL_ACQUIRED.load(Ordering::Relaxed);
+    let call_order_errors =
+        SPATIAL_ENVIRONMENT_DEPTH_CALL_ORDER_ERROR_COUNT.load(Ordering::Relaxed);
+    let metadata = SPATIAL_ENVIRONMENT_DEPTH_FRAME_METADATA
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().copied());
+    let (capture_time_ns, acquire_display_time_ns, depth_view_valid_mask, render_view_valid_mask) =
+        metadata
+            .map(|value| {
+                (
+                    value.capture_time_ns,
+                    value.acquire_display_time_ns,
+                    value.depth_view_valid_mask,
+                    value.render_view_valid_mask,
+                )
+            })
+            .unwrap_or((0, 0, 0, 0));
     let source = if provider_bound {
         "xr-meta-environment-depth"
     } else {
@@ -135,7 +214,7 @@ pub(crate) fn spatial_environment_depth_marker_fields() -> String {
         "not-attempted-provider-not-bound"
     };
     format!(
-        "publicMultiStackDepthSource={} publicMultiStackDepthProviderRequested={} publicMultiStackDepthRealProviderBound={} publicMultiStackDepthValidData={} publicMultiStackDepthPermissionSurface=horizonos.permission.USE_SCENE+USE_SCENE_DATA environmentDepthSource={} environmentDepthProviderState={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound={} environmentDepthAcquireStatus={} environmentDepthValidData={} environmentDepthDebugValidSampleCount={} environmentDepthAcquiredFrameCount={}",
+        "publicMultiStackDepthSource={} publicMultiStackDepthProviderRequested={} publicMultiStackDepthRealProviderBound={} publicMultiStackDepthValidData={} publicMultiStackDepthPermissionSurface=horizonos.permission.USE_SCENE+USE_SCENE_DATA environmentDepthSource={} environmentDepthProviderState={} environmentDepthProviderAvailable={} environmentDepthRealProviderBound={} environmentDepthAcquireStatus={} environmentDepthValidData={} environmentDepthDebugValidSampleCount={} environmentDepthAcquiredFrameCount={} environmentDepthSourceViewCount=2 environmentDepthDepthViewValidMask={} environmentDepthRenderViewValidMask={} environmentDepthCaptureTimeNs={} environmentDepthAcquireDisplayTimeNs={} environmentDepthAcquireDisplayTimePolicy=monotonic-plus-11ms-estimate-with-zero-fallback environmentDepthAcquireFrameLoopIntegration=spatial-sdk-sidecar-compatibility environmentDepthAcquireCallOrderConformant=false environmentDepthAcquireCallOrderErrorCount={}",
         source,
         bool_token(SPATIAL_ENVIRONMENT_DEPTH_REQUESTED.load(Ordering::Relaxed)),
         bool_token(provider_bound),
@@ -148,6 +227,39 @@ pub(crate) fn spatial_environment_depth_marker_fields() -> String {
         bool_token(valid_data),
         valid_sample_count,
         total_acquired,
+        depth_view_valid_mask,
+        render_view_valid_mask,
+        capture_time_ns,
+        acquire_display_time_ns,
+        call_order_errors,
+    )
+}
+
+pub(crate) fn spatial_environment_depth_compact_marker_fields() -> String {
+    let call_order_errors =
+        SPATIAL_ENVIRONMENT_DEPTH_CALL_ORDER_ERROR_COUNT.load(Ordering::Relaxed);
+    let metadata = SPATIAL_ENVIRONMENT_DEPTH_FRAME_METADATA
+        .lock()
+        .ok()
+        .and_then(|guard| guard.as_ref().copied());
+    let (capture_time_ns, acquire_display_time_ns, depth_view_valid_mask, render_view_valid_mask) =
+        metadata
+            .map(|value| {
+                (
+                    value.capture_time_ns,
+                    value.acquire_display_time_ns,
+                    value.depth_view_valid_mask,
+                    value.render_view_valid_mask,
+                )
+            })
+            .unwrap_or((0, 0, 0, 0));
+    format!(
+        "environmentDepthSourceViewCount=2 environmentDepthDepthViewValidMask={} environmentDepthRenderViewValidMask={} environmentDepthCaptureTimeNs={} environmentDepthAcquireDisplayTimeNs={} environmentDepthAcquireDisplayTimePolicy=monotonic-plus-11ms-estimate-with-zero-fallback environmentDepthAcquireScheduling=phase-lock-32ms-success-1ms-call-order-retry environmentDepthAcquireFrameLoopIntegration=spatial-sdk-sidecar-compatibility environmentDepthAcquireCallOrderConformant=false environmentDepthAcquireCallOrderErrorCount={}",
+        depth_view_valid_mask,
+        render_view_valid_mask,
+        capture_time_ns,
+        acquire_display_time_ns,
+        call_order_errors,
     )
 }
 
@@ -294,6 +406,13 @@ unsafe fn start_spatial_environment_depth_probe(
         resolve_openxr_function(instance, get_instance_proc_addr, "xrCreateReferenceSpace");
     let destroy_space_resolution =
         resolve_openxr_function(instance, get_instance_proc_addr, "xrDestroySpace");
+    let locate_views_resolution =
+        resolve_openxr_function(instance, get_instance_proc_addr, "xrLocateViews");
+    let convert_timespec_time_resolution = resolve_openxr_function(
+        instance,
+        get_instance_proc_addr,
+        "xrConvertTimespecTimeToTimeKHR",
+    );
 
     if get_system_resolution.resolved {
         mask |= RECEIPT_GET_SYSTEM_RESOLVED;
@@ -389,6 +508,16 @@ unsafe fn start_spatial_environment_depth_probe(
         mem::transmute(create_reference_space_resolution.function.unwrap());
     let destroy_space: openxr_sys::pfn::DestroySpace =
         mem::transmute(destroy_space_resolution.function.unwrap());
+    let locate_views = locate_views_resolution.function.map(|function| {
+        mem::transmute::<openxr_sys::pfn::VoidFunction, openxr_sys::pfn::LocateViews>(function)
+    });
+    let convert_timespec_time_to_time =
+        convert_timespec_time_resolution.function.map(|function| {
+            mem::transmute::<
+                openxr_sys::pfn::VoidFunction,
+                openxr_sys::pfn::ConvertTimespecTimeToTimeKHR,
+            >(function)
+        });
 
     let get_info = openxr_sys::SystemGetInfo {
         ty: openxr_sys::SystemGetInfo::TYPE,
@@ -570,14 +699,22 @@ unsafe fn start_spatial_environment_depth_probe(
     SPATIAL_ENVIRONMENT_DEPTH_HEIGHT.store(height, Ordering::Relaxed);
     SPATIAL_ENVIRONMENT_DEPTH_NEAR_Z_BITS.store(0.001f32.to_bits(), Ordering::Relaxed);
     SPATIAL_ENVIRONMENT_DEPTH_FAR_Z_BITS.store(4.0f32.to_bits(), Ordering::Relaxed);
+    SPATIAL_ENVIRONMENT_DEPTH_CALL_ORDER_ERROR_COUNT.store(0, Ordering::Relaxed);
+    if let Ok(mut metadata) = SPATIAL_ENVIRONMENT_DEPTH_FRAME_METADATA.lock() {
+        *metadata = None;
+    }
 
     let stop_requested = Arc::new(AtomicBool::new(false));
     let acquire_stop_requested = Arc::clone(&stop_requested);
     let acquire_thread = thread::spawn(move || {
         run_acquire_thread(
             acquire_image,
+            instance,
+            session,
             provider,
             reference_space,
+            locate_views,
+            convert_timespec_time_to_time,
             acquire_stop_requested,
             width,
             height,
@@ -621,10 +758,12 @@ unsafe fn start_spatial_environment_depth_probe(
     });
 
     log_spatial_environment_depth(format!(
-        "status=provider-created environmentDepthSource=xr-meta-environment-depth environmentDepthProviderRequested=true environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthImageSize={}x{} environmentDepthFormat=VK_FORMAT_D16_UNORM environmentDepthLayerCount=2 environmentDepthSwapchainImages={} environmentDepthVkImagesExported=true environmentDepthAcquireStatus=waiting-for-first-acquire environmentDepthValidData=false environmentDepthDebugValidSampleCount=0 environmentDepthReferenceSpace=LOCAL environmentDepthAcquireDisplayTimePolicy=diagnostic-zero-time spatialSdkOwnsFrameLoop=true nativeReceiptMask={}",
+        "status=provider-created environmentDepthSource=xr-meta-environment-depth environmentDepthProviderRequested=true environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthSupported=true environmentDepthImageSize={}x{} environmentDepthFormat=VK_FORMAT_D16_UNORM environmentDepthLayerCount=2 environmentDepthSourceViewCount=2 environmentDepthSwapchainImages={} environmentDepthVkImagesExported=true environmentDepthAcquireStatus=waiting-for-first-acquire environmentDepthValidData=false environmentDepthDebugValidSampleCount=0 environmentDepthReferenceSpace=LOCAL xrLocateViewsResolved={} xrConvertTimespecTimeToTimeKHRResolved={} environmentDepthAcquireDisplayTimePolicy=monotonic-plus-11ms-estimate-with-zero-fallback environmentDepthAcquireScheduling=phase-lock-32ms-success-1ms-call-order-retry environmentDepthAcquireFrameLoopIntegration=spatial-sdk-sidecar-compatibility environmentDepthAcquireCallOrderConformant=false spatialSdkOwnsFrameLoop=true nativeReceiptMask={}",
         width,
         height,
         image_count,
+        bool_token(locate_views.is_some()),
+        bool_token(convert_timespec_time_to_time.is_some()),
         mask,
     ));
     mask
@@ -632,8 +771,12 @@ unsafe fn start_spatial_environment_depth_probe(
 
 fn run_acquire_thread(
     acquire_image: openxr_sys::pfn::AcquireEnvironmentDepthImageMETA,
+    instance: openxr_sys::Instance,
+    session: openxr_sys::Session,
     provider: openxr_sys::EnvironmentDepthProviderMETA,
     reference_space: openxr_sys::Space,
+    locate_views: Option<openxr_sys::pfn::LocateViews>,
+    convert_timespec_time_to_time: Option<openxr_sys::pfn::ConvertTimespecTimeToTimeKHR>,
     stop_requested: Arc<AtomicBool>,
     width: u32,
     height: u32,
@@ -643,15 +786,26 @@ fn run_acquire_thread(
     let mut acquired = 0_u64;
     let mut unavailable = 0_u64;
     let mut errors = 0_u64;
+    let mut unique_captures = 0_u64;
+    let mut repeated_captures = 0_u64;
+    let mut last_capture_time_ns = 0_i64;
     let mut last_error = "none".to_string();
     let mut first_acquired_logged = false;
     while !stop_requested.load(Ordering::Relaxed) {
         attempts = attempts.saturating_add(1);
+        let (display_time, display_time_policy) =
+            estimated_environment_depth_display_time(instance, convert_timespec_time_to_time);
+        let (render_views, render_view_valid_mask) = locate_environment_depth_render_views(
+            session,
+            reference_space,
+            locate_views,
+            display_time,
+        );
         let acquire_info = openxr_sys::EnvironmentDepthImageAcquireInfoMETA {
             ty: openxr_sys::EnvironmentDepthImageAcquireInfoMETA::TYPE,
             next: ptr::null(),
             space: reference_space,
-            display_time: openxr_sys::Time::from_nanos(0),
+            display_time,
         };
         let empty_view = openxr_sys::EnvironmentDepthImageViewMETA {
             ty: openxr_sys::EnvironmentDepthImageViewMETA::TYPE,
@@ -675,6 +829,13 @@ fn run_acquire_thread(
         let result = unsafe { acquire_image(provider, &acquire_info, &mut image) };
         if result == openxr_sys::Result::SUCCESS {
             acquired = acquired.saturating_add(1);
+            let capture_time_ns = timestamp.capture_time.as_nanos();
+            if capture_time_ns > 0 && capture_time_ns != last_capture_time_ns {
+                unique_captures = unique_captures.saturating_add(1);
+                last_capture_time_ns = capture_time_ns;
+            } else {
+                repeated_captures = repeated_captures.saturating_add(1);
+            }
             let valid_sample_count = acquired;
             SPATIAL_ENVIRONMENT_DEPTH_TOTAL_ACQUIRED.store(acquired, Ordering::Relaxed);
             SPATIAL_ENVIRONMENT_DEPTH_VALID_SAMPLE_COUNT
@@ -685,18 +846,50 @@ fn run_acquire_thread(
             SPATIAL_ENVIRONMENT_DEPTH_HEIGHT.store(height, Ordering::Relaxed);
             SPATIAL_ENVIRONMENT_DEPTH_NEAR_Z_BITS.store(image.near_z.to_bits(), Ordering::Relaxed);
             SPATIAL_ENVIRONMENT_DEPTH_FAR_Z_BITS.store(image.far_z.to_bits(), Ordering::Relaxed);
+            let depth_views = image.views.map(spatial_environment_depth_view_snapshot);
+            let depth_view_valid_mask =
+                depth_views
+                    .iter()
+                    .enumerate()
+                    .fold(0_u32, |mask, (index, view)| {
+                        if spatial_environment_depth_view_valid(*view) {
+                            mask | (1_u32 << index)
+                        } else {
+                            mask
+                        }
+                    });
+            if let Ok(mut metadata) = SPATIAL_ENVIRONMENT_DEPTH_FRAME_METADATA.lock() {
+                *metadata = Some(SpatialEnvironmentDepthFrameMetadata {
+                    swapchain_index: image.swapchain_index,
+                    width,
+                    height,
+                    near_z: image.near_z,
+                    far_z: image.far_z,
+                    acquired_frame_count: acquired,
+                    capture_time_ns,
+                    acquire_display_time_ns: display_time.as_nanos(),
+                    depth_views,
+                    render_views,
+                    depth_view_valid_mask,
+                    render_view_valid_mask,
+                });
+            }
             SPATIAL_ENVIRONMENT_DEPTH_VALID_DATA.store(true, Ordering::Relaxed);
             if !first_acquired_logged {
                 first_acquired_logged = true;
                 log_spatial_environment_depth(format!(
-                    "status=first-frame environmentDepthSource=xr-meta-environment-depth environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthAcquireStatus=acquired environmentDepthValidData=true environmentDepthDebugValidSampleCount={} environmentDepthImageSize={}x{} environmentDepthFormat=VK_FORMAT_D16_UNORM environmentDepthLayerCount=2 environmentDepthSwapchainIndex={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCaptureTimeNs={} environmentDepthAcquireDisplayTimeNs=0 environmentDepthAcquireDisplayTimePolicy=diagnostic-zero-time",
+                    "status=first-frame environmentDepthSource=xr-meta-environment-depth environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthAcquireStatus=acquired environmentDepthValidData=true environmentDepthDebugValidSampleCount={} environmentDepthImageSize={}x{} environmentDepthFormat=VK_FORMAT_D16_UNORM environmentDepthLayerCount=2 environmentDepthSourceViewCount=2 environmentDepthDepthViewValidMask={} environmentDepthRenderViewValidMask={} environmentDepthSwapchainIndex={} environmentDepthNearM={:.3} environmentDepthFarM={:.3} environmentDepthCaptureTimeNs={} environmentDepthAcquireDisplayTimeNs={} environmentDepthAcquireDisplayTimePolicy={} environmentDepthAcquireFrameLoopIntegration=spatial-sdk-sidecar-compatibility environmentDepthAcquireCallOrderConformant=false",
                     valid_sample_count,
                     width,
                     height,
+                    depth_view_valid_mask,
+                    render_view_valid_mask,
                     image.swapchain_index,
                     image.near_z,
                     image.far_z,
-                    timestamp.capture_time.as_nanos(),
+                    capture_time_ns,
+                    display_time.as_nanos(),
+                    display_time_policy,
                 ));
             }
         } else if result == openxr_sys::Result::ENVIRONMENT_DEPTH_NOT_AVAILABLE_META {
@@ -704,36 +897,222 @@ fn run_acquire_thread(
         } else {
             errors = errors.saturating_add(1);
             last_error = xr_result_token(result);
+            if result == openxr_sys::Result::ERROR_CALL_ORDER_INVALID {
+                SPATIAL_ENVIRONMENT_DEPTH_CALL_ORDER_ERROR_COUNT.fetch_add(1, Ordering::Relaxed);
+            }
         }
         if attempts == 1 || attempts % 120 == 0 {
             let valid_data = SPATIAL_ENVIRONMENT_DEPTH_VALID_DATA.load(Ordering::Relaxed);
             log_spatial_environment_depth(format!(
-                "status=runtime environmentDepthSource=xr-meta-environment-depth environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthAcquireStatus={} environmentDepthValidData={} environmentDepthDebugValidSampleCount={} acquireAttempts={} acquiredFrames={} unavailableFrames={} acquireErrors={} lastAcquireError={} elapsedMs={} environmentDepthAcquireDisplayTimeNs=0 environmentDepthAcquireDisplayTimePolicy=diagnostic-zero-time",
+                "status=runtime environmentDepthSource=xr-meta-environment-depth environmentDepthProviderState=provider-running environmentDepthProviderAvailable=true environmentDepthRealProviderBound=true environmentDepthAcquireStatus={} environmentDepthValidData={} environmentDepthDebugValidSampleCount={} acquireAttempts={} acquiredFrames={} environmentDepthUniqueCaptureCount={} environmentDepthRepeatedCaptureCount={} unavailableFrames={} acquireErrors={} lastAcquireError={} environmentDepthAcquireCallOrderErrorCount={} elapsedMs={} environmentDepthAcquireDisplayTimeNs={} environmentDepthAcquireDisplayTimePolicy={} environmentDepthAcquireScheduling=phase-lock-32ms-success-1ms-call-order-retry environmentDepthAcquireFrameLoopIntegration=spatial-sdk-sidecar-compatibility environmentDepthAcquireCallOrderConformant=false",
                 if acquired > 0 { "acquired" } else if errors > 0 { "error" } else { "not-available" },
                 bool_token(valid_data),
                 SPATIAL_ENVIRONMENT_DEPTH_VALID_SAMPLE_COUNT.load(Ordering::Relaxed),
                 attempts,
                 acquired,
+                unique_captures,
+                repeated_captures,
                 unavailable,
                 errors,
                 last_error,
+                SPATIAL_ENVIRONMENT_DEPTH_CALL_ORDER_ERROR_COUNT.load(Ordering::Relaxed),
                 start.elapsed().as_millis(),
+                display_time.as_nanos(),
+                display_time_policy,
             ));
         }
-        thread::sleep(Duration::from_millis(33));
+        let retry_delay_ms = if result == openxr_sys::Result::SUCCESS {
+            ENVIRONMENT_DEPTH_POST_SUCCESS_DELAY_MS
+        } else if result == openxr_sys::Result::ERROR_CALL_ORDER_INVALID {
+            ENVIRONMENT_DEPTH_CALL_ORDER_RETRY_DELAY_MS
+        } else {
+            ENVIRONMENT_DEPTH_NOT_AVAILABLE_RETRY_DELAY_MS
+        };
+        thread::sleep(Duration::from_millis(retry_delay_ms));
     }
     log_spatial_environment_depth(format!(
-        "status=acquire-thread-stopped environmentDepthRealProviderBound={} environmentDepthAcquireStatus={} environmentDepthValidData={} environmentDepthDebugValidSampleCount={} acquireAttempts={} acquiredFrames={} unavailableFrames={} acquireErrors={} lastAcquireError={}",
+        "status=acquire-thread-stopped environmentDepthRealProviderBound={} environmentDepthAcquireStatus={} environmentDepthValidData={} environmentDepthDebugValidSampleCount={} acquireAttempts={} acquiredFrames={} environmentDepthUniqueCaptureCount={} environmentDepthRepeatedCaptureCount={} unavailableFrames={} acquireErrors={} lastAcquireError={}",
         bool_token(SPATIAL_ENVIRONMENT_DEPTH_PROVIDER_BOUND.load(Ordering::Relaxed)),
         acquire_status_token(),
         bool_token(SPATIAL_ENVIRONMENT_DEPTH_VALID_DATA.load(Ordering::Relaxed)),
         SPATIAL_ENVIRONMENT_DEPTH_VALID_SAMPLE_COUNT.load(Ordering::Relaxed),
         attempts,
         acquired,
+        unique_captures,
+        repeated_captures,
         unavailable,
         errors,
         last_error,
     ));
+}
+
+fn estimated_environment_depth_display_time(
+    instance: openxr_sys::Instance,
+    convert_timespec_time_to_time: Option<openxr_sys::pfn::ConvertTimespecTimeToTimeKHR>,
+) -> (openxr_sys::Time, &'static str) {
+    let Some(convert_timespec_time_to_time) = convert_timespec_time_to_time else {
+        return (
+            openxr_sys::Time::from_nanos(0),
+            "zero-fallback-function-unavailable",
+        );
+    };
+    let mut timespec = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut timespec) } != 0 {
+        return (
+            openxr_sys::Time::from_nanos(0),
+            "zero-fallback-clock-failed",
+        );
+    }
+    let mut now = openxr_sys::Time::from_nanos(0);
+    let result = unsafe { convert_timespec_time_to_time(instance, &timespec, &mut now) };
+    if result != openxr_sys::Result::SUCCESS {
+        return (
+            openxr_sys::Time::from_nanos(0),
+            "zero-fallback-conversion-failed",
+        );
+    }
+    (
+        openxr_sys::Time::from_nanos(
+            now.as_nanos()
+                .saturating_add(ENVIRONMENT_DEPTH_ESTIMATED_PRESENTATION_LEAD_NS),
+        ),
+        "monotonic-plus-11ms-estimate",
+    )
+}
+
+fn locate_environment_depth_render_views(
+    session: openxr_sys::Session,
+    reference_space: openxr_sys::Space,
+    locate_views: Option<openxr_sys::pfn::LocateViews>,
+    display_time: openxr_sys::Time,
+) -> ([SpatialEnvironmentDepthViewSnapshot; 2], u32) {
+    let Some(locate_views) = locate_views else {
+        return ([SpatialEnvironmentDepthViewSnapshot::default(); 2], 0);
+    };
+    if display_time.as_nanos() == 0 {
+        return ([SpatialEnvironmentDepthViewSnapshot::default(); 2], 0);
+    }
+    let locate_info = openxr_sys::ViewLocateInfo {
+        ty: openxr_sys::ViewLocateInfo::TYPE,
+        next: ptr::null(),
+        view_configuration_type: openxr_sys::ViewConfigurationType::PRIMARY_STEREO,
+        display_time,
+        space: reference_space,
+    };
+    let mut view_state = openxr_sys::ViewState {
+        ty: openxr_sys::ViewState::TYPE,
+        next: ptr::null_mut(),
+        view_state_flags: openxr_sys::ViewStateFlags::from_raw(0),
+    };
+    let empty_view = openxr_sys::View {
+        ty: openxr_sys::View::TYPE,
+        next: ptr::null_mut(),
+        pose: openxr_sys::Posef::IDENTITY,
+        fov: openxr_sys::Fovf::default(),
+    };
+    let mut views = [empty_view; 2];
+    let mut view_count = 0_u32;
+    let result = unsafe {
+        locate_views(
+            session,
+            &locate_info,
+            &mut view_state,
+            views.len() as u32,
+            &mut view_count,
+            views.as_mut_ptr(),
+        )
+    };
+    let required_flags =
+        openxr_sys::ViewStateFlags::ORIENTATION_VALID | openxr_sys::ViewStateFlags::POSITION_VALID;
+    if result != openxr_sys::Result::SUCCESS
+        || !view_state.view_state_flags.contains(required_flags)
+    {
+        return ([SpatialEnvironmentDepthViewSnapshot::default(); 2], 0);
+    }
+    let snapshots = views.map(|view| SpatialEnvironmentDepthViewSnapshot {
+        fov: spatial_environment_depth_fov_snapshot(view.fov),
+        pose: spatial_environment_depth_pose_snapshot(view.pose),
+    });
+    let valid_mask = snapshots
+        .iter()
+        .take((view_count as usize).min(snapshots.len()))
+        .enumerate()
+        .fold(0_u32, |mask, (index, view)| {
+            if spatial_environment_depth_view_valid(*view) {
+                mask | (1_u32 << index)
+            } else {
+                mask
+            }
+        });
+    (snapshots, valid_mask)
+}
+
+fn spatial_environment_depth_view_snapshot(
+    view: openxr_sys::EnvironmentDepthImageViewMETA,
+) -> SpatialEnvironmentDepthViewSnapshot {
+    SpatialEnvironmentDepthViewSnapshot {
+        fov: spatial_environment_depth_fov_snapshot(view.fov),
+        pose: spatial_environment_depth_pose_snapshot(view.pose),
+    }
+}
+
+fn spatial_environment_depth_fov_snapshot(
+    fov: openxr_sys::Fovf,
+) -> SpatialEnvironmentDepthFovSnapshot {
+    SpatialEnvironmentDepthFovSnapshot {
+        angle_left: fov.angle_left,
+        angle_right: fov.angle_right,
+        angle_up: fov.angle_up,
+        angle_down: fov.angle_down,
+    }
+}
+
+fn spatial_environment_depth_pose_snapshot(
+    pose: openxr_sys::Posef,
+) -> SpatialEnvironmentDepthPoseSnapshot {
+    SpatialEnvironmentDepthPoseSnapshot {
+        orientation: [
+            pose.orientation.x,
+            pose.orientation.y,
+            pose.orientation.z,
+            pose.orientation.w,
+        ],
+        position: [pose.position.x, pose.position.y, pose.position.z],
+    }
+}
+
+fn spatial_environment_depth_view_valid(view: SpatialEnvironmentDepthViewSnapshot) -> bool {
+    let fov = view.fov;
+    let angles = [
+        fov.angle_left,
+        fov.angle_right,
+        fov.angle_up,
+        fov.angle_down,
+    ];
+    let orientation_norm_squared = view
+        .pose
+        .orientation
+        .iter()
+        .map(|component| component * component)
+        .sum::<f32>();
+    angles.iter().all(|angle| angle.is_finite())
+        && fov.angle_right > fov.angle_left
+        && fov.angle_up > fov.angle_down
+        && view
+            .pose
+            .position
+            .iter()
+            .all(|component| component.is_finite())
+        && view
+            .pose
+            .orientation
+            .iter()
+            .all(|component| component.is_finite())
+        && orientation_norm_squared > 0.5
+        && orientation_norm_squared < 1.5
 }
 
 fn stop_spatial_environment_depth_probe(reason: &str) -> i64 {
@@ -856,6 +1235,10 @@ fn clear_depth_state(keep_requested: bool) {
     SPATIAL_ENVIRONMENT_DEPTH_HEIGHT.store(0, Ordering::Relaxed);
     SPATIAL_ENVIRONMENT_DEPTH_NEAR_Z_BITS.store(0.001f32.to_bits(), Ordering::Relaxed);
     SPATIAL_ENVIRONMENT_DEPTH_FAR_Z_BITS.store(4.0f32.to_bits(), Ordering::Relaxed);
+    SPATIAL_ENVIRONMENT_DEPTH_CALL_ORDER_ERROR_COUNT.store(0, Ordering::Relaxed);
+    if let Ok(mut metadata) = SPATIAL_ENVIRONMENT_DEPTH_FRAME_METADATA.lock() {
+        *metadata = None;
+    }
 }
 
 fn acquire_status_token() -> &'static str {

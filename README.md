@@ -192,10 +192,31 @@ display holds, and label the selected callback-age or direct plausible sensor-
 timestamp viewer-pose association. Direct use of an `UNKNOWN` Camera2 timebase
 is an empirical headset A/B guarded by a bounded callback delta, not a portable
 timestamp guarantee.
-The accepted best-current motion baseline is the Camera2-calibrated sensor-
-timestamp warp, which preserves the unwarped preset as its control. The full
-test sequence, calibration finding, retained invariants, and remaining work are
-recorded in the
+The Camera2-calibrated sensor-timestamp warp is now the prediction-off rollback
+baseline. MOD-007 adds bracketed capture-pose interpolation, independent
+per-eye calibration, bounded Scene/OpenXR estimated-presentation poses, and
+reprojection on both the raw control and private guide ingress. Native
+every-available camera adoption remains the candidate default; display-aligned
+45 Hz is a controlled comparison. The unattended Quest pass retained about
+50.4 fresh stereo imports/s at 90 FPS with every-available adoption, while the
+45 Hz control increased mean holds from 1.785 to 2.005 display frames; an
+actual fixed-45 Camera2 request was unsupported. The implementation and
+physical-motion gate included a zero-versus-10-percent real-source-margin A/B
+prompted by the observation that the custom projection border lagged relative
+to the otherwise head-stable video carrier. The user confirmed that the
+10-percent zoom-to-fill control removed the echo/lingering artifact, establishing
+retained source coverage as causal, but rejected its constant 1.25x
+magnification as the final presentation. The current candidate couples that
+central 80-percent source crop to an 80-percent target footprint around each
+existing eye center, preserving the original angular scale and exposing the
+underlying video honestly. The user accepted that reduced-footprint mode as the
+best baseline so far and confirmed that the general echo is gone. Rare
+individual-frame inconsistencies remain a separate timing-outlier and 50-to-90
+Hz cadence investigation. Exhausted source coverage remains transparent; no
+replacement edge visual is used. These decisions
+are recorded in the
+[Spatial Camera Presentation-Time Remediation Plan](docs/SPATIAL_CAMERA_PRESENTATION_TIME_PLAN.md).
+The earlier test sequence and calibration findings remain in the
 [Spatial Camera Motion Iteration Report](docs/SPATIAL_CAMERA_MOTION_ITERATION_REPORT.md).
 
 The lane records low-rate session, Polar placeholder, ECG placeholder, block,

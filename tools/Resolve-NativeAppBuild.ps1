@@ -820,13 +820,19 @@ foreach ($featureId in $selectedFeatureIds) {
         if ($null -eq $envEntry.PSObject.Properties["name"]) {
             throw "Feature $featureId build_inputs.env entry is missing name"
         }
-        $envEntryValue = if ($null -ne $envEntry.PSObject.Properties["value"]) {
+        $hasDeclaredValue = $null -ne $envEntry.PSObject.Properties["value"]
+        $envEntryValue = if ($hasDeclaredValue) {
             [string]$envEntry.value
         } else {
-            ""
+            [Environment]::GetEnvironmentVariable([string]$envEntry.name)
+        }
+        if (-not $hasDeclaredValue -and [string]::IsNullOrWhiteSpace($envEntryValue)) {
+            throw "Feature $featureId requires build environment value $($envEntry.name), but it was not supplied."
         }
         $envEntrySource = if ($null -ne $envEntry.PSObject.Properties["source"]) {
             [string]$envEntry.source
+        } elseif (-not $hasDeclaredValue) {
+            "feature:${featureId}:inherited-environment"
         } else {
             "feature:$featureId"
         }

@@ -26,8 +26,9 @@ use crate::camera_hwb_wsi::{
     update_camera_hwb_probe_descriptor_set,
 };
 use crate::camera_latency_diagnostics::{
-    boottime_now_ns, current_camera_latency_rotation_reprojection, current_camera_latency_settings,
-    CameraLatencyCameraSyncMode, CameraLatencyFrameTiming, CameraLatencyStereoPolicy,
+    boottime_now_ns, camera_latency_strict_pair_decision, current_camera_latency_settings,
+    current_camera_latency_stereo_reprojection, CameraLatencyCameraSyncMode,
+    CameraLatencyFrameTiming, CameraLatencyStereoPolicy, CameraLatencyStrictPairDecision,
     CameraLatencyWindow, CAMERA_LATENCY_STRICT_PAIR_MAX_DELTA_NS,
 };
 use crate::spatial_public_multistack::{
@@ -278,6 +279,9 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
     right_offset_x: c_float,
     right_offset_y: c_float,
     sample_scale: c_float,
+    sample_scale_y: c_float,
+    roll_degrees: c_float,
+    metadata_auto_align: c_int,
 ) -> i64 {
     let applied_alignment = update_spatial_public_depth_alignment(
         left_offset_x as f32,
@@ -285,19 +289,28 @@ pub extern "system" fn Java_io_github_mesmerprism_rustyquest_spatial_1camera_1pa
         right_offset_x as f32,
         right_offset_y as f32,
         sample_scale as f32,
+        sample_scale_y as f32,
+        roll_degrees as f32,
+        metadata_auto_align != 0,
     );
     log_marker(format!(
-        "status=private-layer-depth-alignment-updated rawCameraProjectionProbe=true updateMask=1 spatialPrivateLayerControlPanel=true publicMultiStackDepthAlignmentControl=true publicMultiStackDepthAlignmentLeftOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentRightOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentSampleScale={:.4} requestedPublicMultiStackDepthAlignmentLeftOffsetUv={:.6},{:.6} requestedPublicMultiStackDepthAlignmentRightOffsetUv={:.6},{:.6} requestedPublicMultiStackDepthAlignmentSampleScale={:.4} {} runtimeCrash=false",
+        "status=private-layer-depth-alignment-updated rawCameraProjectionProbe=true updateMask=1 spatialPrivateLayerControlPanel=true publicMultiStackDepthAlignmentControl=true publicMultiStackDepthAlignmentLeftOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentRightOffsetUv={:.6},{:.6} publicMultiStackDepthAlignmentSampleScale={:.4} publicMultiStackDepthAlignmentSampleScaleY={:.4} publicMultiStackDepthAlignmentRollDegrees={:.3} publicMultiStackDepthMetadataAutoAlignRequested={} requestedPublicMultiStackDepthAlignmentLeftOffsetUv={:.6},{:.6} requestedPublicMultiStackDepthAlignmentRightOffsetUv={:.6},{:.6} requestedPublicMultiStackDepthAlignmentSampleScale={:.4} requestedPublicMultiStackDepthAlignmentSampleScaleY={:.4} requestedPublicMultiStackDepthAlignmentRollDegrees={:.3} requestedPublicMultiStackDepthMetadataAutoAlign={} {} runtimeCrash=false",
         applied_alignment.left_offset_uv[0],
         applied_alignment.left_offset_uv[1],
         applied_alignment.right_offset_uv[0],
         applied_alignment.right_offset_uv[1],
         applied_alignment.sample_scale,
+        applied_alignment.sample_scale_y,
+        applied_alignment.roll_degrees,
+        bool_token(applied_alignment.metadata_auto_align),
         left_offset_x as f32,
         left_offset_y as f32,
         right_offset_x as f32,
         right_offset_y as f32,
         sample_scale as f32,
+        sample_scale_y as f32,
+        roll_degrees as f32,
+        bool_token(metadata_auto_align != 0),
         camera_hwb_projection_marker_fields(),
     ));
     1
@@ -886,11 +899,13 @@ unsafe fn render_camera_hwb_probe(
     let mut pending_strict_left: Option<CameraProbeFrame> = None;
     let mut pending_strict_right: Option<CameraProbeFrame> = None;
     let mut strict_pair_rejections = 0_u64;
+    let mut strict_unpaired_resets = 0_u64;
     let mut strict_pair_generation = 0_u64;
     let mut transition_left_camera_image = true;
     let mut transition_right_camera_image = matches!(mode, CameraHwbProbeMode::RawColorProjection);
     let mut frames_presented = 0_u32;
     let mut spatial_video_projection_rendered_marker_logged = false;
+    let mut public_multistack_depth_evidence_marker_logged = false;
     let mut observed_latency_settings = active_latency_launch_settings;
     let mut freeze_frame_pending = active_latency_launch_settings.enabled
         && active_latency_launch_settings.freeze_frame
@@ -1148,7 +1163,9 @@ unsafe fn render_camera_hwb_probe(
                         (pending_strict_left.as_ref(), pending_strict_right.as_ref())
                     {
                         let pair_delta_ns = camera_probe_pair_delta_ns(left, right);
-                        if pair_delta_ns <= CAMERA_LATENCY_STRICT_PAIR_MAX_DELTA_NS {
+                        if camera_latency_strict_pair_decision(pair_delta_ns)
+                            == CameraLatencyStrictPairDecision::Accept
+                        {
                             let next_left = pending_strict_left.take().expect("left checked");
                             let next_right = pending_strict_right.take().expect("right checked");
                             let import_started = Instant::now();
@@ -1237,23 +1254,33 @@ unsafe fn render_camera_hwb_probe(
                             frame_timing.camera_import += import_started.elapsed();
                         } else {
                             strict_pair_rejections = strict_pair_rejections.saturating_add(1);
-                            let left_order = camera_probe_frame_order_timestamp(left);
-                            let right_order = camera_probe_frame_order_timestamp(right);
-                            if left_order <= right_order {
-                                pending_strict_left = None;
-                            } else {
-                                pending_strict_right = None;
-                            }
+                            pending_strict_left = None;
+                            pending_strict_right = None;
                             if strict_pair_rejections <= 4
                                 || crate::camera_latency_diagnostics::camera_latency_per_frame_log_enabled()
                             {
                                 log_marker(format!(
-                                    "status=strict-stereo-pair-rejected pairDeltaMs={:.3} maxPairDeltaMs={:.3} rejectedPairs={} policy=strict-timestamp-pair runtimeCrash=false",
+                                    "status=strict-stereo-pair-rejected pairDeltaMs={:.3} maxPairDeltaMs={:.3} rejectedPairs={} policy=strict-timestamp-pair recoveryPolicy=discard-both-latest-candidates recoveryReason=prevent-one-source-period-chase runtimeCrash=false",
                                     pair_delta_ns as f64 / 1_000_000.0,
                                     CAMERA_LATENCY_STRICT_PAIR_MAX_DELTA_NS as f64 / 1_000_000.0,
                                     strict_pair_rejections,
                                 ));
                             }
+                        }
+                    }
+                    if observed_latency_settings.should_discard_unpaired_strict_latest_candidate()
+                        && pending_strict_left.is_some() != pending_strict_right.is_some()
+                    {
+                        strict_unpaired_resets = strict_unpaired_resets.saturating_add(1);
+                        pending_strict_left = None;
+                        pending_strict_right = None;
+                        if strict_unpaired_resets <= 4
+                            || crate::camera_latency_diagnostics::camera_latency_per_frame_log_enabled()
+                        {
+                            log_marker(format!(
+                                "status=strict-stereo-pair-unpaired-reset resets={} policy=strict-timestamp-pair adoptionCadence=display-aligned-45 recoveryPolicy=discard-unpaired-latest-candidate recoveryReason=next-45hz-poll-would-overshoot-missing-eye runtimeCrash=false",
+                                strict_unpaired_resets,
+                            ));
                         }
                     }
                 }
@@ -1294,8 +1321,11 @@ unsafe fn render_camera_hwb_probe(
             None
         };
         let record_started = Instant::now();
-        let camera_reprojection =
-            current_camera_latency_rotation_reprojection(current_left_frame.capture_viewer_basis);
+        let camera_reprojection = current_camera_latency_stereo_reprojection(
+            current_left_frame.capture_viewer_basis,
+            current_right_frame.capture_viewer_basis,
+        );
+        let presentation_pose = camera_reprojection.presentation;
         let record_result = record_camera_hwb_probe_command_buffer(
             &device,
             command_buffer,
@@ -1350,6 +1380,54 @@ unsafe fn render_camera_hwb_probe(
         frame_timing.present_call = present_started.elapsed();
         frames_presented = frames_presented.saturating_add(1);
         frame_timing.loop_total = loop_started.elapsed();
+        if frames_presented <= 4
+            || crate::camera_latency_diagnostics::camera_latency_per_frame_log_enabled()
+        {
+            let presentation_sequence = presentation_pose
+                .basis
+                .map(|basis| basis.sequence)
+                .unwrap_or(0);
+            let left_capture_sequence = current_left_frame
+                .capture_viewer_basis
+                .map(|basis| basis.sequence)
+                .unwrap_or(0);
+            let right_capture_sequence = current_right_frame
+                .capture_viewer_basis
+                .map(|basis| basis.sequence)
+                .unwrap_or(0);
+            log_marker(format!(
+                "status=camera-presentation-pose presentOrdinal={} presentationPoseSource={} presentationPoseFallback={} presentationTargetTimestampNs={} presentationRequestedLeadMs={} presentationEffectiveLeadMs={:.3} latestScenePoseAgeMs={:.3} presentationPoseSequence={} leftCapturePoseSequence={} rightCapturePoseSequence={} leftCaptureToPresentationDeltaMs={:.3} rightCaptureToPresentationDeltaMs={:.3} leftReprojectionApplied={} rightReprojectionApplied={} projectionFootprintPolicy={} sourceOverscanPolicy=central-crop-real-camera-pixels sourceOverscanMode={} sourceOverscanUv={:.3} projectionFootprintScale={:.3} cameraAngularScalePolicy={} sourceCoverageExhaustionPolicy=discard-to-underlying-carrier outOfRangeUvPolicy=discard cameraCalibrationScope=independent-per-eye perEyeDraws=true displayFrameLoopAuthority=spatial-sdk sidecarXrWaitFrame=false sidecarXrBeginFrame=false sidecarXrEndFrame=false queuePresentTimeAuthority=cpu-call-return-not-photons runtimeCrash=false",
+                frames_presented,
+                presentation_pose.source,
+                presentation_pose.fallback,
+                presentation_pose.target_timestamp_ns,
+                presentation_pose.requested_lead_ms,
+                presentation_pose.effective_lead_ms,
+                presentation_pose.latest_sample_age_ms,
+                presentation_sequence,
+                left_capture_sequence,
+                right_capture_sequence,
+                camera_reprojection.left.capture_to_presentation_delta_ms(),
+                camera_reprojection.right.capture_to_presentation_delta_ms(),
+                bool_token(camera_reprojection.left.applied()),
+                bool_token(camera_reprojection.right.applied()),
+                if observed_latency_settings.reprojection_footprint_scale() < 1.0 {
+                    "reduced-target-rect-with-full-surface-scissor"
+                } else {
+                    "fixed-target-rect-with-full-surface-scissor"
+                },
+                observed_latency_settings
+                    .reprojection_guard_band_mode
+                    .marker_token(),
+                observed_latency_settings.reprojection_source_overscan_uv(),
+                observed_latency_settings.reprojection_footprint_scale(),
+                if observed_latency_settings.reprojection_footprint_scale() < 1.0 {
+                    "preserve-original-source-to-target-scale"
+                } else {
+                    "zoom-to-fill-or-no-margin"
+                },
+            ));
+        }
         if observed_latency_settings.stereo_policy == CameraLatencyStereoPolicy::StrictTimestampPair
             && left_imported
             && right_imported
@@ -1404,6 +1482,39 @@ unsafe fn render_camera_hwb_probe(
                     .abs_diff(current_right_frame.timestamp_ns),
             );
         }
+        if mode.should_stream_latest_frame() && !public_multistack_depth_evidence_marker_logged {
+            if let Some(depth_evidence) = public_guide_targets
+                .as_ref()
+                .and_then(|targets| targets.compact_depth_evidence_marker_fields())
+            {
+                log_marker(format!(
+                    "status=public-multistack-depth-evidence framesPresented={} outputMode=raw-color-target-rect stereoSource=camera50-51 monoDuplicated=false {} runtimeCrash=false",
+                    frames_presented,
+                    depth_evidence,
+                ));
+                if let Some(alignment_evidence) = public_guide_targets
+                    .as_ref()
+                    .and_then(|targets| targets.compact_depth_alignment_evidence_marker_fields())
+                {
+                    log_marker(format!(
+                        "status=public-multistack-depth-alignment-evidence framesPresented={} {} runtimeCrash=false",
+                        frames_presented,
+                        alignment_evidence,
+                    ));
+                }
+                if let Some(source_evidence) = public_guide_targets
+                    .as_ref()
+                    .and_then(|targets| targets.compact_depth_source_evidence_marker_fields())
+                {
+                    log_marker(format!(
+                        "status=public-multistack-depth-source-evidence framesPresented={} {} runtimeCrash=false",
+                        frames_presented,
+                        source_evidence,
+                    ));
+                }
+                public_multistack_depth_evidence_marker_logged = true;
+            }
+        }
         if mode.should_stream_latest_frame() && frames_presented <= 4 {
             let public_stack_frame_marker = public_guide_targets
                 .as_ref()
@@ -1411,6 +1522,7 @@ unsafe fn render_camera_hwb_probe(
                     targets.frame_marker_fields(
                         projected_by_public_stack,
                         public_stack_elapsed_seconds,
+                        observed_latency_settings.reprojection_footprint_scale(),
                     )
                 })
                 .unwrap_or_else(|| public_guide_targets_pending_marker_fields("not allocated"));
@@ -1426,6 +1538,7 @@ unsafe fn render_camera_hwb_probe(
                     targets.compact_projection_evidence_marker_fields(
                         projected_by_public_stack,
                         public_stack_elapsed_seconds,
+                        observed_latency_settings.reprojection_footprint_scale(),
                     ),
                 ));
             }

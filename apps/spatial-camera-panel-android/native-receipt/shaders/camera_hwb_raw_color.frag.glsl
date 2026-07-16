@@ -4,8 +4,7 @@ layout(set = 0, binding = 0) uniform sampler2D u_camera_left;
 layout(set = 0, binding = 1) uniform sampler2D u_camera_right;
 
 layout(push_constant) uniform CameraHwbProjectionPush {
-    vec4 leftRect;
-    vec4 rightRect;
+    vec4 targetRect;
     vec4 params;
     vec4 reprojectionRow0;
     vec4 reprojectionRow1;
@@ -53,16 +52,21 @@ vec3 fallback_layer_debug(vec3 rgb, vec2 localUv) {
     return mix(vec3(luma), vec3(bands, 1.0 - bands, 0.55), 0.65);
 }
 
-vec2 rotation_reprojected_uv(vec2 localUv) {
+vec2 camera_source_uv_for_presentation(vec2 localUv) {
+    float sourceOverscanUv = clamp(pc.params.w, 0.0, 0.2);
+    return mix(vec2(sourceOverscanUv), vec2(1.0 - sourceOverscanUv), localUv);
+}
+
+vec2 rotation_reprojected_uv(vec2 presentationSourceUv) {
     if (pc.reprojectionParams.x < 0.5) {
-        return localUv;
+        return presentationSourceUv;
     }
     float tanHalfHorizontalFov = max(pc.reprojectionParams.y, 0.01);
     float tanHalfVerticalFov = max(pc.reprojectionParams.z, 0.01);
     vec2 principalPoint = vec2(pc.reprojectionRow0.w, pc.reprojectionRow1.w);
     vec3 currentRay = vec3(
-        (localUv.x - principalPoint.x) * 2.0 * tanHalfHorizontalFov,
-        (principalPoint.y - localUv.y) * 2.0 * tanHalfVerticalFov,
+        (presentationSourceUv.x - principalPoint.x) * 2.0 * tanHalfHorizontalFov,
+        (principalPoint.y - presentationSourceUv.y) * 2.0 * tanHalfVerticalFov,
         1.0
     );
     vec3 captureRay = vec3(
@@ -79,15 +83,16 @@ vec2 rotation_reprojected_uv(vec2 localUv) {
 
 void main() {
     vec2 localUv = vec2(0.0);
-    if (local_uv_for_rect(vUv, pc.leftRect, localUv)) {
-        vec2 sampleUv = clamp(rotation_reprojected_uv(localUv), vec2(0.0), vec2(1.0));
-        vec3 rgb = texture(u_camera_left, sampleUv).rgb;
-        outColor = vec4(fallback_layer_debug(rgb, localUv), 1.0);
-        return;
-    }
-    if (local_uv_for_rect(vUv, pc.rightRect, localUv)) {
-        vec2 sampleUv = clamp(rotation_reprojected_uv(localUv), vec2(0.0), vec2(1.0));
-        vec3 rgb = texture(u_camera_right, sampleUv).rgb;
+    if (local_uv_for_rect(vUv, pc.targetRect, localUv)) {
+        vec2 presentationSourceUv = camera_source_uv_for_presentation(localUv);
+        vec2 sampleUv = rotation_reprojected_uv(presentationSourceUv);
+        if (any(lessThan(sampleUv, vec2(0.0))) ||
+            any(greaterThan(sampleUv, vec2(1.0)))) {
+            discard;
+        }
+        vec3 rgb = pc.params.z < 0.5
+            ? texture(u_camera_left, sampleUv).rgb
+            : texture(u_camera_right, sampleUv).rgb;
         outColor = vec4(fallback_layer_debug(rgb, localUv), 1.0);
         return;
     }

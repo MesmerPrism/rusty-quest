@@ -175,20 +175,41 @@ parses the complete property transaction after a revision change, routes the
 current-viewer/frozen-world placement comparison, and submits a bounded JNI
 settings packet. When the opt-in raw-layer rotation diagnostic is active, it
 also supplies a bounded timestamped viewer-basis history; native camera
-callbacks select a basis either by callback time minus the operator's assumed
-capture age or by a directly observed sensor timestamp whose callback delta is
-plausible and bounded. The raw shader applies a rotation-only ray warp and can
-transpose it for a direction-control A/B. Direct use of an `UNKNOWN` Camera2
-timebase remains an empirical headset diagnostic rather than a portable clock
-contract. Rust remains the
+callbacks select an exact, interpolated bracket, or explicitly labeled
+fallback basis using either callback time minus the operator's assumed capture
+age or a directly observed sensor timestamp whose callback delta is plausible
+and bounded. The raw shader applies a rotation-only ray warp and can transpose
+it for a direction-control A/B. Direct use of an `UNKNOWN` Camera2 timebase
+remains an empirical headset diagnostic rather than a portable clock contract.
+For presentation-time experiments, the Spatial SDK remains the sole OpenXR
+frame-loop owner. The sidecar can use latest Scene pose, bounded Scene
+extrapolation, or `xrLocateViews` at an explicitly estimated target lead through
+borrowed SDK OpenXR handles; it never calls wait/begin/end frame and never calls
+the target compositor-predicted time. Rust remains the
 data-plane owner for camera acquisition, AHardwareBuffer import, strict/mono
 stereo A/B policies, cadence aggregation, Vulkan WSI, and shader reprojection.
 The best-current calibrated mode keeps the relative headset rotation in the
 viewer/gyroscope basis, then conjugates it by the Camera2 static lens-pose
 rotation before sampling camera-space rays. Static intrinsic focal lengths and
-principal point replace the diagnostic symmetric-FOV assumption. The current
-push contract uses one shared calibration derived from the left camera; exact
-per-eye calibration remains a bounded follow-up rather than an implicit claim.
+principal point replace the diagnostic symmetric-FOV assumption. Calibration
+is stored and applied independently for the left and right cameras. Two
+eye-specific draw calls keep each push block at 96 bytes, below the portable
+128-byte Vulkan push-constant floor. The output target rectangle remains fixed
+within an unchanged full-surface scissor. A live-safe central source crop can reserve 0-20 percent of real
+camera pixels at each edge for rotation reprojection; invalid warped UVs are
+discarded to the underlying carrier only after that real margin is exhausted,
+rather than clamped or replaced with an unwarped stale sample.
+The environment-depth adapter keeps depth acquisition and texture ownership in
+native code. A coherent frame snapshot carries both D16 array layers, near/far,
+capture/display times, and two depth plus two render FOV/pose records into the
+public projection stack. The renderer is the effective-state authority: it
+selects the source view from the live stereo/mono policy, derives a bounded
+FOV/orientation affine, composes low-rate panel residuals, and reports whether
+metadata was applied or fell back to identity. Pose translation is observable
+but not applied without a depth-aware reprojection contract. Spatial SDK still
+owns the OpenXR frame loop, so the exported-depth sidecar is explicitly marked
+call-order nonconformant until an SDK frame hook or texture export closes that
+lifecycle boundary.
 Present mode, swapchain image count, and Camera2 AE FPS request are captured at
 route creation and are reported as pending restart when changed live.
 The world-space hand billboard flock uses that substrate as a public carrier

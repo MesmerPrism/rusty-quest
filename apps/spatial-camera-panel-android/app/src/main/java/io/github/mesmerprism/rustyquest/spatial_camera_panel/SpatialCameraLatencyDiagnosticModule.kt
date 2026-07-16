@@ -38,6 +38,14 @@ internal const val CAMERA_LATENCY_ASSUMED_CAPTURE_AGE_MS_PROPERTY =
     "debug.rustyquest.spatial.camera_latency.assumed_capture_age_ms"
 internal const val CAMERA_LATENCY_REPROJECTION_FOV_DEGREES_PROPERTY =
     "debug.rustyquest.spatial.camera_latency.reprojection_fov_degrees"
+internal const val CAMERA_LATENCY_REPROJECTION_SOURCE_OVERSCAN_PERCENT_PROPERTY =
+    "debug.rustyquest.spatial.camera_latency.reprojection_source_overscan_percent"
+internal const val CAMERA_LATENCY_REPROJECTION_GUARD_BAND_MODE_PROPERTY =
+    "debug.rustyquest.spatial.camera_latency.reprojection_guard_band_mode"
+internal const val CAMERA_LATENCY_PRESENTATION_POSE_MODE_PROPERTY =
+    "debug.rustyquest.spatial.camera_latency.presentation_pose_mode"
+internal const val CAMERA_LATENCY_PRESENTATION_LEAD_MS_PROPERTY =
+    "debug.rustyquest.spatial.camera_latency.presentation_lead_ms"
 
 internal val CAMERA_LATENCY_DIAGNOSTIC_PROPERTIES =
     listOf(
@@ -59,6 +67,10 @@ internal val CAMERA_LATENCY_DIAGNOSTIC_PROPERTIES =
         CAMERA_LATENCY_REPROJECTION_MODE_PROPERTY,
         CAMERA_LATENCY_ASSUMED_CAPTURE_AGE_MS_PROPERTY,
         CAMERA_LATENCY_REPROJECTION_FOV_DEGREES_PROPERTY,
+        CAMERA_LATENCY_REPROJECTION_SOURCE_OVERSCAN_PERCENT_PROPERTY,
+        CAMERA_LATENCY_REPROJECTION_GUARD_BAND_MODE_PROPERTY,
+        CAMERA_LATENCY_PRESENTATION_POSE_MODE_PROPERTY,
+        CAMERA_LATENCY_PRESENTATION_LEAD_MS_PROPERTY,
     )
 
 internal enum class SpatialCameraLatencyPoseMode(val markerToken: String, val nativeCode: Int) {
@@ -147,6 +159,23 @@ internal enum class SpatialCameraLatencyReprojectionMode(
   ),
 }
 
+internal enum class SpatialCameraLatencyPresentationPoseMode(
+    val markerToken: String,
+    val nativeCode: Int,
+) {
+  SceneTickLatest("scene-tick-latest", 0),
+  SceneExtrapolated("scene-extrapolated", 1),
+  OpenXrLocateViews("openxr-locate-views", 2),
+}
+
+internal enum class SpatialCameraLatencyReprojectionGuardBandMode(
+    val markerToken: String,
+    val nativeCode: Int,
+) {
+  ZoomToFill("zoom-to-fill", 0),
+  ReducedFootprint("reduced-footprint", 1),
+}
+
 internal data class SpatialCameraLatencyDiagnosticSettings(
     val enabled: Boolean = false,
     val revision: Long = 0L,
@@ -172,6 +201,12 @@ internal data class SpatialCameraLatencyDiagnosticSettings(
         SpatialCameraLatencyReprojectionMode.Off,
     val assumedCaptureAgeMs: Int = 40,
     val reprojectionFovDegrees: Int = 90,
+    val reprojectionSourceOverscanPercent: Int = 0,
+    val reprojectionGuardBandMode: SpatialCameraLatencyReprojectionGuardBandMode =
+        SpatialCameraLatencyReprojectionGuardBandMode.ZoomToFill,
+    val presentationPoseMode: SpatialCameraLatencyPresentationPoseMode =
+        SpatialCameraLatencyPresentationPoseMode.SceneTickLatest,
+    val presentationLeadMs: Int = 0,
 ) {
   fun markerFields(): String =
       "cameraLatencyDiagnosticEnabled=$enabled " +
@@ -191,7 +226,11 @@ internal data class SpatialCameraLatencyDiagnosticSettings(
           "cameraLatencyFreezeFrame=$freezeFrame " +
           "cameraLatencyReprojectionMode=${reprojectionMode.markerToken} " +
           "cameraLatencyAssumedCaptureAgeMs=$assumedCaptureAgeMs " +
-          "cameraLatencyReprojectionFovDegrees=$reprojectionFovDegrees"
+          "cameraLatencyReprojectionFovDegrees=$reprojectionFovDegrees " +
+          "cameraLatencyReprojectionSourceOverscanPercent=$reprojectionSourceOverscanPercent " +
+          "cameraLatencyReprojectionGuardBandMode=${reprojectionGuardBandMode.markerToken} " +
+          "cameraLatencyPresentationPoseMode=${presentationPoseMode.markerToken} " +
+          "cameraLatencyPresentationLeadMs=$presentationLeadMs"
 }
 
 internal data class SpatialCameraLatencyDiagnosticParseResult(
@@ -323,6 +362,33 @@ internal fun parseSpatialCameraLatencyDiagnosticSettings(
   val reprojectionFovDegrees =
       parseInt(CAMERA_LATENCY_REPROJECTION_FOV_DEGREES_PROPERTY, 90, 60..130)
           ?: return SpatialCameraLatencyDiagnosticParseResult(error = "invalid-reprojection-fov")
+  val reprojectionSourceOverscanPercent =
+      parseInt(CAMERA_LATENCY_REPROJECTION_SOURCE_OVERSCAN_PERCENT_PROPERTY, 0, 0..20)
+          ?: return SpatialCameraLatencyDiagnosticParseResult(
+              error = "invalid-reprojection-source-overscan-percent"
+          )
+  val reprojectionGuardBandMode =
+      when (value(CAMERA_LATENCY_REPROJECTION_GUARD_BAND_MODE_PROPERTY)) {
+        "", "zoom-to-fill" -> SpatialCameraLatencyReprojectionGuardBandMode.ZoomToFill
+        "reduced-footprint" -> SpatialCameraLatencyReprojectionGuardBandMode.ReducedFootprint
+        else ->
+            return SpatialCameraLatencyDiagnosticParseResult(
+                error = "invalid-reprojection-guard-band-mode"
+            )
+      }
+  val presentationPoseMode =
+      when (value(CAMERA_LATENCY_PRESENTATION_POSE_MODE_PROPERTY)) {
+        "", "scene-tick-latest" -> SpatialCameraLatencyPresentationPoseMode.SceneTickLatest
+        "scene-extrapolated" -> SpatialCameraLatencyPresentationPoseMode.SceneExtrapolated
+        "openxr-locate-views" -> SpatialCameraLatencyPresentationPoseMode.OpenXrLocateViews
+        else ->
+            return SpatialCameraLatencyDiagnosticParseResult(
+                error = "invalid-presentation-pose-mode"
+            )
+      }
+  val presentationLeadMs =
+      parseInt(CAMERA_LATENCY_PRESENTATION_LEAD_MS_PROPERTY, 0, 0..30)
+          ?: return SpatialCameraLatencyDiagnosticParseResult(error = "invalid-presentation-lead-ms")
   return SpatialCameraLatencyDiagnosticParseResult(
       settings =
           SpatialCameraLatencyDiagnosticSettings(
@@ -344,6 +410,10 @@ internal fun parseSpatialCameraLatencyDiagnosticSettings(
               reprojectionMode = reprojectionMode,
               assumedCaptureAgeMs = assumedCaptureAgeMs,
               reprojectionFovDegrees = reprojectionFovDegrees,
+              reprojectionSourceOverscanPercent = reprojectionSourceOverscanPercent,
+              reprojectionGuardBandMode = reprojectionGuardBandMode,
+              presentationPoseMode = presentationPoseMode,
+              presentationLeadMs = presentationLeadMs,
           )
   )
 }
@@ -394,7 +464,7 @@ internal class SpatialCameraLatencyDiagnosticModule(
     bindings.marker(
         "channel=camera-latency-diagnostic status=hotload-applied " +
             "reason=${activityMarkerToken(reason)} transport=android-system-property-revision-last " +
-            "nativeUpdateMask=$nativeMask liveSafeFields=pose-mode,frame-wait-ms,summary-ms,frame-log,camera-sync-mode,adoption-cadence,stereo-policy,isolation-mode,freeze-frame,reprojection-mode,assumed-capture-age-ms,reprojection-fov-degrees " +
+            "nativeUpdateMask=$nativeMask liveSafeFields=pose-mode,frame-wait-ms,summary-ms,frame-log,camera-sync-mode,adoption-cadence,stereo-policy,isolation-mode,freeze-frame,reprojection-mode,assumed-capture-age-ms,reprojection-fov-degrees,reprojection-source-overscan-percent,reprojection-guard-band-mode,presentation-pose-mode,presentation-lead-ms " +
             "restartRequiredFields=present-mode,image-count,capture-fps,capture-processing highRatePayloadAllowed=false " +
             requested.markerFields()
     )

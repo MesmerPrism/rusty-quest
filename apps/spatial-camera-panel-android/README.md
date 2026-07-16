@@ -99,7 +99,11 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   `RotationWarp40`, `RotationWarp60`, `RotationWarp80`, `SensorWarp`,
   `SensorWarpInverse`, `SensorWarp70`, `SensorWarp110`,
   `SensorWarpInverseRollFree70`, `SensorWarpInverseYawOnly70`,
-  `SensorWarpCameraCalibrated`, and `VerboseFrameLog`
+  `SensorWarpCameraCalibrated`, `PresentationLatest50`, the
+  `PresentationSceneExtrapolated*` and `PresentationOpenXr*` lead sweeps,
+  `PresentationOpenXr11Overscan0`, `PresentationOpenXr11Overscan10`,
+  `PresentationOpenXr11GuardBand10`,
+  `PresentationOpenXr11Adoption45`, and `VerboseFrameLog`
   hotload while the projection is active. The rotation-warp presets apply only
   to slot 8's raw projection shader. The original presets associate callback
   time minus an assumed capture age with a bounded Spatial viewer-pose history.
@@ -109,8 +113,11 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   diagnostic for an `UNKNOWN` Camera2 timebase, not a portable timestamp
   guarantee. `SensorWarpInverse` transposes the rotation as a direction-control
   A/B, while the 70/110 variants bound FOV sensitivity. All sensor-warp presets
-  also select strict stereo pairing and fence-held images. Cadence summaries report relative source and
-  callback intervals, display-frame hold histograms, and skipped source frames.
+  also select strict stereo pairing and fence-held images. Cadence evidence is
+  emitted as Android-safe rows correlated by `windowSequence`: core, stereo,
+  source/callback interval, display-hold, capture/presentation age, render-stage
+  timing, and active-config summaries. An oversized row emits an explicit
+  `latency-summary-overflow` marker instead of relying on truncated logcat text.
   `Adoption45` is a live-safe A/B mode that leaves the camera producer at its
   native cadence and adopts the latest camera image every second presented
   frame. On a 90 Hz surface this gives a deterministic 45 Hz camera-image
@@ -137,11 +144,38 @@ app-local. Stopping the bridge is the rollback and leaves the adapter inert.
   another rate. Those presets, `LowQueue`, and `ImmediateLowQueue` require a
   projection/app restart. Payload properties are written first and the
   revision property last, so a render loop never adopts a partial transaction.
-  `SensorWarpCameraCalibrated` is the accepted best-current continuation point.
-  It conjugates headset-relative rotation by the gyroscope-referenced Camera2
-  lens pose and derives the ray projection from static focal-length and
-  principal-point metadata. It fails closed if that calibration is unavailable
-  or does not match the selected stream. See the
+  `SensorWarpCameraCalibrated` is the prediction-off rollback point.
+  `PresentationLatest50` preserves that capture-time correction while making
+  the presentation-pose contract explicit. The scene-extrapolated and OpenXR
+  presets add a bounded 0-30 ms estimated presentation lead; the latter calls
+  `xrLocateViews` with SDK-owned handles but never calls `xrWaitFrame`,
+  `xrBeginFrame`, or `xrEndFrame`. Each eye uses its own gyroscope-referenced
+  Camera2 lens pose, focal lengths, and principal point, is drawn independently
+  within the 128-byte portable push-constant floor. `Overscan10` is the retained
+  zoom-to-fill control: it maps the central 80 percent source into the unchanged
+  target and therefore magnifies the camera view by 1.25x. `GuardBand10` maps
+  the same central 80 percent source into a target scaled to 80 percent about
+  each existing eye center. Source span and target span then contract together,
+  preserving the original source-to-target angular scale while leaving captured
+  pixels outside the displayed crop available for rotation reprojection. This
+  footprint multiplier composes with, and does not reset, the user's live target
+  size or stereo offset. Invalid warped UVs are discarded only after that real
+  margin is exhausted, never replaced by an unwarped stale image or smeared
+  edge pixels. The user confirmed that the zoom-to-fill control removed the
+  tracked echo/lingering artifact, which makes retained source coverage causal;
+  the reduced-footprint mode is the accepted non-magnified baseline. The user
+  confirmed that its general echo is gone and described it as the best state so
+  far. Remaining inconsistency appears as rare individual frames and is tracked
+  separately as a timing-outlier/cadence investigation.
+  `PresentationOpenXr11Adoption45` changes
+  only camera-image adoption to display-aligned 45 Hz, so it is the controlled
+  cadence comparison rather than the default. The unattended Quest pass kept
+  every-available at about 50.4 stereo imports/s with 1.785 mean display holds;
+  the corrected 45 Hz control produced about 44.8 imports/s and 2.005 holds,
+  while a fixed-45 Camera2 request reported unsupported. Human yaw/pitch
+  acceptance is still required. See the
+  [presentation-time remediation plan](../../docs/SPATIAL_CAMERA_PRESENTATION_TIME_PLAN.md)
+  and the
   [motion iteration report](../../docs/SPATIAL_CAMERA_MOTION_ITERATION_REPORT.md)
   for the complete A/B sequence and remaining limitations.
 - Scene-depth permission diagnostics that mirror the native renderer surface:
@@ -279,8 +313,14 @@ drives the shader to sample depth layer 0 and layer 1 at the same UV and render
 their difference. That visual proof showed structured per-eye differences, so
 the two Meta-provided depth layers should not be treated as byte-identical by
 default. This is shader visual evidence, not a literal GPU readback byte
-comparison. General Spatial depth-stack alignment is deferred to manual panel
-calibration and future alignment work.
+comparison. The current route defaults to `eye-index` and preserves both Meta
+depth-view FOV/pose records plus matched `xrLocateViews` render records. Native
+code derives a per-eye center-Jacobian affine from FOV and orientation, then
+composes panel-owned residual X/Y, independent X/Y scale, and roll. Invalid or
+missing metadata falls back to identity rather than inventing calibration.
+Translation remains a measured/manual residual because a 2D affine cannot
+perform depth-aware parallax reprojection. See
+`docs/SPATIAL_STEREO_DEPTH_ALIGNMENT_PLAN.md`.
 
 The strict run preserves the native projection footprint by keeping the Spatial
 SDK quad as the carrier and clipping Vulkan output to the packed native target
@@ -377,8 +417,9 @@ front-of-camera private-layer control panel instead of the participant workflow
 panel or the legacy launcher panel. That panel mirrors the native private
 layer selector: seven generic
 layer choices, live projection-area scale, live depth source policy
-(`mono-layer0`, `mono-layer1`, `eye-index`, or `compare`), and live
-depth-alignment X/Y/scale controls. It is registered as
+  (`eye-index` stereo by default, `mono-layer0`, `mono-layer1`, or `compare`),
+  and live metadata-auto, per-eye X/Y, independent X/Y scale, and roll controls.
+  It is registered as
 `spatial_private_layer_panel`, currently renders through the targeted
 `spatial-sdk-layer` UI ordering test path with layer z-index `99`, uses
 Spatial SDK `Grabbable` as the movement authority so it sticks to the grabbed
@@ -621,8 +662,8 @@ Interaction SDK pointer input without native multimodal extension forcing.
   not mutate Spatial scene entities, consume controller input, or call JNI.
 - `app/src/main/.../PrivateLayerPanelControlModule.kt` owns private-layer
   control model and evidence policy: layer choices, depth-source choices,
-  depth-alignment clamping, panel-control marker fields, and JNI submission
-  result markers. It must not render Compose UI, mutate Activity state, call
+  metadata-auto plus residual depth-alignment clamping, panel-control marker
+  fields, and JNI submission result markers. It must not render Compose UI, mutate Activity state, call
   JNI, or decide feature opt-in.
 - `app/src/main/.../SpatialPrivateLayerControlCoordinator.kt` is the single
   mutable owner for layer override, depth-source policy, and depth alignment.
@@ -1117,10 +1158,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCamera
 ```
 
 The smoke enables `debug.rustyquest.spatial.camera_hwb_projection_probe`,
+enables and verifies `debug.rustyquest.spatial.panel_shell.visible` by default,
 starts tag-filtered logcat before launch, captures the marker summary, window
 state, and screenshot under `local-artifacts\spatial-camera-panel-headset`,
 and leaves the projection running for visual inspection unless `-StopAfterRun`
-is passed.
+is passed. Pass `-PanelShellVisible $false` only for an intentional headless
+run; otherwise workflow and private-layer panel toggles remain available to
+controller input.
 
 To include the optional public video background, stage the media on the device
 or under the app-private files directory and pass the path at runtime:

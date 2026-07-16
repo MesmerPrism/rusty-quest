@@ -220,6 +220,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                       alignment.rightX,
                       alignment.rightY,
                       alignment.sampleScale,
+                      alignment.sampleScaleY,
+                      alignment.rollDegrees,
+                      if (alignment.metadataAutoAlign) 1 else 0,
                   )
                 },
                 marker = ::marker,
@@ -879,6 +882,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
                     settings.reprojectionMode.nativeCode,
                     settings.assumedCaptureAgeMs,
                     settings.reprojectionFovDegrees,
+                    settings.reprojectionSourceOverscanPercent,
+                    settings.reprojectionGuardBandMode.nativeCode,
+                    settings.presentationPoseMode.nativeCode,
+                    settings.presentationLeadMs,
                 )
               }
             },
@@ -888,6 +895,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
               } else {
                 nativeUpdateCameraLatencyViewerPose(
                     timestampNs,
+                    plane.viewerPosition.x,
+                    plane.viewerPosition.y,
+                    plane.viewerPosition.z,
                     plane.right.x,
                     plane.right.y,
                     plane.right.z,
@@ -1820,6 +1830,24 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       videoSettings: SpatialVideoProjectionSettings,
   ) {
     cameraLatencyDiagnosticModule.poll("camera-hwb-projection-pre-run", force = true)
+    if (nativeInteropCoordinator.receiptLibraryLoaded) {
+      val openXrProbe = SpatialNativeInteropProbe.capture(scene)
+      val timingMask =
+          nativeConfigureCameraLatencyOpenXrHandles(
+              openXrProbe.openXrInstanceHandle,
+              openXrProbe.openXrSessionHandle,
+              openXrProbe.openXrGetInstanceProcAddrHandle,
+          )
+      marker(
+          "channel=camera-latency-diagnostic status=openxr-handles-configured " +
+              "nativeUpdateMask=$timingMask openXrInstanceHandleNonZero=" +
+              "${openXrProbe.openXrInstanceHandle != 0L} openXrSessionHandleNonZero=" +
+              "${openXrProbe.openXrSessionHandle != 0L} " +
+              "openXrGetInstanceProcAddrHandleNonZero=" +
+              "${openXrProbe.openXrGetInstanceProcAddrHandle != 0L} " +
+              "frameLoopAuthority=spatial-sdk sidecarWaitFrame=false"
+      )
+    }
     cameraLatencyDiagnosticModule.resetPoseCapture("camera-hwb-projection-pre-run")
     cleanupSdkQuadSurfaceProbe("camera-hwb-projection-pre-run")
     cameraHwbProjectionPanelCarrierCoordinator.cleanup("camera-hwb-projection-pre-run")
@@ -3016,10 +3044,23 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       reprojectionMode: Int,
       assumedCaptureAgeMs: Int,
       reprojectionFovDegrees: Int,
+      reprojectionSourceOverscanPercent: Int,
+      reprojectionGuardBandMode: Int,
+      presentationPoseMode: Int,
+      presentationLeadMs: Int,
+  ): Long
+
+  private external fun nativeConfigureCameraLatencyOpenXrHandles(
+      openXrInstanceHandle: Long,
+      openXrSessionHandle: Long,
+      openXrGetInstanceProcAddrHandle: Long,
   ): Long
 
   private external fun nativeUpdateCameraLatencyViewerPose(
       timestampNs: Long,
+      positionX: Float,
+      positionY: Float,
+      positionZ: Float,
       rightX: Float,
       rightY: Float,
       rightZ: Float,
@@ -3041,6 +3082,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
       rightOffsetX: Float,
       rightOffsetY: Float,
       sampleScale: Float,
+      sampleScaleY: Float,
+      rollDegrees: Float,
+      metadataAutoAlign: Int,
   ): Long
 
   private external fun nativeStartSpatialVideoProjectionProbe(

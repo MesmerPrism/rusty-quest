@@ -12,6 +12,9 @@ internal data class PrivateLayerDepthAlignment(
     val rightX: Float = 0.0f,
     val rightY: Float = 0.0f,
     val sampleScale: Float = 1.0f,
+    val sampleScaleY: Float = 1.0f,
+    val rollDegrees: Float = 0.0f,
+    val metadataAutoAlign: Boolean = true,
 )
 
 internal data class PrivateLayerDepthSourceChoice(
@@ -45,9 +48,9 @@ internal object PrivateLayerControls {
 
   val depthSourcePolicies =
       listOf(
+          PrivateLayerDepthSourceChoice(depthPolicyEyeIndex, "Stereo (per eye)", "eye-index"),
           PrivateLayerDepthSourceChoice(depthPolicyMonoLayer0, "Mono 0", "mono-layer0"),
           PrivateLayerDepthSourceChoice(depthPolicyMonoLayer1, "Mono 1", "mono-layer1"),
-          PrivateLayerDepthSourceChoice(depthPolicyEyeIndex, "Per eye", "eye-index"),
           PrivateLayerDepthSourceChoice(depthPolicyCompare, "Compare", "compare"),
       )
 
@@ -68,7 +71,7 @@ internal object PrivateLayerControls {
 
   fun labelForDepthLayerPolicy(policy: Int): String =
       depthSourcePolicies.firstOrNull { it.code == normalizeDepthLayerPolicy(policy) }?.title
-          ?: "Per eye"
+          ?: "Stereo (per eye)"
 
   fun tokenForDepthLayerPolicy(policy: Int): String =
       depthSourcePolicies.firstOrNull { it.code == normalizeDepthLayerPolicy(policy) }?.token
@@ -115,6 +118,9 @@ internal object PrivateLayerPanelControlModule {
           rightX = requestedAlignment.rightX.coerceIn(-0.25f, 0.25f),
           rightY = requestedAlignment.rightY.coerceIn(-0.25f, 0.25f),
           sampleScale = requestedAlignment.sampleScale.coerceIn(0.25f, 3.0f),
+          sampleScaleY = requestedAlignment.sampleScaleY.coerceIn(0.25f, 3.0f),
+          rollDegrees = requestedAlignment.rollDegrees.coerceIn(-15.0f, 15.0f),
+          metadataAutoAlign = requestedAlignment.metadataAutoAlign,
       )
 
   fun layerButtonSelectedMarker(
@@ -293,11 +299,17 @@ internal object PrivateLayerPanelControlModule {
     return if (prefix.isBlank()) {
       "publicMultiStackDepthAlignmentLeftOffsetUv=${activityMarkerFloat6(alignment.leftX)},${activityMarkerFloat6(alignment.leftY)} " +
           "publicMultiStackDepthAlignmentRightOffsetUv=${activityMarkerFloat6(alignment.rightX)},${activityMarkerFloat6(alignment.rightY)} " +
-          "publicMultiStackDepthAlignmentSampleScale=${activityMarkerFloat(alignment.sampleScale)}"
+          "publicMultiStackDepthAlignmentSampleScale=${activityMarkerFloat(alignment.sampleScale)} " +
+          "publicMultiStackDepthAlignmentSampleScaleY=${activityMarkerFloat(alignment.sampleScaleY)} " +
+          "publicMultiStackDepthAlignmentRollDegrees=${activityMarkerFloat(alignment.rollDegrees)} " +
+          "publicMultiStackDepthMetadataAutoAlignRequested=${alignment.metadataAutoAlign}"
     } else {
       "previousPublicMultiStackDepthAlignmentLeftOffsetUv=${activityMarkerFloat6(alignment.leftX)},${activityMarkerFloat6(alignment.leftY)} " +
           "previousPublicMultiStackDepthAlignmentRightOffsetUv=${activityMarkerFloat6(alignment.rightX)},${activityMarkerFloat6(alignment.rightY)} " +
-          "previousPublicMultiStackDepthAlignmentSampleScale=${activityMarkerFloat(alignment.sampleScale)}"
+          "previousPublicMultiStackDepthAlignmentSampleScale=${activityMarkerFloat(alignment.sampleScale)} " +
+          "previousPublicMultiStackDepthAlignmentSampleScaleY=${activityMarkerFloat(alignment.sampleScaleY)} " +
+          "previousPublicMultiStackDepthAlignmentRollDegrees=${activityMarkerFloat(alignment.rollDegrees)} " +
+          "previousPublicMultiStackDepthMetadataAutoAlignRequested=${alignment.metadataAutoAlign}"
     }
   }
 }

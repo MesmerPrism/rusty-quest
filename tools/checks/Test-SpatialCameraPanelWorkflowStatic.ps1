@@ -262,7 +262,10 @@ function Test-ProjectStateAndEvents {
     } else {
         $current = @($inFlight | Where-Object { [string]$_.unit_id -eq [string]$State.current_unit })
         $historicalActiveExceptions = @()
-        if ([string]$Spec.project_id -eq "spatial-camera-panel" -and [string]$State.current_unit -eq "mod-006") {
+        if (
+            [string]$Spec.project_id -eq "spatial-camera-panel" -and
+            @("mod-006", "mod-007") -contains [string]$State.current_unit
+        ) {
             $historicalActiveExceptions = @("mod-003")
         }
         $unexpected = @($inFlight | Where-Object {
@@ -367,6 +370,7 @@ function Test-Mod006Projection {
         foreach ($line in @($lines | Select-Object -Skip $prefixCount)) {
             $event = $line | ConvertFrom-Json
             $isCorrectiveEvent = [string]$event.unit_id -eq "mod-006" -and [string]$event.event_id -like "mod-006-*"
+            $isMod007Event = [string]$event.unit_id -eq "mod-007" -and [string]$event.event_id -like "mod-007-*"
             $isExactSupersession = (
                 [string]$event.event_id -eq "mod-003-superseded-by-mod-006" -and
                 [string]$event.unit_id -eq "mod-003" -and
@@ -378,7 +382,7 @@ function Test-Mod006Projection {
                 [string]$event.event_type -eq "planning" -and
                 @($event.receipts).Count -eq 0
             )
-            Assert-Workflow ($isCorrectiveEvent -or $isExactSupersession -or $isExactNet016Proposal) "$ExpectedProjectId appended an event outside MOD-006, its exact additive MOD-003 supersession, or the inert NET-016 proposal."
+            Assert-Workflow ($isCorrectiveEvent -or $isMod007Event -or $isExactSupersession -or $isExactNet016Proposal) "$ExpectedProjectId appended an event outside MOD-006/MOD-007, the exact additive MOD-003 supersession, or the inert NET-016 proposal."
         }
     }
 
@@ -511,8 +515,16 @@ function Test-BrokerMediaWorkflowProjection {
     Assert-EqualSet -Label "$Label NET-016 prerequisites" -Actual @($unit.prerequisites) -Expected @("mod-006")
     Assert-Workflow ([string]$unit.device_requirement -eq "required") "$Label local NET-016 must retain its device gate."
     if ($Label -eq "Spatial") {
-        Assert-Workflow ($null -eq $State.current_unit -and $null -eq $State.next_ready_unit) "$Label must remain terminal after MOD-006 acceptance and before NET-016 claim."
-        Assert-Workflow ([string]$State.last_event_id -eq "MOD-006-accepted-0016") "$Label compact state does not terminate at the MOD-006 acceptance event."
+        $mod007 = @($Units | Where-Object { [string]$_.unit_id -eq "mod-007" })
+        $terminalAfterMod006 =
+            $null -eq $State.current_unit -and
+            [string]$State.last_event_id -eq "MOD-006-accepted-0016"
+        $mod007InFlight =
+            $mod007.Count -eq 1 -and
+            @("active", "validating") -contains [string]$mod007[0].status -and
+            [string]$State.current_unit -eq "mod-007" -and
+            [string]$State.last_event_id -like "mod-007-*"
+        Assert-Workflow (($terminalAfterMod006 -or $mod007InFlight) -and $null -eq $State.next_ready_unit) "$Label must remain terminal after MOD-006 or identify MOD-007 as the sole in-flight unit before NET-016 claim."
     } else {
         Assert-Workflow ([string]$State.current_unit -eq "mod-006" -and $null -eq $State.next_ready_unit) "$Label must keep MOD-006 as the sole current unit before NET-016 claim."
         Assert-Workflow ([string]$State.last_event_id -eq "net-016-proposed") "$Label compact state does not terminate at the additive NET-016 proposal event."

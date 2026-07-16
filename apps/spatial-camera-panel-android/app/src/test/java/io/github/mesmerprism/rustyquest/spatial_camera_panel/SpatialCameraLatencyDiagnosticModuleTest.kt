@@ -28,6 +28,10 @@ class SpatialCameraLatencyDiagnosticModuleTest {
                 CAMERA_LATENCY_REPROJECTION_MODE_PROPERTY to "rotation-only-raw-layer",
                 CAMERA_LATENCY_ASSUMED_CAPTURE_AGE_MS_PROPERTY to "60",
                 CAMERA_LATENCY_REPROJECTION_FOV_DEGREES_PROPERTY to "95",
+                CAMERA_LATENCY_REPROJECTION_SOURCE_OVERSCAN_PERCENT_PROPERTY to "10",
+                CAMERA_LATENCY_REPROJECTION_GUARD_BAND_MODE_PROPERTY to "reduced-footprint",
+                CAMERA_LATENCY_PRESENTATION_POSE_MODE_PROPERTY to "openxr-locate-views",
+                CAMERA_LATENCY_PRESENTATION_LEAD_MS_PROPERTY to "11",
             )
         )
 
@@ -65,6 +69,16 @@ class SpatialCameraLatencyDiagnosticModuleTest {
     )
     assertEquals(60, parsed.settings?.assumedCaptureAgeMs)
     assertEquals(95, parsed.settings?.reprojectionFovDegrees)
+    assertEquals(10, parsed.settings?.reprojectionSourceOverscanPercent)
+    assertEquals(
+        SpatialCameraLatencyReprojectionGuardBandMode.ReducedFootprint,
+        parsed.settings?.reprojectionGuardBandMode,
+    )
+    assertEquals(
+        SpatialCameraLatencyPresentationPoseMode.OpenXrLocateViews,
+        parsed.settings?.presentationPoseMode,
+    )
+    assertEquals(11, parsed.settings?.presentationLeadMs)
   }
 
   @Test
@@ -106,6 +120,62 @@ class SpatialCameraLatencyDiagnosticModuleTest {
         )
 
     assertEquals("invalid-reprojection-fov", parsed.error)
+    assertNull(parsed.settings)
+  }
+
+  @Test
+  fun outOfRangeReprojectionSourceOverscanIsRejectedClosed() {
+    val parsed =
+        parseSpatialCameraLatencyDiagnosticSettings(
+            mapOf(
+                CAMERA_LATENCY_REVISION_PROPERTY to "57",
+                CAMERA_LATENCY_REPROJECTION_SOURCE_OVERSCAN_PERCENT_PROPERTY to "21",
+            )
+        )
+
+    assertEquals("invalid-reprojection-source-overscan-percent", parsed.error)
+    assertNull(parsed.settings)
+  }
+
+  @Test
+  fun unknownReprojectionGuardBandModeIsRejectedClosed() {
+    val parsed =
+        parseSpatialCameraLatencyDiagnosticSettings(
+            mapOf(
+                CAMERA_LATENCY_REVISION_PROPERTY to "58",
+                CAMERA_LATENCY_REPROJECTION_GUARD_BAND_MODE_PROPERTY to "shrink-somehow",
+            )
+        )
+
+    assertEquals("invalid-reprojection-guard-band-mode", parsed.error)
+    assertNull(parsed.settings)
+  }
+
+  @Test
+  fun unknownPresentationPoseModeIsRejectedClosed() {
+    val parsed =
+        parseSpatialCameraLatencyDiagnosticSettings(
+            mapOf(
+                CAMERA_LATENCY_REVISION_PROPERTY to "55",
+                CAMERA_LATENCY_PRESENTATION_POSE_MODE_PROPERTY to "guess-at-photons",
+            )
+        )
+
+    assertEquals("invalid-presentation-pose-mode", parsed.error)
+    assertNull(parsed.settings)
+  }
+
+  @Test
+  fun outOfRangePresentationLeadIsRejectedClosed() {
+    val parsed =
+        parseSpatialCameraLatencyDiagnosticSettings(
+            mapOf(
+                CAMERA_LATENCY_REVISION_PROPERTY to "56",
+                CAMERA_LATENCY_PRESENTATION_LEAD_MS_PROPERTY to "31",
+            )
+        )
+
+    assertEquals("invalid-presentation-lead-ms", parsed.error)
     assertNull(parsed.settings)
   }
 
