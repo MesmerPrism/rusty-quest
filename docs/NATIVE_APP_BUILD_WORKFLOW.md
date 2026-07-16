@@ -25,11 +25,12 @@ cannot bleed into unrelated apps.
 3. Resolve the spec:
 
    ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File tools/Resolve-NativeAppBuild.ps1 -AppSpec fixtures/native-app-builds/<app>.app.json -DryRun
+   pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Resolve-NativeAppBuild.ps1 -AppSpec fixtures/native-app-builds/<app>.app.json -DryRun
    ```
 
-4. Inspect `local-artifacts/native-app-builds/<app>/feature-lock.json` and
-   `native-app-settings.json`. The settings file is the master app settings
+4. Record the printed resolution fingerprint and inspect
+   `local-artifacts/native-app-builds/<app-id>/<fingerprint>/feature-lock.json`
+   and `native-app-settings.json`. The settings file is the master app settings
    surface; runtime profile, property write plan, Android manifest, and build
    env are generated adapters. The generated lock also records:
 
@@ -44,11 +45,14 @@ cannot bleed into unrelated apps.
 5. Build from the lock:
 
    ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File tools/Build-NativeRendererAndroid.ps1 -AppBuildLock local-artifacts/native-app-builds/<app>/feature-lock.json
+   pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Build-NativeRendererAndroid.ps1 -AppBuildLock local-artifacts/native-app-builds/<app-id>/<fingerprint>/feature-lock.json
    ```
 
-   A successful package should also be checked against
-   `target/native-renderer-android/build-manifest.json`. For downstream apps
+   Commit the intended source slice first: locked builds require a clean exact
+   source composition, including all reachable sibling Git path dependencies.
+   The default output is content addressed by app ID, lock hash, and source-
+   composition fingerprint. A successful package should be checked against the
+   output's `build-manifest.json` and `run-capsule.json`. For downstream apps
    that package optional private shader/payload inputs through generated
    `build-env.json`, verify the manifest reports the expected packaged payload
    booleans before launch. Build-env values select APK contents; runtime
@@ -59,12 +63,18 @@ cannot bleed into unrelated apps.
    pregrant permissions that are absent from the resolved manifest. Media
    projection still needs fresh `createScreenCaptureIntent` result data even
    when the lab `PROJECT_MEDIA` app-op is allowed.
-7. For the private-particle solid-black canary, run serial-scoped headset smoke
-   with the generated profile:
+7. Validate the output's `run-capsule.json`, then run serial-scoped headset
+   smoke from that capsule:
 
    ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-NativeRendererReplaySmoke.ps1 -EvidenceMode PrivateParticleCanary -ProfilePath local-artifacts/native-app-builds/private_particle_solid_black_canary/runtime-profile.json -ApkPath target/native-renderer-android/rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 8 -AllowFlatScreenshot -AllowPerformanceBudgetMiss -StopAfterRun
+   pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Test-ApkRunCapsule.ps1 -Path <content-addressed-output>/run-capsule.json
+   pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-NativeRendererReplaySmoke.ps1 -RunCapsule <content-addressed-output>/run-capsule.json -EvidenceMode PrivateParticleCanary -Serial <quest-serial> -RunSeconds 8 -AllowFlatScreenshot -AllowPerformanceBudgetMiss -StopAfterRun
    ```
+
+   The launcher serializes by headset serial, clears the complete native
+   renderer property manifest before applying the capsule profile, and restores
+   the exact pre-run property values in `finally`. It force-stops only the
+   capsule package. See `docs/APK_RUN_ISOLATION.md`.
 
 Never accept raw `adb getprop` readback as proof by itself. The runtime must
 emit matching effective markers for the selected app profile.
@@ -112,7 +122,7 @@ The clean native hand lab is
 `fixtures/native-app-builds/native-openxr-hand-lab.app.json`. Validate it with:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/Test-NativeOpenXrHandLabAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Test-NativeOpenXrHandLabAndroid.ps1
 ```
 
 It keeps the app custom hand mesh visual disabled, requests the
@@ -123,10 +133,9 @@ particles over a solid black OpenXR projection layer.
 
 The generated app settings and feature lock are the APK packaging contract.
 They are not a substitute for applying the current runtime profile before a
-validation launch. When a source profile has gained a new startup property but
-the already generated lock still packages the right manifest, shaders, and
-assets, it is acceptable to build from that lock and apply the updated runtime
-profile directly with `tools/Apply-RuntimeProfile.ps1 -Execute` before launch.
+validation launch. If a source profile changes, re-resolve and rebuild so the
+new profile hash enters the lock and run capsule. Do not apply an unrelated or
+newer profile to a locked APK as acceptance evidence.
 
 Keep every stale visual switch explicitly owned by the profile used for the
 run. A profile that validates one visible stack should also set unrelated
@@ -185,8 +194,8 @@ Use the smallest route that matches the change:
   `privateParticleSettingsHotload=true` plus the matching effective value
   markers before the change is accepted.
 - Same APK, same manifest: skip rebuild/reinstall and run launch/smoke with
-  the existing APK. Use `-SkipInstall` only when the installed package and lock
-  hash are known to match.
+  the existing run capsule. Use `-SkipInstall` only when the installed package,
+  APK hash, and capsule identities are known to match.
 - Manifest, permission, service, activity, query, asset, shader, native code,
   package identity, or non-hotload render-target changes: rebuild/reinstall and
   rerun the pregrant plan before first launch.

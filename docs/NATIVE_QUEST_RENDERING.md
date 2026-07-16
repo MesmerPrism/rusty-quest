@@ -165,10 +165,10 @@ Run:
 
 ```powershell
 cargo test -p rusty-quest-native-renderer
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -RunCapsule <content-addressed-output>\run-capsule.json -Serial <quest-serial> -RunSeconds 12
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
 ```
 
 The tests validate the public plan, validate a sample timing scorecard, reject
@@ -180,7 +180,8 @@ markers check the Makepad-matched default controls, full-eye guide projection
 coverage, target-edge exterior stretch, and inner-band blend semantics without
 claiming headset visual acceptance.
 `Invoke-NativeRendererReplaySmoke.ps1` is the no-real-hands device wrapper for
-the recorded replay path: it applies the replay visual-proof profile, launches
+the recorded replay path: it validates the run capsule, applies its profile
+with complete property closure, launches
 the NativeActivity, captures logcat and a screenshot, and then calls
 `Test-NativeRendererRuntimeEvidence.ps1`. That evidence checker uses the latest
 dedicated logcat marker per channel, plus an optional screenshot file, so
@@ -274,7 +275,7 @@ overlay-color gates.
 For full repo checks:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 ```
 
 ## Android Scaffold
@@ -515,8 +516,13 @@ until explicitly graduated.
 Build:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Resolve-NativeAppBuild.ps1 -AppSpec .\fixtures\native-app-builds\native-openxr-hand-lab.app.json -DryRun
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1 -AppBuildLock .\local-artifacts\native-app-builds\native_openxr_hand_lab\<resolution-fingerprint>\feature-lock.json
 ```
+
+The locked builder requires a clean exact source commit/tree and emits a
+content-addressed APK, build manifest, and run capsule. See
+`APK_RUN_ISOLATION.md`.
 
 ## Next Runtime Slices
 

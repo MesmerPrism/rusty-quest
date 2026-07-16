@@ -393,6 +393,7 @@ for ($i = 0; $i -lt $cases.Count; $i++) {
         $caseOutDir,
         "-RunSeconds",
         $RunSeconds.ToString(),
+        "-AllowLegacyLooseInputs",
         "-ProjectionCarrier",
         $case.projection_carrier
     )
@@ -489,7 +490,7 @@ for ($i = 0; $i -lt $cases.Count; $i++) {
     }
 
     try {
-        $output = & powershell @smokeArgs 2>&1
+        $output = & pwsh @smokeArgs 2>&1
         $exitCode = $LASTEXITCODE
         $caseResult.exit_code = $exitCode
         $caseResult.output = ($output -join "`n")

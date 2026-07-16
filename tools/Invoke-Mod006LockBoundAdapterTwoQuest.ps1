@@ -92,7 +92,7 @@ function Invoke-Profile {
         [Parameter(Mandatory=$true)][string]$Profile,
         [Parameter(Mandatory=$true)][string]$Out
     )
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $ApplyRuntimeProfile `
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $ApplyRuntimeProfile `
         -ProfilePath $Profile `
         -Execute `
         -Serial $Serial `
@@ -278,7 +278,7 @@ try {
         -LogPath $spatialParticleLog
 
     $particleOut = Join-Path $OutDir "particle-adapter-scorecard.json"
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $ParticleEvidence `
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $ParticleEvidence `
         -NativeRendererLogcatPath $nativeParticleLog `
         -SpatialPanelLogcatPath $spatialParticleLog `
         -Out $particleOut | Out-Host
@@ -328,7 +328,7 @@ try {
         -LogPath $spatialHandLog
 
     $handOut = Join-Path $OutDir "hand-adapter-scorecard.json"
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $HandEvidence `
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $HandEvidence `
         -NativeHandLogcatPath $nativeHandLog `
         -SpatialHandLogcatPath $spatialHandLog `
         -Out $handOut | Out-Host

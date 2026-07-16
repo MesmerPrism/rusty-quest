@@ -129,7 +129,7 @@ function Invoke-Qcl100ReciprocalLeg {
     }
 
     $process = Start-Process `
-        -FilePath "powershell.exe" `
+        -FilePath "pwsh" `
         -ArgumentList $arguments `
         -RedirectStandardOutput $stdout `
         -RedirectStandardError $stderr `

@@ -70,15 +70,15 @@ provider relaunch cannot collide with a prior request sequence.
 ## Build and static validation
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
   -ProductSpecPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.json `
   -ProductLockPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.lock.json `
   -AndroidHome S:\Work\tools\Android\windows-sdk `
   -JavaHome S:\Work\tools\Java\temurin-17
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-BrokerAdmissionClients.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-BrokerAdmissionClients.ps1 `
   -AndroidHome S:\Work\tools\Android\windows-sdk `
   -JavaHome S:\Work\tools\Java\temurin-17
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAdmissionStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAdmissionStatic.ps1 -RepoRoot .
 ```
 
 The broker build generates its grant from the actual broker signing
@@ -88,7 +88,7 @@ same keystore. The unauthorized client uses a separate generated test key.
 ## Device suite
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "& {
+pwsh -NoProfile -ExecutionPolicy Bypass -Command "& {
   & '.\tools\Invoke-BrokerAdmissionDeviceSuite.ps1' `
     -Serial @('<serial-a>','<serial-b>') `
     -OutDir '<private-evidence-dir>'

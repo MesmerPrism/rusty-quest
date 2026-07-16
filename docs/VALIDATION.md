@@ -1,9 +1,16 @@
 # Rusty Quest Validation
 
+Rusty Quest validation requires PowerShell `7.6` LTS or newer through `pwsh`.
+Validate the host contract before a focused or aggregate run:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-PowerShellHost.ps1 -SelfTest
+```
+
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 ```
 
 The default gate targets native OpenXR/Vulkan and Meta Spatial SDK surfaces.
@@ -25,8 +32,8 @@ synthetic and real-Camera2 loopbacks plus one-way direct-P2P are prerequisites,
 not promotion substitutes. Run the focused static gate and reducer with:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-Qcl100PackedStereoStatic.ps1 -RepoRoot .
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-Qcl100PackedStereoRun.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-Qcl100PackedStereoStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-Qcl100PackedStereoRun.ps1 `
   -RunDir .\target\qcl100-packed-sbs-duplex45-20260710T155638Z -Direction duplex `
   -SyntheticLocalSummaryPath .\target\qcl100-packed-sbs-local-synthetic-20260710T153420Z\packed-stereo-local-summary.json `
   -Camera2LocalSummaryPath .\target\qcl100-packed-sbs-local-camera2-20260710T153456Z\packed-stereo-local-summary.json `
@@ -48,15 +55,15 @@ The Spatial Camera Panel panel lane adds a separate static/build/headset gate
 for `apps/spatial-camera-panel-android`:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
 ```
 
 The hand-tracking lab lanes have dedicated wrappers:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeOpenXrHandLabAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialHandLabAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeOpenXrHandLabAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialHandLabAndroid.ps1
 ```
 
 Pass `-Build` only when the Quest build/ADB resources have been reserved. The
@@ -76,10 +83,10 @@ For native hand material plus live joint recording, use the CLI control wrapper
 around the native hand lab:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 -Serial <quest-serial> -Action Prepare -MaterialProfile unity-basic-reference -Wireframe -DisableSdfVisual
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 -Serial <quest-serial> -Action Start -SessionId hand-joints-test-001
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 -Serial <quest-serial> -Action Stop
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 -Serial <quest-serial> -Action PullAndInspect -SessionId hand-joints-test-001
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 -Serial <quest-serial> -Action Prepare -MaterialProfile unity-basic-reference -Wireframe -DisableSdfVisual
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 -Serial <quest-serial> -Action Start -SessionId hand-joints-test-001
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 -Serial <quest-serial> -Action Stop
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 -Serial <quest-serial> -Action PullAndInspect -SessionId hand-joints-test-001
 ```
 
 `Prepare` sets the startup material and live-hand properties; relaunch the
@@ -93,10 +100,10 @@ For a fresh native OpenXR capture with the runtime-provided FB mesh topology,
 use the full mesh capture wrapper instead:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandMeshCapture.ps1 -Serial <quest-serial> -Action Prepare -MaterialProfile unity-basic-reference -Wireframe -DisableSdfVisual
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandMeshCapture.ps1 -Serial <quest-serial> -Action Start -SessionId hand-mesh-native-001
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandMeshCapture.ps1 -Serial <quest-serial> -Action Stop
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandMeshCapture.ps1 -Serial <quest-serial> -Action PullAndInspect -SessionId hand-mesh-native-001
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandMeshCapture.ps1 -Serial <quest-serial> -Action Prepare -MaterialProfile unity-basic-reference -Wireframe -DisableSdfVisual
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandMeshCapture.ps1 -Serial <quest-serial> -Action Start -SessionId hand-mesh-native-001
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandMeshCapture.ps1 -Serial <quest-serial> -Action Stop
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandMeshCapture.ps1 -Serial <quest-serial> -Action PullAndInspect -SessionId hand-mesh-native-001
 ```
 
 This route requires `XR_EXT_hand_tracking` and `XR_FB_hand_tracking_mesh`. It
@@ -109,10 +116,10 @@ validation mesh rows are CPU-skinned from the OpenXR FB bind mesh.
 For the Spatial hand lab comparison capture, use:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Prepare -ShowAvatarHands $true -EnableBillboardWireframe
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Start -SessionId hand-spatial-001
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Stop
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action PullAndInspect -SessionId hand-spatial-001
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Prepare -ShowAvatarHands $true -EnableBillboardWireframe
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Start -SessionId hand-spatial-001
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Stop
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action PullAndInspect -SessionId hand-spatial-001
 ```
 
 Spatial SDK public APIs expose `AvatarBody` hand/head transforms and built-in
@@ -125,14 +132,14 @@ For OpenXR-to-Spatial world alignment, prepare a clean diagnostic view instead
 of the billboard fallback:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Prepare -ShowAvatarHands $true -DisableBillboardWireframe -DisableNativeSurfaceParticleLayer
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Prepare -ShowAvatarHands $true -DisableBillboardWireframe -DisableNativeSurfaceParticleLayer
 ```
 
 The clean rollback profile is `viewer-world-basis-registration`. The
 headset-accepted Spatial hand-lab mapping is selected explicitly:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Prepare -ShowAvatarHands $true -DisableBillboardWireframe -BillboardParticleSource openxr-live-custom-mesh -AlignmentMappingProfile mirror-x-origin-registration -DisableNativeSurfaceParticleLayer
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialHandCapture.ps1 -Serial <quest-serial> -Action Prepare -ShowAvatarHands $true -DisableBillboardWireframe -BillboardParticleSource openxr-live-custom-mesh -AlignmentMappingProfile mirror-x-origin-registration -DisableNativeSurfaceParticleLayer
 ```
 
 The mirror-X profile captures translation from the current OpenXR and
@@ -175,7 +182,7 @@ active projection layer, pass the downstream opaque shader profile at build
 time:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 `
   -Build `
   -PrivateLayerProfilePath <path-to-private-layer-profile.json>
 ```
@@ -709,7 +716,7 @@ gate:
 ```powershell
 cargo test -p rusty-quest-native-renderer-android-native manifold_scalar_driver_bridge
 python .\tools\check_native_renderer_property_parity.py
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-NativeAppBuildStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-NativeAppBuildStatic.ps1 -RepoRoot .
 ```
 
 Those checks prove the public adapter parses Manifold scalar samples, can send
@@ -811,7 +818,7 @@ cargo run --quiet -p rusty-quest-device-link --bin validate_product_wifi_direct_
 cargo run --quiet -p rusty-quest-device-link --bin validate_ble_rendezvous -- message fixtures\device-link\ble-rendezvous-offer.pass.json
 cargo run --quiet -p rusty-quest-device-link --bin validate_ble_rendezvous -- receipt fixtures\device-link\ble-rendezvous-server-ready.receipt.json
 cargo run --quiet -p rusty-quest-device-link --bin validate_ble_rendezvous -- pair fixtures\device-link\ble-rendezvous-pair.pass.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-PeerRendezvousAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-PeerRendezvousAndroid.ps1
 ```
 
 The clean two-Quest no-media product gate is:
@@ -872,26 +879,30 @@ return final projection to multiplied external HWB samples.
 The Quest-native Android renderer scaffold has static and APK build validation:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererProfileMatrix.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererDisplayCompositeSmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthKnownDistanceProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -TargetDistanceMeters 1.0 -ToleranceMeters 0.15 -RunSeconds 8
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial>
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -EvidenceMode EnvironmentDepthParticles -ProfilePath fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles-low-capacity.profile.json -ExpectedEnvironmentDepthParticleCount 64 -MinimumEnvironmentDepthHashProbeExhaustedCount 1 -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -ProfilePath fixtures\runtime-profiles\quest-native-renderer-envdepth-local-surfels.profile.json -RequireEnvironmentDepthSurfaceSupport -Serial <quest-serial> -RunSeconds 12
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererProfileMatrix.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-ApkRunIsolationStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Resolve-NativeAppBuild.ps1 -AppSpec .\fixtures\native-app-builds\native-openxr-hand-lab.app.json -DryRun
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1 -AppBuildLock .\local-artifacts\native-app-builds\native_openxr_hand_lab\<resolution-fingerprint>\feature-lock.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ApkRunCapsule.ps1 -Path <content-addressed-output>\run-capsule.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -RunCapsule <content-addressed-output>\run-capsule.json -Serial <quest-serial> -RunSeconds 12
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererDisplayCompositeSmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -RunCapsule <content-addressed-output>\run-capsule.json -EvidenceMode EnvironmentDepthParticles -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthKnownDistanceProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -TargetDistanceMeters 1.0 -ToleranceMeters 0.15 -RunSeconds 8
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthAcceptanceSuite.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial>
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -RunCapsule <matching-low-capacity-content-addressed-output>\run-capsule.json -EvidenceMode EnvironmentDepthParticles -ExpectedEnvironmentDepthParticleCount 64 -MinimumEnvironmentDepthHashProbeExhaustedCount 1 -Serial <quest-serial> -RunSeconds 12 -AllowFlatScreenshot -AllowPerformanceBudgetMiss
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererEnvironmentDepthMotionProof.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -ProfilePath fixtures\runtime-profiles\quest-native-renderer-envdepth-local-surfels.profile.json -RequireEnvironmentDepthSurfaceSupport -Serial <quest-serial> -RunSeconds 12
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
 ```
 
 `Invoke-NativeRendererReplaySmoke.ps1` is the no-real-hands device wrapper for
-the recorded replay path. It installs the APK unless `-SkipInstall` is passed,
+the recorded replay path. It validates the run capsule, installs its APK unless
+`-SkipInstall` is passed,
 pregrants the APK-declared camera/hand/scene permissions through
 `tools/Grant-NativeRendererPermissions.ps1`, applies
 `quest-native-renderer-replay-visual-proof.profile.json` through
-`Apply-RuntimeProfile.ps1 -Execute`, launches the NativeActivity, captures
+`Apply-RuntimeProfile.ps1 -PropertyScopeMode CompleteManifest -Execute`, launches the NativeActivity, captures
 logcat plus a screenshot, and then calls
 `Test-NativeRendererRuntimeEvidence.ps1` with screenshot content analysis
 enabled. That checker records whole-screenshot dimensions, sampled unique
@@ -1152,7 +1163,7 @@ The remote-camera profile fixture also runs through the existing dry-run
 property planner:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath fixtures\runtime-profiles\quest-remote-camera-q2q-diagnostic.profile.json -DryRun -Out local-artifacts\remote-camera-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath fixtures\runtime-profiles\quest-remote-camera-q2q-diagnostic.profile.json -DryRun -Out local-artifacts\remote-camera-property-write-plan.json
 ```
 
 Runtime profile validation and `Apply-RuntimeProfile.ps1` both reject Android
@@ -1163,7 +1174,7 @@ full lane ids.
 The reusable media-stream contract has a separate source-only test gate:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-media-stream"
+pwsh -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-media-stream"
 ```
 
 That gate validates app-consent MediaProjection display-to-PC and lab-only
@@ -1179,7 +1190,7 @@ The remote-camera crate also validates the compatibility mapping into the
 generic media-stream contract:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-remote-camera"
+pwsh -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-remote-camera"
 ```
 
 Those tests keep the existing remote-camera JSON contract and runtime-profile
@@ -1191,12 +1202,12 @@ socket authority.
 The Manifold broker Android scaffold has two validation levels:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ManifoldBrokerAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ManifoldBrokerAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
   -ProductSpecPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.json `
   -ProductLockPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.lock.json `
   -MediaSessionBindingPath .\fixtures\media-runtime-products\display-composite.binding.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 `
   -ProductSpecPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.json `
   -ProductLockPath ..\rusty-manifold\fixtures\broker-product\media-session-standalone.lock.json `
   -PrepareOnly
@@ -1229,7 +1240,7 @@ cargo test -p rusty-quest-media-stream
 cargo test -p rusty-quest-broker-authority
 cargo test -p rusty-quest-manifold-broker-authority-native
 cargo run -p rusty-quest-broker-authority --bin export_media_product_bindings -- fixtures\media-runtime-products
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAuthorityStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAuthorityStatic.ps1 -RepoRoot .
 ```
 
 The committed Camera2 and display-composite bindings must regenerate without
@@ -1245,9 +1256,9 @@ cargo test -p rusty-quest-broker-authority
 cargo test -p rusty-quest-manifold-broker-authority-native
 cargo test -p rusty-quest-native-renderer-android-native embedded_manifold_runtime_authority_jni
 cargo test -p rusty-quest-broker-client
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAuthorityStatic.ps1 -RepoRoot .
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAdmissionStatic.ps1 -RepoRoot .
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-NativeRendererAndroidScaffoldStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAuthorityStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-QuestBrokerAdmissionStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-NativeRendererAndroidScaffoldStatic.ps1 -RepoRoot .
 ```
 
 These are real entrypoint tests, not stateless receipt projections. Standalone

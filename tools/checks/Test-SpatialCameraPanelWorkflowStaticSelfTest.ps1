@@ -64,7 +64,7 @@ function Invoke-Gate {
     $previous = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $output = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $gate -RepoRoot $Root 2>&1)
+        $output = @(& pwsh -NoProfile -ExecutionPolicy Bypass -File $gate -RepoRoot $Root 2>&1)
         $exitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previous

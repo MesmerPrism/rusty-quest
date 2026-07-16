@@ -41,8 +41,8 @@ The accepted target to return to is:
 Use:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeOpenXrHandLabAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeOpenXrHandLabAndroid.ps1 -Build
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeOpenXrHandLabAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeOpenXrHandLabAndroid.ps1 -Build
 ```
 
 The first command is dry-run/static validation. The `-Build` form produces the
@@ -85,7 +85,7 @@ The rig implementation is public, but the recorded rig pack is supplied as an
 explicit build input and is not committed to Rusty Quest:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialHandLabAndroid.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialHandLabAndroid.ps1 `
   -Build `
   -HandMeshRigAssetDir <asset-root-containing-spatial-ecs-replay>
 ```
@@ -131,8 +131,8 @@ geometry unless a public topology path is observed at runtime.
 Use:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialHandLabAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialHandLabAndroid.ps1 -Build -HandMeshRigAssetDir <asset-root-containing-spatial-ecs-replay>
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialHandLabAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialHandLabAndroid.ps1 -Build -HandMeshRigAssetDir <asset-root-containing-spatial-ecs-replay>
 adb shell setprop debug.rustyquest.spatial.avatar_hands.visible true
 ```
 
@@ -199,7 +199,7 @@ The live joint recorder is controlled by a low-rate app-scoped external control
 file, not by high-rate Android properties:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 `
   -Serial <quest-serial> `
   -Action Prepare `
   -MaterialProfile unity-basic-reference `
@@ -210,17 +210,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendere
 # Launch or relaunch the native hand lab after Prepare so startup material
 # properties are consumed by NativeActivity.
 
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 `
   -Serial <quest-serial> `
   -Action Start `
   -SessionId hand-joints-test-001 `
   -MaxFrames 900
 
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 `
   -Serial <quest-serial> `
   -Action Stop
 
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererHandJointCapture.ps1 `
   -Serial <quest-serial> `
   -Action PullAndInspect `
   -SessionId hand-joints-test-001

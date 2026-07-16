@@ -1,4 +1,5 @@
 param(
+    [string]$RunCapsule = "",
     [string]$ApkPath = "target\native-renderer-android\rusty-quest-native-renderer.apk",
     [string]$ProfilePath = "",
     [ValidateSet("ReplayVisualProof", "LiveVisualDiagnosticCaveat", "EnvironmentDepthParticles", "PrivateParticleCanary", "ParticleAdapterConformance")]
@@ -10,6 +11,7 @@ param(
     [string]$AdbServerPort = $env:RUSTY_QUEST_ADB_SERVER_PORT,
     [string]$PackageName = "io.github.mesmerprism.rustyquest.native_renderer",
     [string]$Activity = "io.github.mesmerprism.rustyquest.native_renderer/android.app.NativeActivity",
+    [ValidateRange(1, 1800)][int]$RunIsolationMutexTimeoutSeconds = 120,
     [string[]]$ScreenshotTargetUvRects = @(),
     [int]$MinimumNonFlatScreenshotTargetRects = 1,
     [switch]$SkipInstall,
@@ -32,7 +34,8 @@ param(
     [int]$MinimumEnvironmentDepthCenterWindowValidCount = 0,
     [string]$PostProfileAndroidPropertyName = "",
     [string]$PostProfileAndroidPropertyValue = "",
-    [switch]$StopAfterRun
+    [switch]$StopAfterRun,
+    [switch]$AllowLegacyLooseInputs
 )
 
 $ErrorActionPreference = "Stop"
@@ -127,11 +130,14 @@ function Invoke-AdbCommand {
     $process = $null
     try {
         $process = Start-Process -FilePath $script:ResolvedAdb -ArgumentList $quotedArgs -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -PassThru -WindowStyle Hidden
+        $process.Handle | Out-Null
         if (-not $process.WaitForExit([Math]::Max(1, $TimeoutSeconds) * 1000)) {
             try { $process.Kill($true) } catch {}
             $exitCode = 124
             $output = "adb command timed out after $TimeoutSeconds seconds."
         } else {
+            $process.WaitForExit()
+            $process.Refresh()
             $stdout = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -Raw -LiteralPath $stdoutPath } else { "" }
             $stderr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -Raw -LiteralPath $stderrPath } else { "" }
             $exitCode = $process.ExitCode
@@ -165,7 +171,7 @@ function Invoke-CheckedPowershell {
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $output = & powershell @Arguments 2>&1
+        $output = & pwsh @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
@@ -177,6 +183,23 @@ function Invoke-CheckedPowershell {
 }
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
+$capsule = $null
+$capsuleValidation = $null
+if ([string]::IsNullOrWhiteSpace($RunCapsule)) {
+    if (-not $AllowLegacyLooseInputs) {
+        throw "-RunCapsule is required for an isolated APK launch. Use -AllowLegacyLooseInputs only for explicit historical compatibility."
+    }
+} else {
+    $resolvedCapsulePath = if ([IO.Path]::IsPathRooted($RunCapsule)) { $RunCapsule } else { Join-Path $repoRoot $RunCapsule }
+    $capsuleValidationText = & pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "Test-ApkRunCapsule.ps1") -CapsulePath $resolvedCapsulePath -ExpectedLane native-renderer-android
+    if ($LASTEXITCODE -ne 0) { throw "APK run capsule validation failed: $resolvedCapsulePath" }
+    $capsuleValidation = ($capsuleValidationText -join "`n") | ConvertFrom-Json
+    $capsule = Get-Content -LiteralPath $capsuleValidation.capsule_path -Raw | ConvertFrom-Json
+    $ApkPath = [string]$capsule.apk.path
+    $ProfilePath = [string]$capsule.runtime_profile.path
+    $PackageName = [string]$capsule.android.package_name
+    $Activity = [string]$capsule.android.activity
+}
 $defaultReplayProfilePath = "fixtures\runtime-profiles\quest-native-renderer-replay-visual-proof.profile.json"
 $defaultLiveDiagnosticProfilePath = "fixtures\runtime-profiles\quest-native-renderer-live-hand-visual-diagnostic.profile.json"
 $defaultEnvironmentDepthParticlesProfilePath = "fixtures\runtime-profiles\quest-native-renderer-native-passthrough-meta-environment-depth-particles.profile.json"
@@ -203,6 +226,9 @@ $resolvedProfile = if ([System.IO.Path]::IsPathRooted($ProfilePath)) {
 if (-not (Test-Path $resolvedApk)) {
     throw "APK not found: $resolvedApk"
 }
+$capsuleApkPath = (Resolve-Path -LiteralPath $resolvedApk).Path
+Import-Module (Join-Path $PSScriptRoot "lib\QuestRunIsolation.psm1") -Force
+if ($null -ne $capsule) { $resolvedApk = Get-QuestRunCapsuleInstallApk -RepoRoot $repoRoot -Capsule $capsule }
 if (-not (Test-Path $resolvedProfile)) {
     throw "Runtime profile not found: $resolvedProfile"
 }
@@ -233,6 +259,7 @@ $permissionPregrantPath = Join-Path $OutDir "permission-pregrant.json"
 $evidenceSummaryPath = Join-Path $OutDir "runtime-evidence-summary.json"
 $screenshotCropOutDir = Join-Path $OutDir "screenshot-crops"
 $summaryPath = Join-Path $OutDir "run-summary.json"
+$isolationReceiptPath = Join-Path $OutDir "run-isolation-receipt.json"
 $remoteScreenshotPath = "/data/local/tmp/rusty_quest_native_renderer_replay_smoke.png"
 
 $summary = [ordered]@{
@@ -247,6 +274,7 @@ $summary = [ordered]@{
     package_name = $PackageName
     activity = $Activity
     apk_path = (Resolve-Path $resolvedApk).Path
+    capsule_apk_path = $capsuleApkPath
     profile_path = (Resolve-Path $resolvedProfile).Path
     evidence_mode = $EvidenceMode
     out_dir = (Resolve-Path $OutDir).Path
@@ -279,6 +307,11 @@ $summary = [ordered]@{
     minimum_environment_depth_center_confidence = $MinimumEnvironmentDepthCenterConfidence
     minimum_environment_depth_center_window_valid_count = $MinimumEnvironmentDepthCenterWindowValidCount
     stop_after_run = [bool]$StopAfterRun
+    cleanup_always = $true
+    run_capsule_path = if ($null -eq $capsuleValidation) { "" } else { [string]$capsuleValidation.capsule_path }
+    run_capsule_sha256 = if ($null -eq $capsuleValidation) { "" } else { [string]$capsuleValidation.capsule_sha256 }
+    legacy_loose_inputs = [bool]$AllowLegacyLooseInputs
+    isolation_receipt_path = $isolationReceiptPath
     property_plan_path = $propertyPlanPath
     permission_pregrant_path = $permissionPregrantPath
     raw_logcat_path = $rawLogcatPath
@@ -291,12 +324,31 @@ $summary = [ordered]@{
     post_profile_android_property_override_requested = (-not [string]::IsNullOrWhiteSpace($PostProfileAndroidPropertyName))
 }
 
+$propertyManifestPath = if ($null -eq $capsule -or $null -eq $capsule.property_manifest) {
+    Join-Path $repoRoot "fixtures\native-renderer\native-renderer-property-manifest.json"
+} else {
+    [string]$capsule.property_manifest.path
+}
+$propertyManifest = Get-Content -LiteralPath $propertyManifestPath -Raw | ConvertFrom-Json
+$isolationPropertyNames = @($propertyManifest.properties | ForEach-Object { [string]$_.name })
+if (-not [string]::IsNullOrWhiteSpace($PostProfileAndroidPropertyName)) { $isolationPropertyNames += $PostProfileAndroidPropertyName }
+$isolationContext = Enter-QuestRunIsolation `
+    -Adb $script:ResolvedAdb `
+    -Serial $Serial `
+    -AdbServerPort $script:ResolvedAdbServerPort `
+    -PackageName $PackageName `
+    -PropertyNames $isolationPropertyNames `
+    -ReceiptPath $isolationReceiptPath `
+    -MutexTimeoutSeconds $RunIsolationMutexTimeoutSeconds
+$cleanupFailureMessage = ""
+
 try {
     $state = Invoke-AdbCommand -Name "adb get-state" -Arguments @("get-state")
     $deviceState = $state.output.Trim()
     if ($deviceState -ne "device") {
         throw "ADB target is not ready: $deviceState"
     }
+    Clear-QuestRunIsolationProperties -Context $isolationContext
     $summary.device_state = $deviceState
     $summary.device_model = (Invoke-AdbCommand -Name "device model" -Arguments @("shell", "getprop", "ro.product.model")).output.Trim()
     $summary.device_build = (Invoke-AdbCommand -Name "device build" -Arguments @("shell", "getprop", "ro.build.version.incremental")).output.Trim()
@@ -325,6 +377,7 @@ try {
         "-File", (Join-Path $PSScriptRoot "Apply-RuntimeProfile.ps1"),
         "-ProfilePath", (Resolve-Path $resolvedProfile).Path,
         "-Execute",
+        "-PropertyScopeMode", "CompleteManifest",
         "-Out", $propertyPlanPath,
         "-Adb", $script:ResolvedAdb,
         "-Serial", $Serial
@@ -461,18 +514,30 @@ try {
     }
     $summary.runtime_evidence_output = Invoke-CheckedPowershell -Name "native renderer runtime evidence" -Arguments $evidenceArgs
 
-    if ($StopAfterRun) {
-        $summary.stop_output = (Invoke-AdbCommand -Name "stop native renderer" -Arguments @("shell", "am", "force-stop", $PackageName) -AllowFailure).output
-    }
-
     $summary.status = "passed"
 } catch {
     $summary.status = "failed"
     $summary.error = $_.Exception.Message
     throw
 } finally {
+    try {
+        $cleanupReceipt = Exit-QuestRunIsolation -Context $isolationContext
+        $summary.cleanup_status = [string]$cleanupReceipt.status
+        $summary.cleanup_property_restore_count = @($cleanupReceipt.property_restore).Count
+        if ([string]$cleanupReceipt.status -ne "pass" -and [string]$summary.status -eq "passed") {
+            $summary.status = "failed"
+            $summary.error = "Quest run isolation cleanup was partial."
+            $cleanupFailureMessage = $summary.error
+        }
+    } catch {
+        $summary.cleanup_status = "failed"
+        $summary.cleanup_error = $_.Exception.Message
+        if ([string]$summary.status -eq "passed") { $summary.status = "failed" }
+        $cleanupFailureMessage = "Quest run isolation cleanup failed: $($_.Exception.Message)"
+    }
     $summary.completed_at = (Get-Date).ToUniversalTime().ToString("o")
     $summary | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -Path $summaryPath
 }
+if (-not [string]::IsNullOrWhiteSpace($cleanupFailureMessage)) { throw $cleanupFailureMessage }
 
 Write-Output "Native renderer no-real-hands replay smoke summary: $summaryPath"

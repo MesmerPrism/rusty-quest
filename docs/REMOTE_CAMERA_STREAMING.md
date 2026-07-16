@@ -206,15 +206,15 @@ Run:
 
 ```powershell
 cargo test -p rusty-quest-remote-camera
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath fixtures\runtime-profiles\quest-remote-camera-q2q-diagnostic.profile.json -DryRun -Out local-artifacts\remote-camera-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath fixtures\runtime-profiles\quest-remote-camera-q2q-diagnostic.profile.json -DryRun -Out local-artifacts\remote-camera-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 ```
 
 The broker package also has static and compile validation:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ManifoldBrokerAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 -LegacyCameraP2pCompatibility
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ManifoldBrokerAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-ManifoldBrokerAndroid.ps1 -LegacyCameraP2pCompatibility
 ```
 
 Live headset evidence for the Quest-side direct TCP broker lane was first
@@ -391,7 +391,7 @@ gate (UDP, TCP, and sustained bidirectional TCP with CRC), and the monitored
 duplex stereo run with final route clear:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-Qcl100NativeStereoPromotionCandidate.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-Qcl100NativeStereoPromotionCandidate.ps1 `
   -OwnerLeaseId <owner-lease-id> -ClientLeaseId <client-lease-id> `
   -InfrastructureWifiSsid <infrastructure-ssid>
 ```
@@ -632,5 +632,5 @@ not QCL099 promotion and not QCL100 duplex promotion.
 The static/self-test gate is:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-Qcl100CrashRelaunchWatchStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-Qcl100CrashRelaunchWatchStatic.ps1 -RepoRoot .
 ```

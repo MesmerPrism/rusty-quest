@@ -4161,11 +4161,15 @@ Assert-Contains "Build script" $buildScript 'spatial_environment_depth_real_prov
 Assert-Contains "Build script" $buildScript 'spatial_environment_depth_data_source = "spatial-fallback-depth-descriptor"'
 Assert-Contains "Build script" $buildScript 'spatial_multimodal_input_default_enabled = $false'
 Assert-Contains "Build script" $buildScript 'native_spatial_controller_actions_default_enabled = $false'
-Assert-Contains "Build script" $buildScript '$PrivateLayerProfilePath = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_PRIVATE_LAYER_PROFILE'
-Assert-Contains "Build script" $buildScript '$OpaqueGuideShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_GUIDE_SHADER'
-Assert-Contains "Build script" $buildScript '$OpaqueProjectionShader = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_SHADER'
-Assert-Contains "Build script" $buildScript '$OpaqueProjectionEffect = $env:RUSTY_QUEST_SPATIAL_CAMERA_PANEL_OPAQUE_PROJECTION_EFFECT'
-Assert-Contains "Build script" $buildScript '$HandMeshRigAssetDir = $env:RUSTY_QUEST_SPATIAL_HAND_MESH_RIG_ASSET_DIR'
+Assert-Contains "Build script" $buildScript '[string]$PrivateLayerProfilePath = ""'
+Assert-Contains "Build script" $buildScript '[string]$OpaqueGuideShader = ""'
+Assert-Contains "Build script" $buildScript '[string]$OpaqueProjectionShader = ""'
+Assert-Contains "Build script" $buildScript '[string]$OpaqueProjectionEffect = ""'
+Assert-Contains "Build script" $buildScript '[string]$HandMeshRigAssetDir = ""'
+Assert-Contains "Build script" $buildScript 'ambient_spatial_feature_environment_ignored'
+Assert-Contains "Build script" $buildScript 'RUSTY_QUEST_SPATIAL_BUILD_ROOT'
+Assert-Contains "Build script" $buildScript 'Content-addressed Spatial APK output already exists'
+Assert-Contains "Build script" $buildScript '-AppId is required so each Spatial project has a distinct Android identity'
 Assert-Contains "Build script" $buildScript 'function Test-HandMeshRigAssetPack'
 Assert-Contains "Build script" $buildScript 'openxr_joint_row_count_per_hand'
 Assert-Contains "Build script" $buildScript 'spatial_hand_mesh_rig_packaged = '
@@ -4173,10 +4177,10 @@ Assert-Contains "Build script" $buildScript 'spatial_hand_mesh_rig_skinning = "c
 Assert-Contains "Build script" $buildScript 'spatial_hand_mesh_rig_surface_anchors = "triangle-index-plus-barycentric"'
 Assert-Contains "Build script" $buildScript 'spatial_hand_alignment_viewer_markers_enabled_default = '
 Assert-Contains "Build script" $buildScript 'spatial_hand_billboard_source_default = '
-Assert-Contains "Build script" $buildScript '$PrivateSurfaceParticleProfilePath = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PROFILE'
-Assert-Contains "Build script" $buildScript '$PrivateSurfaceParticleShader = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_SHADER'
-Assert-Contains "Build script" $buildScript '$PrivateSurfaceParticlePayloadDir = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_PAYLOAD_DIR'
-Assert-Contains "Build script" $buildScript '$PrivateSurfaceParticleMarkerPrefix = $env:RUSTY_QUEST_SPATIAL_SURFACE_PRIVATE_PARTICLE_MARKER_PREFIX'
+Assert-Contains "Build script" $buildScript '[string]$PrivateSurfaceParticleProfilePath = ""'
+Assert-Contains "Build script" $buildScript '[string]$PrivateSurfaceParticleShader = ""'
+Assert-Contains "Build script" $buildScript '[string]$PrivateSurfaceParticlePayloadDir = ""'
+Assert-Contains "Build script" $buildScript '[string]$PrivateSurfaceParticleMarkerPrefix = ""'
 Assert-Contains "Build script" $buildScript 'Both -OpaqueGuideShader and -OpaqueProjectionShader are required'
 Assert-Contains "Build script" $buildScript 'Private surface-particle hook inputs require -PrivateSurfaceParticleProfilePath.'
 Assert-Contains "Build script" $buildScript 'Test-PrivateSurfaceParticleProfile'
@@ -4804,7 +4808,7 @@ Assert-Contains "README" $readme "right secondary/B button"
 Assert-Contains "README" $readme "not MRUK"
 Assert-Contains "README" $readme "Stage-SpatialCameraPanelAsset.ps1"
 Assert-Contains "README" $readme "RequireSpatialAssetModel"
-Assert-Contains "README" $readme "/sdcard/Android/data/io.github.mesmerprism.rustyquest.spatial_camera_panel/files/v.mp4"
+Assert-Contains "README" $readme "/sdcard/Android/data/<project-specific-package>/files/v.mp4"
 Assert-Contains "README" $readme "nativeUpdatePrivateLayerOverride"
 Assert-Contains "README" $readme "nativeUpdatePrivateLayerDepthAlignment"
 Assert-Contains "Implementation notes" $notes "Private effect formulas"

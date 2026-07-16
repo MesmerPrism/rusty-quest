@@ -1,5 +1,6 @@
 param(
     [string]$RepoRoot,
+    [string]$RunCapsule = "",
     [string]$ApkPath = "target\spatial-camera-panel-android\rusty-quest-spatial-camera-panel.apk",
     [string]$OutDir = "",
     [int]$RunSeconds = 12,
@@ -8,10 +9,11 @@ param(
     [string]$AdbServerPort = $env:RUSTY_QUEST_ADB_SERVER_PORT,
     [string]$PackageName = "io.github.mesmerprism.rustyquest.spatial_camera_panel",
     [string]$Activity = "io.github.mesmerprism.rustyquest.spatial_camera_panel/.SpatialCameraPanelActivity",
+    [ValidateRange(1, 1800)][int]$RunIsolationMutexTimeoutSeconds = 120,
     [int]$ReaderMaxImages = 4,
     [bool]$PanelShellVisible = $true,
-    [string]$VideoPath = $env:RUSTY_QUEST_SPATIAL_VIDEO_PATH,
-    [string]$VideoSourcePath = $env:RUSTY_QUEST_SPATIAL_VIDEO_SOURCE_PATH,
+    [string]$VideoPath = "",
+    [string]$VideoSourcePath = "",
     [string]$VideoDestinationRelativePath = "v.mp4",
     [int]$VideoWidth = 3840,
     [int]$VideoHeight = 1920,
@@ -20,13 +22,13 @@ param(
     [string]$VideoStereoLayout = "side-by-side-left-right",
     [double]$VideoOpacity = 1.0,
     [bool]$VideoLooping = $true,
-    [string]$DepthLayerPolicy = $env:RUSTY_QUEST_SPATIAL_DEPTH_LAYER_POLICY,
-    [string]$ProjectionCarrier = $env:RUSTY_QUEST_SPATIAL_PROJECTION_CARRIER,
-    [string]$AssetMeshUri = $env:RUSTY_QUEST_SPATIAL_ASSET_MODEL_URI,
-    [string]$AssetSourcePath = $env:RUSTY_QUEST_SPATIAL_ASSET_MODEL_SOURCE_PATH,
-    [string]$AssetConvertedMeshPath = $env:RUSTY_QUEST_SPATIAL_ASSET_MODEL_CONVERTED_MESH_PATH,
+    [string]$DepthLayerPolicy = "",
+    [string]$ProjectionCarrier = "",
+    [string]$AssetMeshUri = "",
+    [string]$AssetSourcePath = "",
+    [string]$AssetConvertedMeshPath = "",
     [string]$AssetDestinationRelativePath = "spatial-assets/model.glb",
-    [string]$AssetSourceFormat = $env:RUSTY_QUEST_SPATIAL_ASSET_MODEL_SOURCE_FORMAT,
+    [string]$AssetSourceFormat = "",
     [string]$AssetConformanceLockPath = "",
     [string]$AssetLabel = "staged-asset",
     [string]$AssetPositionM = "-0.55;1.15;-1.35",
@@ -51,7 +53,8 @@ param(
     [int]$MinimumSyntheticRedPixels = 1000,
     [int]$MinimumSyntheticGreenPixels = 1000,
     [double]$MinimumSyntheticTargetPixelRatio = 0.01,
-    [switch]$SkipForceStopKnownXrPackages
+    [switch]$ForceStopKnownXrPackages,
+    [switch]$AllowLegacyLooseInputs
 )
 
 $ErrorActionPreference = "Stop"
@@ -161,7 +164,7 @@ function Invoke-CheckedPowershell {
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $output = & powershell @Arguments 2>&1
+        $output = & pwsh @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
@@ -376,6 +379,22 @@ if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 }
 $repoRootPath = Resolve-Path -LiteralPath $RepoRoot
+$capsule = $null
+$capsuleValidation = $null
+if ([string]::IsNullOrWhiteSpace($RunCapsule)) {
+    if (-not $AllowLegacyLooseInputs) {
+        throw "-RunCapsule is required for an isolated Spatial APK launch. Use -AllowLegacyLooseInputs only for explicit historical compatibility."
+    }
+} else {
+    $resolvedCapsulePath = if ([IO.Path]::IsPathRooted($RunCapsule)) { $RunCapsule } else { Join-Path $repoRootPath $RunCapsule }
+    $capsuleValidationText = & pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "Test-ApkRunCapsule.ps1") -CapsulePath $resolvedCapsulePath -ExpectedLane spatial-camera-panel-android
+    if ($LASTEXITCODE -ne 0) { throw "APK run capsule validation failed: $resolvedCapsulePath" }
+    $capsuleValidation = ($capsuleValidationText -join "`n") | ConvertFrom-Json
+    $capsule = Get-Content -LiteralPath $capsuleValidation.capsule_path -Raw | ConvertFrom-Json
+    $ApkPath = [string]$capsule.apk.path
+    $PackageName = [string]$capsule.android.package_name
+    $Activity = [string]$capsule.android.activity
+}
 $assetConformanceLockResolved = if ([string]::IsNullOrWhiteSpace($AssetConformanceLockPath)) {
     Join-Path $repoRootPath "apps\spatial-camera-panel-android\morphospace\conformance-locks\spatial-asset-model.feature.lock.json"
 } elseif ([System.IO.Path]::IsPathRooted($AssetConformanceLockPath)) {
@@ -418,6 +437,9 @@ $resolvedApk = if ([System.IO.Path]::IsPathRooted($ApkPath)) {
 if (-not (Test-Path -LiteralPath $resolvedApk)) {
     throw "APK not found: $resolvedApk"
 }
+$capsuleApkPath = (Resolve-Path -LiteralPath $resolvedApk).Path
+Import-Module (Join-Path $PSScriptRoot "lib\QuestRunIsolation.psm1") -Force
+if ($null -ne $capsule) { $resolvedApk = Get-QuestRunCapsuleInstallApk -RepoRoot $repoRoot -Capsule $capsule }
 
 if ([string]::IsNullOrWhiteSpace($OutDir)) {
     $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
@@ -518,6 +540,7 @@ $foregroundProofPath = Join-Path $OutDir "foreground-proof.json"
 $screenshotPath = Join-Path $OutDir "screencap.png"
 $pixelSummaryPath = Join-Path $OutDir "screenshot-pixel-classification.json"
 $remoteScreenshotPath = "/data/local/tmp/rusty-quest-spatial-camera-hwb-projection-smoke.png"
+$isolationReceiptPath = Join-Path $OutDir "run-isolation-receipt.json"
 
 $summary = [ordered]@{
     '$schema' = "rusty.quest.spatial_camera_panel.camera_hwb_projection_smoke.v1"
@@ -537,6 +560,7 @@ $summary = [ordered]@{
     foreground_proof_path = $foregroundProofPath
     foreground_validation_passed = $false
     apk_path = (Resolve-Path -LiteralPath $resolvedApk).Path
+    capsule_apk_path = $capsuleApkPath
     apk_sha256 = $apkSha256
     out_dir = (Resolve-Path -LiteralPath $OutDir).Path
     run_seconds = [Math]::Max(1, $RunSeconds)
@@ -550,6 +574,11 @@ $summary = [ordered]@{
     spatial_scene_data_appop_mode = ""
     clear_logcat_requested = [bool]$ClearLogcat
     stop_after_run = [bool]$StopAfterRun
+    cleanup_always = $true
+    run_capsule_path = if ($null -eq $capsuleValidation) { "" } else { [string]$capsuleValidation.capsule_path }
+    run_capsule_sha256 = if ($null -eq $capsuleValidation) { "" } else { [string]$capsuleValidation.capsule_sha256 }
+    legacy_loose_inputs = [bool]$AllowLegacyLooseInputs
+    isolation_receipt_path = $isolationReceiptPath
     allow_missing_markers = [bool]$AllowMissingMarkers
     require_public_multistack_projection = [bool]$RequirePublicMultiStackProjection
     require_spatial_video_projection = [bool]$RequireSpatialVideoProjection
@@ -638,6 +667,22 @@ $summary = [ordered]@{
 }
 
 $logcatProcess = $null
+$isolationPropertyNames = if ($null -ne $capsule -and $null -ne $capsule.property_manifest) {
+    $propertyManifest = Get-Content -LiteralPath ([string]$capsule.property_manifest.path) -Raw | ConvertFrom-Json
+    @($propertyManifest.properties | ForEach-Object { [string]$_.name } | Sort-Object -Unique)
+} else {
+    $scriptText = Get-Content -LiteralPath $PSCommandPath -Raw
+    @([regex]::Matches($scriptText, 'setprop",\s*"(?<name>debug\.rustyquest\.[^"]+)"') | ForEach-Object { [string]$_.Groups['name'].Value } | Sort-Object -Unique)
+}
+$isolationContext = Enter-QuestRunIsolation `
+    -Adb $script:ResolvedAdb `
+    -Serial $Serial `
+    -AdbServerPort $script:ResolvedAdbServerPort `
+    -PackageName $PackageName `
+    -PropertyNames $isolationPropertyNames `
+    -ReceiptPath $isolationReceiptPath `
+    -MutexTimeoutSeconds $RunIsolationMutexTimeoutSeconds
+$cleanupFailureMessage = ""
 
 try {
     $state = Invoke-AdbCommand -Name "adb get-state" -Arguments @("get-state")
@@ -645,6 +690,7 @@ try {
     if ($summary.device_state -ne "device") {
         throw "ADB target is not ready: $($summary.device_state)"
     }
+    Clear-QuestRunIsolationProperties -Context $isolationContext
     Save-Text -Path (Join-Path $OutDir "adb-device-state.txt") -Text $summary.device_state
     $summary.device_model = (Invoke-AdbCommand -Name "device model" -Arguments @("shell", "getprop", "ro.product.model")).output.Trim()
     $summary.device_build = (Invoke-AdbCommand -Name "device build" -Arguments @("shell", "getprop", "ro.build.version.incremental")).output.Trim()
@@ -716,7 +762,7 @@ try {
         if ($null -ne $script:ResolvedAdbServerPort) {
             $stageArgs += @("-AdbServerPort", $script:ResolvedAdbServerPort)
         }
-        $stageOutput = & powershell @stageArgs 2>&1
+        $stageOutput = & pwsh @stageArgs 2>&1
         $stageExitCode = $LASTEXITCODE
         Save-Text -Path $stageOutputPath -Text ($stageOutput -join "`n")
         if ($stageExitCode -ne 0) {
@@ -763,7 +809,7 @@ try {
         if ($null -ne $script:ResolvedAdbServerPort) {
             $assetStageArgs += @("-AdbServerPort", $script:ResolvedAdbServerPort)
         }
-        $assetStageOutput = & powershell @assetStageArgs 2>&1
+        $assetStageOutput = & pwsh @assetStageArgs 2>&1
         $assetStageExitCode = $LASTEXITCODE
         Save-Text -Path $assetStageOutputPath -Text ($assetStageOutput -join "`n")
         if ($assetStageExitCode -ne 0) {
@@ -840,7 +886,7 @@ try {
     }
 
     $forceStoppedPackages = @()
-    if (-not $SkipForceStopKnownXrPackages) {
+    if ($ForceStopKnownXrPackages) {
         $knownXrPackages = @(
             $PackageName,
             "io.github.mesmerprism.rustyhostess.t",
@@ -861,7 +907,7 @@ try {
         $forceStoppedPackages += [pscustomobject]@{
             package = $PackageName
             exit_code = 0
-            output = "only target package stopped; known XR package cleanup skipped"
+            output = "only target package stopped; unrelated XR packages preserved"
         }
     }
     $summary.force_stopped_known_xr_packages = $forceStoppedPackages
@@ -1510,9 +1556,25 @@ try {
             $summary.logcat_stop_error = $_.Exception.Message
         }
     }
+    try {
+        $cleanupReceipt = Exit-QuestRunIsolation -Context $isolationContext
+        $summary.cleanup_status = [string]$cleanupReceipt.status
+        $summary.cleanup_property_restore_count = @($cleanupReceipt.property_restore).Count
+        if ([string]$cleanupReceipt.status -ne "pass" -and [string]$summary.status -in @("passed", "completed")) {
+            $summary.status = "failed"
+            $summary.error = "Quest run isolation cleanup was partial."
+            $cleanupFailureMessage = $summary.error
+        }
+    } catch {
+        $summary.cleanup_status = "failed"
+        $summary.cleanup_error = $_.Exception.Message
+        if ([string]$summary.status -in @("passed", "completed")) { $summary.status = "failed" }
+        $cleanupFailureMessage = "Quest run isolation cleanup failed: $($_.Exception.Message)"
+    }
     $summary.completed_at = (Get-Date).ToUniversalTime().ToString("o")
     $summary | ConvertTo-Json -Depth 8 | Set-Content -Encoding UTF8 -Path $summaryPath
 }
+if (-not [string]::IsNullOrWhiteSpace($cleanupFailureMessage)) { throw $cleanupFailureMessage }
 
 Write-Output "Spatial Camera Panel camera_hwb_projection_smoke evidence: $summaryPath"
 Write-Output "APK_SHA256=$apkSha256"

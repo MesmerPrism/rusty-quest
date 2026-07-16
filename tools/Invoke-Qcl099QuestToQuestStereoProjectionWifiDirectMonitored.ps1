@@ -566,7 +566,7 @@ Write-Host "[qcl099-monitor] starting run_id=$RunId timeout=${OverallTimeoutSeco
 
 try {
     $process = Start-Process `
-        -FilePath "powershell" `
+        -FilePath "pwsh" `
         -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encodedCommand) `
         -WorkingDirectory $runnerWorkingDirectory `
         -RedirectStandardOutput $stdoutPath `
