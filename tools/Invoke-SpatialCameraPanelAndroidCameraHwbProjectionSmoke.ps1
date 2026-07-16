@@ -164,7 +164,7 @@ function Invoke-CheckedPowershell {
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $output = & powershell @Arguments 2>&1
+        $output = & pwsh @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
@@ -387,7 +387,7 @@ if ([string]::IsNullOrWhiteSpace($RunCapsule)) {
     }
 } else {
     $resolvedCapsulePath = if ([IO.Path]::IsPathRooted($RunCapsule)) { $RunCapsule } else { Join-Path $repoRootPath $RunCapsule }
-    $capsuleValidationText = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "Test-ApkRunCapsule.ps1") -CapsulePath $resolvedCapsulePath -ExpectedLane spatial-camera-panel-android
+    $capsuleValidationText = & pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "Test-ApkRunCapsule.ps1") -CapsulePath $resolvedCapsulePath -ExpectedLane spatial-camera-panel-android
     if ($LASTEXITCODE -ne 0) { throw "APK run capsule validation failed: $resolvedCapsulePath" }
     $capsuleValidation = ($capsuleValidationText -join "`n") | ConvertFrom-Json
     $capsule = Get-Content -LiteralPath $capsuleValidation.capsule_path -Raw | ConvertFrom-Json
@@ -762,7 +762,7 @@ try {
         if ($null -ne $script:ResolvedAdbServerPort) {
             $stageArgs += @("-AdbServerPort", $script:ResolvedAdbServerPort)
         }
-        $stageOutput = & powershell @stageArgs 2>&1
+        $stageOutput = & pwsh @stageArgs 2>&1
         $stageExitCode = $LASTEXITCODE
         Save-Text -Path $stageOutputPath -Text ($stageOutput -join "`n")
         if ($stageExitCode -ne 0) {
@@ -809,7 +809,7 @@ try {
         if ($null -ne $script:ResolvedAdbServerPort) {
             $assetStageArgs += @("-AdbServerPort", $script:ResolvedAdbServerPort)
         }
-        $assetStageOutput = & powershell @assetStageArgs 2>&1
+        $assetStageOutput = & pwsh @assetStageArgs 2>&1
         $assetStageExitCode = $LASTEXITCODE
         Save-Text -Path $assetStageOutputPath -Text ($assetStageOutput -join "`n")
         if ($assetStageExitCode -ne 0) {

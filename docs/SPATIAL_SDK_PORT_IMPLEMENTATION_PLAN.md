@@ -579,8 +579,8 @@ this public lane.
 ## Build
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 -Build
 ```
 
 For a build where the generic layer-control panel buttons visibly change the
@@ -588,7 +588,7 @@ active camera projection layer, pass the downstream opaque shader profile into
 the build wrapper:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-SpatialCameraPanelAndroid.ps1 `
   -Build `
   -PrivateLayerProfilePath <path-to-private-layer-profile.json>
 ```
@@ -601,7 +601,7 @@ For generic 3D asset validation, stage a GLB/GLTF or pass a local FBX plus a
 converted GLB/GLTF export into the headset smoke wrapper:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
   -Serial <quest-serial> `
   -AssetSourcePath <local-source-model.fbx> `
   -AssetConvertedMeshPath <converted-model.glb> `

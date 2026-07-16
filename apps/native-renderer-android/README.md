@@ -558,8 +558,8 @@ slots and are not packaged here.
 Build:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Resolve-NativeAppBuild.ps1 -AppSpec .\fixtures\native-app-builds\native-openxr-hand-lab.app.json -DryRun
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1 -AppBuildLock .\local-artifacts\native-app-builds\native_openxr_hand_lab\<resolution-fingerprint>\feature-lock.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Resolve-NativeAppBuild.ps1 -AppSpec .\fixtures\native-app-builds\native-openxr-hand-lab.app.json -DryRun
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1 -AppBuildLock .\local-artifacts\native-app-builds\native_openxr_hand_lab\<resolution-fingerprint>\feature-lock.json
 ```
 
 Locked builds require a clean exact source commit/tree, use the app-specific
@@ -571,36 +571,36 @@ compatibility escape and is not acceptance evidence.
 Explicit unlocked recorded-replay compatibility build (not acceptance):
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1 -AllowUnlockedDevelopmentBuild -RecordedHandCaptureDir <recorded-hand-capture-dir> -RecordedHandFrameLimit 8 -RequireRecordedHandCapture
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-NativeRendererAndroid.ps1 -AllowUnlockedDevelopmentBuild -RecordedHandCaptureDir <recorded-hand-capture-dir> -RecordedHandFrameLimit 8 -RequireRecordedHandCapture
 ```
 
 Static validation:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-replay-visual-proof.profile.json -DryRun -Out .\local-artifacts\native-renderer-replay-visual-proof-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-camera-quality.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-camera-quality-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-camera-quality-bt601-unorm.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-camera-quality-bt601-unorm-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-low-noise-30.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-low-noise-30-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-low-noise-record-30.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-low-noise-record-30-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-low-latency-60.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-low-latency-60-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-hold-sync.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-hold-sync-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-hold-sync-reader6.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-hold-sync-reader6-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-hold-sync-reader8.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-hold-sync-reader8-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-1280x960.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-1280x960-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-hwb-peripheral-stretch.profile.json -DryRun -Out .\local-artifacts\native-renderer-hwb-peripheral-stretch-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-live-hand-visual-diagnostic.profile.json -DryRun -Out .\local-artifacts\native-renderer-live-hand-visual-diagnostic-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-live-hand-anchor-particles.profile.json -DryRun -Out .\local-artifacts\native-renderer-live-hand-anchor-particles-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json -DryRun -Out .\local-artifacts\native-renderer-solid-black-openxr-hands-anchor-particles-property-write-plan.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-native-passthrough-hands-and-grafts.profile.json -DryRun -Out .\local-artifacts\native-renderer-native-passthrough-hands-and-grafts-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-replay-visual-proof.profile.json -DryRun -Out .\local-artifacts\native-renderer-replay-visual-proof-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-camera-quality.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-camera-quality-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-camera-quality-bt601-unorm.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-camera-quality-bt601-unorm-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-low-noise-30.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-low-noise-30-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-low-noise-record-30.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-low-noise-record-30-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-low-latency-60.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-low-latency-60-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-hold-sync.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-hold-sync-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-hold-sync-reader6.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-hold-sync-reader6-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-hold-sync-reader8.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-hold-sync-reader8-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-direct-hwb-1280x960.profile.json -DryRun -Out .\local-artifacts\native-renderer-direct-hwb-1280x960-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-hwb-peripheral-stretch.profile.json -DryRun -Out .\local-artifacts\native-renderer-hwb-peripheral-stretch-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-live-hand-visual-diagnostic.profile.json -DryRun -Out .\local-artifacts\native-renderer-live-hand-visual-diagnostic-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-live-hand-anchor-particles.profile.json -DryRun -Out .\local-artifacts\native-renderer-live-hand-anchor-particles-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-solid-black-openxr-hands-anchor-particles.profile.json -DryRun -Out .\local-artifacts\native-renderer-solid-black-openxr-hands-anchor-particles-property-write-plan.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-RuntimeProfile.ps1 -ProfilePath .\fixtures\runtime-profiles\quest-native-renderer-native-passthrough-hands-and-grafts.profile.json -DryRun -Out .\local-artifacts\native-renderer-native-passthrough-hands-and-grafts-property-write-plan.json
 ```
 
 Runtime evidence validation for a no-real-hands replay smoke:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ApkRunCapsule.ps1 -Path <content-addressed-output>\run-capsule.json
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -RunCapsule <content-addressed-output>\run-capsule.json -Serial <quest-serial> -RunSeconds 12
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-ApkRunCapsule.ps1 -Path <content-addressed-output>\run-capsule.json
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 -RunCapsule <content-addressed-output>\run-capsule.json -Serial <quest-serial> -RunSeconds 12
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeRendererRuntimeEvidence.ps1 -LogcatPath <filtered-logcat.txt> -ScreenshotPath <screenshot.png> -RequireScreenshot -RequireNonFlatScreenshot -RequireTargetNonFlatScreenshot -RequireHandMeshVisualScreenshot -RequireSdfVisualScreenshot -RequireCameraProjection -RequireReplayVisualProof -RequireGuideGraph -RequireSdfVisual -RequireGpuTimestampReady -RequirePerformanceBudget -RequirePrivateSlotNoPayload
 ```
 
 The wrapper validates the run capsule, installs its APK unless `-SkipInstall`
@@ -626,7 +626,7 @@ priority.
 Display-composite MediaProjection smoke:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererDisplayCompositeSmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-NativeRendererDisplayCompositeSmoke.ps1 -ApkPath target\native-renderer-android\rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12
 ```
 
 The display-composite wrapper installs the APK unless `-SkipInstall` is passed,

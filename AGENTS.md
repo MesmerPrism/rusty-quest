@@ -14,6 +14,11 @@ Project-owned source in this repo is licensed `AGPL-3.0-or-later`. Platform
 SDKs, APKs, generated binaries, headset logs, and tool downloads need separate
 provenance and notice handling.
 
+Use PowerShell `7.6` LTS or newer through `pwsh` for all validation, build,
+launch, and evidence wrappers. Windows PowerShell 5.1 is bootstrap detection
+only. Do not add new Windows PowerShell child routes; child
+processes must resolve the explicit `pwsh` host.
+
 ## Purpose
 
 Rusty Quest owns platform profile contracts and write/readback transports. It
@@ -281,13 +286,13 @@ ordinary serial-scoped ADB work behind a global `adb-server` lease.
 Run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-ApkRunIsolationStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-ApkRunIsolationStatic.ps1 -RepoRoot .
 ```
 
 The Spatial Camera Panel wrapper runs its focused workflow gate before the
 large legacy static ledger:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-SpatialCameraPanelWorkflowStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-SpatialCameraPanelWorkflowStatic.ps1 -RepoRoot .
 ```

@@ -43,7 +43,7 @@ function Assert-SetEquals {
 
 function Invoke-Resolver {
     param([Parameter(Mandatory=$true)][string]$SpecPath)
-    & powershell -NoProfile -ExecutionPolicy Bypass -File $resolver -AppSpec $SpecPath -DryRun
+    & pwsh -NoProfile -ExecutionPolicy Bypass -File $resolver -AppSpec $SpecPath -DryRun
     if ($LASTEXITCODE -ne 0) {
         throw "Resolve-NativeAppBuild.ps1 failed for $SpecPath with exit code $LASTEXITCODE"
     }
@@ -350,7 +350,7 @@ if ($damagedSpecs.Count -eq 0) {
 foreach ($spec in $damagedSpecs) {
     $failed = $false
     try {
-        & powershell -NoProfile -ExecutionPolicy Bypass -File $resolver -AppSpec $spec.FullName -DryRun *> $null
+        & pwsh -NoProfile -ExecutionPolicy Bypass -File $resolver -AppSpec $spec.FullName -DryRun *> $null
         if ($LASTEXITCODE -ne 0) {
             $failed = $true
         }

@@ -171,7 +171,7 @@ function Invoke-CheckedPowershell {
     $previousErrorActionPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        $output = & powershell @Arguments 2>&1
+        $output = & pwsh @Arguments 2>&1
         $exitCode = $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousErrorActionPreference
@@ -191,7 +191,7 @@ if ([string]::IsNullOrWhiteSpace($RunCapsule)) {
     }
 } else {
     $resolvedCapsulePath = if ([IO.Path]::IsPathRooted($RunCapsule)) { $RunCapsule } else { Join-Path $repoRoot $RunCapsule }
-    $capsuleValidationText = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "Test-ApkRunCapsule.ps1") -CapsulePath $resolvedCapsulePath -ExpectedLane native-renderer-android
+    $capsuleValidationText = & pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "Test-ApkRunCapsule.ps1") -CapsulePath $resolvedCapsulePath -ExpectedLane native-renderer-android
     if ($LASTEXITCODE -ne 0) { throw "APK run capsule validation failed: $resolvedCapsulePath" }
     $capsuleValidation = ($capsuleValidationText -join "`n") | ConvertFrom-Json
     $capsule = Get-Content -LiteralPath $capsuleValidation.capsule_path -Raw | ConvertFrom-Json

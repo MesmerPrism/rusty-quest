@@ -37,7 +37,7 @@ Build the broker, Native Renderer, and Spatial Camera Panel APKs first. Then
 run from a clean exact Rusty Quest tree:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-CorrectedReleaseTwoQuestMatrix.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-CorrectedReleaseTwoQuestMatrix.ps1 `
   -Mode Execute `
   -Serial <quest-a>,<quest-b> `
   -ConfirmBoundedLogcatClear `
@@ -66,7 +66,7 @@ repository.
 Exact-source validation is:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-CorrectedReleaseTwoQuestMatrix.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-CorrectedReleaseTwoQuestMatrix.ps1 `
   -Mode Validate `
   -MatrixPath <private-evidence-root>\device-matrix.json
 ```
@@ -79,7 +79,7 @@ Reducer-only replay is a narrow recovery path for validator defects discovered
 after a complete device run has already produced `device-matrix.json`:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-CorrectedReleaseTwoQuestMatrix.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-CorrectedReleaseTwoQuestMatrix.ps1 `
   -Mode ReplayValidate `
   -MatrixPath <private-evidence-root>\device-matrix.json `
   -OutputPath <private-evidence-root>\replay-validation.json
@@ -191,7 +191,7 @@ authority and direct-lane lease.
 The source/static route never contacts a headset:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-CorrectedReleaseTwoQuestMatrixStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-CorrectedReleaseTwoQuestMatrixStatic.ps1 -RepoRoot .
 ```
 
 It parses the orchestrator, checks the exact criteria and suite/provider

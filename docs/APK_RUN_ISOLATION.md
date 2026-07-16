@@ -3,6 +3,10 @@
 Use this contract whenever multiple Rusty Quest projects build or launch APKs
 during the same session, especially when they share one headset.
 
+Build and run wrappers execute under PowerShell `7.6` LTS or newer through
+`pwsh`. An ambient Windows PowerShell 5.1 host is rejected before source,
+package, property, or headset mutation begins.
+
 ## Build Contract
 
 A locked build requires a clean tracked source composition and binds the exact
@@ -51,7 +55,7 @@ property manifest, and binds the package/activity plus exact source
 commit/tree. Validate it before device mutation:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\tools\Test-ApkRunCapsule.ps1 `
   -Path <content-addressed-output>\run-capsule.json
 ```
@@ -59,12 +63,12 @@ powershell -NoProfile -ExecutionPolicy Bypass `
 Launch native and Spatial apps from the capsule:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\tools\Invoke-NativeRendererReplaySmoke.ps1 `
   -RunCapsule <content-addressed-output>\run-capsule.json `
   -Serial <quest-serial>
 
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\tools\Invoke-SpatialCameraPanelAndroidCameraHwbProjectionSmoke.ps1 `
   -RunCapsule <content-addressed-output>\run-capsule.json `
   -Serial <quest-serial>
@@ -108,7 +112,7 @@ copy is content addressed and never substitutes a loose or unhashed APK.
 ## Static Gate
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass `
+pwsh -NoProfile -ExecutionPolicy Bypass `
   -File .\tools\checks\Test-ApkRunIsolationStatic.ps1 `
   -RepoRoot .
 ```

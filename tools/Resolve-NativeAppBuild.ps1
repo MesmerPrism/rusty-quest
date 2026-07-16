@@ -1100,7 +1100,7 @@ $permissionArgumentText = if ($permissions.Count -gt 0) { " -Permissions $($perm
 $mediaProjectionArgumentText = if ($mediaProjectionAppOps -contains "PROJECT_MEDIA") { " -GrantMediaProjectionAppOp" } else { "" }
 $sceneDataArgumentText = if ($sceneDataAppOps -contains $UseSceneDataAppOp) { " -GrantUseSceneDataAppOp" } else { "" }
 $permissionPregrantCommand = if ($permissionPregrantRequired) {
-    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Grant-NativeRendererPermissions.ps1 -PackageName $([string]$app.package_name) -Serial <quest-serial>$permissionArgumentText$mediaProjectionArgumentText$sceneDataArgumentText -Out $permissionPregrantSummaryPath"
+    "pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Grant-NativeRendererPermissions.ps1 -PackageName $([string]$app.package_name) -Serial <quest-serial>$permissionArgumentText$mediaProjectionArgumentText$sceneDataArgumentText -Out $permissionPregrantSummaryPath"
 } else {
     ""
 }
@@ -1123,9 +1123,9 @@ $permissionPregrant = [ordered]@{
 }
 
 $validationCommands = @(
-    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Resolve-NativeAppBuild.ps1 -AppSpec $(Get-RepoRelativePath -RepoRoot $repoRootText -Path $appSpecPath) -DryRun",
-    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath $($generatedOutputs.runtime_profile) -DryRun -PropertyScopeMode CompleteManifest -Out $($generatedOutputs.property_write_plan)",
-    "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Test-NativeAppBuildProfile.ps1"
+    "pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Resolve-NativeAppBuild.ps1 -AppSpec $(Get-RepoRelativePath -RepoRoot $repoRootText -Path $appSpecPath) -DryRun",
+    "pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath $($generatedOutputs.runtime_profile) -DryRun -PropertyScopeMode CompleteManifest -Out $($generatedOutputs.property_write_plan)",
+    "pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Test-NativeAppBuildProfile.ps1"
 )
 
 $moduleRecords = @()
@@ -1234,12 +1234,12 @@ $runtimeProfile = [ordered]@{
     set_properties = $setProperties
     expected_markers = $requiredMarkers
     validation_commands = @(
-        "powershell -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath $($generatedOutputs.runtime_profile) -DryRun -PropertyScopeMode CompleteManifest -Out $($generatedOutputs.property_write_plan)"
+        "pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Apply-RuntimeProfile.ps1 -ProfilePath $($generatedOutputs.runtime_profile) -DryRun -PropertyScopeMode CompleteManifest -Out $($generatedOutputs.property_write_plan)"
     )
 }
 Write-JsonArtifact -Value $runtimeProfile -Path $runtimeProfilePath
 
-& powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRootText "tools\Apply-RuntimeProfile.ps1") -ProfilePath $runtimeProfilePath -DryRun -PropertyScopeMode CompleteManifest -Out $propertyWritePlanPath | Out-Host
+& pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repoRootText "tools\Apply-RuntimeProfile.ps1") -ProfilePath $runtimeProfilePath -DryRun -PropertyScopeMode CompleteManifest -Out $propertyWritePlanPath | Out-Host
 if ($LASTEXITCODE -ne 0) {
     throw "Generated runtime profile failed Apply-RuntimeProfile.ps1 dry-run"
 }

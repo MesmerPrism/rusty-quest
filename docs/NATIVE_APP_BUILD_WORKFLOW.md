@@ -25,7 +25,7 @@ cannot bleed into unrelated apps.
 3. Resolve the spec:
 
    ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File tools/Resolve-NativeAppBuild.ps1 -AppSpec fixtures/native-app-builds/<app>.app.json -DryRun
+   pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Resolve-NativeAppBuild.ps1 -AppSpec fixtures/native-app-builds/<app>.app.json -DryRun
    ```
 
 4. Record the printed resolution fingerprint and inspect
@@ -45,7 +45,7 @@ cannot bleed into unrelated apps.
 5. Build from the lock:
 
    ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File tools/Build-NativeRendererAndroid.ps1 -AppBuildLock local-artifacts/native-app-builds/<app-id>/<fingerprint>/feature-lock.json
+   pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Build-NativeRendererAndroid.ps1 -AppBuildLock local-artifacts/native-app-builds/<app-id>/<fingerprint>/feature-lock.json
    ```
 
    Commit the intended source slice first: locked builds require a clean exact
@@ -67,8 +67,8 @@ cannot bleed into unrelated apps.
    smoke from that capsule:
 
    ```powershell
-   powershell -NoProfile -ExecutionPolicy Bypass -File tools/Test-ApkRunCapsule.ps1 -Path <content-addressed-output>/run-capsule.json
-   powershell -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-NativeRendererReplaySmoke.ps1 -RunCapsule <content-addressed-output>/run-capsule.json -EvidenceMode PrivateParticleCanary -Serial <quest-serial> -RunSeconds 8 -AllowFlatScreenshot -AllowPerformanceBudgetMiss -StopAfterRun
+   pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Test-ApkRunCapsule.ps1 -Path <content-addressed-output>/run-capsule.json
+   pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-NativeRendererReplaySmoke.ps1 -RunCapsule <content-addressed-output>/run-capsule.json -EvidenceMode PrivateParticleCanary -Serial <quest-serial> -RunSeconds 8 -AllowFlatScreenshot -AllowPerformanceBudgetMiss -StopAfterRun
    ```
 
    The launcher serializes by headset serial, clears the complete native
@@ -122,7 +122,7 @@ The clean native hand lab is
 `fixtures/native-app-builds/native-openxr-hand-lab.app.json`. Validate it with:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File tools/Test-NativeOpenXrHandLabAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Test-NativeOpenXrHandLabAndroid.ps1
 ```
 
 It keeps the app custom hand mesh visual disabled, requests the

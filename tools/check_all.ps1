@@ -4,6 +4,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+& (Join-Path $PSScriptRoot "Test-PowerShellHost.ps1") -SelfTest -Quiet
+
 function Invoke-Checked {
     param(
         [Parameter(Mandatory=$true)]
@@ -26,37 +28,37 @@ try {
     Invoke-Checked "cargo fmt" "cargo" @("fmt", "--all", "--check")
     Invoke-Checked "cargo test" "cargo" @("test", "--workspace", "--exclude", "spatial-camera-panel-native-receipt")
     if ($IncludeLegacyMakepad) {
-        Invoke-Checked "legacy Makepad runtime profile dry-run" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Apply-RuntimeProfile.ps1", "-ProfilePath", "fixtures\runtime-profiles\quest-makepad-mesh-replay.profile.json", "-DryRun")
+        Invoke-Checked "legacy Makepad runtime profile dry-run" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Apply-RuntimeProfile.ps1", "-ProfilePath", "fixtures\runtime-profiles\quest-makepad-mesh-replay.profile.json", "-DryRun")
     } else {
         Write-Host "Skipping legacy Makepad runtime profile validation (pass -IncludeLegacyMakepad to opt in)."
     }
-    Invoke-Checked "remote camera runtime profile dry-run" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Apply-RuntimeProfile.ps1", "-ProfilePath", "fixtures\runtime-profiles\quest-remote-camera-q2q-diagnostic.profile.json", "-DryRun", "-Out", "local-artifacts\remote-camera-property-write-plan.json")
-    Invoke-Checked "native renderer runtime profile matrix" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-NativeRendererProfileMatrix.ps1")
+    Invoke-Checked "remote camera runtime profile dry-run" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Apply-RuntimeProfile.ps1", "-ProfilePath", "fixtures\runtime-profiles\quest-remote-camera-q2q-diagnostic.profile.json", "-DryRun", "-Out", "local-artifacts\remote-camera-property-write-plan.json")
+    Invoke-Checked "native renderer runtime profile matrix" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-NativeRendererProfileMatrix.ps1")
     Invoke-Checked "native renderer property parity" "python" @("tools\check_native_renderer_property_parity.py", "--out", "local-artifacts\native-renderer-property-parity.json")
-    Invoke-Checked "native app-build static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-NativeAppBuildStatic.ps1", "-RepoRoot", ".")
-    Invoke-Checked "APK build and run isolation static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-ApkRunIsolationStatic.ps1", "-RepoRoot", ".")
-    Invoke-Checked "QCL-041 Wi-Fi Direct Android harness" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-Qcl041WifiDirectHarnessAndroid.ps1")
+    Invoke-Checked "native app-build static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-NativeAppBuildStatic.ps1", "-RepoRoot", ".")
+    Invoke-Checked "APK build and run isolation static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-ApkRunIsolationStatic.ps1", "-RepoRoot", ".")
+    Invoke-Checked "QCL-041 Wi-Fi Direct Android harness" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-Qcl041WifiDirectHarnessAndroid.ps1")
     if ($IncludeLegacyMakepad) {
-        Invoke-Checked "legacy QCL-099 stereo projection runner" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-Qcl099StereoProjectionRunner.ps1")
+        Invoke-Checked "legacy QCL-099 stereo projection runner" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-Qcl099StereoProjectionRunner.ps1")
     } else {
         Write-Host "Skipping legacy QCL-099/Makepad validation (pass -IncludeLegacyMakepad to opt in)."
     }
-    Invoke-Checked "QCL-100 crash/relaunch watch static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-Qcl100CrashRelaunchWatchStatic.ps1", "-RepoRoot", ".")
-    Invoke-Checked "QCL-100 native stereo promotion candidate static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-Qcl100NativeStereoPromotionCandidateStatic.ps1", "-RepoRoot", ".")
-    Invoke-Checked "QCL-100 packed stereo static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-Qcl100PackedStereoStatic.ps1", "-RepoRoot", ".")
-    Invoke-Checked "Quest particle adapter static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestParticleAdapterStatic.ps1", "-RepoRoot", ".")
-    Invoke-Checked "Quest hand adapter static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestHandAdapterStatic.ps1", "-RepoRoot", ".")
-    Invoke-Checked "Quest broker product static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestBrokerProductStatic.ps1", "-RepoRoot", ".")
-    Invoke-Checked "Manifold broker product build preparation gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-ManifoldBrokerProductBuildPreparation.ps1", "-RepoRoot", ".")
-    Invoke-Checked "Quest broker authority static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestBrokerAuthorityStatic.ps1", "-RepoRoot", ".")
-    Invoke-Checked "Quest broker admission static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestBrokerAdmissionStatic.ps1", "-RepoRoot", ".")
-    Invoke-Checked "Quest multi-app broker client static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-MultiAppBrokerClients.ps1", "-RepoRoot", ".")
-    Invoke-Checked "Corrected release two-Quest matrix static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-CorrectedReleaseTwoQuestMatrixStatic.ps1", "-RepoRoot", ".")
-    Invoke-Checked "Spatial Camera Panel Android static gate" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-SpatialCameraPanelAndroid.ps1", "-RepoRoot", ".")
-    Invoke-Checked "Manifold broker Android scaffold" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-ManifoldBrokerAndroid.ps1")
-Invoke-Checked "Peer rendezvous Android scaffold" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-PeerRendezvousAndroid.ps1")
-Invoke-Checked "N-peer mesh authority and adapter" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-NPeerMesh.ps1")
-    Invoke-Checked "Native renderer Android scaffold" "powershell" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-NativeRendererAndroid.ps1", "-SkipProfileMatrix")
+    Invoke-Checked "QCL-100 crash/relaunch watch static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-Qcl100CrashRelaunchWatchStatic.ps1", "-RepoRoot", ".")
+    Invoke-Checked "QCL-100 native stereo promotion candidate static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-Qcl100NativeStereoPromotionCandidateStatic.ps1", "-RepoRoot", ".")
+    Invoke-Checked "QCL-100 packed stereo static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-Qcl100PackedStereoStatic.ps1", "-RepoRoot", ".")
+    Invoke-Checked "Quest particle adapter static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestParticleAdapterStatic.ps1", "-RepoRoot", ".")
+    Invoke-Checked "Quest hand adapter static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestHandAdapterStatic.ps1", "-RepoRoot", ".")
+    Invoke-Checked "Quest broker product static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestBrokerProductStatic.ps1", "-RepoRoot", ".")
+    Invoke-Checked "Manifold broker product build preparation gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-ManifoldBrokerProductBuildPreparation.ps1", "-RepoRoot", ".")
+    Invoke-Checked "Quest broker authority static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestBrokerAuthorityStatic.ps1", "-RepoRoot", ".")
+    Invoke-Checked "Quest broker admission static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-QuestBrokerAdmissionStatic.ps1", "-RepoRoot", ".")
+    Invoke-Checked "Quest multi-app broker client static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-MultiAppBrokerClients.ps1", "-RepoRoot", ".")
+    Invoke-Checked "Corrected release two-Quest matrix static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-CorrectedReleaseTwoQuestMatrixStatic.ps1", "-RepoRoot", ".")
+    Invoke-Checked "Spatial Camera Panel Android static gate" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-SpatialCameraPanelAndroid.ps1", "-RepoRoot", ".")
+    Invoke-Checked "Manifold broker Android scaffold" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-ManifoldBrokerAndroid.ps1")
+Invoke-Checked "Peer rendezvous Android scaffold" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-PeerRendezvousAndroid.ps1")
+Invoke-Checked "N-peer mesh authority and adapter" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\checks\Test-NPeerMesh.ps1")
+    Invoke-Checked "Native renderer Android scaffold" "pwsh" @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "tools\Test-NativeRendererAndroid.ps1", "-SkipProfileMatrix")
     Invoke-Checked "Quest boundary scan" "python" @("tools\check_quest_boundaries.py")
 } finally {
     Pop-Location

@@ -168,7 +168,7 @@ Minimum validation for each source slice:
 
 ```powershell
 cargo test -p rusty-quest-native-renderer-android-native
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 ```
 
 APK/headset validation remains a separate gate and must use the repo-local

@@ -14,7 +14,7 @@ automation must use the exact start action and `enabled=true`.
 Build:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-PeerRendezvousAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Build-PeerRendezvousAndroid.ps1
 ```
 
 The output APK is
@@ -23,7 +23,7 @@ The output APK is
 Static and source validation:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-PeerRendezvousAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-PeerRendezvousAndroid.ps1
 cargo test -p rusty-quest-device-link
 cargo run --quiet -p rusty-quest-device-link --bin validate_ble_rendezvous -- message fixtures\device-link\ble-rendezvous-offer.pass.json
 ```
@@ -42,7 +42,7 @@ The two-Quest acceptance wrapper runs both BLE role layouts and requires an
 authenticated reconnect in each phase:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-PeerRendezvousAndroidPair.ps1 `
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Invoke-PeerRendezvousAndroidPair.ps1 `
   -PrimarySerial <serial> -SecondarySerial <serial> `
   -PrimaryQuestLeaseId <lease-id> -SecondaryQuestLeaseId <lease-id>
 ```

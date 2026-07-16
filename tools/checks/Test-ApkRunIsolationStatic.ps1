@@ -15,7 +15,7 @@ function Invoke-ExpectedCapsuleFailure {
         # Windows PowerShell promotes a child native process's stderr to an
         # ErrorRecord when Stop is active, even when the failure is expected.
         $ErrorActionPreference = "Continue"
-        & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo "tools\Test-ApkRunCapsule.ps1") -CapsulePath $Path -ExpectedLane native-renderer-android *> $null
+        & pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo "tools\Test-ApkRunCapsule.ps1") -CapsulePath $Path -ExpectedLane native-renderer-android *> $null
         return $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $previousPreference
@@ -83,7 +83,7 @@ try {
     }
     $capsulePath = Join-Path $temp "run-capsule.json"
     $capsule | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $capsulePath -Encoding UTF8
-    $valid = & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo "tools\Test-ApkRunCapsule.ps1") -CapsulePath $capsulePath -ExpectedLane native-renderer-android
+    $valid = & pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $repo "tools\Test-ApkRunCapsule.ps1") -CapsulePath $capsulePath -ExpectedLane native-renderer-android
     if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace(($valid -join "`n"))) { throw "Valid APK run capsule was rejected." }
     $capsule.source.composition_fingerprint = "0" * 64
     $capsule | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $capsulePath -Encoding UTF8

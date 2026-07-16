@@ -74,7 +74,7 @@ if ($StopAfterRun) {
     $smokeArgs += "-StopAfterRun"
 }
 
-& powershell @smokeArgs
+& pwsh @smokeArgs
 if ($LASTEXITCODE -ne 0) {
     throw "Environment-depth motion proof failed with exit code $LASTEXITCODE"
 }

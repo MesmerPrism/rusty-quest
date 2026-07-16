@@ -201,11 +201,11 @@ format and the Vulkan import path handles its external format correctly.
 - `cargo fmt --manifest-path apps/native-renderer-android/native/Cargo.toml`
 - `cargo test --manifest-path apps/native-renderer-android/native/Cargo.toml display_composite`
 - `python tools/check_native_renderer_property_parity.py --out local-artifacts/native-renderer-property-parity.json`
-- `powershell -NoProfile -ExecutionPolicy Bypass -File tools/Test-NativeRendererProfileMatrix.ps1`
-- `powershell -NoProfile -ExecutionPolicy Bypass -File tools/Test-NativeRendererAndroid.ps1 -SkipProfileMatrix`
-- `powershell -NoProfile -ExecutionPolicy Bypass -File tools/Build-NativeRendererAndroid.ps1`
-- `powershell -NoProfile -ExecutionPolicy Bypass -File tools/check_all.ps1`
-- `powershell -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-NativeRendererDisplayCompositeSmoke.ps1 -ApkPath target/native-renderer-android/rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12`
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Test-NativeRendererProfileMatrix.ps1`
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Test-NativeRendererAndroid.ps1 -SkipProfileMatrix`
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Build-NativeRendererAndroid.ps1`
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File tools/check_all.ps1`
+- `pwsh -NoProfile -ExecutionPolicy Bypass -File tools/Invoke-NativeRendererDisplayCompositeSmoke.ps1 -ApkPath target/native-renderer-android/rusty-quest-native-renderer.apk -Serial <quest-serial> -RunSeconds 12`
 
 Device validation is owned by `$meta-quest-workflow` and the smoke wrapper:
 
