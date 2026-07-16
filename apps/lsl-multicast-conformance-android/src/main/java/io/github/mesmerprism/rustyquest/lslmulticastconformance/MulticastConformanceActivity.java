@@ -91,10 +91,16 @@ public final class MulticastConformanceActivity extends Activity {
             } else if ("requester".equals(role)) {
                 socket.send(new DatagramPacket(QUERY, QUERY.length, group, PORT));
                 querySent = true;
-                DatagramPacket incoming = new DatagramPacket(new byte[256], 256);
-                socket.receive(incoming);
-                responseReceived = exact(incoming, RESPONSE);
-                if (!responseReceived) throw new IllegalStateException("damaged-response");
+                long receiveDeadline = System.nanoTime() + deadlineMs * 1_000_000L;
+                while (!responseReceived && System.nanoTime() < receiveDeadline) {
+                    DatagramPacket incoming = new DatagramPacket(new byte[256], 256);
+                    socket.receive(incoming);
+                    responseReceived = exact(incoming, RESPONSE);
+                    if (!responseReceived && !exact(incoming, QUERY)) {
+                        throw new IllegalStateException("damaged-response");
+                    }
+                }
+                if (!responseReceived) throw new IllegalStateException("response-deadline");
                 reason = "one-query-one-response";
                 result = "pass";
             } else {
