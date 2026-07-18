@@ -3,11 +3,11 @@ $ErrorActionPreference="Stop";$package="io.github.mesmerprism.rustyquest.lslrust
 $manifest=Get-Content -Raw $BuildManifest|ConvertFrom-Json;$apk=Join-Path(Split-Path $BuildManifest)"rusty-lsl-rust-conformance.apk"
 if((Get-FileHash -Algorithm SHA256 $apk).Hash.ToLowerInvariant()-ne$manifest.apk_sha256){throw "APK hash mismatch"}
 if([string]::IsNullOrWhiteSpace($OutDir)){$OutDir=Join-Path(Split-Path $BuildManifest)("device-"+(Get-Date -Format "yyyyMMdd-HHmmss"))};New-Item -ItemType Directory -Force $OutDir|Out-Null
-function Adb([string[]]$Arguments){& adb -s $Serial @Arguments;if($LASTEXITCODE-ne0){throw "adb failed: $($Arguments -join ' ')"}}
+function Invoke-ScopedAdb([string[]]$Arguments){& adb.exe -s $Serial @Arguments;if($LASTEXITCODE-ne0){throw "adb failed: $($Arguments -join ' ')"}}
 $priorPackage=(& adb -s $Serial shell pm path $package 2>&1|Out-String).Trim();$forwardBefore=(& adb -s $Serial forward --list|Out-String);$reverseBefore=(& adb -s $Serial reverse --list|Out-String);$started=(Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss.fff")
 try{
     if(-not[string]::IsNullOrWhiteSpace($priorPackage)){throw "Distinct test package already installed; refusing to overwrite prior state."}
-    Adb @("install","-r","-d","-g",$apk);Adb @("shell","am","start","-W","-n",$component);Start-Sleep -Seconds 3
+    Invoke-ScopedAdb @("install","-r","-d","-g",$apk);Invoke-ScopedAdb @("shell","am","start","-W","-n",$component);Start-Sleep -Seconds 3
     & adb -s $Serial exec-out run-as $package cat files/result.json | Set-Content -Encoding UTF8(Join-Path $OutDir "result.json")
     & adb -s $Serial logcat -d -v threadtime -T $started | Set-Content -Encoding UTF8(Join-Path $OutDir "logcat.txt")
     $result=Get-Content -Raw(Join-Path $OutDir "result.json")|ConvertFrom-Json;$logs=Get-Content -Raw(Join-Path $OutDir "logcat.txt")
