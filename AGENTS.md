@@ -1,5 +1,13 @@
 # Rusty Quest Agent Notes
 
+The `lsl-rust-float32-two-record-chunk-android` app is a distinct public test
+package for LSLC-005S. It builds exact clean Rusty LSL for
+`aarch64-linux-android` and executes only the accepted one-channel, two-record
+Float32 chunk runtime over IPv4 loopback inside Rust. Java owns lifecycle only;
+runs require ordered exact-bit evidence, immediate port reuse, zero bounded
+fatals, one explicit serial, distinct identities, and exact run-owned cleanup.
+It adds no arbitrary chunk, production activation, or compatibility breadth.
+
 The `lsl-rust-float32-loopback-android` app is a distinct public test package
 for LSLC-005L. It builds the exact clean Rusty LSL revision for
 `aarch64-linux-android` and executes the accepted one-channel, one-record

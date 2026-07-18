@@ -1,5 +1,12 @@
 # Rusty Quest Validation
 
+Run `tools/Test-LslRustFloat32TwoRecordChunkAndroid.ps1` for the LSLC-005S
+static gate. Its live wrapper requires an explicit serial and exact APK/native
+hashes, then checks the Rust-owned two-record marker, ordered timestamp/value
+bits, immediate TCP port reuse, zero bounded fatals, and target-only cleanup.
+It does not replay an official oracle or prove arbitrary chunks or non-loopback
+behavior.
+
 Run `tools/Test-LslRustFloat32LoopbackAndroid.ps1` for the LSLC-005L static
 gate. Its live wrapper requires an explicit serial and exact APK/native hashes,
 then checks the Rust-owned Float32 effective marker, exact timestamp/value
