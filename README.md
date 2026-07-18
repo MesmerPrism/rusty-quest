@@ -1,5 +1,10 @@
 # Rusty Quest
 
+`apps/lsl-rust-conformance-android` is the public LSLC-005H platform harness
+for one exact-source-locked Rusty LSL core-contract execution on Quest. It
+keeps Android lifecycle glue separate from the Rust-owned effective marker and
+does not broaden Rusty LSL transport or compatibility claims.
+
 Rusty Quest is the Morphospace lane for Quest platform behavior: runtime
 profiles, Android property hygiene, permissions, launch planning, and platform
 validation evidence.

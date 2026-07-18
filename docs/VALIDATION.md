@@ -1,5 +1,10 @@
 # Rusty Quest Validation
 
+Run `tools/Test-LslRustConformanceAndroid.ps1` for the LSLC-005H static gate.
+The live wrapper additionally requires an explicit serial, exact APK/native
+hashes, the Rust-owned effective marker, zero bounded fatals, and verified
+target-only package/process/forward/reverse/property/staging cleanup.
+
 Rusty Quest validation requires PowerShell `7.6` LTS or newer through `pwsh`.
 Validate the host contract before a focused or aggregate run:
 

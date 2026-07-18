@@ -1,5 +1,12 @@
 # Rusty Quest Agent Notes
 
+The `lsl-rust-conformance-android` app is a distinct public test package for
+LSLC-005H. Its generated native crate binds an exact clean Rusty LSL source
+revision and builds only for `aarch64-linux-android`; Java owns lifecycle while
+Rust owns the effective core-contract marker. Runs are serial-scoped and must
+remove only the run-owned package with zero bounded fatals and complete
+package/process/forward/reverse/property/staging cleanup.
+
 This is the clean source repository for Rusty Quest. Keep committed content
 self-contained and free of local-only planning paths, downstream app names, and
 historical naming drift.
