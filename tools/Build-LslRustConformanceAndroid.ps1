@@ -28,6 +28,7 @@ $lslToml=($lsl -replace '\\','/')+"/crates/rusty-lsl"
 name = "rusty-lsl-quest-conformance"
 version = "0.1.0"
 edition = "2024"
+[workspace]
 [lib]
 crate-type = ["cdylib"]
 [dependencies]
@@ -36,6 +37,7 @@ rusty-lsl = { path = "$lslToml" }
 $ndk=Latest(Join-Path $AndroidHome "ndk");$linker=Join-Path $ndk "toolchains\llvm\prebuilt\windows-x86_64\bin\aarch64-linux-android29-clang.cmd"
 if(-not(Test-Path $linker)){throw "Missing Android linker: $linker"}
 $env:CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$linker;$cargoTarget=Join-Path $fullOut "cargo-target"
+Checked "cargo lock" "cargo" @("generate-lockfile","--manifest-path",(Join-Path $native "Cargo.toml"))
 Checked "cargo android build" "cargo" @("build","--manifest-path",(Join-Path $native "Cargo.toml"),"--target","aarch64-linux-android","--release","--target-dir",$cargoTarget,"--locked")
 $so=Join-Path $cargoTarget "aarch64-linux-android\release\rusty_lsl_quest_conformance.dll"
 if(-not(Test-Path $so)){$so=Join-Path $cargoTarget "aarch64-linux-android\release\librusty_lsl_quest_conformance.so"}
