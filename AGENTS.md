@@ -1,5 +1,13 @@
 # Rusty Quest Agent Notes
 
+The `lsl-rust-float32-loopback-android` app is a distinct public test package
+for LSLC-005L. It builds the exact clean Rusty LSL revision for
+`aarch64-linux-android` and executes the accepted one-channel, one-record
+Float32 handshake/sample runtime over IPv4 loopback inside Rust. Java owns
+lifecycle only. Runs use one explicit serial, a distinct package/build/staging
+identity, zero bounded fatals, immediate port-reuse evidence, and exact
+run-owned cleanup. This adds no production activation or compatibility breadth.
+
 The `lsl-rust-conformance-android` app is a distinct public test package for
 LSLC-005H. Its generated native crate binds an exact clean Rusty LSL source
 revision and builds only for `aarch64-linux-android`; Java owns lifecycle while

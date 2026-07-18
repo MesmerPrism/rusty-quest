@@ -1,5 +1,11 @@
 # Rusty Quest
 
+`apps/lsl-rust-float32-loopback-android` is the public LSLC-005L platform
+harness for one exact-source-locked Rusty LSL Float32 outlet/inlet execution on
+Quest. The exchange, exact-bit checks, activation admission, and immediate port
+reuse run in Rust over `127.0.0.1`; Android Java owns lifecycle only. This is
+bounded device conformance, not official or non-loopback compatibility.
+
 `apps/lsl-rust-conformance-android` is the public LSLC-005H platform harness
 for one exact-source-locked Rusty LSL core-contract execution on Quest. It
 keeps Android lifecycle glue separate from the Rust-owned effective marker and
