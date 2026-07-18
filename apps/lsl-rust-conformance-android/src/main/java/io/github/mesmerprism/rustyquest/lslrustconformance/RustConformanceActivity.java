@@ -18,7 +18,9 @@ public final class RustConformanceActivity extends Activity {
         TextView view = new TextView(this);
         view.setText("Rusty LSL Rust-on-Quest conformance");
         setContentView(view);
-        new Thread(() -> runBounded(), "rlsl-005h-java-lifecycle").start();
+        new Thread(new Runnable() {
+            @Override public void run() { RustConformanceActivity.this.runBounded(); }
+        }, "rlsl-005h-java-lifecycle").start();
     }
 
     private void runBounded() {
