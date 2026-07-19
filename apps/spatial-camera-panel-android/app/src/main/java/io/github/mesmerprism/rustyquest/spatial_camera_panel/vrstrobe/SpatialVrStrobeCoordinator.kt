@@ -47,6 +47,27 @@ private data class VrStrobePendingRendererUpdate(
     val submittedSceneTick: Long,
 )
 
+private data class VrStrobeMaterialAttributeWrite(
+    val name: String,
+    val value: Vector4,
+)
+
+private class VrStrobePendingProfilePublication(
+    val transactionId: Long,
+    val rendererRevision: Long,
+    val source: String,
+    val profileId: String,
+    val outputKind: VrStrobeOutputKind,
+    val writes: List<VrStrobeMaterialAttributeWrite>,
+    val updatePlan: VrStrobeMaterialUpdatePlan,
+    val profileAppliedMarker: String,
+    val queuedAtMs: Long,
+) {
+  var passIndex = 0
+  var nextWriteIndex = 0
+  var startedAtSceneTick: Long? = null
+}
+
 @OptIn(SpatialSDKExperimentalAPI::class)
 internal class SpatialVrStrobeCoordinator(
     private val bindings: SpatialVrStrobeBindings,
@@ -60,8 +81,12 @@ internal class SpatialVrStrobeCoordinator(
   private var mesh: SceneMesh? = null
   private var triangleMesh: TriangleMesh? = null
   private var material: SceneMaterial? = null
+  private var materialAttributeIndices: Map<String, Int> = emptyMap()
   private var rendererRevision = 0L
+  private var visibleRendererRevision = 0L
   private var randomizeTransactionId = 0L
+  private val pendingProfilePublications = java.util.ArrayDeque<VrStrobePendingProfilePublication>()
+  private var activeProfilePublication: VrStrobePendingProfilePublication? = null
   private val pendingRendererUpdates = mutableListOf<VrStrobePendingRendererUpdate>()
   private var lastState = safety.snapshot(0L).state
   private val stimulusSelection = VrStrobeStimulusSelectionAuthority()
@@ -188,8 +213,10 @@ internal class SpatialVrStrobeCoordinator(
                   "profileId=${adopted.profile.id} presetIndex=${adopted.presetIndex} " +
                   "stimulusRevision=${adopted.revision} " +
                   "outputKind=${current.outputKind?.name?.lowercase()} selectionAuthority=unified " +
-                  "rendererSubmit=bounded-active-slot-delta " +
+                  "rendererSubmit=bounded-multi-frame-profile-commit " +
                   "rendererRevision=$rendererRevision " +
+                  "visibleRendererRevision=$visibleRendererRevision " +
+                  "profilePublicationPending=true " +
                   "transactionDurationMs=${(bindings.monotonicNowMs() - nowMs).coerceAtLeast(0L)} " +
                   "randomizationEnvelope=${VrStrobeQuestRandomizationEnvelope.ID} " +
                   "safetyStateBefore=${current.state.name.lowercase()} " +
@@ -400,14 +427,20 @@ internal class SpatialVrStrobeCoordinator(
         .onFailure { viewLockFailures += 1L }
     val nowMs = bindings.monotonicNowMs()
     val snapshot = safety.tick(nowMs)
+    publishNextProfileBatch()
     applyOutput(snapshot)
     val frameObserved =
         pendingRendererUpdates.filter { update -> update.submittedSceneTick < sceneTicks }
     frameObserved.forEach { update ->
+      val visualGeneration =
+          VrStrobeVisualGenerationPolicy.forRendererRevision(update.rendererRevision)
       bindings.marker(
           "channel=spatial-vr-strobe status=randomize-renderer-frame-boundary-observed " +
               "transactionId=${update.transactionId} rendererRevision=${update.rendererRevision} " +
               "submittedSceneTick=${update.submittedSceneTick} observedSceneTick=$sceneTicks " +
+              "visualGenerationPhase=${visualGeneration.phaseOffset} " +
+              "visualGenerationPolarity=${visualGeneration.palettePolarity} " +
+              "visualGenerationCarrier=modeTime.zw-continuously-reasserted " +
               "rendererVisibleProof=attended-required"
       )
     }
@@ -483,6 +516,10 @@ internal class SpatialVrStrobeCoordinator(
       throw error
     }
     material = activeSlot.material
+    materialAttributeIndices =
+        requireNotNull(activeSlot.material.params) { "custom-material-attributes-missing" }
+            .mapIndexed { index, attribute -> attribute.name to index }
+            .toMap()
     mesh = activeSlot.sceneMesh
     triangleMesh = activeSlot.triangleMesh
     carrierEntity = entity
@@ -498,7 +535,9 @@ internal class SpatialVrStrobeCoordinator(
             "triangleCount=${VrStrobeCarrierGeometry.TRIANGLE_COUNT} rasterSurfaceCount=1 " +
             "vertexShaderCurvature=true curvedMode=${carrierShape.curvedMode} " +
             "concavity=${carrierShape.concavity} gpuApi=spatial-sdk-vulkan " +
-            "materialBuffers=1 visibleDrawCount=1 randomizeSubmit=bounded-active-slot-delta"
+            "materialBuffers=1 visibleDrawCount=1 " +
+            "materialAttributeAddressing=cached-index " +
+            "randomizeSubmit=bounded-multi-frame-profile-commit"
     )
   }
 
@@ -549,48 +588,158 @@ internal class SpatialVrStrobeCoordinator(
       source: String,
       transactionId: Long,
   ) {
-    val targetMaterial = requireNotNull(material) { "active-material-missing" }
-    val updatePlan =
-        when (candidate) {
-          is VrStrobeStimulusProfile.Interference -> {
-            setInterferenceProfile(candidate.profile, targetMaterial, "active-randomize")
-            candidate.profile.materialUpdatePlan()
-          }
-          is VrStrobeStimulusProfile.Temporal -> {
-            setTemporalProfile(candidate.profile, targetMaterial, "active-randomize")
-            candidate.profile.materialUpdatePlan()
-          }
-        }
-    applyOutput(snapshot, targetMaterial)
+    requireNotNull(material) { "active-material-missing" }
+    val updatePlan: VrStrobeMaterialUpdatePlan
+    val writes: List<VrStrobeMaterialAttributeWrite>
+    val profileId: String
+    val outputKind: VrStrobeOutputKind
+    val profileAppliedMarker: String
+    when (candidate) {
+      is VrStrobeStimulusProfile.Interference -> {
+        updatePlan = candidate.profile.materialUpdatePlan()
+        writes = interferenceProfileWrites(candidate.profile)
+        profileId = candidate.profile.id
+        outputKind = VrStrobeOutputKind.INTERFERENCE
+        profileAppliedMarker =
+            interferenceProfileAppliedMarker(candidate.profile, "active-randomize-multi-frame")
+      }
+      is VrStrobeStimulusProfile.Temporal -> {
+        updatePlan = candidate.profile.materialUpdatePlan()
+        writes = temporalProfileWrites(candidate.profile)
+        profileId = candidate.profile.id
+        outputKind = VrStrobeOutputKind.TEMPORAL
+        profileAppliedMarker =
+            temporalProfileAppliedMarker(candidate.profile, "active-randomize-multi-frame")
+      }
+    }
+    check(writes.size == updatePlan.profilePublicationPlan().profileUniformWrites) {
+      "profile-publication-write-count-mismatch"
+    }
+    check(snapshot.outputKind == outputKind) { "profile-publication-output-kind-mismatch" }
     rendererRevision += 1L
-    pendingRendererUpdates +=
-        VrStrobePendingRendererUpdate(
+    val publication =
+        VrStrobePendingProfilePublication(
             transactionId = transactionId,
             rendererRevision = rendererRevision,
-            submittedSceneTick = sceneTicks,
+            source = source,
+            profileId = profileId,
+            outputKind = outputKind,
+            writes = writes,
+            updatePlan = updatePlan,
+            profileAppliedMarker = profileAppliedMarker,
+            queuedAtMs = bindings.monotonicNowMs(),
         )
+    pendingProfilePublications.addLast(publication)
+    val publicationPlan = updatePlan.profilePublicationPlan()
     bindings.marker(
-        "channel=spatial-vr-strobe status=randomize-renderer-update-submitted " +
+        "channel=spatial-vr-strobe status=randomize-renderer-update-staged " +
             "transactionId=$transactionId source=${source.replace(' ', '_')} " +
             "sceneObjectMeshSwap=false materialTarget=active " +
-            "updateMode=bounded-active-slot-delta uniformWrites=${updatePlan.uniformWriteCount} " +
+            "updateMode=bounded-multi-frame-profile-commit " +
+            "profileUniformWrites=${publicationPlan.profileUniformWrites} " +
+            "maxWritesPerSceneTick=${publicationPlan.maxWritesPerSceneTick} " +
+            "publicationPasses=${publicationPlan.publicationPasses} " +
+            "publicationSceneTicks=${publicationPlan.sceneTicks} " +
             "activePatternCount=${updatePlan.activePatternCount} " +
             "fullProfileClear=${updatePlan.fullProfileClear} " +
             "inactivePatternSlotWrites=${updatePlan.inactivePatternSlotWrites} " +
-            "rendererRevision=$rendererRevision visibleDrawCount=1"
+            "attributeAddressing=cached-index rendererRevision=$rendererRevision " +
+            "visibleRendererRevision=$visibleRendererRevision " +
+            "queueDepth=${pendingProfilePublications.size + if (activeProfilePublication == null) 0 else 1} " +
+            "visibleDrawCount=1"
     )
   }
 
-  private fun applyCarrierShape(target: SceneMaterial? = material) {
-    target?.setAttribute(
-        "carrierShape",
-        Vector4(
-            carrierShape.curvedMode.floatValue(),
-            carrierShape.concavity,
-            VrStrobeConcavityPolicy.MAX_POLAR_ANGLE_RADIANS,
-            VrStrobeCarrierGeometry.RADIUS_METERS,
-        ),
+  private fun publishNextProfileBatch() {
+    val targetMaterial = material ?: return
+    var publication = activeProfilePublication
+    if (publication == null) {
+      publication = pendingProfilePublications.pollFirst() ?: return
+      publication.startedAtSceneTick = sceneTicks
+      activeProfilePublication = publication
+      bindings.marker(
+          "channel=spatial-vr-strobe status=randomize-profile-publication-start " +
+              "transactionId=${publication.transactionId} " +
+              "rendererRevision=${publication.rendererRevision} " +
+              "profileId=${publication.profileId} outputKind=${publication.outputKind.name.lowercase()} " +
+              "sceneTick=$sceneTicks queuedProfiles=${pendingProfilePublications.size}"
+      )
+    }
+    val start = publication.nextWriteIndex
+    val end =
+        (start + VR_STROBE_PROFILE_WRITES_PER_SCENE_TICK).coerceAtMost(publication.writes.size)
+    publication.writes.subList(start, end).forEach { write ->
+      setMaterialAttribute(targetMaterial, write.name, write.value)
+    }
+    publication.nextWriteIndex = end
+    bindings.marker(
+        "channel=spatial-vr-strobe status=randomize-profile-publication-batch " +
+            "transactionId=${publication.transactionId} " +
+            "rendererRevision=${publication.rendererRevision} " +
+            "pass=${publication.passIndex + 1} writeStart=$start writeEnd=$end " +
+            "writesThisSceneTick=${end - start} sceneTick=$sceneTicks"
     )
+    if (end < publication.writes.size) return
+    publication.passIndex += 1
+    if (publication.passIndex < VR_STROBE_PROFILE_PUBLICATION_PASSES) {
+      publication.nextWriteIndex = 0
+      return
+    }
+    visibleRendererRevision = publication.rendererRevision
+    val visualGeneration =
+        VrStrobeVisualGenerationPolicy.forRendererRevision(visibleRendererRevision)
+    val publicationPlan = publication.updatePlan.profilePublicationPlan()
+    pendingRendererUpdates +=
+        VrStrobePendingRendererUpdate(
+            transactionId = publication.transactionId,
+            rendererRevision = publication.rendererRevision,
+            submittedSceneTick = sceneTicks,
+        )
+    bindings.marker(publication.profileAppliedMarker)
+    bindings.marker(
+        "channel=spatial-vr-strobe status=randomize-renderer-update-submitted " +
+            "transactionId=${publication.transactionId} " +
+            "source=${publication.source.replace(' ', '_')} " +
+            "sceneObjectMeshSwap=false materialTarget=active " +
+            "updateMode=bounded-multi-frame-profile-commit " +
+            "profileUniformWrites=${publicationPlan.profileUniformWrites} " +
+            "maxWritesPerSceneTick=${publicationPlan.maxWritesPerSceneTick} " +
+            "publicationPasses=${publicationPlan.publicationPasses} " +
+            "publicationSceneTicks=${publicationPlan.sceneTicks} " +
+            "totalProfileUniformWrites=${publicationPlan.totalProfileUniformWrites} " +
+            "activePatternCount=${publication.updatePlan.activePatternCount} " +
+            "fullProfileClear=${publication.updatePlan.fullProfileClear} " +
+            "inactivePatternSlotWrites=${publication.updatePlan.inactivePatternSlotWrites} " +
+            "attributeAddressing=cached-index rendererRevision=${publication.rendererRevision} " +
+            "visualGenerationPhase=${visualGeneration.phaseOffset} " +
+            "visualGenerationPolarity=${visualGeneration.palettePolarity} " +
+            "visualGenerationCarrier=modeTime.zw-continuously-reasserted-after-profile-commit " +
+            "publicationDurationMs=${(bindings.monotonicNowMs() - publication.queuedAtMs).coerceAtLeast(0L)} " +
+            "visibleDrawCount=1"
+    )
+    bindings.marker(
+        "channel=spatial-vr-strobe status=randomize-profile-publication-complete " +
+            "transactionId=${publication.transactionId} " +
+            "rendererRevision=${publication.rendererRevision} " +
+            "visibleRendererRevision=$visibleRendererRevision " +
+            "sceneTick=$sceneTicks queuedProfiles=${pendingProfilePublications.size}"
+    )
+    activeProfilePublication = null
+  }
+
+  private fun applyCarrierShape(target: SceneMaterial? = material) {
+    target?.let { targetMaterial ->
+      setMaterialAttribute(
+          targetMaterial,
+          "carrierShape",
+          Vector4(
+              carrierShape.curvedMode.floatValue(),
+              carrierShape.concavity,
+              VrStrobeConcavityPolicy.MAX_POLAR_ANGLE_RADIANS,
+              VrStrobeCarrierGeometry.RADIUS_METERS,
+          ),
+      )
+    }
   }
 
   private fun setInterferenceProfile(
@@ -598,48 +747,8 @@ internal class SpatialVrStrobeCoordinator(
       target: SceneMaterial = requireNotNull(material),
       materialTarget: String = "active",
   ) {
-    target.setAttribute("color1", profile.color1.vector())
-    target.setAttribute("color2", profile.color2.vector())
-    target.setAttribute("color3", profile.color3.vector())
-    target.setAttribute(
-        "colorAnim",
-        Vector4(
-            profile.oscillatorActive.floatValue(),
-            profile.oscillatorFrequencyHz,
-            profile.oscillatorShape,
-            profile.colorCount.toFloat(),
-        ),
-    )
-    target.setAttribute("global0", Vector4(profile.scale, profile.shearX, profile.shearY, profile.rotationSpeed))
-    target.setAttribute(
-        "global1",
-        Vector4(profile.offsetX, profile.offsetY, profile.shakeAmplitude, profile.shakeFrequencyHz),
-    )
-    target.setAttribute("global2", Vector4(profile.stepFactor, 0f, 0f, 0f))
-    target.setAttribute(
-        "post0",
-        Vector4(profile.trailAmount, profile.blurRadius, profile.glowStrength, profile.brightness),
-    )
-    target.setAttribute(
-        "effects0",
-        Vector4(profile.contrast, profile.noiseFrequency, profile.noiseStrength, profile.noiseBias),
-    )
-    target.setAttribute(
-        "effects1",
-        Vector4(profile.vignetteCenter, profile.vignetteEdge, profile.vignetteBias, 0f),
-    )
-    val gpuPlan = setPatterns(target, profile)
-    bindings.marker(
-        "channel=spatial-vr-strobe status=profile-applied kind=interference " +
-            "profileId=${profile.id} stripes=${profile.patterns(VrStrobePatternKind.STRIPE).size} " +
-            "ripples=${profile.patterns(VrStrobePatternKind.RIPPLE).size} " +
-            "rays=${profile.patterns(VrStrobePatternKind.RAY).size} " +
-            "perlins=${profile.patterns(VrStrobePatternKind.PERLIN).size} " +
-            "activeGpuPatterns=${gpuPlan.activePatternCount} " +
-            "maxSignalEvaluationsPerFragment=$VR_STROBE_MAX_SIGNAL_EVALUATIONS_PER_FRAGMENT " +
-            "trailMapping=single-evaluation-palette-softening antiAlias=derivative-band-limited " +
-            "sourceCommit=${VrStrobePresetCatalog.UPSTREAM_COMMIT} materialTarget=$materialTarget"
-    )
+    applyMaterialWrites(target, interferenceProfileWrites(profile))
+    bindings.marker(interferenceProfileAppliedMarker(profile, materialTarget))
   }
 
   private fun setTemporalProfile(
@@ -647,50 +756,73 @@ internal class SpatialVrStrobeCoordinator(
       target: SceneMaterial = requireNotNull(material),
       materialTarget: String = "active",
   ) {
-    target.setAttribute("color1", profile.color1.vector())
-    target.setAttribute("color2", profile.color2.vector())
-    target.setAttribute("color3", profile.fixationColor.vector())
-    target.setAttribute(
-        "strobe0",
-        Vector4(
-            profile.frequencyHz,
-            profile.dutyPercent / 100f,
-            if (profile.noiseType == VrStrobeNoiseType.PERLIN) 1f else 0f,
-            profile.noiseResolution.toFloat(),
-        ),
-    )
-    target.setAttribute(
-        "strobe1",
-        Vector4(
-            profile.noisePhase1.floatValue(),
-            profile.noiseAmplitude1,
-            profile.noisePhase2.floatValue(),
-            profile.noiseAmplitude2,
-        ),
-    )
-    target.setAttribute(
-        "strobe2",
-        Vector4(
-            profile.fixationEnabled.floatValue(),
-            profile.fixationSize.toFloat(),
-            0f,
-            0f,
-        ),
-    )
-    target.setAttribute("fixationColor", profile.fixationColor.vector())
-    target.setAttribute("patternCounts", Vector4(0f))
-    bindings.marker(
-        "channel=spatial-vr-strobe status=profile-applied kind=temporal " +
-            "profileId=${profile.id} frequencyHz=${profile.frequencyHz} dutyPercent=${profile.dutyPercent} " +
-            "automaticTimeLimit=false sourceCommit=${VrStrobePresetCatalog.UPSTREAM_COMMIT} " +
-            "materialTarget=$materialTarget"
-    )
+    applyMaterialWrites(target, temporalProfileWrites(profile))
+    bindings.marker(temporalProfileAppliedMarker(profile, materialTarget))
   }
 
-  private fun setPatterns(
-      target: SceneMaterial,
+  private fun interferenceProfileWrites(
       profile: VrStrobeInterferenceProfile,
-  ): VrStrobeGpuPlan {
+  ): List<VrStrobeMaterialAttributeWrite> = buildList {
+    add(materialWrite("color1", profile.color1.vector()))
+    add(materialWrite("color2", profile.color2.vector()))
+    add(materialWrite("color3", profile.color3.vector()))
+    add(
+        materialWrite(
+            "colorAnim",
+            Vector4(
+                profile.oscillatorActive.floatValue(),
+                profile.oscillatorFrequencyHz,
+                profile.oscillatorShape,
+                profile.colorCount.toFloat(),
+            ),
+        )
+    )
+    add(
+        materialWrite(
+            "global0",
+            Vector4(profile.scale, profile.shearX, profile.shearY, profile.rotationSpeed),
+        )
+    )
+    add(
+        materialWrite(
+            "global1",
+            Vector4(
+                profile.offsetX,
+                profile.offsetY,
+                profile.shakeAmplitude,
+                profile.shakeFrequencyHz,
+            ),
+        )
+    )
+    add(materialWrite("global2", Vector4(profile.stepFactor, 0f, 0f, 0f)))
+    add(
+        materialWrite(
+            "post0",
+            Vector4(
+                profile.trailAmount,
+                profile.blurRadius,
+                profile.glowStrength,
+                profile.brightness,
+            ),
+        )
+    )
+    add(
+        materialWrite(
+            "effects0",
+            Vector4(
+                profile.contrast,
+                profile.noiseFrequency,
+                profile.noiseStrength,
+                profile.noiseBias,
+            ),
+        )
+    )
+    add(
+        materialWrite(
+            "effects1",
+            Vector4(profile.vignetteCenter, profile.vignetteEdge, profile.vignetteBias, 0f),
+        )
+    )
     val gpuPlan = profile.gpuPlan()
     val prefixes =
         listOf(
@@ -702,59 +834,152 @@ internal class SpatialVrStrobeCoordinator(
     prefixes.forEach { (kind, prefix) ->
       val patterns = profile.activeGpuPatterns(kind)
       patterns.forEachIndexed { index, pattern ->
-        setPatternAttributes(target, prefix, index, pattern)
+        addAll(patternAttributeWrites(prefix, index, pattern))
       }
     }
-    target.setAttribute(
-        "patternCounts",
-        Vector4(
-            gpuPlan.stripeCount.toFloat(),
-            gpuPlan.rippleCount.toFloat(),
-            gpuPlan.rayCount.toFloat(),
-            gpuPlan.perlinCount.toFloat(),
-        ),
+    add(
+        materialWrite(
+            "patternCounts",
+            Vector4(
+                gpuPlan.stripeCount.toFloat(),
+                gpuPlan.rippleCount.toFloat(),
+                gpuPlan.rayCount.toFloat(),
+                gpuPlan.perlinCount.toFloat(),
+            ),
+        )
     )
-    return gpuPlan
   }
 
-  private fun setPatternAttributes(
-      target: SceneMaterial,
+  private fun temporalProfileWrites(
+      profile: VrStrobeTemporalProfile,
+  ): List<VrStrobeMaterialAttributeWrite> =
+      listOf(
+          materialWrite("color1", profile.color1.vector()),
+          materialWrite("color2", profile.color2.vector()),
+          materialWrite("color3", profile.fixationColor.vector()),
+          materialWrite(
+              "strobe0",
+              Vector4(
+                  profile.frequencyHz,
+                  profile.dutyPercent / 100f,
+                  if (profile.noiseType == VrStrobeNoiseType.PERLIN) 1f else 0f,
+                  profile.noiseResolution.toFloat(),
+              ),
+          ),
+          materialWrite(
+              "strobe1",
+              Vector4(
+                  profile.noisePhase1.floatValue(),
+                  profile.noiseAmplitude1,
+                  profile.noisePhase2.floatValue(),
+                  profile.noiseAmplitude2,
+              ),
+          ),
+          materialWrite(
+              "strobe2",
+              Vector4(
+                  profile.fixationEnabled.floatValue(),
+                  profile.fixationSize.toFloat(),
+                  0f,
+                  0f,
+              ),
+          ),
+          materialWrite("fixationColor", profile.fixationColor.vector()),
+          materialWrite("patternCounts", Vector4(0f)),
+      )
+
+  private fun patternAttributeWrites(
       prefix: String,
       index: Int,
       pattern: VrStrobePattern,
-  ) {
+  ): List<VrStrobeMaterialAttributeWrite> {
     val value = pattern
     if (value.kind == VrStrobePatternKind.PERLIN) {
-      target.setAttribute(
-          "$prefix${index}A",
-          Vector4(value.active.floatValue(), value.strength, value.perlinScale, value.perlinZSpeed),
+      return listOf(
+          materialWrite(
+              "$prefix${index}A",
+              Vector4(
+                  value.active.floatValue(),
+                  value.strength,
+                  value.perlinScale,
+                  value.perlinZSpeed,
+              ),
+          ),
+          materialWrite(
+              "$prefix${index}B",
+              Vector4(value.pivotX, value.pivotY, value.perlinZOffset, 0f),
+          ),
+          materialWrite("$prefix${index}C", Vector4(0f)),
+          materialWrite("$prefix${index}D", Vector4(0f)),
+          materialWrite("$prefix${index}E", Vector4(0f)),
       )
-      target.setAttribute("$prefix${index}B", Vector4(value.pivotX, value.pivotY, value.perlinZOffset, 0f))
-      target.setAttribute("$prefix${index}C", Vector4(0f))
-      target.setAttribute("$prefix${index}D", Vector4(0f))
-      target.setAttribute("$prefix${index}E", Vector4(0f))
-      return
     }
-    target.setAttribute(
-        "$prefix${index}A",
-        Vector4(value.active.floatValue(), value.strength, value.period, value.speed),
+    return listOf(
+        materialWrite(
+            "$prefix${index}A",
+            Vector4(value.active.floatValue(), value.strength, value.period, value.speed),
+        ),
+        materialWrite(
+            "$prefix${index}B",
+            Vector4(value.pivotX, value.pivotY, value.distortFreq, value.distortAmp),
+        ),
+        materialWrite(
+            "$prefix${index}C",
+            Vector4(value.distortSpeed, value.distMultPar, value.distMultOrth, value.waveFreq),
+        ),
+        materialWrite(
+            "$prefix${index}D",
+            Vector4(value.waveAmp, value.waveShape, value.angle, value.rotationSpeed),
+        ),
+        materialWrite(
+            "$prefix${index}E",
+            Vector4(value.extent, value.rotationPivotX, value.rotationPivotY, value.noiseMove),
+        ),
     )
-    target.setAttribute(
-        "$prefix${index}B",
-        Vector4(value.pivotX, value.pivotY, value.distortFreq, value.distortAmp),
-    )
-    target.setAttribute(
-        "$prefix${index}C",
-        Vector4(value.distortSpeed, value.distMultPar, value.distMultOrth, value.waveFreq),
-    )
-    target.setAttribute(
-        "$prefix${index}D",
-        Vector4(value.waveAmp, value.waveShape, value.angle, value.rotationSpeed),
-    )
-    target.setAttribute(
-        "$prefix${index}E",
-        Vector4(value.extent, value.rotationPivotX, value.rotationPivotY, value.noiseMove),
-    )
+  }
+
+  private fun interferenceProfileAppliedMarker(
+      profile: VrStrobeInterferenceProfile,
+      materialTarget: String,
+  ): String {
+    val gpuPlan = profile.gpuPlan()
+    return "channel=spatial-vr-strobe status=profile-applied kind=interference " +
+        "profileId=${profile.id} stripes=${profile.patterns(VrStrobePatternKind.STRIPE).size} " +
+        "ripples=${profile.patterns(VrStrobePatternKind.RIPPLE).size} " +
+        "rays=${profile.patterns(VrStrobePatternKind.RAY).size} " +
+        "perlins=${profile.patterns(VrStrobePatternKind.PERLIN).size} " +
+        "activeGpuPatterns=${gpuPlan.activePatternCount} " +
+        "maxSignalEvaluationsPerFragment=$VR_STROBE_MAX_SIGNAL_EVALUATIONS_PER_FRAGMENT " +
+        "trailMapping=single-evaluation-palette-softening antiAlias=derivative-band-limited " +
+        "sourceCommit=${VrStrobePresetCatalog.UPSTREAM_COMMIT} materialTarget=$materialTarget"
+  }
+
+  private fun temporalProfileAppliedMarker(
+      profile: VrStrobeTemporalProfile,
+      materialTarget: String,
+  ): String =
+      "channel=spatial-vr-strobe status=profile-applied kind=temporal " +
+          "profileId=${profile.id} frequencyHz=${profile.frequencyHz} " +
+          "dutyPercent=${profile.dutyPercent} automaticTimeLimit=false " +
+          "sourceCommit=${VrStrobePresetCatalog.UPSTREAM_COMMIT} materialTarget=$materialTarget"
+
+  private fun materialWrite(name: String, value: Vector4): VrStrobeMaterialAttributeWrite =
+      VrStrobeMaterialAttributeWrite(name, value)
+
+  private fun applyMaterialWrites(
+      target: SceneMaterial,
+      writes: List<VrStrobeMaterialAttributeWrite>,
+  ) {
+    writes.forEach { write -> setMaterialAttribute(target, write.name, write.value) }
+  }
+
+  private fun setMaterialAttribute(target: SceneMaterial, name: String, value: Vector4) {
+    val attributeIndex = if (target === material) materialAttributeIndices[name] else null
+    if (attributeIndex == null) {
+      target.setAttribute(name, value)
+    } else {
+      target.setAttribute(attributeIndex, value)
+    }
   }
 
   private fun applyOutput(
@@ -765,9 +990,17 @@ internal class SpatialVrStrobeCoordinator(
     val mode =
         if (!snapshot.visualOutputActive) 0f
         else if (snapshot.outputKind == VrStrobeOutputKind.INTERFERENCE) 1f else 2f
-    target.setAttribute(
+    val visualGeneration =
+        VrStrobeVisualGenerationPolicy.forRendererRevision(visibleRendererRevision)
+    setMaterialAttribute(
+        target,
         "modeTime",
-        Vector4(mode, snapshot.elapsedSeconds, 0f, snapshot.visualOutputActive.floatValue()),
+        Vector4(
+            mode,
+            snapshot.elapsedSeconds,
+            visualGeneration.phaseOffset,
+            visualGeneration.palettePolarity,
+        ),
     )
   }
 
@@ -818,7 +1051,11 @@ internal class SpatialVrStrobeCoordinator(
     mesh = null
     triangleMesh = null
     material = null
+    materialAttributeIndices = emptyMap()
     rendererRevision = 0L
+    visibleRendererRevision = 0L
+    pendingProfilePublications.clear()
+    activeProfilePublication = null
     pendingRendererUpdates.clear()
     carrierEntity = null
     bindings.marker(
@@ -905,11 +1142,11 @@ internal class SpatialVrStrobeCoordinator(
             "fixationColor",
             "patternCounts",
         )
-        .forEach { target.setAttribute(it, Vector4(0f)) }
+        .forEach { setMaterialAttribute(target, it, Vector4(0f)) }
     listOf("stripe", "ripple", "ray", "perlin").forEach { prefix ->
       repeat(VR_STROBE_MAX_PATTERN_INSTANCES) { index ->
         listOf("A", "B", "C", "D", "E").forEach { part ->
-          target.setAttribute("$prefix$index$part", Vector4(0f))
+          setMaterialAttribute(target, "$prefix$index$part", Vector4(0f))
         }
       }
     }

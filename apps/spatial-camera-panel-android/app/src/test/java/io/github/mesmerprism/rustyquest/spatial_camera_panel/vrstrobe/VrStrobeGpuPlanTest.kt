@@ -65,4 +65,43 @@ class VrStrobeGpuPlanTest {
     assertEquals(0, update.inactivePatternSlotWrites)
     assertFalse(update.fullProfileClear)
   }
+
+  @Test
+  fun randomizeProfilePublicationIsSlicedRepeatedAndBoundedPerSceneTick() {
+    val interference =
+        VrStrobeInterferenceProfile(
+                patterns =
+                    listOf(
+                        VrStrobePattern(VrStrobePatternKind.STRIPE),
+                        VrStrobePattern(VrStrobePatternKind.RIPPLE),
+                        VrStrobePattern(VrStrobePatternKind.RAY),
+                    )
+            )
+            .materialUpdatePlan()
+            .profilePublicationPlan()
+    val temporal = VrStrobeTemporalProfile().materialUpdatePlan().profilePublicationPlan()
+
+    assertEquals(26, interference.profileUniformWrites)
+    assertEquals(6, interference.maxWritesPerSceneTick)
+    assertEquals(2, interference.publicationPasses)
+    assertEquals(5, interference.batchesPerPass)
+    assertEquals(10, interference.sceneTicks)
+    assertEquals(52, interference.totalProfileUniformWrites)
+    assertEquals(8, temporal.profileUniformWrites)
+    assertEquals(4, temporal.sceneTicks)
+    assertTrue(interference.totalProfileUniformWrites < VR_STROBE_INITIAL_PROFILE_CLEAR_WRITES)
+  }
+
+  @Test
+  fun everyAdjacentRendererRevisionGetsADistinctContinuouslyReassertedVisualGeneration() {
+    val generations =
+        (0L..10_000L).map(VrStrobeVisualGenerationPolicy::forRendererRevision)
+
+    assertEquals(VrStrobeVisualGeneration(0f, 1f), generations.first())
+    generations.zipWithNext().forEach { (before, after) ->
+      assertTrue(before != after)
+      assertEquals(-before.palettePolarity, after.palettePolarity)
+      assertTrue(after.phaseOffset in -0.45f..0.45f)
+    }
+  }
 }

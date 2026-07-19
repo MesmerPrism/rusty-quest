@@ -127,7 +127,13 @@ float interferenceSignal(vec2 rawUv, float timeSeconds) {
   vec2 shake = vec2(
       sin(timeSeconds * g_MaterialUniform.global1.w),
       cos(timeSeconds * g_MaterialUniform.global1.w * 1.3)) * g_MaterialUniform.global1.z;
-  vec2 uv = rawUv + g_MaterialUniform.global1.xy + shake;
+  // modeTime.zw carries a randomize generation signature that the host
+  // advances only after the bounded multi-frame profile commit and then
+  // continuously reasserts. The small translation and alternating polarity
+  // provide an attended witness for the committed renderer revision.
+  vec2 generationShift =
+      vec2(g_MaterialUniform.modeTime.z, g_MaterialUniform.modeTime.z * -0.731);
+  vec2 uv = rawUv + generationShift + g_MaterialUniform.global1.xy + shake;
   uv.x += uv.y * g_MaterialUniform.global0.y;
   uv.y += uv.x * g_MaterialUniform.global0.z;
   uv *= g_MaterialUniform.global0.x;
@@ -246,6 +252,9 @@ vec3 interferencePalette(float signal) {
 
 vec3 interferenceColor(vec2 uv, float timeSeconds) {
   float signal = interferenceSignal(uv, timeSeconds);
+  if (g_MaterialUniform.modeTime.w < 0.0) {
+    signal = 1.0 - signal;
+  }
   vec3 color = interferencePalette(signal);
   float trail = g_MaterialUniform.post0.x;
   float blurRadius = g_MaterialUniform.post0.y;
@@ -274,8 +283,11 @@ vec3 interferenceColor(vec2 uv, float timeSeconds) {
 }
 
 vec3 temporalColor(vec2 uv, float timeSeconds) {
-  float phase = fract(timeSeconds * g_MaterialUniform.strobe0.x);
+  float phase = fract(timeSeconds * g_MaterialUniform.strobe0.x + g_MaterialUniform.modeTime.z);
   bool firstPhase = phase < g_MaterialUniform.strobe0.y;
+  if (g_MaterialUniform.modeTime.w < 0.0) {
+    firstPhase = !firstPhase;
+  }
   vec3 color = firstPhase ? g_MaterialUniform.color1.rgb : g_MaterialUniform.color2.rgb;
   float useNoise = firstPhase ? g_MaterialUniform.strobe1.x : g_MaterialUniform.strobe1.z;
   float amplitude = firstPhase ? g_MaterialUniform.strobe1.y : g_MaterialUniform.strobe1.w;
