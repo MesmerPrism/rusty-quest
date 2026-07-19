@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Trevor's browser-to-Quest setup and profile workflow for StrobeSim.">
+  <title>Trevor workflow · StrobeSim</title>
+  <link rel="stylesheet" href="../onboarding.css?v=20260719-1">
+</head>
+<body>
+  <header class="guide-header">
+    <a href="../">← StrobeSim</a>
+    <nav aria-label="Guide navigation">
+      <a href="#browser">Browser</a>
+      <a href="#quest">Quest</a>
+      <a href="#profiles">Profile exchange</a>
+      <a href="#code">Code</a>
+    </nav>
+  </header>
+
+  <main class="guide-shell">
+    <section class="guide-intro">
+      <h1>Browser to Quest workflow</h1>
+      <p>This is the working path for Trevor: explore or create stimuli in the browser, install the APK supplied by Till, test the result in the headset, and move profile sets between the two versions when needed.</p>
+      <div class="guide-actions">
+        <a class="primary" href="../">Open StrobeSim</a>
+        <a href="https://mesmerprism.com/Meta-Quest-File-Manager/">Get Meta Quest File Manager</a>
+        <a href="https://github.com/MesmerPrism/rusty-quest">Open the Rusty Quest repository</a>
+      </div>
+    </section>
+
+    <aside class="safety-note">
+      <strong>Photosensitive stimulus warning</strong>
+      <p>Both versions can display rapidly flashing, moving, and high-contrast patterns. Stop immediately if the stimulus is uncomfortable. The browser and Quest app each require their own warning acknowledgement.</p>
+    </aside>
+
+    <section aria-labelledby="handoffs-title">
+      <h2 id="handoffs-title">Two separate handoffs</h2>
+      <div class="workflow-map">
+        <div class="workflow-line">
+          <strong>Application</strong>
+          <span>APK from Till → Meta Quest File Manager on Windows → installed Quest app</span>
+        </div>
+        <div class="workflow-line">
+          <strong>Profiles</strong>
+          <span>StrobeSim → validated JSON bundle → repository transfer bridge → Quest stored profile list</span>
+        </div>
+      </div>
+      <p class="workflow-note">The apps use the same profile vocabulary and bounds, but they do not live-sync. The browser preview is flat; the Quest app remains the authority for the spatial, curved, depth-aware headset result.</p>
+    </section>
+
+    <section id="browser" class="guide-section">
+      <h2>1. Explore and create in the browser</h2>
+      <p class="section-lead">StrobeSim starts with Trevor's original nine-profile catalog and adds the Quest profile controls around it.</p>
+      <ol class="steps">
+        <li>
+          <h3>Acknowledge the browser warning</h3>
+          <p>The acknowledgement lasts for the current browser session. Selecting a stimulus card opens its designer and starts the flat preview.</p>
+        </li>
+        <li>
+          <h3>Explore the current profile</h3>
+          <p>Edit the controls directly or use the keyboard for fast exploration. Keyboard commands are ignored while a form field has focus.</p>
+          <table class="shortcut-table">
+            <tbody>
+              <tr><th><kbd>←</kbd> <kbd>→</kbd></th><td>Cycle through the complete current set, including session saves.</td></tr>
+              <tr><th><kbd>Space</kbd></th><td>Pause or resume the browser preview.</td></tr>
+              <tr><th><kbd>↑</kbd></th><td>Randomize within the Quest-safe parameter envelope.</td></tr>
+              <tr><th><kbd>↓</kbd></th><td>Restore the previous randomization for this profile.</td></tr>
+              <tr><th><kbd>S</kbd></th><td>Keep a temporary snapshot for this browser session.</td></tr>
+            </tbody>
+          </table>
+        </li>
+        <li>
+          <h3>Keep or export the result</h3>
+          <p><strong>New simulation</strong> and <strong>New strobe</strong> add profiles to the browser library. <strong>Download for Quest</strong> creates <code>rusty-vr-strobe-profiles.json</code> containing the current library plus session saves. <strong>Restore original set</strong> restores Trevor's nine source profiles while retaining additional profiles.</p>
+        </li>
+      </ol>
+    </section>
+
+    <section id="quest" class="guide-section">
+      <h2>2. Install and run the Quest APK</h2>
+      <p class="section-lead">Till supplies the APK directly. Meta Quest File Manager provides the Windows installation route; it does not publish or download this shared test build.</p>
+      <ol class="steps">
+        <li>
+          <h3>Install Meta Quest File Manager</h3>
+          <p>Use its <a href="https://mesmerprism.com/Meta-Quest-File-Manager/">guided setup and onboarding page</a>. It requires Windows, Android SDK Platform Tools, a Quest in Developer Mode, and a USB data cable for the first authorization.</p>
+        </li>
+        <li>
+          <h3>Authorize the headset</h3>
+          <p>Connect the Quest by USB, put on the headset, and approve the USB debugging prompt. In Meta Quest File Manager choose <strong>Refresh</strong>, then select the ready <strong>[USB]</strong> headset at the top.</p>
+        </li>
+        <li>
+          <h3>Install the supplied file</h3>
+          <p>Open <strong>APKs</strong>, browse to the APK from Till, and choose <strong>Install on selected headset</strong>. The normal reinstall option also updates an existing copy. Wait for the per-headset success result before disconnecting.</p>
+        </li>
+        <li>
+          <h3>Launch in Quest</h3>
+          <p>Open the newly installed app from the Quest app library; sideloaded builds are normally grouped under <strong>Unknown Sources</strong>. On first launch, acknowledge the in-headset warning and select a stimulus. Selection begins the stimulus after a short black lead-in; it is not automatically time-limited.</p>
+        </li>
+      </ol>
+
+      <table class="shortcut-table" aria-label="Quest controller controls">
+        <tbody>
+          <tr><th>Right A</th><td>Randomize the currently active stimulus.</td></tr>
+          <tr><th>Right B</th><td>Open or close the control panel. Opening recenters it in front of you.</td></tr>
+          <tr><th>Either stick, horizontal flick</th><td>Cycle through the current preset list.</td></tr>
+          <tr><th>Right stick, vertical</th><td>Move the stimulus nearer or farther.</td></tr>
+          <tr><th>Left stick, vertical</th><td>Adjust concavity in curved mode; in flat mode it adjusts distance.</td></tr>
+          <tr><th>Left X</th><td>Store an exact copy of the active profile in the Quest app.</td></tr>
+          <tr><th>Right trigger</th><td>Point at and activate panel controls; it does not store a profile.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="profiles" class="guide-section">
+      <h2>3. Move profiles between browser and Quest</h2>
+      <p class="section-lead">The interchange file uses <code>rusty.quest.spatial_vr_strobe.profile_bundle.v1</code>. Import is transactional and replaces the complete Quest stored-profile list only after validation.</p>
+      <ol class="steps">
+        <li>
+          <h3>Browser → Quest</h3>
+          <p>Download <code>rusty-vr-strobe-profiles.json</code> from StrobeSim. With the authorized Quest connected, run the repository bridge from the Rusty Quest checkout:</p>
+          <div class="command-block">pwsh -File tools/Invoke-SpatialVrStrobeProfileTransfer.ps1 `
+  -Action Import `
+  -Serial &lt;quest-serial&gt; `
+  -BundlePath .\rusty-vr-strobe-profiles.json</div>
+          <p>The bridge validates the file, stages it for the app, restarts that app, and succeeds only after the Quest app publishes the matching effective profile count.</p>
+        </li>
+        <li>
+          <h3>Quest → browser</h3>
+          <p>Launch the Quest app at least once so it publishes its effective list, then export it:</p>
+          <div class="command-block">pwsh -File tools/Invoke-SpatialVrStrobeProfileTransfer.ps1 `
+  -Action Export `
+  -Serial &lt;quest-serial&gt; `
+  -OutPath .\quest-profiles.json</div>
+          <p>Back in StrobeSim, choose <strong>Import JSON</strong> and select <code>quest-profiles.json</code>. A valid import replaces the current persistent browser library.</p>
+        </li>
+      </ol>
+      <p class="boundary-note"><strong>Why this is a separate bridge:</strong> Meta Quest File Manager handles the APK and normal ADB-accessible shared storage. The Quest app keeps its effective profile authority in app-private storage, so the ordinary Files tab is not described as a profile-sync route. The repository bridge provides the narrow, validated path.</p>
+    </section>
+
+    <section id="code" class="guide-section">
+      <h2>4. Repository collaboration</h2>
+      <p class="section-lead">Trevor has been invited with write access to the public Rusty Quest repository. Accepting the GitHub invitation enables branches, pushes, and pull-request collaboration without repository administration.</p>
+      <div class="guide-actions">
+        <a class="primary" href="https://github.com/MesmerPrism/rusty-quest/invitations">Open the repository invitation</a>
+        <a href="https://github.com/MesmerPrism/rusty-quest/pull/4">Open the current browser-editor pull request</a>
+        <a href="https://github.com/trevorhewitt/vr_strobe">Open Trevor's reference repository</a>
+      </div>
+      <p class="boundary-note">The public draft exposes the browser editor and the self-contained Quest strobe subsystem. The APK from Till is the current integrated runtime test artifact while the remaining app-shell integration is prepared for review.</p>
+      <ul class="repo-paths">
+        <li><code>apps/spatial-camera-panel-android/profile-editor-web/</code> — browser editor, profile contract, and tests</li>
+        <li><code>apps/spatial-camera-panel-android/app/src/main/java/io/github/mesmerprism/rustyquest/spatial_camera_panel/vrstrobe/</code> — Quest runtime implementation</li>
+        <li><code>tools/Invoke-SpatialVrStrobeProfileTransfer.ps1</code> — validated browser/Quest JSON bridge</li>
+        <li><code>docs/SPATIAL_SDK_VR_STROBE_PORT.md</code> — architecture, controls, provenance, and validation contract</li>
+      </ul>
+      <p class="boundary-note">Browser previews are useful for authoring, but visual acceptance—including curvature, distance, depth, comfort, and performance—belongs to the headset test.</p>
+    </section>
+  </main>
+
+  <footer class="guide-footer">
+    StrobeSim is adapted with Trevor Hewitt's permission. Rusty Quest source is AGPL-3.0-or-later; Meta Quest File Manager is MIT licensed.
+  </footer>
+</body>
+</html>

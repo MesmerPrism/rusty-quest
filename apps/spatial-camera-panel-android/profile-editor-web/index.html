@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Stimulus Portal · Quest Profile Editor</title>
+  <link rel="stylesheet" href="styles.css?v=20260719-2">
+</head>
+<body>
+  <div id="status" class="status" role="status" aria-live="polite"></div>
+
+  <main id="entry-warning-view" class="entry-warning-view" aria-labelledby="warning-title">
+    <section class="entry-warning-panel">
+      <p class="warning-kicker">Before entering</p>
+      <h1 id="warning-title">Photosensitive stimulus warning</h1>
+      <p>This site can display rapidly flashing, high-contrast, and moving patterns. Do not continue if flashing light may be unsafe or uncomfortable for you.</p>
+      <p class="warning-session-note">Your acknowledgement lasts for this browser session. The Quest app keeps its own safety acknowledgement.</p>
+      <button id="warning-accept" class="accent-button" type="button">I understand — enter the site</button>
+    </section>
+  </main>
+
+  <section id="portal-view" class="portal-view hidden" aria-labelledby="portal-title">
+    <div class="portal-container">
+      <header class="portal-header">
+        <h1 id="portal-title">Stimulus Selection</h1>
+        <p>Optimized for Meta Quest Fullscreen Viewing</p>
+      </header>
+
+      <div class="portal-filebar" aria-label="Quest profile transfer">
+        <div>
+          <strong>Quest profile set</strong>
+          <span id="profile-count">0 profiles ready to export</span>
+        </div>
+        <div class="file-actions">
+          <a class="button" href="onboarding/">Setup &amp; Quest workflow</a>
+          <button id="restore-originals-button" type="button">Restore original set</button>
+          <label class="button" for="import-file">Import JSON</label>
+          <button id="download-button" class="accent-button" type="button">Download for Quest</button>
+        </div>
+      </div>
+
+      <p class="shortcut-guide" aria-label="Keyboard shortcuts">
+        <kbd>←</kbd><kbd>→</kbd> profiles · <kbd>Space</kbd> pause · <kbd>↑</kbd> randomize · <kbd>↓</kbd> restore last · <kbd>S</kbd> session save
+      </p>
+
+      <main id="portal-grid" class="portal-grid" aria-label="Trevor's original stimulus list"></main>
+
+      <section id="custom-profile-section" class="custom-profile-section" aria-labelledby="custom-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="custom-title">Quest Profile Library</h2>
+            <p>Profiles created here or imported from a headset.</p>
+          </div>
+          <div class="file-actions">
+            <button id="add-interference" type="button">New simulation</button>
+            <button id="add-temporal" type="button">New strobe</button>
+          </div>
+        </div>
+        <div id="custom-profile-grid" class="portal-grid compact-grid"></div>
+      </section>
+
+      <footer class="portal-footer">
+        Ported with permission from Trevor Hewitt's <span>vr_strobe</span> and adapted to the Rusty Quest profile contract.
+        <a href="onboarding/">Read the browser and Quest workflow.</a>
+      </footer>
+    </div>
+  </section>
+
+  <section id="designer-view" class="designer-view hidden" aria-label="Stimulus designer">
+    <canvas id="preview-canvas" aria-label="Flat stimulus preview"></canvas>
+
+    <nav class="designer-toolbar" aria-label="Profile navigation">
+      <button id="back-button" type="button">← Stimulus Selection</button>
+      <label for="profile-select" class="visually-hidden">Active profile</label>
+      <select id="profile-select"></select>
+      <button id="duplicate-button" type="button">Duplicate</button>
+      <button id="delete-button" class="danger" type="button">Delete</button>
+      <span class="toolbar-spacer"></span>
+      <button id="preview-toggle" type="button">Enable preview</button>
+      <label class="button" for="import-file">Import JSON</label>
+      <button id="designer-download-button" type="button">Download for Quest</button>
+    </nav>
+
+    <div class="designer-shortcuts" aria-label="Keyboard shortcuts">
+      <kbd>←</kbd><kbd>→</kbd> profile · <kbd>Space</kbd> pause · <kbd>↑</kbd> randomize · <kbd>↓</kbd> restore · <kbd>S</kbd> save
+    </div>
+
+    <aside id="simulation-panel" class="designer-panel simulation-panel" aria-label="Interference Shader controls">
+      <div class="simulation-heading">
+        <h1>Interference Shader</h1>
+        <div class="main-actions">
+          <button id="randomize-button" class="randomize-button" type="button">Randomise</button>
+          <button id="reset-profile-button" class="reset-button" type="button">Reset</button>
+        </div>
+      </div>
+      <div id="simulation-editor" class="simulation-editor"></div>
+      <section class="quest-section">
+        <h3>Quest Profile</h3>
+        <div id="simulation-metadata"></div>
+      </section>
+    </aside>
+
+    <aside id="strobe-panel" class="designer-panel strobe-panel" aria-label="Strobe controls">
+      <button id="strobe-header" class="strobe-header" type="button" aria-expanded="false">
+        <span id="strobe-panel-title">STROBE</span>
+        <span id="strobe-toggle-label">EXPAND</span>
+      </button>
+      <div id="strobe-panel-body" class="strobe-panel-body hidden">
+        <div id="strobe-editor"></div>
+        <section class="strobe-control-group quest-strobe-group">
+          <span class="group-label">QUEST PROFILE</span>
+          <div id="strobe-metadata"></div>
+          <button id="strobe-reset-button" type="button">RESET PROFILE</button>
+        </section>
+      </div>
+    </aside>
+
+    <div id="selected-summary" class="selected-summary">No profile selected</div>
+  </section>
+
+  <input id="import-file" type="file" accept="application/json,.json" hidden>
+  <script type="module" src="app.mjs?v=20260719-1"></script>
+</body>
+</html>
