@@ -121,6 +121,8 @@ button, .button { cursor: pointer; }
 .empty-library { grid-column: 1 / -1; margin: 0; padding: 28px; border: 1px dashed #292929; color: var(--muted); font-size: 13px; }
 .portal-footer { margin-top: 48px; color: #666; font-size: 12px; }
 .portal-footer span { color: #999; }
+.portal-footer a { display: block; width: fit-content; margin: 8px auto 0; color: #888; }
+.portal-footer a:hover, .portal-footer a:focus-visible { color: #bbb; }
 .shortcut-guide { margin: -8px 0 24px; color: #777; font: 11px "Cascadia Mono", Consolas, monospace; }
 kbd { min-width: 19px; display: inline-block; padding: 2px 5px; border: 1px solid #3a3a3a; background: #111; color: #ccc; font: inherit; text-align: center; }
 

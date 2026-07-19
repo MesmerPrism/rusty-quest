@@ -54,12 +54,17 @@ val spatialHandMeshRigPackaged =
 val spatialSigningKeystore =
   providers.environmentVariable("RUSTY_QUEST_SPATIAL_SIGNING_KEYSTORE")
 
+val spatialNdkVersion =
+  providers.environmentVariable("RUSTY_QUEST_ANDROID_NDK_VERSION")
+    .orElse("27.2.12479018")
+
 fun buildConfigString(value: String): String =
   "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 android {
   namespace = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
   compileSdk = 34
+  ndkVersion = spatialNdkVersion.get()
 
   defaultConfig {
     applicationId = spatialApplicationId.get()
@@ -187,10 +192,14 @@ dependencies {
   implementation(libs.meta.spatial.sdk.toolkit)
   implementation(libs.meta.spatial.sdk.vr)
   implementation(libs.meta.spatial.sdk.isdk)
+  implementation(libs.gson)
 
   testImplementation(kotlin("test"))
 }
 
 spatial {
   allowUsageDataCollection.set(false)
+  shaders {
+    sources.add(project.layout.projectDirectory.dir("src/shaders"))
+  }
 }

@@ -57,6 +57,13 @@ script with `-Action Export` to pull the effective Quest list back into the
 browser. Imports replace the complete stored list only after the app-owned
 codec validates the bundle.
 
+The public [Trevor workflow](onboarding/index.html) separates the two handoffs
+clearly: Meta Quest File Manager installs or updates the APK supplied by the
+maintainer, while the serial-scoped repository bridge moves the validated JSON
+bundle into or out of app-private storage. The apps do not live-sync, and the
+File Manager's ordinary shared-storage browser is not presented as access to
+the Quest app's private profile authority.
+
 The pattern vocabulary and flat preview math are derived with explicit
 permission from Trevor Hewitt's `vr_strobe`, exact reference commit
 `52c71cc069f4102bc4148e05c5fd3fc4d5466479`, and are distributed here under

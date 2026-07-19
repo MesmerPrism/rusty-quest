@@ -1,0 +1,100 @@
+:root {
+  color-scheme: dark;
+  --background: #0a0a0a;
+  --surface: #121212;
+  --text: #f0f0f0;
+  --muted: #a1a1a1;
+  --border: #323232;
+  --blue: #3a86ff;
+  --green: #63d383;
+  --pink: #ff4fa3;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html { min-width: 100%; min-height: 100%; scroll-behavior: smooth; }
+body { margin: 0; min-width: 100%; min-height: 100%; background: var(--background); color: var(--text); }
+a { color: #8ab4ff; }
+a:hover, a:focus-visible { color: #fff; }
+code, kbd { font-family: "Cascadia Mono", Consolas, monospace; }
+
+.guide-header {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 0 24px;
+  border-bottom: 1px solid #242424;
+  background: #080808;
+}
+.guide-header a { color: #d9d9d9; text-decoration: none; }
+.guide-header nav { display: flex; flex-wrap: wrap; gap: 18px; font-size: 13px; }
+.guide-header nav a { color: #aaa; }
+
+.guide-shell { width: min(900px, calc(100% - 40px)); margin: 0 auto; padding: 54px 0 72px; }
+.guide-intro { max-width: 760px; margin-bottom: 38px; }
+.guide-intro h1 { margin: 0 0 16px; font-size: clamp(32px, 6vw, 54px); line-height: 1.04; font-weight: 400; letter-spacing: -.045em; }
+.guide-intro p { margin: 0; color: #c2c2c2; font-size: 18px; line-height: 1.65; }
+.guide-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 22px; }
+.guide-actions a, .text-button {
+  display: inline-block;
+  padding: 9px 12px;
+  border: 1px solid #3a3a3a;
+  background: #0b0b0b;
+  color: #eee;
+  text-decoration: none;
+  font-size: 14px;
+}
+.guide-actions .primary { border-color: var(--blue); }
+.guide-actions a:hover, .guide-actions a:focus-visible, .text-button:hover, .text-button:focus-visible { border-color: var(--blue); }
+
+.safety-note { margin: 0 0 40px; padding: 18px 20px; border: 1px solid #633245; background: #170b10; }
+.safety-note strong { display: block; margin-bottom: 6px; color: #ff8fbc; }
+.safety-note p { margin: 0; color: #d0b7c1; line-height: 1.55; }
+
+.workflow-map { margin: 0 0 44px; border-top: 1px solid var(--border); }
+.workflow-line { display: grid; grid-template-columns: 105px 1fr; gap: 18px; padding: 16px 0; border-bottom: 1px solid var(--border); }
+.workflow-line strong { color: var(--pink); font-weight: 600; }
+.workflow-line span { color: #d0d0d0; line-height: 1.5; }
+.workflow-line:nth-child(2) strong { color: var(--green); }
+.workflow-note { margin: 12px 0 0; color: var(--muted); font-size: 14px; line-height: 1.55; }
+
+.guide-section { padding: 36px 0; border-top: 1px solid var(--border); }
+.guide-section h2 { margin: 0 0 10px; font-size: 28px; font-weight: 450; letter-spacing: -.025em; }
+.section-lead { max-width: 760px; margin: 0 0 22px; color: var(--muted); line-height: 1.6; }
+.steps { margin: 0; padding-left: 26px; }
+.steps > li { padding: 0 0 22px 8px; }
+.steps > li:last-child { padding-bottom: 0; }
+.steps h3 { margin: 0 0 6px; font-size: 17px; font-weight: 600; }
+.steps p { margin: 0; color: #c2c2c2; line-height: 1.62; }
+.steps p + p { margin-top: 7px; }
+
+.shortcut-table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+.shortcut-table th, .shortcut-table td { padding: 11px 10px; border-bottom: 1px solid #2b2b2b; text-align: left; vertical-align: top; }
+.shortcut-table th { width: 190px; color: #eee; font-weight: 550; }
+.shortcut-table td { color: #bdbdbd; line-height: 1.5; }
+kbd { display: inline-block; min-width: 23px; padding: 2px 5px; border: 1px solid #454545; background: #111; color: #eee; text-align: center; }
+
+.command-block { margin: 12px 0; padding: 14px 16px; overflow-x: auto; border: 1px solid #343434; background: #050505; color: #d9e7ff; font: 13px/1.55 "Cascadia Mono", Consolas, monospace; white-space: pre; }
+.boundary-note { margin-top: 20px; padding: 14px 16px; border-left: 3px solid var(--blue); background: var(--surface); color: #bbb; line-height: 1.55; }
+
+.repo-paths { margin: 16px 0 0; padding: 0; list-style: none; border-top: 1px solid #292929; }
+.repo-paths li { padding: 12px 0; border-bottom: 1px solid #292929; }
+.repo-paths code { color: #d9e7ff; overflow-wrap: anywhere; }
+
+.guide-footer { padding: 24px; border-top: 1px solid #242424; color: #777; text-align: center; font-size: 12px; }
+
+@media (max-width: 680px) {
+  .guide-header { align-items: flex-start; flex-direction: column; padding: 14px 18px; }
+  .guide-shell { width: min(100% - 28px, 900px); padding-top: 38px; }
+  .guide-intro p { font-size: 16px; }
+  .workflow-line { grid-template-columns: 1fr; gap: 5px; }
+  .shortcut-table, .shortcut-table tbody, .shortcut-table tr, .shortcut-table th, .shortcut-table td { display: block; width: 100%; }
+  .shortcut-table tr { padding: 10px 0; border-bottom: 1px solid #2b2b2b; }
+  .shortcut-table th, .shortcut-table td { padding: 3px 0; border: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
