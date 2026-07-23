@@ -46,6 +46,14 @@ try {
     if($fatals-ne0){throw "Scoped fatal count is $fatals"}
     $receipt.phase="result";$receipt.result="pass";$receipt.package_readback=$true;$receipt.host_result_sha256=(Get-FileHash -Algorithm SHA256 (Join-Path $OutDir "host-result.json")).Hash.ToLowerInvariant();$receipt.quest_result_sha256=(Get-FileHash -Algorithm SHA256 (Join-Path $OutDir "quest-result.json")).Hash.ToLowerInvariant();$receipt.bounded_fatal_count=0
 } finally {
+    $logcatPath=Join-Path $OutDir "logcat.txt"
+    & adb.exe -s $Serial logcat -d -v threadtime -T $started|Set-Content -Encoding UTF8 $logcatPath
+    if(Test-Path $logcatPath){
+        $boundedLogs=Get-Content -Raw $logcatPath
+        $receipt.bounded_logcat_sha256=(Get-FileHash -Algorithm SHA256 $logcatPath).Hash.ToLowerInvariant()
+        $receipt.bounded_fatal_count=[regex]::Matches($boundedLogs,"FATAL EXCEPTION|Fatal signal|AndroidRuntime.*FATAL").Count
+        $receipt.failure_path_evidence_preserved=$true
+    }
     & adb.exe -s $Serial shell am force-stop $package|Out-Null
     $pidAfter=(& adb.exe -s $Serial shell pidof $package 2>&1|Out-String).Trim()
     $packageAfter=(& adb.exe -s $Serial shell pm path $package 2>&1|Out-String).Trim()
