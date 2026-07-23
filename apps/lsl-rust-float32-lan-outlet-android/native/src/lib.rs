@@ -203,7 +203,7 @@ fn execute() -> bool {
     let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).unwrap();
     let service_port = listener.local_addr().unwrap().port();
     let xml = format!(
-        "<?xml version=\"1.0\"?>\n<info>\n\t<name>p70-quest-outlet</name>\n\t<type>qualification</type>\n\t<channel_count>1</channel_count>\n\t<channel_format>float32</channel_format>\n\t<source_id>p70-quest-source</source_id>\n\t<nominal_srate>0</nominal_srate>\n\t<version>1.100000000000000</version>\n\t<created_at>1.0</created_at>\n\t<uid>{UID}</uid>\n\t<session_id>p70</session_id>\n\t<hostname>quest</hostname>\n\t<v4address>{local_ip}</v4address>\n\t<v4data_port>{service_port}</v4data_port>\n\t<v4service_port>{service_port}</v4service_port>\n\t<v6address></v6address>\n\t<v6data_port>0</v6data_port>\n\t<v6service_port>0</v6service_port>\n\t<desc />\n</info>\n"
+        "<?xml version=\"1.0\"?>\n<info>\n\t<name>p70-quest-outlet</name>\n\t<type>qualification</type>\n\t<channel_count>1</channel_count>\n\t<channel_format>float32</channel_format>\n\t<source_id>p70-quest-source</source_id>\n\t<nominal_srate>0.000000000000000</nominal_srate>\n\t<version>1.100000000000000</version>\n\t<created_at>1.0</created_at>\n\t<uid>{UID}</uid>\n\t<session_id>p70</session_id>\n\t<hostname>quest</hostname>\n\t<v4address>{local_ip}</v4address>\n\t<v4data_port>{service_port}</v4data_port>\n\t<v4service_port>{service_port}</v4service_port>\n\t<v6address></v6address>\n\t<v6data_port>0</v6data_port>\n\t<v6service_port>0</v6service_port>\n\t<desc />\n</info>\n"
     );
     let response_limit = xml.len();
     let responder_cancelled = Arc::new(AtomicBool::new(false));

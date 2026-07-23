@@ -9,6 +9,10 @@ $all = @(
     (Get-Content -Raw (Join-Path $root "tools\Invoke-LslRustFloat32LanOutletQuest.ps1"))
 ) -join "`n"
 $runScriptText = Get-Content -Raw (Join-Path $root "tools\Invoke-LslRustFloat32LanOutletQuest.ps1")
+$canonicalIrregularRate = '<nominal_srate>0.000000000000000</nominal_srate>'
+if (-not $all.Contains($canonicalIrregularRate) -or $all.Contains('<nominal_srate>0</nominal_srate>')) {
+    throw "Quest XML must use the canonical typed-admission irregular nominal-rate literal"
+}
 $p70Scripts = Get-ChildItem (Join-Path $root "tools") -File |
     Where-Object Name -Like "*LslRustFloat32LanOutlet*.ps1"
 foreach ($script in $p70Scripts) {
