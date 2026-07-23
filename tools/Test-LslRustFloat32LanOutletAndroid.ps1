@@ -40,6 +40,27 @@ foreach ($needle in @("aarch64-linux-android", "rusty_lsl", "RLSLP70_RUST", "run
 foreach ($needle in @("bounded_logcat_sha256", "bounded_fatal_count", "failure_path_evidence_preserved")) {
     if (-not $runScriptText.Contains($needle)) { throw "Missing failure-path evidence guard: $needle" }
 }
+foreach ($needle in @(
+    '$lifecycleCompleted=$false',
+    'if(-not$lifecycleCompleted)',
+    'RESPONDER schema=rusty.lsl.p70.quest_responder_result.v1',
+    '[DateTime]::UtcNow.AddSeconds(12)',
+    '$receipt.responder_marker_observed',
+    '$receipt.responder_marker_wait_seconds',
+    'if($lifecycleCompleted){0}else{12}'
+)) {
+    if (-not $runScriptText.Contains($needle)) { throw "Missing bounded responder-marker wait guard: $needle" }
+}
+$waitIndex = $runScriptText.IndexOf('[DateTime]::UtcNow.AddSeconds(12)', [StringComparison]::Ordinal)
+$finalCaptureIndex = $runScriptText.IndexOf('$logcatPath=Join-Path $OutDir "logcat.txt"', [StringComparison]::Ordinal)
+$finalCleanupIndex = $runScriptText.LastIndexOf('& adb.exe -s $Serial shell am force-stop $package', [StringComparison]::Ordinal)
+if ($waitIndex -lt 0 -or $finalCaptureIndex -lt 0 -or $finalCleanupIndex -lt 0 -or
+    $waitIndex -gt $finalCaptureIndex -or $finalCaptureIndex -gt $finalCleanupIndex) {
+    throw "Failure marker wait, final log capture, and force-stop ordering drifted"
+}
+if ([regex]::Matches($runScriptText, 'AddSeconds\((\d+)\)') | Where-Object { [int]$_.Groups[1].Value -gt 12 }) {
+    throw "Responder-marker wait exceeds the 12-second hard bound"
+}
 $nativeText = Get-Content -Raw (Join-Path $app "native\src\lib.rs")
 foreach ($needle in @(
     "ShortInfoResponderLimits::new(",

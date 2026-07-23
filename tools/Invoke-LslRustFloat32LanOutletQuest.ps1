@@ -22,6 +22,7 @@ $started=(Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm:ss.fff")
 $receipt=[ordered]@{schema="rusty.quest.p70.device_transaction.v1";phase="sent";package=$package;property_manifest=@();staging_inputs=@();capsule_sha256=(Get-FileHash -Algorithm SHA256 $RunCapsule).Hash.ToLowerInvariant();cleanup="pending"}
 $receipt|ConvertTo-Json -Depth 8|Set-Content -Encoding UTF8 (Join-Path $OutDir "transaction-sent.json")
 $receipt.phase="pending";$receipt|ConvertTo-Json -Depth 8|Set-Content -Encoding UTF8 (Join-Path $OutDir "transaction-pending.json")
+$lifecycleCompleted=$false
 try {
     Adb @("install","-r",$apk)
     $packagePath=(& adb.exe -s $Serial shell pm path $package|Out-String).Trim()
@@ -45,22 +46,39 @@ try {
     $fatals=[regex]::Matches($logs,"FATAL EXCEPTION|Fatal signal|AndroidRuntime.*FATAL").Count
     if($fatals-ne0){throw "Scoped fatal count is $fatals"}
     $receipt.phase="result";$receipt.result="pass";$receipt.package_readback=$true;$receipt.host_result_sha256=(Get-FileHash -Algorithm SHA256 (Join-Path $OutDir "host-result.json")).Hash.ToLowerInvariant();$receipt.quest_result_sha256=(Get-FileHash -Algorithm SHA256 (Join-Path $OutDir "quest-result.json")).Hash.ToLowerInvariant();$receipt.bounded_fatal_count=0
+    $lifecycleCompleted=$true
 } finally {
-    $logcatPath=Join-Path $OutDir "logcat.txt"
-    & adb.exe -s $Serial logcat -d -v threadtime -T $started|Set-Content -Encoding UTF8 $logcatPath
-    if(Test-Path $logcatPath){
-        $boundedLogs=Get-Content -Raw $logcatPath
-        $receipt.bounded_logcat_sha256=(Get-FileHash -Algorithm SHA256 $logcatPath).Hash.ToLowerInvariant()
-        $receipt.bounded_fatal_count=[regex]::Matches($boundedLogs,"FATAL EXCEPTION|Fatal signal|AndroidRuntime.*FATAL").Count
-        $receipt.failure_path_evidence_preserved=$true
+    try {
+        $responderMarker="RESPONDER schema=rusty.lsl.p70.quest_responder_result.v1"
+        $responderMarkerObserved=$false
+        if(-not$lifecycleCompleted){
+            $responderWaitDeadline=[DateTime]::UtcNow.AddSeconds(12)
+            while([DateTime]::UtcNow-lt$responderWaitDeadline){
+                $markerLogs=(& adb.exe -s $Serial logcat -d -v threadtime -T $started|Out-String)
+                if($markerLogs.Contains($responderMarker)){$responderMarkerObserved=$true;break}
+                Start-Sleep -Milliseconds 250
+            }
+        }
+        $logcatPath=Join-Path $OutDir "logcat.txt"
+        & adb.exe -s $Serial logcat -d -v threadtime -T $started|Set-Content -Encoding UTF8 $logcatPath
+        if(Test-Path $logcatPath){
+            $boundedLogs=Get-Content -Raw $logcatPath
+            $responderMarkerObserved=$responderMarkerObserved-or$boundedLogs.Contains($responderMarker)
+            $receipt.responder_marker_observed=$responderMarkerObserved
+            $receipt.responder_marker_wait_seconds=if($lifecycleCompleted){0}else{12}
+            $receipt.bounded_logcat_sha256=(Get-FileHash -Algorithm SHA256 $logcatPath).Hash.ToLowerInvariant()
+            $receipt.bounded_fatal_count=[regex]::Matches($boundedLogs,"FATAL EXCEPTION|Fatal signal|AndroidRuntime.*FATAL").Count
+            $receipt.failure_path_evidence_preserved=$true
+        }
+    } finally {
+        & adb.exe -s $Serial shell am force-stop $package|Out-Null
+        $pidAfter=(& adb.exe -s $Serial shell pidof $package 2>&1|Out-String).Trim()
+        $packageAfter=(& adb.exe -s $Serial shell pm path $package 2>&1|Out-String).Trim()
+        $forwardAfter=(& adb.exe -s $Serial forward --list|Out-String);$reverseAfter=(& adb.exe -s $Serial reverse --list|Out-String)
+        if($pidAfter-or-not$packageAfter-or$forwardAfter-ne$forwardBefore-or$reverseAfter-ne$reverseBefore){throw "Cleanup verification failed"}
+        $receipt.cleanup="complete-target-force-stop-package-retained-sockets-closed-empty-property-manifest"
+        $receipt.package_retained=$true;$receipt.property_manifest_restored=($propertyBefore.Count-eq0)
+        $receipt|ConvertTo-Json -Depth 8|Set-Content -Encoding UTF8 (Join-Path $OutDir "private-device-receipt.json")
     }
-    & adb.exe -s $Serial shell am force-stop $package|Out-Null
-    $pidAfter=(& adb.exe -s $Serial shell pidof $package 2>&1|Out-String).Trim()
-    $packageAfter=(& adb.exe -s $Serial shell pm path $package 2>&1|Out-String).Trim()
-    $forwardAfter=(& adb.exe -s $Serial forward --list|Out-String);$reverseAfter=(& adb.exe -s $Serial reverse --list|Out-String)
-    if($pidAfter-or-not$packageAfter-or$forwardAfter-ne$forwardBefore-or$reverseAfter-ne$reverseBefore){throw "Cleanup verification failed"}
-    $receipt.cleanup="complete-target-force-stop-package-retained-sockets-closed-empty-property-manifest"
-    $receipt.package_retained=$true;$receipt.property_manifest_restored=($propertyBefore.Count-eq0)
-    $receipt|ConvertTo-Json -Depth 8|Set-Content -Encoding UTF8 (Join-Path $OutDir "private-device-receipt.json")
 }
 Get-Content -Raw (Join-Path $OutDir "private-device-receipt.json")
