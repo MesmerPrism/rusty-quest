@@ -37,6 +37,13 @@ foreach ($script in $p70Scripts) {
 foreach ($needle in @("aarch64-linux-android", "rusty_lsl", "RLSLP70_RUST", "run_timestamped_float32_outlet", "run_typed_udp_discovery_float32_session_inlet", 'record_count\":1', "ACCEPTED_FEATURE_LOCK_FINGERPRINT", "socket_cleanup", "run-as", "install", "force-stop", "forward --list", "reverse --list")) {
     if (-not $all.Contains($needle)) { throw "Missing Rust-on-Quest guard: $needle" }
 }
+$buildScriptText = Get-Content -Raw (Join-Path $root "tools\Build-LslRustFloat32LanOutletAndroid.ps1")
+if (-not $buildScriptText.Contains("ShortInfoResponseEnvelopeLimits::new(2048,4096)")) {
+    throw "Generated host runner must admit the bounded Quest response body"
+}
+if ($buildScriptText -match 'ShortInfoResponseEnvelopeLimits::new\(1,') {
+    throw "Generated host runner one-byte response body limit is forbidden"
+}
 foreach ($needle in @("bounded_logcat_sha256", "bounded_fatal_count", "failure_path_evidence_preserved")) {
     if (-not $runScriptText.Contains($needle)) { throw "Missing failure-path evidence guard: $needle" }
 }

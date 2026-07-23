@@ -86,7 +86,7 @@ fn main() {
  let sa=TimestampedFloat32SampleActivation::new(admission.capability(RuntimeModule::TimestampedFloat32Sample).unwrap(),ha).unwrap();
  let ql=ShortInfoQueryWireLimits::new(256,1024).unwrap();
  let query=ShortInfoQueryWire::encode(&ShortInfoQuery::new("name='p70-quest-outlet'".into(),reply,70,ql).unwrap(),ql).unwrap();
- let envelope=ShortInfoResponseEnvelopeLimits::new(1,4096).unwrap();
+ let envelope=ShortInfoResponseEnvelopeLimits::new(2048,4096).unwrap();
  let observed=StreamInfoObservedAdmissionLimits::new(
   StreamDescriptorLimits::new(128,128,128,8).unwrap(),
   MetadataTreeLimits::new(4,32,128,256,256).unwrap(),
