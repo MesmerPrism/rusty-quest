@@ -45,8 +45,10 @@ Loss or absence of any future optional family must not remove monitoring.
 profile names:
 
 - the exact Fleet/Manifold device id and identity revision;
-- the expected Manifold authority revision;
-- the producer epoch and monotonic source revision;
+- the initial Manifold authority-revision hint, which the trusted Fleet
+  ingress rebinds to current fleet-global state before review;
+- the monotonic per-peer status revision;
+- the producer epoch and monotonic per-epoch source revision;
 - an app-private Ed25519 key id and enrolled public-key fingerprint;
 - an explicit Hub check-in endpoint;
 - bounded check-in interval and TTL;
@@ -78,11 +80,23 @@ line, or public repository.
 
 ## Epoch and revision behavior
 
-A new service/process lifetime creates a new producer epoch. Every emitted
-status advances the source/status revision. Retry of the same logical check-in
-uses the same signed envelope and id; a new observation uses a new revision.
-Fleet and Manifold independently reject replay, stale authority, expired
-status, untrusted enrollment, identity mismatch, or non-advancing revisions.
+Ordinary service restarts retain the app-private producer epoch and the next
+source revision. An app update or change to the configured device identity,
+identity revision, or key creates a new producer epoch and resets only the
+per-epoch source revision. The independent per-peer Manifold status revision
+continues monotonically across that change.
+
+Devices do not serialize themselves against Manifold's fleet-global authority
+revision. The signed proposal carries an initial revision hint; after signature
+and enrollment verification, the trusted Fleet ingress binds that one
+authority-owned optimistic-lock field to current state immediately before
+Manifold review. Device-owned identity, proposal id, status revision,
+timestamps, capabilities, and Fleet observation remain exactly signed.
+
+Retry of the same logical check-in uses the same signed envelope and id; a new
+observation uses new status and source revisions. Fleet and Manifold
+independently reject replay, expired status, untrusted enrollment, identity
+mismatch, or non-advancing revisions.
 
 ## Validation
 

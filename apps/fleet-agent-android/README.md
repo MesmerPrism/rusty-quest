@@ -23,10 +23,13 @@ lane. Runtime validation restricts `http` endpoints to loopback, link-local,
 or RFC 1918 addresses; nonlocal endpoints must use `https`. Signatures provide
 integrity and enrollment binding, not confidentiality.
 
-The service keeps no offline request queue. It reserves a new monotonic source
-revision for each attempt, publishes one bounded envelope, stores a compact
-app-private receipt, and waits for the configured interval. It is non-sticky
-and stops cleanly on the exact stop action.
+The service keeps no offline request queue. It reserves independent monotonic
+per-peer status and per-epoch source revisions for each attempt, publishes one
+bounded envelope, stores a compact app-private receipt, and waits for the
+configured interval. Ordinary service restarts retain the producer epoch; an
+app or configured identity/key generation change rotates the epoch and resets
+only its source revision. The service is non-sticky and stops cleanly on the
+exact stop action.
 
 Host validation:
 

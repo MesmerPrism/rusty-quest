@@ -49,8 +49,12 @@ final class FleetAgentConfig {
         return new FleetAgentConfig(profile, endpoint, intervalMs);
     }
 
-    String runtimeProfile(long sourceRevision, String sourceEpoch) throws JSONException {
+    String runtimeProfile(
+            long statusRevision,
+            long sourceRevision,
+            String sourceEpoch) throws JSONException {
         JSONObject runtime = new JSONObject(profile.toString());
+        runtime.put("status_revision", statusRevision);
         runtime.put("source_revision", sourceRevision);
         runtime.put("source_epoch", sourceEpoch);
         return runtime.toString();

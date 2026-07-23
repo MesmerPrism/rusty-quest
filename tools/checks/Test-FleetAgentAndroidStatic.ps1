@@ -131,6 +131,10 @@ foreach ($token in @(
     'START_NOT_STICKY',
     'FleetAgentConfig.load',
     'FleetAgentPrivateKey.load',
+    'next-status-revision',
+    'next-source-revision',
+    'producer-generation',
+    'source-epoch',
     'Executors.newSingleThreadScheduledExecutor',
     'RUSTY_QUEST_FLEET_AGENT_SERVICE_START',
     'RUSTY_QUEST_FLEET_AGENT_SERVICE_STOP')) {
@@ -141,6 +145,7 @@ if ($service -match 'get.*Extra\(') {
 }
 Assert-Match $config 'filesDir|context\.getFilesDir' "Fleet Agent profile must be app-private."
 Assert-Match $config 'cleartext_hub_must_be_local' "Cleartext endpoints must fail closed outside the local address set."
+Assert-Match $config 'runtime\.put\("status_revision"' "Runtime profile must keep Manifold status revision independent."
 foreach ($localRange in @('127\.', '10\.', '192\.168\.', '169\.254\.', '172\.')) {
     Assert-Match $config $localRange "Fleet Agent local endpoint validation is missing $localRange"
 }

@@ -120,6 +120,7 @@ mod tests {
             "hardware_class": "standalone_xr",
             "identity_revision": 1,
             "expected_authority_revision": 1,
+            "status_revision": 7,
             "source_revision": 7,
             "source_epoch": "agent-native-test-1",
             "key_id": key.key_id,

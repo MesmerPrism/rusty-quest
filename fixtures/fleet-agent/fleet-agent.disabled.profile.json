@@ -7,6 +7,7 @@
   "hardware_class": "standalone_xr",
   "identity_revision": 1,
   "expected_authority_revision": 1,
+  "status_revision": 1,
   "source_revision": 1,
   "source_epoch": "agent-epoch-disabled",
   "key_id": "key.quest.unenrolled.v1",

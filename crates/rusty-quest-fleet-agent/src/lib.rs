@@ -50,11 +50,13 @@ pub struct QuestFleetAgentProfile {
     pub hardware_class: String,
     /// Accepted enrollment identity revision expected by Fleet.
     pub identity_revision: u64,
-    /// Current Manifold authority revision expected by the producer.
+    /// Initial Manifold authority revision hint; trusted ingress rebinds it.
     pub expected_authority_revision: u64,
-    /// Monotonic Quest status/source revision.
+    /// Monotonic per-peer Manifold status revision.
+    pub status_revision: u64,
+    /// Monotonic per-epoch Quest source revision.
     pub source_revision: u64,
-    /// Quest producer epoch. A service/process restart creates a new epoch.
+    /// Quest producer epoch. Service restarts retain the current generation.
     pub source_epoch: String,
     /// Signing key identifier resolved from app-private configuration.
     pub key_id: String,
@@ -187,7 +189,7 @@ pub fn produce_signed_checkin(
     let proposal = manifold_proposal(profile, snapshot, issued_at_ms, expires_at_ms)?;
     let claims = FleetCheckInClaims {
         schema: "rusty.fleet.checkin_claims.v1".to_owned(),
-        checkin_id: format!("checkin.{}.{}", profile.device_id, profile.source_revision),
+        checkin_id: format!("checkin.{}.{}", profile.device_id, profile.status_revision),
         issued_at_ms,
         expires_at_ms,
         manifold_peer_status_proposal: serde_json::to_value(proposal).map_err(|error| {
@@ -249,11 +251,12 @@ fn validate_profile(profile: &QuestFleetAgentProfile) -> Result<(), QuestFleetAg
     dotted(&profile.trust_domain)?;
     if profile.identity_revision == 0
         || profile.expected_authority_revision == 0
+        || profile.status_revision == 0
         || profile.source_revision == 0
     {
         return Err(QuestFleetAgentError::new(
             "invalid_revision",
-            "identity, authority, and source revisions must be greater than zero",
+            "identity, authority, status, and source revisions must be greater than zero",
         ));
     }
     if !(10_000..=300_000).contains(&profile.checkin_ttl_ms) {
@@ -336,7 +339,7 @@ fn manifold_proposal(
         schema_id: schema(PEER_PROPOSAL_SCHEMA)?,
         proposal_id: dotted(&format!(
             "proposal.fleet-checkin.{}.{}",
-            profile.device_id, profile.source_revision
+            profile.device_id, profile.status_revision
         ))?,
         expected_authority_revision: revision(profile.expected_authority_revision)?,
         proposer_id: dotted("adapter.quest.fleet-agent")?,
@@ -350,7 +353,7 @@ fn manifold_proposal(
         status: ManifoldPeerStatus {
             schema_id: schema(PEER_STATUS_SCHEMA)?,
             peer_id,
-            status_revision: revision(profile.source_revision)?,
+            status_revision: revision(profile.status_revision)?,
             observed_at_ms: u64::try_from(issued_at_ms).map_err(|_| {
                 QuestFleetAgentError::new("invalid_source_time", "source time must fit u64")
             })?,
@@ -554,6 +557,7 @@ mod tests {
             hardware_class: "standalone_xr".to_owned(),
             identity_revision: 1,
             expected_authority_revision: 1,
+            status_revision: 1,
             source_revision: 1,
             source_epoch: "agent-epoch-1".to_owned(),
             key_id: key.key_id,
@@ -642,6 +646,23 @@ mod tests {
             .capabilities
             .get("capability.app-control")
             .is_some_and(CapabilityState::is_ready));
+    }
+
+    #[test]
+    fn status_and_source_revisions_remain_independent() {
+        let mut input = profile(true);
+        input.status_revision = 9;
+        input.source_revision = 1;
+        input.source_epoch = "agent-epoch-2".to_owned();
+        let checkin = produce_signed_checkin(&input, &snapshot(), &[7_u8; 32], 2_000_000_000_000)
+            .expect("valid post-upgrade check-in");
+        let proposal: ManifoldPeerStatusProposal =
+            serde_json::from_value(checkin.claims.manifold_peer_status_proposal.clone())
+                .expect("Manifold proposal");
+        assert_eq!(proposal.status.status_revision.get(), 9);
+        assert_eq!(checkin.claims.observation.source_revision, 1);
+        assert_eq!(checkin.claims.observation.source_epoch, "agent-epoch-2");
+        assert_eq!(checkin.claims.checkin_id, "checkin.quest.synthetic.1.9");
     }
 
     #[test]

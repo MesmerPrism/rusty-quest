@@ -29,7 +29,7 @@ public final class FleetAgentService extends Service {
     private static final String TAG = "RustyFleetAgent";
     private static final String CHANNEL_ID = "rusty_fleet_agent";
     private static final int NOTIFICATION_ID = 9711;
-    private static final String REVISION_PREFERENCES = "fleet-agent-revisions";
+    private static final String STATE_PREFERENCES = "fleet-agent-state";
 
     private ScheduledExecutorService scheduler;
     private FleetAgentConfig config;
@@ -54,7 +54,7 @@ public final class FleetAgentService extends Service {
         try {
             config = FleetAgentConfig.load(getApplicationContext());
             privateSeed = FleetAgentPrivateKey.load(getApplicationContext());
-            sourceEpoch = createSourceEpoch();
+            sourceEpoch = loadProducerEpoch();
         } catch (Exception error) {
             Log.w(TAG, "RUSTY_QUEST_FLEET_AGENT_START_BLOCKED reason="
                     + safeReason(error));
@@ -89,9 +89,13 @@ public final class FleetAgentService extends Service {
 
     private void publishOnce() {
         long attemptedAtMs = System.currentTimeMillis();
-        long revision = nextRevision();
+        Revisions revisions = null;
         try {
-            String profileJson = config.runtimeProfile(revision, sourceEpoch);
+            revisions = nextRevisions();
+            String profileJson = config.runtimeProfile(
+                    revisions.statusRevision,
+                    revisions.sourceRevision,
+                    sourceEpoch);
             String snapshotJson = FleetAgentObservation.capture(getApplicationContext());
             String nativeResult = FleetAgentNativeBridge.produce(
                     profileJson,
@@ -108,13 +112,13 @@ public final class FleetAgentService extends Service {
                 FleetAgentReceipt.write(
                         getApplicationContext(),
                         "rejected_local",
-                        revision,
+                        revisions.sourceRevision,
                         sourceEpoch,
                         attemptedAtMs,
                         null,
                         code);
                 Log.w(TAG, "RUSTY_QUEST_FLEET_AGENT_CHECKIN_LOCAL_REJECT revision="
-                        + revision + " reason=" + code);
+                        + revisions.sourceRevision + " reason=" + code);
                 return;
             }
             String envelope = result.getJSONObject("envelope").toString();
@@ -125,12 +129,14 @@ public final class FleetAgentService extends Service {
             FleetAgentReceipt.write(
                     getApplicationContext(),
                     status,
-                    revision,
+                    revisions.sourceRevision,
                     sourceEpoch,
                     attemptedAtMs,
                     published.statusCode,
                     detail);
-            Log.i(TAG, "RUSTY_QUEST_FLEET_AGENT_CHECKIN_RESULT revision=" + revision
+            Log.i(TAG, "RUSTY_QUEST_FLEET_AGENT_CHECKIN_RESULT revision="
+                    + revisions.sourceRevision
+                    + " statusRevision=" + revisions.statusRevision
                     + " status=" + status
                     + " httpStatus=" + published.statusCode);
         } catch (Exception error) {
@@ -138,29 +144,69 @@ public final class FleetAgentService extends Service {
             FleetAgentReceipt.write(
                     getApplicationContext(),
                     "transport_failed",
-                    revision,
+                    revisions == null ? 0 : revisions.sourceRevision,
                     sourceEpoch,
                     attemptedAtMs,
                     null,
                     reason);
             Log.w(TAG, "RUSTY_QUEST_FLEET_AGENT_CHECKIN_TRANSPORT_FAILED revision="
-                    + revision + " reason=" + reason);
+                    + (revisions == null ? 0 : revisions.sourceRevision)
+                    + " reason=" + reason);
         }
     }
 
-    private long nextRevision() {
+    private Revisions nextRevisions() {
         SharedPreferences preferences =
-                getSharedPreferences(REVISION_PREFERENCES, Context.MODE_PRIVATE);
+                getSharedPreferences(STATE_PREFERENCES, Context.MODE_PRIVATE);
         synchronized (FleetAgentService.class) {
-            long current = preferences.getLong("next-source-revision", 1);
-            if (current == Long.MAX_VALUE) {
-                throw new IllegalStateException("source_revision_exhausted");
+            long sourceRevision = preferences.getLong("next-source-revision", 1);
+            long statusRevision = preferences.getLong("next-status-revision", 1);
+            if (sourceRevision == Long.MAX_VALUE || statusRevision == Long.MAX_VALUE) {
+                throw new IllegalStateException("revision_exhausted");
             }
-            long next = current + 1;
-            if (!preferences.edit().putLong("next-source-revision", next).commit()) {
+            if (!preferences.edit()
+                    .putLong("next-source-revision", sourceRevision + 1)
+                    .putLong("next-status-revision", statusRevision + 1)
+                    .commit()) {
                 throw new IllegalStateException("revision_persistence_failed");
             }
-            return current;
+            return new Revisions(statusRevision, sourceRevision);
+        }
+    }
+
+    private String loadProducerEpoch() throws Exception {
+        SharedPreferences preferences =
+                getSharedPreferences(STATE_PREFERENCES, Context.MODE_PRIVATE);
+        long packageUpdateTime = getPackageManager()
+                .getPackageInfo(getPackageName(), 0)
+                .lastUpdateTime;
+        String generation = packageUpdateTime
+                + ":"
+                + config.profile.getString("device_id")
+                + ":"
+                + config.profile.getLong("identity_revision")
+                + ":"
+                + config.profile.getString("key_id");
+        synchronized (FleetAgentService.class) {
+            String priorGeneration = preferences.getString("producer-generation", null);
+            String epoch = preferences.getString("source-epoch", null);
+            if (generation.equals(priorGeneration)
+                    && epoch != null
+                    && epoch.matches("agent\\.[0-9a-f]{24}")) {
+                return epoch;
+            }
+            String nextEpoch = createSourceEpoch();
+            SharedPreferences.Editor editor = preferences.edit()
+                    .putString("producer-generation", generation)
+                    .putString("source-epoch", nextEpoch)
+                    .putLong("next-source-revision", 1);
+            if (!preferences.contains("next-status-revision")) {
+                editor.putLong("next-status-revision", 1);
+            }
+            if (!editor.commit()) {
+                throw new IllegalStateException("producer_epoch_persistence_failed");
+            }
+            return nextEpoch;
         }
     }
 
@@ -170,7 +216,10 @@ public final class FleetAgentService extends Service {
         }
         try {
             JSONObject response = new JSONObject(responseJson);
-            return response.optString("status", "hub_response_without_status");
+            if (response.optBoolean("accepted", false)) {
+                return "accepted";
+            }
+            return response.optString("rejection_reason", "hub_response_without_result");
         } catch (Exception ignored) {
             return "non_json_hub_response";
         }
@@ -192,6 +241,16 @@ public final class FleetAgentService extends Service {
             value.append(String.format("%02x", item & 0xff));
         }
         return value.toString();
+    }
+
+    private static final class Revisions {
+        final long statusRevision;
+        final long sourceRevision;
+
+        Revisions(long statusRevision, long sourceRevision) {
+            this.statusRevision = statusRevision;
+            this.sourceRevision = sourceRevision;
+        }
     }
 
     private synchronized void stopAgent(String status) {
