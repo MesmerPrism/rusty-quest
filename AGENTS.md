@@ -201,6 +201,15 @@ inputs stay source/privacy/advisory only; they never authenticate a direct
 route or carry media. Validate with
 `tools/Invoke-NPeerMeshTwoQuestConfiguredPeer.ps1`.
 
+Fleet check-in production lives in `crates/rusty-quest-fleet-agent` and the
+permission-minimal `apps/fleet-agent-android` adapter. Keep the default profile
+inert, require an explicit Hub endpoint and enrolled signing identity, preserve
+host-owned receive time, and report arbitrary foreground state as unknown
+unless an explicitly participating app supplies its own evidence. The baseline
+must not add ADB, package-query, accessibility, storage, camera, microphone,
+media, or command-listener authority. Manifold accepts peer status and Fleet
+accepts the device projection; the Quest producer accepts neither.
+
 Generic media adoption lives in `rusty-quest-media-stream`. Manifold owns the
 accepted session/stream descriptor; the Quest runtime owns only receiver-first
 platform lifecycle after the accepted decision. Sources, processors, direct-
@@ -288,6 +297,7 @@ Run:
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-ApkRunIsolationStatic.ps1 -RepoRoot .
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1
 ```
 
 The Spatial Camera Panel wrapper runs its focused workflow gate before the

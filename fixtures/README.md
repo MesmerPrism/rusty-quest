@@ -1,5 +1,11 @@
 # Rusty Quest Fixtures
 
+- `fleet-agent/`: source-only profiles and cross-repository signing evidence
+  for the permission-minimal Rusty Fleet check-in producer. The disabled
+  profile proves opt-in activation, while the golden claims fixture is pinned
+  to the exact published Fleet contract revision and prevents Quest and Fleet
+  from drifting on JCS signing bytes. Fixtures do not contain production
+  enrollment credentials or authorize a Hub.
 - `particle-adapter/`: the closed two-consumer conformance fixture for the
   Matter/Lattice/Optics-to-Quest particle adapter. Both Spatial Camera Panel
   and native renderer default disabled; no high-rate JSON or backend payload is

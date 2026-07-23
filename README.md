@@ -76,6 +76,16 @@ Manifold's bounded mesh authority. Only the live pair contributes a direct
 candidate; Termux/sidecar edges remain advisory. Replay, split brain,
 advisory-to-media substitution, expiry, and revocation are explicit gates.
 
+`crates/rusty-quest-fleet-agent` is the permission-minimal producer for
+[Rusty Fleet check-ins](docs/FLEET_AGENT.md). It consumes the Fleet contract at
+the exact published commit
+`8181683be4a3abbc5daa0c4497c7aeb9e76316a8`, projects Quest-owned power and
+agent lifecycle facts, preserves platform-limited foreground state as unknown,
+builds the matching Manifold low-rate peer-status proposal, and signs the
+domain-separated JCS claims with Ed25519. Its default profile is inert. It does
+not discover a Hub, enroll itself, accept authority, inspect arbitrary apps,
+listen for commands, or add ADB/File Manager/media capability.
+
 `crates/rusty-quest-media-stream` provides the generic receiver-first platform
 runtime described in [Generic Media Stream Runtime](docs/MEDIA_STREAM_RUNTIME.md).
 It composes explicit sources, dual-lane/packed/passthrough processors, validated
@@ -758,6 +768,7 @@ gate is `tools/checks/Test-CorrectedReleaseTwoQuestMatrixStatic.ps1`.
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeAppBuildProfile.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-device-link"
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -Command "cargo run --quiet -p rusty-quest-device-link --bin validate_direct_p2p_socket_route -- fixtures\device-link\direct-p2p-socket-route.pass.json"
 pwsh -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-native-renderer"
 pwsh -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-remote-camera"

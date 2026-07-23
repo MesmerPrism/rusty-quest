@@ -1,0 +1,20 @@
+[package]
+name = "rusty-quest-fleet-agent"
+description = "Permission-minimal Quest observation producer for Rusty Fleet."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+ed25519-dalek = { version = "=2.1.1", default-features = false }
+fleet-contracts = { git = "https://github.com/MesmerPrism/rusty-fleet", rev = "8181683be4a3abbc5daa0c4497c7aeb9e76316a8" }
+rusty-manifold-model = { path = "../../../rusty-manifold/crates/rusty-manifold-model", features = ["serde"] }
+rusty-manifold-peer = { path = "../../../rusty-manifold/crates/rusty-manifold-peer" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+
+[lints]
+workspace = true
