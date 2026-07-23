@@ -172,8 +172,7 @@ fn execute() -> bool {
     let query_limits = ShortInfoQueryWireLimits::new(256, 1024).unwrap();
     let response_limits =
         ShortInfoResponseEnvelopeLimits::new(response_limit, response_limit + 32).unwrap();
-    let responder_socket =
-        UdpSocket::bind((Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT)).unwrap();
+    let responder_socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT)).unwrap();
     let responder_xml = xml.clone();
     let responder = thread::spawn(move || {
         let document = ParsedStreamInfoObservedDocument::parse(
