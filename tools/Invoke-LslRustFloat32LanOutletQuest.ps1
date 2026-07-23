@@ -51,21 +51,33 @@ try {
     try {
         $responderMarker="RESPONDER schema=rusty.lsl.p70.quest_responder_result.v1"
         $responderMarkerObserved=$false
+        $responderWaitElapsedMilliseconds=0
         if(-not$lifecycleCompleted){
+            $responderWaitStopwatch=[Diagnostics.Stopwatch]::StartNew()
             $responderWaitDeadline=[DateTime]::UtcNow.AddSeconds(12)
             while([DateTime]::UtcNow-lt$responderWaitDeadline){
                 $markerLogs=(& adb.exe -s $Serial logcat -d -v threadtime -T $started|Out-String)
                 if($markerLogs.Contains($responderMarker)){$responderMarkerObserved=$true;break}
                 Start-Sleep -Milliseconds 250
             }
+            $responderWaitStopwatch.Stop()
+            $responderWaitElapsedMilliseconds=$responderWaitStopwatch.ElapsedMilliseconds
         }
         $logcatPath=Join-Path $OutDir "logcat.txt"
         & adb.exe -s $Serial logcat -d -v threadtime -T $started|Set-Content -Encoding UTF8 $logcatPath
         if(Test-Path $logcatPath){
             $boundedLogs=Get-Content -Raw $logcatPath
-            $responderMarkerObserved=$responderMarkerObserved-or$boundedLogs.Contains($responderMarker)
+            $responderPattern='RESPONDER schema=rusty\.lsl\.p70\.quest_responder_result\.v1 result=(pass|fail) requests=([0-9]+) termination=(cancelled|deadline|request-limit|error)'
+            $responderMatches=[regex]::Matches($boundedLogs,$responderPattern)
+            $responderMarkerObserved=($responderMatches.Count-eq1)
             $receipt.responder_marker_observed=$responderMarkerObserved
-            $receipt.responder_marker_wait_seconds=if($lifecycleCompleted){0}else{12}
+            $receipt.responder_marker_wait_budget_seconds=if($lifecycleCompleted){0}else{12}
+            $receipt.responder_marker_wait_elapsed_milliseconds=if($lifecycleCompleted){0}else{$responderWaitElapsedMilliseconds}
+            if($responderMarkerObserved){
+                $receipt.responder_result=$responderMatches[0].Groups[1].Value
+                $receipt.responder_requests=[u64]$responderMatches[0].Groups[2].Value
+                $receipt.responder_termination=$responderMatches[0].Groups[3].Value
+            }
             $receipt.bounded_logcat_sha256=(Get-FileHash -Algorithm SHA256 $logcatPath).Hash.ToLowerInvariant()
             $receipt.bounded_fatal_count=[regex]::Matches($boundedLogs,"FATAL EXCEPTION|Fatal signal|AndroidRuntime.*FATAL").Count
             $receipt.failure_path_evidence_preserved=$true

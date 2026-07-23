@@ -46,10 +46,24 @@ foreach ($needle in @(
     'RESPONDER schema=rusty.lsl.p70.quest_responder_result.v1',
     '[DateTime]::UtcNow.AddSeconds(12)',
     '$receipt.responder_marker_observed',
-    '$receipt.responder_marker_wait_seconds',
-    'if($lifecycleCompleted){0}else{12}'
+    '$receipt.responder_marker_wait_budget_seconds',
+    '$receipt.responder_marker_wait_elapsed_milliseconds',
+    '$receipt.responder_result',
+    '$receipt.responder_requests',
+    '$receipt.responder_termination',
+    'if($lifecycleCompleted){0}else{12}',
+    'if($lifecycleCompleted){0}else{$responderWaitElapsedMilliseconds}'
 )) {
     if (-not $runScriptText.Contains($needle)) { throw "Missing bounded responder-marker wait guard: $needle" }
+}
+$exactResponderPattern = 'RESPONDER schema=rusty\\\.lsl\\\.p70\\\.quest_responder_result\\\.v1 result=\(pass\|fail\) requests=\(\[0-9\]\+\) termination=\(cancelled\|deadline\|request-limit\|error\)'
+if ($runScriptText -notmatch $exactResponderPattern) {
+    throw "Exact typed responder marker regex is missing"
+}
+$finalCaptureReadIndex = $runScriptText.IndexOf('$boundedLogs=Get-Content -Raw $logcatPath', [StringComparison]::Ordinal)
+$typedResponderIndex = $runScriptText.IndexOf('$receipt.responder_result=', [StringComparison]::Ordinal)
+if ($finalCaptureReadIndex -lt 0 -or $typedResponderIndex -lt 0 -or $finalCaptureReadIndex -gt $typedResponderIndex) {
+    throw "Typed responder fields must derive from the final bounded log capture"
 }
 $waitIndex = $runScriptText.IndexOf('[DateTime]::UtcNow.AddSeconds(12)', [StringComparison]::Ordinal)
 $finalCaptureIndex = $runScriptText.IndexOf('$logcatPath=Join-Path $OutDir "logcat.txt"', [StringComparison]::Ordinal)
