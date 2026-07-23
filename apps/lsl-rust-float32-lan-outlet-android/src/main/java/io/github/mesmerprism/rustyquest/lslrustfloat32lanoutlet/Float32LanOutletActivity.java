@@ -18,7 +18,9 @@ public final class Float32LanOutletActivity extends Activity {
         TextView view = new TextView(this);
         view.setText("Rusty LSL LAN outlet qualification");
         setContentView(view);
-        new Thread(() -> runBounded(), "rlsl-p70-java-lifecycle").start();
+        new Thread(new Runnable() {
+            @Override public void run() { runBounded(); }
+        }, "rlsl-p70-java-lifecycle").start();
     }
 
     private void runBounded() {
