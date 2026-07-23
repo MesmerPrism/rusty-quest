@@ -21,13 +21,16 @@ foreach ($script in $p70Scripts) {
     if ($parseErrors.Count -ne 0) {
         throw "PowerShell parse failure in $($script.Name): $($parseErrors[0].Message)"
     }
-    $reservedHostVariables = @($ast.FindAll({
+    $reservedAutomaticVariables = @($ast.FindAll({
         param($node)
         $node -is [Management.Automation.Language.VariableExpressionAst] -and
-            $node.VariablePath.UserPath.Equals("Host", [StringComparison]::OrdinalIgnoreCase)
+            (
+                $node.VariablePath.UserPath.Equals("Host", [StringComparison]::OrdinalIgnoreCase) -or
+                $node.VariablePath.UserPath.Equals("Args", [StringComparison]::OrdinalIgnoreCase)
+            )
     }, $true))
-    if ($reservedHostVariables.Count -ne 0) {
-        throw "Reserved PowerShell Host variable used in $($script.Name)"
+    if ($reservedAutomaticVariables.Count -ne 0) {
+        throw "Reserved PowerShell automatic variable used in $($script.Name)"
     }
 }
 foreach ($needle in @("aarch64-linux-android", "rusty_lsl", "RLSLP70_RUST", "run_timestamped_float32_outlet", "run_typed_udp_discovery_float32_session_inlet", 'record_count\":1', "ACCEPTED_FEATURE_LOCK_FINGERPRINT", "socket_cleanup", "run-as", "install", "force-stop", "forward --list", "reverse --list")) {

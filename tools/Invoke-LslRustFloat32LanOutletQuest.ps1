@@ -12,7 +12,7 @@ $root=Split-Path $RunCapsule
 $apk=Join-Path $root "rusty-lsl-float32-lan-outlet.apk"
 if(Test-Path $OutDir){throw "OutDir already exists: $OutDir"}
 New-Item -ItemType Directory $OutDir|Out-Null
-function Adb([string[]]$Args){& adb.exe -s $Serial @Args;if($LASTEXITCODE-ne0){throw "adb failed: $($Args -join ' ')"}}
+function Adb([string[]]$AdbArguments){& adb.exe -s $Serial @AdbArguments;if($LASTEXITCODE-ne0){throw "adb failed: $($AdbArguments -join ' ')"}}
 if((Get-FileHash -Algorithm SHA256 $apk).Hash.ToLowerInvariant()-ne$capsule.apk_sha256){throw "APK hash mismatch"}
 if((Get-FileHash -Algorithm SHA256 $HostRunner).Hash.ToLowerInvariant()-ne$capsule.host_runner_sha256){throw "Host runner hash mismatch"}
 $forwardBefore=(& adb.exe -s $Serial forward --list|Out-String)
