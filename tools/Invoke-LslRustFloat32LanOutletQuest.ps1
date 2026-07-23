@@ -29,7 +29,7 @@ try {
     Adb @("shell","am","force-stop",$package)
     Adb @("shell","am","start","-W","-n",$component)
     $ready=$false
-    for($i=0;$i-lt40;$i++){Start-Sleep -Milliseconds 500;$logs=(& adb.exe -s $Serial logcat -d -v threadtime -T $started|Out-String);if($logs.Contains("RLSLP70_RUST")-and$logs.Contains("READY schema=rusty.lsl.p70.quest_outlet_ready.v1")){$ready=$true;break}}
+    for($i=0;$i-lt40;$i++){Start-Sleep -Milliseconds 500;$logs=(& adb.exe -s $Serial logcat -d -v threadtime -T $started|Out-String);if($logs.Contains("RLSLP70_RUST")-and$logs.Contains("READY schema=rusty.lsl.p70.quest_outlet_ready.v2 self_probe=true stage=responder-ready")){$ready=$true;break}}
     if(-not$ready){throw "App-authored readiness marker not observed"}
     $route=(& adb.exe -s $Serial shell ip -4 route get 192.0.2.1|Out-String)
     $match=[regex]::Match($route,'\bsrc\s+([0-9.]+)\b');if(-not$match.Success){throw "Quest LAN address readback failed"}

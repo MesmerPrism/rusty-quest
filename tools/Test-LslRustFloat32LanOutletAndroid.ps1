@@ -48,7 +48,9 @@ foreach ($needle in @(
     "ParsedShortInfoResponseEnvelope::parse",
     "parsed.query_id() == SELF_PROBE_QUERY_ID",
     "parsed.body().source() == xml",
+    "sent != wire.as_bytes().len()",
     "self_probe=true stage=responder-ready",
+    "NOT_READY schema=rusty.lsl.p70.quest_outlet_ready.v2 self_probe=false stage=responder-self-probe",
     "RESPONDER schema=rusty.lsl.p70.quest_responder_result.v1",
     "run.requests() == 2",
     "ShortInfoResponderTermination::RequestLimit"
@@ -57,6 +59,16 @@ foreach ($needle in @(
 }
 if ($nativeText -notmatch 'ShortInfoResponderLimits::new\(\s*2048,\s*2,') {
     throw "Responder limit must be exactly two requests"
+}
+if ([regex]::Matches($nativeText, '\.send_to\(wire\.as_bytes\(\),').Count -ne 1) {
+    throw "Responder readiness must send exactly one self-probe datagram"
+}
+if ($nativeText -match '(?<!NOT_)READY schema=rusty\.lsl\.p70\.quest_outlet_ready\.v2 self_probe=false') {
+    throw "Self-probe failure must never emit READY"
+}
+$readyContract = "READY schema=rusty.lsl.p70.quest_outlet_ready.v2 self_probe=true stage=responder-ready"
+if (-not $runScriptText.Contains($readyContract) -or -not $nativeText.Contains($readyContract)) {
+    throw "Native and run-script readiness contracts must match exactly"
 }
 $selfProbeCall = $nativeText.IndexOf("let self_probe = prove_responder_ready", [StringComparison]::Ordinal)
 $readyMarker = $nativeText.IndexOf("self_probe=true stage=responder-ready", [StringComparison]::Ordinal)

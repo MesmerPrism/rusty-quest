@@ -51,12 +51,16 @@ fn prove_responder_ready(
     )
     .unwrap();
     let wire = ShortInfoQueryWire::encode(&query, query_limits).unwrap();
+    thread::sleep(Duration::from_millis(50));
+    let sent = socket
+        .send_to(wire.as_bytes(), (Ipv4Addr::LOCALHOST, DISCOVERY_PORT))
+        .unwrap();
+    if sent != wire.as_bytes().len() {
+        return false;
+    }
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     let mut response = vec![0; response_limits.max_envelope_bytes() + 1];
     while std::time::Instant::now() < deadline {
-        socket
-            .send_to(wire.as_bytes(), (Ipv4Addr::LOCALHOST, DISCOVERY_PORT))
-            .unwrap();
         let remaining = deadline.saturating_duration_since(std::time::Instant::now());
         socket
             .set_read_timeout(Some(remaining.min(Duration::from_millis(20))))
@@ -145,10 +149,11 @@ fn execute() -> bool {
     let query_limits = ShortInfoQueryWireLimits::new(256, 1024).unwrap();
     let response_limits =
         ShortInfoResponseEnvelopeLimits::new(response_limit, response_limit + 32).unwrap();
+    let responder_xml = xml.clone();
     let responder = thread::spawn(move || {
         let document = ParsedStreamInfoObservedDocument::parse(
-            StreamInfoObservedDocumentParseLimit::new(xml.len()).unwrap(),
-            &xml,
+            StreamInfoObservedDocumentParseLimit::new(responder_xml.len()).unwrap(),
+            &responder_xml,
         )
         .unwrap();
         run_short_info_responder(
@@ -171,7 +176,7 @@ fn execute() -> bool {
     if !self_probe {
         responder_cancelled.store(true, Ordering::Release);
         let _ = responder.join();
-        log(4, "READY schema=rusty.lsl.p70.quest_outlet_ready.v2 self_probe=false stage=responder-self-probe".into());
+        log(4, "NOT_READY schema=rusty.lsl.p70.quest_outlet_ready.v2 self_probe=false stage=responder-self-probe".into());
         return false;
     }
     let identity = StreamHandshakeIdentity::new(
