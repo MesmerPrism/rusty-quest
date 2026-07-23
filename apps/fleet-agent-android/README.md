@@ -1,8 +1,9 @@
 # Rusty Fleet Agent Android
 
 This package is the permission-minimal Quest adapter for low-rate Rusty Fleet
-check-ins. Normal launcher activation is inert. The non-exported foreground
-service starts only through the exact
+check-ins. Normal launcher activation is inert: it presents explicit Start and
+Stop controls without starting the service. The non-exported foreground
+service starts only when the app sends the exact
 `io.github.mesmerprism.rustyquest.fleetagent.START` action after both
 app-private files exist:
 

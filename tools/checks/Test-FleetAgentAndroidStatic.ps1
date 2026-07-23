@@ -122,8 +122,17 @@ Assert-Match $manifest 'android:allowBackup="false"' "Fleet Agent app-private en
 Assert-Match $manifest 'android:usesCleartextTraffic="true"' "Local M1 cleartext support must remain explicit and runtime-scoped."
 
 Assert-Match $activity 'Inactive on ordinary launch' "Fleet Agent launcher must remain inert."
-if ($activity -match 'startForegroundService|startService') {
-    throw "Fleet Agent launcher must not activate the service."
+foreach ($token in @(
+    'Start local monitoring',
+    'Stop local monitoring',
+    'setOnClickListener',
+    'FleetAgentService.ACTION_START',
+    'FleetAgentService.ACTION_STOP',
+    'startForegroundService')) {
+    Assert-Match $activity ([regex]::Escape($token)) "Fleet Agent activity is missing explicit activation token: $token"
+}
+if ($activity -match 'get.*Extra\(') {
+    throw "Fleet Agent activity must not accept profile, endpoint, or key overrides from intent extras."
 }
 foreach ($token in @(
     'ACTION_START',
