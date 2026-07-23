@@ -1,5 +1,9 @@
 # Rusty Quest
 
+`apps/lsl-rust-float32-lan-outlet-android` is the bounded P70 Rust-on-Quest
+outlet to Rust-host inlet LAN harness. It uses no Android properties or staging
+inputs and remains default-inert.
+
 `apps/lsl-rust-float32-two-record-chunk-android` is the public LSLC-005S
 platform harness for one exact-source-locked two-record Float32 chunk execution
 on Quest. Ordered exact-bit checks and immediate TCP port reuse run in Rust over

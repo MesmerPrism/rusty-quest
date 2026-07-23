@@ -1,5 +1,11 @@
 # Rusty Quest Agent Notes
 
+The P70 `lsl-rust-float32-lan-outlet-android` package is an opt-in,
+same-LAN, one-channel Float32 Quest-outlet to host-inlet qualification only.
+It does not establish the reverse direction or a default runtime feature.
+Use its dedicated build/static/device scripts; the device runner retains the
+installed package after target-only force-stop.
+
 The `lsl-rust-float32-two-record-chunk-android` app is a distinct public test
 package for LSLC-005S. It builds exact clean Rusty LSL for
 `aarch64-linux-android` and executes only the accepted one-channel, two-record

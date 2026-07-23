@@ -1,5 +1,11 @@
 # Rusty Quest Validation
 
+For P70, first run
+`pwsh -NoProfile -File ./tools/Test-LslRustFloat32LanOutletAndroid.ps1`.
+Acquire the exact content-addressed build-output claim before its build.
+Device execution additionally requires cooperative claims for the public
+package and exact serial, plus sent/pending receipts before `adb install -r`.
+
 Run `tools/Test-LslRustFloat32TwoRecordChunkAndroid.ps1` for the LSLC-005S
 static gate. Its live wrapper requires an explicit serial and exact APK/native
 hashes, then checks the Rust-owned two-record marker, ordered timestamp/value
