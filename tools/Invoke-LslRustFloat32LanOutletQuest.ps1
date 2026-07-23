@@ -75,8 +75,15 @@ try {
             $receipt.responder_marker_wait_elapsed_milliseconds=if($lifecycleCompleted){0}else{$responderWaitElapsedMilliseconds}
             if($responderMarkerObserved){
                 $receipt.responder_result=$responderMatches[0].Groups[1].Value
-                $receipt.responder_requests=[u64]$responderMatches[0].Groups[2].Value
+                $receipt.responder_requests=[System.UInt64]$responderMatches[0].Groups[2].Value
                 $receipt.responder_termination=$responderMatches[0].Groups[3].Value
+            }
+            $responderDetailPattern='RESPONDER_DETAIL schema=rusty\.lsl\.p70\.quest_responder_detail\.v1 outcome=(run-ok|responder-error|thread-panic) error=(none|non-loopback-interface|non-concrete-interface|bind|join-multicast|local-address|receive-timeout|receive|send|datagram-limit|invalid-query|response|allocation|probe-length-overflow|partial-send)'
+            $responderDetailMatches=[regex]::Matches($boundedLogs,$responderDetailPattern)
+            $receipt.responder_detail_observed=($responderDetailMatches.Count-eq1)
+            if($receipt.responder_detail_observed){
+                $receipt.responder_outcome=$responderDetailMatches[0].Groups[1].Value
+                $receipt.responder_error_kind=$responderDetailMatches[0].Groups[2].Value
             }
             $receipt.bounded_logcat_sha256=(Get-FileHash -Algorithm SHA256 $logcatPath).Hash.ToLowerInvariant()
             $receipt.bounded_fatal_count=[regex]::Matches($boundedLogs,"FATAL EXCEPTION|Fatal signal|AndroidRuntime.*FATAL").Count
@@ -93,4 +100,15 @@ try {
         $receipt|ConvertTo-Json -Depth 8|Set-Content -Encoding UTF8 (Join-Path $OutDir "private-device-receipt.json")
     }
 }
+$responderAccepted=$receipt.responder_marker_observed-and
+    $receipt.responder_detail_observed-and
+    $receipt.responder_result-eq"pass"-and
+    $receipt.responder_requests-eq[System.UInt64]2-and
+    $receipt.responder_termination-eq"request-limit"-and
+    $receipt.responder_outcome-eq"run-ok"-and
+    $receipt.responder_error_kind-eq"none"
+if(-not$lifecycleCompleted-or-not$responderAccepted){throw "Typed responder lifecycle validation failed"}
+$receipt.phase="confirmed"
+$receipt.confirmed=$true
+$receipt|ConvertTo-Json -Depth 8|Set-Content -Encoding UTF8 (Join-Path $OutDir "private-device-receipt.json")
 Get-Content -Raw (Join-Path $OutDir "private-device-receipt.json")

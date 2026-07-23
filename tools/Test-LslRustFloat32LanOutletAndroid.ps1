@@ -51,6 +51,10 @@ foreach ($needle in @(
     '$receipt.responder_result',
     '$receipt.responder_requests',
     '$receipt.responder_termination',
+    '$receipt.responder_detail_observed',
+    '$receipt.responder_outcome',
+    '$receipt.responder_error_kind',
+    '[System.UInt64]$responderMatches[0].Groups[2].Value',
     'if($lifecycleCompleted){0}else{12}',
     'if($lifecycleCompleted){0}else{$responderWaitElapsedMilliseconds}'
 )) {
@@ -59,6 +63,13 @@ foreach ($needle in @(
 $exactResponderPattern = 'RESPONDER schema=rusty\\\.lsl\\\.p70\\\.quest_responder_result\\\.v1 result=\(pass\|fail\) requests=\(\[0-9\]\+\) termination=\(cancelled\|deadline\|request-limit\|error\)'
 if ($runScriptText -notmatch $exactResponderPattern) {
     throw "Exact typed responder marker regex is missing"
+}
+$exactResponderDetailPattern = 'RESPONDER_DETAIL schema=rusty\\\.lsl\\\.p70\\\.quest_responder_detail\\\.v1 outcome=\(run-ok\|responder-error\|thread-panic\) error='
+if ($runScriptText -notmatch $exactResponderDetailPattern) {
+    throw "Exact responder detail regex is missing"
+}
+if ($runScriptText -match '(?i)\[u64\]') {
+    throw "Non-portable PowerShell u64 type alias is forbidden"
 }
 $finalCaptureReadIndex = $runScriptText.IndexOf('$boundedLogs=Get-Content -Raw $logcatPath', [StringComparison]::Ordinal)
 $typedResponderIndex = $runScriptText.IndexOf('$receipt.responder_result=', [StringComparison]::Ordinal)
@@ -89,6 +100,9 @@ foreach ($needle in @(
     "self_probe=true stage=responder-ready",
     "NOT_READY schema=rusty.lsl.p70.quest_outlet_ready.v2 self_probe=false stage=responder-self-probe",
     "RESPONDER schema=rusty.lsl.p70.quest_responder_result.v1",
+    "RESPONDER_DETAIL schema=rusty.lsl.p70.quest_responder_detail.v1",
+    "responder_error_kind",
+    '"thread-panic"',
     "run.requests() == 2",
     "ShortInfoResponderTermination::RequestLimit"
 )) {
@@ -106,13 +120,16 @@ $probe = $nativeText.IndexOf("let self_probe = prove_responder_ready", [StringCo
 if ($bind -lt 0 -or $spawn -lt 0 -or $probe -lt 0 -or $bind -gt $spawn -or $spawn -gt $probe) {
     throw "Responder socket must be synchronously bound before spawn and the one self-probe"
 }
-$failureResponder = $nativeText.IndexOf("log_responder_outcome(responder_run)", [StringComparison]::Ordinal)
+$failureResponder = $nativeText.IndexOf("log_responder_outcome(responder.join())", [StringComparison]::Ordinal)
 $notReady = $nativeText.IndexOf("NOT_READY schema=rusty.lsl.p70.quest_outlet_ready.v2", [StringComparison]::Ordinal)
 if ($failureResponder -lt 0 -or $notReady -lt 0 -or $failureResponder -gt $notReady) {
     throw "Self-probe failure must log the typed responder outcome before NOT_READY"
 }
 if ($nativeText -match '(?<!NOT_)READY schema=rusty\.lsl\.p70\.quest_outlet_ready\.v2 self_probe=false') {
     throw "Self-probe failure must never emit READY"
+}
+if (-not $nativeText.Contains('<?xml version=\"1.0\"?>\n<info>\n\t<name>')) {
+    throw "Quest responder XML must use the canonical declaration/root/tab-indented field layout"
 }
 $readyContract = "READY schema=rusty.lsl.p70.quest_outlet_ready.v2 self_probe=true stage=responder-ready"
 if (-not $runScriptText.Contains($readyContract) -or -not $nativeText.Contains($readyContract)) {

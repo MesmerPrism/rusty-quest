@@ -3,10 +3,11 @@ use rusty_lsl::{
     ParsedShortInfoResponseEnvelope, ParsedStreamInfoObservedDocument, RawSourceTimestamp,
     RuntimeActivationSelection, RuntimeModule, Sample, SampleLimits, ShortInfoQuery,
     ShortInfoQueryWire, ShortInfoQueryWireLimits, ShortInfoResponderActivation,
-    ShortInfoResponderLimits, ShortInfoResponderTermination, ShortInfoResponseEnvelopeLimits,
-    StreamHandshakeActivation, StreamHandshakeIdentity, StreamHandshakeLimits,
-    StreamInfoObservedDocumentParseLimit, TimestampedFloat32SampleActivation,
-    TimestampedFloat32SampleLimits, TimestampedSample, ACCEPTED_FEATURE_LOCK_FINGERPRINT,
+    ShortInfoResponderError, ShortInfoResponderLimits, ShortInfoResponderTermination,
+    ShortInfoResponseEnvelopeLimits, StreamHandshakeActivation, StreamHandshakeIdentity,
+    StreamHandshakeLimits, StreamInfoObservedDocumentParseLimit,
+    TimestampedFloat32SampleActivation, TimestampedFloat32SampleLimits, TimestampedSample,
+    ACCEPTED_FEATURE_LOCK_FINGERPRINT,
 };
 use std::ffi::{c_char, c_int, c_void, CString};
 use std::net::{Ipv4Addr, TcpListener, UdpSocket};
@@ -89,9 +90,32 @@ fn prove_responder_ready(
     false
 }
 
-fn log_responder_outcome(responder_run: Option<rusty_lsl::ShortInfoResponderRun>) -> bool {
-    let (result, requests, termination) = match responder_run {
-        Some(run) => {
+fn responder_error_kind(error: &ShortInfoResponderError) -> &'static str {
+    match error {
+        ShortInfoResponderError::NonLoopbackMulticastInterface => "non-loopback-interface",
+        ShortInfoResponderError::NonConcreteMulticastInterface => "non-concrete-interface",
+        ShortInfoResponderError::Bind(_) => "bind",
+        ShortInfoResponderError::JoinMulticast(_) => "join-multicast",
+        ShortInfoResponderError::LocalAddress(_) => "local-address",
+        ShortInfoResponderError::ReceiveTimeout(_) => "receive-timeout",
+        ShortInfoResponderError::Receive(_) => "receive",
+        ShortInfoResponderError::Send(_) => "send",
+        ShortInfoResponderError::DatagramLimitExceeded { .. } => "datagram-limit",
+        ShortInfoResponderError::InvalidQuery(_) => "invalid-query",
+        ShortInfoResponderError::Response(_) => "response",
+        ShortInfoResponderError::AllocationFailed { .. } => "allocation",
+        ShortInfoResponderError::ProbeLengthOverflow => "probe-length-overflow",
+        ShortInfoResponderError::PartialSend { .. } => "partial-send",
+    }
+}
+
+fn log_responder_outcome(
+    responder_join: thread::Result<
+        Result<rusty_lsl::ShortInfoResponderRun, ShortInfoResponderError>,
+    >,
+) -> bool {
+    let (result, requests, termination, outcome, error_kind) = match responder_join {
+        Ok(Ok(run)) => {
             let termination = match run.termination() {
                 ShortInfoResponderTermination::Cancelled => "cancelled",
                 ShortInfoResponderTermination::Deadline => "deadline",
@@ -102,10 +126,25 @@ fn log_responder_outcome(responder_run: Option<rusty_lsl::ShortInfoResponderRun>
                     && run.termination() == ShortInfoResponderTermination::RequestLimit,
                 run.requests(),
                 termination,
+                "run-ok",
+                "none",
             )
         }
-        None => (false, 0, "error"),
+        Ok(Err(error)) => (
+            false,
+            0,
+            "error",
+            "responder-error",
+            responder_error_kind(&error),
+        ),
+        Err(_) => (false, 0, "error", "thread-panic", "none"),
     };
+    log(
+        4,
+        format!(
+            "RESPONDER_DETAIL schema=rusty.lsl.p70.quest_responder_detail.v1 outcome={outcome} error={error_kind}"
+        ),
+    );
     log(4, format!(
         "RESPONDER schema=rusty.lsl.p70.quest_responder_result.v1 result={} requests={} termination={}",
         if result { "pass" } else { "fail" }, requests, termination
@@ -164,7 +203,7 @@ fn execute() -> bool {
     let listener = TcpListener::bind((Ipv4Addr::UNSPECIFIED, 0)).unwrap();
     let service_port = listener.local_addr().unwrap().port();
     let xml = format!(
-        "<?xml version=\"1.0\"?>\n<info>\n<name>p70-quest-outlet</name>\n<type>qualification</type>\n<channel_count>1</channel_count>\n<channel_format>float32</channel_format>\n<source_id>p70-quest-source</source_id>\n<nominal_srate>0</nominal_srate>\n<version>1.100000000000000</version>\n<created_at>1.0</created_at>\n<uid>{UID}</uid>\n<session_id>p70</session_id>\n<hostname>quest</hostname>\n<v4address>{local_ip}</v4address>\n<v4data_port>{service_port}</v4data_port>\n<v4service_port>{service_port}</v4service_port>\n<v6address></v6address>\n<v6data_port>0</v6data_port>\n<v6service_port>0</v6service_port>\n<desc />\n</info>\n"
+        "<?xml version=\"1.0\"?>\n<info>\n\t<name>p70-quest-outlet</name>\n\t<type>qualification</type>\n\t<channel_count>1</channel_count>\n\t<channel_format>float32</channel_format>\n\t<source_id>p70-quest-source</source_id>\n\t<nominal_srate>0</nominal_srate>\n\t<version>1.100000000000000</version>\n\t<created_at>1.0</created_at>\n\t<uid>{UID}</uid>\n\t<session_id>p70</session_id>\n\t<hostname>quest</hostname>\n\t<v4address>{local_ip}</v4address>\n\t<v4data_port>{service_port}</v4data_port>\n\t<v4service_port>{service_port}</v4service_port>\n\t<v6address></v6address>\n\t<v6data_port>0</v6data_port>\n\t<v6service_port>0</v6service_port>\n\t<desc />\n</info>\n"
     );
     let response_limit = xml.len();
     let responder_cancelled = Arc::new(AtomicBool::new(false));
@@ -199,8 +238,7 @@ fn execute() -> bool {
     let self_probe = prove_responder_ready(&xml, query_limits, response_limits);
     if !self_probe {
         responder_cancelled.store(true, Ordering::Release);
-        let responder_run = responder.join().ok().and_then(Result::ok);
-        log_responder_outcome(responder_run);
+        log_responder_outcome(responder.join());
         log(4, "NOT_READY schema=rusty.lsl.p70.quest_outlet_ready.v2 self_probe=false stage=responder-self-probe".into());
         return false;
     }
@@ -239,7 +277,7 @@ fn execute() -> bool {
         &sample,
         &AtomicBool::new(false),
     );
-    let responder_ok = log_responder_outcome(responder.join().ok().and_then(Result::ok));
+    let responder_ok = log_responder_outcome(responder.join());
     outlet.is_ok() && responder_ok
 }
 
