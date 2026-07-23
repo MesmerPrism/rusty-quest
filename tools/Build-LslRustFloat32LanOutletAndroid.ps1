@@ -56,7 +56,7 @@ Checked "zipalign" $zipalign @("-f","4",$unaligned,$aligned)
 if([string]::IsNullOrWhiteSpace($Keystore)){$Keystore=Join-Path $target "p70-lan-outlet-debug.keystore"}
 if(-not(Test-Path $Keystore)){Checked "keytool" $keytool @("-genkeypair","-keystore",$Keystore,"-storepass","android","-keypass","android","-alias","androiddebugkey","-keyalg","RSA","-keysize","2048","-validity","10000","-dname","CN=Rusty LSL Float32 LAN Outlet,O=Rusty Quest,C=US")}
 Checked "sign" $signer @("sign","--ks",$Keystore,"--ks-pass","pass:android","--key-pass","pass:android","--out",$apk,$aligned);Checked "verify" $signer @("verify","--verbose",$apk)
-$host=Join-Path $fullOut "host-runner";New-Item -ItemType Directory -Force (Join-Path $host "src")|Out-Null
+$hostProject=Join-Path $fullOut "host-runner";New-Item -ItemType Directory -Force (Join-Path $hostProject "src")|Out-Null
 @"
 [package]
 name = "p70-host-runner"
@@ -65,7 +65,7 @@ edition = "2021"
 [workspace]
 [dependencies]
 rusty-lsl = { path = "$lslToml" }
-"@|Set-Content -Encoding UTF8 (Join-Path $host "Cargo.toml")
+"@|Set-Content -Encoding UTF8 (Join-Path $hostProject "Cargo.toml")
 @'
 use rusty_lsl::*;
 use std::net::{IpAddr, SocketAddr, UdpSocket};
@@ -103,10 +103,10 @@ fn main() {
  assert_eq!(r.sample().values()[0].to_bits(),0x3fa0_0070);
  println!("{{\"schema\":\"rusty.lsl.p70.host_result.v1\",\"result\":\"pass\",\"discovery_count\":{},\"selected_index\":{},\"record_count\":1,\"channel_count\":1,\"timestamp_bits\":\"0x4092522000000070\",\"value_bits\":\"0x3fa00070\",\"terminal_cleanup\":true}}",done.discovery().responses().len(),done.response_index());
 }
-'@|Set-Content -Encoding UTF8 (Join-Path $host "src\main.rs")
-Checked "host runner lock" "cargo" @("generate-lockfile","--manifest-path",(Join-Path $host "Cargo.toml"))
-Checked "host runner build" "cargo" @("build","--release","--locked","--manifest-path",(Join-Path $host "Cargo.toml"),"--target-dir",(Join-Path $host "target"))
-$hostRunner=Join-Path $host "target\release\p70-host-runner.exe";if(-not(Test-Path $hostRunner)){throw "Missing host runner"}
+'@|Set-Content -Encoding UTF8 (Join-Path $hostProject "src\main.rs")
+Checked "host runner lock" "cargo" @("generate-lockfile","--manifest-path",(Join-Path $hostProject "Cargo.toml"))
+Checked "host runner build" "cargo" @("build","--release","--locked","--manifest-path",(Join-Path $hostProject "Cargo.toml"),"--target-dir",(Join-Path $hostProject "target"))
+$hostRunner=Join-Path $hostProject "target\release\p70-host-runner.exe";if(-not(Test-Path $hostRunner)){throw "Missing host runner"}
 $questTree=(git -C $repo rev-parse 'HEAD^{tree}').Trim();$lslTree=(git -C $lsl rev-parse 'HEAD^{tree}').Trim()
 $manifest=[ordered]@{schema="rusty.quest.lsl_rust_float32_lan_outlet_build.v1";quest_source_head=$questHead;quest_source_tree=$questTree;rusty_lsl_source_head=$lslHead;rusty_lsl_source_tree=$lslTree;quest_source_clean=$true;rusty_lsl_source_clean=$true;rust_target="aarch64-linux-android";package="io.github.mesmerprism.rustyquest.lslrustfloat32lanoutlet";activity=".Float32LanOutletActivity";property_manifest=@();staging_inputs=@();apk_sha256=(Get-FileHash -Algorithm SHA256 $apk).Hash.ToLowerInvariant();native_sha256=(Get-FileHash -Algorithm SHA256 $so).Hash.ToLowerInvariant();host_runner_sha256=(Get-FileHash -Algorithm SHA256 $hostRunner).Hash.ToLowerInvariant()}
 $manifest|ConvertTo-Json -Depth 5|Set-Content -Encoding UTF8(Join-Path $fullOut "build-manifest.json")
