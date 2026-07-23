@@ -78,6 +78,8 @@ if ([regex]::Matches($runScriptText, 'AddSeconds\((\d+)\)') | Where-Object { [in
 $nativeText = Get-Content -Raw (Join-Path $app "native\src\lib.rs")
 foreach ($needle in @(
     "ShortInfoResponderLimits::new(",
+    "run_prebound_short_info_responder",
+    "UdpSocket::bind((Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT))",
     "SELF_PROBE_QUERY_ID",
     "ShortInfoQueryWire::encode",
     "ParsedShortInfoResponseEnvelope::parse",
@@ -97,6 +99,17 @@ if ($nativeText -notmatch 'ShortInfoResponderLimits::new\(\s*2048,\s*2,') {
 }
 if ([regex]::Matches($nativeText, '\.send_to\(wire\.as_bytes\(\),').Count -ne 1) {
     throw "Responder readiness must send exactly one self-probe datagram"
+}
+$bind = $nativeText.IndexOf("UdpSocket::bind((Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT))", [StringComparison]::Ordinal)
+$spawn = $nativeText.IndexOf("let responder = thread::spawn", [StringComparison]::Ordinal)
+$probe = $nativeText.IndexOf("let self_probe = prove_responder_ready", [StringComparison]::Ordinal)
+if ($bind -lt 0 -or $spawn -lt 0 -or $probe -lt 0 -or $bind -gt $spawn -or $spawn -gt $probe) {
+    throw "Responder socket must be synchronously bound before spawn and the one self-probe"
+}
+$failureResponder = $nativeText.IndexOf("log_responder_outcome(responder_run)", [StringComparison]::Ordinal)
+$notReady = $nativeText.IndexOf("NOT_READY schema=rusty.lsl.p70.quest_outlet_ready.v2", [StringComparison]::Ordinal)
+if ($failureResponder -lt 0 -or $notReady -lt 0 -or $failureResponder -gt $notReady) {
+    throw "Self-probe failure must log the typed responder outcome before NOT_READY"
 }
 if ($nativeText -match '(?<!NOT_)READY schema=rusty\.lsl\.p70\.quest_outlet_ready\.v2 self_probe=false') {
     throw "Self-probe failure must never emit READY"

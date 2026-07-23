@@ -1,5 +1,5 @@
 use rusty_lsl::{
-    admit_runtime_activation, run_short_info_responder, run_timestamped_float32_outlet,
+    admit_runtime_activation, run_prebound_short_info_responder, run_timestamped_float32_outlet,
     ParsedShortInfoResponseEnvelope, ParsedStreamInfoObservedDocument, RawSourceTimestamp,
     RuntimeActivationSelection, RuntimeModule, Sample, SampleLimits, ShortInfoQuery,
     ShortInfoQueryWire, ShortInfoQueryWireLimits, ShortInfoResponderActivation,
@@ -51,7 +51,6 @@ fn prove_responder_ready(
     )
     .unwrap();
     let wire = ShortInfoQueryWire::encode(&query, query_limits).unwrap();
-    thread::sleep(Duration::from_millis(50));
     let sent = socket
         .send_to(wire.as_bytes(), (Ipv4Addr::LOCALHOST, DISCOVERY_PORT))
         .unwrap();
@@ -88,6 +87,30 @@ fn prove_responder_ready(
         }
     }
     false
+}
+
+fn log_responder_outcome(responder_run: Option<rusty_lsl::ShortInfoResponderRun>) -> bool {
+    let (result, requests, termination) = match responder_run {
+        Some(run) => {
+            let termination = match run.termination() {
+                ShortInfoResponderTermination::Cancelled => "cancelled",
+                ShortInfoResponderTermination::Deadline => "deadline",
+                ShortInfoResponderTermination::RequestLimit => "request-limit",
+            };
+            (
+                run.requests() == 2
+                    && run.termination() == ShortInfoResponderTermination::RequestLimit,
+                run.requests(),
+                termination,
+            )
+        }
+        None => (false, 0, "error"),
+    };
+    log(4, format!(
+        "RESPONDER schema=rusty.lsl.p70.quest_responder_result.v1 result={} requests={} termination={}",
+        if result { "pass" } else { "fail" }, requests, termination
+    ));
+    result
 }
 
 fn execute() -> bool {
@@ -149,6 +172,8 @@ fn execute() -> bool {
     let query_limits = ShortInfoQueryWireLimits::new(256, 1024).unwrap();
     let response_limits =
         ShortInfoResponseEnvelopeLimits::new(response_limit, response_limit + 32).unwrap();
+    let responder_socket =
+        UdpSocket::bind((Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT)).unwrap();
     let responder_xml = xml.clone();
     let responder = thread::spawn(move || {
         let document = ParsedStreamInfoObservedDocument::parse(
@@ -156,9 +181,9 @@ fn execute() -> bool {
             &responder_xml,
         )
         .unwrap();
-        run_short_info_responder(
+        run_prebound_short_info_responder(
             responder_activation,
-            (Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT).into(),
+            responder_socket,
             ShortInfoResponderLimits::new(
                 2048,
                 2,
@@ -175,7 +200,8 @@ fn execute() -> bool {
     let self_probe = prove_responder_ready(&xml, query_limits, response_limits);
     if !self_probe {
         responder_cancelled.store(true, Ordering::Release);
-        let _ = responder.join();
+        let responder_run = responder.join().ok().and_then(Result::ok);
+        log_responder_outcome(responder_run);
         log(4, "NOT_READY schema=rusty.lsl.p70.quest_outlet_ready.v2 self_probe=false stage=responder-self-probe".into());
         return false;
     }
@@ -214,28 +240,7 @@ fn execute() -> bool {
         &sample,
         &AtomicBool::new(false),
     );
-    let responder_run = responder.join().ok().and_then(Result::ok);
-    let (responder_result, responder_requests, responder_termination) = match responder_run {
-        Some(run) => {
-            let termination = match run.termination() {
-                ShortInfoResponderTermination::Cancelled => "cancelled",
-                ShortInfoResponderTermination::Deadline => "deadline",
-                ShortInfoResponderTermination::RequestLimit => "request-limit",
-            };
-            (
-                run.requests() == 2
-                    && run.termination() == ShortInfoResponderTermination::RequestLimit,
-                run.requests(),
-                termination,
-            )
-        }
-        None => (false, 0, "error"),
-    };
-    log(4, format!(
-        "RESPONDER schema=rusty.lsl.p70.quest_responder_result.v1 result={} requests={} termination={}",
-        if responder_result { "pass" } else { "fail" }, responder_requests, responder_termination
-    ));
-    let responder_ok = responder_result;
+    let responder_ok = log_responder_outcome(responder.join().ok().and_then(Result::ok));
     outlet.is_ok() && responder_ok
 }
 
