@@ -38,10 +38,10 @@ try {
     Start-Sleep -Milliseconds 500
     & adb.exe -s $Serial exec-out run-as $package cat files/result.json|Set-Content -Encoding UTF8 (Join-Path $OutDir "quest-result.json")
     & adb.exe -s $Serial logcat -d -v threadtime -T $started|Set-Content -Encoding UTF8 (Join-Path $OutDir "logcat.txt")
-    $host=Get-Content -Raw (Join-Path $OutDir "host-result.json")|ConvertFrom-Json
+    $hostResult=Get-Content -Raw (Join-Path $OutDir "host-result.json")|ConvertFrom-Json
     $quest=Get-Content -Raw (Join-Path $OutDir "quest-result.json")|ConvertFrom-Json
     $logs=Get-Content -Raw (Join-Path $OutDir "logcat.txt")
-    if($host.result-ne"pass"-or$quest.result-ne"pass"-or$quest.native_result-ne1){throw "Lifecycle result failed"}
+    if($hostResult.result-ne"pass"-or$quest.result-ne"pass"-or$quest.native_result-ne1){throw "Lifecycle result failed"}
     $fatals=[regex]::Matches($logs,"FATAL EXCEPTION|Fatal signal|AndroidRuntime.*FATAL").Count
     if($fatals-ne0){throw "Scoped fatal count is $fatals"}
     $receipt.phase="result";$receipt.result="pass";$receipt.package_readback=$true;$receipt.host_result_sha256=(Get-FileHash -Algorithm SHA256 (Join-Path $OutDir "host-result.json")).Hash.ToLowerInvariant();$receipt.quest_result_sha256=(Get-FileHash -Algorithm SHA256 (Join-Path $OutDir "quest-result.json")).Hash.ToLowerInvariant();$receipt.bounded_fatal_count=0

@@ -8,6 +8,28 @@ $all = @(
     (Get-Content -Raw (Join-Path $root "tools\Build-LslRustFloat32LanOutletAndroid.ps1"))
     (Get-Content -Raw (Join-Path $root "tools\Invoke-LslRustFloat32LanOutletQuest.ps1"))
 ) -join "`n"
+$p70Scripts = Get-ChildItem (Join-Path $root "tools") -File |
+    Where-Object Name -Like "*LslRustFloat32LanOutlet*.ps1"
+foreach ($script in $p70Scripts) {
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile(
+        $script.FullName,
+        [ref]$tokens,
+        [ref]$parseErrors
+    )
+    if ($parseErrors.Count -ne 0) {
+        throw "PowerShell parse failure in $($script.Name): $($parseErrors[0].Message)"
+    }
+    $reservedHostVariables = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.VariableExpressionAst] -and
+            $node.VariablePath.UserPath.Equals("Host", [StringComparison]::OrdinalIgnoreCase)
+    }, $true))
+    if ($reservedHostVariables.Count -ne 0) {
+        throw "Reserved PowerShell Host variable used in $($script.Name)"
+    }
+}
 foreach ($needle in @("aarch64-linux-android", "rusty_lsl", "RLSLP70_RUST", "run_timestamped_float32_outlet", "run_typed_udp_discovery_float32_session_inlet", 'record_count\":1', "ACCEPTED_FEATURE_LOCK_FINGERPRINT", "socket_cleanup", "run-as", "install", "force-stop", "forward --list", "reverse --list")) {
     if (-not $all.Contains($needle)) { throw "Missing Rust-on-Quest guard: $needle" }
 }
