@@ -32,6 +32,13 @@ app or configured identity/key generation change rotates the epoch and resets
 only its source revision. The service is non-sticky and stops cleanly on the
 exact stop action.
 
+Content-addressed evidence APKs are debuggable and accept the exact
+`DEBUG_START` and `DEBUG_STOP` activity actions for unattended serial-scoped
+smoke tests. The activity ignores those actions when the application is not
+debuggable, accepts no test values through the intent, and still requires the
+same app-private enrollment profile and signing seed. This is a test
+activation route, not a fleet control-plane contract.
+
 Host validation:
 
 ```powershell

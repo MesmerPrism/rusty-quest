@@ -128,7 +128,12 @@ foreach ($token in @(
     'setOnClickListener',
     'FleetAgentService.ACTION_START',
     'FleetAgentService.ACTION_STOP',
-    'startForegroundService')) {
+    'startForegroundService',
+    'ACTION_DEBUG_START',
+    'ACTION_DEBUG_STOP',
+    'ApplicationInfo.FLAG_DEBUGGABLE',
+    'handleDebugAction(getIntent())',
+    'handleDebugAction(intent)')) {
     Assert-Match $activity ([regex]::Escape($token)) "Fleet Agent activity is missing explicit activation token: $token"
 }
 if ($activity -match 'get.*Extra\(') {

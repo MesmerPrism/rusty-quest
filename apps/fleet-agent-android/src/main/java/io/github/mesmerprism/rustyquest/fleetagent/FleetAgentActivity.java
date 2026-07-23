@@ -2,6 +2,7 @@ package io.github.mesmerprism.rustyquest.fleetagent;
 
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.ApplicationInfo;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
@@ -10,6 +11,11 @@ import android.widget.LinearLayout;
 import android.widget.TextView;
 
 public final class FleetAgentActivity extends Activity {
+    static final String ACTION_DEBUG_START =
+            "io.github.mesmerprism.rustyquest.fleetagent.DEBUG_START";
+    static final String ACTION_DEBUG_STOP =
+            "io.github.mesmerprism.rustyquest.fleetagent.DEBUG_STOP";
+
     private TextView status;
 
     @Override
@@ -49,6 +55,27 @@ public final class FleetAgentActivity extends Activity {
         });
         layout.addView(stop);
         setContentView(layout);
+        handleDebugAction(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleDebugAction(intent);
+    }
+
+    private void handleDebugAction(Intent intent) {
+        if (intent == null
+                || (getApplicationInfo().flags & ApplicationInfo.FLAG_DEBUGGABLE) == 0) {
+            return;
+        }
+        String action = intent.getAction();
+        if (ACTION_DEBUG_START.equals(action)) {
+            requestStart();
+        } else if (ACTION_DEBUG_STOP.equals(action)) {
+            requestStop();
+        }
     }
 
     private void requestStart() {
