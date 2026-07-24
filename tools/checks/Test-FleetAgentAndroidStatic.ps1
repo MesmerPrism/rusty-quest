@@ -29,6 +29,9 @@ $paths = [ordered]@{
     native_bridge = Join-Path $RepoRoot "apps\fleet-agent-android\src\main\java\io\github\mesmerprism\rustyquest\fleetagent\FleetAgentNativeBridge.java"
     build = Join-Path $RepoRoot "tools\Build-FleetAgentAndroid.ps1"
     host_validation = Join-Path $RepoRoot "tools\Test-FleetAgentAndroid.ps1"
+    device_smoke = Join-Path $RepoRoot "tools\Invoke-FleetAgentTwoQuestSmoke.ps1"
+    key_record = Join-Path $RepoRoot "crates\rusty-quest-fleet-agent\src\bin\fleet-agent-key-record.rs"
+    key_record_build = Join-Path $RepoRoot "tools\Build-FleetAgentKeyRecord.ps1"
 }
 foreach ($entry in $paths.GetEnumerator()) {
     if (-not (Test-Path -LiteralPath $entry.Value)) {
@@ -60,6 +63,9 @@ $nativeBridge = Get-Content -Raw -LiteralPath $paths.native_bridge
 $nativeSource = Get-Content -Raw -LiteralPath $paths.native_source
 $build = Get-Content -Raw -LiteralPath $paths.build
 $hostValidation = Get-Content -Raw -LiteralPath $paths.host_validation
+$deviceSmoke = Get-Content -Raw -LiteralPath $paths.device_smoke
+$keyRecord = Get-Content -Raw -LiteralPath $paths.key_record
+$keyRecordBuild = Get-Content -Raw -LiteralPath $paths.key_record_build
 
 Assert-Match $workspace '"crates/rusty-quest-fleet-agent"' "Workspace must include the Fleet Agent contract crate."
 Assert-Match $crate 'rev = "8181683be4a3abbc5daa0c4497c7aeb9e76316a8"' "Fleet contract dependency must remain pinned to the accepted public revision."
@@ -189,6 +195,75 @@ Assert-Match $hostValidation '\[CmdletBinding\(\)\]' "Fleet Agent host validatio
 Assert-Match $hostValidation '\[ValidateSet\("Host"\)\]' "Fleet Agent host validation must expose the declared Host tier."
 Assert-Match $hostValidation '\[string\]\s*\$Tier\s*=\s*"Host"' "Fleet Agent host validation must default to the Host tier."
 Assert-Match $hostValidation 'Fleet Agent Android \$Tier validation passed' "Fleet Agent host validation must report its effective tier."
+foreach ($token in @(
+    'Exactly two distinct Quest serials are required',
+    'adb -s \$Device',
+    'Test-ApkRunCapsule\.ps1',
+    'KeyRecordManifest',
+    'key-record tool dependency source does not match the run capsule',
+    'Device evidence must stay outside the public Rusty Quest checkout',
+    'exec-in.*run-as',
+    'DEBUG_START',
+    'DEBUG_STOP',
+    'Continuity device was not fresh',
+    'freshness=\$Expected',
+    'dumpsys.*battery',
+    'foreground_authority',
+    'accepted_by_hub',
+    'bounded_fatal_count',
+    'writeTask\.Wait\(\$remainingMs\)',
+    'WaitForExit\(\$remainingMs\)',
+    'Task\]::WaitAll',
+    'Kill\(\$true\)',
+    'StoppedBaseline',
+    'accepted_at_ms',
+    'Profile \$index signing identity does not match its private seed',
+    'Fleet Hub watch does not contain one exact accepted source revision event',
+    'OfflineAfterMs must be greater than StaleAfterMs',
+    'device-owned log boundary',
+    'cleanup was not verified',
+    'mutation_attempted',
+    'package_state_restored',
+    'errors = @\(\)',
+    'Unexpected per-device cleanup failure',
+    'finally',
+    'rm -f files/fleet-agent/profile\.json',
+    'uninstall.*\$package',
+    'package_absence_restored')) {
+    Assert-Match $deviceSmoke $token "Fleet Agent two-Quest smoke is missing safety or acceptance token: $token"
+}
+foreach ($forbidden in @(
+    'adb\s+kill-server',
+    'adb\s+start-server',
+    'adb\s+reconnect',
+    'settings\s+(put|delete)',
+    'pm\s+clear',
+    'forward\s+',
+    'reverse\s+')) {
+    if ($deviceSmoke -match $forbidden) {
+        throw "Fleet Agent two-Quest smoke crosses a forbidden device boundary: $forbidden"
+    }
+}
+if ($deviceSmoke -match '(?m)^\s*&?\s*cargo\s+(run|build)\b') {
+    throw "Fleet Agent two-Quest smoke must not compile mutable host tooling."
+}
+foreach ($token in @(
+    'derive_key_record',
+    '--seed-file',
+    'seed.fill(0)',
+    'serde_json::to_writer')) {
+    Assert-Match $keyRecord ([regex]::Escape($token)) "Fleet Agent key-record utility is missing token: $token"
+}
+if ($keyRecord -match 'println!\(.*seed|eprintln!\(.*seed_bytes') {
+    throw "Fleet Agent key-record utility must never print private seed material."
+}
+foreach ($token in @(
+    'Get-QuestBuildSourceComposition',
+    'cargo build --locked',
+    'rusty\.quest\.fleet_agent_key_record_tool\.v1',
+    'executable_sha256')) {
+    Assert-Match $keyRecordBuild $token "Fleet Agent key-record build is missing token: $token"
+}
 
 $appSource = @(
     $manifest,

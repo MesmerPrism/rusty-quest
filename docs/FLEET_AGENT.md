@@ -119,3 +119,28 @@ prove real battery/charging readback, opt-in activation, accepted Hub ingress,
 stale/offline behavior after stop, clean service termination, zero package or
 system fatals, and package cleanup. Device evidence remains outside the public
 repository.
+
+The active physical-device gate is
+`tools/Invoke-FleetAgentTwoQuestSmoke.ps1`. It requires exactly two distinct
+serials, the validated content-addressed run capsule, two distinct private
+profiles and seeds, the source-bound key-record helper manifest, an
+already-running Fleet-owned Hub, and a new evidence directory outside this
+repository. Build the helper before device execution with
+`tools/Build-FleetAgentKeyRecord.ps1`. The caller, not the script, owns the
+exact Agent Board headset and listener reservations.
+
+The gate first proves ordinary launch is inert. It then requires both enrolled
+devices to become fresh through accepted signed check-ins, compares the
+projected power fields with Android battery authority, and verifies that
+participating-application foreground state remains `unknown` with
+`platform_limited` authority. It stops the first producer and requires
+fresh → stale → offline while the second producer remains fresh, then proves
+the same aging and clean stop for the second producer. Bounded log and crash
+buffers must contain zero Fleet Agent fatals.
+
+The gate refuses to replace a pre-installed Fleet Agent package. In `finally`
+it stops only the target package, removes the exact app-private test inputs,
+uninstalls the package installed by the run, and verifies that package and
+process absence match the observed pre-run state. It never restarts ADB,
+changes device settings, creates a forward/reverse route, or accepts an
+implicit device.
