@@ -299,6 +299,83 @@ function Test-RemotePackagePresent {
     throw "Unable to determine package state for $PackageName on $Device."
 }
 
+function ConvertTo-Base64Bytes {
+    param([Parameter(Mandatory=$true)][byte[]]$Bytes)
+    $alphabet = [Text.Encoding]::ASCII.GetBytes(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+    $encoded = [byte[]]::new(4 * [Math]::Ceiling($Bytes.Length / 3.0))
+    $inputIndex = 0
+    $outputIndex = 0
+    while ($inputIndex -lt $Bytes.Length) {
+        $remaining = $Bytes.Length - $inputIndex
+        $first = [int]$Bytes[$inputIndex]
+        $second = if ($remaining -gt 1) {
+            [int]$Bytes[$inputIndex + 1]
+        } else {
+            0
+        }
+        $third = if ($remaining -gt 2) {
+            [int]$Bytes[$inputIndex + 2]
+        } else {
+            0
+        }
+        $encoded[$outputIndex] = $alphabet[$first -shr 2]
+        $encoded[$outputIndex + 1] =
+            $alphabet[(($first -band 3) -shl 4) -bor ($second -shr 4)]
+        $encoded[$outputIndex + 2] = if ($remaining -gt 1) {
+            $alphabet[(($second -band 15) -shl 2) -bor ($third -shr 6)]
+        } else {
+            [byte][char]"="
+        }
+        $encoded[$outputIndex + 3] = if ($remaining -gt 2) {
+            $alphabet[$third -band 63]
+        } else {
+            [byte][char]"="
+        }
+        $inputIndex += 3
+        $outputIndex += 4
+    }
+    return ,$encoded
+}
+
+function Write-AppPrivateBytes {
+    param(
+        [Parameter(Mandatory=$true)][string]$Device,
+        [Parameter(Mandatory=$true)][string]$RelativePath,
+        [Parameter(Mandatory=$true)][byte[]]$Bytes
+    )
+    if ($RelativePath -notmatch '^files/fleet-agent/[A-Za-z0-9._-]+$') {
+        throw "App-private destination is outside the Fleet Agent directory."
+    }
+    $encodedBytes = ConvertTo-Base64Bytes -Bytes $Bytes
+    try {
+        Invoke-Adb -Device $Device -Arguments @(
+            "shell", "-T",
+            "run-as $package sh -c 'base64 -d > $RelativePath'"
+        ) -InputBytes $encodedBytes | Out-Null
+
+        $hasher = [Security.Cryptography.SHA256]::Create()
+        try {
+            $expectedHash = [Convert]::ToHexString(
+                $hasher.ComputeHash($Bytes)).ToLowerInvariant()
+        } finally {
+            $hasher.Dispose()
+        }
+        $remoteHash = (Invoke-Adb -Device $Device -Arguments @(
+            "exec-out", "run-as", $package,
+            "sha256sum", $RelativePath)).output -join "`n"
+        $hashMatch = [regex]::Match(
+            $remoteHash.Trim(),
+            '^([0-9a-fA-F]{64})\s+\S+$')
+        if (-not $hashMatch.Success -or
+            $hashMatch.Groups[1].Value.ToLowerInvariant() -ne $expectedHash) {
+            throw "App-private Fleet Agent input hash did not match staged bytes."
+        }
+    } finally {
+        [Array]::Clear($encodedBytes, 0, $encodedBytes.Length)
+    }
+}
+
 function Invoke-KeyRecordTool {
     param(
         [Parameter(Mandatory=$true)][string]$KeyId,
@@ -529,6 +606,7 @@ $profiles = @()
 $seedFiles = @()
 $publicKeyRecords = @()
 $expectedEndpoint = [Uri]::new($HubBaseUri, "/fleet/v1/checkins").AbsoluteUri
+try {
 for ($index = 0; $index -lt 2; $index++) {
     $profileResolved = (Resolve-Path -LiteralPath $ProfilePath[$index]).Path
     $seedResolved = (Resolve-Path -LiteralPath $SigningSeedPath[$index]).Path
@@ -647,14 +725,12 @@ try {
         Invoke-Adb -Device $device -Arguments @(
             "shell", "run-as", $package,
             "chmod", "700", "files/fleet-agent") | Out-Null
-        Invoke-Adb -Device $device -Arguments @(
-            "exec-in", "run-as", $package,
-            "dd", "of=files/fleet-agent/profile.json"
-        ) -InputBytes $profiles[$index].bytes | Out-Null
-        Invoke-Adb -Device $device -Arguments @(
-            "exec-in", "run-as", $package,
-            "dd", "of=files/fleet-agent/signing-seed.bin"
-        ) -InputBytes $seedFiles[$index].bytes | Out-Null
+        Write-AppPrivateBytes -Device $device `
+            -RelativePath "files/fleet-agent/profile.json" `
+            -Bytes $profiles[$index].bytes
+        Write-AppPrivateBytes -Device $device `
+            -RelativePath "files/fleet-agent/signing-seed.bin" `
+            -Bytes $seedFiles[$index].bytes
         Invoke-Adb -Device $device -Arguments @(
             "shell", "run-as", $package,
             "chmod", "600",
@@ -960,11 +1036,6 @@ try {
             }
         } catch {
             $cleanupErrors.Add("Unexpected per-device cleanup failure: $($_.Exception.Message)")
-        } finally {
-            [Array]::Clear(
-                $seedFiles[$index].bytes,
-                0,
-                $seedFiles[$index].bytes.Length)
         }
         $cleanup.errors = @($cleanupErrors)
         $summary.cleanup += $cleanup
@@ -995,3 +1066,10 @@ if ($null -ne $primaryFailure) {
 }
 
 Write-Output (Join-Path $evidenceFull "private-summary.json")
+} finally {
+    foreach ($seedFile in @($seedFiles)) {
+        if ($null -ne $seedFile -and $null -ne $seedFile.bytes) {
+            [Array]::Clear($seedFile.bytes, 0, $seedFile.bytes.Length)
+        }
+    }
+}

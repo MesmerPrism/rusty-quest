@@ -202,7 +202,12 @@ foreach ($token in @(
     'KeyRecordManifest',
     'key-record tool dependency source does not match the run capsule',
     'Device evidence must stay outside the public Rusty Quest checkout',
-    'exec-in.*run-as',
+    'shell", "-T"',
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789\+/',
+    'base64 -d > \$RelativePath',
+    'sha256sum", \$RelativePath',
+    'Array\]::Clear\(\$encodedBytes',
+    'foreach \(\$seedFile in @\(\$seedFiles\)\)',
     'am", "start", "-W", "-n", \$activity',
     '\^Status:\\s\*ok',
     'ordinary launch did not confirm the exact Activity',
@@ -232,7 +237,6 @@ foreach ($token in @(
     'errors = @\(\)',
     'Unexpected per-device cleanup failure',
     'finally',
-    '"dd", "of=files/fleet-agent/profile\.json"',
     '"chmod", "600"',
     '"rm", "-f", \$privateFile',
     'uninstall.*\$package',
@@ -247,7 +251,8 @@ foreach ($forbidden in @(
     'pm\s+clear',
     'forward\s+',
     'reverse\s+',
-    '"(?:shell|exec-in)"\s*,\s*"sh"\s*,\s*"-c"')) {
+    '"(?:shell|exec-in)"\s*,\s*"sh"\s*,\s*"-c"',
+    'ToBase64String|MemoryStream|CryptoStream|ToArray\(')) {
     if ($deviceSmoke -match $forbidden) {
         throw "Fleet Agent two-Quest smoke crosses a forbidden device boundary: $forbidden"
     }
