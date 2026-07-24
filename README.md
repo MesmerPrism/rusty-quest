@@ -768,7 +768,7 @@ gate is `tools/checks/Test-CorrectedReleaseTwoQuestMatrixStatic.ps1`.
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-NativeAppBuildProfile.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-device-link"
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1 -Tier Host
 pwsh -NoProfile -ExecutionPolicy Bypass -Command "cargo run --quiet -p rusty-quest-device-link --bin validate_direct_p2p_socket_route -- fixtures\device-link\direct-p2p-socket-route.pass.json"
 pwsh -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-native-renderer"
 pwsh -NoProfile -ExecutionPolicy Bypass -Command "cargo test -p rusty-quest-remote-camera"

@@ -28,6 +28,7 @@ $paths = [ordered]@{
     receipt = Join-Path $RepoRoot "apps\fleet-agent-android\src\main\java\io\github\mesmerprism\rustyquest\fleetagent\FleetAgentReceipt.java"
     native_bridge = Join-Path $RepoRoot "apps\fleet-agent-android\src\main\java\io\github\mesmerprism\rustyquest\fleetagent\FleetAgentNativeBridge.java"
     build = Join-Path $RepoRoot "tools\Build-FleetAgentAndroid.ps1"
+    host_validation = Join-Path $RepoRoot "tools\Test-FleetAgentAndroid.ps1"
 }
 foreach ($entry in $paths.GetEnumerator()) {
     if (-not (Test-Path -LiteralPath $entry.Value)) {
@@ -58,6 +59,7 @@ $receipt = Get-Content -Raw -LiteralPath $paths.receipt
 $nativeBridge = Get-Content -Raw -LiteralPath $paths.native_bridge
 $nativeSource = Get-Content -Raw -LiteralPath $paths.native_source
 $build = Get-Content -Raw -LiteralPath $paths.build
+$hostValidation = Get-Content -Raw -LiteralPath $paths.host_validation
 
 Assert-Match $workspace '"crates/rusty-quest-fleet-agent"' "Workspace must include the Fleet Agent contract crate."
 Assert-Match $crate 'rev = "8181683be4a3abbc5daa0c4497c7aeb9e76316a8"' "Fleet contract dependency must remain pinned to the accepted public revision."
@@ -183,6 +185,10 @@ Assert-Match $build 'rusty\.quest\.apk_run_capsule\.v1' "Fleet Agent build must 
 Assert-Match $build 'Test-ApkRunCapsule\.ps1' "Fleet Agent build must validate its generated capsule."
 Assert-Match $build 'fleet-agent-android\\builds\\fleet-agent' "Fleet Agent output must be content addressed."
 Assert-Match $build 'PSVersionTable\.PSVersion -lt \[version\]"7\.6"' "Fleet Agent build must enforce the PowerShell 7.6 host contract."
+Assert-Match $hostValidation '\[CmdletBinding\(\)\]' "Fleet Agent host validation must reject unknown named parameters."
+Assert-Match $hostValidation '\[ValidateSet\("Host"\)\]' "Fleet Agent host validation must expose the declared Host tier."
+Assert-Match $hostValidation '\[string\]\s*\$Tier\s*=\s*"Host"' "Fleet Agent host validation must default to the Host tier."
+Assert-Match $hostValidation 'Fleet Agent Android \$Tier validation passed' "Fleet Agent host validation must report its effective tier."
 
 $appSource = @(
     $manifest,

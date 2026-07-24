@@ -297,7 +297,7 @@ Run:
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\check_all.ps1
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\checks\Test-ApkRunIsolationStatic.ps1 -RepoRoot .
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1 -Tier Host
 ```
 
 The Spatial Camera Panel wrapper runs its focused workflow gate before the

@@ -105,12 +105,14 @@ The source-only edit loop is:
 ```powershell
 cargo test -p rusty-quest-fleet-agent
 cargo clippy -p rusty-quest-fleet-agent --all-targets -- -D warnings
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1 -Tier Host
 ```
 
 The public golden claims fixture under `fixtures/fleet-agent/` must reproduce
-Fleet's signing message and signature exactly. Android static, build, and
-device checks are routed through `tools/Test-FleetAgentAndroid.ps1` and the
-serial-scoped smoke wrapper once the package slice is active.
+Fleet's signing message and signature exactly. `-Tier Host` is the explicit
+source/static owner gate and rejects unknown tier names; add `-Build` only
+when the package build is required. Device checks remain separate and route
+through the serial-scoped smoke wrapper once the package slice is active.
 
 Host validation proves contract and packaging shape. A later device gate must
 prove real battery/charging readback, opt-in activation, accepted Hub ingress,

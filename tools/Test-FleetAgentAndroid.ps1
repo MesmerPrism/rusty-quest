@@ -1,5 +1,10 @@
+[CmdletBinding()]
 param(
     [string]$RepoRoot = "",
+
+    [ValidateSet("Host")]
+    [string]$Tier = "Host",
+
     [switch]$Build
 )
 
@@ -34,4 +39,4 @@ if ($Build) {
     }
 }
 
-Write-Output "Rusty Quest Fleet Agent Android validation passed"
+Write-Output "Rusty Quest Fleet Agent Android $Tier validation passed"

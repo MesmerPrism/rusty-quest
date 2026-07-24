@@ -42,11 +42,12 @@ activation route, not a fleet control-plane contract.
 Host validation:
 
 ```powershell
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1
-pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1 -Build
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1 -Tier Host
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\tools\Test-FleetAgentAndroid.ps1 -Tier Host -Build
 ```
 
-The build writes the APK and a typed build manifest below
+The `Host` tier is the fail-closed source/static gate. The build writes the APK
+and a typed build manifest below
 `target/fleet-agent-android/`. Device execution is routed through the explicit
 serial smoke wrapper; raw profile, key, network, logcat, and receipt evidence
 stays outside the public repository.
