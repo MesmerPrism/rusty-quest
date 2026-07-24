@@ -1,5 +1,26 @@
 # Rusty Quest
 
+`apps/lsl-rust-float32-lan-outlet-android` is the bounded P70 Rust-on-Quest
+outlet to Rust-host inlet LAN harness. It uses no Android properties or staging
+inputs and remains default-inert.
+
+`apps/lsl-rust-float32-two-record-chunk-android` is the public LSLC-005S
+platform harness for one exact-source-locked two-record Float32 chunk execution
+on Quest. Ordered exact-bit checks and immediate TCP port reuse run in Rust over
+`127.0.0.1`; Java owns lifecycle only. This proves one bounded device execution,
+not arbitrary chunks, official endpoints, or non-loopback compatibility.
+
+`apps/lsl-rust-float32-loopback-android` is the public LSLC-005L platform
+harness for one exact-source-locked Rusty LSL Float32 outlet/inlet execution on
+Quest. The exchange, exact-bit checks, activation admission, and immediate port
+reuse run in Rust over `127.0.0.1`; Android Java owns lifecycle only. This is
+bounded device conformance, not official or non-loopback compatibility.
+
+`apps/lsl-rust-conformance-android` is the public LSLC-005H platform harness
+for one exact-source-locked Rusty LSL core-contract execution on Quest. It
+keeps Android lifecycle glue separate from the Rust-owned effective marker and
+does not broaden Rusty LSL transport or compatibility claims.
+
 Rusty Quest is the Morphospace lane for Quest platform behavior: runtime
 profiles, Android property hygiene, permissions, launch planning, and platform
 validation evidence.

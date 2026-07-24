@@ -1,0 +1,163 @@
+$ErrorActionPreference = "Stop"
+$root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+$app = Join-Path $root "apps\lsl-rust-float32-lan-outlet-android"
+$all = @(
+    (Get-Content -Raw (Join-Path $app "AndroidManifest.xml"))
+    (Get-Content -Raw (Join-Path $app "src\main\java\io\github\mesmerprism\rustyquest\lslrustfloat32lanoutlet\Float32LanOutletActivity.java"))
+    (Get-Content -Raw (Join-Path $app "native\src\lib.rs"))
+    (Get-Content -Raw (Join-Path $root "tools\Build-LslRustFloat32LanOutletAndroid.ps1"))
+    (Get-Content -Raw (Join-Path $root "tools\Invoke-LslRustFloat32LanOutletQuest.ps1"))
+) -join "`n"
+$runScriptText = Get-Content -Raw (Join-Path $root "tools\Invoke-LslRustFloat32LanOutletQuest.ps1")
+$canonicalIrregularRate = '<nominal_srate>0.000000000000000</nominal_srate>'
+if (-not $all.Contains($canonicalIrregularRate) -or $all.Contains('<nominal_srate>0</nominal_srate>')) {
+    throw "Quest XML must use the canonical typed-admission irregular nominal-rate literal"
+}
+$p70Scripts = Get-ChildItem (Join-Path $root "tools") -File |
+    Where-Object Name -Like "*LslRustFloat32LanOutlet*.ps1"
+foreach ($script in $p70Scripts) {
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseFile(
+        $script.FullName,
+        [ref]$tokens,
+        [ref]$parseErrors
+    )
+    if ($parseErrors.Count -ne 0) {
+        throw "PowerShell parse failure in $($script.Name): $($parseErrors[0].Message)"
+    }
+    $reservedAutomaticVariables = @($ast.FindAll({
+        param($node)
+        $node -is [Management.Automation.Language.VariableExpressionAst] -and
+            (
+                $node.VariablePath.UserPath.Equals("Host", [StringComparison]::OrdinalIgnoreCase) -or
+                $node.VariablePath.UserPath.Equals("Args", [StringComparison]::OrdinalIgnoreCase)
+            )
+    }, $true))
+    if ($reservedAutomaticVariables.Count -ne 0) {
+        throw "Reserved PowerShell automatic variable used in $($script.Name)"
+    }
+}
+foreach ($needle in @("aarch64-linux-android", "rusty_lsl", "RLSLP70_RUST", "run_timestamped_float32_outlet", "run_typed_udp_discovery_float32_session_inlet", 'record_count\":1', "ACCEPTED_FEATURE_LOCK_FINGERPRINT", "socket_cleanup", "run-as", "install", "force-stop", "forward --list", "reverse --list")) {
+    if (-not $all.Contains($needle)) { throw "Missing Rust-on-Quest guard: $needle" }
+}
+$buildScriptText = Get-Content -Raw (Join-Path $root "tools\Build-LslRustFloat32LanOutletAndroid.ps1")
+if (-not $buildScriptText.Contains("ShortInfoResponseEnvelopeLimits::new(2048,4096)")) {
+    throw "Generated host runner must admit the bounded Quest response body"
+}
+if ($buildScriptText -match 'ShortInfoResponseEnvelopeLimits::new\(1,') {
+    throw "Generated host runner one-byte response body limit is forbidden"
+}
+foreach ($needle in @("bounded_logcat_sha256", "bounded_fatal_count", "failure_path_evidence_preserved")) {
+    if (-not $runScriptText.Contains($needle)) { throw "Missing failure-path evidence guard: $needle" }
+}
+foreach ($needle in @(
+    '$lifecycleCompleted=$false',
+    'if(-not$lifecycleCompleted)',
+    'RESPONDER schema=rusty.lsl.p70.quest_responder_result.v1',
+    '[DateTime]::UtcNow.AddSeconds(12)',
+    '$receipt.responder_marker_observed',
+    '$receipt.responder_marker_wait_budget_seconds',
+    '$receipt.responder_marker_wait_elapsed_milliseconds',
+    '$receipt.responder_result',
+    '$receipt.responder_requests',
+    '$receipt.responder_termination',
+    '$receipt.responder_detail_observed',
+    '$receipt.responder_outcome',
+    '$receipt.responder_error_kind',
+    '[System.UInt64]$responderMatches[0].Groups[2].Value',
+    'if($lifecycleCompleted){0}else{12}',
+    'if($lifecycleCompleted){0}else{$responderWaitElapsedMilliseconds}'
+)) {
+    if (-not $runScriptText.Contains($needle)) { throw "Missing bounded responder-marker wait guard: $needle" }
+}
+$exactResponderPattern = 'RESPONDER schema=rusty\\\.lsl\\\.p70\\\.quest_responder_result\\\.v1 result=\(pass\|fail\) requests=\(\[0-9\]\+\) termination=\(cancelled\|deadline\|request-limit\|error\)'
+if ($runScriptText -notmatch $exactResponderPattern) {
+    throw "Exact typed responder marker regex is missing"
+}
+$exactResponderDetailPattern = 'RESPONDER_DETAIL schema=rusty\\\.lsl\\\.p70\\\.quest_responder_detail\\\.v1 outcome=\(run-ok\|responder-error\|thread-panic\) error='
+if ($runScriptText -notmatch $exactResponderDetailPattern) {
+    throw "Exact responder detail regex is missing"
+}
+if ($runScriptText -match '(?i)\[u64\]') {
+    throw "Non-portable PowerShell u64 type alias is forbidden"
+}
+$finalCaptureReadIndex = $runScriptText.IndexOf('$boundedLogs=Get-Content -Raw $logcatPath', [StringComparison]::Ordinal)
+$typedResponderIndex = $runScriptText.IndexOf('$receipt.responder_result=', [StringComparison]::Ordinal)
+if ($finalCaptureReadIndex -lt 0 -or $typedResponderIndex -lt 0 -or $finalCaptureReadIndex -gt $typedResponderIndex) {
+    throw "Typed responder fields must derive from the final bounded log capture"
+}
+$waitIndex = $runScriptText.IndexOf('[DateTime]::UtcNow.AddSeconds(12)', [StringComparison]::Ordinal)
+$finalCaptureIndex = $runScriptText.IndexOf('$logcatPath=Join-Path $OutDir "logcat.txt"', [StringComparison]::Ordinal)
+$finalCleanupIndex = $runScriptText.LastIndexOf('& adb.exe -s $Serial shell am force-stop $package', [StringComparison]::Ordinal)
+if ($waitIndex -lt 0 -or $finalCaptureIndex -lt 0 -or $finalCleanupIndex -lt 0 -or
+    $waitIndex -gt $finalCaptureIndex -or $finalCaptureIndex -gt $finalCleanupIndex) {
+    throw "Failure marker wait, final log capture, and force-stop ordering drifted"
+}
+if ([regex]::Matches($runScriptText, 'AddSeconds\((\d+)\)') | Where-Object { [int]$_.Groups[1].Value -gt 12 }) {
+    throw "Responder-marker wait exceeds the 12-second hard bound"
+}
+$nativeText = Get-Content -Raw (Join-Path $app "native\src\lib.rs")
+foreach ($needle in @(
+    "ShortInfoResponderLimits::new(",
+    "run_prebound_short_info_responder",
+    "UdpSocket::bind((Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT))",
+    "SELF_PROBE_QUERY_ID",
+    "ShortInfoQueryWire::encode",
+    "ParsedShortInfoResponseEnvelope::parse",
+    "parsed.query_id() == SELF_PROBE_QUERY_ID",
+    "parsed.body().source() == xml",
+    "sent != wire.as_bytes().len()",
+    "self_probe=true stage=responder-ready",
+    "NOT_READY schema=rusty.lsl.p70.quest_outlet_ready.v2 self_probe=false stage=responder-self-probe",
+    "RESPONDER schema=rusty.lsl.p70.quest_responder_result.v1",
+    "RESPONDER_DETAIL schema=rusty.lsl.p70.quest_responder_detail.v1",
+    "responder_error_kind",
+    '"thread-panic"',
+    "run.requests() == 2",
+    "ShortInfoResponderTermination::RequestLimit"
+)) {
+    if (-not $nativeText.Contains($needle)) { throw "Missing responder-readiness guard: $needle" }
+}
+if ($nativeText -notmatch 'ShortInfoResponderLimits::new\(\s*2048,\s*2,') {
+    throw "Responder limit must be exactly two requests"
+}
+if ([regex]::Matches($nativeText, '\.send_to\(wire\.as_bytes\(\),').Count -ne 1) {
+    throw "Responder readiness must send exactly one self-probe datagram"
+}
+$bind = $nativeText.IndexOf("UdpSocket::bind((Ipv4Addr::UNSPECIFIED, DISCOVERY_PORT))", [StringComparison]::Ordinal)
+$spawn = $nativeText.IndexOf("let responder = thread::spawn", [StringComparison]::Ordinal)
+$probe = $nativeText.IndexOf("let self_probe = prove_responder_ready", [StringComparison]::Ordinal)
+if ($bind -lt 0 -or $spawn -lt 0 -or $probe -lt 0 -or $bind -gt $spawn -or $spawn -gt $probe) {
+    throw "Responder socket must be synchronously bound before spawn and the one self-probe"
+}
+$failureResponder = $nativeText.IndexOf("log_responder_outcome(responder.join())", [StringComparison]::Ordinal)
+$notReady = $nativeText.IndexOf("NOT_READY schema=rusty.lsl.p70.quest_outlet_ready.v2", [StringComparison]::Ordinal)
+if ($failureResponder -lt 0 -or $notReady -lt 0 -or $failureResponder -gt $notReady) {
+    throw "Self-probe failure must log the typed responder outcome before NOT_READY"
+}
+if ($nativeText -match '(?<!NOT_)READY schema=rusty\.lsl\.p70\.quest_outlet_ready\.v2 self_probe=false') {
+    throw "Self-probe failure must never emit READY"
+}
+if (-not $nativeText.Contains('<?xml version=\"1.0\"?>\n<info>\n\t<name>')) {
+    throw "Quest responder XML must use the canonical declaration/root/tab-indented field layout"
+}
+$readyContract = "READY schema=rusty.lsl.p70.quest_outlet_ready.v2 self_probe=true stage=responder-ready"
+if (-not $runScriptText.Contains($readyContract) -or -not $nativeText.Contains($readyContract)) {
+    throw "Native and run-script readiness contracts must match exactly"
+}
+$selfProbeCall = $nativeText.IndexOf("let self_probe = prove_responder_ready", [StringComparison]::Ordinal)
+$readyMarker = $nativeText.IndexOf("self_probe=true stage=responder-ready", [StringComparison]::Ordinal)
+if ($selfProbeCall -lt 0 -or $readyMarker -lt 0 -or $selfProbeCall -gt $readyMarker) {
+    throw "Responder self-probe must complete before READY"
+}
+$failureCapture = $runScriptText.IndexOf('$logcatPath=Join-Path $OutDir "logcat.txt"', [StringComparison]::Ordinal)
+$finalForceStop = $runScriptText.LastIndexOf('& adb.exe -s $Serial shell am force-stop $package', [StringComparison]::Ordinal)
+if ($failureCapture -lt 0 -or $finalForceStop -lt 0 -or $failureCapture -gt $finalForceStop) {
+    throw "Failure-path bounded logcat must be captured before final target force-stop"
+}
+foreach ($forbidden in @("android.permission.CAMERA", "android.permission.RECORD_AUDIO", "MANAGE_EXTERNAL_STORAGE", "adb kill-server", "adb start-server")) {
+    if ($all.Contains($forbidden)) { throw "Forbidden Rust-on-Quest token: $forbidden" }
+}
+"P70 Rust-on-Quest Float32 LAN outlet harness static validation passed."
+
