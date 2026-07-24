@@ -204,6 +204,25 @@ function Invoke-Adb {
     }
 }
 
+function Test-RemoteProcessPresent {
+    param(
+        [Parameter(Mandatory=$true)][string]$Device,
+        [Parameter(Mandatory=$true)][string]$ProcessName
+    )
+    $probe = Invoke-Adb -Device $Device -Arguments @(
+        "shell", "pidof", $ProcessName) -AllowFailure
+    $probeOutput = ($probe.output -join " ").Trim()
+    if ($probe.exit_code -eq 0 -and
+        $probeOutput -match '^\d+(?:\s+\d+)*$') {
+        return $true
+    }
+    if ($probe.exit_code -eq 1 -and
+        [string]::IsNullOrWhiteSpace($probeOutput)) {
+        return $false
+    }
+    throw "Unable to determine process state for $ProcessName on $Device."
+}
+
 function Invoke-KeyRecordTool {
     param(
         [Parameter(Mandatory=$true)][string]$KeyId,
@@ -519,20 +538,17 @@ try {
         }
         $logStartedAt[$index] = (
             (Invoke-Adb -Device $device -Arguments @(
-                "shell", "date", "+%m-%d %H:%M:%S.000")).output -join ""
+                "shell", "date '+%m-%d %H:%M:%S.000'")).output -join ""
         ).Trim()
         if ($logStartedAt[$index] -notmatch '^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$') {
             throw "Unable to establish the device-owned log boundary for $device."
         }
         $priorPackage = Invoke-Adb -Device $device -Arguments @(
             "shell", "pm", "path", $package)
-        $priorProcess = Invoke-Adb -Device $device -Arguments @(
-            "shell", "sh", "-c",
-            "if pidof $package >/dev/null 2>&1; then echo present; else echo absent; fi")
         $packagePresentBefore[$index] =
             ($priorPackage.output -join "`n") -match '^package:'
         $processPresentBefore[$index] =
-            (($priorProcess.output -join "").Trim()) -eq "present"
+            Test-RemoteProcessPresent -Device $device -ProcessName $package
         $preflightComplete[$index] = $true
         if ($packagePresentBefore[$index]) {
             throw "Fleet Agent is already installed on $device; refusing an irreversible replacement."
@@ -552,13 +568,24 @@ try {
             throw "Fleet Agent install did not report Success on $device."
         }
         Invoke-Adb -Device $device -Arguments @(
-            "exec-in", "run-as", $package, "sh", "-c",
-            "umask 077; mkdir -p files/fleet-agent; cat > files/fleet-agent/profile.json"
+            "shell", "run-as", $package,
+            "mkdir", "-p", "files/fleet-agent") | Out-Null
+        Invoke-Adb -Device $device -Arguments @(
+            "shell", "run-as", $package,
+            "chmod", "700", "files/fleet-agent") | Out-Null
+        Invoke-Adb -Device $device -Arguments @(
+            "exec-in", "run-as", $package,
+            "dd", "of=files/fleet-agent/profile.json"
         ) -InputBytes $profiles[$index].bytes | Out-Null
         Invoke-Adb -Device $device -Arguments @(
-            "exec-in", "run-as", $package, "sh", "-c",
-            "umask 077; cat > files/fleet-agent/signing-seed.bin"
+            "exec-in", "run-as", $package,
+            "dd", "of=files/fleet-agent/signing-seed.bin"
         ) -InputBytes $seedFiles[$index].bytes | Out-Null
+        Invoke-Adb -Device $device -Arguments @(
+            "shell", "run-as", $package,
+            "chmod", "600",
+            "files/fleet-agent/profile.json",
+            "files/fleet-agent/signing-seed.bin") | Out-Null
 
         Invoke-Adb -Device $device -Arguments @(
             "shell", "am", "start", "-n", $activity) | Out-Null
@@ -774,16 +801,30 @@ try {
                                 $cleanupErrors.Add("Target force-stop failed: $($_.Exception.Message)")
                             }
                             try {
+                                $privateFiles = @(
+                                    "files/fleet-agent/profile.json",
+                                    "files/fleet-agent/signing-seed.bin",
+                                    "files/fleet-agent/last-receipt.json",
+                                    "files/fleet-agent/last-receipt.json.tmp")
+                                foreach ($privateFile in $privateFiles) {
+                                    Invoke-Adb -Device $device -Arguments @(
+                                        "shell", "run-as", $package,
+                                        "rm", "-f", $privateFile) | Out-Null
+                                }
                                 Invoke-Adb -Device $device -Arguments @(
-                                    "shell", "run-as", $package, "sh", "-c",
-                                    "rm -f files/fleet-agent/profile.json files/fleet-agent/signing-seed.bin files/fleet-agent/last-receipt.json files/fleet-agent/last-receipt.json.tmp; rmdir files/fleet-agent 2>/dev/null || true"
-                                ) | Out-Null
-                                $privateProbe = Invoke-Adb -Device $device -Arguments @(
-                                    "shell", "run-as", $package, "sh", "-c",
-                                    "for f in files/fleet-agent/profile.json files/fleet-agent/signing-seed.bin files/fleet-agent/last-receipt.json files/fleet-agent/last-receipt.json.tmp; do test ! -e `"`$f`" || exit 1; done; echo absent"
-                                )
-                                if (($privateProbe.output -join "").Trim() -ne "absent") {
-                                    throw "App-private Fleet Agent inputs were not proven absent."
+                                    "shell", "run-as", $package,
+                                    "rmdir", "files/fleet-agent"
+                                ) -AllowFailure | Out-Null
+                                Invoke-Adb -Device $device -Arguments @(
+                                    "shell", "run-as", $package,
+                                    "ls", "files") | Out-Null
+                                foreach ($privateFile in $privateFiles) {
+                                    $privateProbe = Invoke-Adb -Device $device -Arguments @(
+                                        "shell", "run-as", $package,
+                                        "test", "!", "-e", $privateFile) -AllowFailure
+                                    if ($privateProbe.exit_code -ne 0) {
+                                        throw "App-private Fleet Agent input was not proven absent: $privateFile"
+                                    }
                                 }
                                 $cleanup.private_inputs_removed = $true
                             } catch {
@@ -815,13 +856,10 @@ try {
                     }
                     $packageAfter = Invoke-Adb -Device $device -Arguments @(
                         "shell", "pm", "path", $package)
-                    $processAfter = Invoke-Adb -Device $device -Arguments @(
-                        "shell", "sh", "-c",
-                        "if pidof $package >/dev/null 2>&1; then echo present; else echo absent; fi")
                     $packagePresentAfter =
                         ($packageAfter.output -join "`n") -match '^package:'
                     $processPresentAfter =
-                        (($processAfter.output -join "").Trim()) -eq "present"
+                        Test-RemoteProcessPresent -Device $device -ProcessName $package
                     $cleanup.package_absence_restored = -not $packagePresentAfter
                     $cleanup.process_absent = -not $processPresentAfter
                     $cleanup.package_state_restored =

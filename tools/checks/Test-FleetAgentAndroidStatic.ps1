@@ -227,7 +227,9 @@ foreach ($token in @(
     'errors = @\(\)',
     'Unexpected per-device cleanup failure',
     'finally',
-    'rm -f files/fleet-agent/profile\.json',
+    '"dd", "of=files/fleet-agent/profile\.json"',
+    '"chmod", "600"',
+    '"rm", "-f", \$privateFile',
     'uninstall.*\$package',
     'package_absence_restored')) {
     Assert-Match $deviceSmoke $token "Fleet Agent two-Quest smoke is missing safety or acceptance token: $token"
@@ -239,7 +241,8 @@ foreach ($forbidden in @(
     'settings\s+(put|delete)',
     'pm\s+clear',
     'forward\s+',
-    'reverse\s+')) {
+    'reverse\s+',
+    '"(?:shell|exec-in)"\s*,\s*"sh"\s*,\s*"-c"')) {
     if ($deviceSmoke -match $forbidden) {
         throw "Fleet Agent two-Quest smoke crosses a forbidden device boundary: $forbidden"
     }
