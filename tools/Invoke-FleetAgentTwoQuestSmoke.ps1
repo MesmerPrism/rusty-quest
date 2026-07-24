@@ -128,29 +128,53 @@ function Invoke-Adb {
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
         $inputTimedOut = $false
+        $ioFailure = $null
         if ($null -ne $InputBytes) {
-            $writeTask = $process.StandardInput.BaseStream.WriteAsync(
-                $InputBytes,
-                0,
-                $InputBytes.Length)
-            $remainingMs = [Math]::Max(
-                0,
-                ($TimeoutSeconds * 1000) - [int]$stopwatch.ElapsedMilliseconds)
-            $inputTimedOut = -not $writeTask.Wait($remainingMs)
-            if (-not $inputTimedOut) {
-                $disposeTask = $process.StandardInput.BaseStream.DisposeAsync().AsTask()
+            try {
+                $writeTask = $process.StandardInput.BaseStream.WriteAsync(
+                    $InputBytes,
+                    0,
+                    $InputBytes.Length)
                 $remainingMs = [Math]::Max(
                     0,
                     ($TimeoutSeconds * 1000) - [int]$stopwatch.ElapsedMilliseconds)
-                $inputTimedOut = -not $disposeTask.Wait($remainingMs)
+                $inputTimedOut = -not $writeTask.Wait($remainingMs)
+                if (-not $inputTimedOut -and
+                    -not $writeTask.IsCompletedSuccessfully) {
+                    $ioFailure = "adb standard-input write did not complete successfully"
+                }
+                if (-not $inputTimedOut -and $null -eq $ioFailure) {
+                    $disposeTask =
+                        $process.StandardInput.BaseStream.DisposeAsync().AsTask()
+                    $remainingMs = [Math]::Max(
+                        0,
+                        ($TimeoutSeconds * 1000) - [int]$stopwatch.ElapsedMilliseconds)
+                    $inputTimedOut = -not $disposeTask.Wait($remainingMs)
+                    if (-not $inputTimedOut -and
+                        -not $disposeTask.IsCompletedSuccessfully) {
+                        $ioFailure =
+                            "adb standard-input close did not complete successfully"
+                    }
+                }
+            } catch {
+                $ioFailure = "adb standard-input I/O failed"
             }
         }
-        $remainingMs = [Math]::Max(
-            0,
-            ($TimeoutSeconds * 1000) - [int]$stopwatch.ElapsedMilliseconds)
-        $timedOut = $inputTimedOut -or -not $process.WaitForExit($remainingMs)
+        $processTimedOut = $false
+        if (-not $inputTimedOut -and $null -eq $ioFailure) {
+            try {
+                $remainingMs = [Math]::Max(
+                    0,
+                    ($TimeoutSeconds * 1000) - [int]$stopwatch.ElapsedMilliseconds)
+                $processTimedOut = -not $process.WaitForExit($remainingMs)
+            } catch {
+                $ioFailure = "adb process wait failed"
+            }
+        }
+        $timedOut = $inputTimedOut -or $processTimedOut
         $terminationConfirmed = $process.HasExited
-        if ($timedOut) {
+        if (($timedOut -or $null -ne $ioFailure) -and
+            -not $terminationConfirmed) {
             try {
                 $process.Kill($true)
                 $terminationConfirmed = $process.WaitForExit(5000)
@@ -158,16 +182,24 @@ function Invoke-Adb {
                 $terminationConfirmed = $process.HasExited
             }
         }
-        $streamsDrained = $false
-        if ($terminationConfirmed -and -not $timedOut) {
-            $remainingMs = [Math]::Max(
-                0,
-                ($TimeoutSeconds * 1000) - [int]$stopwatch.ElapsedMilliseconds)
-            $streamsDrained = [Threading.Tasks.Task]::WaitAll(
-                [Threading.Tasks.Task[]]@($stdoutTask, $stderrTask),
-                $remainingMs)
+        if (-not $terminationConfirmed) {
+            $ioFailure = "adb process termination could not be confirmed"
         }
-        if (-not $streamsDrained) {
+        $streamsDrained = $false
+        if ($terminationConfirmed -and -not $timedOut -and
+            $null -eq $ioFailure) {
+            try {
+                $remainingMs = [Math]::Max(
+                    0,
+                    ($TimeoutSeconds * 1000) - [int]$stopwatch.ElapsedMilliseconds)
+                $streamsDrained = [Threading.Tasks.Task]::WaitAll(
+                    [Threading.Tasks.Task[]]@($stdoutTask, $stderrTask),
+                    $remainingMs)
+            } catch {
+                $ioFailure = "adb output I/O failed"
+            }
+        }
+        if (-not $streamsDrained -and $null -eq $ioFailure) {
             $timedOut = $true
         }
         $stdout = if ($streamsDrained) {
@@ -178,11 +210,20 @@ function Invoke-Adb {
         $stderr = if ($streamsDrained) {
             $stderrTask.GetAwaiter().GetResult()
         } else {
-            "adb process output did not close within the absolute deadline"
+            if ($null -ne $ioFailure) {
+                $ioFailure
+            } else {
+                "adb process output did not close within the absolute deadline"
+            }
         }
-        $exitCode = if ($timedOut) { $null } else { $process.ExitCode }
+        $exitCode = if ($timedOut -or $null -ne $ioFailure) {
+            $null
+        } else {
+            $process.ExitCode
+        }
         $result = [pscustomobject]@{
             timed_out = $timedOut
+            io_failed = $null -ne $ioFailure
             termination_confirmed = $terminationConfirmed
             streams_drained = $streamsDrained
             exit_code = $exitCode
@@ -190,8 +231,11 @@ function Invoke-Adb {
             stderr = $stderr
             output = @($stdout -split "\r?\n" | Where-Object { $_ -ne "" })
         }
-        if (($timedOut -or $exitCode -ne 0) -and -not $AllowFailure) {
-            $reason = if ($timedOut) {
+        if (($timedOut -or $null -ne $ioFailure -or $exitCode -ne 0) -and
+            -not $AllowFailure) {
+            $reason = if ($null -ne $ioFailure) {
+                $ioFailure
+            } elseif ($timedOut) {
                 "timed out after $TimeoutSeconds seconds"
             } else {
                 "failed with exit code $exitCode"
@@ -200,6 +244,19 @@ function Invoke-Adb {
         }
         return $result
     } finally {
+        if (-not $process.HasExited) {
+            try {
+                $process.Kill($true)
+                if (-not $process.WaitForExit(5000)) {
+                    throw "bounded termination wait expired"
+                }
+            } catch {
+                if (-not $process.HasExited) {
+                    $process.Dispose()
+                    throw "Exact-serial adb process termination could not be confirmed."
+                }
+            }
+        }
         $process.Dispose()
     }
 }
@@ -221,6 +278,25 @@ function Test-RemoteProcessPresent {
         return $false
     }
     throw "Unable to determine process state for $ProcessName on $Device."
+}
+
+function Test-RemotePackagePresent {
+    param(
+        [Parameter(Mandatory=$true)][string]$Device,
+        [Parameter(Mandatory=$true)][string]$PackageName
+    )
+    $probe = Invoke-Adb -Device $Device -Arguments @(
+        "shell", "pm", "path", $PackageName) -AllowFailure
+    $probeOutput = ($probe.output -join "`n").Trim()
+    if ($probe.exit_code -eq 0 -and
+        $probeOutput -match '^(?:package:\S+)(?:\r?\npackage:\S+)*$') {
+        return $true
+    }
+    if ($probe.exit_code -eq 1 -and
+        [string]::IsNullOrWhiteSpace($probeOutput)) {
+        return $false
+    }
+    throw "Unable to determine package state for $PackageName on $Device."
 }
 
 function Invoke-KeyRecordTool {
@@ -543,10 +619,8 @@ try {
         if ($logStartedAt[$index] -notmatch '^\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}$') {
             throw "Unable to establish the device-owned log boundary for $device."
         }
-        $priorPackage = Invoke-Adb -Device $device -Arguments @(
-            "shell", "pm", "path", $package)
         $packagePresentBefore[$index] =
-            ($priorPackage.output -join "`n") -match '^package:'
+            Test-RemotePackagePresent -Device $device -PackageName $package
         $processPresentBefore[$index] =
             Test-RemoteProcessPresent -Device $device -ProcessName $package
         $preflightComplete[$index] = $true
@@ -587,8 +661,15 @@ try {
             "files/fleet-agent/profile.json",
             "files/fleet-agent/signing-seed.bin") | Out-Null
 
-        Invoke-Adb -Device $device -Arguments @(
-            "shell", "am", "start", "-n", $activity) | Out-Null
+        $ordinaryLaunch = Invoke-Adb -Device $device -Arguments @(
+            "shell", "am", "start", "-W", "-n", $activity)
+        $ordinaryLaunchText = $ordinaryLaunch.output -join "`n"
+        if ($ordinaryLaunchText -notmatch '(?m)^Status:\s*ok\s*$' -or
+            $ordinaryLaunchText -notmatch (
+                '(?m)^Activity:\s*' + [regex]::Escape($activity) + '\s*$') -or
+            $ordinaryLaunchText -match '(?im)^\s*(Error|Exception):') {
+            throw "Fleet Agent ordinary launch did not confirm the exact Activity."
+        }
         Start-Sleep -Seconds 2
         Assert-ServiceStopped -Device $device
         if ($null -ne (Get-HubInspect -DeviceId ([string]$profiles[$index].value.device_id))) {
@@ -780,12 +861,16 @@ try {
                 if (-not $transportAvailable) {
                     $cleanupErrors.Add("Quest transport is unavailable during cleanup.")
                 } else {
-                    $packageProbe = Invoke-Adb -Device $device -Arguments @(
-                        "shell", "pm", "path", $package) -AllowFailure
-                    if ($packageProbe.timed_out -or $packageProbe.exit_code -ne 0) {
-                        $cleanupErrors.Add("Unable to inspect Fleet Agent package during cleanup.")
-                    } else {
-                        $packagePresent = ($packageProbe.output -join "`n") -match '^package:'
+                    $packagePresent = $null
+                    try {
+                        $packagePresent =
+                            Test-RemotePackagePresent -Device $device -PackageName $package
+                    } catch {
+                        $cleanupErrors.Add(
+                            "Unable to inspect Fleet Agent package during cleanup: " +
+                            $_.Exception.Message)
+                    }
+                    if ($null -ne $packagePresent) {
                         if ($packagePresent) {
                             try {
                                 Stop-Agent -Device $device
@@ -854,10 +939,8 @@ try {
                     if ((($verifiedState.output -join "").Trim()) -ne "device") {
                         throw "Quest transport did not remain available for cleanup verification."
                     }
-                    $packageAfter = Invoke-Adb -Device $device -Arguments @(
-                        "shell", "pm", "path", $package)
                     $packagePresentAfter =
-                        ($packageAfter.output -join "`n") -match '^package:'
+                        Test-RemotePackagePresent -Device $device -PackageName $package
                     $processPresentAfter =
                         Test-RemoteProcessPresent -Device $device -ProcessName $package
                     $cleanup.package_absence_restored = -not $packagePresentAfter
