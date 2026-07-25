@@ -96,6 +96,18 @@ import org.json.JSONObject
 class SpatialCameraPanelActivity : AppSystemActivity() {
   private val productPolicy = SpatialProductBuildPolicy.current
   private val presentationPolicy = SpatialPresentationBuildPolicy.current
+  private val immersiveVideoRouteResolution: SpatialImmersiveVideoRouteResolution by
+      lazy(LazyThreadSafetyMode.NONE) {
+        SpatialImmersiveVideoPanelCoordinator.resolveFromIntent(this, intent)
+      }
+  private val immersiveVideoPanelCoordinator: SpatialImmersiveVideoPanelCoordinator by
+      lazy(LazyThreadSafetyMode.NONE) {
+        SpatialImmersiveVideoPanelCoordinator(
+            context = this,
+            resolution = immersiveVideoRouteResolution,
+            emitMarker = ::marker,
+        )
+      }
   private var privateLayerPanelEntity: Entity? = null
   private var privateLayerPanelSceneObject: PanelSceneObject? = null
   private var surfaceTargetId: String = SpatialValidationCommandModule.DEFAULT_SURFACE_TARGET_ID
@@ -1485,6 +1497,12 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     scene.setReferenceSpace(ReferenceSpace.LOCAL_FLOOR)
     scene.setViewOrigin(0.0f, 0.0f, 2.0f, 180.0f)
     spatialSceneReady = true
+    if (immersiveVideoPanelCoordinator.requested) {
+      marker(immersiveVideoPanelCoordinator.routePolicyMarker())
+      val viewerPose = runCatching { scene.getViewerPose() }.getOrElse { Pose() }
+      immersiveVideoPanelCoordinator.spawnAtViewer(viewerPose)
+      return
+    }
     if (productPolicy.cameraPanelRoutesEnabled) {
       deactivateControlPanelForCameraStack("scene-ready")
       deactivatePanelShellIfRequested("scene-ready")
@@ -1580,6 +1598,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onVRReady() {
     super.onVRReady()
+    if (immersiveVideoPanelCoordinator.requested) {
+      immersiveVideoPanelCoordinator.resume("vr-ready")
+      return
+    }
     controllerInputRouteCoordinator.ensureEnabled("vr-ready", forceLog = true)
     if (productPolicy.cameraPanelRoutesEnabled) {
       updateLayerControlPanelPoseFromViewer(reason = "vr-ready", forceLog = true)
@@ -1600,6 +1622,9 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
 
   override fun onSceneTick() {
     super.onSceneTick()
+    if (immersiveVideoPanelCoordinator.requested) {
+      return
+    }
     if (productPolicy.cameraPanelRoutesEnabled) {
       updateLayerControlPanelPoseFromViewer(reason = "scene-tick", forceLog = false)
       updateParticleLayerProjectionFromViewer(reason = "scene-tick", forceLog = false)
@@ -1626,11 +1651,18 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
     return super.dispatchGenericMotionEvent(event)
   }
 
+  override fun onResume() {
+    super.onResume()
+    immersiveVideoPanelCoordinator.resume("activity-resume")
+  }
+
   override fun onPause() {
+    immersiveVideoPanelCoordinator.pause("activity-pause")
     super.onPause()
   }
 
   override fun onDestroy() {
+    immersiveVideoPanelCoordinator.destroy("activity-destroy")
     spatialPassthroughLutCoordinator.stop("activity-destroy")
     if (nativeInteropCoordinator.receiptLibraryLoaded) {
       runCatching { nativeStopSpatialControllerActions() }
@@ -1652,6 +1684,10 @@ class SpatialCameraPanelActivity : AppSystemActivity() {
   }
 
   override fun registerPanels(): List<PanelRegistration> {
+    if (immersiveVideoPanelCoordinator.requested) {
+      marker(immersiveVideoPanelCoordinator.routePolicyMarker())
+      return listOfNotNull(immersiveVideoPanelCoordinator.panelRegistrationOrNull())
+    }
     val composePanels =
         SpatialComposePanelRegistrationModule.registrations(
             privateLayer =

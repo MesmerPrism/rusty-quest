@@ -19,6 +19,8 @@ param(
     [string]$AppId = $env:RUSTY_QUEST_SPATIAL_APP_ID,
     [string]$AppLabel = $env:RUSTY_QUEST_SPATIAL_APP_LABEL,
     [string]$ApkFileName = $env:RUSTY_QUEST_SPATIAL_APK_FILE_NAME,
+    [ValidateSet("Debug", "Release")]
+    [string]$BuildType = "Debug",
     [switch]$LockedFinalPresentation,
     [ValidateRange(0.0, 4.0)][double]$DistortionSpeedScale = 1.0,
     [string]$Keystore = "",
@@ -415,6 +417,7 @@ $resolvedProductId = Resolve-SpatialProductId -Value $ProductId
 $resolvedAppId = Resolve-SpatialAppId -Value $AppId -ResolvedProductId $resolvedProductId
 $resolvedAppLabel = Resolve-SpatialAppLabel -Value $AppLabel -ResolvedProductId $resolvedProductId
 $resolvedApkFileName = Resolve-ApkFileName -Value $ApkFileName -ResolvedAppId $resolvedAppId -ResolvedProductId $resolvedProductId
+$buildTypeLower = $BuildType.ToLowerInvariant()
 if ($resolvedAppId -eq "io.github.mesmerprism.rustyquest.spatial_vr_strobe") {
     throw "The Camera build cannot use the standalone Spatial VR Strobe AppId."
 }
@@ -773,7 +776,7 @@ try {
         "--console=plain",
         "--project-cache-dir", $gradleProjectCacheDir,
         "-p", ([string]$appRoot),
-        ":app:assembleDebug"
+        ":app:assemble$BuildType"
     )
 } finally {
     $env:ANDROID_HOME = $previousAndroidHome
@@ -840,7 +843,7 @@ try {
     }
 }
 
-$apkSource = Join-Path $appBuildDir "outputs\apk\debug\app-debug.apk"
+$apkSource = Join-Path $appBuildDir "outputs\apk\$buildTypeLower\app-$buildTypeLower.apk"
 if (-not (Test-Path -LiteralPath $apkSource)) {
     throw "Gradle build did not produce expected APK: $apkSource"
 }
@@ -862,6 +865,8 @@ $manifest = [ordered]@{
     activity = "$resolvedAppId/io.github.mesmerprism.rustyquest.spatial_camera_panel.SpatialCameraPanelActivity"
     source_namespace = "io.github.mesmerprism.rustyquest.spatial_camera_panel"
     app_lane = "spatial-camera-panel-android"
+    android_build_type = $buildTypeLower
+    android_debuggable = ($BuildType -eq "Debug")
     project_workspace = "private-project-workspace"
     client_id = "client.quest.spatial-camera-panel"
     feature_lock_id = "lock.broker-client.spatial-camera-panel.v1"
@@ -897,7 +902,14 @@ $manifest = [ordered]@{
     distortion_speed_scale = $resolvedDistortionSpeedScale
     distortion_base_phase_rate_hz = 0.5
     distortion_effective_phase_rate_hz = (0.5 * $resolvedDistortionSpeedScale)
-    spatial_sdk_version = "0.13.1"
+    spatial_sdk_version = "0.13.2"
+    media3_version = "1.4.1"
+    immersive_video_default_enabled = $false
+    immersive_video_source_policy = "explicit-single-grant-media-content-uri-or-app-owned-file"
+    immersive_video_shape_tokens = @("flat", "equirect-180", "equirect-360")
+    immersive_video_stereo_tokens = @("mono", "side-by-side-left-right", "top-bottom")
+    immersive_video_render_path = "VideoSurfacePanelRegistration-direct-to-surface"
+    immersive_video_media_packaged = $false
     spatial_hand_mesh_rig_packaged = $handMeshRigAssetInfo.ready
     spatial_hand_mesh_rig_asset_id = $handMeshRigAssetInfo.asset_id
     spatial_hand_mesh_rig_asset_file_count = $handMeshRigAssetInfo.file_count

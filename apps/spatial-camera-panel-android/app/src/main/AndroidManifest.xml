@@ -48,7 +48,6 @@
 
     <application
         android:allowBackup="false"
-        android:debuggable="true"
         android:label="${spatialAppLabel}"
         android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
         <meta-data android:name="rusty.manifold.client_id" android:value="${spatialClientId}" />

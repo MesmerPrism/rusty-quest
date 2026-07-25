@@ -1262,6 +1262,28 @@ This stages the file to the package-scoped external path
 `/sdcard/Android/data/io.github.mesmerprism.rustyquest.spatial_camera_panel/files/v.mp4`,
 which is the path used by the successful native-loop Spatial proofs.
 
+For full immersive-media playback, use the separate explicit route. It
+supports flat, equirectangular 180°, and equirectangular 360° surfaces with
+mono, side-by-side, or top-bottom stereo:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Stage-SpatialCameraPanelImmersiveVideo.ps1 `
+  -Serial <quest-serial> `
+  -SourcePath <local-video.mp4> `
+  -Shape equirect-360 `
+  -Stereo mono `
+  -Launch
+```
+
+This route uses the Spatial SDK direct-to-surface media panel, matches the
+panel pixel dimensions to the encoded source, opens the verified staged file
+through a single MediaStore URI grant without broad media permission, and
+verifies the device copy by size and SHA-256. Projection and stereo
+classification are always explicit; the app does not trust filenames or
+spherical metadata. Videos remain local and are not bundled into the APK. See
+[`docs/SPATIAL_IMMERSIVE_VIDEO_PLAYBACK.md`](../../docs/SPATIAL_IMMERSIVE_VIDEO_PLAYBACK.md)
+for the shape matrix, failure policy, lifecycle, and validation markers.
+
 To include a generic Spatial SDK staged 3D asset, provide a staged mesh URI or
 let the wrapper stage a local GLB/GLTF source. Raw FBX sources must be converted
 to GLB/GLTF first; the source model remains local and is not packaged:

@@ -194,6 +194,13 @@ android {
     checkReleaseBuilds = false
   }
 
+  buildTypes {
+    getByName("release") {
+      isMinifyEnabled = false
+      signingConfig = signingConfigs.getByName("debug")
+    }
+  }
+
   buildFeatures {
     compose = true
     buildConfig = true
@@ -242,6 +249,8 @@ dependencies {
   implementation(libs.meta.spatial.sdk.vr)
   implementation(libs.meta.spatial.sdk.isdk)
   implementation(libs.gson)
+  implementation(libs.androidx.media3.common)
+  implementation(libs.androidx.media3.exoplayer)
 
   testImplementation(kotlin("test"))
 }
